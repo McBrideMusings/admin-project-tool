@@ -3,12 +3,12 @@
 
 import sys, os
 sys.path.insert(0, os.path.expanduser("~/.admin"))
-from admin_lib.core import command, run_cmd, boot, C, info, ok, warn, err
+from admin_lib.core import core, command, run_cmd, boot, C, info, ok, warn, err
 
 PROJECT_NAME = "{{PROJECT_NAME}}"
 
 
-@command("build", "Build the project")
+@core("build", "Build the project")
 def cmd_build(args):
     info("Building...")
     rc = run_cmd("{{BUILD_CMD}}")

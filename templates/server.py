@@ -3,7 +3,7 @@
 
 import sys, os
 sys.path.insert(0, os.path.expanduser("~/.admin"))
-from admin_lib.core import command, run_cmd, boot, C, info, ok, warn, err
+from admin_lib.core import core, command, run_cmd, boot, C, info, ok, warn, err
 from admin_lib.server import (
     run_with_reload, docker_build, docker_deploy, ensure_deps,
     register_server_reload_command,
@@ -13,7 +13,7 @@ PROJECT_NAME = "{{PROJECT_NAME}}"
 DOCKER_IMAGE = "{{DOCKER_IMAGE}}"
 
 
-@command("build", "Build Docker image")
+@core("build", "Build Docker image")
 def cmd_build(args):
     rc = docker_build(DOCKER_IMAGE, ".")
     if rc == 0:
@@ -27,7 +27,7 @@ def cmd_run(args):
     return run_with_reload("node server.js", DOCKER_IMAGE)
 
 
-@command("deploy", "Build and deploy to remote host")
+@core("deploy", "Build and deploy to remote host")
 def cmd_deploy(args):
     remote_host = os.environ.get("DEPLOY_HOST", "")
     if not remote_host:

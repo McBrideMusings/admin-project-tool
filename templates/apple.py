@@ -3,7 +3,7 @@
 
 import sys, os
 sys.path.insert(0, os.path.expanduser("~/.admin"))
-from admin_lib.core import command, run_cmd, boot, C, info, ok, warn, err
+from admin_lib.core import core, command, run_cmd, boot, C, info, ok, warn, err
 from admin_lib.apple import (
     setup_reload, poll_for_reload, cleanup_pid_file,
     find_app, log_predicate, xcodebuild_filtered, clean_derived_data,
@@ -18,7 +18,7 @@ SUBSYSTEM = "{{SUBSYSTEM}}"
 _ADMIN_PID_FILE = "/tmp/admin-run.pid"
 
 
-@command("dev", "Dev build and run (--log LEVEL)")
+@core("dev", "Dev build and run (--log LEVEL)")
 def cmd_dev(args):
     import threading, time
 

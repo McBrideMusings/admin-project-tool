@@ -20,4 +20,23 @@ import sys; sys.path.insert(0, '$DEST_DIR')
 from admin_lib import __version__; print(__version__)
 ")"
 
+# Install templates
+rm -rf "$DEST_DIR/templates"
+cp -R "$SRC_DIR/templates" "$DEST_DIR/templates"
+echo "Installed templates to $DEST_DIR/templates/"
+
+# Install init-admin
+cp "$SRC_DIR/init-admin" "$DEST_DIR/init-admin"
+chmod +x "$DEST_DIR/init-admin"
+echo "Installed init-admin to $DEST_DIR/init-admin"
+
+# Check if ~/.admin is in PATH
+case ":$PATH:" in
+    *":$DEST_DIR:"*) ;;
+    *) echo ""
+       echo "Hint: add ~/.admin to your PATH to use init-admin globally:"
+       echo "  export PATH=\"\$HOME/.admin:\$PATH\""
+       ;;
+esac
+
 echo "Done."

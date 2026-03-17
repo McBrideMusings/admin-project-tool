@@ -1,0 +1,419 @@
+#!/usr/bin/env python3
+"""init-admin — Bootstrap new admin scripts from templates, or audit existing ones.
+
+Standalone script (stdlib only). Does NOT import admin_lib — it reads template
+files and does string substitution to avoid the bootstrap chicken-and-egg problem.
+"""
+
+import argparse
+import os
+import re
+import stat
+import sys
+
+
+# ---------------------------------------------------------------------------
+# Colors
+# ---------------------------------------------------------------------------
+
+class C:
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    CYAN = "\033[36m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    RESET = "\033[0m"
+
+
+def info(msg):
+    print(f"{C.CYAN}{msg}{C.RESET}")
+
+
+def ok(msg):
+    print(f"{C.GREEN}{msg}{C.RESET}")
+
+
+def warn(msg):
+    print(f"{C.YELLOW}{msg}{C.RESET}", file=sys.stderr)
+
+
+def err(msg):
+    print(f"{C.RED}{msg}{C.RESET}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Project type detection
+# ---------------------------------------------------------------------------
+
+def detect_project_type(project_dir):
+    """Detect project type from filesystem markers.
+
+    Returns "apple", "server", or "basic".
+    """
+    entries = set(os.listdir(project_dir))
+
+    for entry in entries:
+        if entry.endswith(".xcodeproj") or entry.endswith(".xcworkspace"):
+            return "apple"
+
+    server_markers = {
+        "Dockerfile", "docker-compose.yml", "docker-compose.yaml",
+        "compose.yml", "compose.yaml",
+    }
+    if entries & server_markers:
+        return "server"
+
+    return "basic"
+
+
+# ---------------------------------------------------------------------------
+# Variable inference
+# ---------------------------------------------------------------------------
+
+def infer_project_name(project_dir):
+    """Derive a human-readable project name from the directory basename."""
+    basename = os.path.basename(os.path.abspath(project_dir))
+    return basename.replace("-", " ").replace("_", " ").title()
+
+
+def infer_basic_vars(project_dir):
+    """Infer BUILD_CMD and TEST_CMD for basic template."""
+    entries = set(os.listdir(project_dir))
+    variables = {}
+
+    if "go.mod" in entries:
+        variables["BUILD_CMD"] = "go build ./cmd/..."
+        variables["TEST_CMD"] = "go test ./..."
+    elif "Cargo.toml" in entries:
+        variables["BUILD_CMD"] = "cargo build"
+        variables["TEST_CMD"] = "cargo test"
+    elif "Makefile" in entries:
+        variables["BUILD_CMD"] = "make"
+        variables["TEST_CMD"] = "make test"
+    elif "package.json" in entries:
+        variables["BUILD_CMD"] = "npm run build"
+        variables["TEST_CMD"] = "npm test"
+    else:
+        variables["BUILD_CMD"] = 'echo "TODO: add build command"'
+        variables["TEST_CMD"] = 'echo "TODO: add test command"'
+
+    return variables
+
+
+def infer_apple_vars(project_dir):
+    """Infer SCHEME, PROCESS, SUBSYSTEM for apple template."""
+    variables = {}
+
+    scheme = None
+    for entry in os.listdir(project_dir):
+        if entry.endswith(".xcodeproj"):
+            scheme = entry[:-len(".xcodeproj")]
+            break
+
+    if not scheme:
+        scheme = os.path.basename(os.path.abspath(project_dir))
+
+    variables["SCHEME"] = scheme
+    variables["PROCESS"] = scheme
+
+    subsystem = None
+    pbxproj = os.path.join(project_dir, f"{scheme}.xcodeproj", "project.pbxproj")
+    if os.path.isfile(pbxproj):
+        try:
+            with open(pbxproj) as f:
+                content = f.read()
+            m = re.search(r'PRODUCT_BUNDLE_IDENTIFIER\s*=\s*"?([^";]+)', content)
+            if m:
+                subsystem = m.group(1)
+        except OSError:
+            pass
+
+    if not subsystem:
+        subsystem = f"com.example.{scheme}"
+    variables["SUBSYSTEM"] = subsystem
+
+    return variables
+
+
+def infer_server_vars(project_dir):
+    """Infer DOCKER_IMAGE for server template."""
+    basename = os.path.basename(os.path.abspath(project_dir))
+    return {"DOCKER_IMAGE": basename.lower().replace(" ", "-").replace("_", "-")}
+
+
+# ---------------------------------------------------------------------------
+# Generation
+# ---------------------------------------------------------------------------
+
+def find_template_dir():
+    """Find the templates directory relative to this script's install location."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(script_dir, "templates"),
+        os.path.join(os.path.expanduser("~/.admin"), "templates"),
+    ]
+    for d in candidates:
+        if os.path.isdir(d):
+            return d
+    return None
+
+
+def generate(project_dir, project_type, force=False):
+    """Generate an admin script from template."""
+    admin_path = os.path.join(project_dir, "admin")
+    if os.path.exists(admin_path) and not force:
+        err(f"admin already exists at {admin_path}")
+        err("Use --force to overwrite.")
+        return 1
+
+    template_dir = find_template_dir()
+    if not template_dir:
+        err("Cannot find templates directory.")
+        return 1
+
+    template_file = os.path.join(template_dir, f"{project_type}.py")
+    if not os.path.isfile(template_file):
+        err(f"Template not found: {template_file}")
+        return 1
+
+    with open(template_file) as f:
+        template = f.read()
+
+    project_name = infer_project_name(project_dir)
+    variables = {"PROJECT_NAME": project_name}
+
+    if project_type == "basic":
+        variables.update(infer_basic_vars(project_dir))
+    elif project_type == "apple":
+        variables.update(infer_apple_vars(project_dir))
+    elif project_type == "server":
+        variables.update(infer_server_vars(project_dir))
+
+    content = template
+    for key, val in variables.items():
+        content = content.replace("{{" + key + "}}", val)
+
+    with open(admin_path, "w") as f:
+        f.write(content)
+    st = os.stat(admin_path)
+    os.chmod(admin_path, st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    tmp_dir = os.path.join(project_dir, "tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
+    gitignore_path = os.path.join(tmp_dir, ".gitignore")
+    if not os.path.exists(gitignore_path):
+        with open(gitignore_path, "w") as f:
+            f.write("*\n!.gitignore\n")
+
+    print()
+    ok("Generated ./admin")
+    print(f"  Type:     {project_type}")
+    print(f"  Template: {template_file}")
+    print()
+    print("  Variables:")
+    for key, val in variables.items():
+        print(f"    {key} = {val}")
+
+    remaining_todos = content.count("TODO")
+    if remaining_todos:
+        print()
+        warn(f"  {remaining_todos} TODO(s) remaining — search for 'TODO' in ./admin")
+
+    print()
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Audit
+# ---------------------------------------------------------------------------
+
+def audit(project_dir):
+    """Audit an existing admin script."""
+    admin_path = os.path.join(project_dir, "admin")
+    if not os.path.isfile(admin_path):
+        err(f"No admin script found at {admin_path}")
+        return 1
+
+    with open(admin_path) as f:
+        content = f.read()
+    lines = content.splitlines()
+    line_count = len(lines)
+
+    uses_admin_lib = "admin_lib" in content
+
+    if uses_admin_lib:
+        return _audit_admin_lib(project_dir, content, lines, line_count)
+    else:
+        return _audit_standalone(project_dir, content, lines, line_count)
+
+
+def _audit_admin_lib(project_dir, content, lines, line_count):
+    """Audit an admin_lib-based script."""
+    project_type = detect_project_type(project_dir)
+
+    print(f"Audit: ./admin (admin_lib-based, {line_count} lines)")
+    print()
+
+    # Check 1: Library importable
+    try:
+        sys.path.insert(0, os.path.expanduser("~/.admin"))
+        import admin_lib
+        ok(f"  admin_lib importable (v{admin_lib.__version__})")
+    except ImportError:
+        err("  admin_lib not importable — is it installed?")
+
+    # Check 2: Layer usage
+    layers_used = []
+    layer_map = {
+        "admin_lib.core": "core",
+        "admin_lib.apple": "apple",
+        "admin_lib.server": "server",
+        "admin_lib.unraid": "unraid",
+    }
+    for import_str, layer_name in layer_map.items():
+        if import_str in content:
+            layers_used.append(layer_name)
+    info(f"  Layers: {', '.join(layers_used) if layers_used else 'none'}")
+
+    # Check 3: Layer opportunities
+    if project_type == "apple" and "apple" not in layers_used:
+        warn("  Opportunity: .xcodeproj found but admin_lib.apple not imported")
+    if project_type == "server" and "server" not in layers_used:
+        warn("  Opportunity: Docker files found but admin_lib.server not imported")
+
+    # Check 4: Decorator correctness
+    print()
+    info("  Decorator usage:")
+    core_names = {"build", "dev", "deploy"}
+    core_pattern = re.compile(r'@core\("(\w+)"')
+    cmd_pattern = re.compile(r'@command\("(\w+)"')
+
+    core_decorated = set(core_pattern.findall(content))
+    cmd_decorated = set(cmd_pattern.findall(content))
+
+    for name in core_names & cmd_decorated:
+        warn(f"    @command(\"{name}\") should be @core(\"{name}\")")
+    for name in core_names & core_decorated:
+        ok(f"    @core(\"{name}\") — correct")
+    for name in cmd_decorated - core_names:
+        ok(f"    @command(\"{name}\") — correct")
+
+    # Check 5: Missing features
+    print()
+    info("  Features:")
+    checks = [
+        ("reload command", "reload" in content and ("register_reload_command" in content or "register_server_reload_command" in content or 'def cmd_reload' in content)),
+        ("tmp/.gitignore", os.path.isfile(os.path.join(project_dir, "tmp", ".gitignore"))),
+        ("boot() call", "boot(" in content),
+    ]
+    for label, present in checks:
+        if present:
+            ok(f"    {label} — present")
+        else:
+            warn(f"    {label} — missing")
+
+    print()
+    return 0
+
+
+def _audit_standalone(project_dir, content, lines, line_count):
+    """Audit a standalone (non-admin_lib) script."""
+    project_type = detect_project_type(project_dir)
+
+    print(f"Audit: ./admin (standalone, not using admin_lib)")
+    print(f"  Type:     {project_type} (detected)")
+    print(f"  Lines:    {line_count}")
+    print()
+
+    # Suggest migration layers
+    layer_suggestions = ["admin_lib.core"]
+    core_savings = 150
+    type_savings = 0
+
+    if project_type == "apple":
+        layer_suggestions.append("admin_lib.apple")
+        type_savings = 80
+    elif project_type == "server":
+        layer_suggestions.append("admin_lib.server")
+        type_savings = 60
+
+    total_savings = core_savings + type_savings
+    estimated_result = max(line_count - total_savings, 40)
+
+    info("  Migration opportunity:")
+    print(f"    admin_lib.core   — replaces ~{core_savings} lines (TUI, colors, run_cmd, signal handling)")
+    if project_type == "apple":
+        print(f"    admin_lib.apple  — replaces ~{type_savings} lines (xcodebuild, reload, DerivedData)")
+    elif project_type == "server":
+        print(f"    admin_lib.server — replaces ~{type_savings} lines (docker_build, run_with_reload)")
+    print(f"    Estimated result: ~{estimated_result} lines (vs {line_count} current)")
+    print()
+
+    # Pattern detection
+    patterns = [
+        (r'subprocess\.Popen.*stdout.*PIPE', "manual Popen + stdout loop", "use run_cmd()"),
+        (r'signal\.signal\(signal\.SIGUSR1', "SIGUSR1 handler", "use setup_reload() or run_with_reload()"),
+        (r'xcodebuild\b', "xcodebuild invocation", "use xcodebuild_filtered()"),
+        (r'docker\s+build', "docker build", "use docker_build()"),
+        (r'docker\s+save', "docker save/deploy", "use docker_deploy()"),
+        (r'os\.remove.*pid|pid.*os\.remove', "manual PID file cleanup", "use setup_reload() / cleanup_pid_file()"),
+        (r'DerivedData', "DerivedData management", "use clean_derived_data()"),
+        (r'class\s+C\b.*ANSI|\\033\[3[0-9]m', "inline ANSI color codes", "use admin_lib.core.C"),
+        (r'def\s+_tui_menu|def\s+read_key|tty\.setraw', "inline TUI menu", "use admin_lib.core.boot()"),
+        (r'OrderedDict.*_commands|_commands\s*=\s*OrderedDict', "manual command registry", "use @command / @core decorators"),
+    ]
+
+    found_patterns = []
+    for pattern, label, suggestion in patterns:
+        for i, line in enumerate(lines, 1):
+            if re.search(pattern, line):
+                found_patterns.append((i, label, suggestion))
+                break
+
+    if found_patterns:
+        info("  Extractable patterns:")
+        for line_num, label, suggestion in found_patterns:
+            print(f"    Line {line_num}: {label} → {suggestion}")
+    else:
+        ok("  No extractable patterns detected.")
+
+    print()
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="init-admin",
+        description="Bootstrap new admin scripts from templates, or audit existing ones.",
+    )
+    parser.add_argument("directory", nargs="?", default=".",
+                        help="Project directory (default: current directory)")
+    parser.add_argument("--audit", action="store_true",
+                        help="Audit an existing admin script")
+    parser.add_argument("--type", choices=["apple", "server", "basic"],
+                        dest="project_type",
+                        help="Override auto-detected project type")
+    parser.add_argument("--force", action="store_true",
+                        help="Overwrite existing admin file")
+
+    args = parser.parse_args()
+    project_dir = os.path.abspath(args.directory)
+
+    if not os.path.isdir(project_dir):
+        err(f"Not a directory: {project_dir}")
+        return 1
+
+    if args.audit:
+        return audit(project_dir)
+
+    project_type = args.project_type or detect_project_type(project_dir)
+    return generate(project_dir, project_type, force=args.force)
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)
