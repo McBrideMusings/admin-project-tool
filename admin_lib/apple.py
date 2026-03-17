@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 
+from . import core as _core
 from .core import (
     C,
     _children,
@@ -22,8 +23,6 @@ from .core import (
     err,
     register_cleanup,
     read_key,
-    LOG_DIR,
-    LOG_FILE,
 )
 
 
@@ -213,6 +212,59 @@ def is_sim_app_running(device_id, bundle_id):
         capture_output=True, text=True,
     )
     return bundle_id in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# Physical device helpers
+# ---------------------------------------------------------------------------
+
+def find_connected_device():
+    """Find a connected iOS device via xcrun devicectl.
+
+    Returns (device_id, device_name) or calls sys.exit(1).
+    """
+    import json
+
+    info("Finding connected iOS device...")
+    json_path = os.path.join(_core.LOG_DIR, "devices.json")
+    os.makedirs(_core.LOG_DIR, exist_ok=True)
+    result = subprocess.run(
+        ["xcrun", "devicectl", "list", "devices", "--json-output", json_path],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        err("Failed to list devices. Is a device connected?")
+        sys.exit(1)
+
+    try:
+        with open(json_path) as f:
+            data = json.load(f)
+        devices = [
+            d for d in data.get("result", {}).get("devices", [])
+            if d.get("connectionProperties", {}).get("transportType") in ("wired", "localNetwork")
+        ]
+    except (json.JSONDecodeError, KeyError, FileNotFoundError):
+        devices = []
+
+    if not devices:
+        err("No connected iOS device found.")
+        err("Connect via USB, or enable wireless debugging:")
+        err("  Xcode > Window > Devices and Simulators > select device > Connect via network")
+        sys.exit(1)
+
+    device = devices[0]
+    device_id = device.get("identifier", "")
+    device_name = device.get("deviceProperties", {}).get("name", "Unknown")
+    info(f"Target device: {device_name} ({device_id})")
+    return device_id, device_name
+
+
+def install_on_device(device_id, app_path):
+    """Install an app on a physical iOS device. Returns exit code."""
+    from .core import run_cmd
+    return run_cmd(
+        f'xcrun devicectl device install app --device "{device_id}" "{app_path}" 2>&1'
+    )
 
 
 # ---------------------------------------------------------------------------
