@@ -14,7 +14,7 @@ import sys
 from .core import (
     C,
     _children,
-    _commands,
+    _custom_commands,
     command,
     info,
     ok,

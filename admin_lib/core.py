@@ -151,14 +151,53 @@ def run_cmd(cmd, shell=True, capture_log=True):
 # Command registry
 # ---------------------------------------------------------------------------
 
-_commands = OrderedDict()
+# Core command names in canonical TUI order.
+# Projects implement whichever apply — none are mandatory.
+#   build  — Compile/produce artifacts. Don't install, don't run.
+#   dev    — Development build + run with hot reload loop.
+#   deploy — Build for production and install/ship.
+CORE_COMMANDS = ("build", "dev", "deploy")
+
+_core_commands = OrderedDict()    # name → {func, desc}
+_custom_commands = OrderedDict()  # name → {func, desc}
 _subcommand_help = {}
 
 
-def command(name, description):
-    """Decorator to register a command."""
+def _all_commands():
+    """Return core commands (in order) + custom commands, for iteration."""
+    merged = OrderedDict()
+    for name in CORE_COMMANDS:
+        if name in _core_commands:
+            merged[name] = _core_commands[name]
+    merged.update(_custom_commands)
+    return merged
+
+
+def core(name, description):
+    """Decorator to register a core command (build/dev/deploy).
+
+    Core commands appear first in the TUI in a fixed order, visually
+    separated from project-specific commands.
+    """
+    if name not in CORE_COMMANDS:
+        raise ValueError(
+            f"'{name}' is not a core command. "
+            f"Use @command() for project-specific commands, "
+            f"or choose from: {', '.join(CORE_COMMANDS)}"
+        )
     def decorator(func):
-        _commands[name] = {"func": func, "desc": description}
+        _core_commands[name] = {"func": func, "desc": description}
+        return func
+    return decorator
+
+
+def command(name, description):
+    """Decorator to register a project-specific command.
+
+    These appear after the core commands in the TUI.
+    """
+    def decorator(func):
+        _custom_commands[name] = {"func": func, "desc": description}
         return func
     return decorator
 
@@ -177,6 +216,7 @@ def subcommand_help(name):
 
 def read_key():
     """Read a single keypress, handling arrow key escape sequences."""
+    import select
     import tty
     import termios
 
@@ -184,17 +224,35 @@ def read_key():
     old_settings = termios.tcgetattr(fd)
     try:
         tty.setraw(fd)
-        ch = sys.stdin.read(1)
-        if ch == "\x1b":
-            seq = sys.stdin.read(2)
-            if seq == "[A":
-                return "up"
-            if seq == "[B":
-                return "down"
+        ch = os.read(fd, 1)
+        if ch == b"\x03":
+            raise KeyboardInterrupt
+        if ch == b"\x1b":
+            # Wait briefly for arrow key sequence bytes to arrive.
+            # Arrow keys send \x1b[A / \x1b[B — bare Esc sends just \x1b.
+            if select.select([fd], [], [], 0.1)[0]:
+                seq = os.read(fd, 2)
+                if seq == b"[A":
+                    return "up"
+                if seq == b"[B":
+                    return "down"
             return "esc"
-        return ch
+        return ch.decode("utf-8", errors="replace")
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+def _build_menu_layout():
+    """Build the menu item list with an optional separator between standard and custom.
+
+    Returns (items, separator_index) where items is a list of command names
+    and separator_index is the position of the visual divider (or -1 if none).
+    """
+    std = [n for n in CORE_COMMANDS if n in _core_commands]
+    cust = list(_custom_commands.keys())
+    if std and cust:
+        return std + cust, len(std)
+    return std + cust, -1
 
 
 def _tui_menu():
@@ -205,26 +263,35 @@ def _tui_menu():
 
     import termios
 
-    items = list(_commands.keys())
+    all_cmds = _all_commands()
+    items, sep_idx = _build_menu_layout()
     sel = 0
     num = len(items)
+
+    if num == 0:
+        warn("No commands registered.")
+        return
 
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
 
-    total_lines = num + 1
+    # Total lines: items + separator line (if present) + blank + footer
+    has_sep = sep_idx > 0
+    total_lines = num + (1 if has_sep else 0) + 2
 
     def draw():
         if draw.rendered:
             sys.stdout.write(f"\033[{total_lines}F")
         sys.stdout.write("\033[J")
         for i, name in enumerate(items):
-            desc = _commands[name]["desc"]
+            if has_sep and i == sep_idx:
+                sys.stdout.write("\n")
+            desc = all_cmds[name]["desc"]
             if i == sel:
                 sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {name:<14}{C.RESET} {desc}\n")
             else:
                 sys.stdout.write(f"    {C.DIM}{name:<14}{C.RESET} {desc}\n")
-        sys.stdout.write(f"{C.DIM}  [arrows/j/k] navigate  [enter] run  [q] quit{C.RESET}\n")
+        sys.stdout.write(f"\n{C.DIM}  [arrows/j/k] navigate  [enter] run  [q/esc] quit{C.RESET}\n")
         sys.stdout.flush()
         draw.rendered = True
 
@@ -248,7 +315,7 @@ def _tui_menu():
                 print()
                 os.makedirs(LOG_DIR, exist_ok=True)
                 open(LOG_FILE, "w").close()
-                _commands[items[sel]]["func"]([])
+                all_cmds[items[sel]]["func"]([])
                 return
     except (KeyboardInterrupt, EOFError):
         print()
@@ -299,7 +366,7 @@ def pick_target(targets, prompt="Select target"):
                 sys.stdout.write(f"    {C.DIM}{name:<14}{C.RESET} {desc}")
             sys.stdout.write("\n")
         sys.stdout.write("\033[2K")
-        sys.stdout.write(f"{C.DIM}  [arrows/j/k] navigate  [enter] select  [q] cancel{C.RESET}")
+        sys.stdout.write(f"{C.DIM}  [arrows/j/k] navigate  [enter] select  [q/esc] cancel{C.RESET}")
         sys.stdout.write("\033[u")
         sys.stdout.flush()
 
@@ -335,11 +402,17 @@ def pick_target(targets, prompt="Select target"):
 
 def _print_help():
     """Print help text (non-TTY fallback and --help)."""
+    all_cmds = _all_commands()
+    _, sep_idx = _build_menu_layout()
+    items = list(all_cmds.keys())
+
     print(f"{C.BOLD}{_project_name}{C.RESET}")
     print(f"Usage: ./admin <command> [args...]\n")
     print("Commands:")
-    for name, cmd_info in _commands.items():
-        print(f"  {C.CYAN}{name:<16}{C.RESET} {cmd_info['desc']}")
+    for i, name in enumerate(items):
+        if sep_idx > 0 and i == sep_idx:
+            print()
+        print(f"  {C.CYAN}{name:<16}{C.RESET} {all_cmds[name]['desc']}")
     print(f"\nRun {C.DIM}./admin{C.RESET} with no args for interactive menu.")
 
 
@@ -373,7 +446,8 @@ def boot(project_name, load_dotenv=False):
         _print_help()
         return
 
-    if cmd_name not in _commands:
+    all_cmds = _all_commands()
+    if cmd_name not in all_cmds:
         err(f"Unknown command: {cmd_name}")
         _print_help()
         sys.exit(1)
@@ -389,4 +463,4 @@ def boot(project_name, load_dotenv=False):
     os.makedirs(LOG_DIR, exist_ok=True)
     open(LOG_FILE, "w").close()
 
-    _commands[cmd_name]["func"](args)
+    all_cmds[cmd_name]["func"](args)

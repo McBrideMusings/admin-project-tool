@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Validation: power-hour-generator admin migrated to admin_lib.
 
-This is what the migrated admin file would look like.
+This is what the migrated admin file looks like.
 Run with: python3 tests/test_phg_migration.py --help
 """
 
@@ -10,13 +10,23 @@ import sys
 import os
 
 sys.path.insert(0, os.path.expanduser("~/.admin"))
-from admin_lib.core import command, run_cmd, boot, C, info, ok, warn, err
+from admin_lib.core import core, command, run_cmd, boot, C, info, ok, warn, err
 
 PROJECT_NAME = "Power Hour Generator"
 
 
-@command("build", "Build the CLI binary and install it")
+@core("build", "Compile all Go packages")
 def cmd_build(args):
+    info("Building...")
+    rc = run_cmd("go build ./...")
+    if rc != 0:
+        err("Build failed")
+        sys.exit(rc)
+    ok("Build complete")
+
+
+@core("deploy", "Build and install CLI to PATH")
+def cmd_deploy(args):
     info("Building and installing powerhour...")
     rc = run_cmd("go build ./...")
     if rc != 0:
@@ -79,7 +89,6 @@ def cmd_clean(args):
 def cmd_docs(args):
     import subprocess
     import threading
-
     from admin_lib.core import _children, LOG_DIR, LOG_FILE
 
     info("Starting VitePress dev server...")

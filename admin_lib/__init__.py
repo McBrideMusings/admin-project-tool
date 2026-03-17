@@ -9,6 +9,7 @@ from .core import (
     warn,
     err,
     run_cmd,
+    core,
     command,
     boot,
     pick_target,
