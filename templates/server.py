@@ -3,14 +3,21 @@
 
 import sys, os
 sys.path.insert(0, os.path.expanduser("~/.admin"))
-from admin_lib.core import core, command, run_cmd, boot, C, info, ok, warn, err
+from admin_lib.core import core, command, run_cmd, boot, C, info, ok, warn, err, set_urls
 from admin_lib.server import (
     run_with_reload, docker_build, docker_deploy, ensure_deps,
-    register_server_reload_command,
+    register_server_reload_command, register_open_command,
 )
 
 PROJECT_NAME = "{{PROJECT_NAME}}"
 DOCKER_IMAGE = "{{DOCKER_IMAGE}}"
+
+# TODO: update URLs for this project
+URLS = [
+    ("Dev", "http://localhost:9090"),
+    ("Prod", "https://{{DOCKER_IMAGE}}.example.com"),
+]
+set_urls(URLS)
 
 
 @core("build", "Build Docker image")
@@ -49,6 +56,7 @@ def cmd_clean(args):
     ok("Clean complete")
 
 
+register_open_command()
 register_server_reload_command()
 
 

@@ -67,6 +67,40 @@ def detect_project_type(project_dir):
     return "basic"
 
 
+def has_web_component(project_dir):
+    """Detect if the project serves a web UI or HTTP API."""
+    entries = set(os.listdir(project_dir))
+
+    web_dirs = {"public", "static", "views"}
+    if entries & web_dirs:
+        return True
+
+    if "templates" in entries:
+        tmpl_dir = os.path.join(project_dir, "templates")
+        if os.path.isdir(tmpl_dir):
+            for f in os.listdir(tmpl_dir):
+                if f.endswith((".html", ".jinja", ".jinja2")):
+                    return True
+
+    web_files = {"index.html", "server.js", "app.js", "server.ts", "app.ts"}
+    if entries & web_files:
+        return True
+
+    web_keywords = ("express", "flask", "fastapi", "http.createServer", "app.listen")
+    for name in ("server.js", "app.js", "server.py", "app.py", "main.py"):
+        path = os.path.join(project_dir, name)
+        if os.path.isfile(path):
+            try:
+                with open(path) as f:
+                    head = f.read(2048)
+                if any(kw in head for kw in web_keywords):
+                    return True
+            except OSError:
+                pass
+
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Variable inference
 # ---------------------------------------------------------------------------
@@ -302,16 +336,22 @@ def _audit_admin_lib(project_dir, content, lines, line_count):
     # Check 5: Missing features
     print()
     info("  Features:")
+    web = has_web_component(project_dir)
     checks = [
         ("reload command", "reload" in content and ("register_reload_command" in content or "register_server_reload_command" in content or 'def cmd_reload' in content)),
         ("tmp/.gitignore", os.path.isfile(os.path.join(project_dir, "tmp", ".gitignore"))),
         ("boot() call", "boot(" in content),
     ]
+    if web:
+        has_open = "open" in cmd_decorated or "register_open_command" in content
+        checks.append(("set_urls() + open command", "set_urls" in content and has_open))
     for label, present in checks:
         if present:
             ok(f"    {label} — present")
         else:
             warn(f"    {label} — missing")
+    if web and "set_urls" not in content:
+        warn("  Web component detected — add set_urls() and register_open_command() for URL status in TUI")
 
     print()
     return 0

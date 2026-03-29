@@ -46,6 +46,50 @@ def err(msg):
 
 
 # ---------------------------------------------------------------------------
+# URL status helpers
+# ---------------------------------------------------------------------------
+
+_urls = []  # list of (label, url) tuples set by projects
+
+
+def set_urls(urls):
+    """Set project URLs for display in TUI. urls: list of (label, url) tuples."""
+    global _urls
+    _urls = list(urls)
+
+
+def check_url(url, timeout=1):
+    """Return True if url responds with 2xx."""
+    try:
+        from urllib.request import urlopen
+        with urlopen(url, timeout=timeout) as resp:
+            return 200 <= resp.status < 400
+    except Exception:
+        return False
+
+
+def format_url_status(label, url, live, label_width=6):
+    """Format a URL line with colored live/down indicator."""
+    dot = f"{C.GREEN}\u25cf{C.RESET}" if live else f"{C.DIM}\u25cb{C.RESET}"
+    status = f"{C.GREEN}LIVE{C.RESET}" if live else f"{C.DIM}DOWN{C.RESET}"
+    return f"  {label:<{label_width}}{C.DIM}{url}{C.RESET}  {dot} {status}"
+
+
+def print_url_status():
+    """Check and print status for all registered URLs. Checks in parallel."""
+    if not _urls:
+        return
+    from concurrent.futures import ThreadPoolExecutor
+    label_width = max(len(label) for label, _ in _urls) + 2
+    health_urls = [(label, url, url.rstrip("/") + "/health") for label, url in _urls]
+    with ThreadPoolExecutor(max_workers=len(health_urls)) as pool:
+        results = list(pool.map(lambda h: check_url(h[2]), health_urls))
+    for (label, url, _), live in zip(health_urls, results):
+        print(format_url_status(label, url, live, label_width))
+    print()
+
+
+# ---------------------------------------------------------------------------
 # Module-level state (set by _init / boot)
 # ---------------------------------------------------------------------------
 
@@ -297,6 +341,7 @@ def _tui_menu():
 
     draw.rendered = False
     print(f"{C.BOLD}{_project_name}{C.RESET}\n")
+    print_url_status()
 
     try:
         while True:
@@ -407,6 +452,7 @@ def _print_help():
     items = list(all_cmds.keys())
 
     print(f"{C.BOLD}{_project_name}{C.RESET}")
+    print_url_status()
     print(f"Usage: ./admin <command> [args...]\n")
     print("Commands:")
     for i, name in enumerate(items):

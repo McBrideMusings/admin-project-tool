@@ -13,6 +13,8 @@ import subprocess
 import sys
 import time
 
+from collections import OrderedDict
+
 from .core import (
     C,
     _children,
@@ -25,6 +27,10 @@ from .core import (
     register_cleanup,
     LOG_DIR,
     LOG_FILE,
+    _urls,
+    check_url,
+    format_url_status,
+    pick_target,
 )
 
 
@@ -325,4 +331,54 @@ def register_server_reload_command(pid_prefix=None):
         if sent == 0:
             err("No live targets found")
             return 1
+        return 0
+
+
+# ---------------------------------------------------------------------------
+# Open URL command
+# ---------------------------------------------------------------------------
+
+def register_open_command(urls=None):
+    """Register an 'open' command that shows URL status and opens in browser.
+
+    urls: list of (label, url) tuples. If None, uses URLs from set_urls().
+    """
+    @command("open", "Open in browser")
+    def cmd_open(args):
+        import webbrowser
+
+        target_urls = urls if urls is not None else _urls
+        if not target_urls:
+            err("No URLs configured")
+            return 1
+
+        url_map = {label: url for label, url in target_urls}
+        target = args[0].lower() if args else None
+
+        if target:
+            match = None
+            for label in url_map:
+                if label.lower() == target:
+                    match = label
+                    break
+            if not match:
+                err(f"Unknown target: {args[0]} (use: {', '.join(l.lower() for l in url_map)})")
+                return 1
+            url = url_map[match]
+            live = check_url(url.rstrip("/") + "/health")
+            print(format_url_status(match, url, live))
+            webbrowser.open(url)
+            return 0
+
+        label_width = max(len(l) for l in url_map) + 2
+        for label, url in target_urls:
+            live = check_url(url.rstrip("/") + "/health")
+            print(format_url_status(label, url, live, label_width))
+        print()
+
+        targets = OrderedDict((label, url) for label, url in target_urls)
+        choice = pick_target(targets, prompt="Open in browser:")
+        if choice:
+            webbrowser.open(url_map[choice])
+            ok(f"Opened {choice}")
         return 0
