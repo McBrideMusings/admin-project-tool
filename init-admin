@@ -49,7 +49,7 @@ def err(msg):
 def detect_project_type(project_dir):
     """Detect project type from filesystem markers.
 
-    Returns "apple", "server", or "basic".
+    Returns "apple", "docker", or "basic".
     """
     entries = set(os.listdir(project_dir))
 
@@ -57,12 +57,12 @@ def detect_project_type(project_dir):
         if entry.endswith(".xcodeproj") or entry.endswith(".xcworkspace"):
             return "apple"
 
-    server_markers = {
+    docker_markers = {
         "Dockerfile", "docker-compose.yml", "docker-compose.yaml",
         "compose.yml", "compose.yaml",
     }
-    if entries & server_markers:
-        return "server"
+    if entries & docker_markers:
+        return "docker"
 
     return "basic"
 
@@ -136,23 +136,27 @@ def infer_basic_vars(project_dir):
 
 
 def infer_apple_vars(project_dir):
-    """Infer SCHEME, PROCESS, SUBSYSTEM for apple template."""
+    """Infer XCODEPROJ, SCHEME, PROCESS, SUBSYSTEM, PLATFORM for apple template."""
     variables = {}
 
-    scheme = None
+    xcodeproj = None
     for entry in os.listdir(project_dir):
         if entry.endswith(".xcodeproj"):
-            scheme = entry[:-len(".xcodeproj")]
+            xcodeproj = entry
             break
 
+    scheme = xcodeproj[:-len(".xcodeproj")] if xcodeproj else None
     if not scheme:
         scheme = os.path.basename(os.path.abspath(project_dir))
+        xcodeproj = f"{scheme}.xcodeproj"
 
+    variables["XCODEPROJ"] = xcodeproj
     variables["SCHEME"] = scheme
     variables["PROCESS"] = scheme
 
     subsystem = None
-    pbxproj = os.path.join(project_dir, f"{scheme}.xcodeproj", "project.pbxproj")
+    platform = "macos"
+    pbxproj = os.path.join(project_dir, xcodeproj, "project.pbxproj")
     if os.path.isfile(pbxproj):
         try:
             with open(pbxproj) as f:
@@ -160,17 +164,22 @@ def infer_apple_vars(project_dir):
             m = re.search(r'PRODUCT_BUNDLE_IDENTIFIER\s*=\s*"?([^";]+)', content)
             if m:
                 subsystem = m.group(1)
+            if re.search(r'SDKROOT\s*=\s*iphoneos', content):
+                platform = "ios"
+            elif re.search(r'IPHONEOS_DEPLOYMENT_TARGET', content):
+                platform = "ios"
         except OSError:
             pass
 
     if not subsystem:
         subsystem = f"com.example.{scheme}"
     variables["SUBSYSTEM"] = subsystem
+    variables["PLATFORM"] = platform
 
     return variables
 
 
-def infer_server_vars(project_dir):
+def infer_docker_vars(project_dir):
     """Infer DOCKER_IMAGE for server template."""
     basename = os.path.basename(os.path.abspath(project_dir))
     return {"DOCKER_IMAGE": basename.lower().replace(" ", "-").replace("_", "-")}
@@ -221,8 +230,8 @@ def generate(project_dir, project_type, force=False):
         variables.update(infer_basic_vars(project_dir))
     elif project_type == "apple":
         variables.update(infer_apple_vars(project_dir))
-    elif project_type == "server":
-        variables.update(infer_server_vars(project_dir))
+    elif project_type == "docker":
+        variables.update(infer_docker_vars(project_dir))
 
     content = template
     for key, val in variables.items():
@@ -302,7 +311,8 @@ def _audit_admin_lib(project_dir, content, lines, line_count):
     layer_map = {
         "admin_lib.core": "core",
         "admin_lib.apple": "apple",
-        "admin_lib.server": "server",
+        "admin_lib.docker": "docker",
+        "admin_lib.server": "docker",
         "admin_lib.unraid": "unraid",
     }
     for import_str, layer_name in layer_map.items():
@@ -313,8 +323,8 @@ def _audit_admin_lib(project_dir, content, lines, line_count):
     # Check 3: Layer opportunities
     if project_type == "apple" and "apple" not in layers_used:
         warn("  Opportunity: .xcodeproj found but admin_lib.apple not imported")
-    if project_type == "server" and "server" not in layers_used:
-        warn("  Opportunity: Docker files found but admin_lib.server not imported")
+    if project_type == "docker" and "docker" not in layers_used:
+        warn("  Opportunity: Docker files found but admin_lib.docker not imported")
 
     # Check 4: Decorator correctness
     print()
@@ -374,8 +384,8 @@ def _audit_standalone(project_dir, content, lines, line_count):
     if project_type == "apple":
         layer_suggestions.append("admin_lib.apple")
         type_savings = 80
-    elif project_type == "server":
-        layer_suggestions.append("admin_lib.server")
+    elif project_type == "docker":
+        layer_suggestions.append("admin_lib.docker")
         type_savings = 60
 
     total_savings = core_savings + type_savings
@@ -385,8 +395,8 @@ def _audit_standalone(project_dir, content, lines, line_count):
     print(f"    admin_lib.core   — replaces ~{core_savings} lines (TUI, colors, run_cmd, signal handling)")
     if project_type == "apple":
         print(f"    admin_lib.apple  — replaces ~{type_savings} lines (xcodebuild, reload, DerivedData)")
-    elif project_type == "server":
-        print(f"    admin_lib.server — replaces ~{type_savings} lines (docker_build, run_with_reload)")
+    elif project_type == "docker":
+        print(f"    admin_lib.docker — replaces ~{type_savings} lines (docker_build, run_with_reload)")
     print(f"    Estimated result: ~{estimated_result} lines (vs {line_count} current)")
     print()
 
@@ -435,7 +445,7 @@ def main():
                         help="Project directory (default: current directory)")
     parser.add_argument("--audit", action="store_true",
                         help="Audit an existing admin script")
-    parser.add_argument("--type", choices=["apple", "server", "basic"],
+    parser.add_argument("--type", choices=["apple", "docker", "basic"],
                         dest="project_type",
                         help="Override auto-detected project type")
     parser.add_argument("--force", action="store_true",
