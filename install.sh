@@ -30,6 +30,11 @@ cp "$SRC_DIR/init-admin" "$DEST_DIR/init-admin"
 chmod +x "$DEST_DIR/init-admin"
 echo "Installed init-admin to $DEST_DIR/init-admin"
 
+# Install bundle
+cp "$SRC_DIR/bundle" "$DEST_DIR/bundle"
+chmod +x "$DEST_DIR/bundle"
+echo "Installed bundle to $DEST_DIR/bundle"
+
 # Check if ~/.admin is in PATH
 case ":$PATH:" in
     *":$DEST_DIR:"*) ;;

@@ -1,0 +1,308 @@
+#!/usr/bin/env python3
+"""bundle — produce a self-contained admin script by inlining admin_lib.
+
+Usage:
+    ./bundle <path-to-admin>           Bundle a single project's admin file
+    ./bundle <path-to-admin> --stdout  Print bundled output instead of overwriting
+    ./bundle --all                     Re-bundle all admin files in ~/Projects/
+    ./bundle --all --dry-run           Show what would be bundled without writing
+"""
+
+import hashlib
+import os
+import re
+import sys
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ADMIN_LIB_DIR = os.path.join(SCRIPT_DIR, "admin_lib")
+MODULE_ORDER = ["core", "remote", "apple", "docker", "unraid"]
+
+BUNDLED_MARKER = "# @bundled"
+PROJECT_MARKER = "# === project "
+
+
+def read_module(name):
+    path = os.path.join(ADMIN_LIB_DIR, f"{name}.py")
+    with open(path) as f:
+        return f.read()
+
+
+def strip_relative_imports(src):
+    """Remove from .xxx import and from . import lines (single and multi-line)."""
+    lines = src.split("\n")
+    result = []
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].lstrip()
+
+        if re.match(r"from \.\w* import ", stripped):
+            if "(" in stripped and ")" not in stripped:
+                while i < len(lines) and ")" not in lines[i]:
+                    i += 1
+                i += 1
+                continue
+            i += 1
+            continue
+
+        if stripped == "try:":
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            if j < len(lines) and re.match(r"\s*from \.", lines[j]):
+                i = _skip_try_except(lines, i)
+                continue
+
+        result.append(lines[i])
+        i += 1
+    return "\n".join(result)
+
+
+def _skip_try_except(lines, start):
+    indent = len(lines[start]) - len(lines[start].lstrip())
+    i = start + 1
+    while i < len(lines):
+        s = lines[i].strip()
+        if s.startswith("except"):
+            i += 1
+            while i < len(lines):
+                if not lines[i].strip():
+                    i += 1
+                    continue
+                ci = len(lines[i]) - len(lines[i].lstrip())
+                if ci <= indent and lines[i].strip():
+                    return i
+                i += 1
+            return i
+        i += 1
+    return i
+
+
+def strip_lazy_relative_imports(src):
+    """Strip indented from .xxx import yyy lines (lazy imports inside functions)."""
+    lines = src.split("\n")
+    return "\n".join(
+        line for line in lines
+        if not (line != line.lstrip() and re.match(r"\s+from \.\w+ import \w+", line))
+    )
+
+
+def replace_core_refs(src):
+    """Replace _core.ATTR with just ATTR."""
+    return re.sub(r"\b_core\.(\w+)", r"\1", src)
+
+
+def process_module(name, src):
+    src = strip_relative_imports(src)
+    src = strip_lazy_relative_imports(src)
+    if name != "core":
+        src = replace_core_refs(src)
+    return src
+
+
+def detect_modules(project_src):
+    needed = {"core"}
+    if re.search(r"admin_lib\.apple|from admin_lib\.apple", project_src):
+        needed.add("apple")
+    if re.search(r"admin_lib\.(server|docker)|from admin_lib\.(server|docker)", project_src):
+        needed.add("docker")
+    if re.search(r"admin_lib\.remote|from admin_lib\.remote", project_src):
+        needed.add("remote")
+    if re.search(r"admin_lib\.unraid|from admin_lib\.unraid", project_src):
+        needed.add("unraid")
+    if re.search(r"from admin_lib import ", project_src):
+        needed.add("core")
+    if "docker" in needed or "unraid" in needed:
+        needed.add("remote")
+    return needed
+
+
+def strip_project_imports(src):
+    """Remove admin_lib imports and sys.path.insert."""
+    lines = src.split("\n")
+    result = []
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].lstrip()
+
+        if "sys.path.insert" in stripped and ".admin" in stripped:
+            i += 1
+            continue
+
+        if re.match(r"(from admin_lib|import admin_lib)", stripped):
+            if "(" in stripped and ")" not in stripped:
+                while i < len(lines) and ")" not in lines[i]:
+                    i += 1
+                i += 1
+                continue
+            i += 1
+            continue
+
+        if stripped == "try:":
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            if j < len(lines) and "admin_lib" in lines[j]:
+                i = _skip_try_except(lines, i)
+                continue
+
+        result.append(lines[i])
+        i += 1
+    return "\n".join(result)
+
+
+def detect_core_aliases(src):
+    """Find aliases like 'import admin_lib.core as _coremod'."""
+    return [m.group(1) for m in re.finditer(r"import admin_lib\.core as (\w+)", src)]
+
+
+def replace_core_aliases(src, aliases):
+    """Replace alias.ATTR with just ATTR for detected aliases."""
+    for alias in aliases:
+        src = re.sub(rf"\b{alias}\.(\w+)", r"\1", src)
+    return src
+
+
+def compute_lib_hash():
+    h = hashlib.sha256()
+    for name in sorted(os.listdir(ADMIN_LIB_DIR)):
+        if name.endswith(".py"):
+            with open(os.path.join(ADMIN_LIB_DIR, name), "rb") as f:
+                h.update(f.read())
+    return h.hexdigest()[:12]
+
+
+def get_version():
+    sys.path.insert(0, SCRIPT_DIR)
+    from admin_lib import __version__
+    return __version__
+
+
+def extract_project_section(bundled_src):
+    """Extract project code from a previously bundled file."""
+    idx = bundled_src.find(PROJECT_MARKER)
+    if idx < 0:
+        return None
+    after_marker = bundled_src[idx:]
+    first_newline = after_marker.index("\n")
+    return after_marker[first_newline + 1:]
+
+
+def extract_bundled_modules(bundled_src):
+    """Extract module list from @bundled header."""
+    m = re.search(r"modules=([\w,]+)", bundled_src)
+    if m:
+        return set(m.group(1).split(","))
+    return None
+
+
+def bundle(admin_path):
+    with open(admin_path) as f:
+        raw_src = f.read()
+
+    is_rebundle = BUNDLED_MARKER in raw_src.split("\n", 3)[1] if len(raw_src.split("\n", 3)) > 1 else False
+
+    if is_rebundle:
+        project_src = extract_project_section(raw_src)
+        if project_src is None:
+            print(f"Error: {admin_path} has @bundled marker but no project section", file=sys.stderr)
+            sys.exit(1)
+        stored_modules = extract_bundled_modules(raw_src)
+        needed = stored_modules if stored_modules else {"core"}
+    else:
+        project_src = raw_src
+        needed = detect_modules(project_src)
+        aliases = detect_core_aliases(project_src)
+        project_src = strip_project_imports(project_src)
+        project_src = replace_core_aliases(project_src, aliases)
+
+    project_lines = project_src.split("\n")
+    if project_lines and project_lines[0].startswith("#!"):
+        project_lines = project_lines[1:]
+    project_src = "\n".join(project_lines)
+
+    version = get_version()
+    lib_hash = compute_lib_hash()
+    modules_str = ",".join(m for m in MODULE_ORDER if m in needed)
+
+    parts = []
+    parts.append("#!/usr/bin/env python3")
+    parts.append(f"{BUNDLED_MARKER} admin_lib={version} sha={lib_hash} modules={modules_str}")
+    parts.append(f"# Re-bundle: {SCRIPT_DIR}/bundle {os.path.abspath(admin_path)}")
+    parts.append("")
+
+    for name in MODULE_ORDER:
+        if name not in needed:
+            continue
+        raw = read_module(name)
+        processed = process_module(name, raw)
+        cleaned = _collapse_blank_lines(processed.strip())
+        parts.append(f"# === admin_lib.{name} {'=' * (60 - len(name))}")
+        parts.append(cleaned)
+        parts.append("")
+
+    parts.append(PROJECT_MARKER + "=" * 60)
+    parts.append(_collapse_blank_lines(project_src.strip()))
+    parts.append("")
+
+    return "\n".join(parts)
+
+
+def _collapse_blank_lines(src):
+    """Collapse runs of 3+ blank lines down to 2."""
+    return re.sub(r"\n{4,}", "\n\n\n", src)
+
+
+def find_all_admin_files():
+    projects_dir = os.path.expanduser("~/Projects")
+    results = []
+    for entry in sorted(os.listdir(projects_dir)):
+        path = os.path.join(projects_dir, entry, "admin")
+        if os.path.isfile(path):
+            results.append((entry, path))
+    return results
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__.strip())
+        sys.exit(1)
+
+    stdout = "--stdout" in sys.argv
+    dry_run = "--dry-run" in sys.argv
+
+    if sys.argv[1] == "--all":
+        for name, path in find_all_admin_files():
+            with open(path) as f:
+                content = f.read()
+            if "admin_lib" not in content and BUNDLED_MARKER not in content:
+                print(f"  skip     {name}/admin  (no admin_lib)")
+                continue
+            try:
+                output = bundle(path)
+            except Exception as e:
+                print(f"  ERROR    {name}/admin  ({e})")
+                continue
+            if dry_run:
+                print(f"  would    {name}/admin")
+            else:
+                with open(path, "w") as f:
+                    f.write(output)
+                print(f"  bundled  {name}/admin")
+        return
+
+    admin_path = sys.argv[1]
+    if not os.path.isfile(admin_path):
+        print(f"Error: {admin_path} not found", file=sys.stderr)
+        sys.exit(1)
+
+    output = bundle(admin_path)
+    if stdout or dry_run:
+        print(output)
+    else:
+        with open(admin_path, "w") as f:
+            f.write(output)
+        print(f"Bundled: {admin_path}")
+
+
+if __name__ == "__main__":
+    main()
