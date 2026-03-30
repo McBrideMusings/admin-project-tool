@@ -37,14 +37,23 @@ if __name__ == "__main__":
 
 ## Layers
 
-- **core** — Universal: colors, output, logging, run_cmd, command registry, TUI menu, pick_target, URL status
-- **apple** — Xcode/Swift/iOS: reload, xcodebuild, simulator, log predicates
-- **server** — Docker/web: run_with_reload, run_parallel, Docker deploy
-- **unraid** — SSH/Unraid plugins (future)
+- **core** — Universal: colors, output, logging, run_cmd, sync_deploy, command registry, TUI menu, pick_target, URL status
+- **apple** — Xcode/Swift/iOS: reload loop, xcodebuild, simulator, log streaming, dev icon swap
+- **docker** — Docker/web: run_with_reload, run_parallel, Docker build/deploy, remote Docker build
+- **remote** — SSH, rsync, scp, systemd service management
+- **unraid** — Unraid plugin deployment (plugin_deploy, plugin_remove)
 
-## URL Status
+## Bundler
 
-Projects with a web component can register URLs with `set_urls()`. The TUI home screen and `--help` output show live/down status for each URL (checked via `/health` endpoint). The server template includes this by default along with an `open` command for browser launching.
+`bundle` produces a self-contained admin script by inlining admin_lib — no `~/.admin/` dependency needed:
+
+```bash
+./bundle path/to/project/admin          # Bundle a single project
+./bundle path/to/project/admin --stdout # Preview without overwriting
+./bundle --all                          # Re-bundle all projects in ~/Projects/
+```
+
+Bundled files include a `@bundled` marker and can be re-bundled when the library updates.
 
 ## Bootstrap & Audit
 
@@ -53,13 +62,11 @@ Projects with a web component can register URLs with `set_urls()`. The TUI home 
 ```bash
 ~/.admin/init-admin .              # Generate from detected project type
 ~/.admin/init-admin --audit .      # Audit existing admin script
-~/.admin/init-admin --type server  # Override detected type
+~/.admin/init-admin --type docker  # Override detected type
 ```
-
-Audit checks: admin_lib importability, layer usage, decorator correctness, reload command, boot() call, and (for web projects) URL status setup.
 
 ## Templates
 
 - `templates/basic.py` — Go, Rust, generic projects
 - `templates/apple.py` — Xcode/Swift projects
-- `templates/server.py` — Docker/web server projects (includes URL status and `open` command)
+- `templates/docker.py` — Docker/web server projects (includes URL status and `open` command)
