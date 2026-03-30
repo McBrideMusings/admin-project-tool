@@ -61,9 +61,23 @@ def set_urls(urls):
 def check_url(url, timeout=1):
     """Return True if url responds with 2xx."""
     try:
-        from urllib.request import urlopen
-        with urlopen(url, timeout=timeout) as resp:
+        from urllib.parse import urlparse
+        import http.client
+        p = urlparse(url)
+        if p.scheme == "https":
+            import ssl
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            conn = http.client.HTTPSConnection(p.hostname, p.port or 443, context=ctx, timeout=timeout)
+        else:
+            conn = http.client.HTTPConnection(p.hostname, p.port or 80, timeout=timeout)
+        try:
+            conn.request("GET", p.path or "/")
+            resp = conn.getresponse()
             return 200 <= resp.status < 400
+        finally:
+            conn.close()
     except Exception:
         return False
 
@@ -189,6 +203,46 @@ def run_cmd(cmd, shell=True, capture_log=True):
         if log_fh:
             log_fh.close()
     return proc.returncode
+
+
+# ---------------------------------------------------------------------------
+# Sync deploy
+# ---------------------------------------------------------------------------
+
+def sync_deploy(src_dir, dest, excludes=None, post_sync=None):
+    """Copy built files to a local or remote destination.
+
+    src_dir: local directory to sync from
+    dest: local path, or user@host:/path for remote rsync
+    excludes: list of rsync --exclude patterns (remote only)
+    post_sync: callable run after successful sync (receives dest as arg)
+    Returns exit code.
+    """
+    is_remote = ":" in dest and "@" in dest.split(":")[0]
+
+    if is_remote:
+        exclude_flags = ""
+        if excludes:
+            exclude_flags = " ".join(f"--exclude '{e}'" for e in excludes)
+        info(f"Syncing to {dest}")
+        rc = run_cmd(f"rsync -avz --delete {exclude_flags} {src_dir}/ {dest}/".strip())
+        if rc != 0:
+            err("rsync failed")
+            return rc
+        ok(f"Remote deploy complete: {dest}")
+    else:
+        import shutil
+        os.makedirs(dest, exist_ok=True)
+        info(f"Copying to {dest}")
+        ignore = shutil.ignore_patterns(*excludes) if excludes else None
+        shutil.copytree(src_dir, dest, dirs_exist_ok=True, ignore=ignore)
+        ok(f"Local deploy complete: {dest}")
+        rc = 0
+
+    if rc == 0 and post_sync:
+        post_sync(dest)
+
+    return rc
 
 
 # ---------------------------------------------------------------------------
