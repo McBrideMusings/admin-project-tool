@@ -37,7 +37,7 @@ if __name__ == "__main__":
 
 ## Layers
 
-- **core** — Universal: colors, output, logging, run_cmd, sync_deploy, command registry, TUI menu, pick_target, URL status
+- **core** — Universal: colors, output, logging, run_cmd, sync_deploy, command registry, TUI menu, pick_target, dispatch_target, URL status
 - **icons** — Icon generation: SVG/text/solid color rendering at arbitrary sizes, optional DEV banner overlay (requires Pillow, cairosvg optional)
 - **apple** — Xcode/Swift/iOS: dev loops (macOS/iOS with automatic log streaming), xcodebuild, simulator, dev icon swap via icons module
 - **docker** — Docker/web: run_with_reload, run_parallel, Docker build/deploy, remote Docker build
@@ -64,10 +64,23 @@ Bundled files include a `@bundled` marker and can be re-bundled when the library
 ~/.admin/init-admin .              # Generate from detected project type
 ~/.admin/init-admin --audit .      # Audit existing admin script
 ~/.admin/init-admin --type docker  # Override detected type
+~/.admin/init-admin --multi .      # Force multi-target generation
 ```
+
+When multiple project patterns are detected (e.g., an Xcode project + a Docker subdirectory), init-admin generates a multi-target admin file with `dispatch_target` routing and `pick_target` menus.
 
 ## Templates
 
+### Single-target
 - `templates/basic.py` — Go, Rust, generic projects
 - `templates/apple.py` — Xcode/Swift projects
 - `templates/docker.py` — Docker/web server projects (includes URL status and `open` command)
+
+### Multi-target
+- `templates/multi_header.py` — Shared header with computed imports
+- `templates/multi_router.py` — Command routing via `dispatch_target`
+- `templates/multi_footer.py` — Clean, reload, boot
+- `templates/fragments/apple.py` — Apple target (build/dev/deploy via xcodebuild + dev loops)
+- `templates/fragments/docker.py` — Docker target (build/dev/deploy via docker_build + run_with_reload)
+- `templates/fragments/sync.py` — Sync target (build/deploy via run_cmd + sync_deploy, no dev)
+- `templates/fragments/basic.py` — Basic target (build/dev/deploy via run_cmd + run_with_reload)
