@@ -77,7 +77,7 @@ register_cleanup(_cleanup_all_pid_files)
 # run_with_reload — long-lived process with SIGUSR1 reload support
 # ---------------------------------------------------------------------------
 
-def run_with_reload(cmd, target, shell=True):
+def run_with_reload(cmd, target, shell=True, formatter=None):
     """Run a long-lived process with SIGUSR1 reload + 'r' keypress support.
 
     Uses selector-based I/O multiplexing. Supports quick-exit detection
@@ -120,6 +120,7 @@ def run_with_reload(cmd, target, shell=True):
             except Exception:
                 pass
 
+            _line_buf = ""
             try:
                 while proc.poll() is None:
                     if _rebuild_requested:
@@ -143,19 +144,34 @@ def run_with_reload(cmd, target, shell=True):
                         data = key.fileobj.read1(4096) if hasattr(key.fileobj, 'read1') else os.read(key.fileobj.fileno(), 4096)
                         if data:
                             text = data.decode("utf-8", errors="replace")
-                            sys.stdout.write(text)
-                            sys.stdout.flush()
                             log_fh.write(text)
                             log_fh.flush()
+                            if formatter:
+                                _line_buf += text
+                                while "\n" in _line_buf:
+                                    line, _line_buf = _line_buf.split("\n", 1)
+                                    sys.stdout.write(formatter(line + "\n"))
+                                sys.stdout.flush()
+                            else:
+                                sys.stdout.write(text)
+                                sys.stdout.flush()
 
                 if proc.stdout:
                     remaining = proc.stdout.read()
                     if remaining:
                         text = remaining.decode("utf-8", errors="replace")
-                        sys.stdout.write(text)
-                        sys.stdout.flush()
                         log_fh.write(text)
                         log_fh.flush()
+                        if formatter:
+                            _line_buf += text
+                            while "\n" in _line_buf:
+                                line, _line_buf = _line_buf.split("\n", 1)
+                                sys.stdout.write(formatter(line + "\n"))
+                            if _line_buf:
+                                sys.stdout.write(formatter(_line_buf + "\n"))
+                        else:
+                            sys.stdout.write(text)
+                        sys.stdout.flush()
             finally:
                 sel.close()
                 if old_term is not None:
@@ -184,7 +200,7 @@ def run_with_reload(cmd, target, shell=True):
 # run_parallel — multiplexed output from multiple processes
 # ---------------------------------------------------------------------------
 
-def run_parallel(targets):
+def run_parallel(targets, formatter=None):
     """Run multiple processes in parallel with labeled, colored output.
 
     targets: list of (cmd, label, color) tuples.
@@ -208,10 +224,11 @@ def run_parallel(targets):
         _children.append(proc)
         procs.append(proc)
 
-        def stream(p, lbl, clr, idx):
+        def stream(p, lbl, clr, idx, fmt=formatter):
             try:
                 for line in p.stdout:
-                    prefixed = f"{clr}[{lbl}]{C.RESET} {line}"
+                    formatted = fmt(line) if fmt else line
+                    prefixed = f"{clr}[{lbl}]{C.RESET} {formatted}"
                     sys.stdout.write(prefixed)
                     sys.stdout.flush()
                     log_fh.write(f"[{lbl}] {line}")

@@ -601,6 +601,10 @@ def _build_imports(target_types):
         lines.append(
             "from admin_lib.docker import run_with_reload"
         )
+    if "docker" in target_types or "basic" in target_types:
+        lines.append(
+            "from admin_lib.logs import make_formatter"
+        )
     return "\n".join(lines)
 
 

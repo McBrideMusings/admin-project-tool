@@ -12,7 +12,7 @@ def _build_{{TARGET_NAME}}(args):
 
 
 def _dev_{{TARGET_NAME}}(args):
-    return run_with_reload("{{DEV_CMD}}", "{{TARGET_NAME}}")
+    return run_with_reload("{{DEV_CMD}}", "{{TARGET_NAME}}", formatter=make_formatter())
 
 
 def _deploy_{{TARGET_NAME}}(args):

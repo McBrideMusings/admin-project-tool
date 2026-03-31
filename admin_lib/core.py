@@ -178,7 +178,7 @@ atexit.register(_cleanup_children)
 # run_cmd
 # ---------------------------------------------------------------------------
 
-def run_cmd(cmd, shell=True, capture_log=True):
+def run_cmd(cmd, shell=True, capture_log=True, formatter=None):
     """Run a command with line-buffered output, tee to tmp/run.log if capture_log is True."""
     os.makedirs(LOG_DIR, exist_ok=True)
     log_fh = None
@@ -192,7 +192,8 @@ def run_cmd(cmd, shell=True, capture_log=True):
     _children.append(proc)
     try:
         for line in proc.stdout:
-            sys.stdout.write(line)
+            display = formatter(line) if formatter else line
+            sys.stdout.write(display)
             sys.stdout.flush()
             if log_fh:
                 log_fh.write(line)

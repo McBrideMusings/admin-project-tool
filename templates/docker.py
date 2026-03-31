@@ -8,6 +8,7 @@ from admin_lib.docker import (
     run_with_reload, docker_build, docker_deploy, ensure_deps,
     register_server_reload_command, register_open_command,
 )
+from admin_lib.logs import make_formatter
 
 PROJECT_NAME = "{{PROJECT_NAME}}"
 DOCKER_IMAGE = "{{DOCKER_IMAGE}}"
@@ -31,7 +32,7 @@ def cmd_build(args):
 @command("run", "Run local dev server")
 def cmd_run(args):
     ensure_deps("node_modules", "npm install")
-    return run_with_reload("node server.js", DOCKER_IMAGE)
+    return run_with_reload("node server.js", DOCKER_IMAGE, formatter=make_formatter())
 
 
 @core("deploy", "Build and deploy to remote host")
