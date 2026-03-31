@@ -404,19 +404,15 @@ def swap_dev_icons(icon_dirs, icon_config):
     """Generate dev icons and copy them into asset catalog directories.
 
     icon_dirs:    dict mapping label → appiconset directory path
-    icon_config:  dict of kwargs for icons.generate_icons() (bg_color,
-                  glyph_svg, glyph_text, glyph_color — sizes/output_dir/dev
-                  are handled automatically)
+    icon_config:  dict of kwargs for generate_icons() (bg_color,
+                  glyph_svg, glyph_text, glyph_color, glyph_scale —
+                  sizes/output_dir/dev are handled automatically)
     Returns True on success, False if generation was skipped.
     """
     import shutil
     import tempfile
 
-    try:
-        from . import icons
-    except ImportError:
-        warn("admin_lib.icons not available — skipping dev icon generation")
-        return False
+    from .icons import generate_icons
 
     info("Generating dev icons...")
 
@@ -458,7 +454,7 @@ def swap_dev_icons(icon_dirs, icon_config):
             config["output_dir"] = tmp_out
             config["dev"] = True
 
-            if not icons.generate_icons(**config):
+            if not generate_icons(**config):
                 warn(f"Dev icon generation failed for {label}")
                 success = False
                 continue

@@ -15,7 +15,7 @@ import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ADMIN_LIB_DIR = os.path.join(SCRIPT_DIR, "admin_lib")
-MODULE_ORDER = ["core", "remote", "apple", "docker", "unraid"]
+MODULE_ORDER = ["core", "icons", "remote", "apple", "docker", "unraid"]
 
 BUNDLED_MARKER = "# @bundled"
 PROJECT_MARKER = "# === project "
@@ -130,6 +130,8 @@ def detect_modules(project_src):
         needed.add("core")
     if "docker" in needed or "unraid" in needed:
         needed.add("remote")
+    if "apple" in needed:
+        needed.add("icons")
     return needed
 
 

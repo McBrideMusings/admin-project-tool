@@ -12,13 +12,11 @@ import sys
 import tempfile
 import traceback
 
-# admin_lib.core may not be on the path when icons is used standalone,
-# so fall back to plain stderr output.
 try:
-    from .core import warn as _warn, err as _err
+    from .core import warn, err
 except ImportError:
-    def _warn(msg): print(msg, file=sys.stderr)
-    def _err(msg): print(msg, file=sys.stderr)
+    def warn(msg): print(msg, file=sys.stderr)
+    def err(msg): print(msg, file=sys.stderr)
 
 _HAS_PIL = False
 _HAS_CAIROSVG = False
@@ -69,12 +67,12 @@ def _render_solid(size, bg_color):
     return Image.new("RGBA", (size, size), bg_color)
 
 
-def _render_text(size, bg_color, text, glyph_color):
+def _render_text(size, bg_color, text, glyph_color, scale):
     """Render a text character centered on a colored background."""
     img = Image.new("RGBA", (size, size), bg_color)
     draw = ImageDraw.Draw(img)
 
-    font_size = int(size * _GLYPH_SCALE)
+    font_size = int(size * scale)
     font = _find_font(font_size)
     if font is None:
         font = ImageFont.load_default()
@@ -86,14 +84,14 @@ def _render_text(size, bg_color, text, glyph_color):
     return img
 
 
-def _render_svg(size, bg_color, svg_path):
+def _render_svg(size, bg_color, svg_path, scale):
     """Render an SVG glyph centered on a colored background.
 
     SVGs use their own fill colors; glyph_color is not applied here.
     """
     img = Image.new("RGBA", (size, size), bg_color)
 
-    glyph_size = max(int(size * _GLYPH_SCALE), 1)
+    glyph_size = max(int(size * scale), 1)
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         tmp_path = tmp.name
 
@@ -164,6 +162,7 @@ def generate_icons(
     glyph_svg=None,
     glyph_text=None,
     glyph_color="#FFFFFF",
+    glyph_scale=None,
     dev=False,
     filename_format="{size}.png",
 ):
@@ -174,15 +173,18 @@ def generate_icons(
       2. glyph_text — text/character rendered centered on background
       3. neither    — solid background color only
 
+    glyph_scale: 0.0–1.0 fraction of icon size for the glyph (default 0.55)
+
     Returns True on success, False if skipped (missing deps or error).
     """
     if not _HAS_PIL:
-        _warn("Icon generation skipped: Pillow not installed.")
-        _warn("  Install with: pip3 install Pillow")
+        warn("Icon generation skipped: Pillow not installed.")
+        warn("  Install with: pip3 install Pillow")
         return False
 
     bg = _hex_to_rgba(bg_color)
     fg = _hex_to_rgba(glyph_color)
+    scale = glyph_scale if glyph_scale is not None else _GLYPH_SCALE
 
     # Resolve rendering mode
     use_svg = False
@@ -193,8 +195,8 @@ def generate_icons(
             use_svg = True
         else:
             fallback_char = os.path.splitext(os.path.basename(glyph_svg))[0][0]
-            _warn(f"cairosvg not available, falling back to text mode ('{fallback_char}').")
-            _warn("  Install with: pip3 install cairosvg")
+            warn(f"cairosvg not available, falling back to text mode ('{fallback_char}').")
+            warn("  Install with: pip3 install cairosvg")
             use_text = fallback_char
 
     if not use_svg and use_text is None and glyph_text:
@@ -205,9 +207,9 @@ def generate_icons(
     try:
         for size in sizes:
             if use_svg:
-                img = _render_svg(size, bg, glyph_svg)
+                img = _render_svg(size, bg, glyph_svg, scale)
             elif use_text:
-                img = _render_text(size, bg, use_text, fg)
+                img = _render_text(size, bg, use_text, fg, scale)
             else:
                 img = _render_solid(size, bg)
 
@@ -218,7 +220,7 @@ def generate_icons(
             img.save(os.path.join(output_dir, fname), "PNG")
     except Exception:
         traceback.print_exc()
-        _err("Icon generation failed. Build will continue without custom icons.")
+        err("Icon generation failed. Build will continue without custom icons.")
         return False
 
     return True
