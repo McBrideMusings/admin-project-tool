@@ -13,5 +13,6 @@ from .core import (
     command,
     boot,
     pick_target,
+    dispatch_target,
     register_cleanup,
 )

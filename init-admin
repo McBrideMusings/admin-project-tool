@@ -185,6 +185,209 @@ def infer_docker_vars(project_dir):
     return {"DOCKER_IMAGE": basename.lower().replace(" ", "-").replace("_", "-")}
 
 
+def infer_sync_vars(project_dir, subdir=None):
+    """Infer variables for a sync-type target."""
+    variables = {}
+    base = os.path.join(project_dir, subdir) if subdir else project_dir
+    pkg_json = os.path.join(base, "package.json")
+    if os.path.isfile(pkg_json):
+        try:
+            import json
+            with open(pkg_json) as f:
+                pkg = json.load(f)
+            scripts = pkg.get("scripts", {})
+            if "build" in scripts:
+                prefix = f"cd {subdir} && " if subdir else ""
+                variables["BUILD_CMD"] = f"{prefix}npm run build"
+        except (OSError, ValueError):
+            pass
+    if "BUILD_CMD" not in variables:
+        variables["BUILD_CMD"] = 'echo "TODO: add build command"'
+    variables["DIST_DIR"] = "dist"
+    variables["DEPLOY_DEST_ENV"] = "DEPLOY_TARGET"
+    variables["DEPLOY_SUBDIR"] = os.path.basename(os.path.abspath(project_dir))
+    variables["EXCLUDES"] = '["__pycache__", "*.pyc"]'
+    return variables
+
+
+# ---------------------------------------------------------------------------
+# Multi-target detection
+# ---------------------------------------------------------------------------
+
+TARGET_TYPE_COMMANDS = {
+    "apple":  {"build", "dev", "deploy"},
+    "docker": {"build", "dev", "deploy"},
+    "sync":   {"build", "deploy"},
+    "basic":  {"build", "dev", "deploy"},
+}
+
+DOCKER_MARKERS = {
+    "Dockerfile", "docker-compose.yml", "docker-compose.yaml",
+    "compose.yml", "compose.yaml",
+}
+
+
+def detect_all_targets(project_dir):
+    """Scan for all project patterns. Returns list of target dicts.
+
+    Each dict: {"name": str, "type": str, "label": str, "vars": dict}
+    """
+    targets = []
+    entries = set(os.listdir(project_dir))
+
+    for entry in sorted(entries):
+        if entry.endswith(".xcodeproj"):
+            apple_vars = infer_apple_vars(project_dir)
+            platform = apple_vars.get("PLATFORM", "macos")
+            targets.append({
+                "name": platform,
+                "type": "apple",
+                "label": f"{platform.title()} {apple_vars.get('SCHEME', '')}",
+                "vars": apple_vars,
+            })
+
+    if entries & DOCKER_MARKERS:
+        docker_vars = infer_docker_vars(project_dir)
+        targets.append({
+            "name": "server",
+            "type": "docker",
+            "label": f"Docker ({docker_vars['DOCKER_IMAGE']})",
+            "vars": docker_vars,
+        })
+
+    for entry in sorted(entries):
+        subdir = os.path.join(project_dir, entry)
+        if not os.path.isdir(subdir) or entry.startswith("."):
+            continue
+        sub_entries = set(os.listdir(subdir))
+
+        if sub_entries & DOCKER_MARKERS:
+            docker_vars = infer_docker_vars(subdir)
+            docker_vars["CONTEXT_DIR"] = entry
+            targets.append({
+                "name": entry,
+                "type": "docker",
+                "label": f"Docker ({entry})",
+                "vars": docker_vars,
+            })
+
+        for sub_entry in sub_entries:
+            if sub_entry.endswith(".xcodeproj"):
+                apple_vars = infer_apple_vars(subdir)
+                platform = apple_vars.get("PLATFORM", "macos")
+                apple_vars["XCODEPROJ"] = os.path.join(entry, apple_vars["XCODEPROJ"])
+                name = platform if not any(t["name"] == platform for t in targets) else entry
+                targets.append({
+                    "name": name,
+                    "type": "apple",
+                    "label": f"{platform.title()} {apple_vars.get('SCHEME', '')}",
+                    "vars": apple_vars,
+                })
+
+        pkg_json = os.path.join(subdir, "package.json")
+        if os.path.isfile(pkg_json):
+            try:
+                import json
+                with open(pkg_json) as f:
+                    pkg = json.load(f)
+                if "build" in pkg.get("scripts", {}):
+                    sync_vars = infer_sync_vars(project_dir, entry)
+                    targets.append({
+                        "name": entry,
+                        "type": "sync",
+                        "label": f"JS build ({entry})",
+                        "vars": sync_vars,
+                    })
+            except (OSError, ValueError):
+                pass
+
+    if "go.mod" in entries or "Cargo.toml" in entries:
+        if not any(t["type"] in ("docker",) and t["name"] == "server" for t in targets):
+            basic_vars = infer_basic_vars(project_dir)
+            targets.append({
+                "name": "main",
+                "type": "basic",
+                "label": infer_project_name(project_dir),
+                "vars": basic_vars,
+            })
+
+    if not targets:
+        basic_vars = infer_basic_vars(project_dir)
+        targets.append({
+            "name": "main",
+            "type": "basic",
+            "label": infer_project_name(project_dir),
+            "vars": basic_vars,
+        })
+
+    seen = set()
+    for t in targets:
+        while t["name"] in seen:
+            t["name"] = t["name"] + "2"
+        seen.add(t["name"])
+
+    return targets
+
+
+def confirm_targets(targets):
+    """Interactive confirmation of detected targets. Returns filtered list."""
+    print()
+    info("Detected targets:")
+    for i, t in enumerate(targets, 1):
+        type_label = t["type"]
+        if t["type"] == "apple":
+            type_label = f"apple/{t['vars'].get('PLATFORM', 'macos')}"
+        print(f"  {i}. [{type_label}] {C.BOLD}{t['name']:<12}{C.RESET} {t['label']}")
+    print()
+
+    if not sys.stdout.isatty():
+        return targets
+
+    try:
+        answer = input(f"  Keep all? [{C.BOLD}Y{C.RESET}/n/edit] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+
+    if answer in ("", "y", "yes"):
+        return targets
+
+    if answer in ("n", "no"):
+        return None
+
+    if answer == "edit":
+        print()
+        print(f"  Enter target numbers to keep (comma-separated), or new names:")
+        print(f"  Example: 1,2 or 1=web,2=ios")
+        try:
+            edit_input = input("  > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return None
+
+        kept = []
+        for part in edit_input.split(","):
+            part = part.strip()
+            try:
+                if "=" in part:
+                    idx_str, new_name = part.split("=", 1)
+                    idx = int(idx_str.strip()) - 1
+                    if 0 <= idx < len(targets):
+                        t = dict(targets[idx])
+                        t["name"] = new_name.strip()
+                        kept.append(t)
+                else:
+                    idx = int(part.strip()) - 1
+                    if 0 <= idx < len(targets):
+                        kept.append(targets[idx])
+            except ValueError:
+                warn(f"  Skipping invalid entry: {part}")
+                continue
+        return kept if kept else None
+
+    return targets
+
+
 # ---------------------------------------------------------------------------
 # Generation
 # ---------------------------------------------------------------------------
@@ -267,6 +470,342 @@ def generate(project_dir, project_type, force=False):
     return 0
 
 
+def _read_template(template_dir, name):
+    """Read a template file and return its contents."""
+    path = os.path.join(template_dir, name)
+    if not os.path.isfile(path):
+        err(f"Template not found: {path}")
+        return None
+    with open(path) as f:
+        return f.read()
+
+
+def _substitute(template, variables):
+    """Apply {{KEY}} substitutions to a template string."""
+    result = template
+    for key, val in variables.items():
+        result = result.replace("{{" + key + "}}", str(val))
+    return result
+
+
+def _sanitize_identifier(name):
+    """Turn a target name into a valid Python identifier."""
+    result = name.replace("-", "_").replace(" ", "_").replace(".", "_")
+    result = re.sub(r'[^a-zA-Z0-9_]', '', result)
+    if result and result[0].isdigit():
+        result = "_" + result
+    return result or "_target"
+
+
+def _apple_destination(platform):
+    """Return the xcodebuild destination string for a platform."""
+    if platform == "ios":
+        return "platform=iOS Simulator,name=iPhone 16"
+    return "platform=macOS"
+
+
+def _apple_dev_app_pattern(scheme, process, platform):
+    """Return the DerivedData glob pattern for a dev build."""
+    if platform == "ios":
+        return f"~/Library/Developer/Xcode/DerivedData/{scheme}-*/Build/Products/Debug-iphonesimulator/{process}.app"
+    return f"~/Library/Developer/Xcode/DerivedData/{scheme}-*/Build/Products/Debug/{process}.app"
+
+
+def _apple_dev_body(target_name, target_upper, platform):
+    """Generate the dev loop body for an apple target."""
+    if platform == "ios":
+        return (
+            f"    dev_loop_ios(\n"
+            f"        _{target_upper}_XCODEPROJ, _{target_upper}_SCHEME,\n"
+            f"        \"Debug\", _{target_upper}_SUBSYSTEM, _{target_upper}_PROCESS,\n"
+            f"        predicate, pattern, pid_file=_{target_upper}_PID_FILE)"
+        )
+    return (
+        f"    dev_loop_macos(\n"
+        f"        _{target_upper}_XCODEPROJ, _{target_upper}_SCHEME,\n"
+        f"        \"Debug\", \"platform=macOS\", _{target_upper}_PROCESS,\n"
+        f"        _{target_upper}_SUBSYSTEM, predicate, pattern,\n"
+        f"        pid_file=_{target_upper}_PID_FILE)"
+    )
+
+
+def _apple_deploy_body(target_name, target_upper, platform, scheme, process):
+    """Generate the deploy body for an apple target."""
+    if platform == "ios":
+        pattern = f"~/Library/Developer/Xcode/DerivedData/{scheme}-*/Build/Products/Debug-iphoneos/{process}.app"
+        return (
+            f"    device_id, device_name = find_connected_device()\n"
+            f"    info(f\"Building for {{device_name}}...\")\n"
+            f"    rc = xcodebuild_filtered(\n"
+            f"        _{target_upper}_XCODEPROJ, _{target_upper}_SCHEME,\n"
+            f"        \"Debug\", f\"platform=iOS,id={{device_id}}\")\n"
+            f"    print()\n"
+            f"    if rc != 0:\n"
+            f"        err(\"Build failed\")\n"
+            f"        sys.exit(1)\n"
+            f"    app_path = find_app(\"{pattern}\")\n"
+            f"    if not app_path:\n"
+            f"        err(\"Could not find built app\")\n"
+            f"        sys.exit(1)\n"
+            f"    info(f\"Installing on {{device_name}}...\")\n"
+            f"    rc = install_on_device(device_id, app_path)\n"
+            f"    if rc != 0:\n"
+            f"        err(\"Install failed\")\n"
+            f"        sys.exit(1)\n"
+            f"    ok(f\"Installed on {{device_name}}\")"
+        )
+    pattern = f"~/Library/Developer/Xcode/DerivedData/{scheme}-*/Build/Products/Release/{process}.app"
+    return (
+        f"    import subprocess\n"
+        f"    info(\"Building release...\")\n"
+        f"    rc = xcodebuild_filtered(\n"
+        f"        _{target_upper}_XCODEPROJ, _{target_upper}_SCHEME,\n"
+        f"        \"Release\", \"platform=macOS\")\n"
+        f"    print()\n"
+        f"    if rc != 0:\n"
+        f"        err(\"Build failed\")\n"
+        f"        sys.exit(1)\n"
+        f"    app_path = find_app(\"{pattern}\")\n"
+        f"    if not app_path:\n"
+        f"        err(\"Could not find built app\")\n"
+        f"        sys.exit(1)\n"
+        f"    dest = f\"/Applications/{process}.app\"\n"
+        f"    info(f\"Copying to {{dest}}\")\n"
+        f"    subprocess.run([\"rm\", \"-rf\", dest])\n"
+        f"    subprocess.run([\"cp\", \"-R\", app_path, dest], check=True)\n"
+        f"    ok(f\"Installed to {{dest}}\")"
+    )
+
+
+def _build_imports(target_types):
+    """Build the extra import lines needed for the given target types."""
+    lines = []
+    if "apple" in target_types:
+        lines.append(
+            "from admin_lib.apple import (\n"
+            "    log_predicate, xcodebuild_filtered, clean_derived_data,\n"
+            "    find_app, register_reload_command,\n"
+            "    dev_loop_macos, dev_loop_ios,\n"
+            "    resolve_simulator, find_connected_device, install_on_device,\n"
+            "    backup_icons, swap_dev_icons, restore_icons,\n"
+            ")"
+        )
+    if "docker" in target_types:
+        lines.append(
+            "from admin_lib.docker import (\n"
+            "    run_with_reload, docker_build, docker_deploy, ensure_deps,\n"
+            "    register_server_reload_command, register_open_command,\n"
+            ")"
+        )
+    if "basic" in target_types and "docker" not in target_types:
+        lines.append(
+            "from admin_lib.docker import run_with_reload"
+        )
+    return "\n".join(lines)
+
+
+def _build_fragment(target, template_dir):
+    """Build a code fragment for a single target."""
+    t_name = target["name"]
+    t_id = _sanitize_identifier(t_name)
+    t_upper = t_id.upper()
+    t_type = target["type"]
+    t_vars = target["vars"]
+
+    fragment_path = os.path.join(template_dir, "fragments", f"{t_type}.py")
+    if not os.path.isfile(fragment_path):
+        err(f"Fragment not found: {fragment_path}")
+        return None
+
+    with open(fragment_path) as f:
+        fragment = f.read()
+
+    variables = {
+        "TARGET_NAME": t_id,
+        "TARGET_UPPER": t_upper,
+        "TARGET_LABEL": target["label"],
+    }
+
+    if t_type == "apple":
+        platform = t_vars.get("PLATFORM", "macos")
+        variables.update({
+            "PLATFORM": platform,
+            "XCODEPROJ": t_vars.get("XCODEPROJ", ""),
+            "SCHEME": t_vars.get("SCHEME", ""),
+            "PROCESS": t_vars.get("PROCESS", ""),
+            "SUBSYSTEM": t_vars.get("SUBSYSTEM", ""),
+            "DESTINATION": _apple_destination(platform),
+            "DEV_APP_PATTERN": _apple_dev_app_pattern(
+                t_vars.get("SCHEME", ""), t_vars.get("PROCESS", ""), platform),
+            "DEV_BODY": _apple_dev_body(t_name, t_upper, platform),
+            "DEPLOY_BODY": _apple_deploy_body(
+                t_name, t_upper, platform,
+                t_vars.get("SCHEME", ""), t_vars.get("PROCESS", "")),
+        })
+    elif t_type == "docker":
+        variables.update({
+            "DOCKER_IMAGE": t_vars.get("DOCKER_IMAGE", t_name),
+            "CONTEXT_DIR": t_vars.get("CONTEXT_DIR", "."),
+            "DEV_CMD": t_vars.get("DEV_CMD", f"echo 'TODO: add dev command for {t_name}'"),
+            "DOCKER_RUN_ARGS": t_vars.get("DOCKER_RUN_ARGS", ""),
+        })
+    elif t_type == "sync":
+        variables.update({
+            "BUILD_CMD": t_vars.get("BUILD_CMD", ""),
+            "DIST_DIR": t_vars.get("DIST_DIR", "dist"),
+            "DEPLOY_DEST_ENV": t_vars.get("DEPLOY_DEST_ENV", "DEPLOY_TARGET"),
+            "DEPLOY_SUBDIR": t_vars.get("DEPLOY_SUBDIR", t_name),
+            "EXCLUDES": t_vars.get("EXCLUDES", "[]"),
+        })
+    elif t_type == "basic":
+        variables.update({
+            "BUILD_CMD": t_vars.get("BUILD_CMD", ""),
+            "DEV_CMD": t_vars.get("DEV_CMD", t_vars.get("BUILD_CMD", "")),
+        })
+
+    return _substitute(fragment, variables)
+
+
+def _build_router(targets):
+    """Build the command router code for multi-target admin."""
+    lines = []
+    commands = {"build": [], "dev": [], "deploy": []}
+
+    for t in targets:
+        supported = TARGET_TYPE_COMMANDS.get(t["type"], set())
+        for cmd in commands:
+            if cmd in supported:
+                commands[cmd].append(t)
+
+    for cmd_name, cmd_targets in commands.items():
+        if not cmd_targets:
+            continue
+
+        dict_name = f"_{cmd_name.upper()}_TARGETS"
+        names_pipe = " | ".join(t["name"] for t in cmd_targets)
+
+        lines.append(f"{dict_name} = OrderedDict([")
+        for t in cmd_targets:
+            lines.append(f"    (\"{t['name']}\", \"{t['label']}\"),")
+        lines.append("])")
+        lines.append("")
+
+        lines.append(f"@core(\"{cmd_name}\", \"{cmd_name.title()} target: {names_pipe}\")")
+        lines.append(f"def cmd_{cmd_name}(args):")
+        lines.append(f"    return dispatch_target({dict_name}, \"{cmd_name}\", args, {{")
+        for t in cmd_targets:
+            t_id = _sanitize_identifier(t["name"])
+            lines.append(f"        \"{t['name']}\": _{cmd_name}_{t_id},")
+        lines.append("    })")
+        lines.append("")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _build_clean_body(targets):
+    """Build the clean command body."""
+    lines = []
+    for t in targets:
+        if t["type"] == "apple":
+            scheme = t["vars"].get("SCHEME", "")
+            lines.append(f"    info(\"Cleaning DerivedData for {scheme}...\")")
+            lines.append(f"    clean_derived_data(\"{scheme}\")")
+    if not lines:
+        lines.append("    # TODO: add project-specific clean logic")
+    return "\n".join(lines)
+
+
+def _build_reload_registration(target_types):
+    """Build the reload command registration."""
+    if "apple" in target_types:
+        return "register_reload_command()"
+    if "docker" in target_types:
+        return "register_server_reload_command()"
+    return ""
+
+
+def generate_multi(project_dir, targets, force=False):
+    """Generate a multi-target admin script from fragments."""
+    admin_path = os.path.join(project_dir, "admin")
+    if os.path.exists(admin_path) and not force:
+        err(f"admin already exists at {admin_path}")
+        err("Use --force to overwrite.")
+        return 1
+
+    template_dir = find_template_dir()
+    if not template_dir:
+        err("Cannot find templates directory.")
+        return 1
+
+    project_name = infer_project_name(project_dir)
+    target_types = set(t["type"] for t in targets)
+
+    header = _read_template(template_dir, "multi_header.py")
+    if header is None:
+        return 1
+    header = _substitute(header, {
+        "PROJECT_NAME": project_name,
+        "EXTRA_IMPORTS": _build_imports(target_types),
+    })
+
+    fragments = []
+    for t in targets:
+        frag = _build_fragment(t, template_dir)
+        if frag is None:
+            return 1
+        fragments.append(frag)
+
+    router = _build_router(targets)
+
+    clean_body = _build_clean_body(targets)
+    reload_reg = _build_reload_registration(target_types)
+    needs_dotenv = "docker" in target_types or "sync" in target_types
+
+    footer_vars = {
+        "CLEAN_BODY": clean_body,
+        "RELOAD_REGISTRATION": reload_reg,
+        "BOOT_ARGS": ", load_dotenv=True" if needs_dotenv else "",
+    }
+    footer = _read_template(template_dir, "multi_footer.py")
+    if footer is None:
+        return 1
+    footer = _substitute(footer, footer_vars)
+
+    content = header + "\n"
+    for frag in fragments:
+        content += frag + "\n"
+    content += "\n# --- Command routing ---\n\n"
+    content += router
+    content += footer
+
+    with open(admin_path, "w") as f:
+        f.write(content)
+    st = os.stat(admin_path)
+    os.chmod(admin_path, st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    tmp_dir = os.path.join(project_dir, "tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
+    gitignore_path = os.path.join(tmp_dir, ".gitignore")
+    if not os.path.exists(gitignore_path):
+        with open(gitignore_path, "w") as f:
+            f.write("*\n!.gitignore\n")
+
+    print()
+    ok("Generated ./admin (multi-target)")
+    print(f"  Targets:")
+    for t in targets:
+        print(f"    {t['name']:<12} [{t['type']}] {t['label']}")
+    print()
+
+    remaining_todos = content.count("TODO")
+    if remaining_todos:
+        warn(f"  {remaining_todos} TODO(s) remaining — search for 'TODO' in ./admin")
+        print()
+
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Audit
 # ---------------------------------------------------------------------------
@@ -343,7 +882,17 @@ def _audit_admin_lib(project_dir, content, lines, line_count):
     for name in cmd_decorated - core_names:
         ok(f"    @command(\"{name}\") — correct")
 
-    # Check 5: Missing features
+    # Check 5: Multi-target support
+    is_multi = "dispatch_target" in content
+    has_pick_target = "pick_target" in content and "dispatch_target" not in content
+    if is_multi:
+        target_dicts = re.findall(r'_(\w+)_TARGETS\s*=\s*OrderedDict', content)
+        target_count = len(set(target_dicts))
+        ok(f"  Multi-target: dispatch_target in use ({target_count} command group(s))")
+    elif has_pick_target:
+        warn("  Opportunity: uses pick_target but not dispatch_target — consider migrating")
+
+    # Check 6: Missing features
     print()
     info("  Features:")
     web = has_web_component(project_dir)
@@ -447,7 +996,9 @@ def main():
                         help="Audit an existing admin script")
     parser.add_argument("--type", choices=["apple", "docker", "basic"],
                         dest="project_type",
-                        help="Override auto-detected project type")
+                        help="Override auto-detected project type (single-target)")
+    parser.add_argument("--multi", action="store_true",
+                        help="Force multi-target generation")
     parser.add_argument("--force", action="store_true",
                         help="Overwrite existing admin file")
 
@@ -461,8 +1012,21 @@ def main():
     if args.audit:
         return audit(project_dir)
 
-    project_type = args.project_type or detect_project_type(project_dir)
-    return generate(project_dir, project_type, force=args.force)
+    if args.project_type and not args.multi:
+        return generate(project_dir, args.project_type, force=args.force)
+
+    targets = detect_all_targets(project_dir)
+
+    if len(targets) == 1 and not args.multi:
+        project_type = args.project_type or targets[0]["type"]
+        return generate(project_dir, project_type, force=args.force)
+
+    targets = confirm_targets(targets)
+    if not targets:
+        info("Cancelled.")
+        return 0
+
+    return generate_multi(project_dir, targets, force=args.force)
 
 
 if __name__ == "__main__":

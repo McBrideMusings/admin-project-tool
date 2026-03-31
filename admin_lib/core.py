@@ -495,6 +495,34 @@ def pick_target(targets, prompt="Select target"):
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
+def dispatch_target(targets, cmd_name, args, handlers):
+    """Route a command to the correct target handler.
+
+    targets:  OrderedDict of {name: description} for pick_target menu
+    cmd_name: command name for error messages (e.g. "build")
+    args:     argv args passed to the command
+    handlers: dict of {target_name: callable(rest_args)}
+
+    Single-target shortcut: if len(targets) == 1, skips the menu.
+    """
+    target = args[0] if args and not args[0].startswith("-") else ""
+    rest = args[1:] if target else (args or [])
+
+    if not target:
+        if len(targets) == 1:
+            target = next(iter(targets))
+        else:
+            target = pick_target(targets, f"{cmd_name.title()} which target?")
+            if not target:
+                return 0
+
+    if target not in handlers:
+        err(f"Unknown {cmd_name} target: {target}")
+        return 1
+
+    return handlers[target](rest)
+
+
 # ---------------------------------------------------------------------------
 # Help
 # ---------------------------------------------------------------------------
