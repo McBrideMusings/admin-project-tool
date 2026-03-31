@@ -28,14 +28,19 @@ def read_module(name):
 
 
 def strip_relative_imports(src):
-    """Remove from .xxx import and from . import lines (single and multi-line)."""
+    """Remove top-level from .xxx import and from . import lines (single and multi-line).
+
+    Only strips non-indented imports; indented (lazy) imports are left for
+    strip_lazy_relative_imports which handles alias rewriting.
+    """
     lines = src.split("\n")
     result = []
     i = 0
     while i < len(lines):
         stripped = lines[i].lstrip()
+        is_indented = lines[i] != stripped
 
-        if re.match(r"from \.\w* import ", stripped):
+        if not is_indented and re.match(r"from \.\w* import ", stripped):
             if "(" in stripped and ")" not in stripped:
                 while i < len(lines) and ")" not in lines[i]:
                     i += 1
@@ -44,7 +49,7 @@ def strip_relative_imports(src):
             i += 1
             continue
 
-        if stripped == "try:":
+        if not is_indented and stripped == "try:":
             j = i + 1
             while j < len(lines) and not lines[j].strip():
                 j += 1
@@ -78,12 +83,24 @@ def _skip_try_except(lines, start):
 
 
 def strip_lazy_relative_imports(src):
-    """Strip indented from .xxx import yyy lines (lazy imports inside functions)."""
+    """Strip indented from .xxx import yyy lines (lazy imports inside functions).
+
+    When an alias is used (import X as Y), rewrite references from Y to X.
+    """
     lines = src.split("\n")
-    return "\n".join(
-        line for line in lines
-        if not (line != line.lstrip() and re.match(r"\s+from \.\w+ import \w+", line))
-    )
+    result = []
+    aliases = []
+    for line in lines:
+        if line != line.lstrip() and re.match(r"\s+from \.\w+ import \w+", line):
+            m = re.match(r"\s+from \.\w+ import (\w+) as (\w+)", line)
+            if m:
+                aliases.append((m.group(2), m.group(1)))
+            continue
+        result.append(line)
+    src = "\n".join(result)
+    for alias, original in aliases:
+        src = re.sub(r"\b" + re.escape(alias) + r"\b", original, src)
+    return src
 
 
 def replace_core_refs(src):
