@@ -400,31 +400,80 @@ def backup_icons(icon_dirs, backup_dir):
                 shutil.copy2(os.path.join(src_dir, fname), os.path.join(dest, fname))
 
 
-def swap_dev_icons(generate_script, dev_icon_dir, icon_dirs):
-    """Run icon generation script and copy dev icons into asset catalogs.
+def swap_dev_icons(icon_dirs, icon_config):
+    """Generate dev icons and copy them into asset catalog directories.
 
-    generate_script: path to the Python script that generates dev icons
-    dev_icon_dir: directory where the script writes output (with label subdirs)
-    icon_dirs: same dict as backup_icons
-    Returns True on success, False if generation failed.
+    icon_dirs:    dict mapping label → appiconset directory path
+    icon_config:  dict of kwargs for icons.generate_icons() (bg_color,
+                  glyph_svg, glyph_text, glyph_color — sizes/output_dir/dev
+                  are handled automatically)
+    Returns True on success, False if generation was skipped.
     """
     import shutil
-    info("Generating dev icons...")
-    rc = subprocess.run(
-        [sys.executable, generate_script],
-        capture_output=True, text=True,
-    )
-    if rc.returncode != 0:
-        warn(f"Dev icon generation failed: {rc.stderr}")
+    import tempfile
+
+    try:
+        from . import icons
+    except ImportError:
+        warn("admin_lib.icons not available — skipping dev icon generation")
         return False
-    for label, dest_dir in icon_dirs.items():
-        src = os.path.join(dev_icon_dir, label)
-        if not os.path.isdir(src):
-            continue
-        for fname in os.listdir(src):
-            if fname.endswith(".png"):
-                shutil.copy2(os.path.join(src, fname), os.path.join(dest_dir, fname))
-    return True
+
+    info("Generating dev icons...")
+
+    try:
+        from PIL import Image as _Img
+    except ImportError:
+        warn("Pillow not installed — skipping dev icon generation")
+        return False
+
+    tmp_base = tempfile.mkdtemp(prefix="dev-icons-")
+    success = True
+
+    try:
+        for label, src_dir in icon_dirs.items():
+            if not os.path.isdir(src_dir):
+                continue
+
+            # Detect sizes from existing PNGs in the asset catalog.
+            # Assumes unique pixel widths per file (standard for Apple asset catalogs).
+            size_to_file = {}
+            for fname in os.listdir(src_dir):
+                if not fname.lower().endswith(".png"):
+                    continue
+                try:
+                    with _Img.open(os.path.join(src_dir, fname)) as im:
+                        size_to_file[im.width] = fname
+                except Exception:
+                    continue
+
+            if not size_to_file:
+                warn(f"No PNGs found in {src_dir} — skipping {label}")
+                continue
+
+            sizes = sorted(size_to_file.keys())
+            tmp_out = os.path.join(tmp_base, label)
+
+            config = dict(icon_config)
+            config["sizes"] = sizes
+            config["output_dir"] = tmp_out
+            config["dev"] = True
+
+            if not icons.generate_icons(**config):
+                warn(f"Dev icon generation failed for {label}")
+                success = False
+                continue
+
+            # Copy generated icons back, matching original filenames
+            for size, orig_fname in size_to_file.items():
+                gen_fname = f"{size}.png"
+                gen_path = os.path.join(tmp_out, gen_fname)
+                if os.path.isfile(gen_path):
+                    shutil.copy2(gen_path, os.path.join(src_dir, orig_fname))
+    finally:
+        if os.path.isdir(tmp_base):
+            shutil.rmtree(tmp_base)
+
+    return success
 
 
 def restore_icons(icon_dirs, backup_dir):
@@ -443,6 +492,189 @@ def restore_icons(icon_dirs, backup_dir):
                 shutil.copy2(os.path.join(src, fname), os.path.join(dest_dir, fname))
     if os.path.isdir(backup_dir):
         shutil.rmtree(backup_dir)
+
+
+# ---------------------------------------------------------------------------
+# Dev loops
+# ---------------------------------------------------------------------------
+
+def dev_loop_macos(project, scheme, config, destination, process, subsystem,
+                   predicate, app_pattern, pid_file="/tmp/admin-run.pid",
+                   extra_settings="", build_action="build",
+                   pre_build=None, post_build=None, pre_launch=None,
+                   is_running_fn=None, kill_fn=None):
+    """Full macOS dev loop: build, launch, stream logs, reload on 'r'/SIGUSR1.
+
+    pre_build:     callable() run before each build (e.g. swap dev icons)
+    post_build:    callable() run after each build completes (e.g. restore icons)
+    pre_launch:    callable(app_path) run after build, before launch (e.g. install to /Applications)
+                   May return a new app_path to launch instead.
+    is_running_fn: callable() -> bool, custom process check (default: pgrep -x process)
+    kill_fn:       callable() to kill the running app (default: pkill -x process)
+    """
+    import time
+
+    setup_reload(pid_file)
+
+    def _default_is_running():
+        r = subprocess.run(["pgrep", "-x", process], capture_output=True)
+        return r.returncode == 0
+
+    def _default_kill():
+        subprocess.run(["pkill", "-x", process], capture_output=True)
+
+    check_running = is_running_fn or _default_is_running
+    kill_app = kill_fn or _default_kill
+
+    while True:
+        clear_rebuild_request()
+        kill_app()
+
+        if pre_build:
+            pre_build()
+
+        info("Building...")
+        rc = xcodebuild_filtered(project, scheme, config, destination,
+                                 action=build_action,
+                                 extra_settings=extra_settings)
+        print()
+
+        if post_build:
+            post_build()
+
+        if rc != 0:
+            err("Build failed")
+            if is_rebuild_requested():
+                warn("Rebuild requested during failed build, retrying...")
+                continue
+            cleanup_pid_file(pid_file)
+            sys.exit(1)
+
+        app_path = find_app(app_pattern)
+        if not app_path:
+            err("Could not find built app")
+            cleanup_pid_file(pid_file)
+            sys.exit(1)
+
+        if pre_launch:
+            result = pre_launch(app_path)
+            if result:
+                app_path = result
+
+        info(f"Launching {app_path}")
+        subprocess.run(["open", app_path], check=True)
+
+        for _ in range(10):
+            if check_running():
+                break
+            time.sleep(0.3)
+
+        log_proc, log_thread, log_fh = stream_os_log(
+            predicate, log_file=_core.LOG_FILE)
+
+        info("Press r to rebuild, Ctrl+C to quit")
+        print()
+
+        got_reload = poll_for_reload(check_running)
+
+        stop_os_log(log_proc, log_fh)
+        print()
+
+        if got_reload:
+            info("Reload signal received — rebuilding...")
+        else:
+            info(f"Stopping {process}...")
+        kill_app()
+
+        if not got_reload:
+            cleanup_pid_file(pid_file)
+            return
+
+
+def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
+                 app_pattern, pid_file="/tmp/admin-run.pid",
+                 extra_settings="", build_action="build",
+                 bundle_id=None, sim_id=None,
+                 pre_build=None, post_build=None):
+    """Full iOS simulator dev loop: build, install, stream logs, reload on 'r'/SIGUSR1.
+
+    bundle_id:  bundle ID for launch/terminate (defaults to subsystem)
+    sim_id:     simulator device ID (if None, auto-resolves via resolve_simulator)
+    pre_build:  callable() run before each build (e.g. swap dev icons)
+    post_build: callable() run after each build completes (e.g. restore icons)
+    """
+    import time
+
+    setup_reload(pid_file)
+
+    launch_bundle = bundle_id or subsystem
+
+    if sim_id is None:
+        sim_id, sim_name = resolve_simulator()
+    boot_simulator(sim_id)
+    destination = f"platform=iOS Simulator,id={sim_id}"
+
+    while True:
+        clear_rebuild_request()
+        terminate_sim_app(sim_id, launch_bundle)
+
+        if pre_build:
+            pre_build()
+
+        info("Building for simulator...")
+        rc = xcodebuild_filtered(project, scheme, config, destination,
+                                 action=build_action,
+                                 extra_settings=extra_settings)
+        print()
+
+        if post_build:
+            post_build()
+
+        if rc != 0:
+            err("Build failed")
+            if is_rebuild_requested():
+                warn("Rebuild requested during failed build, retrying...")
+                continue
+            cleanup_pid_file(pid_file)
+            sys.exit(1)
+
+        app_path = find_app(app_pattern)
+        if not app_path:
+            err("Could not find built app")
+            cleanup_pid_file(pid_file)
+            sys.exit(1)
+
+        info("Installing on simulator...")
+        install_and_launch_sim(sim_id, app_path, launch_bundle)
+
+        def _is_running():
+            return is_sim_app_running(sim_id, launch_bundle)
+
+        for _ in range(10):
+            if _is_running():
+                break
+            time.sleep(0.3)
+
+        log_proc, log_thread, log_fh = stream_os_log(
+            predicate, log_file=_core.LOG_FILE, sim_id=sim_id)
+
+        info("Press r to rebuild, Ctrl+C to quit")
+        print()
+
+        got_reload = poll_for_reload(_is_running)
+
+        stop_os_log(log_proc, log_fh)
+        print()
+
+        if got_reload:
+            info("Reload signal received — rebuilding...")
+        else:
+            info(f"Stopping {process}...")
+        terminate_sim_app(sim_id, launch_bundle)
+
+        if not got_reload:
+            cleanup_pid_file(pid_file)
+            return
 
 
 # ---------------------------------------------------------------------------

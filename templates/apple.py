@@ -5,12 +5,11 @@ import sys, os
 sys.path.insert(0, os.path.expanduser("~/.admin"))
 from admin_lib.core import core, command, run_cmd, boot, C, info, ok, warn, err
 from admin_lib.apple import (
-    setup_reload, poll_for_reload, cleanup_pid_file,
-    find_app, log_predicate, xcodebuild_filtered, clean_derived_data,
-    is_rebuild_requested, clear_rebuild_request, register_reload_command,
-    resolve_simulator, boot_simulator, install_and_launch_sim,
-    terminate_sim_app, is_sim_app_running,
-    find_connected_device, install_on_device,
+    log_predicate, xcodebuild_filtered, clean_derived_data,
+    find_app, register_reload_command,
+    dev_loop_macos, dev_loop_ios,
+    resolve_simulator, find_connected_device, install_on_device,
+    backup_icons, swap_dev_icons, restore_icons,
 )
 
 PROJECT_NAME = "{{PROJECT_NAME}}"
@@ -22,136 +21,47 @@ PLATFORM = "{{PLATFORM}}"
 
 _ADMIN_PID_FILE = "/tmp/admin-run.pid"
 
+ICON_CONFIG = {
+    "bg_color": "{{ICON_BG_COLOR}}",
+    # Use glyph_svg for SVG icons, or glyph_text for a single character:
+    # "glyph_svg": "path/to/icon.svg",
+    "glyph_text": "{{ICON_GLYPH_TEXT}}",
+    "glyph_color": "{{ICON_GLYPH_COLOR}}",
+}
+
+ICON_DIRS = {
+    "mac": "{{MAC_ICON_DIR}}",
+}
+
+_ICON_BACKUP_DIR = os.path.join("tmp", "icon-backup")
+
 
 @core("dev", "Dev build and run (--log LEVEL)")
 def cmd_dev(args):
-    import time
-
     log_level = "app"
     for i, arg in enumerate(args):
         if arg == "--log" and i + 1 < len(args):
             log_level = args[i + 1]
 
     predicate = log_predicate(PROCESS, SUBSYSTEM, log_level)
-    setup_reload(_ADMIN_PID_FILE)
+
+    def _pre_build():
+        backup_icons(ICON_DIRS, _ICON_BACKUP_DIR)
+        swap_dev_icons(ICON_DIRS, ICON_CONFIG)
+
+    def _post_build():
+        restore_icons(ICON_DIRS, _ICON_BACKUP_DIR)
 
     if PLATFORM == "ios":
-        _dev_ios(predicate)
+        pattern = f"~/Library/Developer/Xcode/DerivedData/{SCHEME}-*/Build/Products/Debug-iphonesimulator/{PROCESS}.app"
+        dev_loop_ios(XCODEPROJ, SCHEME, "Debug", SUBSYSTEM, PROCESS,
+                     predicate, pattern, pid_file=_ADMIN_PID_FILE,
+                     pre_build=_pre_build, post_build=_post_build)
     else:
-        _dev_macos(predicate)
-
-
-def _dev_macos(predicate):
-    import subprocess, time
-    pattern = f"~/Library/Developer/Xcode/DerivedData/{SCHEME}-*/Build/Products/Debug/{PROCESS}.app"
-
-    while True:
-        clear_rebuild_request()
-        subprocess.run(["pkill", "-x", PROCESS], capture_output=True)
-
-        info("Building...")
-        rc = xcodebuild_filtered(XCODEPROJ, SCHEME, "Debug", "platform=macOS")
-        print()
-
-        if rc != 0:
-            err("Build failed")
-            if is_rebuild_requested():
-                warn("Rebuild requested during failed build, retrying...")
-                continue
-            cleanup_pid_file(_ADMIN_PID_FILE)
-            sys.exit(1)
-
-        app_path = find_app(pattern)
-        if not app_path:
-            err("Could not find built app")
-            cleanup_pid_file(_ADMIN_PID_FILE)
-            sys.exit(1)
-
-        info(f"Launching {app_path}")
-        info("Press r to rebuild, Ctrl+C to quit")
-        print()
-
-        subprocess.run(["open", app_path], check=True)
-
-        def _is_running():
-            r = subprocess.run(["pgrep", "-x", PROCESS], capture_output=True)
-            return r.returncode == 0
-
-        for _ in range(10):
-            if _is_running():
-                break
-            time.sleep(0.3)
-
-        got_reload = poll_for_reload(_is_running)
-
-        print()
-        if got_reload:
-            info("Reload signal received — rebuilding...")
-        else:
-            info(f"Stopping {PROCESS}...")
-        subprocess.run(["pkill", "-x", PROCESS], capture_output=True)
-
-        if not got_reload:
-            cleanup_pid_file(_ADMIN_PID_FILE)
-            return
-
-
-def _dev_ios(predicate):
-    import subprocess, time
-
-    sim_id, sim_name = resolve_simulator()
-    boot_simulator(sim_id)
-
-    destination = f"platform=iOS Simulator,id={sim_id}"
-    pattern = f"~/Library/Developer/Xcode/DerivedData/{SCHEME}-*/Build/Products/Debug-iphonesimulator/{PROCESS}.app"
-
-    while True:
-        clear_rebuild_request()
-        terminate_sim_app(sim_id, SUBSYSTEM)
-
-        info("Building for simulator...")
-        rc = xcodebuild_filtered(XCODEPROJ, SCHEME, "Debug", destination)
-        print()
-
-        if rc != 0:
-            err("Build failed")
-            if is_rebuild_requested():
-                warn("Rebuild requested during failed build, retrying...")
-                continue
-            cleanup_pid_file(_ADMIN_PID_FILE)
-            sys.exit(1)
-
-        app_path = find_app(pattern)
-        if not app_path:
-            err("Could not find built app")
-            cleanup_pid_file(_ADMIN_PID_FILE)
-            sys.exit(1)
-
-        info(f"Installing on simulator...")
-        install_and_launch_sim(sim_id, app_path, SUBSYSTEM)
-        info("Press r to rebuild, Ctrl+C to quit")
-        print()
-
-        def _is_running():
-            return is_sim_app_running(sim_id, SUBSYSTEM)
-
-        for _ in range(10):
-            if _is_running():
-                break
-            time.sleep(0.3)
-
-        got_reload = poll_for_reload(_is_running)
-
-        print()
-        if got_reload:
-            info("Reload signal received — rebuilding...")
-        else:
-            info(f"Stopping {PROCESS}...")
-        terminate_sim_app(sim_id, SUBSYSTEM)
-
-        if not got_reload:
-            cleanup_pid_file(_ADMIN_PID_FILE)
-            return
+        pattern = f"~/Library/Developer/Xcode/DerivedData/{SCHEME}-*/Build/Products/Debug/{PROCESS}.app"
+        dev_loop_macos(XCODEPROJ, SCHEME, "Debug", "platform=macOS", PROCESS,
+                       SUBSYSTEM, predicate, pattern, pid_file=_ADMIN_PID_FILE,
+                       pre_build=_pre_build, post_build=_post_build)
 
 
 @core("deploy", "Build and install on connected device")
