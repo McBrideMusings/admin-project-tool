@@ -245,6 +245,23 @@ def boot_simulator(device_id):
     subprocess.run(["open", "-a", "Simulator"])
 
 
+def app_bundle_identifier(app_path):
+    """Read CFBundleIdentifier from a built .app, or return None."""
+    info_plist = os.path.join(app_path, "Info.plist")
+    if not os.path.isfile(info_plist):
+        return None
+
+    r = subprocess.run(
+        ["/usr/libexec/PlistBuddy", "-c", "Print :CFBundleIdentifier", info_plist],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return None
+
+    bundle_id = r.stdout.strip()
+    return bundle_id or None
+
+
 def install_and_launch_sim(device_id, app_path, bundle_id):
     """Install and launch an app on a simulator."""
     subprocess.run(["xcrun", "simctl", "install", device_id, app_path])
@@ -612,6 +629,11 @@ def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
 
     while True:
         clear_rebuild_request()
+        existing_app_path = find_app(app_pattern)
+        existing_bundle = (
+            app_bundle_identifier(existing_app_path) if existing_app_path else None
+        )
+        launch_bundle = existing_bundle or bundle_id or subsystem
         terminate_sim_app(sim_id, launch_bundle)
 
         if pre_build:
@@ -640,6 +662,7 @@ def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
             cleanup_pid_file(pid_file)
             sys.exit(1)
 
+        launch_bundle = app_bundle_identifier(app_path) or bundle_id or subsystem
         info("Installing on simulator...")
         install_and_launch_sim(sim_id, app_path, launch_bundle)
 
