@@ -164,6 +164,7 @@ def generate_icons(
     glyph_color="#FFFFFF",
     glyph_scale=None,
     dev=False,
+    opaque=False,
     filename_format="{size}.png",
 ):
     """Generate app icons at the requested sizes.
@@ -174,6 +175,7 @@ def generate_icons(
       3. neither    — solid background color only
 
     glyph_scale: 0.0–1.0 fraction of icon size for the glyph (default 0.55)
+    opaque: if True, flatten alpha to bg_color and save as RGB (required for macOS)
 
     Returns True on success, False if skipped (missing deps or error).
     """
@@ -215,6 +217,11 @@ def generate_icons(
 
             if dev:
                 img = _apply_dev_banner(img)
+
+            if opaque and img.mode == "RGBA":
+                flat = Image.new("RGBA", img.size, bg)
+                flat.paste(img, (0, 0), img)
+                img = flat.convert("RGB")
 
             fname = filename_format.format(size=size)
             img.save(os.path.join(output_dir, fname), "PNG")

@@ -374,35 +374,39 @@ def _tui_menu():
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
 
-    # Total lines: items + separator line (if present) + blank + footer
     has_sep = sep_idx > 0
-    total_lines = num + (1 if has_sep else 0) + 2
+    menu_lines = num + (1 if has_sep else 0) + 2
+
+    print(f"{C.BOLD}{_project_name}{C.RESET}\n")
+    print_url_status()
+
+    for _ in range(menu_lines):
+        sys.stdout.write("\n")
+    sys.stdout.write(f"\033[{menu_lines}A")
+    sys.stdout.flush()
 
     def draw():
-        if draw.rendered:
-            sys.stdout.write(f"\033[{total_lines}F")
-        sys.stdout.write("\033[J")
+        sys.stdout.write("\033[s")
         for i, name in enumerate(items):
             if has_sep and i == sep_idx:
-                sys.stdout.write("\n")
+                sys.stdout.write("\033[2K\n")
             desc = all_cmds[name]["desc"]
+            sys.stdout.write("\033[2K")
             if i == sel:
                 sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {name:<14}{C.RESET} {desc}\n")
             else:
                 sys.stdout.write(f"    {C.DIM}{name:<14}{C.RESET} {desc}\n")
-        sys.stdout.write(f"\n{C.DIM}  [arrows/j/k] navigate  [enter] run  [q/esc] quit{C.RESET}\n")
+        sys.stdout.write(f"\033[2K\n\033[2K{C.DIM}  [arrows/j/k] navigate  [enter] run  [q/esc] quit{C.RESET}\n")
+        sys.stdout.write("\033[u")
         sys.stdout.flush()
-        draw.rendered = True
-
-    draw.rendered = False
-    print(f"{C.BOLD}{_project_name}{C.RESET}\n")
-    print_url_status()
 
     try:
         while True:
             draw()
             key = read_key()
             if key in ("q", "Q", "esc"):
+                sys.stdout.write(f"\033[{menu_lines}B")
+                sys.stdout.flush()
                 print()
                 return
             elif key in ("up", "k"):
@@ -410,7 +414,8 @@ def _tui_menu():
             elif key in ("down", "j"):
                 sel = (sel + 1) % num
             elif key in ("\r", "\n"):
-                sys.stdout.write(f"\033[{total_lines}F\033[J")
+                sys.stdout.write("\033[J")
+                sys.stdout.flush()
                 info(f"./admin {items[sel]}")
                 print()
                 os.makedirs(LOG_DIR, exist_ok=True)
@@ -418,6 +423,8 @@ def _tui_menu():
                 all_cmds[items[sel]]["func"]([])
                 return
     except (KeyboardInterrupt, EOFError):
+        sys.stdout.write(f"\033[{menu_lines}B")
+        sys.stdout.flush()
         print()
         return
     finally:
