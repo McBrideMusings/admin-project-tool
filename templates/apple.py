@@ -7,8 +7,8 @@ from admin_lib.core import core, command, run_cmd, boot, C, info, ok, warn, err
 from admin_lib.apple import (
     log_predicate, xcodebuild_filtered, clean_derived_data,
     find_app, register_reload_command,
-    dev_loop_macos, dev_loop_ios,
-    resolve_simulator, find_connected_device, install_on_device,
+    dev_loop_macos, dev_loop_ios, dev_loop_device, device_log_attach,
+    resolve_simulator, find_connected_device, require_usb_device, install_on_device,
     backup_icons, swap_dev_icons, restore_icons,
 )
 
@@ -69,7 +69,7 @@ def cmd_deploy(args):
     import subprocess
 
     if PLATFORM == "ios":
-        device_id, device_name = find_connected_device()
+        device_id, device_name, _udid = find_connected_device()
         destination = f"platform=iOS,id={device_id}"
         pattern = f"~/Library/Developer/Xcode/DerivedData/{SCHEME}-*/Build/Products/Debug-iphoneos/{PROCESS}.app"
 

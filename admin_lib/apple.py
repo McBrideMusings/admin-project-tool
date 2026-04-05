@@ -287,14 +287,13 @@ def is_sim_app_running(device_id, bundle_id):
 # Physical device helpers
 # ---------------------------------------------------------------------------
 
-def find_connected_device():
-    """Find a connected iOS device via xcrun devicectl.
+def _list_devices():
+    """Query xcrun devicectl for connected devices.
 
-    Returns (device_id, device_name) or calls sys.exit(1).
+    Returns list of device dicts from the JSON output, or empty list.
     """
     import json
 
-    info("Finding connected iOS device...")
     json_path = os.path.join(_core.LOG_DIR, "devices.json")
     os.makedirs(_core.LOG_DIR, exist_ok=True)
     result = subprocess.run(
@@ -302,18 +301,38 @@ def find_connected_device():
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        err("Failed to list devices. Is a device connected?")
-        sys.exit(1)
+        return []
 
     try:
         with open(json_path) as f:
             data = json.load(f)
-        devices = [
+        return [
             d for d in data.get("result", {}).get("devices", [])
             if d.get("connectionProperties", {}).get("transportType") in ("wired", "localNetwork")
         ]
     except (json.JSONDecodeError, KeyError, FileNotFoundError):
-        devices = []
+        return []
+
+
+def _extract_device_info(device):
+    """Extract (device_id, device_name, udid, transport) from a device dict."""
+    device_id = device.get("identifier", "")
+    device_name = device.get("deviceProperties", {}).get("name", "Unknown")
+    udid = device.get("hardwareProperties", {}).get("udid", "")
+    transport = device.get("connectionProperties", {}).get("transportType", "")
+    return device_id, device_name, udid, transport
+
+
+def find_connected_device():
+    """Find a connected iOS device via xcrun devicectl.
+
+    Returns (device_id, device_name, udid) or calls sys.exit(1).
+    device_id is the CoreDevice identifier (for devicectl commands).
+    udid is the hardware UDID (for idevicesyslog).
+    Accepts any connection type (USB or network).
+    """
+    info("Finding connected iOS device...")
+    devices = _list_devices()
 
     if not devices:
         err("No connected iOS device found.")
@@ -321,11 +340,52 @@ def find_connected_device():
         err("  Xcode > Window > Devices and Simulators > select device > Connect via network")
         sys.exit(1)
 
-    device = devices[0]
-    device_id = device.get("identifier", "")
-    device_name = device.get("deviceProperties", {}).get("name", "Unknown")
+    device_id, device_name, udid, _ = _extract_device_info(devices[0])
     info(f"Target device: {device_name} ({device_id})")
-    return device_id, device_name
+    return device_id, device_name, udid
+
+
+def require_usb_device():
+    """Find a connected iOS device that is visible over USB.
+
+    Returns (device_id, device_name, udid) or calls sys.exit(1).
+    Uses idevice_id (libimobiledevice) to verify USB visibility, since
+    devicectl's transportType can report 'localNetwork' even when USB
+    is physically connected.
+    """
+    import shutil
+
+    info("Finding USB-connected iOS device...")
+
+    if not shutil.which("idevice_id"):
+        err("idevice_id not found — install with: brew install libimobiledevice")
+        sys.exit(1)
+
+    result = subprocess.run(["idevice_id", "-l"], capture_output=True, text=True)
+    usb_udids = [u.strip() for u in result.stdout.strip().splitlines() if u.strip()]
+
+    if not usb_udids:
+        devices = _list_devices()
+        if devices:
+            device_name = devices[0].get("deviceProperties", {}).get("name", "Unknown")
+            err(f"{device_name} is visible to Xcode but not over USB.")
+        else:
+            err("No iOS device found.")
+        err("Device logs require a USB connection (idevicesyslog).")
+        err("Plug in your device via USB cable and try again.")
+        sys.exit(1)
+
+    target_udid = usb_udids[0]
+
+    devices = _list_devices()
+    for d in devices:
+        _id, _name, _udid, _transport = _extract_device_info(d)
+        if _udid == target_udid:
+            info(f"Target device: {_name} (USB)")
+            return _id, _name, _udid
+
+    info(f"Target device: UDID {target_udid} (USB)")
+    return "", "Unknown", target_udid
 
 
 def install_on_device(device_id, app_path):
@@ -334,6 +394,143 @@ def install_on_device(device_id, app_path):
     return run_cmd(
         f'xcrun devicectl device install app --device "{device_id}" "{app_path}" 2>&1'
     )
+
+
+def launch_on_device(device_id, bundle_id):
+    """Launch an app on a physical iOS device. Returns exit code."""
+    result = subprocess.run(
+        ["xcrun", "devicectl", "device", "process", "launch",
+         "--terminate-existing", "--device", device_id, bundle_id],
+        capture_output=True, text=True,
+    )
+    return result.returncode
+
+
+def terminate_device_app(device_id, bundle_id):
+    """Terminate an app on a physical iOS device by bundle ID.
+
+    Finds the PID via devicectl process list, then terminates it.
+    Silently succeeds if the app isn't running.
+    """
+    import json
+
+    json_path = os.path.join(_core.LOG_DIR, "processes.json")
+    os.makedirs(_core.LOG_DIR, exist_ok=True)
+    result = subprocess.run(
+        ["xcrun", "devicectl", "device", "info", "processes",
+         "--device", device_id, "--json-output", json_path],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return
+
+    try:
+        with open(json_path) as f:
+            data = json.load(f)
+        for proc in data.get("result", {}).get("runningProcesses", []):
+            if proc.get("bundleIdentifier") == bundle_id:
+                pid = proc.get("processIdentifier")
+                if pid:
+                    subprocess.run(
+                        ["xcrun", "devicectl", "device", "process", "terminate",
+                         "--device", device_id, "--pid", str(pid)],
+                        capture_output=True, text=True,
+                    )
+                return
+    except (json.JSONDecodeError, KeyError, FileNotFoundError):
+        pass
+
+
+def is_device_app_running(device_id, bundle_id):
+    """Check if an app is running on a physical iOS device."""
+    import json
+
+    json_path = os.path.join(_core.LOG_DIR, "processes.json")
+    os.makedirs(_core.LOG_DIR, exist_ok=True)
+    result = subprocess.run(
+        ["xcrun", "devicectl", "device", "info", "processes",
+         "--device", device_id, "--json-output", json_path],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return False
+
+    try:
+        with open(json_path) as f:
+            data = json.load(f)
+        for proc in data.get("result", {}).get("runningProcesses", []):
+            if proc.get("bundleIdentifier") == bundle_id:
+                return True
+    except (json.JSONDecodeError, KeyError, FileNotFoundError):
+        pass
+    return False
+
+
+def stream_device_log(process, udid=None, log_file=None):
+    """Start streaming logs from a physical iOS device in a background thread.
+
+    Uses idevicesyslog to capture device syslog output, filtered by process name.
+    Requires libimobiledevice (brew install libimobiledevice).
+    Returns (proc, thread, log_fh) — caller should call stop_os_log().
+    """
+    import shutil
+    import threading
+
+    if not shutil.which("idevicesyslog"):
+        err("idevicesyslog not found — install with: brew install libimobiledevice")
+        sys.exit(1)
+
+    cmd = ["idevicesyslog", "-p", process, "-x"]
+    if udid:
+        cmd.extend(["-u", udid])
+
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        bufsize=1, universal_newlines=True,
+    )
+    _children.append(proc)
+
+    log_fh = open(log_file, "a") if log_file else None
+
+    def _stream():
+        try:
+            for line in proc.stdout:
+                sys.stdout.write(line)
+                sys.stdout.flush()
+                if log_fh:
+                    log_fh.write(line)
+                    log_fh.flush()
+        except (IOError, ValueError):
+            pass
+
+    thread = threading.Thread(target=_stream, daemon=True)
+    thread.start()
+    return proc, thread, log_fh
+
+
+def device_log_attach(process, log_file=None):
+    """Stream logs from a USB-connected iOS device, blocking until Ctrl+C.
+
+    Requires USB connection. Streams logs from the named process using
+    idevicesyslog. Works with any build (dev or production) — no rebuild needed.
+    """
+    _device_id, device_name, udid = require_usb_device()
+
+    info(f"Streaming logs from {device_name} (process: {process})")
+    info("Press Ctrl+C to stop")
+    print()
+
+    log_proc, _log_thread, log_fh = stream_device_log(
+        process, udid=udid, log_file=log_file)
+
+    try:
+        log_proc.wait()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop_os_log(log_proc, log_fh)
+        print()
+        info("Log streaming stopped.")
 
 
 # ---------------------------------------------------------------------------
@@ -694,6 +891,129 @@ def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
         if not got_reload:
             cleanup_pid_file(pid_file)
             return
+
+
+def _attach_debugger(device_id, process):
+    """Attach lldb to a process on a physical device in the background.
+
+    Uses --waitfor to catch the process at launch so the debugger is
+    attached from the start (which disables os_log privacy redaction).
+    Returns the lldb Popen process.
+    """
+    lldb_proc = subprocess.Popen(
+        ["xcrun", "lldb", "--batch",
+         "-o", f"device select {device_id}",
+         "-o", f"device process attach -n {process} -w -i -c"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        bufsize=1, universal_newlines=True,
+    )
+    _children.append(lldb_proc)
+    return lldb_proc
+
+
+def _stop_debugger(lldb_proc):
+    """Terminate the background lldb debugger."""
+    if lldb_proc and lldb_proc.poll() is None:
+        lldb_proc.terminate()
+        try:
+            lldb_proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            lldb_proc.kill()
+    if lldb_proc in _children:
+        _children.remove(lldb_proc)
+
+
+def dev_loop_device(project, scheme, config, subsystem, process,
+                    app_pattern, pid_file="/tmp/admin-run.pid",
+                    extra_settings="", build_action="build",
+                    bundle_id=None, device_id=None, udid=None,
+                    pre_build=None, post_build=None):
+    """Build, install, and run on a physical iOS device with log streaming.
+
+    Requires USB connection. Attaches lldb in the background so os_log
+    messages are unredacted (no <private>). Streams logs via idevicesyslog.
+    Single-shot: build, install, launch, stream logs, Ctrl+C to quit.
+
+    bundle_id:  bundle ID for launch/terminate (defaults to subsystem)
+    device_id:  CoreDevice identifier (if None, auto-resolves via require_usb_device)
+    udid:       hardware UDID for idevicesyslog targeting (if None, auto-resolves with device_id)
+    pre_build:  callable() run before each build (e.g. swap dev icons)
+    post_build: callable() run after each build completes (e.g. restore icons)
+    """
+    import time
+
+    launch_bundle = bundle_id or subsystem
+
+    if device_id is None:
+        device_id, device_name, udid = require_usb_device()
+    else:
+        device_name = device_id
+
+    destination = "generic/platform=iOS"
+
+    terminate_device_app(device_id, launch_bundle)
+
+    if pre_build:
+        pre_build()
+
+    info(f"Building for device ({device_name})...")
+    rc = xcodebuild_filtered(project, scheme, config, destination,
+                             action=build_action,
+                             extra_settings=extra_settings)
+    print()
+
+    if post_build:
+        post_build()
+
+    if rc != 0:
+        err("Build failed")
+        sys.exit(1)
+
+    app_path = find_app(app_pattern)
+    if not app_path:
+        err("Could not find built app")
+        sys.exit(1)
+
+    launch_bundle = app_bundle_identifier(app_path) or bundle_id or subsystem
+
+    info(f"Installing on {device_name}...")
+    rc = install_on_device(device_id, app_path)
+    if rc != 0:
+        err("Install failed")
+        sys.exit(1)
+
+    info("Attaching debugger (unredacts os_log)...")
+    lldb_proc = _attach_debugger(device_id, process)
+    time.sleep(1)
+
+    info(f"Launching on {device_name}...")
+    rc = launch_on_device(device_id, launch_bundle)
+    if rc != 0:
+        _stop_debugger(lldb_proc)
+        err("Launch failed")
+        sys.exit(1)
+
+    for _ in range(10):
+        if is_device_app_running(device_id, launch_bundle):
+            break
+        time.sleep(0.3)
+
+    log_proc, _log_thread, log_fh = stream_device_log(
+        process, udid=udid, log_file=_core.LOG_FILE)
+
+    info("Streaming logs — Ctrl+C to quit")
+    print()
+
+    try:
+        log_proc.wait()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop_os_log(log_proc, log_fh)
+        _stop_debugger(lldb_proc)
+        terminate_device_app(device_id, launch_bundle)
+        print()
+        info("Done.")
 
 
 # ---------------------------------------------------------------------------
