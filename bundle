@@ -15,7 +15,7 @@ import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ADMIN_LIB_DIR = os.path.join(SCRIPT_DIR, "admin_lib")
-MODULE_ORDER = ["core", "icons", "remote", "apple", "docker", "unraid"]
+MODULE_ORDER = ["core", "cache", "icons", "remote", "apple", "docker", "unraid"]
 
 BUNDLED_MARKER = "# @bundled"
 PROJECT_MARKER = "# === project "
@@ -118,6 +118,8 @@ def process_module(name, src):
 
 def detect_modules(project_src):
     needed = {"core"}
+    if re.search(r"admin_lib\.cache|from admin_lib\.cache", project_src):
+        needed.add("cache")
     if re.search(r"admin_lib\.apple|from admin_lib\.apple", project_src):
         needed.add("apple")
     if re.search(r"admin_lib\.(server|docker)|from admin_lib\.(server|docker)", project_src):
