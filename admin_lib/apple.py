@@ -895,7 +895,8 @@ def dev_loop_device(project, scheme, config, subsystem, process,
                     app_pattern, pid_file="/tmp/admin-run.pid",
                     extra_settings="", build_action="build",
                     bundle_id=None, device_id=None, udid=None,
-                    pre_build=None, post_build=None):
+                    pre_build=None, post_build=None,
+                    skip_build=False):
     """Build, install, and run on a physical iOS device with log streaming.
 
     Launches via devicectl --console with OS_ACTIVITY_DT_MODE=YES so os_log
@@ -918,34 +919,41 @@ def dev_loop_device(project, scheme, config, subsystem, process,
 
     terminate_device_app(device_id, launch_bundle)
 
-    if pre_build:
-        pre_build()
+    if skip_build:
+        app_path = find_app(app_pattern)
+        if not app_path:
+            err("Could not find previously built app — run without cache to rebuild")
+            sys.exit(1)
+        launch_bundle = app_bundle_identifier(app_path) or bundle_id or subsystem
+    else:
+        if pre_build:
+            pre_build()
 
-    info(f"Building for device ({device_name})...")
-    rc = xcodebuild_filtered(project, scheme, config, destination,
-                             action=build_action,
-                             extra_settings=extra_settings)
-    print()
+        info(f"Building for device ({device_name})...")
+        rc = xcodebuild_filtered(project, scheme, config, destination,
+                                 action=build_action,
+                                 extra_settings=extra_settings)
+        print()
 
-    if post_build:
-        post_build()
+        if post_build:
+            post_build()
 
-    if rc != 0:
-        err("Build failed")
-        sys.exit(1)
+        if rc != 0:
+            err("Build failed")
+            sys.exit(1)
 
-    app_path = find_app(app_pattern)
-    if not app_path:
-        err("Could not find built app")
-        sys.exit(1)
+        app_path = find_app(app_pattern)
+        if not app_path:
+            err("Could not find built app")
+            sys.exit(1)
 
-    launch_bundle = app_bundle_identifier(app_path) or bundle_id or subsystem
+        launch_bundle = app_bundle_identifier(app_path) or bundle_id or subsystem
 
-    info(f"Installing on {device_name}...")
-    rc = install_on_device(device_id, app_path)
-    if rc != 0:
-        err("Install failed")
-        sys.exit(1)
+        info(f"Installing on {device_name}...")
+        rc = install_on_device(device_id, app_path)
+        if rc != 0:
+            err("Install failed")
+            sys.exit(1)
 
     info(f"Launching on {device_name}...")
     console_proc = launch_on_device(

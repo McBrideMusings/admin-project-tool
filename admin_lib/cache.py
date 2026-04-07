@@ -21,6 +21,11 @@ import os
 
 from .core import ok
 
+# Session-level cache: avoids re-reading the same file set within a single
+# admin invocation. Keyed by (path, mtime) tuples so any file change naturally
+# misses the cache.
+_session_cache = {}
+
 
 def _cache_dir():
     """Return the build cache directory path (tmp/.build-cache/)."""
@@ -66,12 +71,22 @@ def source_hash(paths):
     Includes file paths in the hash so additions, removals, and renames
     are detected (not just content changes).
     """
+    sorted_paths = sorted(paths)
+    try:
+        key = tuple((p, os.path.getmtime(p)) for p in sorted_paths)
+    except OSError:
+        key = None
+    if key is not None and key in _session_cache:
+        return _session_cache[key]
     h = hashlib.sha256()
-    for p in sorted(paths):
+    for p in sorted_paths:
         h.update(p.encode())
         with open(p, "rb") as f:
             h.update(f.read())
-    return h.hexdigest()
+    result = h.hexdigest()
+    if key is not None:
+        _session_cache[key] = result
+    return result
 
 
 def is_fresh(cache_key, sources, force=False):
