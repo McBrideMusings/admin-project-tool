@@ -89,15 +89,28 @@ def source_hash(paths):
     return result
 
 
-def is_fresh(cache_key, sources, force=False):
+def is_fresh(cache_key, sources, force=False, artifact=None):
     """Return True if the cached hash matches current sources.
 
     cache_key: unique name for this build (e.g. "macos-debug")
     sources:   list of file paths (from collect_sources)
     force:     if True, always returns False
+    artifact:  optional output path (file or directory). If provided and the
+               path does not exist on disk, the cache is considered stale
+               regardless of source hash — prevents "skipping build" when
+               the artifact was deleted, renamed, or produced under
+               different build settings.
     """
     if force or not sources:
         return False
+    if artifact is not None:
+        expanded = os.path.expanduser(artifact)
+        if any(c in expanded for c in "*?["):
+            import glob as _glob
+            if not _glob.glob(expanded):
+                return False
+        elif not os.path.exists(expanded):
+            return False
     cache_file = os.path.join(_cache_dir(), cache_key)
     if not os.path.exists(cache_file):
         return False
@@ -131,7 +144,7 @@ def invalidate(cache_key=None):
         shutil.rmtree(d)
 
 
-def check_build(cache_key, sources, label=None, force=False):
+def check_build(cache_key, sources, label=None, force=False, artifact=None):
     """Check if a build is needed. Returns True if the build should proceed.
 
     Prints "up to date" when cached. Pair with mark_fresh() after a
@@ -141,8 +154,12 @@ def check_build(cache_key, sources, label=None, force=False):
     sources:   list of file paths (from collect_sources)
     label:     human-readable name for status messages (defaults to cache_key)
     force:     if True, always returns True (forces rebuild)
+    artifact:  optional output path — if missing on disk, cache is treated
+               as stale and the build proceeds. Strongly recommended for
+               xcodebuild/cargo outputs so renamed/deleted artifacts don't
+               leave callers pointing at a ghost.
     """
-    if is_fresh(cache_key, sources, force=force):
+    if is_fresh(cache_key, sources, force=force, artifact=artifact):
         ok(f"{label or cache_key}: up to date (skipping build)")
         return False
     return True
