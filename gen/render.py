@@ -100,8 +100,20 @@ def render(
 def generator_commit_sha(repo_dir: Path, allow_dirty: bool = False) -> str:
     """Return the admin-project-tool HEAD SHA, with +dirty suffix if working tree is dirty.
 
-    Raises RenderError if dirty and allow_dirty is False.
+    Prefers a VERSION file (written by install.sh) over a live git call, so
+    the installed copy at ~/.admin/ doesn't need to be a git repo. Raises
+    RenderError if dirty and allow_dirty is False.
     """
+    version_file = repo_dir / "VERSION"
+    if version_file.exists():
+        sha = version_file.read_text().strip()
+        if sha.endswith("+dirty") and not allow_dirty:
+            raise RenderError(
+                f"admin-project-tool was installed from a dirty tree ({sha}); "
+                "reinstall from a clean tree or pass --force-dirty"
+            )
+        return sha
+
     try:
         sha = subprocess.check_output(
             ["git", "-C", str(repo_dir), "rev-parse", "HEAD"],
