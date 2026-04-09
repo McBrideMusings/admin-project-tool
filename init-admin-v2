@@ -1,0 +1,257 @@
+#!/usr/bin/env python3
+"""init-admin v2 — manifest-driven admin script generator.
+
+Usage:
+    init-admin-v2 [PROJECT_DIR]                    # bootstrap: detect + write admin.toml + generate
+    init-admin-v2 --regenerate [PROJECT_DIR]       # reload admin.toml, regenerate ./admin
+    init-admin-v2 --audit [PROJECT_DIR]            # regenerate in memory, diff against ./admin
+
+Flags:
+    --force-dirty     allow generating from a dirty admin-project-tool working tree
+    --force           overwrite existing admin.toml on bootstrap
+
+See ~/.claude/plans/sorted-imagining-nygaard.md for the v2 design doc.
+"""
+from __future__ import annotations
+
+import argparse
+import difflib
+import os
+import stat
+import sys
+from pathlib import Path
+
+# Script layout:
+#   <repo>/init-admin-v2
+#   <repo>/gen/            (importable as `gen`)
+#   <repo>/admin_lib/
+#   <repo>/archetypes/
+#   <repo>/detectors/
+REPO_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(REPO_DIR))
+
+from gen.manifest import (  # noqa: E402
+    Manifest,
+    ManifestError,
+    dump as dump_manifest,
+    load as load_manifest,
+    require_python_311,
+)
+from gen.archetypes import resolve  # noqa: E402
+from gen.render import render, generator_commit_sha, RenderError  # noqa: E402
+from gen.detectors import detect as run_detectors  # noqa: E402
+
+
+ARCHETYPE_DIR = REPO_DIR / "archetypes"
+DETECTOR_DIR = REPO_DIR / "detectors"
+ADMIN_LIB_DIR = REPO_DIR / "admin_lib"
+
+
+# ---------------------------------------------------------------------------
+# Simple output helpers (stand-alone — we can't import admin_lib.core here
+# since the generator runs on the host, not inside a bundled admin script)
+# ---------------------------------------------------------------------------
+
+def info(msg):
+    print(f"\033[34m{msg}\033[0m")
+
+
+def ok(msg):
+    print(f"\033[32m{msg}\033[0m")
+
+
+def warn(msg):
+    print(f"\033[33m{msg}\033[0m", file=sys.stderr)
+
+
+def err(msg):
+    print(f"\033[31merror: {msg}\033[0m", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+def cmd_bootstrap(project_dir: Path, args) -> int:
+    """First-time setup: detect stack → write admin.toml → generate ./admin."""
+    manifest_path = project_dir / "admin.toml"
+    admin_path = project_dir / "admin"
+
+    if manifest_path.exists() and not args.force:
+        warn(f"{manifest_path} already exists — run with --regenerate or --force")
+        return 1
+
+    info(f"detecting project stack in {project_dir}")
+    starter = run_detectors(project_dir, DETECTOR_DIR)
+    detector_name = starter.pop("_detector", "unknown")
+    info(f"detector matched: {detector_name}")
+
+    project_name = starter.get("project_name") or project_dir.resolve().name.replace("-", " ").title()
+    manifest = Manifest(
+        project_name=project_name,
+        python_min="3.11",
+        archetypes=starter.get("archetypes", ["simple"]),
+        urls=starter.get("urls", {}),
+        overrides={},
+        custom={},
+    )
+
+    try:
+        sha = generator_commit_sha(REPO_DIR, allow_dirty=args.force_dirty)
+    except RenderError as e:
+        err(str(e))
+        return 1
+    manifest.generator_commit = sha
+
+    manifest_path.write_text(dump_manifest(manifest))
+    ok(f"wrote {manifest_path}")
+
+    rc = _regenerate(project_dir, args)
+    if rc != 0:
+        return rc
+
+    _ensure_tmp_gitignore(project_dir)
+    info(f"bootstrap complete. Edit {manifest_path} and run --regenerate to update ./admin.")
+    return 0
+
+
+def cmd_regenerate(project_dir: Path, args) -> int:
+    """Reload admin.toml and regenerate ./admin."""
+    return _regenerate(project_dir, args)
+
+
+def _regenerate(project_dir: Path, args) -> int:
+    try:
+        manifest = load_manifest(project_dir)
+    except ManifestError as e:
+        err(str(e))
+        return 1
+
+    try:
+        sha = generator_commit_sha(REPO_DIR, allow_dirty=args.force_dirty)
+    except RenderError as e:
+        err(str(e))
+        return 1
+
+    if manifest.generator_commit != sha:
+        info(f"updating generator_commit: {manifest.generator_commit} → {sha}")
+        manifest.generator_commit = sha
+        (project_dir / "admin.toml").write_text(dump_manifest(manifest))
+
+    try:
+        resolved = resolve(manifest, ARCHETYPE_DIR)
+    except Exception as e:
+        err(f"archetype resolution failed: {e}")
+        return 1
+
+    for event in resolved.merge_log:
+        info(f"merge: {event}")
+
+    try:
+        script = render(resolved, ADMIN_LIB_DIR, generator_commit=sha)
+    except Exception as e:
+        err(f"render failed: {e}")
+        return 1
+
+    admin_path = project_dir / "admin"
+    admin_path.write_text(script)
+    _make_executable(admin_path)
+    _ensure_tmp_gitignore(project_dir)
+    ok(f"wrote {admin_path} ({len(script.splitlines())} lines)")
+    return 0
+
+
+def cmd_audit(project_dir: Path, args) -> int:
+    """Regenerate in memory and diff against the on-disk ./admin."""
+    try:
+        manifest = load_manifest(project_dir)
+    except ManifestError as e:
+        err(str(e))
+        return 1
+
+    try:
+        sha = generator_commit_sha(REPO_DIR, allow_dirty=True)
+    except RenderError as e:
+        err(str(e))
+        return 1
+
+    try:
+        resolved = resolve(manifest, ARCHETYPE_DIR)
+        script = render(resolved, ADMIN_LIB_DIR, generator_commit=sha)
+    except Exception as e:
+        err(f"audit render failed: {e}")
+        return 1
+
+    admin_path = project_dir / "admin"
+    if not admin_path.exists():
+        warn(f"{admin_path} does not exist — run --regenerate")
+        return 1
+
+    on_disk = admin_path.read_text()
+    if on_disk == script:
+        ok("clean: ./admin matches admin.toml + current archetypes")
+        if manifest.generator_commit and manifest.generator_commit != sha:
+            info(
+                f"note: manifest generator_commit={manifest.generator_commit} "
+                f"but admin-project-tool HEAD={sha} — regenerate to refresh"
+            )
+        return 0
+
+    warn("drift detected between admin.toml and ./admin")
+    diff = difflib.unified_diff(
+        on_disk.splitlines(keepends=True),
+        script.splitlines(keepends=True),
+        fromfile="admin (on disk)",
+        tofile="admin (would regenerate)",
+        n=3,
+    )
+    sys.stdout.writelines(diff)
+    return 2
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_executable(path: Path) -> None:
+    st = path.stat()
+    path.chmod(st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def _ensure_tmp_gitignore(project_dir: Path) -> None:
+    tmp = project_dir / "tmp"
+    tmp.mkdir(exist_ok=True)
+    gi = tmp / ".gitignore"
+    if not gi.exists():
+        gi.write_text("*\n!.gitignore\n")
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def main() -> int:
+    require_python_311()
+
+    parser = argparse.ArgumentParser(prog="init-admin-v2", description=__doc__)
+    parser.add_argument("project_dir", nargs="?", default=".", help="project directory")
+    parser.add_argument("--regenerate", action="store_true", help="reload admin.toml and regenerate ./admin")
+    parser.add_argument("--audit", action="store_true", help="diff ./admin against what would be regenerated")
+    parser.add_argument("--force", action="store_true", help="overwrite existing admin.toml on bootstrap")
+    parser.add_argument("--force-dirty", action="store_true", help="allow generation from dirty admin-project-tool tree")
+    args = parser.parse_args()
+
+    project_dir = Path(args.project_dir).resolve()
+    if not project_dir.is_dir():
+        err(f"not a directory: {project_dir}")
+        return 1
+
+    if args.audit:
+        return cmd_audit(project_dir, args)
+    if args.regenerate:
+        return cmd_regenerate(project_dir, args)
+    return cmd_bootstrap(project_dir, args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -178,8 +178,75 @@ atexit.register(_cleanup_children)
 # run_cmd
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Environment variable interpolation
+# ---------------------------------------------------------------------------
+
+import re as _re_env
+
+_ENV_VAR_RE = _re_env.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+_referenced_env_vars: list[tuple[str, str | None]] = []
+
+
+def register_env_var(name, default=None):
+    """Record that the generated admin script references this env var.
+
+    Used by the `env` command to list all referenced vars.
+    """
+    pair = (name, default)
+    if pair not in _referenced_env_vars:
+        _referenced_env_vars.append(pair)
+
+
+def resolve_env(s):
+    """Expand ${VAR} and ${VAR:-default} in s using os.environ.
+
+    Fails fast with a clear error if a referenced var is unset and has no default.
+    Returns the expanded string. Idempotent on strings with no placeholders.
+    """
+    if not isinstance(s, str) or "${" not in s:
+        return s
+
+    def _sub(match):
+        name = match.group(1)
+        default = match.group(2)
+        val = os.environ.get(name)
+        if val is not None:
+            return val
+        if default is not None:
+            return default
+        err(f"required env var {name} is not set")
+        sys.exit(2)
+
+    return _ENV_VAR_RE.sub(_sub, s)
+
+
+def cmd_env(args):
+    """Built-in: list every env var the admin script references and show its state."""
+    if not _referenced_env_vars:
+        info("no env vars referenced by this admin script")
+        return
+    info("environment variables referenced by ./admin:")
+    width = max(len(name) for name, _ in _referenced_env_vars)
+    for name, default in _referenced_env_vars:
+        val = os.environ.get(name)
+        if val is not None:
+            status = f"{C.GREEN}set{C.RESET}"
+            shown = val if len(val) < 60 else val[:57] + "..."
+            print(f"  {name:<{width}}  {status}  = {shown}")
+        elif default is not None:
+            print(f"  {name:<{width}}  {C.YELLOW}default{C.RESET}  = {default}")
+        else:
+            print(f"  {name:<{width}}  {C.RED}UNSET{C.RESET}  (required)")
+
+
 def run_cmd(cmd, shell=True, capture_log=True, formatter=None):
-    """Run a command with line-buffered output, tee to tmp/run.log if capture_log is True."""
+    """Run a command with line-buffered output, tee to tmp/run.log if capture_log is True.
+
+    Strings are passed through resolve_env() first so ${VAR} and ${VAR:-default}
+    placeholders are expanded from os.environ at execution time.
+    """
+    cmd = resolve_env(cmd)
     os.makedirs(LOG_DIR, exist_ok=True)
     log_fh = None
     if capture_log:
@@ -580,6 +647,10 @@ def boot(project_name, load_dotenv=False):
     cmd_name = sys.argv[1]
     if cmd_name in ("-h", "--help", "help"):
         _print_help()
+        return
+
+    if cmd_name == "env":
+        cmd_env(sys.argv[2:])
         return
 
     all_cmds = _all_commands()
