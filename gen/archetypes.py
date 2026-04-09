@@ -8,8 +8,8 @@ Each archetype module defines a top-level ARCHETYPE dict:
         "modules": ["core"],                    # admin_lib modules required
         "urls": {"dev": "http://localhost:1313"},
         "commands": {
-            "build": {"run": "hugo --minify", "desc": "Build site", "core": True},
-            "dev":   {"run": "hugo server -D", "desc": "Run dev server", "core": True},
+            "build": {"run": "hugo --minify", "desc": "Build site"},
+            "dev":   {"run": "hugo server -D", "desc": "Run dev server"},
         },
     }
 
@@ -22,7 +22,7 @@ import importlib.util
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gen.manifest import Command, Manifest
+from gen.manifest import Command, Manifest, SPACER
 
 
 @dataclass
@@ -62,10 +62,11 @@ def load_archetype(archetype_dir: Path, name: str) -> Archetype:
 class ResolvedManifest:
     """A manifest with all archetypes loaded and merged into a final command set."""
     manifest: Manifest
-    commands: dict[str, Command]   # name -> Command, in insertion order
+    commands: dict[str, Command]   # name -> Command, in merge order
     urls: dict[str, str]
     modules: list[str]             # required admin_lib modules
     merge_log: list[str]           # human-readable merge events
+    display_order: list[str]       # final render order; "" entries mean spacer
 
 
 def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
@@ -107,7 +108,6 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
                 "run": override.get("run", base.run),
                 "desc": override.get("desc", base.desc),
                 "kind": override.get("kind", base.kind),
-                "core": override.get("core", base.core),
             }
             log.append(f"command '{cmd_name}' overridden by manifest")
             commands[cmd_name] = _to_command(cmd_name, merged, source="manifest")
@@ -129,12 +129,34 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
     for label, url in manifest.urls.items():
         urls[label] = url
 
+    # Compute display order: entries from manifest.order (commands + spacers),
+    # then any unlisted commands auto-appended in merge order.
+    listed: set[str] = set()
+    display: list[str] = []
+    for entry in manifest.order:
+        if entry == SPACER:
+            display.append(SPACER)
+            continue
+        if entry not in commands:
+            raise ArchetypeError(
+                f"order references unknown command '{entry}' "
+                f"(known: {sorted(commands)})"
+            )
+        if entry in listed:
+            raise ArchetypeError(f"order lists command '{entry}' more than once")
+        listed.add(entry)
+        display.append(entry)
+    for name in commands:
+        if name not in listed:
+            display.append(name)
+
     return ResolvedManifest(
         manifest=manifest,
         commands=commands,
         urls=urls,
         modules=_order_modules(modules),
         merge_log=log,
+        display_order=display,
     )
 
 
@@ -146,7 +168,6 @@ def _to_command(name: str, data: dict, source: str) -> Command:
         run=str(data["run"]),
         desc=str(data.get("desc", name)),
         kind=str(data.get("kind", "shell")),
-        core=bool(data.get("core", False)),
         source=source,
     )
 

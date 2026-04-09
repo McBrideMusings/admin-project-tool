@@ -14,12 +14,10 @@ ARCHETYPE = {
         "build": {
             "run": "hugo --minify",
             "desc": "Build production site",
-            "core": True,
         },
         "dev": {
             "run": "hugo server -D --bind 0.0.0.0",
             "desc": "Run Hugo dev server with drafts",
-            "core": True,
         },
         "clean": {
             "run": "rm -rf public resources",

@@ -15,7 +15,6 @@ from . import core as _core
 from .core import (
     C,
     _children,
-    _custom_commands,
     command,
     info,
     ok,

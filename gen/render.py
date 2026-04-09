@@ -26,7 +26,7 @@ from pathlib import Path
 from gen.archetypes import ResolvedManifest
 from gen.bundler import inline_admin_lib, lib_hash
 from gen.fragments import collect_env_var_calls, render_command
-from gen.manifest import Command
+from gen.manifest import Command, SPACER
 
 ADMIN_LIB_VERSION = "2.0.0-dev"
 BUNDLED_MARKER = "# @bundled"
@@ -71,9 +71,14 @@ def render(
     )
     url_call = f"set_urls([{url_pairs}])\n" if url_pairs else ""
 
+    # Emit command function defs in display order, interleaving add_spacer()
+    # calls for spacer entries. Registration order == display order.
     command_blocks: list[str] = []
-    for cmd in command_list:
-        command_blocks.append(render_command(cmd))
+    for entry in resolved.display_order:
+        if entry == SPACER:
+            command_blocks.append("add_spacer()\n")
+            continue
+        command_blocks.append(render_command(resolved.commands[entry]))
     commands_src = "\n".join(command_blocks)
 
     inline_src = ""

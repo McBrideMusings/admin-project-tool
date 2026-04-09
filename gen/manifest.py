@@ -22,8 +22,10 @@ class Command:
     run: str                       # shell string (may contain ${VAR})
     desc: str
     kind: str = "shell"            # shell | multi-target | apple-dev-loop | docker-reload-loop
-    core: bool = False             # show prominently in TUI / --help
     source: str = "manifest"       # which archetype contributed it (or "manifest")
+
+
+SPACER = ""  # sentinel used inside Manifest.order to denote a spacer row
 
 
 @dataclass
@@ -34,6 +36,7 @@ class Manifest:
     urls: dict[str, str]                     # label -> url (may contain ${VAR})
     overrides: dict[str, dict]               # command name -> partial command dict
     custom: dict[str, dict]                  # command name -> full command dict
+    order: list[str]                         # explicit display order; "" = spacer
     generator_commit: str | None = None
     inline_file: str | None = None           # path relative to project root
     raw: dict = field(default_factory=dict)  # original parsed TOML, for debugging
@@ -104,6 +107,17 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     inline = data.get("inline", {}) or {}
     inline_file = inline.get("file") if isinstance(inline, dict) else None
 
+    raw_order = data.get("order", [])
+    if not isinstance(raw_order, list) or not all(isinstance(x, str) for x in raw_order):
+        raise ManifestError(f"{source}: 'order' must be a list of strings")
+    # Normalize spacer tokens ("" and "---") to the SPACER sentinel.
+    order: list[str] = []
+    for entry in raw_order:
+        if entry == "" or entry == "---":
+            order.append(SPACER)
+        else:
+            order.append(entry)
+
     return Manifest(
         project_name=project_name,
         python_min=python_min,
@@ -111,6 +125,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         urls=urls,
         overrides=overrides,
         custom=custom_normalized,
+        order=order,
         generator_commit=data.get("generator_commit"),
         inline_file=inline_file,
         raw=data,
@@ -130,6 +145,9 @@ def dump(manifest: Manifest) -> str:
         lines.append(f'generator_commit = "{manifest.generator_commit}"')
     arch_list = ", ".join(f'"{a}"' for a in manifest.archetypes)
     lines.append(f"archetypes = [{arch_list}]")
+    if manifest.order:
+        entries = ", ".join(f'"{"" if e == SPACER else _escape(e)}"' for e in manifest.order)
+        lines.append(f"order = [{entries}]")
     lines.append("")
 
     if manifest.urls:

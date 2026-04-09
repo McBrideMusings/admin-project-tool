@@ -94,6 +94,7 @@ def cmd_bootstrap(project_dir: Path, args) -> int:
         urls=starter.get("urls", {}),
         overrides={},
         custom={},
+        order=[],
     )
 
     try:

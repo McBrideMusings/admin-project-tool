@@ -13,7 +13,6 @@ ARCHETYPE = {
         "build": {
             "run": "echo 'TODO: set [commands.build.run] in admin.toml'",
             "desc": "Build the project",
-            "core": True,
         },
         "test": {
             "run": "echo 'TODO: set [commands.test.run] in admin.toml'",

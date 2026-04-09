@@ -142,7 +142,7 @@ All paths relative to `~/Projects/admin-project-tool/`.
 - `templates/` — **removed.** Replaced entirely by archetypes + fragments. Keep a git tag on the last v1 commit for reference.
 
 **Unchanged (reused as-is):**
-- `admin_lib/core.py` — `command`/`core` decorators, `run_cmd`, `set_urls`, `boot`, TUI, signal handling. The generator emits code that calls into these exactly as today.
+- `admin_lib/core.py` — `command` decorator, `add_spacer`, `run_cmd`, `set_urls`, `boot`, TUI, signal handling. The generator emits code that calls into these exactly as today. Command display order follows registration order (which the generator drives from `admin.toml`'s `order` list); spacers are blank rows inserted via `add_spacer()`.
 - `admin_lib/apple.py`, `docker.py`, `remote.py`, `unraid.py`, `cache.py`, `icons.py`, `logs.py` — archetypes reference these from their fragments.
 
 **Claude Code integration:**

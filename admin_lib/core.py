@@ -317,55 +317,35 @@ def sync_deploy(src_dir, dest, excludes=None, post_sync=None):
 # Command registry
 # ---------------------------------------------------------------------------
 
-# Core command names in canonical TUI order.
-# Projects implement whichever apply — none are mandatory.
-#   build  — Compile/produce artifacts. Don't install, don't run.
-#   dev    — Development build + run with hot reload loop.
-#   deploy — Build for production and install/ship.
-CORE_COMMANDS = ("build", "dev", "deploy")
-
-_core_commands = OrderedDict()    # name → {func, desc}
-_custom_commands = OrderedDict()  # name → {func, desc}
+# Ordered registry: entries are either {"func": func, "desc": desc} for
+# commands or {"spacer": True} for blank rows in the TUI/help output.
+# Registration order == display order; the generator emits @command(...) and
+# add_spacer() calls in whatever order admin.toml's `order` field dictates.
+_commands = OrderedDict()         # name/sentinel → entry dict
 _subcommand_help = {}
+_spacer_counter = 0
 
 
 def _all_commands():
-    """Return core commands (in order) + custom commands, for iteration."""
-    merged = OrderedDict()
-    for name in CORE_COMMANDS:
-        if name in _core_commands:
-            merged[name] = _core_commands[name]
-    merged.update(_custom_commands)
-    return merged
-
-
-def core(name, description):
-    """Decorator to register a core command (build/dev/deploy).
-
-    Core commands appear first in the TUI in a fixed order, visually
-    separated from project-specific commands.
-    """
-    if name not in CORE_COMMANDS:
-        raise ValueError(
-            f"'{name}' is not a core command. "
-            f"Use @command() for project-specific commands, "
-            f"or choose from: {', '.join(CORE_COMMANDS)}"
-        )
-    def decorator(func):
-        _core_commands[name] = {"func": func, "desc": description}
-        return func
-    return decorator
+    """Return only real commands (spacers filtered) for dispatch/iteration."""
+    return OrderedDict(
+        (name, entry) for name, entry in _commands.items() if "func" in entry
+    )
 
 
 def command(name, description):
-    """Decorator to register a project-specific command.
-
-    These appear after the core commands in the TUI.
-    """
+    """Decorator to register a command. TUI order follows registration order."""
     def decorator(func):
-        _custom_commands[name] = {"func": func, "desc": description}
+        _commands[name] = {"func": func, "desc": description}
         return func
     return decorator
+
+
+def add_spacer():
+    """Insert a blank row into the TUI/help menu at the current position."""
+    global _spacer_counter
+    _spacer_counter += 1
+    _commands[f"__spacer_{_spacer_counter}__"] = {"spacer": True}
 
 
 def subcommand_help(name):
@@ -409,16 +389,12 @@ def read_key():
 
 
 def _build_menu_layout():
-    """Build the menu item list with an optional separator between standard and custom.
+    """Return the full ordered list of menu entry keys (commands + spacer keys)."""
+    return list(_commands.keys())
 
-    Returns (items, separator_index) where items is a list of command names
-    and separator_index is the position of the visual divider (or -1 if none).
-    """
-    std = [n for n in CORE_COMMANDS if n in _core_commands]
-    cust = list(_custom_commands.keys())
-    if std and cust:
-        return std + cust, len(std)
-    return std + cust, -1
+
+def _is_spacer(key):
+    return _commands.get(key, {}).get("spacer") is True
 
 
 def _tui_menu():
@@ -429,20 +405,29 @@ def _tui_menu():
 
     import termios
 
-    all_cmds = _all_commands()
-    items, sep_idx = _build_menu_layout()
-    sel = 0
+    items = _build_menu_layout()
     num = len(items)
 
-    if num == 0:
+    if num == 0 or all(_is_spacer(k) for k in items):
         warn("No commands registered.")
         return
+
+    # Start selection on the first non-spacer item.
+    sel = next(i for i, k in enumerate(items) if not _is_spacer(k))
+
+    def move(delta):
+        nonlocal sel
+        i = sel
+        for _ in range(num):
+            i = (i + delta) % num
+            if not _is_spacer(items[i]):
+                sel = i
+                return
 
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
 
-    has_sep = sep_idx > 0
-    menu_lines = num + (1 if has_sep else 0) + 2
+    menu_lines = num + 2
 
     print(f"{C.BOLD}{_project_name}{C.RESET}\n")
     print_url_status()
@@ -455,10 +440,12 @@ def _tui_menu():
     def draw():
         sys.stdout.write("\033[s")
         for i, name in enumerate(items):
-            if has_sep and i == sep_idx:
-                sys.stdout.write("\033[2K\n")
-            desc = all_cmds[name]["desc"]
             sys.stdout.write("\033[2K")
+            if _is_spacer(name):
+                sys.stdout.write("\n")
+                continue
+            entry = _commands[name]
+            desc = entry["desc"]
             if i == sel:
                 sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {name:<14}{C.RESET} {desc}\n")
             else:
@@ -477,9 +464,9 @@ def _tui_menu():
                 print()
                 return
             elif key in ("up", "k"):
-                sel = (sel - 1) % num
+                move(-1)
             elif key in ("down", "j"):
-                sel = (sel + 1) % num
+                move(1)
             elif key in ("\r", "\n"):
                 sys.stdout.write("\033[J")
                 sys.stdout.flush()
@@ -487,7 +474,7 @@ def _tui_menu():
                 print()
                 os.makedirs(LOG_DIR, exist_ok=True)
                 open(LOG_FILE, "w").close()
-                all_cmds[items[sel]]["func"]([])
+                _commands[items[sel]]["func"]([])
                 return
     except (KeyboardInterrupt, EOFError):
         sys.stdout.write(f"\033[{menu_lines}B")
@@ -604,18 +591,16 @@ def dispatch_target(targets, cmd_name, args, handlers):
 
 def _print_help():
     """Print help text (non-TTY fallback and --help)."""
-    all_cmds = _all_commands()
-    _, sep_idx = _build_menu_layout()
-    items = list(all_cmds.keys())
-
     print(f"{C.BOLD}{_project_name}{C.RESET}")
     print_url_status()
     print(f"Usage: ./admin <command> [args...]\n")
     print("Commands:")
-    for i, name in enumerate(items):
-        if sep_idx > 0 and i == sep_idx:
+    for name in _build_menu_layout():
+        if _is_spacer(name):
             print()
-        print(f"  {C.CYAN}{name:<16}{C.RESET} {all_cmds[name]['desc']}")
+            continue
+        entry = _commands[name]
+        print(f"  {C.CYAN}{name:<16}{C.RESET} {entry['desc']}")
     print(f"\nRun {C.DIM}./admin{C.RESET} with no args for interactive menu.")
 
 
