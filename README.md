@@ -70,18 +70,8 @@ Bundled files include a `@bundled` marker and can be re-bundled when the library
 
 When multiple project patterns are detected (e.g., an Xcode project + a Docker subdirectory), init-admin generates a multi-target admin file with `dispatch_target` routing and `pick_target` menus.
 
-## Templates
+## Archetypes (v2)
 
-### Single-target
-- `templates/basic.py` — Go, Rust, generic projects
-- `templates/apple.py` — Xcode/Swift projects
-- `templates/docker.py` — Docker/web server projects (includes URL status and `open` command)
-
-### Multi-target
-- `templates/multi_header.py` — Shared header with computed imports
-- `templates/multi_router.py` — Command routing via `dispatch_target`
-- `templates/multi_footer.py` — Clean, reload, boot
-- `templates/fragments/apple.py` — Apple target (build/dev/deploy via xcodebuild + dev loops)
-- `templates/fragments/docker.py` — Docker target (build/dev/deploy via docker_build + run_with_reload)
-- `templates/fragments/sync.py` — Sync target (build/deploy via run_cmd + sync_deploy, no dev)
-- `templates/fragments/basic.py` — Basic target (build/dev/deploy via run_cmd + run_with_reload)
+v2 replaces the single-template model with composable archetypes under `archetypes/`.
+A project's `admin.toml` lists one or more archetypes; their command sets are merged
+in order and emitted by the generator in `gen/`. See `docs/v2-design.md` for details.

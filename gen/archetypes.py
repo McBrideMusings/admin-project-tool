@@ -108,13 +108,14 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
                 "run": override.get("run", base.run),
                 "desc": override.get("desc", base.desc),
                 "kind": override.get("kind", base.kind),
+                "targets": override.get("targets", base.targets),
             }
             log.append(f"command '{cmd_name}' overridden by manifest")
             commands[cmd_name] = _to_command(cmd_name, merged, source="manifest")
         else:
-            if "run" not in override:
+            if "run" not in override and "targets" not in override:
                 raise ArchetypeError(
-                    f"manifest [commands.{cmd_name}] must include 'run' "
+                    f"manifest [commands.{cmd_name}] must include 'run' or 'targets' "
                     f"(no archetype provides it)"
                 )
             commands[cmd_name] = _to_command(cmd_name, override, source="manifest")
@@ -161,14 +162,21 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
 
 
 def _to_command(name: str, data: dict, source: str) -> Command:
-    if "run" not in data:
-        raise ArchetypeError(f"command '{name}' from {source}: missing 'run'")
+    kind = str(data.get("kind", "shell"))
+    targets = data.get("targets") or {}
+    if targets and not isinstance(targets, dict):
+        raise ArchetypeError(
+            f"command '{name}' from {source}: 'targets' must be a table of target->shell"
+        )
+    if "run" not in data and not targets:
+        raise ArchetypeError(f"command '{name}' from {source}: missing 'run' or 'targets'")
     return Command(
         name=name,
-        run=str(data["run"]),
+        run=str(data.get("run", "")),
         desc=str(data.get("desc", name)),
-        kind=str(data.get("kind", "shell")),
+        kind=kind,
         source=source,
+        targets={str(k): str(v) for k, v in targets.items()},
     )
 
 

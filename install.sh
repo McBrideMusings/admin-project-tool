@@ -27,10 +27,8 @@ import sys; sys.path.insert(0, '$DEST_DIR')
 from admin_lib import __version__; print(__version__)
 ")"
 
-# Install templates
+# v1 templates/ directory was removed in v2 — scrub any leftover install.
 rm -rf "$DEST_DIR/templates"
-cp -R "$SRC_DIR/templates" "$DEST_DIR/templates"
-echo "Installed templates to $DEST_DIR/templates/"
 
 # Install init-admin
 cp "$SRC_DIR/init-admin" "$DEST_DIR/init-admin"

@@ -15,29 +15,64 @@ class DetectorError(Exception):
     pass
 
 
-# Order matters: first match wins. More specific stacks should come before
-# more generic ones. 'simple' is the fallback and should always be last.
+# All detectors run; matches are merged in listed order (later wins on URL/name
+# conflicts, archetype lists are unioned). 'simple' runs last and is treated as
+# a fallback — its contribution is only used if no other detector matched.
 DETECTOR_ORDER = [
     "hugo",
+    "go-cli",
+    "firefox-extension",
+    "stash-plugin",
+    "unraid-plugin",
+    "docker-unraid",
+    "apple",
     "simple",
 ]
 
 
 def detect(project_dir: Path, detector_dir: Path) -> dict:
-    """Run detectors in order, return the first partial manifest that matches.
+    """Run all detectors, union their archetype contributions.
 
-    Always returns a dict (falls back to an empty 'simple' archetype manifest).
+    Each detector returns a partial manifest dict (or None). Archetype lists
+    across detectors are concatenated (dedup, detector order preserved). URL
+    and project_name keys are merged with later detectors winning. The
+    'simple' fallback is only included if nothing else matched.
     """
+    combined_archetypes: list[str] = []
+    combined_urls: dict[str, str] = {}
+    project_name: str | None = None
+    matched_detectors: list[str] = []
+
     for name in DETECTOR_ORDER:
+        if name == "simple":
+            continue  # handled as fallback below
         path = detector_dir / f"{name}.py"
         if not path.exists():
             continue
-        mod = _load(path, name)
-        result = mod.detect(project_dir)
-        if result:
-            result.setdefault("_detector", name)
-            return result
-    return {"archetypes": ["simple"], "_detector": "fallback"}
+        result = _load(path, name).detect(project_dir)
+        if not result:
+            continue
+        matched_detectors.append(name)
+        for a in result.get("archetypes", []):
+            if a not in combined_archetypes:
+                combined_archetypes.append(a)
+        combined_urls.update(result.get("urls", {}))
+        if "project_name" in result:
+            project_name = result["project_name"]
+
+    if not combined_archetypes:
+        combined_archetypes = ["simple"]
+        matched_detectors = ["fallback"]
+
+    out: dict = {
+        "archetypes": combined_archetypes,
+        "_detector": "+".join(matched_detectors),
+    }
+    if combined_urls:
+        out["urls"] = combined_urls
+    if project_name:
+        out["project_name"] = project_name
+    return out
 
 
 def _load(path: Path, name: str):

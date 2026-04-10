@@ -19,10 +19,11 @@ MANIFEST_FILENAME = "admin.toml"
 class Command:
     """A single admin command, post-merge."""
     name: str
-    run: str                       # shell string (may contain ${VAR})
+    run: str                       # shell string (may contain ${VAR}); "" allowed when targets is set
     desc: str
     kind: str = "shell"            # shell | multi-target | apple-dev-loop | docker-reload-loop
     source: str = "manifest"       # which archetype contributed it (or "manifest")
+    targets: dict = field(default_factory=dict)  # target name -> shell string (for multi-target kinds)
 
 
 SPACER = ""  # sentinel used inside Manifest.order to denote a spacer row

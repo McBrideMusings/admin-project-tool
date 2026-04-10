@@ -20,7 +20,13 @@ class BundlerError(Exception):
     pass
 
 
-_STRIP_RELATIVE_IMPORT_RE = re.compile(r"^\s*from\s+\.[\w.]*\s+import[^\n]*\n", re.MULTILINE)
+# Strips `from .mod import X` (single line), `from . import foo as bar`, and
+# multi-line parenthesized relative imports. All bundled modules share one flat
+# namespace after inlining, so relative imports become no-ops.
+_STRIP_RELATIVE_IMPORT_RE = re.compile(
+    r"^\s*from\s+\.[\w.]*\s+import\s*(?:\([^)]*\)|[^\n]*)\n",
+    re.MULTILINE,
+)
 
 
 def inline_admin_lib(admin_lib_dir: Path, modules: list[str]) -> str:
@@ -37,7 +43,13 @@ def inline_admin_lib(admin_lib_dir: Path, modules: list[str]) -> str:
         if not src_path.exists():
             raise BundlerError(f"admin_lib module not found: {src_path}")
         src = src_path.read_text()
-        src = _STRIP_RELATIVE_IMPORT_RE.sub("", src)
+        # Replace with `pass` (matching leading whitespace) so any enclosing
+        # try/except block stays syntactically valid.
+        def _repl(m):
+            match_text = m.group(0)
+            indent = match_text[: len(match_text) - len(match_text.lstrip())]
+            return f"{indent}pass\n"
+        src = _STRIP_RELATIVE_IMPORT_RE.sub(_repl, src)
         parts.append(f"# === admin_lib.{name} ===\n{src.rstrip()}\n")
     return "\n".join(parts)
 

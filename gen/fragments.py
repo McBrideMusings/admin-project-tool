@@ -47,8 +47,88 @@ def render_shell(cmd: Command) -> str:
     return body
 
 
+def render_multi_target(cmd: Command) -> str:
+    """A command that dispatches to one of several shell strings based on a target arg.
+
+    Archetype shape:
+        "build": {"kind": "multi-target", "desc": "...", "targets": {
+            "mac": "xcodebuild ... -destination 'platform=macOS'",
+            "ios": "xcodebuild ... -destination 'platform=iOS Simulator,...'",
+        }}
+
+    Generated function: `./admin build` → pick_target menu; `./admin build mac` → run mac.
+    """
+    if not cmd.targets:
+        raise FragmentError(f"multi-target command '{cmd.name}' has no targets")
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    targets_literal = "{" + ", ".join(
+        f"{_pyrepr(k)}: {_pyrepr(v)}" for k, v in cmd.targets.items()
+    ) + "}"
+    labels_literal = "[" + ", ".join(
+        f"({_pyrepr(k)}, {_pyrepr(k)})" for k in cmd.targets
+    ) + "]"
+    body = textwrap.dedent(f'''\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            from collections import OrderedDict
+            _targets = {targets_literal}
+            _menu = OrderedDict({labels_literal})
+            picked = args[0] if args and not args[0].startswith("-") else None
+            if picked is None:
+                if len(_targets) == 1:
+                    picked = next(iter(_targets))
+                else:
+                    picked = pick_target(_menu, {_pyrepr(cmd.desc + " — select target")})
+                    if not picked:
+                        return
+            if picked not in _targets:
+                err({_pyrepr(f"{cmd.name}: unknown target '")} + picked + "'")
+                sys.exit(1)
+            shell = _targets[picked]
+            info({_pyrepr(f"running [" + cmd.name + ":")} + picked + "]: " + shell)
+            rc = run_cmd(shell)
+            if rc != 0:
+                err({_pyrepr(cmd.name + " failed")})
+                sys.exit(rc)
+            ok({_pyrepr(cmd.name + " complete")})
+    ''')
+    return body
+
+
+def render_apple_dev_loop(cmd: Command) -> str:
+    """An apple dev loop — same multi-target shape, semantically a long-running build+watch.
+
+    The underlying admin_lib.apple.dev_loop_* helpers take heavy project-specific
+    config (scheme, process, subsystem, icons). That's out of scope for a shell-string
+    archetype; projects that need the full loop use `[inline]`. This fragment handles
+    the common case: a multi-target xcodebuild-based dev shell with pick_target.
+    """
+    return render_multi_target(cmd)
+
+
+def render_docker_reload_loop(cmd: Command) -> str:
+    """A docker command wrapped in admin_lib.docker.run_with_reload.
+
+    The loop watches for SIGUSR1 / 'r' keypress and re-runs the shell command.
+    Requires the 'docker' module to be in the archetype's modules list.
+    """
+    if not cmd.run:
+        raise FragmentError(f"docker-reload-loop command '{cmd.name}' needs 'run'")
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    body = textwrap.dedent(f'''\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            info({_pyrepr("reload loop: " + cmd.run)})
+            run_with_reload({_pyrepr(cmd.run)}, target={_pyrepr(cmd.name)})
+    ''')
+    return body
+
+
 _RENDERERS = {
     "shell": render_shell,
+    "multi-target": render_multi_target,
+    "apple-dev-loop": render_apple_dev_loop,
+    "docker-reload-loop": render_docker_reload_loop,
 }
 
 
@@ -58,7 +138,10 @@ def _safe_ident(name: str) -> str:
 
 def _pyrepr(s: str) -> str:
     """Python repr that prefers double quotes for readability."""
-    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    r = repr(s)
+    if r[0] == "'":
+        return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return r
 
 
 def collect_env_var_calls(commands: list[Command]) -> list[str]:
@@ -71,11 +154,13 @@ def collect_env_var_calls(commands: list[Command]) -> list[str]:
     pattern = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
     seen: dict[str, str | None] = {}
     for cmd in commands:
-        for m in pattern.finditer(cmd.run):
-            name = m.group(1)
-            default = m.group(2)
-            if name not in seen or (seen[name] is None and default is not None):
-                seen[name] = default
+        scan_strings = [cmd.run] + list(cmd.targets.values())
+        for text in scan_strings:
+            for m in pattern.finditer(text):
+                name = m.group(1)
+                default = m.group(2)
+                if name not in seen or (seen[name] is None and default is not None):
+                    seen[name] = default
     lines = []
     for name, default in seen.items():
         if default is None:
