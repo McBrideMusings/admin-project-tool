@@ -13,9 +13,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from gen.archetypes import load_archetype, resolve  # noqa: E402
+from gen.archetypes import load_archetype, resolve, ArchetypeError, _to_command  # noqa: E402
 from gen.detectors import detect  # noqa: E402
-from gen.manifest import Manifest  # noqa: E402
+from gen.fragments import collect_env_var_calls  # noqa: E402
+from gen.manifest import Command, Manifest, ManifestError, parse  # noqa: E402
 from gen.render import render  # noqa: E402
 
 ARCH_DIR = REPO / "archetypes"
@@ -99,9 +100,58 @@ def test_hugo_roundtrip():
     print("OK: hugo round-trips")
 
 
+def test_unknown_command_key_rejected():
+    try:
+        _to_command("bad", {"run": "echo hi", "desc": "test", "desription": "typo"}, source="test")
+        assert False, "should have raised ArchetypeError"
+    except ArchetypeError as e:
+        assert "desription" in str(e)
+        assert "unknown keys" in str(e)
+    print("OK: unknown command key rejected")
+
+
+def test_invalid_kind_rejected():
+    try:
+        _to_command("bad", {"run": "echo hi", "desc": "test", "kind": "bogus"}, source="test")
+        assert False, "should have raised ArchetypeError"
+    except ArchetypeError as e:
+        assert "bogus" in str(e)
+        assert "unknown kind" in str(e)
+    print("OK: invalid kind rejected")
+
+
+def test_python_min_validation():
+    for bad in ["3", "3.11.0", "abc", "3.11+", ""]:
+        try:
+            parse({"project_name": "T", "python_min": bad})
+            assert False, f"should have rejected python_min={bad!r}"
+        except ManifestError as e:
+            assert "MAJOR.MINOR" in str(e)
+    parse({"project_name": "T", "python_min": "3.11"})
+    parse({"project_name": "T", "python_min": "3.12"})
+    print("OK: python_min validation works")
+
+
+def test_env_vars_from_urls():
+    cmds = [Command(name="x", run="echo ${HOST}", desc="test")]
+    urls = {"prod": "${APP_URL:-http://localhost}", "dev": "http://localhost:8080"}
+    lines = collect_env_var_calls(cmds, urls)
+    var_names = " ".join(lines)
+    assert "HOST" in var_names, "should find HOST from command"
+    assert "APP_URL" in var_names, "should find APP_URL from url"
+    assert "http://localhost" in var_names, "should preserve default"
+    lines_no_urls = collect_env_var_calls(cmds)
+    assert not any("APP_URL" in l for l in lines_no_urls), "without urls param, APP_URL should not appear"
+    print("OK: env vars from urls detected")
+
+
 if __name__ == "__main__":
     test_all_archetypes_load_and_validate()
     test_composition_docker_unraid_plus_apple()
     test_detector_composition()
     test_hugo_roundtrip()
+    test_unknown_command_key_rejected()
+    test_invalid_kind_rejected()
+    test_python_min_validation()
+    test_env_vars_from_urls()
     print("\nAll tests passed.")

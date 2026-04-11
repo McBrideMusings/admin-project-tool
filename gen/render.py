@@ -63,7 +63,7 @@ def render(
     lib_src = inline_admin_lib(admin_lib_dir, resolved.modules)
 
     command_list = list(resolved.commands.values())
-    env_calls = collect_env_var_calls(command_list)
+    env_calls = collect_env_var_calls(command_list, resolved.urls)
     env_block = "\n".join(env_calls) + ("\n" if env_calls else "")
 
     url_pairs = ", ".join(

@@ -7,6 +7,7 @@ inside the generated ./admin script, not here.
 """
 from __future__ import annotations
 
+import re
 import sys
 import tomllib
 from dataclasses import dataclass, field
@@ -71,6 +72,8 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     python_min = data.get("python_min", "3.11")
     if not isinstance(python_min, str):
         raise ManifestError(f"{source}: 'python_min' must be a string")
+    if not re.fullmatch(r"\d+\.\d+", python_min):
+        raise ManifestError(f"{source}: 'python_min' must be MAJOR.MINOR (e.g. '3.11'), got '{python_min}'")
 
     archetypes = data.get("archetypes", [])
     if not isinstance(archetypes, list) or not all(isinstance(a, str) for a in archetypes):

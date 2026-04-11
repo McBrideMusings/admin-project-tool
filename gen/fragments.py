@@ -131,6 +131,8 @@ _RENDERERS = {
     "docker-reload-loop": render_docker_reload_loop,
 }
 
+KNOWN_KINDS = set(_RENDERERS)
+
 
 def _safe_ident(name: str) -> str:
     return name.replace("-", "_").replace(":", "_").replace(".", "_")
@@ -144,8 +146,17 @@ def _pyrepr(s: str) -> str:
     return r
 
 
-def collect_env_var_calls(commands: list[Command]) -> list[str]:
-    """Scan command run-strings for ${VAR} placeholders and emit register_env_var calls.
+def _scan_for_env_vars(text: str, pattern: object, seen: dict[str, str | None]) -> None:
+    """Extract env var names and defaults from a single string."""
+    for m in pattern.finditer(text):
+        name = m.group(1)
+        default = m.group(2)
+        if name not in seen or (seen[name] is None and default is not None):
+            seen[name] = default
+
+
+def collect_env_var_calls(commands: list[Command], urls: dict[str, str] | None = None) -> list[str]:
+    """Scan command run-strings and URL values for ${VAR} placeholders and emit register_env_var calls.
 
     Each call lets the runtime `env` command list referenced vars even before they're
     resolved. Returns Python source lines (no trailing newline).
@@ -153,14 +164,14 @@ def collect_env_var_calls(commands: list[Command]) -> list[str]:
     import re
     pattern = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
     seen: dict[str, str | None] = {}
+
     for cmd in commands:
-        scan_strings = [cmd.run] + list(cmd.targets.values())
-        for text in scan_strings:
-            for m in pattern.finditer(text):
-                name = m.group(1)
-                default = m.group(2)
-                if name not in seen or (seen[name] is None and default is not None):
-                    seen[name] = default
+        for text in [cmd.run] + list(cmd.targets.values()):
+            _scan_for_env_vars(text, pattern, seen)
+
+    for text in (urls or {}).values():
+        _scan_for_env_vars(text, pattern, seen)
+
     lines = []
     for name, default in seen.items():
         if default is None:

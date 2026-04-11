@@ -22,6 +22,7 @@ import importlib.util
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from gen.fragments import KNOWN_KINDS
 from gen.manifest import Command, Manifest, SPACER
 
 
@@ -161,8 +162,22 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
     )
 
 
+_VALID_COMMAND_KEYS = {"run", "desc", "kind", "targets"}
+
+
 def _to_command(name: str, data: dict, source: str) -> Command:
+    unknown = set(data) - _VALID_COMMAND_KEYS
+    if unknown:
+        raise ArchetypeError(
+            f"command '{name}' from {source}: unknown keys {sorted(unknown)}, "
+            f"valid: {sorted(_VALID_COMMAND_KEYS)}"
+        )
     kind = str(data.get("kind", "shell"))
+    if kind not in KNOWN_KINDS:
+        raise ArchetypeError(
+            f"command '{name}' from {source}: unknown kind '{kind}', "
+            f"known: {sorted(KNOWN_KINDS)}"
+        )
     targets = data.get("targets") or {}
     if targets and not isinstance(targets, dict):
         raise ArchetypeError(
