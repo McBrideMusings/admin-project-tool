@@ -35,6 +35,7 @@ class Manifest:
     project_name: str
     python_min: str
     archetypes: list[str]
+    modules: list[str]                       # extra admin_lib modules to bundle (beyond archetype deps)
     urls: dict[str, str]                     # label -> url (may contain ${VAR})
     overrides: dict[str, dict]               # command name -> partial command dict
     custom: dict[str, dict]                  # command name -> full command dict
@@ -78,6 +79,10 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     archetypes = data.get("archetypes", [])
     if not isinstance(archetypes, list) or not all(isinstance(a, str) for a in archetypes):
         raise ManifestError(f"{source}: 'archetypes' must be a list of strings")
+
+    modules = data.get("modules", [])
+    if not isinstance(modules, list) or not all(isinstance(m, str) for m in modules):
+        raise ManifestError(f"{source}: 'modules' must be a list of strings")
 
     urls = data.get("urls", {}) or {}
     if not isinstance(urls, dict):
@@ -126,6 +131,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         project_name=project_name,
         python_min=python_min,
         archetypes=archetypes,
+        modules=modules,
         urls=urls,
         overrides=overrides,
         custom=custom_normalized,
@@ -149,6 +155,9 @@ def dump(manifest: Manifest) -> str:
         lines.append(f'generator_commit = "{manifest.generator_commit}"')
     arch_list = ", ".join(f'"{a}"' for a in manifest.archetypes)
     lines.append(f"archetypes = [{arch_list}]")
+    if manifest.modules:
+        mod_list = ", ".join(f'"{m}"' for m in manifest.modules)
+        lines.append(f"modules = [{mod_list}]")
     if manifest.order:
         entries = ", ".join(f'"{"" if e == SPACER else _escape(e)}"' for e in manifest.order)
         lines.append(f"order = [{entries}]")

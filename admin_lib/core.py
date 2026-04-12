@@ -122,6 +122,19 @@ def _init(project_name, project_root=None):
     LOG_FILE = os.path.join(LOG_DIR, "run.log")
 
 
+def set_log_context(*parts):
+    """Redirect LOG_FILE to a named log based on the command path.
+
+    Example: set_log_context("dev", "macos") → tmp/dev-macos.log
+    The file is created/truncated immediately so callers don't need to.
+    """
+    global LOG_FILE
+    name = "-".join(str(p) for p in parts if p)
+    LOG_FILE = os.path.join(LOG_DIR, f"{name}.log")
+    os.makedirs(LOG_DIR, exist_ok=True)
+    open(LOG_FILE, "w").close()
+
+
 # ---------------------------------------------------------------------------
 # .env loading
 # ---------------------------------------------------------------------------

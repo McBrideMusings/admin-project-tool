@@ -84,6 +84,7 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
     commands: dict[str, Command] = {}
     urls: dict[str, str] = {}
     modules: set[str] = {"core"}
+    modules.update(manifest.modules)
     log: list[str] = []
 
     for arch_name in manifest.archetypes:

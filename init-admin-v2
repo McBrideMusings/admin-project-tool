@@ -148,8 +148,17 @@ def _regenerate(project_dir: Path, args) -> int:
     for event in resolved.merge_log:
         info(f"merge: {event}")
 
+    inline_body = None
+    if manifest.inline_file:
+        inline_path = project_dir / manifest.inline_file
+        if not inline_path.exists():
+            err(f"inline file not found: {inline_path}")
+            return 1
+        inline_body = inline_path.read_text()
+        info(f"inline: {manifest.inline_file} ({len(inline_body.splitlines())} lines)")
+
     try:
-        script = render(resolved, ADMIN_LIB_DIR, generator_commit=sha)
+        script = render(resolved, ADMIN_LIB_DIR, generator_commit=sha, inline_body=inline_body)
     except Exception as e:
         err(f"render failed: {e}")
         return 1
@@ -176,9 +185,15 @@ def cmd_audit(project_dir: Path, args) -> int:
         err(str(e))
         return 1
 
+    inline_body = None
+    if manifest.inline_file:
+        inline_path = project_dir / manifest.inline_file
+        if inline_path.exists():
+            inline_body = inline_path.read_text()
+
     try:
         resolved = resolve(manifest, ARCHETYPE_DIR)
-        script = render(resolved, ADMIN_LIB_DIR, generator_commit=sha)
+        script = render(resolved, ADMIN_LIB_DIR, generator_commit=sha, inline_body=inline_body)
     except Exception as e:
         err(f"audit render failed: {e}")
         return 1

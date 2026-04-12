@@ -84,6 +84,7 @@ def render_multi_target(cmd: Command) -> str:
             if picked not in _targets:
                 err({_pyrepr(f"{cmd.name}: unknown target '")} + picked + "'")
                 sys.exit(1)
+            set_log_context({_pyrepr(cmd.name)}, picked)
             shell = _targets[picked]
             info({_pyrepr(f"running [" + cmd.name + ":")} + picked + "]: " + shell)
             rc = run_cmd(shell)
