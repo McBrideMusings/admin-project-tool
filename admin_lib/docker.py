@@ -15,9 +15,10 @@ import time
 
 from collections import OrderedDict
 
-from . import core as _core
 from .core import (
     C,
+    LOG_DIR,
+    LOG_FILE,
     _children,
     command,
     info,
@@ -25,6 +26,7 @@ from .core import (
     warn,
     err,
     register_cleanup,
+    run_cmd,
     _urls,
     check_url,
     format_url_status,
@@ -84,7 +86,7 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
     """
     global _rebuild_requested
     pid_file = f"{_ADMIN_PID_PREFIX}-{target}.pid"
-    os.makedirs(_core.LOG_DIR, exist_ok=True)
+    os.makedirs(LOG_DIR, exist_ok=True)
 
     with open(pid_file, "w") as f:
         f.write(str(os.getpid()))
@@ -99,7 +101,7 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
             launch_time = time.monotonic()
             info(f"Starting {target}...")
 
-            log_fh = open(_core.LOG_FILE, "a")
+            log_fh = open(LOG_FILE, "a")
             proc = subprocess.Popen(
                 cmd, shell=shell,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -207,8 +209,8 @@ def run_parallel(targets, formatter=None):
     """
     import threading
 
-    os.makedirs(_core.LOG_DIR, exist_ok=True)
-    log_fh = open(_core.LOG_FILE, "a")
+    os.makedirs(LOG_DIR, exist_ok=True)
+    log_fh = open(LOG_FILE, "a")
     procs = []
     threads = []
     return_codes = [None] * len(targets)
@@ -266,7 +268,7 @@ def run_parallel(targets, formatter=None):
 
 def docker_build(image, context_dir=".", platform=None):
     """Build a Docker image. Returns exit code."""
-    from .core import run_cmd
+
     plat = f"--platform {platform} " if platform else ""
     info(f"Building Docker image: {image}...")
     return run_cmd(f"docker build {plat}-t {image} {context_dir}")
@@ -277,7 +279,7 @@ def docker_deploy(image, host, run_args=""):
 
     Returns exit code.
     """
-    from .core import run_cmd
+
 
     info(f"Transferring image to {host}...")
     rc = run_cmd(f"docker save {image} | ssh {host} 'docker load'")
@@ -301,7 +303,7 @@ def ensure_deps(check_path, install_cmd):
     """Check for a dependency path and install if missing. Returns exit code or 0."""
     if os.path.exists(check_path):
         return 0
-    from .core import run_cmd
+
     info("Installing dependencies...")
     return run_cmd(install_cmd)
 
@@ -326,7 +328,7 @@ def remote_docker_build(host, image, local_dir=".", remote_dir=None,
     excludes: list of extra rsync excludes (added to defaults)
     Returns exit code.
     """
-    from .core import run_cmd
+
 
     if remote_dir is None:
         remote_dir = f"/tmp/{image}-build"
@@ -382,11 +384,10 @@ def remote_docker_restart(host, image, run_args=""):
 
 def register_logs_command(host, image):
     """Register a 'logs' command that tails remote Docker container logs."""
-    from .core import run_cmd as _run_cmd
 
     @command("logs", f"Tail {image} container logs on remote")
     def cmd_logs(args):
-        return _run_cmd(f"ssh {host} docker logs -f --tail 100 {image}")
+        return run_cmd(f"ssh {host} docker logs -f --tail 100 {image}")
 
 
 # ---------------------------------------------------------------------------

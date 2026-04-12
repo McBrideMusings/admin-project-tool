@@ -29,8 +29,7 @@ _session_cache = {}
 
 def _cache_dir():
     """Return the build cache directory path (tmp/.build-cache/)."""
-    from . import core as _core
-    return os.path.join(_core._project_root, "tmp", ".build-cache")
+    return os.path.join(_project_root, "tmp", ".build-cache")
 
 
 def collect_sources(*specs):

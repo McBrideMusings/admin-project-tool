@@ -11,9 +11,10 @@ import signal
 import subprocess
 import sys
 
-from . import core as _core
 from .core import (
     C,
+    LOG_DIR,
+    LOG_FILE,
     _children,
     command,
     info,
@@ -295,8 +296,8 @@ def _list_devices():
     """
     import json
 
-    json_path = os.path.join(_core.LOG_DIR, "devices.json")
-    os.makedirs(_core.LOG_DIR, exist_ok=True)
+    json_path = os.path.join(LOG_DIR, "devices.json")
+    os.makedirs(LOG_DIR, exist_ok=True)
     result = subprocess.run(
         ["xcrun", "devicectl", "list", "devices", "--json-output", json_path],
         capture_output=True, text=True,
@@ -434,8 +435,8 @@ def _get_device_process_for_bundle(device_id, bundle_id):
     """
     import json
 
-    json_path = os.path.join(_core.LOG_DIR, "processes.json")
-    os.makedirs(_core.LOG_DIR, exist_ok=True)
+    json_path = os.path.join(LOG_DIR, "processes.json")
+    os.makedirs(LOG_DIR, exist_ok=True)
     result = subprocess.run(
         ["xcrun", "devicectl", "device", "info", "processes",
          "--device", device_id, "--json-output", json_path],
@@ -777,7 +778,7 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
             time.sleep(0.3)
 
         log_proc, log_thread, log_fh = stream_os_log(
-            predicate, log_file=_core.LOG_FILE)
+            predicate, log_file=LOG_FILE)
 
         info("Press r to rebuild, Ctrl+C to quit")
         print()
@@ -869,7 +870,7 @@ def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
             time.sleep(0.3)
 
         log_proc, log_thread, log_fh = stream_os_log(
-            predicate, log_file=_core.LOG_FILE, sim_id=sim_id)
+            predicate, log_file=LOG_FILE, sim_id=sim_id)
 
         info("Press r to rebuild, Ctrl+C to quit")
         print()
@@ -959,7 +960,7 @@ def dev_loop_device(project, scheme, config, subsystem, process,
         device_id, launch_bundle, console=True,
         env=_DEVICE_LOG_ENV)
 
-    _, log_fh = stream_console_output(console_proc, log_file=_core.LOG_FILE)
+    _, log_fh = stream_console_output(console_proc, log_file=LOG_FILE)
 
     info("Streaming logs — Ctrl+C to quit")
     print()
