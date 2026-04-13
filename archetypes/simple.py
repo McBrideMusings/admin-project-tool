@@ -1,8 +1,7 @@
 """'simple' archetype — minimal build/test/clean shell strings.
 
-Successor to v1's basic.py template. Used as the fallback when no other
-archetype detects, and as a seed for projects that just need a couple of
-project-specific shell commands stitched into the admin harness.
+Used as the fallback when no other archetype detects, and as a seed for
+projects that just need a couple of shell commands stitched into the admin harness.
 """
 
 ARCHETYPE = {

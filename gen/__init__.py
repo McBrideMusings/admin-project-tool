@@ -1,5 +1,4 @@
-"""admin-project-tool v2 generator.
+"""admin-project-tool generator — manifest-driven, archetype-composable.
 
-Manifest-driven, archetype-composable. See ~/.claude/plans/sorted-imagining-nygaard.md
-for the design doc. Public entry point is gen.render.render_manifest().
+Public entry point: gen.render.render_manifest().
 """

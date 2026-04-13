@@ -51,7 +51,7 @@ def render(
     header = textwrap.dedent(f"""\
         #!/usr/bin/env python3
         {BUNDLED_MARKER} admin_lib={ADMIN_LIB_VERSION} sha={lh} modules={modules_csv} generator_commit={generator_commit}
-        # Generated from admin.toml by admin-project-tool v2.
+        # Generated from admin.toml by admin-project-tool.
         # Regenerate: ~/.admin/init-admin --regenerate
         \"\"\"admin — task runner for {m.project_name}.\"\"\"
         import sys

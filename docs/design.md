@@ -1,16 +1,12 @@
-# admin-project-tool v2: Manifest-Driven, Archetype-Composable
+# admin-project-tool: Manifest-Driven, Archetype-Composable
 
 ## Context
 
-`admin-project-tool` today generates a per-project `./admin` task runner by picking *one* template (basic / apple / docker) and substituting variables, then bundling `admin_lib` inline. In practice:
+A survey of 16 committed `admin` scripts across `~/Projects` revealed **heavy overlap** — nearly every project has `build / dev / deploy / test / clean`, plus a common tail of `reload / logs / open / uninstall`. One-off commands are rare and always reducible to "name + shell string."
 
-- A survey of 16 committed `admin` scripts across `~/Projects` shows **heavy overlap** — nearly every project has `build / dev / deploy / test / clean`, plus a common tail of `reload / logs / open / uninstall`. One-off commands are rare and always reducible to "name + shell string."
-- Projects cluster into ~5 archetypes: **docker-to-unraid**, **stash-plugin**, **apple/swift**, **unraid-plugin**, **simple-cli** (Hugo, Go CLI, Firefox extension).
-- Two scripts (`open-assistant`, `apple-coding-tool`) are **archetype combinations** (docker-unraid + apple). The current single-template model can't express this, so they're hand-maintained monsters (3000+ lines).
-- After generation, Claude (and the user) routinely hand-edit `./admin` to add Hugo dev servers, tweak commands, add URLs. This **drifts the script from any notion of "what init-admin would produce,"** so the `/init-admin` audit flow can only do fuzzy checks.
-- Contributors to any project must be able to run `./admin` with zero install. Python 3.11+ is the right interpreter choice (preinstalled on macOS/current Linux, stdlib `tomllib`, stable, cross-platform). Go/Deno/Bun/Node/Bash were all considered and ruled out.
+Projects cluster into ~5 archetypes: **docker-to-unraid**, **stash-plugin**, **apple/swift**, **unraid-plugin**, **simple-cli** (Hugo, Go CLI, Firefox extension). Some scripts (`open-assistant`, `apple-coding-tool`) are archetype combinations (docker-unraid + apple) — expressed cleanly by listing multiple archetypes in `admin.toml`.
 
-**The v2 goal:** make `./admin` a reliably-reproducible artifact generated from a short, human-editable `admin.toml` manifest plus a library of composable archetypes. Regeneration must be idempotent. Hand-editing should become unnecessary, not forbidden.
+**The goal:** make `./admin` a reliably-reproducible artifact generated from a short, human-editable `admin.toml` manifest plus a library of composable archetypes. Regeneration is idempotent. Hand-editing is unnecessary (but still allowed via the `[inline]` escape hatch).
 
 ## Design Principles
 
@@ -67,7 +63,7 @@ Initial archetypes (derived 1:1 from the survey clusters):
 - **`apple`** — xcodebuild, dev_loop_macos/ios, device install, DerivedData clean, `--log LEVEL`, multi-target (mac|ios)
 - **`unraid-plugin`** — push source to Unraid USB, register/uninstall
 - **`firefox-extension`** — web-ext dev, package `.xpi`, lint
-- **`simple`** — minimal `build / test / clean` shell strings (v1 `basic.py` successor)
+- **`simple`** — minimal `build / test / clean` shell strings (fallback)
 
 Composition works: `archetypes = ["docker-unraid", "apple"]` produces the `open-assistant` / `cctool` shape without hand editing.
 
@@ -86,17 +82,17 @@ Detectors run on a fresh project during `init-admin` *without* a manifest. They 
 
 Initial detectors mirror the archetypes: hugo (`config.yaml` + `themes/`), docker-unraid (`Dockerfile` + existing remote-deploy markers), apple (`.xcodeproj`/`.xcworkspace`), stash-plugin (rollup config + `stash` in package.json), go-cli (`go.mod`, no Dockerfile), firefox-extension (`manifest.json` with `browser_specific_settings`), unraid-plugin (`plg` files / unraid markers). Fallback: `simple`.
 
-Adding a new stack in v2 = one detector file + one archetype file. No new full template.
+Adding a new stack = one detector file + one archetype file.
 
 ## Generator Architecture
 
-New top-level flow in `init-admin`:
+Top-level flow in `init-admin`:
 
 1. **Bootstrap** — if no `admin.toml`, run detectors → write starter manifest → prompt user to review.
 2. **Load** — parse `admin.toml` with stdlib `tomllib`.
 3. **Resolve archetypes** — load each listed archetype file, merge their command dicts in order.
 4. **Apply manifest overrides** — manifest `[commands]` and `[commands.custom]` win over archetypes.
-5. **Render** — emit the Python admin script as: shebang → header → inlined `admin_lib` (via existing `bundle` logic) → generated command functions (one per merged command, each calling `run_cmd(shell_string)`) → `set_urls()` call → `boot()`.
+5. **Render** — emit the Python admin script as: shebang → header → inlined `admin_lib` → generated command functions (one per merged command, each calling `run_cmd(shell_string)`) → `set_urls()` call → `boot()`.
 6. **Write** `./admin` (executable) + `tmp/.gitignore`.
 
 Rendering uses a small set of **code fragments** (not full templates) — one per command *kind* (shell-string, multi-target, apple dev loop, docker reload loop). Each archetype declares which fragment backs each of its commands. This is how archetype composition actually becomes code: the generator stitches fragments together, not whole files.
@@ -106,7 +102,7 @@ Rendering uses a small set of **code fragments** (not full templates) — one pe
 - `~/.admin/init-admin` — first-time bootstrap (detect → write manifest → generate).
 - `~/.admin/init-admin --regenerate` — re-render `./admin` from `admin.toml`. Idempotent. Standard loop for adding/editing commands.
 - `~/.admin/init-admin --audit` — regenerates in-memory and diffs against `./admin`. Reports: (a) manifest drift (script differs from what manifest would produce), (b) archetype drift (archetype catalog changed since last regen — `admin_lib` hash differs), (c) stale `admin_lib`. Non-zero exit if any drift.
-- `/init-admin` slash command phase 1 now runs the audit and surfaces drift to the user before asking whether to regenerate.
+- `/init-admin` slash command runs the audit and surfaces drift to the user before asking whether to regenerate.
 
 Hand-editing `./admin` is still allowed, but the audit will tell you about it. The expected escape hatch is the manifest's `[inline]` block (a small Python file concatenated into the generated script at a marked insertion point); this keeps hand-written logic *referenced from the manifest* so regeneration preserves it.
 
@@ -117,37 +113,9 @@ Hand-editing `./admin` is still allowed, but the audit will tell you about it. T
 - Manifest parsing uses stdlib `tomllib` — no third-party TOML dependency.
 - `install.sh` verifies the host has Python 3.11+ and refuses to install otherwise.
 
-## Migration of Existing 16 Admin Scripts
+## Migrating Existing Projects
 
-Not part of v2 itself, but v2 must make migration trivial:
-
-1. `init-admin --from-existing` — read a current bundled `./admin`, detect which commands exist, reverse-engineer a starter `admin.toml`. Runs per project, interactive.
-2. Regenerate → diff → commit. The generated script will be shorter than the originals (the monsters shrink by 60–80% because boilerplate moves into archetypes).
-
-Explicitly out of scope for v2 v1: automated migration of every project. Manual, one at a time.
-
-## Files To Create / Modify
-
-All paths relative to `~/Projects/admin-project-tool/`.
-
-**New directories:**
-- `archetypes/` — one `.py` per archetype (8 initial: hugo, go-cli, docker-unraid, stash-plugin, apple, unraid-plugin, firefox-extension, simple)
-- `detectors/` — one `.py` per stack, mirroring archetypes
-- `fragments/` — code fragments backing each command *kind* (shell, multi-target, apple-dev-loop, docker-reload-loop). Replaces/supersedes current `templates/fragments/`.
-
-**Rewritten:**
-- `init-admin` — gains manifest load/resolve/render pipeline; keeps existing detect + interactive confirm flow for first-time bootstrap only. Add `--regenerate`, `--audit`, `--from-existing` subcommands. Gate on Python 3.11+.
-- `bundle` — still inlines `admin_lib`, but is now called from inside `init-admin`'s render step rather than as a separate user-facing tool. Keep it callable standalone for manual re-bundles of legacy scripts.
-- `install.sh` — Python 3.11+ check, deploys new `archetypes/` and `detectors/` directories.
-- `templates/` — **removed.** Replaced entirely by archetypes + fragments. Keep a git tag on the last v1 commit for reference.
-
-**Unchanged (reused as-is):**
-- `admin_lib/core.py` — `command` decorator, `add_spacer`, `run_cmd`, `set_urls`, `boot`, TUI, signal handling. The generator emits code that calls into these exactly as today. Command display order follows registration order (which the generator drives from `admin.toml`'s `order` list); spacers are blank rows inserted via `add_spacer()`.
-- `admin_lib/apple.py`, `docker.py`, `remote.py`, `unraid.py`, `cache.py`, `icons.py`, `logs.py` — archetypes reference these from their fragments.
-
-**Claude Code integration:**
-- `~/.claude/skills/init-admin/SKILL.md` — update phases to describe manifest-first flow: bootstrap writes `admin.toml` *and* `./admin`, subsequent runs are `--regenerate` or `--audit`.
-- `~/.claude/CLAUDE.md` — `admin convention` section: replace "bundled single file" framing with "generated from `admin.toml`; regenerate with `~/.admin/init-admin --regenerate`; hand edits discouraged; use `[inline]` escape hatch for project-specific Python."
+`init-admin --from-existing` reads a current `./admin`, detects which commands exist, and reverse-engineers a starter `admin.toml`. Then: regenerate → diff → commit. Generated scripts are typically 60–80% shorter than hand-maintained originals because boilerplate moves into archetypes.
 
 ## Verification
 
@@ -178,7 +146,7 @@ End-to-end test plan, performed on a scratch clone of `admin-project-tool`:
    - Python 3.11+ guard: temporarily rename `python3` to a 3.10 binary; assert the script exits cleanly with the guard message.
 9. **Claude Code flow**
    - `/init-admin` on a fresh project: verify the skill phases (detect → confirm → bootstrap → commit prompt) produce `admin.toml` + `./admin` + updated `.gitignore` + `read-logs.md`.
-   - `/init-admin` on a v1 project with bundled-but-drifted admin: verify the audit phase surfaces the drift and offers `--from-existing` migration.
+   - `/init-admin` on an existing project with drifted admin: verify the audit phase surfaces the drift and offers `--from-existing` migration.
 
 ## Resolved Design Decisions
 
@@ -206,7 +174,7 @@ prod = "${PROD_URL:-https://example.com}"
 - A new `./admin env` command (provided by `admin_lib.core`) lists every env var the script references and shows which are set/unset on the current machine. This is the discovery mechanism for new contributors.
 - The drift audit treats `${VAR}` as a literal — manifest and generated script must agree on the placeholder, and resolution is deferred to runtime.
 
-**Where the env vars themselves live:** out of scope for v2. Users set them via shell rc files, direnv, `.envrc`, or whatever they prefer. `admin.toml` only references them.
+**Where the env vars themselves live:** out of scope. Users set them via shell rc files, direnv, `.envrc`, or whatever they prefer. `admin.toml` only references them.
 
 ### Archetype versioning by source commit (replaces "version archetypes" question)
 
@@ -227,6 +195,6 @@ Archetypes are not semver-versioned. Instead, the generator records the **git co
 
 **Migration safety:** when the user pulls a newer `admin-project-tool` and runs `--regenerate` across projects, the diff in each project's `./admin` is the exact set of changes the catalog introduced. They can review and commit per-project at their own pace. Old projects still on an older `generator_commit` keep working; they just won't pick up new archetype features until regenerated.
 
-### Out of scope for v2
+### Out of scope
 
 - **Windows CI** — not a priority. Generated script must still be Python-3.11-stdlib-only so it *could* run on Windows, but no automated cross-platform testing.

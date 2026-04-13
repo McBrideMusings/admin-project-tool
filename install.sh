@@ -7,7 +7,7 @@ set -euo pipefail
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 DEST_DIR="$HOME/.admin"
 
-# v2 requires Python 3.11+ for stdlib tomllib.
+# Requires Python 3.11+ for stdlib tomllib.
 if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
     echo "error: admin-project-tool requires Python 3.11+ (for stdlib tomllib)" >&2
     echo "  found: $(python3 --version 2>&1)" >&2
@@ -27,26 +27,18 @@ import sys; sys.path.insert(0, '$DEST_DIR')
 from admin_lib import __version__; print(__version__)
 ")"
 
-# v1 templates/ directory was removed in v2 — scrub any leftover install.
+# Scrub any leftover legacy artifacts
 rm -rf "$DEST_DIR/templates"
+rm -f "$DEST_DIR/init-admin-v2"
+rm -f "$DEST_DIR/bundle"
 
-# Install init-admin
-cp "$SRC_DIR/init-admin" "$DEST_DIR/init-admin"
-chmod +x "$DEST_DIR/init-admin"
-echo "Installed init-admin to $DEST_DIR/init-admin"
-
-# Install bundle
-cp "$SRC_DIR/bundle" "$DEST_DIR/bundle"
-chmod +x "$DEST_DIR/bundle"
-echo "Installed bundle to $DEST_DIR/bundle"
-
-# v2: install generator package, archetypes, detectors, and init-admin-v2
+# Install generator package, archetypes, detectors, and init-admin
 rm -rf "$DEST_DIR/gen" "$DEST_DIR/archetypes" "$DEST_DIR/detectors"
 cp -R "$SRC_DIR/gen" "$DEST_DIR/gen"
 cp -R "$SRC_DIR/archetypes" "$DEST_DIR/archetypes"
 cp -R "$SRC_DIR/detectors" "$DEST_DIR/detectors"
-cp "$SRC_DIR/init-admin-v2" "$DEST_DIR/init-admin-v2"
-chmod +x "$DEST_DIR/init-admin-v2"
+cp "$SRC_DIR/init-admin" "$DEST_DIR/init-admin"
+chmod +x "$DEST_DIR/init-admin"
 
 # Record source commit SHA for provenance. The installed copy is not a git
 # repo, so render.py reads this file instead of shelling out to git.
@@ -59,7 +51,7 @@ if git -C "$SRC_DIR" rev-parse HEAD >/dev/null 2>&1; then
 else
     echo "unknown" > "$DEST_DIR/VERSION"
 fi
-echo "Installed v2 generator (gen/, archetypes/, detectors/, init-admin-v2, VERSION=$(cat "$DEST_DIR/VERSION"))"
+echo "Installed generator (gen/, archetypes/, detectors/, init-admin, VERSION=$(cat "$DEST_DIR/VERSION"))"
 
 # Check if ~/.admin is in PATH
 case ":$PATH:" in

@@ -1,13 +1,7 @@
-"""Minimal admin_lib bundler for v2.
+"""admin_lib bundler — inlines admin_lib modules into a generated admin script.
 
-Inlines the requested admin_lib modules into a single self-contained Python
-string. For the minimal v2 slice this only supports 'core' (which has no
-relative imports). Richer modules (apple/docker/etc.) will be added as
-archetypes that need them are introduced.
-
-This is intentionally simpler than the v1 bundle script — it doesn't need
-to handle rebundles, lazy relative imports, or legacy markers. It's called
-from inside the generator, not as a user-facing tool.
+Called from inside the generator (gen/render.py), not as a user-facing tool.
+Strips relative imports so each module's source is valid in a flat namespace.
 """
 from __future__ import annotations
 
@@ -55,10 +49,7 @@ def inline_admin_lib(admin_lib_dir: Path, modules: list[str]) -> str:
 
 
 def lib_hash(admin_lib_dir: Path) -> str:
-    """SHA256 of all admin_lib/*.py content, first 12 hex chars.
-
-    Same algorithm as v1 bundle so lib versioning stays comparable.
-    """
+    """SHA256 of all admin_lib/*.py content, first 12 hex chars."""
     h = hashlib.sha256()
     for name in sorted(p.name for p in admin_lib_dir.iterdir() if p.suffix == ".py"):
         h.update((admin_lib_dir / name).read_bytes())

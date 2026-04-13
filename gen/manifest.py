@@ -207,4 +207,4 @@ def _inline_table(val: dict) -> str:
 
 def require_python_311() -> None:
     if sys.version_info < (3, 11):
-        sys.exit("admin-project-tool v2 requires Python 3.11+ (for stdlib tomllib)")
+        sys.exit("admin-project-tool requires Python 3.11+ (for stdlib tomllib)")

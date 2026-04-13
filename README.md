@@ -1,6 +1,6 @@
 # admin-project-tool
 
-Shared library for per-project `admin` task runners. Extracts duplicated infrastructure (TUI menu, process management, logging, signal handling, command registry) into a reusable library at `~/.admin/`.
+Shared library and generator for per-project `admin` task runners. Extracts duplicated infrastructure (TUI menu, process management, logging, signal handling, command registry) into a reusable library at `~/.admin/`, and generates each project's `./admin` from a short `admin.toml` manifest.
 
 ## Install
 
@@ -8,31 +8,30 @@ Shared library for per-project `admin` task runners. Extracts duplicated infrast
 ./install.sh
 ```
 
-This copies `admin_lib/` to `~/.admin/admin_lib/`.
+Copies `admin_lib/` and the generator (`gen/`, `archetypes/`, `detectors/`, `init-admin`) to `~/.admin/`. Requires Python 3.11+.
 
 ## Usage
 
-Per-project admin files import from `admin_lib`:
+### Bootstrap a new project
 
-```python
-#!/usr/bin/env python3
-import sys, os
-sys.path.insert(0, os.path.expanduser("~/.admin"))
-from admin_lib.core import command, run_cmd, boot, C, info, ok, warn, err
+```bash
+~/.admin/init-admin .              # detect stack, write admin.toml, generate ./admin
+~/.admin/init-admin --regenerate . # reload admin.toml and regenerate ./admin
+~/.admin/init-admin --audit .      # diff ./admin against what admin.toml would produce
+```
 
-PROJECT_NAME = "My Project"
+### admin.toml manifest
 
-@command("build", "Build the project")
-def cmd_build(args):
-    info("Building...")
-    rc = run_cmd("make")
-    if rc != 0:
-        err("Build failed")
-        sys.exit(rc)
-    ok("Build complete")
+```toml
+project_name = "My Project"
+python_min   = "3.11"
+archetypes   = ["simple"]
 
-if __name__ == "__main__":
-    boot(PROJECT_NAME)
+[urls]
+dev  = "http://localhost:8080"
+
+[commands]
+# Override archetype commands or add project-specific ones
 ```
 
 ## Layers
@@ -45,33 +44,15 @@ if __name__ == "__main__":
 - **remote** — SSH, rsync, scp, systemd service management
 - **unraid** — Unraid plugin deployment (plugin_deploy, plugin_remove)
 
-## Bundler
+## Archetypes
 
-`bundle` produces a self-contained admin script by inlining admin_lib — no `~/.admin/` dependency needed:
+Composable mixins under `archetypes/`. A manifest lists one or more archetypes; their command sets are merged in order and emitted by the generator. See `docs/design.md` for details.
 
-```bash
-./bundle path/to/project/admin          # Bundle a single project
-./bundle path/to/project/admin --stdout # Preview without overwriting
-./bundle --all                          # Re-bundle all projects in ~/Projects/
-```
-
-Bundled files include a `@bundled` marker and can be re-bundled when the library updates.
-
-## Bootstrap & Audit
-
-`init-admin` scaffolds new admin scripts and audits existing ones:
-
-```bash
-~/.admin/init-admin .              # Generate from detected project type
-~/.admin/init-admin --audit .      # Audit existing admin script
-~/.admin/init-admin --type docker  # Override detected type
-~/.admin/init-admin --multi .      # Force multi-target generation
-```
-
-When multiple project patterns are detected (e.g., an Xcode project + a Docker subdirectory), init-admin generates a multi-target admin file with `dispatch_target` routing and `pick_target` menus.
-
-## Archetypes (v2)
-
-v2 replaces the single-template model with composable archetypes under `archetypes/`.
-A project's `admin.toml` lists one or more archetypes; their command sets are merged
-in order and emitted by the generator in `gen/`. See `docs/v2-design.md` for details.
+- **`hugo`** — Hugo static site builds and dev server
+- **`go-cli`** — Go build, test, vet, fmt, deploy
+- **`docker-unraid`** — Docker build on remote, deploy to Unraid
+- **`stash-plugin`** — Rollup build + Stash plugin sync
+- **`apple`** — Xcode/Swift/iOS builds, dev loops, device install
+- **`unraid-plugin`** — Push source to Unraid USB, register/uninstall
+- **`firefox-extension`** — web-ext dev, package, lint
+- **`simple`** — Minimal build/test/clean shell strings (fallback)

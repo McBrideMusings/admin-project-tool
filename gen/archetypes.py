@@ -196,7 +196,6 @@ def _to_command(name: str, data: dict, source: str) -> Command:
     )
 
 
-# Same module order as v1 bundle so the bundled output is predictable.
 _MODULE_ORDER = ["core", "cache", "icons", "remote", "apple", "docker", "unraid", "logs"]
 
 

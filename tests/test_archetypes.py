@@ -1,4 +1,4 @@
-"""Sanity tests for the v2 archetype catalog and generator pipeline.
+"""Sanity tests for the archetype catalog and generator pipeline.
 
 Asserts that every archetype in archetypes/ loads, has the required shape,
 that detectors behave, and that a multi-archetype composition round-trips
