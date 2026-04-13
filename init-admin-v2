@@ -91,6 +91,7 @@ def cmd_bootstrap(project_dir: Path, args) -> int:
         project_name=project_name,
         python_min="3.11",
         archetypes=starter.get("archetypes", ["simple"]),
+        modules=starter.get("modules", []),
         urls=starter.get("urls", {}),
         overrides={},
         custom={},
