@@ -128,9 +128,14 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
             log.append(f"custom '{cmd_name}' shadows archetype-provided command")
         commands[cmd_name] = _to_command(cmd_name, custom, source="custom")
 
-    # Manifest URLs win
-    for label, url in manifest.urls.items():
-        urls[label] = url
+    # Manifest URLs win — rebuild dict so manifest ordering takes priority
+    if manifest.urls:
+        merged = dict(manifest.urls)
+        for label, url in urls.items():
+            if label not in merged:
+                merged[label] = url
+        urls = merged
+
 
     # Compute display order: entries from manifest.order (commands + spacers),
     # then any unlisted commands auto-appended in merge order.
