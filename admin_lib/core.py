@@ -52,11 +52,17 @@ def err(msg):
 _urls = []  # list of (label, url) tuples set by projects
 
 
+_pending_urls = []  # raw (label, url) before env resolution
+
 def set_urls(urls):
-    """Set project URLs for display in TUI. urls: list of (label, url) tuples.
-    Env vars in URLs (${VAR} / ${VAR:-default}) are resolved at call time."""
+    """Register project URLs. Raw ${VAR} strings are stored and resolved later by boot()."""
+    global _pending_urls
+    _pending_urls = list(urls)
+
+def _resolve_pending_urls():
+    """Resolve env vars in pending URLs and activate them."""
     global _urls
-    _urls = [(label, resolve_env(url)) for label, url in urls]
+    _urls = [(label, resolve_env(url)) for label, url in _pending_urls]
 
 
 def check_url(url, timeout=1):
@@ -622,7 +628,7 @@ def _print_help():
 # boot() — single entry point
 # ---------------------------------------------------------------------------
 
-def boot(project_name, load_dotenv=False):
+def boot(project_name, load_dotenv=True):
     """Entry point for per-project admin files.
 
     Call this from __main__. Handles chdir, argv parsing, TUI or dispatch.
@@ -636,8 +642,8 @@ def boot(project_name, load_dotenv=False):
     os.chdir(project_root)
     _init(project_name, project_root)
 
-    if load_dotenv:
-        _load_dotenv(project_root)
+    _load_dotenv(project_root)
+    _resolve_pending_urls()
 
     if len(sys.argv) < 2:
         _tui_menu()
