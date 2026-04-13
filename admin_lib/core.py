@@ -53,9 +53,10 @@ _urls = []  # list of (label, url) tuples set by projects
 
 
 def set_urls(urls):
-    """Set project URLs for display in TUI. urls: list of (label, url) tuples."""
+    """Set project URLs for display in TUI. urls: list of (label, url) tuples.
+    Env vars in URLs (${VAR} / ${VAR:-default}) are resolved at call time."""
     global _urls
-    _urls = list(urls)
+    _urls = [(label, resolve_env(url)) for label, url in urls]
 
 
 def check_url(url, timeout=1):
