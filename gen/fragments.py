@@ -156,8 +156,13 @@ def _scan_for_env_vars(text: str, pattern: object, seen: dict[str, str | None]) 
             seen[name] = default
 
 
-def collect_env_var_calls(commands: list[Command], urls: dict[str, str] | None = None) -> list[str]:
-    """Scan command run-strings and URL values for ${VAR} placeholders and emit register_env_var calls.
+def collect_env_var_calls(
+    commands: list[Command],
+    urls: dict[str, str] | None = None,
+    logs: dict[str, dict] | None = None,
+) -> list[str]:
+    """Scan command run-strings, URL values, and log-target paths/hosts for
+    ${VAR} placeholders and emit register_env_var calls.
 
     Each call lets the runtime `env` command list referenced vars even before they're
     resolved. Returns Python source lines (no trailing newline).
@@ -172,6 +177,13 @@ def collect_env_var_calls(commands: list[Command], urls: dict[str, str] | None =
 
     for text in (urls or {}).values():
         _scan_for_env_vars(text, pattern, seen)
+
+    for target in (logs or {}).values():
+        for env_spec in target.get("envs", {}).values():
+            for key in ("path", "host", "user"):
+                val = env_spec.get(key)
+                if isinstance(val, str):
+                    _scan_for_env_vars(val, pattern, seen)
 
     lines = []
     for name, default in seen.items():

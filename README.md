@@ -32,12 +32,33 @@ dev  = "http://localhost:8080"
 
 [commands]
 # Override archetype commands or add project-specific ones
+
+[logs.app]                                                                            # optional — adds `./admin logs`
+dev  = "./tmp/app.log"                                                                # string = local path
+prod = { path = "/var/log/app.log", host = "${APP_HOST}", user = "${APP_USER:-root}" } # table = remote (ssh)
+default_env = "dev"
 ```
+
+### `./admin logs`
+
+If `admin.toml` declares a `[logs.<target>]` section, the generated `./admin` exposes a file-tailing command:
+
+```bash
+./admin logs                     # TUI picker over log targets
+./admin logs app                 # follow from end, default env
+./admin logs app --env prod      # explicit env
+./admin logs app --tail 500      # print last 500 lines, then follow
+./admin logs app --all           # print whole file, then follow
+./admin logs app --no-follow     # one-shot; combine with --tail or --all
+```
+
+Follow mode reopens the file on inode change or size shrink, so it handles both rotation and truncation-style circular buffers. Remote targets tail over SSH with `tail -F`.
 
 ## Layers
 
 - **core** — Universal: colors, output, logging, run_cmd, sync_deploy, command registry, TUI menu, pick_target, dispatch_target, URL status
 - **logs** — Generic log formatter: strips existing timestamps, prepends HH:MM:SS, colorizes log levels (ERROR/WARN/INFO/DEBUG). Opt-in via `formatter=make_formatter()` on `run_cmd`, `run_with_reload`, `run_parallel`
+- **logtail** — File-based log tailing (`./admin logs`): local or SSH, per-env paths, `--tail N` / `--all` / `--no-follow`. Auto-included when `admin.toml` has a `[logs]` section; handles rotation and truncation-style circular buffers
 - **icons** — Icon generation: SVG/text/solid color rendering at arbitrary sizes, optional DEV banner overlay (requires Pillow, cairosvg optional)
 - **apple** — Xcode/Swift/iOS: dev loops (macOS/iOS with automatic log streaming), xcodebuild, simulator, dev icon swap via icons module
 - **docker** — Docker/web: run_with_reload, run_parallel, Docker build/deploy, remote Docker build

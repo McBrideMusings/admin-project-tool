@@ -45,6 +45,13 @@ def render(
 ) -> str:
     """Return the full text of the generated ./admin script."""
     m = resolved.manifest
+
+    # Presence of [logs] in the manifest pulls in the logtail module.
+    modules = list(resolved.modules)
+    if m.logs and "logtail" not in modules:
+        modules.append("logtail")
+        resolved.modules = modules
+
     lh = lib_hash(admin_lib_dir)
     modules_csv = ",".join(resolved.modules)
 
@@ -63,7 +70,7 @@ def render(
     lib_src = inline_admin_lib(admin_lib_dir, resolved.modules)
 
     command_list = list(resolved.commands.values())
-    env_calls = collect_env_var_calls(command_list, resolved.urls)
+    env_calls = collect_env_var_calls(command_list, resolved.urls, m.logs)
     env_block = "\n".join(env_calls) + ("\n" if env_calls else "")
 
     url_pairs = ", ".join(
@@ -81,6 +88,13 @@ def render(
         command_blocks.append(render_command(resolved.commands[entry]))
     commands_src = "\n".join(command_blocks)
 
+    # Emit register_logs_command AFTER the archetype command functions so that
+    # a manifest [logs] definition supersedes any archetype-supplied `logs` command
+    # (the @command decorator overwrites by name in _commands).
+    logs_src = ""
+    if m.logs:
+        logs_src = f"register_logs_command({_pyliteral(m.logs)})\n\n"
+
     inline_src = ""
     if inline_body:
         inline_src = f"# === inline ===\n{inline_body.rstrip()}\n\n"
@@ -95,6 +109,7 @@ def render(
         f"{env_block}"
         f"{url_call}"
         f"\n{commands_src}\n"
+        f"{logs_src}"
         f"{inline_src}"
         f"{boot_src}"
     )
@@ -143,3 +158,23 @@ def generator_commit_sha(repo_dir: Path, allow_dirty: bool = False) -> str:
 
 def _pyrepr(s: str) -> str:
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _pyliteral(value) -> str:
+    """Render a nested structure of dicts / strings / None / bools / ints as a
+    Python literal. Used to emit the logs spec into the generated script.
+    Any ${VAR} placeholders are preserved verbatim — resolution happens at run time.
+    """
+    if value is None or isinstance(value, bool):
+        return repr(value)
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, str):
+        return _pyrepr(value)
+    if isinstance(value, dict):
+        parts = [f"{_pyrepr(str(k))}: {_pyliteral(v)}" for k, v in value.items()]
+        return "{" + ", ".join(parts) + "}"
+    if isinstance(value, (list, tuple)):
+        parts = [_pyliteral(v) for v in value]
+        return "[" + ", ".join(parts) + "]"
+    raise RenderError(f"cannot serialize to python literal: {type(value).__name__}")

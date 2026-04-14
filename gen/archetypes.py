@@ -201,7 +201,7 @@ def _to_command(name: str, data: dict, source: str) -> Command:
     )
 
 
-_MODULE_ORDER = ["core", "cache", "icons", "remote", "apple", "docker", "unraid", "logs"]
+_MODULE_ORDER = ["core", "cache", "icons", "remote", "apple", "docker", "unraid", "logs", "logtail"]
 
 
 def _order_modules(modules: set[str]) -> list[str]:

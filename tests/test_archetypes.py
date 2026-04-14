@@ -52,6 +52,7 @@ def test_composition_docker_unraid_plus_apple():
         project_name="Test Composition",
         python_min="3.11",
         archetypes=["docker-unraid", "apple"],
+        modules=[],
         urls={},
         overrides={},
         custom={},
@@ -88,6 +89,7 @@ def test_hugo_roundtrip():
         project_name="Hugo Site",
         python_min="3.11",
         archetypes=["hugo"],
+        modules=[],
         urls={},
         overrides={},
         custom={},
@@ -145,6 +147,126 @@ def test_env_vars_from_urls():
     print("OK: env vars from urls detected")
 
 
+def test_logs_section_parsed():
+    data = {
+        "project_name": "t",
+        "python_min": "3.11",
+        "logs": {
+            "app": {
+                "dev": "./tmp/app.log",
+                "prod": {
+                    "path": "/var/log/app.log",
+                    "host": "${APP_HOST}",
+                    "user": "${APP_USER:-root}",
+                },
+                "default_env": "dev",
+            },
+            "worker": {"local": "./tmp/worker.log"},
+        },
+    }
+    m = parse(data)
+    assert "app" in m.logs
+    assert m.logs["app"]["default_env"] == "dev"
+    assert m.logs["app"]["envs"]["dev"]["path"] == "./tmp/app.log"
+    assert m.logs["app"]["envs"]["dev"]["host"] is None
+    assert m.logs["app"]["envs"]["prod"]["host"] == "${APP_HOST}"
+    assert m.logs["app"]["envs"]["prod"]["user"] == "${APP_USER:-root}"
+    assert m.logs["worker"]["default_env"] is None
+    assert m.logs["worker"]["envs"]["local"]["path"] == "./tmp/worker.log"
+    print("OK: [logs] section parsed and normalized")
+
+
+def test_logs_rejects_unknown_default_env():
+    data = {
+        "project_name": "t",
+        "python_min": "3.11",
+        "logs": {"app": {"dev": "./x.log", "default_env": "staging"}},
+    }
+    try:
+        parse(data)
+        assert False, "expected ManifestError"
+    except ManifestError as e:
+        assert "default_env" in str(e) and "staging" in str(e)
+    print("OK: unknown default_env rejected")
+
+
+def test_logs_env_vars_scanned():
+    logs = {
+        "app": {
+            "default_env": None,
+            "envs": {
+                "prod": {
+                    "path": "${LOG_ROOT:-/var/log}/app.log",
+                    "host": "${APP_HOST}",
+                    "user": None,
+                },
+            },
+        }
+    }
+    lines = collect_env_var_calls([], urls=None, logs=logs)
+    joined = " ".join(lines)
+    assert "LOG_ROOT" in joined
+    assert "/var/log" in joined
+    assert "APP_HOST" in joined
+    print("OK: env vars from logs section detected")
+
+
+def test_seek_last_n_lines():
+    import io
+    import re as _re
+    # Load the helper without triggering logtail's relative imports (it imports
+    # from .core, which fails outside a package context). Strip the relative
+    # import line and exec the file.
+    source = (LIB_DIR / "logtail.py").read_text()
+    source = _re.sub(r"from \.core import \([^)]*\)", "pass", source, count=1)
+    ns: dict = {}
+    exec(compile(source, "logtail.py", "exec"), ns)
+    _seek_last_n_lines = ns["_seek_last_n_lines"]
+
+    def take(data: bytes, n: int) -> bytes:
+        buf = io.BytesIO(data)
+        _seek_last_n_lines(buf, n)
+        return buf.read()
+
+    assert take(b"a\nb\nc\n", 2) == b"b\nc\n"
+    assert take(b"a\nb\nc\n", 5) == b"a\nb\nc\n"
+    assert take(b"a\nb", 1) == b"b", "unterminated last line must still be selectable"
+    assert take(b"a\nb\nc", 2) == b"b\nc", "unterminated tail counts as a line"
+    assert take(b"", 3) == b""
+    assert take(b"only\n", 1) == b"only\n"
+    print("OK: _seek_last_n_lines handles terminated and unterminated files")
+
+
+def test_logs_render_emits_register_call():
+    m = Manifest(
+        project_name="Logs Test",
+        python_min="3.11",
+        archetypes=["simple"],
+        modules=[],
+        urls={},
+        overrides={},
+        custom={},
+        order=[],
+        logs={
+            "app": {
+                "default_env": "dev",
+                "envs": {
+                    "dev": {"path": "./tmp/app.log", "host": None, "user": None},
+                },
+            }
+        },
+    )
+    resolved = resolve(m, ARCH_DIR)
+    script = render(resolved, LIB_DIR, generator_commit="test-sha")
+    assert "register_logs_command(" in script
+    assert '"app"' in script
+    assert '"./tmp/app.log"' in script
+    # logtail module must be inlined
+    assert "# === admin_lib.logtail ===" in script
+    assert "def tail_local" in script
+    print("OK: [logs] renders register_logs_command and inlines logtail")
+
+
 if __name__ == "__main__":
     test_all_archetypes_load_and_validate()
     test_composition_docker_unraid_plus_apple()
@@ -154,4 +276,9 @@ if __name__ == "__main__":
     test_invalid_kind_rejected()
     test_python_min_validation()
     test_env_vars_from_urls()
+    test_logs_section_parsed()
+    test_logs_rejects_unknown_default_env()
+    test_logs_env_vars_scanned()
+    test_seek_last_n_lines()
+    test_logs_render_emits_register_call()
     print("\nAll tests passed.")
