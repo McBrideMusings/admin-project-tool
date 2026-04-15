@@ -24,6 +24,7 @@ run time via resolve_env().
 import os
 import subprocess
 import sys
+import threading
 import time
 from collections import OrderedDict
 
@@ -36,6 +37,14 @@ from .core import (
     resolve_env,
     warn,
 )
+
+
+def _require_interactive(message):
+    """Abort with an error if stdout is not a TTY (non-interactive context)."""
+    if not sys.stdout.isatty():
+        err(message)
+        return False
+    return True
 
 
 def register_logs_command(spec):
@@ -54,12 +63,17 @@ def register_logs_command(spec):
             if len(spec) == 1:
                 target_name = next(iter(spec))
             else:
+                if not _require_interactive(
+                    f"logs: target required in non-interactive context "
+                    f"(have: {', '.join(spec)})"
+                ):
+                    return 1
                 menu = OrderedDict(
                     (t, ", ".join(spec[t]["envs"])) for t in spec
                 )
                 target_name = pick_target(menu, "Select log target")
                 if not target_name:
-                    return
+                    return 1
 
         if target_name not in spec:
             err(f"logs: unknown target '{target_name}' (have: {', '.join(spec)})")
@@ -74,12 +88,17 @@ def register_logs_command(spec):
                 if len(envs) == 1:
                     env_name = next(iter(envs))
                 else:
+                    if not _require_interactive(
+                        f"logs: --env required for '{target_name}' in "
+                        f"non-interactive context (have: {', '.join(envs)})"
+                    ):
+                        return 1
                     menu = OrderedDict(
                         (e, envs[e]["path"]) for e in envs
                     )
                     env_name = pick_target(menu, f"Select env for '{target_name}'")
                     if not env_name:
-                        return
+                        return 1
 
         if env_name not in envs:
             err(
@@ -180,6 +199,11 @@ def tail_local(path, tail_n=0, show_all=False, follow=True):
 
     f = open(path, "rb")
     try:
+        head = f.read(512)
+        if b"\x00" in head:
+            warn(f"logs: {path} appears to be binary; output may garble the terminal")
+        f.seek(0)
+
         if show_all:
             f.seek(0)
         elif tail_n > 0:
@@ -295,10 +319,20 @@ def tail_remote(host, user, path, tail_n=0, show_all=False, follow=True):
     info(f"logs: ssh {target}: {remote}")
     proc = subprocess.Popen(
         ["ssh", target, remote],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         start_new_session=True,
     )
     _children.append(proc)
+
+    stderr_chunks = []
+
+    def _drain_stderr():
+        for line in iter(proc.stderr.readline, b""):
+            stderr_chunks.append(line)
+
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
+
     try:
         try:
             while True:
@@ -316,9 +350,21 @@ def tail_remote(host, user, path, tail_n=0, show_all=False, follow=True):
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait()
+        stderr_thread.join(timeout=1)
         if proc in _children:
             _children.remove(proc)
-    return proc.returncode
+
+    rc = proc.returncode
+    if rc != 0:
+        stderr_text = b"".join(stderr_chunks).decode("utf-8", errors="replace").rstrip()
+        if rc == 255:
+            err(f"logs: ssh to {target} failed (exit 255) — check host, key, and network")
+        else:
+            err(f"logs: ssh to {target} exited {rc}")
+        if stderr_text:
+            for line in stderr_text.splitlines():
+                err(f"  {line}")
+    return rc
 
 
 def _shell_quote(s):

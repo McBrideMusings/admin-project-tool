@@ -205,17 +205,22 @@ atexit.register(_cleanup_children)
 import re as _re_env
 
 _ENV_VAR_RE = _re_env.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
-_referenced_env_vars: list[tuple[str, str | None]] = []
+_referenced_env_vars: dict[str, dict] = {}
 
 
-def register_env_var(name, default=None):
+def register_env_var(name, default=None, used_by=None):
     """Record that the generated admin script references this env var.
 
-    Used by the `env` command to list all referenced vars.
+    Used by the `env` command to list all referenced vars. `used_by` is a list
+    of origin strings (e.g. "cmd:deploy", "url:prod", "logs.app.prod") that get
+    unioned across repeat registrations of the same var.
     """
-    pair = (name, default)
-    if pair not in _referenced_env_vars:
-        _referenced_env_vars.append(pair)
+    entry = _referenced_env_vars.setdefault(name, {"default": default, "used_by": []})
+    if entry["default"] is None and default is not None:
+        entry["default"] = default
+    for origin in used_by or ():
+        if origin not in entry["used_by"]:
+            entry["used_by"].append(origin)
 
 
 def resolve_env(s):
@@ -247,17 +252,26 @@ def cmd_env(args):
         info("no env vars referenced by this admin script")
         return
     info("environment variables referenced by ./admin:")
-    width = max(len(name) for name, _ in _referenced_env_vars)
-    for name, default in _referenced_env_vars:
+    width = max(len(name) for name in _referenced_env_vars)
+    for name, entry in _referenced_env_vars.items():
+        default = entry["default"]
+        used_by = entry["used_by"]
         val = os.environ.get(name)
         if val is not None:
             status = f"{C.GREEN}set{C.RESET}"
             shown = val if len(val) < 60 else val[:57] + "..."
-            print(f"  {name:<{width}}  {status}  = {shown}")
+            line = f"  {name:<{width}}  {status}  = {shown}"
         elif default is not None:
-            print(f"  {name:<{width}}  {C.YELLOW}default{C.RESET}  = {default}")
+            line = f"  {name:<{width}}  {C.YELLOW}default{C.RESET}  = {default}"
         else:
-            print(f"  {name:<{width}}  {C.RED}UNSET{C.RESET}  (required)")
+            line = f"  {name:<{width}}  {C.RED}UNSET{C.RESET}  (required)"
+        if used_by:
+            shown_origins = used_by[:3]
+            suffix = ", ".join(shown_origins)
+            if len(used_by) > 3:
+                suffix += f", +{len(used_by) - 3} more"
+            line += f"  (used by: {suffix})"
+        print(line)
 
 
 def run_cmd(cmd, shell=True, capture_log=True, formatter=None):

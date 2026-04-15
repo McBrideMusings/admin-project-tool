@@ -16,4 +16,4 @@ from .core import (
     dispatch_target,
     register_cleanup,
 )
-from .logs import LogFormatter, make_formatter
+from .log_format import LogFormatter, make_formatter

@@ -147,13 +147,21 @@ def _pyrepr(s: str) -> str:
     return r
 
 
-def _scan_for_env_vars(text: str, pattern: object, seen: dict[str, str | None]) -> None:
-    """Extract env var names and defaults from a single string."""
+def _scan_for_env_vars(
+    text: str,
+    pattern: object,
+    seen: dict[str, dict],
+    origin: str,
+) -> None:
+    """Extract env var names and defaults from a single string, tagging the origin."""
     for m in pattern.finditer(text):
         name = m.group(1)
         default = m.group(2)
-        if name not in seen or (seen[name] is None and default is not None):
-            seen[name] = default
+        entry = seen.setdefault(name, {"default": default, "used_by": [origin]})
+        if entry["default"] is None and default is not None:
+            entry["default"] = default
+        if origin not in entry["used_by"]:
+            entry["used_by"].append(origin)
 
 
 def collect_env_var_calls(
@@ -162,33 +170,40 @@ def collect_env_var_calls(
     logs: dict[str, dict] | None = None,
 ) -> list[str]:
     """Scan command run-strings, URL values, and log-target paths/hosts for
-    ${VAR} placeholders and emit register_env_var calls.
+    ${VAR} placeholders and emit register_env_var calls with origin breadcrumbs.
 
     Each call lets the runtime `env` command list referenced vars even before they're
-    resolved. Returns Python source lines (no trailing newline).
+    resolved, and annotate which command/url/log-target referenced each one. Returns
+    Python source lines (no trailing newline).
     """
     import re
     pattern = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
-    seen: dict[str, str | None] = {}
+    seen: dict[str, dict] = {}
 
     for cmd in commands:
-        for text in [cmd.run] + list(cmd.targets.values()):
-            _scan_for_env_vars(text, pattern, seen)
+        origin = f"cmd:{cmd.name}"
+        _scan_for_env_vars(cmd.run, pattern, seen, origin)
+        for tname, tval in cmd.targets.items():
+            _scan_for_env_vars(tval, pattern, seen, f"{origin}:{tname}")
 
-    for text in (urls or {}).values():
-        _scan_for_env_vars(text, pattern, seen)
+    for key, text in (urls or {}).items():
+        _scan_for_env_vars(text, pattern, seen, f"url:{key}")
 
-    for target in (logs or {}).values():
-        for env_spec in target.get("envs", {}).values():
-            for key in ("path", "host", "user"):
-                val = env_spec.get(key)
+    for target_name, target in (logs or {}).items():
+        for env_name, env_spec in target.get("envs", {}).items():
+            origin = f"logs.{target_name}.{env_name}"
+            for field in ("path", "host", "user"):
+                val = env_spec.get(field)
                 if isinstance(val, str):
-                    _scan_for_env_vars(val, pattern, seen)
+                    _scan_for_env_vars(val, pattern, seen, origin)
 
     lines = []
-    for name, default in seen.items():
-        if default is None:
-            lines.append(f"register_env_var({_pyrepr(name)})")
-        else:
-            lines.append(f"register_env_var({_pyrepr(name)}, default={_pyrepr(default)})")
+    for name, entry in seen.items():
+        parts = [_pyrepr(name)]
+        if entry["default"] is not None:
+            parts.append(f"default={_pyrepr(entry['default'])}")
+        if entry["used_by"]:
+            origins = "[" + ", ".join(_pyrepr(o) for o in entry["used_by"]) + "]"
+            parts.append(f"used_by={origins}")
+        lines.append(f"register_env_var({', '.join(parts)})")
     return lines

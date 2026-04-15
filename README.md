@@ -54,10 +54,12 @@ If `admin.toml` declares a `[logs.<target>]` section, the generated `./admin` ex
 
 Follow mode reopens the file on inode change or size shrink, so it handles both rotation and truncation-style circular buffers. Remote targets tail over SSH with `tail -F`.
 
+Intended for text logs. Binary files pass through unfiltered and may garble the terminal; a warning is printed if the first 512 bytes contain NULs.
+
 ## Layers
 
 - **core** — Universal: colors, output, logging, run_cmd, sync_deploy, command registry, TUI menu, pick_target, dispatch_target, URL status
-- **logs** — Generic log formatter: strips existing timestamps, prepends HH:MM:SS, colorizes log levels (ERROR/WARN/INFO/DEBUG). Opt-in via `formatter=make_formatter()` on `run_cmd`, `run_with_reload`, `run_parallel`
+- **log_format** — Generic log formatter: strips existing timestamps, prepends HH:MM:SS, colorizes log levels (ERROR/WARN/INFO/DEBUG). Opt-in via `formatter=make_formatter()` on `run_cmd`, `run_with_reload`, `run_parallel`
 - **logtail** — File-based log tailing (`./admin logs`): local or SSH, per-env paths, `--tail N` / `--all` / `--no-follow`. Auto-included when `admin.toml` has a `[logs]` section; handles rotation and truncation-style circular buffers
 - **icons** — Icon generation: SVG/text/solid color rendering at arbitrary sizes, optional DEV banner overlay (requires Pillow, cairosvg optional)
 - **apple** — Xcode/Swift/iOS: dev loops (macOS/iOS with automatic log streaming), xcodebuild, simulator, dev icon swap via icons module
