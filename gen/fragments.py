@@ -175,6 +175,11 @@ def collect_env_var_calls(
     Each call lets the runtime `env` command list referenced vars even before they're
     resolved, and annotate which command/url/log-target referenced each one. Returns
     Python source lines (no trailing newline).
+
+    The origin-string format ("cmd:<name>", "url:<key>", "logs.<target>.<env>", …)
+    is a stable compatibility contract shared with the runtime renderer; see
+    the contract block above `register_env_var` in admin_lib/core.py before
+    changing it.
     """
     import re
     pattern = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")

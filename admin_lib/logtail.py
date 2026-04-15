@@ -33,18 +33,10 @@ from .core import (
     command,
     err,
     info,
-    pick_target,
+    pick_target_or_none,
     resolve_env,
     warn,
 )
-
-
-def _require_interactive(message):
-    """Abort with an error if stdout is not a TTY (non-interactive context)."""
-    if not sys.stdout.isatty():
-        err(message)
-        return False
-    return True
 
 
 def register_logs_command(spec):
@@ -63,16 +55,16 @@ def register_logs_command(spec):
             if len(spec) == 1:
                 target_name = next(iter(spec))
             else:
-                if not _require_interactive(
-                    f"logs: target required in non-interactive context "
-                    f"(have: {', '.join(spec)})"
-                ):
-                    return 1
                 menu = OrderedDict(
                     (t, ", ".join(spec[t]["envs"])) for t in spec
                 )
-                target_name = pick_target(menu, "Select log target")
-                if not target_name:
+                target_name = pick_target_or_none(
+                    menu,
+                    "Select log target",
+                    f"logs: target required in non-interactive context "
+                    f"(have: {', '.join(spec)})",
+                )
+                if target_name is None:
                     return 1
 
         if target_name not in spec:
@@ -88,16 +80,16 @@ def register_logs_command(spec):
                 if len(envs) == 1:
                     env_name = next(iter(envs))
                 else:
-                    if not _require_interactive(
-                        f"logs: --env required for '{target_name}' in "
-                        f"non-interactive context (have: {', '.join(envs)})"
-                    ):
-                        return 1
                     menu = OrderedDict(
                         (e, envs[e]["path"]) for e in envs
                     )
-                    env_name = pick_target(menu, f"Select env for '{target_name}'")
-                    if not env_name:
+                    env_name = pick_target_or_none(
+                        menu,
+                        f"Select env for '{target_name}'",
+                        f"logs: --env required for '{target_name}' in "
+                        f"non-interactive context (have: {', '.join(envs)})",
+                    )
+                    if env_name is None:
                         return 1
 
         if env_name not in envs:
@@ -178,13 +170,17 @@ def _parse_int(s):
 # Local tailing
 # ---------------------------------------------------------------------------
 
-def tail_local(path, tail_n=0, show_all=False, follow=True):
+def tail_local(path, tail_n=0, show_all=False, follow=True, poll_interval=0.25):
     """Stream a local log file.
 
     show_all=True dumps from the start; otherwise tail_n (if >0) emits the last
     N lines or the cursor starts at EOF. When follow=True the cursor then
     tracks appends, reopening on inode change or size shrink (rotation or
     truncation-style circular buffers).
+
+    poll_interval controls both the follow-loop sleep and the pre-existence
+    wait; it exists as a kwarg so tests can inject a tight interval for
+    deterministic behavior.
     """
     if not os.path.exists(path):
         if not follow:
@@ -193,12 +189,18 @@ def tail_local(path, tail_n=0, show_all=False, follow=True):
         info(f"logs: waiting for {path}...")
         while not os.path.exists(path):
             try:
-                time.sleep(0.5)
+                time.sleep(poll_interval)
             except KeyboardInterrupt:
                 return 0
 
     f = open(path, "rb")
     try:
+        # The 512-byte peek runs in every mode, including the default EOF path
+        # that immediately discards these bytes. That is intentional: the
+        # warning is most valuable precisely when the user is tailing from EOF
+        # and about to dump raw bytes straight to the terminal. Skipping the
+        # peek to save ~512 bytes of I/O in the common case would silently
+        # remove the warning where it matters most.
         head = f.read(512)
         if b"\x00" in head:
             warn(f"logs: {path} appears to be binary; output may garble the terminal")
@@ -221,7 +223,7 @@ def tail_local(path, tail_n=0, show_all=False, follow=True):
         pos = f.tell()
         try:
             while True:
-                time.sleep(0.25)
+                time.sleep(poll_interval)
                 try:
                     st = os.stat(path)
                 except FileNotFoundError:
@@ -326,6 +328,11 @@ def tail_remote(host, user, path, tail_n=0, show_all=False, follow=True):
 
     stderr_chunks = []
 
+    # readline() is adequate here because OpenSSH reliably newline-terminates
+    # stderr messages before exiting, so the daemon surfaces each line as soon
+    # as it arrives. Switching to chunked raw reads would only matter for
+    # clients that emit a partial trailing line and then close the pipe, which
+    # isn't something OpenSSH does in practice.
     def _drain_stderr():
         for line in iter(proc.stderr.readline, b""):
             stderr_chunks.append(line)

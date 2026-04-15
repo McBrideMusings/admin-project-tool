@@ -208,6 +208,25 @@ _ENV_VAR_RE = _re_env.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 _referenced_env_vars: dict[str, dict] = {}
 
 
+#
+# Origin-string format (stable contract)
+# ----------------------------------------------------------------------------
+# `used_by` origin strings are a cross-component compatibility contract between
+# the generator (gen/fragments.py::collect_env_var_calls) and the runtime
+# renderer (cmd_env, below). Generated ./admin scripts embed register_env_var
+# calls with these strings literally; changing the format breaks the display
+# of origins in any previously generated ./admin until that project is
+# re-bundled.
+#
+# Currently defined prefixes:
+#   cmd:<name>              — var appears in a top-level command's run string
+#   cmd:<name>:<target>     — var appears in a command's per-target override
+#   url:<key>               — var appears in a [urls] entry
+#   logs.<target>.<env>     — var appears in a [logs.<target>.<env>] field
+#
+# Treat additions as additive; any format change needs coordinated updates in
+# gen/fragments.py and a migration plan for existing generated scripts.
+# ----------------------------------------------------------------------------
 def register_env_var(name, default=None, used_by=None):
     """Record that the generated admin script references this env var.
 
@@ -247,7 +266,12 @@ def resolve_env(s):
 
 
 def cmd_env(args):
-    """Built-in: list every env var the admin script references and show its state."""
+    """Built-in: list every env var the admin script references and show its state.
+
+    Pass -v/--verbose to print the full origin list for vars referenced from
+    more than three places; by default the list is truncated with `+N more`.
+    """
+    verbose = any(a in ("-v", "--verbose") for a in args)
     if not _referenced_env_vars:
         info("no env vars referenced by this admin script")
         return
@@ -272,6 +296,9 @@ def cmd_env(args):
                 suffix += f", +{len(used_by) - 3} more"
             line += f"  (used by: {suffix})"
         print(line)
+        if verbose and len(used_by) > 3:
+            indent = " " * (4 + width)
+            print(f"{indent}{C.DIM}full used_by: {', '.join(used_by)}{C.RESET}")
 
 
 def run_cmd(cmd, shell=True, capture_log=True, formatter=None):
@@ -589,6 +616,26 @@ def pick_target(targets, prompt="Select target"):
         return None
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+def _require_interactive(message):
+    """Print an error if stdout is not a TTY. Returns True if interactive."""
+    if not sys.stdout.isatty():
+        err(message)
+        return False
+    return True
+
+
+def pick_target_or_none(menu, prompt, non_tty_msg):
+    """Non-TTY-guarded pick_target.
+
+    Returns the chosen key, or None if the caller should treat the situation as
+    an exit-1: either stdout is not a TTY (prints non_tty_msg) or the user
+    cancelled the picker.
+    """
+    if not _require_interactive(non_tty_msg):
+        return None
+    return pick_target(menu, prompt)
 
 
 def dispatch_target(targets, cmd_name, args, handlers):
