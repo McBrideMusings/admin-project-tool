@@ -200,6 +200,13 @@ def dev_macos_postprocess(built_app_path, dev_product_name, dev_display_name):
     bundles and break the build. Rename-then-plist-patch via this helper is
     the supported path.
     """
+    if not built_app_path.endswith(".app") or not os.path.isdir(built_app_path):
+        err(f"dev_macos_postprocess: not an .app bundle: {built_app_path!r}")
+        sys.exit(1)
+    if not os.path.isfile(os.path.join(built_app_path, "Contents", "Info.plist")):
+        err(f"dev_macos_postprocess: missing Info.plist in {built_app_path!r}")
+        sys.exit(1)
+
     dest = os.path.join(
         os.path.dirname(built_app_path), f"{dev_product_name}.app"
     )
