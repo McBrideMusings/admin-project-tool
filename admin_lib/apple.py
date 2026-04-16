@@ -2,11 +2,46 @@
 
 Provides: reload infrastructure, Xcode build helpers, simulator helpers,
 log predicates, app finding.
+
+Dev vs. prod side-by-side installs
+----------------------------------
+The convention for letting a Debug ("dev") build coexist with a Release
+("prod") build on the same machine / simulator / device:
+
+- macOS: pass ``PRODUCT_BUNDLE_IDENTIFIER=<mac-dev-bundle>`` as
+  ``extra_settings`` to ``xcodebuild_filtered`` during the Debug build, then
+  call ``dev_macos_postprocess(built, MAC_DEV_PRODUCT_NAME, MAC_DEV_DISPLAY_NAME)``
+  on the resulting ``.app`` to rename it, patch ``CFBundleDisplayName`` in
+  Info.plist, and re-sign ad-hoc. The rename is what gives Finder / Launchpad
+  / Dock a distinct entry; the ad-hoc re-sign is required because the rename
+  + plist patch invalidates the original signature.
+
+- iOS (simulator and device): pass
+  ``PRODUCT_BUNDLE_IDENTIFIER=<ios-dev-bundle>`` as ``extra_settings``. iOS
+  identifies installs by bundle ID, so a distinct dev bundle ID is sufficient
+  to install dev alongside prod on the same simulator or device. The ``.app``
+  filename itself stays the same; no rename is needed (and iOS wouldn't
+  respect one anyway).
+
+  Known gap: the home-screen *display name* on iOS cannot be differentiated
+  via a global xcodebuild flag — ``INFOPLIST_KEY_CFBundleDisplayName`` is
+  unsafe (see ``xcodebuild_filtered``'s warning about SwiftPM resource-bundle
+  cascade). A distinct dev display name on iOS requires a per-target
+  ``.xcconfig`` or Info.plist setup at the Xcode-project level, which is
+  outside admin-project-tool's scope.
+
+Recommended downstream naming (so consumers of these helpers stay readable):
+``MAC_PROD_BUNDLE``, ``MAC_DEV_BUNDLE``, ``MAC_PROD_PRODUCT_NAME``,
+``MAC_DEV_PRODUCT_NAME``, and iOS analogs. Spelling both ``PROD`` and ``DEV``
+explicitly avoids the trap of an unprefixed ``DEV_PRODUCT_NAME`` that
+actually holds the prod name (the path that shipped before the rename/plutil
+split).
 """
 
 import atexit
 import glob
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -112,6 +147,18 @@ def xcodebuild_filtered(project, scheme, config, destination, action="build",
     """Run xcodebuild with grep filtering, return exit code.
 
     Filters output to show only BUILD/error/warning lines.
+
+    Warning — ``extra_settings`` is a raw xcodebuild settings string forwarded
+    verbatim to the command line. Settings passed this way apply *globally*
+    across every target in the build, including SwiftPM resource bundles
+    (swift-crypto, swift-nio, etc.). Only ``PRODUCT_BUNDLE_IDENTIFIER`` is
+    known to be SwiftPM-safe as a global override. Passing ``PRODUCT_NAME``
+    or ``INFOPLIST_KEY_CFBundleDisplayName`` causes "Multiple commands
+    produce" build failures because SwiftPM bundles try to emit duplicate
+    outputs under the overridden name. For product-name / display-name
+    differentiation on macOS dev builds, use ``dev_macos_postprocess()``
+    (rename + plutil + ad-hoc re-sign) instead of xcodebuild flags. See the
+    module docstring for the full dev/prod side-by-side convention.
     """
     from .core import run_cmd
 
@@ -132,6 +179,53 @@ def xcodebuild_filtered(project, scheme, config, destination, action="build",
     return run_cmd(
         f'{build_cmd} | grep -E "BUILD|error:|warning:" ; exit ${{PIPESTATUS[0]}}'
     )
+
+
+def dev_macos_postprocess(built_app_path, dev_product_name, dev_display_name):
+    """Post-process a macOS Debug build to be a side-by-side dev app.
+
+    Renames ``<built>.app`` → ``<dev_product_name>.app`` next to the original,
+    patches ``CFBundleDisplayName`` in ``Contents/Info.plist``, and re-signs
+    the bundle ad-hoc so macOS accepts the modified contents. Returns the
+    path to the renamed dev app.
+
+    Intended to run on the Debug build output *after* xcodebuild succeeds.
+    Pair with ``PRODUCT_BUNDLE_IDENTIFIER=<mac-dev-bundle>`` passed as
+    ``extra_settings`` to ``xcodebuild_filtered`` so the dev app also has a
+    distinct bundle ID. See the module docstring for the full convention.
+
+    Warning (see also ``xcodebuild_filtered``): do NOT try to differentiate
+    the product name or display name via xcodebuild flags — ``PRODUCT_NAME``
+    and ``INFOPLIST_KEY_CFBundleDisplayName`` cascade to SwiftPM resource
+    bundles and break the build. Rename-then-plist-patch via this helper is
+    the supported path.
+    """
+    dest = os.path.join(
+        os.path.dirname(built_app_path), f"{dev_product_name}.app"
+    )
+    if os.path.exists(dest):
+        shutil.rmtree(dest)
+    os.rename(built_app_path, dest)
+
+    plist_path = os.path.join(dest, "Contents", "Info.plist")
+    r = subprocess.run(
+        ["plutil", "-replace", "CFBundleDisplayName",
+         "-string", dev_display_name, plist_path],
+        capture_output=True,
+    )
+    if r.returncode != 0:
+        warn(f"plutil failed to patch CFBundleDisplayName: "
+             f"{r.stderr.decode('utf-8', 'replace').strip()}")
+
+    r = subprocess.run(
+        ["codesign", "--force", "--sign", "-", dest],
+        capture_output=True,
+    )
+    if r.returncode != 0:
+        warn(f"ad-hoc codesign failed: "
+             f"{r.stderr.decode('utf-8', 'replace').strip()}")
+
+    return dest
 
 
 def clean_derived_data(project_name):
