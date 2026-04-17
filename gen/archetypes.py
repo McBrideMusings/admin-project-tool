@@ -32,6 +32,7 @@ class Archetype:
     modules: list[str] = field(default_factory=lambda: ["core"])
     urls: dict[str, str] = field(default_factory=dict)
     commands: dict[str, dict] = field(default_factory=dict)
+    order: list[str] = field(default_factory=list)
 
 
 class ArchetypeError(Exception):
@@ -51,11 +52,14 @@ def load_archetype(archetype_dir: Path, name: str) -> Archetype:
     data = getattr(mod, "ARCHETYPE", None)
     if not isinstance(data, dict):
         raise ArchetypeError(f"{path}: missing top-level ARCHETYPE dict")
+    raw_order = list(data.get("order", []))
+    normalized_order = ["" if e in ("", "---") else e for e in raw_order]
     return Archetype(
         name=data.get("name", name),
         modules=list(data.get("modules", ["core"])),
         urls=dict(data.get("urls", {})),
         commands=dict(data.get("commands", {})),
+        order=normalized_order,
     )
 
 
@@ -86,6 +90,7 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
     modules: set[str] = {"core"}
     modules.update(manifest.modules)
     log: list[str] = []
+    archetype_order: list[str] = []
 
     for arch_name in manifest.archetypes:
         arch = load_archetype(archetype_dir, arch_name)
@@ -101,6 +106,8 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
                     f"overridden by archetype '{arch_name}'"
                 )
             commands[cmd_name] = _to_command(cmd_name, cmd_data, source=arch_name)
+        if arch.order:
+            archetype_order = list(arch.order)
 
     # Manifest [commands] overrides
     for cmd_name, override in manifest.overrides.items():
@@ -137,11 +144,12 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
         urls = merged
 
 
-    # Compute display order: entries from manifest.order (commands + spacers),
-    # then any unlisted commands auto-appended in merge order.
+    # Compute display order: manifest.order wins; otherwise fall back to the
+    # last archetype's declared order. Unlisted commands auto-append in merge order.
+    effective_order = manifest.order if manifest.order else archetype_order
     listed: set[str] = set()
     display: list[str] = []
-    for entry in manifest.order:
+    for entry in effective_order:
         if entry == SPACER:
             display.append(SPACER)
             continue

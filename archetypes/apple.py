@@ -194,4 +194,5 @@ ARCHETYPE = {
             "run": _RELOAD_PY,
         },
     },
+    "order": ["build", "dev", "deploy", "", "test", "clean", "icons", "reload"],
 }
