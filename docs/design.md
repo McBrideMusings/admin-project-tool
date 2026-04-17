@@ -46,6 +46,13 @@ prod = "https://pierce.dev"
 [inline]                        # escape hatch: raw Python blocks inlined verbatim
 # Rare. Use only when a shell string genuinely can't express the logic.
 # file = "admin_inline.py"
+
+order = ["build", "dev", "deploy", "", "test", "clean"]
+# Display order for the TUI menu and --help. "" (or "---") inserts a blank
+# spacer row — useful for grouping primary commands (build/dev/deploy) away
+# from secondary ones (test/clean/icons). Commands omitted from `order`
+# auto-append after the listed ones in merge order. If `order` is not set
+# on the manifest, the last archetype's declared `order` is used.
 ```
 
 Every key is optional except `project_name` and `archetypes` (may be empty list).
@@ -68,6 +75,8 @@ Initial archetypes (derived 1:1 from the survey clusters):
 Composition works: `archetypes = ["docker-unraid", "apple"]` produces the `open-assistant` / `cctool` shape without hand editing.
 
 **Conflict resolution:** when two archetypes define the same command name, the later one wins; the manifest's own `[commands]` table wins over all archetypes. `init-admin --regenerate` prints a merge report.
+
+**Display order:** archetypes may declare `"order": [...]` (with `""` entries for blank spacers) to group their commands in the TUI and `--help`. Manifest `order` wins; otherwise the last archetype's `order` is used; otherwise commands render in merge order. Example from the `apple` archetype: `["build", "dev", "deploy", "", "test", "clean", "icons", "reload"]` — the spacer signals the primary/secondary split.
 
 ## Detectors (starter generators)
 
