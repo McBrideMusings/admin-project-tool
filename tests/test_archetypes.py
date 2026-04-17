@@ -15,7 +15,7 @@ sys.path.insert(0, str(REPO))
 
 from gen.archetypes import load_archetype, resolve, ArchetypeError, _to_command  # noqa: E402
 from gen.detectors import detect  # noqa: E402
-from gen.fragments import collect_env_var_calls  # noqa: E402
+from gen.fragments import collect_env_var_calls, render_command  # noqa: E402
 from gen.manifest import Command, Manifest, ManifestError, parse  # noqa: E402
 from gen.render import render  # noqa: E402
 
@@ -267,6 +267,76 @@ def test_logs_render_emits_register_call():
     print("OK: [logs] renders register_logs_command and inlines logtail")
 
 
+def test_render_python_kind_emits_verbatim_body():
+    """kind=python emits the `run` string as a Python block inside cmd_<name>.
+
+    Replaces the [inline] escape hatch for projects that need to call admin_lib
+    helpers with project-specific kwargs. No ${VAR} substitution — the body is
+    emitted verbatim, so any env access is explicit via os.environ.get.
+    """
+    cmd = Command(
+        name="dev",
+        run="run_vite_rust_dev(vite_port=int(os.environ.get('VITE_PORT', 5173)))",
+        desc="Run backend + frontend",
+        kind="python",
+    )
+    out = render_command(cmd)
+    assert '@command("dev", "Run backend + frontend")' in out, out
+    assert "def cmd_dev(args):" in out, out
+    assert "set_log_context(\"dev\")" in out, out
+    assert "run_vite_rust_dev(vite_port=int(os.environ.get('VITE_PORT', 5173)))" in out, out
+    assert "${" not in out, "python kind must not substitute ${VAR} placeholders"
+    print("OK: kind=python emits verbatim Python body")
+
+
+def test_render_python_kind_rejects_empty_run():
+    cmd = Command(name="dev", run="", desc="...", kind="python")
+    try:
+        render_command(cmd)
+    except Exception as e:
+        assert "needs 'run'" in str(e), e
+        print("OK: kind=python rejects empty run")
+        return
+    raise AssertionError("expected FragmentError for empty python run")
+
+
+def test_collect_env_vars_scans_python_os_environ_get():
+    """Python-kind commands that call os.environ.get('NAME') should surface the
+    env var in `./admin env` just like ${VAR} placeholders in shell commands do.
+    """
+    cmd = Command(
+        name="dev",
+        run=(
+            "run_vite_rust_dev("
+            "vite_port=int(os.environ.get('VITE_PORT', '5173')), "
+            "dev_mounts=os.environ.get('DEV_MOUNTS'))"
+        ),
+        desc="...",
+        kind="python",
+    )
+    calls = collect_env_var_calls([cmd])
+    joined = "\n".join(calls)
+    assert '"VITE_PORT"' in joined, joined
+    assert 'default="5173"' in joined, joined
+    assert '"DEV_MOUNTS"' in joined, joined
+    assert '"cmd:dev"' in joined, joined
+    print("OK: collect_env_var_calls finds os.environ.get in python-kind run")
+
+
+def test_render_python_kind_multiline_body_indented():
+    """A multi-line Python body is indented to fit inside the generated def."""
+    cmd = Command(
+        name="boot",
+        run="info('starting')\nrun_vite_rust_dev(vite_port=5173)",
+        desc="Boot it",
+        kind="python",
+    )
+    out = render_command(cmd)
+    assert "    info('starting')" in out, out
+    assert "    run_vite_rust_dev(vite_port=5173)" in out, out
+    print("OK: kind=python indents multi-line body")
+
+
 if __name__ == "__main__":
     test_all_archetypes_load_and_validate()
     test_composition_docker_unraid_plus_apple()
@@ -281,4 +351,8 @@ if __name__ == "__main__":
     test_logs_env_vars_scanned()
     test_seek_last_n_lines()
     test_logs_render_emits_register_call()
+    test_render_python_kind_emits_verbatim_body()
+    test_render_python_kind_rejects_empty_run()
+    test_collect_env_vars_scans_python_os_environ_get()
+    test_render_python_kind_multiline_body_indented()
     print("\nAll tests passed.")

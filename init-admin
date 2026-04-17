@@ -136,7 +136,16 @@ def _regenerate(project_dir: Path, args) -> int:
     if manifest.generator_commit != sha:
         info(f"updating generator_commit: {manifest.generator_commit} → {sha}")
         manifest.generator_commit = sha
-        (project_dir / "admin.toml").write_text(dump_manifest(manifest))
+        toml_path = project_dir / "admin.toml"
+        import re as _re
+        text = toml_path.read_text()
+        text = _re.sub(
+            r'generator_commit\s*=\s*"[^"]*"',
+            f'generator_commit = "{sha}"',
+            text,
+            count=1,
+        )
+        toml_path.write_text(text)
 
     try:
         resolved = resolve(manifest, ARCHETYPE_DIR)

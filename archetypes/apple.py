@@ -9,7 +9,7 @@ Runtime env vars:
 
 ARCHETYPE = {
     "name": "apple",
-    "modules": ["core", "apple"],
+    "modules": ["core", "icons", "apple"],
     "urls": {},
     "commands": {
         "build": {

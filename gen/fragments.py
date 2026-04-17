@@ -99,10 +99,11 @@ def render_multi_target(cmd: Command) -> str:
 def render_apple_dev_loop(cmd: Command) -> str:
     """An apple dev loop — same multi-target shape, semantically a long-running build+watch.
 
-    The underlying admin_lib.apple.dev_loop_* helpers take heavy project-specific
-    config (scheme, process, subsystem, icons). That's out of scope for a shell-string
-    archetype; projects that need the full loop use `[inline]`. This fragment handles
-    the common case: a multi-target xcodebuild-based dev shell with pick_target.
+    This fragment handles the simple case: a multi-target xcodebuild-based dev
+    shell with pick_target. Projects needing the full admin_lib.apple.dev_loop_*
+    loop (icon swap, signal-driven reload, log streaming) should use a
+    `kind = "python"` command that calls the dev_loop_* helper with project
+    kwargs — see render_python.
     """
     return render_multi_target(cmd)
 
@@ -125,11 +126,42 @@ def render_docker_reload_loop(cmd: Command) -> str:
     return body
 
 
+def render_python(cmd: Command) -> str:
+    """A command whose `run` string is a block of Python statements executed in
+    the scope of the bundled admin_lib — every top-level admin_lib symbol
+    (`info`, `err`, `run_cmd`, `find_app`, `dev_loop_macos`, and everything else
+    pulled in via the manifest's `modules = [...]`) is in scope.
+
+    Unlike shell/multi-target kinds, the body is emitted verbatim. No `${VAR}`
+    substitution is applied. For env access, call `os.environ.get(...)` directly
+    — that keeps the generated script explicit about which env names it reads
+    and keeps this renderer purely additive (no hidden substitution magic).
+
+    This is the architected alternative to `[inline]` escape files: downstream
+    projects that used to need a per-project admin_inline.py for stateful
+    workflows (multi-stage builds, dev loops, orchestration) should instead
+    extract the imperative body into an admin_lib module and call it from a
+    `kind = "python"` command here.
+    """
+    if not cmd.run:
+        raise FragmentError(f"python command '{cmd.name}' needs 'run' (a Python block)")
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    indented = textwrap.indent(cmd.run.strip(), "    ")
+    body = (
+        f"@command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})\n"
+        f"def {func_name}(args):\n"
+        f"    set_log_context({_pyrepr(cmd.name)})\n"
+        f"{indented}\n"
+    )
+    return body
+
+
 _RENDERERS = {
     "shell": render_shell,
     "multi-target": render_multi_target,
     "apple-dev-loop": render_apple_dev_loop,
     "docker-reload-loop": render_docker_reload_loop,
+    "python": render_python,
 }
 
 KNOWN_KINDS = set(_RENDERERS)
@@ -183,11 +215,20 @@ def collect_env_var_calls(
     """
     import re
     pattern = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+    # kind=python commands read env via os.environ.get("NAME") /
+    # os.environ.get("NAME", "default") instead of ${VAR}. Scanning both lets
+    # `./admin env` surface the same origin breadcrumbs for either kind.
+    py_env_pattern = re.compile(
+        r"""os\.environ\.get\(\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]"""
+        r"""(?:\s*,\s*(?:['"]([^'"]*)['"]|[^)]+?))?\s*\)"""
+    )
     seen: dict[str, dict] = {}
 
     for cmd in commands:
         origin = f"cmd:{cmd.name}"
         _scan_for_env_vars(cmd.run, pattern, seen, origin)
+        if cmd.kind == "python":
+            _scan_for_env_vars(cmd.run, py_env_pattern, seen, origin)
         for tname, tval in cmd.targets.items():
             _scan_for_env_vars(tval, pattern, seen, f"{origin}:{tname}")
 
