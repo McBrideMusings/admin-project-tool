@@ -38,7 +38,10 @@ while i < len(args):
     i += 1
 
 if target is None:
-    target = "mac"
+    from collections import OrderedDict
+    target = pick_target(OrderedDict([("mac", "mac"), ("ios", "ios")]), "dev — select target")
+    if not target:
+        return
 
 cfg = globals().get("_APPLE_CONFIG") or {}
 if target == "mac":
@@ -64,7 +67,10 @@ for a in args:
         err("unknown arg: " + a); sys.exit(1)
 
 if target is None:
-    err("deploy requires a target: mac or ios"); sys.exit(1)
+    from collections import OrderedDict
+    target = pick_target(OrderedDict([("mac", "mac"), ("ios", "ios")]), "deploy — select target")
+    if not target:
+        return
 
 cfg = globals().get("_APPLE_CONFIG") or {}
 if target == "mac":
@@ -156,14 +162,6 @@ ARCHETYPE = {
                     "-destination '${IOS_DEST:-generic/platform=iOS Simulator}' build"
                 ),
             },
-        },
-        "install": {
-            "kind": "shell",
-            "desc": "Build Release and install on a connected iOS device",
-            "run": (
-                "xcodebuild -project ${APP_PROJECT} -scheme ${APP_SCHEME} "
-                "-configuration Release -destination 'generic/platform=iOS' install"
-            ),
         },
         "dev": {
             "kind": "python",
