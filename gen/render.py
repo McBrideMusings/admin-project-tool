@@ -78,6 +78,12 @@ def render(
     )
     url_call = f"set_urls([{url_pairs}])\n" if url_pairs else ""
 
+    # Emit the [apple] table as a module-level _APPLE_CONFIG dict the apple
+    # archetype's kind:"python" commands read. Empty table → no emission.
+    apple_decl = ""
+    if m.apple:
+        apple_decl = f"_APPLE_CONFIG = {_pyliteral(m.apple)}\n"
+
     # Emit command function defs in display order, interleaving add_spacer()
     # calls for spacer entries. Registration order == display order.
     command_blocks: list[str] = []
@@ -108,6 +114,7 @@ def render(
         f"{PROJECT_MARKER}: {m.project_name} ===\n"
         f"{env_block}"
         f"{url_call}"
+        f"{apple_decl}"
         f"\n{commands_src}\n"
         f"{logs_src}"
         f"{inline_src}"

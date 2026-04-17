@@ -41,6 +41,7 @@ class Manifest:
     custom: dict[str, dict]                  # command name -> full command dict
     order: list[str]                         # explicit display order; "" = spacer
     logs: dict[str, dict] = field(default_factory=dict)  # target -> {default_env, envs: {env: {path, host, user}}}
+    apple: dict = field(default_factory=dict)  # [apple] table — archetype-specific config, raw dict
     generator_commit: str | None = None
     inline_file: str | None = None           # path relative to project root
     raw: dict = field(default_factory=dict)  # original parsed TOML, for debugging
@@ -130,6 +131,10 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
 
     logs = _parse_logs(data.get("logs"), source)
 
+    apple = data.get("apple", {}) or {}
+    if not isinstance(apple, dict):
+        raise ManifestError(f"{source}: '[apple]' must be a table")
+
     return Manifest(
         project_name=project_name,
         python_min=python_min,
@@ -140,6 +145,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         custom=custom_normalized,
         order=order,
         logs=logs,
+        apple=apple,
         generator_commit=data.get("generator_commit"),
         inline_file=inline_file,
         raw=data,

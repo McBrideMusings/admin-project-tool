@@ -59,11 +59,17 @@ def test_composition_docker_unraid_plus_apple():
         order=[],
     )
     resolved = resolve(m, ARCH_DIR)
-    # Commands from both should be present; apple's `build` overrides docker-unraid's.
-    for name in ("build", "dev", "install", "clean", "deploy", "logs", "reload", "open"):
+    # Commands from both should be present. Apple is later in the list, so
+    # commands it declares (build, deploy, reload) override docker-unraid's.
+    for name in ("build", "dev", "install", "clean", "deploy", "test", "icons",
+                 "logs", "reload", "open"):
         assert name in resolved.commands, f"missing command after merge: {name}"
     assert resolved.commands["build"].source == "apple"
-    assert resolved.commands["deploy"].source == "docker-unraid"
+    assert resolved.commands["deploy"].source == "apple"
+    assert resolved.commands["reload"].source == "apple"
+    # docker-unraid still contributes commands that apple doesn't declare.
+    assert resolved.commands["logs"].source == "docker-unraid"
+    assert resolved.commands["open"].source == "docker-unraid"
     # Render must not crash.
     script = render(resolved, LIB_DIR, generator_commit="test-sha")
     assert "def cmd_build" in script

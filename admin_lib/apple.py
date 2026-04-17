@@ -1081,6 +1081,352 @@ def dev_loop_device(project, scheme, config, subsystem, process,
 # Reload command auto-registration
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# High-level archetype wrappers — driven by the [apple] table in admin.toml.
+# The apple archetype's kind:"python" commands call these with _APPLE_CONFIG.
+# ---------------------------------------------------------------------------
+
+
+def _detect_project_path(cfg):
+    """Return cfg['project_path'], or the first .xcworkspace/.xcodeproj in cwd."""
+    p = cfg.get("project_path")
+    if p:
+        return p
+    for pat in ("*.xcworkspace", "*.xcodeproj"):
+        matches = glob.glob(pat)
+        if matches:
+            return matches[0]
+    err("apple.project_path not set and no .xcodeproj/.xcworkspace found in cwd")
+    sys.exit(1)
+
+
+def _resolve_icon_dirs(cfg, platforms=("mac", "ios")):
+    """Return {platform: abs_path} for platforms that have an asset dir configured."""
+    icons_cfg = cfg.get("icons") or {}
+    key_map = {"mac": "mac_asset_dir", "ios": "ios_asset_dir"}
+    result = {}
+    for plat in platforms:
+        rel = icons_cfg.get(key_map[plat])
+        if rel:
+            result[plat] = os.path.abspath(rel)
+    return result
+
+
+def _icon_generation_kwargs(cfg):
+    """Return kwargs dict forwarded to generate_icons() from [apple.icons]."""
+    i = cfg.get("icons") or {}
+    out = {}
+    for k in ("bg_color", "glyph_text", "glyph_svg", "glyph_color", "glyph_scale"):
+        if k in i:
+            out[k] = i[k]
+    return out
+
+
+def build_icon_hooks(cfg, platforms=("mac", "ios"), backup_dir="tmp/icon-backup"):
+    """Return (pre_build, post_build) callables for dev loops.
+
+    pre_build backs up committed production icons and swaps in dev-overlay
+    versions generated from [apple.icons] config. post_build restores the
+    committed icons. Returns (None, None) if [apple.icons] is missing or
+    empty, so the caller can pass them directly to dev_loop_* without
+    conditional plumbing.
+    """
+    icon_dirs = _resolve_icon_dirs(cfg, platforms)
+    if not icon_dirs:
+        return (None, None)
+    icon_kwargs = _icon_generation_kwargs(cfg)
+    if not (icon_kwargs.get("glyph_text") or icon_kwargs.get("glyph_svg")):
+        return (None, None)
+
+    def _pre():
+        backup_icons(icon_dirs, backup_dir)
+        swap_dev_icons(icon_dirs, icon_kwargs)
+
+    def _post():
+        restore_icons(icon_dirs, backup_dir)
+
+    return _pre, _post
+
+
+def _make_mac_dev_running_check(cfg):
+    """Return a callable that reports whether the dev mac instance is running.
+
+    If mac_dev_process is set, filter by that name *and* DerivedData in argv
+    so the prod binary (same scheme name, different install path) isn't
+    counted. Otherwise fall back to pgrep -x mac_process.
+    """
+    dev_name = cfg.get("mac_dev_process")
+    prod_name = cfg.get("mac_process") or cfg.get("mac_scheme")
+
+    if dev_name:
+        def _check():
+            r = subprocess.run(["pgrep", "-af", "DerivedData"],
+                               capture_output=True, text=True)
+            return any(dev_name in ln for ln in r.stdout.splitlines())
+        return _check
+
+    if prod_name:
+        def _check():
+            r = subprocess.run(["pgrep", "-x", prod_name], capture_output=True)
+            return r.returncode == 0
+        return _check
+
+    return lambda: False
+
+
+def _make_mac_dev_kill(cfg):
+    """Return a callable that kills only the dev instance (not prod)."""
+    dev_name = cfg.get("mac_dev_process")
+    prod_name = cfg.get("mac_process") or cfg.get("mac_scheme")
+
+    if dev_name:
+        def _kill():
+            r = subprocess.run(["pgrep", "-af", "DerivedData"],
+                               capture_output=True, text=True)
+            for line in r.stdout.splitlines():
+                parts = line.split(None, 1)
+                if len(parts) < 2 or dev_name not in parts[1]:
+                    continue
+                try:
+                    os.kill(int(parts[0]), signal.SIGTERM)
+                except (ProcessLookupError, ValueError):
+                    pass
+        return _kill
+
+    if prod_name:
+        def _kill():
+            subprocess.run(["pkill", "-x", prod_name], capture_output=True)
+        return _kill
+
+    return lambda: None
+
+
+def _derived_glob(scheme, config, platform_subdir, product_name):
+    """Glob pattern under ~/Library/Developer/Xcode/DerivedData for a built .app."""
+    return os.path.expanduser(
+        f"~/Library/Developer/Xcode/DerivedData/{scheme}-*"
+        f"/Build/Products/{config}{platform_subdir}/{product_name}.app"
+    )
+
+
+def dev_mac(cfg, *, log_level="app", clean=False, install=False):
+    """macOS dev loop driven by [apple] config. Swaps dev icons, builds, launches."""
+    if not cfg:
+        err("[apple] table missing from admin.toml"); sys.exit(1)
+    scheme = cfg.get("mac_scheme")
+    if not scheme:
+        err("apple.mac_scheme required"); sys.exit(1)
+    project = _detect_project_path(cfg)
+    config = cfg.get("mac_build_config", "Debug")
+    process = cfg.get("mac_process", scheme)
+    dev_process = cfg.get("mac_dev_process") or process
+    subsystem = cfg.get("subsystem", "")
+    extra_settings = cfg.get("dev_build_settings", "")
+    build_action = "clean build" if clean else "build"
+    predicate = log_predicate(dev_process, subsystem, level=log_level)
+    app_pattern = _derived_glob(scheme, config, "", process)
+
+    pre_build, post_build = build_icon_hooks(cfg)
+
+    pre_launch = None
+    if install:
+        dev_install_path = cfg.get("mac_install_path_dev")
+        if not dev_install_path:
+            err("--install requires apple.mac_install_path_dev in admin.toml")
+            sys.exit(1)
+
+        def pre_launch(built_app):
+            info(f"Installing to {dev_install_path}")
+            if os.path.exists(dev_install_path):
+                shutil.rmtree(dev_install_path)
+            shutil.copytree(built_app, dev_install_path)
+            return dev_install_path
+
+    dev_loop_macos(
+        project=project, scheme=scheme, config=config,
+        destination="platform=macOS",
+        process=dev_process, subsystem=subsystem,
+        predicate=predicate, app_pattern=app_pattern,
+        extra_settings=extra_settings, build_action=build_action,
+        pre_build=pre_build, post_build=post_build, pre_launch=pre_launch,
+        is_running_fn=_make_mac_dev_running_check(cfg),
+        kill_fn=_make_mac_dev_kill(cfg),
+    )
+
+
+def dev_ios(cfg, *, log_level="app", clean=False):
+    """iOS simulator dev loop driven by [apple] config."""
+    if not cfg:
+        err("[apple] table missing from admin.toml"); sys.exit(1)
+    scheme = cfg.get("ios_scheme")
+    if not scheme:
+        err("apple.ios_scheme required"); sys.exit(1)
+    project = _detect_project_path(cfg)
+    config = cfg.get("ios_build_config", "Debug")
+    process = cfg.get("ios_process", scheme)
+    subsystem = cfg.get("subsystem", "")
+    extra_settings = cfg.get("dev_build_settings", "")
+    build_action = "clean build" if clean else "build"
+    predicate = log_predicate(process, subsystem, level=log_level)
+    bundle_id = cfg.get("ios_dev_bundle") or cfg.get("ios_bundle")
+    app_pattern = _derived_glob(scheme, config, "-iphonesimulator", process)
+
+    sim_id = None
+    device_name = os.environ.get("IOS_DEVICE") or cfg.get("ios_device")
+    if device_name:
+        sim_id = find_simulator(device_name)
+        if not sim_id:
+            warn(f"simulator '{device_name}' not found, falling back to auto-resolve")
+
+    pre_build, post_build = build_icon_hooks(cfg)
+
+    dev_loop_ios(
+        project=project, scheme=scheme, config=config,
+        subsystem=subsystem, process=process, predicate=predicate,
+        app_pattern=app_pattern, extra_settings=extra_settings,
+        build_action=build_action, bundle_id=bundle_id, sim_id=sim_id,
+        pre_build=pre_build, post_build=post_build,
+    )
+
+
+def deploy_mac(cfg, *, clean=False):
+    """Build and install a production macOS app to /Applications. No icon swap."""
+    if not cfg:
+        err("[apple] table missing from admin.toml"); sys.exit(1)
+    scheme = cfg.get("mac_scheme")
+    if not scheme:
+        err("apple.mac_scheme required"); sys.exit(1)
+    project = _detect_project_path(cfg)
+    config = cfg.get("mac_deploy_config", cfg.get("mac_build_config", "Debug"))
+    process = cfg.get("mac_process", scheme)
+    install_path = cfg.get("mac_install_path_prod", f"/Applications/{process}.app")
+    build_action = "clean build" if clean else "build"
+
+    info(f"Killing any running {process}...")
+    subprocess.run(["pkill", "-x", process], capture_output=True)
+
+    info(f"Building {scheme} ({config})...")
+    rc = xcodebuild_filtered(project, scheme, config, "platform=macOS",
+                             action=build_action, extra_settings="")
+    if rc != 0:
+        err("Build failed"); sys.exit(rc)
+
+    app_path = find_app(_derived_glob(scheme, config, "", process))
+    if not app_path:
+        err("Could not find built app"); sys.exit(1)
+
+    info(f"Installing to {install_path}")
+    if os.path.exists(install_path):
+        shutil.rmtree(install_path)
+    shutil.copytree(app_path, install_path)
+
+    info(f"Launching {install_path}")
+    subprocess.run(["open", install_path], check=True)
+    ok(f"deploy mac → {install_path}")
+
+
+def deploy_ios(cfg, *, clean=False):
+    """Build and install a production iOS app on a USB-connected device. No icon swap."""
+    if not cfg:
+        err("[apple] table missing from admin.toml"); sys.exit(1)
+    scheme = cfg.get("ios_scheme")
+    if not scheme:
+        err("apple.ios_scheme required"); sys.exit(1)
+    project = _detect_project_path(cfg)
+    config = cfg.get("ios_deploy_config", cfg.get("ios_build_config", "Debug"))
+    process = cfg.get("ios_process", scheme)
+    bundle_id = cfg.get("ios_bundle")
+    build_action = "clean build" if clean else "build"
+
+    device_id, device_name, _udid = require_usb_device()
+    info(f"Deploying to {device_name}")
+
+    info(f"Building {scheme} for device ({config})...")
+    rc = xcodebuild_filtered(project, scheme, config, "generic/platform=iOS",
+                             action=build_action, extra_settings="")
+    if rc != 0:
+        err("Build failed"); sys.exit(rc)
+
+    app_path = find_app(_derived_glob(scheme, config, "-iphoneos", process))
+    if not app_path:
+        err("Could not find built app"); sys.exit(1)
+
+    info(f"Installing to device {device_name}...")
+    rc = install_on_device(device_id, app_path)
+    if rc != 0:
+        err("Install failed"); sys.exit(rc)
+
+    if bundle_id:
+        info(f"Launching {bundle_id}")
+        launch_on_device(device_id, bundle_id)
+    ok(f"deploy ios → {device_name}")
+
+
+def regenerate_icons(cfg):
+    """Regenerate production icons from [apple.icons] config into the asset catalogs.
+
+    Detects sizes from the existing PNGs in each appiconset and overwrites
+    them with freshly generated ones (no DEV overlay). The asset catalog is
+    the source of truth; running this makes committed PNGs match the glyph
+    config. No backup is kept.
+    """
+    from .icons import generate_icons
+
+    icon_dirs = _resolve_icon_dirs(cfg)
+    if not icon_dirs:
+        err("no icon asset dirs configured in [apple.icons]"); sys.exit(1)
+    kwargs = _icon_generation_kwargs(cfg)
+    if not (kwargs.get("glyph_text") or kwargs.get("glyph_svg")):
+        err("[apple.icons] needs glyph_text or glyph_svg"); sys.exit(1)
+
+    try:
+        from PIL import Image as _Img
+    except ImportError:
+        err("Pillow not installed — pip install pillow"); sys.exit(1)
+
+    import tempfile
+
+    any_success = False
+    for label, src_dir in icon_dirs.items():
+        if not os.path.isdir(src_dir):
+            warn(f"{label}: {src_dir} not a directory — skipping")
+            continue
+        size_to_file = {}
+        for fname in os.listdir(src_dir):
+            if not fname.lower().endswith(".png"):
+                continue
+            try:
+                with _Img.open(os.path.join(src_dir, fname)) as im:
+                    size_to_file[im.width] = fname
+            except Exception:
+                continue
+        if not size_to_file:
+            warn(f"{label}: no PNGs in {src_dir} — skipping")
+            continue
+
+        sizes = sorted(size_to_file.keys())
+        tmp_out = tempfile.mkdtemp(prefix=f"prod-icons-{label}-")
+        try:
+            gen_kwargs = dict(kwargs)
+            gen_kwargs["sizes"] = sizes
+            gen_kwargs["output_dir"] = tmp_out
+            gen_kwargs["dev"] = False
+            if not generate_icons(**gen_kwargs):
+                err(f"{label}: icon generation failed")
+                continue
+            for size, orig_fname in size_to_file.items():
+                gen_path = os.path.join(tmp_out, f"{size}.png")
+                if os.path.isfile(gen_path):
+                    shutil.copy2(gen_path, os.path.join(src_dir, orig_fname))
+            ok(f"{label}: regenerated {len(sizes)} icons in {src_dir}")
+            any_success = True
+        finally:
+            shutil.rmtree(tmp_out, ignore_errors=True)
+
+    if not any_success:
+        sys.exit(1)
+
+
 def register_reload_command(pid_file="/tmp/admin-run.pid"):
     """Register a standard reload command that sends SIGUSR1."""
     @command("reload", "Signal a running './admin dev' to rebuild and relaunch")
