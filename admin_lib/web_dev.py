@@ -21,7 +21,7 @@ from .core import (
     info, ok, warn, err, register_cleanup,
 )
 from .docker import ensure_deps, run_with_reload
-from .ports import kill_port
+from .ports import preflight_port
 
 
 def parse_dev_mounts(raw):
@@ -128,8 +128,10 @@ def run_vite_rust_dev(
     if rc != 0:
         return rc
 
-    kill_port(vite_port)
-    kill_port(backend_port)
+    if not preflight_port(vite_port, label="vite"):
+        return 1
+    if not preflight_port(backend_port, label="backend"):
+        return 1
 
     vite_log = os.path.join(LOG_DIR, vite_log_name)
     os.makedirs(LOG_DIR, exist_ok=True)
