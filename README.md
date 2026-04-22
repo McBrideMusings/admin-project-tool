@@ -80,7 +80,7 @@ Composable mixins under `archetypes/`. A manifest lists one or more archetypes; 
 
 - **`hugo`** — Hugo static site builds and dev server
 - **`go-cli`** — Go build, test, vet, fmt, deploy
-- **`docker-unraid`** — Docker build on remote, deploy to Unraid
+- **`docker-unraid`** — local `linux/amd64` build, `docker save | docker load` image transfer, then recreates the remote container against the new image while preserving its live run config (mounts, ports, env, labels) captured via `docker inspect`
 - **`stash-plugin`** — Rollup build + Stash plugin sync
 - **`apple`** — Xcode/Swift/iOS builds, dev loops, device install
 - **`unraid-plugin`** — Push source to Unraid USB, register/uninstall

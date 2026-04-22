@@ -299,6 +299,161 @@ def docker_deploy(image, host, run_args=""):
     return rc
 
 
+def remote_recreate_container(host, image, container=None):
+    """Transport a local image to a remote host and recreate the named container
+    against that new image, preserving its existing run configuration (binds,
+    ports, env, labels, restart policy, network, caps, user, hostname, mac).
+
+    Intended for Unraid-style hosts where the container was first created by
+    the Docker GUI from a template: we don't know the GUI's `docker run` args,
+    so we read them off the live container with `docker inspect` and replay
+    them unchanged against the newly-loaded image.
+
+    If the target container does not exist on `host`, we print an actionable
+    message and return nonzero without touching anything on the remote.
+
+    Returns exit code.
+    """
+    import json
+    import shlex
+
+    if container is None:
+        container = image.split(":", 1)[0].rsplit("/", 1)[-1]
+
+    host_q = shlex.quote(host)
+    image_q = shlex.quote(image)
+    container_q = shlex.quote(container)
+
+    info(f"Transferring image {image} to {host}...")
+    rc = run_cmd(f"docker save {image_q} | ssh {host_q} 'docker load'")
+    if rc != 0:
+        err("Image transfer failed")
+        return rc
+
+    info(f"Inspecting existing container '{container}' on {host}...")
+    proc = subprocess.run(
+        ["ssh", host, "docker", "inspect", container],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip() or proc.stdout.strip() == "[]":
+        err(f"Container '{container}' does not exist on {host}.")
+        print(
+            f"\n  Create it from the Unraid Docker GUI using the template,"
+            f" then re-run this command.\n"
+        )
+        return 1
+
+    try:
+        inspect = json.loads(proc.stdout)[0]
+    except (json.JSONDecodeError, IndexError, KeyError) as e:
+        err(f"Could not parse docker inspect output: {e}")
+        return 1
+
+    args = _build_run_args_from_inspect(inspect)
+
+    info(f"Stopping + removing '{container}' on {host}...")
+    rc = run_cmd(
+        f"ssh {host_q} 'docker stop -t 10 {container_q} >/dev/null"
+        f" && docker rm {container_q} >/dev/null'"
+    )
+    if rc != 0:
+        err("Stop/remove failed")
+        return rc
+
+    run_cmd_parts = ["docker", "run", "-d", "--name", container] + args + [image]
+    remote_run = " ".join(shlex.quote(p) for p in run_cmd_parts)
+    info(f"Recreating '{container}' on {host} with preserved run config...")
+    rc = run_cmd(f"ssh {host_q} {shlex.quote(remote_run)}")
+    if rc == 0:
+        ok(f"Deployed {image} to {host} as container '{container}'")
+    return rc
+
+
+def _build_run_args_from_inspect(inspect):
+    """Translate `docker inspect` JSON (single-container) into a list of
+    `docker run` argv pieces that reproduce the container's runtime config.
+
+    Only emits args for fields that are actually set, so unset/zero values
+    don't override image defaults.
+    """
+    host_cfg = inspect.get("HostConfig") or {}
+    config = inspect.get("Config") or {}
+    net_settings = inspect.get("NetworkSettings") or {}
+    args = []
+
+    for bind in host_cfg.get("Binds") or []:
+        args += ["-v", bind]
+
+    for cport, bindings in (host_cfg.get("PortBindings") or {}).items():
+        for b in bindings or []:
+            host_ip = b.get("HostIp") or ""
+            host_port = b.get("HostPort") or ""
+            spec = f"{host_ip}:{host_port}:{cport}" if host_ip else f"{host_port}:{cport}"
+            args += ["-p", spec]
+
+    for e in config.get("Env") or []:
+        args += ["-e", e]
+
+    rp = host_cfg.get("RestartPolicy") or {}
+    rp_name = rp.get("Name") or ""
+    if rp_name and rp_name != "no":
+        if rp_name == "on-failure" and rp.get("MaximumRetryCount"):
+            args += ["--restart", f"on-failure:{rp['MaximumRetryCount']}"]
+        else:
+            args += ["--restart", rp_name]
+
+    net_mode = host_cfg.get("NetworkMode") or ""
+    if net_mode and net_mode != "default":
+        args += ["--network", net_mode]
+
+    for h in host_cfg.get("ExtraHosts") or []:
+        args += ["--add-host", h]
+
+    for d in host_cfg.get("Devices") or []:
+        path_on_host = d.get("PathOnHost", "")
+        path_in_container = d.get("PathInContainer", "")
+        perms = d.get("CgroupPermissions", "")
+        spec = f"{path_on_host}:{path_in_container}"
+        if perms and perms != "rwm":
+            spec += f":{perms}"
+        args += ["--device", spec]
+
+    for c in host_cfg.get("CapAdd") or []:
+        args += ["--cap-add", c]
+    for c in host_cfg.get("CapDrop") or []:
+        args += ["--cap-drop", c]
+
+    if host_cfg.get("Privileged"):
+        args += ["--privileged"]
+
+    for k, v in (config.get("Labels") or {}).items():
+        args += ["--label", f"{k}={v}"]
+
+    if config.get("User"):
+        args += ["--user", config["User"]]
+
+    if config.get("Hostname"):
+        args += ["--hostname", config["Hostname"]]
+
+    mac = config.get("MacAddress") or net_settings.get("MacAddress") or ""
+    if mac and net_mode not in ("host", "none") and not net_mode.startswith("container:"):
+        args += ["--mac-address", mac]
+
+    if config.get("WorkingDir"):
+        args += ["--workdir", config["WorkingDir"]]
+
+    if host_cfg.get("Memory"):
+        args += ["--memory", str(host_cfg["Memory"])]
+
+    if config.get("Tty"):
+        args += ["-t"]
+    if config.get("OpenStdin"):
+        args += ["-i"]
+
+    return args
+
+
 def ensure_deps(check_path, install_cmd):
     """Check for a dependency path and install if missing. Returns exit code or 0."""
     if os.path.exists(check_path):
