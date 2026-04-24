@@ -106,13 +106,10 @@ def preflight_port(port, label=None, force=False, timeout=2.0):
         return False
     else:
         try:
-            choice = input("Kill it? [y/N] ").strip().lower()
+            input("Kill it? [Enter to kill, Ctrl+C to abort] ")
         except (EOFError, KeyboardInterrupt):
             print(file=sys.stderr)
-            choice = ""
-
-    if choice not in ("y", "yes"):
-        return False
+            return False
 
     pids = [h["pid"] for h in holders]
     cleared = _kill_pids(pids, timeout=timeout)

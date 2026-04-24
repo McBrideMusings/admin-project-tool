@@ -178,6 +178,12 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
                 if old_term is not None:
                     import termios
                     termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_term)
+                if proc.poll() is None:
+                    try:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                    except OSError:
+                        proc.terminate()
+                    proc.wait()
                 if proc in _children:
                     _children.remove(proc)
                 log_fh.close()
