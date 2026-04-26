@@ -12,6 +12,19 @@ _TIMESTAMP_PATTERNS = [
     re.compile(r"^\d{2}:\d{2}:\d{2}[.,]?\d*\s*"),
 ]
 
+
+def strip_log_timestamp(line: str) -> tuple[str, str]:
+    """Strip a leading timestamp from line. Returns (timestamp_str, remainder).
+
+    Returns ("", line) if no pattern matches.
+    """
+    for pat in _TIMESTAMP_PATTERNS:
+        m = pat.match(line)
+        if m:
+            return line[:m.end()].rstrip(), line[m.end():]
+    return "", line
+
+
 _LEVEL_COLORS = [
     (re.compile(r"\b(ERROR|ERR|FATAL|CRIT)\b", re.IGNORECASE), C.RED),
     (re.compile(r"\b(WARN|WARNING)\b", re.IGNORECASE), C.YELLOW),
@@ -37,12 +50,9 @@ class LogFormatter:
         ts = datetime.now().strftime(self._fmt)
         return f"{ts}  {line}\n"
 
-    def _strip_timestamp(self, line):
-        for pat in _TIMESTAMP_PATTERNS:
-            m = pat.match(line)
-            if m:
-                return line[m.end():]
-        return line
+    def _strip_timestamp(self, line: str) -> str:
+        _, rest = strip_log_timestamp(line)
+        return rest
 
     def _colorize_level(self, line):
         for pat, color in _LEVEL_COLORS:

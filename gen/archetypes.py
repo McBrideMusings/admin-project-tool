@@ -170,6 +170,10 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
         if name not in listed:
             display.append(name)
 
+    # Apply exclusions and ensure core is always present
+    modules -= set(manifest.exclude_modules)
+    modules.add("core")
+
     return ResolvedManifest(
         manifest=manifest,
         commands=commands,

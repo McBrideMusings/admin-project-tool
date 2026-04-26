@@ -44,6 +44,7 @@ class Manifest:
     logs: dict[str, dict] = field(default_factory=dict)  # target -> {default_env, envs: {env: {path, host, user}}}
     apple: dict = field(default_factory=dict)  # [apple] table — archetype-specific config, raw dict
     output: dict = field(default_factory=dict)  # [output] table — log column config per source
+    exclude_modules: list[str] = field(default_factory=list)  # modules to suppress even if archetype requires them
     generator_commit: str | None = None
     inline_file: str | None = None           # path relative to project root
     raw: dict = field(default_factory=dict)  # original parsed TOML, for debugging
@@ -141,6 +142,10 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     if not isinstance(output, dict):
         raise ManifestError(f"{source}: '[output]' must be a table")
 
+    exclude_modules = data.get("exclude_modules", [])
+    if not isinstance(exclude_modules, list) or not all(isinstance(m, str) for m in exclude_modules):
+        raise ManifestError(f"{source}: 'exclude_modules' must be a list of strings")
+
     return Manifest(
         project_name=project_name,
         python_min=python_min,
@@ -153,6 +158,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         logs=logs,
         apple=apple,
         output=output,
+        exclude_modules=exclude_modules,
         generator_commit=data.get("generator_commit"),
         inline_file=inline_file,
         raw=data,

@@ -4,21 +4,26 @@ Every log stream routes through ColumnFormatter:
 - apple_os_log sources: native Apple header line detected and replaced with ours.
   Data lines are parsed using the fixed native layout and reassembled with only
   the selected columns, so filtering works end-to-end.
-- All other sources: header printed before first line, then each line is formatted
-  via LogFormatter (timestamp extraction + level colorization).
+- All other sources: header printed before first line, then each line is parsed
+  into Timestamp / Level / Message fields and rendered column-aligned.
+
+Column spec format: 'Name:width' (fixed chars), 'Name:*' (fill remaining), or
+'Name:0' (hidden — skipped in header and data).
 """
 
+import re
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 
 from .core import C
-from .log_format import LogFormatter
+from .log_format import _LEVEL_COLORS, strip_log_timestamp
 
 
 @dataclass
 class Column:
     name: str
-    width: int  # -1 = fill remaining width
+    width: int  # -1 = fill remaining; 0 = hidden
 
 
 # Full native Apple os_log column layout — fixed positions used to parse data lines.
@@ -47,9 +52,28 @@ DEFAULT_COLUMNS: dict[str, list[Column]] = {
     ],
 }
 
+# Level extraction for generic/docker column rendering.
+_LEVEL_RE = re.compile(
+    r"\b(ERROR|ERR|FATAL|CRIT|WARN|WARNING|INFO|DEBUG|TRACE)\b",
+    re.IGNORECASE,
+)
+
+
+def _find_level_color(text: str) -> str | None:
+    """Find the color for a log level in text. Returns None if no level found."""
+    if _LEVEL_RE.search(text):
+        for pat, color in _LEVEL_COLORS:
+            if pat.search(text):
+                return color
+    return None
+
 
 def _parse_column_spec(spec: str) -> Column:
-    """Parse 'Name:width' or 'Name:*' into a Column."""
+    """Parse 'Name:width', 'Name:*', or 'Name:0' into a Column.
+
+    Width 0 hides the column entirely (omitted from header and data lines).
+    Width -1 (written as '*') fills the remaining line width.
+    """
     if ":" not in spec:
         raise ValueError(f"invalid column spec {spec!r} — expected 'Name:width' or 'Name:*'")
     name, width_str = spec.rsplit(":", 1)
@@ -79,13 +103,14 @@ class ColumnFormatter:
     only the selected columns.
 
     apple_passthrough=False: prints our header before the first non-empty line,
-    then reformats each line via LogFormatter.
+    then parses each line into Timestamp/Level/Message fields and renders them
+    column-aligned. A new ColumnFormatter instance is created on each rebuild,
+    so the header re-prints at stream restart (intentional — signals the restart).
     """
 
     def __init__(self, columns: list[Column], apple_passthrough: bool = False):
         self._columns = columns
         self._apple_passthrough = apple_passthrough
-        self._log_formatter = LogFormatter(timestamp_fmt="%H:%M:%S.%f") if not apple_passthrough else None
         self._header_printed = False
         self._use_color = sys.stdout.isatty()
 
@@ -104,15 +129,21 @@ class ColumnFormatter:
                 return raw_line
             if not self._header_printed:
                 self._header_printed = True
-                return self._render_header() + self._log_formatter.format_line(raw_line)
-            return self._log_formatter.format_line(raw_line)
+                return self._render_header() + self._reformat_generic_line(raw_line)
+            return self._reformat_generic_line(raw_line)
 
     def _reformat_apple_line(self, line: str) -> str:
         if not line.strip():
             return line
+        # Native Apple log lines span all columns (Timestamp=32, Thread=11, ... = 88+ chars).
+        # Short lines are error messages or preamble from simctl — pass through raw.
+        if len(line.rstrip("\n")) < 40:
+            return line
         fields = _extract_native_fields(line)
         parts = []
         for col in self._columns:
+            if col.width == 0:
+                continue
             val = fields.get(col.name, "")
             if col.width == -1:
                 parts.append(val.rstrip())
@@ -120,10 +151,48 @@ class ColumnFormatter:
                 parts.append(val[:col.width].ljust(col.width))
         return "".join(parts).rstrip() + "\n"
 
+    def _reformat_generic_line(self, raw_line: str) -> str:
+        stripped = raw_line.rstrip("\n")
+        _, rest = strip_log_timestamp(stripped)
+        rest = rest.strip()
+
+        level = ""
+        m = _LEVEL_RE.search(rest)
+        if m:
+            level = m.group()
+
+        field_map = {
+            "Timestamp": datetime.now().strftime("%H:%M:%S.%f"),
+            "Level": level,
+            "Message": rest,
+        }
+
+        parts = []
+        for col in self._columns:
+            if col.width == 0:
+                continue
+            val = field_map.get(col.name, "")
+            if col.width == -1:
+                parts.append(val.rstrip())
+            else:
+                parts.append(val[:col.width].ljust(col.width))
+
+        line = "".join(parts).rstrip()
+        if self._use_color:
+            color = _find_level_color(line)
+            if color:
+                for pat in _LEVEL_COLORS:
+                    if pat[0].search(line):
+                        line = pat[0].sub(lambda m: f"{color}{m.group()}{C.RESET}", line, count=1)
+                        break
+        return line + "\n"
+
     def _render_header(self) -> str:
         sep = "" if self._apple_passthrough else "  "
         parts = []
         for col in self._columns:
+            if col.width == 0:
+                continue
             if col.width == -1:
                 parts.append(col.name)
             else:
@@ -139,7 +208,9 @@ def make_column_formatter(source: str, config: dict | None = None) -> "ColumnFor
     """Create a ColumnFormatter for the given source.
 
     config: the _OUTPUT_CONFIG dict from admin.toml [output], or None.
-    Column override strings: 'Name:width' or 'Name:*' for fill-remaining.
+    Column override strings: 'Name:width', 'Name:*' for fill-remaining, 'Name:0' to hide.
+    A new instance is created on each rebuild so the column header re-prints,
+    which signals stream restart to the reader.
     """
     override = (config or {}).get(source, {})
     col_specs = override.get("columns") if isinstance(override, dict) else None

@@ -1025,6 +1025,8 @@ def dev_loop_device(project, scheme, config, subsystem, process,
     pre_build:  callable() run before each build (e.g. swap dev icons)
     post_build: callable() run after each build completes (e.g. restore icons)
     """
+    if output_config is None:
+        output_config = globals().get("_OUTPUT_CONFIG")
     launch_bundle = bundle_id or subsystem
 
     if device_id is None:
