@@ -590,15 +590,12 @@ def stream_console_output(proc, log_file=None):
     log_fh = open(log_file, "a") if log_file else None
 
     def _stream():
-        from datetime import datetime
         try:
             for line in proc.stdout:
-                ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                out = f"{ts}  {line}" if not line.startswith("\n") else line
-                sys.stdout.write(out)
+                sys.stdout.write(line)
                 sys.stdout.flush()
                 if log_fh:
-                    log_fh.write(out)
+                    log_fh.write(line)
                     log_fh.flush()
         except ValueError:
             pass
@@ -963,34 +960,32 @@ def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
 
         launch_bundle = app_bundle_identifier(app_path) or bundle_id or subsystem
         info("Installing on simulator...")
-        subprocess.run(["xcrun", "simctl", "install", sim_id, app_path])
-
-        info(f"Launching {launch_bundle}...")
-        console_proc = subprocess.Popen(
-            ["xcrun", "simctl", "launch", "--console-pty", sim_id, launch_bundle],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            bufsize=1, universal_newlines=True,
-        )
-        _children.append(console_proc)
-
-        log_thread, log_fh = stream_console_output(console_proc, log_file=LOG_FILE)
+        install_and_launch_sim(sim_id, app_path, launch_bundle)
 
         def _is_running():
-            return console_proc.poll() is None
+            return is_sim_app_running(sim_id, launch_bundle)
+
+        for _ in range(10):
+            if _is_running():
+                break
+            time.sleep(0.3)
+
+        log_proc, log_thread, log_fh = stream_os_log(
+            predicate, log_file=LOG_FILE, sim_id=sim_id)
 
         info("Press r to rebuild, Ctrl+C to quit")
         print()
 
         got_reload = poll_for_reload(_is_running)
 
-        stop_os_log(console_proc, log_fh)
-        terminate_sim_app(sim_id, launch_bundle)
+        stop_os_log(log_proc, log_fh)
         print()
 
         if got_reload:
             info("Reload signal received — rebuilding...")
         else:
             info(f"Stopping {process}...")
+        terminate_sim_app(sim_id, launch_bundle)
 
         if not got_reload:
             cleanup_pid_file(pid_file)
