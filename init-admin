@@ -212,6 +212,18 @@ def cmd_audit(project_dir: Path, args) -> int:
         return 1
 
     on_disk = admin_path.read_text()
+
+    # Check for specific missing modules that have been added to archetypes since
+    # the on-disk admin was generated. These produce a targeted warning in addition
+    # to the general diff so the reason for regeneration is clear.
+    disk_modules = _parse_bundled_modules(on_disk)
+    needed_modules = set(resolved.modules)
+    for module in sorted(needed_modules - disk_modules):
+        warn(
+            f"module '{module}' missing from bundled admin — "
+            f"regenerate to pick up new features (run: init-admin --regenerate)"
+        )
+
     if on_disk == script:
         ok("clean: ./admin matches admin.toml + current archetypes")
         if manifest.generator_commit and manifest.generator_commit != sha:
@@ -236,6 +248,19 @@ def cmd_audit(project_dir: Path, args) -> int:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _parse_bundled_modules(admin_src: str) -> set[str]:
+    """Extract the modules list from the @bundled header line in an admin script.
+
+    Returns an empty set if the header is absent or malformed (e.g. old-format scripts).
+    """
+    import re
+    for line in admin_src.splitlines()[:5]:
+        m = re.search(r"modules=([\w,]+)", line)
+        if m:
+            return set(m.group(1).split(","))
+    return set()
+
 
 def _make_executable(path: Path) -> None:
     st = path.stat()

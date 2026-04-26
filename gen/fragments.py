@@ -121,7 +121,8 @@ def render_docker_reload_loop(cmd: Command) -> str:
         @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
         def {func_name}(args):
             info({_pyrepr("reload loop: " + cmd.run)})
-            run_with_reload({_pyrepr(cmd.run)}, target={_pyrepr(cmd.name)})
+            _fmt = make_column_formatter("docker", globals().get("_OUTPUT_CONFIG"))
+            run_with_reload({_pyrepr(cmd.run)}, target={_pyrepr(cmd.name)}, formatter=_fmt.format_line)
     ''')
     return body
 

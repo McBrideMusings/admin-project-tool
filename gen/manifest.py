@@ -42,6 +42,7 @@ class Manifest:
     order: list[str]                         # explicit display order; "" = spacer
     logs: dict[str, dict] = field(default_factory=dict)  # target -> {default_env, envs: {env: {path, host, user}}}
     apple: dict = field(default_factory=dict)  # [apple] table — archetype-specific config, raw dict
+    output: dict = field(default_factory=dict)  # [output] table — log column config per source
     generator_commit: str | None = None
     inline_file: str | None = None           # path relative to project root
     raw: dict = field(default_factory=dict)  # original parsed TOML, for debugging
@@ -135,6 +136,10 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     if not isinstance(apple, dict):
         raise ManifestError(f"{source}: '[apple]' must be a table")
 
+    output = data.get("output", {}) or {}
+    if not isinstance(output, dict):
+        raise ManifestError(f"{source}: '[output]' must be a table")
+
     return Manifest(
         project_name=project_name,
         python_min=python_min,
@@ -146,6 +151,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         order=order,
         logs=logs,
         apple=apple,
+        output=output,
         generator_commit=data.get("generator_commit"),
         inline_file=inline_file,
         raw=data,
@@ -276,6 +282,20 @@ def dump(manifest: Manifest) -> str:
                     if user is not None:
                         parts.append(f'user = "{_escape(user)}"')
                     lines.append(f"{env_name} = {{ " + ", ".join(parts) + " }")
+            lines.append("")
+
+    if manifest.output:
+        for source_name, source_cfg in manifest.output.items():
+            lines.append(f"[output.{source_name}]")
+            if isinstance(source_cfg, dict):
+                for k, v in source_cfg.items():
+                    if isinstance(v, list):
+                        items = ", ".join(f'"{_escape(str(x))}"' for x in v)
+                        lines.append(f"{k} = [{items}]")
+                    elif isinstance(v, str):
+                        lines.append(f'{k} = "{_escape(v)}"')
+                    else:
+                        lines.append(f"{k} = {v!r}")
             lines.append("")
 
     if manifest.inline_file:

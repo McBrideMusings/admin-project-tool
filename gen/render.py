@@ -84,6 +84,11 @@ def render(
     if m.apple:
         apple_decl = f"_APPLE_CONFIG = {_pyliteral(m.apple)}\n"
 
+    # Emit the [output] table as _OUTPUT_CONFIG for log column configuration.
+    output_decl = ""
+    if m.output:
+        output_decl = f"_OUTPUT_CONFIG = {_pyliteral(m.output)}\n"
+
     # Emit command function defs in display order, interleaving add_spacer()
     # calls for spacer entries. Registration order == display order.
     command_blocks: list[str] = []
@@ -115,6 +120,7 @@ def render(
         f"{env_block}"
         f"{url_call}"
         f"{apple_decl}"
+        f"{output_decl}"
         f"\n{commands_src}\n"
         f"{logs_src}"
         f"{inline_src}"

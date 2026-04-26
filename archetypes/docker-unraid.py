@@ -15,7 +15,7 @@ use `./admin deploy` for every subsequent code push.
 
 ARCHETYPE = {
     "name": "docker-unraid",
-    "modules": ["core", "docker", "remote", "unraid"],
+    "modules": ["core", "docker", "remote", "unraid", "log_columns"],
     "urls": {
         "prod": "${UNRAID_APP_URL:-http://localhost}",
     },

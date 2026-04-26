@@ -578,25 +578,30 @@ def is_device_app_running(device_id, bundle_id):
     return _get_device_process_for_bundle(device_id, bundle_id) is not None
 
 
-def stream_console_output(proc, log_file=None):
+def stream_console_output(proc, log_file=None, formatter=None):
     """Stream a devicectl --console process's stdout in a background thread.
 
-    proc:     Popen process (from launch_on_device with console=True).
-    log_file: path to tee output to (optional).
+    proc:      Popen process (from launch_on_device with console=True).
+    log_file:  path to tee output to (defaults to tmp/console.log).
+    formatter: optional callable(line) -> line for column formatting.
     Returns (thread, log_fh) — caller should close log_fh and terminate proc.
     """
     import threading
 
-    log_fh = open(log_file, "a") if log_file else None
+    if log_file is None:
+        _log_dir = LOG_DIR or "tmp"
+        os.makedirs(_log_dir, exist_ok=True)
+        log_file = os.path.join(_log_dir, "console.log")
+    log_fh = open(log_file, "a")
 
     def _stream():
         try:
             for line in proc.stdout:
-                sys.stdout.write(line)
+                out = formatter(line) if formatter else line
+                sys.stdout.write(out)
                 sys.stdout.flush()
-                if log_fh:
-                    log_fh.write(line)
-                    log_fh.flush()
+                log_fh.write(out)
+                log_fh.flush()
         except ValueError:
             pass
 
@@ -605,7 +610,7 @@ def stream_console_output(proc, log_file=None):
     return thread, log_fh
 
 
-def device_log_attach(bundle_id, log_file=None):
+def device_log_attach(bundle_id, log_file=None, output_config=None):
     """Stream logs from a connected iOS device, blocking until Ctrl+C.
 
     Launches the app via devicectl --console with OS_ACTIVITY_DT_MODE to get
@@ -620,7 +625,9 @@ def device_log_attach(bundle_id, log_file=None):
     console_proc = launch_on_device(
         device_id, bundle_id, console=True,
         env=_DEVICE_LOG_ENV)
-    _, log_fh = stream_console_output(console_proc, log_file=log_file)
+    from .log_columns import make_column_formatter
+    fmt = make_column_formatter("generic", output_config)
+    _, log_fh = stream_console_output(console_proc, log_file=log_file, formatter=fmt.format_line)
 
     try:
         console_proc.wait()
@@ -636,12 +643,13 @@ def device_log_attach(bundle_id, log_file=None):
 # Reload command auto-registration
 # ---------------------------------------------------------------------------
 
-def stream_os_log(predicate, log_file=None, sim_id=None):
+def stream_os_log(predicate, log_file=None, sim_id=None, formatter=None):
     """Start streaming macOS/simulator logs in a background thread.
 
-    predicate: log stream --predicate string
-    log_file: path to tee output to (optional)
-    sim_id: if set, uses xcrun simctl spawn for simulator logs
+    predicate:  log stream --predicate string
+    log_file:   path to tee output to (defaults to tmp/os_log.log)
+    sim_id:     if set, uses xcrun simctl spawn for simulator logs
+    formatter:  optional callable(line) -> line for column formatting
     Returns (proc, thread, log_fh) — caller should call stop_os_log().
     """
     import threading
@@ -660,16 +668,20 @@ def stream_os_log(predicate, log_file=None, sim_id=None):
     )
     _children.append(proc)
 
-    log_fh = open(log_file, "a") if log_file else None
+    if log_file is None:
+        _log_dir = LOG_DIR or "tmp"
+        os.makedirs(_log_dir, exist_ok=True)
+        log_file = os.path.join(_log_dir, "os_log.log")
+    log_fh = open(log_file, "a")
 
     def _stream():
         try:
             for line in proc.stdout:
-                sys.stdout.write(line)
+                out = formatter(line) if formatter else line
+                sys.stdout.write(out)
                 sys.stdout.flush()
-                if log_fh:
-                    log_fh.write(line)
-                    log_fh.flush()
+                log_fh.write(out)
+                log_fh.flush()
         except (IOError, ValueError):
             pass
 
@@ -811,7 +823,7 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
                    predicate, app_pattern, pid_file="/tmp/admin-run.pid",
                    extra_settings="", build_action="build",
                    pre_build=None, post_build=None, pre_launch=None,
-                   is_running_fn=None, kill_fn=None):
+                   is_running_fn=None, kill_fn=None, output_config=None):
     """Full macOS dev loop: build, launch, stream logs, reload on 'r'/SIGUSR1.
 
     pre_build:     callable() run before each build (e.g. swap dev icons)
@@ -822,6 +834,7 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
     kill_fn:       callable() to kill the running app (default: pkill -x process)
     """
     import time
+    from .log_columns import make_column_formatter
 
     setup_reload(pid_file)
 
@@ -878,8 +891,9 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
                 break
             time.sleep(0.3)
 
+        fmt = make_column_formatter("apple_os_log", output_config)
         log_proc, log_thread, log_fh = stream_os_log(
-            predicate, log_file=LOG_FILE)
+            predicate, log_file=LOG_FILE, formatter=fmt.format_line)
 
         info("Press r to rebuild, Ctrl+C to quit")
         print()
@@ -904,7 +918,7 @@ def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
                  app_pattern, pid_file="/tmp/admin-run.pid",
                  extra_settings="", build_action="build",
                  bundle_id=None, sim_id=None,
-                 pre_build=None, post_build=None):
+                 pre_build=None, post_build=None, output_config=None):
     """Full iOS simulator dev loop: build, install, stream logs, reload on 'r'/SIGUSR1.
 
     bundle_id:  bundle ID for launch/terminate (defaults to subsystem)
@@ -913,6 +927,7 @@ def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
     post_build: callable() run after each build completes (e.g. restore icons)
     """
     import time
+    from .log_columns import make_column_formatter
 
     setup_reload(pid_file)
 
@@ -970,8 +985,9 @@ def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
                 break
             time.sleep(0.3)
 
+        fmt = make_column_formatter("apple_os_log", output_config)
         log_proc, log_thread, log_fh = stream_os_log(
-            predicate, log_file=LOG_FILE, sim_id=sim_id)
+            predicate, log_file=LOG_FILE, sim_id=sim_id, formatter=fmt.format_line)
 
         info("Press r to rebuild, Ctrl+C to quit")
         print()
@@ -997,7 +1013,7 @@ def dev_loop_device(project, scheme, config, subsystem, process,
                     extra_settings="", build_action="build",
                     bundle_id=None, device_id=None, udid=None,
                     pre_build=None, post_build=None,
-                    skip_build=False):
+                    skip_build=False, output_config=None):
     """Build, install, and run on a physical iOS device with log streaming.
 
     Launches via devicectl --console with OS_ACTIVITY_DT_MODE=YES so os_log
@@ -1061,7 +1077,9 @@ def dev_loop_device(project, scheme, config, subsystem, process,
         device_id, launch_bundle, console=True,
         env=_DEVICE_LOG_ENV)
 
-    _, log_fh = stream_console_output(console_proc, log_file=LOG_FILE)
+    from .log_columns import make_column_formatter
+    fmt = make_column_formatter("generic", output_config)
+    _, log_fh = stream_console_output(console_proc, log_file=LOG_FILE, formatter=fmt.format_line)
 
     info("Streaming logs — Ctrl+C to quit")
     print()
@@ -1209,8 +1227,10 @@ def _derived_glob(scheme, config, platform_subdir, product_name):
     )
 
 
-def dev_mac(cfg, *, log_level="app", clean=False, install=False):
+def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=None):
     """macOS dev loop driven by [apple] config. Swaps dev icons, builds, launches."""
+    if output_config is None:
+        output_config = globals().get("_OUTPUT_CONFIG")
     if not cfg:
         err("[apple] table missing from admin.toml"); sys.exit(1)
     scheme = cfg.get("mac_scheme")
@@ -1251,11 +1271,14 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False):
         pre_build=pre_build, post_build=post_build, pre_launch=pre_launch,
         is_running_fn=_make_mac_dev_running_check(cfg),
         kill_fn=_make_mac_dev_kill(cfg),
+        output_config=output_config,
     )
 
 
-def dev_ios(cfg, *, log_level="app", clean=False):
+def dev_ios(cfg, *, log_level="app", clean=False, output_config=None):
     """iOS simulator dev loop driven by [apple] config."""
+    if output_config is None:
+        output_config = globals().get("_OUTPUT_CONFIG")
     if not cfg:
         err("[apple] table missing from admin.toml"); sys.exit(1)
     scheme = cfg.get("ios_scheme")
@@ -1286,6 +1309,7 @@ def dev_ios(cfg, *, log_level="app", clean=False):
         app_pattern=app_pattern, extra_settings=extra_settings,
         build_action=build_action, bundle_id=bundle_id, sim_id=sim_id,
         pre_build=pre_build, post_build=post_build,
+        output_config=output_config,
     )
 
 

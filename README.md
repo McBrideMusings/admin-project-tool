@@ -37,7 +37,15 @@ dev  = "http://localhost:8080"
 dev  = "./tmp/app.log"                                                                # string = local path
 prod = { path = "/var/log/app.log", host = "${APP_HOST}", user = "${APP_USER:-root}" } # table = remote (ssh)
 default_env = "dev"
+
+[output.apple_os_log]                  # optional — filter/reorder log stream columns
+columns = ["Timestamp:32", "Type:12", "Message:*"]
+
+[output.docker]                        # optional — customize docker reload-loop columns
+columns = ["Timestamp:26", "Level:8", "Message:*"]
 ```
+
+Column specs are `"Name:width"` or `"Name:*"` (fill remaining). Source names: `apple_os_log`, `docker`, `generic`. Unspecified sources use built-in defaults. The `[output]` table is optional — omitting it uses the default column set for each archetype.
 
 ### `./admin logs`
 
@@ -67,6 +75,7 @@ Intended for text logs. Binary files pass through unfiltered and may garble the 
 
 - **core** — Universal: colors, output, logging, run_cmd, sync_deploy, command registry, TUI menu, pick_target, dispatch_target, URL status
 - **log_format** — Generic log formatter: strips existing timestamps, prepends HH:MM:SS, colorizes log levels (ERROR/WARN/INFO/DEBUG). Opt-in via `formatter=make_formatter()` on `run_cmd`, `run_with_reload`, `run_parallel`
+- **log_columns** — Column-header log formatter: prints a typed column header before the first log line. Apple `log stream` output is parsed at fixed native column positions and reassembled with only the selected columns. Generic sources get `Timestamp / Level / Message` headers via `log_format`. Configure per-source column sets in `admin.toml` under `[output.<source>]`
 - **logtail** — File-based log tailing (`./admin logs`): local or SSH, per-env paths, `--tail N` / `--all` / `--no-follow`. Auto-included when `admin.toml` has a `[logs]` section; handles rotation and truncation-style circular buffers
 - **icons** — Icon generation: SVG/text/solid color rendering at arbitrary sizes, optional DEV banner overlay (requires Pillow, cairosvg optional)
 - **apple** — Xcode/Swift/iOS: dev loops (macOS/iOS with automatic log streaming), xcodebuild, simulator, dev icon swap via icons module
