@@ -282,7 +282,7 @@ def test_render_python_kind_emits_verbatim_body():
     """
     cmd = Command(
         name="dev",
-        run="run_vite_rust_dev(vite_port=int(os.environ.get('VITE_PORT', 5173)))",
+        run="run_vite_dev(vite_port=int(os.environ.get('VITE_PORT', 5173)))",
         desc="Run backend + frontend",
         kind="python",
     )
@@ -290,7 +290,7 @@ def test_render_python_kind_emits_verbatim_body():
     assert '@command("dev", "Run backend + frontend")' in out, out
     assert "def cmd_dev(args):" in out, out
     assert "set_log_context(\"dev\")" in out, out
-    assert "run_vite_rust_dev(vite_port=int(os.environ.get('VITE_PORT', 5173)))" in out, out
+    assert "run_vite_dev(vite_port=int(os.environ.get('VITE_PORT', 5173)))" in out, out
     assert "${" not in out, "python kind must not substitute ${VAR} placeholders"
     print("OK: kind=python emits verbatim Python body")
 
@@ -313,7 +313,7 @@ def test_collect_env_vars_scans_python_os_environ_get():
     cmd = Command(
         name="dev",
         run=(
-            "run_vite_rust_dev("
+            "run_vite_dev("
             "vite_port=int(os.environ.get('VITE_PORT', '5173')), "
             "dev_mounts=os.environ.get('DEV_MOUNTS'))"
         ),
@@ -333,13 +333,13 @@ def test_render_python_kind_multiline_body_indented():
     """A multi-line Python body is indented to fit inside the generated def."""
     cmd = Command(
         name="boot",
-        run="info('starting')\nrun_vite_rust_dev(vite_port=5173)",
+        run="info('starting')\nrun_vite_dev(vite_port=5173)",
         desc="Boot it",
         kind="python",
     )
     out = render_command(cmd)
     assert "    info('starting')" in out, out
-    assert "    run_vite_rust_dev(vite_port=5173)" in out, out
+    assert "    run_vite_dev(vite_port=5173)" in out, out
     print("OK: kind=python indents multi-line body")
 
 

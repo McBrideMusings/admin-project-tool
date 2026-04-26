@@ -45,8 +45,8 @@ def parse_dev_mounts(raw):
         if not name or not path:
             err(f"DEV_MOUNTS entry has empty name or path: {entry!r}")
             return None
-        if "/" in name or name in (".", ".."):
-            err(f"DEV_MOUNTS name must be a simple identifier: {name!r}")
+        if name in (".", ".."):
+            err(f"DEV_MOUNTS name must not be '.' or '..': {name!r}")
             return None
         mounts.append((name, path))
     return mounts
@@ -72,6 +72,7 @@ def setup_dev_mounts(data_dir, mounts):
 
     for name, target in mounts:
         link = os.path.join(data_dir, name)
+        os.makedirs(os.path.dirname(link), exist_ok=True)
         if os.path.islink(link):
             if os.readlink(link) == target:
                 continue
@@ -84,7 +85,7 @@ def setup_dev_mounts(data_dir, mounts):
     return 0
 
 
-def run_vite_rust_dev(
+def run_vite_dev(
     vite_port,
     backend_port,
     data_dir,
@@ -95,7 +96,7 @@ def run_vite_rust_dev(
     dev_mounts_raw=None,
     vite_log_name="vite.log",
 ):
-    """Launch a Vite dev server + a cargo/rust backend with a reload loop.
+    """Launch a Vite dev server + an arbitrary backend with a reload loop.
 
     Used by projects whose dev flow is "vite frontend in the background +
     backend with SIGUSR1-driven reload in the foreground." Replaces the per-
@@ -153,7 +154,8 @@ def run_vite_rust_dev(
             vite_fh.close()
     register_cleanup(_stop_vite)
 
-    dev_url = os.environ.get("DEV_URL", f"http://localhost:{vite_port}").strip()
+    domain = os.environ.get("DEV_DOMAIN", "").strip()
+    dev_url = f"https://{vite_port}.{domain}" if domain else f"http://localhost:{vite_port}"
     ok(f"Vite dev server: {dev_url}")
     info(f"Vite log: {vite_log}")
     print()
