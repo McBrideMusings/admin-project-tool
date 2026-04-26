@@ -75,7 +75,7 @@ def preflight_port(port, label=None, force=False, timeout=2.0):
     or kills failed. Behavior:
       - port idle -> return True silently
       - port held + force=True -> SIGTERM (then SIGKILL stragglers), return True if cleared
-      - port held + non-TTY stdin -> print holders and return False (no prompt)
+      - port held + non-TTY stdin -> force-kill (same as force=True, logs to stderr)
       - port held + TTY -> show holders, prompt `Kill it? [y/N]`, act on response
 
     Pair with kill_port for the no-questions-asked variant. Use this from any
@@ -95,15 +95,20 @@ def preflight_port(port, label=None, force=False, timeout=2.0):
             parent = f"  parent pid {h['parent_pid']}: {parent_cmd}"
         print(f"  pid {h['pid']:>6}: {h['command']}{parent}", file=sys.stderr)
 
-    if force:
-        choice = "y"
+    try:
+        from . import docker as _docker
+        _in_reload = getattr(_docker, "_reload_active", False)
+    except ImportError:
+        _in_reload = False
+
+    if force or _in_reload:
+        pass  # fall through to kill
     elif not sys.stdin.isatty():
         print(
-            f"Stdin is not a TTY — leaving port {port} alone. "
-            f"Re-run interactively or pass force=True to override.",
+            f"Stdin is not a TTY — force-killing port {port}{tag} holders.",
             file=sys.stderr,
         )
-        return False
+        # fall through to kill
     else:
         try:
             input("Kill it? [Enter to kill, Ctrl+C to abort] ")

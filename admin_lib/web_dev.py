@@ -20,7 +20,7 @@ from .core import (
     LOG_DIR,
     info, ok, warn, err, register_cleanup,
 )
-from .docker import ensure_deps, run_with_reload
+from .docker import ensure_deps, run_with_reload, _wait_or_kill
 from .ports import preflight_port
 
 
@@ -149,6 +149,10 @@ def run_vite_dev(
         try:
             os.killpg(os.getpgid(vite_proc.pid), signal.SIGTERM)
         except (ProcessLookupError, PermissionError, OSError):
+            pass
+        try:
+            _wait_or_kill(vite_proc, timeout=3)
+        except Exception:
             pass
         finally:
             vite_fh.close()

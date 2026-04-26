@@ -46,6 +46,19 @@ except ImportError:
 
 _ADMIN_PID_PREFIX = "/tmp/admin-run"
 _rebuild_requested = False
+_reload_active = False  # True during in-loop restart; suppresses port prompts
+
+
+def _wait_or_kill(proc, timeout=5):
+    """Wait for proc to exit; escalate to SIGKILL if it ignores SIGTERM."""
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        proc.wait()
 
 
 def _handle_rebuild_signal(signum, frame):
@@ -125,12 +138,15 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
             try:
                 while proc.poll() is None:
                     if _rebuild_requested:
+                        global _reload_active
                         info("Reload requested — restarting...")
+                        _reload_active = True
                         try:
                             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
                         except OSError:
                             proc.terminate()
-                        proc.wait()
+                        _wait_or_kill(proc)
+                        _reload_active = False
                         break
 
                     events = sel.select(timeout=0.5)
@@ -183,7 +199,7 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
                         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
                     except OSError:
                         proc.terminate()
-                    proc.wait()
+                    _wait_or_kill(proc)
                 if proc in _children:
                     _children.remove(proc)
                 log_fh.close()
