@@ -20,11 +20,12 @@ MANIFEST_FILENAME = "admin.toml"
 class Command:
     """A single admin command, post-merge."""
     name: str
-    run: str                       # shell string (may contain ${VAR}); "" allowed when targets is set
+    run: str                       # shell string (may contain ${VAR}); "" for sequence/http kinds
     desc: str
-    kind: str = "shell"            # shell | multi-target | apple-dev-loop | docker-reload-loop | python
+    kind: str = "shell"            # shell | multi-target | apple-dev-loop | docker-reload-loop | python | http | sequence
     source: str = "manifest"       # which archetype contributed it (or "manifest")
     targets: dict = field(default_factory=dict)  # target name -> shell string (for multi-target kinds)
+    meta: dict = field(default_factory=dict)     # kind-specific extras: {steps} for sequence, {method, body} for http
 
 
 SPACER = ""  # sentinel used inside Manifest.order to denote a spacer row
@@ -110,9 +111,9 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
 
     custom_normalized: dict[str, dict] = {}
     for name, val in custom.items():
-        if not isinstance(val, dict) or "run" not in val:
+        if not isinstance(val, dict) or ("run" not in val and "steps" not in val):
             raise ManifestError(
-                f"{source}: commands.custom.{name} must be a table with 'run'"
+                f"{source}: commands.custom.{name} must be a table with 'run' or 'steps'"
             )
         custom_normalized[name] = val
 

@@ -54,6 +54,26 @@ _urls = []  # list of (label, url) tuples set by projects
 
 _pending_urls = []  # raw (label, url) before env resolution
 
+def set_generator_commit(sha):
+    """Check the bundled generator SHA against the installed ~/.admin/VERSION.
+
+    Sets _stale_generator = True if the installed tool is newer than what
+    generated this script. Skips silently if the lib isn't installed or if
+    either SHA is dirty (dev/uncommitted state).
+    """
+    global _stale_generator
+    if "+dirty" in sha:
+        return
+    version_file = os.path.expanduser("~/.admin/VERSION")
+    if not os.path.isfile(version_file):
+        return
+    with open(version_file) as f:
+        installed = f.read().strip()
+    if "+dirty" in installed:
+        return
+    _stale_generator = installed.split("+")[0] != sha.split("+")[0]
+
+
 def set_urls(urls):
     """Register project URLs. Raw ${VAR} strings are stored and resolved later by boot()."""
     global _pending_urls
@@ -116,6 +136,7 @@ def print_url_status():
 
 _project_name = ""
 _project_root = ""
+_stale_generator = False
 LOG_DIR = ""
 LOG_FILE = ""
 
@@ -394,6 +415,17 @@ def _all_commands():
     )
 
 
+def run_command(name, args=None):
+    """Invoke a registered command by name. Used by sequence commands."""
+    if args is None:
+        args = []
+    cmds = _all_commands()
+    if name not in cmds:
+        err(f"sequence: unknown step '{name}'")
+        sys.exit(1)
+    cmds[name]["func"](args)
+
+
 def command(name, description):
     """Decorator to register a command. TUI order follows registration order."""
     def decorator(func):
@@ -492,6 +524,8 @@ def _tui_menu():
 
     print(f"{C.BOLD}{_project_name}{C.RESET}\n")
     print_url_status()
+    if _stale_generator:
+        print(f"{C.DIM}  ! tool updated — run: init-admin --regenerate{C.RESET}")
 
     for _ in range(menu_lines):
         sys.stdout.write("\n")
@@ -511,7 +545,7 @@ def _tui_menu():
                 sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {name:<14}{C.RESET} {desc}\n")
             else:
                 sys.stdout.write(f"    {C.DIM}{name:<14}{C.RESET} {desc}\n")
-        sys.stdout.write(f"\033[2K\n\033[2K{C.DIM}  [arrows/j/k] navigate  [enter] run  [q/esc] quit{C.RESET}\n")
+        sys.stdout.write(f"\033[2K\n\033[2K{C.DIM}  [arrows/j/k] navigate  [enter] run  [o] open config  [q/esc] quit{C.RESET}\n")
         sys.stdout.write("\033[u")
         sys.stdout.flush()
 
@@ -524,6 +558,10 @@ def _tui_menu():
                 sys.stdout.flush()
                 print()
                 return
+            elif key == "o":
+                toml_path = os.path.join(_project_root, "admin.toml")
+                opener = "open" if sys.platform == "darwin" else "xdg-open"
+                subprocess.Popen([opener, toml_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             elif key in ("up", "k"):
                 move(-1)
             elif key in ("down", "j"):
@@ -718,6 +756,13 @@ def boot(project_name, load_dotenv=True):
     if cmd_name == "env":
         cmd_env(sys.argv[2:])
         return
+
+    if cmd_name in ("regenerate", "regen"):
+        init_admin = os.path.expanduser("~/.admin/init-admin")
+        if not os.path.isfile(init_admin):
+            err("init-admin not found at ~/.admin/ — is admin-project-tool installed?")
+            sys.exit(1)
+        sys.exit(subprocess.call([init_admin, "--regenerate", _project_root]))
 
     all_cmds = _all_commands()
     if cmd_name not in all_cmds:

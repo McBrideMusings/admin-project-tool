@@ -33,6 +33,20 @@ dev  = "http://localhost:8080"
 [commands]
 # Override archetype commands or add project-specific ones
 
+# HTTP command — makes an HTTP request (non-fatal on error, useful for post-deploy hooks)
+[commands.reload]
+kind   = "http"
+desc   = "Notify service to reload"
+run    = "${SERVICE_URL}/reload"     # the URL
+method = "POST"                      # default: POST
+body   = '{"action": "reload"}'      # optional; sets Content-Type: application/json
+
+# Sequence command — runs named commands in order, stops on first failure
+[commands.dev]
+kind  = "sequence"
+desc  = "Build and reload"
+steps = ["build", "reload"]
+
 [logs.app]                                                                            # optional — adds `./admin logs`
 dev  = "./tmp/app.log"                                                                # string = local path
 prod = { path = "/var/log/app.log", host = "${APP_HOST}", user = "${APP_USER:-root}" } # table = remote (ssh)
@@ -70,6 +84,28 @@ Intended for text logs. Binary files pass through unfiltered and may garble the 
 ./admin logs app --env prod --no-follow --tail 100
 ./admin logs app --env prod --all --no-follow
 ```
+
+### Built-in commands
+
+Every generated `./admin` script includes these hidden built-ins (not shown in the menu):
+
+- `./admin env` — list all environment variables referenced by the manifest
+- `./admin regen` / `./admin regenerate` — re-run `init-admin --regenerate` on the project
+- `./admin help` / `--help` — print command list
+
+### TUI hotkeys
+
+| Key | Action |
+|-----|--------|
+| `↑` / `k` | Move up |
+| `↓` / `j` | Move down |
+| `Enter` | Run selected command |
+| `o` | Open `admin.toml` in default editor |
+| `q` / `Esc` | Quit |
+
+### Stale generator warning
+
+If `~/.admin/VERSION` differs from the SHA embedded in `./admin` (i.e. the tool was updated since the script was last generated), a dim notice appears in the TUI header. Run `./admin regen` to update.
 
 ## Layers
 

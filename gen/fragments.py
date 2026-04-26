@@ -157,12 +157,73 @@ def render_python(cmd: Command) -> str:
     return body
 
 
+def render_http(cmd: Command) -> str:
+    """A command that makes an HTTP request. URL is in cmd.run; method and body are in cmd.meta.
+
+    Non-2xx responses and network errors are warnings, not fatal — this kind is designed
+    for post-deploy notifications where a missed ping shouldn't kill the build.
+    """
+    if not cmd.run:
+        raise FragmentError(f"http command '{cmd.name}' requires 'run' (the URL)")
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    method = cmd.meta.get("method", "POST")
+    body = cmd.meta.get("body", "")
+    url_repr = _pyrepr(cmd.run)
+    method_repr = _pyrepr(method)
+
+    lines = [
+        f"@command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})",
+        f"def {func_name}(args):",
+        f"    import urllib.request as _ur, urllib.error as _ue",
+        f"    _url = resolve_env({url_repr})",
+        f"    info(\"http {method} \" + _url)",
+    ]
+    if body:
+        body_repr = _pyrepr(body)
+        lines += [
+            f"    _body = resolve_env({body_repr}).encode()",
+            f"    _req = _ur.Request(_url, data=_body, headers={{\"Content-Type\": \"application/json\"}}, method={method_repr})",
+        ]
+    else:
+        lines += [f"    _req = _ur.Request(_url, method={method_repr})"]
+    lines += [
+        "    try:",
+        "        with _ur.urlopen(_req, timeout=15) as _resp:",
+        "            if _resp.status >= 400:",
+        "                warn(\"http \" + str(_resp.status) + \" from \" + _url)",
+        "            else:",
+        "                ok(\"done\")",
+        "    except (_ue.URLError, OSError) as _e:",
+        "        warn(\"http request failed: \" + str(_e))",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def render_sequence(cmd: Command) -> str:
+    """A command that runs a list of other commands in order, stopping on first failure."""
+    steps = cmd.meta.get("steps", [])
+    if not steps:
+        raise FragmentError(f"sequence command '{cmd.name}' has no steps")
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    steps_literal = "[" + ", ".join(_pyrepr(s) for s in steps) + "]"
+    body = textwrap.dedent(f"""\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            for _step in {steps_literal}:
+                run_command(_step)
+    """)
+    return body
+
+
 _RENDERERS = {
     "shell": render_shell,
     "multi-target": render_multi_target,
     "apple-dev-loop": render_apple_dev_loop,
     "docker-reload-loop": render_docker_reload_loop,
     "python": render_python,
+    "http": render_http,
+    "sequence": render_sequence,
 }
 
 KNOWN_KINDS = set(_RENDERERS)
@@ -227,9 +288,12 @@ def collect_env_var_calls(
 
     for cmd in commands:
         origin = f"cmd:{cmd.name}"
-        _scan_for_env_vars(cmd.run, pattern, seen, origin)
+        if cmd.kind != "sequence":
+            _scan_for_env_vars(cmd.run, pattern, seen, origin)
         if cmd.kind == "python":
             _scan_for_env_vars(cmd.run, py_env_pattern, seen, origin)
+        if cmd.kind == "http" and cmd.meta.get("body"):
+            _scan_for_env_vars(cmd.meta["body"], pattern, seen, origin)
         for tname, tval in cmd.targets.items():
             _scan_for_env_vars(tval, pattern, seen, f"{origin}:{tname}")
 

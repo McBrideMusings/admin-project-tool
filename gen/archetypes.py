@@ -119,12 +119,16 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
                 "kind": override.get("kind", base.kind),
                 "targets": override.get("targets", base.targets),
             }
+            for key in ("steps", "method", "body"):
+                val = override.get(key, base.meta.get(key))
+                if val is not None:
+                    merged[key] = val
             log.append(f"command '{cmd_name}' overridden by manifest")
             commands[cmd_name] = _to_command(cmd_name, merged, source="manifest")
         else:
-            if "run" not in override and "targets" not in override:
+            if "run" not in override and "targets" not in override and "steps" not in override:
                 raise ArchetypeError(
-                    f"manifest [commands.{cmd_name}] must include 'run' or 'targets' "
+                    f"manifest [commands.{cmd_name}] must include 'run', 'targets', or 'steps' "
                     f"(no archetype provides it)"
                 )
             commands[cmd_name] = _to_command(cmd_name, override, source="manifest")
@@ -176,7 +180,7 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
     )
 
 
-_VALID_COMMAND_KEYS = {"run", "desc", "kind", "targets"}
+_VALID_COMMAND_KEYS = {"run", "desc", "kind", "targets", "steps", "method", "body"}
 
 
 def _to_command(name: str, data: dict, source: str) -> Command:
@@ -197,8 +201,24 @@ def _to_command(name: str, data: dict, source: str) -> Command:
         raise ArchetypeError(
             f"command '{name}' from {source}: 'targets' must be a table of target->shell"
         )
-    if "run" not in data and not targets:
+
+    meta: dict = {}
+    if kind == "sequence":
+        steps = data.get("steps")
+        if not steps or not isinstance(steps, list):
+            raise ArchetypeError(
+                f"command '{name}' from {source}: sequence kind requires 'steps' (a list of command names)"
+            )
+        meta["steps"] = [str(s) for s in steps]
+    elif kind == "http":
+        if "run" not in data:
+            raise ArchetypeError(f"command '{name}' from {source}: http kind requires 'run' (the URL)")
+        meta["method"] = str(data.get("method", "POST"))
+        if "body" in data:
+            meta["body"] = str(data["body"])
+    elif "run" not in data and not targets:
         raise ArchetypeError(f"command '{name}' from {source}: missing 'run' or 'targets'")
+
     return Command(
         name=name,
         run=str(data.get("run", "")),
@@ -206,6 +226,7 @@ def _to_command(name: str, data: dict, source: str) -> Command:
         kind=kind,
         source=source,
         targets={str(k): str(v) for k, v in targets.items()},
+        meta=meta,
     )
 
 

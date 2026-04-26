@@ -119,6 +119,7 @@ def render(
         f"{PROJECT_MARKER}: {m.project_name} ===\n"
         f"{env_block}"
         f"{url_call}"
+        f"set_generator_commit({_pyrepr(generator_commit)})\n"
         f"{apple_decl}"
         f"{output_decl}"
         f"\n{commands_src}\n"
