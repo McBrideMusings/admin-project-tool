@@ -15,6 +15,12 @@ from pathlib import Path
 
 MANIFEST_FILENAME = "admin.toml"
 
+_KNOWN_KEYS = {
+    "project_name", "python_min", "archetypes", "modules", "urls",
+    "commands", "order", "logs", "apple", "output",
+    "exclude_modules", "generator_commit", "inline",
+}
+
 
 @dataclass
 class Command:
@@ -146,6 +152,14 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     if not isinstance(exclude_modules, list) or not all(isinstance(m, str) for m in exclude_modules):
         raise ManifestError(f"{source}: 'exclude_modules' must be a list of strings")
 
+    unknown = set(data.keys()) - _KNOWN_KEYS
+    if unknown:
+        print(
+            f"warning: {source}: unknown keys will be dropped on --regenerate: "
+            + ", ".join(sorted(unknown)),
+            file=sys.stderr,
+        )
+
     return Manifest(
         project_name=project_name,
         python_min=python_min,
@@ -248,6 +262,9 @@ def dump(manifest: Manifest) -> str:
     if manifest.modules:
         mod_list = ", ".join(f'"{m}"' for m in manifest.modules)
         lines.append(f"modules = [{mod_list}]")
+    if manifest.exclude_modules:
+        excl_list = ", ".join(f'"{m}"' for m in manifest.exclude_modules)
+        lines.append(f"exclude_modules = [{excl_list}]")
     if manifest.order:
         entries = ", ".join(f'"{"" if e == SPACER else _escape(e)}"' for e in manifest.order)
         lines.append(f"order = [{entries}]")
@@ -324,9 +341,29 @@ def _inline_table(val: dict) -> str:
             parts.append(f'{k} = "{_escape(v)}"')
         elif isinstance(v, bool):
             parts.append(f"{k} = {'true' if v else 'false'}")
+        elif isinstance(v, dict):
+            parts.append(f"{k} = {_inline_table(v)}")
+        elif isinstance(v, list):
+            parts.append(f"{k} = {_inline_list(v)}")
         else:
             parts.append(f"{k} = {v!r}")
     return "{ " + ", ".join(parts) + " }"
+
+
+def _inline_list(val: list) -> str:
+    items = []
+    for v in val:
+        if isinstance(v, str):
+            items.append(f'"{_escape(v)}"')
+        elif isinstance(v, bool):
+            items.append("true" if v else "false")
+        elif isinstance(v, dict):
+            items.append(_inline_table(v))
+        elif isinstance(v, list):
+            items.append(_inline_list(v))
+        else:
+            items.append(repr(v))
+    return "[" + ", ".join(items) + "]"
 
 
 def require_python_311() -> None:

@@ -10,6 +10,13 @@ Shared library and generator for per-project `admin` task runners. Extracts dupl
 
 Copies `admin_lib/` and the generator (`gen/`, `archetypes/`, `detectors/`, `init-admin`) to `~/.admin/`. Requires Python 3.11+.
 
+Smart install behavior:
+- **Not installed** — installs and adds `~/.admin` to your PATH in `~/.zshrc` / `~/.bashrc`
+- **Stale** — reinstalls and verifies PATH
+- **Up to date** — skips reinstall, verifies PATH is set
+
+Safe to re-run at any time.
+
 ## Usage
 
 ### Bootstrap a new project
@@ -23,9 +30,10 @@ Copies `admin_lib/` and the generator (`gen/`, `archetypes/`, `detectors/`, `ini
 ### admin.toml manifest
 
 ```toml
-project_name = "My Project"
-python_min   = "3.11"
-archetypes   = ["simple"]
+project_name    = "My Project"
+python_min      = "3.11"
+archetypes      = ["simple"]
+exclude_modules = ["log_columns"]   # optional — suppress modules even if an archetype requires them
 
 [urls]
 dev  = "http://localhost:8080"
