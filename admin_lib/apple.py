@@ -1352,7 +1352,7 @@ def deploy_mac(cfg, *, clean=False):
 
 
 def deploy_ios(cfg, *, clean=False):
-    """Build and install a production iOS app on a USB-connected device. No icon swap."""
+    """Build and install a production iOS app on a connected device (USB or wireless). No icon swap."""
     if not cfg:
         err("[apple] table missing from admin.toml"); sys.exit(1)
     scheme = cfg.get("ios_scheme")
@@ -1364,7 +1364,7 @@ def deploy_ios(cfg, *, clean=False):
     bundle_id = cfg.get("ios_bundle")
     build_action = "clean build" if clean else "build"
 
-    device_id, device_name, _udid = require_usb_device()
+    device_id, device_name, _udid = find_connected_device()
     info(f"Deploying to {device_name}")
 
     info(f"Building {scheme} for device ({config})...")

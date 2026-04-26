@@ -11,9 +11,13 @@ Shared library and generator for per-project `admin` task runners. Extracts dupl
 Copies `admin_lib/` and the generator (`gen/`, `archetypes/`, `detectors/`, `init-admin`) to `~/.admin/`. Requires Python 3.11+.
 
 Smart install behavior:
-- **Not installed** — installs and adds `~/.admin` to your PATH in `~/.zshrc` / `~/.bashrc`
+- **Not installed** — installs and adds `~/.admin` to your PATH (`~/.zprofile` on macOS/zsh, `~/.zshrc` on Linux/zsh, `~/.bashrc` for bash)
 - **Stale** — reinstalls and verifies PATH
 - **Up to date** — skips reinstall, verifies PATH is set
+
+Flags:
+- `--force` — reinstall even when already up to date (useful during active development on the tool itself)
+- `--shell <name>` — override shell detection (e.g. `--shell bash` when running under a different shell than your default)
 
 Safe to re-run at any time.
 
