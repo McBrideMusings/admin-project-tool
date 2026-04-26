@@ -590,12 +590,15 @@ def stream_console_output(proc, log_file=None):
     log_fh = open(log_file, "a") if log_file else None
 
     def _stream():
+        from datetime import datetime
         try:
             for line in proc.stdout:
-                sys.stdout.write(line)
+                ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                out = f"{ts}  {line}" if not line.startswith("\n") else line
+                sys.stdout.write(out)
                 sys.stdout.flush()
                 if log_fh:
-                    log_fh.write(line)
+                    log_fh.write(out)
                     log_fh.flush()
         except ValueError:
             pass
