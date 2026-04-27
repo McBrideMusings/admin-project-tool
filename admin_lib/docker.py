@@ -368,11 +368,25 @@ def remote_recreate_container(host, image, container=None):
 
     try:
         inspect = json.loads(proc.stdout)[0]
-    except (json.JSONDecodeError, IndexError, KeyError) as e:
+    except (json.JSONDecodeError, IndexError) as e:
         err(f"Could not parse docker inspect output: {e}")
         return 1
 
     args = _build_run_args_from_inspect(inspect)
+
+    restore_path = f"/tmp/{container}-restore.sh"
+    run_cmd_parts = ["docker", "run", "-d", "--name", container] + args + [image]
+    remote_run = " ".join(shlex.quote(p) for p in run_cmd_parts)
+    restore_script = f"#!/bin/sh\n{remote_run}\n"
+    write_proc = subprocess.run(
+        ["ssh", host, f"cat > {shlex.quote(restore_path)} && chmod +x {shlex.quote(restore_path)}"],
+        input=restore_script.encode(),
+        capture_output=True,
+    )
+    if write_proc.returncode == 0:
+        info(f"Restore script saved: {host}:{restore_path}")
+    else:
+        warn("Could not write restore script to remote")
 
     info(f"Stopping + removing '{container}' on {host}...")
     rc = run_cmd(
@@ -383,13 +397,67 @@ def remote_recreate_container(host, image, container=None):
         err("Stop/remove failed")
         return rc
 
-    run_cmd_parts = ["docker", "run", "-d", "--name", container] + args + [image]
-    remote_run = " ".join(shlex.quote(p) for p in run_cmd_parts)
     info(f"Recreating '{container}' on {host} with preserved run config...")
     rc = run_cmd(f"ssh {host_q} {shlex.quote(remote_run)}")
-    if rc == 0:
-        ok(f"Deployed {image} to {host} as container '{container}'")
-    return rc
+    if rc != 0:
+        err(f"Container start failed — to restore: ssh {host} bash {restore_path}")
+        return rc
+
+    ok(f"Deployed {image} to {host} as container '{container}'")
+
+    snapshot_path = f"/tmp/{container}-lastdeploy.json"
+    subprocess.run(
+        ["ssh", host, f"docker inspect {container_q} > {shlex.quote(snapshot_path)}"],
+        capture_output=True,
+    )
+
+    return 0
+
+
+_HOST_CFG_CONSUMED = frozenset({
+    "Binds", "PortBindings", "RestartPolicy", "NetworkMode", "ExtraHosts",
+    "Devices", "CapAdd", "CapDrop", "Privileged", "Memory",
+})
+
+_HOST_CFG_EXPECTED = frozenset({
+    # Runtime infrastructure / always-populated defaults we intentionally skip
+    "ContainerIDFile", "LogConfig", "AutoRemove", "VolumeDriver", "VolumesFrom",
+    "CgroupnsMode", "Dns", "DnsOptions", "DnsSearch", "Links", "OomScoreAdj",
+    "PidMode", "PublishAllPorts", "ReadonlyRootfs", "UTSMode", "UsernsMode",
+    "ShmSize", "Isolation", "Runtime", "CgroupParent", "BlkioWeight",
+    "BlkioWeightDevice", "BlkioDeviceReadBps", "BlkioDeviceWriteBps",
+    "BlkioDeviceReadIOps", "BlkioDeviceWriteIOps", "CpuPeriod", "CpuQuota",
+    "CpuRealtimePeriod", "CpuRealtimeRuntime", "CpusetCpus", "CpusetMems",
+    "MemoryReservation", "MemorySwap", "MemorySwappiness", "OomKillDisable",
+    "NanoCpus", "CpuShares", "PidsLimit", "KernelMemory", "KernelMemoryTCP",
+    "StorageOpt", "MaskedPaths", "ReadonlyPaths", "IpcMode", "DeviceCgroupRules",
+    "Mounts", "NetworkMode",
+})
+
+_CONFIG_CONSUMED = frozenset({
+    "Env", "Labels", "User", "Hostname", "WorkingDir", "Tty", "OpenStdin",
+})
+
+_CONFIG_EXPECTED = frozenset({
+    # Image-derived (intentionally not replayed — taken from new image)
+    "Domainname", "AttachStdin", "AttachStdout", "AttachStderr", "ExposedPorts",
+    "StdinOnce", "Cmd", "Healthcheck", "ArgsEscaped", "Image", "Volumes",
+    "Entrypoint", "OnBuild", "StopSignal", "StopTimeout", "Shell", "MacAddress",
+})
+
+
+def _is_trivial(v):
+    if v is None:
+        return True
+    if isinstance(v, (list, dict)) and not v:
+        return True
+    if isinstance(v, bool):
+        return not v
+    if isinstance(v, int):
+        return v == 0
+    if isinstance(v, str):
+        return not v
+    return False
 
 
 def _build_run_args_from_inspect(inspect):
@@ -473,7 +541,100 @@ def _build_run_args_from_inspect(inspect):
     if config.get("OpenStdin"):
         args += ["-i"]
 
+    unknown_host = sorted(
+        k for k, v in host_cfg.items()
+        if k not in _HOST_CFG_CONSUMED and k not in _HOST_CFG_EXPECTED and not _is_trivial(v)
+    )
+    unknown_cfg = sorted(
+        k for k, v in config.items()
+        if k not in _CONFIG_CONSUMED and k not in _CONFIG_EXPECTED and not _is_trivial(v)
+    )
+    if unknown_host or unknown_cfg:
+        warn("docker inspect has fields not translated to docker run args:")
+        for k in unknown_host:
+            warn(f"  HostConfig.{k} = {host_cfg[k]!r}")
+        for k in unknown_cfg:
+            warn(f"  Config.{k} = {config[k]!r}")
+
     return args
+
+
+def remote_container_diff(host, image, container=None):
+    """Compare the live container's run config against the last recorded deploy.
+
+    Fetches the current `docker inspect` output from the remote, reads the
+    snapshot saved by the previous `remote_recreate_container` call, and shows
+    any run-arg drift (Unraid GUI tweaks, manual docker commands, etc.).
+
+    Returns 0 if no drift, 1 if drift found or no snapshot exists.
+    """
+    import difflib
+    import json
+    import shlex
+
+    if container is None:
+        container = image.split(":", 1)[0].rsplit("/", 1)[-1]
+
+    snapshot_path = f"/tmp/{container}-lastdeploy.json"
+
+    info(f"Fetching current inspect for '{container}' on {host}...")
+    curr_proc = subprocess.run(
+        ["ssh", host, "docker", "inspect", container],
+        capture_output=True, text=True,
+    )
+    if curr_proc.returncode != 0 or not curr_proc.stdout.strip() or curr_proc.stdout.strip() == "[]":
+        err(f"Container '{container}' not found on {host}")
+        return 1
+    try:
+        curr_inspect = json.loads(curr_proc.stdout)[0]
+    except (json.JSONDecodeError, IndexError):
+        err("Could not parse current docker inspect output")
+        return 1
+
+    snap_proc = subprocess.run(
+        ["ssh", host, f"cat {shlex.quote(snapshot_path)} 2>/dev/null"],
+        capture_output=True, text=True,
+    )
+    if not snap_proc.stdout.strip():
+        err(f"No deploy snapshot found at {host}:{snapshot_path} — run a deploy first")
+        return 1
+    try:
+        last_inspect = json.loads(snap_proc.stdout)[0]
+    except (json.JSONDecodeError, IndexError):
+        err("Could not parse deploy snapshot")
+        return 1
+
+    curr_args = _build_run_args_from_inspect(curr_inspect)
+    last_args = _build_run_args_from_inspect(last_inspect)
+
+    def _pair_args(flat):
+        pairs = []
+        i = 0
+        while i < len(flat):
+            flag = flat[i]
+            if i + 1 < len(flat) and not flat[i + 1].startswith("-"):
+                pairs.append(f"{flag} {flat[i + 1]}")
+                i += 2
+            else:
+                pairs.append(flag)
+                i += 1
+        return sorted(pairs)
+
+    last_lines = _pair_args(last_args)
+    curr_lines = _pair_args(curr_args)
+
+    diff = list(difflib.unified_diff(
+        last_lines, curr_lines, lineterm="",
+        fromfile="last-deploy", tofile="current",
+    ))
+    if not diff:
+        ok(f"No run-config drift detected for '{container}'")
+        return 0
+
+    warn(f"Run-config drift detected for '{container}':")
+    for line in diff:
+        print(line)
+    return 1
 
 
 def ensure_deps(check_path, install_cmd):

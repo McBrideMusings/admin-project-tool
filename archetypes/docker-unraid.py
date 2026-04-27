@@ -4,7 +4,7 @@ Runtime env vars:
     UNRAID_HOST         hostname or IP of the Unraid server
     UNRAID_USER         SSH user (default: root)
     APP_IMAGE           docker image name (e.g. "my-app:latest")
-    UNRAID_APP_URL      public URL for TUI url status (optional)
+    PROD_URL            public URL for TUI url status (optional)
 
 The container's run configuration (binds, ports, env, labels, network, etc.)
 is whatever the Unraid Docker GUI currently has for that container — deploy
@@ -17,7 +17,7 @@ ARCHETYPE = {
     "name": "docker-unraid",
     "modules": ["core", "docker", "remote", "unraid", "log_columns"],
     "urls": {
-        "prod": "${UNRAID_APP_URL:-http://localhost}",
+        "prod": "${PROD_URL:-http://localhost}",
     },
     "commands": {
         "build": {
@@ -28,16 +28,25 @@ ARCHETYPE = {
         "deploy": {
             "kind": "python",
             "run": (
+                "if '--diff' in args:\n"
+                "    host = f\"{os.environ.get('UNRAID_USER', 'root')}@{os.environ['UNRAID_HOST']}\"\n"
+                "    sys.exit(remote_container_diff(host, os.environ['APP_IMAGE']))\n"
                 "rc = docker_build(os.environ['APP_IMAGE'], platform='linux/amd64')\n"
                 "if rc != 0:\n"
                 "    sys.exit(rc)\n"
                 "host = f\"{os.environ.get('UNRAID_USER', 'root')}@{os.environ['UNRAID_HOST']}\"\n"
                 "sys.exit(remote_recreate_container(host, os.environ['APP_IMAGE']))"
             ),
-            "desc": "Build, push, and recreate container on Unraid (preserves run config)",
+            "desc": "Build, push, and recreate container on Unraid (preserves run config); pass --diff to show drift",
         },
         "logs": {
-            "run": "ssh ${UNRAID_USER:-root}@${UNRAID_HOST} \"docker logs -f --tail=200 ${APP_IMAGE%%:*}\"",
+            "kind": "python",
+            "run": (
+                "import shlex\n"
+                "container = os.environ.get('APP_CONTAINER') or os.environ['APP_IMAGE'].split(':')[0].rsplit('/', 1)[-1]\n"
+                "host = f\"{os.environ.get('UNRAID_USER', 'root')}@{os.environ['UNRAID_HOST']}\"\n"
+                "sys.exit(run_cmd(f'ssh {shlex.quote(host)} docker logs -f --tail=200 {shlex.quote(container)}'))"
+            ),
             "desc": "Tail container logs over SSH",
         },
         "reload": {
@@ -46,7 +55,7 @@ ARCHETYPE = {
             "desc": "Build+run with reload loop (press r or SIGUSR1 to rebuild)",
         },
         "open": {
-            "run": "open ${UNRAID_APP_URL:-http://localhost}",
+            "run": "open ${PROD_URL:-http://localhost}",
             "desc": "Open the deployed app URL",
         },
     },
