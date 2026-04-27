@@ -4,7 +4,7 @@ Runtime env vars:
     UNRAID_HOST         hostname or IP of the Unraid server
     UNRAID_USER         SSH user (default: root)
     APP_IMAGE           docker image name (e.g. "my-app:latest")
-    PROD_URL            public URL for TUI url status (optional)
+    PROD_URL            public URL for TUI url status (optional); formerly UNRAID_APP_URL
 
 The container's run configuration (binds, ports, env, labels, network, etc.)
 is whatever the Unraid Docker GUI currently has for that container — deploy

@@ -431,7 +431,9 @@ _HOST_CFG_EXPECTED = frozenset({
     "MemoryReservation", "MemorySwap", "MemorySwappiness", "OomKillDisable",
     "NanoCpus", "CpuShares", "PidsLimit", "KernelMemory", "KernelMemoryTCP",
     "StorageOpt", "MaskedPaths", "ReadonlyPaths", "IpcMode", "DeviceCgroupRules",
-    "Mounts", "NetworkMode",
+    "Mounts",
+    # Common fields with real functional impact — skipped (not yet translated to args)
+    "Tmpfs", "Sysctls", "SecurityOpt", "GroupAdd", "Ulimits",
 })
 
 _CONFIG_CONSUMED = frozenset({
@@ -460,12 +462,14 @@ def _is_trivial(v):
     return False
 
 
-def _build_run_args_from_inspect(inspect):
+def _build_run_args_from_inspect(inspect, warn_prefix=None):
     """Translate `docker inspect` JSON (single-container) into a list of
     `docker run` argv pieces that reproduce the container's runtime config.
 
     Only emits args for fields that are actually set, so unset/zero values
-    don't override image defaults.
+    don't override image defaults.  warn_prefix is prepended to any
+    unconsumed-field warnings (e.g. "current" or "last-deploy") so callers
+    that invoke this twice can distinguish the source.
     """
     host_cfg = inspect.get("HostConfig") or {}
     config = inspect.get("Config") or {}
@@ -550,7 +554,8 @@ def _build_run_args_from_inspect(inspect):
         if k not in _CONFIG_CONSUMED and k not in _CONFIG_EXPECTED and not _is_trivial(v)
     )
     if unknown_host or unknown_cfg:
-        warn("docker inspect has fields not translated to docker run args:")
+        label = f" ({warn_prefix})" if warn_prefix else ""
+        warn(f"docker inspect{label} has fields not translated to docker run args:")
         for k in unknown_host:
             warn(f"  HostConfig.{k} = {host_cfg[k]!r}")
         for k in unknown_cfg:
@@ -595,6 +600,9 @@ def remote_container_diff(host, image, container=None):
         ["ssh", host, f"cat {shlex.quote(snapshot_path)} 2>/dev/null"],
         capture_output=True, text=True,
     )
+    if snap_proc.returncode != 0:
+        err(f"SSH to {host} failed (rc {snap_proc.returncode})")
+        return 1
     if not snap_proc.stdout.strip():
         err(f"No deploy snapshot found at {host}:{snapshot_path} — run a deploy first")
         return 1
@@ -604,8 +612,8 @@ def remote_container_diff(host, image, container=None):
         err("Could not parse deploy snapshot")
         return 1
 
-    curr_args = _build_run_args_from_inspect(curr_inspect)
-    last_args = _build_run_args_from_inspect(last_inspect)
+    curr_args = _build_run_args_from_inspect(curr_inspect, warn_prefix="current")
+    last_args = _build_run_args_from_inspect(last_inspect, warn_prefix="last-deploy")
 
     def _pair_args(flat):
         pairs = []
