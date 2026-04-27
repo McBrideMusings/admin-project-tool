@@ -86,6 +86,13 @@ def setup_dev_mounts(data_dir, mounts):
     return 0
 
 
+def _detect_pkg_manager(frontend_dir):
+    """Return 'bun' if bun.lockb exists in frontend_dir, else 'npm'."""
+    if os.path.exists(os.path.join(frontend_dir, "bun.lockb")):
+        return "bun"
+    return "npm"
+
+
 def run_vite_dev(
     vite_port,
     backend_port,
@@ -118,10 +125,11 @@ def run_vite_dev(
     Reads the `DEV_MOUNTS` env var at call time. Returns the return code of
     `run_with_reload`.
     """
+    pkg = _detect_pkg_manager(frontend_dir)
     rc = ensure_deps(os.path.join(frontend_dir, "node_modules"),
-                      f"cd {frontend_dir} && npm install")
+                      f"cd {frontend_dir} && {pkg} install")
     if rc != 0:
-        err("npm install failed")
+        err(f"{pkg} install failed")
         return rc
 
     os.makedirs(data_dir, exist_ok=True)
@@ -143,7 +151,7 @@ def run_vite_dev(
     vite_env_parts = [f"{k}={shlex.quote(str(v))}" for k, v in (vite_env or {}).items()]
     vite_env_str = (" ".join(vite_env_parts) + " ") if vite_env_parts else ""
     vite_proc = subprocess.Popen(
-        f"cd {frontend_dir} && {vite_env_str}npm run dev",
+        f"cd {frontend_dir} && {vite_env_str}{pkg} run dev",
         shell=True,
         stdin=subprocess.DEVNULL,
         stdout=vite_fh, stderr=subprocess.STDOUT,
