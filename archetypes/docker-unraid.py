@@ -34,7 +34,7 @@ ARCHETYPE = {
                 "host = f\"{os.environ.get('UNRAID_USER', 'root')}@{os.environ['UNRAID_HOST']}\"\n"
                 "sys.exit(remote_recreate_container(host, os.environ['APP_IMAGE']))"
             ),
-            "desc": "Build, push, and recreate container on Unraid (preserves run config)",
+            "desc": "Build, push, and recreate container on Unraid (preserves run config); use `diff` to check drift",
         },
         "diff": {
             "kind": "python",

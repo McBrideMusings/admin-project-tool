@@ -321,6 +321,17 @@ def docker_deploy(image, host, run_args=""):
     return rc
 
 
+def _restore_image_from_inspect(inspect, image):
+    """Return the image reference to use in a restore script.
+
+    Prefers the running container's Image SHA over the tag name so the
+    restore script stays valid even after the tag is overwritten by a new
+    docker load.  Falls back to the tag when no SHA is present.
+    """
+    sha = (inspect.get("Image") or "").strip()
+    return sha or image
+
+
 def remote_recreate_container(host, image, container=None):
     """Transport a local image to a remote host and recreate the named container
     against that new image, preserving its existing run configuration (binds,
@@ -346,12 +357,8 @@ def remote_recreate_container(host, image, container=None):
     image_q = shlex.quote(image)
     container_q = shlex.quote(container)
 
-    info(f"Transferring image {image} to {host}...")
-    rc = run_cmd(f"docker save {image_q} | ssh {host_q} 'docker load'")
-    if rc != 0:
-        err("Image transfer failed")
-        return rc
-
+    # Inspect before docker load so we capture the old image SHA before the
+    # tag is overwritten; also fails fast if the container doesn't exist yet.
     info(f"Inspecting existing container '{container}' on {host}...")
     proc = subprocess.run(
         ["ssh", host, "docker", "inspect", container],
@@ -373,9 +380,13 @@ def remote_recreate_container(host, image, container=None):
         return 1
 
     args = _build_run_args_from_inspect(inspect)
+    restore_image = _restore_image_from_inspect(inspect, image)
 
-    old_image_sha = inspect.get("Image") or ""
-    restore_image = old_image_sha or image
+    info(f"Transferring image {image} to {host}...")
+    rc = run_cmd(f"docker save {image_q} | ssh {host_q} 'docker load'")
+    if rc != 0:
+        err("Image transfer failed")
+        return rc
 
     restore_path = f"/tmp/{container}-restore.sh"
     run_cmd_parts = ["docker", "run", "-d", "--name", container] + args + [restore_image]
@@ -387,10 +398,11 @@ def remote_recreate_container(host, image, container=None):
         capture_output=True,
     )
     if write_proc.returncode == 0:
-        sha_note = f" (SHA: {old_image_sha[:12]})" if old_image_sha else ""
+        sha_note = f" (SHA: {restore_image[:12]})" if restore_image != image else ""
         info(f"Restore script saved: {host}:{restore_path}{sha_note}")
     else:
-        warn("Could not write restore script to remote")
+        err("Could not write restore script to remote — aborting deploy to preserve recovery path")
+        return 1
 
     info(f"Stopping + removing '{container}' on {host}...")
     rc = run_cmd(
@@ -544,7 +556,8 @@ def _build_run_args_from_inspect(inspect, warn_prefix=None):
         soft = u.get("Soft", 0)
         hard = u.get("Hard", 0)
         if name:
-            args += ["--ulimit", f"{name}={soft}:{hard}"]
+            spec = f"{name}={soft}" if soft == hard else f"{name}={soft}:{hard}"
+            args += ["--ulimit", spec]
 
     for k, v in (config.get("Labels") or {}).items():
         args += ["--label", f"{k}={v}"]

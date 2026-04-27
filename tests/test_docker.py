@@ -13,10 +13,11 @@ LIB_DIR = Path(__file__).resolve().parent.parent / "admin_lib"
 
 def _load_docker():
     source = (LIB_DIR / "docker.py").read_text()
-    # Strip the multi-line from .core import (...) block
-    source = _re.sub(r"from \.core import \([^)]*\)", "pass", source, flags=_re.DOTALL)
-    # Strip the from .remote import ... inside try/except (leave try/except intact)
-    source = _re.sub(r"from \.remote import [^\n]+", "pass", source)
+    # Strip all relative imports so docker.py can be exec'd without a package context.
+    # Two forms: multi-line `from .mod import (...)` and single-line `from .mod import X`.
+    # The catch-all module pattern handles any new relative import added to docker.py.
+    source = _re.sub(r"from \.[a-zA-Z_]+ import \([^)]*\)", "pass", source, flags=_re.DOTALL)
+    source = _re.sub(r"from \.[a-zA-Z_]+ import [^\n]+", "pass", source)
 
     warnings = []
     ns: dict = {
@@ -180,14 +181,24 @@ def test_group_add():
     print("OK: group-add")
 
 
-def test_ulimits():
+def test_ulimits_long_form():
     ns = _load_docker()
     fn = ns["_build_run_args_from_inspect"]
     args = fn(_inspect(host_cfg={"Ulimits": [{"Name": "nofile", "Soft": 1024, "Hard": 4096}]}))
     assert "--ulimit" in args
     idx = args.index("--ulimit")
     assert args[idx + 1] == "nofile=1024:4096"
-    print("OK: ulimits")
+    print("OK: ulimits long form (soft != hard)")
+
+
+def test_ulimits_shorthand():
+    ns = _load_docker()
+    fn = ns["_build_run_args_from_inspect"]
+    args = fn(_inspect(host_cfg={"Ulimits": [{"Name": "nofile", "Soft": 1024, "Hard": 1024}]}))
+    assert "--ulimit" in args
+    idx = args.index("--ulimit")
+    assert args[idx + 1] == "nofile=1024", f"expected shorthand, got {args[idx + 1]!r}"
+    print("OK: ulimits shorthand (soft == hard)")
 
 
 def test_unknown_field_triggers_warning():
@@ -225,16 +236,75 @@ def test_warn_prefix_in_message():
     print("OK: warn_prefix included in warning text")
 
 
+def test_tmpfs_none_opts():
+    ns = _load_docker()
+    fn = ns["_build_run_args_from_inspect"]
+    args = fn(_inspect(host_cfg={"Tmpfs": {"/tmp": None}}))
+    assert "--tmpfs" in args
+    idx = args.index("--tmpfs")
+    assert args[idx + 1] == "/tmp", f"None opts should produce bare path, got {args[idx + 1]!r}"
+    print("OK: tmpfs None opts treated as empty (no trailing colon)")
+
+
+def test_tmpfs_sysctls_dict_order_stable():
+    ns = _load_docker()
+    fn = ns["_build_run_args_from_inspect"]
+
+    args_a = fn(_inspect(host_cfg={
+        "Tmpfs": {"/tmp": "size=64m", "/run": ""},
+        "Sysctls": {"net.core.somaxconn": "1024", "net.ipv4.tcp_tw_reuse": "1"},
+    }))
+    args_b = fn(_inspect(host_cfg={
+        "Tmpfs": {"/run": "", "/tmp": "size=64m"},
+        "Sysctls": {"net.ipv4.tcp_tw_reuse": "1", "net.core.somaxconn": "1024"},
+    }))
+
+    def _pair_and_sort(flat):
+        pairs = []
+        i = 0
+        while i < len(flat):
+            flag = flat[i]
+            if i + 1 < len(flat) and not flat[i + 1].startswith("-"):
+                pairs.append(f"{flag} {flat[i + 1]}")
+                i += 2
+            else:
+                pairs.append(flag)
+                i += 1
+        return sorted(pairs)
+
+    assert _pair_and_sort(args_a) == _pair_and_sort(args_b), (
+        "Tmpfs/Sysctls dict order caused drift false positive:\n"
+        f"  a: {_pair_and_sort(args_a)}\n  b: {_pair_and_sort(args_b)}"
+    )
+    print("OK: Tmpfs/Sysctls dict ordering doesn't cause false-positive diffs")
+
+
+def test_restore_image_from_inspect():
+    ns = _load_docker()
+    fn = ns["_restore_image_from_inspect"]
+
+    sha = "sha256:abc123def456789"
+    assert fn({"Image": sha}, "my-app:latest") == sha, "should use SHA when present"
+    assert fn({"Image": ""}, "my-app:latest") == "my-app:latest", "should fall back to tag on empty SHA"
+    assert fn({}, "my-app:latest") == "my-app:latest", "should fall back to tag when Image key missing"
+    assert fn({"Image": None}, "my-app:latest") == "my-app:latest", "should fall back to tag on None SHA"
+    print("OK: _restore_image_from_inspect prefers SHA, falls back to tag")
+
+
 if __name__ == "__main__":
     test_basic_field_translation()
     test_empty_and_default_fields_omitted()
     test_tmpfs_with_opts()
     test_tmpfs_no_opts()
+    test_tmpfs_none_opts()
+    test_tmpfs_sysctls_dict_order_stable()
     test_sysctls()
     test_security_opt()
     test_group_add()
-    test_ulimits()
+    test_ulimits_long_form()
+    test_ulimits_shorthand()
     test_unknown_field_triggers_warning()
     test_clean_dict_no_warnings()
     test_warn_prefix_in_message()
+    test_restore_image_from_inspect()
     print("\nAll docker tests passed.")
