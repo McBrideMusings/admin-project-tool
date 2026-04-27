@@ -136,17 +136,37 @@ def clear_rebuild_request():
 # Xcode build helpers
 # ---------------------------------------------------------------------------
 
+_RAW_BUILD_LOG = "/tmp/admin-xcode-build.log"
+
+
 def find_app(pattern):
     """Glob for a built .app bundle and return the first match, or None."""
     matches = glob.glob(os.path.expanduser(pattern))
     return matches[0] if matches else None
 
 
+def diagnose_build_failure():
+    """After a failed xcodebuild, check for known fixable errors and print remediation."""
+    try:
+        with open(_RAW_BUILD_LOG, "r", errors="replace") as f:
+            content = f.read()
+    except FileNotFoundError:
+        return
+
+    if "errSecInternalComponent" in content:
+        warn("Codesign failed: login keychain is locked.")
+        warn("Unlock it with:")
+        warn("  security unlock-keychain ~/Library/Keychains/login.keychain-db")
+        warn("  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k YOUR_PASSWORD ~/Library/Keychains/login.keychain-db")
+
+
 def xcodebuild_filtered(project, scheme, config, destination, action="build",
                          extra_settings="", allow_provisioning=True):
     """Run xcodebuild with grep filtering, return exit code.
 
-    Filters output to show only BUILD/error/warning lines.
+    Filters output to show only BUILD/error/warning lines. Raw output is
+    teed to /tmp/admin-xcode-build.log for post-failure diagnostics
+    (see diagnose_build_failure()).
 
     Warning — ``extra_settings`` is a raw xcodebuild settings string forwarded
     verbatim to the command line. Settings passed this way apply *globally*
@@ -177,7 +197,7 @@ def xcodebuild_filtered(project, scheme, config, destination, action="build",
 
     build_cmd = " ".join(parts)
     return run_cmd(
-        f'{build_cmd} | grep -E "BUILD|error:|warning:" ; exit ${{PIPESTATUS[0]}}'
+        f'{build_cmd} | tee {_RAW_BUILD_LOG} | grep -E "BUILD|error:|warning:" ; exit ${{PIPESTATUS[0]}}'
     )
 
 
@@ -974,6 +994,15 @@ def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
             sys.exit(1)
 
         launch_bundle = app_bundle_identifier(app_path) or bundle_id or subsystem
+        expected = bundle_id or subsystem
+        if expected and launch_bundle and launch_bundle != expected:
+            warn(f"Built app has bundle ID {launch_bundle!r}, expected {expected!r}")
+            warn(f"Path: {app_path}")
+            warn("Stale DerivedData from another project may be interfering.")
+            warn("Run: ./admin clean  — then retry")
+            cleanup_pid_file(pid_file)
+            sys.exit(1)
+
         info("Installing on simulator...")
         install_and_launch_sim(sim_id, app_path, launch_bundle)
 
@@ -1371,6 +1400,7 @@ def deploy_ios(cfg, *, clean=False):
     rc = xcodebuild_filtered(project, scheme, config, "generic/platform=iOS",
                              action=build_action, extra_settings="")
     if rc != 0:
+        diagnose_build_failure()
         err("Build failed"); sys.exit(rc)
 
     app_path = find_app(_derived_glob(scheme, config, "-iphoneos", process))
@@ -1380,7 +1410,12 @@ def deploy_ios(cfg, *, clean=False):
     info(f"Installing to device {device_name}...")
     rc = install_on_device(device_id, app_path)
     if rc != 0:
-        err("Install failed"); sys.exit(rc)
+        warn("Install failed — retrying once...")
+        rc = install_on_device(device_id, app_path)
+        if rc != 0:
+            err("Install failed after retry.")
+            err("Try plugging in via USB cable for a more reliable connection.")
+            sys.exit(rc)
 
     if bundle_id:
         info(f"Launching {bundle_id}")
