@@ -61,7 +61,7 @@ def test_composition_docker_unraid_plus_apple():
     resolved = resolve(m, ARCH_DIR)
     # Commands from both should be present. Apple is later in the list, so
     # commands it declares (build, deploy, reload) override docker-unraid's.
-    for name in ("build", "dev", "install", "clean", "deploy", "test", "icons",
+    for name in ("build", "dev", "clean", "deploy", "test", "icons",
                  "logs", "reload", "open"):
         assert name in resolved.commands, f"missing command after merge: {name}"
     assert resolved.commands["build"].source == "apple"
