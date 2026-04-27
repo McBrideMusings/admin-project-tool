@@ -13,6 +13,7 @@ individually importable for tests and IDE tooling.
 """
 
 import os
+import shlex
 import signal
 import subprocess
 
@@ -93,6 +94,7 @@ def run_vite_dev(
     backend_dir,
     backend_cmd,
     backend_env=None,
+    vite_env=None,
     dev_mounts_raw=None,
     vite_log_name="vite.log",
 ):
@@ -110,6 +112,7 @@ def run_vite_dev(
         backend_dir:      path to `cd` into before running backend_cmd.
         backend_cmd:      shell string for the reload-looped backend process.
         backend_env:      optional dict[str, str] prepended as `K=V` env assignments.
+        vite_env:         optional dict[str, str] prepended as `K=V` env assignments for Vite.
         vite_log_name:    filename under LOG_DIR for vite stdout+stderr.
 
     Reads the `DEV_MOUNTS` env var at call time. Returns the return code of
@@ -137,8 +140,10 @@ def run_vite_dev(
     vite_log = os.path.join(LOG_DIR, vite_log_name)
     os.makedirs(LOG_DIR, exist_ok=True)
     vite_fh = open(vite_log, "w")
+    vite_env_parts = [f"{k}={shlex.quote(str(v))}" for k, v in (vite_env or {}).items()]
+    vite_env_str = (" ".join(vite_env_parts) + " ") if vite_env_parts else ""
     vite_proc = subprocess.Popen(
-        f"cd {frontend_dir} && npm run dev",
+        f"cd {frontend_dir} && {vite_env_str}npm run dev",
         shell=True,
         stdin=subprocess.DEVNULL,
         stdout=vite_fh, stderr=subprocess.STDOUT,
@@ -166,9 +171,7 @@ def run_vite_dev(
 
     allowed_roots = ",".join(os.path.realpath(p) for _, p in (mounts or []))
 
-    env_parts = []
-    for k, v in (backend_env or {}).items():
-        env_parts.append(f"{k}={v}")
+    env_parts = [f"{k}={shlex.quote(str(v))}" for k, v in (backend_env or {}).items()]
     env_parts.append(f"PORT={backend_port}")
     if allowed_roots:
         env_parts.append(f"ALLOWED_SYMLINK_ROOTS={allowed_roots}")
