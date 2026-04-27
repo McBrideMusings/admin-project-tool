@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# @bundled admin_lib=2.0.0-dev sha=3318a27d5752 modules=core generator_commit=b10e42aa274c4073913d278c4cfd87b0415259d5+dirty
+# @bundled admin_lib=2.0.0-dev sha=3318a27d5752 modules=core generator_commit=0e53ffb3d3a532d6214532b290fc2244b9a9b617
 # Generated from admin.toml by admin-project-tool.
 # Regenerate: ~/.admin/init-admin --regenerate
 """admin — task runner for admin-project-tool."""
@@ -795,7 +795,7 @@ def boot(project_name, load_dotenv=True):
     all_cmds[cmd_name]["func"](args)
 
 # === project: admin-project-tool ===
-set_generator_commit("b10e42aa274c4073913d278c4cfd87b0415259d5+dirty")
+set_generator_commit("0e53ffb3d3a532d6214532b290fc2244b9a9b617")
 
 @command("test", "Run full test suite (Python + shell)")
 def cmd_test(args):
