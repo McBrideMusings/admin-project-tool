@@ -11,6 +11,7 @@ import selectors
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 from collections import OrderedDict
@@ -332,7 +333,7 @@ def _restore_image_from_inspect(inspect, image):
     return sha or image
 
 
-def remote_recreate_container(host, image, container=None):
+def remote_recreate_container(host, image, container=None, dry_run=False):
     """Transport a local image to a remote host and recreate the named container
     against that new image, preserving its existing run configuration (binds,
     ports, env, labels, restart policy, network, caps, user, hostname, mac).
@@ -344,6 +345,9 @@ def remote_recreate_container(host, image, container=None):
 
     If the target container does not exist on `host`, we print an actionable
     message and return nonzero without touching anything on the remote.
+
+    dry_run: if True, inspect the remote container and print the reconstructed
+    docker run command without transferring or recreating anything.
 
     Returns exit code.
     """
@@ -382,11 +386,19 @@ def remote_recreate_container(host, image, container=None):
     args = _build_run_args_from_inspect(inspect)
     restore_image = _restore_image_from_inspect(inspect, image)
 
-    info(f"Transferring image {image} to {host}...")
-    rc = run_cmd(f"docker save {image_q} | ssh {host_q} 'docker load'")
+    if dry_run:
+        run_cmd_parts = ["docker", "run", "-d", "--name", container] + args + [image]
+        reconstructed = " ".join(shlex.quote(p) for p in run_cmd_parts)
+        info("Dry run — docker run command that would be executed on remote:")
+        print(f"  {reconstructed}\n")
+        return 0
+
+    info(f"Transferring image {image} to {host}... (may take a few minutes for large images)")
+    rc, elapsed = _run_with_progress(f"docker save {image_q} | ssh {host_q} 'docker load'")
     if rc != 0:
         err("Image transfer failed")
         return rc
+    info(f"Transfer complete in {elapsed:.0f}s")
 
     restore_path = f"/tmp/{container}-restore.sh"
     run_cmd_parts = ["docker", "run", "-d", "--name", container] + args + [restore_image]
@@ -421,6 +433,9 @@ def remote_recreate_container(host, image, container=None):
 
     ok(f"Deployed {image} to {host} as container '{container}'")
 
+    info(f"Pruning dangling images on {host}...")
+    subprocess.run(["ssh", host, "docker", "image", "prune", "-f"], capture_output=True)
+
     snapshot_path = f"/tmp/{container}-lastdeploy.json"
     subprocess.run(
         ["ssh", host, f"docker inspect {container_q} > {shlex.quote(snapshot_path)}"],
@@ -438,6 +453,7 @@ _HOST_CFG_CONSUMED = frozenset({
 
 _HOST_CFG_EXPECTED = frozenset({
     # Runtime infrastructure — always-populated defaults, no docker run equivalent
+    # LogConfig is always {"Type": "json-file", "Config": {}} by default; no --log-driver arg needed
     "ContainerIDFile", "LogConfig", "AutoRemove", "VolumeDriver", "VolumesFrom",
     "CgroupnsMode", "Dns", "DnsOptions", "DnsSearch", "Links", "OomScoreAdj",
     "PidMode", "PublishAllPorts", "ReadonlyRootfs", "UTSMode", "UsernsMode",
@@ -602,12 +618,14 @@ def _build_run_args_from_inspect(inspect, warn_prefix=None):
     return args
 
 
-def remote_container_diff(host, image, container=None):
+def remote_container_diff(host, image, container=None, output_format="text"):
     """Compare the live container's run config against the last recorded deploy.
 
     Fetches the current `docker inspect` output from the remote, reads the
     snapshot saved by the previous `remote_recreate_container` call, and shows
     any run-arg drift (Unraid GUI tweaks, manual docker commands, etc.).
+
+    output_format: "text" (default) or "json" for machine-readable output.
 
     Returns 0 if no drift, 1 if drift found or no snapshot exists.
     """
@@ -673,6 +691,27 @@ def remote_container_diff(host, image, container=None):
         last_lines, curr_lines, lineterm="",
         fromfile="last-deploy", tofile="current",
     ))
+
+    def _build_run_cmd(args_list):
+        parts = ["docker", "run", "-d", "--name", container] + args_list + [image]
+        return " ".join(shlex.quote(p) for p in parts)
+
+    reconstructed = _build_run_cmd(curr_args)
+
+    if output_format == "json":
+        import json as _json
+        result = {
+            "container": container,
+            "drift": bool(diff),
+            "last_args": last_args,
+            "current_args": curr_args,
+            "diff": diff,
+        }
+        if diff:
+            result["reconstructed_run"] = reconstructed
+        print(_json.dumps(result, indent=2))
+        return 1 if diff else 0
+
     if not diff:
         ok(f"No run-config drift detected for '{container}'")
         return 0
@@ -680,7 +719,30 @@ def remote_container_diff(host, image, container=None):
     warn(f"Run-config drift detected for '{container}':")
     for line in diff:
         print(line)
+    print(f"\nReconstructed docker run (current config):\n  {reconstructed}")
     return 1
+
+
+def _run_with_progress(cmd, interval=10):
+    """Run a shell command, printing elapsed time every interval seconds.
+
+    Returns (returncode, elapsed_seconds).
+    """
+    start = time.monotonic()
+    done = threading.Event()
+
+    def _progress_ticker():
+        while not done.wait(timeout=interval):
+            elapsed = int(time.monotonic() - start)
+            sys.stdout.write(f"  ... still transferring ({elapsed}s elapsed)\n")
+            sys.stdout.flush()
+
+    ticker = threading.Thread(target=_progress_ticker, daemon=True)
+    ticker.start()
+    rc = run_cmd(cmd)
+    done.set()
+    ticker.join()
+    return rc, time.monotonic() - start
 
 
 def ensure_deps(check_path, install_cmd):

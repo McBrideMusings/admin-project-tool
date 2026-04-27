@@ -246,6 +246,21 @@ def test_tmpfs_none_opts():
     print("OK: tmpfs None opts treated as empty (no trailing colon)")
 
 
+def _pair_and_sort(flat):
+    """Pair flag-value arguments and return sorted list of normalized pairs."""
+    pairs = []
+    i = 0
+    while i < len(flat):
+        flag = flat[i]
+        if i + 1 < len(flat) and not flat[i + 1].startswith("-"):
+            pairs.append(f"{flag} {flat[i + 1]}")
+            i += 2
+        else:
+            pairs.append(flag)
+            i += 1
+    return sorted(pairs)
+
+
 def test_tmpfs_sysctls_dict_order_stable():
     ns = _load_docker()
     fn = ns["_build_run_args_from_inspect"]
@@ -259,22 +274,11 @@ def test_tmpfs_sysctls_dict_order_stable():
         "Sysctls": {"net.ipv4.tcp_tw_reuse": "1", "net.core.somaxconn": "1024"},
     }))
 
-    def _pair_and_sort(flat):
-        pairs = []
-        i = 0
-        while i < len(flat):
-            flag = flat[i]
-            if i + 1 < len(flat) and not flat[i + 1].startswith("-"):
-                pairs.append(f"{flag} {flat[i + 1]}")
-                i += 2
-            else:
-                pairs.append(flag)
-                i += 1
-        return sorted(pairs)
-
-    assert _pair_and_sort(args_a) == _pair_and_sort(args_b), (
+    result_a = _pair_and_sort(args_a)
+    result_b = _pair_and_sort(args_b)
+    assert result_a == result_b, (
         "Tmpfs/Sysctls dict order caused drift false positive:\n"
-        f"  a: {_pair_and_sort(args_a)}\n  b: {_pair_and_sort(args_b)}"
+        f"  a: {result_a}\n  b: {result_b}"
     )
     print("OK: Tmpfs/Sysctls dict ordering doesn't cause false-positive diffs")
 
@@ -291,20 +295,52 @@ def test_restore_image_from_inspect():
     print("OK: _restore_image_from_inspect prefers SHA, falls back to tag")
 
 
+def test_logconfig_no_warning():
+    ns = _load_docker()
+    fn = ns["_build_run_args_from_inspect"]
+    ns["_warnings"].clear()
+    fn(_inspect(host_cfg={"LogConfig": {"Type": "json-file", "Config": {}}}))
+    assert ns["_warnings"] == [], f"LogConfig should not warn, got: {ns['_warnings']}"
+    print("OK: LogConfig does not trigger unconsumed-field warning")
+
+
+def test_custom_network_mode():
+    ns = _load_docker()
+    fn = ns["_build_run_args_from_inspect"]
+    args = fn(_inspect(host_cfg={"NetworkMode": "mynet"}))
+    assert "--network" in args
+    idx = args.index("--network")
+    assert args[idx + 1] == "mynet", f"expected mynet, got {args[idx + 1]!r}"
+    print("OK: custom NetworkMode emits --network mynet")
+
+
+def test_ulimits_zero_soft():
+    ns = _load_docker()
+    fn = ns["_build_run_args_from_inspect"]
+    args = fn(_inspect(host_cfg={"Ulimits": [{"Name": "nofile", "Soft": 0, "Hard": 4096}]}))
+    assert "--ulimit" in args
+    idx = args.index("--ulimit")
+    assert args[idx + 1] == "nofile=0:4096", f"expected nofile=0:4096, got {args[idx + 1]!r}"
+    print("OK: ulimits zero-soft / nonzero-hard edge case")
+
+
+def test_devices_differing_paths():
+    ns = _load_docker()
+    fn = ns["_build_run_args_from_inspect"]
+    args = fn(_inspect(host_cfg={
+        "Devices": [{"PathOnHost": "/dev/video0", "PathInContainer": "/dev/video1", "CgroupPermissions": "rwm"}]
+    }))
+    assert "--device" in args
+    idx = args.index("--device")
+    assert args[idx + 1] == "/dev/video0:/dev/video1", f"got {args[idx + 1]!r}"
+    print("OK: Devices with differing host/container paths")
+
+
 if __name__ == "__main__":
-    test_basic_field_translation()
-    test_empty_and_default_fields_omitted()
-    test_tmpfs_with_opts()
-    test_tmpfs_no_opts()
-    test_tmpfs_none_opts()
-    test_tmpfs_sysctls_dict_order_stable()
-    test_sysctls()
-    test_security_opt()
-    test_group_add()
-    test_ulimits_long_form()
-    test_ulimits_shorthand()
-    test_unknown_field_triggers_warning()
-    test_clean_dict_no_warnings()
-    test_warn_prefix_in_message()
-    test_restore_image_from_inspect()
+    fns = sorted(
+        (name, val) for name, val in globals().items()
+        if name.startswith("test_") and callable(val)
+    )
+    for name, fn in fns:
+        fn()
     print("\nAll docker tests passed.")

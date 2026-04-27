@@ -15,7 +15,9 @@ individually importable for tests and IDE tooling.
 import os
 import shlex
 import signal
+import socket
 import subprocess
+import time
 
 from .core import (
     LOG_DIR,
@@ -93,6 +95,19 @@ def _detect_pkg_manager(frontend_dir):
     return "npm"
 
 
+def _wait_for_port(port, timeout=15, interval=0.25):
+    """Poll until a TCP port accepts connections or timeout expires."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                return True
+        except OSError:
+            time.sleep(interval)
+    warn(f"Port {port} not ready after {timeout}s — continuing anyway")
+    return False
+
+
 def run_vite_dev(
     vite_port,
     backend_port,
@@ -127,7 +142,7 @@ def run_vite_dev(
     """
     pkg = _detect_pkg_manager(frontend_dir)
     rc = ensure_deps(os.path.join(frontend_dir, "node_modules"),
-                      f"cd {frontend_dir} && {pkg} install")
+                      f"cd {shlex.quote(frontend_dir)} && {pkg} install")
     if rc != 0:
         err(f"{pkg} install failed")
         return rc
@@ -149,9 +164,12 @@ def run_vite_dev(
     os.makedirs(LOG_DIR, exist_ok=True)
     vite_fh = open(vite_log, "w")
     vite_env_parts = [f"{k}={shlex.quote(str(v))}" for k, v in (vite_env or {}).items()]
-    vite_env_str = (" ".join(vite_env_parts) + " ") if vite_env_parts else ""
+    vite_env_str = " ".join(vite_env_parts)
+    vite_cmd = f"cd {shlex.quote(frontend_dir)} && {pkg} run dev"
+    if vite_env_str:
+        vite_cmd = f"{vite_env_str} {vite_cmd}"
     vite_proc = subprocess.Popen(
-        f"cd {frontend_dir} && {vite_env_str}{pkg} run dev",
+        vite_cmd,
         shell=True,
         stdin=subprocess.DEVNULL,
         stdout=vite_fh, stderr=subprocess.STDOUT,
@@ -171,6 +189,8 @@ def run_vite_dev(
             vite_fh.close()
     register_cleanup(_stop_vite)
 
+    _wait_for_port(vite_port)
+
     domain = os.environ.get("DEV_DOMAIN", "").strip()
     dev_url = f"https://{vite_port}.{domain}" if domain else f"http://localhost:{vite_port}"
     ok(f"Vite dev server: {dev_url}")
@@ -183,9 +203,9 @@ def run_vite_dev(
     env_parts.append(f"PORT={backend_port}")
     if allowed_roots:
         env_parts.append(f"ALLOWED_SYMLINK_ROOTS={allowed_roots}")
-    env = " ".join(env_parts)
+    env_str = " ".join(env_parts)
 
     return run_with_reload(
-        f"cd {backend_dir} && {env} {backend_cmd}",
+        f"cd {shlex.quote(backend_dir)} && {env_str} {backend_cmd}",
         "dev",
     )
