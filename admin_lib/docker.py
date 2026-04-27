@@ -374,8 +374,11 @@ def remote_recreate_container(host, image, container=None):
 
     args = _build_run_args_from_inspect(inspect)
 
+    old_image_sha = inspect.get("Image") or ""
+    restore_image = old_image_sha or image
+
     restore_path = f"/tmp/{container}-restore.sh"
-    run_cmd_parts = ["docker", "run", "-d", "--name", container] + args + [image]
+    run_cmd_parts = ["docker", "run", "-d", "--name", container] + args + [restore_image]
     remote_run = " ".join(shlex.quote(p) for p in run_cmd_parts)
     restore_script = f"#!/bin/sh\n{remote_run}\n"
     write_proc = subprocess.run(
@@ -384,7 +387,8 @@ def remote_recreate_container(host, image, container=None):
         capture_output=True,
     )
     if write_proc.returncode == 0:
-        info(f"Restore script saved: {host}:{restore_path}")
+        sha_note = f" (SHA: {old_image_sha[:12]})" if old_image_sha else ""
+        info(f"Restore script saved: {host}:{restore_path}{sha_note}")
     else:
         warn("Could not write restore script to remote")
 
@@ -417,23 +421,24 @@ def remote_recreate_container(host, image, container=None):
 _HOST_CFG_CONSUMED = frozenset({
     "Binds", "PortBindings", "RestartPolicy", "NetworkMode", "ExtraHosts",
     "Devices", "CapAdd", "CapDrop", "Privileged", "Memory",
+    "Tmpfs", "Sysctls", "SecurityOpt", "GroupAdd", "Ulimits",
 })
 
 _HOST_CFG_EXPECTED = frozenset({
-    # Runtime infrastructure / always-populated defaults we intentionally skip
+    # Runtime infrastructure — always-populated defaults, no docker run equivalent
     "ContainerIDFile", "LogConfig", "AutoRemove", "VolumeDriver", "VolumesFrom",
     "CgroupnsMode", "Dns", "DnsOptions", "DnsSearch", "Links", "OomScoreAdj",
     "PidMode", "PublishAllPorts", "ReadonlyRootfs", "UTSMode", "UsernsMode",
-    "ShmSize", "Isolation", "Runtime", "CgroupParent", "BlkioWeight",
-    "BlkioWeightDevice", "BlkioDeviceReadBps", "BlkioDeviceWriteBps",
+    "ShmSize", "Isolation", "Runtime", "CgroupParent",
+    # cgroup / CPU resource limits — intentionally skipped (rare on Unraid)
+    "BlkioWeight", "BlkioWeightDevice", "BlkioDeviceReadBps", "BlkioDeviceWriteBps",
     "BlkioDeviceReadIOps", "BlkioDeviceWriteIOps", "CpuPeriod", "CpuQuota",
     "CpuRealtimePeriod", "CpuRealtimeRuntime", "CpusetCpus", "CpusetMems",
     "MemoryReservation", "MemorySwap", "MemorySwappiness", "OomKillDisable",
     "NanoCpus", "CpuShares", "PidsLimit", "KernelMemory", "KernelMemoryTCP",
+    # Filesystem / path / security metadata — skipped (no practical docker run equivalent)
     "StorageOpt", "MaskedPaths", "ReadonlyPaths", "IpcMode", "DeviceCgroupRules",
     "Mounts",
-    # Common fields with real functional impact — skipped (not yet translated to args)
-    "Tmpfs", "Sysctls", "SecurityOpt", "GroupAdd", "Ulimits",
 })
 
 _CONFIG_CONSUMED = frozenset({
@@ -520,6 +525,26 @@ def _build_run_args_from_inspect(inspect, warn_prefix=None):
 
     if host_cfg.get("Privileged"):
         args += ["--privileged"]
+
+    for mount_path, opts in (host_cfg.get("Tmpfs") or {}).items():
+        spec = f"{mount_path}:{opts}" if opts else mount_path
+        args += ["--tmpfs", spec]
+
+    for key, val in (host_cfg.get("Sysctls") or {}).items():
+        args += ["--sysctl", f"{key}={val}"]
+
+    for opt in host_cfg.get("SecurityOpt") or []:
+        args += ["--security-opt", opt]
+
+    for group in host_cfg.get("GroupAdd") or []:
+        args += ["--group-add", group]
+
+    for u in host_cfg.get("Ulimits") or []:
+        name = u.get("Name", "")
+        soft = u.get("Soft", 0)
+        hard = u.get("Hard", 0)
+        if name:
+            args += ["--ulimit", f"{name}={soft}:{hard}"]
 
     for k, v in (config.get("Labels") or {}).items():
         args += ["--label", f"{k}={v}"]

@@ -28,16 +28,21 @@ ARCHETYPE = {
         "deploy": {
             "kind": "python",
             "run": (
-                "if '--diff' in args:\n"
-                "    host = f\"{os.environ.get('UNRAID_USER', 'root')}@{os.environ['UNRAID_HOST']}\"\n"
-                "    sys.exit(remote_container_diff(host, os.environ['APP_IMAGE']))\n"
                 "rc = docker_build(os.environ['APP_IMAGE'], platform='linux/amd64')\n"
                 "if rc != 0:\n"
                 "    sys.exit(rc)\n"
                 "host = f\"{os.environ.get('UNRAID_USER', 'root')}@{os.environ['UNRAID_HOST']}\"\n"
                 "sys.exit(remote_recreate_container(host, os.environ['APP_IMAGE']))"
             ),
-            "desc": "Build, push, and recreate container on Unraid (preserves run config); pass --diff to show drift",
+            "desc": "Build, push, and recreate container on Unraid (preserves run config)",
+        },
+        "diff": {
+            "kind": "python",
+            "run": (
+                "host = f\"{os.environ.get('UNRAID_USER', 'root')}@{os.environ['UNRAID_HOST']}\"\n"
+                "sys.exit(remote_container_diff(host, os.environ['APP_IMAGE']))"
+            ),
+            "desc": "Show run-config drift between current container and last deploy",
         },
         "logs": {
             "kind": "python",
