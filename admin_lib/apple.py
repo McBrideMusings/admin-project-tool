@@ -1275,7 +1275,14 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=N
     extra_settings = cfg.get("dev_build_settings", "")
     build_action = "clean build" if clean else "build"
     predicate = log_predicate(dev_process, subsystem, level=log_level)
-    app_pattern = _derived_glob(scheme, config, "", process)
+    derived_name = cfg.get("derived_data_name", scheme)
+    app_pattern = _derived_glob(derived_name, config, "", process)
+
+    prebuild_cmd = cfg.get("prebuild_cmd")
+    if prebuild_cmd:
+        info("prereqs: " + prebuild_cmd)
+        if run_cmd(prebuild_cmd) != 0:
+            err("prereq command failed"); sys.exit(1)
 
     pre_build, post_build = build_icon_hooks(cfg)
 
@@ -1292,6 +1299,12 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=N
                 shutil.rmtree(dev_install_path)
             shutil.copytree(built_app, dev_install_path)
             return dev_install_path
+    elif cfg.get("mac_dev_product_name") or cfg.get("mac_dev_display_name"):
+        _dev_product = cfg.get("mac_dev_product_name")
+        _dev_display = cfg.get("mac_dev_display_name")
+
+        def pre_launch(built_app):
+            return dev_macos_postprocess(built_app, _dev_product, _dev_display)
 
     dev_loop_macos(
         project=project, scheme=scheme, config=config,
@@ -1323,7 +1336,14 @@ def dev_ios(cfg, *, log_level="app", clean=False, output_config=None):
     build_action = "clean build" if clean else "build"
     predicate = log_predicate(process, subsystem, level=log_level)
     bundle_id = cfg.get("ios_dev_bundle") or cfg.get("ios_bundle")
-    app_pattern = _derived_glob(scheme, config, "-iphonesimulator", process)
+    derived_name = cfg.get("derived_data_name", scheme)
+    app_pattern = _derived_glob(derived_name, config, "-iphonesimulator", process)
+
+    prebuild_cmd = cfg.get("prebuild_cmd")
+    if prebuild_cmd:
+        info("prereqs: " + prebuild_cmd)
+        if run_cmd(prebuild_cmd) != 0:
+            err("prereq command failed"); sys.exit(1)
 
     sim_id = None
     device_name = os.environ.get("IOS_DEVICE") or cfg.get("ios_device")
@@ -1356,6 +1376,13 @@ def deploy_mac(cfg, *, clean=False):
     process = cfg.get("mac_process", scheme)
     install_path = cfg.get("mac_install_path_prod", f"/Applications/{process}.app")
     build_action = "clean build" if clean else "build"
+    derived_name = cfg.get("derived_data_name", scheme)
+
+    prebuild_cmd = cfg.get("prebuild_cmd")
+    if prebuild_cmd:
+        info("prereqs: " + prebuild_cmd)
+        if run_cmd(prebuild_cmd) != 0:
+            err("prereq command failed"); sys.exit(1)
 
     info(f"Killing any running {process}...")
     subprocess.run(["pkill", "-x", process], capture_output=True)
@@ -1366,7 +1393,7 @@ def deploy_mac(cfg, *, clean=False):
     if rc != 0:
         err("Build failed"); sys.exit(rc)
 
-    app_path = find_app(_derived_glob(scheme, config, "", process))
+    app_path = find_app(_derived_glob(derived_name, config, "", process))
     if not app_path:
         err("Could not find built app"); sys.exit(1)
 
@@ -1392,6 +1419,13 @@ def deploy_ios(cfg, *, clean=False):
     process = cfg.get("ios_process", scheme)
     bundle_id = cfg.get("ios_bundle")
     build_action = "clean build" if clean else "build"
+    derived_name = cfg.get("derived_data_name", scheme)
+
+    prebuild_cmd = cfg.get("prebuild_cmd")
+    if prebuild_cmd:
+        info("prereqs: " + prebuild_cmd)
+        if run_cmd(prebuild_cmd) != 0:
+            err("prereq command failed"); sys.exit(1)
 
     device_id, device_name, _udid = find_connected_device()
     info(f"Deploying to {device_name}")
@@ -1403,7 +1437,7 @@ def deploy_ios(cfg, *, clean=False):
         diagnose_build_failure()
         err("Build failed"); sys.exit(rc)
 
-    app_path = find_app(_derived_glob(scheme, config, "-iphoneos", process))
+    app_path = find_app(_derived_glob(derived_name, config, "-iphoneos", process))
     if not app_path:
         err("Could not find built app"); sys.exit(1)
 
@@ -1421,6 +1455,99 @@ def deploy_ios(cfg, *, clean=False):
         info(f"Launching {bundle_id}")
         launch_on_device(device_id, bundle_id)
     ok(f"deploy ios → {device_name}")
+
+
+def dev_device(cfg, *, log_level="app", clean=False, output_config=None):
+    """iOS physical-device dev loop driven by [apple] config.
+
+    Builds for iphoneos, installs via devicectl, launches with --console so
+    os_log output is non-redacted. Blocks until the app exits or Ctrl+C.
+    """
+    if output_config is None:
+        output_config = globals().get("_OUTPUT_CONFIG")
+    if not cfg:
+        err("[apple] table missing from admin.toml"); sys.exit(1)
+    scheme = cfg.get("ios_scheme")
+    if not scheme:
+        err("apple.ios_scheme required"); sys.exit(1)
+    project = _detect_project_path(cfg)
+    config = cfg.get("ios_build_config", "Debug")
+    process = cfg.get("ios_process", scheme)
+    subsystem = cfg.get("subsystem", "")
+    extra_settings = cfg.get("dev_build_settings", "")
+    build_action = "clean build" if clean else "build"
+    derived_name = cfg.get("derived_data_name", scheme)
+    bundle_id = cfg.get("ios_dev_bundle") or cfg.get("ios_bundle")
+    app_pattern = _derived_glob(derived_name, config, "-iphoneos", process)
+
+    prebuild_cmd = cfg.get("prebuild_cmd")
+    if prebuild_cmd:
+        info("prereqs: " + prebuild_cmd)
+        if run_cmd(prebuild_cmd) != 0:
+            err("prereq command failed"); sys.exit(1)
+
+    pre_build, post_build = build_icon_hooks(cfg)
+
+    dev_loop_device(
+        project=project, scheme=scheme, config=config,
+        subsystem=subsystem, process=process,
+        app_pattern=app_pattern, extra_settings=extra_settings,
+        build_action=build_action, bundle_id=bundle_id,
+        pre_build=pre_build, post_build=post_build,
+        output_config=output_config,
+    )
+
+
+def build_mac(cfg, *, force=False):
+    """Build macOS client from [apple] config (no run, no install)."""
+    if not cfg:
+        err("[apple] table missing from admin.toml"); sys.exit(1)
+    scheme = cfg.get("mac_scheme")
+    if not scheme:
+        err("apple.mac_scheme required"); sys.exit(1)
+    project = _detect_project_path(cfg)
+    config = cfg.get("mac_build_config", "Debug")
+    build_action = "clean build" if force else "build"
+    info(f"Building {scheme} ({config}) for macOS...")
+    rc = xcodebuild_filtered(project, scheme, config, "platform=macOS",
+                             action=build_action)
+    if rc != 0:
+        diagnose_build_failure()
+        err("Build failed"); sys.exit(rc)
+    ok("macOS build succeeded")
+
+
+def build_ios(cfg, *, force=False):
+    """Build iOS client from [apple] config (no run, no install)."""
+    if not cfg:
+        err("[apple] table missing from admin.toml"); sys.exit(1)
+    scheme = cfg.get("ios_scheme")
+    if not scheme:
+        err("apple.ios_scheme required"); sys.exit(1)
+    project = _detect_project_path(cfg)
+    config = cfg.get("ios_build_config", "Debug")
+    sim = os.environ.get("IOS_DEVICE", "") or cfg.get("ios_device", "")
+    dest = ("platform=iOS Simulator,name=" + sim) if sim else "platform=iOS Simulator"
+    build_action = "clean build" if force else "build"
+    info(f"Building {scheme} ({config}) for iOS...")
+    rc = xcodebuild_filtered(project, scheme, config, dest, action=build_action)
+    if rc != 0:
+        diagnose_build_failure()
+        err("Build failed"); sys.exit(rc)
+    ok("iOS build succeeded")
+
+
+def get_ios_log_bundle(cfg, *, prod=False):
+    """Return the iOS bundle ID for log streaming from [apple] config.
+
+    prod=False → ios_dev_bundle, prod=True → ios_bundle.
+    Calls sys.exit(1) if neither is configured.
+    """
+    bundle = cfg.get("ios_bundle") if prod else cfg.get("ios_dev_bundle")
+    if not bundle:
+        key = "ios_bundle" if prod else "ios_dev_bundle"
+        err(f"apple.{key} not set in admin.toml"); sys.exit(1)
+    return bundle
 
 
 def regenerate_icons(cfg):

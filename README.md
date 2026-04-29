@@ -59,6 +59,23 @@ kind  = "sequence"
 desc  = "Build and reload"
 steps = ["build", "reload"]
 
+[server]                       # optional — drives server sub-targets in apple archetype
+dir              = "my-server"
+binary           = "my-server"
+dev_cmd          = "cd my-server && cargo build && ./target/debug/my-server"
+test_cmd         = "cd my-server && cargo test"
+swift_test_cmd   = "cd MyShared && swift test"
+docker_image     = "my-server"
+docker_build_args = "--build-arg FOO=bar"
+docker_run_args  = "-p 8080:8080"
+bazzite_host_var     = "BAZZITE_HOST"        # env var containing user@host
+bazzite_cross_target = "x86_64-unknown-linux-gnu"
+bazzite_install_path = "~/.local/bin/my-server"
+bazzite_service_name = "my-server"
+bazzite_service_desc = "My Server"
+bazzite_exec_start   = "%h/.local/bin/my-server"
+# deploy_host = "user@host"   # required for deploy server (docker); if absent, reads docker_run_args for -p
+
 [logs.app]                                                                            # optional — adds `./admin logs`
 dev  = "./tmp/app.log"                                                                # string = local path
 prod = { path = "/var/log/app.log", host = "${APP_HOST}", user = "${APP_USER:-root}" } # table = remote (ssh)

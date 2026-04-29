@@ -1,15 +1,50 @@
 """'apple' archetype — Xcode project with macOS and/or iOS targets.
 
-Commands (dev/deploy/test/clean/icons/reload) are all ``kind: "python"``
-bodies that read a ``_APPLE_CONFIG`` dict (emitted by render.py from the
-manifest's ``[apple]`` table) and delegate to the high-level wrappers in
-``admin_lib.apple`` (``dev_mac``, ``dev_ios``, ``deploy_mac``,
-``deploy_ios``, ``regenerate_icons``, ``build_icon_hooks``).
+Commands (build/dev/deploy/test/clean/icons/reload) are all ``kind: "python"``
+bodies that read ``_APPLE_CONFIG`` and optionally ``_SERVER_CONFIG`` dicts
+(emitted by render.py from the manifest's ``[apple]`` and ``[server]`` tables)
+and delegate to the high-level wrappers in ``admin_lib.apple`` and
+``admin_lib.rust``.
 
 See ``admin_lib/apple.py`` for the wrapper signatures and
-``docs/archetypes/apple.md`` (if present) for the full ``[apple]``
-schema.
+``docs/archetypes/apple.md`` (if present) for the full ``[apple]`` schema.
 """
+
+_BUILD_PY = '''\
+target = None
+force = "--force" in args
+rest = [a for a in args if a != "--force"]
+if rest:
+    a = rest[0].lower()
+    if a in ("mac", "macos"):
+        target = "mac"
+    elif a in ("ios", "iphone"):
+        target = "ios"
+    elif a == "server":
+        target = "server"
+    else:
+        err("unknown build target: " + rest[0]); sys.exit(1)
+
+_server = globals().get("_SERVER_CONFIG") or {}
+from collections import OrderedDict
+_choices = OrderedDict([("mac", "macOS client"), ("ios", "iOS client")])
+if _server:
+    _choices["server"] = "server (all platforms)"
+
+if not target:
+    target = pick_target(_choices, "build — select target")
+    if not target:
+        return
+
+cfg = globals().get("_APPLE_CONFIG") or {}
+set_log_context("build", target)
+if target == "mac":
+    build_mac(cfg, force=force)
+elif target == "ios":
+    build_ios(cfg, force=force)
+elif target == "server":
+    build_server(_server, force=force)
+'''
 
 _DEV_PY = '''\
 target = None
@@ -21,8 +56,12 @@ while i < len(args):
     a = args[i]
     if a in ("mac", "macos"):
         target = "mac"
-    elif a in ("ios", "iphone"):
+    elif a in ("ios", "iphone", "simulator"):
         target = "ios"
+    elif a == "device":
+        target = "device"
+    elif a == "server":
+        target = "server"
     elif a == "--log" and i + 1 < len(args):
         i += 1
         log_level = args[i]
@@ -31,21 +70,29 @@ while i < len(args):
     elif a == "--install":
         install_mac = True
     elif a in ("-h", "--help"):
-        info("usage: ./admin dev [mac|ios] [--log app|debug|system|verbose] [--clean] [--install]")
+        info("usage: ./admin dev [mac|ios|device|server] [--log app|debug|system|verbose] [--clean] [--install]")
         return
     else:
         err("unknown arg: " + a); sys.exit(1)
     i += 1
 
+_server = globals().get("_SERVER_CONFIG") or {}
 if target is None:
     from collections import OrderedDict
-    target = pick_target(OrderedDict([("mac", "mac"), ("ios", "ios")]), "dev — select target")
+    _choices = OrderedDict([("mac", "mac"), ("ios", "ios simulator"), ("device", "iOS device (build + install + logs)")])
+    if _server:
+        _choices["server"] = "server with reload loop"
+    target = pick_target(_choices, "dev — select target")
     if not target:
         return
 
 cfg = globals().get("_APPLE_CONFIG") or {}
 if target == "mac":
     dev_mac(cfg, log_level=log_level, clean=force_clean, install=install_mac)
+elif target == "device":
+    dev_device(cfg, log_level=log_level, clean=force_clean)
+elif target == "server":
+    dev_server(_server)
 else:
     dev_ios(cfg, log_level=log_level, clean=force_clean)
 '''
@@ -58,50 +105,109 @@ for a in args:
         target = "mac"
     elif a in ("ios", "iphone"):
         target = "ios"
+    elif a in ("server", "docker"):
+        target = "server"
+    elif a == "bazzite":
+        target = "bazzite"
     elif a == "--clean":
         force_clean = True
     elif a in ("-h", "--help"):
-        info("usage: ./admin deploy <mac|ios> [--clean]")
+        info("usage: ./admin deploy <mac|ios|server|bazzite> [--clean]")
         return
     else:
         err("unknown arg: " + a); sys.exit(1)
 
+_server = globals().get("_SERVER_CONFIG") or {}
 if target is None:
     from collections import OrderedDict
-    target = pick_target(OrderedDict([("mac", "mac"), ("ios", "ios")]), "deploy — select target")
+    _choices = OrderedDict([("mac", "mac"), ("ios", "ios")])
+    if _server:
+        _choices["server"] = "Docker → remote host"
+        if _server.get("bazzite_host_var") or _server.get("bazzite_cross_target"):
+            _choices["bazzite"] = "cross-compile → Bazzite"
+    target = pick_target(_choices, "deploy — select target")
     if not target:
         return
 
 cfg = globals().get("_APPLE_CONFIG") or {}
 if target == "mac":
     deploy_mac(cfg, clean=force_clean)
-else:
+elif target == "ios":
     deploy_ios(cfg, clean=force_clean)
+elif target == "server":
+    deploy_server_docker(_server)
+elif target == "bazzite":
+    deploy_bazzite_server(_server)
+else:
+    err("unknown deploy target: " + target); sys.exit(1)
 '''
 
 _TEST_PY = '''\
-cfg = globals().get("_APPLE_CONFIG") or {}
-test_cmd = cfg.get("test_cmd")
-if not test_cmd:
-    err("apple.test_cmd not set in admin.toml"); sys.exit(1)
-info("running: " + test_cmd)
-rc = run_cmd(test_cmd)
-if rc != 0:
-    err("tests failed"); sys.exit(rc)
-ok("tests passed")
+_server = globals().get("_SERVER_CONFIG") or {}
+_apple = globals().get("_APPLE_CONFIG") or {}
+from collections import OrderedDict
+_choices = OrderedDict()
+if _server.get("test_cmd"):
+    _choices["server"] = "server tests"
+if _server.get("swift_test_cmd"):
+    _choices["swift"] = "Swift integration tests"
+if _apple.get("test_cmd"):
+    _choices["apple"] = "apple tests"
+if not _choices:
+    err("no test_cmd configured in [server] or [apple]"); sys.exit(1)
+
+target = args[0] if args else None
+if not target:
+    if len(_choices) == 1:
+        target = list(_choices.keys())[0]
+    else:
+        target = pick_target(_choices, "test — select target")
+        if not target:
+            return
+elif target not in _choices:
+    err("unknown test target: " + target); sys.exit(1)
+
+set_log_context("test", target)
+if target == "server":
+    test_server(_server)
+elif target == "swift":
+    test_swift(_server)
+elif target == "apple":
+    test_server(_apple)
 '''
 
 _CLEAN_PY = '''\
+_server = globals().get("_SERVER_CONFIG") or {}
+from collections import OrderedDict
+_choices = OrderedDict([("xcode", "Xcode DerivedData")])
+if _server:
+    _choices["cargo"] = _server.get("dir", "server") + "/target"
+
+target = args[0] if args else None
+if not target:
+    if len(_choices) == 1:
+        target = list(_choices.keys())[0]
+    else:
+        target = pick_target(_choices, "clean — select target")
+        if not target:
+            return
+elif target not in _choices:
+    err("unknown clean target: " + target); sys.exit(1)
+
 cfg = globals().get("_APPLE_CONFIG") or {}
-scheme = cfg.get("mac_scheme") or cfg.get("ios_scheme")
-if not scheme:
-    err("apple.mac_scheme or apple.ios_scheme required"); sys.exit(1)
-pattern = os.path.expanduser("~/Library/Developer/Xcode/DerivedData/" + scheme + "-*")
-info("rm -rf " + pattern)
-rc = run_cmd("rm -rf " + pattern)
-if rc != 0:
-    err("clean failed"); sys.exit(rc)
-ok("DerivedData cleaned")
+if target == "xcode":
+    scheme = cfg.get("mac_scheme") or cfg.get("ios_scheme")
+    if not scheme:
+        err("apple.mac_scheme or apple.ios_scheme required"); sys.exit(1)
+    derived_name = cfg.get("derived_data_name") or scheme
+    pattern = os.path.expanduser("~/Library/Developer/Xcode/DerivedData/" + derived_name + "-*")
+    info("rm -rf " + pattern)
+    rc = run_cmd("rm -rf " + pattern)
+    if rc != 0:
+        err("clean failed"); sys.exit(rc)
+    ok("DerivedData cleaned")
+elif target == "cargo":
+    clean_server(_server)
 '''
 
 _ICONS_PY = '''\
@@ -127,6 +233,12 @@ else:
     err("unknown subcommand: " + sub); sys.exit(1)
 '''
 
+_LOGS_PY = '''\
+cfg = globals().get("_APPLE_CONFIG") or {}
+prod = bool(args and args[0] == "--prod")
+device_log_attach(get_ios_log_bundle(cfg, prod=prod), log_file=LOG_FILE)
+'''
+
 _RELOAD_PY = '''\
 pid_file = "/tmp/admin-run.pid"
 if not os.path.exists(pid_file):
@@ -148,39 +260,28 @@ ARCHETYPE = {
     "urls": {},
     "commands": {
         "build": {
-            "kind": "multi-target",
-            "desc": "Build for mac or ios (no run, no install)",
-            "targets": {
-                "mac": (
-                    "xcodebuild -project ${APP_PROJECT} -scheme ${APP_SCHEME} "
-                    "-configuration ${APP_CONFIG:-Debug} "
-                    "-destination 'platform=macOS' build"
-                ),
-                "ios": (
-                    "xcodebuild -project ${APP_PROJECT} -scheme ${APP_SCHEME} "
-                    "-configuration ${APP_CONFIG:-Debug} "
-                    "-destination '${IOS_DEST:-generic/platform=iOS Simulator}' build"
-                ),
-            },
+            "kind": "python",
+            "desc": "Build: mac | ios | server [--force]",
+            "run": _BUILD_PY,
         },
         "dev": {
             "kind": "python",
-            "desc": "Dev build + run (mac|ios) [--log LVL] [--clean] [--install]",
+            "desc": "Dev build + run (mac|ios|device|server) [--log LVL] [--clean] [--install]",
             "run": _DEV_PY,
         },
         "deploy": {
             "kind": "python",
-            "desc": "Build + install (mac → /Applications, ios → USB device) [--clean]",
+            "desc": "Build + install (mac|ios|server|bazzite) [--clean]",
             "run": _DEPLOY_PY,
         },
         "test": {
             "kind": "python",
-            "desc": "Run tests (uses apple.test_cmd from admin.toml)",
+            "desc": "Run tests (server|swift|apple)",
             "run": _TEST_PY,
         },
         "clean": {
             "kind": "python",
-            "desc": "Remove DerivedData for this project's scheme",
+            "desc": "Remove build artifacts (xcode|cargo)",
             "run": _CLEAN_PY,
         },
         "icons": {
@@ -188,11 +289,16 @@ ARCHETYPE = {
             "desc": "Icons: regenerate | swap-dev | restore",
             "run": _ICONS_PY,
         },
+        "logs": {
+            "kind": "python",
+            "desc": "Stream non-redacted logs from USB-connected iOS device [--prod]",
+            "run": _LOGS_PY,
+        },
         "reload": {
             "kind": "python",
             "desc": "Signal a running './admin dev' to rebuild and relaunch",
             "run": _RELOAD_PY,
         },
     },
-    "order": ["build", "dev", "deploy", "", "test", "clean", "icons", "reload"],
+    "order": ["build", "dev", "deploy", "", "test", "clean", "icons", "logs", "reload"],
 }

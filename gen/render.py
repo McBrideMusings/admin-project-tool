@@ -84,6 +84,11 @@ def render(
     if m.apple:
         apple_decl = f"_APPLE_CONFIG = {_pyliteral(m.apple)}\n"
 
+    # Emit the [server] table as _SERVER_CONFIG for server build/dev/deploy commands.
+    server_decl = ""
+    if m.server:
+        server_decl = f"_SERVER_CONFIG = {_pyliteral(m.server)}\n"
+
     # Emit the [output] table as _OUTPUT_CONFIG for log column configuration.
     output_decl = ""
     if m.output:
@@ -121,6 +126,7 @@ def render(
         f"{url_call}"
         f"set_generator_commit({_pyrepr(generator_commit)})\n"
         f"{apple_decl}"
+        f"{server_decl}"
         f"{output_decl}"
         f"\n{commands_src}\n"
         f"{logs_src}"

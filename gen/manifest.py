@@ -17,7 +17,7 @@ MANIFEST_FILENAME = "admin.toml"
 
 _KNOWN_KEYS = {
     "project_name", "python_min", "archetypes", "modules", "urls",
-    "commands", "order", "logs", "apple", "output",
+    "commands", "order", "logs", "apple", "server", "output",
     "exclude_modules", "generator_commit", "inline",
 }
 
@@ -48,7 +48,8 @@ class Manifest:
     custom: dict[str, dict]                  # command name -> full command dict
     order: list[str]                         # explicit display order; "" = spacer
     logs: dict[str, dict] = field(default_factory=dict)  # target -> {default_env, envs: {env: {path, host, user}}}
-    apple: dict = field(default_factory=dict)  # [apple] table — archetype-specific config, raw dict
+    apple: dict = field(default_factory=dict)   # [apple] table — archetype-specific config, raw dict
+    server: dict = field(default_factory=dict)  # [server] table — server build/dev/deploy config, raw dict
     output: dict = field(default_factory=dict)  # [output] table — log column config per source
     exclude_modules: list[str] = field(default_factory=list)  # modules to suppress even if archetype requires them
     generator_commit: str | None = None
@@ -144,6 +145,10 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     if not isinstance(apple, dict):
         raise ManifestError(f"{source}: '[apple]' must be a table")
 
+    server = data.get("server", {}) or {}
+    if not isinstance(server, dict):
+        raise ManifestError(f"{source}: '[server]' must be a table")
+
     output = data.get("output", {}) or {}
     if not isinstance(output, dict):
         raise ManifestError(f"{source}: '[output]' must be a table")
@@ -171,6 +176,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         order=order,
         logs=logs,
         apple=apple,
+        server=server,
         output=output,
         exclude_modules=exclude_modules,
         generator_commit=data.get("generator_commit"),
@@ -307,6 +313,21 @@ def dump(manifest: Manifest) -> str:
                         parts.append(f'user = "{_escape(user)}"')
                     lines.append(f"{env_name} = {{ " + ", ".join(parts) + " }")
             lines.append("")
+
+    if manifest.server:
+        lines.append("[server]")
+        for k, v in manifest.server.items():
+            if isinstance(v, str):
+                lines.append(f'{k} = "{_escape(v)}"')
+            elif isinstance(v, bool):
+                lines.append(f"{k} = {'true' if v else 'false'}")
+            elif isinstance(v, dict):
+                lines.append(f"[server.{k}]")
+                for sk, sv in v.items():
+                    lines.append(f'{sk} = "{_escape(str(sv))}"')
+            else:
+                lines.append(f"{k} = {v!r}")
+        lines.append("")
 
     if manifest.output:
         for source_name, source_cfg in manifest.output.items():
