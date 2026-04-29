@@ -171,7 +171,7 @@ def _regenerate(project_dir: Path, args) -> int:
         err(f"render failed: {e}")
         return 1
 
-    for issue in _audit_inline_python(manifest):
+    for issue in _audit_inline_code(manifest):
         warn(issue)
 
     admin_path = project_dir / "admin"
@@ -227,8 +227,8 @@ def cmd_audit(project_dir: Path, args) -> int:
             f"regenerate to pick up new features (run: init-admin --regenerate)"
         )
 
-    # Check for inline Python that should be migrated to admin_lib / archetypes.
-    for issue in _audit_inline_python(manifest):
+    # Check for inline code that should be migrated to admin_lib / archetypes.
+    for issue in _audit_inline_code(manifest):
         warn(issue)
 
     if on_disk == script:
@@ -278,8 +278,8 @@ def _count_logic_lines(run: str) -> tuple[int, list[str]]:
     return len(lines), signals
 
 
-def _audit_inline_python(manifest: "Manifest") -> list[str]:
-    """Return warning strings for inline Python commands that should be migrated.
+def _audit_inline_code(manifest: "Manifest") -> list[str]:
+    """Return warning strings for inline code commands that should be migrated.
 
     Checks all manifest [commands] overrides and custom commands for
     kind='python' entries with multi-line run strings. Returns a sorted list
@@ -309,14 +309,14 @@ def _audit_inline_python(manifest: "Manifest") -> list[str]:
 
         if count > _INLINE_COMPLEX_THRESHOLD:
             issues.append(
-                f"commands.{name}: {count}-line inline Python — "
+                f"commands.{name}: {count}-line inline code — "
                 f"migrate logic to admin_lib or a new archetype "
-                f"(run: /init-admin for a migration plan)"
+                f"(run: /admin for a migration plan)"
                 + (f" [{'; '.join(signals)}]" if signals else "")
             )
         elif count > _INLINE_SIMPLE_THRESHOLD or signals:
             issues.append(
-                f"commands.{name}: moderately complex inline Python ({count} lines)"
+                f"commands.{name}: moderately complex inline code ({count} lines)"
                 + (f" [{'; '.join(signals)}]" if signals else "")
                 + " — consider wrapping in an admin_lib function"
             )
@@ -324,7 +324,7 @@ def _audit_inline_python(manifest: "Manifest") -> list[str]:
     if manifest.inline_file:
         issues.append(
             f"[inline] file = \"{manifest.inline_file}\" detected — "
-            f"inline files are a migration target, not a pattern. "
+            f"inline code files are a migration target, not a pattern. "
             f"Move logic into admin_lib modules or archetypes in admin-project-tool."
         )
 
