@@ -78,6 +78,60 @@ Composition works: `archetypes = ["docker-unraid", "apple"]` produces the `open-
 
 **Display order:** archetypes may declare `"order": [...]` (with `""` entries for blank spacers) to group their commands in the TUI and `--help`. Manifest `order` wins; otherwise the last archetype's `order` is used; otherwise commands render in merge order. Example from the `apple` archetype: `["build", "dev", "deploy", "", "test", "clean", "icons", "reload"]` — the spacer signals the primary/secondary split.
 
+## Authoring Archetypes
+
+### Actions are declared, not scripted
+
+The central rule: **archetype actions must be expressible as a declarative kind + run string, not as inline code.**
+
+Each `kind` is a renderer that knows how to wire up a specific operation. The `run` field is a short, opaque key the renderer interprets — a function name, a script name, a URL, a destination path. No Python syntax should appear in an action definition.
+
+**Good — declarative:**
+```python
+"actions": {
+    "build-ios":  {"kind": "apple", "run": "build_ios",  "desc": "build iOS"},
+    "npm-build":  {"kind": "npm",   "run": "build",      "desc": "run npm build"},
+    "sync-dist":  {"kind": "sync",  "run": "${DEPLOY_TARGET}/app", "desc": "sync dist/"},
+    "reload":     {"kind": "http",  "run": "${APP_URL}/reload", "method": "POST"},
+    "full-build": {"kind": "sequence", "steps": ["npm-build", "sync-dist", "reload"]},
+}
+```
+
+**Bad — inline code leaking into declarations:**
+```python
+"actions": {
+    "build-ios": {
+        "kind": "python",
+        "run": "build_ios(globals().get('_APPLE_CONFIG') or {})",  # ← NO
+    },
+}
+```
+
+The second form is not declarative — it embeds a call expression that only works because of implicit scope. It can't be composed, validated, or documented without reading the generated code.
+
+### When to add a new kind
+
+If an action needs to call a library function with a config dict, and no existing kind covers it, **add a new kind**. The pattern is always the same:
+
+1. Add `render_<kind>(cmd)` to `gen/fragments.py` — it reads `cmd.run` as the function name (or other opaque token) and emits the call.
+2. Register the kind in `_RENDERERS`.
+3. Add validation in `_to_command` if the kind requires specific fields.
+4. Use the new kind in the archetype's `actions` dict.
+
+Example: `kind = "apple"` renders `<run>(globals().get("_APPLE_CONFIG") or {})`. Any new config-backed function family (server, docker, etc.) follows the same pattern — add `kind = "server"` backed by `_SERVER_CONFIG`, etc.
+
+### `kind = "python"` is for top-level command logic only
+
+Complex top-level commands — ones that parse args, pick targets, branch on config presence, and dispatch to multiple paths — are legitimately expressed as `kind = "python"`. The apple archetype's `build`, `dev`, and `deploy` are the canonical examples: they handle `mac | ios | server` target selection, `--force`, `--log`, `--clean` flags, and multi-step orchestration that can't be expressed in a single function call.
+
+`kind = "python"` is **not** appropriate for actions that are a single function call with a config dict. Those belong in a typed kind.
+
+### Actions vs commands
+
+Actions (`archetype["actions"]`) are building blocks: hidden from the TUI and `--help`, callable only by sequences and `@ref` targets. Commands (`archetype["commands"]`) are the user-facing surface.
+
+A well-authored archetype exposes a small set of composed top-level commands and a richer set of per-target actions for manifests to compose freely. The apple archetype's `build-ios`, `dev-ios`, `dev-device`, `deploy-ios`, and `clean-ios` actions let any manifest build a `kind = "multi-target"` command with iOS as one target — without touching Python.
+
 ## Detectors (starter generators)
 
 `~/Projects/admin-project-tool/detectors/` — one file per stack, each a small function:
@@ -111,7 +165,7 @@ Rendering uses a small set of **code fragments** (not full templates) — one pe
 - `~/.admin/init-admin` — first-time bootstrap (detect → write manifest → generate).
 - `~/.admin/init-admin --regenerate` — re-render `./admin` from `admin.toml`. Idempotent. Standard loop for adding/editing commands.
 - `~/.admin/init-admin --audit` — regenerates in-memory and diffs against `./admin`. Reports: (a) manifest drift (script differs from what manifest would produce), (b) archetype drift (archetype catalog changed since last regen — `admin_lib` hash differs), (c) stale `admin_lib`. Non-zero exit if any drift.
-- `/init-admin` slash command runs the audit and surfaces drift to the user before asking whether to regenerate.
+- `/admin` slash command runs the audit and surfaces drift to the user before asking whether to regenerate.
 
 Hand-editing `./admin` is still allowed, but the audit will tell you about it. The expected escape hatch is the manifest's `[inline]` block (a small Python file concatenated into the generated script at a marked insertion point); this keeps hand-written logic *referenced from the manifest* so regeneration preserves it.
 
@@ -154,8 +208,8 @@ End-to-end test plan, performed on a scratch clone of `admin-project-tool`:
    - Manually run generated script on macOS (baseline) and on one Linux host (WSL or remote). `./admin` TUI renders; `./admin build` runs.
    - Python 3.11+ guard: temporarily rename `python3` to a 3.10 binary; assert the script exits cleanly with the guard message.
 9. **Claude Code flow**
-   - `/init-admin` on a fresh project: verify the skill phases (detect → confirm → bootstrap → commit prompt) produce `admin.toml` + `./admin` + updated `.gitignore` + `read-logs.md`.
-   - `/init-admin` on an existing project with drifted admin: verify the audit phase surfaces the drift and offers `--from-existing` migration.
+   - `/admin` on a fresh project: verify the skill phases (detect → confirm → bootstrap → commit prompt) produce `admin.toml` + `./admin` + updated `.gitignore` + `read-logs.md`.
+   - `/admin` on an existing project with drifted admin: verify the audit phase surfaces the drift and offers `--from-existing` migration.
 
 ## Resolved Design Decisions
 
