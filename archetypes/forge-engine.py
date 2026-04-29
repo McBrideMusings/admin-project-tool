@@ -15,12 +15,15 @@ Mental model:
 """
 
 _DISCOVER_PY = '''
+import re as _re
 samples_root = os.path.join(os.getcwd(), "sample-games")
-_games = []
+_games = []  # list of (folder_name, display_name)
 if os.path.isdir(samples_root):
     for _name in sorted(os.listdir(samples_root)):
         if os.path.isfile(os.path.join(samples_root, _name, "main.lua")):
-            _games.append(_name)
+            _m = _re.match(r"^\\d+-(.+)$", _name)
+            _display = _m.group(1) if _m else _name
+            _games.append((_name, _display))
 
 def _pick_sample(action):
     if not _games:
@@ -28,15 +31,16 @@ def _pick_sample(action):
         info("create one, e.g. sample-games/mygame/main.lua")
         sys.exit(1)
     if args:
-        if args[0] not in _games:
+        _match = next((f for f, d in _games if d == args[0] or f == args[0]), None)
+        if _match is None:
             err("unknown sample: " + args[0])
-            info("available: " + ", ".join(_games))
+            info("available: " + ", ".join(d for _, d in _games))
             sys.exit(1)
-        return args[0]
+        return _match
     if len(_games) == 1:
-        return _games[0]
+        return _games[0][0]
     from collections import OrderedDict
-    choice = pick_target(OrderedDict((g, g) for g in _games), action + " — select sample game")
+    choice = pick_target(OrderedDict((f, d) for f, d in _games), action + " — select sample game")
     if not choice:
         sys.exit(0)
     return choice
