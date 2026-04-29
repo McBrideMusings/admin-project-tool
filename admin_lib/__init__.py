@@ -9,7 +9,8 @@ from .core import (
     warn,
     err,
     run_cmd,
-    sync_deploy,
+    sync,
+    sync_deploy,  # backwards-compat alias
     command,
     boot,
     pick_target,

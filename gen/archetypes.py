@@ -32,6 +32,7 @@ class Archetype:
     modules: list[str] = field(default_factory=lambda: ["core"])
     urls: dict[str, str] = field(default_factory=dict)
     commands: dict[str, dict] = field(default_factory=dict)
+    actions: dict[str, dict] = field(default_factory=dict)
     order: list[str] = field(default_factory=list)
 
 
@@ -59,6 +60,7 @@ def load_archetype(archetype_dir: Path, name: str) -> Archetype:
         modules=list(data.get("modules", ["core"])),
         urls=dict(data.get("urls", {})),
         commands=dict(data.get("commands", {})),
+        actions=dict(data.get("actions", {})),
         order=normalized_order,
     )
 
@@ -68,6 +70,7 @@ class ResolvedManifest:
     """A manifest with all archetypes loaded and merged into a final command set."""
     manifest: Manifest
     commands: dict[str, Command]   # name -> Command, in merge order
+    actions: dict[str, Command]    # name -> Command; registered but not shown in UI
     urls: dict[str, str]
     modules: list[str]             # required admin_lib modules
     merge_log: list[str]           # human-readable merge events
@@ -91,9 +94,11 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
     modules.update(manifest.modules)
     log: list[str] = []
     archetype_order: list[str] = []
+    loaded_archetypes: list[Archetype] = []
 
     for arch_name in manifest.archetypes:
         arch = load_archetype(archetype_dir, arch_name)
+        loaded_archetypes.append(arch)
         modules.update(arch.modules)
         for label, url in arch.urls.items():
             if label in urls:
@@ -111,22 +116,27 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
 
     # Manifest [commands] overrides
     for cmd_name, override in manifest.overrides.items():
+        inline_targets = {
+            k: v for k, v in override.items()
+            if k not in _VALID_COMMAND_KEYS and isinstance(v, dict)
+        }
         if cmd_name in commands:
             base = commands[cmd_name]
             merged = {
                 "run": override.get("run", base.run),
                 "desc": override.get("desc", base.desc),
                 "kind": override.get("kind", base.kind),
-                "targets": override.get("targets", base.targets),
+                "targets": {} if inline_targets else override.get("targets", base.targets),
             }
             for key in ("steps", "method", "body"):
                 val = override.get(key, base.meta.get(key))
                 if val is not None:
                     merged[key] = val
+            merged.update(inline_targets)
             log.append(f"command '{cmd_name}' overridden by manifest")
             commands[cmd_name] = _to_command(cmd_name, merged, source="manifest")
         else:
-            if "run" not in override and "targets" not in override and "steps" not in override:
+            if not (inline_targets or {"run", "targets", "steps"} & override.keys()):
                 raise ArchetypeError(
                     f"manifest [commands.{cmd_name}] must include 'run', 'targets', or 'steps' "
                     f"(no archetype provides it)"
@@ -170,6 +180,14 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
         if name not in listed:
             display.append(name)
 
+    # Process actions: archetype actions first, manifest actions win on conflict
+    actions: dict[str, Command] = {}
+    for arch in loaded_archetypes:
+        for action_name, action_data in arch.actions.items():
+            actions[action_name] = _to_command(action_name, action_data, source=arch.name)
+    for action_name, action_data in manifest.actions.items():
+        actions[action_name] = _to_command(action_name, action_data, source="action")
+
     # Apply exclusions and ensure core is always present
     modules -= set(manifest.exclude_modules)
     modules.add("core")
@@ -177,6 +195,7 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
     return ResolvedManifest(
         manifest=manifest,
         commands=commands,
+        actions=actions,
         urls=urls,
         modules=_order_modules(modules),
         merge_log=log,
@@ -184,11 +203,18 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
     )
 
 
-_VALID_COMMAND_KEYS = {"run", "desc", "kind", "targets", "steps", "method", "body"}
+_VALID_COMMAND_KEYS = {"run", "desc", "kind", "targets", "steps", "method", "body", "src"}
 
 
 def _to_command(name: str, data: dict, source: str) -> Command:
-    unknown = set(data) - _VALID_COMMAND_KEYS
+    # Inline target subtables: keys whose value is a dict and not in _VALID_COMMAND_KEYS.
+    # Syntax: [commands.dev.plugin] / desc = "..." / action = "@dev-plugin"
+    inline_targets_raw = {
+        k: v for k, v in data.items()
+        if k not in _VALID_COMMAND_KEYS and isinstance(v, dict)
+    }
+
+    unknown = set(data) - _VALID_COMMAND_KEYS - set(inline_targets_raw)
     if unknown:
         raise ArchetypeError(
             f"command '{name}' from {source}: unknown keys {sorted(unknown)}, "
@@ -200,13 +226,30 @@ def _to_command(name: str, data: dict, source: str) -> Command:
             f"command '{name}' from {source}: unknown kind '{kind}', "
             f"known: {sorted(KNOWN_KINDS)}"
         )
-    targets = data.get("targets") or {}
-    if targets and not isinstance(targets, dict):
+
+    # Build targets: either from flat [commands.X.targets] table or inline subtables.
+    flat_targets = data.get("targets") or {}
+    if flat_targets and not isinstance(flat_targets, dict):
         raise ArchetypeError(
             f"command '{name}' from {source}: 'targets' must be a table of target->shell"
         )
+    if inline_targets_raw and flat_targets:
+        raise ArchetypeError(
+            f"command '{name}' from {source}: cannot mix [commands.{name}.targets] with inline target subtables"
+        )
 
     meta: dict = {}
+    if inline_targets_raw:
+        for tname, tdata in inline_targets_raw.items():
+            if "action" not in tdata and "run" not in tdata:
+                raise ArchetypeError(
+                    f"command '{name}' from {source}: target '{tname}' must have 'action' or 'run'"
+                )
+        # Normalise: store action/run string in targets, descs in meta
+        targets = {k: v.get("action", v.get("run", "")) for k, v in inline_targets_raw.items()}
+        meta["target_descs"] = {k: v.get("desc", k) for k, v in inline_targets_raw.items()}
+    else:
+        targets = flat_targets
     if kind == "sequence":
         steps = data.get("steps")
         if not steps or not isinstance(steps, list):
@@ -220,6 +263,14 @@ def _to_command(name: str, data: dict, source: str) -> Command:
         meta["method"] = str(data.get("method", "POST"))
         if "body" in data:
             meta["body"] = str(data["body"])
+    elif kind == "sync":
+        if "run" not in data:
+            raise ArchetypeError(f"command '{name}' from {source}: sync kind requires 'run' (destination path)")
+        if "src" in data:
+            meta["src"] = str(data["src"])
+    elif kind == "npm":
+        if "run" not in data:
+            raise ArchetypeError(f"command '{name}' from {source}: npm kind requires 'run' (script name)")
     elif "run" not in data and not targets:
         raise ArchetypeError(f"command '{name}' from {source}: missing 'run' or 'targets'")
 

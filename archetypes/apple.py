@@ -26,8 +26,7 @@ if rest:
         err("unknown build target: " + rest[0]); sys.exit(1)
 
 _server = globals().get("_SERVER_CONFIG") or {}
-from collections import OrderedDict
-_choices = OrderedDict([("mac", "macOS client"), ("ios", "iOS client")])
+_choices = {"mac": "macOS client", "ios": "iOS client"}
 if _server:
     _choices["server"] = "server (all platforms)"
 
@@ -78,8 +77,11 @@ while i < len(args):
 
 _server = globals().get("_SERVER_CONFIG") or {}
 if target is None:
-    from collections import OrderedDict
-    _choices = OrderedDict([("mac", "mac"), ("ios", "ios simulator"), ("device", "iOS device (build + install + logs)")])
+    _choices = {
+        "mac": "mac",
+        "ios": "ios simulator",
+        "device": "iOS device (build + install + logs)",
+    }
     if _server:
         _choices["server"] = "server with reload loop"
     target = pick_target(_choices, "dev — select target")
@@ -119,8 +121,7 @@ for a in args:
 
 _server = globals().get("_SERVER_CONFIG") or {}
 if target is None:
-    from collections import OrderedDict
-    _choices = OrderedDict([("mac", "mac"), ("ios", "ios")])
+    _choices = {"mac": "mac", "ios": "ios"}
     if _server:
         _choices["server"] = "Docker → remote host"
         if _server.get("bazzite_host_var") or _server.get("bazzite_cross_target"):
@@ -145,8 +146,7 @@ else:
 _TEST_PY = '''\
 _server = globals().get("_SERVER_CONFIG") or {}
 _apple = globals().get("_APPLE_CONFIG") or {}
-from collections import OrderedDict
-_choices = OrderedDict()
+_choices = {}
 if _server.get("test_cmd"):
     _choices["server"] = "server tests"
 if _server.get("swift_test_cmd"):
@@ -159,7 +159,7 @@ if not _choices:
 target = args[0] if args else None
 if not target:
     if len(_choices) == 1:
-        target = list(_choices.keys())[0]
+        target = next(iter(_choices))
     else:
         target = pick_target(_choices, "test — select target")
         if not target:
@@ -178,15 +178,14 @@ elif target == "apple":
 
 _CLEAN_PY = '''\
 _server = globals().get("_SERVER_CONFIG") or {}
-from collections import OrderedDict
-_choices = OrderedDict([("xcode", "Xcode DerivedData")])
+_choices = {"xcode": "Xcode DerivedData"}
 if _server:
     _choices["cargo"] = _server.get("dir", "server") + "/target"
 
 target = args[0] if args else None
 if not target:
     if len(_choices) == 1:
-        target = list(_choices.keys())[0]
+        target = next(iter(_choices))
     else:
         target = pick_target(_choices, "clean — select target")
         if not target:
@@ -301,4 +300,11 @@ ARCHETYPE = {
         },
     },
     "order": ["build", "dev", "deploy", "", "test", "clean", "icons", "logs", "reload"],
+    "actions": {
+        "build-ios":   {"kind": "apple", "run": "build_ios",   "desc": "build iOS"},
+        "dev-ios":     {"kind": "apple", "run": "dev_ios",     "desc": "dev iOS simulator"},
+        "dev-device":  {"kind": "apple", "run": "dev_device",  "desc": "dev iOS device"},
+        "deploy-ios":  {"kind": "apple", "run": "deploy_ios",  "desc": "deploy iOS"},
+        "clean-ios":   {"kind": "apple", "run": "clean_ios",   "desc": "clean Xcode DerivedData"},
+    },
 }

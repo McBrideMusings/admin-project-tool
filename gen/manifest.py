@@ -17,7 +17,7 @@ MANIFEST_FILENAME = "admin.toml"
 
 _KNOWN_KEYS = {
     "project_name", "python_min", "archetypes", "modules", "urls",
-    "commands", "order", "logs", "apple", "server", "output",
+    "commands", "actions", "order", "logs", "apple", "server", "output",
     "exclude_modules", "generator_commit", "inline",
 }
 
@@ -51,6 +51,7 @@ class Manifest:
     apple: dict = field(default_factory=dict)   # [apple] table — archetype-specific config, raw dict
     server: dict = field(default_factory=dict)  # [server] table — server build/dev/deploy config, raw dict
     output: dict = field(default_factory=dict)  # [output] table — log column config per source
+    actions: dict[str, dict] = field(default_factory=dict)    # action name -> raw dict (not shown in UI)
     exclude_modules: list[str] = field(default_factory=list)  # modules to suppress even if archetype requires them
     generator_commit: str | None = None
     inline_file: str | None = None           # path relative to project root
@@ -125,6 +126,17 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
             )
         custom_normalized[name] = val
 
+    raw_actions = data.get("actions", {}) or {}
+    if not isinstance(raw_actions, dict):
+        raise ManifestError(f"{source}: 'actions' must be a table")
+    actions: dict[str, dict] = {}
+    for name, val in raw_actions.items():
+        if not isinstance(val, dict) or ("run" not in val and "steps" not in val):
+            raise ManifestError(
+                f"{source}: actions.{name} must be a table with 'run' or 'steps'"
+            )
+        actions[name] = val
+
     inline = data.get("inline", {}) or {}
     inline_file = inline.get("file") if isinstance(inline, dict) else None
 
@@ -173,6 +185,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         urls=urls,
         overrides=overrides,
         custom=custom_normalized,
+        actions=actions,
         order=order,
         logs=logs,
         apple=apple,

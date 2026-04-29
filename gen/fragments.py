@@ -64,15 +64,15 @@ def render_multi_target(cmd: Command) -> str:
     targets_literal = "{" + ", ".join(
         f"{_pyrepr(k)}: {_pyrepr(v)}" for k, v in cmd.targets.items()
     ) + "}"
-    labels_literal = "[" + ", ".join(
-        f"({_pyrepr(k)}, {_pyrepr(k)})" for k in cmd.targets
-    ) + "]"
+    target_descs = cmd.meta.get("target_descs", {})
+    menu_literal = "{" + ", ".join(
+        f"{_pyrepr(k)}: {_pyrepr(target_descs.get(k, k))}" for k in cmd.targets
+    ) + "}"
     body = textwrap.dedent(f'''\
         @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
         def {func_name}(args):
-            from collections import OrderedDict
             _targets = {targets_literal}
-            _menu = OrderedDict({labels_literal})
+            _menu = {menu_literal}
             picked = args[0] if args and not args[0].startswith("-") else None
             if picked is None:
                 if len(_targets) == 1:
@@ -86,12 +86,15 @@ def render_multi_target(cmd: Command) -> str:
                 sys.exit(1)
             set_log_context({_pyrepr(cmd.name)}, picked)
             shell = _targets[picked]
-            info({_pyrepr(f"running [" + cmd.name + ":")} + picked + "]: " + shell)
-            rc = run_cmd(shell)
-            if rc != 0:
-                err({_pyrepr(cmd.name + " failed")})
-                sys.exit(rc)
-            ok({_pyrepr(cmd.name + " complete")})
+            if shell.startswith('@'):
+                run_command(shell[1:])
+            else:
+                info({_pyrepr(f"running [" + cmd.name + ":")} + picked + "]: " + shell)
+                rc = run_cmd(shell)
+                if rc != 0:
+                    err({_pyrepr(cmd.name + " failed")})
+                    sys.exit(rc)
+                ok({_pyrepr(cmd.name + " complete")})
     ''')
     return body
 
@@ -216,6 +219,72 @@ def render_sequence(cmd: Command) -> str:
     return body
 
 
+def render_npm(cmd: Command) -> str:
+    """A command that runs an npm (or bun) script. run = script name (e.g. 'build', 'dev')."""
+    if not cmd.run:
+        raise FragmentError(f"npm command '{cmd.name}' requires 'run' (script name)")
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    script_repr = _pyrepr(cmd.run)
+    body = textwrap.dedent(f"""\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            _pkg = "bun" if os.path.isfile("bun.lockb") else "npm"
+            rc = run_cmd(_pkg + " run " + {script_repr})
+            if rc != 0:
+                err(_pkg + " run " + {script_repr} + " failed")
+                sys.exit(rc)
+            ok(_pkg + " run " + {script_repr} + " complete")
+    """)
+    return body
+
+
+def render_apple(cmd: Command) -> str:
+    """Call an admin_lib.apple function with _APPLE_CONFIG. run = function name."""
+    if not cmd.run:
+        raise FragmentError(f"apple command '{cmd.name}' requires 'run' (function name)")
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    body = textwrap.dedent(f"""\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            {cmd.run}(globals().get("_APPLE_CONFIG") or {{}})
+    """)
+    return body
+
+
+def render_sync(cmd: Command) -> str:
+    """A command that syncs a local directory to a destination. run = dest path, meta.src = source dir."""
+    if not cmd.run:
+        raise FragmentError(f"sync command '{cmd.name}' requires 'run' (destination path)")
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    src = cmd.meta.get("src", "dist/")
+    body = textwrap.dedent(f"""\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            rc = sync({_pyrepr(src)}, resolve_env({_pyrepr(cmd.run)}))
+            if rc != 0:
+                sys.exit(rc)
+    """)
+    return body
+
+
+def render_action(cmd: Command) -> str:
+    """Render a command as a registered action (hidden from TUI/--help, callable via run_command)."""
+    src = render_command(cmd)
+    ident = _safe_ident(cmd.name)
+    lines = src.rstrip("\n").split("\n")
+    out = []
+    func_renamed = False
+    for line in lines:
+        if line.startswith("@command("):
+            continue
+        if not func_renamed and line.startswith("def cmd_"):
+            line = "def _act_" + line[len("def cmd_"):]
+            func_renamed = True
+        out.append(line)
+    out.append(f"register_action({_pyrepr(cmd.name)}, _act_{ident})")
+    return "\n".join(out) + "\n"
+
+
 _RENDERERS = {
     "shell": render_shell,
     "multi-target": render_multi_target,
@@ -224,6 +293,9 @@ _RENDERERS = {
     "python": render_python,
     "http": render_http,
     "sequence": render_sequence,
+    "npm": render_npm,
+    "sync": render_sync,
+    "apple": render_apple,
 }
 
 KNOWN_KINDS = set(_RENDERERS)

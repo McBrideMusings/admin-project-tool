@@ -359,8 +359,8 @@ def run_cmd(cmd, shell=True, capture_log=True, formatter=None):
 # Sync deploy
 # ---------------------------------------------------------------------------
 
-def sync_deploy(src_dir, dest, excludes=None, post_sync=None):
-    """Copy built files to a local or remote destination.
+def sync(src_dir, dest, excludes=None, post_sync=None):
+    """Copy a directory to a local or remote destination via rsync or shutil.
 
     src_dir: local directory to sync from
     dest: local path, or user@host:/path for remote rsync
@@ -379,20 +379,23 @@ def sync_deploy(src_dir, dest, excludes=None, post_sync=None):
         if rc != 0:
             err("rsync failed")
             return rc
-        ok(f"Remote deploy complete: {dest}")
+        ok(f"Synced: {dest}")
     else:
         import shutil
         os.makedirs(dest, exist_ok=True)
         info(f"Copying to {dest}")
         ignore = shutil.ignore_patterns(*excludes) if excludes else None
         shutil.copytree(src_dir, dest, dirs_exist_ok=True, ignore=ignore)
-        ok(f"Local deploy complete: {dest}")
+        ok(f"Synced: {dest}")
         rc = 0
 
     if rc == 0 and post_sync:
         post_sync(dest)
 
     return rc
+
+
+sync_deploy = sync  # backwards-compat alias
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +407,7 @@ def sync_deploy(src_dir, dest, excludes=None, post_sync=None):
 # Registration order == display order; the generator emits @command(...) and
 # add_spacer() calls in whatever order admin.toml's `order` field dictates.
 _commands = OrderedDict()         # name/sentinel → entry dict
+_actions = {}                     # name → callable; registered actions (not shown in TUI/help)
 _subcommand_help = {}
 _spacer_counter = 0
 
@@ -416,14 +420,22 @@ def _all_commands():
 
 
 def run_command(name, args=None):
-    """Invoke a registered command by name. Used by sequence commands."""
+    """Invoke a registered command or action by name. Used by sequences and @-refs."""
     if args is None:
         args = []
+    if name in _actions:
+        _actions[name](args)
+        return
     cmds = _all_commands()
     if name not in cmds:
         err(f"sequence: unknown step '{name}'")
         sys.exit(1)
     cmds[name]["func"](args)
+
+
+def register_action(name, fn):
+    """Register an action. Actions are callable via run_command but hidden from the TUI and --help."""
+    _actions[name] = fn
 
 
 def command(name, description):

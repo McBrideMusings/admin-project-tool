@@ -262,6 +262,16 @@ def clean_derived_data(project_name):
         subprocess.run(["rm", "-rf", d])
 
 
+def clean_ios(cfg):
+    """Remove Xcode DerivedData for the iOS scheme in cfg."""
+    scheme = cfg.get("ios_scheme") or cfg.get("mac_scheme")
+    if not scheme:
+        err("apple.ios_scheme or apple.mac_scheme required for clean")
+        sys.exit(1)
+    derived_name = cfg.get("derived_data_name") or scheme
+    clean_derived_data(derived_name)
+
+
 # ---------------------------------------------------------------------------
 # Log predicates
 # ---------------------------------------------------------------------------

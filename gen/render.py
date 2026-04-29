@@ -25,7 +25,7 @@ from pathlib import Path
 
 from gen.archetypes import ResolvedManifest
 from gen.bundler import inline_admin_lib, lib_hash
-from gen.fragments import collect_env_var_calls, render_command
+from gen.fragments import collect_env_var_calls, render_command, render_action
 from gen.manifest import Command, SPACER
 
 ADMIN_LIB_VERSION = "2.0.0-dev"
@@ -69,7 +69,7 @@ def render(
 
     lib_src = inline_admin_lib(admin_lib_dir, resolved.modules)
 
-    command_list = list(resolved.commands.values())
+    command_list = list(resolved.commands.values()) + list(resolved.actions.values())
     env_calls = collect_env_var_calls(command_list, resolved.urls, m.logs)
     env_block = "\n".join(env_calls) + ("\n" if env_calls else "")
 
@@ -93,6 +93,10 @@ def render(
     output_decl = ""
     if m.output:
         output_decl = f"_OUTPUT_CONFIG = {_pyliteral(m.output)}\n"
+
+    # Emit actions first (they must be registered before commands that call them).
+    action_blocks: list[str] = [render_action(a) for a in resolved.actions.values()]
+    actions_src = "\n".join(action_blocks)
 
     # Emit command function defs in display order, interleaving add_spacer()
     # calls for spacer entries. Registration order == display order.
@@ -120,6 +124,7 @@ def render(
             boot({_pyrepr(m.project_name)})
         """)
 
+    actions_block = f"\n{actions_src}\n" if actions_src else ""
     project_section = (
         f"{PROJECT_MARKER}: {m.project_name} ===\n"
         f"{env_block}"
@@ -128,6 +133,7 @@ def render(
         f"{apple_decl}"
         f"{server_decl}"
         f"{output_decl}"
+        f"{actions_block}"
         f"\n{commands_src}\n"
         f"{logs_src}"
         f"{inline_src}"
