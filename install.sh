@@ -86,9 +86,60 @@ from admin_lib import __version__; print(__version__)
     cp    "$SRC_DIR/admin-gen"  "$DEST_DIR/admin-gen"
     chmod +x "$DEST_DIR/admin-gen"
 
+    mkdir -p "$DEST_DIR/hooks"
+    cp "$SRC_DIR/hooks/session-admin-check.sh" "$DEST_DIR/hooks/session-admin-check.sh"
+    chmod +x "$DEST_DIR/hooks/session-admin-check.sh"
+
     echo "$CURRENT_SHA" > "$DEST_DIR/VERSION"
-    echo "  admin_lib $LIB_VERSION installed (gen/, archetypes/, detectors/, admin-gen)"
+    echo "  admin_lib $LIB_VERSION installed (gen/, archetypes/, detectors/, admin-gen, hooks/)"
     echo "  VERSION=$CURRENT_SHA"
+}
+
+register_claude_hook() {
+    python3 - <<'PYEOF'
+import json, os, sys
+
+settings_path = os.path.expanduser("~/.claude/settings.json")
+hook_cmd = os.path.expanduser("~/.admin/hooks/session-admin-check.sh")
+
+if not os.path.exists(settings_path):
+    print("  Claude Code not detected — skipping SessionStart hook registration")
+    sys.exit(0)
+
+if not os.path.exists(hook_cmd):
+    print("  Warning: hook script not found at ~/.admin/hooks/ — skipping registration")
+    sys.exit(0)
+
+try:
+    with open(settings_path) as f:
+        config = json.load(f)
+except (json.JSONDecodeError, OSError) as e:
+    print(f"  Warning: could not read {settings_path}: {e}")
+    sys.exit(0)
+
+hooks = config.setdefault("hooks", {})
+session_hooks = hooks.setdefault("SessionStart", [])
+
+already = any(
+    any(h.get("command") == hook_cmd for h in block.get("hooks", []))
+    for block in session_hooks
+)
+
+if already:
+    print("  SessionStart hook already registered in ~/.claude/settings.json")
+    sys.exit(0)
+
+session_hooks.append({"matcher": "", "hooks": [{"type": "command", "command": hook_cmd}]})
+
+try:
+    tmp = settings_path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(config, f, indent=2)
+    os.replace(tmp, settings_path)
+    print("  SessionStart hook registered in ~/.claude/settings.json")
+except OSError as e:
+    print(f"  Warning: could not write {settings_path}: {e}")
+PYEOF
 }
 
 # Detect the shell running this script. Prefers ps(1) over $SHELL because
@@ -167,5 +218,6 @@ else
 fi
 
 verify_path
+register_claude_hook
 
 echo "Done."

@@ -167,6 +167,8 @@ Rendering uses a small set of **code fragments** (not full templates) — one pe
 - `admin audit` — regenerates in-memory and diffs against `./admin`. Reports: (a) manifest drift (script differs from what manifest would produce), (b) archetype drift (archetype catalog changed since last regen — `admin_lib` hash differs), (c) stale `admin_lib`. Non-zero exit if any drift.
 - `/admin` slash command runs the audit and surfaces drift to the user before asking whether to regenerate.
 
+- **Auto-regen at session start** — `install.sh` deploys `hooks/session-admin-check.sh` to `~/.admin/hooks/` and (if Claude Code is present) registers it as a Claude Code `SessionStart` hook in `~/.claude/settings.json`. At the start of each Claude Code session the hook silently runs `admin-gen --audit`; if drift is detected it calls `--regenerate` and injects a brief note into Claude's context. Non-admin projects and non-Claude installs are unaffected.
+
 Hand-editing `./admin` is still allowed, but the audit will tell you about it. The expected escape hatch is the manifest's `[inline]` block (a small Python file concatenated into the generated script at a marked insertion point); this keeps hand-written logic *referenced from the manifest* so regeneration preserves it.
 
 ## Python 3.11+ Requirement
