@@ -203,7 +203,7 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
     )
 
 
-_VALID_COMMAND_KEYS = {"run", "desc", "kind", "targets", "steps", "method", "body", "src"}
+_VALID_COMMAND_KEYS = {"run", "desc", "kind", "targets", "steps", "method", "body", "src", "log_file", "log_retain", "log"}
 
 
 def _to_command(name: str, data: dict, source: str) -> Command:
@@ -239,6 +239,15 @@ def _to_command(name: str, data: dict, source: str) -> Command:
         )
 
     meta: dict = {}
+    log_meta = {}
+    if "log_file" in data:
+        log_meta["log_file"] = str(data["log_file"])
+    if "log_retain" in data:
+        log_meta["log_retain"] = int(data["log_retain"])
+    if "log" in data:
+        log_meta["log"] = bool(data["log"])
+    if log_meta:
+        meta["logging"] = log_meta
     if inline_targets_raw:
         for tname, tdata in inline_targets_raw.items():
             if "action" not in tdata and "run" not in tdata:

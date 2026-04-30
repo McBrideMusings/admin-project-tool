@@ -52,6 +52,15 @@ def render(
         modules.append("logtail")
         resolved.modules = modules
 
+    # kill-port commands require the ports module.
+    kill_port_cmds = [c for c in resolved.commands.values() if c.kind == "kill-port"]
+    if kill_port_cmds and "ports" not in resolved.modules:
+        names = ", ".join(f"'{c.name}'" for c in kill_port_cmds)
+        raise RenderError(
+            f"command(s) {names} use kind='kill-port' but 'ports' is not in the module list; "
+            f"add modules = [\"ports\"] to admin.toml"
+        )
+
     lh = lib_hash(admin_lib_dir)
     modules_csv = ",".join(resolved.modules)
 
@@ -94,6 +103,11 @@ def render(
     if m.output:
         output_decl = f"_OUTPUT_CONFIG = {_pyliteral(m.output)}\n"
 
+    # Emit configure_logging() call if [logging] is configured.
+    logging_decl = ""
+    if m.logging:
+        logging_decl = f"configure_logging({_pyliteral(m.logging)})\n"
+
     # Emit actions first (they must be registered before commands that call them).
     action_blocks: list[str] = [render_action(a) for a in resolved.actions.values()]
     actions_src = "\n".join(action_blocks)
@@ -133,8 +147,10 @@ def render(
         f"{apple_decl}"
         f"{server_decl}"
         f"{output_decl}"
+        f"{logging_decl}"
         f"{actions_block}"
         f"\n{commands_src}\n"
+        f"register_builtin_logs_command()\n"
         f"{logs_src}"
         f"{inline_src}"
         f"{boot_src}"

@@ -91,6 +91,7 @@ else:
     if not target:
         return
 
+set_log_context("build", target)
 cmd, _ = _TARGETS[target]
 info("building for " + target + ": " + cmd)
 rc = run_cmd("cd engine && " + cmd)

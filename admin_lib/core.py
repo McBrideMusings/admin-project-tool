@@ -139,6 +139,7 @@ _project_root = ""
 _stale_generator = False
 LOG_DIR = ""
 LOG_FILE = ""
+LOG_CONFIG: dict = {}
 
 
 def _init(project_name, project_root=None):
@@ -150,16 +151,69 @@ def _init(project_name, project_root=None):
     LOG_FILE = os.path.join(LOG_DIR, "run.log")
 
 
-def set_log_context(*parts):
+def configure_logging(cfg: dict):
+    """Store the [logging] config from admin.toml. Called at module level in generated scripts."""
+    global LOG_CONFIG
+    LOG_CONFIG = cfg
+
+
+def _apply_log_config():
+    """Apply LOG_CONFIG overrides to LOG_DIR/LOG_FILE. Called from boot() after _init()."""
+    global LOG_DIR, LOG_FILE
+    d = LOG_CONFIG.get("dir")
+    if d:
+        LOG_DIR = os.path.join(_project_root, d)
+        LOG_FILE = os.path.join(LOG_DIR, "run.log")
+
+
+def _rotate_log(path, retain=None):
+    """Rotate a log file before overwriting, keeping up to retain old copies."""
+    n = retain if retain is not None else LOG_CONFIG.get("retain", 3)
+    if n == 0 or not os.path.exists(path):
+        return
+    for i in range(n - 1, 0, -1):
+        src = f"{path}.{i}"
+        if os.path.exists(src):
+            os.rename(src, f"{path}.{i + 1}")
+    os.rename(path, f"{path}.1")
+
+
+def _prepare_log_file(path=None):
+    """Rotate and truncate a log file, respecting enabled flag."""
+    if LOG_CONFIG.get("enabled") is False:
+        return
+    p = path or LOG_FILE
+    if not p:
+        return
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    _rotate_log(p)
+    open(p, "w").close()
+
+
+def set_log_context(*parts, retain=None):
     """Redirect LOG_FILE to a named log based on the command path.
 
     Example: set_log_context("dev", "macos") → tmp/dev-macos.log
-    The file is created/truncated immediately so callers don't need to.
+    The file is created/truncated (with rotation) immediately.
     """
     global LOG_FILE
+    if LOG_CONFIG.get("enabled") is False:
+        return
     name = "-".join(str(p) for p in parts if p)
     LOG_FILE = os.path.join(LOG_DIR, f"{name}.log")
     os.makedirs(LOG_DIR, exist_ok=True)
+    _rotate_log(LOG_FILE, retain)
+    open(LOG_FILE, "w").close()
+
+
+def set_log_context_path(path, retain=None):
+    """Redirect LOG_FILE to an explicit path (for log_file overrides in admin.toml)."""
+    global LOG_FILE
+    if LOG_CONFIG.get("enabled") is False:
+        return
+    LOG_FILE = path if os.path.isabs(path) else os.path.join(_project_root, path)
+    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+    _rotate_log(LOG_FILE, retain)
     open(LOG_FILE, "w").close()
 
 
@@ -331,7 +385,7 @@ def run_cmd(cmd, shell=True, capture_log=True, formatter=None):
     cmd = resolve_env(cmd)
     os.makedirs(LOG_DIR, exist_ok=True)
     log_fh = None
-    if capture_log:
+    if capture_log and LOG_CONFIG.get("enabled") is not False and LOG_FILE:
         log_fh = open(LOG_FILE, "a")
 
     proc = subprocess.Popen(
@@ -583,8 +637,7 @@ def _tui_menu():
                 sys.stdout.flush()
                 info(f"./admin {items[sel]}")
                 print()
-                os.makedirs(LOG_DIR, exist_ok=True)
-                open(LOG_FILE, "w").close()
+                _prepare_log_file()
                 _commands[items[sel]]["func"]([])
                 return
     except (KeyboardInterrupt, EOFError):
@@ -752,6 +805,7 @@ def boot(project_name, load_dotenv=True):
 
     os.chdir(project_root)
     _init(project_name, project_root)
+    _apply_log_config()
 
     _load_dotenv(project_root)
     _resolve_pending_urls()
@@ -789,8 +843,65 @@ def boot(project_name, load_dotenv=True):
         _subcommand_help[cmd_name]()
         return
 
-    # Clear log file for fresh run
-    os.makedirs(LOG_DIR, exist_ok=True)
-    open(LOG_FILE, "w").close()
+    _prepare_log_file()
 
     all_cmds[cmd_name]["func"](args)
+
+
+# ---------------------------------------------------------------------------
+# Built-in logs command
+# ---------------------------------------------------------------------------
+
+def _cmd_logs_impl(args):
+    """Tail a log file from tmp/. Args act as a substring filter on filenames."""
+    import glob
+    import datetime
+
+    log_dir = LOG_DIR or os.path.join(os.getcwd(), "tmp")
+    filter_str = "-".join(args).lower()
+    if filter_str.endswith(".log"):
+        filter_str = filter_str[:-4]
+
+    all_logs = sorted(
+        glob.glob(os.path.join(log_dir, "*.log")),
+        key=os.path.getmtime,
+        reverse=True,
+    )
+
+    matches = all_logs
+    if filter_str:
+        filtered = [f for f in all_logs if filter_str in os.path.basename(f)[:-4].lower()]
+        if filtered:
+            matches = filtered
+
+    if not matches:
+        err(f"no log files found in {log_dir}")
+        return
+
+    if len(matches) == 1:
+        chosen = matches[0]
+    else:
+        menu = OrderedDict()
+        for f in matches:
+            name = os.path.basename(f)
+            try:
+                size = os.path.getsize(f)
+                age = datetime.datetime.fromtimestamp(os.path.getmtime(f)).strftime("%m/%d %H:%M")
+                label = f"{name}  ({size:,}b, {age})"
+            except OSError:
+                label = name
+            menu[name] = label
+        picked = pick_target(menu, "tail which log?")
+        if not picked:
+            return
+        chosen = os.path.join(log_dir, picked)
+
+    info(f"tailing {os.path.relpath(chosen)}")
+    subprocess.call(["tail", "-f", "-n", "100", chosen])
+
+
+def register_builtin_logs_command():
+    """Register the universal logs file-tailer. Called by generated admin scripts."""
+    @command("logs", "Tail a command's log file (./admin logs [filter...])")
+    def cmd_logs(args):
+        _cmd_logs_impl(args)

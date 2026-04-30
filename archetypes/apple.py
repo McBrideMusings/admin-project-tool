@@ -89,6 +89,7 @@ if target is None:
         return
 
 cfg = globals().get("_APPLE_CONFIG") or {}
+set_log_context("dev", target)
 if target == "mac":
     dev_mac(cfg, log_level=log_level, clean=force_clean, install=install_mac)
 elif target == "device":
@@ -131,6 +132,7 @@ if target is None:
         return
 
 cfg = globals().get("_APPLE_CONFIG") or {}
+set_log_context("deploy", target)
 if target == "mac":
     deploy_mac(cfg, clean=force_clean)
 elif target == "ios":
@@ -194,6 +196,7 @@ elif target not in _choices:
     err("unknown clean target: " + target); sys.exit(1)
 
 cfg = globals().get("_APPLE_CONFIG") or {}
+set_log_context("clean", target)
 if target == "xcode":
     scheme = cfg.get("mac_scheme") or cfg.get("ios_scheme")
     if not scheme:
@@ -230,12 +233,6 @@ elif sub in ("-h", "--help"):
     info("usage: ./admin icons [regenerate|swap-dev|restore]")
 else:
     err("unknown subcommand: " + sub); sys.exit(1)
-'''
-
-_LOGS_PY = '''\
-cfg = globals().get("_APPLE_CONFIG") or {}
-prod = bool(args and args[0] == "--prod")
-device_log_attach(get_ios_log_bundle(cfg, prod=prod), log_file=LOG_FILE)
 '''
 
 _RELOAD_PY = '''\
@@ -288,18 +285,13 @@ ARCHETYPE = {
             "desc": "Icons: regenerate | swap-dev | restore",
             "run": _ICONS_PY,
         },
-        "logs": {
-            "kind": "python",
-            "desc": "Stream non-redacted logs from USB-connected iOS device [--prod]",
-            "run": _LOGS_PY,
-        },
         "reload": {
             "kind": "python",
             "desc": "Signal a running './admin dev' to rebuild and relaunch",
             "run": _RELOAD_PY,
         },
     },
-    "order": ["build", "dev", "deploy", "", "test", "clean", "icons", "logs", "reload"],
+    "order": ["build", "dev", "deploy", "", "test", "clean", "icons", "reload"],
     "actions": {
         "build-ios":   {"kind": "apple", "run": "build_ios",   "desc": "build iOS"},
         "dev-ios":     {"kind": "apple", "run": "dev_ios",     "desc": "dev iOS simulator"},

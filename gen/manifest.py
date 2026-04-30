@@ -18,7 +18,7 @@ MANIFEST_FILENAME = "admin.toml"
 _KNOWN_KEYS = {
     "project_name", "python_min", "archetypes", "modules", "urls",
     "commands", "actions", "order", "logs", "apple", "server", "output",
-    "exclude_modules", "generator_commit", "inline",
+    "exclude_modules", "generator_commit", "inline", "logging",
 }
 
 
@@ -51,6 +51,7 @@ class Manifest:
     apple: dict = field(default_factory=dict)   # [apple] table — archetype-specific config, raw dict
     server: dict = field(default_factory=dict)  # [server] table — server build/dev/deploy config, raw dict
     output: dict = field(default_factory=dict)  # [output] table — log column config per source
+    logging: dict = field(default_factory=dict) # [logging] table — file logging config (enabled, dir, retain)
     actions: dict[str, dict] = field(default_factory=dict)    # action name -> raw dict (not shown in UI)
     exclude_modules: list[str] = field(default_factory=list)  # modules to suppress even if archetype requires them
     generator_commit: str | None = None
@@ -165,6 +166,23 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     if not isinstance(output, dict):
         raise ManifestError(f"{source}: '[output]' must be a table")
 
+    logging_cfg = data.get("logging", {}) or {}
+    if not isinstance(logging_cfg, dict):
+        raise ManifestError(f"{source}: '[logging]' must be a table")
+    _LOGGING_KNOWN = {"enabled", "dir", "retain"}
+    unknown_logging = set(logging_cfg) - _LOGGING_KNOWN
+    if unknown_logging:
+        raise ManifestError(
+            f"{source}: '[logging]' unknown keys: {sorted(unknown_logging)}, "
+            f"valid: {sorted(_LOGGING_KNOWN)}"
+        )
+    if "enabled" in logging_cfg and not isinstance(logging_cfg["enabled"], bool):
+        raise ManifestError(f"{source}: '[logging].enabled' must be a boolean")
+    if "dir" in logging_cfg and not isinstance(logging_cfg["dir"], str):
+        raise ManifestError(f"{source}: '[logging].dir' must be a string")
+    if "retain" in logging_cfg and not isinstance(logging_cfg["retain"], int):
+        raise ManifestError(f"{source}: '[logging].retain' must be an integer")
+
     exclude_modules = data.get("exclude_modules", [])
     if not isinstance(exclude_modules, list) or not all(isinstance(m, str) for m in exclude_modules):
         raise ManifestError(f"{source}: 'exclude_modules' must be a list of strings")
@@ -191,6 +209,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         apple=apple,
         server=server,
         output=output,
+        logging=logging_cfg,
         exclude_modules=exclude_modules,
         generator_commit=data.get("generator_commit"),
         inline_file=inline_file,

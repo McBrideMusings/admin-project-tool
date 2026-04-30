@@ -151,10 +151,20 @@ def render_python(cmd: Command) -> str:
         raise FragmentError(f"python command '{cmd.name}' needs 'run' (a Python block)")
     func_name = "cmd_" + _safe_ident(cmd.name)
     indented = textwrap.indent(cmd.run.strip(), "    ")
+    log_cfg = cmd.meta.get("logging", {})
+    retain_arg = f", retain={log_cfg['log_retain']}" if "log_retain" in log_cfg else ""
+    if log_cfg.get("log") is False:
+        log_line = ""
+    elif "log_file" in log_cfg:
+        log_line = f"    set_log_context_path({_pyrepr(log_cfg['log_file'])}{retain_arg})\n"
+    elif "set_log_context(" in cmd.run or "set_log_context_path(" in cmd.run:
+        log_line = ""
+    else:
+        log_line = f"    set_log_context({_pyrepr(cmd.name)}{retain_arg})\n"
     body = (
         f"@command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})\n"
         f"def {func_name}(args):\n"
-        f"    set_log_context({_pyrepr(cmd.name)})\n"
+        f"{log_line}"
         f"{indented}\n"
     )
     return body
@@ -268,28 +278,40 @@ def render_sync(cmd: Command) -> str:
 
 
 def render_kill_port(cmd: Command) -> str:
-    """A command that kills the process listening on a given TCP port, with confirmation.
+    """A command that kills processes listening on one or more TCP ports, with confirmation.
 
-    run = port number (default; can be overridden by CLI arg at runtime).
+    run = space-separated port numbers (defaults; can be overridden by CLI args at runtime).
     Requires the 'ports' module in the manifest's modules list.
     """
     func_name = "cmd_" + _safe_ident(cmd.name)
-    default_port = cmd.run.strip() if cmd.run else ""
-    if default_port and not default_port.isdigit():
-        raise FragmentError(
-            f"kill-port command '{cmd.name}': run must be a port number, got {default_port!r}"
-        )
+    raw = cmd.run.strip() if cmd.run else ""
+    default_ports: list[str] = []
+    if raw:
+        for p in raw.split():
+            if not p.isdigit():
+                raise FragmentError(
+                    f"kill-port command '{cmd.name}': run must be port numbers, got {p!r}"
+                )
+        default_ports = raw.split()
+
+    desc = cmd.desc
+    if not default_ports:
+        desc = (desc + " [PORT]").strip() if desc else "[PORT]"
+
     lines = [
-        f"@command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})",
+        f"@command({_pyrepr(cmd.name)}, {_pyrepr(desc)})",
         f"def {func_name}(args):",
     ]
-    if default_port:
+    if default_ports:
+        default_list = "[" + ", ".join(default_ports) + "]"
         lines += [
-            f"    try:",
-            f"        _port = int(args[0]) if args else {default_port}",
-            f"    except ValueError:",
-            f'        err("kill-port: invalid port number \'" + args[0] + "\'")',
-            f"        sys.exit(1)",
+            f"    _to_kill = {default_list}",
+            f"    if args:",
+            f"        try:",
+            f"            _to_kill = [int(a) for a in args]",
+            f"        except ValueError as _e:",
+            f'            err("kill-port: invalid port number: " + str(_e))',
+            f"            sys.exit(1)",
         ]
     else:
         lines += [
@@ -297,14 +319,15 @@ def render_kill_port(cmd: Command) -> str:
             f'        err("kill-port: port argument required")',
             f"        sys.exit(1)",
             f"    try:",
-            f"        _port = int(args[0])",
-            f"    except ValueError:",
-            f'        err("kill-port: invalid port number \'" + args[0] + "\'")',
+            f"        _to_kill = [int(a) for a in args]",
+            f"    except ValueError as _e:",
+            f'        err("kill-port: invalid port number: " + str(_e))',
             f"        sys.exit(1)",
         ]
     lines += [
-        f"    if not kill_port_interactive(_port):",
-        f"        sys.exit(1)",
+        f"    for _port in _to_kill:",
+        f"        if not kill_port_interactive(_port):",
+        f"            sys.exit(1)",
         "",
     ]
     return "\n".join(lines)
