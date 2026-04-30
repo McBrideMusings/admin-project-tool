@@ -267,6 +267,49 @@ def render_sync(cmd: Command) -> str:
     return body
 
 
+def render_kill_port(cmd: Command) -> str:
+    """A command that kills the process listening on a given TCP port, with confirmation.
+
+    run = port number (default; can be overridden by CLI arg at runtime).
+    Requires the 'ports' module in the manifest's modules list.
+    """
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    default_port = cmd.run.strip() if cmd.run else ""
+    if default_port and not default_port.isdigit():
+        raise FragmentError(
+            f"kill-port command '{cmd.name}': run must be a port number, got {default_port!r}"
+        )
+    lines = [
+        f"@command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})",
+        f"def {func_name}(args):",
+    ]
+    if default_port:
+        lines += [
+            f"    try:",
+            f"        _port = int(args[0]) if args else {default_port}",
+            f"    except ValueError:",
+            f'        err("kill-port: invalid port number \'" + args[0] + "\'")',
+            f"        sys.exit(1)",
+        ]
+    else:
+        lines += [
+            f"    if not args:",
+            f'        err("kill-port: port argument required")',
+            f"        sys.exit(1)",
+            f"    try:",
+            f"        _port = int(args[0])",
+            f"    except ValueError:",
+            f'        err("kill-port: invalid port number \'" + args[0] + "\'")',
+            f"        sys.exit(1)",
+        ]
+    lines += [
+        f"    if not kill_port_interactive(_port):",
+        f"        sys.exit(1)",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def render_action(cmd: Command) -> str:
     """Render a command as a registered action (hidden from TUI/--help, callable via run_command)."""
     src = render_command(cmd)
@@ -296,6 +339,7 @@ _RENDERERS = {
     "npm": render_npm,
     "sync": render_sync,
     "apple": render_apple,
+    "kill-port": render_kill_port,
 }
 
 KNOWN_KINDS = set(_RENDERERS)

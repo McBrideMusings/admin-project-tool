@@ -125,6 +125,44 @@ def preflight_port(port, label=None, force=False, timeout=2.0):
     return cleared
 
 
+def kill_port_interactive(port):
+    """Interactive kill-by-port for standalone `kill` commands.
+
+    Prints who is on the port, prompts for confirmation, then kills.
+    Returns True if cleared (or nothing was there), False if the user declined
+    or the kill failed. Caller is responsible for sys.exit if needed.
+    """
+    holders = port_holders(port)
+    if not holders:
+        print(f"No process on port {port} — nothing to kill.")
+        return True
+
+    print(f"\nPort {port} is in use:")
+    for h in holders:
+        print(f"  pid {h['pid']:>6}: {h['command']}")
+        if h["parent_pid"]:
+            parent_cmd = h["parent_command"] or "?"
+            print(f"          parent pid {h['parent_pid']}: {parent_cmd}")
+    print()
+
+    pids = [h["pid"] for h in holders]
+
+    if not sys.stdin.isatty():
+        print(f"Stdin is not a TTY — force-killing port {port} holders.", file=sys.stderr)
+    else:
+        try:
+            input("Kill it? [Enter to kill, Ctrl+C to abort] ")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return False
+
+    if _kill_pids(pids):
+        print(f"Port {port} cleared.")
+        return True
+    print(f"Failed to clear port {port}.", file=sys.stderr)
+    return False
+
+
 def _ps_command(pid):
     try:
         r = subprocess.run(
