@@ -184,7 +184,8 @@ def xcodebuild_filtered(project, scheme, config, destination, action="build",
 
     parts = [f'xcodebuild']
     if project:
-        parts.append(f'-project "{project}"')
+        flag = "-workspace" if project.endswith(".xcworkspace") else "-project"
+        parts.append(f'{flag} "{project}"')
     parts.append(f'-scheme "{scheme}"')
     parts.append(f'-configuration {config}')
     parts.append(f'-destination "{destination}"')

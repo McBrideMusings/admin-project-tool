@@ -71,6 +71,9 @@ def build_multiplatform(server_dir, targets, binary_name="server"):
     os.makedirs(out_dir, exist_ok=True)
     version_id = get_version_id(server_dir)
 
+    abs_server_dir = os.path.abspath(server_dir)
+    abs_out_dir = os.path.abspath(out_dir)
+
     for name, cargo_cmd, binary_path, docker_platform in targets:
         info(f"Building {binary_name} for {name}...")
         full_binary = os.path.join(server_dir, binary_path)
@@ -81,7 +84,7 @@ def build_multiplatform(server_dir, targets, binary_name="server"):
             target_dir = os.path.basename(os.path.dirname(os.path.dirname(binary_path)))
             rc = run_cmd(
                 f"docker run --rm --platform {docker_platform} "
-                f"-v {server_dir}:/src -w /src "
+                f"-v {abs_server_dir}:/src -w /src "
                 f"-e CARGO_TARGET_DIR=/src/{target_dir} "
                 f"rust:latest cargo build --release"
             )
@@ -98,7 +101,7 @@ def build_multiplatform(server_dir, targets, binary_name="server"):
         else:
             subprocess.run([
                 "docker", "run", "--rm", "--platform", docker_platform,
-                "-v", f"{out_dir}:/bins", "rust:latest",
+                "-v", f"{abs_out_dir}:/bins", "rust:latest",
                 "strip", f"/bins/{binary_name}-{name}",
             ])
 
