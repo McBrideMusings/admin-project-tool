@@ -255,7 +255,7 @@ ok("reload signal sent to PID " + str(pid))
 
 ARCHETYPE = {
     "name": "apple",
-    "modules": ["core", "icons", "apple", "log_columns"],
+    "modules": ["core", "icons", "apple", "log_format", "log_columns"],
     "urls": {},
     "commands": {
         "build": {
