@@ -14,7 +14,7 @@ import os
 import shutil
 import sqlite3
 
-from .core import info, ok, warn
+from .core import info, ok, resolve_env, warn
 
 
 def directory_size(path):
@@ -191,9 +191,9 @@ def clean_dev_from_config(cfg, force=False):
     paths = []
     for entry in cfg.get("paths") or ():
         if "env" in entry:
-            base = os.environ.get(entry["env"], entry.get("default", ""))
+            base = os.environ.get(entry["env"], resolve_env(entry.get("default", "")))
         else:
-            base = entry.get("path", "")
+            base = resolve_env(entry.get("path", ""))
         if not base:
             continue
         if not os.path.isabs(base):
@@ -202,9 +202,9 @@ def clean_dev_from_config(cfg, force=False):
 
     db = cfg.get("db") or {}
     if "path" in db:
-        db_path = db["path"]
+        db_path = resolve_env(db["path"])
     elif "file" in db:
-        base = os.environ.get(db.get("env", ""), db.get("default", ""))
+        base = os.environ.get(db.get("env", ""), resolve_env(db.get("default", "")))
         if base and not os.path.isabs(base):
             base = os.path.abspath(base)
         db_path = os.path.join(base, db["file"]) if base else db["file"]

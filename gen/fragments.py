@@ -486,18 +486,26 @@ def collect_env_var_calls(
     commands: list[Command],
     urls: dict[str, str] | None = None,
     logs: dict[str, dict] | None = None,
+    config_tables: dict[str, dict] | None = None,
 ) -> list[str]:
-    """Scan command run-strings, URL values, and log-target paths/hosts for
-    ${VAR} placeholders and emit register_env_var calls with origin breadcrumbs.
+    """Scan command run-strings, URL values, log-target paths/hosts, AND
+    config tables for ${VAR} placeholders and emit register_env_var calls
+    with origin breadcrumbs.
 
     Each call lets the runtime `env` command list referenced vars even before they're
     resolved, and annotate which command/url/log-target referenced each one. Returns
     Python source lines (no trailing newline).
 
-    The origin-string format ("cmd:<name>", "url:<key>", "logs.<target>.<env>", …)
-    is a stable compatibility contract shared with the runtime renderer; see
-    the contract block above `register_env_var` in admin_lib/core.py before
-    changing it.
+    `config_tables` is `{table_name: dict}` for the new configless-kind tables
+    ([deploy], [vite_dev], [dev_kill], [clean_dev]). Every `${VAR}` placeholder
+    found anywhere in those tables is registered, AND any `{env, default?}`
+    sub-table (the convention used by clean_dev.paths, dev_kill.pidfiles,
+    vite_dev.mounts) is registered as `register_env_var(env, default=…)`.
+
+    The origin-string format ("cmd:<name>", "url:<key>", "logs.<target>.<env>",
+    "<table>:…") is a stable compatibility contract shared with the runtime
+    renderer; see the contract block above `register_env_var` in
+    admin_lib/core.py before changing it.
     """
     import re
     pattern = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
@@ -532,6 +540,10 @@ def collect_env_var_calls(
                 if isinstance(val, str):
                     _scan_for_env_vars(val, pattern, seen, origin)
 
+    for table_name, table in (config_tables or {}).items():
+        if table:
+            _scan_config_table(table, pattern, seen, f"{table_name}")
+
     lines = []
     for name, entry in seen.items():
         parts = [_pyrepr(name)]
@@ -542,3 +554,33 @@ def collect_env_var_calls(
             parts.append(f"used_by={origins}")
         lines.append(f"register_env_var({', '.join(parts)})")
     return lines
+
+
+def _scan_config_table(value, pattern, seen, origin):
+    """Recursively scan a manifest config table for ${VAR} placeholders and
+    `{env, default?}` sub-tables. Registers each found var into `seen`.
+
+    Strings: scanned via `pattern` (the `${VAR:-default}` regex).
+    Dicts containing an `env` key: registered directly as that env var, with
+    `default` taken from the same dict if present (matches the runtime
+    `os.environ.get(env, default)` shape used by all configless adapters).
+    Dicts and lists: recursed into.
+    """
+    if isinstance(value, str):
+        _scan_for_env_vars(value, pattern, seen, origin)
+        return
+    if isinstance(value, dict):
+        if isinstance(value.get("env"), str) and "{" not in value["env"] and "$" not in value["env"]:
+            name = value["env"]
+            entry = seen.setdefault(name, {"default": None, "used_by": []})
+            if entry["default"] is None and "default" in value:
+                entry["default"] = str(value["default"])
+            if origin not in entry["used_by"]:
+                entry["used_by"].append(origin)
+        for k, v in value.items():
+            _scan_config_table(v, pattern, seen, f"{origin}.{k}")
+        return
+    if isinstance(value, list):
+        for i, item in enumerate(value):
+            _scan_config_table(item, pattern, seen, f"{origin}[{i}]")
+        return

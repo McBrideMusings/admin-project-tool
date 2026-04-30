@@ -7,6 +7,7 @@ remote Docker build, multi-target reload.
 import atexit
 import glob
 import os
+import re
 import selectors
 import shlex
 import signal
@@ -1019,9 +1020,23 @@ def docker_remote_deploy(cfg):
         f"-e {shlex.quote(f'{k}={resolve_env(str(v))}')}"
         for k, v in (cfg.get("env") or {}).items()
     )
+    # Validate scalars at compose time — these get interpolated unquoted into
+    # an SSH-executed command, so a typo like `port = "9091 --privileged"`
+    # would silently turn into a docker-run flag injection on the remote.
+    # run_flags is intentionally left raw (it's the user's escape hatch for
+    # legitimate multi-flag strings like `--gpus all --device /dev/dri:/dev/dri`).
     port = resolve_env(str(cfg.get("port", "")))
-    internal_port = cfg.get("internal_port", port or "80")
+    internal_port = str(cfg.get("internal_port", cfg.get("port") or "80"))
     bind_ip = resolve_env(cfg.get("bind_ip", "")) or ""
+    if port and not re.fullmatch(r"\d+", port):
+        err(f"docker_remote_deploy: invalid port {port!r} (must be digits only)")
+        return 1
+    if internal_port and not re.fullmatch(r"\d+", internal_port):
+        err(f"docker_remote_deploy: invalid internal_port {internal_port!r} (must be digits only)")
+        return 1
+    if bind_ip and not re.fullmatch(r"[A-Za-z0-9_.\-:]+", bind_ip):
+        err(f"docker_remote_deploy: invalid bind_ip {bind_ip!r}")
+        return 1
     port_arg = ""
     if port:
         bind_prefix = f"{bind_ip}:" if bind_ip else ""

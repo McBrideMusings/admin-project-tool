@@ -26,7 +26,7 @@ import subprocess
 import sys
 import time
 
-from .core import info, ok
+from .core import info, ok, resolve_env
 
 
 def kill_port(port, timeout=2.0):
@@ -530,8 +530,9 @@ def nuke_dev_from_config(cfg):
         js_files  = [str, ...]
         web_subdirs = [str, ...]
         runtimes    = [str, ...]
-    `${VAR}` placeholders in `path` strings are resolved at call time so that
-    machine-specific defaults (`/tmp/...`) work portably across environments.
+    `${VAR}` and `${VAR:-default}` placeholders in `path` and `default`
+    strings are resolved at call time via admin_lib.core.resolve_env, so
+    machine-specific values work portably across environments.
     """
     if not cfg:
         info("nothing was running")
@@ -539,9 +540,9 @@ def nuke_dev_from_config(cfg):
     pidfiles = []
     for p in cfg.get("pidfiles") or ():
         if "env" in p:
-            path = os.environ.get(p["env"], p.get("default", ""))
+            path = os.environ.get(p["env"], resolve_env(p.get("default", "")))
         else:
-            path = p.get("path", "")
+            path = resolve_env(p.get("path", ""))
         if not path:
             continue
         pidfiles.append({

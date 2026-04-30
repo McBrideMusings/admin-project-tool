@@ -21,7 +21,7 @@ import time
 
 from .core import (
     LOG_DIR,
-    info, ok, warn, err, register_cleanup,
+    info, ok, warn, err, register_cleanup, resolve_env,
 )
 from .docker import ensure_deps, run_with_reload, _wait_or_kill
 from .ports import preflight_port
@@ -260,9 +260,9 @@ def vite_dev_from_config(cfg):
         if not name:
             continue
         if "path" in m:
-            path = m["path"]
+            path = resolve_env(m["path"])
         else:
-            path = os.environ.get(m.get("env", ""), m.get("default", ""))
+            path = os.environ.get(m.get("env", ""), resolve_env(m.get("default", "")))
         if path:
             mount_parts.append(f"{name}={path}")
     mounts_raw = ",".join(mount_parts) if mount_parts else None
