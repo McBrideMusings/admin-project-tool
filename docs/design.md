@@ -12,7 +12,7 @@ Projects cluster into ~5 archetypes: **docker-to-unraid**, **stash-plugin**, **a
 
 1. **Manifest is truth.** `admin.toml` (committed) fully describes the admin script. `./admin` is a generated bundle from `admin.toml` + archetypes + `admin_lib`.
 2. **Archetypes are mixins, not monoliths.** A manifest can list multiple archetypes; the generator merges their command sets. This kills the "one template" bottleneck that forced `open-assistant` and `cctool` to be hand-maintained.
-3. **Strict regeneration, with an escape hatch.** `init-admin --regenerate` is idempotent. Hand-editing `./admin` remains legal but a drift audit will warn. The expected loop is: *edit manifest → regenerate → commit both*.
+3. **Strict regeneration, with an escape hatch.** `admin regenerate` is idempotent. Hand-editing `./admin` remains legal but a drift audit will warn. The expected loop is: *edit manifest → regenerate → commit both*.
 4. **Zero contributor install.** Generated `./admin` is still a self-contained, bundled Python 3.11+ script. Contributors `git clone && ./admin`. Only the project owner needs `admin-project-tool` installed.
 5. **Stdlib only.** Manifest parses via stdlib `tomllib` (3.11+). No third-party deps in generated script or generator.
 6. **Composability over expressiveness.** The manifest is a short, flat declaration — not a DSL. If a project needs real logic, it drops a custom command as a shell string or, rarely, a small Python snippet the generator inlines verbatim.
@@ -22,7 +22,7 @@ Projects cluster into ~5 archetypes: **docker-to-unraid**, **stash-plugin**, **a
 Lives at project root, committed alongside `./admin`.
 
 ```toml
-# admin.toml — generates ./admin via `~/.admin/init-admin --regenerate`
+# admin.toml — generates ./admin via `admin regenerate`
 project_name = "Portfolio"
 python_min   = "3.11"
 
@@ -74,7 +74,7 @@ Initial archetypes (derived 1:1 from the survey clusters):
 
 Composition works: `archetypes = ["docker-unraid", "apple"]` produces the `open-assistant` / `cctool` shape without hand editing.
 
-**Conflict resolution:** when two archetypes define the same command name, the later one wins; the manifest's own `[commands]` table wins over all archetypes. `init-admin --regenerate` prints a merge report.
+**Conflict resolution:** when two archetypes define the same command name, the later one wins; the manifest's own `[commands]` table wins over all archetypes. `admin regenerate` prints a merge report.
 
 **Display order:** archetypes may declare `"order": [...]` (with `""` entries for blank spacers) to group their commands in the TUI and `--help`. Manifest `order` wins; otherwise the last archetype's `order` is used; otherwise commands render in merge order. Example from the `apple` archetype: `["build", "dev", "deploy", "", "test", "clean", "icons", "reload"]` — the spacer signals the primary/secondary split.
 
@@ -141,7 +141,7 @@ def detect(project_dir: Path) -> dict | None:
     # Return a partial manifest (archetype + URL hints) or None.
 ```
 
-Detectors run on a fresh project during `init-admin` *without* a manifest. They produce a **starter `admin.toml`** which the user then reviews and commits. Detectors never run on projects that already have `admin.toml` — the manifest is the source of truth from that moment forward.
+Detectors run on a fresh project during `admin new` *without* a manifest. They produce a **starter `admin.toml`** which the user then reviews and commits. Detectors never run on projects that already have `admin.toml` — the manifest is the source of truth from that moment forward.
 
 Initial detectors mirror the archetypes: hugo (`config.yaml` + `themes/`), docker-unraid (`Dockerfile` + existing remote-deploy markers), apple (`.xcodeproj`/`.xcworkspace`), stash-plugin (rollup config + `stash` in package.json), go-cli (`go.mod`, no Dockerfile), firefox-extension (`manifest.json` with `browser_specific_settings`), unraid-plugin (`plg` files / unraid markers). Fallback: `simple`.
 
@@ -149,7 +149,7 @@ Adding a new stack = one detector file + one archetype file.
 
 ## Generator Architecture
 
-Top-level flow in `init-admin`:
+Top-level flow in `admin-gen`:
 
 1. **Bootstrap** — if no `admin.toml`, run detectors → write starter manifest → prompt user to review.
 2. **Load** — parse `admin.toml` with stdlib `tomllib`.
@@ -162,9 +162,9 @@ Rendering uses a small set of **code fragments** (not full templates) — one pe
 
 ## Regeneration & Drift Audit
 
-- `~/.admin/init-admin` — first-time bootstrap (detect → write manifest → generate).
-- `~/.admin/init-admin --regenerate` — re-render `./admin` from `admin.toml`. Idempotent. Standard loop for adding/editing commands.
-- `~/.admin/init-admin --audit` — regenerates in-memory and diffs against `./admin`. Reports: (a) manifest drift (script differs from what manifest would produce), (b) archetype drift (archetype catalog changed since last regen — `admin_lib` hash differs), (c) stale `admin_lib`. Non-zero exit if any drift.
+- `admin new` — first-time bootstrap (detect → write manifest → generate).
+- `admin regenerate` — re-render `./admin` from `admin.toml`. Idempotent. Standard loop for adding/editing commands. Accepts `--force-dirty` to allow generation from a dirty `admin-project-tool` tree.
+- `admin audit` — regenerates in-memory and diffs against `./admin`. Reports: (a) manifest drift (script differs from what manifest would produce), (b) archetype drift (archetype catalog changed since last regen — `admin_lib` hash differs), (c) stale `admin_lib`. Non-zero exit if any drift.
 - `/admin` slash command runs the audit and surfaces drift to the user before asking whether to regenerate.
 
 Hand-editing `./admin` is still allowed, but the audit will tell you about it. The expected escape hatch is the manifest's `[inline]` block (a small Python file concatenated into the generated script at a marked insertion point); this keeps hand-written logic *referenced from the manifest* so regeneration preserves it.
@@ -178,7 +178,7 @@ Hand-editing `./admin` is still allowed, but the audit will tell you about it. T
 
 ## Migrating Existing Projects
 
-`init-admin --from-existing` reads a current `./admin`, detects which commands exist, and reverse-engineers a starter `admin.toml`. Then: regenerate → diff → commit. Generated scripts are typically 60–80% shorter than hand-maintained originals because boilerplate moves into archetypes.
+`admin-gen --from-existing` reads a current `./admin`, detects which commands exist, and reverse-engineers a starter `admin.toml`. Then: regenerate → diff → commit. Generated scripts are typically 60–80% shorter than hand-maintained originals because boilerplate moves into archetypes.
 
 ## Verification
 
@@ -190,19 +190,19 @@ End-to-end test plan, performed on a scratch clone of `admin-project-tool`:
 2. **Unit: archetype catalog**
    - For each of the 8 archetypes, assert its declared commands render to valid Python and the shell strings are non-empty.
 3. **Integration: round-trip on `~/Projects/portfolio`** (Hugo — the project that started this)
-   - `init-admin .` → produces `admin.toml` with `archetypes = ["hugo"]` and a generated `./admin`.
+   - `admin new` → produces `admin.toml` with `archetypes = ["hugo"]` and a generated `./admin`.
    - `./admin dev` starts `hugo server -D`; `./admin` shows TUI menu with URL liveness.
    - `./admin open` opens the dev URL.
 4. **Integration: archetype composition on a fake `cctool`-like fixture**
    - Hand-write `admin.toml` with `archetypes = ["docker-unraid", "apple"]`.
    - Regenerate; assert script has `build`, `dev`, `deploy`, `logs`, `open`, `reload`, `test`, `clean`, and multi-target handling for `mac | ios | server`.
 5. **Integration: regeneration idempotency**
-   - `init-admin --regenerate` twice in a row; `git diff` must be empty after the second run.
+   - `admin regenerate` twice in a row; `git diff` must be empty after the second run.
 6. **Integration: drift audit**
    - Hand-edit a line in generated `./admin`; run `--audit`; assert non-zero exit and a diff in the report.
    - Revert; assert `--audit` passes.
 7. **Integration: migration of one real project**
-   - Run `init-admin --from-existing` against `~/Projects/firefox-tab-bsp` (smallest at 680 lines).
+   - Run `admin-gen --from-existing` against `~/Projects/firefox-tab-bsp` (smallest at 680 lines).
    - Inspect generated `admin.toml` for fidelity; regenerate; confirm `./admin dev` still launches Firefox Nightly with auto-reload.
 8. **Cross-platform smoke**
    - Manually run generated script on macOS (baseline) and on one Linux host (WSL or remote). `./admin` TUI renders; `./admin build` runs.
@@ -251,8 +251,8 @@ Archetypes are not semver-versioned. Instead, the generator records the **git co
    ```
 
 **Behavior:**
-- `init-admin --regenerate` reads the current `admin-project-tool` HEAD SHA, regenerates, and updates `generator_commit` in the manifest. The user reviews and commits both files together.
-- `init-admin --audit` checks: (a) generated script matches what the *current* generator would produce, AND (b) `generator_commit` in the manifest matches the current `admin-project-tool` HEAD. If the SHAs differ, the audit reports it as informational ("regenerator-tool has moved since last regen — run `--regenerate` to refresh") rather than as drift, unless the regenerated output actually differs.
+- `admin regenerate` reads the current `admin-project-tool` HEAD SHA, regenerates, and updates `generator_commit` in the manifest. The user reviews and commits both files together.
+- `admin audit` checks: (a) generated script matches what the *current* generator would produce, AND (b) `generator_commit` in the manifest matches the current `admin-project-tool` HEAD. If the SHAs differ, the audit reports it as informational ("regenerator-tool has moved since last regen — run `admin regenerate` to refresh") rather than as drift, unless the regenerated output actually differs.
 - This gives a deterministic, auditable provenance trail without inventing a version number scheme. Two projects pinned to the same commit are guaranteed to produce identical scripts from identical manifests.
 - The generator refuses to run if `admin-project-tool`'s working tree is dirty (unless `--force-dirty`), so the recorded SHA is always meaningful. A dirty-tree generation records the SHA with a `+dirty` suffix and the audit always flags it.
 

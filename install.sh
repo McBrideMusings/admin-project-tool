@@ -76,17 +76,18 @@ from admin_lib import __version__; print(__version__)
 
     rm -rf "$DEST_DIR/templates"
     rm -f  "$DEST_DIR/init-admin-v2"
+    rm -f  "$DEST_DIR/init-admin"
     rm -f  "$DEST_DIR/bundle"
 
     rm -rf "$DEST_DIR/gen" "$DEST_DIR/archetypes" "$DEST_DIR/detectors"
     cp -R "$SRC_DIR/gen"        "$DEST_DIR/gen"
     cp -R "$SRC_DIR/archetypes" "$DEST_DIR/archetypes"
     cp -R "$SRC_DIR/detectors"  "$DEST_DIR/detectors"
-    cp    "$SRC_DIR/init-admin" "$DEST_DIR/init-admin"
-    chmod +x "$DEST_DIR/init-admin"
+    cp    "$SRC_DIR/admin-gen"  "$DEST_DIR/admin-gen"
+    chmod +x "$DEST_DIR/admin-gen"
 
     echo "$CURRENT_SHA" > "$DEST_DIR/VERSION"
-    echo "  admin_lib $LIB_VERSION installed (gen/, archetypes/, detectors/, init-admin)"
+    echo "  admin_lib $LIB_VERSION installed (gen/, archetypes/, detectors/, admin-gen)"
     echo "  VERSION=$CURRENT_SHA"
 }
 

@@ -93,7 +93,7 @@ assert_contains "reports done" "Done." "$out"
 assert_file_exists "VERSION written" "$T/.admin/VERSION"
 assert_file_exists "admin_lib copied" "$T/.admin/admin_lib"
 assert_file_exists "gen copied" "$T/.admin/gen"
-assert_file_exists "init-admin copied" "$T/.admin/init-admin"
+assert_file_exists "admin-gen copied" "$T/.admin/admin-gen"
 assert_file_contains "PATH added to rc" '.admin' "$T/$ZSH_RC"
 rm -rf "$T"
 

@@ -7,7 +7,7 @@ Structure of the generated file:
 
     #!/usr/bin/env python3
     # @bundled admin_lib=... sha=... modules=... generator_commit=...
-    # Regenerate: ~/.admin/init-admin --regenerate
+    # Regenerate: admin regenerate
     <python version guard>
     <inlined admin_lib modules>
     # === project: <name> ===
@@ -68,7 +68,7 @@ def render(
         #!/usr/bin/env python3
         {BUNDLED_MARKER} admin_lib={ADMIN_LIB_VERSION} sha={lh} modules={modules_csv} generator_commit={generator_commit}
         # Generated from admin.toml by admin-project-tool.
-        # Regenerate: ~/.admin/init-admin --regenerate
+        # Regenerate: admin regenerate
         \"\"\"admin — task runner for {m.project_name}.\"\"\"
         import sys
         if sys.version_info < tuple(int(x) for x in "{m.python_min}".split(".")):

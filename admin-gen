@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""init-admin — manifest-driven admin script generator.
+"""admin-gen — manifest-driven admin script generator.
 
 Usage:
-    init-admin [PROJECT_DIR]                    # bootstrap: detect + write admin.toml + generate
-    init-admin --regenerate [PROJECT_DIR]       # reload admin.toml, regenerate ./admin
-    init-admin --audit [PROJECT_DIR]            # regenerate in memory, diff against ./admin
+    admin-gen [PROJECT_DIR]                    # bootstrap: detect + write admin.toml + generate
+    admin-gen --regenerate [PROJECT_DIR]       # reload admin.toml, regenerate ./admin
+    admin-gen --audit [PROJECT_DIR]            # regenerate in memory, diff against ./admin
+
+    When PROJECT_DIR has an admin.toml already, the default action (no flags) is regenerate.
+    When PROJECT_DIR has no admin.toml, the default action is bootstrap.
 
 Flags:
+    --bootstrap       force bootstrap mode (detect + write admin.toml + generate)
     --force-dirty     allow generating from a dirty admin-project-tool working tree
     --force           overwrite existing admin.toml on bootstrap
 """
@@ -20,7 +24,7 @@ import sys
 from pathlib import Path
 
 # Script layout:
-#   <repo>/init-admin
+#   <repo>/admin-gen
 #   <repo>/gen/            (importable as `gen`)
 #   <repo>/admin_lib/
 #   <repo>/archetypes/
@@ -111,7 +115,7 @@ def cmd_bootstrap(project_dir: Path, args) -> int:
         return rc
 
     _ensure_tmp_gitignore(project_dir)
-    info(f"bootstrap complete. Edit {manifest_path} and run --regenerate to update ./admin.")
+    info(f"bootstrap complete. Edit {manifest_path} and run 'admin regenerate' to update ./admin.")
     return 0
 
 
@@ -211,7 +215,7 @@ def cmd_audit(project_dir: Path, args) -> int:
 
     admin_path = project_dir / "admin"
     if not admin_path.exists():
-        warn(f"{admin_path} does not exist — run --regenerate")
+        warn(f"{admin_path} does not exist — run: admin regenerate")
         return 1
 
     on_disk = admin_path.read_text()
@@ -224,7 +228,7 @@ def cmd_audit(project_dir: Path, args) -> int:
     for module in sorted(needed_modules - disk_modules):
         warn(
             f"module '{module}' missing from bundled admin — "
-            f"regenerate to pick up new features (run: init-admin --regenerate)"
+            f"regenerate to pick up new features (run: admin regenerate)"
         )
 
     # Check for inline code that should be migrated to admin_lib / archetypes.
@@ -240,7 +244,7 @@ def cmd_audit(project_dir: Path, args) -> int:
         if manifest.generator_commit and manifest.generator_commit != sha:
             info(
                 f"note: manifest generator_commit={manifest.generator_commit} "
-                f"but admin-project-tool HEAD={sha} — regenerate to refresh"
+                f"but admin-project-tool HEAD={sha} — run: admin regenerate"
             )
         return 0
 
@@ -381,9 +385,10 @@ def _ensure_tmp_gitignore(project_dir: Path) -> None:
 def main() -> int:
     require_python_311()
 
-    parser = argparse.ArgumentParser(prog="init-admin", description=__doc__)
+    parser = argparse.ArgumentParser(prog="admin-gen", description=__doc__)
     parser.add_argument("project_dir", nargs="?", default=".", help="project directory")
     parser.add_argument("--regenerate", action="store_true", help="reload admin.toml and regenerate ./admin")
+    parser.add_argument("--bootstrap", action="store_true", help="force bootstrap mode (detect + write admin.toml + generate)")
     parser.add_argument("--audit", action="store_true", help="diff ./admin against what would be regenerated")
     parser.add_argument("--force", action="store_true", help="overwrite existing admin.toml on bootstrap")
     parser.add_argument("--force-dirty", action="store_true", help="allow generation from dirty admin-project-tool tree")
@@ -396,7 +401,17 @@ def main() -> int:
 
     if args.audit:
         return cmd_audit(project_dir, args)
+    if args.regenerate and args.bootstrap:
+        err("--regenerate and --bootstrap are mutually exclusive")
+        return 1
     if args.regenerate:
+        return cmd_regenerate(project_dir, args)
+    if args.bootstrap:
+        return cmd_bootstrap(project_dir, args)
+
+    # Context-smart auto-detect: if admin.toml exists, regenerate; otherwise bootstrap.
+    manifest_path = project_dir / "admin.toml"
+    if manifest_path.exists():
         return cmd_regenerate(project_dir, args)
     return cmd_bootstrap(project_dir, args)
 

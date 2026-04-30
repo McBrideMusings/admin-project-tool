@@ -591,7 +591,7 @@ def _tui_menu():
     print(f"{C.BOLD}{_project_name}{C.RESET}\n")
     print_url_status()
     if _stale_generator:
-        print(f"{C.DIM}  ! tool updated — run: init-admin --regenerate{C.RESET}")
+        print(f"{C.DIM}  ! tool updated — run: admin regenerate{C.RESET}")
 
     for _ in range(menu_lines):
         sys.stdout.write("\n")
@@ -824,11 +824,16 @@ def boot(project_name, load_dotenv=True):
         return
 
     if cmd_name in ("regenerate", "regen"):
-        init_admin = os.path.expanduser("~/.admin/init-admin")
-        if not os.path.isfile(init_admin):
-            err("init-admin not found at ~/.admin/ — is admin-project-tool installed?")
-            sys.exit(1)
-        sys.exit(subprocess.call([init_admin, "--regenerate", _project_root]))
+        admin_gen = os.path.expanduser("~/.admin/admin-gen")
+        if not os.path.isfile(admin_gen):
+            admin_gen_fallback = os.path.expanduser("~/.admin/init-admin")
+            if os.path.isfile(admin_gen_fallback):
+                warn("admin-gen not found — falling back to init-admin (reinstall admin-project-tool to upgrade)")
+                admin_gen = admin_gen_fallback
+            else:
+                err("admin-gen not found at ~/.admin/ — is admin-project-tool installed?")
+                sys.exit(1)
+        sys.exit(subprocess.call([admin_gen, "--regenerate", _project_root] + sys.argv[2:]))
 
     all_cmds = _all_commands()
     if cmd_name not in all_cmds:
