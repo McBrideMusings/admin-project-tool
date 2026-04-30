@@ -172,3 +172,43 @@ def clean_with_db(paths, db_path, force=False, db_companions=("-shm", "-wal")):
 
     ok(f"clean done — freed {format_bytes(freed)}")
     return freed
+
+
+def clean_dev_from_config(cfg, force=False):
+    """Adapter: read a manifest `[clean_dev]` table and call `clean_with_db`.
+
+    Schema:
+        paths = [
+            {env, default?, label?},   # path resolved from env var (with optional default)
+            {path, label?},             # literal path (relative to cwd)
+            ...
+        ]
+        db = {env?, default?, file}    # db_path = (env_or_default)/file; or {path = "..."}
+    """
+    if not cfg:
+        return 0
+
+    paths = []
+    for entry in cfg.get("paths") or ():
+        if "env" in entry:
+            base = os.environ.get(entry["env"], entry.get("default", ""))
+        else:
+            base = entry.get("path", "")
+        if not base:
+            continue
+        if not os.path.isabs(base):
+            base = os.path.abspath(base)
+        paths.append((base, entry.get("label")))
+
+    db = cfg.get("db") or {}
+    if "path" in db:
+        db_path = db["path"]
+    elif "file" in db:
+        base = os.environ.get(db.get("env", ""), db.get("default", ""))
+        if base and not os.path.isabs(base):
+            base = os.path.abspath(base)
+        db_path = os.path.join(base, db["file"]) if base else db["file"]
+    else:
+        db_path = ""
+
+    return clean_with_db(paths=paths, db_path=db_path, force=force)

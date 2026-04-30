@@ -209,3 +209,72 @@ def run_vite_dev(
         f"cd {shlex.quote(backend_dir)} && {env_str} {backend_cmd}",
         "dev",
     )
+
+
+def vite_dev_from_config(cfg):
+    """Adapter: read a manifest `[vite_dev]` table and call `run_vite_dev`.
+
+    Schema:
+        vite_port, backend_port  : ints
+        data_dir                 : project-relative root for project-local data subdirs
+        data_subdirs             : [{name, env, is_data_root?}, ...] — created on disk;
+                                   `env` exports the abs path as that env var to the backend;
+                                   `is_data_root` marks which subdir becomes run_vite_dev's
+                                   `data_dir` (the symlink-mount root). Default: first entry.
+        frontend_dir, backend_dir, backend_cmd : strings (see run_vite_dev)
+        forward_env  : [str, ...] — env var names to copy from os.environ into backend_env
+                       if set (e.g. ["DEV_DOMAIN"])
+        vite_env     : {str: str, ...} — extra env for the vite child
+        mounts       : [{name, env?, default?, path?}, ...] — translated into the
+                       `name=path,name=path` string `run_vite_dev` consumes
+        backend_extra_env : {str: str, ...} — extra static env for the backend
+    """
+    if not cfg:
+        err("vite_dev_from_config: empty config")
+        return 1
+
+    project_data = os.path.abspath(cfg.get("data_dir", "data"))
+    subdirs = list(cfg.get("data_subdirs") or [])
+    backend_env = dict(cfg.get("backend_extra_env") or {})
+    data_root = None
+    for i, sub in enumerate(subdirs):
+        path = os.path.join(project_data, sub["name"])
+        os.makedirs(path, exist_ok=True)
+        env_name = sub.get("env")
+        if env_name:
+            backend_env[env_name] = path
+        if sub.get("is_data_root") or (data_root is None and i == 0):
+            data_root = path
+    if data_root is None:
+        os.makedirs(project_data, exist_ok=True)
+        data_root = project_data
+
+    for name in cfg.get("forward_env") or ():
+        v = os.environ.get(name, "").strip()
+        if v:
+            backend_env[name] = v
+
+    mount_parts = []
+    for m in cfg.get("mounts") or ():
+        name = m.get("name")
+        if not name:
+            continue
+        if "path" in m:
+            path = m["path"]
+        else:
+            path = os.environ.get(m.get("env", ""), m.get("default", ""))
+        if path:
+            mount_parts.append(f"{name}={path}")
+    mounts_raw = ",".join(mount_parts) if mount_parts else None
+
+    return run_vite_dev(
+        vite_port=cfg["vite_port"],
+        backend_port=cfg["backend_port"],
+        data_dir=data_root,
+        frontend_dir=cfg.get("frontend_dir", "web"),
+        backend_dir=cfg.get("backend_dir", "."),
+        backend_cmd=cfg.get("backend_cmd", "node server.js"),
+        backend_env=backend_env,
+        vite_env=cfg.get("vite_env") or {},
+        dev_mounts_raw=mounts_raw,
+    )

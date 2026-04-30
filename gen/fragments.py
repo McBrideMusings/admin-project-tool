@@ -351,6 +351,78 @@ def render_action(cmd: Command) -> str:
     return "\n".join(out) + "\n"
 
 
+def render_nuke_dev(cmd: Command) -> str:
+    """Kill all dev-server processes for this project. Reads `[dev_kill]` config table.
+
+    Body is a single function call; the config (ports, pidfiles, js_files,
+    web_subdirs) lives entirely in the manifest. Requires the 'ports' module.
+    """
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    body = textwrap.dedent(f"""\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            nuke_dev_from_config(globals().get("_DEV_KILL_CONFIG") or {{}})
+    """)
+    return body
+
+
+def render_clean_dev(cmd: Command) -> str:
+    """Clean caches/outputs and (if corrupt or --force) drop the SQLite DB.
+
+    Reads `[clean_dev]` config table. Calls cmd_kill first if `pre_kill = true`
+    so file handles are released before rmtree. Requires the 'cleanup' module.
+    """
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    body = textwrap.dedent(f"""\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            _cfg = globals().get("_CLEAN_DEV_CONFIG") or {{}}
+            if _cfg.get("pre_kill") and "cmd_kill" in globals():
+                cmd_kill(args)
+            clean_dev_from_config(_cfg, force=("--force" in args or "--db" in args))
+    """)
+    return body
+
+
+def render_vite_dev(cmd: Command) -> str:
+    """Run a Vite frontend + backend reload loop with project-local data dirs.
+
+    Reads `[vite_dev]` config table. Requires the 'web_dev' module.
+    """
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    body = textwrap.dedent(f"""\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            _cfg = globals().get("_VITE_DEV_CONFIG") or {{}}
+            if _cfg.get("pre_kill") and "cmd_kill" in globals():
+                cmd_kill(args)
+            return vite_dev_from_config(_cfg)
+    """)
+    return body
+
+
+def render_docker_unraid_build(cmd: Command) -> str:
+    """Sync project to remote and build the Docker image there. Reads `[deploy]`."""
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    body = textwrap.dedent(f"""\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            sys.exit(docker_remote_build(globals().get("_DEPLOY_CONFIG") or {{}}))
+    """)
+    return body
+
+
+def render_docker_unraid_deploy(cmd: Command) -> str:
+    """Sync, build on remote, recreate container. Reads `[deploy]`."""
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    body = textwrap.dedent(f"""\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            sys.exit(docker_remote_deploy(globals().get("_DEPLOY_CONFIG") or {{}}))
+    """)
+    return body
+
+
 _RENDERERS = {
     "shell": render_shell,
     "multi-target": render_multi_target,
@@ -363,7 +435,20 @@ _RENDERERS = {
     "sync": render_sync,
     "apple": render_apple,
     "kill-port": render_kill_port,
+    "nuke-dev": render_nuke_dev,
+    "clean-dev": render_clean_dev,
+    "vite-dev": render_vite_dev,
+    "docker-unraid-build": render_docker_unraid_build,
+    "docker-unraid-deploy": render_docker_unraid_deploy,
 }
+
+# Kinds whose command body is generated from a named manifest config table
+# rather than a `run` string. Manifest validation skips the run/targets/steps
+# requirement for these.
+CONFIGLESS_KINDS = frozenset({
+    "nuke-dev", "clean-dev", "vite-dev",
+    "docker-unraid-build", "docker-unraid-deploy",
+})
 
 KNOWN_KINDS = set(_RENDERERS)
 

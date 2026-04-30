@@ -19,6 +19,7 @@ _KNOWN_KEYS = {
     "project_name", "python_min", "archetypes", "modules", "urls",
     "commands", "actions", "order", "logs", "apple", "server", "output",
     "exclude_modules", "generator_commit", "inline", "logging",
+    "dev_kill", "clean_dev", "vite_dev", "deploy",
 }
 
 
@@ -52,6 +53,10 @@ class Manifest:
     server: dict = field(default_factory=dict)  # [server] table — server build/dev/deploy config, raw dict
     output: dict = field(default_factory=dict)  # [output] table — log column config per source
     logging: dict = field(default_factory=dict) # [logging] table — file logging config (enabled, dir, retain)
+    dev_kill: dict = field(default_factory=dict)  # [dev_kill] — config for kind="nuke-dev" commands
+    clean_dev: dict = field(default_factory=dict) # [clean_dev] — config for kind="clean-dev" commands
+    vite_dev: dict = field(default_factory=dict)  # [vite_dev] — config for kind="vite-dev" commands
+    deploy: dict = field(default_factory=dict)    # [deploy] — config for docker-unraid build/deploy commands
     actions: dict[str, dict] = field(default_factory=dict)    # action name -> raw dict (not shown in UI)
     exclude_modules: list[str] = field(default_factory=list)  # modules to suppress even if archetype requires them
     generator_commit: str | None = None
@@ -166,6 +171,22 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     if not isinstance(output, dict):
         raise ManifestError(f"{source}: '[output]' must be a table")
 
+    dev_kill = data.get("dev_kill", {}) or {}
+    if not isinstance(dev_kill, dict):
+        raise ManifestError(f"{source}: '[dev_kill]' must be a table")
+
+    clean_dev = data.get("clean_dev", {}) or {}
+    if not isinstance(clean_dev, dict):
+        raise ManifestError(f"{source}: '[clean_dev]' must be a table")
+
+    vite_dev = data.get("vite_dev", {}) or {}
+    if not isinstance(vite_dev, dict):
+        raise ManifestError(f"{source}: '[vite_dev]' must be a table")
+
+    deploy = data.get("deploy", {}) or {}
+    if not isinstance(deploy, dict):
+        raise ManifestError(f"{source}: '[deploy]' must be a table")
+
     logging_cfg = data.get("logging", {}) or {}
     if not isinstance(logging_cfg, dict):
         raise ManifestError(f"{source}: '[logging]' must be a table")
@@ -210,6 +231,10 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         server=server,
         output=output,
         logging=logging_cfg,
+        dev_kill=dev_kill,
+        clean_dev=clean_dev,
+        vite_dev=vite_dev,
+        deploy=deploy,
         exclude_modules=exclude_modules,
         generator_commit=data.get("generator_commit"),
         inline_file=inline_file,

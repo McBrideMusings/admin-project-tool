@@ -22,7 +22,7 @@ import importlib.util
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gen.fragments import KNOWN_KINDS
+from gen.fragments import KNOWN_KINDS, CONFIGLESS_KINDS
 from gen.manifest import Command, Manifest, SPACER
 
 
@@ -136,7 +136,10 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
             log.append(f"command '{cmd_name}' overridden by manifest")
             commands[cmd_name] = _to_command(cmd_name, merged, source="manifest")
         else:
-            if not (inline_targets or {"run", "targets", "steps"} & override.keys()):
+            kind = override.get("kind", "shell")
+            # Configless kinds (e.g. nuke-dev, vite-dev) get their body from a
+            # named manifest config table, not from a `run` string.
+            if kind not in CONFIGLESS_KINDS and not (inline_targets or {"run", "targets", "steps"} & override.keys()):
                 raise ArchetypeError(
                     f"manifest [commands.{cmd_name}] must include 'run', 'targets', or 'steps' "
                     f"(no archetype provides it)"
@@ -280,6 +283,8 @@ def _to_command(name: str, data: dict, source: str) -> Command:
     elif kind == "npm":
         if "run" not in data:
             raise ArchetypeError(f"command '{name}' from {source}: npm kind requires 'run' (script name)")
+    elif kind in CONFIGLESS_KINDS:
+        pass  # body is generated from a manifest config table; no run string needed
     elif "run" not in data and not targets:
         raise ArchetypeError(f"command '{name}' from {source}: missing 'run' or 'targets'")
 

@@ -103,6 +103,13 @@ def render(
     if m.output:
         output_decl = f"_OUTPUT_CONFIG = {_pyliteral(m.output)}\n"
 
+    # Emit [dev_kill], [clean_dev], [vite_dev], [deploy] config tables. Each
+    # is read by its corresponding kind renderer's generated function body.
+    dev_kill_decl = f"_DEV_KILL_CONFIG = {_pyliteral(m.dev_kill)}\n" if m.dev_kill else ""
+    clean_dev_decl = f"_CLEAN_DEV_CONFIG = {_pyliteral(m.clean_dev)}\n" if m.clean_dev else ""
+    vite_dev_decl = f"_VITE_DEV_CONFIG = {_pyliteral(m.vite_dev)}\n" if m.vite_dev else ""
+    deploy_decl = f"_DEPLOY_CONFIG = {_pyliteral(m.deploy)}\n" if m.deploy else ""
+
     # Emit configure_logging() call if [logging] is configured.
     logging_decl = ""
     if m.logging:
@@ -147,6 +154,10 @@ def render(
         f"{apple_decl}"
         f"{server_decl}"
         f"{output_decl}"
+        f"{dev_kill_decl}"
+        f"{clean_dev_decl}"
+        f"{vite_dev_decl}"
+        f"{deploy_decl}"
         f"{logging_decl}"
         f"{actions_block}"
         f"\n{commands_src}\n"

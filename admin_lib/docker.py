@@ -8,6 +8,7 @@ import atexit
 import glob
 import os
 import selectors
+import shlex
 import signal
 import subprocess
 import sys
@@ -27,6 +28,7 @@ from .core import (
     warn,
     err,
     register_cleanup,
+    resolve_env,
     run_cmd,
     _urls,
     check_url,
@@ -934,3 +936,122 @@ def register_open_command(urls=None):
             webbrowser.open(url_map[choice])
             ok(f"Opened {choice}")
         return 0
+
+
+def docker_remote_build(cfg):
+    """Sync project to a remote host and build a Docker image there.
+
+    For projects whose build needs the same OS / GPU / driver stack as the
+    deploy target (e.g. NVENC builds for an Unraid GPU host), building on
+    the remote is simpler than building locally and pushing through a
+    registry. Reads `[deploy]` config table.
+
+    Schema:
+        host        = "user@host" (or shell expansion like "${DEPLOY_HOST}")
+        remote_dir  = absolute path on remote where the project gets rsync'd
+        image       = docker image tag to build
+        exclude     = [str, ...] of rsync --exclude patterns (default sensible set)
+    Returns: process exit code (0 = success).
+    """
+    host = resolve_env(cfg.get("host", ""))
+    remote_dir = cfg.get("remote_dir", "/tmp/build")
+    image = cfg.get("image", "app")
+    excludes = cfg.get("exclude") or [
+        "node_modules", "data", "tmp", ".git", "*.db", "__pycache__",
+    ]
+    if not host:
+        err("docker_remote_build: 'host' is required in [deploy]")
+        return 1
+
+    info(f"Syncing project files to {host}:{remote_dir} ...")
+    excl = " ".join(f"--exclude {shlex.quote(e)}" for e in excludes)
+    rc = run_cmd(f"rsync -az --delete {excl} ./ {shlex.quote(host)}:{shlex.quote(remote_dir)}/")
+    if rc != 0:
+        err("rsync failed")
+        return rc
+    info(f"Building Docker image '{image}' on {host} ...")
+    rc = ssh_cmd(host, f"docker build -t {shlex.quote(image)} {shlex.quote(remote_dir)}", check=False)
+    if rc == 0:
+        ok(f"Image built on {host}: {image}")
+    return rc
+
+
+def docker_remote_deploy(cfg):
+    """Build on remote, then stop+rm+run a container with explicit run-args.
+
+    Like `docker_remote_build` but also recreates the container. Reads `[deploy]`.
+    Use this for the simple "I always want exactly these flags" case where
+    you do NOT want to inherit the existing container's run config (which is
+    what `remote_recreate_container` does for the standard `docker-unraid`
+    archetype). Suited to projects that own their run-config in admin.toml.
+
+    Schema (extends `docker_remote_build`):
+        container       = container name (defaults to image name)
+        bind_ip         = optional IP to bind to (e.g. tailscale IP)
+        port            = host port to publish (`{bind_ip:}port:internal_port`)
+        internal_port   = container port (default: same as host port)
+        run_flags       = extra `docker run` flags as a single string
+        mounts          = [{host, container, ro?}, ...]
+        env             = {NAME: value, ...} → -e flags (values pass through resolve_env)
+        url             = optional URL for the success message
+    """
+    host = resolve_env(cfg.get("host", ""))
+    image = cfg.get("image", "app")
+    container = cfg.get("container", image)
+    if not host:
+        err("docker_remote_deploy: 'host' is required in [deploy]")
+        return 1
+
+    info(f"Deploying to {host}")
+    rc = docker_remote_build(cfg)
+    if rc != 0:
+        return rc
+
+    appdata_mounts = []
+    for m in cfg.get("mounts") or ():
+        host_path = resolve_env(m.get("host", ""))
+        cont_path = m.get("container", "")
+        if not host_path or not cont_path:
+            continue
+        ro_suffix = ":ro" if m.get("ro") else ""
+        appdata_mounts.append(f"-v {shlex.quote(host_path)}:{shlex.quote(cont_path)}{ro_suffix}")
+    env_args = " ".join(
+        f"-e {shlex.quote(f'{k}={resolve_env(str(v))}')}"
+        for k, v in (cfg.get("env") or {}).items()
+    )
+    port = resolve_env(str(cfg.get("port", "")))
+    internal_port = cfg.get("internal_port", port or "80")
+    bind_ip = resolve_env(cfg.get("bind_ip", "")) or ""
+    port_arg = ""
+    if port:
+        bind_prefix = f"{bind_ip}:" if bind_ip else ""
+        port_arg = f"-p {bind_prefix}{port}:{internal_port}"
+    run_flags = resolve_env(cfg.get("run_flags", ""))
+
+    parts = [
+        port_arg,
+        run_flags,
+        " ".join(appdata_mounts),
+        env_args,
+    ]
+    run_args = " ".join(p for p in parts if p)
+
+    image_q = shlex.quote(image)
+    container_q = shlex.quote(container)
+
+    info("Restarting container...")
+    rc = ssh_cmd(
+        host,
+        (
+            f"docker stop {container_q} 2>/dev/null || true; "
+            f"docker rm {container_q} 2>/dev/null || true; "
+            f"docker run -d --restart unless-stopped --name {container_q} {run_args} {image_q}"
+        ),
+        check=False,
+    )
+    if rc == 0:
+        url = resolve_env(cfg.get("url", "")) if cfg.get("url") else ""
+        ok(f"Deployed{(' to ' + url) if url else ''}")
+    else:
+        err("Container start failed")
+    return rc

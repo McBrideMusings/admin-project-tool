@@ -519,3 +519,47 @@ def nuke_dev_processes(
     else:
         info("nothing was running")
     return len(killed)
+
+
+def nuke_dev_from_config(cfg):
+    """Adapter: read a manifest `[dev_kill]` table and call `nuke_dev_processes`.
+
+    Schema (each item optional):
+        ports     = [{port, label?}, ...] | [int, ...]
+        pidfiles  = [{path, format, key?} | {env, default?, format, key?}, ...]
+        js_files  = [str, ...]
+        web_subdirs = [str, ...]
+        runtimes    = [str, ...]
+    `${VAR}` placeholders in `path` strings are resolved at call time so that
+    machine-specific defaults (`/tmp/...`) work portably across environments.
+    """
+    if not cfg:
+        info("nothing was running")
+        return 0
+    pidfiles = []
+    for p in cfg.get("pidfiles") or ():
+        if "env" in p:
+            path = os.environ.get(p["env"], p.get("default", ""))
+        else:
+            path = p.get("path", "")
+        if not path:
+            continue
+        pidfiles.append({
+            "path": path,
+            "format": p.get("format", "int"),
+            "key": p.get("key", "pid"),
+        })
+    ports = []
+    for entry in cfg.get("ports") or ():
+        if isinstance(entry, dict):
+            ports.append((entry.get("port"), entry.get("label")))
+        else:
+            ports.append(entry)
+    return nuke_dev_processes(
+        project_root=os.getcwd(),
+        ports=ports,
+        pidfiles=pidfiles,
+        js_files=tuple(cfg.get("js_files") or ()),
+        web_subdirs=tuple(cfg.get("web_subdirs") or ()),
+        runtimes=tuple(cfg.get("runtimes") or ("bun", "node", "python", "python3")),
+    )
