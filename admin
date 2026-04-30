@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# @bundled admin_lib=2.0.0-dev sha=cae307120f3c modules=core generator_commit=4e8536a71aace02817d90a580c9b08e078d54fc6+dirty
+# @bundled admin_lib=2.0.0-dev sha=89029c8b0e7c modules=core generator_commit=293e2565fcb1baf1ca1fea60d363fa968fb0497f+dirty
 # Generated from admin.toml by admin-project-tool.
 # Regenerate: ~/.admin/init-admin --regenerate
 """admin — task runner for admin-project-tool."""
@@ -807,7 +807,7 @@ def boot(project_name, load_dotenv=True):
     all_cmds[cmd_name]["func"](args)
 
 # === project: admin-project-tool ===
-set_generator_commit("4e8536a71aace02817d90a580c9b08e078d54fc6+dirty")
+set_generator_commit("293e2565fcb1baf1ca1fea60d363fa968fb0497f+dirty")
 
 @command("test", "Run full test suite (Python + shell)")
 def cmd_test(args):
@@ -817,6 +817,7 @@ def cmd_test(args):
         ("python3", "tests/test_manifest.py"),
         ("python3", "tests/test_logtail.py"),
         ("python3", "tests/test_apple.py"),
+        ("python3", "tests/test_ports.py"),
         ("bash",    "tests/test_install.sh"),
     ]
     failed = []

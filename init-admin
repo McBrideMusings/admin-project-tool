@@ -35,7 +35,7 @@ from gen.manifest import (  # noqa: E402
     load as load_manifest,
     require_python_311,
 )
-from gen.archetypes import resolve  # noqa: E402
+from gen.archetypes import resolve, ResolvedManifest  # noqa: E402
 from gen.render import render, generator_commit_sha, RenderError  # noqa: E402
 from gen.detectors import detect as run_detectors  # noqa: E402
 
@@ -231,6 +231,10 @@ def cmd_audit(project_dir: Path, args) -> int:
     for issue in _audit_inline_code(manifest):
         warn(issue)
 
+    # Suggest kill-port if project binds TCP ports but has no kill command.
+    for suggestion in _audit_suggest_kill_port(resolved):
+        info(suggestion)
+
     if on_disk == script:
         ok("clean: ./admin matches admin.toml + current archetypes")
         if manifest.generator_commit and manifest.generator_commit != sha:
@@ -329,6 +333,19 @@ def _audit_inline_code(manifest: "Manifest") -> list[str]:
         )
 
     return issues
+
+
+def _audit_suggest_kill_port(resolved: ResolvedManifest) -> list[str]:
+    """Return a suggestion when the 'ports' module is bundled but no kill-port command exists."""
+    if "ports" not in resolved.modules:
+        return []
+    all_cmds = {**resolved.commands, **resolved.actions}
+    if any(c.kind == "kill-port" for c in all_cmds.values()):
+        return []
+    return [
+        "suggestion: project bundles the 'ports' module but has no kill-port command; "
+        "consider adding one (kind = \"kill-port\") to let devs free ports without restarting"
+    ]
 
 
 def _parse_bundled_modules(admin_src: str) -> set[str]:
