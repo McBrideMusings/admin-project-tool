@@ -294,7 +294,7 @@ def _to_command(name: str, data: dict, source: str) -> Command:
     )
 
 
-_MODULE_ORDER = ["core", "cache", "icons", "remote", "ports", "apple", "docker", "unraid", "web_dev", "log_format", "log_columns", "logtail", "install"]
+_MODULE_ORDER = ["core", "cache", "icons", "remote", "ports", "cleanup", "apple", "docker", "unraid", "web_dev", "log_format", "log_columns", "logtail", "install"]
 
 
 def _order_modules(modules: set[str]) -> list[str]:

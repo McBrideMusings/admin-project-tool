@@ -1,6 +1,6 @@
 project_name    = "admin-project-tool"
 python_min      = "3.11"
-generator_commit = "293e2565fcb1baf1ca1fea60d363fa968fb0497f+dirty"
+generator_commit = "ce5fbf55834485f6efa72a509b89782fd6c9e582+dirty"
 archetypes      = []
 modules         = ["core"]
 
