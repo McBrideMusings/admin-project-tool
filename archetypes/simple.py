@@ -9,17 +9,13 @@ ARCHETYPE = {
     "modules": ["core"],
     "urls": {},
     "commands": {
-        "build": {
-            "run": "echo 'TODO: set [commands.build.run] in admin.toml'",
-            "desc": "Build the project",
-        },
-        "test": {
-            "run": "echo 'TODO: set [commands.test.run] in admin.toml'",
-            "desc": "Run tests",
-        },
-        "clean": {
-            "run": "echo 'TODO: set [commands.clean.run] in admin.toml'",
-            "desc": "Remove build artifacts",
-        },
+        "build": {"desc": "Build the project", "steps": ["build"]},
+        "test":  {"desc": "Run tests",          "steps": ["test"]},
+        "clean": {"desc": "Remove build artifacts", "steps": ["clean"]},
+    },
+    "actions": {
+        "build": {"kind": "shell", "run": "echo 'TODO: set run in admin.toml [actions.build]'", "desc": "Build the project"},
+        "test":  {"kind": "shell", "run": "echo 'TODO: set run in admin.toml [actions.test]'",  "desc": "Run tests"},
+        "clean": {"kind": "shell", "run": "echo 'TODO: set run in admin.toml [actions.clean]'", "desc": "Remove build artifacts"},
     },
 }

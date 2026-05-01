@@ -37,12 +37,11 @@ def test_all_archetypes_load_and_validate():
         assert arch.commands, f"{name}: no commands"
         for cmd_name, data in arch.commands.items():
             assert isinstance(data, dict), f"{name}.{cmd_name}: not a dict"
-            has_run = bool(data.get("run"))
-            has_targets = bool(data.get("targets"))
-            assert has_run or has_targets, (
-                f"{name}.{cmd_name}: needs 'run' or 'targets'"
-            )
+            assert data.get("steps"), f"{name}.{cmd_name}: commands must have 'steps'"
             assert data.get("desc"), f"{name}.{cmd_name}: missing desc"
+        for action_name, data in arch.actions.items():
+            assert isinstance(data, dict), f"{name}.{action_name}: action not a dict"
+            assert data.get("kind") or data.get("run"), f"{name}.{action_name}: action needs kind or run"
     print(f"OK: {len(EXPECTED)} archetypes load and validate")
 
 
@@ -74,8 +73,8 @@ def test_composition_docker_unraid_plus_apple():
     script = render(resolved, LIB_DIR, generator_commit="test-sha")
     assert "def cmd_build" in script
     assert "def cmd_deploy" in script
-    assert "run_with_reload" in script  # docker-reload-loop fragment
-    assert "pick_target" in script      # multi-target fragment
+    assert "run_with_reload" in script  # docker-reload-loop action fragment
+    assert "pick_target" in script      # multi-target action fragment
     print("OK: docker-unraid + apple composition renders")
 
 
@@ -103,24 +102,35 @@ def test_hugo_roundtrip():
     )
     resolved = resolve(m, ARCH_DIR)
     script = render(resolved, LIB_DIR, generator_commit="test-sha")
-    assert "hugo --minify" in script
+    assert "hugo --minify" in script       # in action body
     assert "http://localhost:1313" in script
+    assert "run_command" in script          # commands route to actions via run_command
     print("OK: hugo round-trips")
 
 
 def test_unknown_command_key_rejected():
     try:
-        _to_command("bad", {"run": "echo hi", "desc": "test", "desription": "typo"}, source="test")
+        _to_command("bad", {"desc": "test", "steps": ["x"], "desription": "typo"}, source="test", is_action=False)
         assert False, "should have raised ArchetypeError"
     except ArchetypeError as e:
         assert "desription" in str(e)
-        assert "unknown keys" in str(e)
+        assert "invalid keys" in str(e)
     print("OK: unknown command key rejected")
+
+
+def test_command_with_run_rejected():
+    try:
+        _to_command("bad", {"run": "echo hi", "desc": "test"}, source="test", is_action=False)
+        assert False, "should have raised ArchetypeError"
+    except ArchetypeError as e:
+        assert "run" in str(e)
+        assert "Move kind/run/targets" in str(e)
+    print("OK: command with run= rejected")
 
 
 def test_invalid_kind_rejected():
     try:
-        _to_command("bad", {"run": "echo hi", "desc": "test", "kind": "bogus"}, source="test")
+        _to_command("bad", {"run": "echo hi", "desc": "test", "kind": "bogus"}, source="test", is_action=True)
         assert False, "should have raised ArchetypeError"
     except ArchetypeError as e:
         assert "bogus" in str(e)
@@ -141,11 +151,11 @@ def test_python_min_validation():
 
 
 def test_env_vars_from_urls():
-    cmds = [Command(name="x", run="echo ${HOST}", desc="test")]
+    cmds = [Command(name="x", run="echo ${HOST}", desc="test", kind="shell")]
     urls = {"prod": "${APP_URL:-http://localhost}", "dev": "http://localhost:8080"}
     lines = collect_env_var_calls(cmds, urls)
     var_names = " ".join(lines)
-    assert "HOST" in var_names, "should find HOST from command"
+    assert "HOST" in var_names, "should find HOST from action run string"
     assert "APP_URL" in var_names, "should find APP_URL from url"
     assert "http://localhost" in var_names, "should preserve default"
     lines_no_urls = collect_env_var_calls(cmds)
@@ -265,43 +275,54 @@ def test_logs_render_emits_register_call():
     print("OK: [logs] renders register_logs_command and inlines logtail")
 
 
-def test_render_python_kind_emits_verbatim_body():
-    """kind=python emits the `run` string as a Python block inside cmd_<name>.
+def test_render_python_action_emits_verbatim_body():
+    """kind=python actions emit the `run` string as a Python block.
 
-    Replaces the [inline] escape hatch for projects that need to call admin_lib
-    helpers with project-specific kwargs. No ${VAR} substitution — the body is
-    emitted verbatim, so any env access is explicit via os.environ.get.
+    No ${VAR} substitution — the body is emitted verbatim,
+    so any env access is explicit via os.environ.get.
     """
+    from gen.fragments import render_action
     cmd = Command(
         name="dev",
         run="run_vite_dev(vite_port=int(os.environ.get('VITE_PORT', 5173)))",
         desc="Run backend + frontend",
         kind="python",
     )
-    out = render_command(cmd)
-    assert '@command("dev", "Run backend + frontend")' in out, out
-    assert "def cmd_dev(args):" in out, out
-    assert "set_log_context(\"dev\")" in out, out
+    out = render_action(cmd)
+    assert "def _act_dev(args):" in out, out
+    assert "register_action" in out, out
     assert "run_vite_dev(vite_port=int(os.environ.get('VITE_PORT', 5173)))" in out, out
     assert "${" not in out, "python kind must not substitute ${VAR} placeholders"
-    print("OK: kind=python emits verbatim Python body")
+    print("OK: kind=python action emits verbatim Python body")
 
 
-def test_render_python_kind_rejects_empty_run():
+def test_render_python_action_rejects_empty_run():
+    from gen.fragments import render_action
     cmd = Command(name="dev", run="", desc="...", kind="python")
     try:
-        render_command(cmd)
+        render_action(cmd)
     except Exception as e:
         assert "needs 'run'" in str(e), e
-        print("OK: kind=python rejects empty run")
+        print("OK: kind=python action rejects empty run")
         return
     raise AssertionError("expected FragmentError for empty python run")
 
 
+def test_render_command_is_step_runner():
+    """Commands render as step-runners that call run_command for each step."""
+    cmd = Command(name="dev", run="", desc="Run dev", kind="steps",
+                  meta={"steps": ["dev-action"]})
+    out = render_command(cmd)
+    assert '@command("dev"' in out, out
+    assert "def cmd_dev(args):" in out, out
+    assert 'set_log_context("dev")' in out, out
+    assert 'run_command(_step)' in out, out
+    assert '"dev-action"' in out, out
+    print("OK: commands render as step-runners with set_log_context")
+
+
 def test_collect_env_vars_scans_python_os_environ_get():
-    """Python-kind commands that call os.environ.get('NAME') should surface the
-    env var in `./admin env` just like ${VAR} placeholders in shell commands do.
-    """
+    """Python-kind actions that call os.environ.get('NAME') surface the env var."""
     cmd = Command(
         name="dev",
         run=(
@@ -321,15 +342,16 @@ def test_collect_env_vars_scans_python_os_environ_get():
     print("OK: collect_env_var_calls finds os.environ.get in python-kind run")
 
 
-def test_render_python_kind_multiline_body_indented():
+def test_render_python_action_multiline_body_indented():
     """A multi-line Python body is indented to fit inside the generated def."""
+    from gen.fragments import render_action
     cmd = Command(
         name="boot",
         run="info('starting')\nrun_vite_dev(vite_port=5173)",
         desc="Boot it",
         kind="python",
     )
-    out = render_command(cmd)
+    out = render_action(cmd)
     assert "    info('starting')" in out, out
     assert "    run_vite_dev(vite_port=5173)" in out, out
     print("OK: kind=python indents multi-line body")
@@ -381,23 +403,18 @@ def test_log_false_override_propagated_in_merge():
 
 
 if __name__ == "__main__":
-    test_all_archetypes_load_and_validate()
-    test_composition_docker_unraid_plus_apple()
-    test_detector_composition()
-    test_hugo_roundtrip()
-    test_unknown_command_key_rejected()
-    test_invalid_kind_rejected()
-    test_python_min_validation()
-    test_env_vars_from_urls()
-    test_logs_section_parsed()
-    test_logs_rejects_unknown_default_env()
-    test_logs_env_vars_scanned()
-    test_seek_last_n_lines()
-    test_logs_render_emits_register_call()
-    test_render_python_kind_emits_verbatim_body()
-    test_render_python_kind_rejects_empty_run()
-    test_collect_env_vars_scans_python_os_environ_get()
-    test_render_python_kind_multiline_body_indented()
-    test_log_override_keys_propagated_in_merge()
-    test_log_false_override_propagated_in_merge()
-    print("\nAll tests passed.")
+    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    failed = 0
+    for fn in tests:
+        try:
+            fn()
+            print(f"OK  {fn.__name__}")
+        except Exception as e:
+            import traceback
+            print(f"FAIL {fn.__name__}: {e}")
+            traceback.print_exc()
+            failed += 1
+    if failed:
+        sys.exit(failed)
+    else:
+        print(f"\nAll {len(tests)} tests passed.")

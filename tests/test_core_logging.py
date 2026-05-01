@@ -5,6 +5,7 @@ and render/parse assertions for [logging] manifest config.
 """
 from __future__ import annotations
 
+import glob
 import os
 import sys
 import tempfile
@@ -25,7 +26,47 @@ LIB_DIR = REPO / "admin_lib"
 
 
 # ---------------------------------------------------------------------------
-# _rotate_log
+# _prune_logs
+# ---------------------------------------------------------------------------
+
+def test_prune_logs_retain_zero_keeps_all():
+    with tempfile.TemporaryDirectory() as d:
+        core.configure_logging({})
+        core._init("test", d)
+        os.makedirs(os.path.join(d, "tmp"), exist_ok=True)
+        for ts in ["2026-01-01_100000", "2026-01-01_110000"]:
+            Path(os.path.join(d, "tmp", f"dev.{ts}.log")).write_text("x")
+        core._prune_logs("dev", retain=0)
+        assert len(glob.glob(os.path.join(d, "tmp", "dev.*.log"))) == 2, "retain=0 disables pruning"
+
+
+def test_prune_logs_keeps_n_most_recent():
+    with tempfile.TemporaryDirectory() as d:
+        core.configure_logging({})
+        core._init("test", d)
+        os.makedirs(os.path.join(d, "tmp"), exist_ok=True)
+        timestamps = ["2026-01-01_100000", "2026-01-01_110000", "2026-01-01_120000"]
+        for ts in timestamps:
+            Path(os.path.join(d, "tmp", f"dev.{ts}.log")).write_text("x")
+        core._prune_logs("dev", retain=2)
+        remaining = sorted(glob.glob(os.path.join(d, "tmp", "dev.*.log")))
+        assert len(remaining) == 2, f"should keep 2, got {remaining}"
+        assert "2026-01-01_110000" in remaining[0]
+        assert "2026-01-01_120000" in remaining[1]
+
+
+def test_prune_logs_noop_when_under_limit():
+    with tempfile.TemporaryDirectory() as d:
+        core.configure_logging({})
+        core._init("test", d)
+        os.makedirs(os.path.join(d, "tmp"), exist_ok=True)
+        Path(os.path.join(d, "tmp", "dev.2026-01-01_100000.log")).write_text("x")
+        core._prune_logs("dev", retain=5)
+        assert len(glob.glob(os.path.join(d, "tmp", "dev.*.log"))) == 1, "should not delete"
+
+
+# ---------------------------------------------------------------------------
+# _rotate_log (still used by set_log_context_path)
 # ---------------------------------------------------------------------------
 
 def test_rotate_log_retain_zero_skips():
@@ -45,19 +86,6 @@ def test_rotate_log_retain_one():
         assert os.path.exists(p + ".1"), ".1 should be created"
         assert Path(p + ".1").read_text() == "original"
         assert not os.path.exists(p), "original removed after rotation"
-
-
-def test_rotate_log_retain_three_shifts():
-    with tempfile.TemporaryDirectory() as d:
-        p = os.path.join(d, "run.log")
-        Path(p + ".1").write_text("old1")
-        Path(p + ".2").write_text("old2")
-        Path(p).write_text("current")
-        core._rotate_log(p, retain=3)
-        assert Path(p + ".1").read_text() == "current"
-        assert Path(p + ".2").read_text() == "old1"
-        assert Path(p + ".3").read_text() == "old2"
-        assert not os.path.exists(p)
 
 
 def test_rotate_log_nonexistent_file_noop():
@@ -82,24 +110,29 @@ def test_set_log_context_disabled_when_logging_off():
     core.configure_logging({})
 
 
-def test_set_log_context_creates_file():
+def test_set_log_context_creates_timestamped_file():
     with tempfile.TemporaryDirectory() as d:
         core.configure_logging({})
         core._init("test", d)
         core.set_log_context("dev", "macos")
         assert os.path.exists(core.LOG_FILE), "set_log_context must create the log file"
-        assert core.LOG_FILE.endswith("dev-macos.log")
+        import re
+        assert re.search(r"dev-macos\.\d{4}-\d{2}-\d{2}_\d{6}\.log$", core.LOG_FILE), (
+            f"expected timestamped filename, got {core.LOG_FILE}"
+        )
 
 
-def test_set_log_context_with_retain_rotates():
+def test_set_log_context_prunes_old_files():
     with tempfile.TemporaryDirectory() as d:
         core.configure_logging({})
         core._init("test", d)
-        core.set_log_context("dev")
-        log_path = core.LOG_FILE
-        Path(log_path).write_text("first run")
-        core.set_log_context("dev", retain=1)
-        assert os.path.exists(log_path + ".1"), "previous log should be rotated to .1"
+        os.makedirs(os.path.join(d, "tmp"), exist_ok=True)
+        import time
+        for i in range(4):
+            core.set_log_context("dev", retain=3)
+            time.sleep(0.01)
+        remaining = glob.glob(os.path.join(d, "tmp", "dev.*.log"))
+        assert len(remaining) <= 3, f"should keep at most 3, got {len(remaining)}: {remaining}"
 
 
 # ---------------------------------------------------------------------------
@@ -207,33 +240,30 @@ def test_no_logging_config_no_configure_call():
 
 def test_log_false_suppresses_set_log_context():
     cmd = _to_command("build", {
-        "run": "xcodebuild",
         "desc": "Build",
-        "kind": "python",
+        "steps": ["build"],
         "log": False,
-    }, source="test")
+    }, source="test", is_action=False)
     out = render_command(cmd)
     assert "set_log_context" not in out, "log=false must suppress set_log_context emission"
 
 
 def test_log_retain_emitted_in_set_log_context():
     cmd = _to_command("build", {
-        "run": "xcodebuild",
         "desc": "Build",
-        "kind": "python",
+        "steps": ["build"],
         "log_retain": 7,
-    }, source="test")
+    }, source="test", is_action=False)
     out = render_command(cmd)
     assert "retain=7" in out, "log_retain must appear as retain= kwarg in set_log_context"
 
 
 def test_log_file_emits_set_log_context_path():
     cmd = _to_command("build", {
-        "run": "xcodebuild",
         "desc": "Build",
-        "kind": "python",
+        "steps": ["build"],
         "log_file": "custom/build.log",
-    }, source="test")
+    }, source="test", is_action=False)
     out = render_command(cmd)
     assert "set_log_context_path" in out
     assert "custom/build.log" in out

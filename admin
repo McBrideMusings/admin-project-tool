@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# @bundled admin_lib=2.0.0-dev sha=a0ba5442b87e modules=core generator_commit=b1c036c8b51e8fb088ed5316b13b0872ef5a5d73
+# @bundled admin_lib=2.0.0-dev sha=f68947c122a2 modules=core generator_commit=fc51f5a3219e45a250330d40e3f2561fa59a0449+dirty
 # Generated from admin.toml by admin-project-tool.
 # Regenerate: admin regenerate
 """admin — task runner for admin-project-tool."""
@@ -16,6 +16,8 @@ TUI menu, pick_target, process management, boot() entry point.
 """
 
 import atexit
+import datetime
+import glob
 import os
 import signal
 import subprocess
@@ -162,6 +164,11 @@ def _init(project_name, project_root=None):
     LOG_FILE = os.path.join(LOG_DIR, "run.log")
 
 
+def get_log_dir() -> str:
+    """Return the current LOG_DIR (late-binding for package import contexts)."""
+    return LOG_DIR
+
+
 def configure_logging(cfg: dict):
     """Store the [logging] config from admin.toml. Called at module level in generated scripts."""
     global LOG_CONFIG
@@ -177,9 +184,23 @@ def _apply_log_config():
         LOG_FILE = os.path.join(LOG_DIR, "run.log")
 
 
+def _prune_logs(stem, retain=None):
+    """Delete oldest timestamped log files for `stem`, keeping at most `retain`."""
+    n = retain if retain is not None else LOG_CONFIG.get("retain", 5)
+    if n == 0:
+        return
+    pattern = os.path.join(LOG_DIR, glob.escape(stem) + ".*.log")
+    existing = sorted(glob.glob(pattern))
+    for old in existing[:-n]:
+        try:
+            os.remove(old)
+        except OSError:
+            pass
+
+
 def _rotate_log(path, retain=None):
-    """Rotate a log file before overwriting, keeping up to retain old copies."""
-    n = retain if retain is not None else LOG_CONFIG.get("retain", 3)
+    """Rotate a log file using numbered suffixes (used by set_log_context_path)."""
+    n = retain if retain is not None else LOG_CONFIG.get("retain", 5)
     if n == 0 or not os.path.exists(path):
         return
     for i in range(n - 1, 0, -1):
@@ -202,19 +223,20 @@ def _prepare_log_file(path=None):
 
 
 def set_log_context(*parts, retain=None):
-    """Redirect LOG_FILE to a named log based on the command path.
+    """Redirect LOG_FILE to a timestamped log for this command run.
 
-    Example: set_log_context("dev", "macos") → tmp/dev-macos.log
-    The file is created/truncated (with rotation) immediately.
+    Example: set_log_context("dev") → tmp/dev.2026-05-01_143022.log
+    Old files matching the stem are pruned to retain the N most recent.
     """
     global LOG_FILE
     if LOG_CONFIG.get("enabled") is False:
         return
     name = "-".join(str(p) for p in parts if p)
-    LOG_FILE = os.path.join(LOG_DIR, f"{name}.log")
+    ts = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    LOG_FILE = os.path.join(LOG_DIR, f"{name}.{ts}.log")
     os.makedirs(LOG_DIR, exist_ok=True)
-    _rotate_log(LOG_FILE, retain)
     open(LOG_FILE, "w").close()
+    _prune_logs(name, retain)
 
 
 def set_log_context_path(path, retain=None):
@@ -598,11 +620,12 @@ def _tui_menu():
     old_settings = termios.tcgetattr(fd)
 
     menu_lines = num + 2
+    env_hint = "  [e] open .env" if os.path.exists(os.path.join(_project_root, ".env")) else ""
 
     print(f"{C.BOLD}{_project_name}{C.RESET}\n")
     print_url_status()
     if _stale_generator:
-        print(f"{C.DIM}  ! tool updated — run: admin regenerate{C.RESET}")
+        print(f"{C.DIM}  ! tool updated — auto-regen at next Claude session (or run: admin regenerate){C.RESET}")
 
     for _ in range(menu_lines):
         sys.stdout.write("\n")
@@ -622,7 +645,7 @@ def _tui_menu():
                 sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {name:<14}{C.RESET} {desc}\n")
             else:
                 sys.stdout.write(f"    {C.DIM}{name:<14}{C.RESET} {desc}\n")
-        sys.stdout.write(f"\033[2K\n\033[2K{C.DIM}  [arrows/j/k] navigate  [enter] run  [o] open config  [q/esc] quit{C.RESET}\n")
+        sys.stdout.write(f"\033[2K\n\033[2K{C.DIM}  [arrows/j/k] navigate  [enter] run  [o] open config{env_hint}  [q/esc] quit{C.RESET}\n")
         sys.stdout.write("\033[u")
         sys.stdout.flush()
 
@@ -639,6 +662,11 @@ def _tui_menu():
                 toml_path = os.path.join(_project_root, "admin.toml")
                 opener = "open" if sys.platform == "darwin" else "xdg-open"
                 subprocess.Popen([opener, toml_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elif key == "e":
+                env_path = os.path.join(_project_root, ".env")
+                if os.path.exists(env_path):
+                    opener = "open" if sys.platform == "darwin" else "xdg-open"
+                    subprocess.Popen([opener, env_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             elif key in ("up", "k"):
                 move(-1)
             elif key in ("down", "j"):
@@ -648,7 +676,6 @@ def _tui_menu():
                 sys.stdout.flush()
                 info(f"./admin {items[sel]}")
                 print()
-                _prepare_log_file()
                 _commands[items[sel]]["func"]([])
                 return
     except (KeyboardInterrupt, EOFError):
@@ -859,8 +886,6 @@ def boot(project_name, load_dotenv=True):
         _subcommand_help[cmd_name]()
         return
 
-    _prepare_log_file()
-
     all_cmds[cmd_name]["func"](args)
 
 
@@ -923,14 +948,13 @@ def register_builtin_logs_command():
         _cmd_logs_impl(args)
 
 # === project: admin-project-tool ===
-set_generator_commit("b1c036c8b51e8fb088ed5316b13b0872ef5a5d73")
+set_generator_commit("fc51f5a3219e45a250330d40e3f2561fa59a0449+dirty")
 
-@command("test", "Run full test suite (Python + shell)")
-def cmd_test(args):
-    set_log_context("test")
+def _act_test(args):
     scripts = [
         ("python3", "tests/test_archetypes.py"),
         ("python3", "tests/test_manifest.py"),
+        ("python3", "tests/test_core_logging.py"),
         ("python3", "tests/test_logtail.py"),
         ("python3", "tests/test_apple.py"),
         ("python3", "tests/test_ports.py"),
@@ -945,15 +969,29 @@ def cmd_test(args):
         err("FAILED: " + ", ".join(failed))
         sys.exit(1)
     ok(str(len(scripts)) + " test suites passed")
+register_action("test", _act_test)
 
-@command("install", "Install to ~/.admin")
-def cmd_install(args):
+def _act_install(args):
     info("running: bash install.sh")
     rc = run_cmd("bash install.sh")
     if rc != 0:
         err("install failed")
         sys.exit(rc)
     ok("install complete")
+register_action("install", _act_install)
+
+
+@command("test", "Run full test suite (Python + shell)")
+def cmd_test(args):
+    set_log_context("test")
+    for _step in ["test"]:
+        run_command(_step)
+
+@command("install", "Install to ~/.admin")
+def cmd_install(args):
+    set_log_context("install")
+    for _step in ["install"]:
+        run_command(_step)
 
 register_builtin_logs_command()
 if __name__ == "__main__":

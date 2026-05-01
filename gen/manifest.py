@@ -126,9 +126,10 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
 
     custom_normalized: dict[str, dict] = {}
     for name, val in custom.items():
-        if not isinstance(val, dict) or ("run" not in val and "steps" not in val):
+        if not isinstance(val, dict) or "steps" not in val:
             raise ManifestError(
-                f"{source}: commands.custom.{name} must be a table with 'run' or 'steps'"
+                f"{source}: commands.custom.{name} must be a table with 'steps' (a list of action names). "
+                f"Move run/kind/targets to [actions]."
             )
         custom_normalized[name] = val
 

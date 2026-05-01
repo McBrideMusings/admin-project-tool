@@ -24,18 +24,30 @@ class FragmentError(Exception):
 
 
 def render_command(cmd: Command) -> str:
-    """Return a Python function definition for the given command.
+    """Render a step-runner @command function. Commands are pure routing — no work here.
 
-    The emitted function expects to be in scope of admin_lib.core (info, run_cmd,
-    register_env_var, ok, err — already imported by the generated header).
+    Injects set_log_context at the top so each command run gets its own timestamped log.
     """
-    renderer = _RENDERERS.get(cmd.kind)
-    if renderer is None:
-        raise FragmentError(
-            f"unknown command kind '{cmd.kind}' for command '{cmd.name}' "
-            f"(known kinds: {sorted(_RENDERERS)})"
-        )
-    return renderer(cmd)
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    steps = cmd.meta.get("steps", [])
+    if not steps:
+        raise FragmentError(f"command '{cmd.name}' has no steps")
+    steps_literal = "[" + ", ".join(_pyrepr(s) for s in steps) + "]"
+    log_cfg = cmd.meta.get("logging", {})
+    if log_cfg.get("log") is False:
+        log_line = ""
+    elif "log_file" in log_cfg:
+        log_line = f"    set_log_context_path({_pyrepr(log_cfg['log_file'])})\n"
+    else:
+        retain_arg = f", retain={log_cfg['log_retain']}" if "log_retain" in log_cfg else ""
+        log_line = f"    set_log_context({_pyrepr(cmd.name)}{retain_arg})\n"
+    return (
+        f"@command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})\n"
+        f"def {func_name}(args):\n"
+        f"{log_line}"
+        f"    for _step in {steps_literal}:\n"
+        f"        run_command(_step)\n"
+    )
 
 
 def render_shell(cmd: Command) -> str:
@@ -155,7 +167,7 @@ def render_python(cmd: Command) -> str:
     `kind = "python"` command here.
     """
     if not cmd.run:
-        raise FragmentError(f"python command '{cmd.name}' needs 'run' (a Python block)")
+        raise FragmentError(f"python action '{cmd.name}' needs 'run' (a Python block)")
     func_name = "cmd_" + _safe_ident(cmd.name)
     indented = textwrap.indent(cmd.run.strip(), "    ")
     log_cfg = cmd.meta.get("logging", {})
@@ -164,11 +176,8 @@ def render_python(cmd: Command) -> str:
         log_line = ""
     elif "log_file" in log_cfg:
         log_line = f"    set_log_context_path({_pyrepr(log_cfg['log_file'])}{retain_arg})\n"
-    elif "set_log_context(" in cmd.run or "set_log_context_path(" in cmd.run:
-        # log_retain overrides don't apply to verbatim body calls
-        log_line = ""
     else:
-        log_line = f"    set_log_context({_pyrepr(cmd.name)}{retain_arg})\n"
+        log_line = ""
     body = (
         f"@command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})\n"
         f"def {func_name}(args):\n"
@@ -220,21 +229,6 @@ def render_http(cmd: Command) -> str:
     ]
     return "\n".join(lines)
 
-
-def render_sequence(cmd: Command) -> str:
-    """A command that runs a list of other commands in order, stopping on first failure."""
-    steps = cmd.meta.get("steps", [])
-    if not steps:
-        raise FragmentError(f"sequence command '{cmd.name}' has no steps")
-    func_name = "cmd_" + _safe_ident(cmd.name)
-    steps_literal = "[" + ", ".join(_pyrepr(s) for s in steps) + "]"
-    body = textwrap.dedent(f"""\
-        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
-        def {func_name}(args):
-            for _step in {steps_literal}:
-                run_command(_step)
-    """)
-    return body
 
 
 def render_npm(cmd: Command) -> str:
@@ -342,8 +336,14 @@ def render_kill_port(cmd: Command) -> str:
 
 
 def render_action(cmd: Command) -> str:
-    """Render a command as a registered action (hidden from TUI/--help, callable via run_command)."""
-    src = render_command(cmd)
+    """Render an action using kind-based renderers (hidden from TUI/--help, callable via run_command)."""
+    renderer = _ACTION_RENDERERS.get(cmd.kind)
+    if renderer is None:
+        raise FragmentError(
+            f"unknown action kind '{cmd.kind}' for action '{cmd.name}' "
+            f"(known kinds: {sorted(_ACTION_RENDERERS)})"
+        )
+    src = renderer(cmd)
     ident = _safe_ident(cmd.name)
     lines = src.rstrip("\n").split("\n")
     out = []
@@ -431,14 +431,13 @@ def render_docker_unraid_deploy(cmd: Command) -> str:
     return body
 
 
-_RENDERERS = {
+_ACTION_RENDERERS = {
     "shell": render_shell,
     "multi-target": render_multi_target,
     "apple-dev-loop": render_apple_dev_loop,
     "docker-reload-loop": render_docker_reload_loop,
     "python": render_python,
     "http": render_http,
-    "sequence": render_sequence,
     "npm": render_npm,
     "sync": render_sync,
     "apple": render_apple,
@@ -450,15 +449,14 @@ _RENDERERS = {
     "docker-unraid-deploy": render_docker_unraid_deploy,
 }
 
-# Kinds whose command body is generated from a named manifest config table
-# rather than a `run` string. Manifest validation skips the run/targets/steps
-# requirement for these.
+# Kinds whose action body is generated from a named manifest config table
+# rather than a `run` string.
 CONFIGLESS_KINDS = frozenset({
     "nuke-dev", "clean-dev", "vite-dev",
     "docker-unraid-build", "docker-unraid-deploy",
 })
 
-KNOWN_KINDS = set(_RENDERERS)
+KNOWN_KINDS = set(_ACTION_RENDERERS)
 
 
 def _safe_ident(name: str) -> str:
@@ -519,7 +517,7 @@ def collect_env_var_calls(
 
     for cmd in commands:
         origin = f"cmd:{cmd.name}"
-        if cmd.kind != "sequence":
+        if cmd.kind != "steps":
             _scan_for_env_vars(cmd.run, _ENV_VAR_RE, seen, origin)
         if cmd.kind == "python":
             _scan_for_env_vars(cmd.run, _PY_ENV_RE, seen, origin)

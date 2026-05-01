@@ -52,8 +52,8 @@ def render(
         modules.append("logtail")
         resolved.modules = modules
 
-    # kill-port commands require the ports module.
-    kill_port_cmds = [c for c in resolved.commands.values() if c.kind == "kill-port"]
+    # kill-port actions require the ports module.
+    kill_port_cmds = [c for c in resolved.actions.values() if c.kind == "kill-port"]
     if kill_port_cmds and "ports" not in resolved.modules:
         names = ", ".join(f"'{c.name}'" for c in kill_port_cmds)
         raise RenderError(

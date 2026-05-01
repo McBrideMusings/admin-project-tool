@@ -32,20 +32,15 @@ archetypes = ["hugo"]          # zero or more; merged in listed order
 dev  = "http://localhost:1313"
 prod = "https://pierce.dev"
 
-[targets]                       # optional; for multi-target archetypes (apple mac|ios, etc.)
-# default = "mac"
-# allowed = ["mac", "ios"]
+[commands]                      # override or add commands (desc + steps only)
+# Override: archetype provided `build`; we change its description.
+# build = { desc = "My production build" }
 
-[commands]                      # override or extend archetype-provided commands
-# Override: archetype provided `build`; we replace the shell string.
-# build = { run = "hugo --minify", desc = "Production build" }
+# Add a new command not from any archetype:
+# warm-cache = { desc = "Warm CDN cache", steps = ["warm-cache"] }
 
-[commands.custom]               # purely project-specific, not from any archetype
-# warm-cache = { run = "./scripts/warm.sh", desc = "Warm CDN cache" }
-
-[inline]                        # escape hatch: raw Python blocks inlined verbatim
-# Rare. Use only when a shell string genuinely can't express the logic.
-# file = "admin_inline.py"
+[actions]                       # where work actually happens (kind + run/targets/etc.)
+# warm-cache = { kind = "shell", run = "./scripts/warm.sh", desc = "Warm CDN cache" }
 
 order = ["build", "dev", "deploy", "", "test", "clean"]
 # Display order for the TUI menu and --help. "" (or "---") inserts a blank
@@ -54,6 +49,8 @@ order = ["build", "dev", "deploy", "", "test", "clean"]
 # auto-append after the listed ones in merge order. If `order` is not set
 # on the manifest, the last archetype's declared `order` is used.
 ```
+
+**Command/Action split:** `[commands]` entries are thin routing layers — they may only have `desc` and `steps` (a list of action names). All actual work (shell strings, Python bodies, multi-target dispatch) lives in `[actions]`. Commands are the TUI menu entries; actions are the implementation. The generator errors with a clear message if a `[commands]` entry contains `kind`, `run`, or `targets`.
 
 Every key is optional except `project_name` and `archetypes` (may be empty list).
 
@@ -88,12 +85,14 @@ Each `kind` is a renderer that knows how to wire up a specific operation. The `r
 
 **Good — declarative:**
 ```python
+"commands": {
+    "deploy": {"desc": "Full deploy", "steps": ["npm-build", "sync-dist", "reload"]},
+},
 "actions": {
     "build-ios":  {"kind": "apple", "run": "build_ios",  "desc": "build iOS"},
     "npm-build":  {"kind": "npm",   "run": "build",      "desc": "run npm build"},
     "sync-dist":  {"kind": "sync",  "run": "${DEPLOY_TARGET}/app", "desc": "sync dist/"},
     "reload":     {"kind": "http",  "run": "${APP_URL}/reload", "method": "POST"},
-    "full-build": {"kind": "sequence", "steps": ["npm-build", "sync-dist", "reload"]},
 }
 ```
 
@@ -120,17 +119,29 @@ If an action needs to call a library function with a config dict, and no existin
 
 Example: `kind = "apple"` renders `<run>(globals().get("_APPLE_CONFIG") or {})`. Any new config-backed function family (server, docker, etc.) follows the same pattern — add `kind = "server"` backed by `_SERVER_CONFIG`, etc.
 
-### `kind = "python"` is for top-level command logic only
+### `kind = "python"` is for complex action logic only
 
-Complex top-level commands — ones that parse args, pick targets, branch on config presence, and dispatch to multiple paths — are legitimately expressed as `kind = "python"`. The apple archetype's `build`, `dev`, and `deploy` are the canonical examples: they handle `mac | ios | server` target selection, `--force`, `--log`, `--clean` flags, and multi-step orchestration that can't be expressed in a single function call.
+Complex orchestration — ones that parse args, pick targets, branch on config presence, and dispatch to multiple paths — are legitimately expressed as `kind = "python"` **actions**. The apple archetype's `build`, `dev`, and `deploy` actions are the canonical examples: they handle `mac | ios | server` target selection, `--force`, `--log`, `--clean` flags, and multi-step orchestration.
 
 `kind = "python"` is **not** appropriate for actions that are a single function call with a config dict. Those belong in a typed kind.
 
-### Actions vs commands
+### Commands vs actions — the key rule
 
-Actions (`archetype["actions"]`) are building blocks: hidden from the TUI and `--help`, callable only by sequences and `@ref` targets. Commands (`archetype["commands"]`) are the user-facing surface.
+**Commands** (`archetype["commands"]`) are pure routing: TUI menu entries with `desc` and `steps` only. They may not have `kind`, `run`, or `targets`. Each command calls one or more actions in order. The generator validates this and errors clearly on violations.
 
-A well-authored archetype exposes a small set of composed top-level commands and a richer set of per-target actions for manifests to compose freely. The apple archetype's `build-ios`, `dev-ios`, `dev-device`, `deploy-ios`, and `clean-ios` actions let any manifest build a `kind = "multi-target"` command with iOS as one target — without touching Python.
+**Actions** (`archetype["actions"]`) are the implementation: hidden from TUI and `--help`, callable via `run_command`. They have `kind` + `run`/`targets`/etc. All actual work — shell strings, Python bodies, multi-target dispatch, apple function calls — lives in actions.
+
+The canonical pattern:
+```python
+"commands": {
+    "build": {"desc": "Build the project", "steps": ["build"]},
+},
+"actions": {
+    "build": {"kind": "shell", "run": "make all", "desc": "Build the project"},
+}
+```
+
+A well-authored archetype exposes a small set of composed top-level commands and a richer set of per-target actions for manifests to compose freely. The apple archetype's `build-ios`, `dev-ios`, `dev-device`, `deploy-ios`, and `clean-ios` actions let any manifest build a `kind = "multi-target"` action with iOS as one target.
 
 ## Detectors (starter generators)
 
@@ -158,7 +169,7 @@ Top-level flow in `admin-gen`:
 5. **Render** — emit the Python admin script as: shebang → header → inlined `admin_lib` → generated command functions (one per merged command, each calling `run_cmd(shell_string)`) → `set_urls()` call → `boot()`.
 6. **Write** `./admin` (executable) + `tmp/.gitignore`.
 
-Rendering uses a small set of **code fragments** (not full templates) — one per command *kind* (shell-string, multi-target, apple dev loop, docker reload loop). Each archetype declares which fragment backs each of its commands. This is how archetype composition actually becomes code: the generator stitches fragments together, not whole files.
+Rendering uses a small set of **code fragments** (not full templates) — one per action *kind* (`_ACTION_RENDERERS` in `gen/fragments.py`: shell, multi-target, python, apple, docker-reload-loop, and configless kinds). Commands always render as step-runners (`set_log_context` + `run_command` loop); actions use kind-based fragments. This is how archetype composition actually becomes code: the generator stitches fragments together, not whole files.
 
 ## Regeneration & Drift Audit
 

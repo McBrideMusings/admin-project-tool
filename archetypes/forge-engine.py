@@ -125,26 +125,16 @@ ARCHETYPE = {
     "modules": ["core"],
     "urls": {},
     "commands": {
-        "build": {
-            "kind": "python",
-            "desc": "Build the engine for a target OS (mac | windows | linux)",
-            "run": _BUILD_PY,
-        },
-        "dev": {
-            "kind": "python",
-            "desc": "Run a sample game (auto-picks if one, picker if many)",
-            "run": _DEV_PY,
-        },
-        "test": {
-            "kind": "python",
-            "desc": "Run unit tests (none wired up yet)",
-            "run": _TEST_PY,
-        },
-        "clean": {
-            "kind": "python",
-            "desc": "Remove engine/zig-cache and engine/zig-out",
-            "run": _CLEAN_PY,
-        },
+        "build": {"desc": "Build the engine for a target OS (mac | windows | linux)", "steps": ["build"]},
+        "dev":   {"desc": "Run a sample game (auto-picks if one, picker if many)",    "steps": ["dev"]},
+        "test":  {"desc": "Run unit tests (none wired up yet)",                       "steps": ["test"]},
+        "clean": {"desc": "Remove engine/zig-cache and engine/zig-out",               "steps": ["clean"]},
+    },
+    "actions": {
+        "build": {"kind": "python", "desc": "Build the engine for a target OS (mac | windows | linux)", "run": _BUILD_PY},
+        "dev":   {"kind": "python", "desc": "Run a sample game (auto-picks if one, picker if many)",    "run": _DEV_PY},
+        "test":  {"kind": "python", "desc": "Run unit tests (none wired up yet)",                       "run": _TEST_PY},
+        "clean": {"kind": "python", "desc": "Remove engine/zig-cache and engine/zig-out",               "run": _CLEAN_PY},
     },
     "order": ["build", "dev", "", "test", "clean"],
 }

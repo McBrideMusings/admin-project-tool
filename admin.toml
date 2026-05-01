@@ -1,16 +1,25 @@
 project_name    = "admin-project-tool"
 python_min      = "3.11"
-generator_commit = "b1c036c8b51e8fb088ed5316b13b0872ef5a5d73"
+generator_commit = "fc51f5a3219e45a250330d40e3f2561fa59a0449+dirty"
 archetypes      = []
 modules         = ["core"]
 
 [commands.test]
+desc  = "Run full test suite (Python + shell)"
+steps = ["test"]
+
+[commands.install]
+desc  = "Install to ~/.admin"
+steps = ["install"]
+
+[actions.test]
 kind = "python"
 desc = "Run full test suite (Python + shell)"
 run = """
 scripts = [
     ("python3", "tests/test_archetypes.py"),
     ("python3", "tests/test_manifest.py"),
+    ("python3", "tests/test_core_logging.py"),
     ("python3", "tests/test_logtail.py"),
     ("python3", "tests/test_apple.py"),
     ("python3", "tests/test_ports.py"),
@@ -27,7 +36,7 @@ if failed:
 ok(str(len(scripts)) + " test suites passed")
 """
 
-[commands.install]
+[actions.install]
 kind = "shell"
 desc = "Install to ~/.admin"
 run  = "bash install.sh"

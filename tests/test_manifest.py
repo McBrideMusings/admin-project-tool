@@ -78,27 +78,23 @@ def test_exclude_modules_empty_not_emitted():
 # ---------------------------------------------------------------------------
 
 def test_inline_table_nested_dict_round_trips():
-    """A command with targets = {mac = "...", ios = "..."} must survive dump+parse."""
-    m = _base_manifest(custom={"build": {
-        "run": "",
-        "desc": "Build",
-        "kind": "multi-target",
-        "targets": {"mac": "xcodebuild mac", "ios": "xcodebuild ios"},
+    """A command override with a steps list must survive dump+parse."""
+    m = _base_manifest(overrides={"build": {
+        "desc": "Build all",
+        "steps": ["build-mac", "build-ios"],
     }})
     toml = dump(m)
     m2 = parse(tomllib.loads(toml))
-    targets = m2.custom["build"].get("targets")
-    assert targets == {"mac": "xcodebuild mac", "ios": "xcodebuild ios"}, (
-        f"nested targets dict not preserved after round-trip; got {targets!r}"
+    steps = m2.overrides["build"].get("steps")
+    assert steps == ["build-mac", "build-ios"], (
+        f"steps list not preserved after round-trip; got {steps!r}"
     )
 
 
 def test_inline_table_list_value_round_trips():
-    """A command with a list-valued field (e.g. steps) must survive dump+parse."""
+    """A command with a list-valued field (steps) must survive dump+parse."""
     m = _base_manifest(custom={"deploy": {
-        "run": "",
         "desc": "Deploy",
-        "kind": "sequence",
         "steps": ["build", "push"],
     }})
     toml = dump(m)

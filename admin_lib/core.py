@@ -5,6 +5,8 @@ TUI menu, pick_target, process management, boot() entry point.
 """
 
 import atexit
+import datetime
+import glob
 import os
 import signal
 import subprocess
@@ -171,9 +173,23 @@ def _apply_log_config():
         LOG_FILE = os.path.join(LOG_DIR, "run.log")
 
 
+def _prune_logs(stem, retain=None):
+    """Delete oldest timestamped log files for `stem`, keeping at most `retain`."""
+    n = retain if retain is not None else LOG_CONFIG.get("retain", 5)
+    if n == 0:
+        return
+    pattern = os.path.join(LOG_DIR, glob.escape(stem) + ".*.log")
+    existing = sorted(glob.glob(pattern))
+    for old in existing[:-n]:
+        try:
+            os.remove(old)
+        except OSError:
+            pass
+
+
 def _rotate_log(path, retain=None):
-    """Rotate a log file before overwriting, keeping up to retain old copies."""
-    n = retain if retain is not None else LOG_CONFIG.get("retain", 3)
+    """Rotate a log file using numbered suffixes (used by set_log_context_path)."""
+    n = retain if retain is not None else LOG_CONFIG.get("retain", 5)
     if n == 0 or not os.path.exists(path):
         return
     for i in range(n - 1, 0, -1):
@@ -196,19 +212,20 @@ def _prepare_log_file(path=None):
 
 
 def set_log_context(*parts, retain=None):
-    """Redirect LOG_FILE to a named log based on the command path.
+    """Redirect LOG_FILE to a timestamped log for this command run.
 
-    Example: set_log_context("dev", "macos") → tmp/dev-macos.log
-    The file is created/truncated (with rotation) immediately.
+    Example: set_log_context("dev") → tmp/dev.2026-05-01_143022.log
+    Old files matching the stem are pruned to retain the N most recent.
     """
     global LOG_FILE
     if LOG_CONFIG.get("enabled") is False:
         return
     name = "-".join(str(p) for p in parts if p)
-    LOG_FILE = os.path.join(LOG_DIR, f"{name}.log")
+    ts = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    LOG_FILE = os.path.join(LOG_DIR, f"{name}.{ts}.log")
     os.makedirs(LOG_DIR, exist_ok=True)
-    _rotate_log(LOG_FILE, retain)
     open(LOG_FILE, "w").close()
+    _prune_logs(name, retain)
 
 
 def set_log_context_path(path, retain=None):
@@ -487,7 +504,7 @@ def run_command(name, args=None):
         return
     cmds = _all_commands()
     if name not in cmds:
-        err(f"sequence: unknown step '{name}'")
+        err(f"run_command: unknown action or command '{name}'")
         sys.exit(1)
     cmds[name]["func"](args)
 
@@ -648,7 +665,6 @@ def _tui_menu():
                 sys.stdout.flush()
                 info(f"./admin {items[sel]}")
                 print()
-                _prepare_log_file()
                 _commands[items[sel]]["func"]([])
                 return
     except (KeyboardInterrupt, EOFError):
@@ -858,8 +874,6 @@ def boot(project_name, load_dotenv=True):
     if ("-h" in args or "--help" in args) and cmd_name in _subcommand_help:
         _subcommand_help[cmd_name]()
         return
-
-    _prepare_log_file()
 
     all_cmds[cmd_name]["func"](args)
 
