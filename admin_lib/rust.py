@@ -258,6 +258,24 @@ def clean_server(cfg):
         ok(server_dir + "/target removed.")
 
 
+def clean_bundled_binaries(cfg):
+    """Remove pre-built cross-platform server binaries from
+    ``<server_dir>/bundled-binaries/``. They get regenerated on the next
+    ``./admin build server`` via ``ensure_binaries`` (slow — hits
+    cross-compilation), so this is a deeper clean than ``clean_server``.
+    """
+    server_dir = cfg.get("dir")
+    if not server_dir:
+        err("server.dir not set"); sys.exit(1)
+    out_dir = os.path.join(server_dir, "bundled-binaries")
+    if not os.path.isdir(out_dir):
+        info(f"{out_dir} not present — nothing to clean")
+        return
+    rc = run_cmd("rm -rf " + out_dir)
+    if rc == 0:
+        ok(out_dir + " removed.")
+
+
 def ensure_binaries(server_dir, platforms, binary_name="server", rebuild_fn=None):
     """Rebuild bundled server binaries if source has changed.
 

@@ -12,7 +12,9 @@ The convention for letting a Debug ("dev") build coexist with a Release
   ``extra_settings`` to ``xcodebuild_filtered`` during the Debug build, then
   call ``dev_macos_postprocess(built, MAC_DEV_PRODUCT_NAME, MAC_DEV_DISPLAY_NAME)``
   on the resulting ``.app`` to rename it, patch ``CFBundleDisplayName`` in
-  Info.plist, and re-sign ad-hoc. The rename is what gives Finder / Launchpad
+  Info.plist, and re-sign ad-hoc. Do **not** put ``PRODUCT_BUNDLE_IDENTIFIER=``
+  into the manifest's ``dev_build_settings`` — that string is
+  platform-agnostic and would force one platform's bundle ID onto the other. The rename is what gives Finder / Launchpad
   / Dock a distinct entry; the ad-hoc re-sign is required because the rename
   + plist patch invalidates the original signature.
 
@@ -30,16 +32,29 @@ The convention for letting a Debug ("dev") build coexist with a Release
   ``.xcconfig`` or Info.plist setup at the Xcode-project level, which is
   outside admin-project-tool's scope.
 
-Recommended downstream naming (so consumers of these helpers stay readable):
-``MAC_PROD_BUNDLE``, ``MAC_DEV_BUNDLE``, ``MAC_PROD_PRODUCT_NAME``,
-``MAC_DEV_PRODUCT_NAME``, and iOS analogs. Spelling both ``PROD`` and ``DEV``
-explicitly avoids the trap of an unprefixed ``DEV_PRODUCT_NAME`` that
-actually holds the prod name (the path that shipped before the rename/plutil
-split).
+Defaults
+--------
+The dev wrappers (``dev_mac``, ``dev_ios``, ``dev_device``) auto-derive every
+dev-side identifier from the production values so a manifest only needs the
+prod keys (``mac_bundle``, ``ios_bundle``, ``mac_scheme``, ``ios_scheme``).
+Explicit dev keys override the derived defaults.
+
+  Default                                         | Source
+  -------                                         | ------
+  ``mac_dev_bundle = <mac_bundle>.dev``           | ``_resolve_mac_dev_bundle``
+  ``ios_dev_bundle = <ios_bundle>.dev``           | ``_resolve_ios_dev_bundle``
+  ``mac_dev_product_name = <process>Dev``         | ``_resolve_mac_dev_product_name``
+  ``mac_dev_display_name = <process> Dev``        | ``_resolve_mac_dev_display_name``
+  ``ios_dev_display_name = <process> Dev``        | ``_resolve_ios_dev_display_name``
+  ``mac_dev_process = <ProductDev>.app/...``      | ``_resolve_mac_dev_process``
+
+``<process>`` falls back to the scheme name when ``{platform}_process`` is
+unset (i.e. PRODUCT_NAME == scheme, the Xcode default).
 """
 
 import atexit
 import glob
+import json
 import os
 import shutil
 import signal
@@ -52,6 +67,7 @@ from .core import (
     LOG_FILE,
     _children,
     command,
+    get_log_dir,
     info,
     ok,
     warn,
@@ -269,8 +285,7 @@ def clean_ios(cfg):
     if not scheme:
         err("apple.ios_scheme or apple.mac_scheme required for clean")
         sys.exit(1)
-    derived_name = cfg.get("derived_data_name") or scheme
-    clean_derived_data(derived_name)
+    clean_derived_data(_resolve_derived_data_name(cfg) or scheme)
 
 
 # ---------------------------------------------------------------------------
@@ -620,7 +635,7 @@ def stream_console_output(proc, log_file=None, formatter=None):
     import threading
 
     if log_file is None:
-        _log_dir = LOG_DIR or "tmp"
+        _log_dir = get_log_dir() or "tmp"
         os.makedirs(_log_dir, exist_ok=True)
         log_file = os.path.join(_log_dir, "console.log")
     log_fh = open(log_file, "a")
@@ -700,7 +715,7 @@ def stream_os_log(predicate, log_file=None, sim_id=None, formatter=None):
     _children.append(proc)
 
     if log_file is None:
-        _log_dir = LOG_DIR or "tmp"
+        _log_dir = get_log_dir() or "tmp"
         os.makedirs(_log_dir, exist_ok=True)
         log_file = os.path.join(_log_dir, "os_log.log")
     log_fh = open(log_file, "a")
@@ -949,7 +964,8 @@ def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
                  app_pattern, pid_file="/tmp/admin-run.pid",
                  extra_settings="", build_action="build",
                  bundle_id=None, sim_id=None,
-                 pre_build=None, post_build=None, output_config=None):
+                 pre_build=None, post_build=None, display_name=None,
+                 output_config=None):
     """Full iOS simulator dev loop: build, install, stream logs, reload on 'r'/SIGUSR1.
 
     bundle_id:  bundle ID for launch/terminate (defaults to subsystem)
@@ -1014,6 +1030,9 @@ def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
             cleanup_pid_file(pid_file)
             sys.exit(1)
 
+        if display_name:
+            patch_ios_display_name(app_path, display_name)
+
         info("Installing on simulator...")
         install_and_launch_sim(sim_id, app_path, launch_bundle)
 
@@ -1052,7 +1071,7 @@ def dev_loop_device(project, scheme, config, subsystem, process,
                     app_pattern, pid_file="/tmp/admin-run.pid",
                     extra_settings="", build_action="build",
                     bundle_id=None, device_id=None, udid=None,
-                    pre_build=None, post_build=None,
+                    pre_build=None, post_build=None, display_name=None,
                     skip_build=False, output_config=None):
     """Build, install, and run on a physical iOS device with log streaming.
 
@@ -1108,6 +1127,9 @@ def dev_loop_device(project, scheme, config, subsystem, process,
 
         launch_bundle = app_bundle_identifier(app_path) or bundle_id or subsystem
 
+        if display_name:
+            patch_ios_display_name(app_path, display_name)
+
         info(f"Installing on {device_name}...")
         rc = install_on_device(device_id, app_path)
         if rc != 0:
@@ -1160,6 +1182,178 @@ def _detect_project_path(cfg):
     sys.exit(1)
 
 
+_PBXPROJ_CACHE = {}
+
+
+def _read_pbxproj(project_path):
+    """Parse the Xcode project's ``project.pbxproj`` (an OpenStep ASCII
+    plist) into a dict via ``plutil -convert json``. Cached per project_path
+    so a single admin invocation parses at most once. Returns ``{}`` on any
+    failure so callers fall back to manifest-supplied values.
+    """
+    if project_path in _PBXPROJ_CACHE:
+        return _PBXPROJ_CACHE[project_path]
+
+    actual = project_path
+    if project_path.endswith(".xcworkspace"):
+        # Workspaces aren't pbxproj-shaped; resolve to a sibling .xcodeproj
+        # if there's an obvious one. (Covers the common SPM/CocoaPods case
+        # where the workspace wraps a single .xcodeproj of the same name.)
+        base = os.path.basename(project_path).removesuffix(".xcworkspace")
+        sibling = os.path.join(os.path.dirname(project_path) or ".",
+                               base + ".xcodeproj")
+        if os.path.isdir(sibling):
+            actual = sibling
+        else:
+            _PBXPROJ_CACHE[project_path] = {}
+            return {}
+
+    pbxproj = os.path.join(actual, "project.pbxproj")
+    if not os.path.isfile(pbxproj):
+        _PBXPROJ_CACHE[project_path] = {}
+        return {}
+
+    try:
+        rc = subprocess.run(
+            ["plutil", "-convert", "json", "-o", "-", pbxproj],
+            capture_output=True, text=True, check=True,
+        )
+        data = json.loads(rc.stdout)
+    except (subprocess.CalledProcessError, json.JSONDecodeError, FileNotFoundError):
+        data = {}
+
+    _PBXPROJ_CACHE[project_path] = data
+    return data
+
+
+def _xcode_target_settings(cfg, scheme_name, *, configuration="Debug"):
+    """Return the ``buildSettings`` dict for the PBXNativeTarget that backs
+    a given scheme, at the requested configuration (Debug by default).
+
+    Walks pbxproj: ``PBXNativeTarget(name=scheme_name)`` →
+    ``buildConfigurationList`` → ``XCBuildConfiguration(name=configuration)``
+    → ``buildSettings``. Returns ``{}`` if any link can't be resolved —
+    callers must tolerate empty results and fall back to manifest defaults.
+
+    Note: this only sees settings written *into the pbxproj itself*. Values
+    sourced from ``.xcconfig`` files or Xcode variable substitutions
+    (``$(PRODUCT_NAME)``) come back as literals and need separate handling
+    by the caller.
+    """
+    if not scheme_name:
+        return {}
+    project_path = _detect_project_path(cfg)
+    proj = _read_pbxproj(project_path)
+    objects = proj.get("objects") or {}
+    if not objects:
+        return {}
+
+    target = next(
+        (obj for obj in objects.values()
+         if obj.get("isa") == "PBXNativeTarget" and obj.get("name") == scheme_name),
+        None,
+    )
+    if not target:
+        return {}
+
+    cfg_list = objects.get(target.get("buildConfigurationList"), {}) or {}
+    cfg_ids = cfg_list.get("buildConfigurations") or []
+
+    chosen = next(
+        (objects[cid] for cid in cfg_ids
+         if (objects.get(cid) or {}).get("name") == configuration),
+        None,
+    )
+    if chosen is None and cfg_ids:
+        chosen = objects.get(cfg_ids[0]) or {}
+    if chosen is None:
+        return {}
+
+    return chosen.get("buildSettings") or {}
+
+
+def _xcode_setting(cfg, scheme_name, key):
+    """Return ``buildSettings[key]`` for the given scheme's target, or None
+    if missing or if the value is a Xcode variable substitution like
+    ``$(TARGET_NAME)`` (which the caller can't act on without a proper
+    expansion pass).
+    """
+    val = _xcode_target_settings(cfg, scheme_name).get(key)
+    if not val or not isinstance(val, str):
+        return None
+    if val.startswith("$"):
+        return None
+    return val
+
+
+def _resolve_mac_bundle(cfg):
+    """macOS production bundle ID. Reads ``mac_bundle`` from the manifest if
+    set, otherwise pulls ``PRODUCT_BUNDLE_IDENTIFIER`` from the mac scheme's
+    target in the pbxproj.
+    """
+    return cfg.get("mac_bundle") or _xcode_setting(
+        cfg, cfg.get("mac_scheme"), "PRODUCT_BUNDLE_IDENTIFIER"
+    )
+
+
+def _resolve_ios_bundle(cfg):
+    """iOS production bundle ID. Same fallback chain as
+    :func:`_resolve_mac_bundle` but for the iOS scheme.
+    """
+    return cfg.get("ios_bundle") or _xcode_setting(
+        cfg, cfg.get("ios_scheme"), "PRODUCT_BUNDLE_IDENTIFIER"
+    )
+
+
+def _resolve_mac_process(cfg):
+    """macOS PRODUCT_NAME (== ``.app`` filename and ``CFBundleName``).
+    Falls back to scheme name when the pbxproj uses a variable substitution
+    or the manifest doesn't override.
+    """
+    return (cfg.get("mac_process")
+            or _xcode_setting(cfg, cfg.get("mac_scheme"), "PRODUCT_NAME")
+            or cfg.get("mac_scheme"))
+
+
+def _resolve_ios_process(cfg):
+    """iOS PRODUCT_NAME. Same fallback chain as :func:`_resolve_mac_process`."""
+    return (cfg.get("ios_process")
+            or _xcode_setting(cfg, cfg.get("ios_scheme"), "PRODUCT_NAME")
+            or cfg.get("ios_scheme"))
+
+
+def _resolve_derived_data_name(cfg):
+    """Project-name prefix Xcode uses for the DerivedData folder. Defaults
+    to the basename of the .xcodeproj/.xcworkspace.
+    """
+    explicit = cfg.get("derived_data_name")
+    if explicit:
+        return explicit
+    project_path = _detect_project_path(cfg)
+    base = os.path.basename(project_path)
+    return base.removesuffix(".xcworkspace").removesuffix(".xcodeproj")
+
+
+def _resolve_mac_install_path_prod(cfg):
+    """Filesystem path the production macOS app installs to. Defaults to
+    ``/Applications/<process>.app``.
+    """
+    explicit = cfg.get("mac_install_path_prod")
+    if explicit:
+        return explicit
+    process = _resolve_mac_process(cfg)
+    return f"/Applications/{process}.app" if process else None
+
+
+def _resolve_subsystem(cfg):
+    """``os_log`` subsystem used in log-stream predicates. Defaults to the
+    macOS bundle ID, since ``Logger(subsystem: Bundle.main.bundleIdentifier!)``
+    is the canonical Swift pattern. Returns "" so callers can pass it
+    directly to predicate builders without a None check.
+    """
+    return cfg.get("subsystem") or _resolve_mac_bundle(cfg) or ""
+
+
 def _resolve_icon_dirs(cfg, platforms=("mac", "ios")):
     """Return {platform: abs_path} for platforms that have an asset dir configured."""
     icons_cfg = cfg.get("icons") or {}
@@ -1190,6 +1384,11 @@ def build_icon_hooks(cfg, platforms=("mac", "ios"), backup_dir="tmp/icon-backup"
     committed icons. Returns (None, None) if [apple.icons] is missing or
     empty, so the caller can pass them directly to dev_loop_* without
     conditional plumbing.
+
+    pre_build also registers post_build as a cleanup hook so an interrupted
+    dev run (Ctrl-C, crash) still restores the production icons. Without
+    this, the dev-overlay PNGs leak into the asset catalog and contaminate
+    the next ``deploy`` build with a DEV banner.
     """
     icon_dirs = _resolve_icon_dirs(cfg, platforms)
     if not icon_dirs:
@@ -1198,14 +1397,141 @@ def build_icon_hooks(cfg, platforms=("mac", "ios"), backup_dir="tmp/icon-backup"
     if not (icon_kwargs.get("glyph_text") or icon_kwargs.get("glyph_svg")):
         return (None, None)
 
-    def _pre():
-        backup_icons(icon_dirs, backup_dir)
-        swap_dev_icons(icon_dirs, icon_kwargs)
-
     def _post():
         restore_icons(icon_dirs, backup_dir)
 
+    cleanup_registered = [False]
+
+    def _pre():
+        # Self-heal first: a prior dev run killed via SIGKILL leaves the
+        # catalog in DEV-overlay state with the originals still in
+        # backup_dir. If we ran backup_icons now we'd overwrite those
+        # originals with the current DEV PNGs and lose the only remaining
+        # copy. Restore first so the catalog is back to a known-clean
+        # state, then back up that.
+        restore_stranded_dev_icons(cfg, platforms, backup_dir)
+        # Register cleanup BEFORE we mutate anything. If SIGINT lands during
+        # backup_icons or swap_dev_icons (PIL ops + filesystem copies), the
+        # restore still runs. Once-only — register_cleanup has no dedup, so
+        # repeated dev iterations would otherwise stack copies of _post.
+        if not cleanup_registered[0]:
+            register_cleanup(_post)
+            cleanup_registered[0] = True
+        backup_icons(icon_dirs, backup_dir)
+        swap_dev_icons(icon_dirs, icon_kwargs)
+
     return _pre, _post
+
+
+def patch_ios_display_name(app_path, display_name):
+    """Patch ``CFBundleDisplayName`` in a built iOS .app and re-sign.
+
+    Used by the iOS dev loops to give the dev install a distinct home-screen
+    name (e.g. "CCTool DEV") without touching the Xcode project. The global
+    xcodebuild flag ``INFOPLIST_KEY_CFBundleDisplayName`` is unsafe — it
+    cascades into SwiftPM resource bundles and corrupts them — so we patch
+    the built app's Info.plist directly and re-sign with the original
+    identity (preserving entitlements so the app still installs on device).
+
+    No-op when ``display_name`` is falsy.
+    """
+    if not display_name:
+        return
+    info_plist = os.path.join(app_path, "Info.plist")
+    if not os.path.isfile(info_plist):
+        err(f"Info.plist not found at {info_plist} — cannot patch display name")
+        sys.exit(1)
+
+    rc = subprocess.run(
+        ["plutil", "-replace", "CFBundleDisplayName", "-string", display_name, info_plist],
+        capture_output=True, text=True,
+    )
+    if rc.returncode != 0:
+        err(f"plutil patch failed: {rc.stderr.strip()}")
+        sys.exit(1)
+
+    # Recover the original signing identity so the re-signed app still
+    # installs on device. codesign -dvvv writes to stderr; "Authority="
+    # lines are listed leaf → root, so the first one is the leaf identity
+    # we want. Fall back to ad-hoc ("-") if codesign reports none.
+    sig = subprocess.run(
+        ["codesign", "-dvvv", app_path], capture_output=True, text=True,
+    )
+    identity = "-"
+    for line in sig.stderr.splitlines():
+        if line.startswith("Authority="):
+            identity = line.split("=", 1)[1].strip()
+            break
+
+    rc = subprocess.run(
+        ["codesign", "--force", "--sign", identity,
+         "--preserve-metadata=entitlements,requirements", app_path],
+        capture_output=True, text=True,
+    )
+    if rc.returncode != 0:
+        err(f"resign after display-name patch failed: {rc.stderr.strip()}")
+        err("App will not install on device with broken signature; aborting")
+        sys.exit(1)
+    info(f'Display name → "{display_name}"')
+
+
+def restore_stranded_dev_icons(cfg, platforms=("mac", "ios"), backup_dir="tmp/icon-backup"):
+    """If a previous dev run was interrupted before its post-build restore,
+    its dev-overlay PNGs are still sitting in the asset catalog. Recover the
+    originals from ``backup_dir`` (left behind by the interrupted run) before
+    a fresh build so we don't bake DEV-banner icons into a production deploy.
+    """
+    if not os.path.isdir(backup_dir):
+        return
+    icon_dirs = _resolve_icon_dirs(cfg, platforms)
+    if not icon_dirs:
+        return
+    warn(f"Stranded dev icons found in {backup_dir} (interrupted dev run?) — restoring originals")
+    restore_icons(icon_dirs, backup_dir)
+
+
+def _resolve_mac_dev_bundle(cfg):
+    """macOS dev bundle ID. Default: ``<mac_bundle>.dev``."""
+    base = _resolve_mac_bundle(cfg)
+    return cfg.get("mac_dev_bundle") or (f"{base}.dev" if base else None)
+
+
+def _resolve_ios_dev_bundle(cfg):
+    """iOS dev bundle ID. Default: ``<ios_bundle>.dev``."""
+    base = _resolve_ios_bundle(cfg)
+    return cfg.get("ios_dev_bundle") or (f"{base}.dev" if base else None)
+
+
+def _resolve_mac_dev_product_name(cfg):
+    """Renamed dev ``.app`` filename. Default: ``<process>Dev`` (no space —
+    must be a valid filename and bundle path component)."""
+    base = _resolve_mac_process(cfg)
+    return cfg.get("mac_dev_product_name") or (f"{base}Dev" if base else None)
+
+
+def _resolve_mac_dev_display_name(cfg):
+    """Dock / Launchpad label for the dev install. Default: ``<process> Dev``."""
+    base = _resolve_mac_process(cfg)
+    return cfg.get("mac_dev_display_name") or (f"{base} Dev" if base else None)
+
+
+def _resolve_ios_dev_display_name(cfg):
+    """Home-screen label for the iOS dev install. Default: ``<process> Dev``."""
+    base = _resolve_ios_process(cfg)
+    return cfg.get("ios_dev_display_name") or (f"{base} Dev" if base else None)
+
+
+def _resolve_mac_dev_process(cfg):
+    """``pgrep -f`` pattern that uniquely identifies the running dev
+    instance (so it isn't confused with prod). Default:
+    ``<DevProductName>.app/Contents/MacOS/<process>``.
+    """
+    explicit = cfg.get("mac_dev_process")
+    if explicit:
+        return explicit
+    product = _resolve_mac_dev_product_name(cfg)
+    binary = _resolve_mac_process(cfg)
+    return f"{product}.app/Contents/MacOS/{binary}" if (product and binary) else None
 
 
 def _make_mac_dev_running_check(cfg):
@@ -1215,8 +1541,8 @@ def _make_mac_dev_running_check(cfg):
     so the prod binary (same scheme name, different install path) isn't
     counted. Otherwise fall back to pgrep -x mac_process.
     """
-    dev_name = cfg.get("mac_dev_process")
-    prod_name = cfg.get("mac_process") or cfg.get("mac_scheme")
+    dev_name = _resolve_mac_dev_process(cfg)
+    prod_name = _resolve_mac_process(cfg)
 
     if dev_name:
         def _check():
@@ -1236,8 +1562,8 @@ def _make_mac_dev_running_check(cfg):
 
 def _make_mac_dev_kill(cfg):
     """Return a callable that kills only the dev instance (not prod)."""
-    dev_name = cfg.get("mac_dev_process")
-    prod_name = cfg.get("mac_process") or cfg.get("mac_scheme")
+    dev_name = _resolve_mac_dev_process(cfg)
+    prod_name = _resolve_mac_process(cfg)
 
     if dev_name:
         def _kill():
@@ -1261,6 +1587,34 @@ def _make_mac_dev_kill(cfg):
     return lambda: None
 
 
+def _compose_dev_settings(cfg, dev_bundle_id):
+    """Combine manifest ``dev_build_settings`` with a platform-specific
+    ``PRODUCT_BUNDLE_IDENTIFIER`` override.
+
+    ``dev_build_settings`` is meant for cross-platform extras only. The
+    bundle ID is platform-specific (``mac_dev_bundle`` / ``ios_dev_bundle``)
+    and must not be hard-coded into ``dev_build_settings`` — doing so would
+    force one platform's ID onto the other (e.g. macOS dev ID leaking into
+    an iOS build, breaking the post-build sanity check).
+
+    The platform-specific override is appended last so it wins if the legacy
+    manifest still carries a ``PRODUCT_BUNDLE_IDENTIFIER=`` in its
+    ``dev_build_settings`` string. Emits a warning when that happens so
+    consumers know to clean up the manifest.
+    """
+    extras = (cfg.get("dev_build_settings") or "").strip()
+    if "PRODUCT_BUNDLE_IDENTIFIER" in extras:
+        warn(
+            "dev_build_settings contains PRODUCT_BUNDLE_IDENTIFIER — prefer "
+            "mac_dev_bundle / ios_dev_bundle keys; the platform-specific "
+            "value will override."
+        )
+    if not dev_bundle_id:
+        return extras
+    override = f"PRODUCT_BUNDLE_IDENTIFIER={dev_bundle_id}"
+    return f"{extras} {override}".strip() if extras else override
+
+
 def _derived_glob(scheme, config, platform_subdir, product_name):
     """Glob pattern under ~/Library/Developer/Xcode/DerivedData for a built .app."""
     return os.path.expanduser(
@@ -1280,14 +1634,13 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=N
         err("apple.mac_scheme required"); sys.exit(1)
     project = _detect_project_path(cfg)
     config = cfg.get("mac_build_config", "Debug")
-    process = cfg.get("mac_process", scheme)
-    dev_process = cfg.get("mac_dev_process") or process
-    subsystem = cfg.get("subsystem", "")
-    extra_settings = cfg.get("dev_build_settings", "")
+    process = _resolve_mac_process(cfg)
+    dev_process = _resolve_mac_dev_process(cfg) or process
+    subsystem = _resolve_subsystem(cfg)
+    extra_settings = _compose_dev_settings(cfg, _resolve_mac_dev_bundle(cfg))
     build_action = "clean build" if clean else "build"
     predicate = log_predicate(dev_process, subsystem, level=log_level)
-    derived_name = cfg.get("derived_data_name", scheme)
-    app_pattern = _derived_glob(derived_name, config, "", process)
+    app_pattern = _derived_glob(_resolve_derived_data_name(cfg), config, "", process)
 
     prebuild_cmd = cfg.get("prebuild_cmd")
     if prebuild_cmd:
@@ -1310,12 +1663,12 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=N
                 shutil.rmtree(dev_install_path)
             shutil.copytree(built_app, dev_install_path)
             return dev_install_path
-    elif cfg.get("mac_dev_product_name") or cfg.get("mac_dev_display_name"):
-        _dev_product = cfg.get("mac_dev_product_name")
-        _dev_display = cfg.get("mac_dev_display_name")
-
-        def pre_launch(built_app):
-            return dev_macos_postprocess(built_app, _dev_product, _dev_display)
+    else:
+        _dev_product = _resolve_mac_dev_product_name(cfg)
+        _dev_display = _resolve_mac_dev_display_name(cfg)
+        if _dev_product or _dev_display:
+            def pre_launch(built_app):
+                return dev_macos_postprocess(built_app, _dev_product, _dev_display)
 
     dev_loop_macos(
         project=project, scheme=scheme, config=config,
@@ -1341,14 +1694,14 @@ def dev_ios(cfg, *, log_level="app", clean=False, output_config=None):
         err("apple.ios_scheme required"); sys.exit(1)
     project = _detect_project_path(cfg)
     config = cfg.get("ios_build_config", "Debug")
-    process = cfg.get("ios_process", scheme)
-    subsystem = cfg.get("subsystem", "")
-    extra_settings = cfg.get("dev_build_settings", "")
+    process = _resolve_ios_process(cfg)
+    subsystem = _resolve_subsystem(cfg)
+    ios_dev_bundle = _resolve_ios_dev_bundle(cfg)
+    bundle_id = ios_dev_bundle or _resolve_ios_bundle(cfg)
+    extra_settings = _compose_dev_settings(cfg, ios_dev_bundle)
     build_action = "clean build" if clean else "build"
     predicate = log_predicate(process, subsystem, level=log_level)
-    bundle_id = cfg.get("ios_dev_bundle") or cfg.get("ios_bundle")
-    derived_name = cfg.get("derived_data_name", scheme)
-    app_pattern = _derived_glob(derived_name, config, "-iphonesimulator", process)
+    app_pattern = _derived_glob(_resolve_derived_data_name(cfg), config, "-iphonesimulator", process)
 
     prebuild_cmd = cfg.get("prebuild_cmd")
     if prebuild_cmd:
@@ -1371,6 +1724,7 @@ def dev_ios(cfg, *, log_level="app", clean=False, output_config=None):
         app_pattern=app_pattern, extra_settings=extra_settings,
         build_action=build_action, bundle_id=bundle_id, sim_id=sim_id,
         pre_build=pre_build, post_build=post_build,
+        display_name=_resolve_ios_dev_display_name(cfg),
         output_config=output_config,
     )
 
@@ -1383,11 +1737,13 @@ def deploy_mac(cfg, *, clean=False):
     if not scheme:
         err("apple.mac_scheme required"); sys.exit(1)
     project = _detect_project_path(cfg)
-    config = cfg.get("mac_deploy_config", cfg.get("mac_build_config", "Debug"))
-    process = cfg.get("mac_process", scheme)
-    install_path = cfg.get("mac_install_path_prod", f"/Applications/{process}.app")
+    config = cfg.get("mac_deploy_config", "Release")
+    process = _resolve_mac_process(cfg)
+    install_path = _resolve_mac_install_path_prod(cfg)
     build_action = "clean build" if clean else "build"
-    derived_name = cfg.get("derived_data_name", scheme)
+    derived_name = _resolve_derived_data_name(cfg)
+
+    restore_stranded_dev_icons(cfg)
 
     prebuild_cmd = cfg.get("prebuild_cmd")
     if prebuild_cmd:
@@ -1426,11 +1782,13 @@ def deploy_ios(cfg, *, clean=False):
     if not scheme:
         err("apple.ios_scheme required"); sys.exit(1)
     project = _detect_project_path(cfg)
-    config = cfg.get("ios_deploy_config", cfg.get("ios_build_config", "Debug"))
-    process = cfg.get("ios_process", scheme)
-    bundle_id = cfg.get("ios_bundle")
+    config = cfg.get("ios_deploy_config", "Release")
+    process = _resolve_ios_process(cfg)
+    bundle_id = _resolve_ios_bundle(cfg)
     build_action = "clean build" if clean else "build"
-    derived_name = cfg.get("derived_data_name", scheme)
+    derived_name = _resolve_derived_data_name(cfg)
+
+    restore_stranded_dev_icons(cfg)
 
     prebuild_cmd = cfg.get("prebuild_cmd")
     if prebuild_cmd:
@@ -1483,13 +1841,13 @@ def dev_device(cfg, *, log_level="app", clean=False, output_config=None):
         err("apple.ios_scheme required"); sys.exit(1)
     project = _detect_project_path(cfg)
     config = cfg.get("ios_build_config", "Debug")
-    process = cfg.get("ios_process", scheme)
-    subsystem = cfg.get("subsystem", "")
-    extra_settings = cfg.get("dev_build_settings", "")
+    process = _resolve_ios_process(cfg)
+    subsystem = _resolve_subsystem(cfg)
+    ios_dev_bundle = _resolve_ios_dev_bundle(cfg)
+    bundle_id = ios_dev_bundle or _resolve_ios_bundle(cfg)
+    extra_settings = _compose_dev_settings(cfg, ios_dev_bundle)
     build_action = "clean build" if clean else "build"
-    derived_name = cfg.get("derived_data_name", scheme)
-    bundle_id = cfg.get("ios_dev_bundle") or cfg.get("ios_bundle")
-    app_pattern = _derived_glob(derived_name, config, "-iphoneos", process)
+    app_pattern = _derived_glob(_resolve_derived_data_name(cfg), config, "-iphoneos", process)
 
     prebuild_cmd = cfg.get("prebuild_cmd")
     if prebuild_cmd:
@@ -1505,6 +1863,7 @@ def dev_device(cfg, *, log_level="app", clean=False, output_config=None):
         app_pattern=app_pattern, extra_settings=extra_settings,
         build_action=build_action, bundle_id=bundle_id,
         pre_build=pre_build, post_build=post_build,
+        display_name=_resolve_ios_dev_display_name(cfg),
         output_config=output_config,
     )
 
@@ -1519,6 +1878,7 @@ def build_mac(cfg, *, force=False):
     project = _detect_project_path(cfg)
     config = cfg.get("mac_build_config", "Debug")
     build_action = "clean build" if force else "build"
+    restore_stranded_dev_icons(cfg)
     info(f"Building {scheme} ({config}) for macOS...")
     rc = xcodebuild_filtered(project, scheme, config, "platform=macOS",
                              action=build_action)
@@ -1540,6 +1900,7 @@ def build_ios(cfg, *, force=False):
     sim = os.environ.get("IOS_DEVICE", "") or cfg.get("ios_device", "")
     dest = ("platform=iOS Simulator,name=" + sim) if sim else "platform=iOS Simulator"
     build_action = "clean build" if force else "build"
+    restore_stranded_dev_icons(cfg)
     info(f"Building {scheme} ({config}) for iOS...")
     rc = xcodebuild_filtered(project, scheme, config, dest, action=build_action)
     if rc != 0:
@@ -1554,11 +1915,27 @@ def get_ios_log_bundle(cfg, *, prod=False):
     prod=False → ios_dev_bundle, prod=True → ios_bundle.
     Calls sys.exit(1) if neither is configured.
     """
-    bundle = cfg.get("ios_bundle") if prod else cfg.get("ios_dev_bundle")
+    bundle = _resolve_ios_bundle(cfg) if prod else _resolve_ios_dev_bundle(cfg)
     if not bundle:
         key = "ios_bundle" if prod else "ios_dev_bundle"
-        err(f"apple.{key} not set in admin.toml"); sys.exit(1)
+        err(f"apple.{key} not set in admin.toml and could not derive from project")
+        sys.exit(1)
     return bundle
+
+
+def clean_generated_icons(cfg, backup_dir="tmp/icon-backup"):
+    """Reset asset catalog icons to a freshly-generated state from
+    ``[apple.icons]``. Removes any stranded ``tmp/icon-backup/`` and
+    regenerates the production PNGs from ``glyph_svg``/``glyph_text``,
+    overwriting whatever's currently committed. The asset catalog is the
+    source of truth, so this is the recovery path when the committed PNGs
+    have drifted (e.g. an interrupted dev run got committed with the
+    DEV-overlay icons baked in).
+    """
+    if os.path.isdir(backup_dir):
+        info(f"removing stranded icon backup: {backup_dir}")
+        shutil.rmtree(backup_dir)
+    regenerate_icons(cfg)
 
 
 def regenerate_icons(cfg):
