@@ -37,23 +37,20 @@ def inline_admin_lib(admin_lib_dir: Path, modules: list[str]) -> str:
         if not src_path.exists():
             raise BundlerError(f"admin_lib module not found: {src_path}")
         src = src_path.read_text()
-        # Top-level relative imports become `pass` (all bundled modules share the
-        # flat namespace, so the imported names are already in scope).
-        # Indented relative imports (inside try/except blocks) become
-        # `raise ImportError(...)` so any fallback branch in the except clause
-        # still executes correctly, rather than silently leaving a name undefined.
+        # All relative imports become `pass` — bundled modules share one flat
+        # namespace, so the imported names are already in scope. This applies
+        # equally to top-level imports, function-local imports, and try/except
+        # fallback patterns: in every case the symbol is already defined, so
+        # `pass` is a safe no-op. The indentation of the original line is
+        # preserved so the result is syntactically valid in any context.
         def _repl(m):
             match_text = m.group(0)
             indent = match_text[: len(match_text) - len(match_text.lstrip())]
             # The MULTILINE regex's leading `\s*` greedily consumes the
             # preceding blank line's `\n` into the match. Strip those
-            # newlines so they aren't mistaken for real indentation —
-            # otherwise top-level imports get rewritten as a top-level
-            # `raise ImportError(...)` that crashes the module on load.
+            # newlines so they aren't mistaken for real indentation.
             indent = indent.lstrip("\n")
-            if indent:
-                return f"{indent}raise ImportError('bundled — symbol available in flat namespace')\n"
-            return "pass\n"
+            return f"{indent}pass\n"
         src = _STRIP_RELATIVE_IMPORT_RE.sub(_repl, src)
         parts.append(f"# === admin_lib.{name} ===\n{src.rstrip()}\n")
     return "\n".join(parts)
