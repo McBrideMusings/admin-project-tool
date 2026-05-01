@@ -37,12 +37,23 @@ def inline_admin_lib(admin_lib_dir: Path, modules: list[str]) -> str:
         if not src_path.exists():
             raise BundlerError(f"admin_lib module not found: {src_path}")
         src = src_path.read_text()
-        # Replace with `pass` (matching leading whitespace) so any enclosing
-        # try/except block stays syntactically valid.
+        # Top-level relative imports become `pass` (all bundled modules share the
+        # flat namespace, so the imported names are already in scope).
+        # Indented relative imports (inside try/except blocks) become
+        # `raise ImportError(...)` so any fallback branch in the except clause
+        # still executes correctly, rather than silently leaving a name undefined.
         def _repl(m):
             match_text = m.group(0)
             indent = match_text[: len(match_text) - len(match_text.lstrip())]
-            return f"{indent}pass\n"
+            # The MULTILINE regex's leading `\s*` greedily consumes the
+            # preceding blank line's `\n` into the match. Strip those
+            # newlines so they aren't mistaken for real indentation —
+            # otherwise top-level imports get rewritten as a top-level
+            # `raise ImportError(...)` that crashes the module on load.
+            indent = indent.lstrip("\n")
+            if indent:
+                return f"{indent}raise ImportError('bundled — symbol available in flat namespace')\n"
+            return "pass\n"
         src = _STRIP_RELATIVE_IMPORT_RE.sub(_repl, src)
         parts.append(f"# === admin_lib.{name} ===\n{src.rstrip()}\n")
     return "\n".join(parts)
