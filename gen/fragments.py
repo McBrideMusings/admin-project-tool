@@ -7,9 +7,16 @@ without changing the manifest format or merge logic.
 """
 from __future__ import annotations
 
+import re
 import textwrap
 
 from gen.manifest import Command
+
+_ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+_PY_ENV_RE = re.compile(
+    r"""os\.environ\.get\(\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]"""
+    r"""(?:\s*,\s*(?:['"]([^'"]*)['"]|[^)]+?))?\s*\)"""
+)
 
 
 class FragmentError(Exception):
@@ -158,6 +165,7 @@ def render_python(cmd: Command) -> str:
     elif "log_file" in log_cfg:
         log_line = f"    set_log_context_path({_pyrepr(log_cfg['log_file'])}{retain_arg})\n"
     elif "set_log_context(" in cmd.run or "set_log_context_path(" in cmd.run:
+        # log_retain overrides don't apply to verbatim body calls
         log_line = ""
     else:
         log_line = f"    set_log_context({_pyrepr(cmd.name)}{retain_arg})\n"
@@ -507,30 +515,21 @@ def collect_env_var_calls(
     renderer; see the contract block above `register_env_var` in
     admin_lib/core.py before changing it.
     """
-    import re
-    pattern = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
-    # kind=python commands read env via os.environ.get("NAME") /
-    # os.environ.get("NAME", "default") instead of ${VAR}. Scanning both lets
-    # `./admin env` surface the same origin breadcrumbs for either kind.
-    py_env_pattern = re.compile(
-        r"""os\.environ\.get\(\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]"""
-        r"""(?:\s*,\s*(?:['"]([^'"]*)['"]|[^)]+?))?\s*\)"""
-    )
     seen: dict[str, dict] = {}
 
     for cmd in commands:
         origin = f"cmd:{cmd.name}"
         if cmd.kind != "sequence":
-            _scan_for_env_vars(cmd.run, pattern, seen, origin)
+            _scan_for_env_vars(cmd.run, _ENV_VAR_RE, seen, origin)
         if cmd.kind == "python":
-            _scan_for_env_vars(cmd.run, py_env_pattern, seen, origin)
+            _scan_for_env_vars(cmd.run, _PY_ENV_RE, seen, origin)
         if cmd.kind == "http" and cmd.meta.get("body"):
-            _scan_for_env_vars(cmd.meta["body"], pattern, seen, origin)
+            _scan_for_env_vars(cmd.meta["body"], _ENV_VAR_RE, seen, origin)
         for tname, tval in cmd.targets.items():
-            _scan_for_env_vars(tval, pattern, seen, f"{origin}:{tname}")
+            _scan_for_env_vars(tval, _ENV_VAR_RE, seen, f"{origin}:{tname}")
 
     for key, text in (urls or {}).items():
-        _scan_for_env_vars(text, pattern, seen, f"url:{key}")
+        _scan_for_env_vars(text, _ENV_VAR_RE, seen, f"url:{key}")
 
     for target_name, target in (logs or {}).items():
         for env_name, env_spec in target.get("envs", {}).items():
@@ -538,11 +537,11 @@ def collect_env_var_calls(
             for field in ("path", "host", "user"):
                 val = env_spec.get(field)
                 if isinstance(val, str):
-                    _scan_for_env_vars(val, pattern, seen, origin)
+                    _scan_for_env_vars(val, _ENV_VAR_RE, seen, origin)
 
     for table_name, table in (config_tables or {}).items():
         if table:
-            _scan_config_table(table, pattern, seen, f"{table_name}")
+            _scan_config_table(table, _ENV_VAR_RE, seen, f"{table_name}")
 
     lines = []
     for name, entry in seen.items():

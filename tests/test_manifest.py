@@ -129,6 +129,58 @@ def test_known_keys_produce_no_warning():
 
 
 # ---------------------------------------------------------------------------
+# [logging] round-trip
+# ---------------------------------------------------------------------------
+
+def test_logging_section_survives_dump():
+    m = _base_manifest(logging={"enabled": True, "dir": "logs", "retain": 5})
+    toml = dump(m)
+    assert "[logging]" in toml, f"[logging] section not emitted:\n{toml}"
+    assert "enabled = true" in toml
+    assert 'dir = "logs"' in toml
+    assert "retain = 5" in toml
+
+
+def test_logging_section_round_trips():
+    m = _base_manifest(logging={"enabled": False, "retain": 0})
+    toml = dump(m)
+    m2 = parse(tomllib.loads(toml))
+    assert m2.logging["enabled"] is False
+    assert m2.logging["retain"] == 0
+
+
+def test_empty_logging_section_not_emitted():
+    m = _base_manifest(logging={})
+    toml = dump(m)
+    assert "[logging]" not in toml, "empty [logging] should not be emitted"
+
+
+# ---------------------------------------------------------------------------
+# [logs] key order preservation
+# ---------------------------------------------------------------------------
+
+def test_logs_dump_preserves_raw_key_order():
+    """dump() should write [logs] env entries in the original TOML order, not alphabetically."""
+    toml_src = "\n".join([
+        'project_name = "Ordering Test"',
+        'python_min = "3.11"',
+        "[logs.app]",
+        'prod = "/var/log/app.log"',  # prod before default_env
+        'default_env = "prod"',
+        'dev = "/tmp/app.log"',       # dev after default_env
+    ])
+    m = parse(tomllib.loads(toml_src))
+    m.raw = tomllib.loads(toml_src)
+    out = dump(m)
+    prod_pos = out.index("prod")
+    default_pos = out.index("default_env")
+    dev_pos = out.index("dev =")
+    assert prod_pos < default_pos < dev_pos, (
+        f"key order not preserved: prod={prod_pos}, default_env={default_pos}, dev={dev_pos}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 

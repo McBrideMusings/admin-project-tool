@@ -25,7 +25,7 @@ from pathlib import Path
 
 from gen.archetypes import ResolvedManifest
 from gen.bundler import inline_admin_lib, lib_hash
-from gen.fragments import collect_env_var_calls, render_command, render_action
+from gen.fragments import collect_env_var_calls, render_command, render_action, _pyrepr
 from gen.manifest import Command, SPACER
 
 ADMIN_LIB_VERSION = "2.0.0-dev"
@@ -217,10 +217,6 @@ def generator_commit_sha(repo_dir: Path, allow_dirty: bool = False) -> str:
             )
         return sha + "+dirty"
     return sha
-
-
-def _pyrepr(s: str) -> str:
-    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def _pyliteral(value) -> str:

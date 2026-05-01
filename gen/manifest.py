@@ -354,21 +354,32 @@ def dump(manifest: Manifest) -> str:
     if manifest.logs:
         for target_name, target in manifest.logs.items():
             lines.append(f"[logs.{target_name}]")
-            if target.get("default_env"):
-                lines.append(f'default_env = "{_escape(target["default_env"])}"')
-            for env_name, env in target.get("envs", {}).items():
+            envs = target.get("envs", {})
+            # Preserve original key order from raw TOML if available.
+            raw_keys = list(manifest.raw.get("logs", {}).get(target_name, {}).keys())
+            ordered_keys = raw_keys if raw_keys else (
+                (["default_env"] if target.get("default_env") else []) + list(envs)
+            )
+            for key in ordered_keys:
+                if key == "default_env":
+                    if target.get("default_env"):
+                        lines.append(f'default_env = "{_escape(target["default_env"])}"')
+                    continue
+                env = envs.get(key)
+                if env is None:
+                    continue
                 host = env.get("host")
                 user = env.get("user")
                 path = env.get("path", "")
                 if host is None and user is None:
-                    lines.append(f'{env_name} = "{_escape(path)}"')
+                    lines.append(f'{key} = "{_escape(path)}"')
                 else:
                     parts = [f'path = "{_escape(path)}"']
                     if host is not None:
                         parts.append(f'host = "{_escape(host)}"')
                     if user is not None:
                         parts.append(f'user = "{_escape(user)}"')
-                    lines.append(f"{env_name} = {{ " + ", ".join(parts) + " }")
+                    lines.append(f"{key} = {{ " + ", ".join(parts) + " }")
             lines.append("")
 
     if manifest.server:
@@ -399,6 +410,17 @@ def dump(manifest: Manifest) -> str:
                     else:
                         lines.append(f"{k} = {v!r}")
             lines.append("")
+
+    if manifest.logging:
+        lines.append("[logging]")
+        for k, v in manifest.logging.items():
+            if isinstance(v, bool):
+                lines.append(f"{k} = {'true' if v else 'false'}")
+            elif isinstance(v, str):
+                lines.append(f'{k} = "{_escape(v)}"')
+            else:
+                lines.append(f"{k} = {v!r}")
+        lines.append("")
 
     if manifest.inline_file:
         lines.append("[inline]")

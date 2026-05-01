@@ -32,8 +32,12 @@ audit_rc=$?
 
 if [ "$audit_rc" -eq 2 ]; then
     if "$ADMIN_GEN" --regenerate "$cwd" >/dev/null 2>&1; then
-        # Literal-only string — never interpolate variables here without JSON-escaping first.
-        printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"Note: ./admin was auto-regenerated (admin-project-tool was updated since last generation)."}}\n'
+        _msg="Note: ./admin was auto-regenerated (admin-project-tool was updated since last generation)."
+        if command -v jq >/dev/null 2>&1; then
+            jq -n --arg ctx "$_msg" '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":$ctx}}'
+        else
+            python3 -c "import json,sys; print(json.dumps({'hookSpecificOutput':{'hookEventName':'SessionStart','additionalContext':sys.argv[1]}}))" "$_msg"
+        fi
     fi
 fi
 

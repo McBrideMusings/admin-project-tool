@@ -15,6 +15,7 @@ DEST_DIR="$HOME/.admin"
 
 FORCE=0
 SHELL_OVERRIDE=""
+REGISTER_HOOKS_ONLY=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -27,9 +28,13 @@ while [[ $# -gt 0 ]]; do
             SHELL_OVERRIDE="$2"
             shift 2
             ;;
+        --register-hooks)
+            REGISTER_HOOKS_ONLY=1
+            shift
+            ;;
         *)
             echo "error: unknown option: $1" >&2
-            echo "usage: $0 [--force] [--shell zsh|bash|sh]" >&2
+            echo "usage: $0 [--force] [--register-hooks] [--shell zsh|bash|sh]" >&2
             exit 1
             ;;
     esac
@@ -126,7 +131,6 @@ already = any(
 )
 
 if already:
-    print("  SessionStart hook already registered in ~/.claude/settings.json")
     sys.exit(0)
 
 session_hooks.append({"matcher": "", "hooks": [{"type": "command", "command": hook_cmd}]})
@@ -203,6 +207,12 @@ verify_path() {
 # ------------------------------------------------------------------
 # Main logic
 # ------------------------------------------------------------------
+
+if [[ "$REGISTER_HOOKS_ONLY" == "1" ]]; then
+    register_claude_hook
+    echo "Done."
+    exit 0
+fi
 
 if [[ "$FORCE" == "1" ]]; then
     echo "admin-project-tool: force-installing to $DEST_DIR"

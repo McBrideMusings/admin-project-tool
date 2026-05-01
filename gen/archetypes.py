@@ -132,6 +132,9 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
                 val = override.get(key, base.meta.get(key))
                 if val is not None:
                     merged[key] = val
+            for key in ("log_file", "log_retain", "log"):
+                if key in override:
+                    merged[key] = override[key]
             merged.update(inline_targets)
             log.append(f"command '{cmd_name}' overridden by manifest")
             commands[cmd_name] = _to_command(cmd_name, merged, source="manifest")
@@ -299,7 +302,16 @@ def _to_command(name: str, data: dict, source: str) -> Command:
     )
 
 
-_MODULE_ORDER = ["core", "cache", "icons", "remote", "ports", "cleanup", "apple", "docker", "unraid", "web_dev", "log_format", "log_columns", "logtail", "install"]
+# Canonical bundle order for admin_lib modules. Add new modules here when they
+# are created in admin_lib/ — unlisted modules fall back to alphabetical order
+# at the end, which may cause import-ordering issues in the flat bundle namespace.
+_MODULE_ORDER = [
+    "core", "cache", "icons", "remote", "ports", "cleanup",
+    "apple", "apple_dev", "rust",
+    "docker", "unraid", "web_dev",
+    "log_format", "log_columns", "logtail",
+    "install",
+]
 
 
 def _order_modules(modules: set[str]) -> list[str]:

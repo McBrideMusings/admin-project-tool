@@ -151,6 +151,11 @@ def _init(project_name, project_root=None):
     LOG_FILE = os.path.join(LOG_DIR, "run.log")
 
 
+def get_log_dir() -> str:
+    """Return the current LOG_DIR (late-binding for package import contexts)."""
+    return LOG_DIR
+
+
 def configure_logging(cfg: dict):
     """Store the [logging] config from admin.toml. Called at module level in generated scripts."""
     global LOG_CONFIG
@@ -587,11 +592,12 @@ def _tui_menu():
     old_settings = termios.tcgetattr(fd)
 
     menu_lines = num + 2
+    env_hint = "  [e] open .env" if os.path.exists(os.path.join(_project_root, ".env")) else ""
 
     print(f"{C.BOLD}{_project_name}{C.RESET}\n")
     print_url_status()
     if _stale_generator:
-        print(f"{C.DIM}  ! tool updated — run: admin regenerate{C.RESET}")
+        print(f"{C.DIM}  ! tool updated — auto-regen at next Claude session (or run: admin regenerate){C.RESET}")
 
     for _ in range(menu_lines):
         sys.stdout.write("\n")
@@ -611,7 +617,7 @@ def _tui_menu():
                 sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {name:<14}{C.RESET} {desc}\n")
             else:
                 sys.stdout.write(f"    {C.DIM}{name:<14}{C.RESET} {desc}\n")
-        sys.stdout.write(f"\033[2K\n\033[2K{C.DIM}  [arrows/j/k] navigate  [enter] run  [o] open config  [q/esc] quit{C.RESET}\n")
+        sys.stdout.write(f"\033[2K\n\033[2K{C.DIM}  [arrows/j/k] navigate  [enter] run  [o] open config{env_hint}  [q/esc] quit{C.RESET}\n")
         sys.stdout.write("\033[u")
         sys.stdout.flush()
 
@@ -628,6 +634,11 @@ def _tui_menu():
                 toml_path = os.path.join(_project_root, "admin.toml")
                 opener = "open" if sys.platform == "darwin" else "xdg-open"
                 subprocess.Popen([opener, toml_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elif key == "e":
+                env_path = os.path.join(_project_root, ".env")
+                if os.path.exists(env_path):
+                    opener = "open" if sys.platform == "darwin" else "xdg-open"
+                    subprocess.Popen([opener, env_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             elif key in ("up", "k"):
                 move(-1)
             elif key in ("down", "j"):

@@ -182,6 +182,7 @@ def _regenerate(project_dir: Path, args) -> int:
     admin_path.write_text(script)
     _make_executable(admin_path)
     _ensure_tmp_gitignore(project_dir)
+    _ensure_gitattributes(project_dir)
     ok(f"wrote {admin_path} ({len(script.splitlines())} lines)")
     return 0
 
@@ -376,6 +377,24 @@ def _ensure_tmp_gitignore(project_dir: Path) -> None:
     gi = tmp / ".gitignore"
     if not gi.exists():
         gi.write_text("*\n!.gitignore\n")
+
+
+def _ensure_gitattributes(project_dir: Path) -> None:
+    """Add `./admin linguist-generated=true` to .gitattributes if absent.
+
+    This hides the 2000-line generated bundle from GitHub PR diffs by default
+    without affecting local git behavior or removing the file from the repo.
+    """
+    ga = project_dir / ".gitattributes"
+    marker = "linguist-generated=true"
+    entry = f"admin {marker}\n"
+    if ga.exists():
+        existing = ga.read_text()
+        if entry.rstrip("\n") in existing:
+            return
+        ga.write_text(existing.rstrip("\n") + "\n" + entry)
+    else:
+        ga.write_text(entry)
 
 
 # ---------------------------------------------------------------------------

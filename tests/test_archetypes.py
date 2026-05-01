@@ -219,15 +219,7 @@ def test_logs_env_vars_scanned():
 
 def test_seek_last_n_lines():
     import io
-    import re as _re
-    # Load the helper without triggering logtail's relative imports (it imports
-    # from .core, which fails outside a package context). Strip the relative
-    # import line and exec the file.
-    source = (LIB_DIR / "logtail.py").read_text()
-    source = _re.sub(r"from \.core import \([^)]*\)", "pass", source, count=1)
-    ns: dict = {}
-    exec(compile(source, "logtail.py", "exec"), ns)
-    _seek_last_n_lines = ns["_seek_last_n_lines"]
+    from admin_lib.logtail import _seek_last_n_lines
 
     def take(data: bytes, n: int) -> bytes:
         buf = io.BytesIO(data)
@@ -343,6 +335,51 @@ def test_render_python_kind_multiline_body_indented():
     print("OK: kind=python indents multi-line body")
 
 
+def test_log_override_keys_propagated_in_merge():
+    """Per-command log_retain/log_file/log overrides must survive the archetype merge step.
+
+    Regression for the bug where resolve() built a `merged` dict without log
+    keys, so _to_command never saw them and cmd.meta['logging'] was empty.
+    """
+    m = Manifest(
+        project_name="Log Override Test",
+        python_min="3.11",
+        archetypes=["simple"],
+        modules=[],
+        urls={},
+        overrides={"build": {"log_retain": 7}},
+        custom={},
+        order=[],
+    )
+    resolved = resolve(m, ARCH_DIR)
+    build_cmd = resolved.commands["build"]
+    log_cfg = build_cmd.meta.get("logging", {})
+    assert log_cfg.get("log_retain") == 7, (
+        f"log_retain not propagated through resolve; meta={build_cmd.meta!r}"
+    )
+    print("OK: log_retain override survives archetype merge")
+
+
+def test_log_false_override_propagated_in_merge():
+    m = Manifest(
+        project_name="Log Disable Test",
+        python_min="3.11",
+        archetypes=["simple"],
+        modules=[],
+        urls={},
+        overrides={"build": {"log": False}},
+        custom={},
+        order=[],
+    )
+    resolved = resolve(m, ARCH_DIR)
+    build_cmd = resolved.commands["build"]
+    log_cfg = build_cmd.meta.get("logging", {})
+    assert log_cfg.get("log") is False, (
+        f"log=false not propagated through resolve; meta={build_cmd.meta!r}"
+    )
+    print("OK: log=false override survives archetype merge")
+
+
 if __name__ == "__main__":
     test_all_archetypes_load_and_validate()
     test_composition_docker_unraid_plus_apple()
@@ -361,4 +398,6 @@ if __name__ == "__main__":
     test_render_python_kind_rejects_empty_run()
     test_collect_env_vars_scans_python_os_environ_get()
     test_render_python_kind_multiline_body_indented()
+    test_log_override_keys_propagated_in_merge()
+    test_log_false_override_propagated_in_merge()
     print("\nAll tests passed.")

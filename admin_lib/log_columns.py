@@ -61,10 +61,9 @@ _LEVEL_RE = re.compile(
 
 def _find_level_color(text: str) -> str | None:
     """Find the color for a log level in text. Returns None if no level found."""
-    if _LEVEL_RE.search(text):
-        for pat, color in _LEVEL_COLORS:
-            if pat.search(text):
-                return color
+    for pat, color in _LEVEL_COLORS:
+        if pat.search(text):
+            return color
     return None
 
 
@@ -153,7 +152,7 @@ class ColumnFormatter:
 
     def _reformat_generic_line(self, raw_line: str) -> str:
         stripped = raw_line.rstrip("\n")
-        _, rest = strip_log_timestamp(stripped)
+        ts, rest = strip_log_timestamp(stripped)
         rest = rest.strip()
 
         level = ""
@@ -161,8 +160,9 @@ class ColumnFormatter:
         if m:
             level = m.group()
 
+        ts_display = ts.strip() if ts else datetime.now().strftime("%H:%M:%S.%f")
         field_map = {
-            "Timestamp": datetime.now().strftime("%H:%M:%S.%f"),
+            "Timestamp": ts_display,
             "Level": level,
             "Message": rest,
         }
