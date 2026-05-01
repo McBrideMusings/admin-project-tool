@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from gen.fragments import KNOWN_KINDS, CONFIGLESS_KINDS, _ACTION_RENDERERS
-from gen.manifest import Command, Manifest, SPACER
+from gen.manifest import Command, Manifest, SPACER, VALID_COMMAND_KEYS
 
 
 @dataclass
@@ -40,6 +40,9 @@ class ArchetypeError(Exception):
     pass
 
 
+_VALID_ACTION_KEYS = {"run", "desc", "kind", "targets", "method", "body", "src", "log_file", "log_retain", "log"}
+
+
 def load_archetype(archetype_dir: Path, name: str) -> Archetype:
     """Load archetypes/<name>.py and return its Archetype object."""
     path = archetype_dir / f"{name}.py"
@@ -53,6 +56,16 @@ def load_archetype(archetype_dir: Path, name: str) -> Archetype:
     data = getattr(mod, "ARCHETYPE", None)
     if not isinstance(data, dict):
         raise ArchetypeError(f"{path}: missing top-level ARCHETYPE dict")
+    for cmd_name, cmd_data in data.get("commands", {}).items():
+        if not isinstance(cmd_data, dict):
+            raise ArchetypeError(f"{path}: command '{cmd_name}' must be a dict")
+        unknown = set(cmd_data) - VALID_COMMAND_KEYS
+        if unknown:
+            kind_hint = " Move kind/run/targets to [actions]." if unknown & {"kind", "run", "targets"} else ""
+            raise ArchetypeError(
+                f"{path}: command '{cmd_name}' has invalid keys {sorted(unknown)}. "
+                f"Commands may only have 'desc', 'steps', and log overrides.{kind_hint}"
+            )
     raw_order = list(data.get("order", []))
     normalized_order = ["" if e in ("", "---") else e for e in raw_order]
     return Archetype(
@@ -116,7 +129,7 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
 
     # Manifest [commands] overrides
     for cmd_name, override in manifest.overrides.items():
-        bad = set(override) - _VALID_COMMAND_KEYS
+        bad = set(override) - VALID_COMMAND_KEYS
         if bad:
             kind_hint = " Move kind/run/targets to [actions]." if bad & {"kind", "run", "targets"} else ""
             raise ArchetypeError(
@@ -213,14 +226,10 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
     )
 
 
-_VALID_COMMAND_KEYS = {"desc", "steps", "log_file", "log_retain", "log"}
-_VALID_ACTION_KEYS = {"run", "desc", "kind", "targets", "method", "body", "src", "log_file", "log_retain", "log"}
-
-
 def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> Command:
     if not is_action:
         # Commands are pure routing: only desc, steps, and log overrides.
-        unknown = set(data) - _VALID_COMMAND_KEYS
+        unknown = set(data) - VALID_COMMAND_KEYS
         if unknown:
             kind_hint = ""
             if "kind" in unknown or "run" in unknown or "targets" in unknown:

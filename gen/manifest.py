@@ -22,6 +22,8 @@ _KNOWN_KEYS = {
     "dev_kill", "clean_dev", "vite_dev", "deploy",
 }
 
+VALID_COMMAND_KEYS = {"desc", "steps", "log_file", "log_retain", "log"}
+
 
 @dataclass
 class Command:
@@ -120,15 +122,34 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     for name, val in raw_commands.items():
         if not isinstance(val, dict):
             raise ManifestError(
-                f"{source}: commands.{name} must be a table with at least 'run'"
+                f"{source}: commands.{name} must be a table with 'steps' (a list of action names)"
+            )
+        bad = set(val) - VALID_COMMAND_KEYS
+        if bad:
+            kind_hint = " Move kind/run/targets to [actions]." if bad & {"kind", "run", "targets"} else ""
+            raise ManifestError(
+                f"{source}: commands.{name} has invalid keys {sorted(bad)}. "
+                f"Commands may only have 'desc', 'steps', and log overrides.{kind_hint}"
             )
         overrides[name] = val
 
     custom_normalized: dict[str, dict] = {}
     for name, val in custom.items():
-        if not isinstance(val, dict) or "steps" not in val:
+        if not isinstance(val, dict):
             raise ManifestError(
                 f"{source}: commands.custom.{name} must be a table with 'steps' (a list of action names). "
+                f"Move run/kind/targets to [actions]."
+            )
+        bad = set(val) - VALID_COMMAND_KEYS
+        if bad:
+            kind_hint = " Move kind/run/targets to [actions]." if bad & {"kind", "run", "targets"} else ""
+            raise ManifestError(
+                f"{source}: commands.custom.{name} has invalid keys {sorted(bad)}. "
+                f"Commands may only have 'desc', 'steps', and log overrides.{kind_hint}"
+            )
+        if "steps" not in val:
+            raise ManifestError(
+                f"{source}: commands.custom.{name} must have 'steps' (a list of action names). "
                 f"Move run/kind/targets to [actions]."
             )
         custom_normalized[name] = val

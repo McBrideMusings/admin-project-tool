@@ -209,6 +209,10 @@ def cmd_audit(project_dir: Path, args) -> int:
 
     try:
         resolved = resolve(manifest, ARCHETYPE_DIR)
+    except Exception as e:
+        err(f"audit validation failed: {e}")
+        return 1
+    try:
         script = render(resolved, ADMIN_LIB_DIR, generator_commit=sha, inline_body=inline_body)
     except Exception as e:
         err(f"audit render failed: {e}")
@@ -345,7 +349,7 @@ def _audit_suggest_kill_port(resolved: ResolvedManifest) -> list[str]:
     if "ports" not in resolved.modules:
         return []
     all_cmds = {**resolved.commands, **resolved.actions}
-    if any(c.kind == "kill-port" for c in all_cmds.values()):
+    if any(c.kind in ("kill-port", "nuke-dev") for c in all_cmds.values()):
         return []
     return [
         "suggestion: project bundles the 'ports' module but has no kill-port command; "
