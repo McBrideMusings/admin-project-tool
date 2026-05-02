@@ -69,7 +69,7 @@ def test_find_app_returns_match():
         os.mkdir(app)
         result = ns["find_app"](os.path.join(d, "*.app"))
         assert result == app, result
-    print("OK: find_app returns the first glob match")
+    print("OK: find_app returns the newest glob match")
 
 
 def test_find_app_returns_none_on_no_match():
@@ -78,6 +78,20 @@ def test_find_app_returns_none_on_no_match():
         result = ns["find_app"](os.path.join(d, "*.app"))
         assert result is None, result
     print("OK: find_app returns None when glob has no matches")
+
+
+def test_find_app_returns_newest_when_multiple():
+    ns = _load_apple()
+    with tempfile.TemporaryDirectory() as d:
+        old_app = os.path.join(d, "Old.app")
+        new_app = os.path.join(d, "New.app")
+        os.mkdir(old_app)
+        os.mkdir(new_app)
+        os.utime(old_app, (1000000, 1000000))
+        os.utime(new_app, (2000000, 2000000))
+        result = ns["find_app"](os.path.join(d, "*.app"))
+        assert result == new_app, result
+    print("OK: find_app returns the newest app when multiple matches exist")
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +289,7 @@ def test_backup_and_restore_icons_roundtrip():
 if __name__ == "__main__":
     test_find_app_returns_match()
     test_find_app_returns_none_on_no_match()
+    test_find_app_returns_newest_when_multiple()
     test_log_predicate_app()
     test_log_predicate_debug_includes_process_and_excludes_noise()
     test_log_predicate_system_excludes_own_subsystem()

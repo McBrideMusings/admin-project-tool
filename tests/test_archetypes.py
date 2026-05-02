@@ -316,7 +316,7 @@ def test_render_command_is_step_runner():
     assert '@command("dev"' in out, out
     assert "def cmd_dev(args):" in out, out
     assert 'set_log_context("dev")' in out, out
-    assert 'run_command(_step)' in out, out
+    assert 'run_command(_step, args)' in out, out
     assert '"dev-action"' in out, out
     print("OK: commands render as step-runners with set_log_context")
 

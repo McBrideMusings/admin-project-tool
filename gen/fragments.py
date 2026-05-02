@@ -46,7 +46,7 @@ def render_command(cmd: Command) -> str:
         f"def {func_name}(args):\n"
         f"{log_line}"
         f"    for _step in {steps_literal}:\n"
-        f"        run_command(_step)\n"
+        f"        run_command(_step, args)\n"
     )
 
 
@@ -92,7 +92,10 @@ def render_multi_target(cmd: Command) -> str:
         def {func_name}(args):
             _targets = {targets_literal}
             _menu = {menu_literal}
-            picked = args[0] if args and not args[0].startswith("-") else None
+            if args and not args[0].startswith("-"):
+                picked, rest_args = args[0], args[1:]
+            else:
+                picked, rest_args = None, args
             if picked is None:
                 if len(_targets) == 1:
                     picked = next(iter(_targets))
@@ -106,7 +109,7 @@ def render_multi_target(cmd: Command) -> str:
             set_log_context({_pyrepr(cmd.name)}, picked)
             shell = _targets[picked]
             if shell.startswith('@'):
-                run_command(shell[1:])
+                run_command(shell[1:], rest_args)
             else:
                 info({_pyrepr(f"running [" + cmd.name + ":")} + picked + "]: " + shell)
                 rc = run_cmd(shell)

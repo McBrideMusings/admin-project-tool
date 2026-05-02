@@ -2,7 +2,7 @@
 
 import re
 import sys
-from datetime import datetime
+import datetime
 
 from .core import C
 
@@ -47,7 +47,7 @@ class LogFormatter:
         if self._use_color:
             line = self._colorize_level(line)
 
-        ts = datetime.now().strftime(self._fmt)
+        ts = datetime.datetime.now().strftime(self._fmt)
         return f"{ts}  {line}\n"
 
     def _strip_timestamp(self, line: str) -> str:

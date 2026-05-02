@@ -156,9 +156,9 @@ _RAW_BUILD_LOG = "/tmp/admin-xcode-build.log"
 
 
 def find_app(pattern):
-    """Glob for a built .app bundle and return the first match, or None."""
+    """Glob for a built .app bundle and return the newest match, or None."""
     matches = glob.glob(os.path.expanduser(pattern))
-    return matches[0] if matches else None
+    return max(matches, key=os.path.getmtime) if matches else None
 
 
 def diagnose_build_failure():

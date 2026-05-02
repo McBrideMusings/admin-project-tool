@@ -14,7 +14,7 @@ Column spec format: 'Name:width' (fixed chars), 'Name:*' (fill remaining), or
 import re
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+import datetime
 
 from .core import C
 from .log_format import _LEVEL_COLORS, strip_log_timestamp
@@ -160,7 +160,7 @@ class ColumnFormatter:
         if m:
             level = m.group()
 
-        ts_display = ts.strip() if ts else datetime.now().strftime("%H:%M:%S.%f")
+        ts_display = ts.strip() if ts else datetime.datetime.now().strftime("%H:%M:%S.%f")
         field_map = {
             "Timestamp": ts_display,
             "Level": level,
