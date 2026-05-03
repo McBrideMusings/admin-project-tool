@@ -1700,9 +1700,9 @@ def dev_ios(cfg, *, log_level="app", clean=False, output_config=None):
     project = _detect_project_path(cfg)
     config = cfg.get("ios_build_config", "Debug")
     process = _resolve_ios_process(cfg)
-    subsystem = _resolve_subsystem(cfg, platform="ios")
     ios_dev_bundle = _resolve_ios_dev_bundle(cfg)
     bundle_id = ios_dev_bundle or _resolve_ios_bundle(cfg)
+    subsystem = cfg.get("subsystem") or bundle_id
     extra_settings = _compose_dev_settings(cfg, ios_dev_bundle)
     build_action = "clean build" if clean else "build"
     predicate = log_predicate(process, subsystem, level=log_level)
@@ -1847,9 +1847,9 @@ def dev_device(cfg, *, log_level="app", clean=False, output_config=None):
     project = _detect_project_path(cfg)
     config = cfg.get("ios_build_config", "Debug")
     process = _resolve_ios_process(cfg)
-    subsystem = _resolve_subsystem(cfg, platform="ios")
     ios_dev_bundle = _resolve_ios_dev_bundle(cfg)
     bundle_id = ios_dev_bundle or _resolve_ios_bundle(cfg)
+    subsystem = cfg.get("subsystem") or bundle_id
     extra_settings = _compose_dev_settings(cfg, ios_dev_bundle)
     build_action = "clean build" if clean else "build"
     app_pattern = _derived_glob(_resolve_derived_data_name(cfg), config, "-iphoneos", process)
