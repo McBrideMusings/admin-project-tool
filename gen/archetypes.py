@@ -154,6 +154,8 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
             merged: dict = {
                 "desc": override.get("desc", base.desc),
                 "steps": override.get("steps", base.meta.get("steps", [])),
+                "group": override.get("group", base.group),
+                "priority": override.get("priority", base.priority),
             }
             base_log = base.meta.get("logging", {})
             for key in ("log_file", "log_retain", "log"):
