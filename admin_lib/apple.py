@@ -1286,23 +1286,33 @@ def _xcode_setting(cfg, scheme_name, key):
     return val
 
 
-def _resolve_mac_bundle(cfg):
-    """macOS production bundle ID. Reads ``mac_bundle`` from the manifest if
-    set, otherwise pulls ``PRODUCT_BUNDLE_IDENTIFIER`` from the mac scheme's
-    target in the pbxproj.
+def _resolve_bundle(cfg, platform, *, dev=False):
+    """Single authoritative bundle ID resolver. The Xcode project is the
+    source of truth; the manifest can override. ``dev=True`` appends ``.dev``
+    (or uses the explicit ``{platform}_dev_bundle`` key).
     """
-    return cfg.get("mac_bundle") or _xcode_setting(
-        cfg, cfg.get("mac_scheme"), "PRODUCT_BUNDLE_IDENTIFIER"
-    )
+    if platform == "ios":
+        prod = cfg.get("ios_bundle") or _xcode_setting(
+            cfg, cfg.get("ios_scheme"), "PRODUCT_BUNDLE_IDENTIFIER"
+        )
+        if not dev:
+            return prod
+        return cfg.get("ios_dev_bundle") or (f"{prod}.dev" if prod else None)
+    else:
+        prod = cfg.get("mac_bundle") or _xcode_setting(
+            cfg, cfg.get("mac_scheme"), "PRODUCT_BUNDLE_IDENTIFIER"
+        )
+        if not dev:
+            return prod
+        return cfg.get("mac_dev_bundle") or (f"{prod}.dev" if prod else None)
+
+
+def _resolve_mac_bundle(cfg):
+    return _resolve_bundle(cfg, "mac")
 
 
 def _resolve_ios_bundle(cfg):
-    """iOS production bundle ID. Same fallback chain as
-    :func:`_resolve_mac_bundle` but for the iOS scheme.
-    """
-    return cfg.get("ios_bundle") or _xcode_setting(
-        cfg, cfg.get("ios_scheme"), "PRODUCT_BUNDLE_IDENTIFIER"
-    )
+    return _resolve_bundle(cfg, "ios")
 
 
 def _resolve_mac_process(cfg):
@@ -1345,18 +1355,16 @@ def _resolve_mac_install_path_prod(cfg):
     return f"/Applications/{process}.app" if process else None
 
 
-def _resolve_subsystem(cfg, platform="mac"):
-    """``os_log`` subsystem used in log-stream predicates. Defaults to the
-    platform bundle ID (``Logger(subsystem: Bundle.main.bundleIdentifier!)``
-    is the canonical Swift pattern). Returns "" so callers can pass it
-    directly to predicate builders without a None check.
+def _resolve_subsystem(cfg, platform="mac", *, dev=False):
+    """``os_log`` subsystem — the bundle ID the running app logs under.
+    Matches ``Bundle.main.bundleIdentifier`` at runtime: dev builds use the
+    dev bundle, production builds use the production bundle. Returns "" so
+    callers can pass it directly to predicate builders without a None check.
     """
     explicit = cfg.get("subsystem")
     if explicit:
         return explicit
-    if platform == "ios":
-        return _resolve_ios_bundle(cfg) or _resolve_mac_bundle(cfg) or ""
-    return _resolve_mac_bundle(cfg) or ""
+    return _resolve_bundle(cfg, platform, dev=dev) or ""
 
 
 def _resolve_icon_dirs(cfg, platforms=("mac", "ios")):
@@ -1496,15 +1504,11 @@ def restore_stranded_dev_icons(cfg, platforms=("mac", "ios"), backup_dir="tmp/ic
 
 
 def _resolve_mac_dev_bundle(cfg):
-    """macOS dev bundle ID. Default: ``<mac_bundle>.dev``."""
-    base = _resolve_mac_bundle(cfg)
-    return cfg.get("mac_dev_bundle") or (f"{base}.dev" if base else None)
+    return _resolve_bundle(cfg, "mac", dev=True)
 
 
 def _resolve_ios_dev_bundle(cfg):
-    """iOS dev bundle ID. Default: ``<ios_bundle>.dev``."""
-    base = _resolve_ios_bundle(cfg)
-    return cfg.get("ios_dev_bundle") or (f"{base}.dev" if base else None)
+    return _resolve_bundle(cfg, "ios", dev=True)
 
 
 def _resolve_mac_dev_product_name(cfg):
@@ -1641,8 +1645,9 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=N
     config = cfg.get("mac_build_config", "Debug")
     process = _resolve_mac_process(cfg)
     dev_process = _resolve_mac_dev_process(cfg) or process
-    subsystem = _resolve_subsystem(cfg)
-    extra_settings = _compose_dev_settings(cfg, _resolve_mac_dev_bundle(cfg))
+    bundle_id = _resolve_bundle(cfg, "mac", dev=True)
+    subsystem = _resolve_subsystem(cfg, "mac", dev=True)
+    extra_settings = _compose_dev_settings(cfg, bundle_id)
     build_action = "clean build" if clean else "build"
     predicate = log_predicate(dev_process, subsystem, level=log_level)
     app_pattern = _derived_glob(_resolve_derived_data_name(cfg), config, "", process)
@@ -1700,10 +1705,9 @@ def dev_ios(cfg, *, log_level="app", clean=False, output_config=None):
     project = _detect_project_path(cfg)
     config = cfg.get("ios_build_config", "Debug")
     process = _resolve_ios_process(cfg)
-    ios_dev_bundle = _resolve_ios_dev_bundle(cfg)
-    bundle_id = ios_dev_bundle or _resolve_ios_bundle(cfg)
-    subsystem = cfg.get("subsystem") or bundle_id
-    extra_settings = _compose_dev_settings(cfg, ios_dev_bundle)
+    bundle_id = _resolve_bundle(cfg, "ios", dev=True)
+    subsystem = _resolve_subsystem(cfg, "ios", dev=True)
+    extra_settings = _compose_dev_settings(cfg, bundle_id)
     build_action = "clean build" if clean else "build"
     predicate = log_predicate(process, subsystem, level=log_level)
     app_pattern = _derived_glob(_resolve_derived_data_name(cfg), config, "-iphonesimulator", process)
@@ -1847,10 +1851,9 @@ def dev_device(cfg, *, log_level="app", clean=False, output_config=None):
     project = _detect_project_path(cfg)
     config = cfg.get("ios_build_config", "Debug")
     process = _resolve_ios_process(cfg)
-    ios_dev_bundle = _resolve_ios_dev_bundle(cfg)
-    bundle_id = ios_dev_bundle or _resolve_ios_bundle(cfg)
-    subsystem = cfg.get("subsystem") or bundle_id
-    extra_settings = _compose_dev_settings(cfg, ios_dev_bundle)
+    bundle_id = _resolve_bundle(cfg, "ios", dev=True)
+    subsystem = _resolve_subsystem(cfg, "ios", dev=True)
+    extra_settings = _compose_dev_settings(cfg, bundle_id)
     build_action = "clean build" if clean else "build"
     app_pattern = _derived_glob(_resolve_derived_data_name(cfg), config, "-iphoneos", process)
 
