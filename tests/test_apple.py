@@ -286,6 +286,85 @@ def test_backup_and_restore_icons_roundtrip():
     print("OK: backup_icons + restore_icons round-trip restores original PNGs")
 
 
+# ---------------------------------------------------------------------------
+# _resolve_bundle
+# ---------------------------------------------------------------------------
+
+def _load_apple_stubbed_xcode(xcode_return=None):
+    """Load apple.py with _xcode_setting stubbed to return *xcode_return*."""
+    ns = _load_apple()
+    ns["_xcode_setting"] = lambda cfg, scheme, key: xcode_return
+    return ns
+
+
+def test_resolve_bundle_manifest_override_prod():
+    ns = _load_apple_stubbed_xcode()
+    result = ns["_resolve_bundle"]({"mac_bundle": "com.example.app"}, "mac")
+    assert result == "com.example.app", result
+    print("OK: _resolve_bundle returns manifest mac_bundle for prod mac")
+
+
+def test_resolve_bundle_manifest_override_ios():
+    ns = _load_apple_stubbed_xcode()
+    result = ns["_resolve_bundle"]({"ios_bundle": "com.example.ios"}, "ios")
+    assert result == "com.example.ios", result
+    print("OK: _resolve_bundle returns manifest ios_bundle for prod ios")
+
+
+def test_resolve_bundle_from_pbxproj():
+    ns = _load_apple_stubbed_xcode(xcode_return="com.example.fromxcode")
+    result = ns["_resolve_bundle"]({"mac_scheme": "MyApp"}, "mac")
+    assert result == "com.example.fromxcode", result
+    print("OK: _resolve_bundle falls through to _xcode_setting when no manifest override")
+
+
+def test_resolve_bundle_manifest_wins_over_pbxproj():
+    ns = _load_apple_stubbed_xcode(xcode_return="com.example.fromxcode")
+    result = ns["_resolve_bundle"]({"mac_bundle": "com.example.manifest"}, "mac")
+    assert result == "com.example.manifest", result
+    print("OK: _resolve_bundle manifest override wins over pbxproj value")
+
+
+def test_resolve_bundle_dev_auto_derive():
+    ns = _load_apple_stubbed_xcode()
+    result = ns["_resolve_bundle"]({"mac_bundle": "com.example.app"}, "mac", dev=True)
+    assert result == "com.example.app.dev", result
+    print("OK: _resolve_bundle dev=True appends .dev when no explicit dev bundle")
+
+
+def test_resolve_bundle_dev_explicit_override():
+    ns = _load_apple_stubbed_xcode()
+    cfg = {"mac_bundle": "com.example.app", "mac_dev_bundle": "com.example.app-debug"}
+    result = ns["_resolve_bundle"](cfg, "mac", dev=True)
+    assert result == "com.example.app-debug", result
+    print("OK: _resolve_bundle dev=True uses explicit mac_dev_bundle when set")
+
+
+def test_resolve_bundle_returns_none_when_nothing_configured():
+    ns = _load_apple_stubbed_xcode(xcode_return=None)
+    result = ns["_resolve_bundle"]({}, "mac")
+    assert result is None, result
+    print("OK: _resolve_bundle returns None when neither manifest nor pbxproj has a value")
+
+
+def test_resolve_bundle_dev_returns_none_when_no_prod():
+    ns = _load_apple_stubbed_xcode(xcode_return=None)
+    result = ns["_resolve_bundle"]({}, "mac", dev=True)
+    assert result is None, result
+    print("OK: _resolve_bundle dev=True returns None when prod bundle is also unresolvable")
+
+
+def test_resolve_bundle_unknown_platform_raises():
+    ns = _load_apple_stubbed_xcode()
+    try:
+        ns["_resolve_bundle"]({}, "osx")
+    except ValueError as e:
+        assert "osx" in str(e), e
+        print("OK: _resolve_bundle raises ValueError on unknown platform")
+        return
+    raise AssertionError("expected ValueError on unknown platform 'osx'")
+
+
 if __name__ == "__main__":
     test_find_app_returns_match()
     test_find_app_returns_none_on_no_match()
@@ -301,4 +380,13 @@ if __name__ == "__main__":
     test_dev_macos_postprocess_rejects_empty_path()
     test_dev_macos_postprocess_rejects_app_without_info_plist()
     test_backup_and_restore_icons_roundtrip()
+    test_resolve_bundle_manifest_override_prod()
+    test_resolve_bundle_manifest_override_ios()
+    test_resolve_bundle_from_pbxproj()
+    test_resolve_bundle_manifest_wins_over_pbxproj()
+    test_resolve_bundle_dev_auto_derive()
+    test_resolve_bundle_dev_explicit_override()
+    test_resolve_bundle_returns_none_when_nothing_configured()
+    test_resolve_bundle_dev_returns_none_when_no_prod()
+    test_resolve_bundle_unknown_platform_raises()
     print("\nAll tests passed.")

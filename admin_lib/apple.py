@@ -1291,7 +1291,9 @@ def _resolve_bundle(cfg, platform, *, dev=False):
     source of truth; the manifest can override. ``dev=True`` appends ``.dev``
     (or uses the explicit ``{platform}_dev_bundle`` key).
     """
-    key = "ios" if platform == "ios" else "mac"
+    if platform not in ("ios", "mac"):
+        raise ValueError(f"_resolve_bundle: unknown platform {platform!r} — expected 'ios' or 'mac'")
+    key = platform
     prod = cfg.get(f"{key}_bundle") or _xcode_setting(
         cfg, cfg.get(f"{key}_scheme"), "PRODUCT_BUNDLE_IDENTIFIER"
     )
@@ -1353,6 +1355,12 @@ def _resolve_subsystem(cfg, platform="mac", *, dev=False):
     Matches ``Bundle.main.bundleIdentifier`` at runtime: dev builds use the
     dev bundle, production builds use the production bundle. Returns "" so
     callers can pass it directly to predicate builders without a None check.
+
+    Note: previously, ``platform="ios"`` fell back to the mac bundle ID when
+    no iOS bundle was configured. That fallback was removed — it silently
+    produced a wrong-platform subsystem for mac-only projects. Missing iOS
+    bundle config now returns "" explicitly. Set ``ios_bundle`` (or
+    ``ios_dev_bundle``) in ``[apple]`` if you need a non-empty iOS subsystem.
     """
     explicit = cfg.get("subsystem")
     if explicit:
@@ -1786,7 +1794,7 @@ def deploy_ios(cfg, *, clean=False):
     project = _detect_project_path(cfg)
     config = cfg.get("ios_deploy_config", "Release")
     process = _resolve_ios_process(cfg)
-    bundle_id = _resolve_ios_bundle(cfg)
+    bundle_id = _resolve_bundle(cfg, "ios")
     build_action = "clean build" if clean else "build"
     derived_name = _resolve_derived_data_name(cfg)
 
@@ -1916,7 +1924,7 @@ def get_ios_log_bundle(cfg, *, prod=False):
     prod=False → ios_dev_bundle, prod=True → ios_bundle.
     Calls sys.exit(1) if neither is configured.
     """
-    bundle = _resolve_ios_bundle(cfg) if prod else _resolve_ios_dev_bundle(cfg)
+    bundle = _resolve_bundle(cfg, "ios") if prod else _resolve_bundle(cfg, "ios", dev=True)
     if not bundle:
         key = "ios_bundle" if prod else "ios_dev_bundle"
         err(f"apple.{key} not set in admin.toml and could not derive from project")

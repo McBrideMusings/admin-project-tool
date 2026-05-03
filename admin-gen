@@ -39,7 +39,7 @@ from gen.manifest import (  # noqa: E402
     load as load_manifest,
     require_python_311,
 )
-from gen.archetypes import resolve, ResolvedManifest  # noqa: E402
+from gen.archetypes import resolve, ResolvedManifest, ArchetypeError  # noqa: E402
 from gen.render import render, generator_commit_sha, RenderError  # noqa: E402
 from gen.detectors import detect as run_detectors  # noqa: E402
 
@@ -209,12 +209,12 @@ def cmd_audit(project_dir: Path, args) -> int:
 
     try:
         resolved = resolve(manifest, ARCHETYPE_DIR)
-    except Exception as e:
+    except (ManifestError, ArchetypeError) as e:
         err(f"audit validation failed: {e}")
         return 1
     try:
         script = render(resolved, ADMIN_LIB_DIR, generator_commit=sha, inline_body=inline_body)
-    except Exception as e:
+    except (RenderError, ArchetypeError) as e:
         err(f"audit render failed: {e}")
         return 1
 

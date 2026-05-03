@@ -89,9 +89,10 @@ def setup_dev_mounts(data_dir, mounts):
 
 
 def _detect_pkg_manager(frontend_dir):
-    """Return 'bun' if bun.lockb exists in frontend_dir, else 'npm'."""
-    if os.path.exists(os.path.join(frontend_dir, "bun.lockb")):
-        return "bun"
+    """Return 'bun' if a bun lockfile exists in frontend_dir, else 'npm'."""
+    for name in ("bun.lockb", "bun.lock"):
+        if os.path.exists(os.path.join(frontend_dir, name)):
+            return "bun"
     return "npm"
 
 
@@ -189,11 +190,14 @@ def run_vite_dev(
             vite_fh.close()
     register_cleanup(_stop_vite)
 
-    _wait_for_port(vite_port)
+    ready = _wait_for_port(vite_port)
 
     domain = os.environ.get("DEV_DOMAIN", "").strip()
     dev_url = f"https://{vite_port}.{domain}" if domain else f"http://localhost:{vite_port}"
-    ok(f"Vite dev server: {dev_url}")
+    if ready:
+        ok(f"Vite dev server: {dev_url}")
+    else:
+        warn(f"Vite dev server (may not be ready): {dev_url}")
     info(f"Vite log: {vite_log}")
     print()
 
@@ -236,11 +240,18 @@ def vite_dev_from_config(cfg):
     project_data = os.path.abspath(cfg.get("data_dir", "data"))
     subdirs = list(cfg.get("data_subdirs") or [])
     backend_env = dict(cfg.get("backend_extra_env") or {})
+
+    data_roots = [s for s in subdirs if s.get("is_data_root")]
+    if len(data_roots) > 1:
+        names = [s.get("name", "?") for s in data_roots]
+        err(f"vite_dev: multiple data_subdirs have is_data_root=true: {names}")
+        return 1
+
     data_root = None
     for i, sub in enumerate(subdirs):
         path = os.path.join(project_data, sub["name"])
         os.makedirs(path, exist_ok=True)
-        env_name = sub.get("env")
+        env_name = sub.get("export_as") or sub.get("env")
         if env_name:
             backend_env[env_name] = path
         if sub.get("is_data_root") or (data_root is None and i == 0):

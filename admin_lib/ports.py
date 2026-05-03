@@ -459,7 +459,7 @@ def nuke_dev_processes(
             pids.add(h["pid"])
             ppid = h.get("parent_pid")
             pcmd = h.get("parent_command") or ""
-            if ppid and any(k in pcmd for k in ("bun", "node", "npm", "python", "main.js")):
+            if ppid and any(k in pcmd for k in ("bun", "node", "npm", "python")):
                 pids.add(ppid)
         _kill_set(pids, f"port-{port} holders")
 
