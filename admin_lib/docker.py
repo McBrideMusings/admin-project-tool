@@ -200,7 +200,8 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
                     termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_term)
                 if proc.poll() is None:
                     try:
-                        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                        kill_sig = signal.SIGINT if sys.exc_info()[0] is KeyboardInterrupt else signal.SIGTERM
+                        os.killpg(os.getpgid(proc.pid), kill_sig)
                     except OSError:
                         proc.terminate()
                     _wait_or_kill(proc)
