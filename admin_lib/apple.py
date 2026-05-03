@@ -1291,20 +1291,13 @@ def _resolve_bundle(cfg, platform, *, dev=False):
     source of truth; the manifest can override. ``dev=True`` appends ``.dev``
     (or uses the explicit ``{platform}_dev_bundle`` key).
     """
-    if platform == "ios":
-        prod = cfg.get("ios_bundle") or _xcode_setting(
-            cfg, cfg.get("ios_scheme"), "PRODUCT_BUNDLE_IDENTIFIER"
-        )
-        if not dev:
-            return prod
-        return cfg.get("ios_dev_bundle") or (f"{prod}.dev" if prod else None)
-    else:
-        prod = cfg.get("mac_bundle") or _xcode_setting(
-            cfg, cfg.get("mac_scheme"), "PRODUCT_BUNDLE_IDENTIFIER"
-        )
-        if not dev:
-            return prod
-        return cfg.get("mac_dev_bundle") or (f"{prod}.dev" if prod else None)
+    key = "ios" if platform == "ios" else "mac"
+    prod = cfg.get(f"{key}_bundle") or _xcode_setting(
+        cfg, cfg.get(f"{key}_scheme"), "PRODUCT_BUNDLE_IDENTIFIER"
+    )
+    if not dev:
+        return prod
+    return cfg.get(f"{key}_dev_bundle") or (f"{prod}.dev" if prod else None)
 
 
 def _resolve_mac_bundle(cfg):
