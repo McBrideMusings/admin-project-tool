@@ -22,7 +22,8 @@ _KNOWN_KEYS = {
     "dev_kill", "clean_dev", "vite_dev", "deploy",
 }
 
-VALID_COMMAND_KEYS = {"desc", "steps", "log_file", "log_retain", "log"}
+VALID_COMMAND_KEYS = {"desc", "steps", "log_file", "log_retain", "log", "group", "priority"}
+VALID_ACTION_KEYS = {"run", "desc", "kind", "targets", "method", "body", "src", "log_file", "log_retain", "log"}
 
 
 @dataclass
@@ -35,6 +36,8 @@ class Command:
     source: str = "manifest"       # which archetype contributed it (or "manifest")
     targets: dict = field(default_factory=dict)  # target name -> shell string (for multi-target kinds)
     meta: dict = field(default_factory=dict)     # kind-specific extras: {steps} for sequence, {method, body} for http
+    group: int = 0                 # display group; commands with different groups get automatic spacers between them
+    priority: int = 0              # sort order within a group; ties broken alphabetically
 
 
 SPACER = ""  # sentinel used inside Manifest.order to denote a spacer row
@@ -159,10 +162,8 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         raise ManifestError(f"{source}: 'actions' must be a table")
     actions: dict[str, dict] = {}
     for name, val in raw_actions.items():
-        if not isinstance(val, dict) or ("run" not in val and "steps" not in val):
-            raise ManifestError(
-                f"{source}: actions.{name} must be a table with 'run' or 'steps'"
-            )
+        if not isinstance(val, dict):
+            raise ManifestError(f"{source}: actions.{name} must be a table")
         actions[name] = val
 
     inline = data.get("inline", {}) or {}
@@ -372,6 +373,24 @@ def dump(manifest: Manifest) -> str:
         for name, val in manifest.custom.items():
             lines.append(f"{name} = {_inline_table(val)}")
         lines.append("")
+
+    if manifest.actions:
+        for action_name, action_data in manifest.actions.items():
+            lines.append(f"[actions.{action_name}]")
+            for k, v in action_data.items():
+                if isinstance(v, str):
+                    lines.append(f'{k} = "{_escape(v)}"')
+                elif isinstance(v, bool):
+                    lines.append(f"{k} = {'true' if v else 'false'}")
+                elif isinstance(v, int):
+                    lines.append(f"{k} = {v}")
+                elif isinstance(v, dict):
+                    lines.append(f"{k} = {_inline_table(v)}")
+                elif isinstance(v, list):
+                    lines.append(f"{k} = {_inline_list(v)}")
+                else:
+                    lines.append(f"{k} = {v!r}")
+            lines.append("")
 
     if manifest.logs:
         for target_name, target in manifest.logs.items():

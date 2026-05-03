@@ -559,6 +559,104 @@ def test_inline_target_action_key_adds_at_prefix():
     print("OK: inline target 'action' key produces @-prefixed dispatch target")
 
 
+def test_group_priority_top_level_sort():
+    """Commands sorted by (group, priority, name) with spacers between groups."""
+    manifest = parse({
+        "project_name": "test",
+        "python_min": "3.11",
+        "commands": {
+            "deploy": {"desc": "Deploy", "steps": ["deploy-action"], "group": 2, "priority": 10},
+            "build":  {"desc": "Build",  "steps": ["build-action"],  "group": 1, "priority": 20},
+            "dev":    {"desc": "Dev",    "steps": ["dev-action"],    "group": 1, "priority": 10},
+            "open":   {"desc": "Open",   "steps": ["open-action"],   "group": 2, "priority": 20},
+        },
+        "actions": {
+            "build-action":  {"run": "build"},
+            "dev-action":    {"run": "dev"},
+            "deploy-action": {"run": "deploy"},
+            "open-action":   {"run": "open"},
+        },
+    })
+    resolved = resolve(manifest, ARCH_DIR)
+    assert resolved.display_order == ["dev", "build", "", "deploy", "open"], (
+        f"wrong order: {resolved.display_order}"
+    )
+    print("OK: group+priority produces sorted display order with spacers")
+
+
+def test_group_priority_all_default_alphabetical():
+    """When all commands use defaults (group=0, priority=0), order is alphabetical."""
+    manifest = parse({
+        "project_name": "test",
+        "python_min": "3.11",
+        "commands": {
+            "zebra": {"desc": "Z", "steps": ["z"]},
+            "alpha": {"desc": "A", "steps": ["a"]},
+            "beta":  {"desc": "B", "steps": ["b"]},
+        },
+        "actions": {
+            "z": {"run": "z"},
+            "a": {"run": "a"},
+            "b": {"run": "b"},
+        },
+    })
+    resolved = resolve(manifest, ARCH_DIR)
+    assert resolved.display_order == ["alpha", "beta", "zebra"], (
+        f"wrong order: {resolved.display_order}"
+    )
+    print("OK: all-default group/priority gives alphabetical order with no spacers")
+
+
+def test_group_priority_inline_targets_sorted():
+    """Inline target subtables with group/priority produce meta['target_order']."""
+    arch_data = {
+        "kind": "multi-target",
+        "desc": "Build",
+        "clean": {"run": "rm -rf build/", "desc": "Clean",       "group": 2, "priority": 10},
+        "ios":   {"run": "xcodebuild ios", "desc": "Build iOS",  "group": 1, "priority": 20},
+        "mac":   {"run": "xcodebuild mac", "desc": "Build macOS","group": 1, "priority": 10},
+    }
+    cmd = _to_command("build", arch_data, source="test", is_action=True)
+    assert "target_order" in cmd.meta, "target_order should be set when group/priority declared"
+    assert cmd.meta["target_order"] == ["mac", "ios", "", "clean"], (
+        f"wrong target_order: {cmd.meta['target_order']}"
+    )
+    print("OK: inline target group/priority produces sorted target_order with spacer")
+
+
+def test_group_priority_inline_targets_no_order_when_all_default():
+    """Inline targets with all-default group/priority don't produce target_order."""
+    arch_data = {
+        "kind": "multi-target",
+        "desc": "Build",
+        "mac": {"run": "xcodebuild mac", "desc": "Build macOS"},
+        "ios": {"run": "xcodebuild ios", "desc": "Build iOS"},
+    }
+    cmd = _to_command("build", arch_data, source="test", is_action=True)
+    assert "target_order" not in cmd.meta, (
+        f"target_order should not be set when all defaults; got {cmd.meta.get('target_order')}"
+    )
+    print("OK: inline targets with all-default group/priority produce no target_order")
+
+
+def test_group_priority_renders_target_order_in_pick_target():
+    """render_multi_target emits _target_order and order= kwarg when meta['target_order'] set."""
+    from gen.fragments import render_multi_target
+    cmd = Command(
+        name="build", run="", desc="Build", kind="multi-target",
+        targets={"mac": "xcodebuild mac", "ios": "xcodebuild ios", "clean": "rm -rf build/"},
+        meta={
+            "target_descs": {"mac": "Build macOS", "ios": "Build iOS", "clean": "Clean"},
+            "target_order": ["mac", "ios", "", "clean"],
+        },
+    )
+    code = render_multi_target(cmd)
+    assert "_target_order" in code, "should emit _target_order variable"
+    assert "order=_target_order" in code, "should pass order= kwarg to pick_target"
+    assert "''" in code or '""' in code, "spacer entry should appear in _target_order literal"
+    print("OK: render_multi_target emits _target_order + order= kwarg")
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

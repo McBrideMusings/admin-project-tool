@@ -42,12 +42,21 @@ prod = "https://pierce.dev"
 [actions]                       # where work actually happens (kind + run/targets/etc.)
 # warm-cache = { kind = "shell", run = "./scripts/warm.sh", desc = "Warm CDN cache" }
 
-order = ["build", "dev", "deploy", "", "test", "clean"]
-# Display order for the TUI menu and --help. "" (or "---") inserts a blank
-# spacer row — useful for grouping primary commands (build/dev/deploy) away
-# from secondary ones (test/clean/icons). Commands omitted from `order`
-# auto-append after the listed ones in merge order. If `order` is not set
-# on the manifest, the last archetype's declared `order` is used.
+# Display order — two approaches:
+#
+# 1. Explicit order list (legacy, still supported):
+# order = ["build", "dev", "deploy", "", "test", "clean"]
+#   "" or "---" inserts a blank spacer. Commands omitted auto-append after.
+#   Manifest order wins; otherwise the last archetype's declared order is used.
+#
+# 2. group + priority on each command (preferred for composable archetypes):
+# [commands.dev]
+# desc = "Run dev server"; steps = ["run-dev"]; group = 1; priority = 10
+# [commands.deploy]
+# desc = "Deploy"; steps = ["deploy"]; group = 2; priority = 10
+#   Commands sort by (group, priority, name). Spacers appear automatically
+#   between groups. All default to group=0, priority=0 → alphabetical, no spacers.
+#   Works across multiple archetypes without a central order list.
 ```
 
 **Command/Action split:** `[commands]` entries are thin routing layers — they may only have `desc` and `steps` (a list of action names). All actual work (shell strings, Python bodies, multi-target dispatch) lives in `[actions]`. Commands are the TUI menu entries; actions are the implementation. The generator errors with a clear message if a `[commands]` entry contains `kind`, `run`, or `targets`.
@@ -73,7 +82,7 @@ Composition works: `archetypes = ["docker-unraid", "apple"]` produces the `open-
 
 **Conflict resolution:** when two archetypes define the same command name, the later one wins; the manifest's own `[commands]` table wins over all archetypes. `admin regenerate` prints a merge report.
 
-**Display order:** archetypes may declare `"order": [...]` (with `""` entries for blank spacers) to group their commands in the TUI and `--help`. Manifest `order` wins; otherwise the last archetype's `order` is used; otherwise commands render in merge order. Example from the `apple` archetype: `["build", "dev", "deploy", "", "test", "clean", "icons", "reload"]` — the spacer signals the primary/secondary split.
+**Display order:** Two mechanisms. *Preferred for composable archetypes:* each command declares `group` (int, default 0) and `priority` (int, default 0). Commands sort by `(group, priority, name)`; spacers appear automatically between groups. Commands with all defaults are alphabetical with no spacers. *Legacy explicit list:* manifest or archetype declares `order = ["build", "dev", "", "test"]` with `""` / `"---"` spacers; manifest wins over archetype order. Both mechanisms support sub-command target ordering for `multi-target` actions: inline target subtables may also declare `group`/`priority`, which sorts them and emits spacers in the `pick_target` menu.
 
 ## Authoring Archetypes
 

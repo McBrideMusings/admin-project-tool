@@ -680,10 +680,11 @@ def _tui_menu():
 # pick_target — sub-TUI for selecting among options
 # ---------------------------------------------------------------------------
 
-def pick_target(targets, prompt="Select target"):
+def pick_target(targets, prompt="Select target", order=None):
     """Show an inline TUI picker for sub-targets. Returns the chosen key or None.
 
-    targets: OrderedDict of {name: description}
+    targets: dict of {name: description}
+    order: optional list of names; "" entries render as blank spacer rows
     """
     if not sys.stdout.isatty():
         return None
@@ -691,14 +692,17 @@ def pick_target(targets, prompt="Select target"):
     import tty
     import termios
 
-    items = list(targets.keys())
-    sel = 0
+    display_order = order if order is not None else list(targets.keys())
+    items = [x for x in display_order if x]  # selectable entries only
     num = len(items)
+    if num == 0:
+        return None
+    sel = 0
 
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
 
-    menu_lines = num + 1
+    menu_lines = len(display_order) + 1
 
     sys.stdout.write(f"{C.BOLD}{prompt}{C.RESET}\n")
     for _ in range(menu_lines):
@@ -709,13 +713,14 @@ def pick_target(targets, prompt="Select target"):
 
     def draw():
         sys.stdout.write("\033[s")
-        for i, name in enumerate(items):
-            desc = targets[name]
+        for entry in display_order:
             sys.stdout.write("\033[2K")
-            if i == sel:
-                sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {name:<14}{C.RESET} {desc}")
+            if not entry:
+                pass
+            elif entry == items[sel]:
+                sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {entry:<14}{C.RESET} {targets[entry]}")
             else:
-                sys.stdout.write(f"    {C.DIM}{name:<14}{C.RESET} {desc}")
+                sys.stdout.write(f"    {C.DIM}{entry:<14}{C.RESET} {targets[entry]}")
             sys.stdout.write("\n")
         sys.stdout.write("\033[2K")
         sys.stdout.write(f"{C.DIM}  [arrows/j/k] navigate  [enter] select  [q/esc] cancel{C.RESET}")

@@ -87,12 +87,22 @@ def render_multi_target(cmd: Command) -> str:
     menu_literal = "{" + ", ".join(
         f"{_pyrepr(k)}: {_pyrepr(target_descs.get(k, k))}" for k in cmd.targets
     ) + "}"
+    target_order = cmd.meta.get("target_order")
+    if target_order is not None:
+        order_literal = "[" + ", ".join(_pyrepr(e) for e in target_order) + "]"
+        # 12 spaces: matches the 8-space common indent of the textwrap.dedent block below,
+        # plus 4 spaces to land at function-body level after stripping.
+        order_segment = f"            _target_order = {order_literal}\n"
+        order_kwarg = f", order=_target_order"
+    else:
+        order_segment = ""
+        order_kwarg = ""
     body = textwrap.dedent(f'''\
         @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
         def {func_name}(args):
             _targets = {targets_literal}
             _menu = {menu_literal}
-            if args and not args[0].startswith("-"):
+{order_segment}            if args and not args[0].startswith("-"):
                 picked, rest_args = args[0], args[1:]
             else:
                 picked, rest_args = None, args
@@ -100,7 +110,7 @@ def render_multi_target(cmd: Command) -> str:
                 if len(_targets) == 1:
                     picked = next(iter(_targets))
                 else:
-                    picked = pick_target(_menu, {_pyrepr(cmd.desc + " — select target")})
+                    picked = pick_target(_menu, {_pyrepr(cmd.desc + " — select target")}{order_kwarg})
                     if not picked:
                         return
             if picked not in _targets:
@@ -243,7 +253,7 @@ def render_npm(cmd: Command) -> str:
     body = textwrap.dedent(f"""\
         @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
         def {func_name}(args):
-            _pkg = "bun" if os.path.isfile("bun.lockb") else "npm"
+            _pkg = "bun" if (os.path.isfile("bun.lockb") or os.path.isfile("bun.lock")) else "npm"
             rc = run_cmd(_pkg + " run " + {script_repr})
             if rc != 0:
                 err(_pkg + " run " + {script_repr} + " failed")
@@ -388,7 +398,7 @@ def render_clean_dev(cmd: Command) -> str:
         @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
         def {func_name}(args):
             _cfg = globals().get("_CLEAN_DEV_CONFIG") or {{}}
-            if _cfg.get("pre_kill") and "cmd_kill" in globals():
+            if _cfg.get("pre_kill", True) and "cmd_kill" in globals():
                 cmd_kill(args)
             clean_dev_from_config(_cfg, force=("--force" in args or "--db" in args))
     """)

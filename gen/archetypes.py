@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from gen.fragments import KNOWN_KINDS, CONFIGLESS_KINDS, _ACTION_RENDERERS
-from gen.manifest import Command, Manifest, SPACER, VALID_COMMAND_KEYS
+from gen.manifest import Command, Manifest, SPACER, VALID_COMMAND_KEYS, VALID_ACTION_KEYS
 
 
 @dataclass
@@ -38,9 +38,6 @@ class Archetype:
 
 class ArchetypeError(Exception):
     pass
-
-
-_VALID_ACTION_KEYS = {"run", "desc", "kind", "targets", "method", "body", "src", "log_file", "log_retain", "log"}
 
 
 def load_archetype(archetype_dir: Path, name: str) -> Archetype:
@@ -66,6 +63,16 @@ def load_archetype(archetype_dir: Path, name: str) -> Archetype:
                 f"{path}: command '{cmd_name}' has invalid keys {sorted(unknown)}. "
                 f"Commands may only have 'desc', 'steps', and log overrides.{kind_hint}"
             )
+    for action_name, action_data in data.get("actions", {}).items():
+        if not isinstance(action_data, dict):
+            raise ArchetypeError(f"{path}: action '{action_name}' must be a dict")
+        inline_target_keys = {k for k, v in action_data.items() if isinstance(v, dict) and k not in VALID_ACTION_KEYS}
+        unknown = set(action_data) - VALID_ACTION_KEYS - inline_target_keys
+        if unknown:
+            raise ArchetypeError(
+                f"{path}: action '{action_name}' has unknown keys {sorted(unknown)}, "
+                f"valid: {sorted(VALID_ACTION_KEYS)}"
+            )
     raw_order = list(data.get("order", []))
     normalized_order = ["" if e in ("", "---") else e for e in raw_order]
     return Archetype(
@@ -88,6 +95,19 @@ class ResolvedManifest:
     modules: list[str]             # required admin_lib modules
     merge_log: list[str]           # human-readable merge events
     display_order: list[str]       # final render order; "" entries mean spacer
+
+
+def _sort_by_group_priority(commands: dict[str, Command]) -> list[str]:
+    """Sort commands by (group, priority, name) and insert spacers between group boundaries."""
+    sorted_cmds = sorted(commands.values(), key=lambda c: (c.group, c.priority, c.name))
+    result: list[str] = []
+    last_group: int | None = None
+    for cmd in sorted_cmds:
+        if last_group is not None and cmd.group != last_group:
+            result.append(SPACER)
+        result.append(cmd.name)
+        last_group = cmd.group
+    return result
 
 
 def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
@@ -127,15 +147,8 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
         if arch.order:
             archetype_order = list(arch.order)
 
-    # Manifest [commands] overrides
+    # Manifest [commands] overrides — key validation already happened in manifest.parse()
     for cmd_name, override in manifest.overrides.items():
-        bad = set(override) - VALID_COMMAND_KEYS
-        if bad:
-            kind_hint = " Move kind/run/targets to [actions]." if bad & {"kind", "run", "targets"} else ""
-            raise ArchetypeError(
-                f"manifest [commands.{cmd_name}] has invalid keys {sorted(bad)}. "
-                f"Commands may only have 'desc', 'steps', and log overrides.{kind_hint}"
-            )
         if cmd_name in commands:
             base = commands[cmd_name]
             merged: dict = {
@@ -172,27 +185,31 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
         urls = merged
 
 
-    # Compute display order: manifest.order wins; otherwise fall back to the
-    # last archetype's declared order. Unlisted commands auto-append in merge order.
-    effective_order = manifest.order if manifest.order else archetype_order
-    listed: set[str] = set()
-    display: list[str] = []
-    for entry in effective_order:
-        if entry == SPACER:
-            display.append(SPACER)
-            continue
-        if entry not in commands:
-            raise ArchetypeError(
-                f"order references unknown command '{entry}' "
-                f"(known: {sorted(commands)})"
-            )
-        if entry in listed:
-            raise ArchetypeError(f"order lists command '{entry}' more than once")
-        listed.add(entry)
-        display.append(entry)
-    for name in commands:
-        if name not in listed:
-            display.append(name)
+    # Compute display order.
+    # Explicit order (manifest or archetype): use it as-is, auto-append any unlisted commands.
+    # No explicit order: sort by (group, priority, name) and insert spacers between groups.
+    if manifest.order or archetype_order:
+        effective_order = manifest.order if manifest.order else archetype_order
+        listed: set[str] = set()
+        display: list[str] = []
+        for entry in effective_order:
+            if entry == SPACER:
+                display.append(SPACER)
+                continue
+            if entry not in commands:
+                raise ArchetypeError(
+                    f"order references unknown command '{entry}' "
+                    f"(known: {sorted(commands)})"
+                )
+            if entry in listed:
+                raise ArchetypeError(f"order lists command '{entry}' more than once")
+            listed.add(entry)
+            display.append(entry)
+        for name in commands:
+            if name not in listed:
+                display.append(name)
+    else:
+        display = _sort_by_group_priority(commands)
 
     # Process actions: archetype actions first, manifest actions win on conflict
     actions: dict[str, Command] = {}
@@ -273,20 +290,22 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
             source=source,
             targets={},
             meta=meta,
+            group=int(data.get("group", 0)),
+            priority=int(data.get("priority", 0)),
         )
 
     # Actions: full kind-based rendering.
-    # Inline target subtables: keys whose value is a dict and not in _VALID_ACTION_KEYS.
+    # Inline target subtables: keys whose value is a dict and not in VALID_ACTION_KEYS.
     inline_targets_raw = {
         k: v for k, v in data.items()
-        if k not in _VALID_ACTION_KEYS and isinstance(v, dict)
+        if k not in VALID_ACTION_KEYS and isinstance(v, dict)
     }
 
-    unknown = set(data) - _VALID_ACTION_KEYS - set(inline_targets_raw)
+    unknown = set(data) - VALID_ACTION_KEYS - set(inline_targets_raw)
     if unknown:
         raise ArchetypeError(
             f"action '{name}' from {source}: unknown keys {sorted(unknown)}, "
-            f"valid: {sorted(_VALID_ACTION_KEYS)}"
+            f"valid: {sorted(VALID_ACTION_KEYS)}"
         )
     kind = str(data.get("kind", "shell"))
     if kind not in KNOWN_KINDS:
@@ -328,6 +347,20 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
                 )
         targets = {k: ("@" + v["action"] if "action" in v else v.get("run", "")) for k, v in inline_targets_raw.items()}
         meta["target_descs"] = {k: v.get("desc", k) for k, v in inline_targets_raw.items()}
+        if any(tdata.get("group", 0) != 0 or tdata.get("priority", 0) != 0 for tdata in inline_targets_raw.values()):
+            sorted_tgts = sorted(
+                inline_targets_raw.items(),
+                key=lambda item: (int(item[1].get("group", 0)), int(item[1].get("priority", 0)), item[0]),
+            )
+            target_order: list[str] = []
+            last_grp: int | None = None
+            for tname, tdata in sorted_tgts:
+                g = int(tdata.get("group", 0))
+                if last_grp is not None and g != last_grp:
+                    target_order.append("")
+                target_order.append(tname)
+                last_grp = g
+            meta["target_order"] = target_order
     else:
         targets = flat_targets
     if kind == "http":
