@@ -211,6 +211,18 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
                     f"Add [actions.{step}] to admin.toml."
                 )
 
+    # Validate @-ref targets in multi-target actions at resolve time.
+    for action_name, action in actions.items():
+        if action.kind in ("multi-target", "apple-dev-loop"):
+            for target_name, target_val in action.targets.items():
+                if target_val.startswith('@'):
+                    ref = target_val[1:]
+                    if ref not in actions:
+                        raise ArchetypeError(
+                            f"action '{action_name}': target '{target_name}' references unknown action '@{ref}'. "
+                            f"Known actions: {sorted(actions)}"
+                        )
+
     # Apply exclusions and ensure core is always present
     modules -= set(manifest.exclude_modules)
     modules.add("core")
@@ -310,7 +322,11 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
                 raise ArchetypeError(
                     f"action '{name}' from {source}: target '{tname}' must have 'action' or 'run'"
                 )
-        targets = {k: v.get("action", v.get("run", "")) for k, v in inline_targets_raw.items()}
+            if "action" in tdata and "run" in tdata:
+                raise ArchetypeError(
+                    f"action '{name}' from {source}: target '{tname}' has both 'action' and 'run' — pick one"
+                )
+        targets = {k: ("@" + v["action"] if "action" in v else v.get("run", "")) for k, v in inline_targets_raw.items()}
         meta["target_descs"] = {k: v.get("desc", k) for k, v in inline_targets_raw.items()}
     else:
         targets = flat_targets

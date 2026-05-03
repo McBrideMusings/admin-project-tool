@@ -6,6 +6,8 @@ through resolve+render without crashing.
 """
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -27,6 +29,20 @@ EXPECTED = [
     "hugo", "simple", "go-cli", "firefox-extension",
     "stash-plugin", "unraid-plugin", "docker-unraid", "apple",
 ]
+
+
+def _run_generated_script(script: str, argv: list[str], timeout: int = 10) -> subprocess.CompletedProcess:
+    """Write `script` to a temp file, run it with `argv`, clean up, return the result."""
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
+        f.write(script)
+        path = f.name
+    try:
+        return subprocess.run(
+            [sys.executable, path, *argv],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    finally:
+        os.unlink(path)
 
 
 def test_all_archetypes_load_and_validate():
@@ -400,6 +416,147 @@ def test_log_false_override_propagated_in_merge():
         f"log=false not propagated through resolve; meta={build_cmd.meta!r}"
     )
     print("OK: log=false override survives archetype merge")
+
+
+def test_render_multi_target_at_ref_args_forwarding():
+    """render_multi_target generates run_command(shell[1:], rest_args) for @-ref targets.
+
+    Regression guard for #295: the @-ref dispatch path must forward rest_args, not drop them.
+    """
+    from gen.fragments import render_action
+    cmd = Command(
+        name="build",
+        run="",
+        desc="Build",
+        kind="multi-target",
+        targets={"ios": "@build-ios", "mac": "xcodebuild -scheme Foo"},
+    )
+    out = render_action(cmd)
+    assert "run_command(shell[1:], rest_args)" in out, (
+        "@-ref targets must forward rest_args to run_command: " + out
+    )
+    assert "run_cmd(shell)" in out, "non-@-ref shell targets must use run_cmd"
+    print("OK: render_multi_target @-ref path forwards rest_args")
+
+
+def test_render_command_step_runner_dispatch_end_to_end():
+    """Step-runner commands forward args to the dispatched action at runtime.
+
+    Covers #296: end-to-end verification that args flow through run_command()
+    when a generated step-runner command is invoked.
+    """
+    m = Manifest(
+        project_name="StepTest",
+        python_min="3.11",
+        archetypes=[],
+        modules=[],
+        urls={},
+        overrides={},
+        custom={"runcmd": {"steps": ["echo-action"], "desc": "Echo args"}},
+        order=[],
+        actions={"echo-action": {"kind": "python", "desc": "Echo", "run": "print('got:', args)"}},
+    )
+    resolved = resolve(m, ARCH_DIR)
+    script = render(resolved, LIB_DIR, generator_commit="test-sha")
+
+    result = _run_generated_script(script, ["runcmd", "--flag", "value"])
+    assert result.returncode == 0, f"script failed:\n{result.stderr}"
+    assert "['--flag', 'value']" in result.stdout, (
+        f"args not forwarded to action; stdout={result.stdout!r}"
+    )
+    print("OK: step-runner forwards args to dispatched action end-to-end")
+
+
+def test_multi_target_at_ref_routing_end_to_end():
+    """Multi-target @-ref dispatch routes to the action AND forwards trailing flags.
+
+    Covers #298: './admin build ios --clean' must forward ['--clean'] to the do-ios action.
+    """
+    m = Manifest(
+        project_name="RouteTest",
+        python_min="3.11",
+        archetypes=[],
+        modules=[],
+        urls={},
+        overrides={},
+        custom={"build": {"steps": ["build-action"], "desc": "Build"}},
+        order=[],
+        actions={
+            "build-action": {
+                "kind": "multi-target",
+                "desc": "Build",
+                "targets": {"ios": "@do-ios"},
+            },
+            "do-ios": {
+                "kind": "python",
+                "desc": "Build iOS",
+                "run": "print('ios got:', args)",
+            },
+        },
+    )
+    resolved = resolve(m, ARCH_DIR)
+    script = render(resolved, LIB_DIR, generator_commit="test-sha")
+
+    result = _run_generated_script(script, ["build", "ios", "--clean"])
+    assert result.returncode == 0, f"script failed:\n{result.stderr}"
+    assert "['--clean']" in result.stdout, (
+        f"trailing flags not forwarded via @-ref; stdout={result.stdout!r}"
+    )
+    print("OK: multi-target @-ref routing forwards trailing flags end-to-end")
+
+
+def test_at_ref_validation_catches_unknown_action():
+    """@-ref targets that reference non-existent actions raise ArchetypeError at resolve time.
+
+    Covers #299: validation must happen at code-gen time, not at runtime.
+    """
+    m = Manifest(
+        project_name="BadRef",
+        python_min="3.11",
+        archetypes=[],
+        modules=[],
+        urls={},
+        overrides={},
+        custom={"build": {"steps": ["build-action"], "desc": "Build"}},
+        order=[],
+        actions={
+            "build-action": {
+                "kind": "multi-target",
+                "desc": "Build",
+                "targets": {"ios": "@nonexistent"},
+            },
+        },
+    )
+    try:
+        resolve(m, ARCH_DIR)
+        assert False, "expected ArchetypeError for unknown @-ref"
+    except ArchetypeError as e:
+        assert "nonexistent" in str(e), str(e)
+        assert "build-action" in str(e), str(e)
+    print("OK: @-ref validation catches unknown action at resolve time")
+
+
+def test_inline_target_action_key_adds_at_prefix():
+    """Inline target subtables with 'action:' produce @-prefixed values in targets.
+
+    Covers #218: the 'action' key must be prefixed with '@' so render_multi_target
+    dispatches via run_command, not run_cmd (which would try to exec it as shell).
+    """
+    arch_data = {
+        "kind": "multi-target",
+        "desc": "Build",
+        "ios": {"action": "build-ios", "desc": "Build iOS"},
+        "mac": {"run": "xcodebuild -scheme Foo", "desc": "Build macOS"},
+    }
+    from gen.archetypes import _to_command
+    cmd = _to_command("build", arch_data, source="test", is_action=True)
+    assert cmd.targets["ios"] == "@build-ios", (
+        f"'action' key must produce @-prefixed target; got {cmd.targets['ios']!r}"
+    )
+    assert cmd.targets["mac"] == "xcodebuild -scheme Foo", (
+        f"'run' key must produce bare shell string; got {cmd.targets['mac']!r}"
+    )
+    print("OK: inline target 'action' key produces @-prefixed dispatch target")
 
 
 if __name__ == "__main__":
