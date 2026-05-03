@@ -1345,13 +1345,18 @@ def _resolve_mac_install_path_prod(cfg):
     return f"/Applications/{process}.app" if process else None
 
 
-def _resolve_subsystem(cfg):
+def _resolve_subsystem(cfg, platform="mac"):
     """``os_log`` subsystem used in log-stream predicates. Defaults to the
-    macOS bundle ID, since ``Logger(subsystem: Bundle.main.bundleIdentifier!)``
-    is the canonical Swift pattern. Returns "" so callers can pass it
+    platform bundle ID (``Logger(subsystem: Bundle.main.bundleIdentifier!)``
+    is the canonical Swift pattern). Returns "" so callers can pass it
     directly to predicate builders without a None check.
     """
-    return cfg.get("subsystem") or _resolve_mac_bundle(cfg) or ""
+    explicit = cfg.get("subsystem")
+    if explicit:
+        return explicit
+    if platform == "ios":
+        return _resolve_ios_bundle(cfg) or _resolve_mac_bundle(cfg) or ""
+    return _resolve_mac_bundle(cfg) or ""
 
 
 def _resolve_icon_dirs(cfg, platforms=("mac", "ios")):
@@ -1695,7 +1700,7 @@ def dev_ios(cfg, *, log_level="app", clean=False, output_config=None):
     project = _detect_project_path(cfg)
     config = cfg.get("ios_build_config", "Debug")
     process = _resolve_ios_process(cfg)
-    subsystem = _resolve_subsystem(cfg)
+    subsystem = _resolve_subsystem(cfg, platform="ios")
     ios_dev_bundle = _resolve_ios_dev_bundle(cfg)
     bundle_id = ios_dev_bundle or _resolve_ios_bundle(cfg)
     extra_settings = _compose_dev_settings(cfg, ios_dev_bundle)
@@ -1842,7 +1847,7 @@ def dev_device(cfg, *, log_level="app", clean=False, output_config=None):
     project = _detect_project_path(cfg)
     config = cfg.get("ios_build_config", "Debug")
     process = _resolve_ios_process(cfg)
-    subsystem = _resolve_subsystem(cfg)
+    subsystem = _resolve_subsystem(cfg, platform="ios")
     ios_dev_bundle = _resolve_ios_dev_bundle(cfg)
     bundle_id = ios_dev_bundle or _resolve_ios_bundle(cfg)
     extra_settings = _compose_dev_settings(cfg, ios_dev_bundle)
