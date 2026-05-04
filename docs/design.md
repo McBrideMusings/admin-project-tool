@@ -152,6 +152,38 @@ The canonical pattern:
 
 A well-authored archetype exposes a small set of composed top-level commands and a richer set of per-target actions for manifests to compose freely. The apple archetype's `build-ios`, `dev-ios`, `dev-device`, `deploy-ios`, and `clean-ios` actions let any manifest build a `kind = "multi-target"` action with iOS as one target.
 
+### Ordering commands
+
+Two mechanisms control the order commands appear in the TUI menu and `--help`. They are **mutually exclusive** — whichever order list is present takes precedence and silently ignores group/priority values on commands.
+
+**group + priority (preferred for new archetypes and manifests):**
+
+Each command declares `group` (int, default 0) and `priority` (int, default 0). Commands sort by `(group, priority, name)`; spacers appear automatically between groups. Because each command carries its own placement, this works correctly when multiple archetypes are composed without a central coordinator.
+
+```toml
+[commands.dev]
+desc = "Run dev server"
+steps = ["run-dev"]
+group = 1
+priority = 10
+
+[commands.deploy]
+desc = "Deploy"
+steps = ["deploy"]
+group = 2
+priority = 10
+```
+
+**order list (legacy, still supported):**
+
+The manifest or an archetype declares `order = ["build", "dev", "", "test"]` where `""` or `"---"` inserts a spacer. Manifest order wins over archetype order. Commands omitted from the list append alphabetically after.
+
+```toml
+order = ["build", "dev", "", "test", "clean"]
+```
+
+**Migration signal:** `admin audit` (and `admin regenerate`) warns when both mechanisms are present — commands with non-default group/priority alongside an active order list. Drop the `order` key to switch to group/priority, or drop the group/priority fields to stay with the order list.
+
 ## Detectors (starter generators)
 
 `~/Projects/admin-project-tool/detectors/` — one file per stack, each a small function:
