@@ -541,6 +541,65 @@ def subcommand_help(name):
 # TUI menu (draw.rendered approach)
 # ---------------------------------------------------------------------------
 
+def _read_cursor_row(fd):
+    """Query terminal cursor row via ANSI DSR (ESC[6n). Returns 1-based row or None.
+
+    Drains all response bytes from the TTY buffer (including any late-arriving tail)
+    so nothing leaks into subsequent read_key() calls.
+    """
+    import re
+    import select
+    import tty
+    import termios
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        sys.stdout.write("\033[6n")
+        sys.stdout.flush()
+        buf = b""
+        while True:
+            if not select.select([fd], [], [], 0.3)[0]:
+                break
+            buf += os.read(fd, 32)
+            if b"R" in buf:
+                break
+        # Drain any bytes that arrived after we stopped reading (e.g. late CPR tail)
+        while select.select([fd], [], [], 0)[0]:
+            buf += os.read(fd, 32)
+        m = re.search(rb"\x1b\[(\d+);\d+R", buf)
+        return int(m.group(1)) if m else None
+    except Exception:
+        return None
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _make_home(fd, menu_lines):
+    """Pre-allocate menu_lines rows then return a _home() callable that resets to them.
+
+    Writes menu_lines blank lines to reserve scroll space (so the first draw never
+    causes the terminal to scroll and invalidate the saved position), moves the cursor
+    back up, then queries the absolute row via DSR for reliable subsequent jumps.
+    Falls back to DECSC/DECRC if DSR is unavailable.
+    """
+    for _ in range(menu_lines):
+        sys.stdout.write("\n")
+    sys.stdout.write(f"\033[{menu_lines}A")
+    sys.stdout.flush()
+
+    start_row = _read_cursor_row(fd)
+    if start_row is not None:
+        def _home():
+            sys.stdout.write(f"\033[{start_row};1H\033[J")
+        return _home
+
+    sys.stdout.write("\0337")  # DECSC — save position for DECRC restore below
+    sys.stdout.flush()
+    def _home():
+        sys.stdout.write("\0338\033[J")
+    return _home
+
+
 def read_key():
     """Read a single keypress, handling arrow key escape sequences."""
     import select
@@ -609,7 +668,6 @@ def _tui_menu():
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
 
-    menu_lines = num + 2  # one row per item/spacer + blank + hint; accurate because we truncate below
     env_hint = "  [e] open .env" if os.path.exists(os.path.join(_project_root, ".env")) else ""
 
     print(f"{C.BOLD}{_project_name}{C.RESET}\n")
@@ -617,32 +675,25 @@ def _tui_menu():
     if _stale_generator:
         print(f"{C.DIM}  ! tool updated — auto-regen at next Claude session (or run: admin regenerate){C.RESET}")
 
-    for _ in range(menu_lines):
-        sys.stdout.write("\n")
-    sys.stdout.write(f"\033[{menu_lines}A\r")  # up N lines, col 0
     sys.stdout.flush()
+    _home = _make_home(fd, num + 2)  # num item/spacer rows + blank separator + hint
 
     def draw():
-        # Recheck width on every draw so resize just works.
         cols = shutil.get_terminal_size((80, 24)).columns
-        # "    name           desc" — prefix is 4 + 14 + 1 = 19 visual chars
         max_desc = max(0, cols - 19)
-        hint_full = f"  [arrows/j/k] navigate  [enter] run  [o] open config{env_hint}  [q/esc] quit"
-        hint = hint_full[:cols] if len(hint_full) > cols else hint_full
+        hint = f"  [arrows/j/k] navigate  [enter] run  [o] open config{env_hint}  [q/esc] quit"[:cols]
 
+        _home()
         for i, name in enumerate(items):
-            sys.stdout.write("\r\033[2K")  # col 0, clear line
             if _is_spacer(name):
                 sys.stdout.write("\n")
                 continue
             desc = _commands[name]["desc"]
-            desc_display = desc[:max_desc] if len(desc) > max_desc else desc
             if i == sel:
-                sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {name:<14}{C.RESET} {desc_display}\n")
+                sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {name:<14}{C.RESET} {desc[:max_desc]}\n")
             else:
-                sys.stdout.write(f"    {C.DIM}{name:<14}{C.RESET} {desc_display}\n")
-        sys.stdout.write(f"\r\033[2K\n\r\033[2K{C.DIM}{hint}{C.RESET}\n")
-        sys.stdout.write(f"\033[{menu_lines}A\r")  # up N lines, col 0
+                sys.stdout.write(f"    {C.DIM}{name:<14}{C.RESET} {desc[:max_desc]}\n")
+        sys.stdout.write(f"\n{C.DIM}{hint}{C.RESET}\n")
         sys.stdout.flush()
 
     try:
@@ -650,8 +701,6 @@ def _tui_menu():
             draw()
             key = read_key()
             if key in ("q", "Q", "esc"):
-                sys.stdout.write(f"\033[{menu_lines}B")
-                sys.stdout.flush()
                 print()
                 return
             elif key == "o":
@@ -668,16 +717,13 @@ def _tui_menu():
             elif key in ("down", "j"):
                 move(1)
             elif key in ("\r", "\n"):
-                sys.stdout.write(f"\033[{menu_lines}B")
-                sys.stdout.write("\033[J")
+                _home()  # clear menu before command output
                 sys.stdout.flush()
                 info(f"./admin {items[sel]}")
                 print()
                 _commands[items[sel]]["func"]([])
                 return
     except (KeyboardInterrupt, EOFError):
-        sys.stdout.write(f"\033[{menu_lines}B")
-        sys.stdout.flush()
         print()
         return
     finally:
@@ -710,29 +756,21 @@ def pick_target(targets, prompt="Select target", order=None):
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
 
-    menu_lines = len(display_order) + 1
-
     sys.stdout.write(f"{C.BOLD}{prompt}{C.RESET}\n")
-    for _ in range(menu_lines):
-        sys.stdout.write("\n")
     sys.stdout.flush()
-    sys.stdout.write(f"\033[{menu_lines}A")
-    sys.stdout.flush()
+    _home = _make_home(fd, len(display_order) + 1)  # one row per entry + hint
 
     def draw():
-        sys.stdout.write("\033[s")
+        _home()
         for entry in display_order:
-            sys.stdout.write("\033[2K")
             if not entry:
-                pass
-            elif entry == items[sel]:
-                sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {entry:<14}{C.RESET} {targets[entry]}")
+                sys.stdout.write("\n")
+                continue
+            if entry == items[sel]:
+                sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {entry:<14}{C.RESET} {targets[entry]}\n")
             else:
-                sys.stdout.write(f"    {C.DIM}{entry:<14}{C.RESET} {targets[entry]}")
-            sys.stdout.write("\n")
-        sys.stdout.write("\033[2K")
-        sys.stdout.write(f"{C.DIM}  [arrows/j/k] navigate  [enter] select  [q/esc] cancel{C.RESET}")
-        sys.stdout.write("\033[u")
+                sys.stdout.write(f"    {C.DIM}{entry:<14}{C.RESET} {targets[entry]}\n")
+        sys.stdout.write(f"{C.DIM}  [arrows/j/k] navigate  [enter] select  [q/esc] cancel{C.RESET}\n")
         sys.stdout.flush()
 
     try:
@@ -740,22 +778,18 @@ def pick_target(targets, prompt="Select target", order=None):
             draw()
             key = read_key()
             if key in ("q", "Q", "esc"):
-                sys.stdout.write(f"\033[{menu_lines}B\n")
-                sys.stdout.flush()
+                print()
                 return None
             elif key in ("up", "k"):
                 sel = (sel - 1) % num
             elif key in ("down", "j"):
                 sel = (sel + 1) % num
             elif key in ("\r", "\n"):
-                for _ in range(menu_lines):
-                    sys.stdout.write("\033[2K\n")
-                sys.stdout.write(f"\033[{menu_lines}A")
+                _home()  # clear picker before caller output
                 sys.stdout.flush()
                 return items[sel]
     except (KeyboardInterrupt, EOFError):
-        sys.stdout.write(f"\033[{menu_lines}B\n")
-        sys.stdout.flush()
+        print()
         return None
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
