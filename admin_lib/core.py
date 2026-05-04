@@ -618,12 +618,12 @@ def _tui_menu():
 
     for _ in range(menu_lines):
         sys.stdout.write("\n")
-    sys.stdout.write(f"\033[{menu_lines}A")
+    sys.stdout.write(f"\033[{menu_lines}F")  # up N lines + col 0
     sys.stdout.flush()
 
     def draw():
         for i, name in enumerate(items):
-            sys.stdout.write("\033[2K")
+            sys.stdout.write("\r\033[2K")  # col 0, clear line
             if _is_spacer(name):
                 sys.stdout.write("\n")
                 continue
@@ -633,8 +633,8 @@ def _tui_menu():
                 sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {name:<14}{C.RESET} {desc}\n")
             else:
                 sys.stdout.write(f"    {C.DIM}{name:<14}{C.RESET} {desc}\n")
-        sys.stdout.write(f"\033[2K\n\033[2K{C.DIM}  [arrows/j/k] navigate  [enter] run  [o] open config{env_hint}  [q/esc] quit{C.RESET}\n")
-        sys.stdout.write(f"\033[{menu_lines}A")
+        sys.stdout.write(f"\r\033[2K\n\r\033[2K{C.DIM}  [arrows/j/k] navigate  [enter] run  [o] open config{env_hint}  [q/esc] quit{C.RESET}\n")
+        sys.stdout.write(f"\033[{menu_lines}F")  # up N lines + col 0
         sys.stdout.flush()
 
     try:
