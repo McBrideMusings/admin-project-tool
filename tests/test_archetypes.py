@@ -818,6 +818,153 @@ def test_group_priority_on_action_level_gives_hint_via_load_archetype():
     print("OK: load_archetype also gives subtable hint for group/priority on action level")
 
 
+def test_manifest_override_propagates_group_and_priority():
+    """manifest [commands.X] overrides must carry group/priority into the resolved Command.
+
+    Regression guard for #323: the merge dict previously dropped these fields, so
+    overridden commands inherited the archetype's group/priority (often 0) regardless
+    of what the manifest specified.
+    """
+    m = Manifest(
+        project_name="GPOverrideTest",
+        python_min="3.11",
+        archetypes=["docker-unraid"],
+        modules=[],
+        urls={},
+        overrides={"logs": {"group": 5, "priority": 99}},
+        custom={},
+        order=[],
+    )
+    resolved = resolve(m, ARCH_DIR)
+    logs_cmd = resolved.commands["logs"]
+    assert logs_cmd.group == 5, f"expected group=5 after override, got {logs_cmd.group}"
+    assert logs_cmd.priority == 99, f"expected priority=99 after override, got {logs_cmd.priority}"
+    print("OK: manifest override propagates group/priority to resolved Command")
+
+
+def test_inline_target_action_run_mutual_exclusion():
+    """Inline target subtable with both 'action' and 'run' raises ArchetypeError.
+
+    Regression guard for #307: the validation guard in _to_command could be silently
+    removed and all other tests would still pass.
+    """
+    try:
+        _to_command("build", {
+            "kind": "multi-target",
+            "desc": "Build",
+            "ios": {"action": "build-ios", "run": "xcodebuild ios", "desc": "Build iOS"},
+        }, source="test", is_action=True)
+        raise AssertionError("expected ArchetypeError for action+run on same target")
+    except ArchetypeError as e:
+        assert "both 'action' and 'run'" in str(e), f"unexpected error: {e}"
+        assert "ios" in str(e), f"target name missing from error: {e}"
+    print("OK: inline target with both 'action' and 'run' raises ArchetypeError")
+
+
+def test_inline_target_action_ref_dispatch_end_to_end():
+    """Inline subtable 'action:' @-ref dispatches correctly and forwards args at runtime.
+
+    Regression guard for #302: the _to_command unit test covers the @-prefix logic,
+    but a regression in the generated dispatch code could pass unit tests while
+    silently breaking actual runtime behavior.
+    """
+    m = Manifest(
+        project_name="ActionRefTest",
+        python_min="3.11",
+        archetypes=[],
+        modules=[],
+        urls={},
+        overrides={},
+        custom={"build": {"steps": ["build-action"], "desc": "Build"}},
+        order=[],
+        actions={
+            "build-action": {
+                "kind": "multi-target",
+                "desc": "Build",
+                "ios": {"action": "do-ios", "desc": "Build iOS"},
+                "mac": {"run": "echo mac-built", "desc": "Build macOS"},
+            },
+            "do-ios": {
+                "kind": "python",
+                "desc": "Build iOS",
+                "run": "print('ios got:', args)",
+            },
+        },
+    )
+    resolved = resolve(m, ARCH_DIR)
+    script = render(resolved, LIB_DIR, generator_commit="test-sha")
+
+    result = _run_generated_script(script, ["build", "ios", "--verbose"])
+    assert result.returncode == 0, f"script failed:\n{result.stderr}"
+    assert "['--verbose']" in result.stdout, (
+        f"args not forwarded through inline action: ref dispatch; stdout={result.stdout!r}"
+    )
+    print("OK: inline target subtable action: @-ref dispatches and forwards args end-to-end")
+
+
+def test_render_apple_dev_loop_at_ref_args_forwarding():
+    """render_apple_dev_loop generates run_command(shell[1:], rest_args) for @-ref targets.
+
+    Regression guard for #304: apple-dev-loop delegates to render_multi_target, but the
+    kind must appear in the @-ref validation and its render path must forward args.
+    This unit test covers the render side; the e2e test below covers runtime dispatch.
+    """
+    from gen.fragments import render_action
+    cmd = Command(
+        name="dev",
+        run="",
+        desc="Dev loop",
+        kind="apple-dev-loop",
+        targets={"device": "@dev-device", "sim": "echo sim-built"},
+    )
+    out = render_action(cmd)
+    assert "run_command(shell[1:], rest_args)" in out, (
+        "apple-dev-loop @-ref targets must forward rest_args: " + out
+    )
+    assert "run_cmd(shell)" in out, "non-@-ref shell targets must use run_cmd"
+    print("OK: render_apple_dev_loop @-ref path forwards rest_args")
+
+
+def test_apple_dev_loop_at_ref_dispatch_end_to_end():
+    """apple-dev-loop @-ref target dispatches and forwards args at runtime.
+
+    Regression guard for #304: apple-dev-loop is validated in resolve() alongside
+    multi-target; this test ensures the kind's inclusion in that block is exercised
+    and that args flow through to the referenced action at runtime.
+    """
+    m = Manifest(
+        project_name="AppleDevLoopTest",
+        python_min="3.11",
+        archetypes=[],
+        modules=[],
+        urls={},
+        overrides={},
+        custom={"dev": {"steps": ["dev-action"], "desc": "Dev"}},
+        order=[],
+        actions={
+            "dev-action": {
+                "kind": "apple-dev-loop",
+                "desc": "Dev loop",
+                "targets": {"device": "@dev-device", "sim": "echo sim-built"},
+            },
+            "dev-device": {
+                "kind": "python",
+                "desc": "Dev on device",
+                "run": "print('device got:', args)",
+            },
+        },
+    )
+    resolved = resolve(m, ARCH_DIR)
+    script = render(resolved, LIB_DIR, generator_commit="test-sha")
+
+    result = _run_generated_script(script, ["dev", "device", "--no-clean"])
+    assert result.returncode == 0, f"script failed:\n{result.stderr}"
+    assert "['--no-clean']" in result.stdout, (
+        f"args not forwarded through apple-dev-loop @-ref; stdout={result.stdout!r}"
+    )
+    print("OK: apple-dev-loop @-ref dispatches correctly and forwards args end-to-end")
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

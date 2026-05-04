@@ -256,8 +256,8 @@ def preflight_port(port, label=None, force=False, timeout=2.0):
         print(f"  pid {h['pid']:>6}: {h['command']}{parent}", file=sys.stderr)
 
     try:
-        from . import docker as _docker
-        _in_reload = getattr(_docker, "_reload_active", False)
+        from .docker import _reload_active
+        _in_reload = _reload_active
     except ImportError:
         _in_reload = False
 

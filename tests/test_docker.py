@@ -6,9 +6,15 @@ injects stubs for the core helpers the function depends on.
 from __future__ import annotations
 
 import re as _re
+import signal
+import subprocess
+import sys
+import tempfile
+import time
 from pathlib import Path
 
-LIB_DIR = Path(__file__).resolve().parent.parent / "admin_lib"
+REPO = Path(__file__).resolve().parent.parent
+LIB_DIR = REPO / "admin_lib"
 
 
 def _load_docker():
@@ -334,6 +340,115 @@ def test_devices_differing_paths():
     idx = args.index("--device")
     assert args[idx + 1] == "/dev/video0:/dev/video1", f"got {args[idx + 1]!r}"
     print("OK: Devices with differing host/container paths")
+
+
+def _make_reload_driver(child_file: Path, log_suffix: str) -> str:
+    """Return a Python -c script that runs run_with_reload with the given child file."""
+    lines = [
+        f"import sys; sys.path.insert(0, {str(REPO)!r})",
+        "import admin_lib.docker as dm",
+        f"dm.LOG_DIR = '/tmp'",
+        f"dm.LOG_FILE = '/tmp/test-reload-{log_suffix}.log'",
+        "try:",
+        f"    dm.run_with_reload([sys.executable, {str(child_file)!r}], target='test', shell=False)",
+        "except (KeyboardInterrupt, SystemExit): pass",
+    ]
+    return "\n".join(lines)
+
+
+def _child_script(ready_file: Path, sig_file: Path) -> str:
+    """Return a child process script that records which signal it receives."""
+    lines = [
+        "import sys, signal, pathlib, time",
+        f"ready = pathlib.Path({str(ready_file)!r})",
+        f"sigf  = pathlib.Path({str(sig_file)!r})",
+        "if sigf.exists(): raise SystemExit(0)",
+        "def h(n, f):",
+        "    sigf.write_text('SIGINT' if n == signal.SIGINT else 'SIGTERM')",
+        "    raise SystemExit(0)",
+        "signal.signal(signal.SIGINT, h)",
+        "signal.signal(signal.SIGTERM, h)",
+        "ready.write_text('ok')",
+        "time.sleep(30)",
+    ]
+    return "\n".join(lines)
+
+
+def _wait_for_file(path: Path, timeout: float = 10.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not path.exists():
+        assert time.monotonic() < deadline, f"timeout waiting for {path}"
+        time.sleep(0.05)
+
+
+def test_run_with_reload_sends_sigint_on_ctrl_c():
+    """SIGINT to run_with_reload forwards SIGINT (not SIGTERM) to the child process.
+
+    Regression guard for #317: the one-line fix in 29ecb56 changed the exit-signal
+    from SIGTERM to SIGINT; a future refactor of the finally block could silently revert it.
+    """
+    ready_file = Path(tempfile.mktemp(suffix=".ready"))
+    sig_file = Path(tempfile.mktemp(suffix=".sig"))
+    child_file = Path(tempfile.mktemp(suffix=".py"))
+    child_file.write_text(_child_script(ready_file, sig_file))
+    driver_src = _make_reload_driver(child_file, "sigint")
+
+    proc = subprocess.Popen(
+        [sys.executable, "-c", driver_src],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        _wait_for_file(ready_file)
+        proc.send_signal(signal.SIGINT)
+        proc.wait(timeout=5)
+
+        assert sig_file.exists(), "child never recorded a signal"
+        received = sig_file.read_text()
+        assert received == "SIGINT", f"expected SIGINT on Ctrl-C exit, child received {received}"
+        print("OK: run_with_reload sends SIGINT to child when user Ctrl-Cs")
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        for f in (ready_file, sig_file, child_file):
+            if f.exists():
+                f.unlink()
+
+
+def test_run_with_reload_sends_sigterm_on_reload():
+    """SIGUSR1 (reload) to run_with_reload forwards SIGTERM (not SIGINT) to the child.
+
+    Regression guard for #317: the reload path (triggered by SIGUSR1 or 'r' keypress)
+    must always send SIGTERM so the child can distinguish a reload from a user exit.
+    The child script exits immediately on its 2nd invocation (after reload starts a new
+    child) so run_with_reload returns cleanly.
+    """
+    ready_file = Path(tempfile.mktemp(suffix=".ready"))
+    sig_file = Path(tempfile.mktemp(suffix=".sig"))
+    child_file = Path(tempfile.mktemp(suffix=".py"))
+    child_file.write_text(_child_script(ready_file, sig_file))
+    driver_src = _make_reload_driver(child_file, "sigterm")
+
+    proc = subprocess.Popen(
+        [sys.executable, "-c", driver_src],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        _wait_for_file(ready_file)
+        proc.send_signal(signal.SIGUSR1)
+        _wait_for_file(sig_file, timeout=5.0)
+
+        received = sig_file.read_text()
+        assert received == "SIGTERM", f"expected SIGTERM on reload, child received {received}"
+        print("OK: run_with_reload sends SIGTERM to child on reload (SIGUSR1)")
+    finally:
+        if proc.poll() is None:
+            proc.send_signal(signal.SIGINT)
+            time.sleep(0.5)
+        if proc.poll() is None:
+            proc.kill()
+        for f in (ready_file, sig_file, child_file):
+            if f.exists():
+                f.unlink()
 
 
 if __name__ == "__main__":
