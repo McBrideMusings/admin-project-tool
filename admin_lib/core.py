@@ -618,7 +618,7 @@ def _tui_menu():
 
     for _ in range(menu_lines):
         sys.stdout.write("\n")
-    sys.stdout.write(f"\033[{menu_lines}F")  # up N lines + col 0
+    sys.stdout.write(f"\033[{menu_lines}A\r")  # up N lines, col 0
     sys.stdout.flush()
 
     def draw():
@@ -634,7 +634,7 @@ def _tui_menu():
             else:
                 sys.stdout.write(f"    {C.DIM}{name:<14}{C.RESET} {desc}\n")
         sys.stdout.write(f"\r\033[2K\n\r\033[2K{C.DIM}  [arrows/j/k] navigate  [enter] run  [o] open config{env_hint}  [q/esc] quit{C.RESET}\n")
-        sys.stdout.write(f"\033[{menu_lines}F")  # up N lines + col 0
+        sys.stdout.write(f"\033[{menu_lines}A\r")  # up N lines, col 0
         sys.stdout.flush()
 
     try:
