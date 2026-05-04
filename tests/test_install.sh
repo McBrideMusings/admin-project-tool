@@ -98,7 +98,7 @@ assert_file_contains "PATH added to rc" '.admin' "$T/$ZSH_RC"
 rm -rf "$T"
 
 # ---------------------------------------------------------------------------
-# Test: already up to date
+# Test: already up to date (clean tree only)
 # ---------------------------------------------------------------------------
 
 echo
@@ -106,11 +106,17 @@ echo "--- already up to date ---"
 T="$(mktemp -d)"
 touch "$T/$ZSH_RC"
 mkdir -p "$T/.admin"
-echo "$(get_current_sha)" > "$T/.admin/VERSION"
+SNAP_SHA="$(get_current_sha)"
+echo "$SNAP_SHA" > "$T/.admin/VERSION"
 
 out="$(run_install "$T")"
-assert_contains "reports up to date" "already up to date" "$out"
-assert_not_contains "does not say installing" "installing" "$out"
+if [[ "$SNAP_SHA" == *+dirty ]]; then
+    # Dirty tree always reinstalls — can't observe "already up to date" here.
+    assert_contains "reports up to date" "dirty" "$out"
+else
+    assert_contains "reports up to date" "already up to date" "$out"
+    assert_not_contains "does not say installing" "installing" "$out"
+fi
 rm -rf "$T"
 
 # ---------------------------------------------------------------------------
@@ -150,6 +156,28 @@ echo "$(get_current_sha)" > "$T/.admin/VERSION"
 out="$(run_install "$T" --force)"
 assert_contains "reports force-installing" "force-installing" "$out"
 assert_file_exists "admin_lib present after --force" "$T/.admin/admin_lib"
+rm -rf "$T"
+
+# ---------------------------------------------------------------------------
+# Test: dirty SHA in VERSION always reinstalls (not "already up to date")
+# ---------------------------------------------------------------------------
+
+echo
+echo "--- dirty tree always reinstalls ---"
+T="$(mktemp -d)"
+touch "$T/$ZSH_RC"
+mkdir -p "$T/.admin"
+FAKE_SHA="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)+dirty"
+echo "$FAKE_SHA" > "$T/.admin/VERSION"
+
+out="$(run_install "$T")"
+if [[ "$(get_current_sha)" == *+dirty ]]; then
+    assert_not_contains "dirty SHA never says already up to date" "already up to date" "$out"
+    assert_file_exists "admin_lib reinstalled" "$T/.admin/admin_lib"
+else
+    assert_contains "clean tree with dirty-version reinstalls" "updating" "$out"
+    assert_file_exists "admin_lib reinstalled after dirty-version" "$T/.admin/admin_lib"
+fi
 rm -rf "$T"
 
 # ---------------------------------------------------------------------------

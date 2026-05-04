@@ -109,8 +109,17 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
         f.write(str(os.getpid()))
     atexit.register(_cleanup_pid_file, pid_file)
 
-    old_handler = signal.getsignal(signal.SIGUSR1)
+    _user_exit = False
+
+    def _on_sigint(signum, frame):
+        nonlocal _user_exit
+        _user_exit = True
+        raise KeyboardInterrupt
+
+    old_sigusr1 = signal.getsignal(signal.SIGUSR1)
+    old_sigint = signal.getsignal(signal.SIGINT)
     signal.signal(signal.SIGUSR1, _handle_rebuild_signal)
+    signal.signal(signal.SIGINT, _on_sigint)
 
     try:
         while True:
@@ -160,6 +169,7 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
                             if ch in (b"r", b"R"):
                                 _rebuild_requested = True
                             elif ch == b"\x03":
+                                _user_exit = True
                                 raise KeyboardInterrupt
                             continue
                         data = key.fileobj.read1(4096) if hasattr(key.fileobj, 'read1') else os.read(key.fileobj.fileno(), 4096)
@@ -200,7 +210,7 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
                     termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_term)
                 if proc.poll() is None:
                     try:
-                        kill_sig = signal.SIGINT if sys.exc_info()[0] is KeyboardInterrupt else signal.SIGTERM
+                        kill_sig = signal.SIGINT if _user_exit else signal.SIGTERM
                         os.killpg(os.getpgid(proc.pid), kill_sig)
                     except OSError:
                         proc.terminate()
@@ -220,7 +230,8 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
             return rc
 
     finally:
-        signal.signal(signal.SIGUSR1, old_handler)
+        signal.signal(signal.SIGUSR1, old_sigusr1)
+        signal.signal(signal.SIGINT, old_sigint)
         _cleanup_pid_file(pid_file)
 
 

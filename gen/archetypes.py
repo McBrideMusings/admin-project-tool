@@ -330,6 +330,21 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
             f"action '{name}' from {source}: unknown keys {sorted(unknown)}, "
             f"valid: {sorted(VALID_ACTION_KEYS)}{gp_hint}"
         )
+
+    # Detect reserved keys used as inline target names (dict value when a string
+    # is expected means the user wrote [actions.X.run] intending "run" as a target).
+    reserved_as_targets = {
+        k for k in (VALID_ACTION_KEYS - {"targets"})
+        if isinstance(data.get(k), dict)
+    }
+    if reserved_as_targets:
+        raise ArchetypeError(
+            f"action '{name}' from {source}: reserved key(s) {sorted(reserved_as_targets)} "
+            f"have table values — they look like inline target names but collide with "
+            f"reserved action keys; rename the target or use the flat "
+            f"'[actions.{name}.targets]' table form"
+        )
+
     kind = str(data.get("kind", "shell"))
     if kind not in KNOWN_KINDS:
         raise ArchetypeError(

@@ -223,6 +223,9 @@ elif [[ "$INSTALLED_SHA" == "none" ]]; then
 elif [[ "$CURRENT_SHA" == "unknown" || "$INSTALLED_SHA" != "$CURRENT_SHA" ]]; then
     echo "admin-project-tool: installed ($INSTALLED_SHA) → updating to $CURRENT_SHA"
     do_install
+elif [[ "$CURRENT_SHA" == *+dirty ]]; then
+    echo "admin-project-tool: working tree is dirty — reinstalling"
+    do_install
 else
     echo "admin-project-tool: already up to date ($CURRENT_SHA)"
 fi
