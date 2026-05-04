@@ -240,6 +240,10 @@ def cmd_audit(project_dir: Path, args) -> int:
     for issue in _audit_inline_code(manifest):
         warn(issue)
 
+    # Warn when an explicit order list coexists with group/priority (mutually exclusive).
+    for issue in _audit_order_vs_group_priority(resolved):
+        warn(issue)
+
     # Suggest kill-port if project binds TCP ports but has no kill command.
     for suggestion in _audit_suggest_kill_port(resolved):
         info(suggestion)
@@ -342,6 +346,31 @@ def _audit_inline_code(manifest: "Manifest") -> list[str]:
         )
 
     return issues
+
+
+def _audit_order_vs_group_priority(resolved: ResolvedManifest) -> list[str]:
+    """Warn when an explicit order list (manifest or archetype) overrides group/priority.
+
+    The two mechanisms are mutually exclusive: whichever order list is present takes
+    precedence and group/priority values on commands are silently ignored.
+    """
+    cmds_with_gp = sorted(
+        name for name, cmd in resolved.commands.items()
+        if cmd.group != 0 or cmd.priority != 0
+    )
+    if not cmds_with_gp:
+        return []
+    # Detect whether display_order was produced by explicit ordering rather than group/priority
+    # by comparing against what _sort_by_group_priority would produce.  Covers both manifest
+    # order lists and archetype order lists (the archetype_order local in resolve()).
+    from gen.archetypes import _sort_by_group_priority
+    if resolved.display_order == _sort_by_group_priority(resolved.commands):
+        return []
+    return [
+        f"'order' list and group/priority are mutually exclusive — "
+        f"commands {cmds_with_gp} set group/priority but an explicit order list takes precedence and ignores them. "
+        f"Drop the 'order' list to use group/priority, or drop group/priority from those commands."
+    ]
 
 
 def _audit_suggest_kill_port(resolved: ResolvedManifest) -> list[str]:

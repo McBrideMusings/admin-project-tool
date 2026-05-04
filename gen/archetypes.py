@@ -40,6 +40,24 @@ class ArchetypeError(Exception):
     pass
 
 
+_GP_SUBTABLE_HINT = (
+    " 'group' and 'priority' belong on inline target subtables "
+    "(e.g. [actions.build.mac]), not on the action itself."
+)
+
+
+def _validate_gp_ints(data: dict, error_prefix: str) -> None:
+    """Raise ArchetypeError if 'group' or 'priority' in data is not a plain int."""
+    for key in ("group", "priority"):
+        val = data.get(key, 0)
+        # bool is a subclass of int — reject it explicitly so True/False isn't accepted.
+        if isinstance(val, bool) or not isinstance(val, int):
+            raise ArchetypeError(
+                f"{error_prefix}: '{key}' must be an integer, "
+                f"got {type(val).__name__} {val!r}"
+            )
+
+
 def load_archetype(archetype_dir: Path, name: str) -> Archetype:
     """Load archetypes/<name>.py and return its Archetype object."""
     path = archetype_dir / f"{name}.py"
@@ -69,9 +87,10 @@ def load_archetype(archetype_dir: Path, name: str) -> Archetype:
         inline_target_keys = {k for k, v in action_data.items() if isinstance(v, dict) and k not in VALID_ACTION_KEYS}
         unknown = set(action_data) - VALID_ACTION_KEYS - inline_target_keys
         if unknown:
+            gp_hint = _GP_SUBTABLE_HINT if unknown & {"group", "priority"} else ""
             raise ArchetypeError(
                 f"{path}: action '{action_name}' has unknown keys {sorted(unknown)}, "
-                f"valid: {sorted(VALID_ACTION_KEYS)}"
+                f"valid: {sorted(VALID_ACTION_KEYS)}{gp_hint}"
             )
     raw_order = list(data.get("order", []))
     normalized_order = ["" if e in ("", "---") else e for e in raw_order]
@@ -284,6 +303,7 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
             log_meta["log"] = bool(data["log"])
         if log_meta:
             meta["logging"] = log_meta
+        _validate_gp_ints(data, f"command '{name}' from {source}")
         return Command(
             name=name,
             run="",
@@ -292,8 +312,8 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
             source=source,
             targets={},
             meta=meta,
-            group=int(data.get("group", 0)),
-            priority=int(data.get("priority", 0)),
+            group=data.get("group", 0),
+            priority=data.get("priority", 0),
         )
 
     # Actions: full kind-based rendering.
@@ -305,9 +325,10 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
 
     unknown = set(data) - VALID_ACTION_KEYS - set(inline_targets_raw)
     if unknown:
+        gp_hint = _GP_SUBTABLE_HINT if unknown & {"group", "priority"} else ""
         raise ArchetypeError(
             f"action '{name}' from {source}: unknown keys {sorted(unknown)}, "
-            f"valid: {sorted(VALID_ACTION_KEYS)}"
+            f"valid: {sorted(VALID_ACTION_KEYS)}{gp_hint}"
         )
     kind = str(data.get("kind", "shell"))
     if kind not in KNOWN_KINDS:
@@ -347,17 +368,18 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
                 raise ArchetypeError(
                     f"action '{name}' from {source}: target '{tname}' has both 'action' and 'run' — pick one"
                 )
+            _validate_gp_ints(tdata, f"action '{name}' from {source}: target '{tname}'")
         targets = {k: ("@" + v["action"] if "action" in v else v.get("run", "")) for k, v in inline_targets_raw.items()}
         meta["target_descs"] = {k: v.get("desc", k) for k, v in inline_targets_raw.items()}
         if any(tdata.get("group", 0) != 0 or tdata.get("priority", 0) != 0 for tdata in inline_targets_raw.values()):
             sorted_tgts = sorted(
                 inline_targets_raw.items(),
-                key=lambda item: (int(item[1].get("group", 0)), int(item[1].get("priority", 0)), item[0]),
+                key=lambda item: (item[1].get("group", 0), item[1].get("priority", 0), item[0]),
             )
             target_order: list[str] = []
             last_grp: int | None = None
             for tname, tdata in sorted_tgts:
-                g = int(tdata.get("group", 0))
+                g = tdata.get("group", 0)
                 if last_grp is not None and g != last_grp:
                     target_order.append("")
                 target_order.append(tname)

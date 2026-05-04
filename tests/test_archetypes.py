@@ -657,6 +657,167 @@ def test_group_priority_renders_target_order_in_pick_target():
     print("OK: render_multi_target emits _target_order + order= kwarg")
 
 
+def test_group_priority_within_group_tiebreaking():
+    """Within the same group, lower priority number (higher rank) appears first.
+
+    Regression guard for #322: _sort_by_group_priority must sort by (group, priority, name)
+    so priority=10 precedes priority=20 within the same group.
+    """
+    manifest = parse({
+        "project_name": "test",
+        "python_min": "3.11",
+        "commands": {
+            "secondary": {"desc": "Secondary", "steps": ["b"], "group": 1, "priority": 20},
+            "important":  {"desc": "Important", "steps": ["a"], "group": 1, "priority": 10},
+        },
+        "actions": {
+            "a": {"run": "a"},
+            "b": {"run": "b"},
+        },
+    })
+    resolved = resolve(manifest, ARCH_DIR)
+    assert resolved.display_order == ["important", "secondary"], (
+        f"priority=10 should appear before priority=20 in same group; got {resolved.display_order}"
+    )
+    print("OK: within same group, lower priority number appears first")
+
+
+def test_pick_target_spacer_order_end_to_end():
+    """Generated multi-target script with spacers in target_order correctly dispatches by arg.
+
+    Regression guard for #318: spacers in _target_order must not break explicit target
+    selection. Tests that the generated pick_target call uses order=_target_order and
+    that arg-based dispatch (bypassing the TUI) still works with spacers present.
+    """
+    m = Manifest(
+        project_name="SpacerTest",
+        python_min="3.11",
+        archetypes=[],
+        modules=[],
+        urls={},
+        overrides={},
+        custom={"build": {"steps": ["build-action"], "desc": "Build"}},
+        order=[],
+        actions={
+            "build-action": {
+                "kind": "multi-target",
+                "desc": "Build",
+                "mac":   {"run": "echo mac-built",  "desc": "Build macOS", "group": 1, "priority": 10},
+                "ios":   {"run": "echo ios-built",  "desc": "Build iOS",   "group": 1, "priority": 20},
+                "clean": {"run": "echo cleaned",    "desc": "Clean",       "group": 2, "priority": 10},
+            },
+        },
+    )
+    resolved = resolve(m, ARCH_DIR)
+    script = render(resolved, LIB_DIR, generator_commit="test-sha")
+
+    # spacers in _target_order must not break explicit target dispatch
+    result = _run_generated_script(script, ["build", "ios"])
+    assert result.returncode == 0, f"explicit target with spacers in order failed:\n{result.stderr}"
+    assert "ios-built" in result.stdout, f"wrong target executed; stdout={result.stdout!r}"
+
+    # verify the generated code actually has a spacer in the order list
+    assert "''" in script or '""' in script, "spacer should appear in generated _target_order"
+    assert "order=_target_order" in script, "order= kwarg should be passed to pick_target"
+    print("OK: multi-target with spacers in target_order dispatches correctly")
+
+
+def test_group_priority_type_validation_command():
+    """Commands reject non-integer group/priority with a clear ArchetypeError.
+
+    Regression guard for #319: int('high') raises ValueError with no context;
+    instead we should get a clear error at parse time.
+    """
+    try:
+        _to_command("build", {"desc": "Build", "steps": ["a"], "group": "high", "priority": 10},
+                    source="test", is_action=False)
+        raise AssertionError("should have raised ArchetypeError for string group")
+    except ArchetypeError as e:
+        assert "'group' must be an integer" in str(e), f"unexpected error: {e}"
+
+    try:
+        _to_command("build", {"desc": "Build", "steps": ["a"], "group": 1, "priority": "low"},
+                    source="test", is_action=False)
+        raise AssertionError("should have raised ArchetypeError for string priority")
+    except ArchetypeError as e:
+        assert "'priority' must be an integer" in str(e), f"unexpected error: {e}"
+    print("OK: non-integer group/priority on command raises clear ArchetypeError")
+
+
+def test_group_priority_type_validation_inline_target():
+    """Inline target subtables reject non-integer group/priority with a clear ArchetypeError.
+
+    Regression guard for #319.
+    """
+    try:
+        _to_command("build", {
+            "kind": "multi-target", "desc": "Build",
+            "mac": {"run": "xcodebuild mac", "group": "high", "priority": 10},
+        }, source="test", is_action=True)
+        raise AssertionError("should have raised ArchetypeError for string group on inline target")
+    except ArchetypeError as e:
+        assert "'group' must be an integer" in str(e), f"unexpected error: {e}"
+
+    try:
+        _to_command("build", {
+            "kind": "multi-target", "desc": "Build",
+            "ios": {"run": "xcodebuild ios", "group": 1, "priority": "last"},
+        }, source="test", is_action=True)
+        raise AssertionError("should have raised ArchetypeError for string priority on inline target")
+    except ArchetypeError as e:
+        assert "'priority' must be an integer" in str(e), f"unexpected error: {e}"
+    print("OK: non-integer group/priority on inline target raises clear ArchetypeError")
+
+
+def test_group_priority_on_action_level_gives_hint():
+    """group/priority at the [actions.X] level (not on a subtable) gets a helpful error.
+
+    Regression guard for #316: the error must name 'group'/'priority' and hint that
+    they belong on inline target subtables, not on the action itself.
+    """
+    try:
+        _to_command("build", {
+            "kind": "multi-target", "desc": "Build",
+            "group": 1,
+            "targets": {"mac": "xcodebuild mac"},
+        }, source="test", is_action=True)
+        raise AssertionError("should have raised ArchetypeError for group on action level")
+    except ArchetypeError as e:
+        assert "inline target subtables" in str(e), f"expected hint about subtables, got: {e}"
+    print("OK: group/priority on action level gives subtable hint")
+
+
+def test_group_priority_on_action_level_gives_hint_via_load_archetype():
+    """load_archetype also emits the inline-target-subtable hint for group/priority on actions.
+
+    Regression guard for #316: both the load_archetype validation path and the _to_command
+    action path must emit the hint — _to_command alone is already covered above.
+    """
+    import shutil
+    import tempfile
+
+    arch_code = (
+        'ARCHETYPE = {\n'
+        '    "name": "test-gp-hint",\n'
+        '    "modules": ["core"],\n'
+        '    "commands": {"build": {"desc": "Build", "steps": ["build"]}},\n'
+        '    "actions": {"build": {"kind": "shell", "run": "make", "group": 1}},\n'
+        '}\n'
+    )
+    tmp_dir = Path(tempfile.mkdtemp())
+    arch_file = tmp_dir / "test-gp-hint.py"
+    arch_file.write_text(arch_code)
+    try:
+        try:
+            load_archetype(tmp_dir, "test-gp-hint")
+            raise AssertionError("should have raised ArchetypeError for group on action level")
+        except ArchetypeError as e:
+            assert "inline target subtables" in str(e), f"expected subtable hint, got: {e}"
+    finally:
+        shutil.rmtree(tmp_dir)
+    print("OK: load_archetype also gives subtable hint for group/priority on action level")
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

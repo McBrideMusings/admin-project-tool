@@ -125,10 +125,10 @@ ARCHETYPE = {
     "modules": ["core"],
     "urls": {},
     "commands": {
-        "build": {"desc": "Build the engine for a target OS (mac | windows | linux)", "steps": ["build"]},
-        "dev":   {"desc": "Run a sample game (auto-picks if one, picker if many)",    "steps": ["dev"]},
-        "test":  {"desc": "Run unit tests (none wired up yet)",                       "steps": ["test"]},
-        "clean": {"desc": "Remove engine/zig-cache and engine/zig-out",               "steps": ["clean"]},
+        "build": {"desc": "Build the engine for a target OS (mac | windows | linux)", "steps": ["build"], "group": 1, "priority": 10},
+        "dev":   {"desc": "Run a sample game (auto-picks if one, picker if many)",    "steps": ["dev"],   "group": 1, "priority": 20},
+        "test":  {"desc": "Run unit tests (none wired up yet)",                       "steps": ["test"],  "group": 2, "priority": 10},
+        "clean": {"desc": "Remove engine/zig-cache and engine/zig-out",               "steps": ["clean"], "group": 2, "priority": 20},
     },
     "actions": {
         "build": {"kind": "python", "desc": "Build the engine for a target OS (mac | windows | linux)", "run": _BUILD_PY},
@@ -136,5 +136,4 @@ ARCHETYPE = {
         "test":  {"kind": "python", "desc": "Run unit tests (none wired up yet)",                       "run": _TEST_PY},
         "clean": {"kind": "python", "desc": "Remove engine/zig-cache and engine/zig-out",               "run": _CLEAN_PY},
     },
-    "order": ["build", "dev", "", "test", "clean"],
 }
