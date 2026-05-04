@@ -178,6 +178,9 @@ def _regenerate(project_dir: Path, args) -> int:
     for issue in _audit_inline_code(manifest):
         warn(issue)
 
+    for issue in _audit_order_vs_group_priority(resolved):
+        warn(issue)
+
     admin_path = project_dir / "admin"
     admin_path.write_text(script)
     _make_executable(admin_path)
