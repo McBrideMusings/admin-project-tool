@@ -166,9 +166,12 @@ def run_vite_dev(
     vite_fh = open(vite_log, "w")
     vite_env_parts = [f"{k}={shlex.quote(str(v))}" for k, v in (vite_env or {}).items()]
     vite_env_str = " ".join(vite_env_parts)
-    vite_cmd = f"cd {shlex.quote(frontend_dir)} && {pkg} run dev"
+    inner = f"{pkg} run dev"
     if vite_env_str:
-        vite_cmd = f"{vite_env_str} {vite_cmd}"
+        # Env prefix must apply to `npm run dev`, not to `cd`. Putting it
+        # before the chain leaks the var only to `cd`, which ignores it.
+        inner = f"{vite_env_str} {inner}"
+    vite_cmd = f"cd {shlex.quote(frontend_dir)} && {inner}"
     vite_proc = subprocess.Popen(
         vite_cmd,
         shell=True,

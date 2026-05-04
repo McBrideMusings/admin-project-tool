@@ -622,7 +622,6 @@ def _tui_menu():
     sys.stdout.flush()
 
     def draw():
-        sys.stdout.write("\033[s")
         for i, name in enumerate(items):
             sys.stdout.write("\033[2K")
             if _is_spacer(name):
@@ -635,7 +634,7 @@ def _tui_menu():
             else:
                 sys.stdout.write(f"    {C.DIM}{name:<14}{C.RESET} {desc}\n")
         sys.stdout.write(f"\033[2K\n\033[2K{C.DIM}  [arrows/j/k] navigate  [enter] run  [o] open config{env_hint}  [q/esc] quit{C.RESET}\n")
-        sys.stdout.write("\033[u")
+        sys.stdout.write(f"\033[{menu_lines}A")
         sys.stdout.flush()
 
     try:
