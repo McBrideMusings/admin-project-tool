@@ -13,15 +13,10 @@ from .remote import ssh_cmd
 
 def plugin_deploy(host, plg_path, plg_template, local_src, remote_dest,
                   chmod_dirs=None):
-    """Deploy an Unraid plugin: register .plg if needed, then rsync source files.
+    """Deploy an Unraid plugin: register .plg if missing, then rsync source files.
 
-    host: SSH host (e.g. 'root@unraid')
-    plg_path: remote path for .plg file (e.g. /boot/config/plugins/myplugin.plg)
-    plg_template: .plg XML template string (TIMESTAMP placeholder gets replaced)
-    local_src: local glob pattern for source files
-    remote_dest: remote directory to rsync into
-    chmod_dirs: list of remote dirs to chmod +x after sync
-    Returns exit code.
+    plg_template's TIMESTAMP placeholder is filled at deploy time. chmod_dirs
+    get `chmod +x` applied to their contents. Returns rc.
     """
     rc = ssh_cmd(host, f"test -f {plg_path}", check=False)
     if rc != 0:

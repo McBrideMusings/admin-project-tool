@@ -24,7 +24,7 @@ import textwrap
 from pathlib import Path
 
 from gen.archetypes import ResolvedManifest
-from gen.bundler import inline_admin_lib, lib_hash
+from gen.bundler import inline_admin_lib, lib_hash, strip_unreachable, compact_whitespace
 from gen.fragments import collect_env_var_calls, render_command, render_action, _pyrepr
 from gen.manifest import Command, SPACER
 
@@ -42,8 +42,14 @@ def render(
     admin_lib_dir: Path,
     generator_commit: str,
     inline_body: str | None = None,
+    strip_dead_code: bool = True,
 ) -> str:
-    """Return the full text of the generated ./admin script."""
+    """Return the full text of the generated ./admin script.
+
+    `strip_dead_code` runs `bundler.strip_unreachable` on the assembled output,
+    dropping top-level admin_lib defs that no entry point can reach. Pass False
+    to disable for debugging.
+    """
     m = resolved.manifest
 
     # Presence of [logs] in the manifest pulls in the logtail module.
@@ -177,7 +183,25 @@ def render(
         f"{boot_src}"
     )
 
-    return header + "\n" + lib_src + "\n" + project_section
+    full = header + "\n" + lib_src + "\n" + project_section
+    if strip_dead_code:
+        # Iterate to a fixed point. Each pass can expose new dead code: e.g.
+        # a string-literal forward-ref like `def f() -> "Foo":` keeps Foo alive
+        # until f itself is dropped, after which the string is gone too.
+        total_dropped = 0
+        while True:
+            full, n_dropped, _dropped = strip_unreachable(full)
+            total_dropped += n_dropped
+            if n_dropped == 0:
+                break
+        if total_dropped:
+            full = full.replace(
+                f"{BUNDLED_MARKER} admin_lib={ADMIN_LIB_VERSION}",
+                f"{BUNDLED_MARKER} admin_lib={ADMIN_LIB_VERSION} stripped={total_dropped}",
+                1,
+            )
+            full = compact_whitespace(full)
+    return full
 
 
 def generator_commit_sha(repo_dir: Path, allow_dirty: bool = False) -> str:

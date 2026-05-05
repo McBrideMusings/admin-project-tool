@@ -22,7 +22,7 @@ import importlib.util
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gen.fragments import KNOWN_KINDS, CONFIGLESS_KINDS, _ACTION_RENDERERS
+from gen.fragments import KNOWN_KINDS, CONFIGLESS_KINDS, KIND_MODULES, _ACTION_RENDERERS
 from gen.manifest import Command, Manifest, SPACER, VALID_COMMAND_KEYS, VALID_ACTION_KEYS
 
 
@@ -260,6 +260,10 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
                             f"action '{action_name}': target '{target_name}' references unknown action '@{ref}'. "
                             f"Known actions: {sorted(actions)}"
                         )
+
+    # Pull in modules required by the action kinds in use (e.g. nuke-dev → ports_nuke).
+    for action in actions.values():
+        modules.update(KIND_MODULES.get(action.kind, ()))
 
     # Apply exclusions and ensure core is always present
     modules -= set(manifest.exclude_modules)

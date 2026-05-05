@@ -1,6 +1,6 @@
-"""Tests for admin_lib/log_columns.py.
+"""Tests for admin_lib/log_columns.py and admin_lib/log_columns_apple.py.
 
-Covers _reformat_generic_line, _reformat_apple_line, _extract_native_fields,
+Covers _reformat_generic_line, AppleColumnFormatter, _extract_native_fields,
 _parse_column_spec, make_column_formatter, and width=0 hidden column support.
 """
 from __future__ import annotations
@@ -14,10 +14,13 @@ sys.path.insert(0, str(REPO))
 from admin_lib.log_columns import (  # noqa: E402
     Column,
     ColumnFormatter,
-    _extract_native_fields,
     _find_level_color,
     _parse_column_spec,
     make_column_formatter,
+)
+from admin_lib.log_columns_apple import (  # noqa: E402
+    AppleColumnFormatter,
+    _extract_native_fields,
 )
 
 
@@ -101,7 +104,7 @@ def _make_generic_formatter(columns=None):
         Column("Level", 8),
         Column("Message", -1),
     ]
-    return ColumnFormatter(cols, apple_passthrough=False)
+    return ColumnFormatter(cols)
 
 
 def test_generic_header_printed_before_first_line():
@@ -155,7 +158,7 @@ def test_generic_level_extracted():
 
 def test_hidden_column_absent_from_header():
     cols = [Column("Timestamp", 12), Column("Level", 0), Column("Message", -1)]
-    fmt = ColumnFormatter(cols, apple_passthrough=False)
+    fmt = ColumnFormatter(cols)
     header_line = fmt.format_line("10:00:00 INFO first\n")
     assert "Level" not in header_line
 
@@ -164,13 +167,13 @@ def test_hidden_column_produces_narrower_output_than_visible():
     line = "10:00:01 WARN second\n"
     # With Level column visible (width=8)
     cols_visible = [Column("Timestamp", 12), Column("Level", 8), Column("Message", -1)]
-    fmt_v = ColumnFormatter(cols_visible, apple_passthrough=False)
+    fmt_v = ColumnFormatter(cols_visible)
     fmt_v.format_line("10:00:00 INFO first\n")  # consume header+first
     out_visible = fmt_v.format_line(line)
 
     # With Level column hidden (width=0)
     cols_hidden = [Column("Timestamp", 12), Column("Level", 0), Column("Message", -1)]
-    fmt_h = ColumnFormatter(cols_hidden, apple_passthrough=False)
+    fmt_h = ColumnFormatter(cols_hidden)
     fmt_h.format_line("10:00:00 INFO first\n")  # consume header+first
     out_hidden = fmt_h.format_line(line)
 
@@ -184,11 +187,25 @@ def test_hidden_column_produces_narrower_output_than_visible():
 # ---------------------------------------------------------------------------
 
 def test_apple_short_line_passthrough():
-    fmt = ColumnFormatter([Column("Timestamp", 32), Column("Message", -1)], apple_passthrough=True)
+    fmt = AppleColumnFormatter([Column("Timestamp", 32), Column("Message", -1)])
+    fmt._header_printed = True  # skip preamble passthrough for this test
     short = "error: simulator crash\n"
     assert len(short.rstrip("\n")) < 40
     out = fmt.format_line(short)
     assert out == short
+
+
+def test_apple_make_column_formatter_returns_apple_subclass():
+    fmt = make_column_formatter("apple_os_log")
+    assert isinstance(fmt, AppleColumnFormatter)
+
+
+def test_apple_preamble_passthrough_until_header():
+    fmt = AppleColumnFormatter([Column("Timestamp", 32), Column("Message", -1)])
+    out = fmt.format_line("Filtering the log data using ...\n")
+    assert out == "Filtering the log data using ...\n"
+    header_out = fmt.format_line("Timestamp                       Message\n")
+    assert "Timestamp" in header_out
 
 
 # ---------------------------------------------------------------------------

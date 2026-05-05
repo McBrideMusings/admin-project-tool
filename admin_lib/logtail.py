@@ -173,14 +173,9 @@ def _parse_int(s):
 def tail_local(path, tail_n=0, show_all=False, follow=True, poll_interval=0.25):
     """Stream a local log file.
 
-    show_all=True dumps from the start; otherwise tail_n (if >0) emits the last
-    N lines or the cursor starts at EOF. When follow=True the cursor then
-    tracks appends, reopening on inode change or size shrink (rotation or
-    truncation-style circular buffers).
-
-    poll_interval controls both the follow-loop sleep and the pre-existence
-    wait; it exists as a kwarg so tests can inject a tight interval for
-    deterministic behavior.
+    show_all=True dumps from start; else tail_n>0 emits last N lines or cursor
+    starts at EOF. follow=True tracks appends and reopens on inode change or
+    size shrink (handles rotation and truncation-style buffers).
     """
     if not os.path.exists(path):
         if not follow:

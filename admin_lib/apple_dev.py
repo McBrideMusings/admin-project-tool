@@ -67,14 +67,11 @@ def dev_macos(
     extra_kill_patterns=None,
     log_predicate_str=None,
 ):
-    """Full macOS dev loop with icon swap, build cache, rename, and log streaming.
+    """Full macOS dev loop: icon swap, build cache, rename to dev product, log stream.
 
-    source_fn:          callable() -> list of source paths for cache check.
-    cache_label:        cache key for is_fresh/mark_fresh.
-    ensure_prereqs:     callable() -> int; run before loop (e.g. ensure server binaries).
-                        Nonzero return aborts.
-    extra_kill_patterns: list of pgrep -f patterns to kill at start of each iteration.
-    log_predicate_str:  custom log stream predicate. If None, uses subsystem-based default.
+    source_fn → sources for cache check. ensure_prereqs(): nonzero aborts.
+    extra_kill_patterns: pgrep -f patterns killed each iter. log_predicate_str
+    overrides the subsystem-based default predicate.
     """
     if ensure_prereqs:
         rc = ensure_prereqs()

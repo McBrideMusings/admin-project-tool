@@ -178,23 +178,13 @@ def diagnose_build_failure():
 
 def xcodebuild_filtered(project, scheme, config, destination, action="build",
                          extra_settings="", allow_provisioning=True):
-    """Run xcodebuild with grep filtering, return exit code.
+    """Run xcodebuild with grep-filtered output. Raw log tee'd to
+    /tmp/admin-xcode-build.log. Returns rc.
 
-    Filters output to show only BUILD/error/warning lines. Raw output is
-    teed to /tmp/admin-xcode-build.log for post-failure diagnostics
-    (see diagnose_build_failure()).
-
-    Warning — ``extra_settings`` is a raw xcodebuild settings string forwarded
-    verbatim to the command line. Settings passed this way apply *globally*
-    across every target in the build, including SwiftPM resource bundles
-    (swift-crypto, swift-nio, etc.). Only ``PRODUCT_BUNDLE_IDENTIFIER`` is
-    known to be SwiftPM-safe as a global override. Passing ``PRODUCT_NAME``
-    or ``INFOPLIST_KEY_CFBundleDisplayName`` causes "Multiple commands
-    produce" build failures because SwiftPM bundles try to emit duplicate
-    outputs under the overridden name. For product-name / display-name
-    differentiation on macOS dev builds, use ``dev_macos_postprocess()``
-    (rename + plutil + ad-hoc re-sign) instead of xcodebuild flags. See the
-    module docstring for the full dev/prod side-by-side convention.
+    Warning: extra_settings applies globally (incl. SwiftPM bundles). Only
+    PRODUCT_BUNDLE_IDENTIFIER is SwiftPM-safe; PRODUCT_NAME and
+    INFOPLIST_KEY_CFBundleDisplayName cause "Multiple commands produce"
+    failures. Use dev_macos_postprocess() for product/display-name diffs.
     """
     from .core import run_cmd
 
@@ -219,23 +209,12 @@ def xcodebuild_filtered(project, scheme, config, destination, action="build",
 
 
 def dev_macos_postprocess(built_app_path, dev_product_name, dev_display_name):
-    """Post-process a macOS Debug build to be a side-by-side dev app.
+    """Rename a Debug build .app → <dev_product_name>.app, patch
+    CFBundleDisplayName, re-sign ad-hoc. Returns the renamed path.
 
-    Renames ``<built>.app`` → ``<dev_product_name>.app`` next to the original,
-    patches ``CFBundleDisplayName`` in ``Contents/Info.plist``, and re-signs
-    the bundle ad-hoc so macOS accepts the modified contents. Returns the
-    path to the renamed dev app.
-
-    Intended to run on the Debug build output *after* xcodebuild succeeds.
-    Pair with ``PRODUCT_BUNDLE_IDENTIFIER=<mac-dev-bundle>`` passed as
-    ``extra_settings`` to ``xcodebuild_filtered`` so the dev app also has a
-    distinct bundle ID. See the module docstring for the full convention.
-
-    Warning (see also ``xcodebuild_filtered``): do NOT try to differentiate
-    the product name or display name via xcodebuild flags — ``PRODUCT_NAME``
-    and ``INFOPLIST_KEY_CFBundleDisplayName`` cascade to SwiftPM resource
-    bundles and break the build. Rename-then-plist-patch via this helper is
-    the supported path.
+    Use this instead of PRODUCT_NAME / INFOPLIST_KEY_CFBundleDisplayName
+    xcodebuild flags (those break SwiftPM bundles). Pair with a distinct
+    PRODUCT_BUNDLE_IDENTIFIER passed via xcodebuild_filtered.extra_settings.
     """
     if not built_app_path.endswith(".app") or not os.path.isdir(built_app_path):
         err(f"dev_macos_postprocess: not an .app bundle: {built_app_path!r}")
@@ -320,18 +299,23 @@ def log_predicate(process, subsystem, level="app"):
 # ---------------------------------------------------------------------------
 
 def find_simulator(device_name):
-    """Find a simulator device ID by name. Returns device_id or None."""
+    """Find a simulator device ID by exact name. Prefers booted. Returns device_id or None."""
     import re
     result = subprocess.run(
         ["xcrun", "simctl", "list", "devices", "available"],
         capture_output=True, text=True,
     )
+    pattern = re.compile(r'^\s+' + re.escape(device_name) + r'\s+\(([A-F0-9-]{36})\)')
+    first_match = None
     for line in result.stdout.splitlines():
-        if device_name in line:
-            m = re.search(r'[A-F0-9-]{36}', line)
-            if m:
-                return m.group()
-    return None
+        m = pattern.match(line)
+        if m:
+            did = m.group(1)
+            if "Booted" in line:
+                return did          # booted instance wins immediately
+            if first_match is None:
+                first_match = did
+    return first_match
 
 
 def resolve_simulator():
@@ -870,14 +854,11 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
                    extra_settings="", build_action="build",
                    pre_build=None, post_build=None, pre_launch=None,
                    is_running_fn=None, kill_fn=None, output_config=None):
-    """Full macOS dev loop: build, launch, stream logs, reload on 'r'/SIGUSR1.
+    """Full macOS dev loop: build, launch, stream logs, reload on 'r' or SIGUSR1.
 
-    pre_build:     callable() run before each build (e.g. swap dev icons)
-    post_build:    callable() run after each build completes (e.g. restore icons)
-    pre_launch:    callable(app_path) run after build, before launch (e.g. install to /Applications)
-                   May return a new app_path to launch instead.
-    is_running_fn: callable() -> bool, custom process check (default: pgrep -x process)
-    kill_fn:       callable() to kill the running app (default: pkill -x process)
+    Hook callbacks: pre_build/post_build wrap each build; pre_launch(app_path)
+    runs before launch and may return a new app_path. is_running_fn / kill_fn
+    override the default pgrep/pkill -x process check.
     """
     import time
     from .log_columns import make_column_formatter
@@ -1075,14 +1056,9 @@ def dev_loop_device(project, scheme, config, subsystem, process,
                     skip_build=False, output_config=None):
     """Build, install, and run on a physical iOS device with log streaming.
 
-    Launches via devicectl --console with OS_ACTIVITY_DT_MODE=YES so os_log
-    messages are non-redacted. Single process replaces the old lldb +
-    idevicesyslog approach.
-
-    bundle_id:  bundle ID for launch/terminate (defaults to subsystem)
-    device_id:  CoreDevice identifier (if None, auto-resolves via find_connected_device)
-    pre_build:  callable() run before each build (e.g. swap dev icons)
-    post_build: callable() run after each build completes (e.g. restore icons)
+    Launches via `devicectl --console` with OS_ACTIVITY_DT_MODE=YES (non-redacted
+    os_log). bundle_id defaults to subsystem; device_id auto-resolves via
+    find_connected_device when None. pre_build/post_build wrap each build cycle.
     """
     if output_config is None:
         output_config = globals().get("_OUTPUT_CONFIG")
@@ -1227,18 +1203,12 @@ def _read_pbxproj(project_path):
 
 
 def _xcode_target_settings(cfg, scheme_name, *, configuration="Debug"):
-    """Return the ``buildSettings`` dict for the PBXNativeTarget that backs
-    a given scheme, at the requested configuration (Debug by default).
+    """Return the buildSettings dict for the PBXNativeTarget backing `scheme_name`
+    at `configuration` (default Debug). Returns {} on any resolution failure;
+    callers must tolerate that and fall back to manifest defaults.
 
-    Walks pbxproj: ``PBXNativeTarget(name=scheme_name)`` →
-    ``buildConfigurationList`` → ``XCBuildConfiguration(name=configuration)``
-    → ``buildSettings``. Returns ``{}`` if any link can't be resolved —
-    callers must tolerate empty results and fall back to manifest defaults.
-
-    Note: this only sees settings written *into the pbxproj itself*. Values
-    sourced from ``.xcconfig`` files or Xcode variable substitutions
-    (``$(PRODUCT_NAME)``) come back as literals and need separate handling
-    by the caller.
+    Only sees settings written into pbxproj — .xcconfig values and `$(VAR)`
+    substitutions come back as literals.
     """
     if not scheme_name:
         return {}
@@ -1351,16 +1321,12 @@ def _resolve_mac_install_path_prod(cfg):
 
 
 def _resolve_subsystem(cfg, platform="mac", *, dev=False):
-    """``os_log`` subsystem — the bundle ID the running app logs under.
-    Matches ``Bundle.main.bundleIdentifier`` at runtime: dev builds use the
-    dev bundle, production builds use the production bundle. Returns "" so
-    callers can pass it directly to predicate builders without a None check.
+    """os_log subsystem — the bundle ID the running app logs under.
 
-    Note: previously, ``platform="ios"`` fell back to the mac bundle ID when
-    no iOS bundle was configured. That fallback was removed — it silently
-    produced a wrong-platform subsystem for mac-only projects. Missing iOS
-    bundle config now returns "" explicitly. Set ``ios_bundle`` (or
-    ``ios_dev_bundle``) in ``[apple]`` if you need a non-empty iOS subsystem.
+    Matches Bundle.main.bundleIdentifier at runtime (dev vs prod bundle by
+    `dev` flag). Returns "" instead of None so callers don't need a None check.
+    No cross-platform fallback: missing iOS config returns "" — set ios_bundle /
+    ios_dev_bundle in [apple] if needed.
     """
     explicit = cfg.get("subsystem")
     if explicit:
@@ -1391,18 +1357,11 @@ def _icon_generation_kwargs(cfg):
 
 
 def build_icon_hooks(cfg, platforms=("mac", "ios"), backup_dir="tmp/icon-backup"):
-    """Return (pre_build, post_build) callables for dev loops.
+    """Return (pre_build, post_build) for dev-icon swap. (None, None) if
+    [apple.icons] missing/empty so callers can pass directly to dev_loop_*.
 
-    pre_build backs up committed production icons and swaps in dev-overlay
-    versions generated from [apple.icons] config. post_build restores the
-    committed icons. Returns (None, None) if [apple.icons] is missing or
-    empty, so the caller can pass them directly to dev_loop_* without
-    conditional plumbing.
-
-    pre_build also registers post_build as a cleanup hook so an interrupted
-    dev run (Ctrl-C, crash) still restores the production icons. Without
-    this, the dev-overlay PNGs leak into the asset catalog and contaminate
-    the next ``deploy`` build with a DEV banner.
+    pre_build also registers post_build as a cleanup hook — required so a
+    Ctrl-C'd dev run doesn't leak dev-overlay PNGs into the next deploy build.
     """
     icon_dirs = _resolve_icon_dirs(cfg, platforms)
     if not icon_dirs:
@@ -1438,16 +1397,10 @@ def build_icon_hooks(cfg, platforms=("mac", "ios"), backup_dir="tmp/icon-backup"
 
 
 def patch_ios_display_name(app_path, display_name):
-    """Patch ``CFBundleDisplayName`` in a built iOS .app and re-sign.
-
-    Used by the iOS dev loops to give the dev install a distinct home-screen
-    name (e.g. "CCTool DEV") without touching the Xcode project. The global
-    xcodebuild flag ``INFOPLIST_KEY_CFBundleDisplayName`` is unsafe — it
-    cascades into SwiftPM resource bundles and corrupts them — so we patch
-    the built app's Info.plist directly and re-sign with the original
-    identity (preserving entitlements so the app still installs on device).
-
-    No-op when ``display_name`` is falsy.
+    """Patch CFBundleDisplayName in a built iOS .app and re-sign with the
+    original identity. Used by iOS dev loops to give the dev install a distinct
+    home-screen name without using the unsafe INFOPLIST_KEY_CFBundleDisplayName
+    xcodebuild flag (which corrupts SwiftPM bundles). No-op when display_name is falsy.
     """
     if not display_name:
         return
@@ -1598,19 +1551,9 @@ def _make_mac_dev_kill(cfg):
 
 
 def _compose_dev_settings(cfg, dev_bundle_id):
-    """Combine manifest ``dev_build_settings`` with a platform-specific
-    ``PRODUCT_BUNDLE_IDENTIFIER`` override.
-
-    ``dev_build_settings`` is meant for cross-platform extras only. The
-    bundle ID is platform-specific (``mac_dev_bundle`` / ``ios_dev_bundle``)
-    and must not be hard-coded into ``dev_build_settings`` — doing so would
-    force one platform's ID onto the other (e.g. macOS dev ID leaking into
-    an iOS build, breaking the post-build sanity check).
-
-    The platform-specific override is appended last so it wins if the legacy
-    manifest still carries a ``PRODUCT_BUNDLE_IDENTIFIER=`` in its
-    ``dev_build_settings`` string. Emits a warning when that happens so
-    consumers know to clean up the manifest.
+    """Combine cross-platform `dev_build_settings` with a platform-specific
+    PRODUCT_BUNDLE_IDENTIFIER (appended last so it wins). Warns if the manifest's
+    dev_build_settings already contains a PRODUCT_BUNDLE_IDENTIFIER (legacy).
     """
     extras = (cfg.get("dev_build_settings") or "").strip()
     if "PRODUCT_BUNDLE_IDENTIFIER" in extras:

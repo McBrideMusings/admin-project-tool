@@ -58,14 +58,10 @@ def get_version_id(server_dir):
 def build_multiplatform(server_dir, targets, binary_name="server"):
     """Build a Rust binary for multiple platforms.
 
-    targets is a list of (platform_name, cargo_cmd_or_None, binary_rel_path,
-    docker_platform_or_None) tuples. cargo_cmd is a shell string to run in
-    server_dir (for native builds). If None, Docker cross-compile is used with
-    the given docker_platform.
-
-    Copies each built binary to server_dir/bundled-binaries/<binary_name>-<platform>.
-    Strips each binary (native `strip` for darwin, Docker strip for linux).
-    Returns (exit_code, version_id).
+    targets: list of (platform, cargo_cmd|None, binary_rel_path, docker_platform|None).
+    None cargo_cmd means Docker cross-compile via docker_platform. Outputs to
+    server_dir/bundled-binaries/<binary_name>-<platform>, stripped per platform.
+    Returns (rc, version_id).
     """
     out_dir = os.path.join(server_dir, "bundled-binaries")
     os.makedirs(out_dir, exist_ok=True)
@@ -86,7 +82,8 @@ def build_multiplatform(server_dir, targets, binary_name="server"):
                 f"docker run --rm --platform {docker_platform} "
                 f"-v {abs_server_dir}:/src -w /src "
                 f"-e CARGO_TARGET_DIR=/src/{target_dir} "
-                f"rust:latest cargo build --release"
+                f"-e CCTOOL_GIT_HASH={version_id} "
+                f"rust:slim-bullseye cargo build --release"
             )
 
         if rc != 0:
@@ -101,7 +98,7 @@ def build_multiplatform(server_dir, targets, binary_name="server"):
         else:
             subprocess.run([
                 "docker", "run", "--rm", "--platform", docker_platform,
-                "-v", f"{abs_out_dir}:/bins", "rust:latest",
+                "-v", f"{abs_out_dir}:/bins", "rust:slim-bullseye",
                 "strip", f"/bins/{binary_name}-{name}",
             ])
 

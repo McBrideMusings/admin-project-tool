@@ -273,7 +273,7 @@ ok("reload signal sent to PID " + str(pid))
 
 ARCHETYPE = {
     "name": "apple",
-    "modules": ["core", "icons", "apple", "log_format", "log_columns"],
+    "modules": ["core", "icons", "apple", "log_format", "log_columns", "log_columns_apple"],
     "urls": {},
     "commands": {
         "build":  {"desc": "Build: mac | ios | server [--force]",                                    "steps": ["build"],  "group": 1, "priority": 10},

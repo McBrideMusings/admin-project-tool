@@ -121,25 +121,9 @@ def run_vite_dev(
     dev_mounts_raw=None,
     vite_log_name="vite.log",
 ):
-    """Launch a Vite dev server + an arbitrary backend with a reload loop.
-
-    Used by projects whose dev flow is "vite frontend in the background +
-    backend with SIGUSR1-driven reload in the foreground." Replaces the per-
-    project admin_inline.py pattern of the same shape.
-
-    Arguments:
-        vite_port:        int, the Vite port (killed on startup).
-        backend_port:     int, the backend port (killed on startup).
-        data_dir:         path, created if missing; receives DEV_MOUNTS symlinks.
-        frontend_dir:     path containing `package.json` + `npm run dev` target.
-        backend_dir:      path to `cd` into before running backend_cmd.
-        backend_cmd:      shell string for the reload-looped backend process.
-        backend_env:      optional dict[str, str] prepended as `K=V` env assignments.
-        vite_env:         optional dict[str, str] prepended as `K=V` env assignments for Vite.
-        vite_log_name:    filename under LOG_DIR for vite stdout+stderr.
-
-    Reads the `DEV_MOUNTS` env var at call time. Returns the return code of
-    `run_with_reload`.
+    """Launch Vite + a SIGUSR1-reloadable backend. Vite runs in the background;
+    backend runs in the foreground inside `run_with_reload`. Reads `DEV_MOUNTS`
+    env at call time to symlink into `data_dir`. Returns run_with_reload's rc.
     """
     pkg = _detect_pkg_manager(frontend_dir)
     rc = ensure_deps(os.path.join(frontend_dir, "node_modules"),
@@ -219,22 +203,12 @@ def run_vite_dev(
 
 
 def vite_dev_from_config(cfg):
-    """Adapter: read a manifest `[vite_dev]` table and call `run_vite_dev`.
+    """Adapter: read a manifest `[vite_dev]` table and call run_vite_dev.
 
-    Schema:
-        vite_port, backend_port  : ints
-        data_dir                 : project-relative root for project-local data subdirs
-        data_subdirs             : [{name, env, is_data_root?}, ...] — created on disk;
-                                   `env` exports the abs path as that env var to the backend;
-                                   `is_data_root` marks which subdir becomes run_vite_dev's
-                                   `data_dir` (the symlink-mount root). Default: first entry.
-        frontend_dir, backend_dir, backend_cmd : strings (see run_vite_dev)
-        forward_env  : [str, ...] — env var names to copy from os.environ into backend_env
-                       if set (e.g. ["DEV_DOMAIN"])
-        vite_env     : {str: str, ...} — extra env for the vite child
-        mounts       : [{name, env?, default?, path?}, ...] — translated into the
-                       `name=path,name=path` string `run_vite_dev` consumes
-        backend_extra_env : {str: str, ...} — extra static env for the backend
+    Schema keys: vite_port, backend_port, data_dir, data_subdirs (each with
+    name/env/is_data_root?), frontend_dir, backend_dir, backend_cmd,
+    forward_env, vite_env, mounts, backend_extra_env. See run_vite_dev for the
+    underlying parameters; this adapter just translates the toml shape.
     """
     if not cfg:
         err("vite_dev_from_config: empty config")

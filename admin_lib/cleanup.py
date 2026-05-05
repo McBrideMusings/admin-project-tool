@@ -103,16 +103,11 @@ def clean_paths(paths):
 
 
 def db_quick_check(db_path, timeout=2.0):
-    """Run `PRAGMA quick_check` on a SQLite DB. Returns `(healthy, status)`.
+    """`PRAGMA quick_check` on a SQLite DB. Returns (healthy, status).
 
-    `healthy` is True iff the DB exists, opens, and reports "ok". `status`
-    is a short human string ("healthy", "missing", "CORRUPT: <detail>",
-    "unreadable: <detail>") suitable for logging or showing the user.
-
-    quick_check is ~10× faster than integrity_check on a healthy DB and
-    still catches the malformed-image / page-corruption cases that motivate
-    a forced drop. For a pre-deploy "is this DB sound enough to copy"
-    audit, call integrity_check directly instead.
+    status is "healthy" | "missing" | "CORRUPT: ..." | "unreadable: ...".
+    quick_check is ~10× faster than integrity_check; for pre-deploy audits
+    use integrity_check directly.
     """
     if not os.path.exists(db_path):
         return (False, "missing")
@@ -136,25 +131,9 @@ def db_quick_check(db_path, timeout=2.0):
 
 
 def clean_with_db(paths, db_path, force=False, db_companions=("-shm", "-wal")):
-    """High-level clean: nuke `paths` always, drop SQLite DB only if corrupt.
+    """Clean `paths` always; drop SQLite DB iff `force` or quick_check fails.
 
-    Combines `clean_paths` with `db_quick_check`. The DB is dropped iff
-    `force=True` OR `db_quick_check` reports unhealthy. Companion files
-    (`-shm`, `-wal` by default) are dropped alongside the main file. A
-    healthy DB is kept and logged so the user knows it was inspected.
-
-    Returns total bytes freed (matching `clean_paths`).
-
-    Typical use:
-        clean_with_db(
-            paths=[
-                (os.environ.get("HLS_CACHE_DIR"), "HLS cache"),
-                (os.environ.get("WORK_DIR"), "transcode work dir"),
-                ("web/dist", "frontend build"),
-            ],
-            db_path=os.path.join(config_dir, "app.db"),
-            force=("--force" in args),
-        )
+    Companion files (-shm, -wal) drop with the main DB. Returns total bytes freed.
     """
     info("clearing caches and transcode outputs:")
     freed = clean_paths(paths)
@@ -175,15 +154,9 @@ def clean_with_db(paths, db_path, force=False, db_companions=("-shm", "-wal")):
 
 
 def clean_dev_from_config(cfg, force=False):
-    """Adapter: read a manifest `[clean_dev]` table and call `clean_with_db`.
+    """Adapter: read a manifest `[clean_dev]` table and call clean_with_db.
 
-    Schema:
-        paths = [
-            {env, default?, label?},   # path resolved from env var (with optional default)
-            {path, label?},             # literal path (relative to cwd)
-            ...
-        ]
-        db = {env?, default?, file}    # db_path = (env_or_default)/file; or {path = "..."}
+    Schema: paths=[{env|path, default?, label?}, ...], db={env?, default?, file} | {path}.
     """
     if not cfg:
         return 0

@@ -10,7 +10,7 @@ sys.path.insert(0, str(REPO))
 
 from gen.fragments import FragmentError, render_kill_port  # noqa: E402
 from gen.manifest import Command  # noqa: E402
-from admin_lib.ports import kill_port_interactive  # noqa: E402
+from admin_lib.ports_nuke import kill_port_interactive  # noqa: E402
 
 
 def _cmd(name="kill", run="", desc="Kill dev server"):
@@ -84,7 +84,7 @@ def test_render_kill_port_iterates_all_ports():
 # ---------------------------------------------------------------------------
 
 def test_kill_port_interactive_no_holders_returns_true():
-    with patch("admin_lib.ports.port_holders", return_value=[]):
+    with patch("admin_lib.ports_nuke.port_holders", return_value=[]):
         result = kill_port_interactive(9999)
     assert result is True
     print("OK: no holders → returns True without prompting")
@@ -95,7 +95,7 @@ _HOLDERS = [{"pid": 1234, "command": "node", "parent_pid": None, "parent_command
 
 def test_kill_port_interactive_user_abort_returns_false():
     with (
-        patch("admin_lib.ports.port_holders", return_value=_HOLDERS),
+        patch("admin_lib.ports_nuke.port_holders", return_value=_HOLDERS),
         patch("sys.stdin") as mock_stdin,
         patch("builtins.input", side_effect=KeyboardInterrupt),
     ):
@@ -107,10 +107,10 @@ def test_kill_port_interactive_user_abort_returns_false():
 
 def test_kill_port_interactive_kill_success_returns_true():
     with (
-        patch("admin_lib.ports.port_holders", return_value=_HOLDERS),
+        patch("admin_lib.ports_nuke.port_holders", return_value=_HOLDERS),
         patch("sys.stdin") as mock_stdin,
         patch("builtins.input", return_value=""),
-        patch("admin_lib.ports._kill_pids", return_value=True),
+        patch("admin_lib.ports_nuke._kill_pids", return_value=True),
     ):
         mock_stdin.isatty.return_value = True
         result = kill_port_interactive(3000)
@@ -120,10 +120,10 @@ def test_kill_port_interactive_kill_success_returns_true():
 
 def test_kill_port_interactive_kill_failure_returns_false():
     with (
-        patch("admin_lib.ports.port_holders", return_value=_HOLDERS),
+        patch("admin_lib.ports_nuke.port_holders", return_value=_HOLDERS),
         patch("sys.stdin") as mock_stdin,
         patch("builtins.input", return_value=""),
-        patch("admin_lib.ports._kill_pids", return_value=False),
+        patch("admin_lib.ports_nuke._kill_pids", return_value=False),
     ):
         mock_stdin.isatty.return_value = True
         result = kill_port_interactive(3000)

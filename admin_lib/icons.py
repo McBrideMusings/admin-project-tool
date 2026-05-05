@@ -169,15 +169,10 @@ def generate_icons(
 ):
     """Generate app icons at the requested sizes.
 
-    Input modes (in priority order):
-      1. glyph_svg  — SVG file rendered centered on background (needs cairosvg)
-      2. glyph_text — text/character rendered centered on background
-      3. neither    — solid background color only
-
-    glyph_scale: 0.0–1.0 fraction of icon size for the glyph (default 0.55)
-    opaque: if True, flatten alpha to bg_color and save as RGB (required for macOS)
-
-    Returns True on success, False if skipped (missing deps or error).
+    Input precedence: glyph_svg (needs cairosvg) > glyph_text > solid bg only.
+    glyph_scale: 0.0–1.0 of icon size (default 0.55).
+    opaque=True: flatten alpha to bg_color (required for macOS).
+    Returns True on success, False if skipped.
     """
     if not _HAS_PIL:
         warn("Icon generation skipped: Pillow not installed.")

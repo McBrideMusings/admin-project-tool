@@ -33,15 +33,9 @@ def _cache_dir():
 
 
 def collect_sources(*specs):
-    """Collect source file paths from various spec types.
-
-    Each spec can be:
-    - A file path string (included if it exists)
-    - A glob pattern string (expanded with recursive=True)
-    - A (directory, extensions) tuple — walks directory recursively,
-      collecting files matching any of the extensions (e.g. [".swift", ".h"])
-
-    Returns a sorted list of absolute paths (deduplicated).
+    """Collect source paths. Specs may be: a file path, a glob string (recursive=True),
+    or a (directory, extensions) tuple for recursive ext-matched walk. Returns sorted
+    deduplicated absolute paths.
     """
     import glob as glob_mod
 
@@ -89,16 +83,10 @@ def source_hash(paths):
 
 
 def is_fresh(cache_key, sources, force=False, artifact=None):
-    """Return True if the cached hash matches current sources.
+    """True iff cached hash matches current sources.
 
-    cache_key: unique name for this build (e.g. "macos-debug")
-    sources:   list of file paths (from collect_sources)
-    force:     if True, always returns False
-    artifact:  optional output path (file or directory). If provided and the
-               path does not exist on disk, the cache is considered stale
-               regardless of source hash — prevents "skipping build" when
-               the artifact was deleted, renamed, or produced under
-               different build settings.
+    If `artifact` is given and missing on disk, cache is stale regardless of hash
+    — prevents "skipping build" when the artifact was deleted or renamed.
     """
     if force or not sources:
         return False
@@ -144,19 +132,8 @@ def invalidate(cache_key=None):
 
 
 def check_build(cache_key, sources, label=None, force=False, artifact=None):
-    """Check if a build is needed. Returns True if the build should proceed.
-
-    Prints "up to date" when cached. Pair with mark_fresh() after a
-    successful build.
-
-    cache_key: unique name for this build (e.g. "macos-debug")
-    sources:   list of file paths (from collect_sources)
-    label:     human-readable name for status messages (defaults to cache_key)
-    force:     if True, always returns True (forces rebuild)
-    artifact:  optional output path — if missing on disk, cache is treated
-               as stale and the build proceeds. Strongly recommended for
-               xcodebuild/cargo outputs so renamed/deleted artifacts don't
-               leave callers pointing at a ghost.
+    """True if build should proceed. Prints "up to date" when cached. Pair with
+    mark_fresh() on success. `artifact`: missing on disk → stale (avoid ghosts).
     """
     if is_fresh(cache_key, sources, force=force, artifact=artifact):
         ok(f"{label or cache_key}: up to date (skipping build)")

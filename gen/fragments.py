@@ -422,28 +422,6 @@ def render_vite_dev(cmd: Command) -> str:
     return body
 
 
-def render_docker_unraid_build(cmd: Command) -> str:
-    """Sync project to remote and build the Docker image there. Reads `[deploy]`."""
-    func_name = "cmd_" + _safe_ident(cmd.name)
-    body = textwrap.dedent(f"""\
-        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
-        def {func_name}(args):
-            sys.exit(docker_remote_build(globals().get("_DEPLOY_CONFIG") or {{}}))
-    """)
-    return body
-
-
-def render_docker_unraid_deploy(cmd: Command) -> str:
-    """Sync, build on remote, recreate container. Reads `[deploy]`."""
-    func_name = "cmd_" + _safe_ident(cmd.name)
-    body = textwrap.dedent(f"""\
-        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
-        def {func_name}(args):
-            sys.exit(docker_remote_deploy(globals().get("_DEPLOY_CONFIG") or {{}}))
-    """)
-    return body
-
-
 _ACTION_RENDERERS = {
     "shell": render_shell,
     "multi-target": render_multi_target,
@@ -458,18 +436,25 @@ _ACTION_RENDERERS = {
     "nuke-dev": render_nuke_dev,
     "clean-dev": render_clean_dev,
     "vite-dev": render_vite_dev,
-    "docker-unraid-build": render_docker_unraid_build,
-    "docker-unraid-deploy": render_docker_unraid_deploy,
 }
 
 # Kinds whose action body is generated from a named manifest config table
 # rather than a `run` string.
 CONFIGLESS_KINDS = frozenset({
     "nuke-dev", "clean-dev", "vite-dev",
-    "docker-unraid-build", "docker-unraid-deploy",
 })
 
 KNOWN_KINDS = set(_ACTION_RENDERERS)
+
+
+# Action kinds that pull additional admin_lib modules into the bundle. The
+# resolver consults this so projects don't have to declare these modules
+# explicitly — using a `kind` is enough.
+KIND_MODULES: dict[str, list[str]] = {
+    "kill-port": ["ports", "ports_nuke"],
+    "nuke-dev": ["ports", "ports_nuke"],
+    "docker-reload-loop": ["docker"],
+}
 
 
 def _safe_ident(name: str) -> str:

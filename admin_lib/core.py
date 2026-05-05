@@ -775,12 +775,8 @@ def pick_target_or_none(menu, prompt, non_tty_msg):
 def dispatch_target(targets, cmd_name, args, handlers):
     """Route a command to the correct target handler.
 
-    targets:  OrderedDict of {name: description} for pick_target menu
-    cmd_name: command name for error messages (e.g. "build")
-    args:     argv args passed to the command
-    handlers: dict of {target_name: callable(rest_args)}
-
-    Single-target shortcut: if len(targets) == 1, skips the menu.
+    targets is an OrderedDict {name: description} feeding pick_target. handlers
+    is {name: callable(rest_args)}. Skips the menu when len(targets)==1.
     """
     target = args[0] if args and not args[0].startswith("-") else ""
     rest = args[1:] if target else (args or [])
