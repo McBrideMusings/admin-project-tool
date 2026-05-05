@@ -508,8 +508,6 @@ def _pyrepr(s: str) -> str:
     """Python repr that prefers double quotes for readability."""
     r = repr(s)
     if r[0] == "'":
-        # Reuse repr's escaping (newlines, tabs, backslashes all handled);
-        # just swap quote style: unescape \' and escape ".
         inner = r[1:-1].replace("\\'", "'").replace('"', '\\"')
         return '"' + inner + '"'
     return r
