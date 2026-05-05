@@ -8,7 +8,6 @@ import atexit
 import glob
 import os
 import selectors
-import shlex
 import signal
 import subprocess
 import sys
@@ -61,6 +60,35 @@ def _wait_or_kill(proc, timeout=5):
         except OSError:
             pass
         proc.wait()
+
+
+def _preexec_pdeathsig():
+    """preexec_fn that asks the kernel to SIGTERM us when our parent dies.
+
+    Linux-only via prctl(PR_SET_PDEATHSIG). The whole point: if admin is
+    SIGKILL'd, the terminal gets closed, or the user's shell dies abruptly,
+    atexit handlers don't run and cleanup is skipped — leaving cargo-watch /
+    nodemon / esbuild supervisors as orphans that respawn the dev server on
+    the next file change. Setting this on the spawned shell means the kernel
+    tears the whole tree down for us, regardless of how admin exits.
+
+    Silent no-op on non-Linux. The startup sweep (kill_stale_supervisors)
+    is the cross-platform fallback.
+    """
+    try:
+        import ctypes
+        PR_SET_PDEATHSIG = 1
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0)
+    except Exception:
+        pass
+    # Become a session/group leader so killpg() from the parent reaches the
+    # whole tree (start_new_session=True at the Popen level already does
+    # this, but if it isn't passed for some reason, this is a backstop).
+    try:
+        os.setsid()
+    except OSError:
+        pass
 
 
 def _handle_rebuild_signal(signum, frame):
@@ -130,6 +158,7 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
                 cmd, shell=shell,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 start_new_session=True,
+                preexec_fn=_preexec_pdeathsig,
             )
             _children.append(proc)
 
@@ -227,6 +256,13 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
                 time.sleep(1)
             return rc
 
+    except KeyboardInterrupt:
+        # The SIGINT handler installed above raises this so the inner
+        # try/finally tears the child process down cleanly. Swallow it here
+        # so Ctrl+C exits with a quiet "Stopped." instead of dumping the
+        # full traceback for the selector.poll() call we were sitting in.
+        info("Stopped.")
+        return 130
     finally:
         signal.signal(signal.SIGUSR1, old_sigusr1)
         signal.signal(signal.SIGINT, old_sigint)
@@ -770,50 +806,62 @@ def register_logs_command(host, image):
 # Multi-target reload command
 # ---------------------------------------------------------------------------
 
+def reload_running_targets(target_filter=None, pid_prefix=None):
+    """Send SIGUSR1 to every admin-managed dev target (or one matching `target_filter`).
+
+    Looks at /tmp/admin-run-*.pid (overrideable), reads each pid, and
+    signals it. Stale pidfiles (missing process) are unlinked. Returns 0 if
+    at least one signal was delivered, 1 otherwise.
+
+    The shape used by the `server-reload` action kind. Lives at module level
+    so the kind fragment can call it directly without instantiating the
+    closure-style helper below.
+    """
+    prefix = pid_prefix or _ADMIN_PID_PREFIX
+    pid_files = glob.glob(f"{prefix}-*.pid")
+
+    if not pid_files:
+        err("No running targets found (no PID files)")
+        return 1
+
+    sent = 0
+    for pidfile in pid_files:
+        basename = os.path.basename(pidfile)
+        target_name = basename.replace("admin-run-", "").replace(".pid", "")
+
+        if target_filter and target_filter not in target_name:
+            continue
+
+        try:
+            with open(pidfile) as f:
+                pid = int(f.read().strip())
+        except (OSError, ValueError):
+            warn(f"Cannot read {pidfile} — removing stale file")
+            _cleanup_pid_file(pidfile)
+            continue
+
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            warn(f"PID {pid} ({target_name}) is not running — removing stale file")
+            _cleanup_pid_file(pidfile)
+            continue
+
+        os.kill(pid, signal.SIGUSR1)
+        ok(f"Reload signal sent to {target_name} (PID {pid})")
+        sent += 1
+
+    if sent == 0:
+        err("No live targets found")
+        return 1
+    return 0
+
+
 def register_server_reload_command(pid_prefix=None):
     """Register a reload command that sends SIGUSR1 to all running targets."""
-    prefix = pid_prefix or _ADMIN_PID_PREFIX
-
     @command("reload", "Signal running admin to rebuild+relaunch")
     def cmd_reload(args):
-        pid_files = glob.glob(f"{prefix}-*.pid")
-        target_filter = args[0] if args else None
-
-        if not pid_files:
-            err("No running targets found (no PID files)")
-            return 1
-
-        sent = 0
-        for pidfile in pid_files:
-            basename = os.path.basename(pidfile)
-            target_name = basename.replace("admin-run-", "").replace(".pid", "")
-
-            if target_filter and target_filter not in target_name:
-                continue
-
-            try:
-                with open(pidfile) as f:
-                    pid = int(f.read().strip())
-            except (OSError, ValueError):
-                warn(f"Cannot read {pidfile} — removing stale file")
-                _cleanup_pid_file(pidfile)
-                continue
-
-            try:
-                os.kill(pid, 0)
-            except OSError:
-                warn(f"PID {pid} ({target_name}) is not running — removing stale file")
-                _cleanup_pid_file(pidfile)
-                continue
-
-            os.kill(pid, signal.SIGUSR1)
-            ok(f"Reload signal sent to {target_name} (PID {pid})")
-            sent += 1
-
-        if sent == 0:
-            err("No live targets found")
-            return 1
-        return 0
+        return reload_running_targets(args[0] if args else None, pid_prefix=pid_prefix)
 
 
 # ---------------------------------------------------------------------------

@@ -405,6 +405,45 @@ def render_clean_dev(cmd: Command) -> str:
     return body
 
 
+def render_install_template(cmd: Command) -> str:
+    """Install an Unraid Docker GUI template via scp.
+
+    Reads `[install_template]` config (src, name) and UNRAID_HOST/UNRAID_USER
+    env. Body is a single function call into admin_lib.unraid; the heavy
+    lifting (default src, name from APP_IMAGE, dst path conventions) lives
+    there. Requires the 'unraid' module.
+    """
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    body = textwrap.dedent(f"""\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            return install_docker_template_from_config(globals().get("_INSTALL_TEMPLATE_CONFIG") or {{}})
+    """)
+    return body
+
+
+def render_server_reload(cmd: Command) -> str:
+    """Send SIGUSR1 to dev-loop pidfiles to trigger an in-process rebuild.
+
+    Pairs with `run_with_reload` (and therefore `vite-dev` / `docker-reload-loop`):
+    those write /tmp/admin-run-<target>.pid and trap SIGUSR1 to restart the
+    inner process. Useful as `commands.reload` so editors can wire a save
+    hook to `./admin reload` without spawning a fresh dev session.
+
+    Optional `args[0]`: target name substring filter ("dev" by default
+    matches `cmd_dev`'s pidfile if there's only one target).
+
+    Requires the 'docker' module.
+    """
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    body = textwrap.dedent(f"""\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            return reload_running_targets(args[0] if args else None)
+    """)
+    return body
+
+
 def render_vite_dev(cmd: Command) -> str:
     """Run a Vite frontend + backend reload loop with project-local data dirs.
 
@@ -436,12 +475,14 @@ _ACTION_RENDERERS = {
     "nuke-dev": render_nuke_dev,
     "clean-dev": render_clean_dev,
     "vite-dev": render_vite_dev,
+    "server-reload": render_server_reload,
+    "install-template": render_install_template,
 }
 
 # Kinds whose action body is generated from a named manifest config table
 # rather than a `run` string.
 CONFIGLESS_KINDS = frozenset({
-    "nuke-dev", "clean-dev", "vite-dev",
+    "nuke-dev", "clean-dev", "vite-dev", "server-reload", "install-template",
 })
 
 KNOWN_KINDS = set(_ACTION_RENDERERS)
@@ -454,6 +495,8 @@ KIND_MODULES: dict[str, list[str]] = {
     "kill-port": ["ports", "ports_nuke"],
     "nuke-dev": ["ports", "ports_nuke"],
     "docker-reload-loop": ["docker"],
+    "server-reload": ["docker"],
+    "install-template": ["remote", "unraid"],
 }
 
 

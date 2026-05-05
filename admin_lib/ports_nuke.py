@@ -92,6 +92,76 @@ def kill_port_interactive(port):
     return False
 
 
+def kill_stale_supervisors(project_root, *, markers=None):
+    """Kill orphaned file-watcher / dev-supervisor processes inside a project.
+
+    Catches cargo-watch / nodemon / etc. that survived a previous admin dev
+    session because admin was SIGKILL'd, OOM-killed, or its terminal was
+    closed without giving atexit a chance to run. They sit in /proc with no
+    parent admin, react to file changes from the *next* dev session, and
+    silently relaunch the listener — which then fights the new admin's
+    listener for the port.
+
+    Match is project-scoped: cmdline must contain a known supervisor marker
+    AND cwd must be inside `project_root`. Returns the count of pids killed.
+    """
+    if markers is None:
+        # Match both the shell-wrapper form ("cargo watch", with a space —
+        # how it appears in `sh -c '... cargo watch ...'`) AND the bare
+        # binary form ("cargo-watch", with a hyphen — how /proc reports it
+        # once the shell exec's into the binary or the shell dies leaving
+        # an orphan). Same idea for the others.
+        markers = (
+            "cargo watch", "cargo-watch",
+            "watchexec",
+            "nodemon",
+            "tsc -w", "tsc --watch",
+        )
+    project_root = os.path.abspath(project_root)
+    self_pid = os.getpid()
+    stale = []
+    for proc in list_processes():
+        if proc["pid"] == self_pid:
+            continue
+        cmdline = proc.get("cmdline") or ""
+        cwd = proc.get("cwd") or ""
+        if not any(m in cmdline for m in markers):
+            continue
+        if cwd != project_root and not cwd.startswith(project_root + os.sep):
+            continue
+        stale.append(proc["pid"])
+    if not stale:
+        return 0
+    info(f"Found {len(stale)} orphaned supervisor(s) in {project_root}: {stale}")
+    _kill_pids(stale, timeout=3.0)
+    return len(stale)
+
+
+def kill_dev_interactive(port, project_root=None):
+    """Kill a project's dev server: port holder + any orphaned supervisor.
+
+    What `admin kill` should call instead of `kill_port_interactive` for
+    projects with a watcher-driven backend (cargo-watch, nodemon, ...).
+    The plain port-only kill leaves the supervisor running; the supervisor
+    immediately respawns a new listener on file save and you wonder why
+    the next `admin dev` reports "address already in use".
+
+    `project_root` defaults to the current working directory — admin commands
+    run from the project root, so this is usually correct.
+
+    Returns True if everything cleaned up, False if the user aborted the
+    port-kill prompt.
+    """
+    if project_root is None:
+        project_root = os.getcwd()
+    if not kill_port_interactive(port):
+        return False
+    killed_orphans = kill_stale_supervisors(project_root)
+    if killed_orphans:
+        ok(f"Cleared {killed_orphans} orphaned supervisor process(es).")
+    return True
+
+
 def nuke_dev_processes(
     project_root,
     *,
@@ -101,8 +171,9 @@ def nuke_dev_processes(
     web_subdirs=(),
     runtimes=("bun", "node", "python", "python3"),
     web_argv_markers=("vite", "esbuild", "npm run dev"),
+    supervisor_markers=None,
 ):
-    """Bulletproof dev-server cleanup. Three passes, each a fallback for the previous.
+    """Bulletproof dev-server cleanup. Four passes, each a fallback for the previous.
 
     Why: simple "kill the bun process I just started" fails the moment a
     previous run was force-killed, ssh-disconnected, OOM'd, or left a stale
@@ -111,7 +182,10 @@ def nuke_dev_processes(
     Passes: (1) bound-port listeners + their bun/node/python supervisor
     parents; (2) pidfiles ({"path", "format": "int"|"json", "key"?}), stale
     ones unlinked; (3) /proc argv/cwd matching against project_root + js_files
-    + web_subdirs + web_argv_markers.
+    + web_subdirs + web_argv_markers; (4) project-scoped sweep for orphaned
+    file-watcher supervisors (cargo-watch / nodemon / watchexec / `tsc -w`)
+    via `kill_stale_supervisors` — catches the case where the listener is
+    already dead but its watcher would respawn one on the next file change.
 
     Returns: number of distinct pids killed.
     """
@@ -198,6 +272,14 @@ def nuke_dev_processes(
     if straggler_pids:
         _kill_set(straggler_pids, "argv/cwd-matched stragglers")
 
+    # 4. File-watcher / supervisor orphans.
+    sup_kwargs = {"markers": supervisor_markers} if supervisor_markers else {}
+    sup_count = kill_stale_supervisors(project_root, **sup_kwargs)
+    if sup_count:
+        # kill_stale_supervisors already SIGTERM'd them; we just track the
+        # count for the summary line.
+        killed.update([f"sup{i}" for i in range(sup_count)])
+
     if killed:
         ok(f"dev server stopped ({len(killed)} processes)")
     else:
@@ -240,4 +322,5 @@ def nuke_dev_from_config(cfg):
         js_files=tuple(cfg.get("js_files") or ()),
         web_subdirs=tuple(cfg.get("web_subdirs") or ()),
         runtimes=tuple(cfg.get("runtimes") or ("bun", "node", "python", "python3")),
+        supervisor_markers=tuple(cfg.get("supervisor_markers") or ()) or None,
     )

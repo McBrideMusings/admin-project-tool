@@ -26,7 +26,7 @@ from pathlib import Path
 from gen.archetypes import ResolvedManifest
 from gen.bundler import inline_admin_lib, lib_hash, strip_unreachable, compact_whitespace
 from gen.fragments import collect_env_var_calls, render_command, render_action, _pyrepr
-from gen.manifest import Command, SPACER
+from gen.manifest import SPACER
 
 ADMIN_LIB_VERSION = "2.0.0-dev"
 BUNDLED_MARKER = "# @bundled"
@@ -94,6 +94,7 @@ def render(
             "vite_dev": m.vite_dev,
             "dev_kill": m.dev_kill,
             "clean_dev": m.clean_dev,
+            "install_template": m.install_template,
         },
     )
     env_block = "\n".join(env_calls) + ("\n" if env_calls else "")
@@ -125,6 +126,7 @@ def render(
     clean_dev_decl = f"_CLEAN_DEV_CONFIG = {_pyliteral(m.clean_dev)}\n" if m.clean_dev else ""
     vite_dev_decl = f"_VITE_DEV_CONFIG = {_pyliteral(m.vite_dev)}\n" if m.vite_dev else ""
     deploy_decl = f"_DEPLOY_CONFIG = {_pyliteral(m.deploy)}\n" if m.deploy else ""
+    install_template_decl = f"_INSTALL_TEMPLATE_CONFIG = {_pyliteral(m.install_template)}\n" if m.install_template else ""
 
     # Emit configure_logging() call if [logging] is configured.
     logging_decl = ""
@@ -174,6 +176,7 @@ def render(
         f"{clean_dev_decl}"
         f"{vite_dev_decl}"
         f"{deploy_decl}"
+        f"{install_template_decl}"
         f"{logging_decl}"
         f"{actions_block}"
         f"\n{commands_src}\n"

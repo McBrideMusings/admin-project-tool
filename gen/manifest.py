@@ -19,7 +19,7 @@ _KNOWN_KEYS = {
     "project_name", "python_min", "archetypes", "modules", "urls",
     "commands", "actions", "order", "logs", "apple", "server", "output",
     "exclude_modules", "generator_commit", "inline", "logging",
-    "dev_kill", "clean_dev", "vite_dev", "deploy",
+    "dev_kill", "clean_dev", "vite_dev", "deploy", "install_template",
 }
 
 VALID_COMMAND_KEYS = {"desc", "steps", "log_file", "log_retain", "log", "group", "priority"}
@@ -62,6 +62,7 @@ class Manifest:
     clean_dev: dict = field(default_factory=dict) # [clean_dev] — config for kind="clean-dev" commands
     vite_dev: dict = field(default_factory=dict)  # [vite_dev] — config for kind="vite-dev" commands
     deploy: dict = field(default_factory=dict)    # [deploy] — config for docker-unraid build/deploy commands
+    install_template: dict = field(default_factory=dict)  # [install_template] — kind="install-template" config
     actions: dict[str, dict] = field(default_factory=dict)    # action name -> raw dict (not shown in UI)
     exclude_modules: list[str] = field(default_factory=list)  # modules to suppress even if archetype requires them
     generator_commit: str | None = None
@@ -210,6 +211,10 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     if not isinstance(deploy, dict):
         raise ManifestError(f"{source}: '[deploy]' must be a table")
 
+    install_template = data.get("install_template", {}) or {}
+    if not isinstance(install_template, dict):
+        raise ManifestError(f"{source}: '[install_template]' must be a table")
+
     logging_cfg = data.get("logging", {}) or {}
     if not isinstance(logging_cfg, dict):
         raise ManifestError(f"{source}: '[logging]' must be a table")
@@ -258,6 +263,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         clean_dev=clean_dev,
         vite_dev=vite_dev,
         deploy=deploy,
+        install_template=install_template,
         exclude_modules=exclude_modules,
         generator_commit=data.get("generator_commit"),
         inline_file=inline_file,

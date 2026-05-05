@@ -15,17 +15,18 @@ use `./admin deploy` for every subsequent code push.
 
 ARCHETYPE = {
     "name": "docker-unraid",
-    "modules": ["core", "docker", "remote", "log_columns"],
+    "modules": ["core", "docker", "remote", "log_columns", "unraid"],
     "urls": {
         "prod": "${PROD_URL:-http://localhost}",
     },
     "commands": {
-        "build":  {"desc": "Build Docker image locally for linux/amd64 (Unraid)",                                                       "steps": ["build"]},
-        "deploy": {"desc": "Build, push, and recreate container on Unraid (preserves run config); --dry-run to preview",               "steps": ["deploy"]},
-        "diff":   {"desc": "Show run-config drift between current container and last deploy; --format json for CI",                     "steps": ["diff"]},
-        "logs":   {"desc": "Tail container logs over SSH",                                                                              "steps": ["logs"]},
-        "reload": {"desc": "Build+run with reload loop (press r or SIGUSR1 to rebuild)",                                               "steps": ["reload"]},
-        "open":   {"desc": "Open the deployed app URL",                                                                                 "steps": ["open"]},
+        "build":            {"desc": "Build Docker image locally for linux/amd64 (Unraid)",                                            "steps": ["build"]},
+        "deploy":           {"desc": "Build, push, and recreate container on Unraid (preserves run config); --dry-run to preview",     "steps": ["deploy"]},
+        "diff":             {"desc": "Show run-config drift between current container and last deploy; --format json for CI",          "steps": ["diff"]},
+        "install-template": {"desc": "Install the Unraid Docker GUI template (one-time, before first deploy)",                          "steps": ["install-template"]},
+        "logs":             {"desc": "Tail container logs over SSH",                                                                    "steps": ["logs"]},
+        "reload":           {"desc": "Build+run with reload loop (press r or SIGUSR1 to rebuild)",                                     "steps": ["reload"]},
+        "open":             {"desc": "Open the deployed app URL",                                                                       "steps": ["open"]},
     },
     "actions": {
         "build": {
@@ -67,6 +68,10 @@ ARCHETYPE = {
                 "sys.exit(run_cmd(f'ssh {shlex.quote(host)} docker logs -f --tail=200 {shlex.quote(container)}'))"
             ),
             "desc": "Tail container logs over SSH",
+        },
+        "install-template": {
+            "kind": "install-template",
+            "desc": "Install the Unraid Docker GUI template (one-time, before first deploy)",
         },
         "reload": {
             "kind": "docker-reload-loop",

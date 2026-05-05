@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# @bundled admin_lib=2.0.0-dev sha=2cb6e7ced422 modules=core generator_commit=5816904fc3896b351a586397e1fe87b946a6af43
+# @bundled admin_lib=2.0.0-dev stripped=6 sha=fd161dc83bf9 modules=core generator_commit=057407373f79d4f359ecca6472a4a80a8b75e44a+dirty
 # Generated from admin.toml by admin-project-tool.
 # Regenerate: admin regenerate
 """admin — task runner for admin-project-tool."""
@@ -25,9 +25,7 @@ import sys
 from collections import OrderedDict
 
 
-# ---------------------------------------------------------------------------
 # Colors & output
-# ---------------------------------------------------------------------------
 
 class C:
     """ANSI color codes."""
@@ -58,9 +56,7 @@ def err(msg):
     print(f"{C.RED}{msg}{C.RESET}", file=sys.stderr)
 
 
-# ---------------------------------------------------------------------------
 # URL status helpers
-# ---------------------------------------------------------------------------
 
 _urls = []  # list of (label, url) tuples set by projects
 
@@ -143,9 +139,7 @@ def print_url_status():
     print()
 
 
-# ---------------------------------------------------------------------------
 # Module-level state (set by _init / boot)
-# ---------------------------------------------------------------------------
 
 _project_name = ""
 _project_root = ""
@@ -162,11 +156,6 @@ def _init(project_name, project_root=None):
     _project_root = project_root or os.getcwd()
     LOG_DIR = os.path.join(_project_root, "tmp")
     LOG_FILE = os.path.join(LOG_DIR, "run.log")
-
-
-def get_log_dir() -> str:
-    """Return the current LOG_DIR (late-binding for package import contexts)."""
-    return LOG_DIR
 
 
 def configure_logging(cfg: dict):
@@ -210,18 +199,6 @@ def _rotate_log(path, retain=None):
     os.rename(path, f"{path}.1")
 
 
-def _prepare_log_file(path=None):
-    """Rotate and truncate a log file, respecting enabled flag."""
-    if LOG_CONFIG.get("enabled") is False:
-        return
-    p = path or LOG_FILE
-    if not p:
-        return
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    _rotate_log(p)
-    open(p, "w").close()
-
-
 def set_log_context(*parts, retain=None):
     """Redirect LOG_FILE to a timestamped log for this command run.
 
@@ -250,9 +227,7 @@ def set_log_context_path(path, retain=None):
     open(LOG_FILE, "w").close()
 
 
-# ---------------------------------------------------------------------------
 # .env loading
-# ---------------------------------------------------------------------------
 
 def _load_dotenv(root=None):
     """Load .env file from project root if it exists."""
@@ -269,9 +244,7 @@ def _load_dotenv(root=None):
             os.environ.setdefault(key.strip(), val.strip())
 
 
-# ---------------------------------------------------------------------------
 # Process management
-# ---------------------------------------------------------------------------
 
 _children = []
 _cleanup_hooks = []
@@ -302,13 +275,9 @@ signal.signal(signal.SIGTERM, _cleanup_children)
 atexit.register(_cleanup_children)
 
 
-# ---------------------------------------------------------------------------
 # run_cmd
-# ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
 # Environment variable interpolation
-# ---------------------------------------------------------------------------
 
 import re as _re_env
 
@@ -318,7 +287,6 @@ _referenced_env_vars: dict[str, dict] = {}
 
 #
 # Origin-string format (stable contract)
-# ----------------------------------------------------------------------------
 # `used_by` origin strings are a cross-component compatibility contract between
 # the generator (gen/fragments.py::collect_env_var_calls) and the runtime
 # renderer (cmd_env, below). Generated ./admin scripts embed register_env_var
@@ -334,7 +302,6 @@ _referenced_env_vars: dict[str, dict] = {}
 #
 # Treat additions as additive; any format change needs coordinated updates in
 # gen/fragments.py and a migration plan for existing generated scripts.
-# ----------------------------------------------------------------------------
 def register_env_var(name, default=None, used_by=None):
     """Record that the generated admin script references this env var.
 
@@ -442,52 +409,10 @@ def run_cmd(cmd, shell=True, capture_log=True, formatter=None):
     return proc.returncode
 
 
-# ---------------------------------------------------------------------------
 # Sync deploy
-# ---------------------------------------------------------------------------
-
-def sync(src_dir, dest, excludes=None, post_sync=None):
-    """Copy a directory to a local or remote destination via rsync or shutil.
-
-    src_dir: local directory to sync from
-    dest: local path, or user@host:/path for remote rsync
-    excludes: list of rsync --exclude patterns (remote only)
-    post_sync: callable run after successful sync (receives dest as arg)
-    Returns exit code.
-    """
-    is_remote = ":" in dest and "@" in dest.split(":")[0]
-
-    if is_remote:
-        exclude_flags = ""
-        if excludes:
-            exclude_flags = " ".join(f"--exclude '{e}'" for e in excludes)
-        info(f"Syncing to {dest}")
-        rc = run_cmd(f"rsync -avz --delete {exclude_flags} {src_dir}/ {dest}/".strip())
-        if rc != 0:
-            err("rsync failed")
-            return rc
-        ok(f"Synced: {dest}")
-    else:
-        import shutil
-        os.makedirs(dest, exist_ok=True)
-        info(f"Copying to {dest}")
-        ignore = shutil.ignore_patterns(*excludes) if excludes else None
-        shutil.copytree(src_dir, dest, dirs_exist_ok=True, ignore=ignore)
-        ok(f"Synced: {dest}")
-        rc = 0
-
-    if rc == 0 and post_sync:
-        post_sync(dest)
-
-    return rc
 
 
-sync_deploy = sync  # backwards-compat alias
-
-
-# ---------------------------------------------------------------------------
 # Command registry
-# ---------------------------------------------------------------------------
 
 # Ordered registry: entries are either {"func": func, "desc": desc} for
 # commands or {"spacer": True} for blank rows in the TUI/help output.
@@ -548,9 +473,66 @@ def subcommand_help(name):
     return decorator
 
 
-# ---------------------------------------------------------------------------
 # TUI menu (draw.rendered approach)
-# ---------------------------------------------------------------------------
+
+def _read_cursor_row(fd):
+    """Query terminal cursor row via ANSI DSR (ESC[6n). Returns 1-based row or None.
+
+    Drains all response bytes from the TTY buffer (including any late-arriving tail)
+    so nothing leaks into subsequent read_key() calls.
+    """
+    import re
+    import select
+    import tty
+    import termios
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        sys.stdout.write("\033[6n")
+        sys.stdout.flush()
+        buf = b""
+        while True:
+            if not select.select([fd], [], [], 0.3)[0]:
+                break
+            buf += os.read(fd, 32)
+            if b"R" in buf:
+                break
+        # Drain any bytes that arrived after we stopped reading (e.g. late CPR tail)
+        while select.select([fd], [], [], 0)[0]:
+            buf += os.read(fd, 32)
+        m = re.search(rb"\x1b\[(\d+);\d+R", buf)
+        return int(m.group(1)) if m else None
+    except Exception:
+        return None
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _make_home(fd, menu_lines):
+    """Pre-allocate menu_lines rows then return a _home() callable that resets to them.
+
+    Writes menu_lines blank lines to reserve scroll space (so the first draw never
+    causes the terminal to scroll and invalidate the saved position), moves the cursor
+    back up, then queries the absolute row via DSR for reliable subsequent jumps.
+    Falls back to DECSC/DECRC if DSR is unavailable.
+    """
+    for _ in range(menu_lines):
+        sys.stdout.write("\n")
+    sys.stdout.write(f"\033[{menu_lines}A")
+    sys.stdout.flush()
+
+    start_row = _read_cursor_row(fd)
+    if start_row is not None:
+        def _home():
+            sys.stdout.write(f"\033[{start_row};1H\033[J")
+        return _home
+
+    sys.stdout.write("\0337")  # DECSC — save position for DECRC restore below
+    sys.stdout.flush()
+    def _home():
+        sys.stdout.write("\0338\033[J")
+    return _home
+
 
 def read_key():
     """Read a single keypress, handling arrow key escape sequences."""
@@ -595,6 +577,7 @@ def _tui_menu():
         _print_help()
         return
 
+    import shutil
     import termios
 
     items = _build_menu_layout()
@@ -619,7 +602,6 @@ def _tui_menu():
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
 
-    menu_lines = num + 2
     env_hint = "  [e] open .env" if os.path.exists(os.path.join(_project_root, ".env")) else ""
 
     print(f"{C.BOLD}{_project_name}{C.RESET}\n")
@@ -627,25 +609,25 @@ def _tui_menu():
     if _stale_generator:
         print(f"{C.DIM}  ! tool updated — auto-regen at next Claude session (or run: admin regenerate){C.RESET}")
 
-    for _ in range(menu_lines):
-        sys.stdout.write("\n")
-    sys.stdout.write(f"\033[{menu_lines}A\r")  # up N lines, col 0
     sys.stdout.flush()
+    _home = _make_home(fd, num + 2)  # num item/spacer rows + blank separator + hint
 
     def draw():
+        cols = shutil.get_terminal_size((80, 24)).columns
+        max_desc = max(0, cols - 19)
+        hint = f"  [arrows/j/k] navigate  [enter] run  [o] open config{env_hint}  [q/esc] quit"[:cols]
+
+        _home()
         for i, name in enumerate(items):
-            sys.stdout.write("\r\033[2K")  # col 0, clear line
             if _is_spacer(name):
                 sys.stdout.write("\n")
                 continue
-            entry = _commands[name]
-            desc = entry["desc"]
+            desc = _commands[name]["desc"]
             if i == sel:
-                sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {name:<14}{C.RESET} {desc}\n")
+                sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {name:<14}{C.RESET} {desc[:max_desc]}\n")
             else:
-                sys.stdout.write(f"    {C.DIM}{name:<14}{C.RESET} {desc}\n")
-        sys.stdout.write(f"\r\033[2K\n\r\033[2K{C.DIM}  [arrows/j/k] navigate  [enter] run  [o] open config{env_hint}  [q/esc] quit{C.RESET}\n")
-        sys.stdout.write(f"\033[{menu_lines}A\r")  # up N lines, col 0
+                sys.stdout.write(f"    {C.DIM}{name:<14}{C.RESET} {desc[:max_desc]}\n")
+        sys.stdout.write(f"\n{C.DIM}{hint}{C.RESET}\n")
         sys.stdout.flush()
 
     try:
@@ -653,8 +635,6 @@ def _tui_menu():
             draw()
             key = read_key()
             if key in ("q", "Q", "esc"):
-                sys.stdout.write(f"\033[{menu_lines}B")
-                sys.stdout.flush()
                 print()
                 return
             elif key == "o":
@@ -671,24 +651,20 @@ def _tui_menu():
             elif key in ("down", "j"):
                 move(1)
             elif key in ("\r", "\n"):
-                sys.stdout.write("\033[J")
+                _home()  # clear menu before command output
                 sys.stdout.flush()
                 info(f"./admin {items[sel]}")
                 print()
                 _commands[items[sel]]["func"]([])
                 return
     except (KeyboardInterrupt, EOFError):
-        sys.stdout.write(f"\033[{menu_lines}B")
-        sys.stdout.flush()
         print()
         return
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
-# ---------------------------------------------------------------------------
 # pick_target — sub-TUI for selecting among options
-# ---------------------------------------------------------------------------
 
 def pick_target(targets, prompt="Select target", order=None):
     """Show an inline TUI picker for sub-targets. Returns the chosen key or None.
@@ -712,29 +688,21 @@ def pick_target(targets, prompt="Select target", order=None):
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
 
-    menu_lines = len(display_order) + 1
-
     sys.stdout.write(f"{C.BOLD}{prompt}{C.RESET}\n")
-    for _ in range(menu_lines):
-        sys.stdout.write("\n")
     sys.stdout.flush()
-    sys.stdout.write(f"\033[{menu_lines}A")
-    sys.stdout.flush()
+    _home = _make_home(fd, len(display_order) + 1)  # one row per entry + hint
 
     def draw():
-        sys.stdout.write("\033[s")
+        _home()
         for entry in display_order:
-            sys.stdout.write("\033[2K")
             if not entry:
-                pass
-            elif entry == items[sel]:
-                sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {entry:<14}{C.RESET} {targets[entry]}")
+                sys.stdout.write("\n")
+                continue
+            if entry == items[sel]:
+                sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {entry:<14}{C.RESET} {targets[entry]}\n")
             else:
-                sys.stdout.write(f"    {C.DIM}{entry:<14}{C.RESET} {targets[entry]}")
-            sys.stdout.write("\n")
-        sys.stdout.write("\033[2K")
-        sys.stdout.write(f"{C.DIM}  [arrows/j/k] navigate  [enter] select  [q/esc] cancel{C.RESET}")
-        sys.stdout.write("\033[u")
+                sys.stdout.write(f"    {C.DIM}{entry:<14}{C.RESET} {targets[entry]}\n")
+        sys.stdout.write(f"{C.DIM}  [arrows/j/k] navigate  [enter] select  [q/esc] cancel{C.RESET}\n")
         sys.stdout.flush()
 
     try:
@@ -742,56 +710,28 @@ def pick_target(targets, prompt="Select target", order=None):
             draw()
             key = read_key()
             if key in ("q", "Q", "esc"):
-                sys.stdout.write(f"\033[{menu_lines}B\n")
-                sys.stdout.flush()
+                print()
                 return None
             elif key in ("up", "k"):
                 sel = (sel - 1) % num
             elif key in ("down", "j"):
                 sel = (sel + 1) % num
             elif key in ("\r", "\n"):
-                for _ in range(menu_lines):
-                    sys.stdout.write("\033[2K\n")
-                sys.stdout.write(f"\033[{menu_lines}A")
+                _home()  # clear picker before caller output
                 sys.stdout.flush()
                 return items[sel]
     except (KeyboardInterrupt, EOFError):
-        sys.stdout.write(f"\033[{menu_lines}B\n")
-        sys.stdout.flush()
+        print()
         return None
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
-def _require_interactive(message):
-    """Print an error if stdout is not a TTY. Returns True if interactive."""
-    if not sys.stdout.isatty():
-        err(message)
-        return False
-    return True
-
-
-def pick_target_or_none(menu, prompt, non_tty_msg):
-    """Non-TTY-guarded pick_target.
-
-    Returns the chosen key, or None if the caller should treat the situation as
-    an exit-1: either stdout is not a TTY (prints non_tty_msg) or the user
-    cancelled the picker.
-    """
-    if not _require_interactive(non_tty_msg):
-        return None
-    return pick_target(menu, prompt)
-
-
 def dispatch_target(targets, cmd_name, args, handlers):
     """Route a command to the correct target handler.
 
-    targets:  OrderedDict of {name: description} for pick_target menu
-    cmd_name: command name for error messages (e.g. "build")
-    args:     argv args passed to the command
-    handlers: dict of {target_name: callable(rest_args)}
-
-    Single-target shortcut: if len(targets) == 1, skips the menu.
+    targets is an OrderedDict {name: description} feeding pick_target. handlers
+    is {name: callable(rest_args)}. Skips the menu when len(targets)==1.
     """
     target = args[0] if args and not args[0].startswith("-") else ""
     rest = args[1:] if target else (args or [])
@@ -811,9 +751,7 @@ def dispatch_target(targets, cmd_name, args, handlers):
     return handlers[target](rest)
 
 
-# ---------------------------------------------------------------------------
 # Help
-# ---------------------------------------------------------------------------
 
 def _print_help():
     """Print help text (non-TTY fallback and --help)."""
@@ -830,9 +768,7 @@ def _print_help():
     print(f"\nRun {C.DIM}./admin{C.RESET} with no args for interactive menu.")
 
 
-# ---------------------------------------------------------------------------
 # boot() — single entry point
-# ---------------------------------------------------------------------------
 
 def boot(project_name, load_dotenv=True):
     """Entry point for per-project admin files.
@@ -893,9 +829,7 @@ def boot(project_name, load_dotenv=True):
     all_cmds[cmd_name]["func"](args)
 
 
-# ---------------------------------------------------------------------------
 # Built-in logs command
-# ---------------------------------------------------------------------------
 
 def _cmd_logs_impl(args):
     """Tail a log file from tmp/. Args act as a substring filter on filenames."""
@@ -952,7 +886,7 @@ def register_builtin_logs_command():
         _cmd_logs_impl(args)
 
 # === project: admin-project-tool ===
-set_generator_commit("5816904fc3896b351a586397e1fe87b946a6af43")
+set_generator_commit("057407373f79d4f359ecca6472a4a80a8b75e44a+dirty")
 
 def _act_test(args):
     scripts = [

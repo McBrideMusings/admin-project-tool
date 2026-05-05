@@ -23,8 +23,9 @@ from .core import (
     LOG_DIR,
     info, ok, warn, err, register_cleanup, resolve_env,
 )
-from .docker import ensure_deps, run_with_reload, _wait_or_kill
+from .docker import ensure_deps, run_with_reload, _wait_or_kill, _preexec_pdeathsig
 from .ports import preflight_port
+from .ports_nuke import kill_stale_supervisors
 
 
 def parse_dev_mounts(raw):
@@ -140,6 +141,13 @@ def run_vite_dev(
     if rc != 0:
         return rc
 
+    # Reap any orphaned supervisor processes (cargo-watch, nodemon, etc.)
+    # left behind by a prior dev session that wasn't shut down cleanly.
+    # Without this, the orphan keeps watching files and respawns the listener
+    # the moment we put one back on the port.
+    project_root = os.path.dirname(os.path.abspath(backend_dir)) or os.getcwd()
+    kill_stale_supervisors(project_root)
+
     if not preflight_port(vite_port, label="vite"):
         return 1
     if not preflight_port(backend_port, label="backend"):
@@ -162,6 +170,7 @@ def run_vite_dev(
         stdin=subprocess.DEVNULL,
         stdout=vite_fh, stderr=subprocess.STDOUT,
         start_new_session=True,
+        preexec_fn=_preexec_pdeathsig,
     )
 
     def _stop_vite():
@@ -196,8 +205,16 @@ def run_vite_dev(
         env_parts.append(f"ALLOWED_SYMLINK_ROOTS={allowed_roots}")
     env_str = " ".join(env_parts)
 
+    # `exec env ...` so the shell replaces itself with the backend binary
+    # (cargo-watch / nodemon / etc.) instead of fork-exec'ing it. Without
+    # this, admin's PR_SET_PDEATHSIG only reaches the shell, which then
+    # ignores SIGTERM unless we kill its whole process group — and on a
+    # rough exit (terminal close, SIGKILL) admin doesn't get to do that,
+    # leaving cargo-watch orphaned with the listener still running.
+    # With `exec`, the supervisor IS the direct child of admin and the
+    # kernel's parent-death signal kills it directly.
     return run_with_reload(
-        f"cd {shlex.quote(backend_dir)} && {env_str} {backend_cmd}",
+        f"cd {shlex.quote(backend_dir)} && exec env {env_str} {backend_cmd}",
         "dev",
     )
 
@@ -236,6 +253,13 @@ def vite_dev_from_config(cfg):
     if data_root is None:
         os.makedirs(project_data, exist_ok=True)
         data_root = project_data
+
+    # Convenience: expose the resolved data_root under a single env name
+    # without requiring a no-op subdir entry. Common for backends that take
+    # one ROOT_PATH-style variable and discover everything underneath it.
+    root_env = cfg.get("data_root_env")
+    if root_env:
+        backend_env[root_env] = data_root
 
     for name in cfg.get("forward_env") or ():
         v = os.environ.get(name, "").strip()

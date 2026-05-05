@@ -1,14 +1,72 @@
-"""Layer 4 — Unraid plugin deployment helpers.
+"""Layer 4 — Unraid plugin + docker template deployment helpers.
 
-Provides: plugin_deploy, plugin_remove for Unraid .plg plugin development.
+Provides: plugin_deploy/plugin_remove for .plg plugin distribution, and
+install_docker_template_from_config for registering a Docker container
+template in the Unraid Docker GUI.
 """
 
 import os
-import subprocess
+import shlex
 import time
 
-from .core import info, ok, warn, err, run_cmd
+from .core import info, ok, err, run_cmd
 from .remote import ssh_cmd
+
+
+# Where Unraid's Docker GUI scans for user-defined container templates. Files
+# matching the `my-*.xml` pattern under this dir show up under the "Add
+# Container" picker on the host's webui. We scp into here so a project can be
+# spun up from the GUI without anyone hand-editing the XML on the server.
+_UNRAID_TEMPLATES_DIR = "/boot/config/plugins/dockerMan/templates-user"
+
+
+def _slug_from_app_image():
+    """Strip a registry prefix and `:tag` from APP_IMAGE → bare slug.
+
+    `ghcr.io/me/my-app:latest` → `my-app`. Same logic the docker-unraid
+    `logs` action uses to pick a container name.
+    """
+    image = os.environ.get("APP_IMAGE", "").strip()
+    if not image:
+        return ""
+    return image.split(":", 1)[0].rsplit("/", 1)[-1]
+
+
+def install_docker_template_from_config(cfg):
+    """Install a Docker container template into Unraid's GUI via scp.
+
+    `[install_template]` config keys (all optional):
+        src   path to the local XML file. Default: deploy/unraid-template.xml
+        name  template basename without the `my-` prefix or `.xml` suffix.
+              Default: derived from APP_IMAGE (e.g. `web-file-manager`).
+
+    Reads UNRAID_HOST (required) and UNRAID_USER (default `root`) from env.
+    Returns 0 on success, non-zero on validation/scp failure.
+    """
+    cfg = cfg or {}
+    src = cfg.get("src") or "deploy/unraid-template.xml"
+    if not os.path.exists(src):
+        err(f"install-template: source XML not found: {src}")
+        return 1
+
+    name = (cfg.get("name") or _slug_from_app_image()).strip()
+    if not name:
+        err("install-template: cannot determine template name — set APP_IMAGE or [install_template].name")
+        return 1
+
+    host = os.environ.get("UNRAID_HOST", "").strip()
+    if not host:
+        err("install-template: UNRAID_HOST is not set")
+        return 1
+    user = os.environ.get("UNRAID_USER", "root").strip() or "root"
+
+    dst = f"{_UNRAID_TEMPLATES_DIR}/my-{name}.xml"
+    target = f"{user}@{host}:{dst}"
+    info(f"Installing template: {src} → {target}")
+    rc = run_cmd(f"scp {shlex.quote(src)} {shlex.quote(target)}")
+    if rc == 0:
+        ok(f"Template installed. Open the Unraid Docker GUI → Add Container → Template = my-{name}")
+    return rc
 
 
 def plugin_deploy(host, plg_path, plg_template, local_src, remote_dest,
