@@ -21,6 +21,8 @@ class DetectorError(Exception):
 DETECTOR_ORDER = [
     "hugo",
     "go-cli",
+    "rust",
+    "rust-tauri",
     "firefox-extension",
     "stash-plugin",
     "unraid-plugin",
