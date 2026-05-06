@@ -440,7 +440,7 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
 # are created in admin_lib/ — unlisted modules fall back to alphabetical order
 # at the end, which may cause import-ordering issues in the flat bundle namespace.
 _MODULE_ORDER = [
-    "core", "cache", "icons", "remote", "ports", "cleanup",
+    "core", "cache", "icons", "remote", "ports", "ports_nuke", "cleanup",
     "apple", "apple_dev", "rust",
     "docker", "unraid", "web_dev",
     "log_format", "log_columns", "logtail",

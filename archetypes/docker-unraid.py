@@ -61,13 +61,11 @@ ARCHETYPE = {
         "logs": {
             "kind": "python",
             "run": (
-                "import shlex\n"
-                "container = os.environ.get('APP_CONTAINER') or os.environ.get('APP_IMAGE').split(':')[0].rsplit('/', 1)[-1]\n"
                 "user = os.environ.get('UNRAID_USER', 'root')\n"
                 "host = f\"{user}@{os.environ.get('UNRAID_HOST')}\"\n"
-                "sys.exit(run_cmd(f'ssh {shlex.quote(host)} docker logs -f --tail=200 {shlex.quote(container)}'))"
+                "sys.exit(remote_logs(host, os.environ.get('APP_IMAGE')))"
             ),
-            "desc": "Tail container logs over SSH",
+            "desc": "Tail container logs (local or SSH)",
         },
         "install-template": {
             "kind": "install-template",
