@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# @bundled admin_lib=2.0.0-dev stripped=6 sha=fd161dc83bf9 modules=core generator_commit=057407373f79d4f359ecca6472a4a80a8b75e44a+dirty
+# @bundled admin_lib=2.0.0-dev stripped=6 sha=fd161dc83bf9 modules=core generator_commit=a35e2d8315528e5238452a9944c0cc1d679d4a55+dirty
 # Generated from admin.toml by admin-project-tool.
 # Regenerate: admin regenerate
 """admin — task runner for admin-project-tool."""
@@ -886,7 +886,25 @@ def register_builtin_logs_command():
         _cmd_logs_impl(args)
 
 # === project: admin-project-tool ===
-set_generator_commit("057407373f79d4f359ecca6472a4a80a8b75e44a+dirty")
+set_generator_commit("a35e2d8315528e5238452a9944c0cc1d679d4a55+dirty")
+
+def _act_build(args):
+    info("running: python3 ./admin-gen --regenerate . --force-dirty && python3 ./admin-gen --audit . --force-dirty")
+    rc = run_cmd("python3 ./admin-gen --regenerate . --force-dirty && python3 ./admin-gen --audit . --force-dirty")
+    if rc != 0:
+        err("build failed")
+        sys.exit(rc)
+    ok("build complete")
+register_action("build", _act_build)
+
+def _act_run_dev(args):
+    info("running: python3 ./admin-gen . --force-dirty")
+    rc = run_cmd("python3 ./admin-gen . --force-dirty")
+    if rc != 0:
+        err("run-dev failed")
+        sys.exit(rc)
+    ok("run-dev complete")
+register_action("run-dev", _act_run_dev)
 
 def _act_test(args):
     scripts = [
@@ -919,11 +937,25 @@ def _act_install(args):
 register_action("install", _act_install)
 
 
-@command("install", "Install to ~/.admin")
-def cmd_install(args):
-    set_log_context("install")
+@command("build", "Regenerate ./admin and audit for drift")
+def cmd_build(args):
+    set_log_context("build")
+    for _step in ["build"]:
+        run_command(_step, args)
+
+@command("dev", "Run admin-gen on this project interactively")
+def cmd_dev(args):
+    set_log_context("dev")
+    for _step in ["run-dev"]:
+        run_command(_step, args)
+
+@command("deploy", "Install to ~/.admin")
+def cmd_deploy(args):
+    set_log_context("deploy")
     for _step in ["install"]:
         run_command(_step, args)
+
+add_spacer()
 
 @command("test", "Run full test suite (Python + shell)")
 def cmd_test(args):

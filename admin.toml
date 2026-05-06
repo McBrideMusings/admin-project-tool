@@ -1,16 +1,42 @@
 project_name    = "admin-project-tool"
 python_min      = "3.11"
-generator_commit = "490d6f9d12efd1f6cf9b7ce7bbd14df669d23375+dirty"
+generator_commit = "a35e2d8315528e5238452a9944c0cc1d679d4a55+dirty"
 archetypes      = []
 modules         = ["core"]
 
-[commands.test]
-desc  = "Run full test suite (Python + shell)"
-steps = ["test"]
+[commands.build]
+desc     = "Regenerate ./admin and audit for drift"
+steps    = ["build"]
+group    = 1
+priority = 10
 
-[commands.install]
-desc  = "Install to ~/.admin"
-steps = ["install"]
+[commands.dev]
+desc     = "Run admin-gen on this project interactively"
+steps    = ["run-dev"]
+group    = 1
+priority = 20
+
+[commands.deploy]
+desc     = "Install to ~/.admin"
+steps    = ["install"]
+group    = 1
+priority = 30
+
+[commands.test]
+desc     = "Run full test suite (Python + shell)"
+steps    = ["test"]
+group    = 2
+priority = 10
+
+[actions.build]
+kind = "shell"
+desc = "Regenerate ./admin and audit for drift"
+run  = "python3 ./admin-gen --regenerate . --force-dirty && python3 ./admin-gen --audit . --force-dirty"
+
+[actions.run-dev]
+kind = "shell"
+desc = "Run admin-gen on this project interactively"
+run  = "python3 ./admin-gen . --force-dirty"
 
 [actions.test]
 kind = "python"
