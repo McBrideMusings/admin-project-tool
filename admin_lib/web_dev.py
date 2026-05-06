@@ -156,7 +156,8 @@ def run_vite_dev(
     vite_log = os.path.join(LOG_DIR, vite_log_name)
     os.makedirs(LOG_DIR, exist_ok=True)
     vite_fh = open(vite_log, "w")
-    vite_env_parts = [f"{k}={shlex.quote(str(v))}" for k, v in (vite_env or {}).items()]
+    merged_vite_env = {"VITE_PORT": str(vite_port), **(vite_env or {})}
+    vite_env_parts = [f"{k}={shlex.quote(str(v))}" for k, v in merged_vite_env.items()]
     vite_env_str = " ".join(vite_env_parts)
     inner = f"{pkg} run dev"
     if vite_env_str:
