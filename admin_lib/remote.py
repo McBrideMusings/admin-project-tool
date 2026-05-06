@@ -17,15 +17,15 @@ def _is_local_host(host):
     if addr in ("localhost", "127.0.0.1", "::1"):
         return True
     try:
-        resolved_ips = {info[4][0] for info in socket.getaddrinfo(addr, None)}
+        resolved_ips = {i[4][0] for i in socket.getaddrinfo(addr, None)}
     except socket.gaierror:
         return False
     if resolved_ips & {"127.0.0.1", "::1"}:
         return True
     try:
-        result = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=2)
-        if result.returncode == 0:
-            return bool(resolved_ips & set(result.stdout.split()))
+        r = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=2)
+        if r.returncode == 0 and resolved_ips & set(r.stdout.split()):
+            return True
     except Exception:
         pass
     return False

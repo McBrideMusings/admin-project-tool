@@ -411,17 +411,22 @@ def remote_recreate_container(host, image, container=None, dry_run=False):
     host_q = shlex.quote(host)
     image_q = shlex.quote(image)
     container_q = shlex.quote(container)
-    local = _is_local_host(host)
-    location = "locally" if local else f"on {host}"
 
-    # Inspect before docker load so we capture the old image SHA before the
-    # tag is overwritten; also fails fast if the container doesn't exist yet.
-    info(f"Inspecting existing container '{container}' {location}...")
-    proc = subprocess.run(
-        _docker_argv(host, local, ["docker", "inspect", container]),
-        capture_output=True,
-        text=True,
+    # Prefer local docker if it can see the container (works whether we're
+    # running on the host directly or in a container with the socket mounted).
+    info(f"Inspecting existing container '{container}'...")
+    local_proc = subprocess.run(
+        ["docker", "inspect", container], capture_output=True, text=True,
     )
+    if local_proc.returncode == 0 and local_proc.stdout.strip() not in ("", "[]"):
+        local, location, proc = True, "locally", local_proc
+    else:
+        local, location = False, f"on {host}"
+        proc = subprocess.run(
+            ["ssh", host, "docker", "inspect", container],
+            capture_output=True, text=True,
+        )
+
     if proc.returncode != 0 or not proc.stdout.strip() or proc.stdout.strip() == "[]":
         err(f"Container '{container}' does not exist {location}.")
         print(
@@ -703,14 +708,20 @@ def remote_container_diff(host, image, container=None, output_format="text"):
         container = _default_container_name(image)
 
     snapshot_path = f"/tmp/{container}-lastdeploy.json"
-    local = _is_local_host(host)
-    location = "locally" if local else f"on {host}"
 
-    info(f"Fetching current inspect for '{container}' {location}...")
-    curr_proc = subprocess.run(
-        _docker_argv(host, local, ["docker", "inspect", container]),
-        capture_output=True, text=True,
+    info(f"Fetching current inspect for '{container}'...")
+    local_proc = subprocess.run(
+        ["docker", "inspect", container], capture_output=True, text=True,
     )
+    if local_proc.returncode == 0 and local_proc.stdout.strip() not in ("", "[]"):
+        local, location, curr_proc = True, "locally", local_proc
+    else:
+        local, location = False, f"on {host}"
+        curr_proc = subprocess.run(
+            ["ssh", host, "docker", "inspect", container],
+            capture_output=True, text=True,
+        )
+
     if curr_proc.returncode != 0 or not curr_proc.stdout.strip() or curr_proc.stdout.strip() == "[]":
         err(f"Container '{container}' not found {location}")
         return 1
@@ -837,13 +848,15 @@ def ensure_deps(check_path, install_cmd):
 # ---------------------------------------------------------------------------
 
 def remote_logs(host, image, container=None, tail=200):
-    """Tail container logs, either locally or over SSH."""
+    """Tail container logs, locally if the container is accessible, else via SSH."""
     import shlex
     if container is None:
         container = _default_container_name(image)
     container_q = shlex.quote(container)
     logs_cmd = f"docker logs -f --tail={tail} {container_q}"
-    if _is_local_host(host):
+    # Try local docker first (works when Docker socket is mounted in a container)
+    probe = subprocess.run(["docker", "inspect", container], capture_output=True)
+    if probe.returncode == 0:
         return run_cmd(logs_cmd)
     return run_cmd(f"ssh {shlex.quote(host)} {logs_cmd}")
 
