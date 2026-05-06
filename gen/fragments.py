@@ -27,6 +27,7 @@ def render_command(cmd: Command) -> str:
     """Render a step-runner @command function. Commands are pure routing — no work here.
 
     Injects set_log_context at the top so each command run gets its own timestamped log.
+    Injects _apply_cmd_env if the command declares an env table.
     """
     func_name = "cmd_" + _safe_ident(cmd.name)
     steps = cmd.meta.get("steps", [])
@@ -41,10 +42,13 @@ def render_command(cmd: Command) -> str:
     else:
         retain_arg = f", retain={log_cfg['log_retain']}" if "log_retain" in log_cfg else ""
         log_line = f"    set_log_context({_pyrepr(cmd.name)}{retain_arg})\n"
+    env_map = cmd.meta.get("env")
+    env_line = f"    _apply_cmd_env({_pyrepr(env_map)})\n" if env_map else ""
     return (
         f"@command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})\n"
         f"def {func_name}(args):\n"
         f"{log_line}"
+        f"{env_line}"
         f"    for _step in {steps_literal}:\n"
         f"        run_command(_step, args)\n"
     )

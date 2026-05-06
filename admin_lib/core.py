@@ -362,6 +362,16 @@ def resolve_env(s):
     return _ENV_VAR_RE.sub(_sub, s)
 
 
+def _apply_cmd_env(env_map):
+    """Inject command-level env vars before running a command's steps.
+
+    Values support ${VAR:-default} expansion. Called by generated command
+    functions when the admin.toml [commands.X] table has an `env` entry.
+    """
+    for key, expr in env_map.items():
+        os.environ[key] = resolve_env(str(expr))
+
+
 def cmd_env(args):
     """Built-in: list every env var the admin script references and show its state.
 

@@ -307,6 +307,10 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
             log_meta["log"] = bool(data["log"])
         if log_meta:
             meta["logging"] = log_meta
+        if "env" in data:
+            if not isinstance(data["env"], dict):
+                raise ArchetypeError(f"command '{name}' from {source}: 'env' must be a table")
+            meta["env"] = {str(k): str(v) for k, v in data["env"].items()}
         _validate_gp_ints(data, f"command '{name}' from {source}")
         return Command(
             name=name,

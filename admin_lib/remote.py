@@ -11,7 +11,14 @@ from .core import info, ok, warn, err, run_cmd
 
 
 def _is_local_host(host):
-    """Return True if host (user@addr or bare addr) resolves to the current machine."""
+    """Return True if host (user@addr or bare addr) is the current machine.
+
+    Primary check: ADMIN_LOCAL env var (set by per-command env injection or
+    manually in .env as DEPLOY_LOCAL=true → ADMIN_LOCAL=true).
+    Secondary: IP comparison via hostname -I (works when running directly on host).
+    """
+    if os.environ.get("ADMIN_LOCAL", "").lower() in ("1", "true", "yes"):
+        return True
     import socket
     addr = host.split("@", 1)[-1]
     if addr in ("localhost", "127.0.0.1", "::1"):

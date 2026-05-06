@@ -66,6 +66,8 @@ _HARD_KEEP: frozenset[str] = frozenset({
     "boot", "dispatch_target", "run_command", "command", "subcommand_help",
     # Registration helpers always invoked from the orchestration tail
     "register_builtin_logs_command", "register_cleanup", "register_env_var",
+    # Per-command env injection (called from generated cmd_* functions)
+    "_apply_cmd_env",
     # Logging + URLs + provenance set up at bundle init
     "set_log_context", "set_log_context_path", "configure_logging",
     "set_urls", "check_url", "format_url_status", "set_generator_commit",
