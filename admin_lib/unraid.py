@@ -10,7 +10,7 @@ import shlex
 import time
 
 from .core import info, ok, err, run_cmd
-from .remote import ssh_cmd
+from .remote import ssh_cmd, scp_to, _is_local_host
 
 
 # Where Unraid's Docker GUI scans for user-defined container templates. Files
@@ -61,9 +61,9 @@ def install_docker_template_from_config(cfg):
     user = os.environ.get("UNRAID_USER", "root").strip() or "root"
 
     dst = f"{_UNRAID_TEMPLATES_DIR}/my-{name}.xml"
-    target = f"{user}@{host}:{dst}"
-    info(f"Installing template: {src} → {target}")
-    rc = run_cmd(f"scp {shlex.quote(src)} {shlex.quote(target)}")
+    full_host = f"{user}@{host}"
+    info(f"Installing template: {src} → {full_host}:{dst}")
+    rc = scp_to(src, full_host, dst)
     if rc == 0:
         ok(f"Template installed. Open the Unraid Docker GUI → Add Container → Template = my-{name}")
     return rc
@@ -95,7 +95,8 @@ def plugin_deploy(host, plg_path, plg_template, local_src, remote_dest,
         ok("Plugin registered")
 
     info("Syncing source files...")
-    rc = run_cmd(f"rsync -avz --delete {local_src} {host}:{remote_dest}")
+    dest = remote_dest if _is_local_host(host) else f"{host}:{remote_dest}"
+    rc = run_cmd(f"rsync -avz --delete {local_src} {dest}")
     if rc != 0:
         err("rsync failed")
         return rc

@@ -10,6 +10,27 @@ import sys
 from .core import info, ok, warn, err, run_cmd
 
 
+def _is_local_host(host):
+    """Return True if host (user@addr or bare addr) resolves to the current machine."""
+    import socket
+    addr = host.split("@", 1)[-1]
+    if addr in ("localhost", "127.0.0.1", "::1"):
+        return True
+    try:
+        resolved_ips = {info[4][0] for info in socket.getaddrinfo(addr, None)}
+    except socket.gaierror:
+        return False
+    if resolved_ips & {"127.0.0.1", "::1"}:
+        return True
+    try:
+        result = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=2)
+        if result.returncode == 0:
+            return bool(resolved_ips & set(result.stdout.split()))
+    except Exception:
+        pass
+    return False
+
+
 def require_host(env_var, label=None):
     """Read a host from an environment variable, or exit with a helpful message.
 
@@ -26,15 +47,29 @@ def require_host(env_var, label=None):
 
 
 def ssh_cmd(host, cmd, check=True):
-    """Run a command on a remote host via SSH. Returns exit code."""
-    rc = subprocess.call(["ssh", host, cmd])
+    """Run a command on host, locally or via SSH. Returns exit code."""
+    if _is_local_host(host):
+        rc = subprocess.call(cmd, shell=True)
+    else:
+        rc = subprocess.call(["ssh", host, cmd])
     if check and rc != 0:
-        err(f"SSH command failed (exit {rc})")
+        err(f"Command failed (exit {rc})")
     return rc
 
 
 def scp_to(src, host, dest):
-    """Copy a local file to a remote host via scp. Returns exit code."""
+    """Copy a local file to host, locally or via scp. Returns exit code."""
+    import shutil
+    if _is_local_host(host):
+        info(f"Copying {os.path.basename(src)} to {dest}...")
+        try:
+            os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+            shutil.copy2(src, dest)
+            ok(f"Copied to {dest}")
+            return 0
+        except OSError as e:
+            err(f"Copy failed: {e}")
+            return 1
     info(f"Copying {os.path.basename(src)} to {host}:{dest}...")
     rc = subprocess.call(["scp", src, f"{host}:{dest}"])
     if rc == 0:

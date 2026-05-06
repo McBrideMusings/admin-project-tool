@@ -36,7 +36,7 @@ from .core import (
 
 # Re-export remote helpers so existing projects importing from server still work
 try:
-    from .remote import require_host, ssh_cmd
+    from .remote import require_host, ssh_cmd, _is_local_host
 except ImportError:
     pass
 
@@ -380,27 +380,6 @@ def _restore_image_from_inspect(inspect, image):
     """
     sha = (inspect.get("Image") or "").strip()
     return sha or image
-
-
-def _is_local_host(host):
-    """Return True if host (user@addr or bare addr) resolves to the current machine."""
-    import socket
-    addr = host.split("@", 1)[-1]
-    if addr in ("localhost", "127.0.0.1", "::1"):
-        return True
-    try:
-        resolved_ips = {info[4][0] for info in socket.getaddrinfo(addr, None)}
-    except socket.gaierror:
-        return False
-    if resolved_ips & {"127.0.0.1", "::1"}:
-        return True
-    try:
-        result = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=2)
-        if result.returncode == 0:
-            return bool(resolved_ips & set(result.stdout.split()))
-    except Exception:
-        pass
-    return False
 
 
 def _default_container_name(image):
