@@ -58,6 +58,11 @@ def render(
         modules.append("logtail")
         resolved.modules = modules
 
+    # vite-dev actions require the web_dev module.
+    if any(c.kind == "vite-dev" for c in resolved.actions.values()):
+        if "web_dev" not in resolved.modules:
+            resolved.modules = list(resolved.modules) + ["web_dev"]
+
     # kill-port actions require the ports module.
     kill_port_cmds = [c for c in resolved.actions.values() if c.kind == "kill-port"]
     if kill_port_cmds and "ports" not in resolved.modules:
