@@ -55,6 +55,48 @@ def get_version_id(server_dir):
     return git_hash
 
 
+def _invalidate_docker_target_if_rustc_changed(target_dir, docker_platform):
+    """Wipe target_dir if the Docker image's rustc version changed since last build.
+
+    rust:slim-bullseye is a floating tag. When it updates, old .rlib artifacts
+    become incompatible but Cargo considers them fresh by timestamp, causing
+    'can't find crate' errors. Storing the version in a sentinel file lets us
+    detect this and clean before the build.
+    """
+    sentinel = os.path.join(target_dir, ".docker-rustc-version")
+    try:
+        result = subprocess.run(
+            ["docker", "run", "--rm", "--platform", docker_platform,
+             "rust:slim-bullseye", "rustc", "--version"],
+            capture_output=True, text=True, timeout=30,
+        )
+        current = result.stdout.strip()
+    except Exception:
+        return
+
+    if not current:
+        return
+
+    stored = ""
+    if os.path.exists(sentinel):
+        with open(sentinel) as f:
+            stored = f.read().strip()
+
+    if stored != current:
+        if stored:
+            warn(f"  rustc changed ({stored!r} → {current!r}), cleaning {target_dir}")
+        if os.path.isdir(target_dir):
+            import shutil
+            shutil.rmtree(target_dir)
+        os.makedirs(target_dir, exist_ok=True)
+        with open(sentinel, "w") as f:
+            f.write(current + "\n")
+    elif not os.path.exists(sentinel):
+        os.makedirs(target_dir, exist_ok=True)
+        with open(sentinel, "w") as f:
+            f.write(current + "\n")
+
+
 def build_multiplatform(server_dir, targets, binary_name="server"):
     """Build a Rust binary for multiple platforms.
 
@@ -78,6 +120,8 @@ def build_multiplatform(server_dir, targets, binary_name="server"):
             rc = run_cmd(f"cd {server_dir} && {cargo_cmd}")
         else:
             target_dir = os.path.basename(os.path.dirname(os.path.dirname(binary_path)))
+            abs_target_dir = os.path.join(abs_server_dir, target_dir)
+            _invalidate_docker_target_if_rustc_changed(abs_target_dir, docker_platform)
             rc = run_cmd(
                 f"docker run --rm --platform {docker_platform} "
                 f"-v {abs_server_dir}:/src -w /src "
