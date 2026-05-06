@@ -181,6 +181,13 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
                 val = override.get(key, base_log.get(key))
                 if val is not None:
                     merged[key] = val
+            # Carry env through: override wins, then fall back to archetype base.
+            base_env = base.meta.get("env")
+            override_env = override.get("env")
+            if override_env is not None:
+                merged["env"] = override_env
+            elif base_env is not None:
+                merged["env"] = base_env
             log.append(f"command '{cmd_name}' overridden by manifest")
             commands[cmd_name] = _to_command(cmd_name, merged, source="manifest", is_action=False)
         else:
