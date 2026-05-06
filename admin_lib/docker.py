@@ -389,18 +389,28 @@ def _is_local_host(host):
     if addr in ("localhost", "127.0.0.1", "::1"):
         return True
     try:
-        target_ip = socket.gethostbyname(addr)
+        resolved_ips = {info[4][0] for info in socket.getaddrinfo(addr, None)}
     except socket.gaierror:
         return False
-    if target_ip in ("127.0.0.1", "::1"):
+    if resolved_ips & {"127.0.0.1", "::1"}:
         return True
     try:
         result = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=2)
         if result.returncode == 0:
-            return target_ip in result.stdout.split()
+            return bool(resolved_ips & set(result.stdout.split()))
     except Exception:
         pass
     return False
+
+
+def _default_container_name(image):
+    """Derive a sensible default container name from an image reference."""
+    return image.split(":", 1)[0].rsplit("/", 1)[-1]
+
+
+def _docker_argv(host, local, argv):
+    """Wrap a docker argv list with `ssh host` when the target is remote."""
+    return argv if local else ["ssh", host, *argv]
 
 
 def remote_recreate_container(host, image, container=None, dry_run=False):
@@ -417,7 +427,7 @@ def remote_recreate_container(host, image, container=None, dry_run=False):
     import shlex
 
     if container is None:
-        container = image.split(":", 1)[0].rsplit("/", 1)[-1]
+        container = _default_container_name(image)
 
     host_q = shlex.quote(host)
     image_q = shlex.quote(image)
@@ -428,9 +438,8 @@ def remote_recreate_container(host, image, container=None, dry_run=False):
     # Inspect before docker load so we capture the old image SHA before the
     # tag is overwritten; also fails fast if the container doesn't exist yet.
     info(f"Inspecting existing container '{container}' {location}...")
-    inspect_cmd = ["docker", "inspect", container]
     proc = subprocess.run(
-        inspect_cmd if local else ["ssh", host] + inspect_cmd,
+        _docker_argv(host, local, ["docker", "inspect", container]),
         capture_output=True,
         text=True,
     )
@@ -490,30 +499,21 @@ def remote_recreate_container(host, image, container=None, dry_run=False):
         )
         write_ok = write_proc.returncode == 0
 
-    if write_ok:
-        sha_note = f" (SHA: {restore_image[:12]})" if restore_image != image else ""
-        info(f"Restore script saved: {restore_path}{sha_note}")
-    else:
+    if not write_ok:
         err("Could not write restore script — aborting deploy to preserve recovery path")
         return 1
+    sha_note = f" (SHA: {restore_image[:12]})" if restore_image != image else ""
+    info(f"Restore script saved: {restore_path}{sha_note}")
 
     info(f"Stopping + removing '{container}' {location}...")
-    if local:
-        rc = run_cmd(f"docker stop -t 10 {container_q} >/dev/null && docker rm {container_q} >/dev/null")
-    else:
-        rc = run_cmd(
-            f"ssh {host_q} 'docker stop -t 10 {container_q} >/dev/null"
-            f" && docker rm {container_q} >/dev/null'"
-        )
+    stop_rm_shell = f"docker stop -t 10 {container_q} >/dev/null && docker rm {container_q} >/dev/null"
+    rc = run_cmd(stop_rm_shell if local else f"ssh {host_q} '{stop_rm_shell}'")
     if rc != 0:
         err("Stop/remove failed")
         return rc
 
     info(f"Recreating '{container}' {location} with preserved run config...")
-    if local:
-        rc = run_cmd(remote_run)
-    else:
-        rc = run_cmd(f"ssh {host_q} {shlex.quote(remote_run)}")
+    rc = run_cmd(remote_run if local else f"ssh {host_q} {shlex.quote(remote_run)}")
     if rc != 0:
         restore_hint = f"bash {restore_path}" if local else f"ssh {host} bash {restore_path}"
         err(f"Container start failed — to restore: {restore_hint}")
@@ -522,8 +522,10 @@ def remote_recreate_container(host, image, container=None, dry_run=False):
     ok(f"Deployed {image} as container '{container}' {location}")
 
     info(f"Pruning dangling images {location}...")
-    prune_cmd = ["docker", "image", "prune", "-f"]
-    subprocess.run(prune_cmd if local else ["ssh", host] + prune_cmd, capture_output=True)
+    subprocess.run(
+        _docker_argv(host, local, ["docker", "image", "prune", "-f"]),
+        capture_output=True,
+    )
 
     snapshot_path = f"/tmp/{container}-lastdeploy.json"
     snap_shell = f"docker inspect {container_q} > {shlex.quote(snapshot_path)}"
@@ -719,16 +721,15 @@ def remote_container_diff(host, image, container=None, output_format="text"):
     import shlex
 
     if container is None:
-        container = image.split(":", 1)[0].rsplit("/", 1)[-1]
+        container = _default_container_name(image)
 
     snapshot_path = f"/tmp/{container}-lastdeploy.json"
     local = _is_local_host(host)
     location = "locally" if local else f"on {host}"
 
     info(f"Fetching current inspect for '{container}' {location}...")
-    inspect_cmd = ["docker", "inspect", container]
     curr_proc = subprocess.run(
-        inspect_cmd if local else ["ssh", host] + inspect_cmd,
+        _docker_argv(host, local, ["docker", "inspect", container]),
         capture_output=True, text=True,
     )
     if curr_proc.returncode != 0 or not curr_proc.stdout.strip() or curr_proc.stdout.strip() == "[]":
@@ -744,22 +745,19 @@ def remote_container_diff(host, image, container=None, output_format="text"):
         try:
             with open(snapshot_path) as f:
                 snap_stdout = f.read()
-            snap_ok = True
         except OSError:
-            snap_stdout = ""
-            snap_ok = False
-        snap_proc_rc = 0 if snap_ok else 1
+            err(f"No deploy snapshot found at {snapshot_path} — run a deploy first")
+            return 1
     else:
         snap_proc = subprocess.run(
             ["ssh", host, f"cat {shlex.quote(snapshot_path)} 2>/dev/null"],
             capture_output=True, text=True,
         )
-        snap_proc_rc = snap_proc.returncode
-        snap_stdout = snap_proc.stdout if snap_proc_rc == 0 else ""
+        if snap_proc.returncode != 0:
+            err(f"Could not reach {host} (rc {snap_proc.returncode})")
+            return 1
+        snap_stdout = snap_proc.stdout
 
-    if snap_proc_rc != 0:
-        err(f"Could not reach {host} (rc {snap_proc_rc})")
-        return 1
     if not snap_stdout.strip():
         err(f"No deploy snapshot found at {snapshot_path} — run a deploy first")
         return 1
@@ -863,12 +861,12 @@ def remote_logs(host, image, container=None, tail=200):
     """Tail container logs, either locally or over SSH."""
     import shlex
     if container is None:
-        container = image.split(":", 1)[0].rsplit("/", 1)[-1]
+        container = _default_container_name(image)
     container_q = shlex.quote(container)
+    logs_cmd = f"docker logs -f --tail={tail} {container_q}"
     if _is_local_host(host):
-        return run_cmd(f"docker logs -f --tail={tail} {container_q}")
-    host_q = shlex.quote(host)
-    return run_cmd(f"ssh {host_q} docker logs -f --tail={tail} {container_q}")
+        return run_cmd(logs_cmd)
+    return run_cmd(f"ssh {shlex.quote(host)} {logs_cmd}")
 
 
 def register_logs_command(host, image):
