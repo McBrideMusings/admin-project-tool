@@ -870,7 +870,15 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
         return r.returncode == 0
 
     def _default_kill():
+        if subprocess.run(["pgrep", "-x", process], capture_output=True).returncode != 0:
+            return
         subprocess.run(["pkill", "-x", process], capture_output=True)
+        for _ in range(15):
+            if subprocess.run(["pgrep", "-x", process], capture_output=True).returncode != 0:
+                return
+            time.sleep(0.1)
+        warn(f"{process} ignored SIGTERM, sending SIGKILL")
+        subprocess.run(["pkill", "-9", "-x", process], capture_output=True)
 
     check_running = is_running_fn or _default_is_running
     kill_app = kill_fn or _default_kill
@@ -911,12 +919,19 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
                 app_path = result
 
         info(f"Launching {app_path}")
-        subprocess.run(["open", app_path], check=True)
+        subprocess.run(["open", "-n", app_path], check=True)
 
-        for _ in range(10):
+        appeared = False
+        for _ in range(33):
             if check_running():
+                appeared = True
                 break
             time.sleep(0.3)
+
+        if not appeared:
+            warn("App did not appear in process list within 10s")
+            warn("It may have crashed on launch, or detection failed.")
+            warn("Check Console.app for crash reports — logs below may be empty.")
 
         fmt = make_column_formatter("apple_os_log", output_config)
         log_proc, log_thread, log_fh = stream_os_log(
@@ -925,15 +940,17 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
         info("Press r to rebuild, Ctrl+C to quit")
         print()
 
-        got_reload = poll_for_reload(check_running)
+        got_reload = poll_for_reload(check_running if appeared else lambda: True)
 
         stop_os_log(log_proc, log_fh)
         print()
 
         if got_reload:
             info("Reload signal received — rebuilding...")
-        else:
+        elif appeared:
             info(f"Stopping {process}...")
+        else:
+            info("Exiting (app never appeared).")
         kill_app()
 
         if not got_reload:
@@ -1500,18 +1517,19 @@ def _resolve_mac_dev_process(cfg):
 def _make_mac_dev_running_check(cfg):
     """Return a callable that reports whether the dev mac instance is running.
 
-    If mac_dev_process is set, filter by that name *and* DerivedData in argv
-    so the prod binary (same scheme name, different install path) isn't
-    counted. Otherwise fall back to pgrep -x mac_process.
+    Uses ``pgrep -f <dev_name>`` where dev_name (e.g.
+    ``CCToolDev.app/Contents/MacOS/CCTool``) is itself the disambiguator —
+    the prod build lives under ``/Applications/CCTool.app/...`` so the
+    pattern won't match it. Falls back to ``pgrep -x mac_process`` if no
+    dev product name is configured.
     """
     dev_name = _resolve_mac_dev_process(cfg)
     prod_name = _resolve_mac_process(cfg)
 
     if dev_name:
         def _check():
-            r = subprocess.run(["pgrep", "-af", "DerivedData"],
-                               capture_output=True, text=True)
-            return any(dev_name in ln for ln in r.stdout.splitlines())
+            r = subprocess.run(["pgrep", "-f", dev_name], capture_output=True)
+            return r.returncode == 0
         return _check
 
     if prod_name:
@@ -1524,27 +1542,54 @@ def _make_mac_dev_running_check(cfg):
 
 
 def _make_mac_dev_kill(cfg):
-    """Return a callable that kills only the dev instance (not prod)."""
+    """Return a callable that kills only the dev instance (not prod), then waits
+    for it to actually exit. SIGTERM first; escalates to SIGKILL if still alive
+    after ~1.5s. Returning before the process is gone causes ``open -n`` to race
+    with LaunchServices and silently activate the dying instance.
+    """
+    import time
     dev_name = _resolve_mac_dev_process(cfg)
     prod_name = _resolve_mac_process(cfg)
+    check_running = _make_mac_dev_running_check(cfg)
 
     if dev_name:
-        def _kill():
-            r = subprocess.run(["pgrep", "-af", "DerivedData"],
+        def _send(sig):
+            r = subprocess.run(["pgrep", "-f", dev_name],
                                capture_output=True, text=True)
-            for line in r.stdout.splitlines():
-                parts = line.split(None, 1)
-                if len(parts) < 2 or dev_name not in parts[1]:
-                    continue
+            for pid_str in r.stdout.split():
                 try:
-                    os.kill(int(parts[0]), signal.SIGTERM)
+                    os.kill(int(pid_str), sig)
                 except (ProcessLookupError, ValueError):
                     pass
+
+        def _kill():
+            if not check_running():
+                return
+            _send(signal.SIGTERM)
+            for _ in range(15):
+                if not check_running():
+                    return
+                time.sleep(0.1)
+            warn(f"{dev_name} ignored SIGTERM, sending SIGKILL")
+            _send(signal.SIGKILL)
+            for _ in range(10):
+                if not check_running():
+                    return
+                time.sleep(0.1)
+            warn(f"{dev_name} still alive after SIGKILL — proceeding anyway")
         return _kill
 
     if prod_name:
         def _kill():
+            if subprocess.run(["pgrep", "-x", prod_name], capture_output=True).returncode != 0:
+                return
             subprocess.run(["pkill", "-x", prod_name], capture_output=True)
+            for _ in range(15):
+                if subprocess.run(["pgrep", "-x", prod_name], capture_output=True).returncode != 0:
+                    return
+                time.sleep(0.1)
+            warn(f"{prod_name} ignored SIGTERM, sending SIGKILL")
+            subprocess.run(["pkill", "-9", "-x", prod_name], capture_output=True)
         return _kill
 
     return lambda: None
