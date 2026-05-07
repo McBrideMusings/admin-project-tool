@@ -418,19 +418,27 @@ def _ensure_tmp_gitignore(project_dir: Path) -> None:
 def _ensure_gitattributes(project_dir: Path) -> None:
     """Add `./admin linguist-generated=true` to .gitattributes if absent.
 
-    This hides the 2000-line generated bundle from GitHub PR diffs by default
-    without affecting local git behavior or removing the file from the repo.
+    Only runs when project_dir is inside a git repo. This hides the generated
+    bundle from GitHub PR diffs without affecting local git behavior.
     """
+    result = subprocess.run(
+        ["git", "-C", str(project_dir), "rev-parse", "--git-dir"],
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        return
+
     ga = project_dir / ".gitattributes"
-    marker = "linguist-generated=true"
-    entry = f"admin {marker}\n"
+    entry = "admin linguist-generated=true\n"
     if ga.exists():
         existing = ga.read_text()
-        if entry.rstrip("\n") in existing:
+        if "admin linguist-generated=true" in existing:
             return
         ga.write_text(existing.rstrip("\n") + "\n" + entry)
+        ok(f"updated {ga}")
     else:
         ga.write_text(entry)
+        ok(f"created {ga}")
 
 
 # ---------------------------------------------------------------------------
