@@ -142,10 +142,15 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
         _user_exit = True
         raise KeyboardInterrupt
 
+    def _on_sigterm(signum, frame):
+        raise SystemExit(0)
+
     old_sigusr1 = signal.getsignal(signal.SIGUSR1)
     old_sigint = signal.getsignal(signal.SIGINT)
+    old_sigterm = signal.getsignal(signal.SIGTERM)
     signal.signal(signal.SIGUSR1, _handle_rebuild_signal)
     signal.signal(signal.SIGINT, _on_sigint)
+    signal.signal(signal.SIGTERM, _on_sigterm)
 
     try:
         while True:
@@ -266,6 +271,7 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
     finally:
         signal.signal(signal.SIGUSR1, old_sigusr1)
         signal.signal(signal.SIGINT, old_sigint)
+        signal.signal(signal.SIGTERM, old_sigterm)
         _cleanup_pid_file(pid_file)
 
 
