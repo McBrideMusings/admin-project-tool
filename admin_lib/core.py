@@ -8,6 +8,7 @@ import atexit
 import datetime
 import glob
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -31,20 +32,44 @@ class C:
     RESET = "\033[0m"
 
 
+_ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*m')
+
+
+def _log_write(text: str):
+    """Append plain text to LOG_FILE. No-op if logging is disabled or LOG_FILE unset.
+
+    Must never call info/ok/warn/err — those call back into _log_write.
+    """
+    if not LOG_FILE or LOG_CONFIG.get("enabled") is False:
+        return
+    plain = _ANSI_ESCAPE_RE.sub("", text)
+    if not plain.endswith("\n"):
+        plain += "\n"
+    try:
+        with open(LOG_FILE, "a") as f:
+            f.write(plain)
+    except OSError:
+        pass
+
+
 def info(msg):
     print(f"{C.CYAN}{msg}{C.RESET}")
+    _log_write(msg)
 
 
 def ok(msg):
     print(f"{C.GREEN}{msg}{C.RESET}")
+    _log_write(msg)
 
 
 def warn(msg):
     print(f"{C.YELLOW}{msg}{C.RESET}", file=sys.stderr)
+    _log_write(f"WARNING: {msg}")
 
 
 def err(msg):
     print(f"{C.RED}{msg}{C.RESET}", file=sys.stderr)
+    _log_write(f"ERROR: {msg}")
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +167,7 @@ _stale_generator = False
 LOG_DIR = ""
 LOG_FILE = ""
 LOG_CONFIG: dict = {}
+_log_context_active = False
 
 
 def _init(project_name, project_root=None):
@@ -211,13 +237,27 @@ def _prepare_log_file(path=None):
     open(p, "w").close()
 
 
+def _announce_log_start():
+    """Print the active LOG_FILE to stderr at the start of a logged command."""
+    print(f"{C.DIM}→ logging to: {os.path.relpath(LOG_FILE)}{C.RESET}", file=sys.stderr)
+
+
+def _announce_log_end():
+    """Print the log file path to stderr after a command completes."""
+    global _log_context_active
+    if not _log_context_active or not LOG_FILE:
+        return
+    print(f"{C.DIM}→ wrote: {os.path.relpath(LOG_FILE)}{C.RESET}", file=sys.stderr)
+    _log_context_active = False
+
+
 def set_log_context(*parts, retain=None):
     """Redirect LOG_FILE to a timestamped log for this command run.
 
     Example: set_log_context("dev") → tmp/dev.2026-05-01_143022.log
     Old files matching the stem are pruned to retain the N most recent.
     """
-    global LOG_FILE
+    global LOG_FILE, _log_context_active
     if LOG_CONFIG.get("enabled") is False:
         return
     name = "-".join(str(p) for p in parts if p)
@@ -226,17 +266,21 @@ def set_log_context(*parts, retain=None):
     os.makedirs(LOG_DIR, exist_ok=True)
     open(LOG_FILE, "w").close()
     _prune_logs(name, retain)
+    _log_context_active = True
+    _announce_log_start()
 
 
 def set_log_context_path(path, retain=None):
     """Redirect LOG_FILE to an explicit path (for log_file overrides in admin.toml)."""
-    global LOG_FILE
+    global LOG_FILE, _log_context_active
     if LOG_CONFIG.get("enabled") is False:
         return
     LOG_FILE = path if os.path.isabs(path) else os.path.join(_project_root, path)
     os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
     _rotate_log(LOG_FILE, retain)
     open(LOG_FILE, "w").close()
+    _log_context_active = True
+    _announce_log_start()
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +333,7 @@ def _cleanup_children(signum=None, frame=None):
 signal.signal(signal.SIGINT, _cleanup_children)
 signal.signal(signal.SIGTERM, _cleanup_children)
 atexit.register(_cleanup_children)
+atexit.register(_announce_log_end)
 
 
 # ---------------------------------------------------------------------------
@@ -299,9 +344,7 @@ atexit.register(_cleanup_children)
 # Environment variable interpolation
 # ---------------------------------------------------------------------------
 
-import re as _re_env
-
-_ENV_VAR_RE = _re_env.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+_ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 _referenced_env_vars: dict[str, dict] = {}
 
 
@@ -732,6 +775,7 @@ def _tui_menu():
                 info(f"./admin {items[sel]}")
                 print()
                 _commands[items[sel]]["func"]([])
+                _announce_log_end()
                 return
     except (KeyboardInterrupt, EOFError):
         print()
@@ -929,6 +973,7 @@ def boot(project_name, load_dotenv=True):
         return
 
     all_cmds[cmd_name]["func"](args)
+    _announce_log_end()
 
 
 # ---------------------------------------------------------------------------
