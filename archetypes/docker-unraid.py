@@ -23,7 +23,6 @@ ARCHETYPE = {
         "build":            {"desc": "Build Docker image locally for linux/amd64 (Unraid)",                                            "steps": ["build"]},
         "deploy":           {"desc": "Build, push, and recreate container on Unraid (preserves run config); --dry-run to preview",     "steps": ["deploy"],           "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
         "diff":             {"desc": "Show run-config drift between current container and last deploy; --format json for CI",          "steps": ["diff"],             "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
-        "install-template": {"desc": "Install the Unraid Docker GUI template (one-time, before first deploy)",                          "steps": ["install-template"], "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
         "logs":             {"desc": "Tail container logs (local or SSH)",                                                              "steps": ["logs"],             "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
         "reload":           {"desc": "Build+run with reload loop (press r or SIGUSR1 to rebuild)",                                     "steps": ["reload"]},
         "open":             {"desc": "Open the deployed app URL",                                                                       "steps": ["open"]},
@@ -39,6 +38,7 @@ ARCHETYPE = {
             "run": (
                 "dry_run = '--dry-run' in args\n"
                 "if not dry_run:\n"
+                "    ensure_docker_template(globals().get('_INSTALL_TEMPLATE_CONFIG') or {})\n"
                 "    rc = docker_build(os.environ.get('APP_IMAGE'), platform='linux/amd64')\n"
                 "    if rc != 0:\n"
                 "        sys.exit(rc)\n"
@@ -66,10 +66,6 @@ ARCHETYPE = {
                 "sys.exit(remote_logs(host, os.environ.get('APP_IMAGE')))"
             ),
             "desc": "Tail container logs (local or SSH)",
-        },
-        "install-template": {
-            "kind": "install-template",
-            "desc": "Install the Unraid Docker GUI template (one-time, before first deploy)",
         },
         "reload": {
             "kind": "docker-reload-loop",

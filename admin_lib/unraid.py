@@ -6,10 +6,9 @@ template in the Unraid Docker GUI.
 """
 
 import os
-import shlex
 import time
 
-from .core import info, ok, err, run_cmd
+from .core import info, ok, warn, err, run_cmd
 from .remote import ssh_cmd, scp_to, _is_local_host
 
 
@@ -30,6 +29,44 @@ def _slug_from_app_image():
     if not image:
         return ""
     return image.split(":", 1)[0].rsplit("/", 1)[-1]
+
+
+def ensure_docker_template(cfg):
+    """Auto-install the Unraid Docker GUI template on first deploy if needed.
+
+    No-op when:
+    - The local template XML doesn't exist (nothing to install)
+    - UNRAID_HOST isn't configured
+    - The template is already present on the host
+
+    Non-fatal: warns on scp failure so a bad template never blocks a deploy.
+    """
+    cfg = cfg or {}
+    src = cfg.get("src") or "deploy/unraid-template.xml"
+    if not os.path.exists(src):
+        return
+
+    name = (cfg.get("name") or _slug_from_app_image()).strip()
+    if not name:
+        warn("ensure-template: cannot determine template name — set APP_IMAGE or [install_template].name")
+        return
+
+    host = os.environ.get("UNRAID_HOST", "").strip()
+    if not host:
+        return
+    user = os.environ.get("UNRAID_USER", "root").strip() or "root"
+    full_host = f"{user}@{host}"
+
+    dst = f"{_UNRAID_TEMPLATES_DIR}/my-{name}.xml"
+    if ssh_cmd(full_host, f"test -f {dst}", check=False) == 0:
+        return
+
+    info(f"First deploy: installing Unraid template → {full_host}:{dst}")
+    rc = scp_to(src, full_host, dst)
+    if rc == 0:
+        ok(f"Template installed as my-{name}.xml in Unraid Docker GUI")
+    else:
+        warn("Template install failed (non-fatal) — run: ./admin install-template")
 
 
 def install_docker_template_from_config(cfg):
