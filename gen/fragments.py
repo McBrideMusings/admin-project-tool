@@ -70,6 +70,38 @@ def render_shell(cmd: Command) -> str:
     return body
 
 
+def render_python_script(cmd: Command) -> str:
+    """A command that runs an external Python script file with the command's args appended.
+
+    Use ``run = "path/to/script.py"`` (relative to project root). Args from
+    ``./admin foo bar baz`` are forwarded as ``sys.argv[1:]`` in the script.
+    Output is teed to the per-command log file via ``run_cmd``, and the script's
+    exit code is propagated.
+
+    Scripts that want to use admin_lib helpers can prepend ``~/.admin`` to
+    ``sys.path`` themselves — this renderer keeps the contract minimal: just
+    run a Python file with args.
+    """
+    if not cmd.run:
+        raise FragmentError(f"python-script command '{cmd.name}' needs 'run' = script path")
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    body = textwrap.dedent(f'''\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            import shlex as _shlex
+            _path = {_pyrepr(cmd.run)}
+            if not os.path.exists(_path):
+                err({_pyrepr(cmd.name + ": script not found: ")} + _path)
+                sys.exit(1)
+            _quoted = " ".join(_shlex.quote(a) for a in args)
+            _cmdline = _shlex.quote(sys.executable) + " " + _shlex.quote(_path) + ((" " + _quoted) if _quoted else "")
+            info({_pyrepr("running: ")} + _cmdline)
+            rc = run_cmd(_cmdline)
+            sys.exit(rc)
+    ''')
+    return body
+
+
 def render_multi_target(cmd: Command) -> str:
     """A command that dispatches to one of several shell strings based on a target arg.
 
@@ -471,6 +503,7 @@ _ACTION_RENDERERS = {
     "apple-dev-loop": render_apple_dev_loop,
     "docker-reload-loop": render_docker_reload_loop,
     "python": render_python,
+    "python-script": render_python_script,
     "http": render_http,
     "npm": render_npm,
     "sync": render_sync,
