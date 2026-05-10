@@ -393,10 +393,17 @@ def app_bundle_identifier(app_path):
     return bundle_id or None
 
 
-def install_and_launch_sim(device_id, app_path, bundle_id):
-    """Install and launch an app on a simulator."""
+def install_and_launch_sim(device_id, app_path, bundle_id, launch_args=None):
+    """Install and launch an app on a simulator.
+
+    launch_args: optional list of strings appended to `xcrun simctl launch`,
+    delivered to the app as UIApplication launch arguments.
+    """
     subprocess.run(["xcrun", "simctl", "install", device_id, app_path])
-    subprocess.run(["xcrun", "simctl", "launch", device_id, bundle_id])
+    cmd = ["xcrun", "simctl", "launch", device_id, bundle_id]
+    if launch_args:
+        cmd.extend(launch_args)
+    subprocess.run(cmd)
 
 
 def terminate_sim_app(device_id, bundle_id):
@@ -963,13 +970,14 @@ def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
                  extra_settings="", build_action="build",
                  bundle_id=None, sim_id=None,
                  pre_build=None, post_build=None, display_name=None,
-                 output_config=None):
+                 output_config=None, launch_args=None):
     """Full iOS simulator dev loop: build, install, stream logs, reload on 'r'/SIGUSR1.
 
-    bundle_id:  bundle ID for launch/terminate (defaults to subsystem)
-    sim_id:     simulator device ID (if None, auto-resolves via resolve_simulator)
-    pre_build:  callable() run before each build (e.g. swap dev icons)
-    post_build: callable() run after each build completes (e.g. restore icons)
+    bundle_id:   bundle ID for launch/terminate (defaults to subsystem)
+    sim_id:      simulator device ID (if None, auto-resolves via resolve_simulator)
+    pre_build:   callable() run before each build (e.g. swap dev icons)
+    post_build:  callable() run after each build completes (e.g. restore icons)
+    launch_args: optional list of strings passed to the app on each launch
     """
     import time
     from .log_columns import make_column_formatter
@@ -1032,7 +1040,7 @@ def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
             patch_ios_display_name(app_path, display_name)
 
         info("Installing on simulator...")
-        install_and_launch_sim(sim_id, app_path, launch_bundle)
+        install_and_launch_sim(sim_id, app_path, launch_bundle, launch_args=launch_args)
 
         def _is_running():
             return is_sim_app_running(sim_id, launch_bundle)
@@ -1682,8 +1690,12 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=N
     )
 
 
-def dev_ios(cfg, *, log_level="app", clean=False, output_config=None):
-    """iOS simulator dev loop driven by [apple] config."""
+def dev_ios(cfg, *, log_level="app", clean=False, output_config=None, launch_args=None):
+    """iOS simulator dev loop driven by [apple] config.
+
+    launch_args: optional list of strings forwarded to xcrun simctl launch
+    so the running app receives them as UIApplication launch arguments.
+    """
     if output_config is None:
         output_config = globals().get("_OUTPUT_CONFIG")
     if not cfg:
@@ -1724,6 +1736,7 @@ def dev_ios(cfg, *, log_level="app", clean=False, output_config=None):
         pre_build=pre_build, post_build=post_build,
         display_name=_resolve_ios_dev_display_name(cfg),
         output_config=output_config,
+        launch_args=launch_args,
     )
 
 
