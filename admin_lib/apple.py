@@ -1669,6 +1669,7 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=N
         output_config = globals().get("_OUTPUT_CONFIG")
     if not cfg:
         err("[apple] table missing from admin.toml"); sys.exit(1)
+    cfg = _with_global_defaults(cfg, "apple")
     scheme = cfg.get("mac_scheme")
     if not scheme:
         err("apple.mac_scheme required"); sys.exit(1)
@@ -1782,6 +1783,7 @@ def deploy_mac(cfg, *, clean=False):
     """Build and install a production macOS app to /Applications. No icon swap."""
     if not cfg:
         err("[apple] table missing from admin.toml"); sys.exit(1)
+    cfg = _with_global_defaults(cfg, "apple")
     scheme = cfg.get("mac_scheme")
     if not scheme:
         err("apple.mac_scheme required"); sys.exit(1)
@@ -1827,6 +1829,7 @@ def deploy_ios(cfg, *, clean=False):
     """Build and install a production iOS app on a connected device (USB or wireless). No icon swap."""
     if not cfg:
         err("[apple] table missing from admin.toml"); sys.exit(1)
+    cfg = _with_global_defaults(cfg, "apple")
     scheme = cfg.get("ios_scheme")
     if not scheme:
         err("apple.ios_scheme required"); sys.exit(1)
@@ -1885,6 +1888,7 @@ def dev_device(cfg, *, log_level="app", clean=False, output_config=None):
         output_config = globals().get("_OUTPUT_CONFIG")
     if not cfg:
         err("[apple] table missing from admin.toml"); sys.exit(1)
+    cfg = _with_global_defaults(cfg, "apple")
     scheme = cfg.get("ios_scheme")
     if not scheme:
         err("apple.ios_scheme required"); sys.exit(1)
@@ -1920,6 +1924,7 @@ def build_mac(cfg, *, force=False):
     """Build macOS client from [apple] config (no run, no install)."""
     if not cfg:
         err("[apple] table missing from admin.toml"); sys.exit(1)
+    cfg = _with_global_defaults(cfg, "apple")
     scheme = cfg.get("mac_scheme")
     if not scheme:
         err("apple.mac_scheme required"); sys.exit(1)
