@@ -1761,8 +1761,9 @@ def dev_ios(cfg, *, log_level="app", clean=False, output_config=None, launch_arg
         sim_id = find_simulator(device_name)
         if not sim_id:
             warn(f"simulator '{device_name}' not found, falling back to auto-resolve")
-    if sim_id is None and not device_name:
-        info("No simulator pinned — auto-resolving.")
+    if sim_id is None:
+        if not device_name:
+            info("No simulator pinned — auto-resolving.")
         info("Pin one: set IOS_DEVICE env var, or set ios_device in [apple] of your project or ~/.admin/admin.toml")
 
     pre_build, post_build = build_icon_hooks(cfg)
