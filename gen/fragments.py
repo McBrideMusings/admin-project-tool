@@ -80,7 +80,8 @@ def render_shell_passthrough(cmd: Command) -> str:
 
     When `interactive = true` is set on the action, the subprocess inherits
     the parent terminal directly (via `subprocess.call`) so prompts work
-    naturally. The tradeoff is that output is no longer tee'd to a log file.
+    naturally. The tradeoff is that output is no longer tee'd to a log file —
+    the generated body emits a one-time `warn(...)` at run time to flag this.
     """
     func_name = "cmd_" + _safe_ident(cmd.name)
     interactive = bool(cmd.meta.get("interactive"))
@@ -89,6 +90,11 @@ def render_shell_passthrough(cmd: Command) -> str:
         if interactive
         else "rc = run_cmd(_cmdline)"
     )
+    interactive_warn = (
+        'warn("interactive mode: output is not logged to tmp/run.log")\n            '
+        if interactive
+        else ""
+    )
     body = textwrap.dedent(f'''\
         @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
         def {func_name}(args):
@@ -96,7 +102,7 @@ def render_shell_passthrough(cmd: Command) -> str:
             _quoted = " ".join(_shlex.quote(a) for a in args)
             _cmdline = {_pyrepr(cmd.run)} + ((" " + _quoted) if _quoted else "")
             info({_pyrepr("running: ")} + _cmdline)
-            {invoke}
+            {interactive_warn}{invoke}
             if rc != 0:
                 err({_pyrepr(cmd.name + " failed")})
                 sys.exit(rc)
