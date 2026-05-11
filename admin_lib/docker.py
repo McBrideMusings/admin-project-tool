@@ -442,12 +442,12 @@ def remote_recreate_container(host, image, container=None, dry_run=False):
 
     args = _build_run_args_from_inspect(inspect)
     restore_image = _restore_image_from_inspect(inspect, image)
+    run_cmd_parts = ["docker", "run", "-d", "--name", container] + args + [image]
+    remote_run = " ".join(shlex.quote(p) for p in run_cmd_parts)
 
     if dry_run:
-        run_cmd_parts = ["docker", "run", "-d", "--name", container] + args + [image]
-        reconstructed = " ".join(shlex.quote(p) for p in run_cmd_parts)
         info(f"Dry run — docker run command that would be executed {location}:")
-        print(f"  {reconstructed}\n")
+        print(f"  {remote_run}\n")
         return 0
 
     if local:
@@ -461,9 +461,9 @@ def remote_recreate_container(host, image, container=None, dry_run=False):
         info(f"Transfer complete in {elapsed:.0f}s")
 
     restore_path = f"/tmp/{container}-restore.sh"
-    run_cmd_parts = ["docker", "run", "-d", "--name", container] + args + [restore_image]
-    remote_run = " ".join(shlex.quote(p) for p in run_cmd_parts)
-    restore_script = f"#!/bin/sh\n{remote_run}\n"
+    restore_cmd_parts = ["docker", "run", "-d", "--name", container] + args + [restore_image]
+    restore_run = " ".join(shlex.quote(p) for p in restore_cmd_parts)
+    restore_script = f"#!/bin/sh\n{restore_run}\n"
 
     if local:
         try:
