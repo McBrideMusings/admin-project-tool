@@ -298,6 +298,40 @@ def log_predicate(process, subsystem, level="app"):
 # iOS simulator helpers
 # ---------------------------------------------------------------------------
 
+_GLOBAL_ADMIN_CONFIG_CACHE = None
+_GLOBAL_ADMIN_CONFIG_LOADED = False
+
+
+def _global_admin_config():
+    """Load ~/.admin/admin.toml once and return it as a dict. Returns {} on any error."""
+    global _GLOBAL_ADMIN_CONFIG_CACHE, _GLOBAL_ADMIN_CONFIG_LOADED
+    if _GLOBAL_ADMIN_CONFIG_LOADED:
+        return _GLOBAL_ADMIN_CONFIG_CACHE or {}
+    _GLOBAL_ADMIN_CONFIG_LOADED = True
+    import tomllib
+    path = os.path.expanduser("~/.admin/admin.toml")
+    if not os.path.isfile(path):
+        _GLOBAL_ADMIN_CONFIG_CACHE = {}
+        return {}
+    try:
+        with open(path, "rb") as f:
+            _GLOBAL_ADMIN_CONFIG_CACHE = tomllib.load(f)
+    except Exception:
+        _GLOBAL_ADMIN_CONFIG_CACHE = {}
+    return _GLOBAL_ADMIN_CONFIG_CACHE
+
+
+def _with_global_defaults(cfg, section):
+    """Return cfg merged with ~/.admin/admin.toml [section] as defaults.
+
+    Project values win; the global file fills in any missing keys.
+    """
+    global_section = _global_admin_config().get(section) or {}
+    if not global_section:
+        return cfg
+    return {**global_section, **cfg}
+
+
 def find_simulator(device_name):
     """Find a simulator device ID by exact name. Prefers booted. Returns device_id or None."""
     import re
@@ -1700,6 +1734,7 @@ def dev_ios(cfg, *, log_level="app", clean=False, output_config=None, launch_arg
         output_config = globals().get("_OUTPUT_CONFIG")
     if not cfg:
         err("[apple] table missing from admin.toml"); sys.exit(1)
+    cfg = _with_global_defaults(cfg, "apple")
     scheme = cfg.get("ios_scheme")
     if not scheme:
         err("apple.ios_scheme required"); sys.exit(1)
@@ -1725,6 +1760,9 @@ def dev_ios(cfg, *, log_level="app", clean=False, output_config=None, launch_arg
         sim_id = find_simulator(device_name)
         if not sim_id:
             warn(f"simulator '{device_name}' not found, falling back to auto-resolve")
+    if sim_id is None and not device_name:
+        info("No simulator pinned — auto-resolving.")
+        info("Pin one: set IOS_DEVICE env var, or set ios_device in [apple] of your project or ~/.admin/admin.toml")
 
     pre_build, post_build = build_icon_hooks(cfg)
 
@@ -1902,12 +1940,13 @@ def build_ios(cfg, *, force=False):
     """Build iOS client from [apple] config (no run, no install)."""
     if not cfg:
         err("[apple] table missing from admin.toml"); sys.exit(1)
+    cfg = _with_global_defaults(cfg, "apple")
     scheme = cfg.get("ios_scheme")
     if not scheme:
         err("apple.ios_scheme required"); sys.exit(1)
     project = _detect_project_path(cfg)
     config = cfg.get("ios_build_config", "Debug")
-    sim = os.environ.get("IOS_DEVICE", "") or cfg.get("ios_device", "")
+    sim = os.environ.get("IOS_DEVICE") or cfg.get("ios_device") or ""
     dest = ("platform=iOS Simulator,name=" + sim) if sim else "platform=iOS Simulator"
     build_action = "clean build" if force else "build"
     restore_stranded_dev_icons(cfg)

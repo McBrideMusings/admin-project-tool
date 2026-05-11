@@ -70,6 +70,41 @@ def render_shell(cmd: Command) -> str:
     return body
 
 
+def render_shell_passthrough(cmd: Command) -> str:
+    """A shell command that appends shlex-quoted positional args from `./admin <name> <ARG>...`.
+
+    Use when the project wants to forward arbitrary CLI args to an underlying
+    tool (e.g. `cargo run -- query "$@"`). Differs from `kind = "shell"` only
+    in that the args from `./admin` are quoted and appended to the `run`
+    string before execution.
+
+    When `interactive = true` is set on the action, the subprocess inherits
+    the parent terminal directly (via `subprocess.call`) so prompts work
+    naturally. The tradeoff is that output is no longer tee'd to a log file.
+    """
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    interactive = bool(cmd.meta.get("interactive"))
+    invoke = (
+        "rc = subprocess.call(_cmdline, shell=True)"
+        if interactive
+        else "rc = run_cmd(_cmdline)"
+    )
+    body = textwrap.dedent(f'''\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            import shlex as _shlex
+            _quoted = " ".join(_shlex.quote(a) for a in args)
+            _cmdline = {_pyrepr(cmd.run)} + ((" " + _quoted) if _quoted else "")
+            info({_pyrepr("running: ")} + _cmdline)
+            {invoke}
+            if rc != 0:
+                err({_pyrepr(cmd.name + " failed")})
+                sys.exit(rc)
+            ok({_pyrepr(cmd.name + " complete")})
+    ''')
+    return body
+
+
 def render_python_script(cmd: Command) -> str:
     """A command that runs an external Python script file with the command's args appended.
 
@@ -499,6 +534,7 @@ def render_vite_dev(cmd: Command) -> str:
 
 _ACTION_RENDERERS = {
     "shell": render_shell,
+    "shell-passthrough": render_shell_passthrough,
     "multi-target": render_multi_target,
     "apple-dev-loop": render_apple_dev_loop,
     "docker-reload-loop": render_docker_reload_loop,

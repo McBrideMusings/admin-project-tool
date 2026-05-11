@@ -388,6 +388,8 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
         log_meta["log"] = bool(data["log"])
     if log_meta:
         meta["logging"] = log_meta
+    if data.get("interactive"):
+        meta["interactive"] = True
     if inline_targets_raw:
         for tname, tdata in inline_targets_raw.items():
             if "action" not in tdata and "run" not in tdata:
@@ -452,7 +454,7 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
 # at the end, which may cause import-ordering issues in the flat bundle namespace.
 _MODULE_ORDER = [
     "core", "cache", "icons", "remote", "ports", "ports_nuke", "cleanup",
-    "apple", "apple_dev", "rust",
+    "apple", "rust",
     "docker", "unraid", "web_dev",
     "log_format", "log_columns", "logtail",
     "install",

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# @bundled admin_lib=2.0.0-dev stripped=6 sha=2ea01a8979e3 modules=core generator_commit=09802586e7a6610790e50f8db6d5853c15f76f6e+dirty
+# @bundled admin_lib=2.0.0-dev stripped=6 sha=35ed9a07a670 modules=core generator_commit=3771171250c19745bae891917b6c35ae79793fec+dirty
 # Generated from admin.toml by admin-project-tool.
 # Regenerate: admin regenerate
 """admin — task runner for admin-project-tool."""
@@ -19,6 +19,7 @@ import atexit
 import datetime
 import glob
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -40,19 +41,20 @@ class C:
     RESET = "\033[0m"
 
 
-import re as _re_ansi
-_ANSI_ESCAPE_RE = _re_ansi.compile(r'\x1b\[[0-9;]*m')
+_ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*m')
 
 
 def _log_write(text: str):
-    """Append plain text to LOG_FILE. No-op if logging is disabled or LOG_FILE unset."""
+    """Append plain text to LOG_FILE. No-op if logging is disabled or LOG_FILE unset.
+
+    Must never call info/ok/warn/err — those call back into _log_write.
+    """
     if not LOG_FILE or LOG_CONFIG.get("enabled") is False:
         return
     plain = _ANSI_ESCAPE_RE.sub("", text)
     if not plain.endswith("\n"):
         plain += "\n"
     try:
-        os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
         with open(LOG_FILE, "a") as f:
             f.write(plain)
     except OSError:
@@ -223,8 +225,13 @@ def _rotate_log(path, retain=None):
     os.rename(path, f"{path}.1")
 
 
+def _announce_log_start():
+    """Print the active LOG_FILE to stderr at the start of a logged command."""
+    print(f"{C.DIM}→ logging to: {os.path.relpath(LOG_FILE)}{C.RESET}", file=sys.stderr)
+
+
 def _announce_log_end():
-    """Print the log file path to stderr after a command completes. Terminal-only."""
+    """Print the log file path to stderr after a command completes."""
     global _log_context_active
     if not _log_context_active or not LOG_FILE:
         return
@@ -248,7 +255,7 @@ def set_log_context(*parts, retain=None):
     open(LOG_FILE, "w").close()
     _prune_logs(name, retain)
     _log_context_active = True
-    print(f"{C.DIM}→ logging to: {os.path.relpath(LOG_FILE)}{C.RESET}", file=sys.stderr)
+    _announce_log_start()
 
 
 def set_log_context_path(path, retain=None):
@@ -261,7 +268,7 @@ def set_log_context_path(path, retain=None):
     _rotate_log(LOG_FILE, retain)
     open(LOG_FILE, "w").close()
     _log_context_active = True
-    print(f"{C.DIM}→ logging to: {os.path.relpath(LOG_FILE)}{C.RESET}", file=sys.stderr)
+    _announce_log_start()
 
 
 # .env loading
@@ -317,9 +324,7 @@ atexit.register(_announce_log_end)
 
 # Environment variable interpolation
 
-import re as _re_env
-
-_ENV_VAR_RE = _re_env.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+_ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 _referenced_env_vars: dict[str, dict] = {}
 
 
@@ -936,7 +941,7 @@ def register_builtin_logs_command():
         _cmd_logs_impl(args)
 
 # === project: admin-project-tool ===
-set_generator_commit("09802586e7a6610790e50f8db6d5853c15f76f6e+dirty")
+set_generator_commit("3771171250c19745bae891917b6c35ae79793fec+dirty")
 
 def _act_build(args):
     info("running: python3 ./admin-gen --regenerate . --force-dirty && python3 ./admin-gen --audit . --force-dirty")

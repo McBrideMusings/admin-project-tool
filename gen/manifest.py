@@ -23,7 +23,7 @@ _KNOWN_KEYS = {
 }
 
 VALID_COMMAND_KEYS = {"desc", "steps", "log_file", "log_retain", "log", "group", "priority", "env"}
-VALID_ACTION_KEYS = {"run", "desc", "kind", "targets", "method", "body", "src", "log_file", "log_retain", "log"}
+VALID_ACTION_KEYS = {"run", "desc", "kind", "targets", "method", "body", "src", "log_file", "log_retain", "log", "interactive"}
 
 
 @dataclass
