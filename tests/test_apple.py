@@ -365,6 +365,38 @@ def test_resolve_bundle_unknown_platform_raises():
     raise AssertionError("expected ValueError on unknown platform 'osx'")
 
 
+# ---------------------------------------------------------------------------
+# sweep_orphan_log_streams (#353)
+# ---------------------------------------------------------------------------
+
+def test_sweep_orphan_log_streams_invokes_pkill_with_escaped_subsystem():
+    calls = []
+    def fake_run(*args, **kwargs):
+        calls.append((args, kwargs))
+        return _FakeCompleted()
+    ns = _load_apple(subprocess_run=fake_run)
+    ns["sweep_orphan_log_streams"]("com.example.app")
+    assert len(calls) == 1, calls
+    argv = calls[0][0][0]
+    assert argv[0] == "pkill"
+    assert argv[1] == "-f"
+    # Dots must be escaped so the regex doesn't match unrelated argv text.
+    assert "log stream.*com\\.example\\.app" in argv[2], argv[2]
+    print("OK: sweep_orphan_log_streams runs pkill -f with regex-escaped subsystem")
+
+
+def test_sweep_orphan_log_streams_noop_on_empty_subsystem():
+    calls = []
+    def fake_run(*args, **kwargs):
+        calls.append((args, kwargs))
+        return _FakeCompleted()
+    ns = _load_apple(subprocess_run=fake_run)
+    ns["sweep_orphan_log_streams"]("")
+    ns["sweep_orphan_log_streams"](None)
+    assert calls == [], calls
+    print("OK: sweep_orphan_log_streams skips pkill when subsystem is falsy")
+
+
 if __name__ == "__main__":
     test_find_app_returns_match()
     test_find_app_returns_none_on_no_match()
@@ -389,4 +421,6 @@ if __name__ == "__main__":
     test_resolve_bundle_returns_none_when_nothing_configured()
     test_resolve_bundle_dev_returns_none_when_no_prod()
     test_resolve_bundle_unknown_platform_raises()
+    test_sweep_orphan_log_streams_invokes_pkill_with_escaped_subsystem()
+    test_sweep_orphan_log_streams_noop_on_empty_subsystem()
     print("\nAll tests passed.")

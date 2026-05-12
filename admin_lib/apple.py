@@ -774,6 +774,18 @@ def stop_os_log(proc, log_fh=None):
         log_fh.close()
 
 
+def sweep_orphan_log_streams(subsystem):
+    # If a prior admin dev session was hard-killed (terminal closed, SIGKILL,
+    # Ctrl+\, OOM), its `log stream` child survives as an orphan parented to
+    # launchd. _children + atexit can't clean those up; sweep by argv before
+    # starting a fresh loop. See issue #353.
+    if not subsystem:
+        return
+    import re
+    pattern = f"log stream.*{re.escape(subsystem)}"
+    subprocess.run(["pkill", "-f", pattern], capture_output=True)
+
+
 # ---------------------------------------------------------------------------
 # Dev icon management
 # ---------------------------------------------------------------------------
@@ -905,6 +917,7 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
     from .log_columns import make_column_formatter
 
     setup_reload(pid_file)
+    sweep_orphan_log_streams(subsystem)
 
     def _default_is_running():
         r = subprocess.run(["pgrep", "-x", process], capture_output=True)
@@ -1017,6 +1030,7 @@ def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
     from .log_columns import make_column_formatter
 
     setup_reload(pid_file)
+    sweep_orphan_log_streams(subsystem)
 
     launch_bundle = bundle_id or subsystem
 
