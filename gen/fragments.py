@@ -57,11 +57,13 @@ def render_command(cmd: Command) -> str:
 def render_shell(cmd: Command) -> str:
     """A command that runs a single shell string. Most common kind by far."""
     func_name = "cmd_" + _safe_ident(cmd.name)
+    pty = bool(cmd.meta.get("pty"))
+    run_call = f"run_cmd({_pyrepr(cmd.run)}, pty=True)" if pty else f"run_cmd({_pyrepr(cmd.run)})"
     body = textwrap.dedent(f'''\
         @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
         def {func_name}(args):
             info({_pyrepr(f"running: {cmd.run}")})
-            rc = run_cmd({_pyrepr(cmd.run)})
+            rc = {run_call}
             if rc != 0:
                 err({_pyrepr(cmd.name + " failed")})
                 sys.exit(rc)

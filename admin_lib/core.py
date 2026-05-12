@@ -451,17 +451,99 @@ def cmd_env(args):
             print(f"{indent}{C.DIM}full used_by: {', '.join(used_by)}{C.RESET}")
 
 
-def run_cmd(cmd, shell=True, capture_log=True, formatter=None):
+_ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+
+def _run_cmd_pty(cmd, log_fh, formatter):
+    """Run cmd inside a pseudo-TTY so isatty() checks pass (e.g. wrangler dev).
+
+    Output is displayed to the terminal with ANSI codes intact; the log file
+    receives the same text with escape sequences stripped.
+    """
+    import pty
+    import select
+
+    master_fd, slave_fd = pty.openpty()
+    proc = subprocess.Popen(
+        cmd, shell=True,
+        stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
+        close_fds=True,
+    )
+    os.close(slave_fd)
+    _children.append(proc)
+
+    buf = b""
+    try:
+        while True:
+            try:
+                r, _, _ = select.select([master_fd], [], [], 0.05)
+            except (OSError, ValueError):
+                break
+            if r:
+                try:
+                    data = os.read(master_fd, 4096)
+                except OSError:
+                    break
+                buf += data
+                while b"\n" in buf:
+                    raw_line, buf = buf.split(b"\n", 1)
+                    line = raw_line.rstrip(b"\r").decode("utf-8", errors="replace") + "\n"
+                    sys.stdout.write(formatter(line) if formatter else line)
+                    sys.stdout.flush()
+                    if log_fh:
+                        log_fh.write(_ANSI_ESCAPE_RE.sub("", line))
+                        log_fh.flush()
+            if proc.poll() is not None:
+                try:
+                    while True:
+                        r, _, _ = select.select([master_fd], [], [], 0.05)
+                        if not r:
+                            break
+                        data = os.read(master_fd, 4096)
+                        if not data:
+                            break
+                        buf += data
+                except OSError:
+                    pass
+                break
+    finally:
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
+        proc.wait()
+        if proc in _children:
+            _children.remove(proc)
+        if buf:
+            line = buf.rstrip(b"\r").decode("utf-8", errors="replace")
+            sys.stdout.write(formatter(line) if formatter else line)
+            sys.stdout.flush()
+            if log_fh:
+                log_fh.write(_ANSI_ESCAPE_RE.sub("", line))
+
+    return proc.returncode
+
+
+def run_cmd(cmd, shell=True, capture_log=True, formatter=None, pty=False):
     """Run a command with line-buffered output, tee to tmp/run.log if capture_log is True.
 
     Strings are passed through resolve_env() first so ${VAR} and ${VAR:-default}
     placeholders are expanded from os.environ at execution time.
+
+    If pty=True, the command runs in a pseudo-TTY so programs that check isatty()
+    (e.g. wrangler dev) output Worker logs as if run interactively.
     """
     cmd = resolve_env(cmd)
     os.makedirs(LOG_DIR, exist_ok=True)
     log_fh = None
     if capture_log and LOG_CONFIG.get("enabled") is not False and LOG_FILE:
         log_fh = open(LOG_FILE, "a")
+
+    if pty:
+        rc = _run_cmd_pty(cmd, log_fh, formatter)
+        if log_fh:
+            log_fh.close()
+        return rc
 
     proc = subprocess.Popen(
         cmd, shell=shell, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
