@@ -67,9 +67,17 @@ def _workspace_projects(folder_name):
         _proj_dirs = []
         for _pg in _ws.get("projects", []):
             _base = os.path.join(samples_root, folder_name, _pg)
-            for _match in sorted(_glob.glob(_base)):
+            _matches = sorted(_glob.glob(_base))
+            if not _matches:
+                warn("workspace project pattern matched nothing: " + _pg)
+                continue
+            _found = 0
+            for _match in _matches:
                 if os.path.isfile(os.path.join(_match, "main.lua")):
                     _proj_dirs.append(os.path.relpath(_match, os.getcwd()))
+                    _found += 1
+            if _found == 0:
+                warn("workspace project pattern matched but no main.lua found: " + _pg)
         return _proj_dirs
     except Exception as _e:
         err("could not parse forge.workspace.toml: " + str(_e))
@@ -80,6 +88,7 @@ _DEV_PY = _DISCOVER_PY + '''
 import shlex
 import subprocess as _subprocess
 import threading as _threading
+import time as _time
 
 game, kind = _pick_sample("dev")
 
@@ -127,9 +136,42 @@ for _t in threads:
 try:
     rcs = [p.wait() for p in procs]
 except KeyboardInterrupt:
+    info("interrupt — terminating workspace projects")
+    # SIGTERM all, then bounded wait, then SIGKILL any survivors. A second
+    # Ctrl+C during cleanup must not orphan children, so swallow it here.
     for _p in procs:
-        _p.terminate()
-    rcs = [p.wait() for p in procs]
+        if _p.poll() is None:
+            try:
+                _p.terminate()
+            except Exception:
+                pass
+    _deadline = _time.time() + 5.0
+    for _p in procs:
+        while _p.poll() is None:
+            _remaining = _deadline - _time.time()
+            if _remaining <= 0:
+                break
+            try:
+                _p.wait(timeout=_remaining)
+            except _subprocess.TimeoutExpired:
+                break
+            except KeyboardInterrupt:
+                continue
+    for _p in procs:
+        if _p.poll() is None:
+            warn("child ignored SIGTERM — sending SIGKILL")
+            try:
+                _p.kill()
+            except Exception:
+                pass
+    rcs = []
+    for _p in procs:
+        while True:
+            try:
+                rcs.append(_p.wait())
+                break
+            except KeyboardInterrupt:
+                continue
 for _t in threads:
     _t.join()
 if _log_fh:
