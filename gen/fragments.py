@@ -540,12 +540,32 @@ def render_vite_dev(cmd: Command) -> str:
     return body
 
 
+def render_docker_dev(cmd: Command) -> str:
+    """Build+run the project's Docker image in a reload loop. Reads
+    `[docker_dev]` config table. Requires the 'docker' module.
+
+    Press `r` (or send SIGUSR1) to rebuild + relaunch. `pre_kill = true`
+    invokes `cmd_kill` first to free conflicting ports.
+    """
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    body = textwrap.dedent(f"""\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            _cfg = dict(globals().get("_DOCKER_DEV_CONFIG") or {{}})
+            if _cfg.get("pre_kill") and "cmd_kill" in globals():
+                _cfg["_pre_kill_callable"] = cmd_kill
+            return docker_dev_from_config(_cfg)
+    """)
+    return body
+
+
 _ACTION_RENDERERS = {
     "shell": render_shell,
     "shell-passthrough": render_shell_passthrough,
     "multi-target": render_multi_target,
     "apple-dev-loop": render_apple_dev_loop,
     "docker-reload-loop": render_docker_reload_loop,
+    "docker-dev": render_docker_dev,
     "python": render_python,
     "python-script": render_python_script,
     "http": render_http,
@@ -563,7 +583,8 @@ _ACTION_RENDERERS = {
 # Kinds whose action body is generated from a named manifest config table
 # rather than a `run` string.
 CONFIGLESS_KINDS = frozenset({
-    "nuke-dev", "clean-dev", "vite-dev", "server-reload", "install-template",
+    "nuke-dev", "clean-dev", "vite-dev", "docker-dev",
+    "server-reload", "install-template",
 })
 
 KNOWN_KINDS = set(_ACTION_RENDERERS)
@@ -576,6 +597,7 @@ KIND_MODULES: dict[str, list[str]] = {
     "kill-port": ["ports", "ports_nuke"],
     "nuke-dev": ["ports", "ports_nuke"],
     "docker-reload-loop": ["docker"],
+    "docker-dev": ["docker"],
     "server-reload": ["docker"],
     "install-template": ["remote", "unraid"],
 }

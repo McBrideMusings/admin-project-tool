@@ -19,7 +19,7 @@ _KNOWN_KEYS = {
     "project_name", "python_min", "archetypes", "modules", "urls",
     "commands", "actions", "order", "logs", "apple", "server", "output",
     "exclude_modules", "generator_commit", "inline", "logging",
-    "dev_kill", "clean_dev", "vite_dev", "deploy", "install_template",
+    "dev_kill", "clean_dev", "vite_dev", "docker_dev", "deploy", "install_template",
 }
 
 VALID_COMMAND_KEYS = {"desc", "steps", "log_file", "log_retain", "log", "group", "priority", "env"}
@@ -61,6 +61,7 @@ class Manifest:
     dev_kill: dict = field(default_factory=dict)  # [dev_kill] — config for kind="nuke-dev" commands
     clean_dev: dict = field(default_factory=dict) # [clean_dev] — config for kind="clean-dev" commands
     vite_dev: dict = field(default_factory=dict)  # [vite_dev] — config for kind="vite-dev" commands
+    docker_dev: dict = field(default_factory=dict)  # [docker_dev] — config for kind="docker-dev" commands
     deploy: dict = field(default_factory=dict)    # [deploy] — config for docker-unraid build/deploy commands
     install_template: dict = field(default_factory=dict)  # [install_template] — kind="install-template" config
     actions: dict[str, dict] = field(default_factory=dict)    # action name -> raw dict (not shown in UI)
@@ -207,6 +208,10 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     if not isinstance(vite_dev, dict):
         raise ManifestError(f"{source}: '[vite_dev]' must be a table")
 
+    docker_dev = data.get("docker_dev", {}) or {}
+    if not isinstance(docker_dev, dict):
+        raise ManifestError(f"{source}: '[docker_dev]' must be a table")
+
     deploy = data.get("deploy", {}) or {}
     if not isinstance(deploy, dict):
         raise ManifestError(f"{source}: '[deploy]' must be a table")
@@ -262,6 +267,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         dev_kill=dev_kill,
         clean_dev=clean_dev,
         vite_dev=vite_dev,
+        docker_dev=docker_dev,
         deploy=deploy,
         install_template=install_template,
         exclude_modules=exclude_modules,

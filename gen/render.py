@@ -97,6 +97,7 @@ def render(
         config_tables={
             "deploy": m.deploy,
             "vite_dev": m.vite_dev,
+            "docker_dev": m.docker_dev,
             "dev_kill": m.dev_kill,
             "clean_dev": m.clean_dev,
             "install_template": m.install_template,
@@ -130,6 +131,7 @@ def render(
     dev_kill_decl = f"_DEV_KILL_CONFIG = {_pyliteral(m.dev_kill)}\n" if m.dev_kill else ""
     clean_dev_decl = f"_CLEAN_DEV_CONFIG = {_pyliteral(m.clean_dev)}\n" if m.clean_dev else ""
     vite_dev_decl = f"_VITE_DEV_CONFIG = {_pyliteral(m.vite_dev)}\n" if m.vite_dev else ""
+    docker_dev_decl = f"_DOCKER_DEV_CONFIG = {_pyliteral(m.docker_dev)}\n" if m.docker_dev else ""
     deploy_decl = f"_DEPLOY_CONFIG = {_pyliteral(m.deploy)}\n" if m.deploy else ""
     install_template_decl = f"_INSTALL_TEMPLATE_CONFIG = {_pyliteral(m.install_template)}\n" if m.install_template else ""
 
@@ -180,6 +182,7 @@ def render(
         f"{dev_kill_decl}"
         f"{clean_dev_decl}"
         f"{vite_dev_decl}"
+        f"{docker_dev_decl}"
         f"{deploy_decl}"
         f"{install_template_decl}"
         f"{logging_decl}"

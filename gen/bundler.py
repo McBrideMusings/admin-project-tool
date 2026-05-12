@@ -83,7 +83,8 @@ _HARD_KEEP: frozenset[str] = frozenset({
     "run_cmd", "resolve_env",
     # Manifest-emitted config dicts (set by render.py)
     "_APPLE_CONFIG", "_SERVER_CONFIG", "_OUTPUT_CONFIG",
-    "_DEV_KILL_CONFIG", "_CLEAN_DEV_CONFIG", "_VITE_DEV_CONFIG", "_DEPLOY_CONFIG",
+    "_DEV_KILL_CONFIG", "_CLEAN_DEV_CONFIG", "_VITE_DEV_CONFIG",
+    "_DOCKER_DEV_CONFIG", "_DEPLOY_CONFIG",
 })
 
 

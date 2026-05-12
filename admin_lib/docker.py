@@ -352,6 +352,177 @@ def docker_build(image, context_dir=".", platform=None):
     return run_cmd(f"docker build {plat}-t {image} {context_dir}")
 
 
+# ---------------------------------------------------------------------------
+# docker-dev — build+run a project's Docker image in a reload loop
+# ---------------------------------------------------------------------------
+#
+# Mirrors the vite-dev shape: project declares a `[docker_dev]` config
+# table; the generated admin command calls `docker_dev_from_config(cfg)`
+# which translates the schema into `docker build` + `docker run` argv
+# and hands the joined shell command to `run_with_reload`.
+
+def _docker_dev_build_cmd(cfg):
+    """Render the `docker build && docker run` shell string from a
+    `[docker_dev]` config table. Pure (no side effects); the caller
+    invokes it inside the reload loop and handles bind-mount mkdir's.
+
+    Schema (every field optional unless noted):
+      image_tag          str   — required; what to tag the build and run
+      build_context      str   — defaults to "."
+      container_name     str   — `--name` flag
+      gpu                bool|str|list — true / "all" / ["device=0", ...]
+      env_file           str   — path; emitted as --env-file when the
+                                 file exists at run time (relative to cwd)
+      pre_kill           bool  — call cmd_kill before launching
+      ports              list of {host: int, container: int}
+      bind_mounts        list of {host: str, container: str, mode?: str,
+                                  mkdir?: bool}  — host path is project-
+                                  relative; `mkdir=true` creates it first
+      optional_mounts    list of {env: str, container: str, mode?: str}
+                                — host path comes from env var; skipped
+                                  silently when env unset
+      env                list of {name: str, value: str}
+                                — literal -e flags emitted into argv
+    """
+    import shlex
+
+    image = cfg.get("image_tag")
+    if not image:
+        raise ValueError("docker_dev: 'image_tag' is required")
+    context = cfg.get("build_context", ".")
+
+    # Build phase — docker layer caching keeps this near-instant when
+    # nothing changed.
+    build_cmd = f"docker build -t {shlex.quote(image)} {shlex.quote(context)}"
+
+    # Run phase — assemble argv up to the trailing "$@" / image splice.
+    run_argv = ["docker", "run", "--rm"]
+
+    container_name = cfg.get("container_name")
+    if container_name:
+        run_argv += ["--name", container_name]
+
+    gpu = cfg.get("gpu")
+    if gpu is True or gpu == "all":
+        run_argv += ["--gpus", "all"]
+    elif isinstance(gpu, list) and gpu:
+        run_argv += ["--gpus", ",".join(gpu)]
+    elif isinstance(gpu, str) and gpu:
+        run_argv += ["--gpus", gpu]
+
+    for p in cfg.get("ports") or ():
+        host_port = p.get("host")
+        cont_port = p.get("container", host_port)
+        if host_port is None:
+            continue
+        run_argv += ["-p", f"{host_port}:{cont_port}"]
+
+    for m in cfg.get("bind_mounts") or ():
+        host = m.get("host")
+        container = m.get("container")
+        if not host or not container:
+            continue
+        mode = m.get("mode")
+        # Resolve relative paths against the caller's cwd at render time
+        # so the resulting shell command has no $(pwd) substitutions to
+        # mess with — `shlex.quote` can wrap the whole flag cleanly.
+        host_resolved = host if os.path.isabs(host) else os.path.abspath(host)
+        flag = f"{host_resolved}:{container}" + (f":{mode}" if mode else "")
+        run_argv += ["-v", flag]
+
+    # Optional mounts gated on env vars. We can't expand env vars at
+    # render time (would bake host-specific paths into the shell string
+    # and freeze them for the loop's lifetime), so we emit shell
+    # conditionals that re-check at each invocation.
+    optional_mount_shell = []
+    for m in cfg.get("optional_mounts") or ():
+        env = m.get("env")
+        container = m.get("container")
+        if not env or not container:
+            continue
+        mode = m.get("mode")
+        suffix = f":{mode}" if mode else ""
+        optional_mount_shell.append(
+            f'[ -n "${{{env}:-}}" ] && set -- "$@" -v "${{{env}}}:{container}{suffix}"'
+        )
+
+    # Env-file: only emitted when the file exists at run time. Same
+    # rationale as optional mounts.
+    env_file = cfg.get("env_file")
+    env_file_shell = ""
+    if env_file:
+        env_file_shell = f'[ -f {shlex.quote(env_file)} ] && set -- "$@" --env-file {shlex.quote(env_file)}'
+
+    for e in cfg.get("env") or ():
+        name = e.get("name")
+        value = e.get("value")
+        if not name:
+            continue
+        if value is None:
+            run_argv += ["-e", name]
+        else:
+            run_argv += ["-e", f"{name}={value}"]
+
+    run_argv.append(image)
+
+    # Stitch it together. `set --` resets `$@` so optional mount/env-file
+    # conditionals can accumulate into it; the final `docker run … "$@"`
+    # splices them in.
+    quoted_run = " ".join(shlex.quote(a) for a in run_argv)
+    parts = [
+        "set -e",
+        build_cmd,
+        "set --",
+    ]
+    parts += optional_mount_shell
+    if env_file_shell:
+        parts.append(env_file_shell)
+    # Insert the "$@" splice right after `docker run --rm` in the argv.
+    # Easier: emit the full argv and append "$@" at the end — docker is
+    # fine with -v / --env-file after the image name? No, docker run
+    # rejects flags after the image. So we emit run argv WITHOUT the
+    # image, then "$@", then image.
+    argv_no_image = run_argv[:-1]
+    quoted_no_image = " ".join(shlex.quote(a) for a in argv_no_image)
+    parts.append(f'exec {quoted_no_image} "$@" {shlex.quote(image)}')
+    return "\n".join(parts)
+
+
+def docker_dev_from_config(cfg):
+    """Adapter: read a manifest `[docker_dev]` table and call
+    `run_with_reload` with the rendered docker build+run command. Honors
+    `pre_kill = true` by invoking the project's `cmd_kill` first.
+
+    Returns the exit code from `run_with_reload`.
+    """
+    if not cfg:
+        err("docker_dev_from_config: empty config")
+        return 1
+
+    # Pre-create bind-mount host dirs that opted into mkdir. Skips
+    # absolute paths (those belong to system state, not project state).
+    for m in cfg.get("bind_mounts") or ():
+        host = m.get("host")
+        if host and not host.startswith("/") and m.get("mkdir", True):
+            os.makedirs(host, exist_ok=True)
+
+    if cfg.get("pre_kill"):
+        # cmd_kill is generated when the project has a kill command. We
+        # look it up via the caller's globals — see render_docker_dev.
+        kill = cfg.get("_pre_kill_callable")
+        if callable(kill):
+            kill([])
+
+    try:
+        cmd = _docker_dev_build_cmd(cfg)
+    except ValueError as e:
+        err(f"docker_dev: {e}")
+        return 1
+
+    target = cfg.get("target", "dev")
+    return run_with_reload(cmd, target=target)
+
+
 def docker_deploy(image, host, run_args=""):
     """Build, transfer, and restart a Docker container on a remote host.
 
