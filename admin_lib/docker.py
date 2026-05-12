@@ -390,6 +390,7 @@ def _docker_dev_build_cmd(cfg):
     if not image:
         raise ValueError("docker_dev: 'image_tag' is required")
     context = cfg.get("build_context", ".")
+    target = cfg.get("target")
 
     # Build phase — docker layer caching keeps this near-instant when
     # nothing changed.
@@ -400,8 +401,14 @@ def _docker_dev_build_cmd(cfg):
     # BuildKit streams line-buffered progress that survives the pipe and
     # threads cleanly through the column formatter — without these,
     # `./admin dev` looks frozen for 10+ minutes during a cold rebuild.
+    #
+    # `target` selects a specific multi-stage stage (e.g. a dedicated
+    # `FROM ... AS dev` block that installs frontend dev-deps and runs
+    # bun + vite in watch mode) so the same Dockerfile can serve both
+    # prod and dev iteration without forking the file.
+    target_flag = f" --target={shlex.quote(target)}" if target else ""
     build_cmd = (
-        f"DOCKER_BUILDKIT=1 docker build --progress=plain "
+        f"DOCKER_BUILDKIT=1 docker build --progress=plain{target_flag} "
         f"-t {shlex.quote(image)} {shlex.quote(context)}"
     )
 
@@ -452,6 +459,21 @@ def _docker_dev_build_cmd(cfg):
             continue
         flag = f"{host}:{container}" if host != container else host
         run_argv += ["--device", flag]
+
+    # Anonymous volumes — pinned to specific in-container paths with no
+    # host source. Used to mask a subtree of a bind mount so the value
+    # baked into the image wins over what the host has.
+    #
+    # Canonical use case: bind-mount the project root to /app for live
+    # source editing, then mask /app/node_modules + /app/web/node_modules
+    # so the container's `bun install` results aren't clobbered by an
+    # empty (or wrong-platform) host node_modules. Without this, dev hot
+    # reload through volume mounts is unworkable on cross-platform setups.
+    for p in cfg.get("anonymous_volumes") or ():
+        path = p if isinstance(p, str) else p.get("path")
+        if not path:
+            continue
+        run_argv += ["-v", path]
 
     # Optional mounts gated on env vars. We can't expand env vars at
     # render time (would bake host-specific paths into the shell string
