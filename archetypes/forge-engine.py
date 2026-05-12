@@ -16,40 +16,72 @@ Mental model:
 
 _DISCOVER_PY = '''
 import re as _re
+import tomllib as _tomllib
+import glob as _glob
+
 samples_root = os.path.join(os.getcwd(), "sample-games")
-_games = []  # list of (folder_name, display_name)
+# Each entry: (folder_name, display_name, kind)  kind = "game" | "workspace"
+_games = []
 if os.path.isdir(samples_root):
     for _name in sorted(os.listdir(samples_root)):
-        if os.path.isfile(os.path.join(samples_root, _name, "main.lua")):
-            _m = _re.match(r"^\\d+-(.+)$", _name)
-            _display = _m.group(1) if _m else _name
-            _games.append((_name, _display))
+        _sample_path = os.path.join(samples_root, _name)
+        if os.path.isfile(os.path.join(_sample_path, "main.lua")):
+            _kind = "game"
+        elif os.path.isfile(os.path.join(_sample_path, "forge.workspace.toml")):
+            _kind = "workspace"
+        else:
+            continue
+        _m = _re.match(r"^\\d+-(.+)$", _name)
+        _games.append((_name, _m.group(1) if _m else _name, _kind))
 
 def _pick_sample(action):
     if not _games:
-        err("no sample games found (sample-games/*/main.lua)")
+        err("no sample games found (sample-games/*/main.lua or forge.workspace.toml)")
         info("create one, e.g. sample-games/mygame/main.lua")
         sys.exit(1)
+    _kinds = {f: k for f, _, k in _games}
     if args:
-        _match = next((f for f, d in _games if d == args[0] or f == args[0]), None)
+        _match = next((f for f, d, _k in _games if d == args[0] or f == args[0]), None)
         if _match is None:
             err("unknown sample: " + args[0])
-            info("available: " + ", ".join(d for _, d in _games))
+            info("available: " + ", ".join(d for _, d, _k in _games))
             sys.exit(1)
-        return _match
+        return _match, _kinds[_match]
     if len(_games) == 1:
-        return _games[0][0]
+        return _games[0][0], _games[0][2]
     from collections import OrderedDict
-    choice = pick_target(OrderedDict((f, d) for f, d in _games), action + " — select sample game")
+    choice = pick_target(
+        OrderedDict((f, d + ("  [workspace]" if k == "workspace" else "")) for f, d, k in _games),
+        action + " — select sample game",
+    )
     if not choice:
         sys.exit(0)
-    return choice
+    return choice, _kinds[choice]
+
+def _workspace_projects(folder_name):
+    """Return list of project dirs (relative to repo root) from forge.workspace.toml."""
+    ws_path = os.path.join(samples_root, folder_name, "forge.workspace.toml")
+    try:
+        with open(ws_path, "rb") as _f:
+            _ws = _tomllib.load(_f)
+        _proj_dirs = []
+        for _pg in _ws.get("projects", []):
+            _base = os.path.join(samples_root, folder_name, _pg)
+            for _match in sorted(_glob.glob(_base)):
+                if os.path.isfile(os.path.join(_match, "main.lua")):
+                    _proj_dirs.append(os.path.relpath(_match, os.getcwd()))
+        return _proj_dirs
+    except Exception as _e:
+        err("could not parse forge.workspace.toml: " + str(_e))
+        return []
 '''
 
 _DEV_PY = _DISCOVER_PY + '''
 import shlex
+import subprocess as _subprocess
+import threading as _threading
 
-game = _pick_sample("dev")
+game, kind = _pick_sample("dev")
 
 binary = "engine/zig-out/bin/forge"
 if not os.path.isfile(binary):
@@ -59,12 +91,50 @@ if not os.path.isfile(binary):
         err("build failed")
         sys.exit(rc)
 
-project_dir = os.path.join("sample-games", game)
-# Quote in case a sample directory name contains shell metacharacters.
-cmd = shlex.quote(binary) + " " + shlex.quote(project_dir)
-info("running: " + cmd)
-rc = run_cmd(cmd)
-sys.exit(rc)
+if kind != "workspace":
+    project_dir = os.path.join("sample-games", game)
+    cmd = shlex.quote(binary) + " " + shlex.quote(project_dir)
+    info("running: " + cmd)
+    sys.exit(run_cmd(cmd))
+
+project_dirs = _workspace_projects(game)
+if not project_dirs:
+    err("workspace has no launchable projects (need main.lua in each project dir)")
+    sys.exit(1)
+info("launching workspace \\"" + game + "\\" — " + str(len(project_dirs)) + " projects")
+for _pd in project_dirs:
+    info("  " + _pd)
+_log_fh = open(LOG_FILE, "a") if LOG_FILE and LOG_CONFIG.get("enabled") is not False else None
+_log_lock = _threading.Lock()
+def _pump(proc, tag):
+    for line in proc.stdout:
+        out = "[" + tag + "] " + line
+        sys.stdout.write(out)
+        sys.stdout.flush()
+        if _log_fh:
+            with _log_lock:
+                _log_fh.write(out)
+                _log_fh.flush()
+procs = [
+    _subprocess.Popen([binary, _pd], stdout=_subprocess.PIPE, stderr=_subprocess.STDOUT,
+                      bufsize=1, universal_newlines=True)
+    for _pd in project_dirs
+]
+threads = [_threading.Thread(target=_pump, args=(p, os.path.basename(d)), daemon=True)
+           for p, d in zip(procs, project_dirs)]
+for _t in threads:
+    _t.start()
+try:
+    rcs = [p.wait() for p in procs]
+except KeyboardInterrupt:
+    for _p in procs:
+        _p.terminate()
+    rcs = [p.wait() for p in procs]
+for _t in threads:
+    _t.join()
+if _log_fh:
+    _log_fh.close()
+sys.exit(max(rcs))
 '''
 
 _BUILD_PY = '''
