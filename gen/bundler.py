@@ -26,6 +26,31 @@ _STRIP_RELATIVE_IMPORT_RE = re.compile(
 )
 
 
+def _check_module_alias_imports(src: str, module_name: str) -> None:
+    """Reject `from . import X` / `from . import X as Y` patterns.
+
+    The bundler inlines module *contents* into a flat namespace, but the
+    module *objects themselves* do not survive. So `from . import docker as _d`
+    followed by `_d.foo` would silently become `pass` and then NameError at
+    runtime. `from .docker import foo` is fine — that name gets inlined.
+    """
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level >= 1 and node.module is None:
+            names = ", ".join(
+                a.name + (f" as {a.asname}" if a.asname else "") for a in node.names
+            )
+            raise BundlerError(
+                f"admin_lib.{module_name}:{node.lineno}: "
+                f"`from . import {names}` cannot be bundled — module objects "
+                f"do not survive flat-namespace inlining. Use "
+                f"`from .<mod> import <name>` instead."
+            )
+
+
 def inline_admin_lib(admin_lib_dir: Path, modules: list[str]) -> str:
     """Return a Python string containing the concatenated admin_lib modules.
 
@@ -40,6 +65,7 @@ def inline_admin_lib(admin_lib_dir: Path, modules: list[str]) -> str:
         if not src_path.exists():
             raise BundlerError(f"admin_lib module not found: {src_path}")
         src = src_path.read_text()
+        _check_module_alias_imports(src, name)
         # All relative imports become `pass` (or get deleted at module level)
         # because bundled modules share a single flat namespace — the imported
         # names are already available. At module scope no statement is required,

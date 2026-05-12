@@ -14,11 +14,52 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from gen.bundler import strip_unreachable  # noqa: E402
+import tempfile
+
+from gen.bundler import BundlerError, inline_admin_lib, strip_unreachable  # noqa: E402
 
 
 def _strip(src: str):
     return strip_unreachable(textwrap.dedent(src))
+
+
+def _assert_raises_bundler_error(callable_, match: str):
+    try:
+        callable_()
+    except BundlerError as e:
+        assert match in str(e), f"expected {match!r} in {e!r}"
+        return
+    raise AssertionError(f"expected BundlerError matching {match!r}")
+
+
+def test_rejects_from_dot_import_module():
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        (d / "foo.py").write_text("from . import docker\n")
+        (d / "docker.py").write_text("x = 1\n")
+        _assert_raises_bundler_error(
+            lambda: inline_admin_lib(d, ["foo"]),
+            "from . import docker",
+        )
+
+
+def test_rejects_from_dot_import_module_as_alias():
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        (d / "foo.py").write_text("from . import docker as _d\n_d.thing()\n")
+        (d / "docker.py").write_text("def thing():\n    pass\n")
+        _assert_raises_bundler_error(
+            lambda: inline_admin_lib(d, ["foo"]),
+            "docker as _d",
+        )
+
+
+def test_allows_from_dot_module_import_name():
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        (d / "foo.py").write_text("from .docker import thing\n")
+        (d / "docker.py").write_text("def thing():\n    pass\n")
+        inline_admin_lib(d, ["foo", "docker"])
 
 
 def test_drops_unreferenced_function():

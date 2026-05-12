@@ -1,6 +1,6 @@
 project_name    = "admin-project-tool"
 python_min      = "3.11"
-generator_commit = "ad6412be5ade763be3a9e67004f933efaab6b407+dirty"
+generator_commit = "8718deee596335eb1db8d036b5486c9eb7ea2033+dirty"
 archetypes      = []
 modules         = ["core"]
 
@@ -49,6 +49,7 @@ scripts = [
     ("python3", "tests/test_logtail.py"),
     ("python3", "tests/test_apple.py"),
     ("python3", "tests/test_ports.py"),
+    ("python3", "tests/test_bundler.py"),
     ("bash",    "tests/test_install.sh"),
 ]
 failed = []
