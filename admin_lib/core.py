@@ -556,7 +556,7 @@ def run_cmd(cmd, shell=True, capture_log=True, formatter=None, pty=False):
             sys.stdout.write(display)
             sys.stdout.flush()
             if log_fh:
-                log_fh.write(line)
+                log_fh.write(_ANSI_ESCAPE_RE.sub("", line))
                 log_fh.flush()
     finally:
         proc.wait()

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# @bundled admin_lib=2.0.0-dev stripped=6 sha=12710faf9536 modules=core generator_commit=dcf8532742fae015d1ac18068f9ab18f36937a21+dirty
+# @bundled admin_lib=2.0.0-dev stripped=6 sha=872bf6bf11b8 modules=core generator_commit=ad6412be5ade763be3a9e67004f933efaab6b407+dirty
 # Generated from admin.toml by admin-project-tool.
 # Regenerate: admin regenerate
 """admin — task runner for admin-project-tool."""
@@ -534,7 +534,7 @@ def run_cmd(cmd, shell=True, capture_log=True, formatter=None, pty=False):
             sys.stdout.write(display)
             sys.stdout.flush()
             if log_fh:
-                log_fh.write(line)
+                log_fh.write(_ANSI_ESCAPE_RE.sub("", line))
                 log_fh.flush()
     finally:
         proc.wait()
@@ -1030,7 +1030,7 @@ def register_builtin_logs_command():
         _cmd_logs_impl(args)
 
 # === project: admin-project-tool ===
-set_generator_commit("dcf8532742fae015d1ac18068f9ab18f36937a21+dirty")
+set_generator_commit("ad6412be5ade763be3a9e67004f933efaab6b407+dirty")
 
 def _act_build(args):
     info("running: python3 ./admin-gen --regenerate . --force-dirty && python3 ./admin-gen --audit . --force-dirty")
