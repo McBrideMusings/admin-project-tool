@@ -440,6 +440,19 @@ def _docker_dev_build_cmd(cfg):
         flag = f"{host_resolved}:{container}" + (f":{mode}" if mode else "")
         run_argv += ["-v", flag]
 
+    # `--device` flags. These differ from bind mounts: the kernel registers
+    # the device with the container's cgroup so it's actually usable, not
+    # just visible. Required for GPU/VAAPI passthrough (`-v /dev/dri`
+    # alone doesn't work). Stash, Plex, ersatztv on this daemon all use
+    # this exact pattern for Intel iGPU access.
+    for d in cfg.get("devices") or ():
+        host = d.get("host")
+        container = d.get("container", host)
+        if not host:
+            continue
+        flag = f"{host}:{container}" if host != container else host
+        run_argv += ["--device", flag]
+
     # Optional mounts gated on env vars. We can't expand env vars at
     # render time (would bake host-specific paths into the shell string
     # and freeze them for the loop's lifetime), so we emit shell
