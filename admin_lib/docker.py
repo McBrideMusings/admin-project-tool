@@ -391,6 +391,14 @@ def _docker_dev_build_cmd(cfg):
         raise ValueError("docker_dev: 'image_tag' is required")
     context = cfg.get("build_context", ".")
     target = cfg.get("target")
+    # When the Docker daemon runs on a different host than where admin
+    # runs (e.g. code-server mounting Unraid's docker.sock), `os.getcwd()`
+    # returns a path the daemon can't see. `host_root` overrides that
+    # base for resolving relative bind-mount paths: callers point it at
+    # the daemon-visible path of the project root (e.g. an Unraid share
+    # path) and the rest of the config stays portable. Unset → original
+    # cwd-based resolution.
+    host_root = cfg.get("host_root") or os.getcwd()
 
     # Build phase — docker layer caching keeps this near-instant when
     # nothing changed.
@@ -440,10 +448,10 @@ def _docker_dev_build_cmd(cfg):
         if not host or not container:
             continue
         mode = m.get("mode")
-        # Resolve relative paths against the caller's cwd at render time
+        # Resolve relative paths against `host_root` (defaults to cwd)
         # so the resulting shell command has no $(pwd) substitutions to
         # mess with — `shlex.quote` can wrap the whole flag cleanly.
-        host_resolved = host if os.path.isabs(host) else os.path.abspath(host)
+        host_resolved = host if os.path.isabs(host) else os.path.normpath(os.path.join(host_root, host))
         flag = f"{host_resolved}:{container}" + (f":{mode}" if mode else "")
         run_argv += ["-v", flag]
 
