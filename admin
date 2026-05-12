@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# @bundled admin_lib=2.0.0-dev stripped=6 sha=35ed9a07a670 modules=core generator_commit=3771171250c19745bae891917b6c35ae79793fec+dirty
+# @bundled admin_lib=2.0.0-dev stripped=6 sha=12710faf9536 modules=core generator_commit=dcf8532742fae015d1ac18068f9ab18f36937a21+dirty
 # Generated from admin.toml by admin-project-tool.
 # Regenerate: admin regenerate
 """admin — task runner for admin-project-tool."""
@@ -429,17 +429,99 @@ def cmd_env(args):
             print(f"{indent}{C.DIM}full used_by: {', '.join(used_by)}{C.RESET}")
 
 
-def run_cmd(cmd, shell=True, capture_log=True, formatter=None):
+_ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+
+def _run_cmd_pty(cmd, log_fh, formatter):
+    """Run cmd inside a pseudo-TTY so isatty() checks pass (e.g. wrangler dev).
+
+    Output is displayed to the terminal with ANSI codes intact; the log file
+    receives the same text with escape sequences stripped.
+    """
+    import pty
+    import select
+
+    master_fd, slave_fd = pty.openpty()
+    proc = subprocess.Popen(
+        cmd, shell=True,
+        stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
+        close_fds=True,
+    )
+    os.close(slave_fd)
+    _children.append(proc)
+
+    buf = b""
+    try:
+        while True:
+            try:
+                r, _, _ = select.select([master_fd], [], [], 0.05)
+            except (OSError, ValueError):
+                break
+            if r:
+                try:
+                    data = os.read(master_fd, 4096)
+                except OSError:
+                    break
+                buf += data
+                while b"\n" in buf:
+                    raw_line, buf = buf.split(b"\n", 1)
+                    line = raw_line.rstrip(b"\r").decode("utf-8", errors="replace") + "\n"
+                    sys.stdout.write(formatter(line) if formatter else line)
+                    sys.stdout.flush()
+                    if log_fh:
+                        log_fh.write(_ANSI_ESCAPE_RE.sub("", line))
+                        log_fh.flush()
+            if proc.poll() is not None:
+                try:
+                    while True:
+                        r, _, _ = select.select([master_fd], [], [], 0.05)
+                        if not r:
+                            break
+                        data = os.read(master_fd, 4096)
+                        if not data:
+                            break
+                        buf += data
+                except OSError:
+                    pass
+                break
+    finally:
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
+        proc.wait()
+        if proc in _children:
+            _children.remove(proc)
+        if buf:
+            line = buf.rstrip(b"\r").decode("utf-8", errors="replace")
+            sys.stdout.write(formatter(line) if formatter else line)
+            sys.stdout.flush()
+            if log_fh:
+                log_fh.write(_ANSI_ESCAPE_RE.sub("", line))
+
+    return proc.returncode
+
+
+def run_cmd(cmd, shell=True, capture_log=True, formatter=None, pty=False):
     """Run a command with line-buffered output, tee to tmp/run.log if capture_log is True.
 
     Strings are passed through resolve_env() first so ${VAR} and ${VAR:-default}
     placeholders are expanded from os.environ at execution time.
+
+    If pty=True, the command runs in a pseudo-TTY so programs that check isatty()
+    (e.g. wrangler dev) output Worker logs as if run interactively.
     """
     cmd = resolve_env(cmd)
     os.makedirs(LOG_DIR, exist_ok=True)
     log_fh = None
     if capture_log and LOG_CONFIG.get("enabled") is not False and LOG_FILE:
         log_fh = open(LOG_FILE, "a")
+
+    if pty:
+        rc = _run_cmd_pty(cmd, log_fh, formatter)
+        if log_fh:
+            log_fh.close()
+        return rc
 
     proc = subprocess.Popen(
         cmd, shell=shell, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -842,46 +924,53 @@ def boot(project_name, load_dotenv=True):
     _load_dotenv(project_root)
     _resolve_pending_urls()
 
-    if len(sys.argv) < 2:
-        _tui_menu()
-        return
+    # Top-level KeyboardInterrupt guard so shell/http/python commands that
+    # don't go through run_with_reload exit 130 cleanly instead of dumping a
+    # traceback. run_with_reload keeps its own inner handler for signal
+    # restoration and pidfile cleanup before bubbling up here.
+    try:
+        if len(sys.argv) < 2:
+            _tui_menu()
+            return
 
-    cmd_name = sys.argv[1]
-    if cmd_name in ("-h", "--help", "help"):
-        _print_help()
-        return
+        cmd_name = sys.argv[1]
+        if cmd_name in ("-h", "--help", "help"):
+            _print_help()
+            return
 
-    if cmd_name == "env":
-        cmd_env(sys.argv[2:])
-        return
+        if cmd_name == "env":
+            cmd_env(sys.argv[2:])
+            return
 
-    if cmd_name in ("regenerate", "regen"):
-        admin_gen = os.path.expanduser("~/.admin/admin-gen")
-        if not os.path.isfile(admin_gen):
-            admin_gen_fallback = os.path.expanduser("~/.admin/init-admin")
-            if os.path.isfile(admin_gen_fallback):
-                warn("admin-gen not found — falling back to init-admin (reinstall admin-project-tool to upgrade)")
-                admin_gen = admin_gen_fallback
-            else:
-                err("admin-gen not found at ~/.admin/ — is admin-project-tool installed?")
-                sys.exit(1)
-        sys.exit(subprocess.call([admin_gen, "--regenerate", _project_root] + sys.argv[2:]))
+        if cmd_name in ("regenerate", "regen"):
+            admin_gen = os.path.expanduser("~/.admin/admin-gen")
+            if not os.path.isfile(admin_gen):
+                admin_gen_fallback = os.path.expanduser("~/.admin/init-admin")
+                if os.path.isfile(admin_gen_fallback):
+                    warn("admin-gen not found — falling back to init-admin (reinstall admin-project-tool to upgrade)")
+                    admin_gen = admin_gen_fallback
+                else:
+                    err("admin-gen not found at ~/.admin/ — is admin-project-tool installed?")
+                    sys.exit(1)
+            sys.exit(subprocess.call([admin_gen, "--regenerate", _project_root] + sys.argv[2:]))
 
-    all_cmds = _all_commands()
-    if cmd_name not in all_cmds:
-        err(f"Unknown command: {cmd_name}")
-        _print_help()
-        sys.exit(1)
+        all_cmds = _all_commands()
+        if cmd_name not in all_cmds:
+            err(f"Unknown command: {cmd_name}")
+            _print_help()
+            sys.exit(1)
 
-    args = sys.argv[2:]
+        args = sys.argv[2:]
 
-    # Check for subcommand help
-    if ("-h" in args or "--help" in args) and cmd_name in _subcommand_help:
-        _subcommand_help[cmd_name]()
-        return
+        # Check for subcommand help
+        if ("-h" in args or "--help" in args) and cmd_name in _subcommand_help:
+            _subcommand_help[cmd_name]()
+            return
 
-    all_cmds[cmd_name]["func"](args)
-    _announce_log_end()
+        all_cmds[cmd_name]["func"](args)
+        _announce_log_end()
+    except KeyboardInterrupt:
+        sys.exit(130)
 
 
 # Built-in logs command
@@ -941,7 +1030,7 @@ def register_builtin_logs_command():
         _cmd_logs_impl(args)
 
 # === project: admin-project-tool ===
-set_generator_commit("3771171250c19745bae891917b6c35ae79793fec+dirty")
+set_generator_commit("dcf8532742fae015d1ac18068f9ab18f36937a21+dirty")
 
 def _act_build(args):
     info("running: python3 ./admin-gen --regenerate . --force-dirty && python3 ./admin-gen --audit . --force-dirty")

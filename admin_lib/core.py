@@ -1016,46 +1016,53 @@ def boot(project_name, load_dotenv=True):
     _load_dotenv(project_root)
     _resolve_pending_urls()
 
-    if len(sys.argv) < 2:
-        _tui_menu()
-        return
+    # Top-level KeyboardInterrupt guard so shell/http/python commands that
+    # don't go through run_with_reload exit 130 cleanly instead of dumping a
+    # traceback. run_with_reload keeps its own inner handler for signal
+    # restoration and pidfile cleanup before bubbling up here.
+    try:
+        if len(sys.argv) < 2:
+            _tui_menu()
+            return
 
-    cmd_name = sys.argv[1]
-    if cmd_name in ("-h", "--help", "help"):
-        _print_help()
-        return
+        cmd_name = sys.argv[1]
+        if cmd_name in ("-h", "--help", "help"):
+            _print_help()
+            return
 
-    if cmd_name == "env":
-        cmd_env(sys.argv[2:])
-        return
+        if cmd_name == "env":
+            cmd_env(sys.argv[2:])
+            return
 
-    if cmd_name in ("regenerate", "regen"):
-        admin_gen = os.path.expanduser("~/.admin/admin-gen")
-        if not os.path.isfile(admin_gen):
-            admin_gen_fallback = os.path.expanduser("~/.admin/init-admin")
-            if os.path.isfile(admin_gen_fallback):
-                warn("admin-gen not found — falling back to init-admin (reinstall admin-project-tool to upgrade)")
-                admin_gen = admin_gen_fallback
-            else:
-                err("admin-gen not found at ~/.admin/ — is admin-project-tool installed?")
-                sys.exit(1)
-        sys.exit(subprocess.call([admin_gen, "--regenerate", _project_root] + sys.argv[2:]))
+        if cmd_name in ("regenerate", "regen"):
+            admin_gen = os.path.expanduser("~/.admin/admin-gen")
+            if not os.path.isfile(admin_gen):
+                admin_gen_fallback = os.path.expanduser("~/.admin/init-admin")
+                if os.path.isfile(admin_gen_fallback):
+                    warn("admin-gen not found — falling back to init-admin (reinstall admin-project-tool to upgrade)")
+                    admin_gen = admin_gen_fallback
+                else:
+                    err("admin-gen not found at ~/.admin/ — is admin-project-tool installed?")
+                    sys.exit(1)
+            sys.exit(subprocess.call([admin_gen, "--regenerate", _project_root] + sys.argv[2:]))
 
-    all_cmds = _all_commands()
-    if cmd_name not in all_cmds:
-        err(f"Unknown command: {cmd_name}")
-        _print_help()
-        sys.exit(1)
+        all_cmds = _all_commands()
+        if cmd_name not in all_cmds:
+            err(f"Unknown command: {cmd_name}")
+            _print_help()
+            sys.exit(1)
 
-    args = sys.argv[2:]
+        args = sys.argv[2:]
 
-    # Check for subcommand help
-    if ("-h" in args or "--help" in args) and cmd_name in _subcommand_help:
-        _subcommand_help[cmd_name]()
-        return
+        # Check for subcommand help
+        if ("-h" in args or "--help" in args) and cmd_name in _subcommand_help:
+            _subcommand_help[cmd_name]()
+            return
 
-    all_cmds[cmd_name]["func"](args)
-    _announce_log_end()
+        all_cmds[cmd_name]["func"](args)
+        _announce_log_end()
+    except KeyboardInterrupt:
+        sys.exit(130)
 
 
 # ---------------------------------------------------------------------------
