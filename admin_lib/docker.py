@@ -393,7 +393,17 @@ def _docker_dev_build_cmd(cfg):
 
     # Build phase — docker layer caching keeps this near-instant when
     # nothing changed.
-    build_cmd = f"docker build -t {shlex.quote(image)} {shlex.quote(context)}"
+    #
+    # `DOCKER_BUILDKIT=1` and `--progress=plain` are non-negotiable: the
+    # legacy builder suppresses per-step output when stdout isn't a TTY
+    # (which it never is inside run_with_reload, since stdout is a pipe).
+    # BuildKit streams line-buffered progress that survives the pipe and
+    # threads cleanly through the column formatter — without these,
+    # `./admin dev` looks frozen for 10+ minutes during a cold rebuild.
+    build_cmd = (
+        f"DOCKER_BUILDKIT=1 docker build --progress=plain "
+        f"-t {shlex.quote(image)} {shlex.quote(context)}"
+    )
 
     # Run phase — assemble argv up to the trailing "$@" / image splice.
     run_argv = ["docker", "run", "--rm"]
