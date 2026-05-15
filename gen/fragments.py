@@ -559,6 +559,29 @@ def render_docker_dev(cmd: Command) -> str:
     return body
 
 
+def render_interactive_shell(cmd: Command) -> str:
+    """A long-running shell wrapped in run_with_keybindings.
+
+    The wrapped process keeps running; configured keypresses side-fire commands
+    (inline shell snippets, named actions, or signals to PID files).
+    """
+    if not cmd.run:
+        raise FragmentError(f"interactive-shell command '{cmd.name}' needs 'run'")
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    keys_literal = _dict_literal(cmd.keys)
+    body = textwrap.dedent(f'''\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            info({_pyrepr(f"running: {cmd.run}")})
+            rc = run_with_keybindings({_pyrepr(cmd.run)}, {keys_literal}, label={_pyrepr(cmd.name)})
+            if rc not in (0, 130):
+                err({_pyrepr(cmd.name + " failed")})
+                sys.exit(rc)
+            ok({_pyrepr(cmd.name + " complete")})
+    ''')
+    return body
+
+
 _ACTION_RENDERERS = {
     "shell": render_shell,
     "shell-passthrough": render_shell_passthrough,
@@ -566,6 +589,7 @@ _ACTION_RENDERERS = {
     "apple-dev-loop": render_apple_dev_loop,
     "docker-reload-loop": render_docker_reload_loop,
     "docker-dev": render_docker_dev,
+    "interactive-shell": render_interactive_shell,
     "python": render_python,
     "python-script": render_python_script,
     "http": render_http,
@@ -600,6 +624,7 @@ KIND_MODULES: dict[str, list[str]] = {
     "docker-dev": ["docker"],
     "server-reload": ["docker"],
     "install-template": ["remote", "unraid"],
+    "interactive-shell": ["keybindings"],
 }
 
 
@@ -614,6 +639,27 @@ def _pyrepr(s: str) -> str:
         inner = r[1:-1].replace("\\'", "'").replace('"', '\\"')
         return '"' + inner + '"'
     return r
+
+
+def _dict_literal(value) -> str:
+    """Render a nested dict/list/string/bool/int/None as a Python literal.
+
+    Strings use double quotes via _pyrepr. Used by renderers that need to emit
+    a dict directly into the generated source (e.g. the keybinding map).
+    """
+    if value is None or isinstance(value, bool):
+        return repr(value)
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, str):
+        return _pyrepr(value)
+    if isinstance(value, dict):
+        parts = [f"{_pyrepr(str(k))}: {_dict_literal(v)}" for k, v in value.items()]
+        return "{" + ", ".join(parts) + "}"
+    if isinstance(value, (list, tuple)):
+        parts = [_dict_literal(v) for v in value]
+        return "[" + ", ".join(parts) + "]"
+    raise FragmentError(f"cannot serialize to python literal: {type(value).__name__}")
 
 
 def _scan_for_env_vars(

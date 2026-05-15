@@ -23,7 +23,7 @@ _KNOWN_KEYS = {
 }
 
 VALID_COMMAND_KEYS = {"desc", "steps", "log_file", "log_retain", "log", "group", "priority", "env"}
-VALID_ACTION_KEYS = {"run", "desc", "kind", "targets", "method", "body", "src", "log_file", "log_retain", "log", "interactive"}
+VALID_ACTION_KEYS = {"run", "desc", "kind", "targets", "method", "body", "src", "log_file", "log_retain", "log", "interactive", "keys"}
 
 
 @dataclass
@@ -32,12 +32,13 @@ class Command:
     name: str
     run: str                       # shell string (may contain ${VAR}); "" for sequence/http kinds
     desc: str
-    kind: str = "shell"            # shell | multi-target | apple-dev-loop | docker-reload-loop | python | http | sequence
+    kind: str = "shell"            # shell | multi-target | apple-dev-loop | docker-reload-loop | interactive-shell | python | http | sequence
     source: str = "manifest"       # which archetype contributed it (or "manifest")
     targets: dict = field(default_factory=dict)  # target name -> shell string (for multi-target kinds)
     meta: dict = field(default_factory=dict)     # kind-specific extras: {steps} for sequence, {method, body} for http
     group: int = 0                 # display group; commands with different groups get automatic spacers between them
     priority: int = 0              # sort order within a group; ties broken alphabetically
+    keys: dict = field(default_factory=dict)     # interactive-shell: keychar -> {label?, run|action|signal+pid_file}
 
 
 SPACER = ""  # sentinel used inside Manifest.order to denote a spacer row

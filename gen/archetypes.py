@@ -46,6 +46,72 @@ _GP_SUBTABLE_HINT = (
 )
 
 
+_VALID_KEY_BINDING_FIELDS = {"label", "run", "action", "signal", "pid_file"}
+
+
+def _parse_keys(raw, error_prefix: str) -> dict[str, dict]:
+    """Validate the `keys` table on an action and return a normalized copy.
+
+    Each entry must be a single-char key mapped to a dict with exactly one of
+    `run`, `action`, or `signal` (+ `pid_file`). `label` is optional.
+    """
+    if not isinstance(raw, dict):
+        raise ArchetypeError(f"{error_prefix}: 'keys' must be a table")
+    out: dict[str, dict] = {}
+    for keychar, binding in raw.items():
+        if not isinstance(keychar, str) or len(keychar) != 1:
+            raise ArchetypeError(
+                f"{error_prefix}: key '{keychar}' must be a single character"
+            )
+        if keychar in ("\x03", "\x04"):
+            raise ArchetypeError(
+                f"{error_prefix}: key '{keychar!r}' is reserved (Ctrl-C / Ctrl-D)"
+            )
+        if not isinstance(binding, dict):
+            raise ArchetypeError(
+                f"{error_prefix}: keys.{keychar} must be a table"
+            )
+        unknown = set(binding) - _VALID_KEY_BINDING_FIELDS
+        if unknown:
+            raise ArchetypeError(
+                f"{error_prefix}: keys.{keychar} has unknown fields {sorted(unknown)}, "
+                f"valid: {sorted(_VALID_KEY_BINDING_FIELDS)}"
+            )
+        targets_set = {f for f in ("run", "action", "signal") if f in binding}
+        if not targets_set:
+            raise ArchetypeError(
+                f"{error_prefix}: keys.{keychar} must have one of 'run', 'action', or 'signal'"
+            )
+        if len(targets_set) > 1:
+            raise ArchetypeError(
+                f"{error_prefix}: keys.{keychar} has conflicting targets {sorted(targets_set)} — pick one"
+            )
+        if "signal" in binding and "pid_file" not in binding:
+            raise ArchetypeError(
+                f"{error_prefix}: keys.{keychar} has 'signal' but no 'pid_file'"
+            )
+        if "pid_file" in binding and "signal" not in binding:
+            raise ArchetypeError(
+                f"{error_prefix}: keys.{keychar} has 'pid_file' but no 'signal'"
+            )
+        for f in ("label", "run", "signal", "pid_file"):
+            if f in binding and not isinstance(binding[f], str):
+                raise ArchetypeError(
+                    f"{error_prefix}: keys.{keychar}.{f} must be a string"
+                )
+        if "action" in binding:
+            if not isinstance(binding["action"], str):
+                raise ArchetypeError(
+                    f"{error_prefix}: keys.{keychar}.action must be a string"
+                )
+        normalized = dict(binding)
+        if "action" in normalized:
+            ref = normalized["action"]
+            normalized["action"] = ref[1:] if ref.startswith("@") else ref
+        out[keychar] = normalized
+    return out
+
+
 def _validate_gp_ints(data: dict, error_prefix: str) -> None:
     """Raise ArchetypeError if 'group' or 'priority' in data is not a plain int."""
     for key in ("group", "priority"):
@@ -268,6 +334,16 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
                             f"Known actions: {sorted(actions)}"
                         )
 
+    # Validate `action = "@name"` keybindings reference known actions.
+    for action_name, action in actions.items():
+        for keychar, binding in action.keys.items():
+            ref = binding.get("action")
+            if ref and ref not in actions:
+                raise ArchetypeError(
+                    f"action '{action_name}': keys.{keychar} references unknown action '{ref}'. "
+                    f"Known actions: {sorted(actions)}"
+                )
+
     # Pull in modules required by the action kinds in use (e.g. nuke-dev → ports_nuke).
     for action in actions.values():
         modules.update(KIND_MODULES.get(action.kind, ()))
@@ -348,8 +424,9 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
 
     # Detect reserved keys used as inline target names (dict value when a string
     # is expected means the user wrote [actions.X.run] intending "run" as a target).
+    # `targets` is the legitimate table-shape key; `keys` (binding map) is too.
     reserved_as_targets = {
-        k for k in (VALID_ACTION_KEYS - {"targets"})
+        k for k in (VALID_ACTION_KEYS - {"targets", "keys"})
         if isinstance(data.get(k), dict)
     }
     if reserved_as_targets:
@@ -433,10 +510,21 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
     elif kind == "npm":
         if "run" not in data:
             raise ArchetypeError(f"action '{name}' from {source}: npm kind requires 'run' (script name)")
+    elif kind == "interactive-shell":
+        if "run" not in data:
+            raise ArchetypeError(f"action '{name}' from {source}: interactive-shell requires 'run'")
     elif kind in CONFIGLESS_KINDS:
         pass
     elif "run" not in data and not targets:
         raise ArchetypeError(f"action '{name}' from {source}: missing 'run' or 'targets'")
+
+    parsed_keys: dict[str, dict] = {}
+    if "keys" in data:
+        if kind != "interactive-shell":
+            raise ArchetypeError(
+                f"action '{name}' from {source}: 'keys' is only valid on kind = \"interactive-shell\""
+            )
+        parsed_keys = _parse_keys(data["keys"], f"action '{name}' from {source}")
 
     return Command(
         name=name,
@@ -446,6 +534,7 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
         source=source,
         targets={str(k): str(v) for k, v in targets.items()},
         meta=meta,
+        keys=parsed_keys,
     )
 
 
@@ -455,7 +544,7 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
 _MODULE_ORDER = [
     "core", "cache", "icons", "remote", "ports", "ports_nuke", "cleanup",
     "apple", "rust",
-    "docker", "unraid", "web_dev",
+    "docker", "unraid", "web_dev", "keybindings",
     "log_format", "log_columns", "logtail",
     "install",
 ]

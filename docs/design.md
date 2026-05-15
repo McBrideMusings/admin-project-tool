@@ -128,6 +128,46 @@ If an action needs to call a library function with a config dict, and no existin
 
 Example: `kind = "apple"` renders `<run>(globals().get("_APPLE_CONFIG") or {})`. Any new config-backed function family (server, docker, etc.) follows the same pattern — add `kind = "server"` backed by `_SERVER_CONFIG`, etc.
 
+### `kind = "interactive-shell"` — long-running shell with keybindings
+
+A `kind = "shell"` action runs to completion and exits. `kind = "interactive-shell"` is the variant for long-lived processes (supervisors, dev loops, watchers) that should accept single-character keypresses to side-fire commands while the wrapped process keeps running. Each binding sits inline on the action under `keys.<keychar>`:
+
+```toml
+[actions.dev-local]
+kind = "interactive-shell"
+desc = "Bun (web+worker) + Vite on the host"
+run  = '''bash <<'__DEV_LOCAL_EOM__'
+# ... long-running supervisor; writes child PIDs to /tmp/*.pid ...
+__DEV_LOCAL_EOM__
+'''
+
+[actions.dev-local.keys.r]
+label    = "restart web"
+signal   = "TERM"
+pid_file = "/tmp/recodarr-main.pid"
+
+[actions.dev-local.keys.R]
+label    = "restart all"
+signal   = "INT"
+pid_file = "/tmp/recodarr-main.pid"
+
+[actions.dev-local.keys.v]
+label = "restart Vite"
+run   = '''kill -TERM "$(cat /tmp/recodarr-vite.pid)" 2>/dev/null || true'''
+```
+
+Each binding has exactly one target shape:
+
+- `run = "<shell snippet>"` — fire and forget in a subshell while the wrapped process keeps running.
+- `action = "<action-name>"` — invoke another `[actions.X]` by name. Cross-references are validated at generation time. A leading `@` is optional (`action = "@restart"` is equivalent to `action = "restart"`).
+- `signal = "TERM" | "INT" | "USR1" | …`, `pid_file = "<path>"` — read the PID file, send the signal. Stale/missing PID file warns and no-ops.
+
+Keys are case-sensitive single characters: `r` and `R` are distinct. Ctrl-C / Ctrl-D are reserved for exit. Ctrl/Alt combos are not in scope. The runtime prints a footer banner with the configured bindings on entry.
+
+**Distinction from `kind = "docker-reload-loop"`**: docker-reload-loop's `r` tears down and respawns the wrapped process. `interactive-shell` keeps the wrapper running and side-fires whatever the binding declares — useful when the wrapped script supervises its own children and only wants part of the tree cycled.
+
+**Archetype/manifest merging**: actions are whole-table replaced when both an archetype and the manifest declare the same `[actions.X]`. A project that wants to keep an archetype's `keys` but tweak one must re-declare them on the manifest side.
+
 ### `kind = "python"` is for complex action logic only
 
 Complex orchestration — ones that parse args, pick targets, branch on config presence, and dispatch to multiple paths — are legitimately expressed as `kind = "python"` **actions**. The apple archetype's `build`, `dev`, and `deploy` actions are the canonical examples: they handle `mac | ios | server` target selection, `--force`, `--log`, `--clean` flags, and multi-step orchestration.
