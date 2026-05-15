@@ -51,21 +51,72 @@ def _check_module_alias_imports(src: str, module_name: str) -> None:
             )
 
 
-def inline_admin_lib(admin_lib_dir: Path, modules: list[str]) -> str:
-    """Return a Python string containing the concatenated admin_lib modules.
+def _hoist_future_imports(src: str) -> tuple[set[str], str]:
+    """Extract `from __future__ import …` statements from a module's source.
 
-    Each module's source is wrapped with a `# === admin_lib.<name> ===` banner
-    for readability. Relative imports (`from .foo import ...`) are stripped.
-    The caller (render.py) is responsible for adding the shebang, header, and
-    project-specific code.
+    Returns (features, stripped_source). The caller is responsible for
+    emitting a single `from __future__ import <merged features>` line at
+    the top of the bundled output.
+
+    Without this hoist, a module that declares a future import lands
+    mid-file in the bundled admin script and Python rejects it with
+    `SyntaxError: from __future__ imports must occur at the beginning
+    of the file`.
+
+    Lines are removed by line-number range from the AST, so single-line,
+    comma-separated, and parenthesized multi-line forms all collapse
+    correctly. Modules that fail to parse pass through unchanged — the
+    eventual bundled output surfaces the syntax error in context rather
+    than hiding it.
+    """
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return set(), src
+    features: set[str] = set()
+    ranges: list[tuple[int, int]] = []
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+            for alias in node.names:
+                features.add(alias.name)
+            end = node.end_lineno or node.lineno
+            ranges.append((node.lineno, end))
+    if not ranges:
+        return set(), src
+    lines = src.splitlines(keepends=True)
+    keep = [True] * len(lines)
+    for start, end in ranges:
+        for i in range(start - 1, end):
+            if 0 <= i < len(keep):
+                keep[i] = False
+    stripped = "".join(line for line, k in zip(lines, keep) if k)
+    return features, stripped
+
+
+def inline_admin_lib(admin_lib_dir: Path, modules: list[str]) -> tuple[list[str], str]:
+    """Return (future_imports, bundled_source).
+
+    `bundled_source` is the concatenated admin_lib module sources with
+    `from __future__` imports hoisted out and relative imports stripped.
+    Each module is wrapped with a `# === admin_lib.<name> ===` banner.
+
+    `future_imports` is the sorted union of `__future__` features used
+    across all bundled modules. The caller (render.py) emits a single
+    `from __future__ import <features>` line at the top of the generated
+    admin script — after the shebang/marker/docstring, before any other
+    import — to keep Python's "future import must be at file head" rule
+    happy.
     """
     parts: list[str] = []
+    all_futures: set[str] = set()
     for name in modules:
         src_path = admin_lib_dir / f"{name}.py"
         if not src_path.exists():
             raise BundlerError(f"admin_lib module not found: {src_path}")
         src = src_path.read_text()
         _check_module_alias_imports(src, name)
+        futures, src = _hoist_future_imports(src)
+        all_futures |= futures
         # All relative imports become `pass` (or get deleted at module level)
         # because bundled modules share a single flat namespace — the imported
         # names are already available. At module scope no statement is required,
@@ -80,7 +131,7 @@ def inline_admin_lib(admin_lib_dir: Path, modules: list[str]) -> str:
             return f"{indent}pass\n"
         src = _STRIP_RELATIVE_IMPORT_RE.sub(_repl, src)
         parts.append(f"# === admin_lib.{name} ===\n{src.rstrip()}\n")
-    return "\n".join(parts)
+    return sorted(all_futures), "\n".join(parts)
 
 
 # Symbols that are entry points by virtue of how the runtime invokes them

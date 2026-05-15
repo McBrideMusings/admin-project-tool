@@ -62,6 +62,62 @@ def test_allows_from_dot_module_import_name():
         inline_admin_lib(d, ["foo", "docker"])
 
 
+def test_hoists_future_imports_out_of_module_body():
+    # A module that declares `from __future__ import annotations` lands
+    # mid-file in the bundled output, where Python rejects the future
+    # import. The bundler must hoist it so the caller can re-emit it at
+    # the very top of the final script.
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        (d / "foo.py").write_text(
+            "from __future__ import annotations\n"
+            "\n"
+            "def thing() -> str:\n"
+            "    return 'ok'\n"
+        )
+        futures, src = inline_admin_lib(d, ["foo"])
+        assert futures == ["annotations"]
+        assert "from __future__" not in src
+        assert "def thing" in src
+
+
+def test_merges_future_imports_across_modules():
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        (d / "a.py").write_text("from __future__ import annotations\nx = 1\n")
+        (d / "b.py").write_text(
+            "from __future__ import annotations, division\ny = 2\n"
+        )
+        futures, src = inline_admin_lib(d, ["a", "b"])
+        assert futures == ["annotations", "division"]
+        assert "from __future__" not in src
+
+
+def test_module_without_future_import_passes_through():
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        (d / "foo.py").write_text("x = 1\n")
+        futures, src = inline_admin_lib(d, ["foo"])
+        assert futures == []
+        assert "x = 1" in src
+
+
+def test_hoists_parenthesized_multiline_future_import():
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        (d / "foo.py").write_text(
+            "from __future__ import (\n"
+            "    annotations,\n"
+            "    division,\n"
+            ")\n"
+            "x = 1\n"
+        )
+        futures, src = inline_admin_lib(d, ["foo"])
+        assert futures == ["annotations", "division"]
+        assert "from __future__" not in src
+        assert "x = 1" in src
+
+
 def test_drops_unreferenced_function():
     src = """
         def used():

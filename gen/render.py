@@ -75,19 +75,28 @@ def render(
     lh = lib_hash(admin_lib_dir)
     modules_csv = ",".join(resolved.modules)
 
-    header = textwrap.dedent(f"""\
-        #!/usr/bin/env python3
-        {BUNDLED_MARKER} admin_lib={ADMIN_LIB_VERSION} sha={lh} modules={modules_csv} generator_commit={generator_commit}
-        # Generated from admin.toml by admin-project-tool.
-        # Regenerate: admin regenerate
-        \"\"\"admin — task runner for {m.project_name}.\"\"\"
-        import sys
-        if sys.version_info < tuple(int(x) for x in "{m.python_min}".split(".")):
-            sys.exit("admin requires Python {m.python_min}+")
-        import os
-        """)
+    # Bundle modules first so we know which __future__ features need to be
+    # hoisted into the header. Python requires `from __future__ import …`
+    # to appear before any other statement except the module docstring,
+    # so it has to slot in immediately after the `"""admin — …"""` line.
+    future_imports, lib_src = inline_admin_lib(admin_lib_dir, resolved.modules)
 
-    lib_src = inline_admin_lib(admin_lib_dir, resolved.modules)
+    header_lines = [
+        "#!/usr/bin/env python3",
+        f"{BUNDLED_MARKER} admin_lib={ADMIN_LIB_VERSION} sha={lh} modules={modules_csv} generator_commit={generator_commit}",
+        "# Generated from admin.toml by admin-project-tool.",
+        "# Regenerate: admin regenerate",
+        f'"""admin — task runner for {m.project_name}."""',
+    ]
+    if future_imports:
+        header_lines.append(f"from __future__ import {', '.join(future_imports)}")
+    header_lines.extend([
+        "import sys",
+        f'if sys.version_info < tuple(int(x) for x in "{m.python_min}".split(".")):',
+        f'    sys.exit("admin requires Python {m.python_min}+")',
+        "import os",
+    ])
+    header = "\n".join(header_lines) + "\n"
 
     command_list = list(resolved.commands.values()) + list(resolved.actions.values())
     env_calls = collect_env_var_calls(
