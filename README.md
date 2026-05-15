@@ -1,6 +1,6 @@
 # admin-project-tool
 
-Generates and manages `./admin` task-runner scripts for projects. See `docs/design.md` for the full architecture.
+Generates and manages `./admin` task-runner scripts for projects. See `docs/architecture/design.md` for the full architecture.
 
 ## Installation
 
