@@ -4,3 +4,7 @@ tmp/
 .DS_Store
 .worktrees
 .claude/settings.local.json
+.claude/*.local.md
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+node_modules/
