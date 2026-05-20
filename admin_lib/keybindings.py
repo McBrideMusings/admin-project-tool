@@ -28,6 +28,7 @@ from .core import (
     warn,
     err,
 )
+from .log_bridge import start_log_bridge, stop_log_bridge
 
 
 def _safe_ident(name: str) -> str:
@@ -122,6 +123,7 @@ def run_with_keybindings(cmd, keys, *, label=None, formatter=None, shell=True):
     the wrapped process. Ctrl-C terminates the wrapped process and exits.
     """
     os.makedirs(LOG_DIR, exist_ok=True)
+    start_log_bridge(LOG_FILE)
     _user_exit = False
 
     def _on_sigint(signum, frame):
@@ -240,5 +242,6 @@ def run_with_keybindings(cmd, keys, *, label=None, formatter=None, shell=True):
         if proc in _children:
             _children.remove(proc)
         log_fh.close()
+        stop_log_bridge()
         signal.signal(signal.SIGINT, old_sigint)
         signal.signal(signal.SIGTERM, old_sigterm)
