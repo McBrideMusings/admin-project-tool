@@ -27,7 +27,7 @@ Generates per-project `./admin` task-runner scripts from a short `admin.toml` ma
 
 ## Testing
 
-Tests currently run as plain `python3 tests/test_X.py` scripts with `__main__` blocks. This is an accident, not a decision — see issue [#367](https://github.com/McBrideMusings/admin-project-tool/issues/367) for the pending migration to pytest. Until that lands: new tests follow the existing manual-loop pattern and must be added by hand to `[actions.test]` in `admin.toml` (no glob).
+Tests run under `pytest` (dev-only dep — bundled `admin_lib/` and the generated `./admin` stay stdlib-only). Install with `pip install -r requirements-dev.txt`. New `tests/test_*.py` files are auto-discovered — no manual registration in `admin.toml`. Shell tests (`tests/test_install.sh`, etc.) are chained after pytest in `[actions.test]`.
 
 Run all: `./admin test`.
 
@@ -43,3 +43,7 @@ Run all: `./admin test`.
 ## Session hook
 
 `install.sh` registers a `SessionStart` hook at `~/.admin/hooks/session-admin-check.sh`. On every Claude Code session, it diff-checks the project's `./admin` against the installed `admin-project-tool` version and silently regenerates if stale. To disable: remove the entry from `~/.claude/settings.json`.
+
+## Log bridge
+
+A project can opt into browser-console-to-admin-log forwarding by adding `[log_bridge] hosts = [...]` to its `admin.toml`. Any subsequent `interactive-shell` action spins up a `ThreadingHTTPServer` on a free port (default `9988-9999`; override per machine with `port_range = [start, end]`), bound to `0.0.0.0` so Tailscale peers can reach it. The userscript at `tampermonkey/log-bridge.user.js` probes the user's hardcoded hosts × ports, picks the admin instance whose `hosts` glob-matches the page, and POSTs batched `console.*` entries to `/log` where they're appended to the same log file the action is already writing. Discovery files at `/tmp/admin-project-tool/<pid>.json` are debugging aids; dead-PID files are swept on each start. Bind is `0.0.0.0` unconditionally — anyone on the tailnet can POST. `port_range` is per-machine: set it in each environment's `admin.toml` when the default range conflicts (e.g. a container that only exposes `3300-3399`); update `PROBE_PORTS` in the userscript to cover the union of all ranges.

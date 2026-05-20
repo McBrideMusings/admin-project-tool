@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# @bundled admin_lib=2.0.0-dev stripped=6 sha=592939adf614 modules=core generator_commit=a58e01dd331d2bc37e43687a459542472cddee28+dirty
+# @bundled admin_lib=2.0.0-dev stripped=6 sha=514feda545d0 modules=core generator_commit=369752ed5815575e0f1b326a45424409684d788d
 # Generated from admin.toml by admin-project-tool.
 # Regenerate: admin regenerate
 """admin — task runner for admin-project-tool."""
@@ -1030,7 +1030,7 @@ def register_builtin_logs_command():
         _cmd_logs_impl(args)
 
 # === project: admin-project-tool ===
-set_generator_commit("a58e01dd331d2bc37e43687a459542472cddee28+dirty")
+set_generator_commit("369752ed5815575e0f1b326a45424409684d788d")
 
 def _act_build(args):
     info("running: python3 ./admin-gen --regenerate . --force-dirty && python3 ./admin-gen --audit . --force-dirty")
@@ -1051,26 +1051,12 @@ def _act_run_dev(args):
 register_action("run-dev", _act_run_dev)
 
 def _act_test(args):
-    scripts = [
-        ("python3", "tests/test_archetypes.py"),
-        ("python3", "tests/test_manifest.py"),
-        ("python3", "tests/test_core_logging.py"),
-        ("python3", "tests/test_logtail.py"),
-        ("python3", "tests/test_apple.py"),
-        ("python3", "tests/test_ports.py"),
-        ("python3", "tests/test_bundler.py"),
-        ("python3", "tests/test_keybindings.py"),
-        ("bash",    "tests/test_install.sh"),
-    ]
-    failed = []
-    for interp, script in scripts:
-        rc = subprocess.run([interp, script]).returncode
-        if rc != 0:
-            failed.append(script)
-    if failed:
-        err("FAILED: " + ", ".join(failed))
-        sys.exit(1)
-    ok(str(len(scripts)) + " test suites passed")
+    info("running: .venv/bin/pytest tests/ && bash tests/test_install.sh")
+    rc = run_cmd(".venv/bin/pytest tests/ && bash tests/test_install.sh")
+    if rc != 0:
+        err("test failed")
+        sys.exit(rc)
+    ok("test complete")
 register_action("test", _act_test)
 
 def _act_install(args):

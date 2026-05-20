@@ -1,6 +1,6 @@
 project_name    = "admin-project-tool"
 python_min      = "3.11"
-generator_commit = "a58e01dd331d2bc37e43687a459542472cddee28+dirty"
+generator_commit = "369752ed5815575e0f1b326a45424409684d788d"
 archetypes      = []
 modules         = ["core"]
 
@@ -39,30 +39,9 @@ desc = "Run admin-gen on this project interactively"
 run  = "python3 ./admin-gen . --force-dirty"
 
 [actions.test]
-kind = "python"
-desc = "Run full test suite (Python + shell)"
-run = """
-scripts = [
-    ("python3", "tests/test_archetypes.py"),
-    ("python3", "tests/test_manifest.py"),
-    ("python3", "tests/test_core_logging.py"),
-    ("python3", "tests/test_logtail.py"),
-    ("python3", "tests/test_apple.py"),
-    ("python3", "tests/test_ports.py"),
-    ("python3", "tests/test_bundler.py"),
-    ("python3", "tests/test_keybindings.py"),
-    ("bash",    "tests/test_install.sh"),
-]
-failed = []
-for interp, script in scripts:
-    rc = subprocess.run([interp, script]).returncode
-    if rc != 0:
-        failed.append(script)
-if failed:
-    err("FAILED: " + ", ".join(failed))
-    sys.exit(1)
-ok(str(len(scripts)) + " test suites passed")
-"""
+kind = "shell"
+desc = "Run full test suite (pytest + shell)"
+run  = ".venv/bin/pytest tests/ && bash tests/test_install.sh"
 
 [actions.install]
 kind = "shell"
