@@ -20,6 +20,7 @@ _KNOWN_KEYS = {
     "commands", "actions", "order", "logs", "apple", "server", "output",
     "exclude_modules", "generator_commit", "inline", "logging",
     "dev_kill", "clean_dev", "vite_dev", "docker_dev", "deploy", "install_template",
+    "log_bridge",
 }
 
 VALID_COMMAND_KEYS = {"desc", "steps", "log_file", "log_retain", "log", "group", "priority", "env"}
@@ -65,6 +66,7 @@ class Manifest:
     docker_dev: dict = field(default_factory=dict)  # [docker_dev] — config for kind="docker-dev" commands
     deploy: dict = field(default_factory=dict)    # [deploy] — config for docker-unraid build/deploy commands
     install_template: dict = field(default_factory=dict)  # [install_template] — kind="install-template" config
+    log_bridge: dict = field(default_factory=dict)            # [log_bridge] — browser-console HTTP bridge config
     actions: dict[str, dict] = field(default_factory=dict)    # action name -> raw dict (not shown in UI)
     exclude_modules: list[str] = field(default_factory=list)  # modules to suppress even if archetype requires them
     generator_commit: str | None = None
@@ -238,6 +240,34 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     if "retain" in logging_cfg and not isinstance(logging_cfg["retain"], int):
         raise ManifestError(f"{source}: '[logging].retain' must be an integer")
 
+    log_bridge = data.get("log_bridge", {}) or {}
+    if not isinstance(log_bridge, dict):
+        raise ManifestError(f"{source}: '[log_bridge]' must be a table")
+    _LOG_BRIDGE_KNOWN = {"hosts", "port_range"}
+    unknown_log_bridge = set(log_bridge) - _LOG_BRIDGE_KNOWN
+    if unknown_log_bridge:
+        raise ManifestError(
+            f"{source}: '[log_bridge]' unknown keys: {sorted(unknown_log_bridge)}, "
+            f"valid: {sorted(_LOG_BRIDGE_KNOWN)}"
+        )
+    if log_bridge:
+        hosts = log_bridge.get("hosts")
+        if not isinstance(hosts, list) or not hosts or not all(isinstance(h, str) for h in hosts):
+            raise ManifestError(
+                f"{source}: '[log_bridge].hosts' must be a non-empty list of strings"
+            )
+        port_range = log_bridge.get("port_range")
+        if port_range is not None:
+            if (
+                not isinstance(port_range, list)
+                or len(port_range) != 2
+                or not all(isinstance(p, int) for p in port_range)
+                or port_range[0] >= port_range[1]
+            ):
+                raise ManifestError(
+                    f"{source}: '[log_bridge].port_range' must be [start, end] with start < end"
+                )
+
     exclude_modules = data.get("exclude_modules", [])
     if not isinstance(exclude_modules, list) or not all(isinstance(m, str) for m in exclude_modules):
         raise ManifestError(f"{source}: 'exclude_modules' must be a list of strings")
@@ -271,6 +301,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         docker_dev=docker_dev,
         deploy=deploy,
         install_template=install_template,
+        log_bridge=log_bridge,
         exclude_modules=exclude_modules,
         generator_commit=data.get("generator_commit"),
         inline_file=inline_file,

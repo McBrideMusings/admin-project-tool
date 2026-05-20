@@ -58,6 +58,13 @@ def render(
         modules.append("logtail")
         resolved.modules = modules
 
+    # Presence of [log_bridge] pulls in the log_bridge and log_server modules.
+    if m.log_bridge:
+        for mod in ("log_server", "log_bridge"):
+            if mod not in modules:
+                modules.append(mod)
+        resolved.modules = modules
+
     # vite-dev actions require the web_dev module.
     if any(c.kind == "vite-dev" for c in resolved.actions.values()):
         if "web_dev" not in resolved.modules:
@@ -149,6 +156,14 @@ def render(
     if m.logging:
         logging_decl = f"configure_logging({_pyliteral(m.logging)})\n"
 
+    # Emit configure_log_bridge() call if [log_bridge] is configured. The
+    # project name is injected at render time so the runtime side doesn't need
+    # a separate setter for it.
+    log_bridge_decl = ""
+    if m.log_bridge:
+        lb_cfg = {**m.log_bridge, "project": m.project_name}
+        log_bridge_decl = f"configure_log_bridge({_pyliteral(lb_cfg)})\n"
+
     # Emit actions first (they must be registered before commands that call them).
     action_blocks: list[str] = [render_action(a) for a in resolved.actions.values()]
     actions_src = "\n".join(action_blocks)
@@ -195,6 +210,7 @@ def render(
         f"{deploy_decl}"
         f"{install_template_decl}"
         f"{logging_decl}"
+        f"{log_bridge_decl}"
         f"{actions_block}"
         f"\n{commands_src}\n"
         f"register_builtin_logs_command()\n"
