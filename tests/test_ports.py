@@ -131,16 +131,3 @@ def test_kill_port_interactive_kill_failure_returns_false():
     print("OK: failed kill → returns False")
 
 
-if __name__ == "__main__":
-    test_render_kill_port_with_single_default()
-    test_render_kill_port_with_multiple_defaults()
-    test_render_kill_port_no_default_appends_port_hint()
-    test_render_kill_port_no_default_empty_desc()
-    test_render_kill_port_non_numeric_raises()
-    test_render_kill_port_mixed_invalid_raises()
-    test_render_kill_port_iterates_all_ports()
-    test_kill_port_interactive_no_holders_returns_true()
-    test_kill_port_interactive_user_abort_returns_false()
-    test_kill_port_interactive_kill_success_returns_true()
-    test_kill_port_interactive_kill_failure_returns_false()
-    print("\nAll tests passed.")

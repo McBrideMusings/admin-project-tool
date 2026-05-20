@@ -273,19 +273,3 @@ def test_log_file_emits_set_log_context_path():
 # Runner
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
-    for fn in tests:
-        try:
-            fn()
-            print(f"OK  {fn.__name__}")
-        except Exception as e:
-            import traceback
-            print(f"FAIL {fn.__name__}: {e}")
-            traceback.print_exc()
-            failed += 1
-    if failed:
-        sys.exit(failed)
-    else:
-        print(f"\nAll {len(tests)} tests passed.")

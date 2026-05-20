@@ -451,11 +451,3 @@ def test_run_with_reload_sends_sigterm_on_reload():
                 f.unlink()
 
 
-if __name__ == "__main__":
-    fns = sorted(
-        (name, val) for name, val in globals().items()
-        if name.startswith("test_") and callable(val)
-    )
-    for name, fn in fns:
-        fn()
-    print("\nAll docker tests passed.")
