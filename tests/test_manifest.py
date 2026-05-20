@@ -180,17 +180,3 @@ def test_logs_dump_preserves_raw_key_order():
 # Runner
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
-    for fn in tests:
-        try:
-            fn()
-            print(f"OK  {fn.__name__}")
-        except Exception as e:
-            print(f"FAIL {fn.__name__}: {e}")
-            failed += 1
-    if failed:
-        sys.exit(failed)
-    else:
-        print(f"\nAll {len(tests)} tests passed.")

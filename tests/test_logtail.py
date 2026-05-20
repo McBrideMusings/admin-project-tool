@@ -264,11 +264,3 @@ def test_cmd_logs_single_target_single_env_non_tty_proceeds():
     print("OK: cmd_logs with single target/env proceeds in non-TTY")
 
 
-if __name__ == "__main__":
-    test_append_during_follow()
-    test_rotation_reopens()
-    test_truncation_reopens()
-    test_cmd_logs_non_tty_no_target_exits_1()
-    test_cmd_logs_non_tty_no_env_exits_1()
-    test_cmd_logs_single_target_single_env_non_tty_proceeds()
-    print("All tests passed.")
