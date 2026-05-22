@@ -19,6 +19,7 @@ ARCHETYPE = {
     "urls": {
         "prod": "${PROD_URL:-http://localhost}",
     },
+    "order": ["build", "dev", "deploy", "---", "logs", "diff", "open"],
     "commands": {
         "build":            {"desc": "Build Docker image locally for linux/amd64 (Unraid)",                                            "steps": ["build"]},
         "deploy":           {"desc": "Build, push, and recreate container on Unraid (preserves run config); --dry-run to preview",     "steps": ["deploy"],           "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
