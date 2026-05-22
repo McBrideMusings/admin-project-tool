@@ -9,7 +9,16 @@ from __future__ import annotations
 
 import re
 import sys
-import tomllib
+try:
+    import tomllib
+except ImportError:
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]  # Python 3.9 backport
+    except ImportError:
+        sys.exit(
+            "admin-project-tool requires Python 3.11+ (stdlib tomllib) "
+            "or Python 3.9+ with tomli installed (pip install tomli)"
+        )
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -552,5 +561,20 @@ def _inline_list(val: list) -> str:
 
 
 def require_python_311() -> None:
+    """Preflight: Python 3.9+ with tomllib/tomli, or Python 3.11+. Name kept for back-compat."""
+    if sys.version_info < (3, 9):
+        sys.exit(
+            "admin-project-tool requires Python 3.9+ with tomli (pip install tomli) "
+            "or Python 3.11+ (stdlib tomllib)"
+        )
     if sys.version_info < (3, 11):
-        sys.exit("admin-project-tool requires Python 3.11+ (for stdlib tomllib)")
+        try:
+            import tomllib  # noqa: F401
+        except ImportError:
+            try:
+                import tomli  # noqa: F401
+            except ImportError:
+                sys.exit(
+                    f"Python {sys.version.split()[0]} found but tomllib is not available. "
+                    "Install tomli: pip install tomli"
+                )

@@ -15,7 +15,7 @@ Generates per-project `./admin` task-runner scripts from a short `admin.toml` ma
 
 1. **Manifest is truth.** `admin.toml` is the spec. `./admin` is a generated artifact — never hand-edit beyond what `admin-gen --audit` tolerates.
 2. **Commands are pure routing.** `[commands.X]` may only contain `desc` + `steps` (list of action names). `kind`, `run`, `targets` belong in `[actions.X]`. The generator errors loudly otherwise.
-3. **Stdlib only (with one narrow carve-out).** No third-party deps in the generator OR the generated script by default. The only exception is try/except-guarded optional imports that degrade gracefully when absent (today: `Pillow` + `cairosvg` in `admin_lib/icons.py`). New optional deps must clear the same bar. See [ADR-0001](docs/adr/0001-stdlib-only.md). Manifest parses via `tomllib`; writing TOML is hand-rolled.
+3. **Stdlib only (with one narrow carve-out).** No third-party deps in the generator OR the generated script by default. The only exception is try/except-guarded optional imports that degrade gracefully when absent (today: `Pillow` + `cairosvg` in `admin_lib/icons.py`; `tomli` in `gen/manifest.py` and `admin_lib/apple.py` as a Python 3.9/3.10 backport for `tomllib`). New optional deps must clear the same bar. See [ADR-0001](docs/adr/0001-stdlib-only.md). Manifest parses via `tomllib` (or `tomli` on Python 3.9/3.10); writing TOML is hand-rolled.
 4. **Zero contributor install.** Generated `./admin` is fully self-contained — contributors `git clone && ./admin`.
 5. **Idempotent regeneration.** `admin-gen --regenerate` must produce byte-identical output for the same inputs.
 

@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import io
 import sys
-import tomllib
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib  # type: ignore[no-redef]
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent

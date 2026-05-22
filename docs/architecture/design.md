@@ -263,12 +263,14 @@ Rendering uses a small set of **code fragments** (not full templates) — one pe
 
 Hand-editing `./admin` is still allowed, but the audit will tell you about it. The expected escape hatch is the manifest's `[inline]` block (a small Python file concatenated into the generated script at a marked insertion point); this keeps hand-written logic *referenced from the manifest* so regeneration preserves it.
 
-## Python 3.11+ Requirement
+## Python Version Requirements
 
-- Generated `./admin` starts with `#!/usr/bin/env python3` and a runtime guard: `if sys.version_info < (3, 11): sys.exit("admin requires Python 3.11+")`.
+**Generator (`admin-gen`, `install.sh`):** Python 3.9+ with `tomli` installed, or Python 3.11+ (stdlib `tomllib`). `install.sh` checks for one of these and exits with a `pip install tomli` hint if neither is satisfied.
+
+**Generated `./admin` scripts:** Controlled by `python_min` in `admin.toml` (default `"3.11"`). The generated script opens with `if sys.version_info < (min): sys.exit(...)`. Projects may lower this if they don't rely on features that require 3.11.
+
 - `manifest.python_min` is written into the guard (allowing a project to pin higher if it uses a newer feature).
-- Manifest parsing uses stdlib `tomllib` — no third-party TOML dependency.
-- `install.sh` verifies the host has Python 3.11+ and refuses to install otherwise.
+- On Python < 3.11 without `tomli`, `admin_lib` degrades gracefully (global config returns `{}`, workspace TOML parsing is skipped with a warning). The generated `./admin` never unconditionally imports third-party packages.
 
 ## Migrating Existing Projects
 
