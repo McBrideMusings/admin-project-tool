@@ -16,7 +16,10 @@ Mental model:
 
 _DISCOVER_PY = '''
 import re as _re
-import tomllib as _tomllib
+try:
+    import tomllib as _tomllib
+except ImportError:
+    _tomllib = None
 import glob as _glob
 
 samples_root = os.path.join(os.getcwd(), "sample-games")
@@ -60,6 +63,9 @@ def _pick_sample(action):
 
 def _workspace_projects(folder_name):
     """Return list of project dirs (relative to repo root) from forge.workspace.toml."""
+    if _tomllib is None:
+        warn("tomllib unavailable (Python < 3.11, no tomli) — skipping workspace.toml")
+        return []
     ws_path = os.path.join(samples_root, folder_name, "forge.workspace.toml")
     try:
         with open(ws_path, "rb") as _f:

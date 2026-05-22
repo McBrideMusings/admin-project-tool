@@ -308,7 +308,14 @@ def _global_admin_config():
     if _GLOBAL_ADMIN_CONFIG_LOADED:
         return _GLOBAL_ADMIN_CONFIG_CACHE or {}
     _GLOBAL_ADMIN_CONFIG_LOADED = True
-    import tomllib
+    try:
+        import tomllib
+    except ImportError:
+        try:
+            import tomli as tomllib  # type: ignore[no-redef]
+        except ImportError:
+            _GLOBAL_ADMIN_CONFIG_CACHE = {}
+            return {}
     path = os.path.expanduser("~/.admin/admin.toml")
     if not os.path.isfile(path):
         _GLOBAL_ADMIN_CONFIG_CACHE = {}

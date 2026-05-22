@@ -40,9 +40,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
-    echo "error: admin-project-tool requires Python 3.11+ (for stdlib tomllib)" >&2
-    echo "  found: $(python3 --version 2>&1)" >&2
+if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)'; then
+    echo "error: admin-project-tool requires Python 3.9+ (found: $(python3 --version 2>&1))" >&2
+    exit 1
+fi
+if ! python3 -c 'import tomllib' 2>/dev/null && ! python3 -c 'import tomli' 2>/dev/null; then
+    echo "error: tomllib not available for $(python3 --version 2>&1)" >&2
+    echo "  Python 3.11+ has tomllib in stdlib. For Python 3.9/3.10:" >&2
+    echo "  pip install tomli" >&2
     exit 1
 fi
 
