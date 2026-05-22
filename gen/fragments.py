@@ -573,7 +573,8 @@ def render_interactive_shell(cmd: Command) -> str:
         @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
         def {func_name}(args):
             info({_pyrepr(f"running: {cmd.run}")})
-            rc = run_with_keybindings({_pyrepr(cmd.run)}, {keys_literal}, label={_pyrepr(cmd.name)})
+            _fmt = make_formatter()
+            rc = run_with_keybindings({_pyrepr(cmd.run)}, {keys_literal}, label={_pyrepr(cmd.name)}, formatter=_fmt)
             if rc not in (0, 130):
                 err({_pyrepr(cmd.name + " failed")})
                 sys.exit(rc)
@@ -624,7 +625,7 @@ KIND_MODULES: dict[str, list[str]] = {
     "docker-dev": ["docker"],
     "server-reload": ["docker"],
     "install-template": ["remote", "unraid"],
-    "interactive-shell": ["keybindings"],
+    "interactive-shell": ["ports", "log_server", "log_bridge", "keybindings", "log_format"],
 }
 
 

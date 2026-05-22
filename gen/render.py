@@ -25,7 +25,7 @@ from pathlib import Path
 
 from gen.archetypes import ResolvedManifest
 from gen.bundler import inline_admin_lib, lib_hash, strip_unreachable, compact_whitespace
-from gen.fragments import collect_env_var_calls, render_command, render_action, _pyrepr
+from gen.fragments import collect_env_var_calls, render_command, render_action, _pyrepr, KIND_MODULES
 from gen.manifest import SPACER
 
 ADMIN_LIB_VERSION = "2.0.0-dev"
@@ -70,14 +70,15 @@ def render(
         if "web_dev" not in resolved.modules:
             resolved.modules = list(resolved.modules) + ["web_dev"]
 
-    # kill-port actions require the ports module.
-    kill_port_cmds = [c for c in resolved.actions.values() if c.kind == "kill-port"]
-    if kill_port_cmds and "ports" not in resolved.modules:
-        names = ", ".join(f"'{c.name}'" for c in kill_port_cmds)
-        raise RenderError(
-            f"command(s) {names} use kind='kill-port' but 'ports' is not in the module list; "
-            f"add modules = [\"ports\"] to admin.toml"
-        )
+    # Auto-inject modules declared in KIND_MODULES for any action kind in use.
+    modules = list(resolved.modules)
+    seen = set(modules)
+    for action in resolved.actions.values():
+        for mod in KIND_MODULES.get(action.kind, []):
+            if mod not in seen:
+                seen.add(mod)
+                modules.append(mod)
+    resolved.modules = modules
 
     lh = lib_hash(admin_lib_dir)
     modules_csv = ",".join(resolved.modules)

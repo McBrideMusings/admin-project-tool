@@ -42,7 +42,7 @@ def _expect_error(fn, *, contains: str):
 
 def test_kind_registered():
     assert "interactive-shell" in _ACTION_RENDERERS
-    assert KIND_MODULES["interactive-shell"] == ["keybindings"]
+    assert KIND_MODULES["interactive-shell"] == ["ports", "log_server", "log_bridge", "keybindings", "log_format"]
 
 
 def test_keys_only_on_interactive_shell():
