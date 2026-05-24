@@ -583,6 +583,22 @@ def render_interactive_shell(cmd: Command) -> str:
     return body
 
 
+def render_print_urls(cmd: Command) -> str:
+    """Print registered URL status after a deploy step.
+
+    Calls print_url_status() which is always present in core. If no [urls]
+    are registered the call is a silent no-op, so this kind is safe to use
+    in any project.
+    """
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    body = textwrap.dedent(f"""\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            print_url_status()
+    """)
+    return body
+
+
 _ACTION_RENDERERS = {
     "shell": render_shell,
     "shell-passthrough": render_shell_passthrough,
@@ -603,13 +619,14 @@ _ACTION_RENDERERS = {
     "vite-dev": render_vite_dev,
     "server-reload": render_server_reload,
     "install-template": render_install_template,
+    "print-urls": render_print_urls,
 }
 
 # Kinds whose action body is generated from a named manifest config table
 # rather than a `run` string.
 CONFIGLESS_KINDS = frozenset({
     "nuke-dev", "clean-dev", "vite-dev", "docker-dev",
-    "server-reload", "install-template",
+    "server-reload", "install-template", "print-urls",
 })
 
 KNOWN_KINDS = set(_ACTION_RENDERERS)
