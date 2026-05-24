@@ -78,5 +78,9 @@ ARCHETYPE = {
             "run": "open ${PROD_URL:-http://localhost}",
             "desc": "Open the deployed app URL",
         },
+        "print-urls": {
+            "kind": "print-urls",
+            "desc": "Print registered URLs and their health status",
+        },
     },
 }
