@@ -2,6 +2,12 @@
 
 Default URL points at the Hugo dev server's standard port. Override
 [urls.dev] in admin.toml if a project uses a different port.
+
+Runtime env var:
+    HUGO_SOURCE   path to the Hugo project root (default "."). Set this when
+                  the site lives in a subdirectory of the repo (e.g. a
+                  monorepo with the Hugo project under site/). It is passed to
+                  `hugo -s` and used to locate build artifacts for `clean`.
 """
 
 ARCHETYPE = {
@@ -16,8 +22,8 @@ ARCHETYPE = {
         "clean": {"desc": "Remove build artifacts",                     "steps": ["clean"]},
     },
     "actions": {
-        "build": {"kind": "shell", "run": "hugo --minify",                      "desc": "Build production site"},
-        "dev":   {"kind": "shell", "run": "hugo server -D --bind 0.0.0.0",      "desc": "Run Hugo dev server with drafts"},
-        "clean": {"kind": "shell", "run": "rm -rf public resources",            "desc": "Remove build artifacts"},
+        "build": {"kind": "shell", "run": "hugo --minify -s ${HUGO_SOURCE:-.}",                   "desc": "Build production site"},
+        "dev":   {"kind": "shell", "run": "hugo server -D --bind 0.0.0.0 -s ${HUGO_SOURCE:-.}",   "desc": "Run Hugo dev server with drafts"},
+        "clean": {"kind": "shell", "run": "rm -rf ${HUGO_SOURCE:-.}/public ${HUGO_SOURCE:-.}/resources", "desc": "Remove build artifacts"},
     },
 }

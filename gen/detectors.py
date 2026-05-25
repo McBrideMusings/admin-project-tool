@@ -27,6 +27,7 @@ DETECTOR_ORDER = [
     "stash-plugin",
     "unraid-plugin",
     "docker-unraid",
+    "cloudflare-workers",
     "apple",
     "simple",
 ]
