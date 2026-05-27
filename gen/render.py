@@ -189,7 +189,12 @@ def render(
     # guards (default: the common deploy commands). Only step-based commands can
     # be gated this way; non-step commands are skipped.
     if m.git_gate:
-        gated = m.git_gate.get("commands") or ["deploy", "preview", "staging"]
+        # Omitted `commands` → gate the common deploy commands; an explicit
+        # `commands = []` → gate nothing (lets a project keep the table but
+        # disable per-command gating).
+        gated = m.git_gate.get("commands")
+        if gated is None:
+            gated = ["deploy", "preview", "staging"]
         for cname in gated:
             cmd = resolved.commands.get(cname)
             if cmd is None:

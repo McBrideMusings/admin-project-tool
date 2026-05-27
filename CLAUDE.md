@@ -47,3 +47,16 @@ Run all: `./admin test`.
 ## Log bridge
 
 A project can opt into browser-console-to-admin-log forwarding by adding `[log_bridge] hosts = [...]` to its `admin.toml`. Any subsequent `interactive-shell` action spins up a `ThreadingHTTPServer` on a free port (default `9988-9999`; override per machine with `port_range = [start, end]`), bound to `0.0.0.0` so Tailscale peers can reach it. The userscript at `tampermonkey/log-bridge.user.js` probes the user's hardcoded hosts × ports, picks the admin instance whose `hosts` glob-matches the page, and POSTs batched `console.*` entries to `/log` where they're appended to the same log file the action is already writing. Discovery files at `/tmp/admin-project-tool/<pid>.json` are debugging aids; dead-PID files are swept on each start. Bind is `0.0.0.0` unconditionally — anyone on the tailnet can POST. `port_range` is per-machine: set it in each environment's `admin.toml` when the default range conflicts (e.g. a container that only exposes `3300-3399`); update `PROBE_PORTS` in the userscript to cover the union of all ranges.
+
+## Git gate
+
+A project can gate its deploy-style commands behind preflight git checks by adding a `[git_gate]` table to `admin.toml`:
+
+```toml
+[git_gate]
+commands       = ["preview", "staging", "deploy"]  # optional; defaults to these three
+require_clean  = true   # block if the working tree has uncommitted/untracked changes
+require_pushed = true   # block if the current branch isn't fully pushed to origin
+```
+
+`gen/manifest.py` parses + validates the table; `gen/render.py` emits a `_GIT_GATE_CONFIG` dict plus a built-in `git-gate` action (backed by `admin_lib.core.git_gate`) and prepends `git-gate` to the `steps` of each guarded command. At runtime the action calls `git_gate(cfg)`, which checks the enabled rules (`git status --porcelain` for clean, `git rev-list origin/<branch>..HEAD` for pushed), prints the offending rule + the exact fix command, and `sys.exit(1)` to abort before the real deploy step. Both rules default `true`; set either to `false` to drop it. Only step-based commands can be gated (non-step commands are skipped). Feature branches are fine — they just have to exist on origin with no unpushed commits.
