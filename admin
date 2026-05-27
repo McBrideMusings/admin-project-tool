@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# @bundled admin_lib=2.0.0-dev stripped=6 sha=4b6ffd143ebb modules=core generator_commit=c7dc6b7f9790167bfe4b9e64421d409c4fde40ea+dirty
+# @bundled admin_lib=2.0.0-dev stripped=6 sha=4b6ffd143ebb modules=core generator_commit=975a343f2c6a2ff833d6acfaf062a430fdbf4b02+dirty
 # Generated from admin.toml by admin-project-tool.
 # Regenerate: admin regenerate
 """admin — task runner for admin-project-tool."""
@@ -1048,7 +1048,7 @@ def register_builtin_logs_command():
         _cmd_logs_impl(args)
 
 # === project: admin-project-tool ===
-set_generator_commit("c7dc6b7f9790167bfe4b9e64421d409c4fde40ea+dirty")
+set_generator_commit("975a343f2c6a2ff833d6acfaf062a430fdbf4b02+dirty")
 
 def _act_build(args):
     info("running: python3 ./admin-gen --regenerate . --force-dirty && python3 ./admin-gen --audit . --force-dirty")
