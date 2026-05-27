@@ -649,6 +649,58 @@ def register_action(name, fn):
     _actions[name] = fn
 
 
+def git_gate(cfg):
+    """Preflight git checks for deploy-style commands. Returns 0 to proceed, 1 to block.
+
+    Configured via the manifest's ``[git_gate]`` table. Keys (both default True):
+      require_clean  — block if the working tree has uncommitted or untracked changes
+      require_pushed — block if the current branch isn't fully pushed to origin
+
+    On block, prints exactly what's wrong and the git command to fix it. Feature
+    branches are fine — they just need to exist on origin with no unpushed commits.
+    """
+    import subprocess
+
+    cfg = cfg or {}
+
+    def _git(*a):
+        return subprocess.run(["git", *a], capture_output=True, text=True)
+
+    if cfg.get("require_clean", True):
+        st = _git("status", "--porcelain")
+        if st.returncode != 0:
+            err("git gate: not a git repository (or git is unavailable).")
+            return 1
+        if st.stdout.strip():
+            err(
+                "git gate: working tree has uncommitted or untracked changes — "
+                "commit or stash them before deploying (run: git status)."
+            )
+            return 1
+
+    if cfg.get("require_pushed", True):
+        branch = _git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        if not branch or branch == "HEAD":
+            err("git gate: detached HEAD — check out a branch and push it before deploying.")
+            return 1
+        if _git("rev-parse", "--verify", "--quiet", "origin/" + branch).returncode != 0:
+            err(
+                f"git gate: branch '{branch}' is not on origin — "
+                f"push it first:  git push -u origin {branch}"
+            )
+            return 1
+        ahead = _git("rev-list", "--count", f"origin/{branch}..HEAD").stdout.strip()
+        if ahead and ahead != "0":
+            err(
+                f"git gate: '{branch}' has {ahead} commit(s) not pushed to origin — "
+                f"push first:  git push origin {branch}"
+            )
+            return 1
+
+    ok("git gate: working tree clean and pushed to origin.")
+    return 0
+
+
 def command(name, description):
     """Decorator to register a command. TUI order follows registration order."""
     def decorator(func):
