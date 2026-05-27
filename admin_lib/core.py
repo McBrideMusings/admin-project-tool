@@ -805,13 +805,24 @@ def _tui_menu():
 
     env_hint = "  [e] open .env" if os.path.exists(os.path.join(_project_root, ".env")) else ""
 
-    print(f"{C.BOLD}{_project_name}{C.RESET}\n")
-    print_url_status()
-    if _stale_generator:
-        print(f"{C.DIM}  ! tool updated — auto-regen at next Claude session (or run: admin regenerate){C.RESET}")
+    # Check URL statuses once upfront (parallel); cache results for draw() so
+    # navigation keypresses don't re-probe the network.
+    url_statuses = []
+    url_label_width = 6
+    if _urls:
+        from concurrent.futures import ThreadPoolExecutor
+        url_label_width = max(len(label) for label, _ in _urls) + 2
+        with ThreadPoolExecutor(max_workers=len(_urls)) as pool:
+            results = pool.map(lambda lu: check_url(lu[1].rstrip("/") + "/health"), _urls)
+        url_statuses = [(label, url, live) for (label, url), live in zip(_urls, results)]
 
-    sys.stdout.flush()
-    _home = _make_home(fd, num + 2)  # num item/spacer rows + blank separator + hint
+    # Total rows draw() will emit — must match exactly so _make_home reserves
+    # the right amount of space and no scrolling pushes URL lines off screen.
+    n_url_rows = len(url_statuses) + (1 if url_statuses else 0)  # status lines + blank after
+    n_stale_rows = 1 if _stale_generator else 0
+    total_lines = 2 + n_url_rows + n_stale_rows + num + 2  # name+blank, urls, stale, items, blank+hint
+
+    _home = _make_home(fd, total_lines)
 
     def draw():
         cols = shutil.get_terminal_size((80, 24)).columns
@@ -819,6 +830,13 @@ def _tui_menu():
         hint = f"  [arrows/j/k] navigate  [enter] run  [o] open config{env_hint}  [q/esc] quit"[:cols]
 
         _home()
+        sys.stdout.write(f"{C.BOLD}{_project_name}{C.RESET}\n\n")
+        for label, url, live in url_statuses:
+            sys.stdout.write(format_url_status(label, url, live, url_label_width) + "\n")
+        if url_statuses:
+            sys.stdout.write("\n")
+        if _stale_generator:
+            sys.stdout.write(f"{C.DIM}  ! tool updated — auto-regen at next Claude session (or run: admin regenerate){C.RESET}\n")
         for i, name in enumerate(items):
             if _is_spacer(name):
                 sys.stdout.write("\n")
