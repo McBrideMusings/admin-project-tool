@@ -176,12 +176,20 @@ def render_multi_target(cmd: Command) -> str:
     else:
         order_segment = ""
         order_kwarg = ""
+    target_pty = cmd.meta.get("target_pty", {})
+    if target_pty:
+        pty_literal = "{" + ", ".join(f"{_pyrepr(k)}: True" for k in target_pty) + "}"
+        pty_segment = f"            _target_pty = {pty_literal}\n"
+        pty_kwarg = ", pty=_target_pty.get(picked, False)"
+    else:
+        pty_segment = ""
+        pty_kwarg = ""
     body = textwrap.dedent(f'''\
         @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
         def {func_name}(args):
             _targets = {targets_literal}
             _menu = {menu_literal}
-{order_segment}            if args and not args[0].startswith("-"):
+{order_segment}{pty_segment}            if args and not args[0].startswith("-"):
                 picked, rest_args = args[0], args[1:]
             else:
                 picked, rest_args = None, args
@@ -201,7 +209,7 @@ def render_multi_target(cmd: Command) -> str:
                 run_command(shell[1:], rest_args)
             else:
                 info({_pyrepr(f"running [" + cmd.name + ":")} + picked + "]: " + shell)
-                rc = run_cmd(shell)
+                rc = run_cmd(shell{pty_kwarg})
                 if rc != 0:
                     err({_pyrepr(cmd.name + " failed")})
                     sys.exit(rc)

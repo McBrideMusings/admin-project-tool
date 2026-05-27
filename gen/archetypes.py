@@ -480,6 +480,9 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
             _validate_gp_ints(tdata, f"action '{name}' from {source}: target '{tname}'")
         targets = {k: ("@" + v["action"] if "action" in v else v.get("run", "")) for k, v in inline_targets_raw.items()}
         meta["target_descs"] = {k: v.get("desc", k) for k, v in inline_targets_raw.items()}
+        target_pty = {k: True for k, v in inline_targets_raw.items() if v.get("pty")}
+        if target_pty:
+            meta["target_pty"] = target_pty
         if any(tdata.get("group", 0) != 0 or tdata.get("priority", 0) != 0 for tdata in inline_targets_raw.values()):
             sorted_tgts = sorted(
                 inline_targets_raw.items(),
