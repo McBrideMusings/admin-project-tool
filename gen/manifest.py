@@ -29,7 +29,7 @@ _KNOWN_KEYS = {
     "commands", "actions", "order", "logs", "apple", "server", "output",
     "exclude_modules", "generator_commit", "inline", "logging",
     "dev_kill", "clean_dev", "vite_dev", "docker_dev", "deploy", "install_template",
-    "log_bridge",
+    "log_bridge", "git_gate",
 }
 
 VALID_COMMAND_KEYS = {"desc", "steps", "log_file", "log_retain", "log", "group", "priority", "env"}
@@ -76,6 +76,7 @@ class Manifest:
     deploy: dict = field(default_factory=dict)    # [deploy] — config for docker-unraid build/deploy commands
     install_template: dict = field(default_factory=dict)  # [install_template] — kind="install-template" config
     log_bridge: dict = field(default_factory=dict)            # [log_bridge] — browser-console HTTP bridge config
+    git_gate: dict = field(default_factory=dict)              # [git_gate] — preflight git checks gating deploy commands
     actions: dict[str, dict] = field(default_factory=dict)    # action name -> raw dict (not shown in UI)
     exclude_modules: list[str] = field(default_factory=list)  # modules to suppress even if archetype requires them
     generator_commit: str | None = None
@@ -277,6 +278,26 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
                     f"{source}: '[log_bridge].port_range' must be [start, end] with start < end"
                 )
 
+    git_gate = data.get("git_gate", {}) or {}
+    if not isinstance(git_gate, dict):
+        raise ManifestError(f"{source}: '[git_gate]' must be a table")
+    _GIT_GATE_KNOWN = {"commands", "require_clean", "require_pushed"}
+    unknown_git_gate = set(git_gate) - _GIT_GATE_KNOWN
+    if unknown_git_gate:
+        raise ManifestError(
+            f"{source}: '[git_gate]' unknown keys: {sorted(unknown_git_gate)}, "
+            f"valid: {sorted(_GIT_GATE_KNOWN)}"
+        )
+    if git_gate:
+        commands_val = git_gate.get("commands")
+        if commands_val is not None and (
+            not isinstance(commands_val, list) or not all(isinstance(c, str) for c in commands_val)
+        ):
+            raise ManifestError(f"{source}: '[git_gate].commands' must be a list of strings")
+        for bkey in ("require_clean", "require_pushed"):
+            if bkey in git_gate and not isinstance(git_gate[bkey], bool):
+                raise ManifestError(f"{source}: '[git_gate].{bkey}' must be a boolean")
+
     exclude_modules = data.get("exclude_modules", [])
     if not isinstance(exclude_modules, list) or not all(isinstance(m, str) for m in exclude_modules):
         raise ManifestError(f"{source}: 'exclude_modules' must be a list of strings")
@@ -311,6 +332,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         deploy=deploy,
         install_template=install_template,
         log_bridge=log_bridge,
+        git_gate=git_gate,
         exclude_modules=exclude_modules,
         generator_commit=data.get("generator_commit"),
         inline_file=inline_file,
