@@ -1974,7 +1974,14 @@ def build_ios(cfg, *, force=False):
     project = _detect_project_path(cfg)
     config = cfg.get("ios_build_config", "Debug")
     sim = os.environ.get("IOS_DEVICE") or cfg.get("ios_device") or ""
-    dest = ("platform=iOS Simulator,name=" + sim) if sim else "platform=iOS Simulator"
+    if sim:
+        dest = "platform=iOS Simulator,name=" + sim
+    else:
+        # No simulator pinned — auto-resolve (booted first, then newest iPhone).
+        # The bare "platform=iOS Simulator" destination is ambiguous on machines
+        # with multiple runtimes and causes xcodebuild to fail before compiling.
+        sim_id, _ = resolve_simulator()
+        dest = f"platform=iOS Simulator,id={sim_id}"
     build_action = "clean build" if force else "build"
     restore_stranded_dev_icons(cfg)
     info(f"Building {scheme} ({config}) for iOS...")
