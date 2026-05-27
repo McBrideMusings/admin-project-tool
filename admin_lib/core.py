@@ -659,17 +659,22 @@ def git_gate(cfg):
     On block, prints exactly what's wrong and the git command to fix it. Feature
     branches are fine — they just need to exist on origin with no unpushed commits.
     """
-    import subprocess
-
     cfg = cfg or {}
 
     def _git(*a):
         return subprocess.run(["git", *a], capture_output=True, text=True)
 
+    # Confirm we're in a git repo up front so the diagnostic is accurate no
+    # matter which rules are enabled.
+    repo = _git("rev-parse", "--is-inside-work-tree")
+    if repo.returncode != 0 or repo.stdout.strip() != "true":
+        err("git gate: not a git repository (or git is unavailable).")
+        return 1
+
     if cfg.get("require_clean", True):
         st = _git("status", "--porcelain")
         if st.returncode != 0:
-            err("git gate: not a git repository (or git is unavailable).")
+            err("git gate: could not read git status — aborting to be safe.")
             return 1
         if st.stdout.strip():
             err(
@@ -689,11 +694,14 @@ def git_gate(cfg):
                 f"push it first:  git push -u origin {branch}"
             )
             return 1
-        ahead = _git("rev-list", "--count", f"origin/{branch}..HEAD").stdout.strip()
-        if ahead and ahead != "0":
+        # Block unless the count is exactly "0": a non-zero count means unpushed
+        # commits, and a failed comparison (rc != 0 / empty) blocks too rather
+        # than silently passing.
+        ahead = _git("rev-list", "--count", f"origin/{branch}..HEAD")
+        if ahead.returncode != 0 or ahead.stdout.strip() != "0":
             err(
-                f"git gate: '{branch}' has {ahead} commit(s) not pushed to origin — "
-                f"push first:  git push origin {branch}"
+                f"git gate: '{branch}' has commits not pushed to origin (or the "
+                f"comparison failed) — push first:  git push origin {branch}"
             )
             return 1
 
