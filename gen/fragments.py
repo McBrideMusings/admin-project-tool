@@ -530,11 +530,6 @@ def render_action(cmd: Command) -> str:
     return "\n".join(out) + "\n"
 
 
-def _pyrepr_list(values) -> str:
-    """Render a list of strings as a Python list literal using _pyrepr per element."""
-    return "[" + ", ".join(_pyrepr(v) for v in values) + "]"
-
-
 def render_nuke_dev(cmd: Command) -> str:
     """Kill all dev-server processes for this project. Reads `[dev_kill]` config table.
 
@@ -782,6 +777,11 @@ def _pyrepr(s: str) -> str:
         inner = r[1:-1].replace("\\'", "'").replace('"', '\\"')
         return '"' + inner + '"'
     return r
+
+
+def _pyrepr_list(values) -> str:
+    """Render a list of strings as a Python list literal using _pyrepr per element."""
+    return "[" + ", ".join(_pyrepr(v) for v in values) + "]"
 
 
 def _dict_literal(value) -> str:
