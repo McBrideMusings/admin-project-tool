@@ -630,15 +630,44 @@ def _docker_argv(host, local, argv):
     return argv if local else ["ssh", host, *argv]
 
 
-def remote_recreate_container(host, image, container=None, dry_run=False):
-    """Transport a local image to `host` and recreate the named container,
-    preserving its existing run config (read via `docker inspect`).
+def _parse_env_file(path):
+    """Best-effort .env parser — KEY=value pairs, # comments, blank lines.
+    Returns a dict. Missing file → empty dict (caller decides if that's OK).
+    """
+    if not path or not os.path.exists(path):
+        return {}
+    out = {}
+    with open(path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k = k.strip()
+            v = v.strip()
+            if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+                v = v[1:-1]
+            if k:
+                out[k] = v
+    return out
 
-    Intended for Unraid-style hosts whose containers were first created by the
-    Docker GUI — the GUI's run args aren't known to us, so we replay them
-    against the newly-loaded image. If the container doesn't exist on host,
-    returns nonzero without touching anything. dry_run prints the reconstructed
-    `docker run` command instead of executing.
+
+def remote_recreate_container(host, image, container=None, target_cfg=None,
+                              force=False, dry_run=False):
+    """Recreate a container on `host` from a local image.
+
+    Two modes:
+      target_cfg=None — legacy path. Inspect the live container, replay its
+        config against the new image. Container MUST exist.
+      target_cfg=<dict> — TOML-canonical. Render argv from the `[docker_run]`
+        table. If the container exists, diff target vs live; abort with a
+        drift report unless `force=True`. If the container doesn't exist,
+        create it from the cfg directly.
+
+    `force=True` skips the drift check (still computed, just doesn't abort).
+    `dry_run=True` prints the would-run command instead of executing.
     """
     import json
     import shlex
@@ -657,8 +686,11 @@ def remote_recreate_container(host, image, container=None, dry_run=False):
         _docker_argv(host, local, ["docker", "inspect", container]),
         capture_output=True, text=True,
     )
+    container_exists = (
+        proc.returncode == 0 and proc.stdout.strip() and proc.stdout.strip() != "[]"
+    )
 
-    if proc.returncode != 0 or not proc.stdout.strip() or proc.stdout.strip() == "[]":
+    if not container_exists and target_cfg is None:
         err(f"Container '{container}' does not exist {location}.")
         print(
             f"\n  Create it from the Unraid Docker GUI using the template,"
@@ -666,14 +698,41 @@ def remote_recreate_container(host, image, container=None, dry_run=False):
         )
         return 1
 
-    try:
-        inspect = json.loads(proc.stdout)[0]
-    except (json.JSONDecodeError, IndexError) as e:
-        err(f"Could not parse docker inspect output: {e}")
-        return 1
+    inspect = None
+    if container_exists:
+        try:
+            inspect = json.loads(proc.stdout)[0]
+        except (json.JSONDecodeError, IndexError) as e:
+            err(f"Could not parse docker inspect output: {e}")
+            return 1
 
-    args = _build_run_args_from_inspect(inspect)
-    restore_image = _restore_image_from_inspect(inspect, image)
+    if target_cfg is not None:
+        # TOML-canonical path: render from cfg, check drift, use cfg argv.
+        env_file_path = target_cfg.get("env_file")
+        env_file_vars = _parse_env_file(env_file_path) if env_file_path else {}
+        args = _build_run_args_from_cfg(target_cfg, env_file_vars=env_file_vars)
+        if container_exists:
+            img_env, img_labels, img_workdir, img_user = _fetch_image_metadata(host, local, image)
+            live_args = _live_argv_for_drift(
+                inspect, image_env=img_env, image_labels=img_labels,
+                image_workdir=img_workdir, image_user=img_user,
+            )
+            in_target_only, in_live_only = _compute_drift(args, live_args)
+            if in_target_only or in_live_only:
+                report = _format_drift_report(in_target_only, in_live_only)
+                if force:
+                    warn("Drift detected — proceeding with --force (live state will be discarded):")
+                    print(report)
+                else:
+                    err(report)
+                    return 1
+            else:
+                info("No drift between live container and [docker_run] — proceeding")
+    else:
+        # Legacy inspect-and-recreate path.
+        args = _build_run_args_from_inspect(inspect)
+
+    restore_image = _restore_image_from_inspect(inspect, image) if inspect else image
     run_cmd_parts = ["docker", "run", "-d", "--name", container] + args + [image]
     remote_run = " ".join(shlex.quote(p) for p in run_cmd_parts)
 
@@ -693,41 +752,44 @@ def remote_recreate_container(host, image, container=None, dry_run=False):
         info(f"Transfer complete in {elapsed:.0f}s")
 
     restore_path = f"/tmp/{container}-restore.sh"
-    restore_cmd_parts = ["docker", "run", "-d", "--name", container] + args + [restore_image]
-    restore_run = " ".join(shlex.quote(p) for p in restore_cmd_parts)
-    restore_script = f"#!/bin/sh\n{restore_run}\n"
+    if container_exists:
+        restore_cmd_parts = ["docker", "run", "-d", "--name", container] + args + [restore_image]
+        restore_run = " ".join(shlex.quote(p) for p in restore_cmd_parts)
+        restore_script = f"#!/bin/sh\n{restore_run}\n"
 
-    if local:
-        try:
-            with open(restore_path, "w") as f:
-                f.write(restore_script)
-            import stat as _stat
-            os.chmod(restore_path, os.stat(restore_path).st_mode | _stat.S_IXUSR | _stat.S_IXGRP)
-            write_ok = True
-        except OSError:
-            write_ok = False
-    else:
-        write_proc = subprocess.run(
-            ["ssh", host, f"cat > {shlex.quote(restore_path)} && chmod +x {shlex.quote(restore_path)}"],
-            input=restore_script.encode(),
-            capture_output=True,
-        )
-        write_ok = write_proc.returncode == 0
+        if local:
+            try:
+                with open(restore_path, "w") as f:
+                    f.write(restore_script)
+                import stat as _stat
+                os.chmod(restore_path, os.stat(restore_path).st_mode | _stat.S_IXUSR | _stat.S_IXGRP)
+                write_ok = True
+            except OSError:
+                write_ok = False
+        else:
+            write_proc = subprocess.run(
+                ["ssh", host, f"cat > {shlex.quote(restore_path)} && chmod +x {shlex.quote(restore_path)}"],
+                input=restore_script.encode(),
+                capture_output=True,
+            )
+            write_ok = write_proc.returncode == 0
 
-    if not write_ok:
-        err("Could not write restore script — aborting deploy to preserve recovery path")
-        return 1
-    sha_note = f" (SHA: {restore_image[:12]})" if restore_image != image else ""
-    info(f"Restore script saved: {restore_path}{sha_note}")
+        if not write_ok:
+            err("Could not write restore script — aborting deploy to preserve recovery path")
+            return 1
+        sha_note = f" (SHA: {restore_image[:12]})" if restore_image != image else ""
+        info(f"Restore script saved: {restore_path}{sha_note}")
 
-    info(f"Stopping + removing '{container}' {location}...")
-    stop_rm_shell = f"docker stop -t 10 {container_q} >/dev/null && docker rm {container_q} >/dev/null"
-    rc = run_cmd(stop_rm_shell if local else f"ssh {host_q} '{stop_rm_shell}'")
-    if rc != 0:
-        err("Stop/remove failed")
-        return rc
+    if container_exists:
+        info(f"Stopping + removing '{container}' {location}...")
+        stop_rm_shell = f"docker stop -t 10 {container_q} >/dev/null && docker rm {container_q} >/dev/null"
+        rc = run_cmd(stop_rm_shell if local else f"ssh {host_q} '{stop_rm_shell}'")
+        if rc != 0:
+            err("Stop/remove failed")
+            return rc
 
-    info(f"Recreating '{container}' {location} with preserved run config...")
+    config_source = "[docker_run] in admin.toml" if target_cfg is not None else "preserved run config"
+    info(f"Recreating '{container}' {location} from {config_source}...")
     rc = run_cmd(remote_run if local else f"ssh {host_q} {shlex.quote(remote_run)}")
     if rc != 0:
         restore_hint = f"bash {restore_path}" if local else f"ssh {host} bash {restore_path}"
@@ -754,7 +816,7 @@ def remote_recreate_container(host, image, container=None, dry_run=False):
 
 _HOST_CFG_CONSUMED = frozenset({
     "Binds", "PortBindings", "RestartPolicy", "NetworkMode", "ExtraHosts",
-    "Devices", "CapAdd", "CapDrop", "Privileged", "Memory",
+    "Devices", "DeviceRequests", "CapAdd", "CapDrop", "Privileged", "Memory",
     "Tmpfs", "Sysctls", "SecurityOpt", "GroupAdd", "Ulimits",
 })
 
@@ -800,6 +862,363 @@ def _is_trivial(v):
     if isinstance(v, str):
         return not v
     return False
+
+
+_ENV_REF_RE = __import__("re").compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _expand_env_refs(value, env_vars):
+    """Substitute ${VAR} references in `value` from `env_vars`. Returns
+    (substituted, all_resolved). all_resolved=False means at least one
+    ${VAR} couldn't be resolved — caller should drop the entry rather than
+    emit a literal ${VAR} that would poison the drift comparison.
+    """
+    all_resolved = True
+    def sub(m):
+        nonlocal all_resolved
+        v = env_vars.get(m.group(1))
+        if v is None:
+            all_resolved = False
+            return m.group(0)
+        return v
+    return _ENV_REF_RE.sub(sub, value), all_resolved
+
+
+def _build_run_args_from_cfg(cfg, env_vars=None, env_file_vars=None):
+    """Render argv pieces (no `docker run -d --name X` prefix, no image) from
+    an `[docker_run]` config table — the prod counterpart to
+    `_docker_dev_build_cmd`. Output shape matches `_build_run_args_from_inspect`
+    so the two can be compared for drift.
+
+    env_vars: dict of host env (defaults to os.environ); used to expand
+    `optional_mounts` (skipped silently when the gating env is unset).
+    env_file_vars: optional dict of pre-parsed env_file values; merged into
+    the emitted `-e NAME=VALUE` pieces. When None, env_file is NOT auto-read
+    here (caller handles it) so this function stays pure.
+    """
+    if env_vars is None:
+        env_vars = os.environ
+
+    args = []
+
+    # Bind mounts (absolute host paths in prod; no host_root rewriting).
+    # Normalize mode="rw" (and unset) to no suffix — matches docker's default
+    # and mirrors the live-side strip in _live_argv_for_drift so the drift
+    # comparison doesn't false-positive on cosmetic mode differences.
+    def _mount_flag(host, container, mode):
+        if mode and mode != "rw":
+            return f"{host}:{container}:{mode}"
+        return f"{host}:{container}"
+
+    for m in cfg.get("bind_mounts") or ():
+        host = m.get("host")
+        container = m.get("container")
+        if not host or not container:
+            continue
+        args += ["-v", _mount_flag(host, container, m.get("mode"))]
+
+    # Optional mounts gated on host env vars — expand at render time
+    for m in cfg.get("optional_mounts") or ():
+        env = m.get("env")
+        container = m.get("container")
+        if not env or not container:
+            continue
+        host = env_vars.get(env, "").strip()
+        if not host:
+            continue
+        args += ["-v", _mount_flag(host, container, m.get("mode"))]
+
+    # Anonymous volumes
+    for p in cfg.get("anonymous_volumes") or ():
+        path = p if isinstance(p, str) else p.get("path")
+        if not path:
+            continue
+        args += ["-v", path]
+
+    # Ports — host may be int, "PORT", or "IP:PORT"; container is int
+    for p in cfg.get("ports") or ():
+        host_port = p.get("host")
+        cont_port = p.get("container", host_port)
+        if host_port is None:
+            continue
+        host_str = str(host_port)
+        host_ip = ""
+        if ":" in host_str:
+            host_ip, host_str = host_str.rsplit(":", 1)
+        spec = f"{host_ip}:{host_str}:{cont_port}/tcp" if host_ip else f"{host_str}:{cont_port}/tcp"
+        args += ["-p", spec]
+
+    # Env list — literal -e flags, with ${VAR} substitution at render time.
+    # `name = "X"` with no `value` → inherit X from process env (same as `value = "${X}"`).
+    # `value = "${X}"` → substitute from process env.
+    # If any referenced var isn't set, skip the entry (warn) so drift
+    # comparison doesn't see a literal `${X}` on one side.
+    seen_env_names = set()
+    for e in cfg.get("env") or ():
+        name = e.get("name")
+        if not name:
+            continue
+        seen_env_names.add(name)
+        value = e.get("value")
+        if value is None:
+            resolved = env_vars.get(name)
+            if resolved is None:
+                warn(f"docker_run.env: {name!r} has no value and is not in process env — skipping")
+                continue
+            args += ["-e", f"{name}={resolved}"]
+        else:
+            resolved, all_ok = _expand_env_refs(value, env_vars)
+            if not all_ok:
+                warn(f"docker_run.env: {name} value {value!r} references unset env var — skipping")
+                continue
+            args += ["-e", f"{name}={resolved}"]
+
+    # env_file — merge in any keys not already set by the literal env list
+    # so cfg.env wins on conflict (matches docker's --env / --env-file order)
+    if env_file_vars:
+        for name in sorted(env_file_vars.keys()):
+            if name in seen_env_names:
+                continue
+            args += ["-e", f"{name}={env_file_vars[name]}"]
+
+    # Restart policy
+    restart = cfg.get("restart")
+    if restart and restart != "no":
+        args += ["--restart", restart]
+
+    # Network mode (rare in [docker_run] but supported for symmetry)
+    network = cfg.get("network")
+    if network and network != "default":
+        args += ["--network", network]
+
+    # Devices (e.g. /dev/dri)
+    for d in cfg.get("devices") or ():
+        host = d.get("host")
+        container = d.get("container", host)
+        if not host:
+            continue
+        perms = d.get("permissions", "rwm")
+        spec = f"{host}:{container}"
+        if perms and perms != "rwm":
+            spec += f":{perms}"
+        args += ["--device", spec]
+
+    # GPU — same translation as the dev path
+    gpu = cfg.get("gpu")
+    if gpu is True or gpu == "all":
+        args += ["--gpus", "all"]
+    elif isinstance(gpu, list) and gpu:
+        args += ["--gpus", ",".join(gpu)]
+    elif isinstance(gpu, str) and gpu:
+        args += ["--gpus", gpu]
+
+    # Labels — same ${VAR} substitution as env values, skip on unresolved refs.
+    # Used for e.g. `net.unraid.docker.managed=dockerman` so the Unraid GUI
+    # keeps the container visible in its managed-containers view after our
+    # `docker run` recreate (the GUI normally adds these labels itself).
+    for lbl in cfg.get("labels") or ():
+        key = lbl.get("key")
+        if not key:
+            continue
+        value = lbl.get("value", "")
+        if value:
+            value, all_ok = _expand_env_refs(value, env_vars)
+            if not all_ok:
+                warn(f"docker_run.labels: {key} value {lbl.get('value')!r} references unset env var — skipping")
+                continue
+        args += ["--label", f"{key}={value}"]
+
+    return args
+
+
+def _argv_to_pair_set(argv):
+    """Canonicalize an argv-pieces list into a sortable set of (flag, value)
+    strings, so two lists with different orderings compare cleanly.
+
+    Boolean flags (no value, e.g. --privileged) get an empty value.
+    """
+    pairs = set()
+    i = 0
+    while i < len(argv):
+        flag = argv[i]
+        if i + 1 < len(argv) and not argv[i + 1].startswith("-"):
+            pairs.add(f"{flag}\t{argv[i + 1]}")
+            i += 2
+        else:
+            pairs.add(f"{flag}\t")
+            i += 1
+    return pairs
+
+
+def _compute_drift(target_argv, live_argv):
+    """Diff target (from TOML) against live (from docker inspect).
+
+    Returns (in_target_only, in_live_only) — each a sorted list of
+    "flag\\tvalue" strings. Strict semantics: any divergence in either
+    direction counts as drift.
+    """
+    target_set = _argv_to_pair_set(target_argv)
+    live_set = _argv_to_pair_set(live_argv)
+    in_target_only = sorted(target_set - live_set)
+    in_live_only = sorted(live_set - target_set)
+    return in_target_only, in_live_only
+
+
+def _format_drift_report(in_target_only, in_live_only):
+    """Render a drift report for human eyeballs. Returns the formatted
+    string (no I/O; caller prints).
+
+    Format:
+        Drift detected between live container and admin.toml ([docker_run]):
+
+          target has, live missing:
+            --gpus      all
+            -p          100.114.249.118:9091:9091/tcp
+
+          live has, target missing:
+            -p          :9091:9091/tcp
+
+        Refusing to deploy. Either back-port the live values to admin.toml,
+        or rerun with --force to overwrite (live state will be discarded).
+    """
+    if not in_target_only and not in_live_only:
+        return ""
+
+    def _fmt_block(label, entries):
+        if not entries:
+            return ""
+        rows = []
+        flag_width = max(len(e.split("\t", 1)[0]) for e in entries)
+        for entry in entries:
+            flag, value = entry.split("\t", 1)
+            rows.append(f"    {flag.ljust(flag_width)}  {value}")
+        return f"  {label}:\n" + "\n".join(rows) + "\n"
+
+    out = ["Drift detected between live container and admin.toml ([docker_run]):\n"]
+    out.append(_fmt_block("target has, live missing", in_target_only))
+    out.append(_fmt_block("live has, target missing", in_live_only))
+    out.append(
+        "Refusing to deploy. Either back-port the live values to admin.toml,\n"
+        "or rerun with --force to overwrite (live state will be discarded)."
+    )
+    return "\n".join(s for s in out if s)
+
+
+def _live_argv_for_drift(inspect, image_env=None, image_labels=None,
+                         image_workdir=None, image_user=None):
+    """Build the live-side argv for drift comparison.
+
+    Strips noise that's never expressible from TOML so the report only shows
+    actionable drift:
+      - image-baked env vars (image_env: ["NAME=VALUE", ...])
+      - image-baked labels (image_labels: {k: v})
+      - image's WorkingDir / User (when live matches)
+      - Docker autogen `--hostname <12-char-hex>` and `--mac-address` on bridge
+      - default `--network bridge` (Docker's implicit default)
+      - bind-mount `:rw` suffix (Docker's default mount mode)
+    """
+    args = _build_run_args_from_inspect(inspect)
+    image_env_set = set(image_env or [])
+    image_labels = image_labels or {}
+
+    filtered = []
+    i = 0
+    while i < len(args):
+        flag = args[i]
+        val = args[i + 1] if i + 1 < len(args) and not args[i + 1].startswith("-") else None
+
+        # --network bridge is Docker's implicit default; not actionable
+        if flag == "--network" and val == "bridge":
+            i += 2; continue
+        # Image-baked env vars
+        if flag == "-e" and val in image_env_set:
+            i += 2; continue
+        # Unraid dockerMan diagnostic env vars (HOST_CONTAINERNAME / HOST_HOSTNAME
+        # / HOST_OS / HOST_CONFIGURABLE). Added by Unraid when it creates the
+        # container; not re-added when we deploy via `docker run` from outside
+        # the GUI, so flagging drift on them just clutters every deploy.
+        if flag == "-e" and val and val.split("=", 1)[0] in (
+            "HOST_CONTAINERNAME", "HOST_HOSTNAME", "HOST_OS", "HOST_CONFIGURABLE",
+        ):
+            i += 2; continue
+        # Image-baked labels (live emits "k=v"; image_labels is {k:v})
+        if flag == "--label" and val and "=" in val:
+            k, v = val.split("=", 1)
+            if image_labels.get(k) == v:
+                i += 2; continue
+        # --hostname: always stripped. Cfg has no `hostname` field, so any
+        # value live carries is either Docker's autogen 12-hex (no signal) or
+        # an Unraid-GUI default (often the container name, also no signal).
+        # Preserving it would force every deploy through `--force` for no
+        # gain. If a project ever needs declared hostnames, add a knob then.
+        if flag == "--hostname":
+            if val is not None:
+                i += 2
+            else:
+                i += 1
+            continue
+        # Docker autogenerated MAC on bridge network (always per-container)
+        if flag == "--mac-address" and val:
+            i += 2; continue
+        # WorkingDir / User baked into the image
+        if flag == "--workdir" and val == image_workdir:
+            i += 2; continue
+        if flag == "--user" and val == image_user:
+            i += 2; continue
+        # Strip `:rw` from bind specs — rw is Docker's default mount mode
+        if flag == "-v" and val and val.endswith(":rw"):
+            filtered += [flag, val[:-3]]
+            i += 2; continue
+
+        filtered.append(flag)
+        if val is not None:
+            filtered.append(val)
+            i += 2
+        else:
+            i += 1
+    return filtered
+
+
+def _fetch_image_metadata(host, local, image):
+    """Return (env, labels, working_dir, user) baked into the image, or
+    ([], {}, None, None) on any inspect failure.
+
+    Uses `docker image inspect` (not bare `docker inspect`) so a container
+    sharing the image's base name doesn't shadow the image lookup —
+    `docker inspect muxarr` would return the muxarr CONTAINER when one
+    exists, and its env would falsely be treated as "image-baked", silently
+    stripping every container env from the drift report.
+
+    Uses full JSON (no Go `--format` template) because ssh-via-argv mangles
+    `{{json}}` placeholders into an "unclosed action" parse error.
+    """
+    import json
+    proc = subprocess.run(
+        _docker_argv(host, local, ["docker", "image", "inspect", image]),
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return [], {}, None, None
+    try:
+        parsed = json.loads(proc.stdout)
+        if not parsed:
+            return [], {}, None, None
+        config = parsed[0].get("Config") or {}
+        return (
+            config.get("Env") or [],
+            config.get("Labels") or {},
+            config.get("WorkingDir") or None,
+            config.get("User") or None,
+        )
+    except (json.JSONDecodeError, ValueError, IndexError, AttributeError):
+        return [], {}, None, None
+
+
+def _fetch_image_env(host, local, image):
+    """Back-compat shim — returns just the env list. Prefer
+    `_fetch_image_metadata` for full filtering data."""
+    env, _, _, _ = _fetch_image_metadata(host, local, image)
+    return env
 
 
 def _build_run_args_from_inspect(inspect, warn_prefix=None):
@@ -852,6 +1271,29 @@ def _build_run_args_from_inspect(inspect, warn_prefix=None):
         if perms and perms != "rwm":
             spec += f":{perms}"
         args += ["--device", spec]
+
+    # DeviceRequests is where `--gpus` lives in `docker inspect` output.
+    # `--gpus all`               → Driver=nvidia, Count=-1
+    # `--gpus N`                 → Driver=nvidia, Count=N
+    # `--gpus "device=ID,ID"`    → Driver=nvidia, Count=0, DeviceIDs=[...]
+    # Missing this translation silently strips GPU access on inspect-and-recreate
+    # deploys (e.g. ffmpeg loses CUDA → "Cannot load libcuda.so.1").
+    for req in host_cfg.get("DeviceRequests") or []:
+        driver = req.get("Driver") or ""
+        if driver and driver != "nvidia":
+            continue  # non-nvidia device requests aren't expressible via --gpus
+        device_ids = req.get("DeviceIDs") or []
+        count = req.get("Count") or 0
+        if device_ids:
+            # Emit as a bare value (no embedded double quotes) — shlex.quote
+            # downstream wraps the whole arg correctly if needed. Literal
+            # `"device=..."` would survive shell escaping and reach docker
+            # with the quote chars intact, which docker's --gpus parser rejects.
+            args += ["--gpus", f"device={','.join(device_ids)}"]
+        elif count == -1:
+            args += ["--gpus", "all"]
+        elif count > 0:
+            args += ["--gpus", str(count)]
 
     for c in host_cfg.get("CapAdd") or []:
         args += ["--cap-add", c]
