@@ -65,6 +65,16 @@ def render(
                 modules.append(mod)
         resolved.modules = modules
 
+    # Any `requires` list on any action or target — or any [guards.<name>]
+    # entry — pulls in the guards module.
+    needs_guards = bool(m.guards) or any(
+        a.meta.get("requires") or a.meta.get("target_requires")
+        for a in resolved.actions.values()
+    )
+    if needs_guards and "guards" not in modules:
+        modules.append("guards")
+        resolved.modules = modules
+
     # vite-dev actions require the web_dev module.
     if any(c.kind == "vite-dev" for c in resolved.actions.values()):
         if "web_dev" not in resolved.modules:
@@ -115,9 +125,11 @@ def render(
             "deploy": m.deploy,
             "vite_dev": m.vite_dev,
             "docker_dev": m.docker_dev,
+            "docker_run": m.docker_run,
             "dev_kill": m.dev_kill,
             "clean_dev": m.clean_dev,
             "install_template": m.install_template,
+            "fixtures": m.fixtures,
         },
     )
     env_block = "\n".join(env_calls) + ("\n" if env_calls else "")
@@ -149,8 +161,10 @@ def render(
     clean_dev_decl = f"_CLEAN_DEV_CONFIG = {_pyliteral(m.clean_dev)}\n" if m.clean_dev else ""
     vite_dev_decl = f"_VITE_DEV_CONFIG = {_pyliteral(m.vite_dev)}\n" if m.vite_dev else ""
     docker_dev_decl = f"_DOCKER_DEV_CONFIG = {_pyliteral(m.docker_dev)}\n" if m.docker_dev else ""
+    docker_run_decl = f"_DOCKER_RUN_CONFIG = {_pyliteral(m.docker_run)}\n" if m.docker_run else ""
     deploy_decl = f"_DEPLOY_CONFIG = {_pyliteral(m.deploy)}\n" if m.deploy else ""
     install_template_decl = f"_INSTALL_TEMPLATE_CONFIG = {_pyliteral(m.install_template)}\n" if m.install_template else ""
+    fixtures_decl = f"_FIXTURES_CONFIG = {_pyliteral(m.fixtures)}\n" if m.fixtures else ""
 
     # Emit configure_logging() call if [logging] is configured.
     logging_decl = ""
@@ -165,43 +179,21 @@ def render(
         lb_cfg = {**m.log_bridge, "project": m.project_name}
         log_bridge_decl = f"configure_log_bridge({_pyliteral(lb_cfg)})\n"
 
-    # Emit the [git_gate] config + a built-in `git-gate` action when configured.
-    # The action calls admin_lib.git_gate() and exits non-zero to block; it gets
-    # prepended (below) to the steps of every guarded command so it runs — and
-    # can abort — before the real deploy.
-    git_gate_decl = ""
-    git_gate_action = ""
-    if m.git_gate:
-        git_gate_decl = f"_GIT_GATE_CONFIG = {_pyliteral(m.git_gate)}\n"
-        git_gate_action = (
-            "def _act_git_gate(args):\n"
-            "    rc = git_gate(_GIT_GATE_CONFIG)\n"
-            "    if rc != 0:\n"
-            "        sys.exit(rc)\n"
-            'register_action("git-gate", _act_git_gate)\n'
-        )
+    # Emit `register_shell_guard(name, run, fail)` for each [guards.<name>]
+    # table entry. Built-in guards (git-clean, git-pushed) are registered by
+    # admin_lib/guards.py at import time — no emission needed for them.
+    guard_decls = ""
+    if m.guards:
+        lines = []
+        for gname, gdef in m.guards.items():
+            lines.append(
+                f"register_shell_guard({_pyrepr(gname)}, {_pyrepr(gdef['run'])}, {_pyrepr(gdef['fail'])})"
+            )
+        guard_decls = "\n".join(lines) + "\n"
 
     # Emit actions first (they must be registered before commands that call them).
     action_blocks: list[str] = [render_action(a) for a in resolved.actions.values()]
     actions_src = "\n".join(action_blocks)
-
-    # Prepend the built-in `git-gate` step to each command the [git_gate] table
-    # guards (default: the common deploy commands). Only step-based commands can
-    # be gated this way; non-step commands are skipped.
-    if m.git_gate:
-        # Omitted `commands` → gate the common deploy commands; an explicit
-        # `commands = []` → gate nothing (lets a project keep the table but
-        # disable per-command gating).
-        gated = m.git_gate.get("commands")
-        if gated is None:
-            gated = ["deploy", "preview", "staging"]
-        for cname in gated:
-            cmd = resolved.commands.get(cname)
-            if cmd is None:
-                continue
-            steps = cmd.meta.get("steps")
-            if steps and "git-gate" not in steps:
-                cmd.meta["steps"] = ["git-gate"] + list(steps)
 
     # Emit command function defs in display order, interleaving add_spacer()
     # calls for spacer entries. Registration order == display order.
@@ -242,13 +234,14 @@ def render(
         f"{clean_dev_decl}"
         f"{vite_dev_decl}"
         f"{docker_dev_decl}"
+        f"{docker_run_decl}"
         f"{deploy_decl}"
         f"{install_template_decl}"
+        f"{fixtures_decl}"
         f"{logging_decl}"
         f"{log_bridge_decl}"
-        f"{git_gate_decl}"
+        f"{guard_decls}"
         f"{actions_block}"
-        f"{git_gate_action}"
         f"\n{commands_src}\n"
         f"register_builtin_logs_command()\n"
         f"{logs_src}"

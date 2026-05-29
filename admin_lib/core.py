@@ -454,7 +454,7 @@ def cmd_env(args):
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
 
-def _run_cmd_pty(cmd, log_fh, formatter):
+def _run_cmd_pty(cmd, log_fh, formatter, collect=None):
     """Run cmd inside a pseudo-TTY so isatty() checks pass (e.g. wrangler dev).
 
     Output is displayed to the terminal with ANSI codes intact; the log file
@@ -493,6 +493,8 @@ def _run_cmd_pty(cmd, log_fh, formatter):
                     if log_fh:
                         log_fh.write(_ANSI_ESCAPE_RE.sub("", line))
                         log_fh.flush()
+                    if collect is not None:
+                        collect.append(line)
             if proc.poll() is not None:
                 try:
                     while True:
@@ -520,11 +522,13 @@ def _run_cmd_pty(cmd, log_fh, formatter):
             sys.stdout.flush()
             if log_fh:
                 log_fh.write(_ANSI_ESCAPE_RE.sub("", line))
+            if collect is not None:
+                collect.append(line)
 
     return proc.returncode
 
 
-def run_cmd(cmd, shell=True, capture_log=True, formatter=None, pty=False):
+def run_cmd(cmd, shell=True, capture_log=True, formatter=None, pty=False, collect=None):
     """Run a command with line-buffered output, tee to tmp/run.log if capture_log is True.
 
     Strings are passed through resolve_env() first so ${VAR} and ${VAR:-default}
@@ -540,7 +544,7 @@ def run_cmd(cmd, shell=True, capture_log=True, formatter=None, pty=False):
         log_fh = open(LOG_FILE, "a")
 
     if pty:
-        rc = _run_cmd_pty(cmd, log_fh, formatter)
+        rc = _run_cmd_pty(cmd, log_fh, formatter, collect=collect)
         if log_fh:
             log_fh.close()
         return rc
@@ -558,6 +562,8 @@ def run_cmd(cmd, shell=True, capture_log=True, formatter=None, pty=False):
             if log_fh:
                 log_fh.write(_ANSI_ESCAPE_RE.sub("", line))
                 log_fh.flush()
+            if collect is not None:
+                collect.append(line)
     finally:
         proc.wait()
         _children.remove(proc)
@@ -647,66 +653,6 @@ def run_command(name, args=None):
 def register_action(name, fn):
     """Register an action. Actions are callable via run_command but hidden from the TUI and --help."""
     _actions[name] = fn
-
-
-def git_gate(cfg):
-    """Preflight git checks for deploy-style commands. Returns 0 to proceed, 1 to block.
-
-    Configured via the manifest's ``[git_gate]`` table. Keys (both default True):
-      require_clean  — block if the working tree has uncommitted or untracked changes
-      require_pushed — block if the current branch isn't fully pushed to origin
-
-    On block, prints exactly what's wrong and the git command to fix it. Feature
-    branches are fine — they just need to exist on origin with no unpushed commits.
-    """
-    cfg = cfg or {}
-
-    def _git(*a):
-        return subprocess.run(["git", *a], capture_output=True, text=True)
-
-    # Confirm we're in a git repo up front so the diagnostic is accurate no
-    # matter which rules are enabled.
-    repo = _git("rev-parse", "--is-inside-work-tree")
-    if repo.returncode != 0 or repo.stdout.strip() != "true":
-        err("git gate: not a git repository (or git is unavailable).")
-        return 1
-
-    if cfg.get("require_clean", True):
-        st = _git("status", "--porcelain")
-        if st.returncode != 0:
-            err("git gate: could not read git status — aborting to be safe.")
-            return 1
-        if st.stdout.strip():
-            err(
-                "git gate: working tree has uncommitted or untracked changes — "
-                "commit or stash them before deploying (run: git status)."
-            )
-            return 1
-
-    if cfg.get("require_pushed", True):
-        branch = _git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-        if not branch or branch == "HEAD":
-            err("git gate: detached HEAD — check out a branch and push it before deploying.")
-            return 1
-        if _git("rev-parse", "--verify", "--quiet", "origin/" + branch).returncode != 0:
-            err(
-                f"git gate: branch '{branch}' is not on origin — "
-                f"push it first:  git push -u origin {branch}"
-            )
-            return 1
-        # Block unless the count is exactly "0": a non-zero count means unpushed
-        # commits, and a failed comparison (rc != 0 / empty) blocks too rather
-        # than silently passing.
-        ahead = _git("rev-list", "--count", f"origin/{branch}..HEAD")
-        if ahead.returncode != 0 or ahead.stdout.strip() != "0":
-            err(
-                f"git gate: '{branch}' has commits not pushed to origin (or the "
-                f"comparison failed) — push first:  git push origin {branch}"
-            )
-            return 1
-
-    ok("git gate: working tree clean and pushed to origin.")
-    return 0
 
 
 def command(name, description):

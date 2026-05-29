@@ -344,12 +344,20 @@ def run_parallel(targets, formatter=None):
 # Docker helpers
 # ---------------------------------------------------------------------------
 
-def docker_build(image, context_dir=".", platform=None):
-    """Build a Docker image. Returns exit code."""
+def docker_build(image, context_dir=".", platform=None, target=None):
+    """Build a Docker image. Returns exit code.
+
+    `target` selects a specific multi-stage build stage. Without it Docker
+    picks the LAST stage in the Dockerfile, which can silently produce the
+    wrong image when the file is laid out as `base` → `dev` (dev inherits
+    from base for HMR convenience). Pass it explicitly for prod builds.
+    """
 
     plat = f"--platform {platform} " if platform else ""
-    info(f"Building Docker image: {image}...")
-    return run_cmd(f"docker build {plat}-t {image} {context_dir}")
+    tgt = f"--target {target} " if target else ""
+    target_note = f" (target={target})" if target else ""
+    info(f"Building Docker image: {image}{target_note}...")
+    return run_cmd(f"docker build {plat}{tgt}-t {image} {context_dir}")
 
 
 # ---------------------------------------------------------------------------

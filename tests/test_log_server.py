@@ -123,9 +123,11 @@ def test_log_endpoint_appends_to_log_file(running_server):
     with urllib.request.urlopen(req, timeout=2) as resp:
         body = json.loads(resp.read())
     assert body == {"written": 2}
-    lines = log_file.read_text().splitlines()
-    assert "[client] [info] m1" in lines[0]
-    assert "[client] [error] m2" in lines[1]
+    # The first POST from a new client also emits a one-time `client connected`
+    # banner line ahead of the entries — filter it out before indexing entries.
+    entry_lines = [ln for ln in log_file.read_text().splitlines() if "[client] [" in ln]
+    assert "[client] [info] m1" in entry_lines[0]
+    assert "[client] [error] m2" in entry_lines[1]
 
 
 def test_log_endpoint_rejects_non_array(running_server):

@@ -19,7 +19,7 @@ ARCHETYPE = {
     "urls": {
         "prod": "${PROD_URL:-http://localhost}",
     },
-    "order": ["build", "dev", "deploy", "---", "logs", "diff", "open"],
+    "order": ["build", "deploy", "---", "logs", "diff", "open"],
     "commands": {
         "build":            {"desc": "Build Docker image locally for linux/amd64 (Unraid)",                                            "steps": ["build"]},
         "deploy":           {"desc": "Build, push, and recreate container on Unraid (preserves run config); --dry-run to preview",     "steps": ["deploy"],           "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
@@ -31,7 +31,10 @@ ARCHETYPE = {
     "actions": {
         "build": {
             "kind": "python",
-            "run": "docker_build(os.environ.get('APP_IMAGE'), platform='linux/amd64')",
+            "run": (
+                "_target = (globals().get('_DOCKER_RUN_CONFIG') or {}).get('target')\n"
+                "docker_build(os.environ.get('APP_IMAGE'), platform='linux/amd64', target=_target)"
+            ),
             "desc": "Build Docker image locally for linux/amd64 (Unraid)",
         },
         "deploy": {
@@ -40,7 +43,8 @@ ARCHETYPE = {
                 "dry_run = '--dry-run' in args\n"
                 "if not dry_run:\n"
                 "    ensure_docker_template(globals().get('_INSTALL_TEMPLATE_CONFIG') or {})\n"
-                "    rc = docker_build(os.environ.get('APP_IMAGE'), platform='linux/amd64')\n"
+                "    _target = (globals().get('_DOCKER_RUN_CONFIG') or {}).get('target')\n"
+                "    rc = docker_build(os.environ.get('APP_IMAGE'), platform='linux/amd64', target=_target)\n"
                 "    if rc != 0:\n"
                 "        sys.exit(rc)\n"
                 "user = os.environ.get('UNRAID_USER', 'root')\n"
