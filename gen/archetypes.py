@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from gen.fragments import KNOWN_KINDS, CONFIGLESS_KINDS, KIND_MODULES, _ACTION_RENDERERS
-from gen.manifest import Command, Manifest, SPACER, VALID_COMMAND_KEYS, VALID_ACTION_KEYS
+from gen.manifest import Command, Manifest, SPACER, VALID_COMMAND_KEYS, VALID_ACTION_KEYS, GUARDS_BUILTIN
 
 
 @dataclass
@@ -334,6 +334,29 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
                             f"Known actions: {sorted(actions)}"
                         )
 
+    # Validate every name in a `requires` list resolves to a known guard:
+    # either a built-in (registered by admin_lib/guards.py) or a [guards.<name>]
+    # entry in the manifest. Catches typos at gen time rather than runtime.
+    known_guards = set(GUARDS_BUILTIN) | set(manifest.guards)
+    for action_name, action in actions.items():
+        parent_requires = action.meta.get("requires", [])
+        for req in parent_requires:
+            if req not in known_guards:
+                raise ArchetypeError(
+                    f"action '{action_name}': requires references unknown guard '{req}'. "
+                    f"Known: {sorted(known_guards)}"
+                )
+        target_requires = action.meta.get("target_requires", {})
+        for tname, treq in target_requires.items():
+            if treq is None:
+                continue
+            for req in treq:
+                if req not in known_guards:
+                    raise ArchetypeError(
+                        f"action '{action_name}': target '{tname}' requires references unknown guard '{req}'. "
+                        f"Known: {sorted(known_guards)}"
+                    )
+
     # Validate `action = "@name"` keybindings reference known actions.
     for action_name, action in actions.items():
         for keychar, binding in action.keys.items():
@@ -347,6 +370,8 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
     # Pull in modules required by the action kinds in use (e.g. nuke-dev → ports_nuke).
     for action in actions.values():
         modules.update(KIND_MODULES.get(action.kind, ()))
+        if action.meta.get("watch") or action.meta.get("target_watch"):
+            modules.add("watch")
 
     # Apply exclusions and ensure core is always present
     modules -= set(manifest.exclude_modules)
@@ -467,6 +492,17 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
         meta["logging"] = log_meta
     if data.get("interactive"):
         meta["interactive"] = True
+    # Parse parent-level `requires` (acts as default for multi-target children,
+    # or as the action-level guard list for flat actions).
+    if "requires" in data:
+        parent_requires = data["requires"]
+        if not isinstance(parent_requires, list) or not all(isinstance(r, str) for r in parent_requires):
+            raise ArchetypeError(
+                f"action '{name}' from {source}: 'requires' must be a list of guard-name strings"
+            )
+        meta["requires"] = [str(r) for r in parent_requires]
+    if "watch" in data:
+        meta["watch"] = str(data["watch"])
     if inline_targets_raw:
         for tname, tdata in inline_targets_raw.items():
             if "action" not in tdata and "run" not in tdata:
@@ -483,6 +519,27 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
         target_pty = {k: True for k, v in inline_targets_raw.items() if v.get("pty")}
         if target_pty:
             meta["target_pty"] = target_pty
+        target_watch = {k: str(v["watch"]) for k, v in inline_targets_raw.items() if v.get("watch")}
+        if target_watch:
+            meta["target_watch"] = target_watch
+        # Per-target `requires` overrides. None = inherit parent default;
+        # an explicit list (including []) replaces it. Only emitted when at least
+        # one child overrides — otherwise the parent default covers every target.
+        target_requires: dict[str, list[str] | None] = {}
+        any_override = False
+        for tname, tdata in inline_targets_raw.items():
+            if "requires" in tdata:
+                treq = tdata["requires"]
+                if not isinstance(treq, list) or not all(isinstance(r, str) for r in treq):
+                    raise ArchetypeError(
+                        f"action '{name}' from {source}: target '{tname}' 'requires' must be a list of guard-name strings"
+                    )
+                target_requires[tname] = [str(r) for r in treq]
+                any_override = True
+            else:
+                target_requires[tname] = None
+        if any_override:
+            meta["target_requires"] = target_requires
         if any(tdata.get("group", 0) != 0 or tdata.get("priority", 0) != 0 for tdata in inline_targets_raw.values()):
             sorted_tgts = sorted(
                 inline_targets_raw.items(),
@@ -549,7 +606,7 @@ _MODULE_ORDER = [
     "apple", "rust",
     "docker", "unraid", "web_dev", "keybindings",
     "log_format", "log_columns", "logtail",
-    "install",
+    "install", "watch",
 ]
 
 

@@ -28,12 +28,17 @@ _KNOWN_KEYS = {
     "project_name", "python_min", "archetypes", "modules", "urls",
     "commands", "actions", "order", "logs", "apple", "server", "output",
     "exclude_modules", "generator_commit", "inline", "logging",
-    "dev_kill", "clean_dev", "vite_dev", "docker_dev", "deploy", "install_template",
-    "log_bridge", "git_gate",
+    "dev_kill", "clean_dev", "vite_dev", "docker_dev", "docker_run", "deploy", "install_template",
+    "fixtures", "log_bridge", "guards",
 }
 
 VALID_COMMAND_KEYS = {"desc", "steps", "log_file", "log_retain", "log", "group", "priority", "env"}
-VALID_ACTION_KEYS = {"run", "desc", "kind", "targets", "method", "body", "src", "log_file", "log_retain", "log", "interactive", "keys"}
+VALID_ACTION_KEYS = {"run", "desc", "kind", "targets", "method", "body", "src", "log_file", "log_retain", "log", "interactive", "keys", "requires", "watch"}
+
+# Built-in Guard names registered by admin_lib/guards.py at import time.
+# Duplicated here (not imported from admin_lib) so the manifest layer stays
+# independent of the runtime layer. Keep in sync with admin_lib/guards.py.
+GUARDS_BUILTIN = frozenset({"git-clean", "git-pushed"})
 
 
 @dataclass
@@ -74,9 +79,11 @@ class Manifest:
     vite_dev: dict = field(default_factory=dict)  # [vite_dev] — config for kind="vite-dev" commands
     docker_dev: dict = field(default_factory=dict)  # [docker_dev] — config for kind="docker-dev" commands
     deploy: dict = field(default_factory=dict)    # [deploy] — config for docker-unraid build/deploy commands
+    docker_run: dict = field(default_factory=dict)  # [docker_run] — prod docker run config (target, image_tag, env, mounts, …)
     install_template: dict = field(default_factory=dict)  # [install_template] — kind="install-template" config
+    fixtures: dict = field(default_factory=dict)  # [fixtures] — config for kind="fixtures-generate"/"fixtures-reset"
     log_bridge: dict = field(default_factory=dict)            # [log_bridge] — browser-console HTTP bridge config
-    git_gate: dict = field(default_factory=dict)              # [git_gate] — preflight git checks gating deploy commands
+    guards: dict[str, dict] = field(default_factory=dict)     # [guards.<name>] — user-defined shell guards
     actions: dict[str, dict] = field(default_factory=dict)    # action name -> raw dict (not shown in UI)
     exclude_modules: list[str] = field(default_factory=list)  # modules to suppress even if archetype requires them
     generator_commit: str | None = None
@@ -229,9 +236,17 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     if not isinstance(deploy, dict):
         raise ManifestError(f"{source}: '[deploy]' must be a table")
 
+    docker_run = data.get("docker_run", {}) or {}
+    if not isinstance(docker_run, dict):
+        raise ManifestError(f"{source}: '[docker_run]' must be a table")
+
     install_template = data.get("install_template", {}) or {}
     if not isinstance(install_template, dict):
         raise ManifestError(f"{source}: '[install_template]' must be a table")
+
+    fixtures = data.get("fixtures", {}) or {}
+    if not isinstance(fixtures, dict):
+        raise ManifestError(f"{source}: '[fixtures]' must be a table")
 
     logging_cfg = data.get("logging", {}) or {}
     if not isinstance(logging_cfg, dict):
@@ -278,25 +293,36 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
                     f"{source}: '[log_bridge].port_range' must be [start, end] with start < end"
                 )
 
-    git_gate = data.get("git_gate", {}) or {}
-    if not isinstance(git_gate, dict):
-        raise ManifestError(f"{source}: '[git_gate]' must be a table")
-    _GIT_GATE_KNOWN = {"commands", "require_clean", "require_pushed"}
-    unknown_git_gate = set(git_gate) - _GIT_GATE_KNOWN
-    if unknown_git_gate:
-        raise ManifestError(
-            f"{source}: '[git_gate]' unknown keys: {sorted(unknown_git_gate)}, "
-            f"valid: {sorted(_GIT_GATE_KNOWN)}"
-        )
-    if git_gate:
-        commands_val = git_gate.get("commands")
-        if commands_val is not None and (
-            not isinstance(commands_val, list) or not all(isinstance(c, str) for c in commands_val)
-        ):
-            raise ManifestError(f"{source}: '[git_gate].commands' must be a list of strings")
-        for bkey in ("require_clean", "require_pushed"):
-            if bkey in git_gate and not isinstance(git_gate[bkey], bool):
-                raise ManifestError(f"{source}: '[git_gate].{bkey}' must be a boolean")
+    guards = data.get("guards", {}) or {}
+    if not isinstance(guards, dict):
+        raise ManifestError(f"{source}: '[guards]' must be a table")
+    _GUARD_KNOWN = {"run", "fail"}
+    for gname, gdef in guards.items():
+        if not isinstance(gdef, dict):
+            raise ManifestError(
+                f"{source}: '[guards.{gname}]' must be a table with 'run' and 'fail'"
+            )
+        if gname in GUARDS_BUILTIN:
+            raise ManifestError(
+                f"{source}: '[guards.{gname}]' collides with a built-in guard name "
+                f"({sorted(GUARDS_BUILTIN)}). Built-in guards are registered by "
+                f"admin_lib/guards.py and cannot be redefined in TOML."
+            )
+        unknown_guard = set(gdef) - _GUARD_KNOWN
+        if unknown_guard:
+            raise ManifestError(
+                f"{source}: '[guards.{gname}]' unknown keys: {sorted(unknown_guard)}, "
+                f"valid: {sorted(_GUARD_KNOWN)}"
+            )
+        for required_key in ("run", "fail"):
+            if required_key not in gdef:
+                raise ManifestError(
+                    f"{source}: '[guards.{gname}]' missing required key '{required_key}'"
+                )
+            if not isinstance(gdef[required_key], str) or not gdef[required_key]:
+                raise ManifestError(
+                    f"{source}: '[guards.{gname}].{required_key}' must be a non-empty string"
+                )
 
     exclude_modules = data.get("exclude_modules", [])
     if not isinstance(exclude_modules, list) or not all(isinstance(m, str) for m in exclude_modules):
@@ -330,9 +356,11 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         vite_dev=vite_dev,
         docker_dev=docker_dev,
         deploy=deploy,
+        docker_run=docker_run,
         install_template=install_template,
+        fixtures=fixtures,
         log_bridge=log_bridge,
-        git_gate=git_gate,
+        guards=guards,
         exclude_modules=exclude_modules,
         generator_commit=data.get("generator_commit"),
         inline_file=inline_file,

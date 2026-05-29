@@ -50,6 +50,14 @@ _Avoid_: version, build_id
 A mismatch between a project's `admin.toml` `generator_commit` and the currently installed `admin-project-tool` SHA. Detected by `admin-gen --audit`; the SessionStart hook regenerates silently when drift is found.
 _Avoid_: stale, out-of-date
 
+**Guard**:
+A named precondition referenced from an action's or target's `requires` list. A Guard returns pass/fail; on fail it blocks the action and prints an actionable message. Built-in Guards (`git-clean`, `git-pushed`) live in `admin_lib/guards.py` as Python with dynamic diagnostics; user-defined Guards live in `[guards.<name>]` tables as a shell expression (`run`) plus a static failure string (`fail`). Both share one name namespace; `requires` resolves names through both.
+_Avoid_: gate, check, precondition (overloaded), validator
+
+**Requires**:
+The field on an action or multi-target target that lists Guard names. `requires = ["git-clean", "git-pushed"]` runs both Guards in order, fail-fast, before the action's `run`. Parent multi-target actions define a default that children inherit and may override (replace-not-merge); `requires = []` on a child is the explicit opt-out.
+_Avoid_: needs, preconditions, before
+
 ## Relationships
 
 - A **Manifest** lists zero or more **Archetypes** and is merged with each in order.
@@ -59,6 +67,7 @@ _Avoid_: stale, out-of-date
 - The **Bundler** inlines `admin_lib/` into the rendered output; the **Generator_commit** is stamped into the header.
 - A **Detector** proposes which **Archetypes** apply to a project; paired with its archetype by filename.
 - **Drift** is the audit signal that something downstream of the **Generator_commit** has changed.
+- An **Action** (or a multi-target child) may carry a `**Requires**` list of **Guard** names; each Guard is checked before the Action runs.
 
 ## Example dialogue
 

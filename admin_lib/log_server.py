@@ -46,18 +46,18 @@ def append_log_bridge_entries(entries: Iterable[dict], *, client_key: str = "") 
     path = _LOG_BRIDGE_STATE["log_path"]
     if not path:
         return 0
+    entries_list = list(entries)
     lines = []
     if client_key and client_key not in _SEEN_CLIENTS:
         _SEEN_CLIENTS.add(client_key)
-        banner = f"[log-bridge] client connected: {client_key}\n"
-        lines.append(banner)
-    lines.extend(format_log_bridge_entry(e) for e in entries)
+        lines.append(f"[log-bridge] client connected: {client_key}\n")
+    lines.extend(format_log_bridge_entry(e) for e in entries_list)
     with open(path, "a") as f:
         f.writelines(lines)
     out = "".join(lines)
     sys.stdout.write(out)
     sys.stdout.flush()
-    return len(lines)
+    return len(entries_list)
 
 
 class _LogBridgeHandler(BaseHTTPRequestHandler):

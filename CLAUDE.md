@@ -48,15 +48,35 @@ Run all: `./admin test`.
 
 A project can opt into browser-console-to-admin-log forwarding by adding `[log_bridge] hosts = [...]` to its `admin.toml`. Any subsequent `interactive-shell` action spins up a `ThreadingHTTPServer` on a free port (default `9988-9999`; override per machine with `port_range = [start, end]`), bound to `0.0.0.0` so Tailscale peers can reach it. The userscript at `tampermonkey/log-bridge.user.js` probes the user's hardcoded hosts × ports, picks the admin instance whose `hosts` glob-matches the page, and POSTs batched `console.*` entries to `/log` where they're appended to the same log file the action is already writing. Discovery files at `/tmp/admin-project-tool/<pid>.json` are debugging aids; dead-PID files are swept on each start. Bind is `0.0.0.0` unconditionally — anyone on the tailnet can POST. `port_range` is per-machine: set it in each environment's `admin.toml` when the default range conflicts (e.g. a container that only exposes `3300-3399`); update `PROBE_PORTS` in the userscript to cover the union of all ranges.
 
-## Git gate
+## Guards
 
-A project can gate its deploy-style commands behind preflight git checks by adding a `[git_gate]` table to `admin.toml`:
+A project can gate any action or multi-target target behind a named precondition by listing guard names in `requires`. Built-in guards (`git-clean`, `git-pushed`) are registered by `admin_lib/guards.py`; user-defined ones live in `[guards.<name>]` tables. The full design and rejected alternatives live in [ADR-0005](docs/adr/0005-guards-and-requires.md).
 
 ```toml
-[git_gate]
-commands       = ["preview", "staging", "deploy"]  # optional; defaults to these three
-require_clean  = true   # block if the working tree has uncommitted/untracked changes
-require_pushed = true   # block if the current branch isn't fully pushed to origin
+# Built-in guards: reference by name. Custom ones: define inline.
+[guards.no-tag]
+run  = "test -z \"$(git tag --points-at HEAD)\""
+fail = "HEAD is already tagged — bump the version before redeploying."
+
+# Flat action: requires applies to the action body.
+[actions.deploy]
+kind     = "shell"
+run      = "bun run deploy"
+requires = ["git-clean", "git-pushed", "no-tag"]
+
+# Multi-target: requires on the parent is the default; children may override.
+[actions.preview]
+kind     = "multi-target"
+requires = ["git-clean", "git-pushed"]
+
+[actions.preview.cf]            # inherits parent ["git-clean", "git-pushed"]
+run = "bun run deploy:cf:preview"
+
+[actions.preview.devvit]        # explicit opt-out — no guards for devvit
+run      = "bun run deploy:devvit"
+requires = []
 ```
 
-`gen/manifest.py` parses + validates the table; `gen/render.py` emits a `_GIT_GATE_CONFIG` dict plus a built-in `git-gate` action (backed by `admin_lib.core.git_gate`) and prepends `git-gate` to the `steps` of each guarded command. At runtime the action calls `git_gate(cfg)`, which checks the enabled rules (`git status --porcelain` for clean, `git rev-list origin/<branch>..HEAD` for pushed), prints the offending rule + the exact fix command, and `sys.exit(1)` to abort before the real deploy step. Both rules default `true`; set either to `false` to drop it. Only step-based commands can be gated (non-step commands are skipped). Feature branches are fine — they just have to exist on origin with no unpushed commits.
+**Pipeline.** `gen/manifest.py` parses `[guards.<name>]` (requires `run` + `fail`, rejects collisions with built-in names). `gen/archetypes.py` parses `requires` on actions and inline target subtables, stores per-target overrides as `meta["target_requires"]` (where `None` means inherit the parent default), and audits at resolve time that every name in any `requires` list maps to a known guard — built-in or user-defined. `gen/render.py` emits one `register_shell_guard(name, run, fail)` call per `[guards.<name>]` entry; `gen/fragments.py` prepends a `run_requires([...])` check to flat-action bodies and a per-target dispatch (resolved at render time, `_target_requires[picked]`) inside multi-target `cmd_*` functions. The `admin_lib/guards` module is auto-pulled into the bundle only when the manifest actually uses guards or `requires`.
+
+**Runtime.** `run_requires` walks the list fail-fast: invokes each named guard, prints its diagnostic via `err()` on first failure, returns 1. Built-in guards produce dynamic diagnostics ("branch 'X' has unpushed commits — push first: git push origin X"); user-defined shell guards run `/bin/sh -c <run>`, capture stdout+stderr, print the captured output then the static `fail` on non-zero exit. The cwd is inherited (the generated `./admin` cd's to project root at boot). Guards do not compose — a guard cannot reference another `requires`. Adding a new built-in means writing a Python function in `admin_lib/guards.py` and adding its name to `GUARDS_BUILTIN` in `gen/manifest.py`.

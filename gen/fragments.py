@@ -58,18 +58,30 @@ def render_shell(cmd: Command) -> str:
     """A command that runs a single shell string. Most common kind by far."""
     func_name = "cmd_" + _safe_ident(cmd.name)
     pty = bool(cmd.meta.get("pty"))
-    run_call = f"run_cmd({_pyrepr(cmd.run)}, pty=True)" if pty else f"run_cmd({_pyrepr(cmd.run)})"
-    body = textwrap.dedent(f'''\
-        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
-        def {func_name}(args):
-            info({_pyrepr(f"running: {cmd.run}")})
-            rc = {run_call}
-            if rc != 0:
-                err({_pyrepr(cmd.name + " failed")})
-                sys.exit(rc)
-            ok({_pyrepr(cmd.name + " complete")})
-    ''')
-    return body
+    watch_kind = cmd.meta.get("watch")
+    collect_kwarg = ", collect=_collected" if watch_kind else ""
+    run_call = (
+        f"run_cmd({_pyrepr(cmd.run)}, pty=True{collect_kwarg})"
+        if pty else
+        f"run_cmd({_pyrepr(cmd.run)}{collect_kwarg})"
+    )
+    lines = [
+        f"@command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})",
+        f"def {func_name}(args):",
+    ]
+    if watch_kind:
+        lines.append("    _collected = []")
+    lines += [
+        f"    info({_pyrepr(f'running: {cmd.run}')})",
+        f"    rc = {run_call}",
+        "    if rc != 0:",
+        f"        err({_pyrepr(cmd.name + ' failed')})",
+        "        sys.exit(rc)",
+    ]
+    if watch_kind:
+        lines.append(f"    run_watcher({_pyrepr(watch_kind)}, ''.join(_collected))")
+    lines.append(f"    ok({_pyrepr(cmd.name + ' complete')})")
+    return "\n".join(lines) + "\n"
 
 
 def render_shell_passthrough(cmd: Command) -> str:
@@ -184,12 +196,60 @@ def render_multi_target(cmd: Command) -> str:
     else:
         pty_segment = ""
         pty_kwarg = ""
+    # Resolve per-target `requires` at render time: parent default applies to
+    # every target unless the child explicitly overrides. `None` in
+    # target_requires_meta means "inherit", an explicit list (possibly empty)
+    # means "replace". We emit a `_target_requires` sidecar map and a runtime
+    # check only when at least one target ends up with a non-empty list.
+    parent_requires = cmd.meta.get("requires") or []
+    target_requires_meta = cmd.meta.get("target_requires", {})
+    resolved_target_requires: dict[str, list[str]] = {}
+    for tname in cmd.targets:
+        override = target_requires_meta.get(tname)
+        if override is None:
+            resolved_target_requires[tname] = list(parent_requires)
+        else:
+            resolved_target_requires[tname] = list(override)
+    if any(resolved_target_requires.values()):
+        reqs_literal = "{" + ", ".join(
+            f"{_pyrepr(k)}: {_pyrepr_list(v)}" for k, v in resolved_target_requires.items()
+        ) + "}"
+        requires_segment = f"            _target_requires = {reqs_literal}\n"
+        requires_check = (
+            "            _reqs = _target_requires.get(picked) or []\n"
+            "            if _reqs:\n"
+            "                _rc = run_requires(_reqs)\n"
+            "                if _rc != 0:\n"
+            "                    sys.exit(_rc)\n"
+        )
+    else:
+        requires_segment = ""
+        requires_check = ""
+    target_watch = cmd.meta.get("target_watch", {})
+    if target_watch:
+        watch_literal = "{" + ", ".join(
+            f"{_pyrepr(k)}: {_pyrepr(v)}" for k, v in target_watch.items()
+        ) + "}"
+        # 12 spaces: function-body level after dedent strips 8
+        watch_segment = f"            _target_watch = {watch_literal}\n"
+        # 16 spaces: else-block level after dedent strips 8
+        collect_decl = "                _collected = []\n"
+        collect_kwarg_extra = ", collect=_collected"
+        watch_block = (
+            "                if _target_watch.get(picked):\n"
+            "                    run_watcher(_target_watch[picked], ''.join(_collected))\n"
+        )
+    else:
+        watch_segment = ""
+        collect_decl = ""
+        collect_kwarg_extra = ""
+        watch_block = ""
     body = textwrap.dedent(f'''\
         @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
         def {func_name}(args):
             _targets = {targets_literal}
             _menu = {menu_literal}
-{order_segment}{pty_segment}            if args and not args[0].startswith("-"):
+{order_segment}{pty_segment}{requires_segment}{watch_segment}            if args and not args[0].startswith("-"):
                 picked, rest_args = args[0], args[1:]
             else:
                 picked, rest_args = None, args
@@ -204,16 +264,16 @@ def render_multi_target(cmd: Command) -> str:
                 err({_pyrepr(f"{cmd.name}: unknown target '")} + picked + "'")
                 sys.exit(1)
             set_log_context({_pyrepr(cmd.name)}, picked)
-            shell = _targets[picked]
+{requires_check}            shell = _targets[picked]
             if shell.startswith('@'):
                 run_command(shell[1:], rest_args)
             else:
-                info({_pyrepr(f"running [" + cmd.name + ":")} + picked + "]: " + shell)
-                rc = run_cmd(shell{pty_kwarg})
+{collect_decl}                info({_pyrepr(f"running [" + cmd.name + ":")} + picked + "]: " + shell)
+                rc = run_cmd(shell{pty_kwarg}{collect_kwarg_extra})
                 if rc != 0:
                     err({_pyrepr(cmd.name + " failed")})
                     sys.exit(rc)
-                ok({_pyrepr(cmd.name + " complete")})
+{watch_block}                ok({_pyrepr(cmd.name + " complete")})
     ''')
     return body
 
@@ -446,6 +506,11 @@ def render_action(cmd: Command) -> str:
     src = renderer(cmd)
     ident = _safe_ident(cmd.name)
     lines = src.rstrip("\n").split("\n")
+    # For flat (non-multi-target) actions, the guard check goes at the top of
+    # the action body. Multi-target and apple-dev-loop renderers handle their
+    # own per-target dispatch (post-pick), so we skip injection there.
+    requires = cmd.meta.get("requires") or []
+    inject_requires = bool(requires) and cmd.kind not in ("multi-target", "apple-dev-loop")
     out = []
     func_renamed = False
     for line in lines:
@@ -454,9 +519,20 @@ def render_action(cmd: Command) -> str:
         if not func_renamed and line.startswith("def cmd_"):
             line = "def _act_" + line[len("def cmd_"):]
             func_renamed = True
+            out.append(line)
+            if inject_requires:
+                out.append(f"    _rc = run_requires({_pyrepr_list(requires)})")
+                out.append("    if _rc != 0:")
+                out.append("        sys.exit(_rc)")
+            continue
         out.append(line)
     out.append(f"register_action({_pyrepr(cmd.name)}, _act_{ident})")
     return "\n".join(out) + "\n"
+
+
+def _pyrepr_list(values) -> str:
+    """Render a list of strings as a Python list literal using _pyrepr per element."""
+    return "[" + ", ".join(_pyrepr(v) for v in values) + "]"
 
 
 def render_nuke_dev(cmd: Command) -> str:
@@ -488,6 +564,42 @@ def render_clean_dev(cmd: Command) -> str:
             if _cfg.get("pre_kill", True) and "cmd_kill" in globals():
                 cmd_kill(args)
             clean_dev_from_config(_cfg, force=("--force" in args or "--db" in args))
+    """)
+    return body
+
+
+def render_fixtures_generate(cmd: Command) -> str:
+    """Synthesize the dev fixture tree from the `[fixtures]` table.
+
+    Reads `[fixtures]` {baseline, tree}. Writes real files of random bytes;
+    refuses a non-empty baseline unless `--force`. Requires the 'fixtures'
+    module (which pulls 'cleanup').
+    """
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    body = textwrap.dedent(f"""\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            _rc = fixtures_generate_from_config(globals().get("_FIXTURES_CONFIG") or {{}}, force=("--force" in args))
+            if _rc:
+                sys.exit(_rc)
+    """)
+    return body
+
+
+def render_fixtures_reset(cmd: Command) -> str:
+    """Restore the mutable `working` fixture copy from `baseline`.
+
+    Reads `[fixtures]` {baseline, working, clean?, db?}. Pure-Python
+    rsync-`--delete` equivalent, plus optional cache/DB wipes via the cleanup
+    module. Requires the 'fixtures' module (which pulls 'cleanup').
+    """
+    func_name = "cmd_" + _safe_ident(cmd.name)
+    body = textwrap.dedent(f"""\
+        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
+        def {func_name}(args):
+            _rc = fixtures_reset_from_config(globals().get("_FIXTURES_CONFIG") or {{}})
+            if _rc:
+                sys.exit(_rc)
     """)
     return body
 
@@ -624,6 +736,8 @@ _ACTION_RENDERERS = {
     "kill-port": render_kill_port,
     "nuke-dev": render_nuke_dev,
     "clean-dev": render_clean_dev,
+    "fixtures-generate": render_fixtures_generate,
+    "fixtures-reset": render_fixtures_reset,
     "vite-dev": render_vite_dev,
     "server-reload": render_server_reload,
     "install-template": render_install_template,
@@ -634,6 +748,7 @@ _ACTION_RENDERERS = {
 # rather than a `run` string.
 CONFIGLESS_KINDS = frozenset({
     "nuke-dev", "clean-dev", "vite-dev", "docker-dev",
+    "fixtures-generate", "fixtures-reset",
     "server-reload", "install-template", "print-urls",
 })
 
@@ -650,6 +765,8 @@ KIND_MODULES: dict[str, list[str]] = {
     "docker-dev": ["docker"],
     "server-reload": ["docker"],
     "install-template": ["remote", "unraid"],
+    "fixtures-generate": ["cleanup", "fixtures"],
+    "fixtures-reset": ["cleanup", "fixtures"],
     "interactive-shell": ["ports", "log_server", "log_bridge", "keybindings", "log_format"],
 }
 
