@@ -41,17 +41,19 @@ ARCHETYPE = {
             "kind": "python",
             "run": (
                 "dry_run = '--dry-run' in args\n"
+                "force = '--force' in args\n"
+                "_run_cfg = globals().get('_DOCKER_RUN_CONFIG') or None\n"
                 "if not dry_run:\n"
                 "    ensure_docker_template(globals().get('_INSTALL_TEMPLATE_CONFIG') or {})\n"
-                "    _target = (globals().get('_DOCKER_RUN_CONFIG') or {}).get('target')\n"
+                "    _target = (_run_cfg or {}).get('target')\n"
                 "    rc = docker_build(os.environ.get('APP_IMAGE'), platform='linux/amd64', target=_target)\n"
                 "    if rc != 0:\n"
                 "        sys.exit(rc)\n"
                 "user = os.environ.get('UNRAID_USER', 'root')\n"
                 "host = f\"{user}@{os.environ.get('UNRAID_HOST')}\"\n"
-                "sys.exit(remote_recreate_container(host, os.environ.get('APP_IMAGE'), dry_run=dry_run))"
+                "sys.exit(remote_recreate_container(host, os.environ.get('APP_IMAGE'), target_cfg=_run_cfg, force=force, dry_run=dry_run))"
             ),
-            "desc": "Build, push, and recreate container on Unraid (preserves run config); --dry-run to preview",
+            "desc": "Build, push, and recreate container on Unraid from [docker_run] (--force to override drift, --dry-run to preview)",
         },
         "diff": {
             "kind": "python",
