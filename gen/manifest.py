@@ -47,7 +47,7 @@ class Command:
     name: str
     run: str                       # shell string (may contain ${VAR}); "" for sequence/http kinds
     desc: str
-    kind: str = "shell"            # shell | multi-target | apple-dev-loop | docker-reload-loop | interactive-shell | python | http | sequence
+    kind: str = "shell"            # shell | shell-passthrough (appends shlex-quoted ./admin args) | multi-target | apple-dev-loop | docker-reload-loop | interactive-shell | python | python-script | http | sequence
     source: str = "manifest"       # which archetype contributed it (or "manifest")
     targets: dict = field(default_factory=dict)  # target name -> shell string (for multi-target kinds)
     meta: dict = field(default_factory=dict)     # kind-specific extras: {steps} for sequence, {method, body} for http
