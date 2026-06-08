@@ -801,3 +801,167 @@ def test_run_with_reload_sends_sigterm_on_reload():
                 f.unlink()
 
 
+# ---------------------------------------------------------------------------
+# logs dispatch: dev (file tail) vs live (container logs) + --from parsing
+# ---------------------------------------------------------------------------
+
+def _load_docker_logs(tmp_dir=None, chosen="dev"):
+    """docker.py namespace wired for logs_dispatch/remote_logs/tail_dev_log testing.
+
+    Captures the shell command remote_logs builds, the argv tail_dev_log spawns,
+    and the menu pick_target is shown. Forces remote so the SSH path is exercised.
+    """
+    ns = _load_docker()
+    calls = {"run_cmd": [], "subprocess": [], "pick": []}
+    ns["run_cmd"] = lambda cmd, *a, **k: calls["run_cmd"].append(cmd) or 0
+    sp = type("SP", (), {})()
+    sp.call = lambda argv, *a, **k: calls["subprocess"].append(list(argv)) or 0
+    ns["subprocess"] = sp
+    ns["_is_local_host"] = lambda host: False
+    ns["pick_target"] = lambda menu, prompt=None: (calls["pick"].append(list(menu.keys())) or chosen)
+    if tmp_dir is not None:
+        ns["LOG_DIR"] = tmp_dir
+    ns["_calls"] = calls
+    return ns
+
+
+def test_parse_since_offset_full_and_partial():
+    fn = _load_docker()["_parse_since_offset"]
+    assert fn("00:02:00:00") == 7200          # 2 hours
+    assert fn("01:00:00:00") == 86400         # 1 day
+    assert fn("02:00:00") == 7200             # HH:MM:SS right-aligned
+    assert fn("90") == 90                     # bare seconds
+    assert fn("05:30") == 330                 # MM:SS
+
+
+def test_parse_since_offset_rejects_bad_input():
+    fn = _load_docker()["_parse_since_offset"]
+    for bad in ("1:2:3:4:5", "abc", "1:x", "-5"):
+        try:
+            fn(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"expected ValueError for {bad!r}")
+
+
+# --- timestamp filtering (dev --from) -------------------------------------
+
+def test_ts_epoch_parses_ansi_wrapped_rfc3339():
+    fn = _load_docker()["_ts_epoch"]
+    wrapped = "\x1b[2m2026-06-03T03:16:11.686512Z\x1b[0m \x1b[32m INFO\x1b[0m hi\n"
+    plain = "2026-06-03T03:16:11Z INFO hi"
+    assert fn(wrapped) is not None
+    assert fn(plain) is not None
+    assert abs(fn(wrapped) - fn(plain)) < 2          # same second, ignoring frac
+    assert fn("Starting dev...\n") is None           # banner line, no ts
+    assert fn("[Running 'cargo run']\n") is None
+    # Nanosecond precision (>6 frac digits) must not blow up strptime.
+    assert fn("2026-06-03T03:16:11.686512123Z hi") is not None
+
+
+def test_lines_since_includes_from_first_match():
+    ns = _load_docker()
+    fn, ts = ns["_lines_since"], ns["_ts_epoch"]
+    lines = [
+        "banner no timestamp\n",
+        "\x1b[2m2026-06-03T03:00:00Z\x1b[0m old\n",
+        "\x1b[2m2026-06-03T04:00:00Z\x1b[0m new\n",
+        "    untimestamped continuation\n",
+    ]
+    cutoff = ts("2026-06-03T03:30:00Z x")
+    out, matched = fn(lines, cutoff)
+    assert matched is True
+    assert out == lines[2:]                           # from 04:00 onward, incl. continuation
+
+
+def test_lines_since_no_match():
+    ns = _load_docker()
+    fn, ts = ns["_lines_since"], ns["_ts_epoch"]
+    lines = ["\x1b[2m2026-06-03T01:00:00Z\x1b[0m old\n"]
+    out, matched = fn(lines, ts("2026-06-03T05:00:00Z x"))
+    assert matched is False and out == []
+
+
+# --- dev file tailing ------------------------------------------------------
+
+def test_newest_log_and_tail_no_since():
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        old = os.path.join(d, "dev.2026-01-01_000000.log")
+        new = os.path.join(d, "dev.log")
+        open(old, "w").write("old\n")
+        open(new, "w").write("new\n")
+        os.utime(old, (1, 1))                         # force old mtime
+        ns = _load_docker_logs(tmp_dir=d)
+        ns["tail_dev_log"]()
+        argv = ns["_calls"]["subprocess"][-1]
+        assert argv[:3] == ["tail", "-n", "100"] and argv[-1] == new
+
+
+def test_tail_dev_log_since_no_match_warns_and_follows():
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "dev.log")
+        open(path, "w").write("2020-01-01T00:00:00Z ancient\n")
+        ns = _load_docker_logs(tmp_dir=d)
+        ns["tail_dev_log"](since=60)
+        assert any("trailing new output only" in w for w in ns["_warnings"])
+        assert ns["_calls"]["subprocess"][-1][:3] == ["tail", "-n", "0"]
+
+
+def test_tail_dev_log_no_files_errors():
+    with tempfile.TemporaryDirectory() as d:
+        ns = _load_docker_logs(tmp_dir=d)
+        assert ns["tail_dev_log"]() == 1
+        assert ns["_calls"]["subprocess"] == []
+
+
+# --- dispatch --------------------------------------------------------------
+
+def test_remote_logs_default_follows():
+    ns = _load_docker_logs()
+    ns["remote_logs"]("root@box", "app:latest")
+    cmd = ns["_calls"]["run_cmd"][-1]
+    assert cmd.startswith("ssh ")
+    assert "docker logs" in cmd and "-f" in cmd and "--tail=200" in cmd
+    assert "--since" not in cmd
+
+
+def test_logs_dispatch_live_from_since_and_follows():
+    ns = _load_docker_logs()
+    ns["logs_dispatch"](["live", "--from", "00:02:00:00"], image="app:latest", host="root@box")
+    cmd = ns["_calls"]["run_cmd"][-1]
+    assert "--since 7200s" in cmd and "-f" in cmd      # --from always trails too
+
+
+def test_logs_dispatch_live_bare_follows():
+    ns = _load_docker_logs()
+    ns["logs_dispatch"](["live"], image="app:latest", host="root@box")
+    cmd = ns["_calls"]["run_cmd"][-1]
+    assert "-f" in cmd and "--since" not in cmd
+
+
+def test_logs_dispatch_bad_from_errors_before_ssh():
+    ns = _load_docker_logs()
+    rc = ns["logs_dispatch"](["live", "--from", "nope"], image="app:latest", host="root@box")
+    assert rc == 1 and ns["_calls"]["run_cmd"] == []
+
+
+def test_logs_dispatch_dev_tails_file_not_container():
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "dev.log")
+        open(path, "w").write("x\n")
+        ns = _load_docker_logs(tmp_dir=d)
+        ns["logs_dispatch"](["dev"], image="app:latest")
+        assert ns["_calls"]["subprocess"][-1][-1] == path
+        assert ns["_calls"]["run_cmd"] == []          # never hit docker logs
+
+
+def test_logs_dispatch_bare_offers_only_dev_and_live():
+    ns = _load_docker_logs(chosen="live")
+    ns["logs_dispatch"]([], image="app:latest", host="root@box")
+    assert ns["_calls"]["pick"][-1] == ["dev", "live"]   # tiny 2-item menu, no files
+    assert "docker logs" in ns["_calls"]["run_cmd"][-1]   # routed to live after pick
+
+

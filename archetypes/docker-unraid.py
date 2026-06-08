@@ -24,7 +24,7 @@ ARCHETYPE = {
         "build":            {"desc": "Build Docker image locally for linux/amd64 (Unraid)",                                            "steps": ["build"]},
         "deploy":           {"desc": "Build, push, and recreate container on Unraid (preserves run config); --dry-run to preview",     "steps": ["deploy"],           "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
         "diff":             {"desc": "Show run-config drift between current container and last deploy; --format json for CI",          "steps": ["diff"],             "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
-        "logs":             {"desc": "Tail container logs (local or SSH)",                                                              "steps": ["logs"],             "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
+        "logs":             {"desc": "Tail logs — `dev` (newest local log) or `live` (container); --from DD:HH:MM:SS rolls back",                    "steps": ["logs"],             "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
         "reload":           {"desc": "Build+run with reload loop (press r or SIGUSR1 to rebuild)",                                     "steps": ["reload"]},
         "open":             {"desc": "Open the deployed app URL",                                                                       "steps": ["open"]},
     },
@@ -68,11 +68,9 @@ ARCHETYPE = {
         "logs": {
             "kind": "python",
             "run": (
-                "user = os.environ.get('UNRAID_USER', 'root')\n"
-                "host = f\"{user}@{os.environ.get('UNRAID_HOST')}\"\n"
-                "sys.exit(remote_logs(host, os.environ.get('APP_IMAGE')))"
+                "sys.exit(logs_dispatch(args, image=os.environ.get('APP_IMAGE')))"
             ),
-            "desc": "Tail container logs (local or SSH)",
+            "desc": "Tail logs — `dev` (newest local log) or `live` (container); --from DD:HH:MM:SS rolls back",
         },
         "reload": {
             "kind": "docker-reload-loop",

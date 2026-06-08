@@ -270,6 +270,18 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
             log.append(f"custom '{cmd_name}' shadows archetype-provided command")
         commands[cmd_name] = _to_command(cmd_name, custom, source="custom", is_action=False)
 
+    # hide_commands: drop named commands from the listing entirely. The underlying
+    # actions (and any [actions] they reference) are untouched, so other commands'
+    # steps still resolve and the action remains callable via run_command.
+    for cmd_name in manifest.hide_commands:
+        if cmd_name not in commands:
+            raise ArchetypeError(
+                f"hide_commands references unknown command '{cmd_name}' "
+                f"(known: {sorted(commands)})"
+            )
+        del commands[cmd_name]
+        log.append(f"command '{cmd_name}' hidden by manifest hide_commands")
+
     # Manifest URLs win — rebuild dict so manifest ordering takes priority
     if manifest.urls:
         merged = dict(manifest.urls)
@@ -284,6 +296,7 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
     # No explicit order: sort by (group, priority, name) and insert spacers between groups.
     if manifest.order or archetype_order:
         effective_order = manifest.order if manifest.order else archetype_order
+        hidden_set = set(manifest.hide_commands)
         listed: set[str] = set()
         display: list[str] = []
         for entry in effective_order:
@@ -291,6 +304,10 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
                 display.append(SPACER)
                 continue
             if entry not in commands:
+                # A hidden command may still appear in an archetype's (or the
+                # project's) order list — skip it rather than treating it as a typo.
+                if entry in hidden_set:
+                    continue
                 raise ArchetypeError(
                     f"order references unknown command '{entry}' "
                     f"(known: {sorted(commands)})"

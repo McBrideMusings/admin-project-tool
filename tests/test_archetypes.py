@@ -965,3 +965,90 @@ def test_apple_dev_loop_at_ref_dispatch_end_to_end():
     print("OK: apple-dev-loop @-ref dispatches correctly and forwards args end-to-end")
 
 
+
+
+# ---------------------------------------------------------------------------
+# hide_commands: drop a command from the listing while keeping its action
+# ---------------------------------------------------------------------------
+
+def _docker_manifest(**kw):
+    base = dict(
+        project_name="Hide Test",
+        python_min="3.11",
+        archetypes=["docker-unraid"],
+        modules=[],
+        urls={},
+        overrides={},
+        custom={},
+        order=[],
+    )
+    base.update(kw)
+    return Manifest(**base)
+
+
+def test_hide_commands_drops_command_keeps_action():
+    m = _docker_manifest(hide_commands=["reload", "open", "diff"])
+    resolved = resolve(m, ARCH_DIR)
+    for hidden in ("reload", "open", "diff"):
+        assert hidden not in resolved.commands, f"{hidden} should be hidden"
+        assert hidden not in resolved.display_order, f"{hidden} still in display order"
+    # Actions survive so other commands' steps still resolve and they stay callable.
+    for act in ("reload", "open", "diff"):
+        assert act in resolved.actions, f"action {act} should remain"
+    script = render(resolved, LIB_DIR, generator_commit="test-sha")
+    assert "def cmd_reload" not in script
+    assert "def cmd_open" not in script
+    assert "def cmd_diff" not in script
+
+
+def test_hide_commands_unknown_raises():
+    m = _docker_manifest(hide_commands=["nonesuch"])
+    try:
+        resolve(m, ARCH_DIR)
+    except ArchetypeError as e:
+        assert "nonesuch" in str(e)
+        return
+    raise AssertionError("expected ArchetypeError for unknown hide_commands entry")
+
+
+def test_archetype_logs_command_not_shadowed_by_builtin():
+    """docker-unraid provides a `logs` command, so the builtin file-tailer
+    registration must NOT be emitted (it would overwrite the real one)."""
+    m = _docker_manifest()
+    resolved = resolve(m, ARCH_DIR)
+    assert "logs" in resolved.commands
+    script = render(resolved, LIB_DIR, generator_commit="test-sha")
+    import re as _re
+    # The *call* must not be emitted (the def is hard-kept; match a bare call line).
+    assert not _re.search(r"(?m)^register_builtin_logs_command\(\)$", script)
+    assert "logs_dispatch(" in script  # the dispatcher is wired in
+
+
+def test_hiding_logs_does_not_readd_builtin():
+    """Hiding `logs` must NOT let the builtin file-tailer re-register a `logs`
+    command — that would be the opposite of what hide_commands asked for."""
+    m = _docker_manifest(hide_commands=["logs"])
+    resolved = resolve(m, ARCH_DIR)
+    assert "logs" not in resolved.commands
+    script = render(resolved, LIB_DIR, generator_commit="test-sha")
+    import re as _re
+    assert not _re.search(r"(?m)^register_builtin_logs_command\(\)$", script)
+
+
+def test_builtin_logs_emitted_when_no_logs_command():
+    """An archetype without a `logs` command keeps the builtin file-tailer."""
+    m = Manifest(
+        project_name="No Logs Cmd",
+        python_min="3.11",
+        archetypes=["hugo"],
+        modules=[],
+        urls={},
+        overrides={},
+        custom={},
+        order=[],
+    )
+    resolved = resolve(m, ARCH_DIR)
+    assert "logs" not in resolved.commands
+    script = render(resolved, LIB_DIR, generator_commit="test-sha")
+    import re as _re
+    assert _re.search(r"(?m)^register_builtin_logs_command\(\)$", script)
