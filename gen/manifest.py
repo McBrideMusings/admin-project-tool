@@ -27,7 +27,7 @@ MANIFEST_FILENAME = "admin.toml"
 _KNOWN_KEYS = {
     "project_name", "python_min", "archetypes", "modules", "urls",
     "commands", "actions", "order", "logs", "apple", "server", "output",
-    "exclude_modules", "generator_commit", "inline", "logging",
+    "exclude_modules", "hide_commands", "generator_commit", "inline", "logging",
     "dev_kill", "clean_dev", "vite_dev", "docker_dev", "docker_run", "deploy", "install_template",
     "fixtures", "log_bridge", "guards",
 }
@@ -86,6 +86,7 @@ class Manifest:
     guards: dict[str, dict] = field(default_factory=dict)     # [guards.<name>] — user-defined shell guards
     actions: dict[str, dict] = field(default_factory=dict)    # action name -> raw dict (not shown in UI)
     exclude_modules: list[str] = field(default_factory=list)  # modules to suppress even if archetype requires them
+    hide_commands: list[str] = field(default_factory=list)    # archetype/manifest commands to drop from the listing (actions stay)
     generator_commit: str | None = None
     inline_file: str | None = None           # path relative to project root
     raw: dict = field(default_factory=dict)  # original parsed TOML, for debugging
@@ -328,6 +329,10 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     if not isinstance(exclude_modules, list) or not all(isinstance(m, str) for m in exclude_modules):
         raise ManifestError(f"{source}: 'exclude_modules' must be a list of strings")
 
+    hide_commands = data.get("hide_commands", [])
+    if not isinstance(hide_commands, list) or not all(isinstance(c, str) for c in hide_commands):
+        raise ManifestError(f"{source}: 'hide_commands' must be a list of strings")
+
     unknown = set(data.keys()) - _KNOWN_KEYS
     if unknown:
         print(
@@ -362,6 +367,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         log_bridge=log_bridge,
         guards=guards,
         exclude_modules=exclude_modules,
+        hide_commands=hide_commands,
         generator_commit=data.get("generator_commit"),
         inline_file=inline_file,
         raw=data,

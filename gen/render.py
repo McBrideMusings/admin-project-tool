@@ -212,6 +212,14 @@ def render(
     if m.logs:
         logs_src = f"register_logs_command({_pyliteral(m.logs)})\n\n"
 
+    # The builtin file-tailer registers a `logs` command. Only emit it when no
+    # archetype/manifest `logs` command exists, otherwise it would permanently
+    # shadow the real one (e.g. docker-unraid's container-logs dispatcher).
+    # Also suppress it when `logs` was explicitly hidden — re-adding a working
+    # `logs` command there would be the opposite of what hide_commands asked for.
+    emit_builtin_logs = "logs" not in resolved.commands and "logs" not in m.hide_commands
+    builtin_logs_src = "register_builtin_logs_command()\n" if emit_builtin_logs else ""
+
     inline_src = ""
     if inline_body:
         inline_src = f"# === inline ===\n{inline_body.rstrip()}\n\n"
@@ -243,7 +251,7 @@ def render(
         f"{guard_decls}"
         f"{actions_block}"
         f"\n{commands_src}\n"
-        f"register_builtin_logs_command()\n"
+        f"{builtin_logs_src}"
         f"{logs_src}"
         f"{inline_src}"
         f"{boot_src}"

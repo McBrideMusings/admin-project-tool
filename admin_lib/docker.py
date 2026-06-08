@@ -1515,16 +1515,170 @@ def ensure_deps(check_path, install_cmd):
 # Logs command
 # ---------------------------------------------------------------------------
 
-def remote_logs(host, image, container=None, tail=200):
-    """Tail container logs locally or via SSH."""
+def remote_logs(host, image, container=None, tail=200, since=None, follow=True):
+    """Tail container logs locally or via SSH.
+
+    since:  optional `docker logs --since` value in seconds (int). When set,
+            history is shown from that point forward.
+    follow: when True, append `-f` to stream live (the default — plain
+            `./admin logs live` follows). With a `--since` window and no
+            explicit `-f`, callers pass follow=False to dump-and-exit.
+    """
     import shlex
     if container is None:
         container = _default_container_name(image)
     container_q = shlex.quote(container)
-    logs_cmd = f"docker logs -f --tail={tail} {container_q}"
+    flags = []
+    if since is not None:
+        flags.append(f"--since {int(since)}s")
+    if follow:
+        flags.append("-f")
+    flags.append(f"--tail={tail}")
+    logs_cmd = f"docker logs {' '.join(flags)} {container_q}"
     if _is_local_host(host):
         return run_cmd(logs_cmd)
     return run_cmd(f"ssh {shlex.quote(host)} {logs_cmd}")
+
+
+def _parse_since_offset(spec):
+    """Convert a relative DD:HH:MM:SS offset into total seconds (int).
+
+    Fields are right-aligned, so shorter forms work too: 'SS', 'MM:SS',
+    'HH:MM:SS', 'DD:HH:MM:SS'. e.g. '02:00:00' -> 7200 (2 hours ago).
+    Raises ValueError on malformed input.
+    """
+    parts = str(spec).split(":")
+    if not 1 <= len(parts) <= 4:
+        raise ValueError(f"--from expects up to DD:HH:MM:SS, got {spec!r}")
+    try:
+        nums = [int(p) for p in parts]
+    except ValueError:
+        raise ValueError(f"--from fields must be integers, got {spec!r}")
+    if any(n < 0 for n in nums):
+        raise ValueError(f"--from fields must be non-negative, got {spec!r}")
+    mult = [1, 60, 3600, 86400]  # seconds, minutes, hours, days (reversed order)
+    return sum(n * mult[i] for i, n in enumerate(reversed(nums)))
+
+
+def _ts_epoch(line):
+    """Extract a leading RFC3339 UTC timestamp from a (possibly ANSI-wrapped) log
+    line and return it as an epoch float. None when the line has no timestamp.
+
+    Matches the backend's tracing format, e.g. `2026-06-03T03:16:11.686512Z`.
+    """
+    import re
+    import datetime
+    clean = re.sub(r"\x1b\[[0-9;]*m", "", line)
+    m = re.match(r"\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?Z", clean)
+    if not m:
+        return None
+    base, frac = m.group(1), (m.group(2) or "")
+    frac = frac[:7]  # %f accepts at most 6 fractional digits (keep the dot + 6)
+    fmt = "%Y-%m-%dT%H:%M:%S.%f" if frac else "%Y-%m-%dT%H:%M:%S"
+    try:
+        dt = datetime.datetime.strptime(base + frac, fmt)
+    except ValueError:
+        return None
+    return dt.replace(tzinfo=datetime.timezone.utc).timestamp()
+
+
+def _lines_since(lines, cutoff_epoch):
+    """Return (filtered_lines, matched). Once a line at/after cutoff_epoch is
+    seen, that line and every line after it (including untimestamped
+    continuation lines) is included.
+    """
+    out, started = [], False
+    for line in lines:
+        if not started:
+            ep = _ts_epoch(line)
+            if ep is not None and ep >= cutoff_epoch:
+                started = True
+        if started:
+            out.append(line)
+    return out, started
+
+
+def _newest_log(prefix, log_dir=None):
+    """Newest `<prefix>.log` / `<prefix>.<timestamp>.log` in log_dir by mtime, or None."""
+    log_dir = log_dir or LOG_DIR or os.path.join(os.getcwd(), "tmp")
+    cands = glob.glob(os.path.join(log_dir, f"{prefix}.log"))
+    cands += glob.glob(os.path.join(log_dir, f"{prefix}.*.log"))
+    if not cands:
+        return None
+    return max(cands, key=os.path.getmtime)
+
+
+def tail_dev_log(prefix="dev", since=None):
+    """Trail the newest local `<prefix>` log file.
+
+    since=None -> last 100 lines, then follow.
+    since=<seconds> -> print lines from (now - since) forward (keyed off the
+        RFC3339 timestamps the backend emits), then follow. If no timestamped
+        line falls within the window, warn and follow new output only.
+    """
+    path = _newest_log(prefix)
+    if not path:
+        err(f"no {prefix} logs found in {LOG_DIR or 'tmp'}")
+        return 1
+    info(f"trailing {os.path.relpath(path)}")
+    if since is None:
+        return subprocess.call(["tail", "-n", "100", "-f", path])
+    cutoff = time.time() - since
+    with open(path, errors="replace") as f:
+        lines = f.readlines()
+    filtered, matched = _lines_since(lines, cutoff)
+    if matched:
+        sys.stdout.write("".join(filtered))
+        sys.stdout.flush()
+    else:
+        warn(
+            f"no timestamped lines within the last {since}s in "
+            f"{os.path.basename(path)}; trailing new output only"
+        )
+    return subprocess.call(["tail", "-n", "0", "-f", path])
+
+
+def logs_dispatch(args, image, host=None):
+    """Route `./admin logs [dev|live] [--from DD:HH:MM:SS]`.
+
+    No target -> a tiny dev|live picker (never a file list).
+    `dev`  -> trail the newest local dev log file (tail_dev_log).
+    `live` -> deployed container logs via docker logs (local or over SSH).
+
+    `--from DD:HH:MM:SS` (relative offset) shows everything from that point
+    forward and then keeps trailing, for both targets.
+    """
+    args = list(args or [])
+    target = args[0] if args and args[0] in ("dev", "live") else None
+    rest = args[1:] if target else args
+
+    if target is None:
+        menu = OrderedDict([
+            ("dev", "dev   local dev server logs"),
+            ("live", "live  deployed container logs"),
+        ])
+        target = pick_target(menu, "which logs?")
+        if not target:
+            return 0
+
+    since = None
+    if "--from" in rest:
+        i = rest.index("--from")
+        if i + 1 >= len(rest):
+            err("--from requires a DD:HH:MM:SS value")
+            return 1
+        try:
+            since = _parse_since_offset(rest[i + 1])
+        except ValueError as e:
+            err(str(e))
+            return 1
+
+    if target == "live":
+        if host is None:
+            user = os.environ.get("UNRAID_USER", "root")
+            host = f"{user}@{os.environ.get('UNRAID_HOST')}"
+        return remote_logs(host, image, since=since, follow=True)
+    return tail_dev_log(since=since)
 
 
 def register_logs_command(host, image):
