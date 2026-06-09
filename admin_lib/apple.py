@@ -1658,6 +1658,29 @@ def _make_mac_dev_kill(cfg):
     return lambda: None
 
 
+def _compose_sign_settings(cfg):
+    """Build xcodebuild build-setting overrides for code signing from [apple] config.
+
+    Reads code_sign_identity, development_team, code_sign_style. Resolves
+    ${VAR} / ${VAR:-default} from the environment. Returns empty string when
+    none of the keys are present.
+    """
+    from .core import resolve_env
+    parts = []
+    for manifest_key, xcode_key in (
+        ("code_sign_identity", "CODE_SIGN_IDENTITY"),
+        ("development_team",   "DEVELOPMENT_TEAM"),
+        ("code_sign_style",    "CODE_SIGN_STYLE"),
+    ):
+        val = cfg.get(manifest_key)
+        if val is None:
+            continue
+        val = resolve_env(str(val))
+        if val:
+            parts.append(f'{xcode_key}="{val}"')
+    return " ".join(parts)
+
+
 def _compose_dev_settings(cfg, dev_bundle_id):
     """Combine cross-platform `dev_build_settings` with a platform-specific
     PRODUCT_BUNDLE_IDENTIFIER (appended last so it wins). Warns if the manifest's
@@ -1671,9 +1694,13 @@ def _compose_dev_settings(cfg, dev_bundle_id):
             "value will override."
         )
     if not dev_bundle_id:
-        return extras
-    override = f"PRODUCT_BUNDLE_IDENTIFIER={dev_bundle_id}"
-    return f"{extras} {override}".strip() if extras else override
+        result = extras
+    else:
+        override = f"PRODUCT_BUNDLE_IDENTIFIER={dev_bundle_id}"
+        result = f"{extras} {override}".strip() if extras else override
+    sign = _compose_sign_settings(cfg)
+    parts = [p for p in [result, sign] if p]
+    return " ".join(parts)
 
 
 def _derived_glob(scheme, config, platform_subdir, product_name):
@@ -1829,7 +1856,8 @@ def deploy_mac(cfg, *, clean=False):
 
     info(f"Building {scheme} ({config})...")
     rc = xcodebuild_filtered(project, scheme, config, "platform=macOS",
-                             action=build_action, extra_settings="")
+                             action=build_action,
+                             extra_settings=_compose_sign_settings(cfg))
     if rc != 0:
         err("Build failed"); sys.exit(rc)
 
@@ -1875,7 +1903,8 @@ def deploy_ios(cfg, *, clean=False):
 
     info(f"Building {scheme} for device ({config})...")
     rc = xcodebuild_filtered(project, scheme, config, "generic/platform=iOS",
-                             action=build_action, extra_settings="")
+                             action=build_action,
+                             extra_settings=_compose_sign_settings(cfg))
     if rc != 0:
         diagnose_build_failure()
         err("Build failed"); sys.exit(rc)
@@ -1956,7 +1985,8 @@ def build_mac(cfg, *, force=False):
     restore_stranded_dev_icons(cfg)
     info(f"Building {scheme} ({config}) for macOS...")
     rc = xcodebuild_filtered(project, scheme, config, "platform=macOS",
-                             action=build_action)
+                             action=build_action,
+                             extra_settings=_compose_sign_settings(cfg))
     if rc != 0:
         diagnose_build_failure()
         err("Build failed"); sys.exit(rc)
@@ -1985,7 +2015,8 @@ def build_ios(cfg, *, force=False):
     build_action = "clean build" if force else "build"
     restore_stranded_dev_icons(cfg)
     info(f"Building {scheme} ({config}) for iOS...")
-    rc = xcodebuild_filtered(project, scheme, config, dest, action=build_action)
+    rc = xcodebuild_filtered(project, scheme, config, dest, action=build_action,
+                             extra_settings=_compose_sign_settings(cfg))
     if rc != 0:
         diagnose_build_failure()
         err("Build failed"); sys.exit(rc)
