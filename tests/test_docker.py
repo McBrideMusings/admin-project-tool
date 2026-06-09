@@ -444,6 +444,31 @@ def test_cfg_renderer_emits_gpu_and_device():
     print("OK: cfg renderer emits expected pairs for muxarr-shape config")
 
 
+def test_cfg_renderer_emits_user():
+    ns = _load_docker()
+    cfg = dict(_MUXARR_CFG, user="99:100")
+    args = ns["_build_run_args_from_cfg"](cfg, env_vars={})
+    pair_set = ns["_argv_to_pair_set"](args)
+    assert "--user\t99:100" in pair_set
+    # Absent user key → no --user flag (don't override the image default).
+    args_none = ns["_build_run_args_from_cfg"](_MUXARR_CFG, env_vars={})
+    assert "--user" not in args_none
+    print("OK: cfg renderer emits --user when set, omits it when unset")
+
+
+def test_cfg_renderer_expands_env_in_port_host():
+    ns = _load_docker()
+    cfg = dict(_MUXARR_CFG, ports=[{"host": "${TS_IP}:8080", "container": 8080}])
+    args = ns["_build_run_args_from_cfg"](cfg, env_vars={"TS_IP": "100.64.0.1"})
+    pair_set = ns["_argv_to_pair_set"](args)
+    assert "-p\t100.64.0.1:8080:8080/tcp" in pair_set
+    # Unset env → port skipped (so drift surfaces instead of a literal ${VAR}).
+    args_unset = ns["_build_run_args_from_cfg"](cfg, env_vars={})
+    assert not any("${TS_IP}" in a for a in args_unset)
+    assert "-p" not in args_unset
+    print("OK: cfg renderer expands ${VAR} in port host, skips on unset")
+
+
 def test_cfg_renderer_optional_mount_gated_on_env():
     ns = _load_docker()
     cfg = dict(_MUXARR_CFG, optional_mounts=[

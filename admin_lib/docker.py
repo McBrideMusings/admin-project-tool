@@ -935,13 +935,20 @@ def _build_run_args_from_cfg(cfg, env_vars=None, env_file_vars=None):
             continue
         args += ["-v", path]
 
-    # Ports — host may be int, "PORT", or "IP:PORT"; container is int
+    # Ports — host may be int, "PORT", or "IP:PORT"; container is int.
+    # ${VAR} in the host is expanded (same as env/labels) so a Tailscale-bound
+    # port can reference e.g. "${UNRAID_HOST}:8080" instead of hardcoding the IP.
     for p in cfg.get("ports") or ():
         host_port = p.get("host")
         cont_port = p.get("container", host_port)
         if host_port is None:
             continue
         host_str = str(host_port)
+        if "${" in host_str:
+            host_str, all_ok = _expand_env_refs(host_str, env_vars)
+            if not all_ok:
+                warn(f"docker_run.ports: host {host_port!r} references unset env var — skipping")
+                continue
         host_ip = ""
         if ":" in host_str:
             host_ip, host_str = host_str.rsplit(":", 1)
@@ -990,6 +997,15 @@ def _build_run_args_from_cfg(cfg, env_vars=None, env_file_vars=None):
     network = cfg.get("network")
     if network and network != "default":
         args += ["--network", network]
+
+    # User (UID[:GID] or name). Unraid runs containers as nobody:users ("99:100"),
+    # which differs from the image's baked USER. The live-side drift filter only
+    # strips --user when it equals the image user, so without this knob the cfg
+    # can't reproduce a non-image user and a --force deploy would silently drop
+    # it — reverting to the image default and changing ownership of written files.
+    user = cfg.get("user")
+    if user:
+        args += ["--user", str(user)]
 
     # Devices (e.g. /dev/dri)
     for d in cfg.get("devices") or ():
