@@ -8,7 +8,7 @@ Hands-on docs for using `admin-project-tool` in a project.
 
 ```bash
 # In a target project:
-admin-gen .            # interactive — pick archetypes, write admin.toml
-admin-gen --regenerate # produce ./admin from admin.toml
-./admin                # run the menu
+admin new    # detect the stack, write a starter admin.toml
+admin check  # validate that admin.toml parses and resolves
+admin        # run the menu (interprets admin.toml at runtime)
 ```
