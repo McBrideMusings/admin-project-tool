@@ -1,14 +1,16 @@
-"""Tests for kill-port renderer and kill_port_interactive."""
+"""Tests for the kill-port interpreter factory and kill_port_interactive."""
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from gen.fragments import FragmentError, render_kill_port  # noqa: E402
+from admin_lib.interp import InterpError, _make_kill_port  # noqa: E402
 from gen.manifest import Command  # noqa: E402
 from admin_lib.ports_nuke import kill_port_interactive  # noqa: E402
 
@@ -18,65 +20,45 @@ def _cmd(name="kill", run="", desc="Kill dev server"):
 
 
 # ---------------------------------------------------------------------------
-# render_kill_port
+# interp._make_kill_port — port parsing + validation happen at build time
 # ---------------------------------------------------------------------------
 
-def test_render_kill_port_with_single_default():
-    src = render_kill_port(_cmd(run="3000"))
-    assert "_to_kill = [3000]" in src
-    assert "if args:" in src
-    assert "[int(a) for a in args]" in src
-    assert "for _port in _to_kill:" in src
-    assert "kill_port_interactive" in src
-    assert "[PORT]" not in src
-    print("OK: single default port renders correctly")
+def test_make_kill_port_valid_defaults_build_callable():
+    assert callable(_make_kill_port(_cmd(run="3000"), {}))
+    assert callable(_make_kill_port(_cmd(run="3000 8080 5000"), {}))
+    print("OK: valid default ports build a callable")
 
 
-def test_render_kill_port_with_multiple_defaults():
-    src = render_kill_port(_cmd(run="3000 8080"))
-    assert "_to_kill = [3000, 8080]" in src
-    assert "if args:" in src
-    assert "kill_port_interactive" in src
-    print("OK: multiple default ports render correctly")
+def test_make_kill_port_no_default_builds_callable():
+    # No defaults is legal — the port is required as a runtime arg instead.
+    assert callable(_make_kill_port(_cmd(run=""), {}))
+    print("OK: no-default kill-port builds a callable")
 
 
-def test_render_kill_port_no_default_appends_port_hint():
-    src = render_kill_port(_cmd(run=""))
-    assert "[PORT]" in src
-    assert "port argument required" in src
-    assert "kill_port_interactive" in src
-    print("OK: no-default command gets [PORT] hint in description")
+def test_make_kill_port_non_numeric_raises():
+    with pytest.raises(InterpError) as e:
+        _make_kill_port(_cmd(run="not-a-port"), {})
+    assert "not-a-port" in str(e.value)
+    print("OK: non-numeric run raises InterpError")
 
 
-def test_render_kill_port_no_default_empty_desc():
-    src = render_kill_port(_cmd(run="", desc=""))
-    assert '"[PORT]"' in src
-    print("OK: empty desc with no default gets [PORT] as full description")
+def test_make_kill_port_mixed_invalid_raises():
+    with pytest.raises(InterpError) as e:
+        _make_kill_port(_cmd(run="3000 abc"), {})
+    assert "abc" in str(e.value)
+    print("OK: mixed valid/invalid run raises InterpError")
 
 
-def test_render_kill_port_non_numeric_raises():
-    try:
-        render_kill_port(_cmd(run="not-a-port"))
-        assert False, "expected FragmentError"
-    except FragmentError as e:
-        assert "not-a-port" in str(e)
-    print("OK: non-numeric run raises FragmentError")
-
-
-def test_render_kill_port_mixed_invalid_raises():
-    try:
-        render_kill_port(_cmd(run="3000 abc"))
-        assert False, "expected FragmentError"
-    except FragmentError as e:
-        assert "abc" in str(e)
-    print("OK: mixed valid/invalid run raises FragmentError")
-
-
-def test_render_kill_port_iterates_all_ports():
-    src = render_kill_port(_cmd(run="3000 4000 5000"))
-    assert "_to_kill = [3000, 4000, 5000]" in src
-    assert "for _port in _to_kill:" in src
-    print("OK: three-port default generates iteration loop")
+def test_kill_port_default_dispatch_calls_interactive_per_port(monkeypatch):
+    """The built closure kills each default port via kill_port_interactive."""
+    killed = []
+    monkeypatch.setattr(
+        "admin_lib.ports_nuke.kill_port_interactive",
+        lambda p: killed.append(p) or True,
+    )
+    _make_kill_port(_cmd(run="3000 4000 5000"), {})([])
+    assert killed == [3000, 4000, 5000]
+    print("OK: closure iterates all default ports")
 
 
 # ---------------------------------------------------------------------------

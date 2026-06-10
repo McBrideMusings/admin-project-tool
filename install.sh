@@ -15,7 +15,6 @@ DEST_DIR="$HOME/.admin"
 
 FORCE=0
 SHELL_OVERRIDE=""
-REGISTER_HOOKS_ONLY=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -28,13 +27,9 @@ while [[ $# -gt 0 ]]; do
             SHELL_OVERRIDE="$2"
             shift 2
             ;;
-        --register-hooks)
-            REGISTER_HOOKS_ONLY=1
-            shift
-            ;;
         *)
             echo "error: unknown option: $1" >&2
-            echo "usage: $0 [--force] [--register-hooks] [--shell zsh|bash|sh]" >&2
+            echo "usage: $0 [--force] [--shell zsh|bash|sh]" >&2
             exit 1
             ;;
     esac
@@ -84,7 +79,6 @@ import sys; sys.path.insert(0, '$DEST_DIR')
 from admin_lib import __version__; print(__version__)
 ")"
 
-    rm -rf "$DEST_DIR/templates"
     rm -f  "$DEST_DIR/init-admin-v2"
     rm -f  "$DEST_DIR/init-admin"
     rm -f  "$DEST_DIR/bundle"
@@ -93,62 +87,17 @@ from admin_lib import __version__; print(__version__)
     cp -R "$SRC_DIR/gen"        "$DEST_DIR/gen"
     cp -R "$SRC_DIR/archetypes" "$DEST_DIR/archetypes"
     cp -R "$SRC_DIR/detectors"  "$DEST_DIR/detectors"
-    cp    "$SRC_DIR/admin-gen"  "$DEST_DIR/admin-gen"
-    chmod +x "$DEST_DIR/admin-gen"
+    cp    "$SRC_DIR/admin-run"  "$DEST_DIR/admin"
+    chmod +x "$DEST_DIR/admin"
 
-    mkdir -p "$DEST_DIR/hooks"
-    cp "$SRC_DIR/hooks/session-admin-check.sh" "$DEST_DIR/hooks/session-admin-check.sh"
-    chmod +x "$DEST_DIR/hooks/session-admin-check.sh"
+    # Clean up artifacts from the pre-interpreter (generator) install: admin-gen,
+    # the SessionStart hook, and the (now removed) shim templates are gone (ADR-0006).
+    rm -f  "$DEST_DIR/admin-gen"
+    rm -rf "$DEST_DIR/hooks" "$DEST_DIR/templates"
 
     echo "$CURRENT_SHA" > "$DEST_DIR/VERSION"
-    echo "  admin_lib $LIB_VERSION installed (gen/, archetypes/, detectors/, admin-gen, hooks/)"
+    echo "  admin_lib $LIB_VERSION installed (gen/, archetypes/, detectors/, admin)"
     echo "  VERSION=$CURRENT_SHA"
-}
-
-register_claude_hook() {
-    python3 - <<'PYEOF'
-import json, os, sys
-
-settings_path = os.path.expanduser("~/.claude/settings.json")
-hook_cmd = os.path.expanduser("~/.admin/hooks/session-admin-check.sh")
-
-if not os.path.exists(settings_path):
-    print("  Claude Code not detected — skipping SessionStart hook registration")
-    sys.exit(0)
-
-if not os.path.exists(hook_cmd):
-    print("  Warning: hook script not found at ~/.admin/hooks/ — skipping registration")
-    sys.exit(0)
-
-try:
-    with open(settings_path) as f:
-        config = json.load(f)
-except (json.JSONDecodeError, OSError) as e:
-    print(f"  Warning: could not read {settings_path}: {e}")
-    sys.exit(0)
-
-hooks = config.setdefault("hooks", {})
-session_hooks = hooks.setdefault("SessionStart", [])
-
-already = any(
-    any(h.get("command") == hook_cmd for h in block.get("hooks", []))
-    for block in session_hooks
-)
-
-if already:
-    sys.exit(0)
-
-session_hooks.append({"matcher": "", "hooks": [{"type": "command", "command": hook_cmd}]})
-
-try:
-    tmp = settings_path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(config, f, indent=2)
-    os.replace(tmp, settings_path)
-    print("  SessionStart hook registered in ~/.claude/settings.json")
-except OSError as e:
-    print(f"  Warning: could not write {settings_path}: {e}")
-PYEOF
 }
 
 # Detect the shell running this script. Prefers ps(1) over $SHELL because
@@ -213,12 +162,6 @@ verify_path() {
 # Main logic
 # ------------------------------------------------------------------
 
-if [[ "$REGISTER_HOOKS_ONLY" == "1" ]]; then
-    register_claude_hook
-    echo "Done."
-    exit 0
-fi
-
 if [[ "$FORCE" == "1" ]]; then
     echo "admin-project-tool: force-installing to $DEST_DIR"
     do_install
@@ -236,6 +179,5 @@ else
 fi
 
 verify_path
-register_claude_hook
 
 echo "Done."

@@ -22,7 +22,7 @@ import importlib.util
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gen.fragments import KNOWN_KINDS, CONFIGLESS_KINDS, KIND_MODULES, _ACTION_RENDERERS
+from gen.fragments import KNOWN_KINDS, CONFIGLESS_KINDS, KIND_MODULES
 from gen.manifest import Command, Manifest, SPACER, VALID_COMMAND_KEYS, VALID_ACTION_KEYS, GUARDS_BUILTIN
 
 

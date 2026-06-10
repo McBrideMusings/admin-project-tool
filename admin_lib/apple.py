@@ -63,11 +63,10 @@ import sys
 
 from .core import (
     C,
-    LOG_DIR,
-    LOG_FILE,
     _children,
     command,
     get_log_dir,
+    get_log_file,
     info,
     ok,
     warn,
@@ -208,13 +207,18 @@ def xcodebuild_filtered(project, scheme, config, destination, action="build",
     )
 
 
-def dev_macos_postprocess(built_app_path, dev_product_name, dev_display_name):
+def dev_macos_postprocess(built_app_path, dev_product_name, dev_display_name, sign_identity="-"):
     """Rename a Debug build .app → <dev_product_name>.app, patch
-    CFBundleDisplayName, re-sign ad-hoc. Returns the renamed path.
+    CFBundleDisplayName, re-sign. Returns the renamed path.
 
     Use this instead of PRODUCT_NAME / INFOPLIST_KEY_CFBundleDisplayName
     xcodebuild flags (those break SwiftPM bundles). Pair with a distinct
     PRODUCT_BUNDLE_IDENTIFIER passed via xcodebuild_filtered.extra_settings.
+
+    sign_identity defaults to "-" (ad-hoc). Pass a real identity (hash or name)
+    so the rename re-signs with the *same* stable identity the build used —
+    otherwise the ad-hoc re-sign throws away the stable signature and macOS
+    re-prompts for TCC permissions on every rebuild.
     """
     if not built_app_path.endswith(".app") or not os.path.isdir(built_app_path):
         err(f"dev_macos_postprocess: not an .app bundle: {built_app_path!r}")
@@ -241,11 +245,12 @@ def dev_macos_postprocess(built_app_path, dev_product_name, dev_display_name):
              f"{r.stderr.decode('utf-8', 'replace').strip()}")
 
     r = subprocess.run(
-        ["codesign", "--force", "--sign", "-", dest],
+        ["codesign", "--force", "--sign", sign_identity, dest],
         capture_output=True,
     )
     if r.returncode != 0:
-        warn(f"ad-hoc codesign failed: "
+        label = "ad-hoc" if sign_identity == "-" else f"identity {sign_identity}"
+        warn(f"codesign ({label}) failed: "
              f"{r.stderr.decode('utf-8', 'replace').strip()}")
 
     return dest
@@ -475,8 +480,9 @@ def _list_devices():
     """
     import json
 
-    json_path = os.path.join(LOG_DIR, "devices.json")
-    os.makedirs(LOG_DIR, exist_ok=True)
+    log_dir = get_log_dir()
+    json_path = os.path.join(log_dir, "devices.json")
+    os.makedirs(log_dir, exist_ok=True)
     result = subprocess.run(
         ["xcrun", "devicectl", "list", "devices", "--json-output", json_path],
         capture_output=True, text=True,
@@ -614,8 +620,9 @@ def _get_device_process_for_bundle(device_id, bundle_id):
     """
     import json
 
-    json_path = os.path.join(LOG_DIR, "processes.json")
-    os.makedirs(LOG_DIR, exist_ok=True)
+    log_dir = get_log_dir()
+    json_path = os.path.join(log_dir, "processes.json")
+    os.makedirs(log_dir, exist_ok=True)
     result = subprocess.run(
         ["xcrun", "devicectl", "device", "info", "processes",
          "--device", device_id, "--json-output", json_path],
@@ -996,7 +1003,7 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
 
         fmt = make_column_formatter("apple_os_log", output_config)
         log_proc, log_thread, log_fh = stream_os_log(
-            predicate, log_file=LOG_FILE, formatter=fmt.format_line)
+            predicate, log_file=get_log_file(), formatter=fmt.format_line)
 
         info("Press r to rebuild, Ctrl+C to quit")
         print()
@@ -1107,7 +1114,7 @@ def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
 
         fmt = make_column_formatter("apple_os_log", output_config)
         log_proc, log_thread, log_fh = stream_os_log(
-            predicate, log_file=LOG_FILE, sim_id=sim_id, formatter=fmt.format_line)
+            predicate, log_file=get_log_file(), sim_id=sim_id, formatter=fmt.format_line)
 
         info("Press r to rebuild, Ctrl+C to quit")
         print()
@@ -1199,7 +1206,7 @@ def dev_loop_device(project, scheme, config, subsystem, process,
 
     from .log_columns import make_column_formatter
     fmt = make_column_formatter("generic", output_config)
-    _, log_fh = stream_console_output(console_proc, log_file=LOG_FILE, formatter=fmt.format_line)
+    _, log_fh = stream_console_output(console_proc, log_file=get_log_file(), formatter=fmt.format_line)
 
     info("Streaming logs — Ctrl+C to quit")
     print()
@@ -1658,12 +1665,65 @@ def _make_mac_dev_kill(cfg):
     return lambda: None
 
 
+def resolve_signing_identity(cfg):
+    """Resolve a concrete code-signing identity (SHA-1 hash) by querying the
+    keychain with ``security find-identity``, so callers never hardcode a hash.
+
+    The optional ``[apple].sign_identity`` is a case-insensitive *substring*
+    matched against the identity descriptions (e.g. a developer/team name, a
+    team ID, or ``"Apple Development"``). With no selector — or an empty one —
+    and exactly one valid identity, that identity is auto-picked. Returns the
+    hash, or ``None`` (caller falls back to ad-hoc) when nothing matches or the
+    match is ambiguous, warning loudly so a silent ad-hoc downgrade is visible.
+
+    Signing with a stable identity instead of ad-hoc is what lets macOS keep
+    TCC privacy grants (camera, Documents, …) across rebuilds rather than
+    re-prompting — ad-hoc gives the binary a fresh code hash every build.
+    """
+    import re as _re
+    selector = cfg.get("sign_identity")
+    try:
+        r = subprocess.run(
+            ["security", "find-identity", "-v", "-p", "codesigning"],
+            capture_output=True, text=True,
+        )
+    except (OSError, ValueError):
+        warn("could not run `security find-identity` — using ad-hoc signing")
+        return None
+
+    ids = []
+    for line in r.stdout.splitlines():
+        m = _re.match(r'^\s*\d+\)\s+([0-9A-Fa-f]{40})\s+"(.+)"\s*$', line)
+        if m:
+            ids.append((m.group(1), m.group(2)))
+
+    matched = ids
+    if selector:
+        sel = str(selector).lower()
+        matched = [(h, d) for (h, d) in ids if sel in d.lower()]
+
+    if len(matched) == 1:
+        return matched[0][0]
+    if not matched:
+        hint = f" matching {selector!r}" if selector else ""
+        warn(f"no code-signing identity{hint} found — using ad-hoc signing "
+             "(macOS will re-prompt for permissions on each rebuild)")
+        return None
+    names = ", ".join(d for _, d in matched)
+    warn("multiple code-signing identities match — set [apple].sign_identity to "
+         f"a unique substring to disambiguate: {names}. Using ad-hoc.")
+    return None
+
+
 def _compose_sign_settings(cfg):
     """Build xcodebuild build-setting overrides for code signing from [apple] config.
 
     Reads code_sign_identity, development_team, code_sign_style. Resolves
-    ${VAR} / ${VAR:-default} from the environment. Returns empty string when
-    none of the keys are present.
+    ${VAR} / ${VAR:-default} from the environment. Additionally, when
+    ``sign_identity`` is present (and no explicit ``code_sign_identity``), the
+    identity is resolved dynamically from the keychain (see
+    :func:`resolve_signing_identity`) and signed manually — no hash in config.
+    Returns empty string when none of the keys are present.
     """
     from .core import resolve_env
     parts = []
@@ -1678,6 +1738,17 @@ def _compose_sign_settings(cfg):
         val = resolve_env(str(val))
         if val:
             parts.append(f'{xcode_key}="{val}"')
+
+    # Dynamic identity: resolve [apple].sign_identity against the keychain to a
+    # concrete hash and sign manually, so dev builds get a stable signature
+    # (TCC grants persist) without a hardcoded hash. Skipped if the manifest
+    # already pinned an explicit literal CODE_SIGN_IDENTITY above.
+    if "sign_identity" in cfg and cfg.get("code_sign_identity") is None:
+        ident = resolve_signing_identity(cfg)
+        if ident:
+            parts.append(f'CODE_SIGN_IDENTITY="{ident}"')
+            parts.append("CODE_SIGN_STYLE=Manual")
+            parts.append("PROVISIONING_PROFILE_SPECIFIER=")
     return " ".join(parts)
 
 
@@ -1757,8 +1828,13 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=N
         _dev_product = _resolve_mac_dev_product_name(cfg)
         _dev_display = _resolve_mac_dev_display_name(cfg)
         if _dev_product or _dev_display:
+            # Re-sign the renamed .app with the same stable identity the build
+            # used (not ad-hoc), so TCC grants survive the rename. "-" → ad-hoc
+            # when no sign_identity is configured (unchanged default).
+            _resign = (resolve_signing_identity(cfg) if "sign_identity" in cfg else None) or "-"
+
             def pre_launch(built_app):
-                return dev_macos_postprocess(built_app, _dev_product, _dev_display)
+                return dev_macos_postprocess(built_app, _dev_product, _dev_display, sign_identity=_resign)
 
     dev_loop_macos(
         project=project, scheme=scheme, config=config,
