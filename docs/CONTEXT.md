@@ -45,10 +45,12 @@ _Avoid_: section, block
 **Generator_commit**:
 The git SHA of `admin-project-tool` at the time a manifest was last regenerated, written into `admin.toml` and embedded in the `./admin` header banner.
 _Avoid_: version, build_id
+_Status_: removed under **Interpreter mode** ([ADR-0006](adr/0006-interpreter-mode.md)) — the global installed tool version replaces the per-project pin; **Compile** is the new pin.
 
 **Drift**:
 A mismatch between a project's `admin.toml` `generator_commit` and the currently installed `admin-project-tool` SHA. Detected by `admin-gen --audit`; the SessionStart hook regenerates silently when drift is found.
 _Avoid_: stale, out-of-date
+_Status_: removed under **Interpreter mode** ([ADR-0006](adr/0006-interpreter-mode.md)) — with no vendored artifact there is nothing to drift; `admin audit` shrinks to a manifest-validity `check`.
 
 **Guard**:
 A named precondition referenced from an action's or target's `requires` list. A Guard returns pass/fail; on fail it blocks the action and prints an actionable message. Built-in Guards (`git-clean`, `git-pushed`) live in `admin_lib/guards.py` as Python with dynamic diagnostics; user-defined Guards live in `[guards.<name>]` tables as a shell expression (`run`) plus a static failure string (`fail`). Both share one name namespace; `requires` resolves names through both.
@@ -57,6 +59,16 @@ _Avoid_: gate, check, precondition (overloaded), validator
 **Requires**:
 The field on an action or multi-target target that lists Guard names. `requires = ["git-clean", "git-pushed"]` runs both Guards in order, fail-fast, before the action's `run`. Parent multi-target actions define a default that children inherit and may override (replace-not-merge); `requires = []` on a child is the explicit opt-out.
 _Avoid_: needs, preconditions, before
+
+### Execution model (interpreter mode)
+
+**Interpreter mode**:
+The default execution model after [ADR-0006](adr/0006-interpreter-mode.md): the installed `admin` tool (on PATH) reads `admin.toml` and executes commands at runtime — a project commits only the manifest; nothing is generated or vendored. Replaces mandatory code generation; **Compile** is the opt-in path to a standalone artifact.
+_Avoid_: runtime mode, JIT
+
+**Compile**:
+The `admin compile` verb. Packages the interpreter + `admin_lib` + the project's resolved `admin.toml` into a single self-contained `.pyz` (stdlib `zipapp`). The compiled artifact is both the portable standalone (no install needed) and the version pin for a project.
+_Avoid_: build (reserved for project-level build commands), freeze, bundle
 
 ## Relationships
 

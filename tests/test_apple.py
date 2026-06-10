@@ -397,3 +397,70 @@ def test_sweep_orphan_log_streams_noop_on_empty_subsystem():
     print("OK: sweep_orphan_log_streams skips pkill when subsystem is falsy")
 
 
+# ---------------------------------------------------------------------------
+# resolve_signing_identity
+# ---------------------------------------------------------------------------
+
+_FIND_IDENTITY_ONE = (
+    '  1) ' + 'A' * 40 + ' "Apple Development: Pierce McBride (TEAM123)"\n'
+    '     1 valid identities found\n'
+)
+_FIND_IDENTITY_TWO = (
+    '  1) ' + 'A' * 40 + ' "Apple Development: Pierce McBride (TEAM123)"\n'
+    '  2) ' + 'B' * 40 + ' "Apple Development: Acme Inc (TEAM999)"\n'
+    '     2 valid identities found\n'
+)
+
+
+def _identity_stub(stdout):
+    def fake_run(argv, **kwargs):
+        return _FakeCompleted(returncode=0, stdout=stdout)
+    return fake_run
+
+
+def test_resolve_signing_identity_auto_picks_single():
+    ns = _load_apple(subprocess_run=_identity_stub(_FIND_IDENTITY_ONE))
+    assert ns["resolve_signing_identity"]({}) == "A" * 40
+    print("OK: resolve_signing_identity auto-picks the sole identity with no selector")
+
+
+def test_resolve_signing_identity_substring_selector_picks_match():
+    ns = _load_apple(subprocess_run=_identity_stub(_FIND_IDENTITY_TWO))
+    assert ns["resolve_signing_identity"]({"sign_identity": "acme"}) == "B" * 40
+    print("OK: resolve_signing_identity matches a case-insensitive substring selector")
+
+
+def test_resolve_signing_identity_team_id_selector():
+    ns = _load_apple(subprocess_run=_identity_stub(_FIND_IDENTITY_TWO))
+    assert ns["resolve_signing_identity"]({"sign_identity": "TEAM123"}) == "A" * 40
+    print("OK: resolve_signing_identity matches on a team-id substring")
+
+
+def test_resolve_signing_identity_ambiguous_returns_none():
+    ns = _load_apple(subprocess_run=_identity_stub(_FIND_IDENTITY_TWO))
+    assert ns["resolve_signing_identity"]({}) is None
+    print("OK: resolve_signing_identity returns None when many match and no selector")
+
+
+def test_resolve_signing_identity_no_match_returns_none():
+    ns = _load_apple(subprocess_run=_identity_stub(_FIND_IDENTITY_TWO))
+    assert ns["resolve_signing_identity"]({"sign_identity": "nonesuch"}) is None
+    print("OK: resolve_signing_identity returns None when the selector matches nothing")
+
+
+def test_dev_macos_postprocess_signs_with_given_identity():
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return _FakeCompleted(returncode=0)
+
+    ns = _load_apple(subprocess_run=fake_run)
+    with tempfile.TemporaryDirectory() as d:
+        built = _make_fake_app(d, "Scratchpad.app")
+        ns["dev_macos_postprocess"](built, "Scratchpad DEV", "Scratchpad DEV", sign_identity="DEADBEEF")
+    codesign = next(c for c in calls if "codesign" in " ".join(str(x) for x in c))
+    assert codesign[codesign.index("--sign") + 1] == "DEADBEEF", codesign
+    print("OK: dev_macos_postprocess re-signs with the supplied identity, not ad-hoc")
+
+

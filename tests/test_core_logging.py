@@ -15,11 +15,16 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 import admin_lib.core as core  # noqa: E402
+from admin_lib import interp  # noqa: E402
 from gen.archetypes import resolve  # noqa: E402
 from gen.manifest import Manifest, parse  # noqa: E402
-from gen.render import render  # noqa: E402
-from gen.fragments import render_command  # noqa: E402
 from gen.archetypes import _to_command  # noqa: E402
+
+
+def _clear_registry():
+    core._commands.clear()
+    core._actions.clear()
+    core._referenced_env_vars.clear()
 
 ARCH_DIR = REPO / "archetypes"
 LIB_DIR = REPO / "admin_lib"
@@ -192,10 +197,10 @@ def test_logging_unknown_key_rejected():
 
 
 # ---------------------------------------------------------------------------
-# configure_logging emitted in render output
+# [logging] config applied by the interpreter
 # ---------------------------------------------------------------------------
 
-def test_configure_logging_emitted_in_render():
+def test_configure_logging_applied_by_interpreter():
     m = Manifest(
         project_name="Log Test",
         python_min="3.11",
@@ -208,13 +213,13 @@ def test_configure_logging_emitted_in_render():
         logging={"enabled": True, "retain": 5},
     )
     resolved = resolve(m, ARCH_DIR)
-    script = render(resolved, LIB_DIR, generator_commit="test-sha")
-    assert "configure_logging(" in script
-    assert "'enabled': True" in script or '"enabled": True' in script
-    assert "5" in script
+    _clear_registry()
+    core.LOG_CONFIG = {}
+    interp.register_all(resolved, "Log Test")
+    assert core.LOG_CONFIG == {"enabled": True, "retain": 5}
 
 
-def test_no_logging_config_no_configure_call():
+def test_no_logging_config_leaves_log_config_untouched():
     m = Manifest(
         project_name="No Log",
         python_min="3.11",
@@ -226,47 +231,46 @@ def test_no_logging_config_no_configure_call():
         order=[],
     )
     resolved = resolve(m, ARCH_DIR)
-    script = render(resolved, LIB_DIR, generator_commit="test-sha")
-    # configure_logging appears as a function definition in core.py bundle,
-    # but must NOT appear as a top-level call when no [logging] is configured.
-    import re
-    calls = re.findall(r"^configure_logging\(", script, re.MULTILINE)
-    assert not calls, f"unexpected configure_logging() call without [logging] config"
+    _clear_registry()
+    core.LOG_CONFIG = {}
+    interp.register_all(resolved, "No Log")
+    assert core.LOG_CONFIG == {}
 
 
 # ---------------------------------------------------------------------------
-# per-command log = false suppresses set_log_context
+# per-command log overrides drive the step-runner's set_log_context calls
 # ---------------------------------------------------------------------------
 
-def test_log_false_suppresses_set_log_context():
-    cmd = _to_command("build", {
-        "desc": "Build",
-        "steps": ["build"],
-        "log": False,
-    }, source="test", is_action=False)
-    out = render_command(cmd)
-    assert "set_log_context" not in out, "log=false must suppress set_log_context emission"
+def _capture_log_calls(monkeypatch):
+    calls = []
+    monkeypatch.setattr(interp, "set_log_context", lambda *a, **k: calls.append(("ctx", a, k)))
+    monkeypatch.setattr(interp, "set_log_context_path", lambda *a, **k: calls.append(("path", a, k)))
+    monkeypatch.setattr(interp, "run_command", lambda *a, **k: None)
+    return calls
 
 
-def test_log_retain_emitted_in_set_log_context():
-    cmd = _to_command("build", {
-        "desc": "Build",
-        "steps": ["build"],
-        "log_retain": 7,
-    }, source="test", is_action=False)
-    out = render_command(cmd)
-    assert "retain=7" in out, "log_retain must appear as retain= kwarg in set_log_context"
+def test_log_false_suppresses_set_log_context(monkeypatch):
+    calls = _capture_log_calls(monkeypatch)
+    cmd = _to_command("build", {"desc": "Build", "steps": ["build"], "log": False},
+                      source="test", is_action=False)
+    interp._make_step_runner(cmd)([])
+    assert not any(c[0] in ("ctx", "path") for c in calls), "log=false must skip set_log_context"
 
 
-def test_log_file_emits_set_log_context_path():
-    cmd = _to_command("build", {
-        "desc": "Build",
-        "steps": ["build"],
-        "log_file": "custom/build.log",
-    }, source="test", is_action=False)
-    out = render_command(cmd)
-    assert "set_log_context_path" in out
-    assert "custom/build.log" in out
+def test_log_retain_passed_to_set_log_context(monkeypatch):
+    calls = _capture_log_calls(monkeypatch)
+    cmd = _to_command("build", {"desc": "Build", "steps": ["build"], "log_retain": 7},
+                      source="test", is_action=False)
+    interp._make_step_runner(cmd)([])
+    assert ("ctx", ("build",), {"retain": 7}) in calls
+
+
+def test_log_file_uses_set_log_context_path(monkeypatch):
+    calls = _capture_log_calls(monkeypatch)
+    cmd = _to_command("build", {"desc": "Build", "steps": ["build"], "log_file": "custom/build.log"},
+                      source="test", is_action=False)
+    interp._make_step_runner(cmd)([])
+    assert ("path", ("custom/build.log",), {}) in calls
 
 
 # ---------------------------------------------------------------------------

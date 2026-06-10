@@ -27,9 +27,12 @@ MANIFEST_FILENAME = "admin.toml"
 _KNOWN_KEYS = {
     "project_name", "python_min", "archetypes", "modules", "urls",
     "commands", "actions", "order", "logs", "apple", "server", "output",
-    "exclude_modules", "hide_commands", "generator_commit", "inline", "logging",
+    "exclude_modules", "hide_commands", "inline", "logging",
     "dev_kill", "clean_dev", "vite_dev", "docker_dev", "docker_run", "deploy", "install_template",
     "fixtures", "log_bridge", "guards",
+    # Obsolete under interpreter mode (ADR-0006); tolerated silently on
+    # un-migrated manifests, never written back. `admin migrate` strips it.
+    "generator_commit",
 }
 
 VALID_COMMAND_KEYS = {"desc", "steps", "log_file", "log_retain", "log", "group", "priority", "env"}
@@ -87,7 +90,6 @@ class Manifest:
     actions: dict[str, dict] = field(default_factory=dict)    # action name -> raw dict (not shown in UI)
     exclude_modules: list[str] = field(default_factory=list)  # modules to suppress even if archetype requires them
     hide_commands: list[str] = field(default_factory=list)    # archetype/manifest commands to drop from the listing (actions stay)
-    generator_commit: str | None = None
     inline_file: str | None = None           # path relative to project root
     raw: dict = field(default_factory=dict)  # original parsed TOML, for debugging
 
@@ -336,7 +338,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     unknown = set(data.keys()) - _KNOWN_KEYS
     if unknown:
         print(
-            f"warning: {source}: unknown keys will be dropped on --regenerate: "
+            f"warning: {source}: unknown keys are ignored: "
             + ", ".join(sorted(unknown)),
             file=sys.stderr,
         )
@@ -368,7 +370,6 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         guards=guards,
         exclude_modules=exclude_modules,
         hide_commands=hide_commands,
-        generator_commit=data.get("generator_commit"),
         inline_file=inline_file,
         raw=data,
     )
@@ -450,8 +451,6 @@ def dump(manifest: Manifest) -> str:
     lines: list[str] = []
     lines.append(f'project_name = "{_escape(manifest.project_name)}"')
     lines.append(f'python_min   = "{manifest.python_min}"')
-    if manifest.generator_commit:
-        lines.append(f'generator_commit = "{manifest.generator_commit}"')
     arch_list = ", ".join(f'"{a}"' for a in manifest.archetypes)
     lines.append(f"archetypes = [{arch_list}]")
     if manifest.modules:

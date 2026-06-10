@@ -18,8 +18,9 @@ from collections import OrderedDict
 
 from .core import (
     C,
-    LOG_DIR,
-    LOG_FILE,
+    get_log_dir,
+    get_log_file,
+    get_urls,
     _children,
     command,
     info,
@@ -28,7 +29,6 @@ from .core import (
     err,
     register_cleanup,
     run_cmd,
-    _urls,
     check_url,
     format_url_status,
     pick_target,
@@ -129,7 +129,7 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
     """
     global _rebuild_requested
     pid_file = f"{_ADMIN_PID_PREFIX}-{target}.pid"
-    os.makedirs(LOG_DIR, exist_ok=True)
+    os.makedirs(get_log_dir(), exist_ok=True)
 
     with open(pid_file, "w") as f:
         f.write(str(os.getpid()))
@@ -158,7 +158,7 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
             launch_time = time.monotonic()
             info(f"Starting {target}...")
 
-            log_fh = open(LOG_FILE, "a")
+            log_fh = open(get_log_file(), "a")
             proc = subprocess.Popen(
                 cmd, shell=shell,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -287,8 +287,8 @@ def run_parallel(targets, formatter=None):
     """
     import threading
 
-    os.makedirs(LOG_DIR, exist_ok=True)
-    log_fh = open(LOG_FILE, "a")
+    os.makedirs(get_log_dir(), exist_ok=True)
+    log_fh = open(get_log_file(), "a")
     procs = []
     threads = []
     return_codes = [None] * len(targets)
@@ -1616,7 +1616,7 @@ def _lines_since(lines, cutoff_epoch):
 
 def _newest_log(prefix, log_dir=None):
     """Newest `<prefix>.log` / `<prefix>.<timestamp>.log` in log_dir by mtime, or None."""
-    log_dir = log_dir or LOG_DIR or os.path.join(os.getcwd(), "tmp")
+    log_dir = log_dir or get_log_dir() or os.path.join(os.getcwd(), "tmp")
     cands = glob.glob(os.path.join(log_dir, f"{prefix}.log"))
     cands += glob.glob(os.path.join(log_dir, f"{prefix}.*.log"))
     if not cands:
@@ -1634,7 +1634,7 @@ def tail_dev_log(prefix="dev", since=None):
     """
     path = _newest_log(prefix)
     if not path:
-        err(f"no {prefix} logs found in {LOG_DIR or 'tmp'}")
+        err(f"no {prefix} logs found in {get_log_dir() or 'tmp'}")
         return 1
     info(f"trailing {os.path.relpath(path)}")
     if since is None:
@@ -1780,7 +1780,7 @@ def register_open_command(urls=None):
     def cmd_open(args):
         import webbrowser
 
-        target_urls = urls if urls is not None else _urls
+        target_urls = urls if urls is not None else get_urls()
         if not target_urls:
             err("No URLs configured")
             return 1

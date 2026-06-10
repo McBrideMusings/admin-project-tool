@@ -1,10 +1,11 @@
 """File-based log tailing.
 
-Reads a named log target + environment out of a spec registered at generation
-time, then streams the matching local file or a remote file over SSH. Default
-is 'follow from end' — no history is printed unless --tail N or --all is given.
+Reads a named log target + environment out of a spec registered from the
+manifest's [logs] table, then streams the matching local file or a remote file
+over SSH. Default is 'follow from end' — no history is printed unless --tail N
+or --all is given.
 
-Spec shape (as emitted by gen/render.py):
+Spec shape (parsed from [logs] by gen/manifest.py::_parse_logs):
 
     {
         "<target>": {

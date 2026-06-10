@@ -1,48 +1,45 @@
 # admin-project-tool
 
-Generates per-project `./admin` task-runner scripts from a short `admin.toml` manifest plus a library of composable archetypes. See `docs/architecture/design.md` for the full architecture.
+Runs per-project tasks from a short `admin.toml` manifest plus a library of composable archetypes. The installed tool **interprets** `admin.toml` at runtime (ADR-0006) — a project commits only the manifest; the `admin` command (installed on PATH at `~/.admin/admin`) finds it by walking up from `$PWD`. `admin compile` packages a standalone `./admin` (a zipapp) for the rare case the tool isn't installed. See `docs/architecture/design.md` for the full architecture.
 
 ## What this repo is
 
-- **`admin-gen`** — the generator CLI. Reads a project's `admin.toml`, merges archetypes, bundles `admin_lib`, and emits a self-contained `./admin` Python script.
-- **`admin_lib/`** — runtime helpers inlined into every generated script (logging, port management, log tailing, Apple build helpers, etc.). Stdlib only.
+- **`admin-run`** — the interpreter CLI (installed as `~/.admin/admin`). Reads a project's `admin.toml`, merges archetypes, registers live command/action callables, and dispatches. Tool verbs: `new`, `check`, `compile`.
+- **`admin_lib/`** — runtime helpers (logging, port management, log tailing, Apple build helpers, etc.) imported as a real package. `admin_lib/interp.py` is the interpreter: one closure factory per action kind. Stdlib only.
 - **`archetypes/`** — partial manifests per project type (apple, hugo, docker-unraid, rust-tauri, etc.). Mixins, not monoliths.
 - **`detectors/`** — heuristics that suggest archetypes from a project's file layout.
-- **`gen/`** — generator internals: manifest parser, bundler, archetype merger, renderer.
-- **`install.sh`** — installs `admin-gen` + `admin_lib` to `~/.admin/`, wires PATH, registers a Claude Code `SessionStart` hook that auto-regenerates stale `./admin` scripts.
+- **`gen/`** — generator internals: manifest parser (`manifest.py`), archetype merger (`archetypes.py`), kind metadata + ${VAR} scanner (`fragments.py`), standalone compile (`compile.py`).
+- **`install.sh`** — installs the interpreter + `admin_lib` + `gen` + `archetypes` to `~/.admin/` and puts `~/.admin` on PATH so `admin` runs from any project.
 
 ## Design principles (don't violate)
 
-1. **Manifest is truth.** `admin.toml` is the spec. `./admin` is a generated artifact — never hand-edit beyond what `admin-gen --audit` tolerates.
-2. **Commands are pure routing.** `[commands.X]` may only contain `desc` + `steps` (list of action names). `kind`, `run`, `targets` belong in `[actions.X]`. The generator errors loudly otherwise.
-3. **Stdlib only (with one narrow carve-out).** No third-party deps in the generator OR the generated script by default. The only exception is try/except-guarded optional imports that degrade gracefully when absent (today: `Pillow` + `cairosvg` in `admin_lib/icons.py`; `tomli` in `gen/manifest.py` and `admin_lib/apple.py` as a Python 3.9/3.10 backport for `tomllib`). New optional deps must clear the same bar. See [ADR-0001](docs/adr/0001-stdlib-only.md). Manifest parses via `tomllib` (or `tomli` on Python 3.9/3.10); writing TOML is hand-rolled.
-4. **Zero contributor install.** Generated `./admin` is fully self-contained — contributors `git clone && ./admin`.
-5. **Idempotent regeneration.** `admin-gen --regenerate` must produce byte-identical output for the same inputs.
+1. **Manifest is truth.** `admin.toml` is the spec. The interpreter reads it live; there is no generated artifact to drift. `admin compile` is the only thing that emits a file.
+2. **Commands are pure routing.** `[commands.X]` may only contain `desc` + `steps` (list of action names). `kind`, `run`, `targets` belong in `[actions.X]`. The resolver errors loudly otherwise.
+3. **Stdlib only (with one narrow carve-out).** No third-party deps in the tool OR the interpreter/compiled output by default. The only exception is try/except-guarded optional imports that degrade gracefully when absent (today: `Pillow` + `cairosvg` in `admin_lib/icons.py`; `tomli` in `gen/manifest.py` and `admin_lib/apple.py` as a Python 3.9/3.10 backport for `tomllib`). New optional deps must clear the same bar. See [ADR-0001](docs/adr/0001-stdlib-only.md). Manifest parses via `tomllib` (or `tomli` on Python 3.9/3.10); writing TOML is hand-rolled.
+4. **One engine.** The interpreter (`admin_lib/interp.py`) is the single execution path. `admin compile` packages that same interpreter + `admin_lib` + the resolved manifest into a zipapp — it never re-implements per-kind logic. Adding a kind = one factory in `interp._FACTORIES` (kept in sync with `gen/fragments.KNOWN_KINDS`).
+5. **Tool verbs are reserved.** `new`, `check`, `compile` share the `admin <word>` namespace with manifest commands; a manifest may not define a command with one of these names (the CLI errors).
 
 ## Hard rules (from past pain)
 
 - **Never scaffold `admin_inline.py`.** Project-specific Python belongs upstream in `admin_lib/` or `archetypes/`. A per-project inline file is a regression vector.
-- **`from __future__` imports must be hoisted by the bundler.** Mid-file `__future__` imports are a `SyntaxError` in the bundled output. The bundler dedupes them into a single header line — see `gen/render.py`.
-- **Reject `from . import module`** in archetype/lib code. The bundler flattens namespaces; the module object doesn't survive. Bundler raises `BundlerError` at gen time.
+- **A new action kind needs both a `KNOWN_KINDS` entry and an `interp._FACTORIES` factory.** A test (`tests/test_interp.py::test_factories_cover_known_kinds`) fails if they drift apart.
 
 ## Testing
 
-Tests run under `pytest` (dev-only dep — bundled `admin_lib/` and the generated `./admin` stay stdlib-only). Install with `pip install -r requirements-dev.txt`. New `tests/test_*.py` files are auto-discovered — no manual registration in `admin.toml`. Shell tests (`tests/test_install.sh`, etc.) are chained after pytest in `[actions.test]`.
+Tests run under `pytest` (dev-only dep — `admin_lib/` and the interpreter stay stdlib-only at runtime). Install with `pip install -r requirements-dev.txt`. New `tests/test_*.py` files are auto-discovered. Shell tests (`tests/test_install.sh`, etc.) are chained after pytest in `[actions.test]`.
 
-Run all: `./admin test`.
+Run all: `./admin test`. Tests that exercise full dispatch write a temp `admin.toml` and run it through `admin-run` (see `tests/test_archetypes.py::_run_interpreter`).
 
 ## Common workflows
 
 | Goal | Command |
 |---|---|
-| Regenerate this repo's `./admin` after editing `admin.toml` | `./admin build` |
-| Run the generator against an external project interactively | `./admin dev` |
+| Validate this repo's `admin.toml` (parse + resolve) | `./admin build` (runs `admin-run check .`) |
 | Install / reinstall to `~/.admin/` | `./admin deploy` |
 | Run full test suite | `./admin test` |
+| Build a standalone `./admin` for a project | `admin compile [DIR]` |
 
-## Session hook
-
-`install.sh` registers a `SessionStart` hook at `~/.admin/hooks/session-admin-check.sh`. On every Claude Code session, it diff-checks the project's `./admin` against the installed `admin-project-tool` version and silently regenerates if stale. To disable: remove the entry from `~/.claude/settings.json`.
+Pre-install (or while developing the tool), invoke the interpreter directly with `./admin-run <verb-or-command>` instead of the PATH `admin`.
 
 ## Log bridge
 
@@ -77,6 +74,6 @@ run      = "bun run deploy:devvit"
 requires = []
 ```
 
-**Pipeline.** `gen/manifest.py` parses `[guards.<name>]` (requires `run` + `fail`, rejects collisions with built-in names). `gen/archetypes.py` parses `requires` on actions and inline target subtables, stores per-target overrides as `meta["target_requires"]` (where `None` means inherit the parent default), and audits at resolve time that every name in any `requires` list maps to a known guard — built-in or user-defined. `gen/render.py` emits one `register_shell_guard(name, run, fail)` call per `[guards.<name>]` entry; `gen/fragments.py` prepends a `run_requires([...])` check to flat-action bodies and a per-target dispatch (resolved at render time, `_target_requires[picked]`) inside multi-target `cmd_*` functions. The `admin_lib/guards` module is auto-pulled into the bundle only when the manifest actually uses guards or `requires`.
+**Pipeline.** `gen/manifest.py` parses `[guards.<name>]` (requires `run` + `fail`, rejects collisions with built-in names). `gen/archetypes.py` parses `requires` on actions and inline target subtables, stores per-target overrides as `meta["target_requires"]` (where `None` means inherit the parent default), and audits at resolve time that every name in any `requires` list maps to a known guard — built-in or user-defined. At registration, `admin_lib/interp.py` calls `register_shell_guard(name, run, fail)` for each `[guards.<name>]` entry, wraps each flat action with a `run_requires([...])` check, and resolves per-target requires inside the multi-target closure (`_target_requires[picked]`).
 
-**Runtime.** `run_requires` walks the list fail-fast: invokes each named guard, prints its diagnostic via `err()` on first failure, returns 1. Built-in guards produce dynamic diagnostics ("branch 'X' has unpushed commits — push first: git push origin X"); user-defined shell guards run `/bin/sh -c <run>`, capture stdout+stderr, print the captured output then the static `fail` on non-zero exit. The cwd is inherited (the generated `./admin` cd's to project root at boot). Guards do not compose — a guard cannot reference another `requires`. Adding a new built-in means writing a Python function in `admin_lib/guards.py` and adding its name to `GUARDS_BUILTIN` in `gen/manifest.py`.
+**Runtime.** `run_requires` walks the list fail-fast: invokes each named guard, prints its diagnostic via `err()` on first failure, returns 1. Built-in guards produce dynamic diagnostics ("branch 'X' has unpushed commits — push first: git push origin X"); user-defined shell guards run `/bin/sh -c <run>`, capture stdout+stderr, print the captured output then the static `fail` on non-zero exit. The cwd is inherited (the interpreter cd's to project root at boot). Guards do not compose — a guard cannot reference another `requires`. Adding a new built-in means writing a Python function in `admin_lib/guards.py` and adding its name to `GUARDS_BUILTIN` in `gen/manifest.py`.

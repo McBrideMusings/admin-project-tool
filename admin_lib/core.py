@@ -81,25 +81,6 @@ _urls = []  # list of (label, url) tuples set by projects
 
 _pending_urls = []  # raw (label, url) before env resolution
 
-def set_generator_commit(sha):
-    """Check the bundled generator SHA against the installed ~/.admin/VERSION.
-
-    Sets _stale_generator = True if the installed tool is newer than what
-    generated this script. Skips silently if the lib isn't installed or if
-    either SHA is dirty (dev/uncommitted state).
-    """
-    global _stale_generator
-    if "+dirty" in sha:
-        return
-    version_file = os.path.expanduser("~/.admin/VERSION")
-    if not os.path.isfile(version_file):
-        return
-    with open(version_file) as f:
-        installed = f.read().strip()
-    if "+dirty" in installed:
-        return
-    _stale_generator = installed.split("+")[0] != sha.split("+")[0]
-
 
 def set_urls(urls):
     """Register project URLs. Raw ${VAR} strings are stored and resolved later by boot()."""
@@ -110,6 +91,16 @@ def _resolve_pending_urls():
     """Resolve env vars in pending URLs and activate them."""
     global _urls
     _urls = [(label, resolve_env(url)) for label, url in _pending_urls]
+
+
+def get_urls():
+    """Return the resolved (label, url) list.
+
+    Late-binding accessor: modules must call this rather than importing `_urls`
+    by value, since boot() reassigns the module global after they import (under
+    interpreter mode a value-import would freeze the empty initial list).
+    """
+    return _urls
 
 
 def check_url(url, timeout=1):
@@ -163,7 +154,6 @@ def print_url_status():
 
 _project_name = ""
 _project_root = ""
-_stale_generator = False
 LOG_DIR = ""
 LOG_FILE = ""
 LOG_CONFIG: dict = {}
@@ -182,6 +172,11 @@ def _init(project_name, project_root=None):
 def get_log_dir() -> str:
     """Return the current LOG_DIR (late-binding for package import contexts)."""
     return LOG_DIR
+
+
+def get_log_file() -> str:
+    """Return the current LOG_FILE (late-binding for package import contexts)."""
+    return LOG_FILE
 
 
 def configure_logging(cfg: dict):
@@ -352,11 +347,10 @@ _referenced_env_vars: dict[str, dict] = {}
 # Origin-string format (stable contract)
 # ----------------------------------------------------------------------------
 # `used_by` origin strings are a cross-component compatibility contract between
-# the generator (gen/fragments.py::collect_env_var_calls) and the runtime
-# renderer (cmd_env, below). Generated ./admin scripts embed register_env_var
-# calls with these strings literally; changing the format breaks the display
-# of origins in any previously generated ./admin until that project is
-# re-bundled.
+# the manifest scanner (gen/fragments.py::scan_env_vars) and the runtime `env`
+# command (cmd_env, below). The interpreter registers these strings live via
+# register_env_var; a compiled ./admin embeds the same strings in its pickled
+# manifest. Changing the format changes how origins display in the `env` listing.
 #
 # Currently defined prefixes:
 #   cmd:<name>              — var appears in a top-level command's run string
@@ -425,7 +419,7 @@ def cmd_env(args):
     if not _referenced_env_vars:
         info("no env vars referenced by this admin script")
         return
-    info("environment variables referenced by ./admin:")
+    info("environment variables referenced by this project:")
     width = max(len(name) for name in _referenced_env_vars)
     for name, entry in _referenced_env_vars.items():
         default = entry["default"]
@@ -825,8 +819,7 @@ def _tui_menu():
     # Total rows draw() will emit — must match exactly so _make_home reserves
     # the right amount of space and no scrolling pushes URL lines off screen.
     n_url_rows = len(url_statuses) + (1 if url_statuses else 0)  # status lines + blank after
-    n_stale_rows = 1 if _stale_generator else 0
-    total_lines = 2 + n_url_rows + n_stale_rows + num + 2  # name+blank, urls, stale, items, blank+hint
+    total_lines = 2 + n_url_rows + num + 2  # name+blank, urls, items, blank+hint
 
     _home = _make_home(fd, total_lines)
 
@@ -841,8 +834,6 @@ def _tui_menu():
             sys.stdout.write(format_url_status(label, url, live, url_label_width) + "\n")
         if url_statuses:
             sys.stdout.write("\n")
-        if _stale_generator:
-            sys.stdout.write(f"{C.DIM}  ! tool updated — auto-regen at next Claude session (or run: admin regenerate){C.RESET}\n")
         for i, name in enumerate(items):
             if _is_spacer(name):
                 sys.stdout.write("\n")
@@ -878,7 +869,7 @@ def _tui_menu():
             elif key in ("\r", "\n"):
                 _home()  # clear menu before command output
                 sys.stdout.flush()
-                info(f"./admin {items[sel]}")
+                info(f"admin {items[sel]}")
                 print()
                 _commands[items[sel]]["func"]([])
                 _announce_log_end()
@@ -1007,7 +998,7 @@ def _print_help():
     """Print help text (non-TTY fallback and --help)."""
     print(f"{C.BOLD}{_project_name}{C.RESET}")
     print_url_status()
-    print(f"Usage: ./admin <command> [args...]\n")
+    print(f"Usage: admin <command> [args...]\n")
     print("Commands:")
     for name in _build_menu_layout():
         if _is_spacer(name):
@@ -1015,23 +1006,32 @@ def _print_help():
             continue
         entry = _commands[name]
         print(f"  {C.CYAN}{name:<16}{C.RESET} {entry['desc']}")
-    print(f"\nRun {C.DIM}./admin{C.RESET} with no args for interactive menu.")
+    print(f"\nRun {C.DIM}admin{C.RESET} with no args for interactive menu.")
 
 
 # ---------------------------------------------------------------------------
 # boot() — single entry point
 # ---------------------------------------------------------------------------
 
-def boot(project_name, load_dotenv=True):
-    """Entry point for per-project admin files.
+def boot(project_name, load_dotenv=True, project_root=None, argv=None):
+    """Entry point for per-project admin files and the runtime interpreter.
 
     Call this from __main__. Handles chdir, argv parsing, TUI or dispatch.
+
+    When `project_root` is None it is inferred from the caller's __file__ (the
+    per-project ./admin script — the bundled/compiled path). The interpreter
+    (admin_lib.interp) passes an explicit `project_root` and `argv` instead,
+    since the caller is the installed tool, not a script living in the project.
     """
-    # Determine project root from the caller's __file__ (the admin script)
-    import inspect
-    caller_frame = inspect.stack()[1]
-    admin_file = caller_frame.filename
-    project_root = os.path.dirname(os.path.abspath(admin_file))
+    if project_root is None:
+        # Determine project root from the caller's __file__ (the admin script)
+        import inspect
+        caller_frame = inspect.stack()[1]
+        admin_file = caller_frame.filename
+        project_root = os.path.dirname(os.path.abspath(admin_file))
+
+    if argv is None:
+        argv = sys.argv
 
     os.chdir(project_root)
     _init(project_name, project_root)
@@ -1045,30 +1045,18 @@ def boot(project_name, load_dotenv=True):
     # traceback. run_with_reload keeps its own inner handler for signal
     # restoration and pidfile cleanup before bubbling up here.
     try:
-        if len(sys.argv) < 2:
+        if len(argv) < 2:
             _tui_menu()
             return
 
-        cmd_name = sys.argv[1]
+        cmd_name = argv[1]
         if cmd_name in ("-h", "--help", "help"):
             _print_help()
             return
 
         if cmd_name == "env":
-            cmd_env(sys.argv[2:])
+            cmd_env(argv[2:])
             return
-
-        if cmd_name in ("regenerate", "regen"):
-            admin_gen = os.path.expanduser("~/.admin/admin-gen")
-            if not os.path.isfile(admin_gen):
-                admin_gen_fallback = os.path.expanduser("~/.admin/init-admin")
-                if os.path.isfile(admin_gen_fallback):
-                    warn("admin-gen not found — falling back to init-admin (reinstall admin-project-tool to upgrade)")
-                    admin_gen = admin_gen_fallback
-                else:
-                    err("admin-gen not found at ~/.admin/ — is admin-project-tool installed?")
-                    sys.exit(1)
-            sys.exit(subprocess.call([admin_gen, "--regenerate", _project_root] + sys.argv[2:]))
 
         all_cmds = _all_commands()
         if cmd_name not in all_cmds:
@@ -1076,7 +1064,7 @@ def boot(project_name, load_dotenv=True):
             _print_help()
             sys.exit(1)
 
-        args = sys.argv[2:]
+        args = argv[2:]
 
         # Check for subcommand help
         if ("-h" in args or "--help" in args) and cmd_name in _subcommand_help:
@@ -1143,6 +1131,6 @@ def _cmd_logs_impl(args):
 
 def register_builtin_logs_command():
     """Register the universal logs file-tailer. Called by generated admin scripts."""
-    @command("logs", "Tail a command's log file (./admin logs [filter...])")
+    @command("logs", "Tail a command's log file (admin logs [filter...])")
     def cmd_logs(args):
         _cmd_logs_impl(args)

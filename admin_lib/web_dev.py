@@ -20,7 +20,7 @@ import subprocess
 import time
 
 from .core import (
-    LOG_DIR,
+    get_log_dir,
     info, ok, warn, err, register_cleanup, resolve_env,
 )
 from .docker import ensure_deps, run_with_reload, _wait_or_kill, _preexec_pdeathsig
@@ -153,8 +153,8 @@ def run_vite_dev(
     if not preflight_port(backend_port, label="backend"):
         return 1
 
-    vite_log = os.path.join(LOG_DIR, vite_log_name)
-    os.makedirs(LOG_DIR, exist_ok=True)
+    vite_log = os.path.join(get_log_dir(), vite_log_name)
+    os.makedirs(get_log_dir(), exist_ok=True)
     vite_fh = open(vite_log, "w")
     merged_vite_env = {"VITE_PORT": str(vite_port), **(vite_env or {})}
     vite_env_parts = [f"{k}={shlex.quote(str(v))}" for k, v in merged_vite_env.items()]
