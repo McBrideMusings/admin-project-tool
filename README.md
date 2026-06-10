@@ -1,6 +1,6 @@
 # admin-project-tool
 
-Generates and manages `./admin` task-runner scripts for projects. See `docs/architecture/design.md` for the full architecture.
+Interprets a project's `admin.toml` task-runner manifest at runtime. A project commits only `admin.toml` — there is no generated `./admin` script. See `docs/architecture/design.md` for the full architecture.
 
 ## Installation
 
@@ -8,30 +8,24 @@ Generates and manages `./admin` task-runner scripts for projects. See `docs/arch
 ./install.sh
 ```
 
-Installs `admin_lib`, `admin-gen`, and supporting files to `~/.admin/` and adds it to your PATH.
+Installs the interpreter (`admin_lib`, `gen/`, `archetypes/`, `detectors/`, and the `admin` entrypoint) to `~/.admin/` and adds it to your PATH.
 
 ### Flags
 
 | Flag | Description |
 |------|-------------|
 | `--force` | Reinstall even when already up to date |
-| `--register-hooks` | Register the Claude Code SessionStart hook without reinstalling |
 | `--shell zsh\|bash\|sh` | Override shell detection for rc-file PATH setup |
 
-## Claude Code SessionStart hook
+## Usage
 
-`install.sh` registers a Claude Code `SessionStart` hook at `~/.admin/hooks/session-admin-check.sh`. At the start of each Claude Code session, the hook checks whether the project's `./admin` script is out of date with the installed version of `admin-project-tool`, and regenerates it automatically if so.
+Once installed, `admin` is on your PATH. Run it from anywhere inside a project — it finds `admin.toml` by walking up from the current directory and interprets it at runtime. Editing `admin.toml` takes effect immediately; there is nothing to regenerate.
 
-**What it does:**
-- Reads the session's `cwd` from Claude's hook stdin
-- Exits silently if the project has no `admin.toml` / `admin` files
-- Runs `admin-gen --audit` to check for drift
-- If drift is detected, runs `admin-gen --regenerate` and reports the result to Claude as context
+| Command | Description |
+|---------|-------------|
+| `admin new` | Detect the project's stack and write a starter `admin.toml` |
+| `admin check` | Validate that `admin.toml` parses and resolves |
+| `admin compile` | Build a standalone `./admin` zipapp for a machine without the tool installed |
+| `admin <command>` | Run a command defined in the project's `admin.toml` |
 
-**To opt out:** remove the `SessionStart` entry for `~/.admin/hooks/session-admin-check.sh` from `~/.claude/settings.json`.
-
-**To register manually** (for users who installed before this feature shipped):
-
-```bash
-./install.sh --register-hooks
-```
+To update the tool: edit, commit, push, then re-run `./install.sh`. There is no per-project regeneration.
