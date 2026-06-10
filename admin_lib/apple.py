@@ -73,6 +73,7 @@ from .core import (
     err,
     register_cleanup,
     read_key,
+    run_cmd,
 )
 
 
@@ -1827,7 +1828,12 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=N
     else:
         _dev_product = _resolve_mac_dev_product_name(cfg)
         _dev_display = _resolve_mac_dev_display_name(cfg)
-        if _dev_product or _dev_display:
+        # Opt out of the dev rename/display-patch with mac_dev_rename = false —
+        # for projects that already differentiate their debug build at the Xcode
+        # level (distinct bundle ID, CFBundleDisplayName) and don't want a
+        # renamed "<name>Dev.app". Stable signing still applies via the build's
+        # CODE_SIGN flags; the rename is purely a Finder/Dock cosmetic.
+        if cfg.get("mac_dev_rename", True) and (_dev_product or _dev_display):
             # Re-sign the renamed .app with the same stable identity the build
             # used (not ad-hoc), so TCC grants survive the rename. "-" → ad-hoc
             # when no sign_identity is configured (unchanged default).
