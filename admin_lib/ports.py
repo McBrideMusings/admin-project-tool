@@ -244,11 +244,15 @@ def preflight_port(port, label=None, force=False, timeout=2.0, project_root=None
     # works when lsof hangs on macOS).
     holders = port_holders(port, timeout=timeout)
     if not holders:
+        # ports_nuke is an optional companion module — tolerate it being absent.
+        # But only ImportError is caught: a real error inside the sweep should
+        # surface, not get swallowed and mis-reported below as "lsof timed out".
         try:
             from .ports_nuke import project_dev_holders
+        except ImportError:
+            project_dev_holders = None
+        if project_dev_holders is not None:
             holders = project_dev_holders(project_root or os.getcwd(), timeout=timeout)
-        except Exception:
-            holders = []
 
     print(f"\nPort {port}{tag} is already in use:", file=sys.stderr)
     if holders:
