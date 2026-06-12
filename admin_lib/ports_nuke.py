@@ -347,6 +347,11 @@ def nuke_dev_processes(
         killed.update(pids)
 
     # 1. Ports.
+    # project_dev_holders is the lsof-can't-map-the-port fallback. It returns
+    # the SAME project-scoped set regardless of port, and its per-pid cwd sweep
+    # is the slow part on a wedged mount — so compute it at most once, lazily,
+    # and reuse it across every busy port rather than re-sweeping per port.
+    fallback_holders = None
     for entry in ports:
         if isinstance(entry, (tuple, list)):
             port, _label = entry[0], (entry[1] if len(entry) > 1 else None)
@@ -356,7 +361,9 @@ def nuke_dev_processes(
         if not holders and not port_free(port):
             # Busy but lsof couldn't name it (macOS + a stale mount that hangs
             # the scan). Fall back to ps + per-pid cwd to find the dev holders.
-            holders = project_dev_holders(project_root)
+            if fallback_holders is None:
+                fallback_holders = project_dev_holders(project_root)
+            holders = fallback_holders
         if not holders:
             continue
         pids = set()
