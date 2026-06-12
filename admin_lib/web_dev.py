@@ -148,9 +148,9 @@ def run_vite_dev(
     project_root = os.path.dirname(os.path.abspath(backend_dir)) or os.getcwd()
     kill_stale_supervisors(project_root)
 
-    if not preflight_port(vite_port, label="vite"):
+    if not preflight_port(vite_port, label="vite", project_root=project_root):
         return 1
-    if not preflight_port(backend_port, label="backend"):
+    if not preflight_port(backend_port, label="backend", project_root=project_root):
         return 1
 
     vite_log = os.path.join(get_log_dir(), vite_log_name)
