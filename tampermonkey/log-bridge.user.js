@@ -110,13 +110,18 @@
   //          →  myapp-*-web.example.net
   function suggestGlob(hostname) {
     const labels = hostname.split(".");
-    const segs = labels[0].split("-").map((s) => (/\d/.test(s) ? "*" : s));
-    const collapsed = [];
-    for (const s of segs) {
-      if (s === "*" && collapsed[collapsed.length - 1] === "*") continue;
-      collapsed.push(s);
+    const wild = labels[0].split("-").map((s) => (/\d/.test(s) ? "*" : s));
+    // Only wildcard if at least one literal segment survives. Otherwise a label
+    // like "2024" would collapse to a bare "*", matching every sibling subdomain
+    // — keep the label exact in that case.
+    if (wild.some((s) => s !== "*")) {
+      const collapsed = [];
+      for (const s of wild) {
+        if (s === "*" && collapsed[collapsed.length - 1] === "*") continue;
+        collapsed.push(s);
+      }
+      labels[0] = collapsed.join("-");
     }
-    labels[0] = collapsed.join("-");
     return labels.join(".");
   }
 
@@ -199,32 +204,36 @@
     });
   }
 
-  async function probeAll() {
-    const probes = [];
-    for (const host of PROBE_HOSTS) {
-      for (const port of PROBE_PORTS) {
-        probes.push(
-          gmRequest({ method: "GET", url: `http://${host}:${port}/health` }).then((r) => {
-            if (!r || !r.ok) return null;
+  // Probe hosts × ports in parallel and resolve as soon as one listener's
+  // advertised hosts (from that project's admin.toml, served at /health) match
+  // this page — the final gate that keeps prod URLs out of the script. Short-
+  // circuits on first match so it returns immediately instead of waiting for
+  // every dead host:port to time out. First matching responder wins (if you run
+  // two listeners for the same host, the newest-started one isn't guaranteed).
+  function findTarget() {
+    const endpoints = [];
+    for (const host of PROBE_HOSTS) for (const port of PROBE_PORTS) endpoints.push({ host, port });
+    return new Promise((resolve) => {
+      if (endpoints.length === 0) return resolve(null);
+      let pending = endpoints.length;
+      let settled = false;
+      const finish = (val) => { if (!settled) { settled = true; resolve(val); } };
+      for (const { host, port } of endpoints) {
+        gmRequest({ method: "GET", url: `http://${host}:${port}/health` }).then((r) => {
+          if (!settled && r && r.ok) {
             try {
               const data = JSON.parse(r.body);
-              return { host, port, ...data };
+              if (hostMatches(location.hostname, data.hosts || [])) {
+                return finish({ host, port, ...data });
+              }
             } catch {
-              return null;
+              // ignore unparseable /health
             }
-          })
-        );
+          }
+          if (--pending === 0) finish(null);
+        });
       }
-    }
-    const results = (await Promise.all(probes)).filter(Boolean);
-    // Final gate: the listener's advertised hosts (from that project's admin.toml)
-    // must match this page. This is what keeps prod URLs out of the script.
-    return results.filter((r) => hostMatches(location.hostname, r.hosts || []));
-  }
-
-  function pickTarget(matches) {
-    if (matches.length === 0) return null;
-    return matches.slice().sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""))[0];
+    });
   }
 
   function makeIndicator() {
@@ -278,7 +287,7 @@
   }
 
   function startFlusher(target, buffer) {
-    setInterval(() => {
+    const flush = () => {
       if (buffer.length === 0) return;
       const batch = buffer.splice(0, buffer.length);
       gmRequest({
@@ -287,15 +296,18 @@
         data: JSON.stringify(batch),
         headers: { "Content-Type": "application/json" },
       });
-    }, BATCH_INTERVAL_MS);
+    };
+    const id = setInterval(flush, BATCH_INTERVAL_MS);
+    // Stop the timer (and flush what's left) when the page goes away — otherwise
+    // it keeps firing against a stale target for the page's lifetime.
+    window.addEventListener("pagehide", () => { clearInterval(id); flush(); }, { once: true });
   }
 
   (async () => {
     const dot = makeIndicator();
     const buffer = [];
     patchConsole(unsafeWindow.console, buffer); // Patch the PAGE's console, not the sandbox's.
-    const matches = await probeAll();
-    const target = pickTarget(matches);
+    const target = await findTarget();
     if (!target) {
       dot.title = "admin-project-tool: no matching listener running"; // dot stays grey (#888 from creation)
       buffer.length = 0; // discard — nobody is listening
