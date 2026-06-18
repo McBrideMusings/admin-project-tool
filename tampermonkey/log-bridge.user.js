@@ -46,8 +46,8 @@
   // then this machine's Tailscale IPs (the browser runs on the Mac).
   const PROBE_HOSTS = [
     "127.0.0.1",
-    "100.64.0.11",   // Pierce's Mac
-    "100.64.0.10", // example-host
+    "100.64.0.11",   // primary dev machine (tailnet)
+    "100.64.0.10", // second machine (tailnet)
   ];
 
   // Must cover every machine's [log_bridge] port_range (default 9988-9999).
@@ -64,8 +64,8 @@
 
   // ----- host matching -----
 
-  // Convert a single-label DNS glob ("socialpokergame-*-webview.devvit.net") to a
-  // regex. "*" matches one DNS label segment (no dots).
+  // Convert a single-label DNS glob ("myapp-*-web.example.net") to a regex.
+  // "*" matches one DNS label segment (no dots).
   function globToRegex(glob) {
     const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^.]+");
     return new RegExp("^" + escaped + "$");
@@ -106,8 +106,8 @@
   // Auto-derive a durable glob from a concrete host: within the first DNS label,
   // wildcard any "-"-joined segment that contains a digit (version ids, subreddit
   // ids, build numbers), then collapse adjacent wildcards. Leaves digit-free hosts
-  // exact. e.g. socialpokergame-gdld8s-0-0-87-webview.devvit.net
-  //          →  socialpokergame-*-webview.devvit.net
+  // exact. e.g. myapp-ab12cd-0-0-87-web.example.net
+  //          →  myapp-*-web.example.net
   function suggestGlob(hostname) {
     const labels = hostname.split(".");
     const segs = labels[0].split("-").map((s) => (/\d/.test(s) ? "*" : s));
@@ -297,8 +297,7 @@
     const matches = await probeAll();
     const target = pickTarget(matches);
     if (!target) {
-      dot.style.background = "#888";
-      dot.title = "admin-project-tool: no matching listener running";
+      dot.title = "admin-project-tool: no matching listener running"; // dot stays grey (#888 from creation)
       buffer.length = 0; // discard — nobody is listening
       return;
     }
