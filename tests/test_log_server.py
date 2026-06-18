@@ -20,19 +20,18 @@ def _reset_state():
     yield
 
 
-def test_format_entry_includes_timestamp_level_message_url():
+def test_format_entry_includes_timestamp_level_message():
     out = log_server.format_log_bridge_entry({
         "timestamp": "2026-05-19T14:23:01.234Z",
         "level": "WARN",
         "message": "hello",
-        "url": "https://example.dev/x",
     })
-    assert out == "2026-05-19T14:23:01.234Z [client] [warn] hello  (https://example.dev/x)\n"
+    assert out == "2026-05-19T14:23:01.234Z [client] [warn] hello\n"
 
 
 def test_format_entry_synthesizes_timestamp_when_missing():
     out = log_server.format_log_bridge_entry({"message": "x"})
-    assert " [client] [log] x  ()\n" in out
+    assert " [client] [log] x\n" in out
 
 
 def test_append_entries_noop_when_log_path_unset():
@@ -67,6 +66,32 @@ def test_append_entries_appends_to_existing_log(tmp_path):
     lines = log_file.read_text().splitlines()
     assert lines[0] == "preexisting line"
     assert "[client] [log] added" in lines[1]
+
+
+def test_connect_banner_prints_host_and_browser_once(tmp_path):
+    log_file = tmp_path / "session.log"
+    log_server.set_log_server_state(
+        log_path=str(log_file), hosts=["x"], project="p", pid=1, started_at="t", port=9988,
+    )
+    entry = {"message": "m", "level": "info", "host": "app.example.net"}
+    log_server.append_log_bridge_entries([entry], user_agent="UA/1")
+    log_server.append_log_bridge_entries([entry], user_agent="UA/1")
+    banners = [ln for ln in log_file.read_text().splitlines() if "client connected" in ln]
+    assert len(banners) == 1
+    assert "app.example.net" in banners[0]
+    assert "UA/1" in banners[0]
+
+
+def test_connect_banner_falls_back_to_url_host_for_legacy_clients(tmp_path):
+    log_file = tmp_path / "session.log"
+    log_server.set_log_server_state(
+        log_path=str(log_file), hosts=["x"], project="p", pid=1, started_at="t", port=9988,
+    )
+    log_server.append_log_bridge_entries(
+        [{"message": "m", "url": "https://legacy.example.net/game?token=abc"}], user_agent="UA/2"
+    )
+    banners = [ln for ln in log_file.read_text().splitlines() if "client connected" in ln]
+    assert "legacy.example.net" in banners[0]
 
 
 # -- HTTP server roundtrip ----------------------------------------------------
