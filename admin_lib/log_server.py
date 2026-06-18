@@ -12,6 +12,7 @@ import threading
 import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Iterable
+from urllib.parse import urlparse
 
 _SEEN_CLIENTS: set[str] = set()
 
@@ -38,19 +39,33 @@ def format_log_bridge_entry(entry: dict) -> str:
     ts = entry.get("timestamp") or datetime.datetime.now(datetime.timezone.utc).isoformat()
     level = (entry.get("level") or "log").lower()
     msg = entry.get("message") or ""
-    url = entry.get("url") or ""
-    return f"{ts} [client] [{level}] {msg}  ({url})\n"
+    return f"{ts} [client] [{level}] {msg}\n"
 
 
-def append_log_bridge_entries(entries: Iterable[dict], *, client_key: str = "") -> int:
+def _entry_host(entry: dict) -> str:
+    """Host of a forwarded entry. New clients send `host`; older ones sent the
+    full `url` (which carried auth tokens) — parse the host out of that."""
+    host = entry.get("host")
+    if host:
+        return host
+    try:
+        return urlparse(entry.get("url") or "").hostname or ""
+    except ValueError:
+        return ""
+
+
+def append_log_bridge_entries(entries: Iterable[dict], *, user_agent: str = "") -> int:
     path = _LOG_BRIDGE_STATE["log_path"]
     if not path:
         return 0
     entries_list = list(entries)
     lines = []
-    if client_key and client_key not in _SEEN_CLIENTS:
-        _SEEN_CLIENTS.add(client_key)
-        lines.append(f"[log-bridge] client connected: {client_key}\n")
+    host = _entry_host(entries_list[0]) if entries_list else ""
+    # One connect banner per host (not per line) — notes the host + browser once.
+    seen_key = host or user_agent
+    if seen_key and seen_key not in _SEEN_CLIENTS:
+        _SEEN_CLIENTS.add(seen_key)
+        lines.append(f"[log-bridge] client connected: {host or 'unknown host'}  ({user_agent or 'unknown'})\n")
     lines.extend(format_log_bridge_entry(e) for e in entries_list)
     with open(path, "a") as f:
         f.writelines(lines)
@@ -97,7 +112,7 @@ class _LogBridgeHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": str(e)})
             return
         ua = self.headers.get("User-Agent") or "unknown"
-        count = append_log_bridge_entries(entries, client_key=ua)
+        count = append_log_bridge_entries(entries, user_agent=ua)
         self._send_json(200, {"written": count})
 
     def log_message(self, fmt, *args):
