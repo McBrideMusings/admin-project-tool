@@ -282,19 +282,37 @@ def set_log_context_path(path, retain=None):
 # .env loading
 # ---------------------------------------------------------------------------
 
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
 def _load_dotenv(root=None):
-    """Load .env file from project root if it exists."""
+    """Load .env file from project root if it exists.
+
+    Tolerates a non-text .env (e.g. a git-crypt-encrypted file on a machine
+    that hasn't unlocked the repo): the git-crypt magic header is detected and
+    the file skipped, undecodable bytes are otherwise ignored, and only
+    well-formed KEY=value lines are applied. A locked/binary .env never crashes
+    boot.
+    """
     root = root or _project_root or os.getcwd()
     env_path = os.path.join(root, ".env")
     if not os.path.isfile(env_path):
         return
-    with open(env_path) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, val = line.partition("=")
-            os.environ.setdefault(key.strip(), val.strip())
+    with open(env_path, "rb") as f:
+        raw = f.read()
+    # git-crypt prefixes encrypted files with "\0GITCRYPT\0"; nothing parseable
+    # follows when the repo is locked, so skip the file entirely.
+    if raw.startswith(b"\x00GITCRYPT\x00"):
+        return
+    for line in raw.decode("utf-8", "ignore").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if not _ENV_KEY_RE.match(key):
+            continue
+        os.environ.setdefault(key, val.strip())
 
 
 # ---------------------------------------------------------------------------
