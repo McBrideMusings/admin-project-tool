@@ -594,6 +594,8 @@ def register_all(resolved, project_name, inline_body=None):
         configure_logging(m.logging)
     if m.log_bridge:
         lb_cfg = {**m.log_bridge, "project": m.project_name}
+        if isinstance(lb_cfg.get("hosts"), list):
+            lb_cfg["hosts"] = [resolve_env(h) for h in lb_cfg["hosts"]]
         from admin_lib.log_bridge import configure_log_bridge
         configure_log_bridge(lb_cfg)
 
