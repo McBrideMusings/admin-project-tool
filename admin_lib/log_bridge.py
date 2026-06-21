@@ -76,6 +76,14 @@ def start_log_bridge(log_path: str):
     if not log_bridge_enabled() or _LOG_BRIDGE_SERVER is not None:
         return
     hosts = _LOG_BRIDGE_CFG["hosts"]
+    # Per-listener override: a dispatch can narrow the advertised hosts for THIS
+    # process (comma-separated) so two bridges in the same project isolate by host
+    # (e.g. one advertising the live host, another advertising localhost). The
+    # userscript routes a page only to a listener whose advertised hosts match the
+    # page hostname, so distinct host sets => non-intermingling streams.
+    override = os.environ.get("ADMIN_LOG_BRIDGE_HOSTS", "").strip()
+    if override:
+        hosts = [h.strip() for h in override.split(",") if h.strip()]
     project = _LOG_BRIDGE_CFG.get("project", "")
     LOG_BRIDGE_DISCOVERY_DIR.mkdir(parents=True, exist_ok=True)
     _log_bridge_sweep_stale()
