@@ -670,5 +670,10 @@ def interpret(resolved, project_root, argv, inline_body=None):
     root instead of inferring it from the caller's __file__.
     """
     m = resolved.manifest
+    # Load .env BEFORE register_all: register_all eagerly resolves env-bearing
+    # config (e.g. [log_bridge].hosts via resolve_env), so .env must already be in
+    # os.environ or those ${VAR:-default} expansions fall back to their defaults.
+    # boot() calls _load_dotenv again, but it uses setdefault so this is idempotent.
+    core._load_dotenv(project_root)
     register_all(resolved, m.project_name, inline_body=inline_body)
     core.boot(m.project_name, project_root=project_root, argv=argv)
