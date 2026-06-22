@@ -36,7 +36,6 @@ from admin_lib.core import (
     pick_target,
     print_url_status,
     register_action,
-    register_builtin_logs_command,
     register_env_var,
     resolve_env,
     run_cmd,
@@ -618,12 +617,13 @@ def register_all(resolved, project_name, inline_body=None):
         command(cmd.name, cmd.desc)(_make_step_runner(cmd))
 
     # --- logs command --------------------------------------------------------
-    emit_builtin_logs = "logs" not in resolved.commands and "logs" not in m.hide_commands
+    # `logs` is a project-defined runtime log stream — wired only when the
+    # manifest asks for it, via a [logs] file-tail section or a [commands.logs]
+    # the project declares. There is no auto-injected "pick a tmp/*.log" picker;
+    # to read a command's tee'd output, open tmp/<cmd>.log directly.
     if m.logs:
         from admin_lib.logtail import register_logs_command
         register_logs_command(m.logs)
-    elif emit_builtin_logs:
-        register_builtin_logs_command()
 
     # --- inline escape file --------------------------------------------------
     if inline_body is not None:
