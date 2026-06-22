@@ -72,7 +72,7 @@ class Manifest:
     overrides: dict[str, dict]               # command name -> partial command dict
     custom: dict[str, dict]                  # command name -> full command dict
     order: list[str]                         # explicit display order; "" = spacer
-    logs: dict[str, dict] = field(default_factory=dict)  # target -> {default_env, envs: {env: {path, host, user}}}
+    logs: dict[str, dict] = field(default_factory=dict)  # name -> {kind, highlight, ...kind-specific fields}
     apple: dict = field(default_factory=dict)   # [apple] table — archetype-specific config, raw dict
     server: dict = field(default_factory=dict)  # [server] table — server build/dev/deploy config, raw dict
     output: dict = field(default_factory=dict)  # [output] table — log column config per source
@@ -375,12 +375,47 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     )
 
 
-def _parse_logs(raw, source: str) -> dict[str, dict]:
-    """Normalize [logs.<name>] sections.
+_LOG_KINDS = ("file", "command", "docker", "pick")
 
-    Returns {target: {"default_env": str|None, "envs": {env: {"path", "host", "user"}}}}.
-    Env values may be strings (local path shorthand) or tables with a required `path`
-    and optional `host`/`user`. ${VAR} placeholders are preserved verbatim.
+# Keys that carry meaning for every kind and so are never treated as file envs.
+_LOG_COMMON_KEYS = ("kind", "highlight")
+
+
+def _log_opt_str(target, key, source, name):
+    val = target.get(key)
+    if val is not None and not isinstance(val, str):
+        raise ManifestError(f"{source}: logs.{name}.{key} must be a string")
+    return val
+
+
+def _log_req_str(target, key, source, name):
+    val = target.get(key)
+    if not isinstance(val, str) or not val:
+        raise ManifestError(f"{source}: logs.{name}.{key} must be a non-empty string")
+    return val
+
+
+def _parse_highlight(target, source, name):
+    raw = target.get("highlight")
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or not all(isinstance(x, str) for x in raw):
+        raise ManifestError(f"{source}: logs.{name}.highlight must be a list of strings")
+    return raw
+
+
+def _parse_logs(raw, source: str) -> dict[str, dict]:
+    """Normalize [logs.<name>] sections into per-source specs.
+
+    Every spec carries "kind" (one of file/command/docker/pick) and a "highlight"
+    list of regex strings. ${VAR} placeholders are preserved verbatim. Per kind:
+
+      file (default)  {"default_env", "envs": {env: {"path","host","user"}}}
+      command         {"run", "host", "user"}      — stream a command's stdout
+      docker          {"container", "host", "user"} — docker logs -f <container>
+      pick            {"glob"}                       — pick a file, then tail it
+
+    `host`/`user` on command/docker run the source over SSH when set.
     """
     if raw is None:
         return {}
@@ -392,54 +427,84 @@ def _parse_logs(raw, source: str) -> dict[str, dict]:
         if not isinstance(target, dict):
             raise ManifestError(f"{source}: logs.{name} must be a table")
 
-        default_env = target.get("default_env")
-        if default_env is not None and not isinstance(default_env, str):
-            raise ManifestError(f"{source}: logs.{name}.default_env must be a string")
-
-        envs: dict[str, dict] = {}
-        for env_name, env_val in target.items():
-            if env_name == "default_env":
-                continue
-            if isinstance(env_val, str):
-                envs[env_name] = {"path": env_val, "host": None, "user": None}
-            elif isinstance(env_val, dict):
-                if "path" not in env_val or not isinstance(env_val["path"], str):
-                    raise ManifestError(
-                        f"{source}: logs.{name}.{env_name} must have a 'path' string"
-                    )
-                host = env_val.get("host")
-                user = env_val.get("user")
-                if host is not None and not isinstance(host, str):
-                    raise ManifestError(
-                        f"{source}: logs.{name}.{env_name}.host must be a string"
-                    )
-                if user is not None and not isinstance(user, str):
-                    raise ManifestError(
-                        f"{source}: logs.{name}.{env_name}.user must be a string"
-                    )
-                envs[env_name] = {
-                    "path": env_val["path"],
-                    "host": host,
-                    "user": user,
-                }
-            else:
-                raise ManifestError(
-                    f"{source}: logs.{name}.{env_name} must be a string path or table"
-                )
-
-        if not envs:
+        kind = target.get("kind", "file")
+        if kind not in _LOG_KINDS:
             raise ManifestError(
-                f"{source}: logs.{name} must declare at least one environment"
-            )
-        if default_env is not None and default_env not in envs:
-            raise ManifestError(
-                f"{source}: logs.{name}.default_env '{default_env}' not in envs "
-                f"{sorted(envs)}"
+                f"{source}: logs.{name}.kind must be one of {_LOG_KINDS}, got '{kind}'"
             )
 
-        result[name] = {"default_env": default_env, "envs": envs}
+        if kind == "file":
+            spec = _parse_file_log(target, source, name)
+        elif kind == "command":
+            spec = {
+                "run": _log_req_str(target, "run", source, name),
+                "host": _log_opt_str(target, "host", source, name),
+                "user": _log_opt_str(target, "user", source, name),
+            }
+        elif kind == "docker":
+            spec = {
+                "container": _log_req_str(target, "container", source, name),
+                "host": _log_opt_str(target, "host", source, name),
+                "user": _log_opt_str(target, "user", source, name),
+            }
+        else:  # pick
+            spec = {"glob": _log_req_str(target, "glob", source, name)}
+
+        spec["kind"] = kind
+        spec["highlight"] = _parse_highlight(target, source, name)
+        result[name] = spec
 
     return result
+
+
+def _parse_file_log(target, source, name) -> dict:
+    """Parse a file-kind [logs.<name>] section into {default_env, envs}."""
+    default_env = target.get("default_env")
+    if default_env is not None and not isinstance(default_env, str):
+        raise ManifestError(f"{source}: logs.{name}.default_env must be a string")
+
+    envs: dict[str, dict] = {}
+    for env_name, env_val in target.items():
+        if env_name == "default_env" or env_name in _LOG_COMMON_KEYS:
+            continue
+        if isinstance(env_val, str):
+            envs[env_name] = {"path": env_val, "host": None, "user": None}
+        elif isinstance(env_val, dict):
+            if "path" not in env_val or not isinstance(env_val["path"], str):
+                raise ManifestError(
+                    f"{source}: logs.{name}.{env_name} must have a 'path' string"
+                )
+            host = env_val.get("host")
+            user = env_val.get("user")
+            if host is not None and not isinstance(host, str):
+                raise ManifestError(
+                    f"{source}: logs.{name}.{env_name}.host must be a string"
+                )
+            if user is not None and not isinstance(user, str):
+                raise ManifestError(
+                    f"{source}: logs.{name}.{env_name}.user must be a string"
+                )
+            envs[env_name] = {
+                "path": env_val["path"],
+                "host": host,
+                "user": user,
+            }
+        else:
+            raise ManifestError(
+                f"{source}: logs.{name}.{env_name} must be a string path or table"
+            )
+
+    if not envs:
+        raise ManifestError(
+            f"{source}: logs.{name} must declare at least one environment"
+        )
+    if default_env is not None and default_env not in envs:
+        raise ManifestError(
+            f"{source}: logs.{name}.default_env '{default_env}' not in envs "
+            f"{sorted(envs)}"
+        )
+
+    return {"default_env": default_env, "envs": envs}
 
 
 def dump(manifest: Manifest) -> str:

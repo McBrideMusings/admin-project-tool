@@ -14,6 +14,7 @@ import re as _re
 import tempfile
 import threading
 import time
+import types as _types
 from pathlib import Path
 
 LIB_DIR = Path(__file__).resolve().parent.parent / "admin_lib"
@@ -56,9 +57,26 @@ class _StubSys:
         self.stdout = _StubStdout(sink)
 
 
-def _load_logtail():
-    source = (LIB_DIR / "logtail.py").read_text()
+def _stub_log_deps():
+    """Stubs for the runtime deps logtail pulls from sibling modules, so the
+    exec'd source resolves without the package context."""
+    return {
+        "make_formatter": lambda **k: (lambda line: line),
+        "C": _types.SimpleNamespace(
+            RED="", GREEN="", YELLOW="", BLUE="", MAGENTA="", CYAN="",
+            BOLD="", DIM="", RESET="",
+        ),
+    }
+
+
+def _strip_relative_imports(source: str) -> str:
     source = _re.sub(r"from \.core import \([^)]*\)", "pass", source, count=1)
+    source = _re.sub(r"from \.log_format import .*", "pass", source, count=1)
+    return source
+
+
+def _load_logtail():
+    source = _strip_relative_imports((LIB_DIR / "logtail.py").read_text())
     ns: dict = {
         "info": lambda *a, **k: None,
         "warn": lambda *a, **k: None,
@@ -67,6 +85,7 @@ def _load_logtail():
         "pick_target_or_none": lambda *a, **k: None,
         "resolve_env": lambda s: s,
         "_children": [],
+        **_stub_log_deps(),
     }
     exec(compile(source, "logtail.py", "exec"), ns)
     return ns
@@ -164,8 +183,7 @@ def _load_logtail_for_cmd(
     simulate non-TTY or user-cancel) and what tail_local/tail_remote return.
     The `err` stub records messages for assertions.
     """
-    source = (LIB_DIR / "logtail.py").read_text()
-    source = _re.sub(r"from \.core import \([^)]*\)", "pass", source, count=1)
+    source = _strip_relative_imports((LIB_DIR / "logtail.py").read_text())
 
     registry: dict = {}
     err_calls: list = []
@@ -196,6 +214,7 @@ def _load_logtail_for_cmd(
         "pick_target_or_none": _pick,
         "resolve_env": lambda s: s,
         "_children": [],
+        **_stub_log_deps(),
     }
     exec(compile(source, "logtail.py", "exec"), ns)
     # Replace tail_local / tail_remote with inert stubs so cmd_logs doesn't
@@ -262,5 +281,94 @@ def test_cmd_logs_single_target_single_env_non_tty_proceeds():
     assert rc == 0, f"expected tail_local rc=0 to pass through, got {rc}"
     assert not errs, f"no err expected in single-target non-TTY flow, got {errs}"
     print("OK: cmd_logs with single target/env proceeds in non-TTY")
+
+
+# --- non-file kinds: dispatch ------------------------------------------------
+
+def _capture(ns, name, rc=0):
+    """Replace ns[name] with a recorder; returns the list it appends (a, k) to."""
+    calls = []
+
+    def _rec(*a, **k):
+        calls.append((a, k))
+        return rc
+
+    ns[name] = _rec
+    return calls
+
+
+def test_cmd_logs_command_kind_dispatches():
+    ns, registry, errs = _load_logtail_for_cmd()
+    calls = _capture(ns, "tail_command", rc=0)
+    ns["register_logs_command"]({
+        "plugin": {
+            "kind": "command",
+            "run": "node scripts/logs.mjs --follow",
+            "host": None, "user": None, "highlight": [],
+        }
+    })
+    rc = registry["logs"](["plugin"])
+    assert rc == 0
+    (args, _kw), = calls
+    assert args[0] == "node scripts/logs.mjs --follow"
+    print("OK: command kind routes to tail_command")
+
+
+def test_cmd_logs_docker_kind_dispatches_with_highlight():
+    ns, registry, errs = _load_logtail_for_cmd()
+    calls = _capture(ns, "tail_docker", rc=0)
+    ns["register_logs_command"]({
+        "docker": {
+            "kind": "docker",
+            "container": "stash",
+            "host": "tower", "user": None,
+            "highlight": ["stash-organize"],
+        }
+    })
+    rc = registry["logs"](["docker"])
+    assert rc == 0
+    (args, kw), = calls
+    assert args[0] == "stash"
+    assert kw["highlight"] == ["stash-organize"]
+    print("OK: docker kind routes to tail_docker with highlight")
+
+
+def test_cmd_logs_pick_kind_dispatches():
+    ns, registry, errs = _load_logtail_for_cmd()
+    calls = _capture(ns, "tail_pick", rc=0)
+    ns["register_logs_command"]({
+        "pick": {"kind": "pick", "glob": "tmp/*.log", "highlight": []}
+    })
+    rc = registry["logs"](["pick"])
+    assert rc == 0
+    (args, _kw), = calls
+    assert args[0] == "tmp/*.log"
+    print("OK: pick kind routes to tail_pick")
+
+
+def test_line_renderer_highlights_matching_lines_only():
+    ns = _load_logtail()
+
+    class _Stdout:
+        def __init__(self):
+            self.chunks = []
+
+        def isatty(self):
+            return True
+
+        def write(self, s):
+            self.chunks.append(s)
+
+        def flush(self):
+            pass
+
+    out = _Stdout()
+    ns["sys"] = _types.SimpleNamespace(stdout=out)
+    renderer = ns["LineRenderer"](["stash-organize"])
+    renderer.write("hit stash-organize here\n")
+    renderer.write("plain line\n")
+    assert out.chunks[0].startswith("\033[1;7m"), out.chunks[0]
+    assert not out.chunks[1].startswith("\033[1;7m"), out.chunks[1]
+    print("OK: LineRenderer wraps only matching lines")
 
 
