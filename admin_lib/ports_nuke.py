@@ -7,18 +7,30 @@ Calls into `ports.py` for port_holders and _kill_pids.
 import json
 import os
 import re
+import subprocess
 import sys
 
 from .core import info, ok, resolve_env
-from .ports import port_holders, _kill_pids
+from .ports import port_holders, port_free, _kill_pids, _ps_parent
 
 
 def list_processes(skip_self=True):
-    """Yield {pid, argv, cmdline, argv0, cwd} for every readable /proc entry.
+    """Yield {pid, argv, cmdline, argv0, cwd} for every visible process.
 
-    argv is the actual token list (not space-joined), so callers can match on
-    individual tokens without false positives from `bash -c '...'` wrappers.
+    Linux: walks /proc (no external deps). macOS/BSD (no /proc): falls back to
+    `ps`. Either way argv is a token list so callers can match individual tokens
+    without false positives from `bash -c '...'` wrappers. Note: in the `ps`
+    fallback `cwd` is None (ps can't report it) and argv is recovered by a naive
+    split, so callers that need a process's cwd should fill it lazily with
+    `_pid_cwd` only for the small set they actually care about.
     """
+    if os.path.isdir("/proc"):
+        yield from _list_processes_proc(skip_self)
+    else:
+        yield from _list_processes_ps(skip_self)
+
+
+def _list_processes_proc(skip_self=True):
     self_pid = os.getpid()
     try:
         entries = os.listdir("/proc")
@@ -51,6 +63,134 @@ def list_processes(skip_self=True):
             "argv0": argv[0],
             "cwd": cwd,
         }
+
+
+def _list_processes_ps(skip_self=True):
+    self_pid = os.getpid()
+    try:
+        r = subprocess.run(
+            ["ps", "-Ao", "pid=,command="],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return
+    for line in r.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if len(parts) < 2:
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+        if skip_self and pid == self_pid:
+            continue
+        cmdline = parts[1]
+        # ps space-joins argv; a naive split is good enough for marker/cwd
+        # matching (dev command paths don't contain spaces). cwd is unknown
+        # here — _pid_cwd fills it on demand for the candidates that need it.
+        argv = cmdline.split()
+        yield {
+            "pid": pid,
+            "argv": argv,
+            "cmdline": cmdline,
+            "argv0": argv[0] if argv else "",
+            "cwd": None,
+        }
+
+
+def _pid_cwd(pid, timeout=2.0):
+    """Working directory of `pid`, or None. /proc on Linux; per-pid `lsof` on
+    macOS/BSD. The lsof form is scoped to the cwd fd (`-d cwd`), so it stats one
+    descriptor — it does NOT walk the process's data fds, which is what makes a
+    full `lsof` scan hang on a wedged network mount.
+    """
+    try:
+        return os.readlink(f"/proc/{pid}/cwd")
+    except OSError:
+        pass
+    try:
+        r = subprocess.run(
+            ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    for ln in r.stdout.splitlines():
+        if ln.startswith("n"):
+            return ln[1:]
+    return None
+
+
+def _cwd_in_root(cwd, project_root):
+    """True if `cwd` is `project_root` or a directory beneath it. A falsy/None
+    cwd (e.g. `_pid_cwd` couldn't resolve it) is never inside the root.
+    """
+    if not cwd:
+        return False
+    return cwd == project_root or cwd.startswith(project_root + os.sep)
+
+
+# Heuristics for "this looks like a dev process" — used when lsof can't map a
+# port to a pid (macOS + a stale mount) and we must identify holders by what
+# they are instead of what socket they hold.
+_DEV_CMDLINE_MARKERS = (
+    "cargo watch", "cargo-watch", "watchexec", "nodemon",
+    "vite", "esbuild", "npm run dev", "bun run dev", "tsc -w", "tsc --watch",
+)
+_DEV_RUNTIMES = {"node", "bun", "deno", "python", "python3"}
+
+
+def _is_project_dev_proc(proc, project_root):
+    """True if `proc` is one of *this project's* dev processes.
+
+    Deliberately narrow: a bare language runtime (node/bun/python) only counts
+    when the script it runs lives inside project_root. Without that, unrelated
+    tooling that merely runs with cwd inside the project — MCP servers, npx
+    packages, editors — would be swept up and killed. Unambiguous dev markers
+    (cargo-watch, vite, a target/debug build, …) are trusted on their own and
+    scoped to the project by the caller's per-pid cwd check.
+    """
+    cmdline = proc.get("cmdline") or ""
+    if any(m in cmdline for m in _DEV_CMDLINE_MARKERS):
+        return True
+    if "target/debug/" in cmdline or "target/release/" in cmdline:
+        return True
+    base = os.path.basename(proc.get("argv0") or "")
+    if base in _DEV_RUNTIMES:
+        prefix = os.path.abspath(project_root) + os.sep
+        return any(tok.startswith(prefix) for tok in (proc.get("argv") or [])[1:])
+    return False
+
+
+def project_dev_holders(project_root, timeout=2.0):
+    """Holder dicts (ports.port_holders shape) for this project's dev processes.
+
+    The fallback for naming a port's holder when lsof can't map port→pid — i.e.
+    macOS where a stale mount hangs the full lsof scan. We can't tell *which*
+    port each process listens on without lsof, so on this degraded path every
+    dev process rooted in `project_root` is treated as a holder and the prior
+    session is torn down — fine, because `admin dev` is about to start a fresh
+    one. Scoping is by per-pid cwd, so unrelated processes are never touched.
+    """
+    project_root = os.path.abspath(project_root)
+    holders = []
+    for proc in list_processes():
+        if not _is_project_dev_proc(proc, project_root):
+            continue
+        cwd = proc.get("cwd") or _pid_cwd(proc["pid"], timeout=timeout)
+        if not _cwd_in_root(cwd, project_root):
+            continue
+        ppid, pcmd = _ps_parent(proc["pid"])
+        holders.append({
+            "pid": proc["pid"],
+            "command": proc.get("cmdline") or "?",
+            "parent_pid": ppid,
+            "parent_command": pcmd,
+        })
+    return holders
 
 
 def find_pids_by_cmdline(pattern):
@@ -124,10 +264,13 @@ def kill_stale_supervisors(project_root, *, markers=None):
         if proc["pid"] == self_pid:
             continue
         cmdline = proc.get("cmdline") or ""
-        cwd = proc.get("cwd") or ""
         if not any(m in cmdline for m in markers):
             continue
-        if cwd != project_root and not cwd.startswith(project_root + os.sep):
+        # Marker matched — only now fetch cwd (per-pid, lazy) to scope to the
+        # project. Doing it after the marker filter keeps the per-pid lsof on
+        # macOS down to the handful of supervisor candidates.
+        cwd = proc.get("cwd") or _pid_cwd(proc["pid"])
+        if not _cwd_in_root(cwd, project_root):
             continue
         stale.append(proc["pid"])
     if not stale:
@@ -204,12 +347,23 @@ def nuke_dev_processes(
         killed.update(pids)
 
     # 1. Ports.
+    # project_dev_holders is the lsof-can't-map-the-port fallback. It returns
+    # the SAME project-scoped set regardless of port, and its per-pid cwd sweep
+    # is the slow part on a wedged mount — so compute it at most once, lazily,
+    # and reuse it across every busy port rather than re-sweeping per port.
+    fallback_holders = None
     for entry in ports:
         if isinstance(entry, (tuple, list)):
             port, _label = entry[0], (entry[1] if len(entry) > 1 else None)
         else:
             port = entry
         holders = port_holders(port)
+        if not holders and not port_free(port):
+            # Busy but lsof couldn't name it (macOS + a stale mount that hangs
+            # the scan). Fall back to ps + per-pid cwd to find the dev holders.
+            if fallback_holders is None:
+                fallback_holders = project_dev_holders(project_root)
+            holders = fallback_holders
         if not holders:
             continue
         pids = set()

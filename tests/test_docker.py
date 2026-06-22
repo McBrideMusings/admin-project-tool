@@ -28,10 +28,10 @@ def _load_docker():
     warnings = []
     ns: dict = {
         "C": type("C", (), {"DIM": "", "RESET": "", "GREEN": "", "RED": "", "YELLOW": ""})(),
-        "LOG_DIR": "/tmp",
-        "LOG_FILE": "/tmp/test.log",
+        "get_log_dir": lambda: "/tmp",
+        "get_log_file": lambda: "/tmp/test.log",
+        "get_urls": lambda: [],
         "_children": [],
-        "_urls": {},
         "command": lambda *a, **k: (lambda f: f),
         "info": lambda *a, **k: None,
         "ok": lambda *a, **k: None,
@@ -722,8 +722,9 @@ def _make_reload_driver(child_file: Path, log_suffix: str) -> str:
     lines = [
         f"import sys; sys.path.insert(0, {str(REPO)!r})",
         "import admin_lib.docker as dm",
-        f"dm.LOG_DIR = '/tmp'",
-        f"dm.LOG_FILE = '/tmp/test-reload-{log_suffix}.log'",
+        "import admin_lib.core as _core",
+        "_core.LOG_DIR = '/tmp'",
+        f"_core.LOG_FILE = '/tmp/test-reload-{log_suffix}.log'",
         "try:",
         f"    dm.run_with_reload([sys.executable, {str(child_file)!r}], target='test', shell=False)",
         "except (KeyboardInterrupt, SystemExit): pass",
@@ -845,7 +846,7 @@ def _load_docker_logs(tmp_dir=None, chosen="dev"):
     ns["_is_local_host"] = lambda host: False
     ns["pick_target"] = lambda menu, prompt=None: (calls["pick"].append(list(menu.keys())) or chosen)
     if tmp_dir is not None:
-        ns["LOG_DIR"] = tmp_dir
+        ns["get_log_dir"] = lambda: tmp_dir
     ns["_calls"] = calls
     return ns
 

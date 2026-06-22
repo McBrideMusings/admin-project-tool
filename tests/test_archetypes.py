@@ -17,9 +17,9 @@ sys.path.insert(0, str(REPO))
 
 from gen.archetypes import load_archetype, resolve, ArchetypeError, _to_command  # noqa: E402
 from gen.detectors import detect  # noqa: E402
-from gen.fragments import collect_env_var_calls, render_command  # noqa: E402
-from gen.manifest import Command, Manifest, ManifestError, parse  # noqa: E402
-from gen.render import render  # noqa: E402
+from gen.fragments import scan_env_vars  # noqa: E402
+from gen.manifest import Command, Manifest, ManifestError, dump as dump_manifest, parse  # noqa: E402
+from admin_lib import core, interp  # noqa: E402
 
 ARCH_DIR = REPO / "archetypes"
 DET_DIR = REPO / "detectors"
@@ -31,18 +31,28 @@ EXPECTED = [
 ]
 
 
-def _run_generated_script(script: str, argv: list[str], timeout: int = 10) -> subprocess.CompletedProcess:
-    """Write `script` to a temp file, run it with `argv`, clean up, return the result."""
-    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
-        f.write(script)
-        path = f.name
-    try:
+def _run_interpreter(m: Manifest, argv: list[str], timeout: int = 10) -> subprocess.CompletedProcess:
+    """Write the manifest to a temp admin.toml and run it through the interpreter."""
+    with tempfile.TemporaryDirectory() as d:
+        (Path(d) / "admin.toml").write_text(dump_manifest(m))
         return subprocess.run(
-            [sys.executable, path, *argv],
+            [sys.executable, str(REPO / "admin-run"), "--project-dir", d, *argv],
             capture_output=True, text=True, timeout=timeout,
         )
-    finally:
-        os.unlink(path)
+
+
+def _clear_registry():
+    core._commands.clear()
+    core._actions.clear()
+    core._referenced_env_vars.clear()
+
+
+def _register(m: Manifest):
+    """Resolve + register a manifest into the live core registry; return resolved."""
+    resolved = resolve(m, ARCH_DIR)
+    _clear_registry()
+    interp.register_all(resolved, m.project_name)
+    return resolved
 
 
 def test_all_archetypes_load_and_validate():
@@ -85,13 +95,14 @@ def test_composition_docker_unraid_plus_apple():
     # docker-unraid still contributes commands that apple doesn't declare.
     assert resolved.commands["logs"].source == "docker-unraid"
     assert resolved.commands["open"].source == "docker-unraid"
-    # Render must not crash.
-    script = render(resolved, LIB_DIR, generator_commit="test-sha")
-    assert "def cmd_build" in script
-    assert "def cmd_deploy" in script
-    assert "run_with_reload" in script  # docker-reload-loop action fragment
-    assert "pick_target" in script      # multi-target action fragment
-    print("OK: docker-unraid + apple composition renders")
+    # Registration of the merged set must not crash, and the merged commands +
+    # their backing actions must all be present and callable.
+    _clear_registry()
+    interp.register_all(resolved, m.project_name)
+    for name in ("build", "deploy", "reload", "logs", "open"):
+        assert name in core._all_commands(), f"{name} command missing after register"
+    assert resolved.actions, "composition produced no actions"
+    print("OK: docker-unraid + apple composition registers")
 
 
 def test_detector_composition():
@@ -117,10 +128,12 @@ def test_hugo_roundtrip():
         order=[],
     )
     resolved = resolve(m, ARCH_DIR)
-    script = render(resolved, LIB_DIR, generator_commit="test-sha")
-    assert "hugo --minify" in script       # in action body
-    assert "http://localhost:1313" in script
-    assert "run_command" in script          # commands route to actions via run_command
+    # Action run strings + url survive resolution; registration succeeds.
+    assert any("hugo --minify" in a.run for a in resolved.actions.values())
+    assert resolved.urls.get("dev") == "http://localhost:1313"
+    _clear_registry()
+    interp.register_all(resolved, m.project_name)
+    assert "build" in core._all_commands()
     print("OK: hugo round-trips")
 
 
@@ -169,13 +182,12 @@ def test_python_min_validation():
 def test_env_vars_from_urls():
     cmds = [Command(name="x", run="echo ${HOST}", desc="test", kind="shell")]
     urls = {"prod": "${APP_URL:-http://localhost}", "dev": "http://localhost:8080"}
-    lines = collect_env_var_calls(cmds, urls)
-    var_names = " ".join(lines)
-    assert "HOST" in var_names, "should find HOST from action run string"
-    assert "APP_URL" in var_names, "should find APP_URL from url"
-    assert "http://localhost" in var_names, "should preserve default"
-    lines_no_urls = collect_env_var_calls(cmds)
-    assert not any("APP_URL" in l for l in lines_no_urls), "without urls param, APP_URL should not appear"
+    seen = scan_env_vars(cmds, urls)
+    assert "HOST" in seen, "should find HOST from action run string"
+    assert "APP_URL" in seen, "should find APP_URL from url"
+    assert seen["APP_URL"]["default"] == "http://localhost", "should preserve default"
+    seen_no_urls = scan_env_vars(cmds)
+    assert "APP_URL" not in seen_no_urls, "without urls param, APP_URL should not appear"
     print("OK: env vars from urls detected")
 
 
@@ -235,11 +247,10 @@ def test_logs_env_vars_scanned():
             },
         }
     }
-    lines = collect_env_var_calls([], urls=None, logs=logs)
-    joined = " ".join(lines)
-    assert "LOG_ROOT" in joined
-    assert "/var/log" in joined
-    assert "APP_HOST" in joined
+    seen = scan_env_vars([], urls=None, logs=logs)
+    assert "LOG_ROOT" in seen
+    assert seen["LOG_ROOT"]["default"] == "/var/log"
+    assert "APP_HOST" in seen
     print("OK: env vars from logs section detected")
 
 
@@ -281,60 +292,53 @@ def test_logs_render_emits_register_call():
         },
     )
     resolved = resolve(m, ARCH_DIR)
-    script = render(resolved, LIB_DIR, generator_commit="test-sha")
-    assert "register_logs_command(" in script
-    assert '"app"' in script
-    assert '"./tmp/app.log"' in script
-    # logtail module must be inlined
-    assert "# === admin_lib.logtail ===" in script
-    assert "def tail_local" in script
-    print("OK: [logs] renders register_logs_command and inlines logtail")
+    _clear_registry()
+    interp.register_all(resolved, m.project_name)
+    # A [logs] table registers a `logs` command (via logtail.register_logs_command).
+    assert "logs" in core._all_commands()
+    print("OK: [logs] registers a logs command")
 
 
-def test_render_python_action_emits_verbatim_body():
-    """kind=python actions emit the `run` string as a Python block.
-
-    No ${VAR} substitution — the body is emitted verbatim,
-    so any env access is explicit via os.environ.get.
+def test_python_action_runs_verbatim_body():
+    """kind=python actions execute the `run` string verbatim against the flat
+    namespace — no ${VAR} substitution, env access via os.environ.get.
     """
-    from gen.fragments import render_action
     cmd = Command(
         name="dev",
         run="run_vite_dev(vite_port=int(os.environ.get('VITE_PORT', 5173)))",
         desc="Run backend + frontend",
         kind="python",
     )
-    out = render_action(cmd)
-    assert "def _act_dev(args):" in out, out
-    assert "register_action" in out, out
-    assert "run_vite_dev(vite_port=int(os.environ.get('VITE_PORT', 5173)))" in out, out
-    assert "${" not in out, "python kind must not substitute ${VAR} placeholders"
-    print("OK: kind=python action emits verbatim Python body")
+    captured = {}
+    ns = {"run_vite_dev": lambda **kw: captured.update(kw), "os": os}
+    interp._make_python(cmd, ns)([])
+    assert captured == {"vite_port": 5173}, captured
+    print("OK: kind=python action runs verbatim Python body")
 
 
-def test_render_python_action_rejects_empty_run():
-    from gen.fragments import render_action
+def test_python_action_rejects_empty_run():
+    from admin_lib.interp import InterpError
     cmd = Command(name="dev", run="", desc="...", kind="python")
     try:
-        render_action(cmd)
-    except Exception as e:
+        interp._make_python(cmd, {})
+    except InterpError as e:
         assert "needs 'run'" in str(e), e
         print("OK: kind=python action rejects empty run")
         return
-    raise AssertionError("expected FragmentError for empty python run")
+    raise AssertionError("expected InterpError for empty python run")
 
 
-def test_render_command_is_step_runner():
-    """Commands render as step-runners that call run_command for each step."""
+def test_command_step_runner_dispatches_steps(monkeypatch):
+    """Commands build step-runners that set a log context and call run_command per step."""
     cmd = Command(name="dev", run="", desc="Run dev", kind="steps",
                   meta={"steps": ["dev-action"]})
-    out = render_command(cmd)
-    assert '@command("dev"' in out, out
-    assert "def cmd_dev(args):" in out, out
-    assert 'set_log_context("dev")' in out, out
-    assert 'run_command(_step, args)' in out, out
-    assert '"dev-action"' in out, out
-    print("OK: commands render as step-runners with set_log_context")
+    calls = []
+    monkeypatch.setattr(interp, "set_log_context", lambda *a, **k: calls.append(("ctx", a)))
+    monkeypatch.setattr(interp, "run_command", lambda *a, **k: calls.append(("run", a)))
+    interp._make_step_runner(cmd)([])
+    assert ("ctx", ("dev",)) in calls
+    assert ("run", ("dev-action", [])) in calls
+    print("OK: commands build step-runners with set_log_context")
 
 
 def test_collect_env_vars_scans_python_os_environ_get():
@@ -349,28 +353,29 @@ def test_collect_env_vars_scans_python_os_environ_get():
         desc="...",
         kind="python",
     )
-    calls = collect_env_var_calls([cmd])
-    joined = "\n".join(calls)
-    assert '"VITE_PORT"' in joined, joined
-    assert 'default="5173"' in joined, joined
-    assert '"DEV_MOUNTS"' in joined, joined
-    assert '"cmd:dev"' in joined, joined
-    print("OK: collect_env_var_calls finds os.environ.get in python-kind run")
+    seen = scan_env_vars([cmd])
+    assert "VITE_PORT" in seen, seen
+    assert seen["VITE_PORT"]["default"] == "5173", seen
+    assert "DEV_MOUNTS" in seen, seen
+    assert "cmd:dev" in seen["VITE_PORT"]["used_by"], seen
+    print("OK: scan_env_vars finds os.environ.get in python-kind run")
 
 
-def test_render_python_action_multiline_body_indented():
-    """A multi-line Python body is indented to fit inside the generated def."""
-    from gen.fragments import render_action
+def test_python_action_multiline_body_runs_all_statements():
+    """A multi-line Python body executes every statement."""
     cmd = Command(
         name="boot",
         run="info('starting')\nrun_vite_dev(vite_port=5173)",
         desc="Boot it",
         kind="python",
     )
-    out = render_action(cmd)
-    assert "    info('starting')" in out, out
-    assert "    run_vite_dev(vite_port=5173)" in out, out
-    print("OK: kind=python indents multi-line body")
+    seen = []
+    ns = {"info": lambda m: seen.append(("info", m)),
+          "run_vite_dev": lambda **kw: seen.append(("vite", kw))}
+    interp._make_python(cmd, ns)([])
+    assert ("info", "starting") in seen
+    assert ("vite", {"vite_port": 5173}) in seen
+    print("OK: kind=python runs multi-line body")
 
 
 def test_log_override_keys_propagated_in_merge():
@@ -418,12 +423,11 @@ def test_log_false_override_propagated_in_merge():
     print("OK: log=false override survives archetype merge")
 
 
-def test_render_multi_target_at_ref_args_forwarding():
-    """render_multi_target generates run_command(shell[1:], rest_args) for @-ref targets.
+def test_multi_target_at_ref_args_forwarding(monkeypatch):
+    """The multi-target closure forwards rest_args to run_command for @-ref targets.
 
     Regression guard for #295: the @-ref dispatch path must forward rest_args, not drop them.
     """
-    from gen.fragments import render_action
     cmd = Command(
         name="build",
         run="",
@@ -431,15 +435,21 @@ def test_render_multi_target_at_ref_args_forwarding():
         kind="multi-target",
         targets={"ios": "@build-ios", "mac": "xcodebuild -scheme Foo"},
     )
-    out = render_action(cmd)
-    assert "run_command(shell[1:], rest_args)" in out, (
-        "@-ref targets must forward rest_args to run_command: " + out
-    )
-    assert "run_cmd(shell)" in out, "non-@-ref shell targets must use run_cmd"
-    print("OK: render_multi_target @-ref path forwards rest_args")
+    monkeypatch.setattr(interp, "set_log_context", lambda *a, **k: None)
+    captured = {}
+    monkeypatch.setattr(interp, "run_command", lambda name, args: captured.update(name=name, args=args))
+    interp._make_multi_target(cmd, {})(["ios", "--flag"])
+    assert captured == {"name": "build-ios", "args": ["--flag"]}, captured
+
+    # A non-@-ref target runs its shell string via run_cmd.
+    ran = {}
+    monkeypatch.setattr(interp, "run_cmd", lambda shell, **kw: ran.update(shell=shell) or 0)
+    interp._make_multi_target(cmd, {})(["mac"])
+    assert ran["shell"] == "xcodebuild -scheme Foo"
+    print("OK: multi-target @-ref path forwards rest_args")
 
 
-def test_render_command_step_runner_dispatch_end_to_end():
+def test_command_step_runner_dispatch_end_to_end():
     """Step-runner commands forward args to the dispatched action at runtime.
 
     Covers #296: end-to-end verification that args flow through run_command()
@@ -456,11 +466,8 @@ def test_render_command_step_runner_dispatch_end_to_end():
         order=[],
         actions={"echo-action": {"kind": "python", "desc": "Echo", "run": "print('got:', args)"}},
     )
-    resolved = resolve(m, ARCH_DIR)
-    script = render(resolved, LIB_DIR, generator_commit="test-sha")
-
-    result = _run_generated_script(script, ["runcmd", "--flag", "value"])
-    assert result.returncode == 0, f"script failed:\n{result.stderr}"
+    result = _run_interpreter(m, ["runcmd", "--flag", "value"])
+    assert result.returncode == 0, f"interpreter failed:\n{result.stderr}"
     assert "['--flag', 'value']" in result.stdout, (
         f"args not forwarded to action; stdout={result.stdout!r}"
     )
@@ -494,11 +501,8 @@ def test_multi_target_at_ref_routing_end_to_end():
             },
         },
     )
-    resolved = resolve(m, ARCH_DIR)
-    script = render(resolved, LIB_DIR, generator_commit="test-sha")
-
-    result = _run_generated_script(script, ["build", "ios", "--clean"])
-    assert result.returncode == 0, f"script failed:\n{result.stderr}"
+    result = _run_interpreter(m, ["build", "ios", "--clean"])
+    assert result.returncode == 0, f"interpreter failed:\n{result.stderr}"
     assert "['--clean']" in result.stdout, (
         f"trailing flags not forwarded via @-ref; stdout={result.stdout!r}"
     )
@@ -639,9 +643,8 @@ def test_group_priority_inline_targets_no_order_when_all_default():
     print("OK: inline targets with all-default group/priority produce no target_order")
 
 
-def test_group_priority_renders_target_order_in_pick_target():
-    """render_multi_target emits _target_order and order= kwarg when meta['target_order'] set."""
-    from gen.fragments import render_multi_target
+def test_group_priority_passes_target_order_to_pick_target(monkeypatch):
+    """The multi-target closure passes meta['target_order'] to pick_target as order=."""
     cmd = Command(
         name="build", run="", desc="Build", kind="multi-target",
         targets={"mac": "xcodebuild mac", "ios": "xcodebuild ios", "clean": "rm -rf build/"},
@@ -650,11 +653,11 @@ def test_group_priority_renders_target_order_in_pick_target():
             "target_order": ["mac", "ios", "", "clean"],
         },
     )
-    code = render_multi_target(cmd)
-    assert "_target_order" in code, "should emit _target_order variable"
-    assert "order=_target_order" in code, "should pass order= kwarg to pick_target"
-    assert "''" in code or '""' in code, "spacer entry should appear in _target_order literal"
-    print("OK: render_multi_target emits _target_order + order= kwarg")
+    captured = {}
+    monkeypatch.setattr(interp, "pick_target", lambda menu, prompt, order=None: captured.update(order=order))
+    interp._make_multi_target(cmd, {})([])  # no arg → goes through pick_target
+    assert captured["order"] == ["mac", "ios", "", "clean"]
+    print("OK: multi-target passes target_order to pick_target")
 
 
 def test_group_priority_within_group_tiebreaking():
@@ -709,16 +712,13 @@ def test_pick_target_spacer_order_end_to_end():
         },
     )
     resolved = resolve(m, ARCH_DIR)
-    script = render(resolved, LIB_DIR, generator_commit="test-sha")
+    # The spacer must be present in the resolved target_order metadata.
+    assert "" in resolved.actions["build-action"].meta["target_order"]
 
-    # spacers in _target_order must not break explicit target dispatch
-    result = _run_generated_script(script, ["build", "ios"])
+    # spacers in target_order must not break explicit target dispatch
+    result = _run_interpreter(m, ["build", "ios"])
     assert result.returncode == 0, f"explicit target with spacers in order failed:\n{result.stderr}"
     assert "ios-built" in result.stdout, f"wrong target executed; stdout={result.stdout!r}"
-
-    # verify the generated code actually has a spacer in the order list
-    assert "''" in script or '""' in script, "spacer should appear in generated _target_order"
-    assert "order=_target_order" in script, "order= kwarg should be passed to pick_target"
     print("OK: multi-target with spacers in target_order dispatches correctly")
 
 
@@ -891,25 +891,22 @@ def test_inline_target_action_ref_dispatch_end_to_end():
             },
         },
     )
-    resolved = resolve(m, ARCH_DIR)
-    script = render(resolved, LIB_DIR, generator_commit="test-sha")
-
-    result = _run_generated_script(script, ["build", "ios", "--verbose"])
-    assert result.returncode == 0, f"script failed:\n{result.stderr}"
+    result = _run_interpreter(m, ["build", "ios", "--verbose"])
+    assert result.returncode == 0, f"interpreter failed:\n{result.stderr}"
     assert "['--verbose']" in result.stdout, (
         f"args not forwarded through inline action: ref dispatch; stdout={result.stdout!r}"
     )
     print("OK: inline target subtable action: @-ref dispatches and forwards args end-to-end")
 
 
-def test_render_apple_dev_loop_at_ref_args_forwarding():
-    """render_apple_dev_loop generates run_command(shell[1:], rest_args) for @-ref targets.
+def test_apple_dev_loop_at_ref_args_forwarding(monkeypatch):
+    """apple-dev-loop maps to the multi-target factory and forwards rest_args for @-refs.
 
-    Regression guard for #304: apple-dev-loop delegates to render_multi_target, but the
-    kind must appear in the @-ref validation and its render path must forward args.
-    This unit test covers the render side; the e2e test below covers runtime dispatch.
+    Regression guard for #304: apple-dev-loop must share the multi-target dispatch
+    path (including @-ref arg forwarding). This unit test covers the factory side;
+    the e2e test below covers runtime dispatch.
     """
-    from gen.fragments import render_action
+    assert interp._FACTORIES["apple-dev-loop"] is interp._make_multi_target
     cmd = Command(
         name="dev",
         run="",
@@ -917,12 +914,12 @@ def test_render_apple_dev_loop_at_ref_args_forwarding():
         kind="apple-dev-loop",
         targets={"device": "@dev-device", "sim": "echo sim-built"},
     )
-    out = render_action(cmd)
-    assert "run_command(shell[1:], rest_args)" in out, (
-        "apple-dev-loop @-ref targets must forward rest_args: " + out
-    )
-    assert "run_cmd(shell)" in out, "non-@-ref shell targets must use run_cmd"
-    print("OK: render_apple_dev_loop @-ref path forwards rest_args")
+    monkeypatch.setattr(interp, "set_log_context", lambda *a, **k: None)
+    captured = {}
+    monkeypatch.setattr(interp, "run_command", lambda name, args: captured.update(name=name, args=args))
+    interp._FACTORIES["apple-dev-loop"](cmd, {})(["device", "--no-clean"])
+    assert captured == {"name": "dev-device", "args": ["--no-clean"]}
+    print("OK: apple-dev-loop @-ref path forwards rest_args")
 
 
 def test_apple_dev_loop_at_ref_dispatch_end_to_end():
@@ -954,11 +951,8 @@ def test_apple_dev_loop_at_ref_dispatch_end_to_end():
             },
         },
     )
-    resolved = resolve(m, ARCH_DIR)
-    script = render(resolved, LIB_DIR, generator_commit="test-sha")
-
-    result = _run_generated_script(script, ["dev", "device", "--no-clean"])
-    assert result.returncode == 0, f"script failed:\n{result.stderr}"
+    result = _run_interpreter(m, ["dev", "device", "--no-clean"])
+    assert result.returncode == 0, f"interpreter failed:\n{result.stderr}"
     assert "['--no-clean']" in result.stdout, (
         f"args not forwarded through apple-dev-loop @-ref; stdout={result.stdout!r}"
     )
@@ -995,10 +989,11 @@ def test_hide_commands_drops_command_keeps_action():
     # Actions survive so other commands' steps still resolve and they stay callable.
     for act in ("reload", "open", "diff"):
         assert act in resolved.actions, f"action {act} should remain"
-    script = render(resolved, LIB_DIR, generator_commit="test-sha")
-    assert "def cmd_reload" not in script
-    assert "def cmd_open" not in script
-    assert "def cmd_diff" not in script
+    _clear_registry()
+    interp.register_all(resolved, m.project_name)
+    for hidden in ("reload", "open", "diff"):
+        assert hidden not in core._all_commands(), f"{hidden} command must not register"
+        assert hidden in core._actions, f"action {hidden} must stay callable"
 
 
 def test_hide_commands_unknown_raises():
@@ -1017,11 +1012,12 @@ def test_archetype_logs_command_not_shadowed_by_builtin():
     m = _docker_manifest()
     resolved = resolve(m, ARCH_DIR)
     assert "logs" in resolved.commands
-    script = render(resolved, LIB_DIR, generator_commit="test-sha")
-    import re as _re
-    # The *call* must not be emitted (the def is hard-kept; match a bare call line).
-    assert not _re.search(r"(?m)^register_builtin_logs_command\(\)$", script)
-    assert "logs_dispatch(" in script  # the dispatcher is wired in
+    _clear_registry()
+    interp.register_all(resolved, m.project_name)
+    # The archetype's logs command is registered — NOT the builtin file-tailer.
+    assert "logs" in core._all_commands()
+    builtin_desc = "Tail a command's log file (admin logs [filter...])"
+    assert core._all_commands()["logs"]["desc"] != builtin_desc
 
 
 def test_hiding_logs_does_not_readd_builtin():
@@ -1030,9 +1026,10 @@ def test_hiding_logs_does_not_readd_builtin():
     m = _docker_manifest(hide_commands=["logs"])
     resolved = resolve(m, ARCH_DIR)
     assert "logs" not in resolved.commands
-    script = render(resolved, LIB_DIR, generator_commit="test-sha")
-    import re as _re
-    assert not _re.search(r"(?m)^register_builtin_logs_command\(\)$", script)
+    _clear_registry()
+    interp.register_all(resolved, m.project_name)
+    # Hidden logs must NOT be re-added by the builtin file-tailer.
+    assert "logs" not in core._all_commands()
 
 
 def test_builtin_logs_emitted_when_no_logs_command():
@@ -1049,6 +1046,7 @@ def test_builtin_logs_emitted_when_no_logs_command():
     )
     resolved = resolve(m, ARCH_DIR)
     assert "logs" not in resolved.commands
-    script = render(resolved, LIB_DIR, generator_commit="test-sha")
-    import re as _re
-    assert _re.search(r"(?m)^register_builtin_logs_command\(\)$", script)
+    _clear_registry()
+    interp.register_all(resolved, m.project_name)
+    # No archetype logs command → the builtin file-tailer registers one.
+    assert "logs" in core._all_commands()

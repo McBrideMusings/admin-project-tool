@@ -1,20 +1,13 @@
 project_name    = "admin-project-tool"
 python_min      = "3.11"
-generator_commit = "ae574c3df8c0c25445bac2a2a17bd4fb788d01fe"
 archetypes      = []
 modules         = ["core"]
 
 [commands.build]
-desc     = "Regenerate ./admin and audit for drift"
-steps    = ["build"]
+desc     = "Validate admin.toml (parse + resolve + consistency)"
+steps    = ["check"]
 group    = 1
 priority = 10
-
-[commands.dev]
-desc     = "Run admin-gen on this project interactively"
-steps    = ["run-dev"]
-group    = 1
-priority = 20
 
 [commands.deploy]
 desc     = "Install to ~/.admin"
@@ -28,15 +21,10 @@ steps    = ["test"]
 group    = 2
 priority = 10
 
-[actions.build]
+[actions.check]
 kind = "shell"
-desc = "Regenerate ./admin and audit for drift"
-run  = "python3 ./admin-gen --regenerate . --force-dirty && python3 ./admin-gen --audit . --force-dirty"
-
-[actions.run-dev]
-kind = "shell"
-desc = "Run admin-gen on this project interactively"
-run  = "python3 ./admin-gen . --force-dirty"
+desc = "Validate this repo's manifest via the interpreter CLI"
+run  = "python3 ./admin-run check ."
 
 [actions.test]
 kind = "shell"

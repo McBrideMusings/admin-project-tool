@@ -20,8 +20,8 @@ import sys
 import time
 
 from .core import (
-    LOG_DIR,
-    LOG_FILE,
+    get_log_dir,
+    get_log_file,
     _children,
     info,
     ok,
@@ -122,8 +122,8 @@ def run_with_keybindings(cmd, keys, *, label=None, formatter=None, shell=True):
     recognized keypress we side-fire the binding's target instead of restarting
     the wrapped process. Ctrl-C terminates the wrapped process and exits.
     """
-    os.makedirs(LOG_DIR, exist_ok=True)
-    start_log_bridge(LOG_FILE)
+    os.makedirs(get_log_dir(), exist_ok=True)
+    start_log_bridge(get_log_file())
     _user_exit = False
 
     def _on_sigint(signum, frame):
@@ -139,7 +139,7 @@ def run_with_keybindings(cmd, keys, *, label=None, formatter=None, shell=True):
     signal.signal(signal.SIGINT, _on_sigint)
     signal.signal(signal.SIGTERM, _on_sigterm)
 
-    log_fh = open(LOG_FILE, "a")
+    log_fh = open(get_log_file(), "a")
     proc = subprocess.Popen(
         cmd, shell=shell,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

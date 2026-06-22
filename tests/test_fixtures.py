@@ -16,10 +16,16 @@ from admin_lib.fixtures import (  # noqa: E402
 )
 from gen.archetypes import resolve  # noqa: E402
 from gen.manifest import parse  # noqa: E402
-from gen.render import render  # noqa: E402
+from admin_lib import core, interp  # noqa: E402
 
 ARCH_DIR = REPO / "archetypes"
 LIB_DIR = REPO / "admin_lib"
+
+
+def _clear_registry():
+    core._commands.clear()
+    core._actions.clear()
+    core._referenced_env_vars.clear()
 
 
 def test_parse_size_units():
@@ -95,7 +101,7 @@ def test_restore_tree_empty_baseline_errors():
     print("OK: restore_tree errors on missing/empty baseline")
 
 
-def test_fixtures_reset_kind_renders_and_pulls_modules():
+def test_fixtures_reset_kind_registers_and_pulls_modules():
     data = {
         "project_name": "t",
         "python_min": "3.11",
@@ -110,15 +116,17 @@ def test_fixtures_reset_kind_renders_and_pulls_modules():
     m = parse(data)
     assert m.fixtures["baseline"] == "data/fixtures/baseline"
     resolved = resolve(m, ARCH_DIR)
-    script = render(resolved, LIB_DIR, generator_commit="test-sha")
-    assert "_FIXTURES_CONFIG = {" in script
-    assert "fixtures_reset_from_config" in script
-    assert "def restore_tree" in script              # admin_lib.fixtures bundled
-    assert "def clean_dev_from_config" in script      # cleanup auto-pulled
-    print("OK: fixtures-reset renders config + auto-pulls fixtures/cleanup modules")
+    # fixtures-reset auto-pulls the fixtures + cleanup modules (KIND_MODULES).
+    assert "fixtures" in resolved.modules
+    assert "cleanup" in resolved.modules
+    _clear_registry()
+    ns = interp.register_all(resolved, "t")
+    assert "reset" in core._actions
+    assert ns["_FIXTURES_CONFIG"]["baseline"] == "data/fixtures/baseline"
+    print("OK: fixtures-reset registers + auto-pulls fixtures/cleanup modules")
 
 
-def test_fixtures_generate_kind_renders():
+def test_fixtures_generate_kind_registers():
     data = {
         "project_name": "t",
         "python_min": "3.11",
@@ -132,8 +140,9 @@ def test_fixtures_generate_kind_renders():
     }
     m = parse(data)
     resolved = resolve(m, ARCH_DIR)
-    script = render(resolved, LIB_DIR, generator_commit="test-sha")
-    assert "fixtures_generate_from_config" in script
-    assert "def generate_tree" in script
-    assert '"--force" in args' in script
-    print("OK: fixtures-generate renders with --force passthrough")
+    assert "fixtures" in resolved.modules
+    _clear_registry()
+    ns = interp.register_all(resolved, "t")
+    assert "seed" in core._actions
+    assert ns["_FIXTURES_CONFIG"]["tree"][0]["dir"] == "Movies"
+    print("OK: fixtures-generate registers with config")

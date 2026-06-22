@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""admin — runtime manifest interpreter (ADR-0006).
+
+The installed entry point (on PATH at ~/.admin/admin). Reads a project's
+admin.toml and executes commands directly — nothing is committed to a project
+but admin.toml itself. Run it from anywhere inside a project; it finds the
+manifest by walking up from $PWD.
+
+Invocation:
+    admin                         # interactive menu for the project in $PWD
+    admin <command> [args...]     # run a manifest command
+    admin --project-dir DIR ...   # operate on DIR instead of $PWD
+
+Tool verbs (reserved; a manifest may not define a command with these names):
+    admin new [DIR]               # detect stack + write a starter admin.toml
+    admin compile [DIR]           # build a standalone ./admin (zipapp) — see ADR-0006
+    admin check [DIR]             # validate admin.toml parses, resolves, and is consistent
+"""
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+REPO_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(REPO_DIR))
+
+from gen.manifest import (  # noqa: E402
+    Manifest,
+    ManifestError,
+    dump as dump_manifest,
+    load as load_manifest,
+    require_python_311,
+)
+from gen.archetypes import resolve, ArchetypeError  # noqa: E402
+from gen.detectors import detect as run_detectors  # noqa: E402
+
+ARCHETYPE_DIR = REPO_DIR / "archetypes"
+DETECTOR_DIR = REPO_DIR / "detectors"
+
+# Tool verbs share the `admin <word>` namespace with manifest commands; a
+# manifest may not define a command with one of these names (ADR-0006).
+RESERVED_VERBS = {"new", "compile", "check"}
+
+
+def err(msg):
+    print(f"\033[31merror: {msg}\033[0m", file=sys.stderr)
+
+
+def info(msg):
+    print(f"\033[34m{msg}\033[0m")
+
+
+def ok(msg):
+    print(f"\033[32m{msg}\033[0m")
+
+
+def _find_project_dir(start: Path) -> Path | None:
+    """Walk up from `start` looking for an admin.toml. Returns the dir or None."""
+    cur = start.resolve()
+    for d in [cur, *cur.parents]:
+        if (d / "admin.toml").exists():
+            return d
+    return None
+
+
+def _load_resolved(project_dir: Path):
+    """Load + resolve the manifest at project_dir, enforcing the reserved-verb rule."""
+    manifest = load_manifest(project_dir)
+    resolved = resolve(manifest, ARCHETYPE_DIR)
+    clash = RESERVED_VERBS & set(resolved.commands)
+    if clash:
+        raise ManifestError(
+            f"manifest defines command(s) {sorted(clash)} that collide with reserved "
+            f"tool verbs {sorted(RESERVED_VERBS)} — rename the command"
+        )
+    inline_body = None
+    if manifest.inline_file:
+        inline_path = project_dir / manifest.inline_file
+        if not inline_path.exists():
+            raise ManifestError(f"inline file not found: {inline_path}")
+        inline_body = inline_path.read_text()
+    return resolved, inline_body
+
+
+# ---------------------------------------------------------------------------
+# Tool verbs
+# ---------------------------------------------------------------------------
+
+def cmd_check(project_dir: Path) -> int:
+    """Validate the manifest parses, resolves, and references only known things."""
+    try:
+        resolved, _ = _load_resolved(project_dir)
+    except (ManifestError, ArchetypeError) as e:
+        err(str(e))
+        return 1
+    for event in resolved.merge_log:
+        info(f"merge: {event}")
+    ok(
+        f"ok: {resolved.manifest.project_name} — "
+        f"{len(resolved.commands)} commands, {len(resolved.actions)} actions, "
+        f"{len(resolved.modules)} modules"
+    )
+    return 0
+
+
+def cmd_compile(project_dir: Path) -> int:
+    """Build a standalone ./admin (zipapp) that embeds this manifest."""
+    from gen.compile import compile_standalone
+    try:
+        resolved, inline_body = _load_resolved(project_dir)
+    except (ManifestError, ArchetypeError) as e:
+        err(str(e))
+        return 1
+    target = project_dir / "admin"
+    compile_standalone(resolved, REPO_DIR, target, inline_body=inline_body)
+    ok(f"wrote {target} (standalone)")
+    return 0
+
+
+def _ensure_tmp_gitignore(project_dir: Path) -> None:
+    tmp = project_dir / "tmp"
+    tmp.mkdir(exist_ok=True)
+    gi = tmp / ".gitignore"
+    if not gi.exists():
+        gi.write_text("*\n!.gitignore\n")
+
+
+def cmd_new(project_dir: Path, force: bool) -> int:
+    """Detect the project stack and write a starter admin.toml (PATH-only; no ./admin file)."""
+    manifest_path = project_dir / "admin.toml"
+    if manifest_path.exists() and not force:
+        err(f"{manifest_path} already exists — pass --force to overwrite")
+        return 1
+
+    info(f"detecting project stack in {project_dir}")
+    starter = run_detectors(project_dir, DETECTOR_DIR)
+    detector_name = starter.pop("_detector", "unknown")
+    info(f"detector matched: {detector_name}")
+
+    project_name = starter.get("project_name") or project_dir.resolve().name.replace("-", " ").title()
+    manifest = Manifest(
+        project_name=project_name,
+        python_min="3.11",
+        archetypes=starter.get("archetypes", ["simple"]),
+        modules=starter.get("modules", []),
+        urls=starter.get("urls", {}),
+        overrides={},
+        custom={},
+        order=[],
+    )
+    manifest_path.write_text(dump_manifest(manifest))
+    ok(f"wrote {manifest_path}")
+
+    _ensure_tmp_gitignore(project_dir)
+    info("run 'admin <command>' from anywhere in this project (the tool is on PATH).")
+
+    # Validate the starter manifest resolves before declaring success.
+    return cmd_check(project_dir)
+
+
+# ---------------------------------------------------------------------------
+# Manifest dispatch
+# ---------------------------------------------------------------------------
+
+def dispatch(project_dir: Path, command_argv: list[str]) -> int:
+    """Register the manifest and run `command_argv` (the project command + args)."""
+    from admin_lib import interp
+    try:
+        resolved, inline_body = _load_resolved(project_dir)
+    except (ManifestError, ArchetypeError) as e:
+        err(str(e))
+        return 1
+    interp.interpret(
+        resolved,
+        project_root=str(project_dir),
+        argv=["admin", *command_argv],
+        inline_body=inline_body,
+    )
+    return 0
+
+
+def main() -> int:
+    require_python_311()
+    argv = sys.argv[1:]
+
+    # Optional global --project-dir DIR prefix (the shim uses it).
+    project_dir_override: Path | None = None
+    if argv and argv[0] == "--project-dir":
+        if len(argv) < 2:
+            err("--project-dir requires a directory argument")
+            return 1
+        project_dir_override = Path(argv[1]).resolve()
+        argv = argv[2:]
+
+    # Tool verbs operate on a project dir given as the first positional (or cwd).
+    if argv and argv[0] in RESERVED_VERBS:
+        verb = argv[0]
+        rest = argv[1:]
+        force = "--force" in rest
+        rest = [a for a in rest if a != "--force"]
+        target = project_dir_override or (Path(rest[0]).resolve() if rest else Path.cwd())
+        if verb == "check":
+            return cmd_check(target)
+        if verb == "compile":
+            return cmd_compile(target)
+        if verb == "new":
+            return cmd_new(target, force)
+
+    # Manifest dispatch. Resolve which project we're operating on.
+    project_dir = project_dir_override or _find_project_dir(Path.cwd())
+    if project_dir is None:
+        err("no admin.toml found in this directory or any parent — run 'admin new' to create one")
+        return 1
+    return dispatch(project_dir, argv)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
