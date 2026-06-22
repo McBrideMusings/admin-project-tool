@@ -1,5 +1,7 @@
 # admin-project-tool: Manifest-Driven, Archetype-Composable
 
+> **Superseded in part by [ADR-0006](../adr/0006-interpreter-mode.md).** This document describes the original *code-generation* model, where `admin-gen` rendered a self-contained `./admin` script per project. The tool now **interprets** `admin.toml` at runtime instead: the manifest, archetype-merge, and kind model below are all still accurate, but wherever this doc says "render / generate / bundle a `./admin` script", read "register live callables in `admin_lib/interp.py`". Code generation survives only as `admin compile` (a zipapp). The "Regeneration & Drift Audit" and "Archetype versioning by source commit" sections are obsolete — see the notes inline.
+
 ## Context
 
 A survey of 16 committed `admin` scripts across `~/Projects` revealed **heavy overlap** — nearly every project has `build / dev / deploy / test / clean`, plus a common tail of `reload / logs / open / uninstall`. One-off commands are rare and always reducible to "name + shell string."
@@ -12,9 +14,9 @@ Projects cluster into ~5 archetypes: **docker-to-unraid**, **stash-plugin**, **a
 
 1. **Manifest is truth.** `admin.toml` (committed) fully describes the admin script. `./admin` is a generated bundle from `admin.toml` + archetypes + `admin_lib`.
 2. **Archetypes are mixins, not monoliths.** A manifest can list multiple archetypes; the generator merges their command sets. This kills the "one template" bottleneck that forced `open-assistant` and `cctool` to be hand-maintained.
-3. **Strict regeneration, with an escape hatch.** `admin regenerate` is idempotent. Hand-editing `./admin` remains legal but a drift audit will warn. The expected loop is: *edit manifest → regenerate → commit both*.
-4. **Zero contributor install.** Generated `./admin` is still a self-contained, bundled Python 3.11+ script. Contributors `git clone && ./admin`. Only the project owner needs `admin-project-tool` installed.
-5. **Stdlib only.** Manifest parses via stdlib `tomllib` (3.11+). No third-party deps in generated script or generator.
+3. **Manifest read live.** *(ADR-0006: was "strict regeneration".)* The interpreter reads `admin.toml` on each run; there is no generated artifact to keep idempotent or audit for drift. The loop is simply *edit manifest → run*.
+4. **Interpreter installed; standalone on demand.** *(ADR-0006: was "zero contributor install".)* A project commits only `admin.toml`; the installed `admin` (on PATH) runs it from anywhere inside the project. For a machine without the tool installed, `admin compile` emits a self-contained zipapp `./admin`.
+5. **Stdlib only.** Manifest parses via stdlib `tomllib` (3.11+). No third-party deps in the interpreter or compiled output. (`zipapp`, used by `compile`, is stdlib.)
 6. **Composability over expressiveness.** The manifest is a short, flat declaration — not a DSL. If a project needs real logic, it drops a custom command as a shell string or, rarely, a small Python snippet the generator inlines verbatim.
 
 ## Manifest Format (`admin.toml`)
@@ -254,6 +256,8 @@ Rendering uses a small set of **code fragments** (not full templates) — one pe
 
 ## Regeneration & Drift Audit
 
+> **Obsolete (ADR-0006).** With no vendored artifact there is nothing to regenerate or drift. `admin audit`, `generator_commit`, idempotency, and the `SessionStart` auto-regen hook are all removed. The surviving verbs are `admin new` (detect → write `admin.toml`), `admin check` (parse + resolve validation), and `admin compile` (standalone zipapp). A project commits only `admin.toml`; the installed `admin` runs it from PATH. The rest of this section is retained for historical context only.
+
 - `admin new` — first-time bootstrap (detect → write manifest → generate).
 - `admin regenerate` — re-render `./admin` from `admin.toml`. Idempotent. Standard loop for adding/editing commands. Accepts `--force-dirty` to allow generation from a dirty `admin-project-tool` tree.
 - `admin audit` — regenerates in-memory and diffs against `./admin`. Reports: (a) manifest drift (script differs from what manifest would produce), (b) archetype drift (archetype catalog changed since last regen — `admin_lib` hash differs), (c) stale `admin_lib`. Non-zero exit if any drift.
@@ -336,6 +340,8 @@ prod = "${PROD_URL:-https://example.com}"
 **Where the env vars themselves live:** out of scope. Users set them via shell rc files, direnv, `.envrc`, or whatever they prefer. `admin.toml` only references them.
 
 ### Archetype versioning by source commit (replaces "version archetypes" question)
+
+> **Obsolete (ADR-0006).** Versioning is now global: the installed tool's version is what runs every project, and `admin compile` is the way to pin a project to a frozen copy. `generator_commit` is no longer written or read. Retained below for historical context.
 
 Archetypes are not semver-versioned. Instead, the generator records the **git commit SHA of the `admin-project-tool` repo** that was used at generation time, and embeds it into both:
 

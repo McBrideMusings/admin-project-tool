@@ -13,9 +13,9 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from gen.archetypes import ArchetypeError, _to_command, resolve  # noqa: E402
-from gen.fragments import _ACTION_RENDERERS, KIND_MODULES, render_interactive_shell  # noqa: E402
+from gen.fragments import KNOWN_KINDS, KIND_MODULES  # noqa: E402
 from gen.manifest import Manifest  # noqa: E402
-from gen.render import render  # noqa: E402
+from admin_lib import interp  # noqa: E402
 
 ARCH_DIR = REPO / "archetypes"
 LIB_DIR = REPO / "admin_lib"
@@ -41,7 +41,8 @@ def _expect_error(fn, *, contains: str):
 # ---------------------------------------------------------------------------
 
 def test_kind_registered():
-    assert "interactive-shell" in _ACTION_RENDERERS
+    assert "interactive-shell" in KNOWN_KINDS
+    assert "interactive-shell" in interp._FACTORIES
     assert KIND_MODULES["interactive-shell"] == ["ports", "log_server", "log_bridge", "keybindings", "log_format"]
 
 
@@ -199,10 +200,10 @@ def test_action_reference_unknown_rejected():
 
 
 # ---------------------------------------------------------------------------
-# Rendering
+# Interpreter — the interactive-shell closure invokes run_with_keybindings
 # ---------------------------------------------------------------------------
 
-def test_render_interactive_shell_emits_runtime_call():
+def test_interactive_shell_invokes_keybindings(monkeypatch):
     cmd = _to_action("dev-local", {
         "kind": "interactive-shell",
         "run": "bash -c sleep",
@@ -211,17 +212,23 @@ def test_render_interactive_shell_emits_runtime_call():
             "v": {"label": "restart vite", "run": "kill -TERM 1"},
         },
     })
-    body = render_interactive_shell(cmd)
-    assert "def cmd_dev_local(args):" in body
-    assert "run_with_keybindings(" in body
-    assert '"r": {' in body
-    assert '"signal": "TERM"' in body
-    assert '"pid_file": "/tmp/main.pid"' in body
-    assert '"v": {' in body
+    captured = {}
+    import admin_lib.keybindings as kb
+    monkeypatch.setattr(
+        kb, "run_with_keybindings",
+        lambda c, keys, **kw: captured.update(cmd=c, keys=keys, label=kw.get("label")) or 0,
+    )
+    fn = interp._make_interactive_shell(cmd, {})
+    fn([])
+    assert captured["cmd"] == "bash -c sleep"
+    assert captured["label"] == "dev-local"
+    assert captured["keys"]["r"]["signal"] == "TERM"
+    assert captured["keys"]["r"]["pid_file"] == "/tmp/main.pid"
+    assert captured["keys"]["v"]["run"] == "kill -TERM 1"
 
 
-def test_full_render_bundles_keybindings_module():
-    """An interactive-shell action pulls keybindings.py into the bundle."""
+def test_interactive_shell_pulls_keybindings_modules():
+    """An interactive-shell action pulls its module deps into resolved.modules."""
     m = _make_manifest(
         actions={
             "dev-local": {
@@ -233,9 +240,8 @@ def test_full_render_bundles_keybindings_module():
         commands={"dev": {"desc": "dev", "steps": ["dev-local"]}},
     )
     resolved = resolve(m, ARCH_DIR)
-    script = render(resolved, LIB_DIR, generator_commit="test-sha")
-    assert "def run_with_keybindings(" in script
-    assert "run_with_keybindings(" in script
+    for mod in ("ports", "log_server", "log_bridge", "keybindings", "log_format"):
+        assert mod in resolved.modules
 
 
 # ---------------------------------------------------------------------------

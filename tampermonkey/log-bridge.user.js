@@ -1,54 +1,71 @@
 // ==UserScript==
 // @name         admin-project-tool log bridge
 // @namespace    https://github.com/McBrideMusings/admin-project-tool
-// @version      0.1.0
-// @description  Ships console.log/info/warn/error/debug from the browser to a locally-running admin-project-tool process, so client and server logs interleave in one file.
+// @version      0.2.0
+// @description  Ships console.log/info/warn/error/debug from the browser to a locally-running admin-project-tool listener, so client and server logs interleave in one file. localhost/127.0.0.1 is always watched; any other host is opt-in via a single Tampermonkey menu command. Forwards only when a matching listener is actually running.
 // @match        *://*/*
 // @run-at       document-start
 // @grant        GM.xmlHttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_registerMenuCommand
 // @grant        unsafeWindow
 // @connect      127.0.0.1
 // @connect      100.64.0.11
 // @connect      100.64.0.10
 // ==/UserScript==
 
+// ----------------------------------------------------------------------------
+// How this stays project-agnostic (one script for every project, no baked URLs):
+//
+//   - WHERE it can run: `@match *://*/*` covers every page, including any prod
+//     webview iframe. No per-project @match line.
+//   - WHERE it sends: GM.xmlHttpRequest only ever talks to the LISTENER (your Mac
+//     / localhost), never the prod site — so `@connect` is your stable machines,
+//     not per-project prod URLs.
+//   - WHICH pages to forward: decided at runtime, never hardcoded:
+//       • localhost / 127.0.0.1 / 0.0.0.0 → always a candidate (no setup).
+//       • any other host → only if it matches a glob you saved via the menu
+//         command "Log bridge: watch <host>". Saved in Tampermonkey storage
+//         (GM_setValue), not in this file.
+//   - WHETHER to actually forward: even on a candidate page, it only forwards if
+//     a listener is running AND its advertised [log_bridge].hosts (from that
+//     project's admin.toml, served at /health) match this hostname. So the prod
+//     hostname authority lives in each project's admin.toml — never here.
+//
+// Net: localhost works with zero setup; a prod app needs ONE menu click the first
+// time you visit it, ever. Nothing project-specific is in this script.
+// ----------------------------------------------------------------------------
+
 (function () {
   "use strict";
 
-  // ----- Hardcoded for v1. Edit these two arrays to suit your tailnet. -----
+  // ----- Edit these to suit your tailnet. -----
 
-  // Hosts to probe for a running admin-project-tool. The first is always
-  // localhost. Remaining entries are Tailscale peer IPs reachable from the
-  // browser's machine.
+  // Hosts to probe for a running admin-project-tool listener. localhost first;
+  // then this machine's Tailscale IPs (the browser runs on the Mac).
   const PROBE_HOSTS = [
     "127.0.0.1",
-    "100.64.0.11",   // Pierce's Mac
-    "100.64.0.10", // example-host
+    "100.64.0.11",   // primary dev machine (tailnet)
+    "100.64.0.10", // second machine (tailnet)
   ];
 
-  // Union of all port ranges across your machines. Each machine's admin.toml
-  // can set [log_bridge] port_range = [start, end] — add any custom ranges here.
+  // Must cover every machine's [log_bridge] port_range (default 9988-9999).
   const PROBE_PORTS = [];
-  for (let p = 9988; p <= 9999; p++) PROBE_PORTS.push(p); // default range
+  for (let p = 9988; p <= 9999; p++) PROBE_PORTS.push(p);
 
-  // Coarse prefilter — never probe anything unless the current page's
-  // hostname matches one of these patterns. Cheap and prevents probing on
-  // every random tab you open.
-  const HOSTNAME_PREFILTER = [
-    /^localhost$/,
-    /^127\.0\.0\.1$/,
-    /^0\.0\.0\.0$/,
-    /\.dev\.example-host\.com$/,
-    /\.mac\.example-host\.com$/,
-  ];
+  // localhost variants are always watched — no registration needed.
+  const LOCAL_HOST_RES = [/^localhost$/, /^127\.0\.0\.1$/, /^0\.0\.0\.0$/];
 
-  // ----- Implementation -----
-
-  if (!HOSTNAME_PREFILTER.some((re) => re.test(location.hostname))) return;
+  // Tampermonkey-storage key holding the user's opt-in host globs (JSON array).
+  const STORE_KEY = "watchedHostGlobs";
 
   const BATCH_INTERVAL_MS = 1000;
 
-  // Convert a single-label DNS glob ("*.dev.example.internal") to a regex.
+  // ----- host matching -----
+
+  // Convert a single-label DNS glob ("myapp-*-web.example.net") to a regex.
+  // "*" matches one DNS label segment (no dots).
   function globToRegex(glob) {
     const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^.]+");
     return new RegExp("^" + escaped + "$");
@@ -57,6 +74,123 @@
   function hostMatches(hostname, patterns) {
     return patterns.some((p) => globToRegex(p).test(hostname));
   }
+
+  function isLocalHost(hostname) {
+    return LOCAL_HOST_RES.some((re) => re.test(hostname));
+  }
+
+  function getWatched() {
+    try {
+      const v = JSON.parse(GM_getValue(STORE_KEY, "[]"));
+      return Array.isArray(v) ? v : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function setWatched(arr) {
+    GM_setValue(STORE_KEY, JSON.stringify(arr));
+  }
+
+  // Which saved glob (if any) currently matches this host.
+  function matchingWatchedGlob(hostname) {
+    return getWatched().find((g) => {
+      try {
+        return globToRegex(g).test(hostname);
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  // Auto-derive a durable glob from a concrete host: within the first DNS label,
+  // wildcard any "-"-joined segment that contains a digit (version ids, subreddit
+  // ids, build numbers), then collapse adjacent wildcards. Leaves digit-free hosts
+  // exact. e.g. myapp-ab12cd-0-0-87-web.example.net
+  //          →  myapp-*-web.example.net
+  function suggestGlob(hostname) {
+    const labels = hostname.split(".");
+    const wild = labels[0].split("-").map((s) => (/\d/.test(s) ? "*" : s));
+    // Only wildcard if at least one literal segment survives. Otherwise a label
+    // like "2024" would collapse to a bare "*", matching every sibling subdomain
+    // — keep the label exact in that case.
+    if (wild.some((s) => s !== "*")) {
+      const collapsed = [];
+      for (const s of wild) {
+        if (s === "*" && collapsed[collapsed.length - 1] === "*") continue;
+        collapsed.push(s);
+      }
+      labels[0] = collapsed.join("-");
+    }
+    return labels.join(".");
+  }
+
+  // ----- on-page toast (modal-free; works inside sandboxed iframes) -----
+
+  function toast(text) {
+    const show = () => {
+      if (!document.body) return;
+      const el = document.createElement("div");
+      el.textContent = text;
+      el.style.cssText = [
+        "position:fixed",
+        "left:50%",
+        "bottom:16px",
+        "transform:translateX(-50%)",
+        "max-width:90vw",
+        "padding:8px 14px",
+        "background:#1b1b2e",
+        "color:#e6e6f0",
+        "font:13px/1.4 system-ui,sans-serif",
+        "border:1px solid #4caf50",
+        "border-radius:8px",
+        "z-index:2147483647",
+        "pointer-events:none",
+        "box-shadow:0 4px 16px rgba(0,0,0,0.4)",
+      ].join(";");
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 4000);
+    };
+    if (document.body) show();
+    else document.addEventListener("DOMContentLoaded", show, { once: true });
+  }
+
+  // ----- menu command (registered on EVERY page so you can watch a new host) -----
+
+  (function registerMenu() {
+    const host = location.hostname;
+    if (isLocalHost(host)) {
+      GM_registerMenuCommand(`Log bridge: ${host} is always watched (local)`, () => {
+        toast("Log bridge: localhost is always watched — no action needed.");
+      });
+      return;
+    }
+    const existing = matchingWatchedGlob(host);
+    if (existing) {
+      GM_registerMenuCommand(`Log bridge: unwatch ${host}`, () => {
+        setWatched(getWatched().filter((g) => g !== existing));
+        toast(`Log bridge: stopped watching "${existing}". Reload to apply.`);
+      });
+    } else {
+      GM_registerMenuCommand(`Log bridge: watch ${host}`, () => {
+        const glob = suggestGlob(host);
+        const watched = getWatched();
+        if (!watched.includes(glob)) {
+          watched.push(glob);
+          setWatched(watched);
+        }
+        toast(`Log bridge: now watching "${glob}". Reload — a listener must be running to forward.`);
+      });
+    }
+  })();
+
+  // ----- candidacy gate: no probe / no console patch / no dot otherwise -----
+
+  const HOST = location.hostname;
+  const isCandidate = isLocalHost(HOST) || !!matchingWatchedGlob(HOST);
+  if (!isCandidate) return;
+
+  // ----- forwarding implementation -----
 
   function gmRequest(opts) {
     return new Promise((resolve) => {
@@ -70,30 +204,36 @@
     });
   }
 
-  async function probeAll() {
-    const probes = [];
-    for (const host of PROBE_HOSTS) {
-      for (const port of PROBE_PORTS) {
-        probes.push(
-          gmRequest({ method: "GET", url: `http://${host}:${port}/health` }).then((r) => {
-            if (!r || !r.ok) return null;
+  // Probe hosts × ports in parallel and resolve as soon as one listener's
+  // advertised hosts (from that project's admin.toml, served at /health) match
+  // this page — the final gate that keeps prod URLs out of the script. Short-
+  // circuits on first match so it returns immediately instead of waiting for
+  // every dead host:port to time out. First matching responder wins (if you run
+  // two listeners for the same host, the newest-started one isn't guaranteed).
+  function findTarget() {
+    const endpoints = [];
+    for (const host of PROBE_HOSTS) for (const port of PROBE_PORTS) endpoints.push({ host, port });
+    return new Promise((resolve) => {
+      if (endpoints.length === 0) return resolve(null);
+      let pending = endpoints.length;
+      let settled = false;
+      const finish = (val) => { if (!settled) { settled = true; resolve(val); } };
+      for (const { host, port } of endpoints) {
+        gmRequest({ method: "GET", url: `http://${host}:${port}/health` }).then((r) => {
+          if (!settled && r && r.ok) {
             try {
               const data = JSON.parse(r.body);
-              return { host, port, ...data };
+              if (hostMatches(location.hostname, data.hosts || [])) {
+                return finish({ host, port, ...data });
+              }
             } catch {
-              return null;
+              // ignore unparseable /health
             }
-          })
-        );
+          }
+          if (--pending === 0) finish(null);
+        });
       }
-    }
-    const results = (await Promise.all(probes)).filter(Boolean);
-    return results.filter((r) => hostMatches(location.hostname, r.hosts || []));
-  }
-
-  function pickTarget(matches) {
-    if (matches.length === 0) return null;
-    return matches.slice().sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""))[0];
+    });
   }
 
   function makeIndicator() {
@@ -137,7 +277,7 @@
             timestamp: new Date().toISOString(),
             level: m,
             message,
-            url: location.href,
+            host: location.hostname, // host only — never the full URL (avoids leaking auth tokens in the query string)
           });
         } catch {
           // Never let log capture break the page.
@@ -147,7 +287,7 @@
   }
 
   function startFlusher(target, buffer) {
-    setInterval(() => {
+    const flush = () => {
       if (buffer.length === 0) return;
       const batch = buffer.splice(0, buffer.length);
       gmRequest({
@@ -156,18 +296,20 @@
         data: JSON.stringify(batch),
         headers: { "Content-Type": "application/json" },
       });
-    }, BATCH_INTERVAL_MS);
+    };
+    const id = setInterval(flush, BATCH_INTERVAL_MS);
+    // Stop the timer (and flush what's left) when the page goes away — otherwise
+    // it keeps firing against a stale target for the page's lifetime.
+    window.addEventListener("pagehide", () => { clearInterval(id); flush(); }, { once: true });
   }
 
   (async () => {
     const dot = makeIndicator();
     const buffer = [];
     patchConsole(unsafeWindow.console, buffer); // Patch the PAGE's console, not the sandbox's.
-    const matches = await probeAll();
-    const target = pickTarget(matches);
+    const target = await findTarget();
     if (!target) {
-      dot.style.background = "#888";
-      dot.title = "admin-project-tool: no matching admin process found";
+      dot.title = "admin-project-tool: no matching listener running"; // dot stays grey (#888 from creation)
       buffer.length = 0; // discard — nobody is listening
       return;
     }

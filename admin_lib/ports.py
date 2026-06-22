@@ -20,6 +20,69 @@ import sys
 import time
 
 
+def port_free(port):
+    """Authoritative free/busy probe via bind(). True only if nothing is
+    *listening* on the port, on either IP stack.
+
+    This is the source of truth for "is the port free" — NOT the lsof/proc
+    holder lookup. A bind() touches no process file tables, so it can't hang on
+    a stale/disconnected network mount the way `lsof` can (lsof has to stat
+    every process's open fds, and one fd pointing into a wedged SMB/NFS mount
+    blocks the whole scan). port_holders is then only used to *name* the holder
+    for the kill prompt; if it fails, that must never be read as "port is free".
+
+    The probe mirrors what a real dev server does, so "free" means "the server
+    could bind here", not the stricter "nothing whatsoever touches this port":
+
+    - SO_REUSEADDR is set (as essentially every server sets it), so a connection
+      socket left in TIME_WAIT by a just-exited server reads as FREE. Without
+      this, a back-to-back `admin dev` restart would be refused for ~30-60s even
+      though nothing is listening — the server itself would have rebound fine.
+    - It probes the wildcard AND loopback of both stacks (see _PORT_PROBE_ADDRS).
+      SO_REUSEADDR lets a wildcard bind succeed *over* a live loopback listener,
+      so the wildcard probe alone would false-"free" a Vite-on-127.0.0.1; the
+      exact-address probe still collides and reports busy.
+    - Only EADDRINUSE counts as busy. An IPv6 probe failing because the stack is
+      disabled or absent (EADDRNOTAVAIL / EAFNOSUPPORT) means "skip this family",
+      NOT "busy" — otherwise a host with IPv6 off would report every free port
+      occupied, the inverse silent-failure.
+    """
+    import errno
+    import socket
+    # Probe the wildcard AND loopback of each stack: a listener bound to a
+    # specific address (Vite on 127.0.0.1, a server on ::1) only collides with a
+    # bind to that same address, so the wildcard probe alone would miss it.
+    probes = [
+        (socket.AF_INET, "0.0.0.0"),
+        (socket.AF_INET, "127.0.0.1"),
+        (socket.AF_INET6, "::"),
+        (socket.AF_INET6, "::1"),
+    ]
+    for family, host in probes:
+        try:
+            s = socket.socket(family, socket.SOCK_STREAM)
+        except OSError:
+            continue  # family unsupported on this host — skip it
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if family == socket.AF_INET6:
+                # Probe each stack independently so a dual-stack bind doesn't
+                # collide with the IPv4 probe (or vice versa).
+                try:
+                    s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                except (OSError, AttributeError):
+                    pass
+            s.bind((host, port))
+        except OSError as e:
+            if e.errno == errno.EADDRINUSE:
+                return False
+            # EADDRNOTAVAIL / EAFNOSUPPORT / etc — this address/family isn't
+            # usable here; that's not the port being held. Skip and keep going.
+        finally:
+            s.close()
+    return True
+
+
 def kill_port(port, timeout=2.0):
     """SIGTERM any TCP listener on `port`. Silent no-op on misses or races.
 
@@ -157,24 +220,58 @@ def _pids_for_socket_inodes(inodes):
     return pids
 
 
-def preflight_port(port, label=None, force=False, timeout=2.0):
+def preflight_port(port, label=None, force=False, timeout=2.0, project_root=None):
     """Ensure `port` is free. If held: TTY → prompt; non-TTY or force=True → SIGTERM/KILL.
 
-    Returns True if free or cleared, False if the user declined or kill failed.
-    Use from a `dev` command to surface conflicts instead of silently failing.
+    Returns True if free or cleared, False if the user declined, the kill
+    failed, or the port is held but no holder could be identified. Use from a
+    `dev` command to surface conflicts instead of silently failing.
+
+    Free/busy is decided by `port_free` (a bind probe), NOT by whether a holder
+    was found. This is the fix for the silent-pass bug: on macOS `lsof` can hang
+    on a stale network mount and time out, and the old code read that empty
+    result as "port is free" and marched straight into a bind failure. Holder
+    lookup is now only for *naming* what to kill; when it can't, we say so and
+    refuse to proceed rather than pretend the port is clear.
     """
-    holders = port_holders(port, timeout=timeout)
-    if not holders:
+    tag = f" ({label})" if label else ""
+
+    if port_free(port):
         return True
 
-    tag = f" ({label})" if label else ""
+    # Port is occupied. Name the holder(s): lsof/proc first (fast on Linux),
+    # then a ps + per-pid-cwd sweep scoped to the project (the only thing that
+    # works when lsof hangs on macOS).
+    holders = port_holders(port, timeout=timeout)
+    if not holders:
+        # ports_nuke is an optional companion module — tolerate it being absent.
+        # But only ImportError is caught: a real error inside the sweep should
+        # surface, not get swallowed and mis-reported below as "lsof timed out".
+        try:
+            from .ports_nuke import project_dev_holders
+        except ImportError:
+            project_dev_holders = None
+        if project_dev_holders is not None:
+            holders = project_dev_holders(project_root or os.getcwd(), timeout=timeout)
+
     print(f"\nPort {port}{tag} is already in use:", file=sys.stderr)
-    for h in holders:
-        parent = ""
-        if h["parent_pid"]:
-            parent_cmd = h["parent_command"] or "?"
-            parent = f"  parent pid {h['parent_pid']}: {parent_cmd}"
-        print(f"  pid {h['pid']:>6}: {h['command']}{parent}", file=sys.stderr)
+    if holders:
+        for h in holders:
+            parent = ""
+            if h.get("parent_pid"):
+                parent_cmd = h.get("parent_command") or "?"
+                parent = f"  parent pid {h['parent_pid']}: {parent_cmd}"
+            print(f"  pid {h['pid']:>6}: {h.get('command') or '?'}{parent}", file=sys.stderr)
+    else:
+        # Busy, but nothing could be named. Do NOT silently proceed — that's the
+        # exact failure this function exists to prevent.
+        print(
+            "  (could not identify the holder — `lsof` timed out, likely blocked\n"
+            "   on a slow/disconnected network mount, and no project dev process matched)",
+            file=sys.stderr,
+        )
+        print(f"Free port {port}{tag} manually (e.g. `admin kill`) and retry.", file=sys.stderr)
+        return False
 
     try:
         from .docker import _reload_active
@@ -197,13 +294,14 @@ def preflight_port(port, label=None, force=False, timeout=2.0):
             print(file=sys.stderr)
             return False
 
-    pids = [h["pid"] for h in holders]
-    cleared = _kill_pids(pids, timeout=timeout)
-    if cleared:
+    _kill_pids([h["pid"] for h in holders], timeout=timeout)
+    # Re-probe with bind, not pid-liveness: a child can respawn, or the socket
+    # can linger after the pid dies. The bind probe is the real answer.
+    if port_free(port):
         print(f"Port {port} cleared.", file=sys.stderr)
-    else:
-        print(f"Failed to clear port {port}.", file=sys.stderr)
-    return cleared
+        return True
+    print(f"Failed to clear port {port}.", file=sys.stderr)
+    return False
 
 
 

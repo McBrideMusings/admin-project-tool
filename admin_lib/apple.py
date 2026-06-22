@@ -63,17 +63,17 @@ import sys
 
 from .core import (
     C,
-    LOG_DIR,
-    LOG_FILE,
     _children,
     command,
     get_log_dir,
+    get_log_file,
     info,
     ok,
     warn,
     err,
     register_cleanup,
     read_key,
+    run_cmd,
 )
 
 
@@ -208,13 +208,39 @@ def xcodebuild_filtered(project, scheme, config, destination, action="build",
     )
 
 
-def dev_macos_postprocess(built_app_path, dev_product_name, dev_display_name):
+def dev_macos_postprocess(built_app_path, dev_product_name, dev_display_name, sign_identity="-"):
     """Rename a Debug build .app → <dev_product_name>.app, patch
-    CFBundleDisplayName, re-sign ad-hoc. Returns the renamed path.
+    CFBundleDisplayName, re-sign. Returns the renamed path.
+
+    WHY RENAME THE .app AT ALL (the Dock-name gotcha) — ADR-0007:
+    The macOS Dock's hover tooltip and Finder show the app's **.app filename**,
+    NOT CFBundleName or CFBundleDisplayName. So a dev build at `Macterm.app`
+    shows "Macterm" in the Dock tooltip *even if* CFBundleName /
+    CFBundleDisplayName are "Macterm Dev" (those only drive the menu-bar app
+    menu and some in-app surfaces). The ONLY way to make the Dock say
+    "Macterm Dev" is to rename the bundle file to `Macterm Dev.app`. That's what
+    this does. Enable it per project with `[apple] mac_dev_product_name`
+    (mac_dev_rename defaults to True). Keep PRODUCT_NAME stable ("Macterm") so
+    the .app the build produces — and anything that references it by name, e.g.
+    a test target's TEST_HOST — is unaffected; the rename happens post-build,
+    just before launch.
+
+    The full name picture for a dev variant:
+      • Dock hover tooltip / Finder  → the .app filename   (THIS rename)
+      • Menu-bar app menu            → CFBundleName         (project.yml)
+      • Some Finder/system surfaces  → CFBundleDisplayName  (patched here)
+      • In-app strings (window title, welcome screen, etc.) → hardcoded in the
+        app unless they read Bundle.main's CFBundleDisplayName; make them read it
+        so the dev variant labels itself everywhere.
 
     Use this instead of PRODUCT_NAME / INFOPLIST_KEY_CFBundleDisplayName
     xcodebuild flags (those break SwiftPM bundles). Pair with a distinct
     PRODUCT_BUNDLE_IDENTIFIER passed via xcodebuild_filtered.extra_settings.
+
+    sign_identity defaults to "-" (ad-hoc). Pass a real identity (hash or name)
+    so the rename re-signs with the *same* stable identity the build used —
+    otherwise the ad-hoc re-sign throws away the stable signature and macOS
+    re-prompts for TCC permissions on every rebuild.
     """
     if not built_app_path.endswith(".app") or not os.path.isdir(built_app_path):
         err(f"dev_macos_postprocess: not an .app bundle: {built_app_path!r}")
@@ -241,11 +267,12 @@ def dev_macos_postprocess(built_app_path, dev_product_name, dev_display_name):
              f"{r.stderr.decode('utf-8', 'replace').strip()}")
 
     r = subprocess.run(
-        ["codesign", "--force", "--sign", "-", dest],
+        ["codesign", "--force", "--sign", sign_identity, dest],
         capture_output=True,
     )
     if r.returncode != 0:
-        warn(f"ad-hoc codesign failed: "
+        label = "ad-hoc" if sign_identity == "-" else f"identity {sign_identity}"
+        warn(f"codesign ({label}) failed: "
              f"{r.stderr.decode('utf-8', 'replace').strip()}")
 
     return dest
@@ -475,8 +502,9 @@ def _list_devices():
     """
     import json
 
-    json_path = os.path.join(LOG_DIR, "devices.json")
-    os.makedirs(LOG_DIR, exist_ok=True)
+    log_dir = get_log_dir()
+    json_path = os.path.join(log_dir, "devices.json")
+    os.makedirs(log_dir, exist_ok=True)
     result = subprocess.run(
         ["xcrun", "devicectl", "list", "devices", "--json-output", json_path],
         capture_output=True, text=True,
@@ -614,8 +642,9 @@ def _get_device_process_for_bundle(device_id, bundle_id):
     """
     import json
 
-    json_path = os.path.join(LOG_DIR, "processes.json")
-    os.makedirs(LOG_DIR, exist_ok=True)
+    log_dir = get_log_dir()
+    json_path = os.path.join(log_dir, "processes.json")
+    os.makedirs(log_dir, exist_ok=True)
     result = subprocess.run(
         ["xcrun", "devicectl", "device", "info", "processes",
          "--device", device_id, "--json-output", json_path],
@@ -840,9 +869,31 @@ def swap_dev_icons(icon_dirs, icon_config):
     tmp_base = tempfile.mkdtemp(prefix="dev-icons-")
     success = True
 
+    has_glyph = bool(icon_config.get("glyph_text") or icon_config.get("glyph_svg"))
+
     try:
         for label, src_dir in icon_dirs.items():
             if not os.path.isdir(src_dir):
+                continue
+
+            if not has_glyph:
+                # No glyph: overlay the banner on the existing canonical PNGs so
+                # the real icon art shows through (the originals are already
+                # backed up by build_icon_hooks._pre, so editing in place is
+                # safe). Same _apply_dev_banner as the glyph path.
+                from .icons import _apply_dev_banner
+                for fname in os.listdir(src_dir):
+                    if not fname.lower().endswith(".png"):
+                        continue
+                    fpath = os.path.join(src_dir, fname)
+                    try:
+                        img = _Img.open(fpath).convert("RGBA")
+                    except Exception:
+                        continue
+                    _apply_dev_banner(img)
+                    # Drop the alpha channel (opaque RGB) so macOS renders the
+                    # icon full-bleed instead of insetting it into a padded tile.
+                    img.convert("RGB").save(fpath, "PNG")
                 continue
 
             # Detect sizes from existing PNGs in the asset catalog.
@@ -906,6 +957,175 @@ def restore_icons(icon_dirs, backup_dir):
 
 
 # ---------------------------------------------------------------------------
+# Icon Composer (.icon) dev-banner swap
+#
+# Xcode 26 projects use a single layered `.icon` bundle (icon.json + Assets/)
+# that actool compiles into the Liquid Glass .icns, not an appiconset of flat
+# PNGs — so the appiconset swap above can't touch it. These mirror the same
+# backup → swap → restore → self-heal shape for the `.icon` format: inject an
+# opaque "DEV" banner layer for dev builds, restore the pristine icon.json on
+# exit. The banner rides its own top group with glass/translucency disabled so
+# the stripe stays crisp over the Liquid Glass glyph instead of being faded by
+# the base group's translucency.
+# ---------------------------------------------------------------------------
+
+_DEV_BANNER_ASSET = "dev-banner.png"
+_DEV_BANNER_LAYER = "dev-banner"
+
+
+def _icon_composer_json(icon_path):
+    return os.path.join(icon_path, "icon.json")
+
+
+def _icon_composer_assets(icon_path):
+    return os.path.join(icon_path, "Assets")
+
+
+def _is_banner_group(group):
+    """True if a parsed icon.json group is the injected DEV-banner group."""
+    return any(layer.get("name") == _DEV_BANNER_LAYER
+               for layer in (group.get("layers") or []))
+
+
+def _inject_banner_layer(doc):
+    """Append the opaque DEV-banner group to a parsed icon.json dict.
+
+    Idempotent: a stale banner group from a re-swap is dropped first. Pure
+    dict transform (no filesystem / Pillow) so it's unit-testable.
+    """
+    groups = [g for g in (doc.get("groups") or []) if not _is_banner_group(g)]
+    groups.append({
+        "layers": [{
+            "glass": False,
+            "image-name": _DEV_BANNER_ASSET,
+            "name": _DEV_BANNER_LAYER,
+            "position": {"scale": 1, "translation-in-points": [0, 0]},
+        }],
+    })
+    doc["groups"] = groups
+    return doc
+
+
+def _strip_banner_layer(doc):
+    """Remove the injected DEV-banner group from a parsed icon.json dict."""
+    doc["groups"] = [g for g in (doc.get("groups") or [])
+                     if not _is_banner_group(g)]
+    return doc
+
+
+def swap_dev_icon_composer(icon_path, backup_dir):
+    """Inject an opaque 'DEV' banner layer into an Icon Composer ``.icon``.
+
+    Backs up the pristine ``icon.json`` to ``backup_dir``, renders a
+    transparent DEV-banner overlay into ``Assets/dev-banner.png`` sized to the
+    base art, and appends a top group referencing it (glass/translucency off).
+    Returns True on success, False if skipped (no icon.json / no Pillow).
+    """
+    import json
+    import shutil
+
+    json_path = _icon_composer_json(icon_path)
+    if not os.path.isfile(json_path):
+        warn(f"{json_path} not found — skipping dev icon")
+        return False
+
+    try:
+        from PIL import Image as _Img
+        from .icons import make_dev_banner
+    except ImportError:
+        warn("Pillow not installed — skipping dev icon generation")
+        return False
+
+    info("Injecting DEV banner into Icon Composer icon...")
+
+    os.makedirs(backup_dir, exist_ok=True)
+    shutil.copy2(json_path, os.path.join(backup_dir, "icon.json"))
+
+    # Size the banner to the base art so layer coordinates line up.
+    assets_dir = _icon_composer_assets(icon_path)
+    os.makedirs(assets_dir, exist_ok=True)
+    base_size = 1024
+    raw = os.path.join(assets_dir, "icon-raw.png")
+    if os.path.isfile(raw):
+        try:
+            with _Img.open(raw) as im:
+                base_size = max(im.width, im.height)
+        except Exception:
+            pass
+
+    make_dev_banner(base_size).save(
+        os.path.join(assets_dir, _DEV_BANNER_ASSET), "PNG")
+
+    with open(json_path) as f:
+        doc = json.load(f)
+    _inject_banner_layer(doc)
+    with open(json_path, "w") as f:
+        json.dump(doc, f, indent=2)
+        f.write("\n")
+
+    return True
+
+
+def restore_icon_composer(icon_path, backup_dir):
+    """Restore a ``.icon`` to its pristine state after a dev build.
+
+    Prefers the byte-exact pristine ``icon.json`` from ``backup_dir`` (keeps
+    the user's formatting); if it's missing — a corrupted/partial state —
+    strips the banner group in place. Removes the generated banner asset and
+    the backup dir either way.
+    """
+    import json
+    import shutil
+
+    json_path = _icon_composer_json(icon_path)
+    backup_json = os.path.join(backup_dir, "icon.json")
+    if os.path.isfile(backup_json):
+        shutil.copy2(backup_json, json_path)
+    elif os.path.isfile(json_path):
+        with open(json_path) as f:
+            doc = json.load(f)
+        _strip_banner_layer(doc)
+        with open(json_path, "w") as f:
+            json.dump(doc, f, indent=2)
+            f.write("\n")
+
+    banner = os.path.join(_icon_composer_assets(icon_path), _DEV_BANNER_ASSET)
+    if os.path.isfile(banner):
+        os.remove(banner)
+    if os.path.isdir(backup_dir):
+        shutil.rmtree(backup_dir)
+
+
+_LSREGISTER = ("/System/Library/Frameworks/CoreServices.framework/Versions/A/"
+               "Frameworks/LaunchServices.framework/Versions/A/Support/lsregister")
+
+
+def refresh_app_icon_cache(app_path):
+    """Make LaunchServices/Dock re-read a freshly built app's icon.
+
+    A dev app reuses one bundle id at one path, so when its icon *content*
+    changes (e.g. a DEV banner is compiled in for the first time) macOS keeps
+    serving the previously cached icon. Bump the bundle's mtime and re-register
+    it with LaunchServices so the next ``open`` shows the new icon. Best-effort
+    — a cache refresh is never worth failing a dev launch over.
+
+    Note: this fixes future launches. An icon already cached *without* the
+    banner from earlier builds is sticky; clearing that one-time poisoned cache
+    needs a `killall Dock`.
+    """
+    try:
+        os.utime(app_path, None)
+    except OSError:
+        pass
+    if os.path.exists(_LSREGISTER):
+        try:
+            subprocess.run([_LSREGISTER, "-f", app_path],
+                           capture_output=True, check=False)
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Dev loops
 # ---------------------------------------------------------------------------
 
@@ -913,12 +1133,15 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
                    predicate, app_pattern, pid_file="/tmp/admin-run.pid",
                    extra_settings="", build_action="build",
                    pre_build=None, post_build=None, pre_launch=None,
-                   is_running_fn=None, kill_fn=None, output_config=None):
+                   is_running_fn=None, kill_fn=None, output_config=None,
+                   refresh_icon=False):
     """Full macOS dev loop: build, launch, stream logs, reload on 'r' or SIGUSR1.
 
     Hook callbacks: pre_build/post_build wrap each build; pre_launch(app_path)
     runs before launch and may return a new app_path. is_running_fn / kill_fn
-    override the default pgrep/pkill -x process check.
+    override the default pgrep/pkill -x process check. refresh_icon re-reads the
+    built app's icon into LaunchServices before launch (set when a dev-icon swap
+    is active, so a just-compiled banner isn't masked by a stale icon cache).
     """
     import time
     from .log_columns import make_column_formatter
@@ -944,6 +1167,7 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
     check_running = is_running_fn or _default_is_running
     kill_app = kill_fn or _default_kill
 
+    first_launch = True
     while True:
         clear_rebuild_request()
         kill_app()
@@ -979,6 +1203,13 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
             if result:
                 app_path = result
 
+        # The swapped-in banner is identical content every rebuild, so the
+        # cache only needs refreshing once — skip the blocking lsregister scan
+        # on subsequent hot-reloads.
+        if refresh_icon and first_launch:
+            refresh_app_icon_cache(app_path)
+        first_launch = False
+
         info(f"Launching {app_path}")
         subprocess.run(["open", "-n", app_path], check=True)
 
@@ -996,7 +1227,7 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
 
         fmt = make_column_formatter("apple_os_log", output_config)
         log_proc, log_thread, log_fh = stream_os_log(
-            predicate, log_file=LOG_FILE, formatter=fmt.format_line)
+            predicate, log_file=get_log_file(), formatter=fmt.format_line)
 
         info("Press r to rebuild, Ctrl+C to quit")
         print()
@@ -1107,7 +1338,7 @@ def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
 
         fmt = make_column_formatter("apple_os_log", output_config)
         log_proc, log_thread, log_fh = stream_os_log(
-            predicate, log_file=LOG_FILE, sim_id=sim_id, formatter=fmt.format_line)
+            predicate, log_file=get_log_file(), sim_id=sim_id, formatter=fmt.format_line)
 
         info("Press r to rebuild, Ctrl+C to quit")
         print()
@@ -1199,7 +1430,7 @@ def dev_loop_device(project, scheme, config, subsystem, process,
 
     from .log_columns import make_column_formatter
     fmt = make_column_formatter("generic", output_config)
-    _, log_fh = stream_console_output(console_proc, log_file=LOG_FILE, formatter=fmt.format_line)
+    _, log_fh = stream_console_output(console_proc, log_file=get_log_file(), formatter=fmt.format_line)
 
     info("Streaming logs — Ctrl+C to quit")
     print()
@@ -1426,6 +1657,16 @@ def _resolve_icon_dirs(cfg, platforms=("mac", "ios")):
     return result
 
 
+def _resolve_icon_composer(cfg):
+    """Abs path to the Icon Composer ``.icon`` bundle from
+    ``[apple.icons] mac_icon``, or None. Its presence routes the dev-icon
+    swap through the ``.icon`` path instead of the appiconset PNG path.
+    """
+    icons_cfg = cfg.get("icons") or {}
+    rel = icons_cfg.get("mac_icon")
+    return os.path.abspath(rel) if rel else None
+
+
 def _icon_generation_kwargs(cfg):
     """Return kwargs dict forwarded to generate_icons() from [apple.icons]."""
     i = cfg.get("icons") or {}
@@ -1436,19 +1677,64 @@ def _icon_generation_kwargs(cfg):
     return out
 
 
+def _restore_stranded_icon_composer(icon_path, backup_dir):
+    """Composer analog of restore_stranded_dev_icons: if a prior dev run was
+    SIGKILL'd before its post-build restore, the injected banner is still in
+    the ``.icon`` (its pristine icon.json is in ``backup_dir``). Revert before
+    a fresh build so a DEV banner can't be baked into a release.
+    """
+    banner = os.path.join(_icon_composer_assets(icon_path), _DEV_BANNER_ASSET)
+    if not (os.path.isdir(backup_dir) or os.path.isfile(banner)):
+        return
+    warn(f"Stranded dev icon found for {icon_path} (interrupted dev run?) — restoring original")
+    restore_icon_composer(icon_path, backup_dir)
+
+
+def _build_icon_composer_hooks(cfg, icon_path, backup_dir):
+    """(pre_build, post_build) for the Icon Composer ``.icon`` dev-banner swap.
+
+    Mirrors the appiconset hooks: self-heal a stranded prior run, register the
+    restore as a cleanup hook before mutating, then inject the banner.
+    """
+    composer_backup = os.path.join(backup_dir, "icon-composer")
+
+    def _post():
+        restore_icon_composer(icon_path, composer_backup)
+
+    cleanup_registered = [False]
+
+    def _pre():
+        _restore_stranded_icon_composer(icon_path, composer_backup)
+        if not cleanup_registered[0]:
+            register_cleanup(_post)
+            cleanup_registered[0] = True
+        swap_dev_icon_composer(icon_path, composer_backup)
+
+    return _pre, _post
+
+
 def build_icon_hooks(cfg, platforms=("mac", "ios"), backup_dir="tmp/icon-backup"):
     """Return (pre_build, post_build) for dev-icon swap. (None, None) if
     [apple.icons] missing/empty so callers can pass directly to dev_loop_*.
 
     pre_build also registers post_build as a cleanup hook — required so a
-    Ctrl-C'd dev run doesn't leak dev-overlay PNGs into the next deploy build.
+    Ctrl-C'd dev run doesn't leak dev-overlay icons into the next deploy build.
+    An ``[apple.icons] mac_icon`` (Xcode 26 Icon Composer) routes through the
+    ``.icon`` banner swap; otherwise the appiconset PNG swap is used.
     """
+    icon_composer = _resolve_icon_composer(cfg)
+    if icon_composer:
+        return _build_icon_composer_hooks(cfg, icon_composer, backup_dir)
+
     icon_dirs = _resolve_icon_dirs(cfg, platforms)
     if not icon_dirs:
         return (None, None)
     icon_kwargs = _icon_generation_kwargs(cfg)
-    if not (icon_kwargs.get("glyph_text") or icon_kwargs.get("glyph_svg")):
-        return (None, None)
+    # With glyph config, swap_dev_icons regenerates the icon from the glyph and
+    # adds the banner (apple-coding-tool, apple-notepad). Without it — a real-art
+    # canonical appiconset, e.g. macterm — it overlays the banner on the existing
+    # committed PNGs. Either path uses the same _apply_dev_banner, so all projects
+    # share one dev-banner implementation.
 
     def _post():
         restore_icons(icon_dirs, backup_dir)
@@ -1528,6 +1814,10 @@ def restore_stranded_dev_icons(cfg, platforms=("mac", "ios"), backup_dir="tmp/ic
     originals from ``backup_dir`` (left behind by the interrupted run) before
     a fresh build so we don't bake DEV-banner icons into a production deploy.
     """
+    icon_composer = _resolve_icon_composer(cfg)
+    if icon_composer:
+        _restore_stranded_icon_composer(icon_composer, os.path.join(backup_dir, "icon-composer"))
+        return
     if not os.path.isdir(backup_dir):
         return
     icon_dirs = _resolve_icon_dirs(cfg, platforms)
@@ -1658,12 +1948,65 @@ def _make_mac_dev_kill(cfg):
     return lambda: None
 
 
+def resolve_signing_identity(cfg):
+    """Resolve a concrete code-signing identity (SHA-1 hash) by querying the
+    keychain with ``security find-identity``, so callers never hardcode a hash.
+
+    The optional ``[apple].sign_identity`` is a case-insensitive *substring*
+    matched against the identity descriptions (e.g. a developer/team name, a
+    team ID, or ``"Apple Development"``). With no selector — or an empty one —
+    and exactly one valid identity, that identity is auto-picked. Returns the
+    hash, or ``None`` (caller falls back to ad-hoc) when nothing matches or the
+    match is ambiguous, warning loudly so a silent ad-hoc downgrade is visible.
+
+    Signing with a stable identity instead of ad-hoc is what lets macOS keep
+    TCC privacy grants (camera, Documents, …) across rebuilds rather than
+    re-prompting — ad-hoc gives the binary a fresh code hash every build.
+    """
+    import re as _re
+    selector = cfg.get("sign_identity")
+    try:
+        r = subprocess.run(
+            ["security", "find-identity", "-v", "-p", "codesigning"],
+            capture_output=True, text=True,
+        )
+    except (OSError, ValueError):
+        warn("could not run `security find-identity` — using ad-hoc signing")
+        return None
+
+    ids = []
+    for line in r.stdout.splitlines():
+        m = _re.match(r'^\s*\d+\)\s+([0-9A-Fa-f]{40})\s+"(.+)"\s*$', line)
+        if m:
+            ids.append((m.group(1), m.group(2)))
+
+    matched = ids
+    if selector:
+        sel = str(selector).lower()
+        matched = [(h, d) for (h, d) in ids if sel in d.lower()]
+
+    if len(matched) == 1:
+        return matched[0][0]
+    if not matched:
+        hint = f" matching {selector!r}" if selector else ""
+        warn(f"no code-signing identity{hint} found — using ad-hoc signing "
+             "(macOS will re-prompt for permissions on each rebuild)")
+        return None
+    names = ", ".join(d for _, d in matched)
+    warn("multiple code-signing identities match — set [apple].sign_identity to "
+         f"a unique substring to disambiguate: {names}. Using ad-hoc.")
+    return None
+
+
 def _compose_sign_settings(cfg):
     """Build xcodebuild build-setting overrides for code signing from [apple] config.
 
     Reads code_sign_identity, development_team, code_sign_style. Resolves
-    ${VAR} / ${VAR:-default} from the environment. Returns empty string when
-    none of the keys are present.
+    ${VAR} / ${VAR:-default} from the environment. Additionally, when
+    ``sign_identity`` is present (and no explicit ``code_sign_identity``), the
+    identity is resolved dynamically from the keychain (see
+    :func:`resolve_signing_identity`) and signed manually — no hash in config.
+    Returns empty string when none of the keys are present.
     """
     from .core import resolve_env
     parts = []
@@ -1678,6 +2021,17 @@ def _compose_sign_settings(cfg):
         val = resolve_env(str(val))
         if val:
             parts.append(f'{xcode_key}="{val}"')
+
+    # Dynamic identity: resolve [apple].sign_identity against the keychain to a
+    # concrete hash and sign manually, so dev builds get a stable signature
+    # (TCC grants persist) without a hardcoded hash. Skipped if the manifest
+    # already pinned an explicit literal CODE_SIGN_IDENTITY above.
+    if "sign_identity" in cfg and cfg.get("code_sign_identity") is None:
+        ident = resolve_signing_identity(cfg)
+        if ident:
+            parts.append(f'CODE_SIGN_IDENTITY="{ident}"')
+            parts.append("CODE_SIGN_STYLE=Manual")
+            parts.append("PROVISIONING_PROFILE_SPECIFIER=")
     return " ".join(parts)
 
 
@@ -1756,9 +2110,19 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=N
     else:
         _dev_product = _resolve_mac_dev_product_name(cfg)
         _dev_display = _resolve_mac_dev_display_name(cfg)
-        if _dev_product or _dev_display:
+        # Opt out of the dev rename/display-patch with mac_dev_rename = false —
+        # for projects that already differentiate their debug build at the Xcode
+        # level (distinct bundle ID, CFBundleDisplayName) and don't want a
+        # renamed "<name>Dev.app". Stable signing still applies via the build's
+        # CODE_SIGN flags; the rename is purely a Finder/Dock cosmetic.
+        if cfg.get("mac_dev_rename", True) and (_dev_product or _dev_display):
+            # Re-sign the renamed .app with the same stable identity the build
+            # used (not ad-hoc), so TCC grants survive the rename. "-" → ad-hoc
+            # when no sign_identity is configured (unchanged default).
+            _resign = (resolve_signing_identity(cfg) if "sign_identity" in cfg else None) or "-"
+
             def pre_launch(built_app):
-                return dev_macos_postprocess(built_app, _dev_product, _dev_display)
+                return dev_macos_postprocess(built_app, _dev_product, _dev_display, sign_identity=_resign)
 
     dev_loop_macos(
         project=project, scheme=scheme, config=config,
@@ -1770,6 +2134,9 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=N
         is_running_fn=_make_mac_dev_running_check(cfg),
         kill_fn=_make_mac_dev_kill(cfg),
         output_config=output_config,
+        # An icon swap is active iff build_icon_hooks returned hooks; refresh
+        # the built app's icon cache so the swapped-in banner actually shows.
+        refresh_icon=pre_build is not None,
     )
 
 

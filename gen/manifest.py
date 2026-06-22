@@ -22,14 +22,19 @@ except ImportError:
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from gen.fragments import LOG_KINDS
+
 MANIFEST_FILENAME = "admin.toml"
 
 _KNOWN_KEYS = {
     "project_name", "python_min", "archetypes", "modules", "urls",
     "commands", "actions", "order", "logs", "apple", "server", "output",
-    "exclude_modules", "hide_commands", "generator_commit", "inline", "logging",
+    "exclude_modules", "hide_commands", "inline", "logging",
     "dev_kill", "clean_dev", "vite_dev", "docker_dev", "docker_run", "deploy", "install_template",
     "fixtures", "log_bridge", "guards",
+    # Obsolete under interpreter mode (ADR-0006); tolerated silently on
+    # un-migrated manifests, never written back. `admin migrate` strips it.
+    "generator_commit",
 }
 
 VALID_COMMAND_KEYS = {"desc", "steps", "log_file", "log_retain", "log", "group", "priority", "env"}
@@ -69,7 +74,7 @@ class Manifest:
     overrides: dict[str, dict]               # command name -> partial command dict
     custom: dict[str, dict]                  # command name -> full command dict
     order: list[str]                         # explicit display order; "" = spacer
-    logs: dict[str, dict] = field(default_factory=dict)  # target -> {default_env, envs: {env: {path, host, user}}}
+    logs: dict[str, dict] = field(default_factory=dict)  # name -> {kind, highlight, ...kind-specific fields}
     apple: dict = field(default_factory=dict)   # [apple] table — archetype-specific config, raw dict
     server: dict = field(default_factory=dict)  # [server] table — server build/dev/deploy config, raw dict
     output: dict = field(default_factory=dict)  # [output] table — log column config per source
@@ -87,7 +92,6 @@ class Manifest:
     actions: dict[str, dict] = field(default_factory=dict)    # action name -> raw dict (not shown in UI)
     exclude_modules: list[str] = field(default_factory=list)  # modules to suppress even if archetype requires them
     hide_commands: list[str] = field(default_factory=list)    # archetype/manifest commands to drop from the listing (actions stay)
-    generator_commit: str | None = None
     inline_file: str | None = None           # path relative to project root
     raw: dict = field(default_factory=dict)  # original parsed TOML, for debugging
 
@@ -336,7 +340,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     unknown = set(data.keys()) - _KNOWN_KEYS
     if unknown:
         print(
-            f"warning: {source}: unknown keys will be dropped on --regenerate: "
+            f"warning: {source}: unknown keys are ignored: "
             + ", ".join(sorted(unknown)),
             file=sys.stderr,
         )
@@ -368,18 +372,50 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         guards=guards,
         exclude_modules=exclude_modules,
         hide_commands=hide_commands,
-        generator_commit=data.get("generator_commit"),
         inline_file=inline_file,
         raw=data,
     )
 
 
-def _parse_logs(raw, source: str) -> dict[str, dict]:
-    """Normalize [logs.<name>] sections.
+# Keys that carry meaning for every kind and so are never treated as file envs.
+_LOG_COMMON_KEYS = ("kind", "highlight")
 
-    Returns {target: {"default_env": str|None, "envs": {env: {"path", "host", "user"}}}}.
-    Env values may be strings (local path shorthand) or tables with a required `path`
-    and optional `host`/`user`. ${VAR} placeholders are preserved verbatim.
+
+def _log_opt_str(target, key, source, name):
+    val = target.get(key)
+    if val is not None and not isinstance(val, str):
+        raise ManifestError(f"{source}: logs.{name}.{key} must be a string")
+    return val
+
+
+def _log_req_str(target, key, source, name):
+    val = target.get(key)
+    if not isinstance(val, str) or not val:
+        raise ManifestError(f"{source}: logs.{name}.{key} must be a non-empty string")
+    return val
+
+
+def _parse_highlight(target, source, name):
+    raw = target.get("highlight")
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or not all(isinstance(x, str) for x in raw):
+        raise ManifestError(f"{source}: logs.{name}.highlight must be a list of strings")
+    return raw
+
+
+def _parse_logs(raw, source: str) -> dict[str, dict]:
+    """Normalize [logs.<name>] sections into per-source specs.
+
+    Every spec carries "kind" (one of file/command/docker/pick) and a "highlight"
+    list of regex strings. ${VAR} placeholders are preserved verbatim. Per kind:
+
+      file (default)  {"default_env", "envs": {env: {"path","host","user"}}}
+      command         {"run", "host", "user"}      — stream a command's stdout
+      docker          {"container", "host", "user"} — docker logs -f <container>
+      pick            {"glob"}                       — pick a file, then tail it
+
+    `host`/`user` on command/docker run the source over SSH when set.
     """
     if raw is None:
         return {}
@@ -391,54 +427,78 @@ def _parse_logs(raw, source: str) -> dict[str, dict]:
         if not isinstance(target, dict):
             raise ManifestError(f"{source}: logs.{name} must be a table")
 
-        default_env = target.get("default_env")
-        if default_env is not None and not isinstance(default_env, str):
-            raise ManifestError(f"{source}: logs.{name}.default_env must be a string")
-
-        envs: dict[str, dict] = {}
-        for env_name, env_val in target.items():
-            if env_name == "default_env":
-                continue
-            if isinstance(env_val, str):
-                envs[env_name] = {"path": env_val, "host": None, "user": None}
-            elif isinstance(env_val, dict):
-                if "path" not in env_val or not isinstance(env_val["path"], str):
-                    raise ManifestError(
-                        f"{source}: logs.{name}.{env_name} must have a 'path' string"
-                    )
-                host = env_val.get("host")
-                user = env_val.get("user")
-                if host is not None and not isinstance(host, str):
-                    raise ManifestError(
-                        f"{source}: logs.{name}.{env_name}.host must be a string"
-                    )
-                if user is not None and not isinstance(user, str):
-                    raise ManifestError(
-                        f"{source}: logs.{name}.{env_name}.user must be a string"
-                    )
-                envs[env_name] = {
-                    "path": env_val["path"],
-                    "host": host,
-                    "user": user,
-                }
-            else:
-                raise ManifestError(
-                    f"{source}: logs.{name}.{env_name} must be a string path or table"
-                )
-
-        if not envs:
+        kind = target.get("kind", "file")
+        if kind not in LOG_KINDS:
             raise ManifestError(
-                f"{source}: logs.{name} must declare at least one environment"
-            )
-        if default_env is not None and default_env not in envs:
-            raise ManifestError(
-                f"{source}: logs.{name}.default_env '{default_env}' not in envs "
-                f"{sorted(envs)}"
+                f"{source}: logs.{name}.kind must be one of "
+                f"{tuple(LOG_KINDS)}, got '{kind}'"
             )
 
-        result[name] = {"default_env": default_env, "envs": envs}
+        if kind == "file":
+            spec = _parse_file_log(target, source, name)
+        else:
+            # Non-file kinds are flat string fields driven by LOG_KINDS metadata.
+            meta = LOG_KINDS[kind]
+            spec = {f: _log_req_str(target, f, source, name)
+                    for f in meta["required"]}
+            spec.update({f: _log_opt_str(target, f, source, name)
+                         for f in meta["optional"]})
+
+        spec["kind"] = kind
+        spec["highlight"] = _parse_highlight(target, source, name)
+        result[name] = spec
 
     return result
+
+
+def _parse_file_log(target, source, name) -> dict:
+    """Parse a file-kind [logs.<name>] section into {default_env, envs}."""
+    default_env = target.get("default_env")
+    if default_env is not None and not isinstance(default_env, str):
+        raise ManifestError(f"{source}: logs.{name}.default_env must be a string")
+
+    envs: dict[str, dict] = {}
+    for env_name, env_val in target.items():
+        if env_name == "default_env" or env_name in _LOG_COMMON_KEYS:
+            continue
+        if isinstance(env_val, str):
+            envs[env_name] = {"path": env_val, "host": None, "user": None}
+        elif isinstance(env_val, dict):
+            if "path" not in env_val or not isinstance(env_val["path"], str):
+                raise ManifestError(
+                    f"{source}: logs.{name}.{env_name} must have a 'path' string"
+                )
+            host = env_val.get("host")
+            user = env_val.get("user")
+            if host is not None and not isinstance(host, str):
+                raise ManifestError(
+                    f"{source}: logs.{name}.{env_name}.host must be a string"
+                )
+            if user is not None and not isinstance(user, str):
+                raise ManifestError(
+                    f"{source}: logs.{name}.{env_name}.user must be a string"
+                )
+            envs[env_name] = {
+                "path": env_val["path"],
+                "host": host,
+                "user": user,
+            }
+        else:
+            raise ManifestError(
+                f"{source}: logs.{name}.{env_name} must be a string path or table"
+            )
+
+    if not envs:
+        raise ManifestError(
+            f"{source}: logs.{name} must declare at least one environment"
+        )
+    if default_env is not None and default_env not in envs:
+        raise ManifestError(
+            f"{source}: logs.{name}.default_env '{default_env}' not in envs "
+            f"{sorted(envs)}"
+        )
+
+    return {"default_env": default_env, "envs": envs}
 
 
 def dump(manifest: Manifest) -> str:
@@ -450,8 +510,6 @@ def dump(manifest: Manifest) -> str:
     lines: list[str] = []
     lines.append(f'project_name = "{_escape(manifest.project_name)}"')
     lines.append(f'python_min   = "{manifest.python_min}"')
-    if manifest.generator_commit:
-        lines.append(f'generator_commit = "{manifest.generator_commit}"')
     arch_list = ", ".join(f'"{a}"' for a in manifest.archetypes)
     lines.append(f"archetypes = [{arch_list}]")
     if manifest.modules:
@@ -504,32 +562,45 @@ def dump(manifest: Manifest) -> str:
     if manifest.logs:
         for target_name, target in manifest.logs.items():
             lines.append(f"[logs.{target_name}]")
-            envs = target.get("envs", {})
-            # Preserve original key order from raw TOML if available.
-            raw_keys = list(manifest.raw.get("logs", {}).get(target_name, {}).keys())
-            ordered_keys = raw_keys if raw_keys else (
-                (["default_env"] if target.get("default_env") else []) + list(envs)
-            )
-            for key in ordered_keys:
-                if key == "default_env":
-                    if target.get("default_env"):
-                        lines.append(f'default_env = "{_escape(target["default_env"])}"')
-                    continue
-                env = envs.get(key)
-                if env is None:
-                    continue
-                host = env.get("host")
-                user = env.get("user")
-                path = env.get("path", "")
-                if host is None and user is None:
-                    lines.append(f'{key} = "{_escape(path)}"')
-                else:
-                    parts = [f'path = "{_escape(path)}"']
-                    if host is not None:
-                        parts.append(f'host = "{_escape(host)}"')
-                    if user is not None:
-                        parts.append(f'user = "{_escape(user)}"')
-                    lines.append(f"{key} = {{ " + ", ".join(parts) + " }")
+            kind = target.get("kind", "file")
+            if kind == "file":
+                envs = target.get("envs", {})
+                # Preserve original key order from raw TOML if available.
+                raw_keys = list(manifest.raw.get("logs", {}).get(target_name, {}).keys())
+                ordered_keys = raw_keys if raw_keys else (
+                    (["default_env"] if target.get("default_env") else []) + list(envs)
+                )
+                for key in ordered_keys:
+                    if key == "default_env":
+                        if target.get("default_env"):
+                            lines.append(f'default_env = "{_escape(target["default_env"])}"')
+                        continue
+                    env = envs.get(key)
+                    if env is None:
+                        continue
+                    host = env.get("host")
+                    user = env.get("user")
+                    path = env.get("path", "")
+                    if host is None and user is None:
+                        lines.append(f'{key} = "{_escape(path)}"')
+                    else:
+                        parts = [f'path = "{_escape(path)}"']
+                        if host is not None:
+                            parts.append(f'host = "{_escape(host)}"')
+                        if user is not None:
+                            parts.append(f'user = "{_escape(user)}"')
+                        lines.append(f"{key} = {{ " + ", ".join(parts) + " }")
+            else:
+                # Non-file kinds: kind + flat string fields (LOG_KINDS metadata).
+                lines.append(f'kind = "{_escape(kind)}"')
+                for f in (*LOG_KINDS[kind]["required"], *LOG_KINDS[kind]["optional"]):
+                    val = target.get(f)
+                    if val is not None:
+                        lines.append(f'{f} = "{_escape(val)}"')
+            highlight = target.get("highlight") or []
+            if highlight:
+                items = ", ".join(f'"{_escape(x)}"' for x in highlight)
+                lines.append(f"highlight = [{items}]")
             lines.append("")
 
     if manifest.server:

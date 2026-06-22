@@ -1,5 +1,7 @@
 # Bundler flattens `admin_lib` into a single namespace
 
+> **Status: superseded by [ADR-0006](./0006-interpreter-mode.md).** The flat-namespace bundler (`gen/bundler.py`) is deleted. Interpreter mode imports `admin_lib` as a real package, and `admin compile` produces a standalone via stdlib `zipapp` (whole files copied into an archive, no flattening) — so neither the `__future__`-hoisting nor the `from . import` prohibition below applies any longer. Retained for historical context.
+
 The bundler in `gen/bundler.py` inlines every module under `admin_lib/` directly into the generated `./admin`, producing a single Python file with a flat top-level namespace. This is what makes the "self-contained one-file `./admin`" guarantee from [ADR-0001](./0001-stdlib-only.md) achievable without `pip install`, a zipapp, or sys.path manipulation.
 
 **Two consequences are enforced as gen-time errors, not silent breakage.**
