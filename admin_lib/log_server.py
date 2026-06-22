@@ -16,6 +16,18 @@ from urllib.parse import urlparse
 
 _SEEN_CLIENTS: set[str] = set()
 
+# Optional per-line output sink. When set, emitted client lines go through it
+# instead of a raw stdout write — `admin logs` uses this to render bridged
+# [client] lines through the same LineRenderer as the tailed stream. The
+# log-file append is unaffected. None restores the default stdout behavior.
+_emit_sink = None
+
+
+def set_log_server_sink(fn):
+    """Set (or clear, with None) the per-line output sink. See `_emit_sink`."""
+    global _emit_sink
+    _emit_sink = fn
+
 _LOG_BRIDGE_STATE = {
     "log_path": None,
     "hosts": [],
@@ -69,9 +81,12 @@ def append_log_bridge_entries(entries: Iterable[dict], *, user_agent: str = "") 
     lines.extend(format_log_bridge_entry(e) for e in entries_list)
     with open(path, "a") as f:
         f.writelines(lines)
-    out = "".join(lines)
-    sys.stdout.write(out)
-    sys.stdout.flush()
+    if _emit_sink is not None:
+        for ln in lines:
+            _emit_sink(ln)
+    else:
+        sys.stdout.write("".join(lines))
+        sys.stdout.flush()
     return len(entries_list)
 
 

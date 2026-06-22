@@ -180,6 +180,100 @@ def test_logs_dump_preserves_raw_key_order():
 
 
 # ---------------------------------------------------------------------------
+# [logs] kinds: command / docker / pick
+# ---------------------------------------------------------------------------
+
+def _parse_logs_toml(*lines):
+    toml = "\n".join((
+        'project_name = "Kinds Test"',
+        'python_min = "3.11"',
+        *lines,
+    ))
+    return parse(tomllib.loads(toml)).logs
+
+
+def test_logs_file_kind_is_default_backcompat():
+    logs = _parse_logs_toml(
+        "[logs.app]",
+        'prod = "/var/log/app.log"',
+    )
+    assert logs["app"]["kind"] == "file"
+    assert logs["app"]["highlight"] == []
+    assert logs["app"]["envs"]["prod"]["path"] == "/var/log/app.log"
+
+
+def test_logs_command_kind():
+    logs = _parse_logs_toml(
+        "[logs.plugin]",
+        'kind = "command"',
+        'run = "node scripts/logs.mjs --follow"',
+    )
+    spec = logs["plugin"]
+    assert spec["kind"] == "command"
+    assert spec["run"] == "node scripts/logs.mjs --follow"
+    assert spec["host"] is None and spec["user"] is None
+
+
+def test_logs_docker_kind_with_host_and_highlight():
+    logs = _parse_logs_toml(
+        "[logs.docker]",
+        'kind = "docker"',
+        'container = "stash"',
+        'host = "${STASH_DEPLOY_TARGET}"',
+        'highlight = ["stash-organize"]',
+    )
+    spec = logs["docker"]
+    assert spec["kind"] == "docker"
+    assert spec["container"] == "stash"
+    assert spec["host"] == "${STASH_DEPLOY_TARGET}"
+    assert spec["highlight"] == ["stash-organize"]
+
+
+def test_logs_pick_kind():
+    logs = _parse_logs_toml(
+        "[logs.pick]",
+        'kind = "pick"',
+        'glob = "tmp/*.log"',
+    )
+    assert logs["pick"]["kind"] == "pick"
+    assert logs["pick"]["glob"] == "tmp/*.log"
+
+
+def test_logs_invalid_kind_raises():
+    with _pytest_raises(ManifestError, "kind must be one of"):
+        _parse_logs_toml("[logs.x]", 'kind = "nope"', 'run = "x"')
+
+
+def test_logs_command_requires_run():
+    with _pytest_raises(ManifestError, "run must be a non-empty string"):
+        _parse_logs_toml("[logs.x]", 'kind = "command"')
+
+
+def test_logs_docker_requires_container():
+    with _pytest_raises(ManifestError, "container must be a non-empty string"):
+        _parse_logs_toml("[logs.x]", 'kind = "docker"')
+
+
+def test_logs_highlight_must_be_string_list():
+    with _pytest_raises(ManifestError, "highlight must be a list of strings"):
+        _parse_logs_toml("[logs.x]", 'kind = "pick"', 'glob = "*"', "highlight = 5")
+
+
+def _pytest_raises(exc_type, needle):
+    import contextlib
+
+    @contextlib.contextmanager
+    def _cm():
+        try:
+            yield
+        except exc_type as e:
+            assert needle in str(e), f"expected {needle!r} in {e!r}"
+            return
+        raise AssertionError(f"expected {exc_type.__name__} containing {needle!r}")
+    return _cm()
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 

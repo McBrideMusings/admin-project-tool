@@ -17,7 +17,28 @@ def _reset_state():
         log_path=None, hosts=[], project="", pid=0, started_at="", port=0,
     )
     log_server._SEEN_CLIENTS.clear()
+    log_server.set_log_server_sink(None)
     yield
+    log_server.set_log_server_sink(None)
+
+
+def test_sink_receives_lines_and_suppresses_stdout(tmp_path, capsys):
+    log_file = tmp_path / "session.log"
+    log_server.set_log_server_state(
+        log_path=str(log_file), hosts=["x"], project="p", pid=1, started_at="t", port=9988,
+    )
+    received = []
+    log_server.set_log_server_sink(received.append)
+    written = log_server.append_log_bridge_entries(
+        [{"message": "hi", "level": "info", "host": "app.example.net"}], user_agent="UA/1"
+    )
+    assert written == 1
+    # Sink got the banner line + the entry line; nothing went to raw stdout.
+    assert any("client connected" in ln for ln in received)
+    assert any("[client] [info] hi" in ln for ln in received)
+    assert capsys.readouterr().out == ""
+    # File append still happens regardless of the sink.
+    assert "[client] [info] hi" in log_file.read_text()
 
 
 def test_format_entry_includes_timestamp_level_message():

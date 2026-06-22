@@ -110,10 +110,15 @@ def scan_env_vars(commands, urls=None, logs=None, config_tables=None) -> dict[st
         _scan_for_env_vars(text, _ENV_VAR_RE, seen, f"url:{key}")
 
     for target_name, target in (logs or {}).items():
+        # file kind: scan each env's path/host/user under logs.<target>.<env>
         for env_name, env_spec in target.get("envs", {}).items():
             origin = f"logs.{target_name}.{env_name}"
             for field in ("path", "host", "user"):
                 _scan_for_env_vars(env_spec.get(field), _ENV_VAR_RE, seen, origin)
+        # command/docker/pick kinds: scan flat string fields under logs.<target>
+        origin = f"logs.{target_name}"
+        for field in ("run", "container", "glob", "host", "user"):
+            _scan_for_env_vars(target.get(field), _ENV_VAR_RE, seen, origin)
 
     for table_name, table in (config_tables or {}).items():
         if table:
