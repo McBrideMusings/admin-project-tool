@@ -1,4 +1,52 @@
-"""General-purpose icon generation with optional DEV banner overlay.
+"""General-purpose Apple (macOS + iOS) app-icon generation with an optional
+DEV banner overlay. This is the ONE shared icon generator — every project's
+icons go through here (via ``[apple.icons]`` + the apple archetype's ``icons``
+command, or the dev-loop banner swap). Do NOT write per-project icon scripts.
+
+═══════════════════════════════════════════════════════════════════════════════
+ THE ALPHA-CHANNEL GOTCHA (read this before touching anything) — ADR-0007
+═══════════════════════════════════════════════════════════════════════════════
+
+macOS renders an app icon in the Dock based on whether the PNG is fully opaque:
+
+  • FULLY OPAQUE (no alpha channel, i.e. RGB — or RGBA with every pixel α=255)
+    → macOS renders it FULL-BLEED: the artwork fills the whole Dock tile,
+      edge-to-edge, like every first-party app.
+
+  • CONTAINS ANY TRANSPARENCY (an alpha channel with *any* pixel α<255 —
+    a soft shadow, an anti-aliased edge, a deliberate transparent margin)
+    → macOS treats it as a "legacy / bordered" icon and INSETS it into a
+      smaller padded tile. It looks shrunken and wrong next to other apps.
+
+This bites constantly because it's invisible in a PNG viewer — two icons that
+look identical render completely differently in the Dock. The ONLY reliable
+diagnostic is the pixel data:
+
+    from PIL import Image
+    im = Image.open("icon_1024.png")
+    im.mode                                  # 'RGB'  → no alpha → full-bleed
+                                             # 'RGBA' → has alpha → suspect
+    im.convert("RGBA").split()[-1].getextrema()[0]   # min alpha; <255 → inset
+
+A DEV banner overlay is the classic trap: its rotated, anti-aliased stripe (and
+a sub-255 fill) drops the min alpha below 255, so a bannered icon that *looks*
+fine renders inset. ``generate_icons`` therefore ALWAYS flattens its output to
+opaque RGB (drops the alpha channel) — that is the fix, and it is non-optional.
+If you add any new icon path, flatten it to RGB too.
+
+iOS vs macOS:
+  • iOS masks icons into the rounded-rect shape itself and forbids alpha — icons
+    are full-bleed opaque squares. The flatten-to-RGB rule is correct there too.
+  • macOS does NOT mask the artwork into a shape; the PNG is shown as-is. So a
+    full-bleed Dock look REQUIRES a fully-opaque (no-alpha) square. The classic
+    macOS "icon grid" with a ~10% transparent margin (≈824px art in a 1024px
+    canvas) is the *alternative*, non-full-bleed convention — but that margin is
+    alpha<255, so it triggers the inset treatment and is incompatible with
+    full-bleed. Pick one; you cannot have a transparent margin AND full-bleed.
+
+(For the *name* of a dev-variant app in the Dock — a separate gotcha about the
+.app filename vs CFBundleName — see ``dev_macos_postprocess`` in apple.py and
+ADR-0007.)
 
 Dependencies (graceful degradation):
   - Pillow: required for all icon generation
@@ -109,14 +157,14 @@ def _render_svg(size, bg_color, svg_path, scale):
     return img
 
 
-def _apply_dev_banner(img):
-    """Overlay a red diagonal 'DEV' stripe in the bottom-right corner.
+def make_dev_banner(size):
+    """Return a transparent ``size``×``size`` RGBA overlay carrying a red
+    diagonal 'DEV' stripe in the bottom-right corner.
 
-    All dimensions are proportional to image size so the banner looks
-    identical at any resolution.
+    Composite it over any icon art to mark a development build. All
+    dimensions are proportional to ``size`` so the banner looks identical at
+    any resolution. Requires Pillow (callers gate on ``_HAS_PIL``).
     """
-    size = img.width
-
     # Oversized canvas so the stripe extends past edges after rotation
     canvas_size = size * 2
     banner_height = int(size * 0.22)
@@ -149,9 +197,13 @@ def _apply_dev_banner(img):
     # Crop so the stripe center lands in the bottom-right of the icon
     crop_x = (canvas_size // 2) - int(size * 0.72)
     crop_y = (canvas_size // 2) - int(size * 0.72)
-    cropped = banner_img.crop((crop_x, crop_y, crop_x + size, crop_y + size))
+    return banner_img.crop((crop_x, crop_y, crop_x + size, crop_y + size))
 
-    img.paste(cropped, (0, 0), cropped)
+
+def _apply_dev_banner(img):
+    """Overlay a red diagonal 'DEV' stripe in the bottom-right corner."""
+    banner = make_dev_banner(img.width)
+    img.paste(banner, (0, 0), banner)
     return img
 
 
@@ -164,15 +216,15 @@ def generate_icons(
     glyph_color="#FFFFFF",
     glyph_scale=None,
     dev=False,
-    opaque=False,
     filename_format="{size}.png",
 ):
     """Generate app icons at the requested sizes.
 
     Input precedence: glyph_svg (needs cairosvg) > glyph_text > solid bg only.
     glyph_scale: 0.0–1.0 of icon size (default 0.55).
-    opaque=True: flatten alpha to bg_color (required for macOS).
-    Returns True on success, False if skipped.
+    Icons are ALWAYS written as opaque RGB (no alpha channel): macOS renders a
+    no-alpha icon edge-to-edge (full-bleed), while any alpha channel makes it
+    inset the icon into a padded tile. Returns True on success, False if skipped.
     """
     if not _HAS_PIL:
         warn("Icon generation skipped: Pillow not installed.")
@@ -213,10 +265,14 @@ def generate_icons(
             if dev:
                 img = _apply_dev_banner(img)
 
-            if opaque and img.mode == "RGBA":
+            # Always flatten onto the bg → opaque RGB, no alpha channel, so
+            # macOS renders the icon full-bleed instead of insetting it.
+            if img.mode == "RGBA":
                 flat = Image.new("RGBA", img.size, bg)
                 flat.paste(img, (0, 0), img)
                 img = flat.convert("RGB")
+            else:
+                img = img.convert("RGB")
 
             fname = filename_format.format(size=size)
             img.save(os.path.join(output_dir, fname), "PNG")

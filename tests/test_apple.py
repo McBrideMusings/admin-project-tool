@@ -8,6 +8,7 @@ resolve outside a package); #95 tracks replacing that workaround.
 """
 from __future__ import annotations
 
+import json
 import os
 import re as _re
 import shutil
@@ -462,5 +463,211 @@ def test_dev_macos_postprocess_signs_with_given_identity():
     codesign = next(c for c in calls if "codesign" in " ".join(str(x) for x in c))
     assert codesign[codesign.index("--sign") + 1] == "DEADBEEF", codesign
     print("OK: dev_macos_postprocess re-signs with the supplied identity, not ad-hoc")
+
+
+# ---------------------------------------------------------------------------
+# Icon Composer (.icon) dev-banner swap
+# ---------------------------------------------------------------------------
+
+def test_build_icon_hooks_works_without_glyph_when_asset_dir_set():
+    # Real-art appiconset (macterm): mac_asset_dir set, no glyph_text/glyph_svg.
+    # The swap overlays the banner on the existing PNGs, so hooks must be live.
+    ns = _load_apple()
+    with tempfile.TemporaryDirectory() as root:
+        mac_dir = os.path.join(root, "AppIcon.appiconset")
+        os.makedirs(mac_dir)
+        cfg = {"icons": {"mac_asset_dir": mac_dir}}
+        pre, post = ns["build_icon_hooks"](cfg, platforms=("mac",))
+        assert pre is not None and post is not None, (
+            "no-glyph appiconset must still get overlay hooks"
+        )
+    print("OK: build_icon_hooks returns overlay hooks for a glyphless asset dir")
+
+
+def test_swap_dev_icons_overlays_banner_without_glyph():
+    try:
+        from PIL import Image
+    except ImportError:
+        import pytest
+        pytest.skip("Pillow not installed")
+    sys.path.insert(0, str(LIB_DIR.parent))
+    try:
+        ns = _load_apple()
+        ns["__name__"] = "admin_lib.apple"
+        ns["__package__"] = "admin_lib"
+        with tempfile.TemporaryDirectory() as root:
+            mac_dir = os.path.join(root, "AppIcon.appiconset")
+            os.makedirs(mac_dir)
+            png = os.path.join(mac_dir, "icon_512.png")
+            Image.new("RGBA", (512, 512), (20, 20, 30, 255)).save(png)
+            before = open(png, "rb").read()
+
+            ok = ns["swap_dev_icons"]({"mac": mac_dir}, {})  # no glyph -> overlay
+            assert ok is True
+            after = open(png, "rb").read()
+            assert after != before, "overlay must modify the existing PNG in place"
+            # the art region (top-left) stays the base color; only the banner changes
+            im = Image.open(png).convert("RGBA")
+            assert im.size == (512, 512), "overlay preserves the canonical size"
+        print("OK: swap_dev_icons overlays the banner on existing PNGs (no glyph)")
+    finally:
+        sys.path.remove(str(LIB_DIR.parent))
+
+
+def test_inject_and_strip_banner_layer():
+    ns = _load_apple()
+    doc = {"groups": [{
+        "layers": [{"name": "icon-raw", "image-name": "icon-raw.png"}],
+        "translucency": {"enabled": True, "value": 0.5},
+    }]}
+
+    ns["_inject_banner_layer"](doc)
+    assert len(doc["groups"]) == 2
+    banner_group = doc["groups"][-1]
+    assert ns["_is_banner_group"](banner_group), "banner group appended last (renders on top)"
+    layer = banner_group["layers"][0]
+    assert layer["glass"] is False, "banner layer must be opaque (no Liquid Glass)"
+    assert layer["image-name"] == "dev-banner.png"
+    assert "translucency" not in banner_group, "banner group must not inherit translucency"
+    # Base glyph group is untouched.
+    assert doc["groups"][0]["layers"][0]["name"] == "icon-raw"
+
+    # Idempotent: re-injecting does not stack a second banner group.
+    ns["_inject_banner_layer"](doc)
+    assert sum(1 for g in doc["groups"] if ns["_is_banner_group"](g)) == 1
+
+    ns["_strip_banner_layer"](doc)
+    assert len(doc["groups"]) == 1
+    assert not any(ns["_is_banner_group"](g) for g in doc["groups"])
+    print("OK: _inject/_strip_banner_layer add/remove one opaque top group idempotently")
+
+
+def test_restore_icon_composer_reverts_from_backup():
+    ns = _load_apple()
+    with tempfile.TemporaryDirectory() as root:
+        icon = os.path.join(root, "AppIcon.icon")
+        assets = os.path.join(icon, "Assets")
+        os.makedirs(assets)
+        pristine = '{\n  "groups" : [\n\n  ]\n}\n'
+        json_path = os.path.join(icon, "icon.json")
+        backup = os.path.join(root, "icon-backup", "icon-composer")
+        os.makedirs(backup)
+
+        # Simulate a swapped state: pristine json saved in backup, live json
+        # mutated with a banner group, banner asset present.
+        with open(os.path.join(backup, "icon.json"), "w") as f:
+            f.write(pristine)
+        with open(json_path, "w") as f:
+            f.write('{"groups":[{"layers":[{"name":"dev-banner"}]}]}')
+        with open(os.path.join(assets, "dev-banner.png"), "wb") as f:
+            f.write(b"PNG")
+
+        ns["restore_icon_composer"](icon, backup)
+
+        with open(json_path) as f:
+            assert f.read() == pristine, "icon.json restored byte-for-byte from backup"
+        assert not os.path.exists(os.path.join(assets, "dev-banner.png")), "banner asset removed"
+        assert not os.path.exists(backup), "backup dir cleaned up"
+    print("OK: restore_icon_composer reverts icon.json from backup + removes banner asset")
+
+
+def test_restore_icon_composer_strips_in_place_without_backup():
+    ns = _load_apple()
+    with tempfile.TemporaryDirectory() as root:
+        icon = os.path.join(root, "AppIcon.icon")
+        assets = os.path.join(icon, "Assets")
+        os.makedirs(assets)
+        json_path = os.path.join(icon, "icon.json")
+        with open(json_path, "w") as f:
+            json.dump({"groups": [
+                {"layers": [{"name": "icon-raw"}]},
+                {"layers": [{"name": "dev-banner", "image-name": "dev-banner.png"}]},
+            ]}, f)
+        with open(os.path.join(assets, "dev-banner.png"), "wb") as f:
+            f.write(b"PNG")
+        backup = os.path.join(root, "missing-backup")  # never created
+
+        ns["restore_icon_composer"](icon, backup)
+
+        with open(json_path) as f:
+            doc = json.load(f)
+        assert len(doc["groups"]) == 1, "banner group stripped in place"
+        assert doc["groups"][0]["layers"][0]["name"] == "icon-raw"
+        assert not os.path.exists(os.path.join(assets, "dev-banner.png"))
+    print("OK: restore_icon_composer strips banner in place when backup is gone")
+
+
+def test_refresh_app_icon_cache_reregisters_bundle():
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return _FakeCompleted(returncode=0)
+
+    ns = _load_apple(subprocess_run=fake_run)
+    with tempfile.TemporaryDirectory() as root:
+        app = os.path.join(root, "Macterm.app")
+        os.makedirs(app)
+        ns["refresh_app_icon_cache"](app)
+
+    if os.path.exists(ns["_LSREGISTER"]):
+        assert calls, "refresh must invoke lsregister when it is present"
+        ls = calls[-1]
+        assert ls[0] == ns["_LSREGISTER"] and ls[1] == "-f" and ls[2] == app, ls
+        print("OK: refresh_app_icon_cache touches + re-registers the bundle via lsregister -f")
+    else:
+        assert not calls, "refresh must be a no-op when lsregister is absent"
+        print("OK: refresh_app_icon_cache is a no-op without lsregister (non-macOS)")
+
+
+def test_swap_dev_icon_composer_roundtrip():
+    try:
+        import PIL  # noqa: F401
+    except ImportError:
+        import pytest
+        pytest.skip("Pillow not installed")
+
+    # swap does `from .icons import make_dev_banner`; give the exec-loaded
+    # namespace a package context so that relative import resolves to the real
+    # admin_lib.icons (repo root on sys.path makes admin_lib importable).
+    sys.path.insert(0, str(LIB_DIR.parent))
+    try:
+        ns = _load_apple()
+        ns["__name__"] = "admin_lib.apple"
+        ns["__package__"] = "admin_lib"
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as root:
+            icon = os.path.join(root, "AppIcon.icon")
+            assets = os.path.join(icon, "Assets")
+            os.makedirs(assets)
+            Image.new("RGBA", (256, 256), (10, 10, 10, 255)).save(
+                os.path.join(assets, "icon-raw.png"))
+            pristine = json.dumps({
+                "fill": {"solid": "srgb:0,0,0,1"},
+                "groups": [{
+                    "layers": [{"glass": True, "image-name": "icon-raw.png", "name": "icon-raw"}],
+                    "translucency": {"enabled": True, "value": 0.5},
+                }],
+            }, indent=2) + "\n"
+            json_path = os.path.join(icon, "icon.json")
+            with open(json_path, "w") as f:
+                f.write(pristine)
+            backup = os.path.join(root, "icon-backup", "icon-composer")
+
+            assert ns["swap_dev_icon_composer"](icon, backup) is True
+            assert os.path.isfile(os.path.join(assets, "dev-banner.png")), "banner asset generated"
+            with open(json_path) as f:
+                doc = json.load(f)
+            assert any(ns["_is_banner_group"](g) for g in doc["groups"]), "banner group injected"
+            assert os.path.isfile(os.path.join(backup, "icon.json")), "pristine json backed up"
+
+            ns["restore_icon_composer"](icon, backup)
+            with open(json_path) as f:
+                assert f.read() == pristine, "icon.json restored byte-for-byte after dev run"
+            assert not os.path.exists(os.path.join(assets, "dev-banner.png"))
+            assert not os.path.exists(backup)
+        print("OK: swap_dev_icon_composer → restore round-trips icon.json + banner asset")
+    finally:
+        sys.path.remove(str(LIB_DIR.parent))
 
 
