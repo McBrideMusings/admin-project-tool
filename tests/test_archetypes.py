@@ -1032,8 +1032,9 @@ def test_hiding_logs_does_not_readd_builtin():
     assert "logs" not in core._all_commands()
 
 
-def test_builtin_logs_emitted_when_no_logs_command():
-    """An archetype without a `logs` command keeps the builtin file-tailer."""
+def test_no_logs_command_without_logs_config():
+    """A project that neither defines a `logs` command nor a [logs] section gets
+    NO `logs` command — the old auto-injected tmp/*.log file-tailer is gone."""
     m = Manifest(
         project_name="No Logs Cmd",
         python_min="3.11",
@@ -1048,5 +1049,5 @@ def test_builtin_logs_emitted_when_no_logs_command():
     assert "logs" not in resolved.commands
     _clear_registry()
     interp.register_all(resolved, m.project_name)
-    # No archetype logs command → the builtin file-tailer registers one.
-    assert "logs" in core._all_commands()
+    # No logs command and no [logs] section → no `logs` command at all.
+    assert "logs" not in core._all_commands()

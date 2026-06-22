@@ -55,7 +55,8 @@ def test_register_commands_actions_and_env():
     resolved = _resolve(data)
     interp.register_all(resolved, "T")
 
-    assert set(core._all_commands()) == {"build", "greet", "logs"}
+    # No [logs] section and no `logs` command → no auto-injected `logs` command.
+    assert set(core._all_commands()) == {"build", "greet"}
     assert set(core._actions) == {"compile-step", "greet"}
     # ${WHO:-world} is discovered and registered with its default + origin.
     assert "WHO" in core._referenced_env_vars
