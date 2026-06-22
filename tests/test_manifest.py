@@ -239,6 +239,27 @@ def test_logs_pick_kind():
     assert logs["pick"]["glob"] == "tmp/*.log"
 
 
+def test_logs_dump_roundtrips_docker_kind():
+    # dump() used to only know the file shape, silently dropping non-file specs
+    # to an empty [logs.name] block. It must now round-trip kind + fields.
+    src = "\n".join((
+        'project_name = "Roundtrip"',
+        'python_min = "3.11"',
+        "[logs.db]",
+        'kind = "docker"',
+        'container = "stash"',
+        'host = "${DB_HOST}"',
+        'highlight = ["err", "warn"]',
+    ))
+    dumped = dump(parse(tomllib.loads(src)))
+    spec = parse(tomllib.loads(dumped)).logs["db"]
+    assert spec["kind"] == "docker"
+    assert spec["container"] == "stash"
+    assert spec["host"] == "${DB_HOST}"
+    assert spec["user"] is None
+    assert spec["highlight"] == ["err", "warn"]
+
+
 def test_logs_invalid_kind_raises():
     with _pytest_raises(ManifestError, "kind must be one of"):
         _parse_logs_toml("[logs.x]", 'kind = "nope"', 'run = "x"')

@@ -42,6 +42,11 @@ from .log_format import make_formatter
 # Bold + reverse video — makes highlight-matching lines pop out of a noisy stream.
 _HIGHLIGHT = "\033[1;7m"
 
+# Serializes stdout writes so the main tail thread and the log-bridge sink
+# (which runs on ThreadingHTTPServer worker threads, see _start_bridge_session)
+# can't splice each other's lines or highlight escape sequences mid-write.
+_OUTPUT_LOCK = threading.Lock()
+
 
 class LineRenderer:
     """Route every tailed line through the shared LogFormatter (timestamp
@@ -66,8 +71,49 @@ class LineRenderer:
             body = out[:-1] if out.endswith("\n") else out
             if any(p.search(body) for p in self._patterns):
                 out = f"{_HIGHLIGHT}{body}{C.RESET}\n"
-        sys.stdout.write(out)
+        with _OUTPUT_LOCK:
+            sys.stdout.write(out)
+            sys.stdout.flush()
+
+
+class _RawSink:
+    """Default file/pick output: bytes straight to stdout, no formatting — keeps
+    the fast, binary-safe path byte-identical when no highlight is configured.
+    """
+
+    def feed(self, data):
+        sys.stdout.buffer.write(data)
         sys.stdout.flush()
+
+    def flush(self):
+        pass
+
+
+class _RenderSink:
+    """File/pick output when a highlight list is set: decode the byte stream,
+    buffer partial lines across reads, and route each complete line through a
+    LineRenderer so file kinds get the same formatter + whole-line highlight as
+    command/docker. A trailing unterminated line is emitted on flush().
+    """
+
+    def __init__(self, highlight):
+        self._r = LineRenderer(highlight)
+        self._buf = ""
+
+    def feed(self, data):
+        self._buf += data.decode("utf-8", "replace")
+        *lines, self._buf = self._buf.split("\n")
+        for ln in lines:
+            self._r.write(ln + "\n")
+
+    def flush(self):
+        if self._buf:
+            self._r.write(self._buf)
+            self._buf = ""
+
+
+def _make_file_sink(highlight):
+    return _RenderSink(highlight) if highlight else _RawSink()
 
 
 def register_logs_command(spec):
@@ -104,73 +150,100 @@ def register_logs_command(spec):
 
         target = spec[target_name]
         kind = target.get("kind", "file")
-        highlight = target.get("highlight", [])
-
-        def _resolve_opt(key):
-            val = target.get(key)
-            return resolve_env(val) if val else None
-
-        if kind == "command":
-            return tail_command(
-                resolve_env(target["run"]),
-                _resolve_opt("host"),
-                _resolve_opt("user"),
-                highlight,
-            )
-        if kind == "docker":
-            return tail_docker(
-                resolve_env(target["container"]),
-                _resolve_opt("host"),
-                _resolve_opt("user"),
-                tail_n=tail_n, show_all=show_all, follow=follow, highlight=highlight,
-            )
-        if kind == "pick":
-            return tail_pick(
-                resolve_env(target["glob"]),
-                tail_n=tail_n, show_all=show_all, follow=follow,
-            )
-
-        # kind == "file"
-        envs = target["envs"]
-
-        if env_name is None:
-            env_name = target.get("default_env")
-            if env_name is None:
-                if len(envs) == 1:
-                    env_name = next(iter(envs))
-                else:
-                    menu = OrderedDict(
-                        (e, envs[e]["path"]) for e in envs
-                    )
-                    env_name = pick_target_or_none(
-                        menu,
-                        f"Select env for '{target_name}'",
-                        f"logs: --env required for '{target_name}' in "
-                        f"non-interactive context (have: {', '.join(envs)})",
-                    )
-                    if env_name is None:
-                        return 1
-
-        if env_name not in envs:
-            err(
-                f"logs: unknown env '{env_name}' for '{target_name}' "
-                f"(have: {', '.join(envs)})"
-            )
-            sys.exit(1)
-
-        env_spec = envs[env_name]
-        path = resolve_env(env_spec["path"])
-        host = resolve_env(env_spec["host"]) if env_spec.get("host") else None
-        user = resolve_env(env_spec["user"]) if env_spec.get("user") else None
-
-        if host:
-            return tail_remote(
-                host, user, path,
-                tail_n=tail_n, show_all=show_all, follow=follow,
-            )
-        return tail_local(
-            path, tail_n=tail_n, show_all=show_all, follow=follow,
+        return LOG_KIND_HANDLERS[kind](
+            target, target_name, env_name, tail_n, show_all, follow,
         )
+
+
+# ---------------------------------------------------------------------------
+# Per-kind dispatch — one handler each, uniform signature. LOG_KIND_HANDLERS
+# below is the single dispatch catalog; a test asserts it covers exactly
+# gen.fragments.LOG_KINDS (the parser/scanner catalog), mirroring the existing
+# KNOWN_KINDS ↔ interp._FACTORIES guard, so adding a kind forces a handler here.
+# ---------------------------------------------------------------------------
+
+def _resolve_opt(target, key):
+    val = target.get(key)
+    return resolve_env(val) if val else None
+
+
+def _tail_command_kind(target, target_name, env_name, tail_n, show_all, follow):
+    return tail_command(
+        resolve_env(target["run"]),
+        _resolve_opt(target, "host"),
+        _resolve_opt(target, "user"),
+        target.get("highlight", []),
+    )
+
+
+def _tail_docker_kind(target, target_name, env_name, tail_n, show_all, follow):
+    return tail_docker(
+        resolve_env(target["container"]),
+        _resolve_opt(target, "host"),
+        _resolve_opt(target, "user"),
+        tail_n=tail_n, show_all=show_all, follow=follow,
+        highlight=target.get("highlight", []),
+    )
+
+
+def _tail_pick_kind(target, target_name, env_name, tail_n, show_all, follow):
+    return tail_pick(
+        resolve_env(target["glob"]),
+        tail_n=tail_n, show_all=show_all, follow=follow,
+        highlight=target.get("highlight", []),
+    )
+
+
+def _tail_file_kind(target, target_name, env_name, tail_n, show_all, follow):
+    envs = target["envs"]
+
+    if env_name is None:
+        env_name = target.get("default_env")
+        if env_name is None:
+            if len(envs) == 1:
+                env_name = next(iter(envs))
+            else:
+                menu = OrderedDict(
+                    (e, envs[e]["path"]) for e in envs
+                )
+                env_name = pick_target_or_none(
+                    menu,
+                    f"Select env for '{target_name}'",
+                    f"logs: --env required for '{target_name}' in "
+                    f"non-interactive context (have: {', '.join(envs)})",
+                )
+                if env_name is None:
+                    return 1
+
+    if env_name not in envs:
+        err(
+            f"logs: unknown env '{env_name}' for '{target_name}' "
+            f"(have: {', '.join(envs)})"
+        )
+        sys.exit(1)
+
+    env_spec = envs[env_name]
+    path = resolve_env(env_spec["path"])
+    host = resolve_env(env_spec["host"]) if env_spec.get("host") else None
+    user = resolve_env(env_spec["user"]) if env_spec.get("user") else None
+    highlight = target.get("highlight", [])
+
+    if host:
+        return tail_remote(
+            host, user, path,
+            tail_n=tail_n, show_all=show_all, follow=follow, highlight=highlight,
+        )
+    return tail_local(
+        path, tail_n=tail_n, show_all=show_all, follow=follow, highlight=highlight,
+    )
+
+
+LOG_KIND_HANDLERS = {
+    "file": _tail_file_kind,
+    "command": _tail_command_kind,
+    "docker": _tail_docker_kind,
+    "pick": _tail_pick_kind,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -270,8 +343,8 @@ def tail_docker(container, host, user, tail_n=0, show_all=False, follow=True,
         stop_bridge()
 
 
-def tail_pick(pattern, tail_n=0, show_all=False, follow=True):
-    """Glob `pattern`, let the user pick a file, then tail it raw."""
+def tail_pick(pattern, tail_n=0, show_all=False, follow=True, highlight=None):
+    """Glob `pattern`, let the user pick a file, then tail it (honoring highlight)."""
     matches = sorted(
         globmod.glob(pattern),
         key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0,
@@ -296,7 +369,8 @@ def tail_pick(pattern, tail_n=0, show_all=False, follow=True):
         )
         if chosen is None:
             return 1
-    return tail_local(chosen, tail_n=tail_n, show_all=show_all, follow=follow)
+    return tail_local(chosen, tail_n=tail_n, show_all=show_all, follow=follow,
+                      highlight=highlight)
 
 
 def _stream_proc(argv, renderer, merge_stderr=False):
@@ -413,13 +487,17 @@ def _parse_int(s):
 # Local tailing
 # ---------------------------------------------------------------------------
 
-def tail_local(path, tail_n=0, show_all=False, follow=True, poll_interval=0.25):
+def tail_local(path, tail_n=0, show_all=False, follow=True, poll_interval=0.25,
+               highlight=None):
     """Stream a local log file.
 
     show_all=True dumps from start; else tail_n>0 emits last N lines or cursor
     starts at EOF. follow=True tracks appends and reopens on inode change or
-    size shrink (handles rotation and truncation-style buffers).
+    size shrink (handles rotation and truncation-style buffers). A non-empty
+    highlight routes output through a LineRenderer (formatter + whole-line
+    highlight); otherwise bytes stream raw and binary-safe.
     """
+    sink = _make_file_sink(highlight)
     if not os.path.exists(path):
         if not follow:
             err(f"logs: file not found: {path}")
@@ -451,9 +529,10 @@ def tail_local(path, tail_n=0, show_all=False, follow=True, poll_interval=0.25):
         else:
             f.seek(0, 2)
 
-        _drain(f)
+        _drain(f, sink)
 
         if not follow:
+            sink.flush()
             return 0
 
         info(f"logs: following {path} (Ctrl-C to stop)")
@@ -476,23 +555,22 @@ def tail_local(path, tail_n=0, show_all=False, follow=True, poll_interval=0.25):
 
                 chunk = f.read(65536)
                 if chunk:
-                    sys.stdout.buffer.write(chunk)
-                    sys.stdout.flush()
+                    sink.feed(chunk)
                     pos = f.tell()
         except KeyboardInterrupt:
+            sink.flush()
             return 0
     finally:
         f.close()
     return 0
 
 
-def _drain(f):
+def _drain(f, sink):
     while True:
         chunk = f.read(65536)
         if not chunk:
             return
-        sys.stdout.buffer.write(chunk)
-        sys.stdout.flush()
+        sink.feed(chunk)
 
 
 def _seek_last_n_lines(f, n):
@@ -537,14 +615,16 @@ def _seek_last_n_lines(f, n):
 # Remote tailing (SSH)
 # ---------------------------------------------------------------------------
 
-def tail_remote(host, user, path, tail_n=0, show_all=False, follow=True):
+def tail_remote(host, user, path, tail_n=0, show_all=False, follow=True,
+                highlight=None):
     """Tail a remote log file over SSH.
 
     Shells out to `ssh [-l user] host 'tail ... path'`. Uses `-F` for follow
     so the remote side handles rotation/truncation. Ctrl-C terminates the ssh
-    child cleanly.
+    child cleanly. A non-empty highlight routes output through a LineRenderer.
     """
     target = f"{user}@{host}" if user else host
+    sink = _make_file_sink(highlight)
 
     if show_all:
         head = "tail -n +1"
@@ -585,11 +665,11 @@ def tail_remote(host, user, path, tail_n=0, show_all=False, follow=True):
                     else proc.stdout.read(4096)
                 if not chunk:
                     break
-                sys.stdout.buffer.write(chunk)
-                sys.stdout.flush()
+                sink.feed(chunk)
         except KeyboardInterrupt:
             proc.terminate()
     finally:
+        sink.flush()
         try:
             proc.wait(timeout=2)
         except subprocess.TimeoutExpired:

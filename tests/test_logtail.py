@@ -372,3 +372,131 @@ def test_line_renderer_highlights_matching_lines_only():
     print("OK: LineRenderer wraps only matching lines")
 
 
+# --- kind dispatch catalog guard --------------------------------------------
+
+def test_log_kind_handlers_cover_manifest_kinds():
+    # Mirrors test_interp.test_factories_cover_known_kinds: the logtail dispatch
+    # catalog must match the parser/scanner catalog so a new kind can't be
+    # half-wired (parseable but undispatchable, or vice versa).
+    from gen.fragments import LOG_KINDS
+    ns = _load_logtail()
+    assert set(ns["LOG_KIND_HANDLERS"]) == set(LOG_KINDS)
+    print("OK: LOG_KIND_HANDLERS covers exactly gen.fragments.LOG_KINDS")
+
+
+# --- file/pick sinks (highlight vs raw) -------------------------------------
+
+def test_make_file_sink_renders_only_with_highlight():
+    ns = _load_logtail()
+    assert type(ns["_make_file_sink"]([])).__name__ == "_RawSink"
+    assert type(ns["_make_file_sink"](["x"])).__name__ == "_RenderSink"
+    print("OK: _make_file_sink picks RawSink without highlight, RenderSink with")
+
+
+def test_raw_sink_writes_bytes_verbatim():
+    ns = _load_logtail()
+
+    class _Buf:
+        def __init__(self):
+            self.data = b""
+
+        def write(self, b):
+            self.data += b
+
+        def flush(self):
+            pass
+
+    out = _types.SimpleNamespace(buffer=_Buf(), flush=lambda: None)
+    ns["sys"] = _types.SimpleNamespace(stdout=out)
+    sink = ns["_RawSink"]()
+    sink.feed(b"\x00raw\xff")
+    sink.flush()
+    assert out.buffer.data == b"\x00raw\xff", "raw sink must pass bytes untouched"
+    print("OK: _RawSink streams bytes verbatim (binary-safe)")
+
+
+def test_render_sink_buffers_partial_lines_then_flushes():
+    ns = _load_logtail()
+
+    class _Out:
+        def __init__(self):
+            self.chunks = []
+
+        def isatty(self):
+            return False  # no color, so lines pass through the identity formatter
+
+        def write(self, s):
+            self.chunks.append(s)
+
+        def flush(self):
+            pass
+
+    out = _Out()
+    ns["sys"] = _types.SimpleNamespace(stdout=out)
+    sink = ns["_RenderSink"]([])
+    sink.feed(b"line1\npart")
+    assert out.chunks == ["line1\n"], out.chunks  # partial line held back
+    sink.feed(b"ial\nline3\n")
+    assert out.chunks == ["line1\n", "partial\n", "line3\n"], out.chunks
+    sink.feed(b"trailing-no-newline")
+    assert out.chunks == ["line1\n", "partial\n", "line3\n"], "no newline yet"
+    sink.flush()
+    assert out.chunks[-1] == "trailing-no-newline", "flush emits the trailing line"
+    print("OK: _RenderSink line-buffers across reads and flushes the tail")
+
+
+# --- highlight forwarding to file/pick (was a silent no-op) ------------------
+
+def test_cmd_logs_file_kind_forwards_highlight_to_tail_local():
+    ns, registry, errs = _load_logtail_for_cmd()
+    calls = _capture(ns, "tail_local", rc=0)
+    ns["register_logs_command"]({
+        "app": {
+            "kind": "file", "default_env": "prod",
+            "envs": {"prod": {"path": "/tmp/a.log", "host": None, "user": None}},
+            "highlight": ["ERR"],
+        }
+    })
+    assert registry["logs"](["app"]) == 0
+    (_args, kw), = calls
+    assert kw.get("highlight") == ["ERR"], kw
+    print("OK: file kind forwards highlight to tail_local")
+
+
+def test_cmd_logs_pick_kind_forwards_highlight():
+    ns, registry, errs = _load_logtail_for_cmd()
+    calls = _capture(ns, "tail_pick", rc=0)
+    ns["register_logs_command"]({
+        "pick": {"kind": "pick", "glob": "tmp/*.log", "highlight": ["WARN"]}
+    })
+    assert registry["logs"](["pick"]) == 0
+    (_args, kw), = calls
+    assert kw.get("highlight") == ["WARN"], kw
+    print("OK: pick kind forwards highlight to tail_pick")
+
+
+# --- output lock (bridge sink vs tail thread) -------------------------------
+
+def test_line_renderer_write_holds_output_lock():
+    ns = _load_logtail()
+    entered = []
+
+    class _TrackLock:
+        def __enter__(self):
+            entered.append(True)
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    ns["_OUTPUT_LOCK"] = _TrackLock()
+    ns["sys"] = _types.SimpleNamespace(
+        stdout=_types.SimpleNamespace(
+            isatty=lambda: False, write=lambda s: None, flush=lambda: None,
+        )
+    )
+    ns["LineRenderer"]().write("x\n")
+    assert entered == [True], "write must run inside the shared output lock"
+    print("OK: LineRenderer.write serializes through _OUTPUT_LOCK")
+
+

@@ -22,6 +22,8 @@ except ImportError:
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from gen.fragments import LOG_KINDS
+
 MANIFEST_FILENAME = "admin.toml"
 
 _KNOWN_KEYS = {
@@ -375,8 +377,6 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     )
 
 
-_LOG_KINDS = ("file", "command", "docker", "pick")
-
 # Keys that carry meaning for every kind and so are never treated as file envs.
 _LOG_COMMON_KEYS = ("kind", "highlight")
 
@@ -428,27 +428,21 @@ def _parse_logs(raw, source: str) -> dict[str, dict]:
             raise ManifestError(f"{source}: logs.{name} must be a table")
 
         kind = target.get("kind", "file")
-        if kind not in _LOG_KINDS:
+        if kind not in LOG_KINDS:
             raise ManifestError(
-                f"{source}: logs.{name}.kind must be one of {_LOG_KINDS}, got '{kind}'"
+                f"{source}: logs.{name}.kind must be one of "
+                f"{tuple(LOG_KINDS)}, got '{kind}'"
             )
 
         if kind == "file":
             spec = _parse_file_log(target, source, name)
-        elif kind == "command":
-            spec = {
-                "run": _log_req_str(target, "run", source, name),
-                "host": _log_opt_str(target, "host", source, name),
-                "user": _log_opt_str(target, "user", source, name),
-            }
-        elif kind == "docker":
-            spec = {
-                "container": _log_req_str(target, "container", source, name),
-                "host": _log_opt_str(target, "host", source, name),
-                "user": _log_opt_str(target, "user", source, name),
-            }
-        else:  # pick
-            spec = {"glob": _log_req_str(target, "glob", source, name)}
+        else:
+            # Non-file kinds are flat string fields driven by LOG_KINDS metadata.
+            meta = LOG_KINDS[kind]
+            spec = {f: _log_req_str(target, f, source, name)
+                    for f in meta["required"]}
+            spec.update({f: _log_opt_str(target, f, source, name)
+                         for f in meta["optional"]})
 
         spec["kind"] = kind
         spec["highlight"] = _parse_highlight(target, source, name)
@@ -568,32 +562,45 @@ def dump(manifest: Manifest) -> str:
     if manifest.logs:
         for target_name, target in manifest.logs.items():
             lines.append(f"[logs.{target_name}]")
-            envs = target.get("envs", {})
-            # Preserve original key order from raw TOML if available.
-            raw_keys = list(manifest.raw.get("logs", {}).get(target_name, {}).keys())
-            ordered_keys = raw_keys if raw_keys else (
-                (["default_env"] if target.get("default_env") else []) + list(envs)
-            )
-            for key in ordered_keys:
-                if key == "default_env":
-                    if target.get("default_env"):
-                        lines.append(f'default_env = "{_escape(target["default_env"])}"')
-                    continue
-                env = envs.get(key)
-                if env is None:
-                    continue
-                host = env.get("host")
-                user = env.get("user")
-                path = env.get("path", "")
-                if host is None and user is None:
-                    lines.append(f'{key} = "{_escape(path)}"')
-                else:
-                    parts = [f'path = "{_escape(path)}"']
-                    if host is not None:
-                        parts.append(f'host = "{_escape(host)}"')
-                    if user is not None:
-                        parts.append(f'user = "{_escape(user)}"')
-                    lines.append(f"{key} = {{ " + ", ".join(parts) + " }")
+            kind = target.get("kind", "file")
+            if kind == "file":
+                envs = target.get("envs", {})
+                # Preserve original key order from raw TOML if available.
+                raw_keys = list(manifest.raw.get("logs", {}).get(target_name, {}).keys())
+                ordered_keys = raw_keys if raw_keys else (
+                    (["default_env"] if target.get("default_env") else []) + list(envs)
+                )
+                for key in ordered_keys:
+                    if key == "default_env":
+                        if target.get("default_env"):
+                            lines.append(f'default_env = "{_escape(target["default_env"])}"')
+                        continue
+                    env = envs.get(key)
+                    if env is None:
+                        continue
+                    host = env.get("host")
+                    user = env.get("user")
+                    path = env.get("path", "")
+                    if host is None and user is None:
+                        lines.append(f'{key} = "{_escape(path)}"')
+                    else:
+                        parts = [f'path = "{_escape(path)}"']
+                        if host is not None:
+                            parts.append(f'host = "{_escape(host)}"')
+                        if user is not None:
+                            parts.append(f'user = "{_escape(user)}"')
+                        lines.append(f"{key} = {{ " + ", ".join(parts) + " }")
+            else:
+                # Non-file kinds: kind + flat string fields (LOG_KINDS metadata).
+                lines.append(f'kind = "{_escape(kind)}"')
+                for f in (*LOG_KINDS[kind]["required"], *LOG_KINDS[kind]["optional"]):
+                    val = target.get(f)
+                    if val is not None:
+                        lines.append(f'{f} = "{_escape(val)}"')
+            highlight = target.get("highlight") or []
+            if highlight:
+                items = ", ".join(f'"{_escape(x)}"' for x in highlight)
+                lines.append(f"highlight = [{items}]")
             lines.append("")
 
     if manifest.server:

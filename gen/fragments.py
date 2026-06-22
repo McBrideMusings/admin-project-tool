@@ -62,6 +62,27 @@ KIND_MODULES: dict[str, list[str]] = {
 }
 
 
+# Single source of truth for [logs.<name>] source kinds, shared by the manifest
+# parser (validation + field parsing), the ${VAR} scanner below, and the logtail
+# dispatch (admin_lib.logtail.LOG_KIND_HANDLERS — a test asserts the two cover
+# the same kinds, mirroring KNOWN_KINDS ↔ interp._FACTORIES). "file" is special:
+# it carries per-environment subtables (path/host/user) rather than flat string
+# fields, so the parser handles it on its own; the rest are flat string fields.
+LOG_KINDS: dict[str, dict[str, tuple]] = {
+    "file":    {"required": (),            "optional": ()},
+    "command": {"required": ("run",),      "optional": ("host", "user")},
+    "docker":  {"required": ("container",), "optional": ("host", "user")},
+    "pick":    {"required": ("glob",),      "optional": ()},
+}
+
+# Flat ${VAR}-bearing string fields across all non-file log kinds (what the
+# scanner walks under logs.<name>); derived so a new kind needs no scanner edit.
+LOG_FLAT_FIELDS: tuple = tuple(sorted({
+    f for meta in LOG_KINDS.values()
+    for f in (*meta["required"], *meta["optional"])
+}))
+
+
 def _safe_ident(name: str) -> str:
     return name.replace("-", "_").replace(":", "_").replace(".", "_")
 
@@ -117,7 +138,7 @@ def scan_env_vars(commands, urls=None, logs=None, config_tables=None) -> dict[st
                 _scan_for_env_vars(env_spec.get(field), _ENV_VAR_RE, seen, origin)
         # command/docker/pick kinds: scan flat string fields under logs.<target>
         origin = f"logs.{target_name}"
-        for field in ("run", "container", "glob", "host", "user"):
+        for field in LOG_FLAT_FIELDS:
             _scan_for_env_vars(target.get(field), _ENV_VAR_RE, seen, origin)
 
     for table_name, table in (config_tables or {}).items():
