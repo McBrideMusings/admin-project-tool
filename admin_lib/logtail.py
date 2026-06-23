@@ -159,7 +159,7 @@ def register_logs_command(spec):
 # Per-kind dispatch — one handler each, uniform signature. LOG_KIND_HANDLERS
 # below is the single dispatch catalog; a test asserts it covers exactly
 # admin_lib.kinds.LOG_KINDS (the parser/scanner catalog), mirroring the existing
-# KNOWN_KINDS ↔ interp._FACTORIES guard, so adding a kind forces a handler here.
+# action-kind factory-binding check, so adding a kind forces a handler here.
 # ---------------------------------------------------------------------------
 
 def _resolve_opt(target, key):

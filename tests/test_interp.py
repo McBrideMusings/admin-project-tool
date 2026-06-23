@@ -141,12 +141,6 @@ def test_compile_produces_runnable_standalone(tmp_path):
     assert "HELLO_FROM_COMPILED" in out.stdout
 
 
-def test_factories_cover_known_kinds():
-    """The interpreter's per-kind factories must exactly match the kind catalog."""
-    from admin_lib.kinds import KNOWN_KINDS
-    assert set(interp._FACTORIES) == set(KNOWN_KINDS)
-
-
 def test_flat_action_runs_requires_before_body(monkeypatch):
     """A guarded flat action runs its `requires` guards before the body, fail-fast."""
     data = {

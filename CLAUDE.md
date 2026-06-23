@@ -15,13 +15,13 @@ Runs per-project tasks from a short `admin.toml` manifest plus a library of comp
 1. **Manifest is truth.** `admin.toml` is the spec. The interpreter reads it live; there is no generated artifact to drift. `admin compile` is the only thing that emits a file.
 2. **Commands are pure routing.** `[commands.X]` may only contain `desc` + `steps` (list of action names). `kind`, `run`, `targets` belong in `[actions.X]`. The resolver errors loudly otherwise.
 3. **Stdlib only (with one narrow carve-out).** No third-party deps in the tool OR the interpreter/compiled output by default. The only exception is try/except-guarded optional imports that degrade gracefully when absent (today: `Pillow` + `cairosvg` in `admin_lib/icons.py`; `tomli` in `admin_lib/manifest.py` and `admin_lib/apple.py` as a Python 3.9/3.10 backport for `tomllib`). New optional deps must clear the same bar. See [ADR-0001](docs/adr/0001-stdlib-only.md). Manifest parses via `tomllib` (or `tomli` on Python 3.9/3.10); writing TOML is hand-rolled.
-4. **One engine.** The interpreter (`admin_lib/interp.py`) is the single execution path. `admin compile` packages that same interpreter + `admin_lib` + the resolved manifest into a zipapp — it never re-implements per-kind logic. Adding a kind = one factory in `interp._FACTORIES` (kept in sync with `admin_lib/kinds.KNOWN_KINDS`).
+4. **One engine.** The interpreter (`admin_lib/interp.py`) is the single execution path. `admin compile` packages that same interpreter + `admin_lib` + the resolved manifest into a zipapp — it never re-implements per-kind logic. Adding a kind = one `_kind(...)` entry in the `admin_lib/kinds.KINDS` catalog + one `register_factory(name, ...)` in `interp.py`; the interpreter checks at import that every kind has a factory.
 5. **Tool verbs are reserved.** `new`, `check`, `compile` share the `admin <word>` namespace with manifest commands; a manifest may not define a command with one of these names (the CLI errors).
 
 ## Hard rules (from past pain)
 
 - **Never scaffold `admin_inline.py`.** Project-specific Python belongs upstream in `admin_lib/` or `archetypes/`. A per-project inline file is a regression vector.
-- **A new action kind needs both a `KNOWN_KINDS` entry and an `interp._FACTORIES` factory.** A test (`tests/test_interp.py::test_factories_cover_known_kinds`) fails if they drift apart.
+- **A new action kind is one `_kind(...)` entry in `admin_lib/kinds.KINDS` plus a `register_factory(name, ...)` in `admin_lib/interp.py`.** `KINDS` is the single source of truth (`KNOWN_KINDS`/`CONFIGLESS_KINDS`/`KIND_MODULES` are derived views). `register_factory` rejects an undeclared kind, and `interp.py` raises at import if any declared kind has no factory — so the catalog and factories can't drift, no sync test required.
 
 ## Testing
 

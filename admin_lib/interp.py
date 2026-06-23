@@ -47,6 +47,7 @@ from admin_lib.core import (
     sync,
     _apply_cmd_env,
 )
+from admin_lib.kinds import KINDS, register_factory
 
 
 class InterpError(Exception):
@@ -483,30 +484,38 @@ def _make_print_urls(cmd, ns):
     return _fn
 
 
-_FACTORIES = {
-    "shell": _make_shell,
-    "shell-passthrough": _make_shell_passthrough,
-    "multi-target": _make_multi_target,
-    "apple-dev-loop": _make_multi_target,  # same shape as multi-target
-    "docker-reload-loop": _make_docker_reload_loop,
-    "docker-dev": _make_docker_dev,
-    "interactive-shell": _make_interactive_shell,
-    "python": _make_python,
-    "python-script": _make_python_script,
-    "http": _make_http,
-    "npm": _make_npm,
-    "sync": _make_sync,
-    "apple": _make_apple,
-    "kill-port": _make_kill_port,
-    "nuke-dev": _make_nuke_dev,
-    "clean-dev": _make_clean_dev,
-    "fixtures-generate": _make_fixtures_generate,
-    "fixtures-reset": _make_fixtures_reset,
-    "vite-dev": _make_vite_dev,
-    "server-reload": _make_server_reload,
-    "install-template": _make_install_template,
-    "print-urls": _make_print_urls,
-}
+# Bind each kind's closure factory into the single catalog (admin_lib/kinds.KINDS).
+# register_factory rejects any name not declared there; the coverage check below
+# rejects any declared kind left without a factory — together they make the old
+# KNOWN_KINDS/_FACTORIES drift impossible, so no separate sync test is needed.
+register_factory("shell", _make_shell)
+register_factory("shell-passthrough", _make_shell_passthrough)
+register_factory("multi-target", _make_multi_target)
+register_factory("apple-dev-loop", _make_multi_target)  # same shape as multi-target
+register_factory("docker-reload-loop", _make_docker_reload_loop)
+register_factory("docker-dev", _make_docker_dev)
+register_factory("interactive-shell", _make_interactive_shell)
+register_factory("python", _make_python)
+register_factory("python-script", _make_python_script)
+register_factory("http", _make_http)
+register_factory("npm", _make_npm)
+register_factory("sync", _make_sync)
+register_factory("apple", _make_apple)
+register_factory("kill-port", _make_kill_port)
+register_factory("nuke-dev", _make_nuke_dev)
+register_factory("clean-dev", _make_clean_dev)
+register_factory("fixtures-generate", _make_fixtures_generate)
+register_factory("fixtures-reset", _make_fixtures_reset)
+register_factory("vite-dev", _make_vite_dev)
+register_factory("server-reload", _make_server_reload)
+register_factory("install-template", _make_install_template)
+register_factory("print-urls", _make_print_urls)
+
+# Import-time coverage check: every declared kind must have a factory bound. This
+# is the runtime invariant that replaces the old CI-only sync test.
+_unbound = sorted(name for name, spec in KINDS.items() if spec.factory is None)
+if _unbound:
+    raise InterpError(f"action kinds with no registered factory: {_unbound}")
 
 
 # ---------------------------------------------------------------------------
@@ -544,11 +553,12 @@ def _make_step_runner(cmd):
 # ---------------------------------------------------------------------------
 
 def _build_action_fn(cmd, ns):
-    factory = _FACTORIES.get(cmd.kind)
+    spec = KINDS.get(cmd.kind)
+    factory = spec.factory if spec else None
     if factory is None:
         raise InterpError(
             f"unknown action kind '{cmd.kind}' for action '{cmd.name}' "
-            f"(known kinds: {sorted(_FACTORIES)})"
+            f"(known kinds: {sorted(KINDS)})"
         )
     fn = factory(cmd, ns)
 

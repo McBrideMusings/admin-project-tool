@@ -13,7 +13,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from admin_lib.archetypes import ArchetypeError, _to_command, resolve  # noqa: E402
-from admin_lib.kinds import KNOWN_KINDS, KIND_MODULES  # noqa: E402
+from admin_lib.kinds import KNOWN_KINDS, KIND_MODULES, KINDS  # noqa: E402
 from admin_lib.manifest import Manifest  # noqa: E402
 from admin_lib import interp  # noqa: E402
 
@@ -42,7 +42,7 @@ def _expect_error(fn, *, contains: str):
 
 def test_kind_registered():
     assert "interactive-shell" in KNOWN_KINDS
-    assert "interactive-shell" in interp._FACTORIES
+    assert KINDS["interactive-shell"].factory is not None
     assert KIND_MODULES["interactive-shell"] == ["ports", "log_server", "log_bridge", "keybindings", "log_format"]
 
 
