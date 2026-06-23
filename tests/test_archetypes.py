@@ -17,7 +17,7 @@ sys.path.insert(0, str(REPO))
 
 from admin_lib.archetypes import load_archetype, resolve, ArchetypeError, _to_command  # noqa: E402
 from admin_lib.detectors import detect  # noqa: E402
-from admin_lib.kinds import scan_env_vars  # noqa: E402
+from admin_lib.kinds import scan_env_vars, KINDS  # noqa: E402
 from admin_lib.manifest import Command, Manifest, ManifestError, dump as dump_manifest, parse  # noqa: E402
 from admin_lib import core, interp  # noqa: E402
 
@@ -906,7 +906,7 @@ def test_apple_dev_loop_at_ref_args_forwarding(monkeypatch):
     path (including @-ref arg forwarding). This unit test covers the factory side;
     the e2e test below covers runtime dispatch.
     """
-    assert interp._FACTORIES["apple-dev-loop"] is interp._make_multi_target
+    assert KINDS["apple-dev-loop"].factory is interp._make_multi_target
     cmd = Command(
         name="dev",
         run="",
@@ -917,7 +917,7 @@ def test_apple_dev_loop_at_ref_args_forwarding(monkeypatch):
     monkeypatch.setattr(interp, "set_log_context", lambda *a, **k: None)
     captured = {}
     monkeypatch.setattr(interp, "run_command", lambda name, args: captured.update(name=name, args=args))
-    interp._FACTORIES["apple-dev-loop"](cmd, {})(["device", "--no-clean"])
+    KINDS["apple-dev-loop"].factory(cmd, {})(["device", "--no-clean"])
     assert captured == {"name": "dev-device", "args": ["--no-clean"]}
     print("OK: apple-dev-loop @-ref path forwards rest_args")
 

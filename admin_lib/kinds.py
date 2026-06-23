@@ -4,17 +4,23 @@ Historically this module rendered each action kind into Python source for the
 generated ./admin. Under interpreter mode (ADR-0006) that rendering became live
 closures in admin_lib/interp.py, so what remains here is:
 
-  * the kind catalog — KNOWN_KINDS, CONFIGLESS_KINDS, KIND_MODULES — that the
-    manifest and archetype validators consult, and
+  * the kind catalog — the `KINDS` registry of `Kind` records, the single source
+    of truth for every action kind (name, configless flag, auto-pulled modules,
+    and the runtime factory the interpreter binds in). KNOWN_KINDS,
+    CONFIGLESS_KINDS, and KIND_MODULES are derived views the manifest and
+    archetype validators consult, and
   * scan_env_vars() — the ${VAR} / os.environ.get() scanner that feeds the
     runtime `env` command with the set of referenced variables and origins.
 
-KNOWN_KINDS is kept in sync with admin_lib.interp._FACTORIES (a test asserts the
-two never drift).
+The interpreter binds each kind's factory via register_factory() and checks at
+import that every kind has exactly one — so the catalog and the factories can't
+drift, with no separate sync test.
 """
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
+from typing import Callable, Optional
 
 _ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 _PY_ENV_RE = re.compile(
@@ -27,45 +33,91 @@ class FragmentError(Exception):
     pass
 
 
-# Canonical set of action kinds. The runtime closure factory for each lives in
-# admin_lib.interp._FACTORIES; keep the two in sync (tests/test_interp.py guards).
-KNOWN_KINDS = frozenset({
-    "shell", "shell-passthrough", "multi-target", "apple-dev-loop",
-    "docker-reload-loop", "docker-dev", "interactive-shell", "python",
-    "python-script", "http", "npm", "sync", "apple", "kill-port", "nuke-dev",
-    "clean-dev", "fixtures-generate", "fixtures-reset", "vite-dev",
-    "server-reload", "install-template", "print-urls",
-})
+@dataclass
+class Kind:
+    """One action kind — the single record for its name, validation metadata, and
+    runtime factory.
 
-# Kinds whose body is driven by a named manifest config table rather than a
-# `run` string. The manifest/archetype validators skip the "needs run/targets"
-# check for these.
-CONFIGLESS_KINDS = frozenset({
-    "nuke-dev", "clean-dev", "vite-dev", "docker-dev",
-    "fixtures-generate", "fixtures-reset",
-    "server-reload", "install-template", "print-urls",
-})
+    `name`, `configless`, and `modules` are validation metadata the manifest and
+    archetype resolvers read **without importing the interpreter**. `factory` is
+    bound later by admin_lib.interp via register_factory(); the interpreter
+    dispatches on it. Because both sides key off this one record, the metadata
+    and the factory can't drift.
+    """
+    name: str
+    configless: bool = False           # body driven by a config table, not a `run` string
+    modules: tuple[str, ...] = ()      # admin_lib modules auto-pulled when this kind is used
+    factory: Optional[Callable] = field(default=None, repr=False, compare=False)
 
-# Action kinds that pull additional admin_lib modules into scope. The resolver
-# consults this so a project doesn't have to declare these modules explicitly —
-# using a `kind` is enough.
-KIND_MODULES: dict[str, list[str]] = {
-    "kill-port": ["ports", "ports_nuke"],
-    "nuke-dev": ["ports", "ports_nuke"],
-    "docker-reload-loop": ["docker"],
-    "docker-dev": ["docker"],
-    "server-reload": ["docker"],
-    "install-template": ["remote", "unraid"],
-    "fixtures-generate": ["cleanup", "fixtures"],
-    "fixtures-reset": ["cleanup", "fixtures"],
-    "interactive-shell": ["ports", "log_server", "log_bridge", "keybindings", "log_format"],
-}
+
+# The canonical action-kind catalog — the single source of truth. Adding a kind
+# is one _kind(...) line here plus a register_factory(name, ...) in
+# admin_lib/interp.py; the interpreter checks at import that every kind got
+# exactly one factory.
+KINDS: dict[str, Kind] = {}
+
+
+def _kind(name: str, *, configless: bool = False, modules: tuple[str, ...] = ()) -> None:
+    KINDS[name] = Kind(name, configless=configless, modules=modules)
+
+
+_kind("shell")
+_kind("shell-passthrough")
+_kind("multi-target")
+_kind("apple-dev-loop")
+_kind("python")
+_kind("python-script")
+_kind("http")
+_kind("npm")
+_kind("sync")
+_kind("apple")
+_kind("clean-dev", configless=True)
+_kind("vite-dev", configless=True)
+_kind("print-urls", configless=True)
+_kind("docker-reload-loop", modules=("docker",))
+_kind("docker-dev", configless=True, modules=("docker",))
+_kind("server-reload", configless=True, modules=("docker",))
+_kind("kill-port", modules=("ports", "ports_nuke"))
+_kind("nuke-dev", configless=True, modules=("ports", "ports_nuke"))
+_kind("fixtures-generate", configless=True, modules=("cleanup", "fixtures"))
+_kind("fixtures-reset", configless=True, modules=("cleanup", "fixtures"))
+_kind("install-template", configless=True, modules=("remote", "unraid"))
+_kind("interactive-shell", modules=("ports", "log_server", "log_bridge", "keybindings", "log_format"))
+
+
+# Derived views over KINDS — one source, three lenses. Kept as module-level names
+# so the manifest/archetype validators read them directly:
+#   KNOWN_KINDS      — every valid kind name
+#   CONFIGLESS_KINDS — kinds whose body is a config table, not a `run` string
+#                      (validators skip the "needs run/targets" check for these)
+#   KIND_MODULES     — admin_lib modules a kind auto-pulls into scope, so a
+#                      project doesn't have to declare them (using the kind is enough)
+KNOWN_KINDS = frozenset(KINDS)
+CONFIGLESS_KINDS = frozenset(n for n, k in KINDS.items() if k.configless)
+KIND_MODULES: dict[str, list[str]] = {n: list(k.modules) for n, k in KINDS.items() if k.modules}
+
+
+def register_factory(name: str, fn: Callable) -> Callable:
+    """Bind a kind's runtime closure factory (called from admin_lib.interp).
+
+    Raises if `name` isn't a declared kind — you can't register a factory for a
+    kind absent from the catalog. That's one half of the can't-drift guarantee;
+    the other is interp's import-time check that every kind got a factory.
+    """
+    spec = KINDS.get(name)
+    if spec is None:
+        raise FragmentError(
+            f"register_factory: unknown kind {name!r} — declare it with _kind() "
+            "in admin_lib/kinds.py first"
+        )
+    spec.factory = fn
+    return fn
 
 
 # Single source of truth for [logs.<name>] source kinds, shared by the manifest
 # parser (validation + field parsing), the ${VAR} scanner below, and the logtail
 # dispatch (admin_lib.logtail.LOG_KIND_HANDLERS — a test asserts the two cover
-# the same kinds, mirroring KNOWN_KINDS ↔ interp._FACTORIES). "file" is special:
+# the same kinds, mirroring how each action Kind binds its factory). "file" is special:
 # it carries per-environment subtables (path/host/user) rather than flat string
 # fields, so the parser handles it on its own; the rest are flat string fields.
 LOG_KINDS: dict[str, dict[str, tuple]] = {
