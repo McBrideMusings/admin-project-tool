@@ -158,3 +158,17 @@ def test_flat_action_runs_requires_before_body(monkeypatch):
     with pytest.raises(SystemExit):
         core._actions["deploy"]([])
     assert calls == [["no-go"]], "guards must run before the action body, fail-fast"
+
+
+def test_register_factory_rejects_unknown_kind():
+    from admin_lib.kinds import register_factory, FragmentError
+    with pytest.raises(FragmentError):
+        register_factory("no-such-kind", lambda cmd, ns: None)
+
+
+def test_register_factory_rejects_double_registration():
+    """Every kind already has its factory bound at interp import, so re-binding
+    any of them must raise rather than silently overwrite."""
+    from admin_lib.kinds import register_factory, FragmentError
+    with pytest.raises(FragmentError):
+        register_factory("shell", lambda cmd, ns: None)
