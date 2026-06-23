@@ -38,6 +38,7 @@ from .core import (
     warn,
 )
 from .log_format import make_formatter
+from .kinds import LOG_KINDS, register_log_handler, FragmentError
 
 # Bold + reverse video — makes highlight-matching lines pop out of a noisy stream.
 _HIGHLIGHT = "\033[1;7m"
@@ -150,16 +151,17 @@ def register_logs_command(spec):
 
         target = spec[target_name]
         kind = target.get("kind", "file")
-        return LOG_KIND_HANDLERS[kind](
+        return LOG_KINDS[kind].handler(
             target, target_name, env_name, tail_n, show_all, follow,
         )
 
 
 # ---------------------------------------------------------------------------
-# Per-kind dispatch — one handler each, uniform signature. LOG_KIND_HANDLERS
-# below is the single dispatch catalog; a test asserts it covers exactly
-# admin_lib.kinds.LOG_KINDS (the parser/scanner catalog), mirroring the existing
-# action-kind factory-binding check, so adding a kind forces a handler here.
+# Per-kind dispatch — one handler each, uniform signature. Each handler binds
+# into its admin_lib.kinds.LogKind via register_log_handler (below), and the
+# import-time coverage check guarantees every declared log kind got a handler —
+# mirroring the action-kind factory binding, so adding a kind forces a handler
+# here with no separate sync test.
 # ---------------------------------------------------------------------------
 
 def _resolve_opt(target, key):
@@ -238,12 +240,16 @@ def _tail_file_kind(target, target_name, env_name, tail_n, show_all, follow):
     )
 
 
-LOG_KIND_HANDLERS = {
-    "file": _tail_file_kind,
-    "command": _tail_command_kind,
-    "docker": _tail_docker_kind,
-    "pick": _tail_pick_kind,
-}
+register_log_handler("file", _tail_file_kind)
+register_log_handler("command", _tail_command_kind)
+register_log_handler("docker", _tail_docker_kind)
+register_log_handler("pick", _tail_pick_kind)
+
+# Import-time coverage check: every declared log kind must have a handler bound.
+# Replaces the old LOG_KINDS<->LOG_KIND_HANDLERS sync test.
+_unbound_log = sorted(n for n, spec in LOG_KINDS.items() if spec.handler is None)
+if _unbound_log:
+    raise FragmentError(f"log kinds with no registered handler: {_unbound_log}")
 
 
 # ---------------------------------------------------------------------------

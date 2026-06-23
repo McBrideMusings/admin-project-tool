@@ -122,22 +122,59 @@ def register_factory(name: str, fn: Callable) -> Callable:
 
 # Single source of truth for [logs.<name>] source kinds, shared by the manifest
 # parser (validation + field parsing), the ${VAR} scanner below, and the logtail
-# dispatch (admin_lib.logtail.LOG_KIND_HANDLERS — a test asserts the two cover
-# the same kinds, mirroring how each action Kind binds its factory). "file" is special:
-# it carries per-environment subtables (path/host/user) rather than flat string
-# fields, so the parser handles it on its own; the rest are flat string fields.
-LOG_KINDS: dict[str, dict[str, tuple]] = {
-    "file":    {"required": (),            "optional": ()},
-    "command": {"required": ("run",),      "optional": ("host", "user")},
-    "docker":  {"required": ("container",), "optional": ("host", "user")},
-    "pick":    {"required": ("glob",),      "optional": ()},
-}
+# dispatch. Each LogKind carries its required/optional flat fields and — bound at
+# import by admin_lib.logtail via register_log_handler — its tail handler, so the
+# parser catalog and the dispatch catalog are one registry that can't drift (no
+# sync test). "file" is special: it carries per-environment subtables
+# (path/host/user) rather than flat string fields, so the parser handles it on
+# its own; the rest are flat string fields.
+@dataclass
+class LogKind:
+    name: str
+    required: tuple[str, ...] = ()
+    optional: tuple[str, ...] = ()
+    handler: Optional[Callable] = field(default=None, repr=False, compare=False)
+
+
+LOG_KINDS: dict[str, LogKind] = {}
+
+
+def _log_kind(name: str, *, required: tuple[str, ...] = (), optional: tuple[str, ...] = ()) -> None:
+    LOG_KINDS[name] = LogKind(name, required=required, optional=optional)
+
+
+_log_kind("file")
+_log_kind("command", required=("run",), optional=("host", "user"))
+_log_kind("docker", required=("container",), optional=("host", "user"))
+_log_kind("pick", required=("glob",))
+
+
+def register_log_handler(name: str, fn: Callable) -> Callable:
+    """Bind a log kind's tail handler (called from admin_lib.logtail). Raises if
+    `name` isn't a declared log kind, or if it already has a handler bound —
+    mirroring register_factory. logtail runs the import-time check that every log
+    kind got a handler.
+    """
+    spec = LOG_KINDS.get(name)
+    if spec is None:
+        raise FragmentError(
+            f"register_log_handler: unknown log kind {name!r} — declare it with "
+            "_log_kind() in admin_lib/kinds.py first"
+        )
+    if spec.handler is not None:
+        raise FragmentError(
+            f"register_log_handler: log kind {name!r} already has a handler bound "
+            "(double registration)"
+        )
+    spec.handler = fn
+    return fn
+
 
 # Flat ${VAR}-bearing string fields across all non-file log kinds (what the
 # scanner walks under logs.<name>); derived so a new kind needs no scanner edit.
 LOG_FLAT_FIELDS: tuple = tuple(sorted({
-    f for meta in LOG_KINDS.values()
-    for f in (*meta["required"], *meta["optional"])
+    f for spec in LOG_KINDS.values()
+    for f in (*spec.required, *spec.optional)
 }))
 
 

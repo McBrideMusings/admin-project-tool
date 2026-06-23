@@ -60,18 +60,35 @@ class _StubSys:
 def _stub_log_deps():
     """Stubs for the runtime deps logtail pulls from sibling modules, so the
     exec'd source resolves without the package context."""
+    # Stub the admin_lib.kinds log-kind registry so the re-exec'd logtail binds
+    # its handlers into an isolated copy (not the real shared LOG_KINDS, which is
+    # already bound — re-binding would trip the double-registration guard).
+    class _StubLogKind:
+        def __init__(self):
+            self.handler = None
+
+    log_kinds = {n: _StubLogKind() for n in ("file", "command", "docker", "pick")}
+
+    def _register_log_handler(name, fn):
+        log_kinds[name].handler = fn
+        return fn
+
     return {
         "make_formatter": lambda **k: (lambda line: line),
         "C": _types.SimpleNamespace(
             RED="", GREEN="", YELLOW="", BLUE="", MAGENTA="", CYAN="",
             BOLD="", DIM="", RESET="",
         ),
+        "LOG_KINDS": log_kinds,
+        "register_log_handler": _register_log_handler,
+        "FragmentError": Exception,
     }
 
 
 def _strip_relative_imports(source: str) -> str:
     source = _re.sub(r"from \.core import \([^)]*\)", "pass", source, count=1)
     source = _re.sub(r"from \.log_format import .*", "pass", source, count=1)
+    source = _re.sub(r"from \.kinds import .*", "pass", source, count=1)
     return source
 
 
@@ -370,18 +387,6 @@ def test_line_renderer_highlights_matching_lines_only():
     assert out.chunks[0].startswith("\033[1;7m"), out.chunks[0]
     assert not out.chunks[1].startswith("\033[1;7m"), out.chunks[1]
     print("OK: LineRenderer wraps only matching lines")
-
-
-# --- kind dispatch catalog guard --------------------------------------------
-
-def test_log_kind_handlers_cover_manifest_kinds():
-    # Mirrors test_interp.test_factories_cover_known_kinds: the logtail dispatch
-    # catalog must match the parser/scanner catalog so a new kind can't be
-    # half-wired (parseable but undispatchable, or vice versa).
-    from admin_lib.kinds import LOG_KINDS
-    ns = _load_logtail()
-    assert set(ns["LOG_KIND_HANDLERS"]) == set(LOG_KINDS)
-    print("OK: LOG_KIND_HANDLERS covers exactly admin_lib.kinds.LOG_KINDS")
 
 
 # --- file/pick sinks (highlight vs raw) -------------------------------------

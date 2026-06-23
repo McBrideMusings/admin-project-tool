@@ -389,11 +389,11 @@ def _parse_logs(raw, source: str) -> dict[str, dict]:
             spec = _parse_file_log(target, source, name)
         else:
             # Non-file kinds are flat string fields driven by LOG_KINDS metadata.
-            meta = LOG_KINDS[kind]
+            lk = LOG_KINDS[kind]
             spec = {f: _log_req_str(target, f, source, name)
-                    for f in meta["required"]}
+                    for f in lk.required}
             spec.update({f: _log_opt_str(target, f, source, name)
-                         for f in meta["optional"]})
+                         for f in lk.optional})
 
         spec["kind"] = kind
         spec["highlight"] = _parse_highlight(target, source, name)
@@ -544,7 +544,7 @@ def dump(manifest: Manifest) -> str:
             else:
                 # Non-file kinds: kind + flat string fields (LOG_KINDS metadata).
                 lines.append(f'kind = "{_escape(kind)}"')
-                for f in (*LOG_KINDS[kind]["required"], *LOG_KINDS[kind]["optional"]):
+                for f in (*LOG_KINDS[kind].required, *LOG_KINDS[kind].optional):
                     val = target.get(f)
                     if val is not None:
                         lines.append(f'{f} = "{_escape(val)}"')
