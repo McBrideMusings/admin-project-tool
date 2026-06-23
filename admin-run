@@ -32,8 +32,9 @@ from admin_lib.manifest import (  # noqa: E402
     load as load_manifest,
     require_python_311,
 )
-from admin_lib.archetypes import resolve, ArchetypeError  # noqa: E402
+from admin_lib.archetypes import resolve  # noqa: E402
 from admin_lib.detectors import detect as run_detectors  # noqa: E402
+from admin_lib.validate import ValidationError  # noqa: E402
 
 ARCHETYPE_DIR = REPO_DIR / "archetypes"
 DETECTOR_DIR = REPO_DIR / "detectors"
@@ -91,7 +92,7 @@ def cmd_check(project_dir: Path) -> int:
     """Validate the manifest parses, resolves, and references only known things."""
     try:
         resolved, _ = _load_resolved(project_dir)
-    except (ManifestError, ArchetypeError) as e:
+    except ValidationError as e:
         err(str(e))
         return 1
     for event in resolved.merge_log:
@@ -109,7 +110,7 @@ def cmd_compile(project_dir: Path) -> int:
     from admin_lib.compile import compile_standalone
     try:
         resolved, inline_body = _load_resolved(project_dir)
-    except (ManifestError, ArchetypeError) as e:
+    except ValidationError as e:
         err(str(e))
         return 1
     target = project_dir / "admin"
@@ -168,7 +169,7 @@ def dispatch(project_dir: Path, command_argv: list[str]) -> int:
     from admin_lib import interp
     try:
         resolved, inline_body = _load_resolved(project_dir)
-    except (ManifestError, ArchetypeError) as e:
+    except ValidationError as e:
         err(str(e))
         return 1
     interp.interpret(
