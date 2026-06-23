@@ -25,15 +25,15 @@ from pathlib import Path
 REPO_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO_DIR))
 
-from gen.manifest import (  # noqa: E402
+from admin_lib.manifest import (  # noqa: E402
     Manifest,
     ManifestError,
     dump as dump_manifest,
     load as load_manifest,
     require_python_311,
 )
-from gen.archetypes import resolve, ArchetypeError  # noqa: E402
-from gen.detectors import detect as run_detectors  # noqa: E402
+from admin_lib.archetypes import resolve, ArchetypeError  # noqa: E402
+from admin_lib.detectors import detect as run_detectors  # noqa: E402
 
 ARCHETYPE_DIR = REPO_DIR / "archetypes"
 DETECTOR_DIR = REPO_DIR / "detectors"
@@ -106,7 +106,7 @@ def cmd_check(project_dir: Path) -> int:
 
 def cmd_compile(project_dir: Path) -> int:
     """Build a standalone ./admin (zipapp) that embeds this manifest."""
-    from gen.compile import compile_standalone
+    from admin_lib.compile import compile_standalone
     try:
         resolved, inline_body = _load_resolved(project_dir)
     except (ManifestError, ArchetypeError) as e:

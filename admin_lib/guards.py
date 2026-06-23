@@ -63,7 +63,7 @@ def run_requires(names):
 
     On failure, the offending Guard's message is printed via `err()` before
     returning. Unknown names are themselves a failure — the audit pass in
-    `gen/archetypes.py` should have caught them upstream.
+    `admin_lib/archetypes.py` should have caught them upstream.
     """
     for name in names:
         fn = _guards.get(name)

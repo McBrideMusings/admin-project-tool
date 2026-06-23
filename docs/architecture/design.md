@@ -1,6 +1,8 @@
 # admin-project-tool: Manifest-Driven, Archetype-Composable
 
 > **Superseded in part by [ADR-0006](../adr/0006-interpreter-mode.md).** This document describes the original *code-generation* model, where `admin-gen` rendered a self-contained `./admin` script per project. The tool now **interprets** `admin.toml` at runtime instead: the manifest, archetype-merge, and kind model below are all still accurate, but wherever this doc says "render / generate / bundle a `./admin` script", read "register live callables in `admin_lib/interp.py`". Code generation survives only as `admin compile` (a zipapp). The "Regeneration & Drift Audit" and "Archetype versioning by source commit" sections are obsolete — see the notes inline.
+>
+> **Module paths moved.** The `gen/` package was retired: its modules now live under `admin_lib/` — `gen/manifest.py` → `admin_lib/manifest.py`, `gen/archetypes.py` → `admin_lib/archetypes.py`, `gen/detectors.py` → `admin_lib/detectors.py`, `gen/compile.py` → `admin_lib/compile.py`, and `gen/fragments.py` → `admin_lib/kinds.py` (now kind metadata + the `${VAR}` scanner only — the `render_*` functions and `_ACTION_RENDERERS` it once held are gone). Wherever this doc names a `gen/…` path or a renderer, read the `admin_lib/…` equivalent.
 
 ## Context
 

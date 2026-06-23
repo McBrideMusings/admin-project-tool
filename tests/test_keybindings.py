@@ -12,9 +12,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from gen.archetypes import ArchetypeError, _to_command, resolve  # noqa: E402
-from gen.fragments import KNOWN_KINDS, KIND_MODULES  # noqa: E402
-from gen.manifest import Manifest  # noqa: E402
+from admin_lib.archetypes import ArchetypeError, _to_command, resolve  # noqa: E402
+from admin_lib.kinds import KNOWN_KINDS, KIND_MODULES  # noqa: E402
+from admin_lib.manifest import Manifest  # noqa: E402
 from admin_lib import interp  # noqa: E402
 
 ARCH_DIR = REPO / "archetypes"

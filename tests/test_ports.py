@@ -11,7 +11,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from admin_lib.interp import InterpError, _make_kill_port  # noqa: E402
-from gen.manifest import Command  # noqa: E402
+from admin_lib.manifest import Command  # noqa: E402
 from admin_lib.ports_nuke import kill_port_interactive  # noqa: E402
 
 

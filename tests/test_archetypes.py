@@ -15,10 +15,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from gen.archetypes import load_archetype, resolve, ArchetypeError, _to_command  # noqa: E402
-from gen.detectors import detect  # noqa: E402
-from gen.fragments import scan_env_vars  # noqa: E402
-from gen.manifest import Command, Manifest, ManifestError, dump as dump_manifest, parse  # noqa: E402
+from admin_lib.archetypes import load_archetype, resolve, ArchetypeError, _to_command  # noqa: E402
+from admin_lib.detectors import detect  # noqa: E402
+from admin_lib.kinds import scan_env_vars  # noqa: E402
+from admin_lib.manifest import Command, Manifest, ManifestError, dump as dump_manifest, parse  # noqa: E402
 from admin_lib import core, interp  # noqa: E402
 
 ARCH_DIR = REPO / "archetypes"
@@ -552,7 +552,7 @@ def test_inline_target_action_key_adds_at_prefix():
         "ios": {"action": "build-ios", "desc": "Build iOS"},
         "mac": {"run": "xcodebuild -scheme Foo", "desc": "Build macOS"},
     }
-    from gen.archetypes import _to_command
+    from admin_lib.archetypes import _to_command
     cmd = _to_command("build", arch_data, source="test", is_action=True)
     assert cmd.targets["ios"] == "@build-ios", (
         f"'action' key must produce @-prefixed target; got {cmd.targets['ios']!r}"

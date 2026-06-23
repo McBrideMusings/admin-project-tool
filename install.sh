@@ -83,8 +83,11 @@ from admin_lib import __version__; print(__version__)
     rm -f  "$DEST_DIR/init-admin"
     rm -f  "$DEST_DIR/bundle"
 
+    # The manifest frontend (manifest/archetypes/kinds/compile/detectors) now
+    # lives inside admin_lib/ (copied above); only the archetype + detector DATA
+    # dirs are top-level. rm the stale gen/ so an upgrade from a pre-move install
+    # drops it.
     rm -rf "$DEST_DIR/gen" "$DEST_DIR/archetypes" "$DEST_DIR/detectors"
-    cp -R "$SRC_DIR/gen"        "$DEST_DIR/gen"
     cp -R "$SRC_DIR/archetypes" "$DEST_DIR/archetypes"
     cp -R "$SRC_DIR/detectors"  "$DEST_DIR/detectors"
     cp    "$SRC_DIR/admin-run"  "$DEST_DIR/admin"
@@ -96,7 +99,7 @@ from admin_lib import __version__; print(__version__)
     rm -rf "$DEST_DIR/hooks" "$DEST_DIR/templates"
 
     echo "$CURRENT_SHA" > "$DEST_DIR/VERSION"
-    echo "  admin_lib $LIB_VERSION installed (gen/, archetypes/, detectors/, admin)"
+    echo "  admin_lib $LIB_VERSION installed (archetypes/, detectors/, admin)"
     echo "  VERSION=$CURRENT_SHA"
 }
 

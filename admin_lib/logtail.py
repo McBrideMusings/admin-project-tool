@@ -5,7 +5,7 @@ them. Every source has a `kind`; non-file kinds (command/docker) render their
 output through the shared LogFormatter and can whole-line-highlight matches.
 Default is 'follow from end' — no history is printed unless --tail N or --all.
 
-Spec shape (parsed from [logs] by gen/manifest.py::_parse_logs); every spec also
+Spec shape (parsed from [logs] by admin_lib/manifest.py::_parse_logs); every spec also
 carries "kind" and a "highlight" list of regex strings:
 
     file    {"default_env": <str|None>,
@@ -158,7 +158,7 @@ def register_logs_command(spec):
 # ---------------------------------------------------------------------------
 # Per-kind dispatch — one handler each, uniform signature. LOG_KIND_HANDLERS
 # below is the single dispatch catalog; a test asserts it covers exactly
-# gen.fragments.LOG_KINDS (the parser/scanner catalog), mirroring the existing
+# admin_lib.kinds.LOG_KINDS (the parser/scanner catalog), mirroring the existing
 # KNOWN_KINDS ↔ interp._FACTORIES guard, so adding a kind forces a handler here.
 # ---------------------------------------------------------------------------
 

@@ -378,10 +378,10 @@ def test_log_kind_handlers_cover_manifest_kinds():
     # Mirrors test_interp.test_factories_cover_known_kinds: the logtail dispatch
     # catalog must match the parser/scanner catalog so a new kind can't be
     # half-wired (parseable but undispatchable, or vice versa).
-    from gen.fragments import LOG_KINDS
+    from admin_lib.kinds import LOG_KINDS
     ns = _load_logtail()
     assert set(ns["LOG_KIND_HANDLERS"]) == set(LOG_KINDS)
-    print("OK: LOG_KIND_HANDLERS covers exactly gen.fragments.LOG_KINDS")
+    print("OK: LOG_KIND_HANDLERS covers exactly admin_lib.kinds.LOG_KINDS")
 
 
 # --- file/pick sinks (highlight vs raw) -------------------------------------

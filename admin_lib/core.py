@@ -365,7 +365,7 @@ _referenced_env_vars: dict[str, dict] = {}
 # Origin-string format (stable contract)
 # ----------------------------------------------------------------------------
 # `used_by` origin strings are a cross-component compatibility contract between
-# the manifest scanner (gen/fragments.py::scan_env_vars) and the runtime `env`
+# the manifest scanner (admin_lib/kinds.py::scan_env_vars) and the runtime `env`
 # command (cmd_env, below). The interpreter registers these strings live via
 # register_env_var; a compiled ./admin embeds the same strings in its pickled
 # manifest. Changing the format changes how origins display in the `env` listing.
@@ -377,7 +377,7 @@ _referenced_env_vars: dict[str, dict] = {}
 #   logs.<target>.<env>     — var appears in a [logs.<target>.<env>] field
 #
 # Treat additions as additive; any format change needs coordinated updates in
-# gen/fragments.py and a migration plan for existing generated scripts.
+# admin_lib/kinds.py and a migration plan for existing compiled ./admin artifacts.
 # ----------------------------------------------------------------------------
 def register_env_var(name, default=None, used_by=None):
     """Record that the generated admin script references this env var.
