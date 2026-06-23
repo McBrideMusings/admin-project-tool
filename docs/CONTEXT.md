@@ -60,6 +60,37 @@ _Avoid_: gate, check, precondition (overloaded), validator
 The field on an action or multi-target target that lists Guard names. `requires = ["git-clean", "git-pushed"]` runs both Guards in order, fail-fast, before the action's `run`. Parent multi-target actions define a default that children inherit and may override (replace-not-merge); `requires = []` on a child is the explicit opt-out.
 _Avoid_: needs, preconditions, before
 
+### Architecture
+
+Terms for reasoning about the *shape* of the code (not the domain). Used by architecture reviews; keep them stable.
+
+**Module**:
+Anything with an interface and an implementation — a function, class, file, or package. Scale-agnostic.
+_Avoid_: component, service, unit
+
+**Interface**:
+Everything a caller must know to use a module correctly — type signature, invariants, ordering, error modes, required config, perf characteristics. Wider than just the type-level surface.
+_Avoid_: API, signature (those mean only the type-level surface)
+
+**Implementation**:
+What's inside a module — hidden from callers.
+
+**Depth**:
+Leverage at the interface. A module is **deep** when a large amount of behaviour sits behind a small interface; **shallow** when the interface is nearly as complex as the implementation.
+
+**Seam**:
+A place where behaviour can be altered without editing in that place — the location at which a module's interface lives (Michael Feathers).
+_Avoid_: boundary (overloaded with DDD's bounded context)
+
+**Adapter**:
+A concrete thing satisfying an interface at a seam. Names the *role* (which slot it fills), not the substance.
+
+**Leverage**:
+What callers gain from depth — more capability per unit of interface they must learn.
+
+**Locality**:
+What maintainers gain from depth — change, bugs, and knowledge concentrate at one place instead of spreading across callers.
+
 ### Execution model (interpreter mode)
 
 **Interpreter mode**:
