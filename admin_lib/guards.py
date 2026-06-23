@@ -1,18 +1,32 @@
-"""Preconditions for actions and multi-target targets.
+"""Guards — the single home for guard handling across the whole pipeline.
 
-Generated `./admin` files reference Guards by name from a `requires` list on an
-action or target. Before the action runs, each named Guard is invoked in order
-(fail-fast); on failure, the runtime prints the Guard's diagnostic and exits
+A guard is a named precondition referenced from a `requires` list on an action
+or target. Before the action runs, each named guard is invoked in order
+(fail-fast); on failure the runtime prints the guard's diagnostic and exits
 non-zero. Two authoring paths share one name namespace:
 
-  - Built-in Guards (this module): Python functions, registered at import
-    time. Free to produce dynamic diagnostics (e.g. interpolating the current
-    branch name into a "push first" hint).
-  - User-defined Guards (TOML): `[guards.<name>]` table with `run` (shell
-    expression) and `fail` (static message). The renderer emits a
-    `register_shell_guard(name, run, fail)` call into the bundled output.
+  - Built-in guards (this module): Python functions registered at import time,
+    free to produce dynamic diagnostics (e.g. the current branch in a hint).
+  - User-defined guards (TOML): `[guards.<name>]` table with `run` (shell
+    expression) and `fail` (static message).
 
-Both kinds resolve through `_guards`; both are invoked via `run_requires`.
+This module owns every guard-specific step the pipeline needs — one hook per
+phase, so guard logic lives in one place rather than smeared across the parser,
+resolver, and interpreter:
+
+  - parse_guard_tables(data, source) — validate `[guards.<name>]` definitions
+    (manifest parse phase).
+  - validate_requires(actions, guard_defs) — every `requires` name resolves to a
+    known guard (resolve phase).
+  - register(guard_defs) — wire user-defined shell guards into the registry
+    (interpreter registration phase). Built-ins register at import.
+  - run_requires(names) — run a `requires` list, fail-fast (dispatch phase).
+
+parse_guard_tables and validate_requires raise GuardError; the manifest and
+resolve layers catch it and re-raise as their own error type (ManifestError /
+ArchetypeError) so admin-run's existing handlers report it. This module imports
+no other admin_lib module except core, so the parser/resolver can call its parse
+and validate hooks without pulling in the runtime.
 """
 from __future__ import annotations
 
@@ -24,6 +38,78 @@ from .core import err
 GUARDS_BUILTIN = frozenset({"git-clean", "git-pushed"})
 
 _guards: dict = {}
+
+
+class GuardError(Exception):
+    """Raised by the parse/validate hooks. Manifest parse and resolve catch it
+    and re-raise as ManifestError / ArchetypeError."""
+
+
+_GUARD_TABLE_KEYS = {"run", "fail"}
+
+
+def parse_guard_tables(data, source):
+    """Validate the `[guards.<name>]` tables of a parsed manifest and return the
+    guards dict. Each table needs a non-empty `run` + `fail`; a name may not
+    collide with a built-in guard. Raises GuardError on any violation.
+    """
+    guards = data.get("guards", {}) or {}
+    if not isinstance(guards, dict):
+        raise GuardError(f"{source}: '[guards]' must be a table")
+    for gname, gdef in guards.items():
+        if not isinstance(gdef, dict):
+            raise GuardError(
+                f"{source}: '[guards.{gname}]' must be a table with 'run' and 'fail'"
+            )
+        if gname in GUARDS_BUILTIN:
+            raise GuardError(
+                f"{source}: '[guards.{gname}]' collides with a built-in guard name "
+                f"({sorted(GUARDS_BUILTIN)}). Built-in guards are registered by "
+                f"admin_lib/guards.py and cannot be redefined in TOML."
+            )
+        unknown = set(gdef) - _GUARD_TABLE_KEYS
+        if unknown:
+            raise GuardError(
+                f"{source}: '[guards.{gname}]' unknown keys: {sorted(unknown)}, "
+                f"valid: {sorted(_GUARD_TABLE_KEYS)}"
+            )
+        for required_key in ("run", "fail"):
+            if required_key not in gdef:
+                raise GuardError(
+                    f"{source}: '[guards.{gname}]' missing required key '{required_key}'"
+                )
+            if not isinstance(gdef[required_key], str) or not gdef[required_key]:
+                raise GuardError(
+                    f"{source}: '[guards.{gname}].{required_key}' must be a non-empty string"
+                )
+    return guards
+
+
+def validate_requires(actions, guard_defs):
+    """Audit that every name in any action's (or target's) `requires` list
+    resolves to a known guard — a built-in or a user-defined `[guards.<name>]`.
+    Catches typos at resolve time rather than at dispatch. Raises GuardError.
+
+    `actions` maps action name -> an object with a `.meta` dict (`requires`,
+    `target_requires`); `guard_defs` is the manifest's user-defined guards dict.
+    """
+    known = set(GUARDS_BUILTIN) | set(guard_defs)
+    for action_name, action in actions.items():
+        for req in action.meta.get("requires", []):
+            if req not in known:
+                raise GuardError(
+                    f"action '{action_name}': requires references unknown guard '{req}'. "
+                    f"Known: {sorted(known)}"
+                )
+        for tname, treq in action.meta.get("target_requires", {}).items():
+            if treq is None:
+                continue
+            for req in treq:
+                if req not in known:
+                    raise GuardError(
+                        f"action '{action_name}': target '{tname}' requires references unknown "
+                        f"guard '{req}'. Known: {sorted(known)}"
+                    )
 
 
 def register_guard(name, fn):
@@ -56,6 +142,15 @@ def register_shell_guard(name, run, fail):
             message = f"{out}\n{message}"
         return False, message
     register_guard(name, _impl)
+
+
+def register(guard_defs):
+    """Register every user-defined shell guard from a manifest's guards dict into
+    the runtime registry. The interpreter calls this once during setup; built-in
+    guards are already registered at import.
+    """
+    for name, gdef in guard_defs.items():
+        register_shell_guard(name, gdef["run"], gdef["fail"])
 
 
 def run_requires(names):

@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from admin_lib.kinds import LOG_KINDS
+from admin_lib.guards import parse_guard_tables, GuardError
 
 MANIFEST_FILENAME = "admin.toml"
 
@@ -40,10 +41,6 @@ _KNOWN_KEYS = {
 VALID_COMMAND_KEYS = {"desc", "steps", "log_file", "log_retain", "log", "group", "priority", "env"}
 VALID_ACTION_KEYS = {"run", "desc", "kind", "targets", "method", "body", "src", "log_file", "log_retain", "log", "interactive", "keys", "requires", "watch"}
 
-# Built-in Guard names registered by admin_lib/guards.py at import time.
-# Duplicated here (not imported from admin_lib) so the manifest layer stays
-# independent of the runtime layer. Keep in sync with admin_lib/guards.py.
-GUARDS_BUILTIN = frozenset({"git-clean", "git-pushed"})
 
 
 @dataclass
@@ -298,36 +295,12 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
                     f"{source}: '[log_bridge].port_range' must be [start, end] with start < end"
                 )
 
-    guards = data.get("guards", {}) or {}
-    if not isinstance(guards, dict):
-        raise ManifestError(f"{source}: '[guards]' must be a table")
-    _GUARD_KNOWN = {"run", "fail"}
-    for gname, gdef in guards.items():
-        if not isinstance(gdef, dict):
-            raise ManifestError(
-                f"{source}: '[guards.{gname}]' must be a table with 'run' and 'fail'"
-            )
-        if gname in GUARDS_BUILTIN:
-            raise ManifestError(
-                f"{source}: '[guards.{gname}]' collides with a built-in guard name "
-                f"({sorted(GUARDS_BUILTIN)}). Built-in guards are registered by "
-                f"admin_lib/guards.py and cannot be redefined in TOML."
-            )
-        unknown_guard = set(gdef) - _GUARD_KNOWN
-        if unknown_guard:
-            raise ManifestError(
-                f"{source}: '[guards.{gname}]' unknown keys: {sorted(unknown_guard)}, "
-                f"valid: {sorted(_GUARD_KNOWN)}"
-            )
-        for required_key in ("run", "fail"):
-            if required_key not in gdef:
-                raise ManifestError(
-                    f"{source}: '[guards.{gname}]' missing required key '{required_key}'"
-                )
-            if not isinstance(gdef[required_key], str) or not gdef[required_key]:
-                raise ManifestError(
-                    f"{source}: '[guards.{gname}].{required_key}' must be a non-empty string"
-                )
+    # [guards.<name>] table validation lives in the guard module (the single
+    # home for guard logic); it raises GuardError, re-raised here as ManifestError.
+    try:
+        guards = parse_guard_tables(data, source)
+    except GuardError as e:
+        raise ManifestError(str(e)) from e
 
     exclude_modules = data.get("exclude_modules", [])
     if not isinstance(exclude_modules, list) or not all(isinstance(m, str) for m in exclude_modules):
