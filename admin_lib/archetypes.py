@@ -22,9 +22,17 @@ import importlib.util
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from admin_lib.kinds import KNOWN_KINDS, CONFIGLESS_KINDS, KIND_MODULES
-from admin_lib.manifest import Command, Manifest, SPACER, VALID_COMMAND_KEYS, VALID_ACTION_KEYS
+from admin_lib.kinds import KIND_MODULES
+from admin_lib.manifest import Command, Manifest, SPACER
 from admin_lib.guards import validate_requires, GuardError
+from admin_lib.validate import (
+    ValidationError,
+    validate_command,
+    validate_action,
+    validate_action_keys,
+    inline_targets,
+    _parse_keys,
+)
 
 
 @dataclass
@@ -37,92 +45,8 @@ class Archetype:
     order: list[str] = field(default_factory=list)
 
 
-class ArchetypeError(Exception):
+class ArchetypeError(ValidationError):
     pass
-
-
-_GP_SUBTABLE_HINT = (
-    " 'group' and 'priority' belong on inline target subtables "
-    "(e.g. [actions.build.mac]), not on the action itself."
-)
-
-
-_VALID_KEY_BINDING_FIELDS = {"label", "run", "action", "signal", "pid_file"}
-
-
-def _parse_keys(raw, error_prefix: str) -> dict[str, dict]:
-    """Validate the `keys` table on an action and return a normalized copy.
-
-    Each entry must be a single-char key mapped to a dict with exactly one of
-    `run`, `action`, or `signal` (+ `pid_file`). `label` is optional.
-    """
-    if not isinstance(raw, dict):
-        raise ArchetypeError(f"{error_prefix}: 'keys' must be a table")
-    out: dict[str, dict] = {}
-    for keychar, binding in raw.items():
-        if not isinstance(keychar, str) or len(keychar) != 1:
-            raise ArchetypeError(
-                f"{error_prefix}: key '{keychar}' must be a single character"
-            )
-        if keychar in ("\x03", "\x04"):
-            raise ArchetypeError(
-                f"{error_prefix}: key '{keychar!r}' is reserved (Ctrl-C / Ctrl-D)"
-            )
-        if not isinstance(binding, dict):
-            raise ArchetypeError(
-                f"{error_prefix}: keys.{keychar} must be a table"
-            )
-        unknown = set(binding) - _VALID_KEY_BINDING_FIELDS
-        if unknown:
-            raise ArchetypeError(
-                f"{error_prefix}: keys.{keychar} has unknown fields {sorted(unknown)}, "
-                f"valid: {sorted(_VALID_KEY_BINDING_FIELDS)}"
-            )
-        targets_set = {f for f in ("run", "action", "signal") if f in binding}
-        if not targets_set:
-            raise ArchetypeError(
-                f"{error_prefix}: keys.{keychar} must have one of 'run', 'action', or 'signal'"
-            )
-        if len(targets_set) > 1:
-            raise ArchetypeError(
-                f"{error_prefix}: keys.{keychar} has conflicting targets {sorted(targets_set)} — pick one"
-            )
-        if "signal" in binding and "pid_file" not in binding:
-            raise ArchetypeError(
-                f"{error_prefix}: keys.{keychar} has 'signal' but no 'pid_file'"
-            )
-        if "pid_file" in binding and "signal" not in binding:
-            raise ArchetypeError(
-                f"{error_prefix}: keys.{keychar} has 'pid_file' but no 'signal'"
-            )
-        for f in ("label", "run", "signal", "pid_file"):
-            if f in binding and not isinstance(binding[f], str):
-                raise ArchetypeError(
-                    f"{error_prefix}: keys.{keychar}.{f} must be a string"
-                )
-        if "action" in binding:
-            if not isinstance(binding["action"], str):
-                raise ArchetypeError(
-                    f"{error_prefix}: keys.{keychar}.action must be a string"
-                )
-        normalized = dict(binding)
-        if "action" in normalized:
-            ref = normalized["action"]
-            normalized["action"] = ref[1:] if ref.startswith("@") else ref
-        out[keychar] = normalized
-    return out
-
-
-def _validate_gp_ints(data: dict, error_prefix: str) -> None:
-    """Raise ArchetypeError if 'group' or 'priority' in data is not a plain int."""
-    for key in ("group", "priority"):
-        val = data.get(key, 0)
-        # bool is a subclass of int — reject it explicitly so True/False isn't accepted.
-        if isinstance(val, bool) or not isinstance(val, int):
-            raise ArchetypeError(
-                f"{error_prefix}: '{key}' must be an integer, "
-                f"got {type(val).__name__} {val!r}"
-            )
 
 
 def load_archetype(archetype_dir: Path, name: str) -> Archetype:
@@ -138,27 +62,16 @@ def load_archetype(archetype_dir: Path, name: str) -> Archetype:
     data = getattr(mod, "ARCHETYPE", None)
     if not isinstance(data, dict):
         raise ArchetypeError(f"{path}: missing top-level ARCHETYPE dict")
+    # Light per-file key check; full action validation happens at resolve time
+    # in _to_command. Both delegate to admin_lib.validate.
     for cmd_name, cmd_data in data.get("commands", {}).items():
         if not isinstance(cmd_data, dict):
             raise ArchetypeError(f"{path}: command '{cmd_name}' must be a dict")
-        unknown = set(cmd_data) - VALID_COMMAND_KEYS
-        if unknown:
-            kind_hint = " Move kind/run/targets to [actions]." if unknown & {"kind", "run", "targets"} else ""
-            raise ArchetypeError(
-                f"{path}: command '{cmd_name}' has invalid keys {sorted(unknown)}. "
-                f"Commands may only have 'desc', 'steps', and log overrides.{kind_hint}"
-            )
+        validate_command(f"{path}: command '{cmd_name}'", cmd_data, ArchetypeError, require_steps=False)
     for action_name, action_data in data.get("actions", {}).items():
         if not isinstance(action_data, dict):
             raise ArchetypeError(f"{path}: action '{action_name}' must be a dict")
-        inline_target_keys = {k for k, v in action_data.items() if isinstance(v, dict) and k not in VALID_ACTION_KEYS}
-        unknown = set(action_data) - VALID_ACTION_KEYS - inline_target_keys
-        if unknown:
-            gp_hint = _GP_SUBTABLE_HINT if unknown & {"group", "priority"} else ""
-            raise ArchetypeError(
-                f"{path}: action '{action_name}' has unknown keys {sorted(unknown)}, "
-                f"valid: {sorted(VALID_ACTION_KEYS)}{gp_hint}"
-            )
+        validate_action_keys(f"{path}: action '{action_name}'", action_data, ArchetypeError)
     raw_order = list(data.get("order", []))
     normalized_order = ["" if e in ("", "---") else e for e in raw_order]
     return Archetype(
@@ -393,22 +306,9 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
 
 def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> Command:
     if not is_action:
-        # Commands are pure routing: only desc, steps, and log overrides.
-        unknown = set(data) - VALID_COMMAND_KEYS
-        if unknown:
-            kind_hint = ""
-            if "kind" in unknown or "run" in unknown or "targets" in unknown:
-                kind_hint = " Move kind/run/targets to [actions] instead."
-            raise ArchetypeError(
-                f"command '{name}' from {source}: invalid keys {sorted(unknown)}. "
-                f"Commands may only have 'desc', 'steps', and log overrides.{kind_hint}"
-            )
-        steps = data.get("steps")
-        if not steps or not isinstance(steps, list):
-            raise ArchetypeError(
-                f"command '{name}' from {source}: commands require 'steps' (a list of action names)"
-            )
-        meta: dict = {"steps": [str(s) for s in steps]}
+        # Schema validation lives in admin_lib.validate; here we only build.
+        validate_command(f"command '{name}' from {source}", data, ArchetypeError, require_steps=True)
+        meta: dict = {"steps": [str(s) for s in data["steps"]]}
         log_meta: dict = {}
         if "log_file" in data:
             log_meta["log_file"] = str(data["log_file"])
@@ -419,10 +319,7 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
         if log_meta:
             meta["logging"] = log_meta
         if "env" in data:
-            if not isinstance(data["env"], dict):
-                raise ArchetypeError(f"command '{name}' from {source}: 'env' must be a table")
             meta["env"] = {str(k): str(v) for k, v in data["env"].items()}
-        _validate_gp_ints(data, f"command '{name}' from {source}")
         return Command(
             name=name,
             run="",
@@ -435,53 +332,12 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
             priority=data.get("priority", 0),
         )
 
-    # Actions: full kind-based rendering.
-    # Inline target subtables: keys whose value is a dict and not in VALID_ACTION_KEYS.
-    inline_targets_raw = {
-        k: v for k, v in data.items()
-        if k not in VALID_ACTION_KEYS and isinstance(v, dict)
-    }
+    # Actions: validate the full schema, then build the Command (no raises below).
+    validate_action(f"action '{name}' from {source}", data, ArchetypeError)
 
-    unknown = set(data) - VALID_ACTION_KEYS - set(inline_targets_raw)
-    if unknown:
-        gp_hint = _GP_SUBTABLE_HINT if unknown & {"group", "priority"} else ""
-        raise ArchetypeError(
-            f"action '{name}' from {source}: unknown keys {sorted(unknown)}, "
-            f"valid: {sorted(VALID_ACTION_KEYS)}{gp_hint}"
-        )
-
-    # Detect reserved keys used as inline target names (dict value when a string
-    # is expected means the user wrote [actions.X.run] intending "run" as a target).
-    # `targets` is the legitimate table-shape key; `keys` (binding map) is too.
-    reserved_as_targets = {
-        k for k in (VALID_ACTION_KEYS - {"targets", "keys"})
-        if isinstance(data.get(k), dict)
-    }
-    if reserved_as_targets:
-        raise ArchetypeError(
-            f"action '{name}' from {source}: reserved key(s) {sorted(reserved_as_targets)} "
-            f"have table values — they look like inline target names but collide with "
-            f"reserved action keys; rename the target or use the flat "
-            f"'[actions.{name}.targets]' table form"
-        )
-
+    inline_targets_raw = inline_targets(data)
     kind = str(data.get("kind", "shell"))
-    if kind not in KNOWN_KINDS:
-        raise ArchetypeError(
-            f"action '{name}' from {source}: unknown kind '{kind}', "
-            f"known: {sorted(KNOWN_KINDS)}"
-        )
-
-    # Build targets: either from flat [actions.X.targets] table or inline subtables.
     flat_targets = data.get("targets") or {}
-    if flat_targets and not isinstance(flat_targets, dict):
-        raise ArchetypeError(
-            f"action '{name}' from {source}: 'targets' must be a table of target->shell"
-        )
-    if inline_targets_raw and flat_targets:
-        raise ArchetypeError(
-            f"action '{name}' from {source}: cannot mix targets with inline target subtables"
-        )
 
     meta = {}
     log_meta = {}
@@ -495,28 +351,13 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
         meta["logging"] = log_meta
     if data.get("interactive"):
         meta["interactive"] = True
-    # Parse parent-level `requires` (acts as default for multi-target children,
-    # or as the action-level guard list for flat actions).
+    # Parent-level `requires` (default for multi-target children, or the
+    # action-level guard list for flat actions).
     if "requires" in data:
-        parent_requires = data["requires"]
-        if not isinstance(parent_requires, list) or not all(isinstance(r, str) for r in parent_requires):
-            raise ArchetypeError(
-                f"action '{name}' from {source}: 'requires' must be a list of guard-name strings"
-            )
-        meta["requires"] = [str(r) for r in parent_requires]
+        meta["requires"] = [str(r) for r in data["requires"]]
     if "watch" in data:
         meta["watch"] = str(data["watch"])
     if inline_targets_raw:
-        for tname, tdata in inline_targets_raw.items():
-            if "action" not in tdata and "run" not in tdata:
-                raise ArchetypeError(
-                    f"action '{name}' from {source}: target '{tname}' must have 'action' or 'run'"
-                )
-            if "action" in tdata and "run" in tdata:
-                raise ArchetypeError(
-                    f"action '{name}' from {source}: target '{tname}' has both 'action' and 'run' — pick one"
-                )
-            _validate_gp_ints(tdata, f"action '{name}' from {source}: target '{tname}'")
         targets = {k: ("@" + v["action"] if "action" in v else v.get("run", "")) for k, v in inline_targets_raw.items()}
         meta["target_descs"] = {k: v.get("desc", k) for k, v in inline_targets_raw.items()}
         target_pty = {k: True for k, v in inline_targets_raw.items() if v.get("pty")}
@@ -532,12 +373,7 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
         any_override = False
         for tname, tdata in inline_targets_raw.items():
             if "requires" in tdata:
-                treq = tdata["requires"]
-                if not isinstance(treq, list) or not all(isinstance(r, str) for r in treq):
-                    raise ArchetypeError(
-                        f"action '{name}' from {source}: target '{tname}' 'requires' must be a list of guard-name strings"
-                    )
-                target_requires[tname] = [str(r) for r in treq]
+                target_requires[tname] = [str(r) for r in tdata["requires"]]
                 any_override = True
             else:
                 target_requires[tname] = None
@@ -560,34 +396,16 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
     else:
         targets = flat_targets
     if kind == "http":
-        if "run" not in data:
-            raise ArchetypeError(f"action '{name}' from {source}: http kind requires 'run' (the URL)")
         meta["method"] = str(data.get("method", "POST"))
         if "body" in data:
             meta["body"] = str(data["body"])
     elif kind == "sync":
-        if "run" not in data:
-            raise ArchetypeError(f"action '{name}' from {source}: sync kind requires 'run' (destination path)")
         if "src" in data:
             meta["src"] = str(data["src"])
-    elif kind == "npm":
-        if "run" not in data:
-            raise ArchetypeError(f"action '{name}' from {source}: npm kind requires 'run' (script name)")
-    elif kind == "interactive-shell":
-        if "run" not in data:
-            raise ArchetypeError(f"action '{name}' from {source}: interactive-shell requires 'run'")
-    elif kind in CONFIGLESS_KINDS:
-        pass
-    elif "run" not in data and not targets:
-        raise ArchetypeError(f"action '{name}' from {source}: missing 'run' or 'targets'")
 
     parsed_keys: dict[str, dict] = {}
     if "keys" in data:
-        if kind != "interactive-shell":
-            raise ArchetypeError(
-                f"action '{name}' from {source}: 'keys' is only valid on kind = \"interactive-shell\""
-            )
-        parsed_keys = _parse_keys(data["keys"], f"action '{name}' from {source}")
+        parsed_keys = _parse_keys(data["keys"], f"action '{name}' from {source}", ArchetypeError)
 
     return Command(
         name=name,

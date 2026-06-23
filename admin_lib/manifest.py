@@ -24,6 +24,7 @@ from pathlib import Path
 
 from admin_lib.kinds import LOG_KINDS
 from admin_lib.guards import parse_guard_tables, GuardError
+from admin_lib.validate import ValidationError, validate_command
 
 MANIFEST_FILENAME = "admin.toml"
 
@@ -37,9 +38,6 @@ _KNOWN_KEYS = {
     # un-migrated manifests, never written back. `admin migrate` strips it.
     "generator_commit",
 }
-
-VALID_COMMAND_KEYS = {"desc", "steps", "log_file", "log_retain", "log", "group", "priority", "env"}
-VALID_ACTION_KEYS = {"run", "desc", "kind", "targets", "method", "body", "src", "log_file", "log_retain", "log", "interactive", "keys", "requires", "watch"}
 
 
 
@@ -93,7 +91,7 @@ class Manifest:
     raw: dict = field(default_factory=dict)  # original parsed TOML, for debugging
 
 
-class ManifestError(Exception):
+class ManifestError(ValidationError):
     pass
 
 
@@ -151,13 +149,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
             raise ManifestError(
                 f"{source}: commands.{name} must be a table with 'steps' (a list of action names)"
             )
-        bad = set(val) - VALID_COMMAND_KEYS
-        if bad:
-            kind_hint = " Move kind/run/targets to [actions]." if bad & {"kind", "run", "targets"} else ""
-            raise ManifestError(
-                f"{source}: commands.{name} has invalid keys {sorted(bad)}. "
-                f"Commands may only have 'desc', 'steps', and log overrides.{kind_hint}"
-            )
+        validate_command(f"{source}: commands.{name}", val, ManifestError, require_steps=False)
         overrides[name] = val
 
     custom_normalized: dict[str, dict] = {}
@@ -167,18 +159,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
                 f"{source}: commands.custom.{name} must be a table with 'steps' (a list of action names). "
                 f"Move run/kind/targets to [actions]."
             )
-        bad = set(val) - VALID_COMMAND_KEYS
-        if bad:
-            kind_hint = " Move kind/run/targets to [actions]." if bad & {"kind", "run", "targets"} else ""
-            raise ManifestError(
-                f"{source}: commands.custom.{name} has invalid keys {sorted(bad)}. "
-                f"Commands may only have 'desc', 'steps', and log overrides.{kind_hint}"
-            )
-        if "steps" not in val:
-            raise ManifestError(
-                f"{source}: commands.custom.{name} must have 'steps' (a list of action names). "
-                f"Move run/kind/targets to [actions]."
-            )
+        validate_command(f"{source}: commands.custom.{name}", val, ManifestError, require_steps=True)
         custom_normalized[name] = val
 
     raw_actions = data.get("actions", {}) or {}
