@@ -1,4 +1,4 @@
-"""Tests for admin_lib/log_columns.py and admin_lib/log_columns_apple.py.
+"""Tests for admin_lib/log_columns.py.
 
 Covers _reformat_generic_line, AppleColumnFormatter, _extract_native_fields,
 _parse_column_spec, make_column_formatter, and width=0 hidden column support.
@@ -14,13 +14,11 @@ sys.path.insert(0, str(REPO))
 from admin_lib.log_columns import (  # noqa: E402
     Column,
     ColumnFormatter,
+    AppleColumnFormatter,
+    _extract_native_fields,
     _find_level_color,
     _parse_column_spec,
     make_column_formatter,
-)
-from admin_lib.log_columns_apple import (  # noqa: E402
-    AppleColumnFormatter,
-    _extract_native_fields,
 )
 
 
