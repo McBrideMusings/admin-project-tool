@@ -12,7 +12,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from gen.manifest import Manifest, ManifestError, dump, parse  # noqa: E402
+from admin_lib.manifest import Manifest, ManifestError, dump, parse  # noqa: E402
 
 
 def _base_data(**overrides) -> dict:

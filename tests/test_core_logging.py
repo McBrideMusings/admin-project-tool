@@ -16,9 +16,9 @@ sys.path.insert(0, str(REPO))
 
 import admin_lib.core as core  # noqa: E402
 from admin_lib import interp  # noqa: E402
-from gen.archetypes import resolve  # noqa: E402
-from gen.manifest import Manifest, parse  # noqa: E402
-from gen.archetypes import _to_command  # noqa: E402
+from admin_lib.archetypes import resolve  # noqa: E402
+from admin_lib.manifest import Manifest, parse  # noqa: E402
+from admin_lib.archetypes import _to_command  # noqa: E402
 
 
 def _clear_registry():
@@ -187,7 +187,7 @@ def test_logging_section_empty_ok():
 
 
 def test_logging_unknown_key_rejected():
-    from gen.manifest import ManifestError
+    from admin_lib.manifest import ManifestError
     data = {"project_name": "t", "python_min": "3.11", "logging": {"unknown_key": True}}
     try:
         parse(data)

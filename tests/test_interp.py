@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from gen.manifest import parse
-from gen.archetypes import resolve
+from admin_lib.manifest import parse
+from admin_lib.archetypes import resolve
 from admin_lib import core, interp
 
 REPO_DIR = Path(__file__).resolve().parent.parent
@@ -143,7 +143,7 @@ def test_compile_produces_runnable_standalone(tmp_path):
 
 def test_factories_cover_known_kinds():
     """The interpreter's per-kind factories must exactly match the kind catalog."""
-    from gen.fragments import KNOWN_KINDS
+    from admin_lib.kinds import KNOWN_KINDS
     assert set(interp._FACTORIES) == set(KNOWN_KINDS)
 
 

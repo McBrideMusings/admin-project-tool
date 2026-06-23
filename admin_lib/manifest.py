@@ -22,7 +22,7 @@ except ImportError:
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gen.fragments import LOG_KINDS
+from admin_lib.kinds import LOG_KINDS
 
 MANIFEST_FILENAME = "admin.toml"
 

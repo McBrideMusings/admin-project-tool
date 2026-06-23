@@ -22,8 +22,8 @@ import importlib.util
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gen.fragments import KNOWN_KINDS, CONFIGLESS_KINDS, KIND_MODULES
-from gen.manifest import Command, Manifest, SPACER, VALID_COMMAND_KEYS, VALID_ACTION_KEYS, GUARDS_BUILTIN
+from admin_lib.kinds import KNOWN_KINDS, CONFIGLESS_KINDS, KIND_MODULES
+from admin_lib.manifest import Command, Manifest, SPACER, VALID_COMMAND_KEYS, VALID_ACTION_KEYS, GUARDS_BUILTIN
 
 
 @dataclass

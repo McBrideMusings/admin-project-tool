@@ -1,6 +1,6 @@
 """Standalone compile (ADR-0006).
 
-`admin compile` packages the interpreter + admin_lib + gen + a project's
+`admin compile` packages the interpreter + admin_lib + a project's
 *resolved* manifest into a single executable zipapp (`./admin`). The compiled
 artifact runs the exact same interpreter (admin_lib.interp) against the embedded
 manifest — there is no per-command code generation. It is the one surviving
@@ -20,10 +20,13 @@ import tempfile
 import zipapp
 from pathlib import Path
 
-# Packages copied into the archive. gen is needed because the pickled
-# ResolvedManifest references gen.manifest.Command / gen.archetypes.ResolvedManifest,
-# and admin_lib.interp imports a few helpers from gen.{fragments,archetypes,manifest}.
-_RUNTIME_PACKAGES = ("admin_lib", "gen")
+# Package copied into the archive. The pickled ResolvedManifest references
+# admin_lib.manifest.Command / admin_lib.archetypes.ResolvedManifest, and the
+# interpreter + manifest frontend now all live under admin_lib.
+# NOTE (migration): the pickle records these import paths, so a ./admin compiled
+# before the gen/ -> admin_lib/ move (which pickled gen.manifest.* paths) will
+# fail to unpickle here — recompile to fix.
+_RUNTIME_PACKAGES = ("admin_lib",)
 
 _MAIN = '''\
 """Entry point for a compiled (zipapp) ./admin. Runs the embedded manifest."""

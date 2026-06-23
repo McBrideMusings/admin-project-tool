@@ -7,7 +7,8 @@ via boot(). `admin compile` packages this same interpreter + admin_lib + the
 manifest into a standalone zipapp.
 
 Each function here is the runtime equivalent of one renderer that used to live
-in gen/fragments.py: where the renderer emitted a string of Python, the
+in gen/fragments.py (that module is now admin_lib/kinds.py, metadata-only): where
+the renderer emitted a string of Python, the
 interpreter builds the live closure that does the same work. Because these are
 real functions, tracebacks point at this file with real line numbers — the
 reason Design 1 (full port, no exec of generated strings) was chosen over
@@ -84,7 +85,7 @@ def build_namespace(resolved) -> dict:
     Used only as the globals() for exec'd kind="python" / [inline] code; the
     ported kind closures call admin_lib functions directly and don't need it.
     """
-    from gen.archetypes import _order_modules
+    from admin_lib.archetypes import _order_modules
 
     ns: dict = {}
     for mod_name in _order_modules(set(resolved.modules)):
@@ -118,7 +119,7 @@ def _sync_core_globals(g: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Per-kind closure factories (runtime equivalents of gen/fragments renderers)
+# Per-kind closure factories (runtime equivalents of the old gen/fragments renderers)
 # ---------------------------------------------------------------------------
 
 def _make_shell(cmd, ns):
@@ -576,7 +577,7 @@ def register_all(resolved, project_name, inline_body=None):
     manifest into the live admin_lib.core registry. Returns the flat namespace
     used for kind="python" / [inline] code.
     """
-    from gen.manifest import SPACER
+    from admin_lib.manifest import SPACER
 
     m = resolved.manifest
     ns = build_namespace(resolved)
@@ -634,7 +635,7 @@ def register_all(resolved, project_name, inline_body=None):
     # Expose registered callables under their bundled cmd_/_act_ names so any
     # kind="python"/[inline] body using the historical `"cmd_kill" in globals()`
     # pattern still resolves. Done after registration so all names exist.
-    from gen.fragments import _safe_ident
+    from admin_lib.kinds import _safe_ident
     for cname, cmd in resolved.commands.items():
         entry = core._commands.get(cname)
         if entry and "func" in entry:
@@ -649,7 +650,7 @@ def _register_env_vars(resolved, m):
     """Scan the manifest for ${VAR} references and register each live so the
     `env` command can list them. Shares the scanner with the manifest layer.
     """
-    from gen.fragments import scan_env_vars
+    from admin_lib.kinds import scan_env_vars
 
     command_list = list(resolved.commands.values()) + list(resolved.actions.values())
     config_tables = {

@@ -31,16 +31,18 @@ A string in a command's `steps` list; names an action to dispatch. Reading `step
 _Avoid_: stage, phase
 
 **Kind**:
-An action's execution strategy. The discriminator that picks a renderer in `gen/fragments.py`. Examples: `shell`, `python`, `multi-target`, `interactive-shell`, `apple-dev-loop`, `kill-port`, `http`. Closed set — adding a new kind means adding a renderer.
+An action's execution strategy. The discriminator that selects an action's runtime closure factory in `admin_lib/interp._FACTORIES`; the closed catalog of valid kinds (`KNOWN_KINDS`) lives in `admin_lib/kinds.py`, which the manifest/archetype validators consult. Examples: `shell`, `python`, `multi-target`, `interactive-shell`, `apple-dev-loop`, `kill-port`, `http`. Closed set — adding a new kind means adding a factory.
 _Avoid_: type, mode
 
 **Bundler**:
-The component in `gen/bundler.py` that inlines `admin_lib` modules into the generated `./admin` as a flat namespace — strips relative imports, hoists `__future__` imports, dedupes.
+The component in `gen/bundler.py` that inlined `admin_lib` modules into the generated `./admin` as a flat namespace — strips relative imports, hoists `__future__` imports, dedupes.
 _Avoid_: packer, linker
+_Status_: removed. The flat-namespace bundler was deleted under **Bundler flat namespace** ([ADR-0004](adr/0004-bundler-flat-namespace.md)); **Interpreter mode** ([ADR-0006](adr/0006-interpreter-mode.md)) imports `admin_lib` as a real package and **Compile** produces a `zipapp` (whole files, no flattening).
 
 **Fragment**:
 A rendered snippet emitted by `gen/fragments.py` — one per command (the function the TUI calls) and one per action (the dispatch body for that kind). Composed by the renderer into the final `./admin`.
 _Avoid_: section, block
+_Status_: removed under **Interpreter mode** ([ADR-0006](adr/0006-interpreter-mode.md)) — there is no rendering step; the interpreter builds live closures directly (`admin_lib/interp.py`). `gen/fragments.py` was reduced to kind metadata + the `${VAR}` scanner and renamed `admin_lib/kinds.py`.
 
 **Generator_commit**:
 The git SHA of `admin-project-tool` at the time a manifest was last regenerated, written into `admin.toml` and embedded in the `./admin` header banner.
@@ -106,8 +108,8 @@ _Avoid_: build (reserved for project-level build commands), freeze, bundle
 - A **Manifest** lists zero or more **Archetypes** and is merged with each in order.
 - Merging produces a flat set of **Commands** and **Actions**.
 - A **Command** has one or more **Steps**; each Step names an **Action**.
-- An **Action** has exactly one **Kind**; the Kind selects which renderer in `gen/fragments.py` emits its **Fragment**.
-- The **Bundler** inlines `admin_lib/` into the rendered output; the **Generator_commit** is stamped into the header.
+- An **Action** has exactly one **Kind**; the Kind selects the runtime closure factory in `admin_lib/interp.py` that executes it.
+- **Compile** packages `admin_lib/` + the resolved **Manifest** into a standalone `zipapp`.
 - A **Detector** proposes which **Archetypes** apply to a project; paired with its archetype by filename.
 - **Drift** is the audit signal that something downstream of the **Generator_commit** has changed.
 - An **Action** (or a multi-target child) may carry a `**Requires**` list of **Guard** names; each Guard is checked before the Action runs.
@@ -115,10 +117,10 @@ _Avoid_: build (reserved for project-level build commands), freeze, bundle
 ## Example dialogue
 
 > **Dev:** "If I add a new **Kind** like `interactive-shell`, what else has to move?"
-> **Maintainer:** "Add a renderer in `gen/fragments.py`, then validate the new fields it accepts in `gen/manifest.py` and `gen/archetypes.py`. The **Bundler** is unaware of **Kinds** — it just inlines `admin_lib/`."
+> **Maintainer:** "Add a factory to `admin_lib/interp._FACTORIES` and its name to `KNOWN_KINDS` in `admin_lib/kinds.py`, then validate the new fields it accepts in `admin_lib/manifest.py` and `admin_lib/archetypes.py`. **Compile** is unaware of **Kinds** — it just packages `admin_lib/`."
 >
-> **Dev:** "And if a project's **Action** uses the new kind, but the installed tool doesn't know about it?"
-> **Maintainer:** "The **Generator_commit** in their **Manifest** won't match the installed SHA — that's **Drift**. `admin-gen --audit` flags it; the SessionStart hook regenerates against the new tool."
+> **Dev:** "And if a project's **Action** uses a kind the installed tool doesn't know about?"
+> **Maintainer:** "Resolve fails fast — `admin_lib/archetypes.py` checks every action's **Kind** against `KNOWN_KINDS` and raises `unknown kind`. There's no **Drift** to track: the installed tool reads `admin.toml` live ([ADR-0006](adr/0006-interpreter-mode.md)), so a project always runs against whatever tool is on PATH. To pin a version, `admin compile`."
 
 ## Flagged ambiguities
 

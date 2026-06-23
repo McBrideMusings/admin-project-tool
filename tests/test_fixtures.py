@@ -14,8 +14,8 @@ from admin_lib.fixtures import (  # noqa: E402
     parse_size,
     restore_tree,
 )
-from gen.archetypes import resolve  # noqa: E402
-from gen.manifest import parse  # noqa: E402
+from admin_lib.archetypes import resolve  # noqa: E402
+from admin_lib.manifest import parse  # noqa: E402
 from admin_lib import core, interp  # noqa: E402
 
 ARCH_DIR = REPO / "archetypes"
