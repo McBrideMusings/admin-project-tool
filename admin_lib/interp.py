@@ -611,9 +611,8 @@ def register_all(resolved, project_name, inline_body=None):
 
     # --- guards --------------------------------------------------------------
     if m.guards:
-        from admin_lib.guards import register_shell_guard
-        for gname, gdef in m.guards.items():
-            register_shell_guard(gname, gdef["run"], gdef["fail"])
+        from admin_lib.guards import register as register_guards
+        register_guards(m.guards)
 
     # --- actions (must register before commands that call them) -------------
     for action in resolved.actions.values():

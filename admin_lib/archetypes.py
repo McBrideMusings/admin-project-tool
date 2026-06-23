@@ -23,7 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from admin_lib.kinds import KNOWN_KINDS, CONFIGLESS_KINDS, KIND_MODULES
-from admin_lib.manifest import Command, Manifest, SPACER, VALID_COMMAND_KEYS, VALID_ACTION_KEYS, GUARDS_BUILTIN
+from admin_lib.manifest import Command, Manifest, SPACER, VALID_COMMAND_KEYS, VALID_ACTION_KEYS
+from admin_lib.guards import validate_requires, GuardError
 
 
 @dataclass
@@ -351,28 +352,13 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
                             f"Known actions: {sorted(actions)}"
                         )
 
-    # Validate every name in a `requires` list resolves to a known guard:
-    # either a built-in (registered by admin_lib/guards.py) or a [guards.<name>]
-    # entry in the manifest. Catches typos at gen time rather than runtime.
-    known_guards = set(GUARDS_BUILTIN) | set(manifest.guards)
-    for action_name, action in actions.items():
-        parent_requires = action.meta.get("requires", [])
-        for req in parent_requires:
-            if req not in known_guards:
-                raise ArchetypeError(
-                    f"action '{action_name}': requires references unknown guard '{req}'. "
-                    f"Known: {sorted(known_guards)}"
-                )
-        target_requires = action.meta.get("target_requires", {})
-        for tname, treq in target_requires.items():
-            if treq is None:
-                continue
-            for req in treq:
-                if req not in known_guards:
-                    raise ArchetypeError(
-                        f"action '{action_name}': target '{tname}' requires references unknown guard '{req}'. "
-                        f"Known: {sorted(known_guards)}"
-                    )
+    # Every `requires` name (action- or target-level) must resolve to a known
+    # guard. Delegated to the guard module, which owns guard-name knowledge; it
+    # raises GuardError, re-raised here as ArchetypeError.
+    try:
+        validate_requires(actions, manifest.guards)
+    except GuardError as e:
+        raise ArchetypeError(str(e)) from e
 
     # Validate `action = "@name"` keybindings reference known actions.
     for action_name, action in actions.items():

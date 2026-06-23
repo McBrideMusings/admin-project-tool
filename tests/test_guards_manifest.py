@@ -18,7 +18,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from admin_lib.manifest import GUARDS_BUILTIN, ManifestError, parse  # noqa: E402
+from admin_lib.manifest import ManifestError, parse  # noqa: E402
+from admin_lib.guards import GUARDS_BUILTIN  # noqa: E402
 from admin_lib.archetypes import ArchetypeError, resolve  # noqa: E402
 
 ARCH_DIR = REPO / "archetypes"
