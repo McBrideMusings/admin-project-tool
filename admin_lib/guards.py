@@ -22,11 +22,12 @@ resolver, and interpreter:
     (interpreter registration phase). Built-ins register at import.
   - run_requires(names) — run a `requires` list, fail-fast (dispatch phase).
 
-parse_guard_tables and validate_requires raise GuardError; the manifest and
-resolve layers catch it and re-raise as their own error type (ManifestError /
-ArchetypeError) so admin-run's existing handlers report it. This module imports
-no other admin_lib module except core, so the parser/resolver can call its parse
-and validate hooks without pulling in the runtime.
+parse_guard_tables and validate_requires take a caller-injected `exc` (the
+phase's error class — ManifestError at parse, ArchetypeError at resolve, both
+subclasses of admin_lib.validate.ValidationError) and raise it directly, the same
+exc-injection pattern admin_lib/validate.py uses. This module imports no other
+admin_lib module except core, so the parser/resolver can call its parse and
+validate hooks without pulling in the runtime.
 """
 from __future__ import annotations
 
@@ -40,55 +41,52 @@ GUARDS_BUILTIN = frozenset({"git-clean", "git-pushed"})
 _guards: dict = {}
 
 
-class GuardError(Exception):
-    """Raised by the parse/validate hooks. Manifest parse and resolve catch it
-    and re-raise as ManifestError / ArchetypeError."""
-
-
 _GUARD_TABLE_KEYS = {"run", "fail"}
 
 
-def parse_guard_tables(data, source):
+def parse_guard_tables(data, source, exc):
     """Validate the `[guards.<name>]` tables of a parsed manifest and return the
     guards dict. Each table needs a non-empty `run` + `fail`; a name may not
-    collide with a built-in guard. Raises GuardError on any violation.
+    collide with a built-in guard. Raises the caller-injected `exc` (the phase's
+    ValidationError subclass) on any violation.
     """
     guards = data.get("guards", {}) or {}
     if not isinstance(guards, dict):
-        raise GuardError(f"{source}: '[guards]' must be a table")
+        raise exc(f"{source}: '[guards]' must be a table")
     for gname, gdef in guards.items():
         if not isinstance(gdef, dict):
-            raise GuardError(
+            raise exc(
                 f"{source}: '[guards.{gname}]' must be a table with 'run' and 'fail'"
             )
         if gname in GUARDS_BUILTIN:
-            raise GuardError(
+            raise exc(
                 f"{source}: '[guards.{gname}]' collides with a built-in guard name "
                 f"({sorted(GUARDS_BUILTIN)}). Built-in guards are registered by "
                 f"admin_lib/guards.py and cannot be redefined in TOML."
             )
         unknown = set(gdef) - _GUARD_TABLE_KEYS
         if unknown:
-            raise GuardError(
+            raise exc(
                 f"{source}: '[guards.{gname}]' unknown keys: {sorted(unknown)}, "
                 f"valid: {sorted(_GUARD_TABLE_KEYS)}"
             )
         for required_key in ("run", "fail"):
             if required_key not in gdef:
-                raise GuardError(
+                raise exc(
                     f"{source}: '[guards.{gname}]' missing required key '{required_key}'"
                 )
             if not isinstance(gdef[required_key], str) or not gdef[required_key]:
-                raise GuardError(
+                raise exc(
                     f"{source}: '[guards.{gname}].{required_key}' must be a non-empty string"
                 )
     return guards
 
 
-def validate_requires(actions, guard_defs):
+def validate_requires(actions, guard_defs, exc):
     """Audit that every name in any action's (or target's) `requires` list
     resolves to a known guard — a built-in or a user-defined `[guards.<name>]`.
-    Catches typos at resolve time rather than at dispatch. Raises GuardError.
+    Catches typos at resolve time rather than at dispatch. Raises the
+    caller-injected `exc` (the phase's ValidationError subclass).
 
     `actions` maps action name -> an object with a `.meta` dict (`requires`,
     `target_requires`); `guard_defs` is the manifest's user-defined guards dict.
@@ -97,7 +95,7 @@ def validate_requires(actions, guard_defs):
     for action_name, action in actions.items():
         for req in action.meta.get("requires", []):
             if req not in known:
-                raise GuardError(
+                raise exc(
                     f"action '{action_name}': requires references unknown guard '{req}'. "
                     f"Known: {sorted(known)}"
                 )
@@ -106,7 +104,7 @@ def validate_requires(actions, guard_defs):
                 continue
             for req in treq:
                 if req not in known:
-                    raise GuardError(
+                    raise exc(
                         f"action '{action_name}': target '{tname}' requires references unknown "
                         f"guard '{req}'. Known: {sorted(known)}"
                     )

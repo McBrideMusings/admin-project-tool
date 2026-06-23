@@ -24,14 +24,13 @@ from pathlib import Path
 
 from admin_lib.kinds import KIND_MODULES
 from admin_lib.manifest import Command, Manifest, SPACER
-from admin_lib.guards import validate_requires, GuardError
+from admin_lib.guards import validate_requires
 from admin_lib.validate import (
     ValidationError,
     validate_command,
     validate_action,
     validate_action_keys,
-    inline_targets,
-    _parse_keys,
+    parse_keys,
 )
 
 
@@ -266,12 +265,9 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
                         )
 
     # Every `requires` name (action- or target-level) must resolve to a known
-    # guard. Delegated to the guard module, which owns guard-name knowledge; it
-    # raises GuardError, re-raised here as ArchetypeError.
-    try:
-        validate_requires(actions, manifest.guards)
-    except GuardError as e:
-        raise ArchetypeError(str(e)) from e
+    # guard. Delegated to the guard module, which owns guard-name knowledge and
+    # raises the injected ArchetypeError.
+    validate_requires(actions, manifest.guards, ArchetypeError)
 
     # Validate `action = "@name"` keybindings reference known actions.
     for action_name, action in actions.items():
@@ -332,12 +328,12 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
             priority=data.get("priority", 0),
         )
 
-    # Actions: validate the full schema, then build the Command (no raises below).
-    validate_action(f"action '{name}' from {source}", data, ArchetypeError)
-
-    inline_targets_raw = inline_targets(data)
-    kind = str(data.get("kind", "shell"))
-    flat_targets = data.get("targets") or {}
+    # Actions: validate the full schema (returns the derived shape), then build
+    # the Command from it with no raises below.
+    va = validate_action(f"action '{name}' from {source}", data, ArchetypeError)
+    inline_targets_raw = va.inline_targets
+    kind = va.kind
+    flat_targets = va.flat_targets
 
     meta = {}
     log_meta = {}
@@ -405,7 +401,7 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
 
     parsed_keys: dict[str, dict] = {}
     if "keys" in data:
-        parsed_keys = _parse_keys(data["keys"], f"action '{name}' from {source}", ArchetypeError)
+        parsed_keys = parse_keys(data["keys"], f"action '{name}' from {source}", ArchetypeError)
 
     return Command(
         name=name,

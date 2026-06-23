@@ -19,12 +19,24 @@ resolver, so those layers can call its hooks without pulling in the runtime.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from admin_lib.kinds import KNOWN_KINDS, CONFIGLESS_KINDS
 
 
 class ValidationError(Exception):
     """Umbrella for manifest/archetype schema errors. ManifestError and
     ArchetypeError subclass this; admin-run catches ValidationError."""
+
+
+@dataclass
+class ValidatedAction:
+    """The shape `validate_action` derived while checking, returned so the
+    builder (`_to_command`) consumes it instead of re-deriving the same facts —
+    one derivation, no validator/builder divergence."""
+    kind: str
+    inline_targets: dict
+    flat_targets: dict
 
 
 # Keys a [commands.X] / archetype command table may carry (pure routing — ADR-0003).
@@ -41,7 +53,7 @@ _GP_SUBTABLE_HINT = (
 _VALID_KEY_BINDING_FIELDS = {"label", "run", "action", "signal", "pid_file"}
 
 
-def _validate_gp_ints(data: dict, lead: str, exc) -> None:
+def _validate_gp_ints(data: dict, lead: str, exc: type[ValidationError]) -> None:
     """Raise if 'group' or 'priority' in data is not a plain int."""
     for key in ("group", "priority"):
         val = data.get(key, 0)
@@ -53,7 +65,7 @@ def _validate_gp_ints(data: dict, lead: str, exc) -> None:
             )
 
 
-def _parse_keys(raw, lead: str, exc) -> dict[str, dict]:
+def parse_keys(raw, lead: str, exc: type[ValidationError]) -> dict[str, dict]:
     """Validate the `keys` table on an action and return a normalized copy.
 
     Each entry must be a single-char key mapped to a dict with exactly one of
@@ -107,7 +119,7 @@ def inline_targets(data: dict) -> dict[str, dict]:
     return {k: v for k, v in data.items() if k not in VALID_ACTION_KEYS and isinstance(v, dict)}
 
 
-def validate_command(lead: str, data: dict, exc, *, require_steps: bool) -> None:
+def validate_command(lead: str, data: dict, exc: type[ValidationError], *, require_steps: bool) -> None:
     """Pure-routing rule (ADR-0003): a command may only carry desc/steps/log
     overrides (+ group/priority/env). `require_steps` is True at the resolve and
     custom-command sites (a final command needs steps) and False for archetype
@@ -128,7 +140,7 @@ def validate_command(lead: str, data: dict, exc, *, require_steps: bool) -> None
     _validate_gp_ints(data, lead, exc)
 
 
-def validate_action_keys(lead: str, data: dict, exc) -> None:
+def validate_action_keys(lead: str, data: dict, exc: type[ValidationError]) -> None:
     """Light check: an action carries only known keys (inline target subtables
     excepted). Shared by load_archetype (early per-file check) and the full
     validate_action."""
@@ -141,9 +153,10 @@ def validate_action_keys(lead: str, data: dict, exc) -> None:
         )
 
 
-def validate_action(lead: str, data: dict, exc) -> None:
-    """Full action schema check. After this returns clean, _to_command can build
-    the Command with no further raises."""
+def validate_action(lead: str, data: dict, exc: type[ValidationError]) -> ValidatedAction:
+    """Full action schema check. Returns the derived shape (kind + raw targets)
+    so the builder consumes it instead of re-deriving; after this returns clean,
+    _to_command builds the Command with no further raises."""
     validate_action_keys(lead, data, exc)
 
     inline_targets_raw = inline_targets(data)
@@ -214,4 +227,6 @@ def validate_action(lead: str, data: dict, exc) -> None:
     if "keys" in data:
         if kind != "interactive-shell":
             raise exc(f"{lead}: 'keys' is only valid on kind = \"interactive-shell\"")
-        _parse_keys(data["keys"], lead, exc)
+        parse_keys(data["keys"], lead, exc)
+
+    return ValidatedAction(kind, inline_targets_raw, flat_targets)
