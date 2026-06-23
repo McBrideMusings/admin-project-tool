@@ -101,14 +101,20 @@ def register_factory(name: str, fn: Callable) -> Callable:
     """Bind a kind's runtime closure factory (called from admin_lib.interp).
 
     Raises if `name` isn't a declared kind — you can't register a factory for a
-    kind absent from the catalog. That's one half of the can't-drift guarantee;
-    the other is interp's import-time check that every kind got a factory.
+    kind absent from the catalog — or if the kind already has a factory bound (a
+    copy-paste double-registration). Together with interp's import-time check
+    that every kind got a factory, that's the can't-drift guarantee.
     """
     spec = KINDS.get(name)
     if spec is None:
         raise FragmentError(
             f"register_factory: unknown kind {name!r} — declare it with _kind() "
             "in admin_lib/kinds.py first"
+        )
+    if spec.factory is not None:
+        raise FragmentError(
+            f"register_factory: kind {name!r} already has a factory bound "
+            "(double registration)"
         )
     spec.factory = fn
     return fn
