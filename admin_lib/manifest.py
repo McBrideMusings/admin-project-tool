@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from admin_lib.kinds import LOG_KINDS
-from admin_lib.guards import parse_guard_tables, GuardError
+from admin_lib.guards import parse_guard_tables
 from admin_lib.validate import ValidationError, validate_command
 
 MANIFEST_FILENAME = "admin.toml"
@@ -277,11 +277,8 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
                 )
 
     # [guards.<name>] table validation lives in the guard module (the single
-    # home for guard logic); it raises GuardError, re-raised here as ManifestError.
-    try:
-        guards = parse_guard_tables(data, source)
-    except GuardError as e:
-        raise ManifestError(str(e)) from e
+    # home for guard logic) and raises the injected ManifestError.
+    guards = parse_guard_tables(data, source, ManifestError)
 
     exclude_modules = data.get("exclude_modules", [])
     if not isinstance(exclude_modules, list) or not all(isinstance(m, str) for m in exclude_modules):
