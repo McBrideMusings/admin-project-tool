@@ -10,7 +10,6 @@ from .core import (
     err,
     run_cmd,
     sync,
-    sync_deploy,  # backwards-compat alias
     command,
     boot,
     pick_target,

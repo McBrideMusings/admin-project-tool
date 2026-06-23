@@ -624,9 +624,6 @@ def sync(src_dir, dest, excludes=None, post_sync=None):
     return rc
 
 
-sync_deploy = sync  # backwards-compat alias
-
-
 # ---------------------------------------------------------------------------
 # Command registry
 # ---------------------------------------------------------------------------
