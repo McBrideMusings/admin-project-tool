@@ -1044,6 +1044,21 @@ def _build_run_args_from_cfg(cfg, env_vars=None, env_file_vars=None):
                 continue
         args += ["--label", f"{key}={value}"]
 
+    # Linux capabilities + security knobs. `cap_add` is needed for e.g.
+    # intel_gpu_top (CAP_PERFMON → i915 perf PMU access). These mirror the
+    # HostConfig keys the drift filter reads back from `docker inspect`, so a
+    # deploy that sets them stays drift-clean.
+    for c in cfg.get("cap_add") or ():
+        args += ["--cap-add", c]
+    for c in cfg.get("cap_drop") or ():
+        args += ["--cap-drop", c]
+    if cfg.get("privileged"):
+        args += ["--privileged"]
+    for opt in cfg.get("security_opt") or ():
+        args += ["--security-opt", opt]
+    for key, val in (cfg.get("sysctls") or {}).items():
+        args += ["--sysctl", f"{key}={val}"]
+
     return args
 
 
