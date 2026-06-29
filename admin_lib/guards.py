@@ -21,6 +21,8 @@ resolver, and interpreter:
   - register(guard_defs) — wire user-defined shell guards into the registry
     (interpreter registration phase). Built-ins register at import.
   - run_requires(names) — run a `requires` list, fail-fast (dispatch phase).
+  - run_global_preflight() — process-wide checks that run before any command
+    regardless of `requires` (e.g. the `deps-fresh` node/bun workspace check).
 
 parse_guard_tables and validate_requires take a caller-injected `exc` (the
 phase's error class — ManifestError at parse, ArchetypeError at resolve, both
@@ -31,12 +33,14 @@ validate hooks without pulling in the runtime.
 """
 from __future__ import annotations
 
+import json
 import subprocess
+from pathlib import Path
 
 from .core import err
 
 
-GUARDS_BUILTIN = frozenset({"git-clean", "git-pushed"})
+GUARDS_BUILTIN = frozenset({"git-clean", "git-pushed", "deps-fresh"})
 
 _guards: dict = {}
 
@@ -171,6 +175,160 @@ def run_requires(names):
     return 0
 
 
+# ---------------------------------------------------------------------------
+# deps-fresh — node/bun workspace integrity (a built-in guard, also run as a
+# global preflight before every command). Catches the "declared a `workspace:*`
+# dependency but never linked it into node_modules" class: a fresh git worktree
+# that was never installed, or a workspace dep added without re-running install.
+# The symptom is an opaque bundler "failed to resolve import" deep in a build;
+# this turns it into "your install is stale — run <pm> install" up front.
+# ---------------------------------------------------------------------------
+
+_PM_LOCKFILES = (
+    ("bun.lock", "bun install"),
+    ("bun.lockb", "bun install"),
+    ("pnpm-lock.yaml", "pnpm install"),
+    ("yarn.lock", "yarn install"),
+    ("package-lock.json", "npm install"),
+)
+
+
+def _pm_install_cmd(root):
+    """Pick the install command from whichever lockfile the project ships."""
+    for lock, cmd in _PM_LOCKFILES:
+        if (root / lock).exists():
+            return cmd
+    return "bun install"
+
+
+def _read_json(path):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _workspace_globs(root_pkg):
+    """Normalize the root package.json `workspaces` field to a list of globs.
+    Supports both the array form and npm/bun's `{"packages": [...]}` form."""
+    patterns = root_pkg.get("workspaces")
+    if isinstance(patterns, dict):
+        patterns = patterns.get("packages", [])
+    if not isinstance(patterns, list):
+        return []
+    return [p for p in patterns if isinstance(p, str)]
+
+
+def _workspace_members(root, root_pkg):
+    """Every workspace member dir holding a package.json (the root package
+    included, since it can declare workspace deps too).
+
+    Honors npm/yarn `!`-prefixed exclusion patterns, and never descends into a
+    `node_modules/` (a `packages/**`-style glob would otherwise pull installed
+    deps in as if they were workspace members)."""
+    includes, excludes = [], []
+    for pat in _workspace_globs(root_pkg):
+        (excludes if pat.startswith("!") else includes).append(pat.lstrip("!"))
+    excluded = set()
+    for pat in excludes:
+        excluded.update(root.glob(pat))
+    members = [root]
+    for pat in includes:
+        for p in sorted(root.glob(pat)):
+            if p in excluded or "node_modules" in p.relative_to(root).parts:
+                continue
+            if (p / "package.json").is_file():
+                members.append(p)
+    return members
+
+
+def _link_present(consumer, root, dep):
+    """A `workspace:*` dep is satisfied when it's linked into node_modules —
+    either per-consumer or hoisted to the workspace root. exists() follows the
+    symlink, so a present-and-valid link returns True and a dangling one (stale)
+    returns False, which is what we want."""
+    for base in (consumer, root):
+        if (base / "node_modules" / dep).exists():
+            return True
+    return False
+
+
+def _scan_missing(root, root_pkg):
+    """Return [(consumer_rel, dep)] for every `workspace:*` dependency declared
+    by a workspace member but not linked into node_modules."""
+    missing = []
+    for member in _workspace_members(root, root_pkg):
+        pkg = _read_json(member / "package.json")
+        if pkg is None:
+            continue
+        deps = {}
+        for field in ("dependencies", "devDependencies"):
+            d = pkg.get(field)
+            if isinstance(d, dict):
+                deps.update(d)
+        for dep, spec in deps.items():
+            if not (isinstance(spec, str) and spec.startswith("workspace:")):
+                continue
+            if _link_present(member, root, dep):
+                continue
+            rel = "." if member == root else str(member.relative_to(root))
+            missing.append((rel, dep))
+    return missing
+
+
+def deps_fresh_check(root=None):
+    """Core of the `deps-fresh` guard. Returns (ok, message).
+
+    No-op pass when the cwd isn't a node project (no root package.json) — so it's
+    safe to run globally across every archetype. For a node/bun workspace it
+    enumerates each member's `workspace:*` dependencies and confirms each is
+    linked; any that aren't mean the install is stale.
+    """
+    root = Path.cwd() if root is None else Path(root)
+    root_pkg = _read_json(root / "package.json")
+    if root_pkg is None:
+        return True, None
+
+    try:
+        missing = _scan_missing(root, root_pkg)
+    except Exception:
+        # This runs as a global preflight before every command — a bug here, or
+        # an unusual manifest (e.g. an absolute/`~` workspace glob, which
+        # Path.glob rejects on 3.9–3.12), must never crash or block the tool.
+        # Degrade to a no-op pass.
+        return True, None
+
+    if not missing:
+        return True, None
+
+    listing = "\n".join(f"  {dep}  (needed by {consumer})" for consumer, dep in missing)
+    return False, (
+        "deps-fresh: workspace package(s) declared but not linked in node_modules — "
+        "your install is stale (a fresh worktree, or a workspace dep added without "
+        f"reinstalling):\n{listing}\n"
+        f"Fix:  {_pm_install_cmd(root)}"
+    )
+
+
+_preflight_result = None
+
+
+def run_global_preflight():
+    """Run process-wide preflight checks once per invocation, before any command
+    dispatches (CLI or TUI). Returns 0 on pass, 1 on failure; the failing check's
+    message is printed via err(). The result (not merely the fact that it ran) is
+    memoized, so a repeat call in the same process returns the same verdict rather
+    than silently passing."""
+    global _preflight_result
+    if _preflight_result is not None:
+        return _preflight_result
+    passed, message = deps_fresh_check()
+    if not passed and message:
+        err(message)
+    _preflight_result = 0 if passed else 1
+    return _preflight_result
+
+
 def _git_capture(*args):
     return subprocess.run(["git", *args], capture_output=True, text=True)
 
@@ -224,3 +382,4 @@ def _git_pushed_guard():
 
 register_guard("git-clean", _git_clean_guard)
 register_guard("git-pushed", _git_pushed_guard)
+register_guard("deps-fresh", deps_fresh_check)
