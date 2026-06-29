@@ -886,6 +886,9 @@ def _tui_menu():
                 sys.stdout.flush()
                 info(f"admin {items[sel]}")
                 print()
+                from admin_lib.guards import run_global_preflight
+                if run_global_preflight() != 0:
+                    return
                 _commands[items[sel]]["func"]([])
                 _announce_log_end()
                 return
@@ -1085,6 +1088,10 @@ def boot(project_name, load_dotenv=True, project_root=None, argv=None):
         if ("-h" in args or "--help" in args) and cmd_name in _subcommand_help:
             _subcommand_help[cmd_name]()
             return
+
+        from admin_lib.guards import run_global_preflight
+        if run_global_preflight() != 0:
+            sys.exit(1)
 
         all_cmds[cmd_name]["func"](args)
         _announce_log_end()

@@ -55,8 +55,12 @@ _Avoid_: stale, out-of-date
 _Status_: removed under **Interpreter mode** ([ADR-0006](adr/0006-interpreter-mode.md)) — with no vendored artifact there is nothing to drift; `admin audit` shrinks to a manifest-validity `check`.
 
 **Guard**:
-A named precondition referenced from an action's or target's `requires` list. A Guard returns pass/fail; on fail it blocks the action and prints an actionable message. Built-in Guards (`git-clean`, `git-pushed`) live in `admin_lib/guards.py` as Python with dynamic diagnostics; user-defined Guards live in `[guards.<name>]` tables as a shell expression (`run`) plus a static failure string (`fail`). Both share one name namespace; `requires` resolves names through both.
+A named precondition referenced from an action's or target's `requires` list. A Guard returns pass/fail; on fail it blocks the action and prints an actionable message. Built-in Guards (`git-clean`, `git-pushed`, `deps-fresh`) live in `admin_lib/guards.py` as Python with dynamic diagnostics; user-defined Guards live in `[guards.<name>]` tables as a shell expression (`run`) plus a static failure string (`fail`). Both share one name namespace; `requires` resolves names through both.
 _Avoid_: gate, check, precondition (overloaded), validator
+
+**Global preflight**:
+An always-on check that runs before every command (CLI or TUI), independent of any `requires` list, via `run_global_preflight` in `admin_lib/guards.py` (memoized — once per invocation). Currently just `deps-fresh`: a node/bun workspace integrity check that blocks when a `workspace:*` dependency is declared but not linked into `node_modules` (stale install — fresh worktree, or a dep added without reinstalling), pointing at the right `<pm> install`. A no-op on non-node projects.
+_Avoid_: hook, gate (reserved for Guard)
 
 **Requires**:
 The field on an action or multi-target target that lists Guard names. `requires = ["git-clean", "git-pushed"]` runs both Guards in order, fail-fast, before the action's `run`. Parent multi-target actions define a default that children inherit and may override (replace-not-merge); `requires = []` on a child is the explicit opt-out.
