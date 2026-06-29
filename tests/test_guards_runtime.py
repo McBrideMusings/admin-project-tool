@@ -203,20 +203,20 @@ def test_deps_fresh_install_cmd_follows_lockfile(tmp_path):
 def test_run_global_preflight_memoizes(monkeypatch):
     calls = {"n": 0}
 
-    def _fake_check(root=None):
+    def _fake_check():
         calls["n"] += 1
         return True, None
 
-    monkeypatch.setattr(guards, "deps_fresh_check", _fake_check)
-    monkeypatch.setattr(guards, "_preflight_result", None)
+    monkeypatch.setattr(guards, "_PREFLIGHT_CHECKS", (_fake_check,))
+    guards.reset_preflight()
     assert guards.run_global_preflight() == 0
     assert guards.run_global_preflight() == 0
     assert calls["n"] == 1  # second call short-circuits
 
 
 def test_run_global_preflight_reports_failure(monkeypatch, capsys):
-    monkeypatch.setattr(guards, "deps_fresh_check", lambda root=None: (False, "deps-fresh: stale"))
-    monkeypatch.setattr(guards, "_preflight_result", None)
+    monkeypatch.setattr(guards, "_PREFLIGHT_CHECKS", (lambda: (False, "deps-fresh: stale"),))
+    guards.reset_preflight()
     assert guards.run_global_preflight() == 1
     assert "deps-fresh: stale" in capsys.readouterr().err
 
@@ -226,15 +226,25 @@ def test_run_global_preflight_memoizes_failure_verdict(monkeypatch):
     # because "it already ran".
     calls = {"n": 0}
 
-    def _fake_fail(root=None):
+    def _fake_fail():
         calls["n"] += 1
         return False, "deps-fresh: stale"
 
-    monkeypatch.setattr(guards, "deps_fresh_check", _fake_fail)
-    monkeypatch.setattr(guards, "_preflight_result", None)
+    monkeypatch.setattr(guards, "_PREFLIGHT_CHECKS", (_fake_fail,))
+    guards.reset_preflight()
     assert guards.run_global_preflight() == 1
     assert guards.run_global_preflight() == 1
     assert calls["n"] == 1
+
+
+def test_run_global_preflight_exempts_control_commands(monkeypatch):
+    # logs/kill must run even when a check would fail — you need them to recover.
+    monkeypatch.setattr(guards, "_PREFLIGHT_CHECKS", (lambda: (False, "stale"),))
+    guards.reset_preflight()
+    assert guards.run_global_preflight("logs") == 0
+    assert guards.run_global_preflight("kill") == 0
+    guards.reset_preflight()
+    assert guards.run_global_preflight("deploy") == 1  # non-exempt still blocks
 
 
 def test_deps_fresh_excludes_negated_pattern(tmp_path):
@@ -269,3 +279,27 @@ def test_deps_fresh_fail_open_on_bad_workspace_glob(tmp_path):
     _write_pkg(tmp_path, {"name": "root", "workspaces": ["/etc/*"]})
     ok, msg = guards.deps_fresh_check(tmp_path)
     assert ok and msg is None
+
+
+def test_deps_fresh_reads_pnpm_workspace_yaml(tmp_path):
+    # pnpm declares members in pnpm-workspace.yaml, not the package.json
+    # `workspaces` field — those members must still be scanned.
+    (tmp_path / "pnpm-lock.yaml").write_text("")
+    _write_pkg(tmp_path, {"name": "root"})  # no `workspaces` field
+    (tmp_path / "pnpm-workspace.yaml").write_text("packages:\n  - 'packages/*'\n")
+    _write_pkg(tmp_path / "packages/ui", {"name": "ui"})
+    _write_pkg(tmp_path / "packages/web", {"name": "web", "dependencies": {"ui": "workspace:*"}})
+    ok, msg = guards.deps_fresh_check(tmp_path)
+    assert ok is False
+    assert "ui" in msg
+    assert "pnpm install" in msg
+
+
+def test_deps_fresh_rejects_link_without_package_json(tmp_path):
+    # A leftover same-named dir (or dangling link) with no package.json must not
+    # count as a satisfied workspace link.
+    web = _workspace_fixture(tmp_path)
+    (web / "node_modules" / "ui").mkdir(parents=True)
+    ok, msg = guards.deps_fresh_check(tmp_path)
+    assert ok is False
+    assert "ui" in msg
