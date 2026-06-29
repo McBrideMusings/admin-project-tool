@@ -208,6 +208,13 @@ def _read_json(path):
         return None
 
 
+def _read_text(path):
+    try:
+        return path.read_text()
+    except OSError:
+        return None
+
+
 def _workspace_globs(root_pkg):
     """Normalize the root package.json `workspaces` field to a list of globs.
     Supports both the array form and npm/bun's `{"packages": [...]}` form."""
@@ -219,15 +226,37 @@ def _workspace_globs(root_pkg):
     return [p for p in patterns if isinstance(p, str)]
 
 
+def _pnpm_globs(root):
+    """pnpm declares workspace members in `pnpm-workspace.yaml`, not package.json.
+    Parse its top-level `packages:` block directly — it's a flat list of glob
+    strings, not worth a YAML dependency for a tool that otherwise ships none.
+    Only the standard block-list form is handled; anything else degrades to []."""
+    text = _read_text(root / "pnpm-workspace.yaml")
+    if text is None:
+        return []
+    globs, in_packages = [], False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not line[:1].isspace():  # a top-level key
+            in_packages = stripped.startswith("packages:")
+            continue
+        if in_packages and stripped.startswith("- "):
+            globs.append(stripped[2:].strip().strip("'\""))
+    return globs
+
+
 def _workspace_members(root, root_pkg):
     """Every workspace member dir holding a package.json (the root package
     included, since it can declare workspace deps too).
 
-    Honors npm/yarn `!`-prefixed exclusion patterns, and never descends into a
-    `node_modules/` (a `packages/**`-style glob would otherwise pull installed
-    deps in as if they were workspace members)."""
+    Pulls globs from both package.json `workspaces` (npm/bun/yarn) and
+    `pnpm-workspace.yaml` (pnpm). Honors npm/yarn `!`-prefixed exclusion
+    patterns, and never descends into a `node_modules/` (a `packages/**`-style
+    glob would otherwise pull installed deps in as if they were members)."""
     includes, excludes = [], []
-    for pat in _workspace_globs(root_pkg):
+    for pat in _workspace_globs(root_pkg) + _pnpm_globs(root):
         (excludes if pat.startswith("!") else includes).append(pat.lstrip("!"))
     excluded = set()
     for pat in excludes:
@@ -244,11 +273,12 @@ def _workspace_members(root, root_pkg):
 
 def _link_present(consumer, root, dep):
     """A `workspace:*` dep is satisfied when it's linked into node_modules —
-    either per-consumer or hoisted to the workspace root. exists() follows the
-    symlink, so a present-and-valid link returns True and a dangling one (stale)
-    returns False, which is what we want."""
+    either per-consumer or hoisted to the workspace root. We require an actual
+    `package.json` at the link target (exists() follows the symlink), so a
+    dangling link or a leftover same-named empty dir counts as missing, not
+    satisfied."""
     for base in (consumer, root):
-        if (base / "node_modules" / dep).exists():
+        if (base / "node_modules" / dep / "package.json").exists():
             return True
     return False
 
@@ -310,23 +340,49 @@ def deps_fresh_check(root=None):
     )
 
 
+# The always-on checks, run once before every command. This tuple is the single
+# source of truth — the preflight analogue of GUARDS_BUILTIN; add a check by
+# appending its `() -> (ok, message)` function here. Commands named in
+# _PREFLIGHT_EXEMPT skip the whole pass: they're the control/diagnostic verbs you
+# need in order to recover from (or look into) the very state a check might block
+# on — blocking `logs`/`kill` on a stale install would lock you out of fixing it.
+_PREFLIGHT_CHECKS = (deps_fresh_check,)
+_PREFLIGHT_EXEMPT = frozenset({"logs", "kill"})
+
 _preflight_result = None
 
 
-def run_global_preflight():
-    """Run process-wide preflight checks once per invocation, before any command
-    dispatches (CLI or TUI). Returns 0 on pass, 1 on failure; the failing check's
-    message is printed via err(). The result (not merely the fact that it ran) is
-    memoized, so a repeat call in the same process returns the same verdict rather
-    than silently passing."""
+def reset_preflight():
+    """Clear the memoized preflight verdict. For tests and any long-lived host
+    that dispatches more than once per process."""
+    global _preflight_result
+    _preflight_result = None
+
+
+def run_global_preflight(command=None):
+    """Run the always-on preflight checks once per invocation, before a command
+    dispatches (CLI or TUI). Returns 0 on pass, 1 on first failure; the failing
+    check's message is printed via err().
+
+    `command` is the name of the command about to run; the control/diagnostic
+    verbs in _PREFLIGHT_EXEMPT skip the pass entirely. The verdict (not merely
+    the fact that it ran) is memoized via `_preflight_result`, so a repeat call
+    in the same process returns the same answer rather than silently passing."""
+    if command in _PREFLIGHT_EXEMPT:
+        return 0
     global _preflight_result
     if _preflight_result is not None:
         return _preflight_result
-    passed, message = deps_fresh_check()
-    if not passed and message:
-        err(message)
-    _preflight_result = 0 if passed else 1
-    return _preflight_result
+    rc = 0
+    for check in _PREFLIGHT_CHECKS:
+        passed, message = check()
+        if not passed:
+            if message:
+                err(message)
+            rc = 1
+            break
+    _preflight_result = rc
+    return rc
 
 
 def _git_capture(*args):

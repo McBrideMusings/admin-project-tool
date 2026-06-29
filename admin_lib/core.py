@@ -887,7 +887,7 @@ def _tui_menu():
                 info(f"admin {items[sel]}")
                 print()
                 from admin_lib.guards import run_global_preflight
-                if run_global_preflight() != 0:
+                if run_global_preflight(items[sel]) != 0:
                     return
                 _commands[items[sel]]["func"]([])
                 _announce_log_end()
@@ -1090,7 +1090,7 @@ def boot(project_name, load_dotenv=True, project_root=None, argv=None):
             return
 
         from admin_lib.guards import run_global_preflight
-        if run_global_preflight() != 0:
+        if run_global_preflight(cmd_name) != 0:
             sys.exit(1)
 
         all_cmds[cmd_name]["func"](args)
