@@ -914,6 +914,7 @@ def pick_target(targets, prompt="Select target", order=None):
 
     import tty
     import termios
+    import shutil
 
     display_order = order if order is not None else list(targets.keys())
     items = [x for x in display_order if x]  # selectable entries only
@@ -930,16 +931,32 @@ def pick_target(targets, prompt="Select target", order=None):
     _home = _make_home(fd, len(display_order) + 1)  # one row per entry + hint
 
     def draw():
+        cols = shutil.get_terminal_size((80, 24)).columns
+        prefix_width = 4  # "  > " / "    "
+        gap = 2
+        min_desc = 8
+        name_width = max((len(e) for e in items), default=0)
+        name_width = min(name_width, max(0, cols - prefix_width - gap - min_desc))
+        max_desc = max(0, cols - prefix_width - name_width - gap)
+
+        def fit(s, width):
+            if len(s) <= width:
+                return s
+            return s[: width - 1] + "…" if width > 0 else ""
+
         _home()
         for entry in display_order:
             if not entry:
                 sys.stdout.write("\n")
                 continue
+            name = fit(entry, name_width)
+            desc = fit(targets[entry], max_desc)
             if entry == items[sel]:
-                sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {entry:<14}{C.RESET} {targets[entry]}\n")
+                sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {name:<{name_width}}{C.RESET}{' ' * gap}{desc}\n")
             else:
-                sys.stdout.write(f"    {C.DIM}{entry:<14}{C.RESET} {targets[entry]}\n")
-        sys.stdout.write(f"{C.DIM}  [arrows/j/k] navigate  [enter] select  [q/esc] cancel{C.RESET}\n")
+                sys.stdout.write(f"    {C.DIM}{name:<{name_width}}{C.RESET}{' ' * gap}{desc}\n")
+        hint = "  [arrows/j/k] navigate  [enter] select  [q/esc] cancel"[:cols]
+        sys.stdout.write(f"{C.DIM}{hint}{C.RESET}\n")
         sys.stdout.flush()
 
     try:
