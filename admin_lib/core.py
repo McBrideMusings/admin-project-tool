@@ -787,6 +787,38 @@ def _is_spacer(key):
     return _commands.get(key, {}).get("spacer") is True
 
 
+def _char_width(ch):
+    """Terminal column width of one character (East-Asian wide/fullwidth = 2)."""
+    import unicodedata
+    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
+def _display_width(s):
+    """Terminal column width of s, accounting for wide characters."""
+    return sum(_char_width(ch) for ch in s)
+
+
+def _fit_display(s, width):
+    """Truncate s to at most `width` terminal columns, adding an ellipsis if cut."""
+    if width <= 0:
+        return ""
+    if _display_width(s) <= width:
+        return s
+    out, w = "", 0
+    for ch in s:
+        cw = _char_width(ch)
+        if w + cw > width - 1:
+            break
+        out += ch
+        w += cw
+    return out + "…"
+
+
+def _pad_display(s, width):
+    """Left-justify s to `width` terminal columns (display-width aware)."""
+    return s + " " * max(0, width - _display_width(s))
+
+
 def _tui_menu():
     """Inline interactive menu for selecting a command."""
     if not sys.stdout.isatty():
@@ -840,7 +872,13 @@ def _tui_menu():
 
     def draw():
         cols = shutil.get_terminal_size((80, 24)).columns
-        max_desc = max(0, cols - 19)
+        prefix_width = 4 if cols > 4 else 0
+        gap = 1
+        min_desc = 8
+        command_names = [name for name in items if not _is_spacer(name)]
+        name_width = max((_display_width(name) for name in command_names), default=0)
+        name_width = min(name_width, max(0, cols - prefix_width - gap - min_desc))
+        max_desc = max(0, cols - prefix_width - name_width - gap)
         hint = f"  [arrows/j/k] navigate  [enter] run  [o] open config{env_hint}  [q/esc] quit"[:cols]
 
         _home()
@@ -853,11 +891,14 @@ def _tui_menu():
             if _is_spacer(name):
                 sys.stdout.write("\n")
                 continue
-            desc = _commands[name]["desc"]
+            desc = _fit_display(_commands[name]["desc"], max_desc)
+            label = _pad_display(_fit_display(name, name_width), name_width)
             if i == sel:
-                sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {name:<14}{C.RESET} {desc[:max_desc]}\n")
+                prefix = "  > " if prefix_width else ""
+                sys.stdout.write(f"{prefix}{C.CYAN}{C.BOLD}{label}{C.RESET}{' ' * gap}{desc}\n")
             else:
-                sys.stdout.write(f"    {C.DIM}{name:<14}{C.RESET} {desc[:max_desc]}\n")
+                prefix = "    " if prefix_width else ""
+                sys.stdout.write(f"{prefix}{C.DIM}{label}{C.RESET}{' ' * gap}{desc}\n")
         sys.stdout.write(f"\n{C.DIM}{hint}{C.RESET}\n")
         sys.stdout.flush()
 
@@ -932,29 +973,26 @@ def pick_target(targets, prompt="Select target", order=None):
 
     def draw():
         cols = shutil.get_terminal_size((80, 24)).columns
-        prefix_width = 4  # "  > " / "    "
+        prefix_width = 4 if cols > 4 else 0  # "  > " / "    "
         gap = 2
         min_desc = 8
-        name_width = max((len(e) for e in items), default=0)
+        name_width = max((_display_width(e) for e in items), default=0)
         name_width = min(name_width, max(0, cols - prefix_width - gap - min_desc))
         max_desc = max(0, cols - prefix_width - name_width - gap)
-
-        def fit(s, width):
-            if len(s) <= width:
-                return s
-            return s[: width - 1] + "…" if width > 0 else ""
 
         _home()
         for entry in display_order:
             if not entry:
                 sys.stdout.write("\n")
                 continue
-            name = fit(entry, name_width)
-            desc = fit(targets[entry], max_desc)
+            name = _pad_display(_fit_display(entry, name_width), name_width)
+            desc = _fit_display(targets[entry], max_desc)
             if entry == items[sel]:
-                sys.stdout.write(f"  {C.CYAN}{C.BOLD}> {name:<{name_width}}{C.RESET}{' ' * gap}{desc}\n")
+                prefix = "  > " if prefix_width else ""
+                sys.stdout.write(f"{prefix}{C.CYAN}{C.BOLD}{name}{C.RESET}{' ' * gap}{desc}\n")
             else:
-                sys.stdout.write(f"    {C.DIM}{name:<{name_width}}{C.RESET}{' ' * gap}{desc}\n")
+                prefix = "    " if prefix_width else ""
+                sys.stdout.write(f"{prefix}{C.DIM}{name}{C.RESET}{' ' * gap}{desc}\n")
         hint = "  [arrows/j/k] navigate  [enter] select  [q/esc] cancel"[:cols]
         sys.stdout.write(f"{C.DIM}{hint}{C.RESET}\n")
         sys.stdout.flush()
