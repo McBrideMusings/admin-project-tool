@@ -466,6 +466,25 @@ def cmd_env(args):
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
 
+def _stamp_log(text):
+    """Prefix a streamed line with an absolute wall-clock timestamp (HH:MM:SS.mmm).
+
+    Applied to both the dated log file and the live console echo, but only for
+    unformatted output — a formatter (LogFormatter) already stamps its own lines,
+    so console writes that go through one are left alone to avoid a double stamp.
+    Diffing consecutive stamps localises a slow step inside a long-running command:
+    its cost shows up as the gap before the next line (e.g. electron-builder
+    printing `signing …` then going quiet for 70s). The HH:MM:SS.mmm form matches
+    strip_log_timestamp() in log_format, so `admin logs` still renders cleanly.
+    Blank lines pass through unstamped to keep output free of trailing-whitespace
+    noise.
+    """
+    if not text.strip():
+        return text
+    ts = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    return f"{ts} {text}"
+
+
 def _run_cmd_pty(cmd, log_fh, formatter, collect=None):
     """Run cmd inside a pseudo-TTY so isatty() checks pass (e.g. wrangler dev).
 
@@ -500,10 +519,10 @@ def _run_cmd_pty(cmd, log_fh, formatter, collect=None):
                 while b"\n" in buf:
                     raw_line, buf = buf.split(b"\n", 1)
                     line = raw_line.rstrip(b"\r").decode("utf-8", errors="replace") + "\n"
-                    sys.stdout.write(formatter(line) if formatter else line)
+                    sys.stdout.write(formatter(line) if formatter else _stamp_log(line))
                     sys.stdout.flush()
                     if log_fh:
-                        log_fh.write(_ANSI_ESCAPE_RE.sub("", line))
+                        log_fh.write(_stamp_log(_ANSI_ESCAPE_RE.sub("", line)))
                         log_fh.flush()
                     if collect is not None:
                         collect.append(line)
@@ -530,10 +549,10 @@ def _run_cmd_pty(cmd, log_fh, formatter, collect=None):
             _children.remove(proc)
         if buf:
             line = buf.rstrip(b"\r").decode("utf-8", errors="replace")
-            sys.stdout.write(formatter(line) if formatter else line)
+            sys.stdout.write(formatter(line) if formatter else _stamp_log(line))
             sys.stdout.flush()
             if log_fh:
-                log_fh.write(_ANSI_ESCAPE_RE.sub("", line))
+                log_fh.write(_stamp_log(_ANSI_ESCAPE_RE.sub("", line)))
             if collect is not None:
                 collect.append(line)
 
@@ -568,11 +587,11 @@ def run_cmd(cmd, shell=True, capture_log=True, formatter=None, pty=False, collec
     _children.append(proc)
     try:
         for line in proc.stdout:
-            display = formatter(line) if formatter else line
+            display = formatter(line) if formatter else _stamp_log(line)
             sys.stdout.write(display)
             sys.stdout.flush()
             if log_fh:
-                log_fh.write(_ANSI_ESCAPE_RE.sub("", line))
+                log_fh.write(_stamp_log(_ANSI_ESCAPE_RE.sub("", line)))
                 log_fh.flush()
             if collect is not None:
                 collect.append(line)
