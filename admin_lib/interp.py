@@ -288,6 +288,14 @@ def _make_python(cmd, ns):
         # Refresh reassignable core globals (LOG_FILE, etc.) so the body sees
         # post-boot / post-set_log_context values rather than the build-time snapshot.
         _sync_core_globals(local_ns)
+        # Sibling action/command callables (_act_*/cmd_*) are injected into the
+        # shared ns AFTER this action's namespace was copied (build_namespace does
+        # it once all actions are registered), so they were absent from the copy.
+        # Pull them in at call time so a kind="python" body can dispatch to another
+        # action via _act_<name> (e.g. dispatch_target's handler map).
+        for _k, _v in ns.items():
+            if _k.startswith("_act_") or _k.startswith("cmd_"):
+                local_ns[_k] = _v
         return fn(args)
     return _fn
 
