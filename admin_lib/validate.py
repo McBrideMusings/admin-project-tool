@@ -203,6 +203,8 @@ def validate_action(lead: str, data: dict, exc: type[ValidationError]) -> Valida
                     raise exc(
                         f"{lead}: target '{tname}' 'requires' must be a list of guard-name strings"
                     )
+            if "env" in tdata and not isinstance(tdata["env"], dict):
+                raise exc(f"{lead}: target '{tname}' 'env' must be a table of NAME = value")
         targets = inline_targets_raw
     else:
         targets = flat_targets

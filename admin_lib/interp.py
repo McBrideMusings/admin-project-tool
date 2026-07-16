@@ -197,6 +197,7 @@ def _make_multi_target(cmd, ns):
     target_order = cmd.meta.get("target_order")
     target_pty = cmd.meta.get("target_pty", {})
     target_watch = cmd.meta.get("target_watch", {})
+    target_env = cmd.meta.get("target_env", {})
 
     # Resolve per-target requires at build time: parent default unless the child
     # overrides (None = inherit, list = replace). Mirrors render_multi_target.
@@ -224,6 +225,10 @@ def _make_multi_target(cmd, ns):
             err(f"{name}: unknown target '" + picked + "'")
             sys.exit(1)
         set_log_context(name, picked)
+        # Applied after the target is picked but before its guards run, so a
+        # guard sees the same environment the target will.
+        if target_env.get(picked):
+            _apply_cmd_env(target_env[picked])
         if has_requires:
             reqs = resolved_target_requires.get(picked) or []
             if reqs:
