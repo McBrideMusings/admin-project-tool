@@ -193,8 +193,15 @@ def _scan_for_env_vars(text, pattern, seen: dict, origin: str) -> None:
     """Extract env var names + defaults from a single string, tagging the origin."""
     if not isinstance(text, str):
         return
+    from admin_lib.core import COMPUTED_VARS
+
     for m in pattern.finditer(text):
         name = m.group(1)
+        # Computed vars (${LAN_IP}) are answered at runtime, never by the user —
+        # registering them here would make `admin env` demand a value and abort a
+        # command that is perfectly runnable.
+        if name in COMPUTED_VARS:
+            continue
         default = m.group(2)
         entry = seen.setdefault(name, {"default": default, "used_by": []})
         if entry["default"] is None and default is not None:

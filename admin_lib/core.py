@@ -397,8 +397,48 @@ def register_env_var(name, default=None, used_by=None):
             entry["used_by"].append(origin)
 
 
+def lan_ip():
+    """The address another device on this network reaches this machine at.
+
+    Asking the routing table which source address it would use to reach an
+    off-link host, rather than guessing at interface names. `ipconfig getifaddr
+    en0 || ipconfig getifaddr en1` — what projects were hand-rolling — is macOS
+    only and wrong whenever the active interface isn't one of those two (a
+    second Ethernet, a dock, a VM bridge).
+
+    No traffic is sent: a UDP socket has no handshake, so connect() only does the
+    route lookup. The target is TEST-NET-1, which is reserved and unroutable.
+    """
+    import socket
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("192.0.2.1", 1))
+        return s.getsockname()[0]
+    except OSError:
+        # No route at all (offline, or every interface down).
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except OSError:
+            return "127.0.0.1"
+    finally:
+        s.close()
+
+
+# Vars resolved by computing them rather than reading the environment. They are
+# never "required" — `admin env` must not ask the user to set LAN_IP — so the
+# manifest scanner skips them too (see kinds.scan_env_vars).
+COMPUTED_VARS = {
+    "LAN_IP": lan_ip,
+}
+
+
 def resolve_env(s):
     """Expand ${VAR} and ${VAR:-default} in s using os.environ.
+
+    A few names (COMPUTED_VARS, e.g. ${LAN_IP}) are computed instead of read from
+    the environment; an explicit environment value still wins, so a project can
+    pin one when the automatic answer is wrong.
 
     Fails fast with a clear error if a referenced var is unset and has no default.
     Returns the expanded string. Idempotent on strings with no placeholders.
@@ -412,6 +452,8 @@ def resolve_env(s):
         val = os.environ.get(name)
         if val is not None:
             return val
+        if name in COMPUTED_VARS:
+            return COMPUTED_VARS[name]()
         if default is not None:
             return default
         err(f"required env var {name} is not set")
