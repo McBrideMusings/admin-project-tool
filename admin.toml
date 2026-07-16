@@ -32,6 +32,6 @@ desc = "Run full test suite (pytest + shell)"
 run  = ".venv/bin/pytest tests/ && bash tests/test_install.sh"
 
 [actions.install]
-kind = "shell"
-desc = "Install to ~/.admin"
+kind = "shell-passthrough"
+desc = "Install to ~/.admin (--link symlinks instead of copying, so edits are live)"
 run  = "bash install.sh"

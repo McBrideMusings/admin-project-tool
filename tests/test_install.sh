@@ -45,6 +45,11 @@ assert_file_exists() {
     if [[ -e "$path" ]]; then ok "$desc"; else fail "$desc" "missing: $path"; fi
 }
 
+assert_symlink() {
+    local desc="$1" path="$2"
+    if [[ -L "$path" ]]; then ok "$desc"; else fail "$desc" "not a symlink: $path"; fi
+}
+
 assert_file_contains() {
     local desc="$1" needle="$2" file="$3"
     if grep -qF "$needle" "$file" 2>/dev/null; then ok "$desc"; else fail "$desc" "not found in $file: $needle"; fi
@@ -229,6 +234,54 @@ touch "$T/$ZSH_RC"  # rc file exists but is empty
 # the old verify_path logic (which skipped ensure_path_in_rc when on PATH).
 out="$(PATH="$T/.admin:$PATH" HOME="$T" bash "$REPO/install.sh" --shell zsh 2>&1)"
 assert_file_contains "rc file written even when on session PATH" '.admin' "$T/$ZSH_RC"
+rm -rf "$T"
+
+# ---------------------------------------------------------------------------
+# Test: --link install (symlinks instead of copying, so source edits are live)
+# ---------------------------------------------------------------------------
+
+echo
+echo "--- --link install ---"
+T="$(mktemp -d)"
+touch "$T/$ZSH_RC"
+
+out="$(run_install "$T" --link)"
+assert_contains "reports linking" "linking" "$out"
+assert_contains "reports edits are live" "edits are live" "$out"
+assert_symlink "admin_lib symlinked" "$T/.admin/admin_lib"
+assert_symlink "archetype data dir symlinked" "$T/.admin/archetypes"
+assert_symlink "detector data dir symlinked" "$T/.admin/detectors"
+assert_symlink "admin interpreter symlinked" "$T/.admin/admin"
+assert_file_contains "VERSION records the linked source" "linked:$REPO" "$T/.admin/VERSION"
+
+# An edit to the source tree must be visible through the link with no reinstall
+# -- that is the entire point of the mode. Probe with a NEW throwaway file
+# rather than appending to a tracked one: a `git checkout --` to undo that would
+# silently destroy a developer's uncommitted work if the suite ran on a dirty tree.
+probe_file="$REPO/admin_lib/_link_probe_$$.py"
+echo "# link liveness probe" > "$probe_file"
+if [[ -f "$T/.admin/admin_lib/_link_probe_$$.py" ]]; then
+    ok "source edits are live through the link"
+else
+    fail "source edits are live through the link" "probe not visible via $T/.admin"
+fi
+rm -f "$probe_file"
+
+# A plain install over a linked install must NOT silently revert to a copy --
+# that would quietly reintroduce staleness.
+out="$(run_install "$T")"
+assert_contains "plain install reports it is linked" "edits are already live" "$out"
+assert_symlink "plain install leaves the link intact" "$T/.admin/admin_lib"
+
+# --force is the documented way back to a copied install.
+out="$(run_install "$T" --force)"
+assert_contains "force reports installing" "force-installing" "$out"
+if [[ -L "$T/.admin/admin_lib" ]]; then
+    fail "--force replaces the link with a real copy" "still a symlink"
+else
+    ok "--force replaces the link with a real copy"
+fi
+assert_file_exists "source tree survives unlinking" "$REPO/admin_lib/apple.py"
 rm -rf "$T"
 
 # ---------------------------------------------------------------------------

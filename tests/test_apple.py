@@ -26,13 +26,14 @@ class _FakeCompleted:
         self.stderr = stderr
 
 
-def _load_apple(subprocess_run=None):
+def _load_apple(subprocess_run=None, subprocess_popen=None):
     """Load apple.py into an isolated namespace with core/*and optionally
-    subprocess.run* stubbed.
+    subprocess.run / subprocess.Popen* stubbed.
 
     subprocess_run, if given, replaces subprocess.run in the loaded
     namespace so tests can assert what plutil/codesign would have been
-    called with without actually invoking them.
+    called with without actually invoking them. subprocess_popen does the
+    same for the detached `log stream` child.
     """
     source = (LIB_DIR / "apple.py").read_text()
     source = _re.sub(r"from \.core import \([^)]*\)", "pass", source, count=1)
@@ -50,11 +51,13 @@ def _load_apple(subprocess_run=None):
         "read_key": lambda *a, **k: None,
     }
     exec(compile(source, "apple.py", "exec"), ns)
-    if subprocess_run is not None:
+    if subprocess_run is not None or subprocess_popen is not None:
         class _SubprocessStub:
-            pass
+            STDOUT = -2
+            PIPE = -1
         stub = _SubprocessStub()
-        stub.run = subprocess_run
+        stub.run = subprocess_run or (lambda *a, **k: _FakeCompleted())
+        stub.Popen = subprocess_popen or (lambda *a, **k: None)
         ns["subprocess"] = stub
     return ns
 
@@ -671,3 +674,164 @@ def test_swap_dev_icon_composer_roundtrip():
         sys.path.remove(str(LIB_DIR.parent))
 
 
+
+
+# ---------------------------------------------------------------------------
+# resolve_simulator / ensure_booted_simulator
+# ---------------------------------------------------------------------------
+
+_BOOTED_LIST = "    iPhone 17 (312D27AE-281C-4CD5-865E-45A30CEBCC60) (Booted)\n"
+_AVAILABLE_LIST = (
+    "-- iOS 25.0 --\n"
+    "    iPhone 15 (AAAAAAAA-1111-2222-3333-444444444444) (Shutdown)\n"
+    "-- iOS 26.5 --\n"
+    "    iPhone 16 (BBBBBBBB-1111-2222-3333-444444444444) (Shutdown)\n"
+    "    iPhone 17 (CCCCCCCC-1111-2222-3333-444444444444) (Shutdown)\n"
+)
+
+
+def _simctl_stub(booted="", available="", calls=None):
+    """Fake subprocess.run answering `simctl list devices booted|available`."""
+    def _run(cmd, *a, **k):
+        if calls is not None:
+            calls.append(cmd)
+        if "list" in cmd and "booted" in cmd:
+            return _FakeCompleted(stdout=booted)
+        if "list" in cmd and "available" in cmd:
+            return _FakeCompleted(stdout=available)
+        return _FakeCompleted()
+    return _run
+
+
+def test_resolve_simulator_prefers_booted_device():
+    ns = _load_apple(subprocess_run=_simctl_stub(booted=_BOOTED_LIST))
+    did, name = ns["resolve_simulator"]()
+    assert did == "312D27AE-281C-4CD5-865E-45A30CEBCC60", did
+    assert name == "iPhone 17", name
+    print("OK: resolve_simulator returns the already-booted device")
+
+
+def test_resolve_simulator_picks_newest_iphone_when_none_booted():
+    ns = _load_apple(subprocess_run=_simctl_stub(available=_AVAILABLE_LIST))
+    did, name = ns["resolve_simulator"]()
+    assert name == "iPhone 17", name
+    assert did == "CCCCCCCC-1111-2222-3333-444444444444", did
+    print("OK: resolve_simulator picks newest runtime + newest model when none booted")
+
+
+def test_resolve_simulator_exits_when_no_iphones():
+    ns = _load_apple(subprocess_run=_simctl_stub(available="-- iOS 26.5 --\n"))
+    try:
+        ns["resolve_simulator"]()
+    except SystemExit as e:
+        assert e.code == 1, e.code
+        print("OK: resolve_simulator exits 1 when no iPhone simulators exist")
+        return
+    raise AssertionError("expected SystemExit when no iPhone simulators exist")
+
+
+def test_ensure_booted_simulator_waits_for_boot_to_complete():
+    calls = []
+    ns = _load_apple(subprocess_run=_simctl_stub(available=_AVAILABLE_LIST, calls=calls))
+    did, name = ns["ensure_booted_simulator"]()
+    assert did == "CCCCCCCC-1111-2222-3333-444444444444", did
+
+    bootstatus = [c for c in calls if "bootstatus" in c]
+    assert len(bootstatus) == 1, calls
+    # -b boots the device if needed AND blocks until boot finishes; without it
+    # callers race an unbooted device into install/launch.
+    assert bootstatus[0] == ["xcrun", "simctl", "bootstatus", did, "-b"], bootstatus[0]
+    assert ["open", "-a", "Simulator"] in calls, calls
+    print("OK: ensure_booted_simulator blocks on `simctl bootstatus -b` for the resolved device")
+
+
+# ---------------------------------------------------------------------------
+# stream_sim_log_detached
+# ---------------------------------------------------------------------------
+
+class _FakePopen:
+    def __init__(self, pid=4242):
+        self.pid = pid
+
+
+def _popen_stub(calls, pid=4242):
+    def _popen(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return _FakePopen(pid)
+    return _popen
+
+
+def test_stream_sim_log_detached_spawns_detached_and_writes_pid_file():
+    calls = []
+    ns = _load_apple(subprocess_popen=_popen_stub(calls))
+    with tempfile.TemporaryDirectory() as d:
+        log_file = os.path.join(d, "nested", "rn-sim.log")
+        pid_file = os.path.join(d, "nested", "rn-sim.pid")
+        pid = ns["stream_sim_log_detached"]("SIM-ID", 'subsystem == "x"', log_file, pid_file=pid_file)
+
+        assert pid == 4242, pid
+        cmd, kwargs = calls[0]
+        assert cmd == ["xcrun", "simctl", "spawn", "SIM-ID",
+                       "log", "stream", "--level", "debug",
+                       "--predicate", 'subsystem == "x"'], cmd
+        # start_new_session is what lets the stream outlive a caller that
+        # os.execvp's into a supervisor.
+        assert kwargs["start_new_session"] is True, kwargs
+        assert os.path.isdir(os.path.dirname(log_file)), "log dir created"
+        with open(pid_file) as f:
+            assert f.read().strip() == "4242"
+    print("OK: stream_sim_log_detached spawns a detached simctl log stream and records its pid")
+
+
+def test_stream_sim_log_detached_stays_out_of_children():
+    # _children is reaped by an atexit handler; a detached stream must not be
+    # registered there or it dies with the launching process.
+    ns = _load_apple(subprocess_popen=_popen_stub([]))
+    with tempfile.TemporaryDirectory() as d:
+        ns["stream_sim_log_detached"]("SIM-ID", "p", os.path.join(d, "s.log"))
+        assert ns["_children"] == [], ns["_children"]
+    print("OK: stream_sim_log_detached does not register the stream in _children")
+
+
+def test_stream_sim_log_detached_reuses_a_live_stream():
+    calls = []
+    ns = _load_apple(subprocess_popen=_popen_stub(calls))
+    with tempfile.TemporaryDirectory() as d:
+        pid_file = os.path.join(d, "rn-sim.pid")
+        with open(pid_file, "w") as f:
+            f.write(str(os.getpid()))       # a pid that is definitely alive
+
+        pid = ns["stream_sim_log_detached"]("SIM-ID", "p", os.path.join(d, "s.log"), pid_file=pid_file)
+        assert pid == os.getpid(), pid
+        assert calls == [], "must not spawn a second stream while one is live"
+    print("OK: stream_sim_log_detached reuses a live stream instead of stacking a second")
+
+
+def test_stream_sim_log_detached_restarts_on_stale_pid_file():
+    calls = []
+    ns = _load_apple(subprocess_popen=_popen_stub(calls))
+    with tempfile.TemporaryDirectory() as d:
+        pid_file = os.path.join(d, "rn-sim.pid")
+        with open(pid_file, "w") as f:
+            f.write("999999")               # above macOS max pid — never live
+
+        pid = ns["stream_sim_log_detached"]("SIM-ID", "p", os.path.join(d, "s.log"), pid_file=pid_file)
+        assert pid == 4242, pid
+        assert len(calls) == 1, calls
+        with open(pid_file) as f:
+            assert f.read().strip() == "4242", "pid file rewritten to the new stream"
+    print("OK: stream_sim_log_detached restarts when the recorded pid is dead")
+
+
+def test_stream_sim_log_detached_restarts_on_unreadable_pid_file():
+    calls = []
+    ns = _load_apple(subprocess_popen=_popen_stub(calls))
+    with tempfile.TemporaryDirectory() as d:
+        pid_file = os.path.join(d, "rn-sim.pid")
+        with open(pid_file, "w") as f:
+            f.write("not-a-pid")
+
+        pid = ns["stream_sim_log_detached"]("SIM-ID", "p", os.path.join(d, "s.log"), pid_file=pid_file)
+        assert pid == 4242, pid
+        assert len(calls) == 1, calls
+    print("OK: stream_sim_log_detached restarts when the pid file is garbage")

@@ -2,7 +2,13 @@
 # Install admin_lib to ~/.admin/ for use by per-project admin scripts.
 # Smart install: detects existing version, skips reinstall when up to date.
 #
-# Usage: ./install.sh [--force] [--shell zsh|bash|sh]
+# Usage: ./install.sh [--link] [--force] [--shell zsh|bash|sh]
+#
+# Default installs a COPY, so edits to this source tree do not affect the
+# installed tool until the next install — a stale ~/.admin surfaces only as a
+# bare "NameError: name 'x' is not defined" from a project's action. --link
+# symlinks instead, so edits are live and that failure cannot happen. Once
+# linked, a plain install leaves the links alone; --force switches back to a copy.
 
 set -euo pipefail
 
@@ -14,12 +20,17 @@ DEST_DIR="$HOME/.admin"
 # ------------------------------------------------------------------
 
 FORCE=0
+LINK=0
 SHELL_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --force|-f)
             FORCE=1
+            shift
+            ;;
+        --link|-l)
+            LINK=1
             shift
             ;;
         --shell)
@@ -29,7 +40,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "error: unknown option: $1" >&2
-            echo "usage: $0 [--force] [--shell zsh|bash|sh]" >&2
+            echo "usage: $0 [--link] [--force] [--shell zsh|bash|sh]" >&2
             exit 1
             ;;
     esac
@@ -90,6 +101,10 @@ from admin_lib import __version__; print(__version__)
     rm -rf "$DEST_DIR/gen" "$DEST_DIR/archetypes" "$DEST_DIR/detectors"
     cp -R "$SRC_DIR/archetypes" "$DEST_DIR/archetypes"
     cp -R "$SRC_DIR/detectors"  "$DEST_DIR/detectors"
+    # rm first: coming from a --link install, $DEST_DIR/admin is a symlink back
+    # to admin-run, and cp would resolve it and copy the file onto itself
+    # ("are identical (not copied)"), failing the install under set -e.
+    rm -f "$DEST_DIR/admin"
     cp    "$SRC_DIR/admin-run"  "$DEST_DIR/admin"
     chmod +x "$DEST_DIR/admin"
 
@@ -101,6 +116,31 @@ from admin_lib import __version__; print(__version__)
     echo "$CURRENT_SHA" > "$DEST_DIR/VERSION"
     echo "  admin_lib $LIB_VERSION installed (archetypes/, detectors/, admin)"
     echo "  VERSION=$CURRENT_SHA"
+}
+
+do_link() {
+    mkdir -p "$DEST_DIR"
+
+    # No trailing slashes: rm -rf on a symlink removes the link, never the
+    # source tree it points at.
+    rm -rf "$DEST_DIR/admin_lib" "$DEST_DIR/archetypes" "$DEST_DIR/detectors" "$DEST_DIR/gen"
+    rm -f  "$DEST_DIR/admin" "$DEST_DIR/init-admin-v2" "$DEST_DIR/init-admin" \
+           "$DEST_DIR/bundle" "$DEST_DIR/admin-gen"
+    rm -rf "$DEST_DIR/hooks" "$DEST_DIR/templates"
+
+    ln -s "$SRC_DIR/admin_lib"  "$DEST_DIR/admin_lib"
+    ln -s "$SRC_DIR/archetypes" "$DEST_DIR/archetypes"
+    ln -s "$SRC_DIR/detectors"  "$DEST_DIR/detectors"
+    ln -s "$SRC_DIR/admin-run"  "$DEST_DIR/admin"
+
+    LIB_VERSION="$(python3 -c "
+import sys; sys.path.insert(0, '$DEST_DIR')
+from admin_lib import __version__; print(__version__)
+")"
+
+    echo "linked:$SRC_DIR" > "$DEST_DIR/VERSION"
+    echo "  admin_lib $LIB_VERSION linked (archetypes/, detectors/, admin)"
+    echo "  $DEST_DIR -> $SRC_DIR — edits are live, no reinstall needed"
 }
 
 # Detect the shell running this script. Prefers ps(1) over $SHELL because
@@ -165,7 +205,18 @@ verify_path() {
 # Main logic
 # ------------------------------------------------------------------
 
-if [[ "$FORCE" == "1" ]]; then
+IS_LINKED=0
+[[ -L "$DEST_DIR/admin_lib" ]] && IS_LINKED=1
+
+if [[ "$LINK" == "1" ]]; then
+    echo "admin-project-tool: linking $DEST_DIR to $SRC_DIR"
+    do_link
+elif [[ "$IS_LINKED" == "1" && "$FORCE" != "1" ]]; then
+    # Don't silently revert a linked install back to a copy — that would quietly
+    # reintroduce the staleness this mode exists to remove.
+    echo "admin-project-tool: linked to $(readlink "$DEST_DIR/admin_lib") — edits are already live, nothing to copy"
+    echo "  (--force to switch back to a copied install)"
+elif [[ "$FORCE" == "1" ]]; then
     echo "admin-project-tool: force-installing to $DEST_DIR"
     do_install
 elif [[ "$INSTALLED_SHA" == "none" ]]; then

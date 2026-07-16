@@ -88,7 +88,7 @@ def _load_resolved(project_dir: Path):
 # Tool verbs
 # ---------------------------------------------------------------------------
 
-def cmd_check(project_dir: Path) -> int:
+def cmd_check(project_dir: Path, show_namespace: bool = False) -> int:
     """Validate the manifest parses, resolves, and references only known things."""
     try:
         resolved, _ = _load_resolved(project_dir)
@@ -102,7 +102,36 @@ def cmd_check(project_dir: Path) -> int:
         f"{len(resolved.commands)} commands, {len(resolved.actions)} actions, "
         f"{len(resolved.modules)} modules"
     )
+    if show_namespace:
+        _print_namespace(resolved)
     return 0
+
+
+def _print_namespace(resolved) -> None:
+    """List what kind="python" / [inline] bodies can call, grouped by module.
+
+    Answers "can my action call this function?" — otherwise only discoverable by
+    reconstructing build_namespace() by hand.
+    """
+    from admin_lib.interp import build_namespace
+    ns = build_namespace(resolved)
+
+    by_module: dict[str, list[str]] = {}
+    for name, val in ns.items():
+        if name.startswith("_") or not callable(val):
+            continue
+        mod = getattr(val, "__module__", "") or ""
+        label = mod.split(".")[-1] if mod.startswith("admin_lib") else (mod or "builtin")
+        by_module.setdefault(label, []).append(name)
+
+    info(f"namespace: {sum(len(v) for v in by_module.values())} callables from modules {', '.join(resolved.modules)}")
+    for label in sorted(by_module):
+        names = ", ".join(sorted(by_module[label]))
+        info(f"  [{label}] {names}")
+
+    tables = sorted(k for k, v in ns.items() if isinstance(v, dict) and not k.startswith("_"))
+    if tables:
+        info(f"  [config tables] {', '.join(tables)}")
 
 
 def cmd_compile(project_dir: Path) -> int:
@@ -199,10 +228,11 @@ def main() -> int:
         verb = argv[0]
         rest = argv[1:]
         force = "--force" in rest
-        rest = [a for a in rest if a != "--force"]
+        show_namespace = "--show-namespace" in rest
+        rest = [a for a in rest if a not in ("--force", "--show-namespace")]
         target = project_dir_override or (Path(rest[0]).resolve() if rest else Path.cwd())
         if verb == "check":
-            return cmd_check(target)
+            return cmd_check(target, show_namespace=show_namespace)
         if verb == "compile":
             return cmd_compile(target)
         if verb == "new":
