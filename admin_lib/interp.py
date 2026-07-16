@@ -250,7 +250,7 @@ def _make_docker_reload_loop(cmd, ns):
     name = cmd.name
 
     def _fn(args):
-        from admin_lib.docker import run_with_reload
+        from admin_lib.reload import run_with_reload
         from admin_lib.log_columns import make_column_formatter
         info("reload loop: " + run)
         fmt = make_column_formatter("docker", ns.get("_OUTPUT_CONFIG"))

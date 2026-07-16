@@ -27,6 +27,7 @@ The iOS build itself is configured by [apple] exactly as for a native project
 """
 from __future__ import annotations
 
+import glob
 import os
 
 from .android import dev_loop_android
@@ -81,6 +82,25 @@ def stop_metro_for(rn_cfg: dict) -> bool:
     """Stop this project's Metro. For a `down`/`kill` command."""
     log_file, pid_file = _metro_paths()
     return stop_metro(pid_file, port=metro_port(rn_cfg))
+
+
+def apple_config_for(rn_cfg: dict, apple_cfg: dict) -> dict:
+    """Fill in [apple].project_path from [react_native].app_dir when unset.
+
+    An RN app always keeps its Xcode workspace at <app_dir>/ios/, never at the
+    project root — so apple's own detection, which globs the cwd, never finds
+    it. Without this every RN project hand-writes the same derived path, and
+    gets a "no .xcodeproj/.xcworkspace found" error that points at the wrong
+    place. An explicit project_path still wins.
+    """
+    if apple_cfg.get("project_path"):
+        return apple_cfg
+    app_dir = _rn_app_dir(rn_cfg)
+    for pat in ("*.xcworkspace", "*.xcodeproj"):
+        matches = sorted(glob.glob(os.path.join(app_dir, "ios", pat)))
+        if matches:
+            return {**apple_cfg, "project_path": matches[0]}
+    return apple_cfg
 
 
 def dev_android(rn_cfg: dict, *, output_config=None):

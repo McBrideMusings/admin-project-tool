@@ -36,7 +36,6 @@ from .core import _children, get_log_dir, get_log_file, info, register_cleanup, 
 
 _ADMIN_PID_PREFIX = "/tmp/admin-run"
 _rebuild_requested = False
-_reload_active = False  # True during in-loop restart; suppresses port prompts
 
 
 def _handle_rebuild_signal(signum, frame):
@@ -134,20 +133,37 @@ def poll_for_reload(is_running_fn, timeout=1):
     """Poll for reload signal, 'r' keypress, or process exit.
 
     Returns True if reload requested, False if process exited or Ctrl+C.
+
+    The keypress half needs a tty; the signal half does not. When stdin is not
+    one — `admin dev` piped, redirected, backgrounded, or run under CI or a log
+    capture — the terminal setup is skipped and only SIGUSR1 and process exit
+    are watched. Raising there would kill the dev command *after* a successful
+    build and launch, which is the worst possible moment (issue #400), and a
+    non-interactive run was never going to send a keypress anyway.
     """
     import select
     import termios
     import tty
 
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
+    fd = None
+    old_settings = None
+    if sys.stdin.isatty():
+        try:
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            tty.setcbreak(fd)
+        except (termios.error, ValueError, OSError):
+            fd = old_settings = None
+
     try:
-        tty.setcbreak(fd)
         while True:
             if _rebuild_requested:
                 return True
             if not is_running_fn():
                 return False
+            if fd is None:
+                time.sleep(min(timeout, 0.5))
+                continue
             readable, _, _ = select.select([sys.stdin], [], [], timeout)
             if readable:
                 ch = sys.stdin.read(1)
@@ -156,7 +172,8 @@ def poll_for_reload(is_running_fn, timeout=1):
     except KeyboardInterrupt:
         return False
     finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        if fd is not None and old_settings is not None:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
 def run_with_reload(cmd, target, shell=True, formatter=None):
@@ -248,15 +265,12 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
             try:
                 while proc.poll() is None:
                     if _rebuild_requested:
-                        global _reload_active
                         info("Reload requested — restarting...")
-                        _reload_active = True
                         try:
                             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
                         except OSError:
                             proc.terminate()
                         _wait_or_kill(proc)
-                        _reload_active = False
                         break
 
                     events = sel.select(timeout=0.5)
@@ -274,9 +288,15 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
                             _emit(data.decode("utf-8", errors="replace"))
 
                 if proc.stdout:
+                    # Unconditionally final, even when the drain reads nothing:
+                    # the select loop usually consumes the child's last chunk
+                    # itself, so an `if remaining:` guard here would skip the
+                    # flush exactly when a trailing newline-less line (a bare
+                    # `$ ` prompt, a progress line) is still sitting in
+                    # _line_buf, and the terminal would never show it.
                     remaining = proc.stdout.read()
-                    if remaining:
-                        _emit(remaining.decode("utf-8", errors="replace"), final=True)
+                    _emit(remaining.decode("utf-8", errors="replace") if remaining else "",
+                          final=True)
             finally:
                 sel.close()
                 if old_term is not None:
