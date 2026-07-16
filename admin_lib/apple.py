@@ -1049,6 +1049,62 @@ _LSREGISTER = ("/System/Library/Frameworks/CoreServices.framework/Versions/A/"
                "Frameworks/LaunchServices.framework/Versions/A/Support/lsregister")
 
 
+def sign(path, identity=None, identifier=None, deep=True, cfg=None):
+    """Code-sign a binary or .app, keeping macOS keychain/TCC grants across rebuilds.
+
+    The identifier is the point. An ad-hoc-signed binary's designated
+    requirement is its raw cdhash, which changes on every build — so macOS sees
+    each rebuild as a different app and re-prompts for camera/Documents/keychain
+    access, and any Keychain item bound to the old requirement is unreachable.
+    Signing with a *fixed* identifier makes the designated requirement constant
+    (identifier + team), and the grants persist.
+
+    identity: an explicit identity or hash; "-" forces ad-hoc. None (default)
+        takes $CODE_SIGN_IDENTITY, else resolves one from the keychain, else
+        falls back to ad-hoc — so a machine with no cert (CI) still produces a
+        loadable binary rather than failing.
+    identifier: the stable bundle identifier to bind the signature to. Omit and
+        codesign derives one from the binary, which is the behavior this exists
+        to avoid.
+
+    Returns the identity used.
+    """
+    path = str(path)
+    if not os.path.exists(path):
+        err("sign: no such path: " + path)
+        sys.exit(1)
+
+    if identity is None:
+        identity = os.environ.get("CODE_SIGN_IDENTITY") or ""
+    if not identity:
+        identity = resolve_signing_identity(cfg or {}) or "-"
+
+    base = ["codesign", "--force"]
+    if deep:
+        base.append("--deep")
+
+    attempts = []
+    if identifier:
+        attempts.append(base + ["--identifier", identifier, "--sign", identity, path])
+    attempts.append(base + ["--sign", identity, path])
+
+    for i, cmd in enumerate(attempts):
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode == 0:
+            label = "ad-hoc" if identity == "-" else identity[:14]
+            if identifier and i == 0:
+                info(f"signed {os.path.basename(path)} ({label}, identifier {identifier})")
+            else:
+                # No identifier means the designated requirement is the cdhash
+                # again, so grants will not survive the next build.
+                warn(f"signed {os.path.basename(path)} ({label}) without a stable "
+                     f"identifier — keychain/TCC grants will not persist")
+            return identity
+
+    err(f"codesign failed for {path}: " + (r.stderr or "").strip())
+    sys.exit(1)
+
+
 def _pids_running_from(app_path):
     """Pids whose executable lives inside `app_path`.
 
