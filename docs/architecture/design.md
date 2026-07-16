@@ -76,7 +76,6 @@ Initial archetypes (derived 1:1 from the survey clusters):
 - **`hugo`** — `build: hugo`, `dev: hugo server -D`, `clean: rm -rf public resources`, default URL `http://localhost:1313`
 - **`go-cli`** — `build: go build ./...`, `test: go test ./...`, `vet`, `fmt`, `deploy: go install ./...`
 - **`docker-unraid`** — build image on remote, deploy to Unraid, `logs`, `open`, `reload`, SSH target from config
-- **`stash-plugin`** — rollup build + sync to Stash plugin dir, dev/deploy variants
 - **`apple`** — xcodebuild, dev_loop_macos/ios, device install, DerivedData clean, `--log LEVEL`, multi-target (mac|ios)
 - **`unraid-plugin`** — push source to Unraid USB, register/uninstall
 - **`firefox-extension`** — web-ext dev, package `.xpi`, lint
@@ -239,7 +238,9 @@ def detect(project_dir: Path) -> dict | None:
 
 Detectors run on a fresh project during `admin new` *without* a manifest. They produce a **starter `admin.toml`** which the user then reviews and commits. Detectors never run on projects that already have `admin.toml` — the manifest is the source of truth from that moment forward.
 
-Initial detectors mirror the archetypes: hugo (`config.yaml` + `themes/`), docker-unraid (`Dockerfile` + existing remote-deploy markers), apple (`.xcodeproj`/`.xcworkspace`), stash-plugin (rollup config + `stash` in package.json), go-cli (`go.mod`, no Dockerfile), firefox-extension (`manifest.json` with `browser_specific_settings`), unraid-plugin (`plg` files / unraid markers). Fallback: `simple`.
+Initial detectors mirror the archetypes: hugo (`config.yaml` + `themes/`), docker-unraid (`Dockerfile` + existing remote-deploy markers), apple (`.xcodeproj`/`.xcworkspace`), go-cli (`go.mod`, no Dockerfile), firefox-extension (`manifest.json` with `browser_specific_settings`), unraid-plugin (`plg` files / unraid markers). Fallback: `simple`.
+
+> The original survey above named `stash-plugin` as an archetype. It was removed: three repos of one product is a project shape, not a platform, and what it actually did — build, then copy the build output somewhere — is the generic `sync` kind. Its consumers use `sync` + an `http` action for the Stash-specific reload. The bar an archetype has to clear is a platform or development environment, not a single application.
 
 Adding a new stack = one detector file + one archetype file.
 
