@@ -968,8 +968,15 @@ def pick_target(targets, prompt="Select target", order=None):
 
     targets: dict of {name: description}
     order: optional list of names; "" entries render as blank spacer rows
+
+    There is no picker without a TTY, so returns None — but says so first.
+    Callers typically fall through every branch on None and exit 0 having done
+    nothing, which is indistinguishable from success in a script; the message is
+    what makes that visible. (pick_target_or_none() reports its own tailored
+    message and returns before reaching here, so this never double-prints.)
     """
     if not sys.stdout.isatty():
+        err(f"{prompt}: no target given and stdout is not a TTY — pass the target as an argument")
         return None
 
     import tty
