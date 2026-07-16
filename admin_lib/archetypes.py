@@ -362,6 +362,16 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
         target_watch = {k: str(v["watch"]) for k, v in inline_targets_raw.items() if v.get("watch")}
         if target_watch:
             meta["target_watch"] = target_watch
+        # Per-target env. The reason this exists: several projects wrapped an
+        # otherwise-declarative multi-target in a python dispatcher purely to set
+        # one variable per target before handing off (stash-reels and muxarr both
+        # scope ADMIN_LOG_BRIDGE_HOSTS to dev vs live this way).
+        target_env = {
+            k: {str(ek): str(ev) for ek, ev in v["env"].items()}
+            for k, v in inline_targets_raw.items() if v.get("env")
+        }
+        if target_env:
+            meta["target_env"] = target_env
         # Per-target `requires` overrides. None = inherit parent default;
         # an explicit list (including []) replaces it. Only emitted when at least
         # one child overrides — otherwise the parent default covers every target.
