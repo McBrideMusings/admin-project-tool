@@ -10,7 +10,7 @@ import re
 import subprocess
 import sys
 
-from .core import info, ok, resolve_env
+from .core import err, info, ok, resolve_env
 from .ports import port_holders, port_free, _kill_pids, _ps_parent
 
 
@@ -193,6 +193,56 @@ def project_dev_holders(project_root, timeout=2.0):
     return holders
 
 
+def _pid_ppid_map():
+    """{pid: ppid} for every visible process, or {} if ps is unavailable.
+
+    One `ps -Ao pid=,ppid=` call — portable across macOS and Linux, unlike
+    `ps --ppid` (GNU-only) or `ps -P` (which on macOS is not a ppid filter).
+    """
+    try:
+        r = subprocess.run(
+            ["ps", "-Ao", "pid=,ppid="],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return {}
+    out = {}
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        try:
+            out[int(parts[0])] = int(parts[1])
+        except ValueError:
+            continue
+    return out
+
+
+def child_pids(pid):
+    """Every descendant of `pid`, deepest first.
+
+    Deepest-first so a caller killing the list in order reaps grandchildren
+    before the parent that would otherwise reparent them to init.
+    """
+    tree = {}
+    for child, parent in _pid_ppid_map().items():
+        tree.setdefault(parent, []).append(child)
+
+    out = []
+
+    def walk(p, depth=0):
+        if depth > 20:  # a real tree can't cycle; guard against a bogus ps
+            return
+        for c in tree.get(p, ()):
+            if c == p:
+                continue
+            walk(c, depth + 1)
+            out.append(c)
+
+    walk(pid)
+    return out
+
+
 def find_pids_by_cmdline(pattern):
     """Return pids whose joined argv matches `pattern` (regex)."""
     rx = re.compile(pattern)
@@ -315,6 +365,7 @@ def nuke_dev_processes(
     runtimes=("bun", "node", "python", "python3"),
     web_argv_markers=("vite", "esbuild", "npm run dev"),
     supervisor_markers=None,
+    patterns=(),
 ):
     """Bulletproof dev-server cleanup. Four passes, each a fallback for the previous.
 
@@ -325,7 +376,8 @@ def nuke_dev_processes(
     Passes: (1) bound-port listeners + their bun/node/python supervisor
     parents; (2) pidfiles ({"path", "format": "int"|"json", "key"?}), stale
     ones unlinked; (3) /proc argv/cwd matching against project_root + js_files
-    + web_subdirs + web_argv_markers; (4) project-scoped sweep for orphaned
+    + web_subdirs + web_argv_markers; (3b) declared argv `patterns`, scoped to
+    project_root unless a pattern sets global=true; (4) project-scoped sweep for orphaned
     file-watcher supervisors (cargo-watch / nodemon / watchexec / `tsc -w`)
     via `kill_stale_supervisors` — catches the case where the listener is
     already dead but its watcher would respawn one on the next file change.
@@ -394,6 +446,12 @@ def nuke_dev_processes(
         if pid and pid != os.getpid() and pid not in killed:
             try:
                 os.kill(pid, 0)
+                # Children first: a pidfile names a supervisor (a bun/electron/
+                # cargo parent), and SIGTERM to it does not reliably take its
+                # children with it — they get reparented and keep the port. Kill
+                # the tree bottom-up, which is what `pkill -P <pid>; kill <pid>`
+                # was doing by hand.
+                _kill_set(child_pids(pid), f"pidfile {os.path.basename(path)} children")
                 _kill_set([pid], f"pidfile {os.path.basename(path)}")
             except ProcessLookupError:
                 pass
@@ -426,6 +484,41 @@ def nuke_dev_processes(
     if straggler_pids:
         _kill_set(straggler_pids, "argv/cwd-matched stragglers")
 
+    # 3b. Declared argv patterns.
+    #
+    # For dev processes the first three passes can't see: a hugo/wrangler/cargo
+    # binary that binds no port we listed, writes no pidfile, and isn't a JS
+    # runtime. Projects were reaching for `pkill -f 'hugo server'` here, which
+    # matches by argv across the whole machine — it will happily kill the same
+    # dev server running from a different checkout. These patterns are scoped to
+    # processes whose cwd is inside project_root unless a pattern opts out with
+    # global=true, so the default is narrower than the pkill it replaces.
+    for spec in patterns or ():
+        if isinstance(spec, str):
+            spec = {"match": spec}
+        needle = spec.get("match") or ""
+        if not needle:
+            continue
+        is_regex = bool(spec.get("regex"))
+        is_global = bool(spec.get("global"))
+        try:
+            rx = re.compile(needle) if is_regex else None
+        except re.error as e:
+            err(f"[dev_kill].patterns: bad regex {needle!r}: {e}")
+            sys.exit(1)
+        hits = set()
+        for proc in list_processes():
+            if proc["pid"] in killed:
+                continue
+            cmdline = proc["cmdline"] or ""
+            if rx.search(cmdline) if rx else (needle in cmdline):
+                if not is_global:
+                    cwd = proc["cwd"] or _pid_cwd(proc["pid"]) or ""
+                    if not _cwd_in_root(cwd, project_root):
+                        continue
+                hits.add(proc["pid"])
+        _kill_set(hits, f"pattern {needle!r}")
+
     # 4. File-watcher / supervisor orphans.
     sup_kwargs = {"markers": supervisor_markers} if supervisor_markers else {}
     sup_count = kill_stale_supervisors(project_root, **sup_kwargs)
@@ -444,7 +537,7 @@ def nuke_dev_processes(
 def nuke_dev_from_config(cfg):
     """Adapter: read a manifest `[dev_kill]` table and call nuke_dev_processes.
 
-    Schema: ports, pidfiles, js_files, web_subdirs, runtimes. ${VAR} placeholders
+    Schema: ports, pidfiles, js_files, web_subdirs, runtimes, patterns. ${VAR} placeholders
     in path/default strings are resolved via core.resolve_env at call time.
     """
     if not cfg:
@@ -463,12 +556,25 @@ def nuke_dev_from_config(cfg):
             "format": p.get("format", "int"),
             "key": p.get("key", "pid"),
         })
+    def _port(value):
+        # Ports accept "${PORT:-3300}" the same way pidfile paths accept ${VAR};
+        # without this a project whose port is env-driven has to hardcode it here
+        # and silently drifts from the port its dev server actually binds.
+        if isinstance(value, str):
+            resolved = resolve_env(value).strip()
+            try:
+                return int(resolved)
+            except ValueError:
+                err(f"[dev_kill].ports: {value!r} resolved to {resolved!r}, which is not a port")
+                sys.exit(1)
+        return value
+
     ports = []
     for entry in cfg.get("ports") or ():
         if isinstance(entry, dict):
-            ports.append((entry.get("port"), entry.get("label")))
+            ports.append((_port(entry.get("port")), entry.get("label")))
         else:
-            ports.append(entry)
+            ports.append(_port(entry))
     return nuke_dev_processes(
         project_root=os.getcwd(),
         ports=ports,
@@ -477,4 +583,5 @@ def nuke_dev_from_config(cfg):
         web_subdirs=tuple(cfg.get("web_subdirs") or ()),
         runtimes=tuple(cfg.get("runtimes") or ("bun", "node", "python", "python3")),
         supervisor_markers=tuple(cfg.get("supervisor_markers") or ()) or None,
+        patterns=tuple(cfg.get("patterns") or ()),
     )

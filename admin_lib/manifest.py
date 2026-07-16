@@ -210,6 +210,25 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     dev_kill = data.get("dev_kill", {}) or {}
     if not isinstance(dev_kill, dict):
         raise ManifestError(f"{source}: '[dev_kill]' must be a table")
+    for _p in dev_kill.get("patterns", []) or []:
+        if isinstance(_p, str):
+            continue
+        if not isinstance(_p, dict):
+            raise ManifestError(
+                f"{source}: '[dev_kill].patterns' entries must be a string or a "
+                f"table with 'match', got {type(_p).__name__}"
+            )
+        if not isinstance(_p.get("match"), str) or not _p.get("match"):
+            raise ManifestError(f"{source}: '[dev_kill].patterns' entry needs a non-empty 'match' string")
+        _unknown = set(_p) - {"match", "regex", "global"}
+        if _unknown:
+            raise ManifestError(
+                f"{source}: '[dev_kill].patterns' unknown keys: {sorted(_unknown)}, "
+                f"valid: ['global', 'match', 'regex']"
+            )
+        for _flag in ("regex", "global"):
+            if _flag in _p and not isinstance(_p[_flag], bool):
+                raise ManifestError(f"{source}: '[dev_kill].patterns' '{_flag}' must be a boolean")
 
     clean_dev = data.get("clean_dev", {}) or {}
     if not isinstance(clean_dev, dict):
