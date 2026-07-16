@@ -71,7 +71,6 @@ from .core import (
     warn,
     err,
     register_cleanup,
-    read_key,
     run_cmd,
 )
 
@@ -1400,6 +1399,11 @@ def dev_loop_device(project, scheme, config, subsystem, process,
             device_id, launch_bundle, console=True,
             env=_DEVICE_LOG_ENV)
 
+        # "generic", not "apple_os_log" as the simulator loop uses: that
+        # formatter waits for `log stream`'s native "Timestamp..." header and
+        # then parses fixed-width os_log columns. devicectl --console emits the
+        # app's raw stdout/stderr with no header and no columns, so the Apple
+        # formatter would wait forever and pass every line through unformatted.
         fmt = make_column_formatter("generic", output_config)
         _, log_fh = stream_subprocess(
             console_proc, log_file=get_log_file(), formatter=fmt.format_line)

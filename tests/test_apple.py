@@ -36,13 +36,17 @@ def _load_apple(subprocess_run=None, subprocess_popen=None):
     same for the detached `log stream` child.
     """
     source = (LIB_DIR / "apple.py").read_text()
-    # Strip every relative import, not just .core: exec'ing outside a package
-    # leaves __name__ unset, so any `from .x import ...` raises KeyError. Both
-    # forms — parenthesized multi-line and bare single-line. The names they
-    # bind are supplied in ns below.
-    source = _re.sub(r"from \.\w+ import \([^)]*\)", "pass", source)
-    source = _re.sub(r"^from \.\w+ import [^(\n]+$", "pass", source, flags=_re.M)
+    # Only .core is stripped, and only because ns below stubs its names to keep
+    # tests from logging and shelling out. Every OTHER relative import resolves
+    # for real, because __name__/__package__ are set in ns: exec'ing without
+    # them is what makes `from .x import y` raise KeyError('__name__'), and
+    # regex-stripping each new import as it appears just moves the breakage to
+    # the next one added (it already did, twice). #95 tracks replacing this
+    # loader with a plain import.
+    source = _re.sub(r"from \.core import \([^)]*\)", "pass", source, count=1)
     ns: dict = {
+        "__name__": "admin_lib.apple",
+        "__package__": "admin_lib",
         "C": type("C", (), {"RED": "", "GREEN": "", "YELLOW": "", "CYAN": "", "RESET": ""}),
         "LOG_DIR": "/tmp",
         "LOG_FILE": "/tmp/apple-test.log",
@@ -53,17 +57,6 @@ def _load_apple(subprocess_run=None, subprocess_popen=None):
         "warn": lambda *a, **k: None,
         "err": lambda *a, **k: None,
         "register_cleanup": lambda *a, **k: None,
-        "read_key": lambda *a, **k: None,
-        # Bound by `from .reload import ...` in apple.py — the dev loops use
-        # these; none of the helpers covered here call them.
-        "cleanup_pid_file": lambda *a, **k: None,
-        "clear_rebuild_request": lambda *a, **k: None,
-        "is_rebuild_requested": lambda *a, **k: False,
-        "poll_for_reload": lambda *a, **k: False,
-        "setup_reload": lambda *a, **k: None,
-        # Bound by `from .streams import ...` — the shared output pump.
-        "stream_subprocess": lambda *a, **k: (None, None),
-        "stop_stream": lambda *a, **k: None,
     }
     exec(compile(source, "apple.py", "exec"), ns)
     if subprocess_run is not None or subprocess_popen is not None:

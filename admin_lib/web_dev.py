@@ -23,7 +23,8 @@ from .core import (
     get_log_dir,
     info, ok, warn, err, register_cleanup, resolve_env,
 )
-from .docker import ensure_deps, run_with_reload, _wait_or_kill, _preexec_pdeathsig
+from .docker import ensure_deps
+from .reload import run_with_reload, _wait_or_kill, _preexec_pdeathsig
 from .ports import preflight_port
 from .ports_nuke import kill_stale_supervisors
 

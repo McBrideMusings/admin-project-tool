@@ -273,13 +273,7 @@ def preflight_port(port, label=None, force=False, timeout=2.0, project_root=None
         print(f"Free port {port}{tag} manually (e.g. `admin kill`) and retry.", file=sys.stderr)
         return False
 
-    try:
-        from .reload import _reload_active
-        _in_reload = _reload_active
-    except ImportError:
-        _in_reload = False
-
-    if force or _in_reload:
+    if force:
         pass  # fall through to kill
     elif not sys.stdin.isatty():
         print(

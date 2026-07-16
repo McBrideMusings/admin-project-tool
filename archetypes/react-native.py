@@ -48,7 +48,7 @@ if target is None:
         return
 
 _rn = globals().get("_REACT_NATIVE_CONFIG") or {}
-cfg = globals().get("_APPLE_CONFIG") or {}
+cfg = apple_config_for(_rn, globals().get("_APPLE_CONFIG") or {})
 set_log_context("dev", target)
 
 ensure_metro_for(_rn)

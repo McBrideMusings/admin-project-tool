@@ -137,9 +137,11 @@ def dev_loop_android(app_dir, package, pid_file="/tmp/admin-run.pid",
         # this launch — logcat's ring buffer survives app restarts.
         subprocess.run(_adb(serial, "logcat", "-c"), capture_output=True)
 
+        # --device, not --deviceId: the latter is deprecated as of RN 0.86 and
+        # prints a rename warning on every build.
         rc = run_cmd(
             f"cd {shlex.quote(str(app_dir))} && npx react-native run-android"
-            f" --no-packager --deviceId {shlex.quote(serial)}{mode}"
+            f" --no-packager --device {shlex.quote(serial)}{mode}"
         )
         if rc != 0:
             err("Build/install failed")
@@ -156,6 +158,8 @@ def dev_loop_android(app_dir, package, pid_file="/tmp/admin-run.pid",
             cleanup_pid_file(pid_file)
             sys.exit(1)
 
+        # "generic": logcat's own `-v time` format is nothing like the fixed
+        # native os_log layout "apple_os_log" parses.
         fmt = make_column_formatter("generic", output_config)
         log_proc, _thread, log_fh = stream_logcat(
             pid, log_file=get_log_file(), serial=serial, formatter=fmt.format_line)
