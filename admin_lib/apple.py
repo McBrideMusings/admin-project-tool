@@ -439,9 +439,26 @@ def resolve_simulator():
 
 
 def boot_simulator(device_id):
-    """Boot a simulator and open Simulator.app."""
+    """Boot a simulator and open Simulator.app.
+
+    Returns once `simctl boot` has been issued — the device is still booting.
+    Use ensure_booted_simulator() when the caller needs a usable device.
+    """
     subprocess.run(["xcrun", "simctl", "boot", device_id], capture_output=True)
     subprocess.run(["open", "-a", "Simulator"])
+
+
+def ensure_booted_simulator():
+    """Resolve a simulator, boot it if needed, and wait until it finishes booting.
+
+    Returns (device_id, device_name). Callers that install/launch on the returned
+    id can do so immediately — `simctl bootstatus -b` boots the device when it
+    isn't already and blocks until boot completes, so there is no race.
+    """
+    device_id, name = resolve_simulator()
+    subprocess.run(["open", "-a", "Simulator"])
+    subprocess.run(["xcrun", "simctl", "bootstatus", device_id, "-b"])
+    return device_id, name
 
 
 def app_bundle_identifier(app_path):
@@ -820,6 +837,54 @@ def sweep_orphan_log_streams(subsystem):
     import re
     pattern = f"log stream.*{re.escape(subsystem)}"
     subprocess.run(["pkill", "-f", pattern], capture_output=True)
+
+
+def stream_sim_log_detached(sim_id, predicate, log_file, pid_file=None):
+    """Stream a simulator's os_log to log_file from a detached process.
+
+    Unlike stream_os_log(), nothing Python-side stays in the data path: the
+    `log stream` child is a new session leader writing straight to the file, so
+    it survives the caller exiting or os.execvp'ing into a supervisor. It is
+    deliberately kept out of _children — the atexit handler must not reap it.
+
+    Callers own the lifetime: pass pid_file and kill that pid on teardown, or
+    sweep by predicate with sweep_orphan_log_streams(). If a live stream is
+    already recorded in pid_file, returns its pid instead of starting a second.
+
+    Returns the pid of the streaming process.
+    """
+    if pid_file and os.path.isfile(pid_file):
+        try:
+            with open(pid_file) as pf:
+                existing = int(pf.read().strip())
+            os.kill(existing, 0)
+        except (ValueError, OSError):
+            pass          # stale or unreadable pid file — fall through and restart
+        else:
+            return existing
+
+    log_dir = os.path.dirname(log_file)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+
+    fh = open(log_file, "a")
+    try:
+        proc = subprocess.Popen(
+            ["xcrun", "simctl", "spawn", sim_id,
+             "log", "stream", "--level", "debug", "--predicate", predicate],
+            stdout=fh, stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    finally:
+        fh.close()        # the child holds its own dup of the fd
+
+    if pid_file:
+        pid_dir = os.path.dirname(pid_file)
+        if pid_dir:
+            os.makedirs(pid_dir, exist_ok=True)
+        with open(pid_file, "w") as pf:
+            pf.write(str(proc.pid))
+    return proc.pid
 
 
 # ---------------------------------------------------------------------------
@@ -1273,8 +1338,10 @@ def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
     launch_bundle = bundle_id or subsystem
 
     if sim_id is None:
-        sim_id, sim_name = resolve_simulator()
-    boot_simulator(sim_id)
+        sim_id, sim_name = ensure_booted_simulator()
+    else:
+        boot_simulator(sim_id)
+        subprocess.run(["xcrun", "simctl", "bootstatus", sim_id, "-b"])
     destination = f"platform=iOS Simulator,id={sim_id}"
 
     while True:
