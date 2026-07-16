@@ -44,7 +44,7 @@ VALID_COMMAND_KEYS = {"desc", "steps", "log_file", "log_retain", "log", "group",
 # Keys an [actions.X] table may carry.
 VALID_ACTION_KEYS = {"run", "desc", "kind", "targets", "method", "body", "src", "log_file",
                      "log_retain", "log", "interactive", "keys", "requires", "watch",
-                     "excludes"}
+                     "excludes", "hosts"}
 
 _GP_SUBTABLE_HINT = (
     " 'group' and 'priority' belong on inline target subtables "
