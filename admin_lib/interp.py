@@ -69,6 +69,7 @@ _CONFIG_GLOBALS = {
     "_DEPLOY_CONFIG": "deploy",
     "_INSTALL_TEMPLATE_CONFIG": "install_template",
     "_FIXTURES_CONFIG": "fixtures",
+    "_DOCS_CONFIG": "docs",
 }
 
 
@@ -328,16 +329,51 @@ def _make_http(cmd, ns):
     return _fn
 
 
+def _pkg_runner(dirpath: str = ".") -> str:
+    """bun or npm, decided by the lockfile sitting next to the package.json we run.
+
+    dirpath matters: a docs site with its own docs/package.json may be a bun
+    workspace inside an otherwise npm project, or vice versa.
+    """
+    for lock in ("bun.lockb", "bun.lock"):
+        if os.path.isfile(os.path.join(dirpath, lock)):
+            return "bun"
+    return "npm"
+
+
 def _make_npm(cmd, ns):
     script = cmd.run
 
     def _fn(args):
-        pkg = "bun" if (os.path.isfile("bun.lockb") or os.path.isfile("bun.lock")) else "npm"
+        pkg = _pkg_runner()
         rc = run_cmd(pkg + " run " + script)
         if rc != 0:
             err(pkg + " run " + script + " failed")
             sys.exit(rc)
         ok(pkg + " run " + script + " complete")
+    return _fn
+
+
+def _make_docs(cmd, ns):
+    import shlex
+
+    cfg = ns.get("_DOCS_CONFIG") or {}
+    dirpath = str(cfg.get("dir", ".")) or "."
+    script = str(cfg.get("script", "docs:dev"))
+
+    def _fn(args):
+        if not os.path.isdir(dirpath):
+            err("docs: no such directory: " + dirpath + " (set [docs].dir)")
+            sys.exit(1)
+        pkg = _pkg_runner(dirpath)
+        run = pkg + " run " + script
+        if dirpath != ".":
+            run = "cd " + shlex.quote(dirpath) + " && " + run
+        rc = run_cmd(run)
+        if rc != 0:
+            err(run + " failed")
+            sys.exit(rc)
+        ok("docs server exited")
     return _fn
 
 
@@ -508,6 +544,7 @@ register_factory("python", _make_python)
 register_factory("python-script", _make_python_script)
 register_factory("http", _make_http)
 register_factory("npm", _make_npm)
+register_factory("docs", _make_docs)
 register_factory("sync", _make_sync)
 register_factory("apple", _make_apple)
 register_factory("kill-port", _make_kill_port)

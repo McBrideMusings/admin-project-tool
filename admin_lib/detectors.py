@@ -35,6 +35,9 @@ DETECTOR_ORDER = [
     # an RN app keeps its workspace down in <app_dir>/ios/ — but a repo with a
     # native Mac app at the root and an RN client in a subdir matches both.
     "react-native",
+    # Orthogonal to every archetype above — a docs site rides along with whatever
+    # the project actually is, so it contributes no competing command names.
+    "docs",
     "simple",
 ]
 

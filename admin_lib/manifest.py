@@ -33,7 +33,7 @@ _KNOWN_KEYS = {
     "commands", "actions", "order", "logs", "apple", "react_native", "server", "output",
     "exclude_modules", "hide_commands", "inline", "logging",
     "dev_kill", "clean_dev", "vite_dev", "docker_dev", "docker_run", "deploy", "install_template",
-    "fixtures", "log_bridge", "guards",
+    "fixtures", "log_bridge", "guards", "docs",
     # Obsolete under interpreter mode (ADR-0006); tolerated silently on
     # un-migrated manifests, never written back. `admin migrate` strips it.
     "generator_commit",
@@ -83,6 +83,7 @@ class Manifest:
     docker_run: dict = field(default_factory=dict)  # [docker_run] — prod docker run config (target, image_tag, env, mounts, …)
     install_template: dict = field(default_factory=dict)  # [install_template] — kind="install-template" config
     fixtures: dict = field(default_factory=dict)  # [fixtures] — config for kind="fixtures-generate"/"fixtures-reset"
+    docs: dict = field(default_factory=dict)      # [docs] — config for kind="docs" (dir, script)
     log_bridge: dict = field(default_factory=dict)            # [log_bridge] — browser-console HTTP bridge config
     guards: dict[str, dict] = field(default_factory=dict)     # [guards.<name>] — user-defined shell guards
     actions: dict[str, dict] = field(default_factory=dict)    # action name -> raw dict (not shown in UI)
@@ -236,6 +237,20 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     if not isinstance(fixtures, dict):
         raise ManifestError(f"{source}: '[fixtures]' must be a table")
 
+    docs = data.get("docs", {}) or {}
+    if not isinstance(docs, dict):
+        raise ManifestError(f"{source}: '[docs]' must be a table")
+    _DOCS_KNOWN = {"dir", "script"}
+    unknown_docs = set(docs) - _DOCS_KNOWN
+    if unknown_docs:
+        raise ManifestError(
+            f"{source}: '[docs]' unknown keys: {sorted(unknown_docs)}, "
+            f"valid: {sorted(_DOCS_KNOWN)}"
+        )
+    for _k in ("dir", "script"):
+        if _k in docs and not isinstance(docs[_k], str):
+            raise ManifestError(f"{source}: '[docs].{_k}' must be a string")
+
     logging_cfg = data.get("logging", {}) or {}
     if not isinstance(logging_cfg, dict):
         raise ManifestError(f"{source}: '[logging]' must be a table")
@@ -325,6 +340,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         docker_run=docker_run,
         install_template=install_template,
         fixtures=fixtures,
+        docs=docs,
         log_bridge=log_bridge,
         guards=guards,
         exclude_modules=exclude_modules,
