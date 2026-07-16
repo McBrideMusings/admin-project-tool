@@ -86,6 +86,7 @@ _kind("fixtures-generate", configless=True, modules=("cleanup", "fixtures"))
 _kind("fixtures-reset", configless=True, modules=("cleanup", "fixtures"))
 _kind("install-template", configless=True, modules=("remote", "unraid"))
 _kind("interactive-shell", modules=("ports", "log_server", "log_bridge", "keybindings", "log_format"))
+_kind("bridge-listen", configless=True, modules=("ports", "log_server", "log_bridge", "keybindings", "log_format"))
 
 
 # Derived views over KINDS — one source, three lenses. Kept as module-level names

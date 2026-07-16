@@ -656,6 +656,42 @@ def _make_interactive_shell(cmd, ns):
     return _fn
 
 
+_BRIDGE_PARK = "tail -f /dev/null"
+
+
+def _make_bridge_listen(cmd, ns):
+    """kind = "bridge-listen" — park a session so the log bridge can attach.
+
+    The interactive-shell machinery starts the bridge listener and streams what
+    the browser POSTs to it; the shell command itself is irrelevant, it just has
+    to not exit. Projects were writing `kind = "interactive-shell"` with
+    `run = "tail -f /dev/null"`, which says nothing about what the action is for.
+
+    `hosts` narrows what this listener advertises, so `logs live` and `logs dev`
+    can run side by side and the userscript routes each page to the right one.
+    """
+    name = cmd.name
+    keys = cmd.keys
+    hosts = cmd.meta.get("hosts")
+
+    def _fn(args):
+        from admin_lib.keybindings import run_with_keybindings
+        from admin_lib.log_format import make_formatter
+
+        if hosts:
+            resolved = resolve_env(hosts)
+            os.environ["ADMIN_LOG_BRIDGE_HOSTS"] = resolved
+            info("log bridge scoped to: " + resolved)
+        info("waiting for browser console output (Ctrl-C to stop)")
+        fmt = make_formatter()
+        rc = run_with_keybindings(_BRIDGE_PARK, keys, label=name, formatter=fmt)
+        if rc not in (0, 130):
+            err(name + " failed")
+            sys.exit(rc)
+        ok(name + " complete")
+    return _fn
+
+
 def _make_print_urls(cmd, ns):
     def _fn(args):
         print_url_status()
@@ -691,6 +727,7 @@ register_factory("vite-dev", _make_vite_dev)
 register_factory("server-reload", _make_server_reload)
 register_factory("install-template", _make_install_template)
 register_factory("print-urls", _make_print_urls)
+register_factory("bridge-listen", _make_bridge_listen)
 
 # Import-time coverage check: every declared kind must have a factory bound. This
 # is the runtime invariant that replaces the old CI-only sync test.
