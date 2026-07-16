@@ -516,9 +516,15 @@ def _make_apple(cmd, ns):
 def _make_sync(cmd, ns):
     dest = cmd.run
     src = cmd.meta.get("src", "dist/")
+    # `excludes` is load-bearing, not a nicety: sync deletes whatever in the
+    # destination has no counterpart in the source, and a plugin directory can
+    # hold live runtime state next to the deployed files (stash-organizer keeps
+    # its library/state SQLite DBs there). Anything listed here is neither
+    # copied nor deleted.
+    excludes = cmd.meta.get("excludes") or None
 
     def _fn(args):
-        rc = sync(src, resolve_env(dest))
+        rc = sync(src, resolve_env(dest), excludes=excludes)
         if rc != 0:
             sys.exit(rc)
     return _fn

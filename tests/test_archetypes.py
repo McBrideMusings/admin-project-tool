@@ -27,7 +27,7 @@ LIB_DIR = REPO / "admin_lib"
 
 EXPECTED = [
     "hugo", "simple", "go-cli", "firefox-extension",
-    "stash-plugin", "unraid-plugin", "docker-unraid", "apple",
+    "unraid-plugin", "docker-unraid", "apple",
 ]
 
 

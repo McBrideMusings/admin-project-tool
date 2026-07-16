@@ -621,6 +621,36 @@ def run_cmd(cmd, shell=True, capture_log=True, formatter=None, pty=False, collec
 # Sync deploy
 # ---------------------------------------------------------------------------
 
+def _prune_extraneous(src_dir, dest, ignore=None):
+    """Remove entries under `dest` that have no counterpart under `src_dir`.
+
+    The local half of rsync --delete. Only walks `dest`, and only ever removes
+    paths that are absent from `src_dir`, so it cannot touch anything outside
+    the destination tree.
+    """
+    import shutil
+
+    for root, dirs, files in os.walk(dest, topdown=True):
+        rel = os.path.relpath(root, dest)
+        src_root = src_dir if rel == "." else os.path.join(src_dir, rel)
+        skip = ignore(root, dirs + files) if ignore else set()
+        for name in list(dirs):
+            if name in skip:
+                dirs.remove(name)
+                continue
+            if not os.path.isdir(os.path.join(src_root, name)):
+                shutil.rmtree(os.path.join(root, name), ignore_errors=True)
+                dirs.remove(name)
+        for name in files:
+            if name in skip:
+                continue
+            if not os.path.exists(os.path.join(src_root, name)):
+                try:
+                    os.remove(os.path.join(root, name))
+                except OSError:
+                    pass
+
+
 def sync(src_dir, dest, excludes=None, post_sync=None):
     """Copy a directory to a local or remote destination via rsync or shutil.
 
@@ -647,6 +677,11 @@ def sync(src_dir, dest, excludes=None, post_sync=None):
         os.makedirs(dest, exist_ok=True)
         info(f"Copying to {dest}")
         ignore = shutil.ignore_patterns(*excludes) if excludes else None
+        # Delete extraneous files, matching the --delete the remote branch has
+        # always used. Without this the two halves of `sync` mean different
+        # things: a renamed or removed source file lingers forever in a local
+        # dest, and a plugin dir keeps loading the stale copy.
+        _prune_extraneous(src_dir, dest, ignore)
         shutil.copytree(src_dir, dest, dirs_exist_ok=True, ignore=ignore)
         ok(f"Synced: {dest}")
         rc = 0

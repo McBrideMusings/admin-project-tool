@@ -24,7 +24,6 @@ DETECTOR_ORDER = [
     "rust",
     "rust-tauri",
     "firefox-extension",
-    "stash-plugin",
     "unraid-plugin",
     "docker-unraid",
     "cloudflare-workers",

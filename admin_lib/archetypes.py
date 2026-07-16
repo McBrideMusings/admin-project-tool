@@ -353,6 +353,8 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
         meta["requires"] = [str(r) for r in data["requires"]]
     if "watch" in data:
         meta["watch"] = str(data["watch"])
+    if "excludes" in data:
+        meta["excludes"] = [str(e) for e in data["excludes"]]
     if inline_targets_raw:
         targets = {k: ("@" + v["action"] if "action" in v else v.get("run", "")) for k, v in inline_targets_raw.items()}
         meta["target_descs"] = {k: v.get("desc", k) for k, v in inline_targets_raw.items()}
