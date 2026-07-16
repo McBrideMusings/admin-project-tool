@@ -32,7 +32,10 @@ class C:
     RESET = "\033[0m"
 
 
-_ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*m')
+# Every ANSI escape, not just the SGR colour codes: log files should carry no
+# escape sequences at all, and cursor moves / erases from a progress-bar-style
+# child would otherwise survive into the file and scramble it when catted.
+_ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
 
 def _log_write(text: str):
@@ -463,9 +466,6 @@ def cmd_env(args):
             print(f"{indent}{C.DIM}full used_by: {', '.join(used_by)}{C.RESET}")
 
 
-_ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-
-
 def _stamp_log(text):
     """Prefix a streamed line with an absolute wall-clock timestamp (HH:MM:SS.mmm).
 
@@ -478,8 +478,22 @@ def _stamp_log(text):
     strip_log_timestamp() in log_format, so `admin logs` still renders cleanly.
     Blank lines pass through unstamped to keep output free of trailing-whitespace
     noise.
+
+    A line that already opens with its own timestamp is passed through untouched.
+    Stamping it would prepend the time admin *read* the line in front of the time
+    the event *happened* — and those diverge exactly when it matters: tailing a
+    file written earlier, or one that bursts after a stall. The reader's stamp
+    would then measure tail's I/O and mask the very gap being hunted. Sources
+    that arrive pre-stamped (`log stream`'s microsecond os_log output, docker
+    logs -t, a re-tailed admin log) keep their own, higher-precision event time.
     """
     if not text.strip():
+        return text
+    # Local import: log_format imports C from this module, so a module-level
+    # import here would be circular.
+    from .log_format import strip_log_timestamp
+    ts_own, _ = strip_log_timestamp(_ANSI_ESCAPE_RE.sub("", text))
+    if ts_own:
         return text
     ts = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
     return f"{ts} {text}"

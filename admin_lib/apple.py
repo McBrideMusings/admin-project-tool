@@ -52,7 +52,6 @@ Explicit dev keys override the derived defaults.
 unset (i.e. PRODUCT_NAME == scheme, the Xcode default).
 """
 
-import atexit
 import glob
 import json
 import os
@@ -76,76 +75,18 @@ from .core import (
     run_cmd,
 )
 
-
-# ---------------------------------------------------------------------------
-# Reload infrastructure
-# ---------------------------------------------------------------------------
-
-_rebuild_requested = False
-
-
-def _handle_rebuild_signal(signum, frame):
-    global _rebuild_requested
-    _rebuild_requested = True
-
-
-def setup_reload(pid_file="/tmp/admin-run.pid"):
-    """Register SIGUSR1 handler and write PID file."""
-    signal.signal(signal.SIGUSR1, _handle_rebuild_signal)
-    with open(pid_file, "w") as f:
-        f.write(str(os.getpid()))
-    atexit.register(cleanup_pid_file, pid_file)
-    register_cleanup(lambda: cleanup_pid_file(pid_file))
-
-
-def cleanup_pid_file(pid_file):
-    """Remove PID file if it exists."""
-    try:
-        os.remove(pid_file)
-    except FileNotFoundError:
-        pass
-
-
-def poll_for_reload(is_running_fn, timeout=1):
-    """Poll for reload signal, 'r' keypress, or process exit.
-
-    Returns True if reload requested, False if process exited or Ctrl+C.
-    """
-    import select
-    import termios
-    import tty
-
-    global _rebuild_requested
-
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
-    try:
-        tty.setcbreak(fd)
-        while True:
-            if _rebuild_requested:
-                return True
-            if not is_running_fn():
-                return False
-            readable, _, _ = select.select([sys.stdin], [], [], timeout)
-            if readable:
-                ch = sys.stdin.read(1)
-                if ch == "r":
-                    return True
-    except KeyboardInterrupt:
-        return False
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-
-
-def is_rebuild_requested():
-    """Check if a rebuild has been requested (via signal or keypress)."""
-    return _rebuild_requested
-
-
-def clear_rebuild_request():
-    """Reset the rebuild request flag."""
-    global _rebuild_requested
-    _rebuild_requested = False
+# The reload flag, its SIGUSR1 handler, and the pid-file plumbing live in
+# admin_lib.reload — shared with run_with_reload rather than kept as a second
+# private copy here. apple's dev loops own their own loop and poll the flag;
+# see admin_lib/reload.py for why both shapes sit on one piece of state.
+from .reload import (
+    cleanup_pid_file,
+    clear_rebuild_request,
+    is_rebuild_requested,
+    poll_for_reload,
+    setup_reload,
+)
+from .streams import stop_stream, stream_subprocess
 
 
 # ---------------------------------------------------------------------------
@@ -702,38 +643,6 @@ def is_device_app_running(device_id, bundle_id):
     return _get_device_process_for_bundle(device_id, bundle_id) is not None
 
 
-def stream_console_output(proc, log_file=None, formatter=None):
-    """Stream a devicectl --console process's stdout in a background thread.
-
-    proc:      Popen process (from launch_on_device with console=True).
-    log_file:  path to tee output to (defaults to tmp/console.log).
-    formatter: optional callable(line) -> line for column formatting.
-    Returns (thread, log_fh) — caller should close log_fh and terminate proc.
-    """
-    import threading
-
-    if log_file is None:
-        _log_dir = get_log_dir() or "tmp"
-        os.makedirs(_log_dir, exist_ok=True)
-        log_file = os.path.join(_log_dir, "console.log")
-    log_fh = open(log_file, "a")
-
-    def _stream():
-        try:
-            for line in proc.stdout:
-                out = formatter(line) if formatter else line
-                sys.stdout.write(out)
-                sys.stdout.flush()
-                log_fh.write(out)
-                log_fh.flush()
-        except ValueError:
-            pass
-
-    thread = threading.Thread(target=_stream, daemon=True)
-    thread.start()
-    return thread, log_fh
-
-
 def device_log_attach(bundle_id, log_file=None, output_config=None):
     """Stream logs from a connected iOS device, blocking until Ctrl+C.
 
@@ -751,14 +660,18 @@ def device_log_attach(bundle_id, log_file=None, output_config=None):
         env=_DEVICE_LOG_ENV)
     from .log_columns import make_column_formatter
     fmt = make_column_formatter("generic", output_config)
-    _, log_fh = stream_console_output(console_proc, log_file=log_file, formatter=fmt.format_line)
+    if log_file is None:
+        _log_dir = get_log_dir() or "tmp"
+        os.makedirs(_log_dir, exist_ok=True)
+        log_file = os.path.join(_log_dir, "console.log")
+    _, log_fh = stream_subprocess(console_proc, log_file=log_file, formatter=fmt.format_line)
 
     try:
         console_proc.wait()
     except KeyboardInterrupt:
         pass
     finally:
-        stop_os_log(console_proc, log_fh)
+        stop_stream(console_proc, log_fh)
         print()
         info("Log streaming stopped.")
 
@@ -774,10 +687,8 @@ def stream_os_log(predicate, log_file=None, sim_id=None, formatter=None):
     log_file:   path to tee output to (defaults to tmp/os_log.log)
     sim_id:     if set, uses xcrun simctl spawn for simulator logs
     formatter:  optional callable(line) -> line for column formatting
-    Returns (proc, thread, log_fh) — caller should call stop_os_log().
+    Returns (proc, thread, log_fh) — caller should call stop_stream().
     """
-    import threading
-
     if sim_id:
         cmd = ["xcrun", "simctl", "spawn", sim_id,
                "log", "stream", "--predicate", predicate,
@@ -796,35 +707,9 @@ def stream_os_log(predicate, log_file=None, sim_id=None, formatter=None):
         _log_dir = get_log_dir() or "tmp"
         os.makedirs(_log_dir, exist_ok=True)
         log_file = os.path.join(_log_dir, "os_log.log")
-    log_fh = open(log_file, "a")
 
-    def _stream():
-        try:
-            for line in proc.stdout:
-                out = formatter(line) if formatter else line
-                sys.stdout.write(out)
-                sys.stdout.flush()
-                log_fh.write(out)
-                log_fh.flush()
-        except (IOError, ValueError):
-            pass
-
-    thread = threading.Thread(target=_stream, daemon=True)
-    thread.start()
+    thread, log_fh = stream_subprocess(proc, log_file=log_file, formatter=formatter)
     return proc, thread, log_fh
-
-
-def stop_os_log(proc, log_fh=None):
-    """Terminate an os log stream process and clean up."""
-    proc.terminate()
-    try:
-        proc.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-    if proc in _children:
-        _children.remove(proc)
-    if log_fh:
-        log_fh.close()
 
 
 def sweep_orphan_log_streams(subsystem):
@@ -1299,7 +1184,7 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
 
         got_reload = poll_for_reload(check_running if appeared else lambda: True)
 
-        stop_os_log(log_proc, log_fh)
+        stop_stream(log_proc, log_fh)
         print()
 
         if got_reload:
@@ -1412,7 +1297,7 @@ def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
 
         got_reload = poll_for_reload(_is_running)
 
-        stop_os_log(log_proc, log_fh)
+        stop_stream(log_proc, log_fh)
         print()
 
         if got_reload:
@@ -1437,7 +1322,16 @@ def dev_loop_device(project, scheme, config, subsystem, process,
     Launches via `devicectl --console` with OS_ACTIVITY_DT_MODE=YES (non-redacted
     os_log). bundle_id defaults to subsystem; device_id auto-resolves via
     find_connected_device when None. pre_build/post_build wrap each build cycle.
+
+    Loops on 'r'/SIGUSR1 like dev_loop_ios. The device log stream is only
+    obtainable by owning the launch — `devicectl device process launch --console`
+    attaches and waits, and there is no attach-to-running-process subcommand nor
+    a `log stream --device` — so a rebuild has to tear the launched app down and
+    relaunch it, rather than restarting a child beside an independent stream the
+    way the simulator can.
     """
+    from .log_columns import make_column_formatter
+
     if output_config is None:
         output_config = globals().get("_OUTPUT_CONFIG")
     launch_bundle = bundle_id or subsystem
@@ -1449,68 +1343,85 @@ def dev_loop_device(project, scheme, config, subsystem, process,
 
     destination = "generic/platform=iOS"
 
-    terminate_device_app(device_id, launch_bundle)
+    setup_reload(pid_file)
 
-    if skip_build:
-        app_path = find_app(app_pattern)
-        if not app_path:
-            err("Could not find previously built app — run without cache to rebuild")
-            sys.exit(1)
-        launch_bundle = app_bundle_identifier(app_path) or bundle_id or subsystem
-    else:
-        if pre_build:
-            pre_build()
-
-        info(f"Building for device ({device_name})...")
-        rc = xcodebuild_filtered(project, scheme, config, destination,
-                                 action=build_action,
-                                 extra_settings=extra_settings)
-        print()
-
-        if post_build:
-            post_build()
-
-        if rc != 0:
-            err("Build failed")
-            sys.exit(1)
-
-        app_path = find_app(app_pattern)
-        if not app_path:
-            err("Could not find built app")
-            sys.exit(1)
-
-        launch_bundle = app_bundle_identifier(app_path) or bundle_id or subsystem
-
-        if display_name:
-            patch_ios_display_name(app_path, display_name)
-
-        info(f"Installing on {device_name}...")
-        rc = install_on_device(device_id, app_path)
-        if rc != 0:
-            err("Install failed")
-            sys.exit(1)
-
-    info(f"Launching on {device_name}...")
-    console_proc = launch_on_device(
-        device_id, launch_bundle, console=True,
-        env=_DEVICE_LOG_ENV)
-
-    from .log_columns import make_column_formatter
-    fmt = make_column_formatter("generic", output_config)
-    _, log_fh = stream_console_output(console_proc, log_file=get_log_file(), formatter=fmt.format_line)
-
-    info("Streaming logs — Ctrl+C to quit")
-    print()
-
-    try:
-        console_proc.wait()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        stop_os_log(console_proc, log_fh)
+    while True:
+        clear_rebuild_request()
         terminate_device_app(device_id, launch_bundle)
+
+        if skip_build:
+            app_path = find_app(app_pattern)
+            if not app_path:
+                err("Could not find previously built app — run without cache to rebuild")
+                cleanup_pid_file(pid_file)
+                sys.exit(1)
+            launch_bundle = app_bundle_identifier(app_path) or bundle_id or subsystem
+        else:
+            if pre_build:
+                pre_build()
+
+            info(f"Building for device ({device_name})...")
+            rc = xcodebuild_filtered(project, scheme, config, destination,
+                                     action=build_action,
+                                     extra_settings=extra_settings)
+            print()
+
+            if post_build:
+                post_build()
+
+            if rc != 0:
+                err("Build failed")
+                if is_rebuild_requested():
+                    warn("Rebuild requested during failed build, retrying...")
+                    continue
+                cleanup_pid_file(pid_file)
+                sys.exit(1)
+
+            app_path = find_app(app_pattern)
+            if not app_path:
+                err("Could not find built app")
+                cleanup_pid_file(pid_file)
+                sys.exit(1)
+
+            launch_bundle = app_bundle_identifier(app_path) or bundle_id or subsystem
+
+            if display_name:
+                patch_ios_display_name(app_path, display_name)
+
+            info(f"Installing on {device_name}...")
+            rc = install_on_device(device_id, app_path)
+            if rc != 0:
+                err("Install failed")
+                cleanup_pid_file(pid_file)
+                sys.exit(1)
+
+        info(f"Launching on {device_name}...")
+        console_proc = launch_on_device(
+            device_id, launch_bundle, console=True,
+            env=_DEVICE_LOG_ENV)
+
+        fmt = make_column_formatter("generic", output_config)
+        _, log_fh = stream_subprocess(
+            console_proc, log_file=get_log_file(), formatter=fmt.format_line)
+
+        info("Press r to rebuild, Ctrl+C to quit")
         print()
-        info("Done.")
+
+        got_reload = poll_for_reload(lambda: console_proc.poll() is None)
+
+        stop_stream(console_proc, log_fh)
+        print()
+
+        if got_reload:
+            info("Reload signal received — rebuilding...")
+        else:
+            info(f"Stopping {process}...")
+        terminate_device_app(device_id, launch_bundle)
+
+        if not got_reload:
+            cleanup_pid_file(pid_file)
+            info("Done.")
+            return
 
 
 # ---------------------------------------------------------------------------

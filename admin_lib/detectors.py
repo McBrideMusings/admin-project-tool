@@ -29,6 +29,12 @@ DETECTOR_ORDER = [
     "docker-unraid",
     "cloudflare-workers",
     "apple",
+    # After apple so that react-native wins the dev command if both match:
+    # later archetypes win on command-name conflicts. The two rarely collide —
+    # apple only matches an .xcodeproj/.xcworkspace at the project root, while
+    # an RN app keeps its workspace down in <app_dir>/ios/ — but a repo with a
+    # native Mac app at the root and an RN client in a subdir matches both.
+    "react-native",
     "simple",
 ]
 
@@ -40,9 +46,18 @@ def detect(project_dir: Path, detector_dir: Path) -> dict:
     across detectors are concatenated (dedup, detector order preserved). URL
     and project_name keys are merged with later detectors winning. The
     'simple' fallback is only included if nothing else matched.
+
+    Any other key a detector returns is passed through as a manifest table
+    (later detectors winning), so a detector that had to locate something in
+    order to match can seed the config that names it — react-native finds the
+    app dir while looking for a package.json, and discarding that would leave
+    a required key for the user to hand-fill. Unknown table names are rejected
+    later by the manifest parser against _KNOWN_KEYS, so a typo here surfaces
+    as a ManifestError rather than silently landing in admin.toml.
     """
     combined_archetypes: list[str] = []
     combined_urls: dict[str, str] = {}
+    combined_tables: dict[str, object] = {}
     project_name: str | None = None
     matched_detectors: list[str] = []
 
@@ -62,15 +77,17 @@ def detect(project_dir: Path, detector_dir: Path) -> dict:
         combined_urls.update(result.get("urls", {}))
         if "project_name" in result:
             project_name = result["project_name"]
+        for key, value in result.items():
+            if key not in ("archetypes", "urls", "project_name"):
+                combined_tables[key] = value
 
     if not combined_archetypes:
         combined_archetypes = ["simple"]
         matched_detectors = ["fallback"]
 
-    out: dict = {
-        "archetypes": combined_archetypes,
-        "_detector": "+".join(matched_detectors),
-    }
+    out: dict = dict(combined_tables)
+    out["archetypes"] = combined_archetypes
+    out["_detector"] = "+".join(matched_detectors)
     if combined_urls:
         out["urls"] = combined_urls
     if project_name:

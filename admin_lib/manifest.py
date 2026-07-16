@@ -30,7 +30,7 @@ MANIFEST_FILENAME = "admin.toml"
 
 _KNOWN_KEYS = {
     "project_name", "python_min", "archetypes", "modules", "urls",
-    "commands", "actions", "order", "logs", "apple", "server", "output",
+    "commands", "actions", "order", "logs", "apple", "react_native", "server", "output",
     "exclude_modules", "hide_commands", "inline", "logging",
     "dev_kill", "clean_dev", "vite_dev", "docker_dev", "docker_run", "deploy", "install_template",
     "fixtures", "log_bridge", "guards",
@@ -71,6 +71,7 @@ class Manifest:
     order: list[str]                         # explicit display order; "" = spacer
     logs: dict[str, dict] = field(default_factory=dict)  # name -> {kind, highlight, ...kind-specific fields}
     apple: dict = field(default_factory=dict)   # [apple] table — archetype-specific config, raw dict
+    react_native: dict = field(default_factory=dict)  # [react_native] table — Metro/RN config, raw dict
     server: dict = field(default_factory=dict)  # [server] table — server build/dev/deploy config, raw dict
     output: dict = field(default_factory=dict)  # [output] table — log column config per source
     logging: dict = field(default_factory=dict) # [logging] table — file logging config (enabled, dir, retain)
@@ -191,6 +192,10 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     if not isinstance(apple, dict):
         raise ManifestError(f"{source}: '[apple]' must be a table")
 
+    react_native = data.get("react_native", {}) or {}
+    if not isinstance(react_native, dict):
+        raise ManifestError(f"{source}: '[react_native]' must be a table")
+
     server = data.get("server", {}) or {}
     if not isinstance(server, dict):
         raise ManifestError(f"{source}: '[server]' must be a table")
@@ -308,6 +313,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         order=order,
         logs=logs,
         apple=apple,
+        react_native=react_native,
         server=server,
         output=output,
         logging=logging_cfg,

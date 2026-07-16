@@ -274,7 +274,7 @@ def preflight_port(port, label=None, force=False, timeout=2.0, project_root=None
         return False
 
     try:
-        from .docker import _reload_active
+        from .reload import _reload_active
         _in_reload = _reload_active
     except ImportError:
         _in_reload = False
