@@ -33,7 +33,7 @@ _KNOWN_KEYS = {
     "commands", "actions", "order", "logs", "apple", "react_native", "server", "output",
     "exclude_modules", "hide_commands", "inline", "logging",
     "dev_kill", "clean_dev", "vite_dev", "docker_dev", "docker_run", "deploy", "install_template",
-    "fixtures", "log_bridge", "guards", "docs", "go",
+    "fixtures", "log_bridge", "guards", "docs", "go", "raylib",
     # Obsolete under interpreter mode (ADR-0006); tolerated silently on
     # un-migrated manifests, never written back. `admin migrate` strips it.
     "generator_commit",
@@ -85,6 +85,7 @@ class Manifest:
     fixtures: dict = field(default_factory=dict)  # [fixtures] — config for kind="fixtures-generate"/"fixtures-reset"
     docs: dict = field(default_factory=dict)      # [docs] — config for kind="docs" (dir, script)
     go: dict = field(default_factory=dict)        # [go] — config for kind="go" (binary, main)
+    raylib: dict = field(default_factory=dict)    # [raylib] — config for kind="raylib" (binary, build_dir, cmake_flags, jobs, smoke_env, clean_dirs)
     log_bridge: dict = field(default_factory=dict)            # [log_bridge] — browser-console HTTP bridge config
     guards: dict[str, dict] = field(default_factory=dict)     # [guards.<name>] — user-defined shell guards
     actions: dict[str, dict] = field(default_factory=dict)    # action name -> raw dict (not shown in UI)
@@ -266,6 +267,34 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         if _k in go_cfg and not isinstance(go_cfg[_k], str):
             raise ManifestError(f"{source}: '[go].{_k}' must be a string")
 
+    raylib_cfg = data.get("raylib", {}) or {}
+    if not isinstance(raylib_cfg, dict):
+        raise ManifestError(f"{source}: '[raylib]' must be a table")
+    _RAYLIB_KNOWN = {"binary", "build_dir", "cmake_flags", "jobs", "smoke_env", "clean_dirs"}
+    unknown_raylib = set(raylib_cfg) - _RAYLIB_KNOWN
+    if unknown_raylib:
+        raise ManifestError(
+            f"{source}: '[raylib]' unknown keys: {sorted(unknown_raylib)}, "
+            f"valid: {sorted(_RAYLIB_KNOWN)}"
+        )
+    for _k in ("binary", "build_dir", "smoke_env"):
+        if _k in raylib_cfg and not isinstance(raylib_cfg[_k], str):
+            raise ManifestError(f"{source}: '[raylib].{_k}' must be a string")
+    for _k in ("cmake_flags", "clean_dirs"):
+        if _k in raylib_cfg and not (
+            isinstance(raylib_cfg[_k], list)
+            and all(isinstance(x, str) for x in raylib_cfg[_k])
+        ):
+            raise ManifestError(f"{source}: '[raylib].{_k}' must be a list of strings")
+    if "jobs" in raylib_cfg:
+        _j = raylib_cfg["jobs"]
+        _ok = (isinstance(_j, int) and not isinstance(_j, bool) and _j >= 0) or _j == "auto"
+        if not _ok:
+            raise ManifestError(
+                f"{source}: '[raylib].jobs' must be a non-negative integer or "
+                f'"auto" (bare -j, one job per core), got {_j!r}'
+            )
+
     logging_cfg = data.get("logging", {}) or {}
     if not isinstance(logging_cfg, dict):
         raise ManifestError(f"{source}: '[logging]' must be a table")
@@ -357,6 +386,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         fixtures=fixtures,
         docs=docs,
         go=go_cfg,
+        raylib=raylib_cfg,
         log_bridge=log_bridge,
         guards=guards,
         exclude_modules=exclude_modules,

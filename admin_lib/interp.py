@@ -71,6 +71,7 @@ _CONFIG_GLOBALS = {
     "_FIXTURES_CONFIG": "fixtures",
     "_DOCS_CONFIG": "docs",
     "_GO_CONFIG": "go",
+    "_RAYLIB_CONFIG": "raylib",
 }
 
 
@@ -399,6 +400,82 @@ def _make_go(cmd, ns):
     return _fn
 
 
+_RAYLIB_MODES = ("build", "run", "smoke", "clean")
+
+
+def _make_raylib(cmd, ns):
+    """kind = "raylib" — run is the mode: build | run | smoke | clean.
+
+    The seven raylib games shared a CMake configure/build/run/smoke/clean
+    skeleton and differed only in binary name, cmake flags, job count, the smoke
+    env var, and which dirs clean removes — so those are [raylib] config and the
+    skeleton lives here once.
+    """
+    import shlex
+
+    mode = (cmd.run or "build").strip()
+    if mode not in _RAYLIB_MODES:
+        raise InterpError(
+            f"action '{cmd.name}': kind=\"raylib\" run must be one of "
+            f"{list(_RAYLIB_MODES)}, got {mode!r}"
+        )
+
+    def _fn(args):
+        cfg = ns.get("_RAYLIB_CONFIG") or {}
+        build_dir = str(cfg.get("build_dir", "build") or "build")
+        binary = str(cfg.get("binary", "") or "")
+        flags = list(cfg.get("cmake_flags", []) or [])
+        jobs = cfg.get("jobs", 0) or 0
+        smoke_env = str(cfg.get("smoke_env", "RF_SMOKE") or "RF_SMOKE")
+        clean_dirs = list(cfg.get("clean_dirs", []) or [build_dir])
+
+        if mode in ("run", "smoke") and not binary:
+            err(f"{cmd.name}: [raylib].binary is not set — nothing to run")
+            sys.exit(1)
+        exe = "./" + build_dir.strip("/") + "/" + binary
+
+        if mode == "clean":
+            # Done in Python, not `rm -rf`: clean_dirs entries may be globs
+            # (game-adventure removes data/zones/*.db), and shell-quoting a glob
+            # stops it expanding while not quoting it breaks paths with spaces.
+            import glob as _glob
+            import shutil
+
+            for pattern in clean_dirs:
+                for path in sorted(_glob.glob(pattern)):
+                    info("removing " + path)
+                    if os.path.isdir(path) and not os.path.islink(path):
+                        shutil.rmtree(path, ignore_errors=True)
+                    else:
+                        try:
+                            os.remove(path)
+                        except OSError as e:
+                            err("could not remove " + path + ": " + str(e))
+                            sys.exit(1)
+            ok(cmd.name + " complete")
+            return
+
+        if mode == "build":
+            configure = ["cmake", "-S", ".", "-B", shlex.quote(build_dir)] + [shlex.quote(f) for f in flags]
+            build = ["cmake", "--build", shlex.quote(build_dir)]
+            if jobs == "auto":
+                build.append("-j")   # cmake picks one job per core
+            elif jobs:
+                build.append(f"-j{int(jobs)}")
+            run = " ".join(configure) + " && " + " ".join(build)
+        elif mode == "run":
+            run = shlex.quote(exe)
+        else:
+            run = smoke_env + "=1 " + shlex.quote(exe)
+
+        rc = run_cmd(run)
+        if rc != 0:
+            err(run + " failed")
+            sys.exit(rc)
+        ok(cmd.name + " complete")
+    return _fn
+
+
 def _make_docs(cmd, ns):
     import shlex
 
@@ -591,6 +668,7 @@ register_factory("http", _make_http)
 register_factory("npm", _make_npm)
 register_factory("docs", _make_docs)
 register_factory("go", _make_go)
+register_factory("raylib", _make_raylib)
 register_factory("sync", _make_sync)
 register_factory("apple", _make_apple)
 register_factory("kill-port", _make_kill_port)
