@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import glob
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -271,6 +272,40 @@ def test_log_file_uses_set_log_context_path(monkeypatch):
                       source="test", is_action=False)
     interp._make_step_runner(cmd)([])
     assert ("path", ("custom/build.log",), {}) in calls
+
+
+# ---------------------------------------------------------------------------
+# _stamp_log
+# ---------------------------------------------------------------------------
+
+def test_stamp_log_stamps_unstamped_line():
+    out = core._stamp_log("building the thing\n")
+    assert re.match(r"^\d{2}:\d{2}:\d{2}\.\d{3} building the thing\n$", out)
+
+
+def test_stamp_log_blank_line_untouched():
+    assert core._stamp_log("\n") == "\n"
+    assert core._stamp_log("   ") == "   "
+
+
+def test_stamp_log_preserves_os_log_event_time():
+    # `log stream`'s native format — the sim/device log path. Its microsecond
+    # event time must survive; re-stamping would front it with tail's read time.
+    line = ('2026-07-16 11:58:41.770694-0400 0x5f8734e  Info  0x0  37470  0  '
+            'TermMobile: (React) [com.facebook.react.log:javascript] Running\n')
+    assert core._stamp_log(line) == line
+
+
+def test_stamp_log_preserves_own_prior_stamp():
+    # Re-tailing an admin log that _stamp_log already stamped once.
+    line = "11:58:41.770 building the thing\n"
+    assert core._stamp_log(line) == line
+
+
+def test_stamp_log_ignores_ansi_before_timestamp():
+    # Console echo keeps ANSI intact, so the timestamp is not at index 0.
+    line = "\x1b[32m2026-07-16 11:58:41.770694-0400\x1b[0m app started\n"
+    assert core._stamp_log(line) == line
 
 
 # ---------------------------------------------------------------------------

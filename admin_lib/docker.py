@@ -1,13 +1,11 @@
 """Layer 3 — Docker, long-lived process, and remote container helpers.
 
-Provides: run_with_reload, run_parallel, Docker build/deploy patterns,
+Provides: run_parallel, Docker build/deploy patterns,
 remote Docker build, multi-target reload.
 """
 
-import atexit
 import glob
 import os
-import selectors
 import signal
 import subprocess
 import sys
@@ -27,11 +25,20 @@ from .core import (
     ok,
     warn,
     err,
-    register_cleanup,
     run_cmd,
     check_url,
     format_url_status,
     pick_target,
+)
+
+# Reload infrastructure lives in admin_lib.reload — it is not Docker's, and a
+# `docker.run_with_reload` was invisible to every non-Docker project that needed
+# exactly it. docker_dev_from_config still drives it; the pid-file helpers below
+# are shared with it so a `docker dev` and a reload loop agree on the paths.
+from .reload import (
+    _ADMIN_PID_PREFIX,
+    cleanup_pid_file,
+    run_with_reload,
 )
 
 # Re-export remote helpers so existing projects importing from server still work
@@ -39,240 +46,6 @@ try:
     from .remote import require_host, ssh_cmd, _is_local_host
 except ImportError:
     pass
-
-
-# ---------------------------------------------------------------------------
-# Reload infrastructure (server-style: selector-based I/O multiplexing)
-# ---------------------------------------------------------------------------
-
-_ADMIN_PID_PREFIX = "/tmp/admin-run"
-_rebuild_requested = False
-_reload_active = False  # True during in-loop restart; suppresses port prompts
-
-
-def _wait_or_kill(proc, timeout=5):
-    """Wait for proc to exit; escalate to SIGKILL if it ignores SIGTERM."""
-    try:
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        try:
-            proc.kill()
-        except OSError:
-            pass
-        proc.wait()
-
-
-def _preexec_pdeathsig():
-    """preexec_fn that asks the kernel to SIGTERM us when our parent dies.
-
-    Linux-only via prctl(PR_SET_PDEATHSIG). The whole point: if admin is
-    SIGKILL'd, the terminal gets closed, or the user's shell dies abruptly,
-    atexit handlers don't run and cleanup is skipped — leaving cargo-watch /
-    nodemon / esbuild supervisors as orphans that respawn the dev server on
-    the next file change. Setting this on the spawned shell means the kernel
-    tears the whole tree down for us, regardless of how admin exits.
-
-    Silent no-op on non-Linux. The startup sweep (kill_stale_supervisors)
-    is the cross-platform fallback.
-    """
-    try:
-        import ctypes
-        PR_SET_PDEATHSIG = 1
-        libc = ctypes.CDLL("libc.so.6", use_errno=True)
-        libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0)
-    except Exception:
-        pass
-    # Become a session/group leader so killpg() from the parent reaches the
-    # whole tree (start_new_session=True at the Popen level already does
-    # this, but if it isn't passed for some reason, this is a backstop).
-    try:
-        os.setsid()
-    except OSError:
-        pass
-
-
-def _handle_rebuild_signal(signum, frame):
-    global _rebuild_requested
-    _rebuild_requested = True
-
-
-def _cleanup_pid_file(path):
-    try:
-        os.unlink(path)
-    except OSError:
-        pass
-
-
-def _cleanup_all_pid_files():
-    for pidfile in glob.glob(f"{_ADMIN_PID_PREFIX}-*.pid"):
-        try:
-            with open(pidfile) as f:
-                pid = int(f.read().strip())
-            if pid == os.getpid():
-                os.unlink(pidfile)
-        except (OSError, ValueError):
-            pass
-
-
-register_cleanup(_cleanup_all_pid_files)
-
-
-# ---------------------------------------------------------------------------
-# run_with_reload — long-lived process with SIGUSR1 reload support
-# ---------------------------------------------------------------------------
-
-def run_with_reload(cmd, target, shell=True, formatter=None):
-    """Run a long-lived process with SIGUSR1 reload + 'r' keypress support.
-
-    Uses selector-based I/O multiplexing. Supports quick-exit detection
-    with retry backoff.
-    """
-    global _rebuild_requested
-    pid_file = f"{_ADMIN_PID_PREFIX}-{target}.pid"
-    os.makedirs(get_log_dir(), exist_ok=True)
-
-    with open(pid_file, "w") as f:
-        f.write(str(os.getpid()))
-    atexit.register(_cleanup_pid_file, pid_file)
-
-    _user_exit = False
-
-    def _on_sigint(signum, frame):
-        nonlocal _user_exit
-        _user_exit = True
-        raise KeyboardInterrupt
-
-    def _on_sigterm(signum, frame):
-        raise SystemExit(0)
-
-    old_sigusr1 = signal.getsignal(signal.SIGUSR1)
-    old_sigint = signal.getsignal(signal.SIGINT)
-    old_sigterm = signal.getsignal(signal.SIGTERM)
-    signal.signal(signal.SIGUSR1, _handle_rebuild_signal)
-    signal.signal(signal.SIGINT, _on_sigint)
-    signal.signal(signal.SIGTERM, _on_sigterm)
-
-    try:
-        while True:
-            _rebuild_requested = False
-            launch_time = time.monotonic()
-            info(f"Starting {target}...")
-
-            log_fh = open(get_log_file(), "a")
-            proc = subprocess.Popen(
-                cmd, shell=shell,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                start_new_session=True,
-                preexec_fn=_preexec_pdeathsig,
-            )
-            _children.append(proc)
-
-            sel = selectors.DefaultSelector()
-            sel.register(proc.stdout, selectors.EVENT_READ)
-            stdin_fd = sys.stdin.fileno()
-            old_term = None
-            try:
-                import tty, termios
-                old_term = termios.tcgetattr(stdin_fd)
-                tty.setcbreak(stdin_fd)
-                sel.register(stdin_fd, selectors.EVENT_READ, "stdin")
-            except Exception:
-                pass
-
-            _line_buf = ""
-            try:
-                while proc.poll() is None:
-                    if _rebuild_requested:
-                        global _reload_active
-                        info("Reload requested — restarting...")
-                        _reload_active = True
-                        try:
-                            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                        except OSError:
-                            proc.terminate()
-                        _wait_or_kill(proc)
-                        _reload_active = False
-                        break
-
-                    events = sel.select(timeout=0.5)
-                    for key, _ in events:
-                        if key.data == "stdin":
-                            ch = os.read(stdin_fd, 1)
-                            if ch in (b"r", b"R"):
-                                _rebuild_requested = True
-                            elif ch == b"\x03":
-                                _user_exit = True
-                                raise KeyboardInterrupt
-                            continue
-                        data = key.fileobj.read1(4096) if hasattr(key.fileobj, 'read1') else os.read(key.fileobj.fileno(), 4096)
-                        if data:
-                            text = data.decode("utf-8", errors="replace")
-                            log_fh.write(text)
-                            log_fh.flush()
-                            if formatter:
-                                _line_buf += text
-                                while "\n" in _line_buf:
-                                    line, _line_buf = _line_buf.split("\n", 1)
-                                    sys.stdout.write(formatter(line + "\n"))
-                                sys.stdout.flush()
-                            else:
-                                sys.stdout.write(text)
-                                sys.stdout.flush()
-
-                if proc.stdout:
-                    remaining = proc.stdout.read()
-                    if remaining:
-                        text = remaining.decode("utf-8", errors="replace")
-                        log_fh.write(text)
-                        log_fh.flush()
-                        if formatter:
-                            _line_buf += text
-                            while "\n" in _line_buf:
-                                line, _line_buf = _line_buf.split("\n", 1)
-                                sys.stdout.write(formatter(line + "\n"))
-                            if _line_buf:
-                                sys.stdout.write(formatter(_line_buf + "\n"))
-                        else:
-                            sys.stdout.write(text)
-                        sys.stdout.flush()
-            finally:
-                sel.close()
-                if old_term is not None:
-                    import termios
-                    termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_term)
-                if proc.poll() is None:
-                    try:
-                        kill_sig = signal.SIGINT if _user_exit else signal.SIGTERM
-                        os.killpg(os.getpgid(proc.pid), kill_sig)
-                    except OSError:
-                        proc.terminate()
-                    _wait_or_kill(proc)
-                if proc in _children:
-                    _children.remove(proc)
-                log_fh.close()
-
-            if _rebuild_requested:
-                continue
-
-            elapsed = time.monotonic() - launch_time
-            rc = proc.returncode
-            if elapsed < 2.0:
-                warn(f"Process exited in {elapsed:.1f}s (code {rc}) — waiting before retry...")
-                time.sleep(1)
-            return rc
-
-    except KeyboardInterrupt:
-        # The SIGINT handler installed above raises this so the inner
-        # try/finally tears the child process down cleanly. Swallow it here
-        # so Ctrl+C exits with a quiet "Stopped." instead of dumping the
-        # full traceback for the selector.poll() call we were sitting in.
-        info("Stopped.")
-        return 130
-    finally:
-        signal.signal(signal.SIGUSR1, old_sigusr1)
-        signal.signal(signal.SIGINT, old_sigint)
-        signal.signal(signal.SIGTERM, old_sigterm)
-        _cleanup_pid_file(pid_file)
 
 
 # ---------------------------------------------------------------------------
@@ -1755,14 +1528,14 @@ def reload_running_targets(target_filter=None, pid_prefix=None):
                 pid = int(f.read().strip())
         except (OSError, ValueError):
             warn(f"Cannot read {pidfile} — removing stale file")
-            _cleanup_pid_file(pidfile)
+            cleanup_pid_file(pidfile)
             continue
 
         try:
             os.kill(pid, 0)
         except OSError:
             warn(f"PID {pid} ({target_name}) is not running — removing stale file")
-            _cleanup_pid_file(pidfile)
+            cleanup_pid_file(pidfile)
             continue
 
         os.kill(pid, signal.SIGUSR1)
