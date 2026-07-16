@@ -1049,6 +1049,145 @@ _LSREGISTER = ("/System/Library/Frameworks/CoreServices.framework/Versions/A/"
                "Frameworks/LaunchServices.framework/Versions/A/Support/lsregister")
 
 
+def _pids_running_from(app_path):
+    """Pids whose executable lives inside `app_path`.
+
+    Matching on the bundle path rather than the process name is deliberate: a
+    name match ("Term", "Stash") can hit an unrelated app, and the thing we
+    actually need to stop is whatever is running *out of the bundle we are about
+    to replace*.
+    """
+    app_path = os.path.abspath(app_path).rstrip("/")
+    try:
+        r = subprocess.run(["ps", "-Ao", "pid=,comm="],
+                           capture_output=True, text=True, timeout=5)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    pids = []
+    for line in r.stdout.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) < 2:
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+        if parts[1].startswith(app_path + "/"):
+            pids.append(pid)
+    return pids
+
+
+def install_app(bundle_path, dest_dir="/Applications", relaunch=None, timeout=5.0):
+    """Install a built .app into `dest_dir`, replacing any copy already there.
+
+    Six projects hand-rolled this and only two got it right. The three things
+    that are easy to get wrong and are handled here:
+
+    * The running copy is stopped first, gracefully (SIGTERM, then SIGKILL), and
+      we wait for it to actually exit — `cp -r` over a running bundle corrupts
+      the copy on disk and leaves the old binary mapped.
+    * The swap is atomic: the new bundle is staged beside the destination and
+      renamed into place, so an interrupted install can never leave a
+      half-copied .app where a working one used to be. `rm -rf` + `cp -R` (what
+      most of them did) has exactly that window.
+    * LaunchServices is told the bundle changed, otherwise the Dock and `open`
+      keep using the previous registration.
+
+    relaunch: True/False to force; None (default) relaunches only if a copy was
+    running when we started — which is what you want for `admin deploy` while
+    using the app.
+
+    Returns the installed path.
+    """
+    import time
+
+    # A glob is the normal case for electron-forge, which names its output dir
+    # with an arch suffix (out/<Name>-darwin-arm64/<Name>.app). Ambiguity is an
+    # error rather than a coin flip — two matches means a stale build is lying
+    # around and picking either one silently installs the wrong binary.
+    if glob.has_magic(bundle_path):
+        matches = sorted(glob.glob(bundle_path))
+        if not matches:
+            err("install_app: no app bundle matched: " + bundle_path)
+            sys.exit(1)
+        if len(matches) > 1:
+            err("install_app: " + bundle_path + " matched several bundles:")
+            for m in matches:
+                info("  " + m)
+            info("remove the stale build(s), or pass an exact path")
+            sys.exit(1)
+        bundle_path = matches[0]
+
+    bundle_path = os.path.abspath(bundle_path)
+    if not os.path.isdir(bundle_path):
+        err("install_app: no such app bundle: " + bundle_path)
+        sys.exit(1)
+    dest = os.path.join(dest_dir, os.path.basename(bundle_path))
+
+    was_running = bool(_pids_running_from(dest))
+    if was_running:
+        pids = _pids_running_from(dest)
+        info(f"stopping running {os.path.basename(dest)} (pids: {pids})")
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+        deadline = time.time() + timeout
+        while time.time() < deadline and _pids_running_from(dest):
+            time.sleep(0.1)
+        stubborn = _pids_running_from(dest)
+        if stubborn:
+            warn(f"{os.path.basename(dest)} ignored SIGTERM, sending SIGKILL")
+            for pid in stubborn:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+            deadline = time.time() + 2.0
+            while time.time() < deadline and _pids_running_from(dest):
+                time.sleep(0.1)
+
+    staged = dest + ".installing"
+    previous = dest + ".previous"
+    for leftover in (staged, previous):
+        if os.path.exists(leftover):
+            shutil.rmtree(leftover, ignore_errors=True)
+
+    # ditto rather than cp -R: it preserves resource forks, symlinks, and the
+    # bundle's signature, which a naive copy can strip. Called directly rather
+    # than through run_cmd so this stays usable as a plain library function,
+    # with no dependency on a configured log file.
+    r = subprocess.run(["ditto", bundle_path, staged], capture_output=True, text=True)
+    if r.returncode != 0:
+        shutil.rmtree(staged, ignore_errors=True)
+        err("install_app: copy failed: " + (r.stderr or "").strip())
+        sys.exit(r.returncode)
+
+    try:
+        if os.path.exists(dest):
+            os.rename(dest, previous)
+        os.rename(staged, dest)
+    except OSError as e:
+        # Put the old one back rather than leaving nothing installed.
+        if os.path.exists(previous) and not os.path.exists(dest):
+            os.rename(previous, dest)
+        shutil.rmtree(staged, ignore_errors=True)
+        err("install_app: could not swap in the new bundle: " + str(e))
+        sys.exit(1)
+    shutil.rmtree(previous, ignore_errors=True)
+
+    refresh_app_icon_cache(dest)
+    ok("installed " + dest)
+
+    should_relaunch = was_running if relaunch is None else relaunch
+    if should_relaunch:
+        info("relaunching " + os.path.basename(dest))
+        subprocess.run(["open", dest], capture_output=True)
+    return dest
+
+
+
 def refresh_app_icon_cache(app_path):
     """Make LaunchServices/Dock re-read a freshly built app's icon.
 
