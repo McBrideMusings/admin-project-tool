@@ -33,7 +33,7 @@ _KNOWN_KEYS = {
     "commands", "actions", "order", "logs", "apple", "react_native", "server", "output",
     "exclude_modules", "hide_commands", "inline", "logging",
     "dev_kill", "clean_dev", "vite_dev", "docker_dev", "docker_run", "deploy", "install_template",
-    "fixtures", "log_bridge", "guards", "docs",
+    "fixtures", "log_bridge", "guards", "docs", "go",
     # Obsolete under interpreter mode (ADR-0006); tolerated silently on
     # un-migrated manifests, never written back. `admin migrate` strips it.
     "generator_commit",
@@ -84,6 +84,7 @@ class Manifest:
     install_template: dict = field(default_factory=dict)  # [install_template] — kind="install-template" config
     fixtures: dict = field(default_factory=dict)  # [fixtures] — config for kind="fixtures-generate"/"fixtures-reset"
     docs: dict = field(default_factory=dict)      # [docs] — config for kind="docs" (dir, script)
+    go: dict = field(default_factory=dict)        # [go] — config for kind="go" (binary, main)
     log_bridge: dict = field(default_factory=dict)            # [log_bridge] — browser-console HTTP bridge config
     guards: dict[str, dict] = field(default_factory=dict)     # [guards.<name>] — user-defined shell guards
     actions: dict[str, dict] = field(default_factory=dict)    # action name -> raw dict (not shown in UI)
@@ -251,6 +252,20 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         if _k in docs and not isinstance(docs[_k], str):
             raise ManifestError(f"{source}: '[docs].{_k}' must be a string")
 
+    go_cfg = data.get("go", {}) or {}
+    if not isinstance(go_cfg, dict):
+        raise ManifestError(f"{source}: '[go]' must be a table")
+    _GO_KNOWN = {"binary", "main"}
+    unknown_go = set(go_cfg) - _GO_KNOWN
+    if unknown_go:
+        raise ManifestError(
+            f"{source}: '[go]' unknown keys: {sorted(unknown_go)}, "
+            f"valid: {sorted(_GO_KNOWN)}"
+        )
+    for _k in ("binary", "main"):
+        if _k in go_cfg and not isinstance(go_cfg[_k], str):
+            raise ManifestError(f"{source}: '[go].{_k}' must be a string")
+
     logging_cfg = data.get("logging", {}) or {}
     if not isinstance(logging_cfg, dict):
         raise ManifestError(f"{source}: '[logging]' must be a table")
@@ -341,6 +356,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         install_template=install_template,
         fixtures=fixtures,
         docs=docs,
+        go=go_cfg,
         log_bridge=log_bridge,
         guards=guards,
         exclude_modules=exclude_modules,

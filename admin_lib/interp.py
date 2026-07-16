@@ -70,6 +70,7 @@ _CONFIG_GLOBALS = {
     "_INSTALL_TEMPLATE_CONFIG": "install_template",
     "_FIXTURES_CONFIG": "fixtures",
     "_DOCS_CONFIG": "docs",
+    "_GO_CONFIG": "go",
 }
 
 
@@ -354,6 +355,50 @@ def _make_npm(cmd, ns):
     return _fn
 
 
+_GO_MODES = ("build", "install", "clean")
+
+
+def _make_go(cmd, ns):
+    """kind = "go" — run is the mode: build | install | clean.
+
+    Paths come from [go] (binary, main) rather than the run string, so a project
+    that emits a named binary configures it instead of shadowing the whole
+    go-cli action set.
+    """
+    import shlex
+
+    mode = (cmd.run or "build").strip()
+    if mode not in _GO_MODES:
+        raise InterpError(
+            f"action '{cmd.name}': kind=\"go\" run must be one of "
+            f"{list(_GO_MODES)}, got {mode!r}"
+        )
+
+    def _fn(args):
+        cfg = ns.get("_GO_CONFIG") or {}
+        binary = str(cfg.get("binary", "") or "")
+        main = str(cfg.get("main", "") or "")
+        if mode == "build":
+            if binary:
+                run = "go build -o " + shlex.quote(binary) + " " + (main or ".")
+            else:
+                run = "go build " + (main or "./...")
+        elif mode == "install":
+            run = "go install " + (main or "./...")
+        else:
+            run = "go clean ./..."
+            if binary:
+                # `go clean` empties the build cache; it never removes a -o
+                # target, so the binary this archetype built is removed by name.
+                run += " && rm -f " + shlex.quote(binary)
+        rc = run_cmd(run)
+        if rc != 0:
+            err(run + " failed")
+            sys.exit(rc)
+        ok(run + " complete")
+    return _fn
+
+
 def _make_docs(cmd, ns):
     import shlex
 
@@ -545,6 +590,7 @@ register_factory("python-script", _make_python_script)
 register_factory("http", _make_http)
 register_factory("npm", _make_npm)
 register_factory("docs", _make_docs)
+register_factory("go", _make_go)
 register_factory("sync", _make_sync)
 register_factory("apple", _make_apple)
 register_factory("kill-port", _make_kill_port)
