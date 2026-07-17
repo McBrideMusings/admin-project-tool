@@ -8,6 +8,11 @@ and delegate to the high-level wrappers in ``admin_lib.apple`` and
 
 See ``admin_lib/apple.py`` for the wrapper signatures and
 ``docs/archetypes/apple.md`` (if present) for the full ``[apple]`` schema.
+The reusable iOS-simulator helpers (``resolve_simulator``,
+``ensure_booted_simulator``, ``install_and_launch_sim``, …) that any
+``kind: "python"`` action may call by bare name are tabulated under
+"Reusable library helpers in ``kind = "python"`` bodies" in
+``docs/architecture/design.md``.
 """
 
 _BUILD_PY = '''\
