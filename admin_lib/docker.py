@@ -6,6 +6,7 @@ remote Docker build, multi-target reload.
 
 import glob
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -844,18 +845,44 @@ def _build_run_args_from_cfg(cfg, env_vars=None, env_file_vars=None):
     return args
 
 
+def _normalize_mem_bytes(value):
+    """Canonicalize a Docker --memory value to an integer byte-count string.
+
+    The TOML side emits a human suffix ("24g"); `docker inspect` reports the
+    raw byte count ("25769803776"). A plain string compare flags these as
+    drift even though they're the same cap, so we resolve both to bytes before
+    comparing. Docker's size suffixes are 1024-based (b/k/m/g, case-insensitive).
+    Returns the value unchanged if it doesn't parse as a size.
+    """
+    m = re.fullmatch(r"\s*(\d+)\s*([bkmgBKMG]?)\s*", str(value))
+    if not m:
+        return str(value)
+    mult = {"": 1, "b": 1, "k": 1024, "m": 1024 ** 2, "g": 1024 ** 3}[m.group(2).lower()]
+    return str(int(m.group(1)) * mult)
+
+
+# Flags whose value is a byte size — normalized to bytes before drift compare
+# so "24g" and "25769803776" don't read as divergent.
+_MEM_FLAGS = {"--memory", "-m", "--memory-swap", "--memory-reservation", "--shm-size"}
+
+
 def _argv_to_pair_set(argv):
     """Canonicalize an argv-pieces list into a sortable set of (flag, value)
     strings, so two lists with different orderings compare cleanly.
 
     Boolean flags (no value, e.g. --privileged) get an empty value.
+    Byte-size flags are normalized to a byte count so unit notation
+    ("24g" vs "25769803776") doesn't register as drift.
     """
     pairs = set()
     i = 0
     while i < len(argv):
         flag = argv[i]
         if i + 1 < len(argv) and not argv[i + 1].startswith("-"):
-            pairs.add(f"{flag}\t{argv[i + 1]}")
+            value = argv[i + 1]
+            if flag in _MEM_FLAGS:
+                value = _normalize_mem_bytes(value)
+            pairs.add(f"{flag}\t{value}")
             i += 2
         else:
             pairs.add(f"{flag}\t")
