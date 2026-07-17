@@ -177,6 +177,43 @@ Complex orchestration — ones that parse args, pick targets, branch on config p
 
 `kind = "python"` is **not** appropriate for actions that are a single function call with a config dict. Those belong in a typed kind.
 
+### Reusable library helpers in `kind = "python"` bodies
+
+A `kind = "python"` (or `kind = "python-script"`) body is `exec`'d with a **flat namespace**: every top-level name from each `admin_lib` module the manifest pulls in — `manifest.modules` unioned with every archetype's declared `modules` (`admin_lib/interp.py::build_namespace`) — is available by **bare name**, no `import` line. Pulling in a module (via `archetypes = [...]` or an explicit `modules = [...]`) is therefore what makes its helpers callable. This is the contract a project uses to reuse library logic instead of re-implementing it in a sidecar script.
+
+**iOS simulator helpers** (`admin_lib/apple.py`, available once the `apple` module is pulled in) are the reusable set for driving a simulator from a python action:
+
+| Helper | Signature | Behaviour |
+|---|---|---|
+| `resolve_simulator()` | `-> (device_id, name)` | Pick the best sim — already-booted first, else newest available iPhone. `sys.exit(1)` if none found. Does **not** boot. |
+| `ensure_booted_simulator()` | `-> (device_id, name)` | `resolve_simulator()`, open Simulator.app, then `simctl bootstatus -b` (boots if needed and blocks until boot completes). The returned id is immediately installable — no race. |
+| `boot_simulator(device_id)` | `-> None` | Issue `simctl boot` and open Simulator.app; **returns before boot completes**. Use `ensure_booted_simulator()` when you need a usable device. |
+| `find_simulator(device_name)` | `-> device_id \| None` | Find a sim by exact name; prefers a booted instance. |
+| `install_and_launch_sim(device_id, app_path, bundle_id, launch_args=None)` | `-> None` | `simctl install` then `simctl launch`; `launch_args` (list of str) are appended to the launch command as UIApplication launch arguments. |
+| `terminate_sim_app(device_id, bundle_id)` | `-> None` | `simctl terminate` the app (quiet). |
+| `is_sim_app_running(device_id, bundle_id)` | `-> bool` | Whether the app appears in the sim's `launchctl list`. |
+| `app_bundle_identifier(app_path)` | `-> str \| None` | Read `CFBundleIdentifier` from a built `.app`'s `Info.plist`. |
+
+Minimal python-action example — boot a sim, then install and launch a built `.app`:
+
+```toml
+# admin.toml — the apple module must be in scope
+modules = ["apple"]          # or: archetypes = ["apple"]
+
+[actions.run-sim]
+kind = "python"
+desc = "Boot a simulator and launch the built app"
+run  = '''
+device_id, name = ensure_booted_simulator()
+app = "build/MyApp.app"
+bundle = app_bundle_identifier(app)
+install_and_launch_sim(device_id, app, bundle, launch_args=["-AppleLanguages", "(en)"])
+info("launched " + bundle + " on " + name)
+'''
+```
+
+`info`/`err`/`ok` are likewise bare names from `admin_lib.core` (always pulled in). Device-side equivalents (`install_on_device`, `launch_on_device`) live in the same module and follow the same contract.
+
 ### Commands vs actions — the key rule
 
 **Commands** (`archetype["commands"]`) are pure routing: TUI menu entries with `desc` and `steps` only. They may not have `kind`, `run`, or `targets`. Each command calls one or more actions in order. The generator validates this and errors clearly on violations.
