@@ -509,6 +509,22 @@ def test_drift_detects_missing_gpu_in_live():
     print("OK: drift surfaces missing --gpus on live (the muxarr GPU bug)")
 
 
+def test_memory_suffix_not_drift():
+    """--memory 24g (TOML) vs 25769803776 bytes (docker inspect) is the same
+    cap, so it must NOT register as drift."""
+    ns = _load_docker()
+    assert ns["_normalize_mem_bytes"]("24g") == "25769803776"
+    assert ns["_normalize_mem_bytes"]("512m") == str(512 * 1024 ** 2)
+    assert ns["_normalize_mem_bytes"]("25769803776") == "25769803776"
+    assert ns["_normalize_mem_bytes"]("weird") == "weird"
+    target = ["--memory", "24g", "--cap-add", "PERFMON"]
+    live = ["--memory", "25769803776", "--cap-add", "PERFMON"]
+    in_target_only, in_live_only = ns["_compute_drift"](target, live)
+    assert not in_target_only and not in_live_only, \
+        f"memory unit notation should not drift: {in_target_only!r} {in_live_only!r}"
+    print("OK: --memory 24g == 25769803776 bytes, no phantom drift")
+
+
 def test_drift_detects_undeclared_live_field_strict():
     """Strict drift: live has a port mapping TOML doesn't declare → drift."""
     ns = _load_docker()
