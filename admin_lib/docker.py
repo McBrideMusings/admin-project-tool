@@ -766,6 +766,15 @@ def _build_run_args_from_cfg(cfg, env_vars=None, env_file_vars=None):
     if restart and restart != "no":
         args += ["--restart", restart]
 
+    # Memory cap (--memory, e.g. "24g"). Blast-radius net: bounds container RAM so
+    # a runaway process (e.g. a VMAF ffmpeg buffering decoded frames) gets
+    # cgroup-OOM-killed inside the container instead of taking the host down. The
+    # inspect/drift side already reads HostConfig.Memory → --memory, so a deploy
+    # that sets this stays drift-clean.
+    memory = cfg.get("memory")
+    if memory:
+        args += ["--memory", str(memory)]
+
     # Network mode (rare in [docker_run] but supported for symmetry)
     network = cfg.get("network")
     if network and network != "default":
