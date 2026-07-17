@@ -516,6 +516,7 @@ def test_memory_suffix_not_drift():
     assert ns["_normalize_mem_bytes"]("24g") == "25769803776"
     assert ns["_normalize_mem_bytes"]("512m") == str(512 * 1024 ** 2)
     assert ns["_normalize_mem_bytes"]("25769803776") == "25769803776"
+    assert ns["_normalize_mem_bytes"]("1.5g") == str(int(1.5 * 1024 ** 3))
     assert ns["_normalize_mem_bytes"]("weird") == "weird"
     target = ["--memory", "24g", "--cap-add", "PERFMON"]
     live = ["--memory", "25769803776", "--cap-add", "PERFMON"]

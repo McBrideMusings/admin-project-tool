@@ -851,14 +851,15 @@ def _normalize_mem_bytes(value):
     The TOML side emits a human suffix ("24g"); `docker inspect` reports the
     raw byte count ("25769803776"). A plain string compare flags these as
     drift even though they're the same cap, so we resolve both to bytes before
-    comparing. Docker's size suffixes are 1024-based (b/k/m/g, case-insensitive).
+    comparing. Docker's size suffixes are 1024-based (b/k/m/g, case-insensitive)
+    and accept a fractional magnitude ("1.5g"), matching docker's RAMInBytes.
     Returns the value unchanged if it doesn't parse as a size.
     """
-    m = re.fullmatch(r"\s*(\d+)\s*([bkmgBKMG]?)\s*", str(value))
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([bkmgBKMG]?)\s*", str(value))
     if not m:
         return str(value)
     mult = {"": 1, "b": 1, "k": 1024, "m": 1024 ** 2, "g": 1024 ** 3}[m.group(2).lower()]
-    return str(int(m.group(1)) * mult)
+    return str(int(float(m.group(1)) * mult))
 
 
 # Flags whose value is a byte size — normalized to bytes before drift compare
