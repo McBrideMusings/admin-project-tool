@@ -8,6 +8,7 @@ export default defineConfig({
     nav: [
       { text: 'Guide', link: '/guide/' },
       { text: 'Architecture', link: '/architecture/design' },
+      { text: 'Archetypes', link: '/archetypes/apple' },
       { text: 'Development', link: '/development/' },
     ],
     sidebar: {
@@ -24,6 +25,14 @@ export default defineConfig({
           text: 'Architecture',
           items: [
             { text: 'Design', link: '/architecture/design' },
+          ],
+        },
+      ],
+      '/archetypes/': [
+        {
+          text: 'Archetypes',
+          items: [
+            { text: 'apple ([apple] schema)', link: '/archetypes/apple' },
           ],
         },
       ],
