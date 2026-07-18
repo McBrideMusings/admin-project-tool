@@ -32,7 +32,7 @@ _KNOWN_KEYS = {
     "project_name", "python_min", "archetypes", "modules", "urls",
     "commands", "actions", "order", "logs", "apple", "react_native", "server", "output",
     "exclude_modules", "hide_commands", "inline", "logging",
-    "dev_kill", "clean_dev", "vite_dev", "docker_dev", "docker_run", "deploy", "install_template",
+    "dev_kill", "dev_precheck", "clean_dev", "vite_dev", "docker_dev", "docker_run", "deploy", "install_template",
     "fixtures", "log_bridge", "guards", "docs", "go", "raylib",
     # Obsolete under interpreter mode (ADR-0006); tolerated silently on
     # un-migrated manifests, never written back. `admin migrate` strips it.
@@ -76,6 +76,7 @@ class Manifest:
     output: dict = field(default_factory=dict)  # [output] table — log column config per source
     logging: dict = field(default_factory=dict) # [logging] table — file logging config (enabled, dir, retain)
     dev_kill: dict = field(default_factory=dict)  # [dev_kill] — config for kind="nuke-dev" commands
+    dev_precheck: dict = field(default_factory=dict)  # [dev_precheck] — config for kind="dev-precheck" commands
     clean_dev: dict = field(default_factory=dict) # [clean_dev] — config for kind="clean-dev" commands
     vite_dev: dict = field(default_factory=dict)  # [vite_dev] — config for kind="vite-dev" commands
     docker_dev: dict = field(default_factory=dict)  # [docker_dev] — config for kind="docker-dev" commands
@@ -229,6 +230,22 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         for _flag in ("regex", "global"):
             if _flag in _p and not isinstance(_p[_flag], bool):
                 raise ManifestError(f"{source}: '[dev_kill].patterns' '{_flag}' must be a boolean")
+
+    dev_precheck = data.get("dev_precheck", {}) or {}
+    if not isinstance(dev_precheck, dict):
+        raise ManifestError(f"{source}: '[dev_precheck]' must be a table")
+    _dp_unknown = set(dev_precheck) - {"containers", "runtimes", "accept_runtimes", "reap_pidfiles", "label"}
+    if _dp_unknown:
+        raise ManifestError(
+            f"{source}: '[dev_precheck]' unknown keys: {sorted(_dp_unknown)}, "
+            "valid: ['accept_runtimes', 'containers', 'label', 'reap_pidfiles', 'runtimes']"
+        )
+    for _lk in ("containers", "runtimes", "accept_runtimes", "reap_pidfiles"):
+        _lv = dev_precheck.get(_lk)
+        if _lv is not None and (not isinstance(_lv, list) or any(not isinstance(x, str) for x in _lv)):
+            raise ManifestError(f"{source}: '[dev_precheck].{_lk}' must be a list of strings")
+    if "label" in dev_precheck and not isinstance(dev_precheck["label"], str):
+        raise ManifestError(f"{source}: '[dev_precheck].label' must be a string")
 
     clean_dev = data.get("clean_dev", {}) or {}
     if not isinstance(clean_dev, dict):
@@ -396,6 +413,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         output=output,
         logging=logging_cfg,
         dev_kill=dev_kill,
+        dev_precheck=dev_precheck,
         clean_dev=clean_dev,
         vite_dev=vite_dev,
         docker_dev=docker_dev,
