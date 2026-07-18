@@ -314,6 +314,29 @@ def test_log_bridge_port_range_start_ge_end_still_raises():
         _parse_log_bridge("port_range = [9999, 9988]")
 
 
+# ---------------------------------------------------------------------------
+# guards / requires survive dump round-trip
+# ---------------------------------------------------------------------------
+
+def test_guards_survive_dump_round_trip():
+    # dump() had no [guards.<name>] emitter, silently dropping Manifest.guards
+    # (action-level requires already round-tripped via the generic emitter).
+    src = "\n".join((
+        'project_name = "Guarded"',
+        'python_min = "3.11"',
+        "[guards.no-tag]",
+        'run = "test -z x"',
+        'fail = "already tagged"',
+        "[actions.deploy]",
+        'kind = "shell"',
+        'run = "echo hi"',
+        'requires = ["git-clean", "no-tag"]',
+    ))
+    m = parse(tomllib.loads(dump(parse(tomllib.loads(src)))))
+    assert m.guards == {"no-tag": {"run": "test -z x", "fail": "already tagged"}}
+    assert m.actions["deploy"]["requires"] == ["git-clean", "no-tag"]
+
+
 def _pytest_raises(exc_type, needle):
     import contextlib
 
