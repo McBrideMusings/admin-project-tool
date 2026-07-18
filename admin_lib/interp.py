@@ -62,6 +62,7 @@ _CONFIG_GLOBALS = {
     "_SERVER_CONFIG": "server",
     "_OUTPUT_CONFIG": "output",
     "_DEV_KILL_CONFIG": "dev_kill",
+    "_DEV_PRECHECK_CONFIG": "dev_precheck",
     "_CLEAN_DEV_CONFIG": "clean_dev",
     "_VITE_DEV_CONFIG": "vite_dev",
     "_DOCKER_DEV_CONFIG": "docker_dev",
@@ -569,6 +570,15 @@ def _make_nuke_dev(cmd, ns):
     return _fn
 
 
+def _make_dev_precheck(cmd, ns):
+    def _fn(args):
+        from admin_lib.ports_nuke import dev_precheck_from_config
+        rc = dev_precheck_from_config(ns.get("_DEV_PRECHECK_CONFIG") or {})
+        if rc:
+            sys.exit(rc)
+    return _fn
+
+
 def _kill_command_exists():
     """True if a command/action named 'kill' is registered (configless pre_kill)."""
     return "kill" in core._all_commands() or "kill" in core._actions
@@ -720,6 +730,7 @@ register_factory("sync", _make_sync)
 register_factory("apple", _make_apple)
 register_factory("kill-port", _make_kill_port)
 register_factory("nuke-dev", _make_nuke_dev)
+register_factory("dev-precheck", _make_dev_precheck)
 register_factory("clean-dev", _make_clean_dev)
 register_factory("fixtures-generate", _make_fixtures_generate)
 register_factory("fixtures-reset", _make_fixtures_reset)
@@ -883,6 +894,7 @@ def _register_env_vars(resolved, m):
     config_tables = {
         "deploy": m.deploy, "vite_dev": m.vite_dev, "docker_dev": m.docker_dev,
         "docker_run": m.docker_run, "dev_kill": m.dev_kill, "clean_dev": m.clean_dev,
+        "dev_precheck": m.dev_precheck,
         "install_template": m.install_template, "fixtures": m.fixtures,
     }
     seen = scan_env_vars(command_list, resolved.urls, m.logs, config_tables)
