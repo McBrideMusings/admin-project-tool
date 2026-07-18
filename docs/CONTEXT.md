@@ -31,7 +31,7 @@ A string in a command's `steps` list; names an action to dispatch. Reading `step
 _Avoid_: stage, phase
 
 **Kind**:
-An action's execution strategy. The discriminator that selects an action's runtime closure factory in `admin_lib/interp._FACTORIES`; the closed catalog of valid kinds (`KNOWN_KINDS`) lives in `admin_lib/kinds.py`, which the manifest/archetype validators consult. Examples: `shell`, `python`, `multi-target`, `interactive-shell`, `apple-dev-loop`, `kill-port`, `http`. Closed set — adding a new kind means adding a factory.
+An action's execution strategy. The discriminator that selects an action's runtime closure factory in `admin_lib/interp._FACTORIES`; the closed catalog of valid kinds (`KNOWN_KINDS`) lives in `admin_lib/kinds.py`, which the manifest/archetype validators consult. Examples: `shell`, `python`, `multi-target`, `interactive-shell`, `apple-dev-loop`, `kill-port`, `dev-precheck`, `http`. Closed set — adding a new kind means adding a factory.
 _Avoid_: type, mode
 
 **Bundler**:
