@@ -26,7 +26,7 @@ ARCHETYPE = {
         "diff":             {"desc": "Show run-config drift between current container and last deploy; --format json for CI",          "steps": ["diff"],             "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
         "logs":             {"desc": "Tail logs — `dev` (newest local log) or `live` (container); --from DD:HH:MM:SS rolls back",                    "steps": ["logs"],             "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
         "reload":           {"desc": "Build+run with reload loop (press r or SIGUSR1 to rebuild)",                                     "steps": ["reload"]},
-        "run-args":         {"desc": "Print [docker_run] rendered to shlex-quoted `docker run` args (for external native-build scripts)", "steps": ["run-args"]},
+        "run-args":         {"desc": "Print [docker_run] rendered to shlex-quoted `docker run` args (for external native-build scripts)", "steps": ["run-args"], "log": False},
         "open":             {"desc": "Open the deployed app URL",                                                                       "steps": ["open"]},
     },
     "actions": {
@@ -84,7 +84,7 @@ ARCHETYPE = {
                 "_run_cfg = globals().get('_DOCKER_RUN_CONFIG') or {}\n"
                 "print(render_run_args(_run_cfg))"
             ),
-            "desc": "Print [docker_run] rendered to shlex-quoted `docker run` args (for external native-build scripts)",
+            "desc": "Print [docker_run] rendered to shlex-quoted `docker run` args (for external native-build scripts). Expands env_file into -e NAME=VALUE tokens, so any secrets appear in stdout — treat the output as sensitive.",
         },
         "open": {
             "kind": "shell",

@@ -854,6 +854,11 @@ def render_run_args(cfg, env_vars=None):
     Lets an out-of-tree native-build script capture `$(admin run-args)` instead
     of re-parsing `admin.toml` itself, so its recreate command can never drift
     from what `./admin deploy` would run (issue #429).
+
+    Note: an `env_file` is expanded inline into `-e NAME=VALUE` tokens, so any
+    secrets it holds appear in the returned string — treat the output as
+    sensitive (same exposure `remote_recreate_container` puts on the remote
+    command line, but now also locally capturable).
     """
     import shlex
     cfg = cfg or {}
