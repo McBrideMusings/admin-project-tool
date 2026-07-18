@@ -725,13 +725,15 @@ def test_parse_env_file_basic():
     import tempfile, os as _os
     fd, path = tempfile.mkstemp(suffix=".env")
     try:
-        _os.write(fd, b"# comment\nFOO=bar\nBAZ=\"quoted value\"\n\nEMPTY=\n")
+        _os.write(fd, b"# comment\nFOO=bar\nBAZ=\"quoted value\"\nSING='q'\n\nEMPTY=\n")
         _os.close(fd)
         result = fn(path)
-        assert result == {"FOO": "bar", "BAZ": "quoted value", "EMPTY": ""}
+        # Docker's --env-file keeps surrounding quotes verbatim (they become
+        # literal chars in the value), so the parser must NOT strip them.
+        assert result == {"FOO": "bar", "BAZ": '"quoted value"', "SING": "'q'", "EMPTY": ""}
     finally:
         _os.unlink(path)
-    print("OK: env file parser handles comments, quotes, blank lines")
+    print("OK: env file parser handles comments, blank lines, verbatim quotes")
 
 
 def _make_reload_driver(child_file: Path, log_suffix: str) -> str:
