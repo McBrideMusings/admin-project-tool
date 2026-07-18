@@ -75,11 +75,15 @@ def test_run_args_command_dispatches_end_to_end():
             [sys.executable, str(REPO / "admin-run"), "--project-dir", d, "run-args"],
             capture_output=True, text=True, timeout=10,
         )
+        # run-args is a pure-query command (log = false) — it must not litter
+        # the project's tmp/ with a per-call timestamped log file.
+        tmp_logs = list((Path(d) / "tmp").glob("run-args.*.log"))
     assert result.returncode == 0, result.stderr
     assert "--memory 24g" in result.stdout
     assert "--cap-add PERFMON" in result.stdout
     assert "-v /mnt/user/appdata/x:/data" in result.stdout
     assert "-p 8080:80/tcp" in result.stdout
+    assert tmp_logs == [], f"run-args wrote log files: {tmp_logs}"
 
 
 if __name__ == "__main__":
