@@ -182,6 +182,11 @@ def get_log_file() -> str:
     return LOG_FILE
 
 
+def get_project_root() -> str:
+    """Return the current project root (late-binding for package import contexts)."""
+    return _project_root
+
+
 def configure_logging(cfg: dict):
     """Store the [logging] config from admin.toml. Called at module level in generated scripts."""
     global LOG_CONFIG
