@@ -748,8 +748,8 @@ def _inline_list(val: list) -> str:
     return "[" + ", ".join(items) + "]"
 
 
-def require_python_311() -> None:
-    """Preflight: Python 3.9+ with tomllib/tomli, or Python 3.11+. Name kept for back-compat."""
+def require_python_min() -> None:
+    """Preflight: Python 3.9+ with tomllib/tomli, or Python 3.11+ (stdlib tomllib)."""
     if sys.version_info < (3, 9):
         sys.exit(
             "admin-project-tool requires Python 3.9+ with tomli (pip install tomli) "
