@@ -30,7 +30,7 @@ from admin_lib.manifest import (  # noqa: E402
     ManifestError,
     dump as dump_manifest,
     load as load_manifest,
-    require_python_311,
+    require_python_min,
 )
 from admin_lib.archetypes import resolve  # noqa: E402
 from admin_lib.detectors import detect as run_detectors  # noqa: E402
@@ -211,7 +211,7 @@ def dispatch(project_dir: Path, command_argv: list[str]) -> int:
 
 
 def main() -> int:
-    require_python_311()
+    require_python_min()
     argv = sys.argv[1:]
 
     # Optional global --project-dir DIR prefix (the shim uses it).
