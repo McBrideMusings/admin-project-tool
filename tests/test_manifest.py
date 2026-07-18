@@ -122,7 +122,7 @@ def test_unknown_key_prints_warning():
 
 
 def test_known_keys_produce_no_warning():
-    data = _base_data(archetypes=["docker-unraid"], exclude_modules=["log_columns"])
+    data = _base_data(archetypes=["docker"], exclude_modules=["log_columns"])
     warning = _capture_stderr(lambda: parse(data))
     assert warning == "", f"Unexpected warning for known keys: {warning!r}"
 

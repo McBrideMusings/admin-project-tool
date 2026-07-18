@@ -845,6 +845,24 @@ def _build_run_args_from_cfg(cfg, env_vars=None, env_file_vars=None):
     return args
 
 
+def render_run_args(cfg, env_vars=None):
+    """Render a `[docker_run]` table to a shlex-quoted, eval-ready run-args
+    string — the argv that sits between `docker run -d --name X` and the image,
+    assembled exactly as `remote_recreate_container` does (same renderer, same
+    env_file merge, same quoting).
+
+    Lets an out-of-tree native-build script capture `$(admin run-args)` instead
+    of re-parsing `admin.toml` itself, so its recreate command can never drift
+    from what `./admin deploy` would run (issue #429).
+    """
+    import shlex
+    cfg = cfg or {}
+    env_file_path = cfg.get("env_file")
+    env_file_vars = _parse_env_file(env_file_path) if env_file_path else {}
+    args = _build_run_args_from_cfg(cfg, env_vars=env_vars, env_file_vars=env_file_vars)
+    return " ".join(shlex.quote(p) for p in args)
+
+
 def _normalize_mem_bytes(value):
     """Canonicalize a Docker --memory value to an integer byte-count string.
 

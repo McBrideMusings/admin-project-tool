@@ -25,7 +25,7 @@ DETECTOR_ORDER = [
     "rust-tauri",
     "firefox-extension",
     "unraid-plugin",
-    "docker-unraid",
+    "docker",
     "cloudflare-workers",
     "apple",
     # After apple so that react-native wins the dev command if both match:

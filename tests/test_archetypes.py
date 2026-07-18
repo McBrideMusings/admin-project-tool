@@ -27,7 +27,7 @@ LIB_DIR = REPO / "admin_lib"
 
 EXPECTED = [
     "hugo", "simple", "go-cli", "firefox-extension",
-    "unraid-plugin", "docker-unraid", "apple",
+    "unraid-plugin", "docker", "apple",
 ]
 
 
@@ -71,12 +71,12 @@ def test_all_archetypes_load_and_validate():
     print(f"OK: {len(EXPECTED)} archetypes load and validate")
 
 
-def test_composition_docker_unraid_plus_apple():
-    """docker-unraid + apple is the canonical composition case from the design doc."""
+def test_composition_docker_plus_apple():
+    """docker + apple is the canonical composition case from the design doc."""
     m = Manifest(
         project_name="Test Composition",
         python_min="3.11",
-        archetypes=["docker-unraid", "apple"],
+        archetypes=["docker", "apple"],
         modules=[],
         urls={},
         overrides={},
@@ -85,16 +85,16 @@ def test_composition_docker_unraid_plus_apple():
     )
     resolved = resolve(m, ARCH_DIR)
     # Commands from both should be present. Apple is later in the list, so
-    # commands it declares (build, deploy, reload) override docker-unraid's.
+    # commands it declares (build, deploy, reload) override docker's.
     for name in ("build", "dev", "clean", "deploy", "test", "icons",
                  "logs", "reload", "open"):
         assert name in resolved.commands, f"missing command after merge: {name}"
     assert resolved.commands["build"].source == "apple"
     assert resolved.commands["deploy"].source == "apple"
     assert resolved.commands["reload"].source == "apple"
-    # docker-unraid still contributes commands that apple doesn't declare.
-    assert resolved.commands["logs"].source == "docker-unraid"
-    assert resolved.commands["open"].source == "docker-unraid"
+    # docker still contributes commands that apple doesn't declare.
+    assert resolved.commands["logs"].source == "docker"
+    assert resolved.commands["open"].source == "docker"
     # Registration of the merged set must not crash, and the merged commands +
     # their backing actions must all be present and callable.
     _clear_registry()
@@ -102,7 +102,7 @@ def test_composition_docker_unraid_plus_apple():
     for name in ("build", "deploy", "reload", "logs", "open"):
         assert name in core._all_commands(), f"{name} command missing after register"
     assert resolved.actions, "composition produced no actions"
-    print("OK: docker-unraid + apple composition registers")
+    print("OK: docker + apple composition registers")
 
 
 def test_detector_composition():
@@ -111,7 +111,7 @@ def test_detector_composition():
         (d / "Dockerfile").write_text("FROM scratch\n")
         (d / "Foo.xcodeproj").mkdir()
         result = detect(d, DET_DIR)
-        assert "docker-unraid" in result["archetypes"]
+        assert "docker" in result["archetypes"]
         assert "apple" in result["archetypes"]
     print("OK: detector returns unioned archetypes")
 
@@ -828,7 +828,7 @@ def test_manifest_override_propagates_group_and_priority():
     m = Manifest(
         project_name="GPOverrideTest",
         python_min="3.11",
-        archetypes=["docker-unraid"],
+        archetypes=["docker"],
         modules=[],
         urls={},
         overrides={"logs": {"group": 5, "priority": 99}},
@@ -969,7 +969,7 @@ def _docker_manifest(**kw):
     base = dict(
         project_name="Hide Test",
         python_min="3.11",
-        archetypes=["docker-unraid"],
+        archetypes=["docker"],
         modules=[],
         urls={},
         overrides={},
@@ -1007,7 +1007,7 @@ def test_hide_commands_unknown_raises():
 
 
 def test_archetype_logs_command_not_shadowed_by_builtin():
-    """docker-unraid provides a `logs` command, so the builtin file-tailer
+    """docker provides a `logs` command, so the builtin file-tailer
     registration must NOT be emitted (it would overwrite the real one)."""
     m = _docker_manifest()
     resolved = resolve(m, ARCH_DIR)
