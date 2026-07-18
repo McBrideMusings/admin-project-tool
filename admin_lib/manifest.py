@@ -375,6 +375,11 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
                 raise ManifestError(
                     f"{source}: '[log_bridge].port_range' must be [start, end] with start < end"
                 )
+            if port_range[0] < 1 or port_range[1] > 65535:
+                raise ManifestError(
+                    f"{source}: '[log_bridge].port_range' must fall within 1-65535 "
+                    f"(got {port_range})"
+                )
 
     # [guards.<name>] table validation lives in the guard module (the single
     # home for guard logic) and raises the injected ManifestError.
