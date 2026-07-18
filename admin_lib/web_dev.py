@@ -87,6 +87,19 @@ def setup_dev_mounts(data_dir, mounts):
             return 1
         os.symlink(target, link)
         ok(f"mount: {link} -> {target}")
+
+    # Prune stale mounts: a symlink directly under data_dir whose name is no
+    # longer in DEV_MOUNTS is a leftover from a previous run and keeps showing
+    # up as a top-level root. Remove only symlinks — never a real file or dir,
+    # mirroring the refuse-to-clobber guard above.
+    keep = {name for name, _ in mounts}
+    for entry in os.listdir(data_dir):
+        if entry in keep:
+            continue
+        link = os.path.join(data_dir, entry)
+        if os.path.islink(link):
+            os.unlink(link)
+            info(f"pruned stale mount: {link}")
     return 0
 
 
