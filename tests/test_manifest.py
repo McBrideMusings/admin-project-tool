@@ -280,6 +280,40 @@ def test_logs_highlight_must_be_string_list():
         _parse_logs_toml("[logs.x]", 'kind = "pick"', 'glob = "*"', "highlight = 5")
 
 
+# ---------------------------------------------------------------------------
+# [log_bridge].port_range validation
+# ---------------------------------------------------------------------------
+
+def _parse_log_bridge(*lines):
+    toml = "\n".join((
+        'project_name = "Bridge Test"',
+        'python_min = "3.11"',
+        "[log_bridge]",
+        'hosts = ["localhost"]',
+        *lines,
+    ))
+    return parse(tomllib.loads(toml))
+
+
+def test_log_bridge_valid_port_range_parses():
+    _parse_log_bridge("port_range = [9988, 9999]")
+
+
+def test_log_bridge_port_range_start_below_one_raises():
+    with _pytest_raises(ManifestError, "within 1-65535"):
+        _parse_log_bridge("port_range = [0, 100]")
+
+
+def test_log_bridge_port_range_end_above_max_raises():
+    with _pytest_raises(ManifestError, "within 1-65535"):
+        _parse_log_bridge("port_range = [70000, 70010]")
+
+
+def test_log_bridge_port_range_start_ge_end_still_raises():
+    with _pytest_raises(ManifestError, "start < end"):
+        _parse_log_bridge("port_range = [9999, 9988]")
+
+
 def _pytest_raises(exc_type, needle):
     import contextlib
 
