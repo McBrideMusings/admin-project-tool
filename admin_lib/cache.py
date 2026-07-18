@@ -19,7 +19,7 @@ Usage:
 import hashlib
 import os
 
-from .core import ok
+from .core import get_project_root, ok
 
 # Session-level cache: avoids re-reading the same file set within a single
 # admin invocation. Keyed by (path, mtime) tuples so any file change naturally
@@ -29,7 +29,7 @@ _session_cache = {}
 
 def _cache_dir():
     """Return the build cache directory path (tmp/.build-cache/)."""
-    return os.path.join(_project_root, "tmp", ".build-cache")
+    return os.path.join(get_project_root(), "tmp", ".build-cache")
 
 
 def collect_sources(*specs):
