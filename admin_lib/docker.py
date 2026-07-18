@@ -421,8 +421,10 @@ def _parse_env_file(path):
             k, v = line.split("=", 1)
             k = k.strip()
             v = v.strip()
-            if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
-                v = v[1:-1]
+            # Do NOT strip surrounding quotes: docker's --env-file injects the
+            # post-'=' string verbatim (quotes become literal chars in the value).
+            # Stripping here would render the wrong value and make the drift check
+            # fire forever (target FOO=bar baz vs live FOO="bar baz").
             if k:
                 out[k] = v
     return out
