@@ -8,7 +8,7 @@
 
 A survey of 16 committed `admin` scripts across `~/Projects` revealed **heavy overlap** — nearly every project has `build / dev / deploy / test / clean`, plus a common tail of `reload / logs / open / uninstall`. One-off commands are rare and always reducible to "name + shell string."
 
-Projects cluster into ~5 archetypes: **docker-to-unraid**, **stash-plugin**, **apple/swift**, **unraid-plugin**, **simple-cli** (Hugo, Go CLI, Firefox extension). Some scripts (`open-assistant`, `apple-coding-tool`) are archetype combinations (docker-unraid + apple) — expressed cleanly by listing multiple archetypes in `admin.toml`.
+Projects cluster into ~5 archetypes: **docker-to-unraid**, **stash-plugin**, **apple/swift**, **unraid-plugin**, **simple-cli** (Hugo, Go CLI, Firefox extension). Some scripts (`open-assistant`, `apple-coding-tool`) are archetype combinations (docker + apple) — expressed cleanly by listing multiple archetypes in `admin.toml`.
 
 **The goal:** make `./admin` a reliably-reproducible artifact generated from a short, human-editable `admin.toml` manifest plus a library of composable archetypes. Regeneration is idempotent. Hand-editing is unnecessary (but still allowed via the `[inline]` escape hatch).
 
@@ -75,13 +75,13 @@ Initial archetypes (derived 1:1 from the survey clusters):
 
 - **`hugo`** — `build: hugo`, `dev: hugo server -D`, `clean: rm -rf public resources`, default URL `http://localhost:1313`
 - **`go-cli`** — `build: go build ./...`, `test: go test ./...`, `vet`, `fmt`, `deploy: go install ./...`
-- **`docker-unraid`** — build image on remote, deploy to Unraid, `logs`, `open`, `reload`, SSH target from config
+- **`docker`** — build image on remote, deploy to Unraid, `logs`, `open`, `reload`, `run-args` (emit `[docker_run]` as shlex-quoted `docker run` args), SSH target from config
 - **`apple`** — xcodebuild, dev_loop_macos/ios, device install, DerivedData clean, `--log LEVEL`, multi-target (mac|ios)
 - **`unraid-plugin`** — push source to Unraid USB, register/uninstall
 - **`firefox-extension`** — web-ext dev, package `.xpi`, lint
 - **`simple`** — minimal `build / test / clean` shell strings (fallback)
 
-Composition works: `archetypes = ["docker-unraid", "apple"]` produces the `open-assistant` / `cctool` shape without hand editing.
+Composition works: `archetypes = ["docker", "apple"]` produces the `open-assistant` / `cctool` shape without hand editing.
 
 **Conflict resolution:** when two archetypes define the same command name, the later one wins; the manifest's own `[commands]` table wins over all archetypes. `admin regenerate` prints a merge report.
 
@@ -275,7 +275,7 @@ def detect(project_dir: Path) -> dict | None:
 
 Detectors run on a fresh project during `admin new` *without* a manifest. They produce a **starter `admin.toml`** which the user then reviews and commits. Detectors never run on projects that already have `admin.toml` — the manifest is the source of truth from that moment forward.
 
-Initial detectors mirror the archetypes: hugo (`config.yaml` + `themes/`), docker-unraid (`Dockerfile` + existing remote-deploy markers), apple (`.xcodeproj`/`.xcworkspace`), go-cli (`go.mod`, no Dockerfile), firefox-extension (`manifest.json` with `browser_specific_settings`), unraid-plugin (`plg` files / unraid markers). Fallback: `simple`.
+Initial detectors mirror the archetypes: hugo (`config.yaml` + `themes/`), docker (`Dockerfile` + existing remote-deploy markers), apple (`.xcodeproj`/`.xcworkspace`), go-cli (`go.mod`, no Dockerfile), firefox-extension (`manifest.json` with `browser_specific_settings`), unraid-plugin (`plg` files / unraid markers). Fallback: `simple`.
 
 > The original survey above named `stash-plugin` as an archetype. It was removed: three repos of one product is a project shape, not a platform, and what it actually did — build, then copy the build output somewhere — is the generic `sync` kind. Its consumers use `sync` + an `http` action for the Stash-specific reload. The bar an archetype has to clear is a platform or development environment, not a single application.
 
@@ -334,7 +334,7 @@ End-to-end test plan, performed on a scratch clone of `admin-project-tool`:
    - `./admin dev` starts `hugo server -D`; `./admin` shows TUI menu with URL liveness.
    - `./admin open` opens the dev URL.
 4. **Integration: archetype composition on a fake `cctool`-like fixture**
-   - Hand-write `admin.toml` with `archetypes = ["docker-unraid", "apple"]`.
+   - Hand-write `admin.toml` with `archetypes = ["docker", "apple"]`.
    - Regenerate; assert script has `build`, `dev`, `deploy`, `logs`, `open`, `reload`, `test`, `clean`, and multi-target handling for `mac | ios | server`.
 5. **Integration: regeneration idempotency**
    - `admin regenerate` twice in a row; `git diff` must be empty after the second run.
@@ -360,7 +360,7 @@ No global `~/.admin/admin.toml.d/` layer. Cross-project values that vary by host
 **Syntax** — `${VAR}` or `${VAR:-default}` inside any string value in `admin.toml`:
 
 ```toml
-[archetype_config.docker-unraid]
+[archetype_config.docker]
 ssh_host = "${UNRAID_HOST}"
 ssh_user = "${UNRAID_USER:-root}"
 

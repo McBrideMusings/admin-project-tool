@@ -1,4 +1,4 @@
-"""'docker-unraid' archetype — build a Docker image and deploy to an Unraid host.
+"""'docker' archetype — build a Docker image and deploy to a remote (Unraid) host.
 
 Runtime env vars:
     UNRAID_HOST         hostname or IP of the Unraid server
@@ -14,7 +14,7 @@ use `./admin deploy` for every subsequent code push.
 """
 
 ARCHETYPE = {
-    "name": "docker-unraid",
+    "name": "docker",
     "modules": ["core", "docker", "remote", "log_format", "log_columns", "unraid"],
     "urls": {
         "prod": "${PROD_URL:-http://localhost}",
@@ -26,6 +26,7 @@ ARCHETYPE = {
         "diff":             {"desc": "Show run-config drift between current container and last deploy; --format json for CI",          "steps": ["diff"],             "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
         "logs":             {"desc": "Tail logs — `dev` (newest local log) or `live` (container); --from DD:HH:MM:SS rolls back",                    "steps": ["logs"],             "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
         "reload":           {"desc": "Build+run with reload loop (press r or SIGUSR1 to rebuild)",                                     "steps": ["reload"]},
+        "run-args":         {"desc": "Print [docker_run] rendered to shlex-quoted `docker run` args (for external native-build scripts)", "steps": ["run-args"]},
         "open":             {"desc": "Open the deployed app URL",                                                                       "steps": ["open"]},
     },
     "actions": {
@@ -76,6 +77,14 @@ ARCHETYPE = {
             "kind": "docker-reload-loop",
             "run": "docker build -t ${APP_IMAGE} . && docker run --rm ${APP_IMAGE}",
             "desc": "Build+run with reload loop (press r or SIGUSR1 to rebuild)",
+        },
+        "run-args": {
+            "kind": "python",
+            "run": (
+                "_run_cfg = globals().get('_DOCKER_RUN_CONFIG') or {}\n"
+                "print(render_run_args(_run_cfg))"
+            ),
+            "desc": "Print [docker_run] rendered to shlex-quoted `docker run` args (for external native-build scripts)",
         },
         "open": {
             "kind": "shell",

@@ -11,7 +11,7 @@ The normalized state parsed from a project's `admin.toml` — project metadata, 
 _Avoid_: config, settings
 
 **Archetype**:
-A partial manifest (commands, actions, modules, URLs) bundled per project type — `hugo`, `apple`, `docker-unraid`, `rust-tauri`, etc. Lives in `archetypes/<name>.py`. Multiple archetypes can be listed in one manifest and are merged in order.
+A partial manifest (commands, actions, modules, URLs) bundled per project type — `hugo`, `apple`, `docker`, `rust-tauri`, etc. Lives in `archetypes/<name>.py`. Multiple archetypes can be listed in one manifest and are merged in order.
 _Avoid_: template, preset, profile
 
 **Detector**:

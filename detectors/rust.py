@@ -1,4 +1,4 @@
-"""rust detector: Cargo.toml present and no Dockerfile (Docker-first projects use docker-unraid)."""
+"""rust detector: Cargo.toml present and no Dockerfile (Docker-first projects use docker)."""
 from pathlib import Path
 
 

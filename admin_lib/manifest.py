@@ -79,7 +79,7 @@ class Manifest:
     clean_dev: dict = field(default_factory=dict) # [clean_dev] — config for kind="clean-dev" commands
     vite_dev: dict = field(default_factory=dict)  # [vite_dev] — config for kind="vite-dev" commands
     docker_dev: dict = field(default_factory=dict)  # [docker_dev] — config for kind="docker-dev" commands
-    deploy: dict = field(default_factory=dict)    # [deploy] — config for docker-unraid build/deploy commands
+    deploy: dict = field(default_factory=dict)    # [deploy] — config for docker build/deploy commands
     docker_run: dict = field(default_factory=dict)  # [docker_run] — prod docker run config (target, image_tag, env, mounts, …)
     install_template: dict = field(default_factory=dict)  # [install_template] — kind="install-template" config
     fixtures: dict = field(default_factory=dict)  # [fixtures] — config for kind="fixtures-generate"/"fixtures-reset"

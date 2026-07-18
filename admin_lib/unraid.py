@@ -22,7 +22,7 @@ _UNRAID_TEMPLATES_DIR = "/boot/config/plugins/dockerMan/templates-user"
 def _slug_from_app_image():
     """Strip a registry prefix and `:tag` from APP_IMAGE → bare slug.
 
-    `ghcr.io/me/my-app:latest` → `my-app`. Same logic the docker-unraid
+    `ghcr.io/me/my-app:latest` → `my-app`. Same logic the docker
     `logs` action uses to pick a container name.
     """
     image = os.environ.get("APP_IMAGE", "").strip()
