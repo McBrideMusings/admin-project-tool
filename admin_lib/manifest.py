@@ -620,6 +620,13 @@ def dump(manifest: Manifest) -> str:
                     lines.append(f"{k} = {v!r}")
             lines.append("")
 
+    if manifest.guards:
+        for name, guard in manifest.guards.items():
+            lines.append(f"[guards.{name}]")
+            for k, v in guard.items():
+                lines.append(f'{k} = "{_escape(v)}"')
+            lines.append("")
+
     if manifest.logs:
         for target_name, target in manifest.logs.items():
             lines.append(f"[logs.{target_name}]")
