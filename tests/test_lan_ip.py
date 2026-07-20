@@ -19,7 +19,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from admin_lib.core import COMPUTED_VARS, lan_ip, resolve_env  # noqa: E402
+from admin_lib.core import COMPUTED_VARS, lan_ip, resolve_computed, resolve_env  # noqa: E402
 from admin_lib.kinds import scan_env_vars  # noqa: E402
 from admin_lib.manifest import Command  # noqa: E402
 
@@ -79,6 +79,60 @@ def test_other_vars_still_scan_normally():
 
 def test_lan_ip_is_declared_computed():
     assert "LAN_IP" in COMPUTED_VARS
+
+
+def test_resolve_computed_expands_lan_ip():
+    assert resolve_computed("http://${LAN_IP}:8787") == f"http://{lan_ip()}:8787"
+
+
+def test_resolve_computed_leaves_non_computed_vars_for_the_shell():
+    """The safety property. resolve_env exits(2) on an unresolvable name, so it
+    cannot touch a shell command containing shell-locals — resolve_computed must
+    pass every non-computed ${VAR} through byte-for-byte."""
+    src = 'x=$(cmd); echo ${x} ${HOME} ${UNSET_ON_PURPOSE:-d}'
+    assert resolve_computed(src) == src
+
+
+def test_resolve_computed_env_override_wins():
+    prev = os.environ.get("LAN_IP")
+    os.environ["LAN_IP"] = "10.9.9.9"
+    try:
+        assert resolve_computed("http://${LAN_IP}:1") == "http://10.9.9.9:1"
+    finally:
+        os.environ.pop("LAN_IP", None)
+        if prev is not None:
+            os.environ["LAN_IP"] = prev
+
+
+def test_interactive_shell_resolves_lan_ip():
+    """#426 landed for `kind = "shell"` but not for `interactive-shell` — which is
+    the kind reddit-poker's dev-cf actually uses, so the banner printed a literal
+    ${LAN_IP} for months. Pin the kind that motivated the feature."""
+    import admin_lib.keybindings as kb
+    from admin_lib.interp import _make_interactive_shell
+
+    captured = {}
+    original = kb.run_with_keybindings
+
+    def _spy(cmd, keys, **kwargs):
+        captured["cmd"] = cmd
+        return 0
+
+    kb.run_with_keybindings = _spy
+    try:
+        cmd = Command(
+            name="dev-cf",
+            run="printf 'http://${LAN_IP}:8787' && echo ${shell_local}",
+            desc="dev",
+            kind="interactive-shell",
+        )
+        _make_interactive_shell(cmd, {})([])
+    finally:
+        kb.run_with_keybindings = original
+
+    assert f"http://{lan_ip()}:8787" in captured["cmd"]
+    assert "${LAN_IP}" not in captured["cmd"]
+    assert "${shell_local}" in captured["cmd"], "non-computed vars must reach the shell"
 
 
 def test_lan_ip_resolves_in_a_real_dispatch():
