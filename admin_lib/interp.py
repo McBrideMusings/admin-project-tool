@@ -38,6 +38,7 @@ from admin_lib.core import (
     print_url_status,
     register_action,
     register_env_var,
+    resolve_computed,
     resolve_env,
     run_cmd,
     run_command,
@@ -656,9 +657,13 @@ def _make_interactive_shell(cmd, ns):
     def _fn(args):
         from admin_lib.keybindings import run_with_keybindings
         from admin_lib.log_format import make_formatter
-        info(f"running: {run}")
+        # Expand ${LAN_IP} and friends before the shell sees them — the shell can
+        # expand its own vars but cannot compute these. resolve_computed leaves
+        # every non-computed ${VAR} untouched, so shell-locals still work.
+        resolved = resolve_computed(run)
+        info(f"running: {resolved}")
         fmt = make_formatter()
-        rc = run_with_keybindings(run, keys, label=name, formatter=fmt)
+        rc = run_with_keybindings(resolved, keys, label=name, formatter=fmt)
         if rc not in (0, 130):
             err(name + " failed")
             sys.exit(rc)

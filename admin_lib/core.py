@@ -467,6 +467,29 @@ def resolve_env(s):
     return _ENV_VAR_RE.sub(_sub, s)
 
 
+def resolve_computed(s):
+    """Expand ONLY ${COMPUTED_VARS} (e.g. ${LAN_IP}); leave every other ${VAR} alone.
+
+    For strings that are handed to a shell. `resolve_env` is wrong there: it
+    exits(2) on any name it can't resolve, so a `run` containing a shell-local
+    like `${x}` from `x=$(...)` would kill the action. The shell can expand its
+    own variables — what it cannot do is compute LAN_IP. So substitute just those
+    and pass the rest through untouched.
+
+    An explicit environment value still wins, matching resolve_env.
+    """
+    if not isinstance(s, str) or "${" not in s:
+        return s
+
+    def _sub(match):
+        name = match.group(1)
+        if name not in COMPUTED_VARS:
+            return match.group(0)  # not ours — hand it to the shell verbatim
+        return os.environ.get(name) or COMPUTED_VARS[name]()
+
+    return _ENV_VAR_RE.sub(_sub, s)
+
+
 def _apply_cmd_env(env_map):
     """Inject command-level env vars before running a command's steps.
 
