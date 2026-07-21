@@ -41,7 +41,10 @@ DETECTOR_DIR = REPO_DIR / "detectors"
 
 # Tool verbs share the `admin <word>` namespace with manifest commands; a
 # manifest may not define a command with one of these names (ADR-0006).
-RESERVED_VERBS = {"new", "compile", "check"}
+RESERVED_VERBS = {"new", "compile", "check", "branch", "worktree"}
+
+# Verbs that take an <input> (branch name / issue-PR number / URL), not a DIR.
+_INPUT_VERBS = {"branch", "worktree"}
 
 
 def err(msg):
@@ -190,6 +193,36 @@ def cmd_new(project_dir: Path, force: bool) -> int:
 
 
 # ---------------------------------------------------------------------------
+# branch / worktree verbs
+# ---------------------------------------------------------------------------
+
+def _worktree_cfg(project_dir: Path | None) -> dict:
+    """Best-effort [worktree] table for the repo; {} if no/broken manifest."""
+    if project_dir is None:
+        return {}
+    try:
+        resolved, _ = _load_resolved(project_dir)
+        return resolved.manifest.worktree or {}
+    except Exception:
+        return {}
+
+
+def _run_action_in(wt_path: str, action_name: str) -> int:
+    """Run an admin action inside a worktree dir (for [worktree].setup)."""
+    return dispatch(Path(wt_path), [action_name])
+
+
+def cmd_branch(inp: str) -> int:
+    from admin_lib.wtverbs import cmd_branch as _cmd_branch
+    return _cmd_branch(inp)
+
+
+def cmd_worktree(inp: str, project_dir: Path | None) -> int:
+    from admin_lib.wtverbs import cmd_worktree as _cmd_worktree
+    return _cmd_worktree(inp, cfg=_worktree_cfg(project_dir), run_action=_run_action_in)
+
+
+# ---------------------------------------------------------------------------
 # Manifest dispatch
 # ---------------------------------------------------------------------------
 
@@ -227,6 +260,28 @@ def main() -> int:
     if argv and argv[0] in RESERVED_VERBS:
         verb = argv[0]
         rest = argv[1:]
+
+        # branch / worktree take an <input>, not a DIR (or --prune for cleanup).
+        if verb in _INPUT_VERBS:
+            prune = "--prune" in rest
+            dry_run = "--dry-run" in rest
+            yes = "--yes" in rest or "-y" in rest
+            positional = [a for a in rest if not a.startswith("-")]
+            if prune:
+                from admin_lib.wtverbs import prune_branches, prune_worktrees
+                if verb == "branch":
+                    return prune_branches(dry_run=dry_run, yes=yes)
+                return prune_worktrees(dry_run=dry_run, yes=yes)
+            if not positional:
+                # Bare verb → interactive list (create takes an arg; this browses).
+                from admin_lib.wtverbs import tui_branches, tui_worktrees
+                return tui_branches() if verb == "branch" else tui_worktrees()
+            inp = positional[0]
+            if verb == "branch":
+                return cmd_branch(inp)
+            project_dir = project_dir_override or _find_project_dir(Path.cwd())
+            return cmd_worktree(inp, project_dir)
+
         force = "--force" in rest
         show_namespace = "--show-namespace" in rest
         rest = [a for a in rest if a not in ("--force", "--show-namespace")]

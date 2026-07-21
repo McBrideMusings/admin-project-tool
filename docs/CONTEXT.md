@@ -66,6 +66,22 @@ _Avoid_: hook, gate (reserved for Guard)
 The field on an action or multi-target target that lists Guard names. `requires = ["git-clean", "git-pushed"]` runs both Guards in order, fail-fast, before the action's `run`. Parent multi-target actions define a default that children inherit and may override (replace-not-merge); `requires = []` on a child is the explicit opt-out.
 _Avoid_: needs, preconditions, before
 
+**Branch** (verb — `admin branch <input>`):
+Reserved tool verb that resolves an input (branch name, issue/PR number, issue/PR URL) to a branch and creates/checks it out **in the current working tree** — no worktree. Contrast **Worktree**, which spins up a separate working tree for the same resolved branch. (In repo-dash the `branch` command actually makes a worktree; admin splits the two meanings apart.)
+_Avoid_: checkout (overloaded), switch
+
+**Worktree** (verb — `admin worktree <input>`):
+Reserved tool verb that resolves the same input set as **Branch**, then creates a separate git worktree for that branch (branch-state attach + post-create install + Herdr association), rather than switching the current tree.
+_Avoid_: wt (fine as a shorthand, not the canonical name), tree
+
+**Resolver**:
+The input-classification-and-resolution stage shared by **Branch** and **Worktree**. Phase 1 (classify) is pure syntax: `{text, number, PR, issue}` + number + `owner/repo`, no network. Phase 2 (resolve) uses `gh` to turn an issue into a slugged new branch name, a PR into its head ref, and a bare number into whichever it is. Text passes through unchanged.
+_Avoid_: parser, classify (that names only phase 1)
+
+**Dead branch**:
+A local branch that cleanup can force-delete safely, origin untouched: its remote is gone, its PR merged on GitHub (catches squash/rebase that `git branch --merged` misses, gated on not-ahead), it's merged into the default, or it's fully pushed. Everything else is a *survivor* (needs human judgment). Classified by `admin_lib/gitwt.classify_dead`. Surfaced by `admin branch --prune` / `admin worktree --prune` and the bare-verb TUI.
+_Avoid_: stale (that's only one weaker signal), orphan
+
 ### Architecture
 
 Terms for reasoning about the *shape* of the code (not the domain). Used by architecture reviews; keep them stable.

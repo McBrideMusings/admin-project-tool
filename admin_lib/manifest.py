@@ -33,7 +33,7 @@ _KNOWN_KEYS = {
     "commands", "actions", "order", "logs", "apple", "react_native", "server", "output",
     "exclude_modules", "hide_commands", "inline", "logging",
     "dev_kill", "dev_precheck", "clean_dev", "vite_dev", "docker_dev", "docker_run", "deploy", "install_template",
-    "fixtures", "log_bridge", "guards", "docs", "go", "raylib",
+    "fixtures", "log_bridge", "guards", "docs", "go", "raylib", "worktree",
     # Obsolete under interpreter mode (ADR-0006); tolerated silently on
     # un-migrated manifests, never written back. `admin migrate` strips it.
     "generator_commit",
@@ -88,6 +88,7 @@ class Manifest:
     go: dict = field(default_factory=dict)        # [go] — config for kind="go" (binary, main)
     raylib: dict = field(default_factory=dict)    # [raylib] — config for kind="raylib" (binary, build_dir, cmake_flags, jobs, smoke_env, clean_dirs)
     log_bridge: dict = field(default_factory=dict)            # [log_bridge] — browser-console HTTP bridge config
+    worktree: dict = field(default_factory=dict)              # [worktree] — worktree verb config (root, setup, copy)
     guards: dict[str, dict] = field(default_factory=dict)     # [guards.<name>] — user-defined shell guards
     actions: dict[str, dict] = field(default_factory=dict)    # action name -> raw dict (not shown in UI)
     exclude_modules: list[str] = field(default_factory=list)  # modules to suppress even if archetype requires them
@@ -348,6 +349,9 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     if "retain" in logging_cfg and not isinstance(logging_cfg["retain"], int):
         raise ManifestError(f"{source}: '[logging].retain' must be an integer")
 
+    worktree_cfg = data.get("worktree", {}) or {}
+    _validate_worktree(worktree_cfg)
+
     log_bridge = data.get("log_bridge", {}) or {}
     if not isinstance(log_bridge, dict):
         raise ManifestError(f"{source}: '[log_bridge]' must be a table")
@@ -430,12 +434,34 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         go=go_cfg,
         raylib=raylib_cfg,
         log_bridge=log_bridge,
+        worktree=worktree_cfg,
         guards=guards,
         exclude_modules=exclude_modules,
         hide_commands=hide_commands,
         inline_file=inline_file,
         raw=data,
     )
+
+
+_WORKTREE_KNOWN = {"root", "setup", "copy"}
+
+
+def _validate_worktree(cfg: dict) -> None:
+    """Shape-check the [worktree] table: root (str), setup (str), copy (list[str])."""
+    if not cfg:
+        return
+    if not isinstance(cfg, dict):
+        raise ManifestError("[worktree] must be a table")
+    unknown = set(cfg) - _WORKTREE_KNOWN
+    if unknown:
+        raise ManifestError(f"[worktree]: unknown key(s) {sorted(unknown)} (known: {sorted(_WORKTREE_KNOWN)})")
+    for key in ("root", "setup"):
+        if key in cfg and not isinstance(cfg[key], str):
+            raise ManifestError(f"[worktree].{key} must be a string")
+    copy = cfg.get("copy")
+    if copy is not None:
+        if not isinstance(copy, list) or not all(isinstance(x, str) for x in copy):
+            raise ManifestError("[worktree].copy must be a list of strings")
 
 
 # Keys that carry meaning for every kind and so are never treated as file envs.
