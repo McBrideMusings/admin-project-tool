@@ -4,7 +4,7 @@ Runs per-project tasks from a short `admin.toml` manifest plus a library of comp
 
 ## What this repo is
 
-- **`admin-run`** — the interpreter CLI (installed as `~/.admin/admin`). Reads a project's `admin.toml`, merges archetypes, registers live command/action callables, and dispatches. Tool verbs: `new`, `check`, `compile`.
+- **`admin-run`** — the interpreter CLI (installed as `~/.admin/admin`). Reads a project's `admin.toml`, merges archetypes, registers live command/action callables, and dispatches. Tool verbs: `new`, `check`, `compile`, `branch`, `worktree`.
 - **`admin_lib/`** — runtime helpers (logging, port management, log tailing, Apple build helpers, etc.) imported as a real package. `admin_lib/interp.py` is the interpreter: one closure factory per action kind. It also holds the manifest frontend: `manifest.py` (parser), `archetypes.py` (archetype merger), `kinds.py` (kind metadata + ${VAR} scanner), `validate.py` (command/action schema validation — `ValidationError` umbrella; see [ADR-0008](docs/adr/0008-centralized-schema-validation.md)), `compile.py` (standalone zipapp), `detectors.py` (detector loader). Stdlib only.
 - **`archetypes/`** — partial manifests per project type (apple, react-native, hugo, docker, rust-tauri, etc.). Mixins, not monoliths. (The data dir — the merger code is `admin_lib/archetypes.py`.)
 - **`detectors/`** — heuristics that suggest archetypes from a project's file layout. (The data dir — the loader is `admin_lib/detectors.py`.)
@@ -16,7 +16,7 @@ Runs per-project tasks from a short `admin.toml` manifest plus a library of comp
 2. **Commands are pure routing.** `[commands.X]` may only contain `desc` + `steps` (list of action names). `kind`, `run`, `targets` belong in `[actions.X]`. The resolver errors loudly otherwise.
 3. **Stdlib only (with one narrow carve-out).** No third-party deps in the tool OR the interpreter/compiled output by default. The only exception is try/except-guarded optional imports that degrade gracefully when absent (today: `Pillow` + `cairosvg` in `admin_lib/icons.py`; `tomli` in `admin_lib/manifest.py` and `admin_lib/apple.py` as a Python 3.9/3.10 backport for `tomllib`). New optional deps must clear the same bar. See [ADR-0001](docs/adr/0001-stdlib-only.md). Manifest parses via `tomllib` (or `tomli` on Python 3.9/3.10); writing TOML is hand-rolled.
 4. **One engine.** The interpreter (`admin_lib/interp.py`) is the single execution path. `admin compile` packages that same interpreter + `admin_lib` + the resolved manifest into a zipapp — it never re-implements per-kind logic. Adding a kind = one `_kind(...)` entry in the `admin_lib/kinds.KINDS` catalog + one `register_factory(name, ...)` in `interp.py`; the interpreter checks at import that every kind has a factory.
-5. **Tool verbs are reserved.** `new`, `check`, `compile` share the `admin <word>` namespace with manifest commands; a manifest may not define a command with one of these names (the CLI errors).
+5. **Tool verbs are reserved.** `new`, `check`, `compile`, `branch`, `worktree` share the `admin <word>` namespace with manifest commands; a manifest may not define a command with one of these names (the CLI errors). `branch`/`worktree` take an `<input>` (branch name / issue-PR number / GitHub URL) resolved by `admin_lib/resolve.py`; bare → a TUI, `--prune` → cleanup. See `admin_lib/wtverbs.py`.
 
 ## Hard rules (from past pain)
 
