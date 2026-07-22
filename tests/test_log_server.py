@@ -158,6 +158,8 @@ def test_start_log_server_adopts_prebound_socket(tmp_path):
     server = log_server.start_log_server("127.0.0.1", port, sock=s)
     try:
         assert server.server_address[1] == port
+        assert server.server_port == port          # mirrored from server_bind
+        assert isinstance(server.server_name, str)
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as resp:
             assert resp.status == 200
     finally:

@@ -7,6 +7,7 @@ configured. Stdlib only — http.server + threading.
 from __future__ import annotations
 
 import json
+import socket
 import sys
 import threading
 import datetime
@@ -147,6 +148,11 @@ def start_log_server(host: str, port: int, sock=None) -> ThreadingHTTPServer:
         server.socket.close()          # discard the unbound socket TCPServer made
         server.socket = sock           # adopt the pre-bound one
         server.server_address = sock.getsockname()
+        # server_bind() normally sets these two; the adopt path skips it, so
+        # mirror them here for any handler/stdlib code that reads them.
+        host_, port_ = server.server_address[:2]
+        server.server_name = socket.getfqdn(host_)
+        server.server_port = port_
         try:
             server.server_activate()   # listen() on the adopted socket
         except OSError:
