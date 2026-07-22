@@ -20,9 +20,10 @@ class ResolveError(Exception):
 
 @dataclass
 class Resolved:
-    branch: str          # the branch name to create/checkout
-    source: str          # classify kind that produced it: text / number / pr / issue
-    is_pr: bool = False  # True when it resolved to a PR's existing head branch
+    branch: str            # the branch name to create/checkout
+    source: str            # classify kind that produced it: text / number / pr / issue
+    is_pr: bool = False    # True when it resolved to a PR's head branch
+    pr_number: int = 0     # the PR number, when is_pr (used to fetch pull/N/head)
 
 
 def resolve(inp: str) -> Resolved:
@@ -31,7 +32,7 @@ def resolve(inp: str) -> Resolved:
 
     if c.kind == classify.PR:
         try:
-            return Resolved(branch=_pr_branch(c.number), source="pr", is_pr=True)
+            return Resolved(branch=_pr_branch(c.number), source="pr", is_pr=True, pr_number=c.number)
         except ghwt.GhError as e:
             raise ResolveError(f"could not resolve PR #{c.number}: {e}")
 
@@ -49,13 +50,21 @@ def resolve(inp: str) -> Resolved:
                 f"available — install GitHub CLI, or pass a branch name instead"
             )
         try:
-            return Resolved(branch=_pr_branch(c.number), source="number", is_pr=True)
+            return Resolved(branch=_pr_branch(c.number), source="number", is_pr=True, pr_number=c.number)
         except ghwt.GhError:
             pass  # not a PR — try issue
         try:
             return Resolved(branch=_issue_branch(c.number), source="number")
         except ghwt.GhError as e:
             raise ResolveError(f"#{c.number} is neither a reachable PR nor issue: {e}")
+
+    # A URL that reached here is not a recognized GitHub link — don't silently
+    # turn it into a branch name (git would reject it with an opaque ref error).
+    if inp.startswith(("http://", "https://")):
+        raise ResolveError(
+            f"unrecognized URL: {inp} — expected a GitHub issue, PR, or "
+            f"project-board link, an issue/PR number, or a branch name"
+        )
 
     # TEXT: the input is the branch name. Trim; keep slashes (feat/foo is valid).
     name = inp.strip()

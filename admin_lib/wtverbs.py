@@ -53,6 +53,8 @@ def cmd_branch(inp: str) -> int:
     except resolve.ResolveError as e:
         err(str(e))
         return 1
+    if _fetch_pr_if_needed(r) != 0:
+        return 1
     try:
         action = gitwt.checkout_in_current_tree(r.branch)
     except gitwt.GitError as e:
@@ -60,6 +62,20 @@ def cmd_branch(inp: str) -> int:
         return 1
     ok(f"{action} branch {r.branch}")
     return 0
+
+
+def _fetch_pr_if_needed(r) -> int:
+    """For a PR input, fetch pull/<n>/head into a local branch (fork-safe) so the
+    normal branch-state attach then just checks it out. No-op for non-PR inputs
+    or when the local branch already exists."""
+    if not r.is_pr or gitwt.branch_exists_local(r.branch):
+        return 0
+    try:
+        gitwt.fetch_pr(r.pr_number, r.branch)
+        return 0
+    except gitwt.GitError as e:
+        err(f"failed to fetch PR #{r.pr_number} (pull/{r.pr_number}/head): {e}")
+        return 1
 
 
 # --- admin worktree <input> (P2) --------------------------------------------
@@ -99,6 +115,9 @@ def cmd_worktree(inp: str, cfg: dict | None = None, run_action=None) -> int:
         info(f"branch {branch} already has a worktree at {existing}")
         return _finish(root, existing, branch, cfg, run_action, created=False)
 
+    if _fetch_pr_if_needed(r) != 0:
+        return 1
+
     path = worktree_root(root, cfg) / _sanitize_dir(branch)
     if path.exists():
         err(f"path exists but is not a registered worktree: {path}")
@@ -110,8 +129,6 @@ def cmd_worktree(inp: str, cfg: dict | None = None, run_action=None) -> int:
         gitwt.add_worktree(str(path), branch)
     except gitwt.GitError as e:
         err(str(e))
-        if r.is_pr:
-            err("(if this is a PR from a fork, its head branch isn't on origin — fork PRs aren't supported yet)")
         return 1
     return _finish(root, str(path), branch, cfg, run_action, created=True)
 
@@ -350,23 +367,42 @@ def _tui(title, build_entries, on_delete, on_enter, enter_hint):
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
+def branch_entries() -> list:
+    """Rows for the branches TUI: dead cleanup candidates first, then survivors."""
+    gitwt.fetch_prune()
+    cands = gitwt.list_cleanup_candidates()
+    dead, survivors = gitwt.classify_dead(cands, ghwt.merged_pr_head_branches())
+    entries = [_Entry(d.name, d.reason, True, d.name) for d in dead]
+    for s in survivors:
+        status = "stale" if s.is_stale else ("ahead" if s.ahead else "unmerged")
+        entries.append(_Entry(s.name, status, False, s.name))
+    return entries
+
+
+def worktree_entries(root: str) -> list:
+    """Rows for the worktrees TUI: each linked worktree tagged dirty/dead/active."""
+    merged_prs = ghwt.merged_pr_head_branches()
+    entries = []
+    for w in gitwt.worktrees():
+        if w.bare or w.path == root or not w.branch:
+            continue
+        if gitwt.worktree_dirty(w.path):
+            entries.append(_Entry(f"{w.branch}  {w.path}", "dirty", False, w))
+            continue
+        dead, _ = gitwt.classify_dead([gitwt.branch_status(w.branch)], merged_prs)
+        if dead:
+            entries.append(_Entry(f"{w.branch}  {w.path}", dead[0].reason, True, w))
+        else:
+            entries.append(_Entry(f"{w.branch}  {w.path}", "active", False, w))
+    return entries
+
+
 def tui_branches() -> int:
     try:
         gitwt.repo_root()
     except gitwt.GitError as e:
         err(str(e))
         return 1
-
-    def build():
-        gitwt.fetch_prune()
-        cands = gitwt.list_cleanup_candidates()
-        dead, survivors = gitwt.classify_dead(cands, ghwt.merged_pr_head_branches())
-        reasons = {d.name: d.reason for d in dead}
-        entries = [_Entry(d.name, d.reason, True, d.name) for d in dead]
-        for s in survivors:
-            status = "stale" if s.is_stale else ("ahead" if s.ahead else "unmerged")
-            entries.append(_Entry(s.name, status, False, s.name))
-        return entries
 
     def on_delete(e):
         try:
@@ -384,7 +420,7 @@ def tui_branches() -> int:
             err(str(ex))
             return 1
 
-    return _tui("branches", build, on_delete, on_enter, "checkout")
+    return _tui("branches", branch_entries, on_delete, on_enter, "checkout")
 
 
 def tui_worktrees() -> int:
@@ -393,23 +429,6 @@ def tui_worktrees() -> int:
     except gitwt.GitError as e:
         err(str(e))
         return 1
-
-    def build():
-        gitwt.fetch_prune()
-        merged_prs = ghwt.merged_pr_head_branches()
-        entries = []
-        for w in gitwt.worktrees():
-            if w.bare or w.path == root or not w.branch:
-                continue
-            if gitwt.worktree_dirty(w.path):
-                entries.append(_Entry(f"{w.branch}  {w.path}", "dirty", False, w))
-                continue
-            dead, _ = gitwt.classify_dead([gitwt.branch_status(w.branch)], merged_prs)
-            if dead:
-                entries.append(_Entry(f"{w.branch}  {w.path}", dead[0].reason, True, w))
-            else:
-                entries.append(_Entry(f"{w.branch}  {w.path}", "active", False, w))
-        return entries
 
     def on_delete(e):
         w = e.data
@@ -428,4 +447,4 @@ def tui_worktrees() -> int:
             print(f"cd {w.path}")
         return 0
 
-    return _tui("worktrees", build, on_delete, on_enter, "open")
+    return _tui("worktrees", lambda: worktree_entries(root), on_delete, on_enter, "open")

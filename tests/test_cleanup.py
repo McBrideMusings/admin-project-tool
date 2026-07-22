@@ -102,6 +102,54 @@ def test_current_and_default_never_candidates(repo_with_origin):
     assert "main" not in {c.name for c in cands}
 
 
+def test_remote_gone_with_local_work_survives(repo_with_origin):
+    # Push a branch, then delete its remote (PR closed unmerged). Its commits now
+    # live on no origin ref — the only copy is local. Must NOT be deleted.
+    w = repo_with_origin
+    _git(w, "checkout", "-q", "-b", "orphaned")
+    (w / "o.txt").write_text("precious")
+    _git(w, "add", "-A")
+    _git(w, "commit", "-qm", "work")
+    _git(w, "push", "-q", "-u", "origin", "orphaned")
+    _git(w, "push", "-q", "origin", "--delete", "orphaned")
+    _git(w, "fetch", "-q", "--prune", "origin")
+    _git(w, "checkout", "-q", "main")
+    cands = gitwt.list_cleanup_candidates()
+    dead, _ = gitwt.classify_dead(cands, {})
+    assert "orphaned" not in {d.name for d in dead}
+
+
+def test_squash_merged_still_deleted_when_pr_confirmed(repo_with_origin):
+    # Squash-merge shape: branch pushed then its remote deleted (commits never on
+    # origin/main by SHA), but gh confirms its PR merged → safe to delete.
+    w = repo_with_origin
+    _git(w, "checkout", "-q", "-b", "squashed")
+    (w / "sq.txt").write_text("x")
+    _git(w, "add", "-A")
+    _git(w, "commit", "-qm", "sq")
+    _git(w, "push", "-q", "-u", "origin", "squashed")
+    _git(w, "push", "-q", "origin", "--delete", "squashed")
+    _git(w, "fetch", "-q", "--prune", "origin")
+    _git(w, "checkout", "-q", "main")
+    cands = gitwt.list_cleanup_candidates()
+    dead = {d.name for d in gitwt.classify_dead(cands, {"squashed": True})[0]}
+    assert "squashed" in dead
+
+
+def test_worktree_branch_with_local_work_protected(repo_with_origin, tmp_path):
+    # A worktree branch carrying unpushed commits whose name is NOT a merged PR
+    # must classify as survivor even though branch_status has no upstream signal.
+    w = repo_with_origin
+    wt = tmp_path / "wt"
+    _git(w, "worktree", "add", "-q", "-b", "wt-work", str(wt))
+    (wt / "x.txt").write_text("unpushed")
+    _git(wt, "add", "-A")
+    _git(wt, "commit", "-qm", "wt work")
+    dead, _ = gitwt.classify_dead([gitwt.branch_status("wt-work")], {})
+    assert not dead
+    _git(w, "worktree", "remove", "--force", str(wt))
+
+
 def test_prune_dry_run_deletes_nothing(repo_with_origin):
     w = repo_with_origin
     _git(w, "checkout", "-q", "-b", "gone-soon")

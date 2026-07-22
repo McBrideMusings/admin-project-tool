@@ -81,6 +81,22 @@ def fetch_branch(branch: str) -> None:
     _git("fetch", "origin", branch)
 
 
+def fetch_pr(number: int, local_branch: str) -> None:
+    """Fetch a PR's head commits into a new local branch via pull/<n>/head.
+
+    Works for same-repo AND fork PRs — pull/<n>/head lives on origin regardless
+    of which fork the PR came from."""
+    _git("fetch", "origin", f"pull/{number}/head:{local_branch}")
+
+
+def has_local_commits(branch: str) -> bool:
+    """True if `branch` has commits reachable from no origin/* remote ref — i.e.
+    unpushed, unlanded work that deleting the local ref would lose. False when
+    every commit is already on some origin ref (pushed or merged). On an
+    origin-less repo this is True for every branch, so cleanup stays conservative."""
+    return bool(_git_quiet("rev-list", "refs/heads/" + branch, "--not", "--remotes=origin").strip())
+
+
 # --- current-tree branch attach (P1) ----------------------------------------
 
 def checkout_in_current_tree(branch: str) -> str:
@@ -183,6 +199,7 @@ class Branch:
     remote_gone: bool = False   # tracked an origin branch that no longer exists
     fully_pushed: bool = False  # tracks origin and is not ahead (no local-only commits)
     ahead: bool = False         # local tip has unpushed local-only commits
+    has_local_commits: bool = False  # commits reachable from NO origin/* ref — unlanded work
     age_str: str = ""
 
 
@@ -286,6 +303,7 @@ def list_cleanup_candidates(stale_after_days: int = 30) -> list[Branch]:
         result.append(Branch(name=name, is_merged=is_merged, is_stale=stale,
                              is_personal=personal, remote_gone=gone,
                              fully_pushed=fully_pushed, ahead=ahead,
+                             has_local_commits=has_local_commits(name),
                              age_str=age_str.strip()))
     result.sort(key=lambda b: b.name)
     return result
@@ -313,6 +331,7 @@ def branch_status(name: str) -> Branch:
         remote_gone=gone,
         fully_pushed=bool(upstream) and not gone and not ahead,
         ahead=ahead,
+        has_local_commits=has_local_commits(name),
         age_str=age_str,
     )
 
@@ -327,7 +346,14 @@ def classify_dead(cands: list[Branch], merged_prs: dict[str, bool]):
     dead: list[DeadBranch] = []
     survivors: list[Branch] = []
     for br in cands:
-        if br.remote_gone:
+        # Hard backstop: never delete a branch holding commits that live on no
+        # origin ref (unpushed, unlanded work) — UNLESS gh says its PR merged,
+        # which is the squash/rebase case where the work landed under new SHAs.
+        # This protects remote-gone-with-local-work, worktree branches, and stale
+        # personal branches that the upstream:track signals alone would miss.
+        if br.has_local_commits and not merged_prs.get(br.name):
+            survivors.append(br)
+        elif br.remote_gone:
             dead.append(DeadBranch(br.name, "remote gone"))
         elif merged_prs.get(br.name) and not br.ahead:
             dead.append(DeadBranch(br.name, "PR merged"))
