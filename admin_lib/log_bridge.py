@@ -36,16 +36,26 @@ def log_bridge_enabled() -> bool:
     return bool(_LOG_BRIDGE_CFG.get("hosts"))
 
 
-def _log_bridge_allocate_port() -> int:
+def _log_bridge_bind_port() -> tuple[int, socket.socket]:
+    """Bind a free port in the configured range; return (port, the bound socket).
+
+    Returns the still-open bound socket instead of a bare port number so the
+    caller hands it straight to the HTTP server. The old version bound then
+    released each probed port inside a `with` block and let the real bind happen
+    later — a window in which another process could grab the port between the
+    probe and the rebind. Keeping the socket open makes acquisition atomic.
+    """
     pr = _LOG_BRIDGE_CFG.get("port_range")
     port_range = range(pr[0], pr[1] + 1) if pr else LOG_BRIDGE_PORT_RANGE_DEFAULT
     for port in port_range:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                s.bind((LOG_BRIDGE_BIND_HOST, port))
-            except OSError:
-                continue
-            return port
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind((LOG_BRIDGE_BIND_HOST, port))
+        except OSError:
+            s.close()
+            continue
+        return port, s
     raise RuntimeError(
         f"log_bridge: no free port in {port_range.start}-{port_range.stop - 1}"
     )
@@ -87,7 +97,7 @@ def start_log_bridge(log_path: str):
     project = _LOG_BRIDGE_CFG.get("project", "")
     LOG_BRIDGE_DISCOVERY_DIR.mkdir(parents=True, exist_ok=True)
     _log_bridge_sweep_stale()
-    port = _log_bridge_allocate_port()
+    port, sock = _log_bridge_bind_port()
     started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     pid = os.getpid()
     set_log_server_state(
@@ -98,7 +108,7 @@ def start_log_bridge(log_path: str):
         started_at=started_at,
         port=port,
     )
-    _LOG_BRIDGE_SERVER = start_log_server(LOG_BRIDGE_BIND_HOST, port)
+    _LOG_BRIDGE_SERVER = start_log_server(LOG_BRIDGE_BIND_HOST, port, sock=sock)
     print(f"[log-bridge] listening on port {port}  hosts={hosts}", flush=True)
     _LOG_BRIDGE_DISCOVERY_PATH = LOG_BRIDGE_DISCOVERY_DIR / f"{pid}.json"
     _LOG_BRIDGE_DISCOVERY_PATH.write_text(json.dumps({
