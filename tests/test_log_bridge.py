@@ -42,12 +42,25 @@ def test_configure_with_none_clears():
     assert not log_bridge.log_bridge_enabled()
 
 
-def test_allocate_port_returns_port_in_range():
-    port = log_bridge._log_bridge_allocate_port()
-    assert port in log_bridge.LOG_BRIDGE_PORT_RANGE_DEFAULT
+def test_bind_port_returns_port_in_range():
+    port, sock = log_bridge._log_bridge_bind_port()
+    try:
+        assert port in log_bridge.LOG_BRIDGE_PORT_RANGE_DEFAULT
+    finally:
+        sock.close()
 
 
-def test_allocate_port_raises_when_range_exhausted(monkeypatch):
+def test_bind_port_returns_socket_bound_to_that_port():
+    # The socket must stay bound to the returned port (closing the probe race) —
+    # not merely report a number then release it.
+    port, sock = log_bridge._log_bridge_bind_port()
+    try:
+        assert sock.getsockname()[1] == port
+    finally:
+        sock.close()
+
+
+def test_bind_port_raises_when_range_exhausted(monkeypatch):
     sockets = []
     for port in log_bridge.LOG_BRIDGE_PORT_RANGE_DEFAULT:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -58,7 +71,7 @@ def test_allocate_port_raises_when_range_exhausted(monkeypatch):
             s.close()
     try:
         with pytest.raises(RuntimeError, match="no free port"):
-            log_bridge._log_bridge_allocate_port()
+            log_bridge._log_bridge_bind_port()
     finally:
         for s in sockets:
             s.close()

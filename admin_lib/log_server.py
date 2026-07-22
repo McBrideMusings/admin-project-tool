@@ -135,7 +135,23 @@ class _LogBridgeHandler(BaseHTTPRequestHandler):
         return
 
 
-def start_log_server(host: str, port: int) -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer((host, port), _LogBridgeHandler)
+def start_log_server(host: str, port: int, sock=None) -> ThreadingHTTPServer:
+    """Start the bridge server. When `sock` is given, adopt that already-bound
+    socket instead of binding a fresh one — log_bridge binds inside its port-range
+    scan and hands the bound socket here so acquisition is atomic (no window for
+    another process to steal the port between a probe and the real bind)."""
+    if sock is None:
+        server = ThreadingHTTPServer((host, port), _LogBridgeHandler)
+    else:
+        server = ThreadingHTTPServer((host, port), _LogBridgeHandler, bind_and_activate=False)
+        server.socket.close()          # discard the unbound socket TCPServer made
+        server.socket = sock           # adopt the pre-bound one
+        server.server_address = sock.getsockname()
+        try:
+            server.server_activate()   # listen() on the adopted socket
+        except OSError:
+            # Never leak the caller's bound port if listen() fails on adoption.
+            server.server_close()
+            raise
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server

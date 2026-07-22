@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import urllib.request
 from pathlib import Path
 
@@ -141,6 +142,27 @@ def running_server(tmp_path):
     yield server, actual_port, log_file
     server.shutdown()
     server.server_close()
+
+
+def test_start_log_server_adopts_prebound_socket(tmp_path):
+    # A socket bound by the caller is adopted and served on, without rebinding —
+    # the atomic-acquisition path log_bridge uses to close the probe race.
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    log_server.set_log_server_state(
+        log_path=str(tmp_path / "s.log"), hosts=["localhost"], project="p",
+        pid=1, started_at="2026-05-19T00:00:00Z", port=port,
+    )
+    server = log_server.start_log_server("127.0.0.1", port, sock=s)
+    try:
+        assert server.server_address[1] == port
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as resp:
+            assert resp.status == 200
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_health_endpoint_returns_state(running_server):
