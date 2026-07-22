@@ -119,12 +119,49 @@ def test_worktree_idempotent_when_branch_has_one(repo, tmp_path):
     assert wtverbs.cmd_worktree("feat/dup", cfg={"root": str(root)}) == 0
 
 
-def test_worktree_fork_pr_error_hint(repo, tmp_path, monkeypatch):
-    # A PR resolving to a head branch that exists nowhere: add_worktree forks a new
-    # branch of that name from origin (no origin here) — force the failure path.
+def test_worktree_pr_fetches_pull_head(repo, tmp_path, monkeypatch):
+    # A PR input fetches pull/<n>/head into a local branch (fork-safe), then the
+    # normal attach checks it out — no reliance on the head living on origin.
+    calls = []
     monkeypatch.setattr(resolve, "resolve",
-                        lambda inp: resolve.Resolved(branch="ghost", source="pr", is_pr=True))
-    monkeypatch.setattr(gitwt, "add_worktree",
-                        lambda *a: (_ for _ in ()).throw(gitwt.GitError("no such ref")))
+                        lambda inp: resolve.Resolved(branch="pr-head", source="pr", is_pr=True, pr_number=9))
+
+    def fake_fetch_pr(number, local):
+        calls.append((number, local))
+        subprocess.run(["git", "branch", local], check=True, capture_output=True)
+
+    monkeypatch.setattr(gitwt, "fetch_pr", fake_fetch_pr)
     root = tmp_path / "wts"
-    assert wtverbs.cmd_worktree("https://github.com/o/r/pull/1", cfg={"root": str(root)}) == 1
+    rc = wtverbs.cmd_worktree("https://github.com/o/r/pull/9", cfg={"root": str(root)})
+    assert rc == 0
+    assert calls == [(9, "pr-head")]
+    assert (root / "proj" / "pr-head").is_dir()
+
+
+def test_branch_pr_fetches_pull_head(repo, monkeypatch):
+    calls = []
+    monkeypatch.setattr(resolve, "resolve",
+                        lambda inp: resolve.Resolved(branch="pr-b", source="pr", is_pr=True, pr_number=4))
+
+    def fake_fetch_pr(number, local):
+        calls.append((number, local))
+        subprocess.run(["git", "branch", local], check=True, capture_output=True)
+
+    monkeypatch.setattr(gitwt, "fetch_pr", fake_fetch_pr)
+    assert wtverbs.cmd_branch("https://github.com/o/r/pull/4") == 0
+    assert calls == [(4, "pr-b")]
+    assert _branch("") == "pr-b"
+
+
+def test_tui_non_tty_returns_error(repo, monkeypatch):
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
+    assert wtverbs.tui_branches() == 1
+    assert wtverbs.tui_worktrees() == 1
+
+
+def test_worktree_entries_tags_active(repo, tmp_path):
+    root = tmp_path / "wts"
+    wtverbs.cmd_worktree("feat/live", cfg={"root": str(root)})
+    entries = wtverbs.worktree_entries(str(repo))
+    live = [e for e in entries if "feat/live" in e.label]
+    assert live and not live[0].dead and live[0].status in ("active", "unmerged")

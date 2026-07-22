@@ -146,3 +146,19 @@ def test_resolve_number_neither_pr_nor_issue_is_clean(monkeypatch):
     monkeypatch.setattr(ghwt, "issue_title", _boom_error)
     with pytest.raises(resolve.ResolveError):
         resolve.resolve("999999")
+
+
+def test_resolve_pr_carries_number(monkeypatch):
+    monkeypatch.setattr(ghwt, "pr_head_ref", lambda n: "the-head")
+    r = resolve.resolve("https://github.com/o/r/pull/77")
+    assert r.is_pr and r.pr_number == 77
+
+
+def test_resolve_unrecognized_github_url_errors():
+    with pytest.raises(resolve.ResolveError):
+        resolve.resolve("https://github.com/orgs/O/projects/1/views/2")
+
+
+def test_resolve_bare_url_errors():
+    with pytest.raises(resolve.ResolveError):
+        resolve.resolve("https://example.com/whatever")
