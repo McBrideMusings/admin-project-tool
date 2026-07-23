@@ -32,7 +32,7 @@ _KNOWN_KEYS = {
     "project_name", "python_min", "archetypes", "modules", "urls",
     "commands", "actions", "order", "logs", "apple", "react_native", "server", "output",
     "exclude_modules", "hide_commands", "inline", "logging",
-    "dev_kill", "dev_precheck", "clean_dev", "vite_dev", "docker_dev", "docker_run", "deploy", "install_template",
+    "dev_kill", "dev_precheck", "clean_dev", "vite_dev", "docker_dev", "docker_run", "docker_build", "deploy", "install_template",
     "fixtures", "log_bridge", "guards", "docs", "go", "raylib", "worktree",
     # Obsolete under interpreter mode (ADR-0006); tolerated silently on
     # un-migrated manifests, never written back. `admin migrate` strips it.
@@ -82,6 +82,7 @@ class Manifest:
     docker_dev: dict = field(default_factory=dict)  # [docker_dev] — config for kind="docker-dev" commands
     deploy: dict = field(default_factory=dict)    # [deploy] — config for docker build/deploy commands
     docker_run: dict = field(default_factory=dict)  # [docker_run] — prod docker run config (target, image_tag, env, mounts, …)
+    docker_build: dict = field(default_factory=dict)  # [docker_build] — where the image is built (on_host + context)
     install_template: dict = field(default_factory=dict)  # [install_template] — kind="install-template" config
     fixtures: dict = field(default_factory=dict)  # [fixtures] — config for kind="fixtures-generate"/"fixtures-reset"
     docs: dict = field(default_factory=dict)      # [docs] — config for kind="docs" (dir, script)
@@ -282,6 +283,15 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     if not isinstance(docker_run, dict):
         raise ManifestError(f"{source}: '[docker_run]' must be a table")
 
+    docker_build = data.get("docker_build", {}) or {}
+    if not isinstance(docker_build, dict):
+        raise ManifestError(f"{source}: '[docker_build]' must be a table")
+    if docker_build.get("on_host") and not docker_build.get("context"):
+        raise ManifestError(
+            f"{source}: '[docker_build].on_host' requires 'context' "
+            "(the build-context path ON the target host)"
+        )
+
     install_template = data.get("install_template", {}) or {}
     if not isinstance(install_template, dict):
         raise ManifestError(f"{source}: '[install_template]' must be a table")
@@ -442,6 +452,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         docker_dev=docker_dev,
         deploy=deploy,
         docker_run=docker_run,
+        docker_build=docker_build,
         install_template=install_template,
         fixtures=fixtures,
         docs=docs,

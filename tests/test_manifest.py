@@ -355,3 +355,24 @@ def _pytest_raises(exc_type, needle):
 # Runner
 # ---------------------------------------------------------------------------
 
+
+
+def test_docker_build_on_host_requires_context():
+    """on_host without a context has nowhere to build — fail loudly at parse time."""
+    with _pytest_raises(ManifestError, "requires 'context'"):
+        parse(_base_data(docker_build={"on_host": True}))
+
+
+def test_docker_build_on_host_with_context_parses():
+    m = parse(_base_data(docker_build={"on_host": True, "context": "${APPDATA_DIR}"}))
+    assert m.docker_build["on_host"] is True
+    assert m.docker_build["context"] == "${APPDATA_DIR}"
+
+
+def test_docker_build_must_be_a_table():
+    with _pytest_raises(ManifestError, "must be a table"):
+        parse(_base_data(docker_build="nope"))
+
+
+def test_docker_build_absent_defaults_empty():
+    assert parse(_base_data()).docker_build == {}
