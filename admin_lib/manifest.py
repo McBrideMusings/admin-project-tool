@@ -22,7 +22,7 @@ except ImportError:
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from admin_lib.kinds import LOG_KINDS
+from admin_lib.kinds import LOG_KINDS, DEPLOY_KEYS
 from admin_lib.guards import parse_guard_tables
 from admin_lib.validate import ValidationError, validate_command
 
@@ -263,6 +263,20 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     deploy = data.get("deploy", {}) or {}
     if not isinstance(deploy, dict):
         raise ManifestError(f"{source}: '[deploy]' must be a table")
+    if deploy:
+        unknown = set(deploy) - DEPLOY_KEYS
+        if unknown:
+            raise ManifestError(
+                f"{source}: '[deploy]' has unknown key(s): {', '.join(sorted(unknown))}"
+                f" (accepted: {', '.join(sorted(DEPLOY_KEYS))})"
+            )
+        for required in ("src", "dest"):
+            if not deploy.get(required):
+                raise ManifestError(f"{source}: '[deploy].{required}' is required")
+        if not isinstance(deploy.get("exclude", []), list):
+            raise ManifestError(f"{source}: '[deploy].exclude' must be a list")
+        if not isinstance(deploy.get("delete", False), bool):
+            raise ManifestError(f"{source}: '[deploy].delete' must be true or false")
 
     docker_run = data.get("docker_run", {}) or {}
     if not isinstance(docker_run, dict):

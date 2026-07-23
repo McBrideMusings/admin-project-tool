@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 
-from .core import info, ok, warn, err, run_cmd
+from .core import info, ok, warn, err, run_cmd, resolve_env
 
 
 def _is_local_host(host):
@@ -142,3 +142,69 @@ def systemd_user_status(host, name):
     """Show status of a systemd user service on a remote host."""
     info(f"Status of {name} on {host}:")
     ssh_cmd(host, f"systemctl --user status {name}", check=False)
+
+
+# ---------------------------------------------------------------------------
+# [deploy] — push a local mirror directory to the host that runs the app
+# ---------------------------------------------------------------------------
+
+from .kinds import DEPLOY_KEYS as _DEPLOY_KEYS
+
+
+def deploy_files(cfg, dry_run=False):
+    """Push the local mirror directory declared in ``[deploy]`` to its target.
+
+    The manifest table names a directory in the repo that mirrors, file for
+    file, a directory on the machine that runs the app — an appdata folder, a
+    config dir, a static-asset root. Editing the local copy and running the
+    deploy command is then the whole update path: no image rebuild, no GUI.
+
+        [deploy]
+        src     = "deploy/appdata"                    # repo-relative, required
+        dest    = "/mnt/user/appdata/my-app"          # path on the target, required
+        host    = "${UNRAID_USER:-root}@${UNRAID_HOST}"   # omit for a local copy
+        exclude = ["*.log"]                           # rsync --exclude patterns
+        delete  = false                               # default false — see below
+
+    ``delete`` defaults to **false** here, the opposite of :func:`core.sync`.
+    A mirror directory usually points at a folder the running app also writes
+    into (a history file, a database, logs). Mirroring exactly would delete
+    that state on every deploy, so the safe default is additive; set
+    ``delete = true`` when the local copy genuinely owns the whole directory.
+
+    Returns an exit code.
+    """
+    from .core import sync
+
+    cfg = cfg or {}
+    unknown = set(cfg) - _DEPLOY_KEYS
+    if unknown:
+        err(f"[deploy]: unknown key(s): {', '.join(sorted(unknown))}")
+        return 1
+
+    src = cfg.get("src")
+    dest = cfg.get("dest")
+    if not src or not dest:
+        err("[deploy] needs both 'src' (local dir) and 'dest' (path on the target)")
+        return 1
+
+    src = resolve_env(str(src))
+    dest = resolve_env(str(dest))
+    if not os.path.isdir(src):
+        err(f"[deploy] src is not a directory: {src}")
+        return 1
+
+    host = cfg.get("host")
+    if host:
+        host = resolve_env(str(host))
+        target = dest if _is_local_host(host) else f"{host}:{dest}"
+    else:
+        target = dest
+
+    excludes = [resolve_env(str(e)) for e in (cfg.get("exclude") or [])]
+    return sync(
+        src, target,
+        excludes=excludes or None,
+        delete=bool(cfg.get("delete", False)),
+        dry_run=dry_run,
+    )

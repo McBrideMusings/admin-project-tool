@@ -7,10 +7,15 @@ Runtime env vars:
     PROD_URL            public URL for TUI url status (optional); formerly UNRAID_APP_URL
 
 The container's run configuration (binds, ports, env, labels, network, etc.)
-is whatever the Unraid Docker GUI currently has for that container — deploy
-reads it off the live container with `docker inspect` and replays it against
-the newly-loaded image. Create the container in the Unraid GUI first, then
-use `./admin deploy` for every subsequent code push.
+comes from the `[docker_run]` table when the project declares one — deploy
+renders `docker run` from it and creates the container even when none exists,
+so the Unraid GUI is never needed. Without `[docker_run]`, deploy falls back
+to reading the live container with `docker inspect` and replaying its config
+against the newly-loaded image; that path needs the container to exist already.
+
+A project can also declare a `[deploy]` table naming a local directory that
+mirrors one on the host (appdata, config, static assets). `admin deploy files`
+rsyncs it without rebuilding the image; `admin deploy all` does both.
 """
 
 ARCHETYPE = {
@@ -22,7 +27,7 @@ ARCHETYPE = {
     "order": ["build", "deploy", "---", "logs", "diff", "open"],
     "commands": {
         "build":            {"desc": "Build Docker image locally for linux/amd64 (Unraid)",                                            "steps": ["build"]},
-        "deploy":           {"desc": "Build, push, and recreate container on Unraid (preserves run config); --dry-run to preview",     "steps": ["deploy"],           "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
+        "deploy":           {"desc": "Deploy to Unraid — `image` (default), `files` ([deploy] mirror dir), or `all`; --dry-run to preview",     "steps": ["deploy"],           "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
         "diff":             {"desc": "Show run-config drift between current container and last deploy; --format json for CI",          "steps": ["diff"],             "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
         "logs":             {"desc": "Tail logs — `dev` (newest local log) or `live` (container); --from DD:HH:MM:SS rolls back",                    "steps": ["logs"],             "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
         "reload":           {"desc": "Build+run with reload loop (press r or SIGUSR1 to rebuild)",                                     "steps": ["reload"]},
@@ -41,20 +46,12 @@ ARCHETYPE = {
         "deploy": {
             "kind": "python",
             "run": (
-                "dry_run = '--dry-run' in args\n"
-                "force = '--force' in args\n"
-                "_run_cfg = globals().get('_DOCKER_RUN_CONFIG') or None\n"
-                "if not dry_run:\n"
-                "    ensure_docker_template(globals().get('_INSTALL_TEMPLATE_CONFIG') or {})\n"
-                "    _target = (_run_cfg or {}).get('target')\n"
-                "    rc = docker_build(os.environ.get('APP_IMAGE'), platform='linux/amd64', target=_target)\n"
-                "    if rc != 0:\n"
-                "        sys.exit(rc)\n"
-                "user = os.environ.get('UNRAID_USER', 'root')\n"
-                "host = f\"{user}@{os.environ.get('UNRAID_HOST')}\"\n"
-                "sys.exit(remote_recreate_container(host, os.environ.get('APP_IMAGE'), target_cfg=_run_cfg, force=force, dry_run=dry_run))"
+                "sys.exit(deploy_dispatch(args,"
+                " run_cfg=globals().get('_DOCKER_RUN_CONFIG') or None,"
+                " deploy_cfg=globals().get('_DEPLOY_CONFIG') or None,"
+                " template_cfg=globals().get('_INSTALL_TEMPLATE_CONFIG') or {}))"
             ),
-            "desc": "Build, push, and recreate container on Unraid from [docker_run] (--force to override drift, --dry-run to preview)",
+            "desc": "Deploy to Unraid — `image` (default, rebuild + recreate from [docker_run]), `files` ([deploy] mirror dir only), or `all`; --force to override drift, --dry-run to preview",
         },
         "diff": {
             "kind": "python",

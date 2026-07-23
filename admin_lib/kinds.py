@@ -101,6 +101,10 @@ KNOWN_KINDS = frozenset(KINDS)
 CONFIGLESS_KINDS = frozenset(n for n, k in KINDS.items() if k.configless)
 KIND_MODULES: dict[str, list[str]] = {n: list(k.modules) for n, k in KINDS.items() if k.modules}
 
+# Keys accepted by the [deploy] table (admin_lib.remote.deploy_files consumes
+# it). Lives here so the manifest validator and the runtime agree on one list.
+DEPLOY_KEYS = frozenset({"src", "dest", "host", "exclude", "delete", "post_sync"})
+
 
 def register_factory(name: str, fn: Callable) -> Callable:
     """Bind a kind's runtime closure factory (called from admin_lib.interp).

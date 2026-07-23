@@ -63,6 +63,36 @@ prod = "https://pierce.dev"
 #   Works across multiple archetypes without a central order list.
 ```
 
+### `[deploy]` — a local directory that mirrors one on the host
+
+An app's code and the files it reads at runtime change on different clocks. A
+config edit or a new asset does not need an image rebuild, a registry push, and
+a container recreate — it needs those bytes on the host. `[deploy]` names a
+directory in the repo that mirrors one on the machine running the app, so
+editing the local copy and running one command is the whole update path.
+
+```toml
+[deploy]
+src     = "deploy/appdata"                       # repo-relative, required
+dest    = "/mnt/user/appdata/my-app"             # path on the target, required
+host    = "${UNRAID_USER:-root}@${UNRAID_HOST}"  # omit for a local copy
+exclude = ["*.log"]                              # rsync --exclude patterns
+delete  = false                                  # default false
+```
+
+`delete` defaults to **false**, unlike the underlying `core.sync`. A mirror
+directory usually points at a folder the running app also writes into — a
+history file, a SQLite database, logs. Mirroring exactly would delete that state
+on every deploy. Set `delete = true` only when the local copy owns the whole
+directory.
+
+`host` is compared against the current machine first (`ADMIN_LOCAL`, then IP
+match), so the same manifest works when run *on* the target and from a laptop.
+
+The `docker` archetype exposes it as `admin deploy files`, alongside
+`admin deploy image` (the default) and `admin deploy all`. Any archetype can
+call `remote.deploy_files(cfg)` to do the same.
+
 **Command/Action split:** `[commands]` entries are thin routing layers — they may only have `desc` and `steps` (a list of action names). All actual work (shell strings, Python bodies, multi-target dispatch) lives in `[actions]`. Commands are the TUI menu entries; actions are the implementation. The generator errors with a clear message if a `[commands]` entry contains `kind`, `run`, or `targets`.
 
 Every key is optional except `project_name` and `archetypes` (may be empty list).
@@ -75,7 +105,7 @@ Initial archetypes (derived 1:1 from the survey clusters):
 
 - **`hugo`** — `build: hugo`, `dev: hugo server -D`, `clean: rm -rf public resources`, default URL `http://localhost:1313`
 - **`go-cli`** — `build: go build ./...`, `test: go test ./...`, `vet`, `fmt`, `deploy: go install ./...`
-- **`docker`** — build image on remote, deploy to Unraid, `logs`, `open`, `reload`, `run-args` (emit `[docker_run]` as shlex-quoted `docker run` args), SSH target from config
+- **`docker`** — build image on remote, deploy to Unraid (`deploy image` rebuilds and recreates the container from `[docker_run]`; `deploy files` rsyncs the `[deploy]` mirror directory; `deploy all` does both), `logs`, `open`, `reload`, `run-args` (emit `[docker_run]` as shlex-quoted `docker run` args), SSH target from config
 - **`apple`** — xcodebuild, dev_loop_macos/ios, device install, DerivedData clean, `--log LEVEL`, multi-target (mac|ios)
 - **`unraid-plugin`** — push source to Unraid USB, register/uninstall
 - **`firefox-extension`** — web-ext dev, package `.xpi`, lint

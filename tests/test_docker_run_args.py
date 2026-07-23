@@ -92,3 +92,25 @@ if __name__ == "__main__":
     test_render_run_args_empty_cfg_is_empty_string()
     test_run_args_command_dispatches_end_to_end()
     print("OK: docker run-args")
+
+
+def test_render_run_args_expands_env_in_bind_mount_host(monkeypatch):
+    """A host path must be able to come from .env — a committed manifest should
+    not hardcode a deploy target's directory layout."""
+    monkeypatch.setenv("APPDATA_DIR", "/mnt/user/appdata/plex-home")
+    cfg = {"bind_mounts": [{"host": "${APPDATA_DIR}", "container": "/app"}]}
+
+    out = render_run_args(cfg)
+
+    assert "-v /mnt/user/appdata/plex-home:/app" in out
+    assert "${" not in out
+
+
+def test_render_run_args_skips_bind_mount_with_unset_env(monkeypatch):
+    """An unset var drops the mount instead of mounting a literal '${VAR}' dir."""
+    monkeypatch.delenv("NOT_SET_ANYWHERE", raising=False)
+    cfg = {"bind_mounts": [{"host": "${NOT_SET_ANYWHERE}", "container": "/app"}]}
+
+    out = render_run_args(cfg)
+
+    assert "-v" not in out

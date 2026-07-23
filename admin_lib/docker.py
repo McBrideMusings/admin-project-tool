@@ -686,11 +686,22 @@ def _build_run_args_from_cfg(cfg, env_vars=None, env_file_vars=None):
             return f"{host}:{container}:{mode}"
         return f"{host}:{container}"
 
+    # `${VAR}` in a host path is expanded, same as ports/env/labels. A host path
+    # is exactly what a committed manifest should not hardcode (deploy targets,
+    # /mnt/user/... layouts), so it has to be able to come from .env. An unset
+    # var skips the mount with a warning rather than mounting a literal "${VAR}"
+    # directory, which would also read as drift against the live container.
     for m in cfg.get("bind_mounts") or ():
         host = m.get("host")
         container = m.get("container")
         if not host or not container:
             continue
+        host = str(host)
+        if "${" in host:
+            host, all_ok = _expand_env_refs(host, env_vars)
+            if not all_ok:
+                warn(f"docker_run.bind_mounts: host {m.get('host')!r} references unset env var — skipping")
+                continue
         args += ["-v", _mount_flag(host, container, m.get("mode"))]
 
     # Optional mounts gated on host env vars — expand at render time
@@ -1502,6 +1513,59 @@ def tail_dev_log(prefix="dev", since=None):
             f"{os.path.basename(path)}; trailing new output only"
         )
     return subprocess.call(["tail", "-n", "0", "-f", path])
+
+
+def deploy_dispatch(args, run_cfg=None, deploy_cfg=None, template_cfg=None):
+    """Route `admin deploy [image|files|all] [--dry-run] [--force]`.
+
+    Two independent things can go to the host, and a change usually touches
+    only one of them:
+
+      image  rebuild the Docker image and recreate the container (the default,
+             and what bare `admin deploy` has always done)
+      files  rsync the `[deploy]` mirror directory — config, appdata, assets —
+             leaving the image and the running container alone
+      all    files first, then image
+
+    `files` is a no-op with a clear message when the project declares no
+    `[deploy]` table, so the sub-target is safe to document everywhere.
+    """
+    from .remote import deploy_files
+    from .unraid import ensure_docker_template
+
+    args = list(args or [])
+    target = args[0] if args and args[0] in ("image", "files", "all") else "image"
+    dry_run = "--dry-run" in args
+    force = "--force" in args
+
+    if target in ("files", "all"):
+        if not deploy_cfg:
+            err("No [deploy] table in admin.toml — nothing to sync.")
+            print(
+                "\n  Declare the local directory that mirrors the host, e.g.\n\n"
+                "    [deploy]\n"
+                '    src  = "deploy/appdata"\n'
+                '    dest = "/mnt/user/appdata/my-app"\n'
+                '    host = "${UNRAID_USER:-root}@${UNRAID_HOST}"\n'
+            )
+            return 1
+        rc = deploy_files(deploy_cfg, dry_run=dry_run)
+        if rc != 0 or target == "files":
+            return rc
+
+    if not dry_run:
+        ensure_docker_template(template_cfg or {})
+        rc = docker_build(os.environ.get("APP_IMAGE"), platform="linux/amd64",
+                          target=(run_cfg or {}).get("target"))
+        if rc != 0:
+            return rc
+
+    user = os.environ.get("UNRAID_USER", "root")
+    host = f"{user}@{os.environ.get('UNRAID_HOST')}"
+    return remote_recreate_container(
+        host, os.environ.get("APP_IMAGE"),
+        target_cfg=run_cfg, force=force, dry_run=dry_run,
+    )
 
 
 def logs_dispatch(args, image, host=None):

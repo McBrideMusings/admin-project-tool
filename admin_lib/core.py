@@ -721,13 +721,19 @@ def _prune_extraneous(src_dir, dest, ignore=None):
                     pass
 
 
-def sync(src_dir, dest, excludes=None, post_sync=None):
+def sync(src_dir, dest, excludes=None, post_sync=None, delete=True, dry_run=False):
     """Copy a directory to a local or remote destination via rsync or shutil.
 
     src_dir: local directory to sync from
     dest: local path, or user@host:/path for remote rsync
-    excludes: list of rsync --exclude patterns (remote only)
+    excludes: list of rsync --exclude patterns (applied to both branches)
     post_sync: callable run after successful sync (receives dest as arg)
+    delete: mirror the source exactly, removing anything at `dest` the source
+        lacks (rsync --delete). Default True — the historical behaviour, right
+        for a dest the source fully owns (a plugin dir, a build output). Pass
+        False when the destination also holds files written *there* at runtime
+        (databases, state files, logs): mirroring would delete them.
+    dry_run: print what would be copied, change nothing.
     Returns exit code.
     """
     is_remote = ":" in dest and "@" in dest.split(":")[0]
@@ -736,22 +742,30 @@ def sync(src_dir, dest, excludes=None, post_sync=None):
         exclude_flags = ""
         if excludes:
             exclude_flags = " ".join(f"--exclude '{e}'" for e in excludes)
-        info(f"Syncing to {dest}")
-        rc = run_cmd(f"rsync -avz --delete {exclude_flags} {src_dir}/ {dest}/".strip())
+        delete_flag = " --delete" if delete else ""
+        dry_flag = " --dry-run" if dry_run else ""
+        info(f"Syncing to {dest}" + (" (dry run)" if dry_run else ""))
+        rc = run_cmd(
+            f"rsync -avz{delete_flag}{dry_flag} {exclude_flags} {src_dir}/ {dest}/".strip()
+        )
         if rc != 0:
             err("rsync failed")
             return rc
         ok(f"Synced: {dest}")
     else:
         import shutil
+        ignore = shutil.ignore_patterns(*excludes) if excludes else None
+        if dry_run:
+            info(f"Would copy {src_dir}/ -> {dest}/ (dry run)")
+            return 0
         os.makedirs(dest, exist_ok=True)
         info(f"Copying to {dest}")
-        ignore = shutil.ignore_patterns(*excludes) if excludes else None
         # Delete extraneous files, matching the --delete the remote branch has
         # always used. Without this the two halves of `sync` mean different
         # things: a renamed or removed source file lingers forever in a local
         # dest, and a plugin dir keeps loading the stale copy.
-        _prune_extraneous(src_dir, dest, ignore)
+        if delete:
+            _prune_extraneous(src_dir, dest, ignore)
         shutil.copytree(src_dir, dest, dirs_exist_ok=True, ignore=ignore)
         ok(f"Synced: {dest}")
         rc = 0
