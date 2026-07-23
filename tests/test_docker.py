@@ -1119,6 +1119,66 @@ def test_health_interval_floor_is_one_second():
     assert "seq 1 5" in out
 
 
+# ---------------------------------------------------------------------------
+# Build on the deploy target ([docker_build].on_host) instead of locally
+# ---------------------------------------------------------------------------
+
+def _docker_ns_capturing(local=False):
+    """docker.py namespace with run_cmd captured and _is_local_host forced.
+
+    `_is_local_host` arrives via a relative import that _load_docker strips, so it
+    has to be injected here or the build helper NameErrors.
+    """
+    ns = _load_docker()
+    calls = []
+    ns["run_cmd"] = lambda cmd, *a, **k: (calls.append(cmd), 0)[1]
+    ns["_is_local_host"] = lambda h: local
+    ns["_calls"] = calls
+    return ns
+
+
+def test_remote_docker_build_runs_over_ssh_when_remote():
+    ns = _docker_ns_capturing(local=False)
+    assert ns["remote_docker_build"]("root@box", "app:latest", "/mnt/user/appdata/app") == 0
+    cmd = ns["_calls"][-1]
+    assert cmd.startswith("ssh root@box ")
+    assert "docker build" in cmd
+    assert "app:latest" in cmd
+    assert "/mnt/user/appdata/app" in cmd
+
+
+def test_remote_docker_build_runs_directly_when_local():
+    ns = _docker_ns_capturing(local=True)
+    ns["remote_docker_build"]("root@box", "app:latest", "/srv/app")
+    cmd = ns["_calls"][-1]
+    assert not cmd.startswith("ssh ")
+    assert cmd.startswith("cd /srv/app && docker build")
+
+
+def test_remote_docker_build_passes_target_stage():
+    ns = _docker_ns_capturing(local=True)
+    ns["remote_docker_build"]("h", "i:1", "/c", target="prod")
+    assert "--target prod" in ns["_calls"][-1]
+
+
+def test_build_context_expands_env():
+    ns = _load_docker()
+    got = ns["_build_context"]({"context": "${APPDATA}/x"}, env_vars={"APPDATA": "/mnt/a"})
+    assert got == "/mnt/a/x"
+
+
+def test_build_context_unresolved_env_returns_none_with_warning():
+    ns = _load_docker()
+    assert ns["_build_context"]({"context": "${NOPE}/x"}, env_vars={}) is None
+    assert any("unset env var" in w for w in ns["_warnings"])
+
+
+def test_build_context_absent_returns_none():
+    ns = _load_docker()
+    assert ns["_build_context"]({}) is None
+    assert ns["_build_context"](None) is None
+
+
 def test_provision_and_health_read_from_parsed_toml():
     """The documented TOML shape maps onto both helpers — [docker_run] is a raw
     dict passthrough in manifest.py, so the nested tables must survive as-is."""

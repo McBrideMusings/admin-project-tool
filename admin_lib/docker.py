@@ -431,7 +431,7 @@ def _parse_env_file(path):
 
 
 def remote_recreate_container(host, image, container=None, target_cfg=None,
-                              force=False, dry_run=False):
+                              force=False, dry_run=False, skip_transfer=False):
     """Recreate a container on `host` from a local image.
 
     Two modes:
@@ -530,6 +530,8 @@ def remote_recreate_container(host, image, container=None, target_cfg=None,
 
     if local:
         info(f"Running locally — skipping image transfer (image already present)")
+    elif skip_transfer:
+        info("Image was built on the target — skipping transfer")
     else:
         info(f"Transferring image {image} to {host}... (may take a few minutes for large images)")
         rc, elapsed = _run_with_progress(f"docker save {image_q} | ssh {host_q} 'docker load'")
@@ -912,6 +914,41 @@ def render_run_args(cfg, env_vars=None):
     env_file_vars = _parse_env_file(env_file_path) if env_file_path else {}
     args = _build_run_args_from_cfg(cfg, env_vars=env_vars, env_file_vars=env_file_vars)
     return " ".join(shlex.quote(p) for p in args)
+
+
+def remote_docker_build(host, image, context, target=None):
+    """Build the image ON the deploy target instead of locally.
+
+    The default deploy builds locally for linux/amd64 and ships the result with
+    `docker save | ssh docker load`. That is the wrong shape for two common setups:
+    a workstation on a different arch (an ARM Mac emulating amd64 through QEMU), and
+    a project whose code is bind-mounted from the host, where the image changes only
+    when its dependencies do. Building on the target skips both the emulation and a
+    multi-GB image transfer. `context` is a build-context path ON the host.
+    """
+    import shlex
+    local = _is_local_host(host)
+    tgt = f"--target {shlex.quote(target)} " if target else ""
+    build = f"cd {shlex.quote(context)} && docker build {tgt}-t {shlex.quote(image)} ."
+    where = "this host" if local else host
+    info(f"Building {image} on {where} in {context}...")
+    return run_cmd(build if local else f"ssh {shlex.quote(host)} {shlex.quote(build)}")
+
+
+def _build_context(build_cfg, env_vars=None):
+    """The env-expanded `[docker_build].context` path, or None when unresolved."""
+    if env_vars is None:
+        env_vars = os.environ
+    context = (build_cfg or {}).get("context")
+    if not context:
+        return None
+    context = str(context)
+    if "${" in context:
+        context, all_ok = _expand_env_refs(context, env_vars)
+        if not all_ok:
+            warn(f"docker_build.context {(build_cfg or {}).get('context')!r} references unset env var")
+            return None
+    return context
 
 
 def _provision_commands(cfg, env_vars=None):
@@ -1622,7 +1659,7 @@ def tail_dev_log(prefix="dev", since=None):
     return subprocess.call(["tail", "-n", "0", "-f", path])
 
 
-def deploy_dispatch(args, run_cfg=None, deploy_cfg=None, template_cfg=None):
+def deploy_dispatch(args, run_cfg=None, deploy_cfg=None, template_cfg=None, build_cfg=None):
     """Route `admin deploy [image|files|all] [--dry-run] [--force]`.
 
     Two independent things can go to the host, and a change usually touches
@@ -1684,18 +1721,32 @@ def deploy_dispatch(args, run_cfg=None, deploy_cfg=None, template_cfg=None):
         if rc != 0 or target == "files":
             return rc
 
+    user = os.environ.get("UNRAID_USER", "root")
+    host = f"{user}@{os.environ.get('UNRAID_HOST')}"
+    image = os.environ.get("APP_IMAGE")
+    target = (run_cfg or {}).get("target")
+
+    # `[docker_build].on_host` builds on the deploy target and skips the image
+    # transfer — see remote_docker_build for why that's the right shape for a
+    # cross-arch workstation or a bind-mounted-code project.
+    on_host = bool((build_cfg or {}).get("on_host"))
+    context = _build_context(build_cfg) if on_host else None
+    if on_host and not context:
+        err("[docker_build].on_host is set but 'context' is missing or references an unset env var")
+        return 1
+
     if not dry_run:
         ensure_docker_template(template_cfg or {})
-        rc = docker_build(os.environ.get("APP_IMAGE"), platform="linux/amd64",
-                          target=(run_cfg or {}).get("target"))
+        if on_host:
+            rc = remote_docker_build(host, image, context, target=target)
+        else:
+            rc = docker_build(image, platform="linux/amd64", target=target)
         if rc != 0:
             return rc
 
-    user = os.environ.get("UNRAID_USER", "root")
-    host = f"{user}@{os.environ.get('UNRAID_HOST')}"
     return remote_recreate_container(
-        host, os.environ.get("APP_IMAGE"),
-        target_cfg=run_cfg, force=force, dry_run=dry_run,
+        host, image,
+        target_cfg=run_cfg, force=force, dry_run=dry_run, skip_transfer=on_host,
     )
 
 

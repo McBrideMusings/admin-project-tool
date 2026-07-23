@@ -68,6 +68,7 @@ _CONFIG_GLOBALS = {
     "_VITE_DEV_CONFIG": "vite_dev",
     "_DOCKER_DEV_CONFIG": "docker_dev",
     "_DOCKER_RUN_CONFIG": "docker_run",
+    "_DOCKER_BUILD_CONFIG": "docker_build",
     "_DEPLOY_CONFIG": "deploy",
     "_INSTALL_TEMPLATE_CONFIG": "install_template",
     "_FIXTURES_CONFIG": "fixtures",
@@ -898,7 +899,8 @@ def _register_env_vars(resolved, m):
     command_list = list(resolved.commands.values()) + list(resolved.actions.values())
     config_tables = {
         "deploy": m.deploy, "vite_dev": m.vite_dev, "docker_dev": m.docker_dev,
-        "docker_run": m.docker_run, "dev_kill": m.dev_kill, "clean_dev": m.clean_dev,
+        "docker_run": m.docker_run, "docker_build": m.docker_build,
+        "dev_kill": m.dev_kill, "clean_dev": m.clean_dev,
         "dev_precheck": m.dev_precheck,
         "install_template": m.install_template, "fixtures": m.fixtures,
     }
