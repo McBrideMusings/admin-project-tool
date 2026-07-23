@@ -164,12 +164,6 @@ def dispatch(monkeypatch):
     return docker.deploy_dispatch, calls
 
 
-def test_dispatch_bare_deploys_image_only(dispatch):
-    deploy_dispatch, calls = dispatch
-    assert deploy_dispatch([], deploy_cfg={"src": "d", "dest": "/x"}) == 0
-    assert [c[0] for c in calls] == ["template", "build", "recreate"]
-
-
 def test_dispatch_files_skips_the_image(dispatch):
     deploy_dispatch, calls = dispatch
     assert deploy_dispatch(["files"], deploy_cfg={"src": "d", "dest": "/x"}) == 0
@@ -252,3 +246,51 @@ def test_dispatch_leading_flag_still_means_image(dispatch):
     deploy_dispatch, calls = dispatch
     assert deploy_dispatch(["--dry-run"], deploy_cfg=None) == 0
     assert [c[0] for c in calls] == ["recreate"]
+
+
+def test_dispatch_bare_asks_when_there_is_a_real_choice(dispatch, monkeypatch):
+    """With a [deploy] table and a TTY, bare `admin deploy` asks rather than
+    assuming — same convention as `admin logs`."""
+    from admin_lib import docker
+
+    deploy_dispatch, calls = dispatch
+    monkeypatch.setattr(docker.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(docker, "pick_target", lambda menu, prompt: "files")
+
+    assert deploy_dispatch([], deploy_cfg={"src": "d", "dest": "/x"}) == 0
+    assert [c[0] for c in calls] == ["files"]
+
+
+def test_dispatch_bare_skips_the_picker_without_a_deploy_table(dispatch, monkeypatch):
+    """One thing to deploy means no question to ask — unchanged behaviour."""
+    from admin_lib import docker
+
+    deploy_dispatch, calls = dispatch
+    monkeypatch.setattr(docker.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(docker, "pick_target", lambda menu, prompt: pytest.fail("asked"))
+
+    assert deploy_dispatch([], deploy_cfg=None) == 0
+    assert [c[0] for c in calls] == ["template", "build", "recreate"]
+
+
+def test_dispatch_bare_without_a_tty_deploys_the_image(dispatch, monkeypatch):
+    """A deploy from a script means ship the code; nobody is there to answer."""
+    from admin_lib import docker
+
+    deploy_dispatch, calls = dispatch
+    monkeypatch.setattr(docker.sys.stdout, "isatty", lambda: False)
+    monkeypatch.setattr(docker, "pick_target", lambda menu, prompt: pytest.fail("asked"))
+
+    assert deploy_dispatch([], deploy_cfg={"src": "d", "dest": "/x"}) == 0
+    assert [c[0] for c in calls] == ["template", "build", "recreate"]
+
+
+def test_dispatch_cancelled_picker_does_nothing(dispatch, monkeypatch):
+    from admin_lib import docker
+
+    deploy_dispatch, calls = dispatch
+    monkeypatch.setattr(docker.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(docker, "pick_target", lambda menu, prompt: None)
+
+    assert deploy_dispatch([], deploy_cfg={"src": "d", "dest": "/x"}) == 0
+    assert calls == []

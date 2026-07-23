@@ -1521,30 +1521,46 @@ def deploy_dispatch(args, run_cfg=None, deploy_cfg=None, template_cfg=None):
     Two independent things can go to the host, and a change usually touches
     only one of them:
 
-      image  rebuild the Docker image and recreate the container (the default,
-             and what bare `admin deploy` has always done)
+      image  rebuild the Docker image and recreate the container
       files  rsync the `[deploy]` mirror directory — config, appdata, assets —
              leaving the image and the running container alone
       all    files first, then image
 
-    `files` is a no-op with a clear message when the project declares no
-    `[deploy]` table, so the sub-target is safe to document everywhere.
+    With no target, the sub-target is *asked for* rather than assumed, same as
+    `admin logs` — but only when there is a real choice to make. A project with
+    no `[deploy]` table has exactly one thing it can deploy, so bare
+    `admin deploy` goes straight to the image, unchanged. Without a TTY there is
+    nobody to ask, so it also falls back to the image: a deploy invoked from a
+    script means ship the code.
     """
     from .remote import deploy_files
     from .unraid import ensure_docker_template
 
     args = list(args or [])
-    target = "image"
+    target = None
     if args and not args[0].startswith("-"):
-        # A typo'd sub-target must not fall through to the default. `admin
-        # deploy fiels` silently rebuilding and recreating the container is the
-        # one failure here with real blast radius, so unknown words are fatal.
+        # A typo'd sub-target must not fall through to a default. `admin deploy
+        # fiels` silently rebuilding and recreating the container is the one
+        # failure here with real blast radius, so unknown words are fatal.
         if args[0] not in ("image", "files", "all"):
             err(f"Unknown deploy target: {args[0]!r} (expected image, files, or all)")
             return 1
         target = args[0]
     dry_run = "--dry-run" in args
     force = "--force" in args
+
+    if target is None:
+        if deploy_cfg and sys.stdout.isatty():
+            menu = OrderedDict([
+                ("image", "image  rebuild the image and recreate the container"),
+                ("files", "files  sync the mirror directory only"),
+                ("all", "all    sync the mirror directory, then the image"),
+            ])
+            target = pick_target(menu, "what to deploy?")
+            if not target:
+                return 0
+        else:
+            target = "image"
 
     if target in ("files", "all"):
         if not deploy_cfg:
