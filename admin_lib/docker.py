@@ -1534,7 +1534,15 @@ def deploy_dispatch(args, run_cfg=None, deploy_cfg=None, template_cfg=None):
     from .unraid import ensure_docker_template
 
     args = list(args or [])
-    target = args[0] if args and args[0] in ("image", "files", "all") else "image"
+    target = "image"
+    if args and not args[0].startswith("-"):
+        # A typo'd sub-target must not fall through to the default. `admin
+        # deploy fiels` silently rebuilding and recreating the container is the
+        # one failure here with real blast radius, so unknown words are fatal.
+        if args[0] not in ("image", "files", "all"):
+            err(f"Unknown deploy target: {args[0]!r} (expected image, files, or all)")
+            return 1
+        target = args[0]
     dry_run = "--dry-run" in args
     force = "--force" in args
 
