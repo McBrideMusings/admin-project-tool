@@ -1010,3 +1010,138 @@ def test_logs_dispatch_bare_offers_only_dev_and_live():
     assert "docker logs" in ns["_calls"]["run_cmd"][-1]   # routed to live after pick
 
 
+# ---------------------------------------------------------------------------
+# Bind-mount provisioning (mkdir/chown) — the Unraid uid-99 trap
+# ---------------------------------------------------------------------------
+
+def test_provision_skips_mounts_that_did_not_opt_in():
+    ns = _load_docker()
+    cfg = {"bind_mounts": [{"host": "/mnt/a", "container": "/a"}]}
+    assert ns["_provision_commands"](cfg) == []
+
+
+def test_provision_mkdir_only():
+    ns = _load_docker()
+    cfg = {"bind_mounts": [{"host": "/mnt/a", "container": "/a", "mkdir": True}]}
+    assert ns["_provision_commands"](cfg) == ["mkdir -p /mnt/a"]
+
+
+def test_provision_chown_implies_mkdir():
+    """chown without mkdir still creates the dir — you can't chown what isn't there."""
+    ns = _load_docker()
+    cfg = {"bind_mounts": [{"host": "/mnt/a", "container": "/a", "chown": "99:100"}]}
+    assert ns["_provision_commands"](cfg) == ["mkdir -p /mnt/a && chown 99:100 /mnt/a"]
+
+
+def test_provision_expands_env_in_host_path():
+    ns = _load_docker()
+    cfg = {"bind_mounts": [
+        {"host": "${APPDATA}/data", "container": "/app/data", "mkdir": True, "chown": "99:100"},
+    ]}
+    out = ns["_provision_commands"](cfg, env_vars={"APPDATA": "/mnt/user/appdata/x"})
+    assert out == ["mkdir -p /mnt/user/appdata/x/data && chown 99:100 /mnt/user/appdata/x/data"]
+
+
+def test_provision_unresolved_env_skipped_with_warning():
+    ns = _load_docker()
+    cfg = {"bind_mounts": [{"host": "${NOPE}/data", "container": "/d", "mkdir": True}]}
+    assert ns["_provision_commands"](cfg, env_vars={}) == []
+    assert any("unset env var" in w for w in ns["_warnings"])
+
+
+def test_provision_quotes_paths_with_spaces():
+    ns = _load_docker()
+    cfg = {"bind_mounts": [{"host": "/mnt/my data", "container": "/d", "mkdir": True}]}
+    assert ns["_provision_commands"](cfg) == ["mkdir -p '/mnt/my data'"]
+
+
+def test_provision_empty_cfg_is_empty():
+    ns = _load_docker()
+    assert ns["_provision_commands"]({}) == []
+    assert ns["_provision_commands"](None) == []
+
+
+# ---------------------------------------------------------------------------
+# Post-deploy health check
+# ---------------------------------------------------------------------------
+
+def test_health_none_without_table_or_url():
+    ns = _load_docker()
+    assert ns["_health_check_shell"]({}) is None
+    assert ns["_health_check_shell"]({"health": {}}) is None
+    assert ns["_health_check_shell"](None) is None
+
+
+def test_health_snippet_polls_expected_code():
+    ns = _load_docker()
+    cfg = {"health": {"url": "http://127.0.0.1:7860/", "expect": 200,
+                      "timeout": 40, "interval": 2}}
+    out = ns["_health_check_shell"](cfg)
+    assert "seq 1 20" in out                 # timeout 40 / interval 2
+    assert "http://127.0.0.1:7860/" in out
+    assert '"$code" = "200"' in out
+    assert "sleep 2" in out
+
+
+def test_health_defaults_expect_200_and_30s():
+    ns = _load_docker()
+    out = ns["_health_check_shell"]({"health": {"url": "http://x/"}})
+    assert '"$code" = "200"' in out
+    assert "seq 1 15" in out                 # default timeout 30 / interval 2
+
+
+def test_health_non_200_expectation_honored():
+    ns = _load_docker()
+    out = ns["_health_check_shell"]({"health": {"url": "http://x/", "expect": 401}})
+    assert '"$code" = "401"' in out
+
+
+def test_health_expands_env_in_url():
+    ns = _load_docker()
+    out = ns["_health_check_shell"]({"health": {"url": "http://127.0.0.1:${UI_PORT}/"}},
+                                    env_vars={"UI_PORT": "7860"})
+    assert "http://127.0.0.1:7860/" in out
+
+
+def test_health_unresolved_env_returns_none_with_warning():
+    ns = _load_docker()
+    cfg = {"health": {"url": "http://127.0.0.1:${NOPE}/"}}
+    assert ns["_health_check_shell"](cfg, env_vars={}) is None
+    assert any("unset env var" in w for w in ns["_warnings"])
+
+
+def test_health_interval_floor_is_one_second():
+    """interval = 0 would divide-by-zero / busy-spin; floor it at 1."""
+    ns = _load_docker()
+    out = ns["_health_check_shell"]({"health": {"url": "http://x/", "interval": 0,
+                                                "timeout": 5}})
+    assert "sleep 1" in out
+    assert "seq 1 5" in out
+
+
+def test_provision_and_health_read_from_parsed_toml():
+    """The documented TOML shape maps onto both helpers — [docker_run] is a raw
+    dict passthrough in manifest.py, so the nested tables must survive as-is."""
+    import tomllib
+    ns = _load_docker()
+    manifest = (
+        "[docker_run]\n"
+        "[[docker_run.bind_mounts]]\n"
+        'host = "/mnt/user/appdata/app/data"\n'
+        'container = "/app/data"\n'
+        "mkdir = true\n"
+        'chown = "99:100"\n'
+        "\n"
+        "[docker_run.health]\n"
+        'url = "http://127.0.0.1:7860/"\n'
+        "timeout = 40\n"
+    )
+    cfg = tomllib.loads(manifest)["docker_run"]
+    assert ns["_provision_commands"](cfg) == [
+        "mkdir -p /mnt/user/appdata/app/data && chown 99:100 /mnt/user/appdata/app/data"
+    ]
+    out = ns["_health_check_shell"](cfg)
+    assert "http://127.0.0.1:7860/" in out
+    assert "seq 1 20" in out
+
+

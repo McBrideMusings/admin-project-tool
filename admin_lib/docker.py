@@ -512,9 +512,20 @@ def remote_recreate_container(host, image, container=None, target_cfg=None,
     run_cmd_parts = ["docker", "run", "-d", "--name", container] + args + [image]
     remote_run = " ".join(shlex.quote(p) for p in run_cmd_parts)
 
+    provision = _provision_commands(target_cfg) if target_cfg is not None else []
+    health_shell = _health_check_shell(target_cfg) if target_cfg is not None else None
+
     if dry_run:
+        if provision:
+            info(f"Dry run — bind-mount dirs that would be provisioned {location}:")
+            for c in provision:
+                print(f"  {c}")
+            print()
         info(f"Dry run — docker run command that would be executed {location}:")
         print(f"  {remote_run}\n")
+        if health_shell:
+            info("Dry run — post-deploy health check that would run:")
+            print(f"  {health_shell}\n")
         return 0
 
     if local:
@@ -564,6 +575,16 @@ def remote_recreate_container(host, image, container=None, target_cfg=None,
             err("Stop/remove failed")
             return rc
 
+    # Bind-mount host dirs must exist AND be owned correctly before the container
+    # starts — a root-created dir is one an unprivileged container user can't write.
+    if provision:
+        info(f"Provisioning {len(provision)} bind-mount dir(s) {location}...")
+        for cmd in provision:
+            rc = run_cmd(cmd if local else f"ssh {host_q} {shlex.quote(cmd)}")
+            if rc != 0:
+                err(f"Bind-mount provisioning failed: {cmd}")
+                return rc
+
     config_source = "[docker_run] in admin.toml" if target_cfg is not None else "preserved run config"
     info(f"Recreating '{container}' {location} from {config_source}...")
     rc = run_cmd(remote_run if local else f"ssh {host_q} {shlex.quote(remote_run)}")
@@ -586,6 +607,18 @@ def remote_recreate_container(host, image, container=None, target_cfg=None,
         subprocess.run(snap_shell, shell=True, capture_output=True)
     else:
         subprocess.run(["ssh", host, snap_shell], capture_output=True)
+
+    # `docker run` returning 0 only means the container was created — not that the
+    # app inside came up. Poll the declared health URL before calling the deploy good.
+    if health_shell:
+        info(f"Waiting for health check {location}...")
+        rc = run_cmd(health_shell if local else f"ssh {host_q} {shlex.quote(health_shell)}")
+        if rc != 0:
+            err(f"Container '{container}' started but never became healthy.")
+            logs_hint = f"docker logs {container}" if local else f"ssh {host} docker logs {container}"
+            print(f"\n  Check: {logs_hint}\n")
+            return 1
+        ok("Health check passed")
 
     return 0
 
@@ -879,6 +912,80 @@ def render_run_args(cfg, env_vars=None):
     env_file_vars = _parse_env_file(env_file_path) if env_file_path else {}
     args = _build_run_args_from_cfg(cfg, env_vars=env_vars, env_file_vars=env_file_vars)
     return " ".join(shlex.quote(p) for p in args)
+
+
+def _provision_commands(cfg, env_vars=None):
+    """Shell commands that prepare bind-mount host dirs BEFORE `docker run`.
+
+    For each `[[docker_run.bind_mounts]]` entry opting into `mkdir = true` and/or
+    `chown = "UID:GID"`, emit a `mkdir -p` (and a `chown`) over the env-expanded
+    host path. Pure — returns a list of shell strings; the caller runs each on the
+    host (locally or via SSH). This is the Unraid uid-99 trap: a root-created bind
+    dir is one the container (running as nobody:users) cannot write, surfacing as an
+    opaque Permission denied from inside the container. `chown` implies the dir must
+    exist, so a `chown` without `mkdir` still creates it first. `${VAR}` in the host
+    path is expanded (host layouts must not be hardcoded in a committed manifest); an
+    unresolved reference skips that dir with a warning.
+    """
+    import shlex
+    if env_vars is None:
+        env_vars = os.environ
+    cmds = []
+    for m in (cfg or {}).get("bind_mounts") or ():
+        host = m.get("host")
+        want_chown = m.get("chown")
+        want_mkdir = m.get("mkdir")
+        if not host or (not want_mkdir and not want_chown):
+            continue
+        host = str(host)
+        if "${" in host:
+            host, all_ok = _expand_env_refs(host, env_vars)
+            if not all_ok:
+                warn(f"docker_run.bind_mounts: host {m.get('host')!r} references unset env var — skipping provision")
+                continue
+        hq = shlex.quote(host)
+        parts = [f"mkdir -p {hq}"]
+        if want_chown:
+            parts.append(f"chown {shlex.quote(str(want_chown))} {hq}")
+        cmds.append(" && ".join(parts))
+    return cmds
+
+
+def _health_check_shell(cfg, env_vars=None):
+    """Shell snippet that polls the container's health URL until it returns the
+    expected HTTP status or times out. Returns None when no `[docker_run.health]`
+    table is declared (or its url references an unset var). Pure — the caller runs
+    it on the host (locally or via SSH), so a `127.0.0.1:PORT` url resolves against
+    the published port on the deploy target, not the machine running admin. Uses
+    curl (present on Unraid). `${VAR}` in the url is expanded.
+
+    health table: {url (required), expect = 200, timeout = 30, interval = 2}.
+    """
+    import shlex
+    if env_vars is None:
+        env_vars = os.environ
+    health = (cfg or {}).get("health")
+    if not health:
+        return None
+    url = health.get("url")
+    if not url:
+        return None
+    url = str(url)
+    if "${" in url:
+        url, all_ok = _expand_env_refs(url, env_vars)
+        if not all_ok:
+            warn(f"docker_run.health: url {health.get('url')!r} references unset env var — skipping health check")
+            return None
+    expect = int(health.get("expect", 200))
+    timeout = int(health.get("timeout", 30))
+    interval = max(1, int(health.get("interval", 2)))
+    tries = max(1, timeout // interval)
+    uq = shlex.quote(url)
+    return (
+        f"for _ in $(seq 1 {tries}); do "
+        f"code=$(curl -s -o /dev/null -w '%{{http_code}}' {uq} 2>/dev/null || true); "
+        f'[ "$code" = "{expect}" ] && exit 0; sleep {interval}; done; exit 1'
+    )
 
 
 def _normalize_mem_bytes(value):
