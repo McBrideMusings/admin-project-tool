@@ -238,3 +238,17 @@ def test_manifest_requires_deploy_src(tmp_path):
 def test_manifest_rejects_non_bool_delete(tmp_path):
     with pytest.raises(ManifestError, match="true or false"):
         _manifest('[deploy]\nsrc = "a"\ndest = "/b"\ndelete = "yes"\n', tmp_path)
+
+
+def test_dispatch_unknown_target_refuses_to_deploy(dispatch):
+    """A typo must not fall through to a full image deploy."""
+    deploy_dispatch, calls = dispatch
+    assert deploy_dispatch(["fiels"], deploy_cfg={"src": "d", "dest": "/x"}) == 1
+    assert calls == []
+
+
+def test_dispatch_leading_flag_still_means_image(dispatch):
+    """`admin deploy --dry-run` keeps working — a flag is not a sub-target."""
+    deploy_dispatch, calls = dispatch
+    assert deploy_dispatch(["--dry-run"], deploy_cfg=None) == 0
+    assert [c[0] for c in calls] == ["recreate"]
