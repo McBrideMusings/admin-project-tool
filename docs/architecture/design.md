@@ -90,7 +90,10 @@ directory.
 match), so the same manifest works when run *on* the target and from a laptop.
 
 The `docker` archetype exposes it as `admin deploy files`, alongside
-`admin deploy image` (the default) and `admin deploy all`. Any archetype can
+`admin deploy image` and `admin deploy all` — and bare `admin deploy` shows a
+picker, since a project carrying a `[deploy]` table has a real choice to make.
+(Without one there is nothing to pick, so it goes straight to the image, as it
+always did.) Any archetype can
 call `remote.deploy_files(cfg)` to do the same.
 
 **Command/Action split:** `[commands]` entries are thin routing layers — they may only have `desc` and `steps` (a list of action names). All actual work (shell strings, Python bodies, multi-target dispatch) lives in `[actions]`. Commands are the TUI menu entries; actions are the implementation. The generator errors with a clear message if a `[commands]` entry contains `kind`, `run`, or `targets`.
