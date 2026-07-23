@@ -495,12 +495,11 @@ def remote_recreate_container(host, image, container=None, target_cfg=None,
             )
             in_target_only, in_live_only = _compute_drift(args, live_args)
             if in_target_only or in_live_only:
-                report = _format_drift_report(in_target_only, in_live_only)
                 if force:
                     warn("Drift detected — proceeding with --force (live state will be discarded):")
-                    print(report)
+                    print(_format_drift_report(in_target_only, in_live_only, refusing=False))
                 else:
-                    err(report)
+                    err(_format_drift_report(in_target_only, in_live_only))
                     return 1
             else:
                 info("No drift between live container and [docker_run] — proceeding")
@@ -1085,7 +1084,7 @@ def _compute_drift(target_argv, live_argv):
     return in_target_only, in_live_only
 
 
-def _format_drift_report(in_target_only, in_live_only):
+def _format_drift_report(in_target_only, in_live_only, refusing=True):
     """Render a drift report for human eyeballs. Returns the formatted
     string (no I/O; caller prints).
 
@@ -1118,10 +1117,13 @@ def _format_drift_report(in_target_only, in_live_only):
     out = ["Drift detected between live container and admin.toml ([docker_run]):\n"]
     out.append(_fmt_block("target has, live missing", in_target_only))
     out.append(_fmt_block("live has, target missing", in_live_only))
-    out.append(
-        "Refusing to deploy. Either back-port the live values to admin.toml,\n"
-        "or rerun with --force to overwrite (live state will be discarded)."
-    )
+    # Under --force the caller has already said it is proceeding; appending
+    # "Refusing to deploy … rerun with --force" there contradicts the line above it.
+    if refusing:
+        out.append(
+            "Refusing to deploy. Either back-port the live values to admin.toml,\n"
+            "or rerun with --force to overwrite (live state will be discarded)."
+        )
     return "\n".join(s for s in out if s)
 
 

@@ -1205,3 +1205,14 @@ def test_provision_and_health_read_from_parsed_toml():
     assert "seq 1 20" in out
 
 
+
+
+def test_drift_report_omits_refusal_tail_under_force():
+    """--force already printed 'proceeding'; the refusal tail would contradict it."""
+    ns = _load_docker()
+    forced = ns["_format_drift_report"](["-v\t/a:/b"], [], refusing=False)
+    assert "-v" in forced
+    assert "Refusing to deploy" not in forced
+    assert "--force" not in forced
+    default = ns["_format_drift_report"](["-v\t/a:/b"], [])
+    assert "Refusing to deploy" in default
