@@ -843,3 +843,44 @@ def test_stream_sim_log_detached_restarts_on_unreadable_pid_file():
         assert pid == 4242, pid
         assert len(calls) == 1, calls
     print("OK: stream_sim_log_detached restarts when the pid file is garbage")
+
+
+def test_resolve_mac_dev_process_defaults_to_the_dev_bundle():
+    ns = _load_apple()
+    cfg = {"mac_scheme": "CCTool", "mac_process": "CCTool"}
+    assert ns["_resolve_mac_dev_process"](cfg) == "CCToolDev.app/Contents/MacOS/CCTool"
+    print("OK: _resolve_mac_dev_process matches the renamed dev bundle by default")
+
+
+def test_resolve_mac_dev_process_without_rename_matches_build_products():
+    """mac_dev_rename = false produces no <name>Dev.app, so a pattern naming one
+    matches nothing — the dev loop then never kills its own app and reports it
+    never launched."""
+    ns = _load_apple()
+    cfg = {"mac_scheme": "CCTool", "mac_process": "CCTool", "mac_dev_rename": False}
+    pattern = ns["_resolve_mac_dev_process"](cfg)
+    assert pattern == "/Build/Products/Debug/CCTool.app/Contents/MacOS/CCTool", pattern
+
+    running = ("/Users/x/Library/Developer/Xcode/DerivedData/CCTool-abc"
+               "/Build/Products/Debug/CCTool.app/Contents/MacOS/CCTool")
+    assert pattern in running, "pattern must match the app the dev loop just built"
+    assert pattern not in "/Applications/CCTool.app/Contents/MacOS/CCTool", \
+        "pattern must not match the installed prod copy"
+    print("OK: _resolve_mac_dev_process falls back to the build-products path when rename is off")
+
+
+def test_resolve_mac_dev_process_honours_build_config_without_rename():
+    ns = _load_apple()
+    cfg = {"mac_scheme": "CCTool", "mac_process": "CCTool",
+           "mac_dev_rename": False, "mac_build_config": "Staging"}
+    assert ns["_resolve_mac_dev_process"](cfg) == \
+        "/Build/Products/Staging/CCTool.app/Contents/MacOS/CCTool"
+    print("OK: _resolve_mac_dev_process uses mac_build_config in the no-rename pattern")
+
+
+def test_resolve_mac_dev_process_explicit_wins_over_rename_flag():
+    ns = _load_apple()
+    cfg = {"mac_scheme": "CCTool", "mac_process": "CCTool",
+           "mac_dev_rename": False, "mac_dev_process": "custom-pattern"}
+    assert ns["_resolve_mac_dev_process"](cfg) == "custom-pattern"
+    print("OK: mac_dev_process overrides the no-rename fallback")
