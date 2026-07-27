@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         admin-project-tool log bridge
 // @namespace    https://github.com/McBrideMusings/admin-project-tool
-// @version      0.2.0
+// @version      0.2.1
 // @description  Ships console.log/info/warn/error/debug from the browser to a locally-running admin-project-tool listener, so client and server logs interleave in one file. localhost/127.0.0.1 is always watched; any other host is opt-in via a single Tampermonkey menu command. Forwards only when a matching listener is actually running.
 // @match        *://*/*
 // @run-at       document-start
@@ -54,8 +54,19 @@
   const PROBE_PORTS = [];
   for (let p = 9988; p <= 9999; p++) PROBE_PORTS.push(p);
 
-  // localhost variants are always watched — no registration needed.
-  const LOCAL_HOST_RES = [/^localhost$/, /^127\.0\.0\.1$/, /^0\.0\.0\.0$/];
+  // localhost variants + private/tailscale IPs are always watched — no
+  // registration needed. Covers every address `wrangler dev --ip 0.0.0.0`
+  // advertises (loopback, LAN, and the tailnet), so the bridge just works on
+  // whichever dev URL you open.
+  const LOCAL_HOST_RES = [
+    /^localhost$/,
+    /^127\.0\.0\.1$/,
+    /^0\.0\.0\.0$/,
+    /^10\./, // private 10.0.0.0/8
+    /^192\.168\./, // private 192.168.0.0/16
+    /^172\.(1[6-9]|2\d|3[01])\./, // private 172.16.0.0/12
+    /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, // tailscale CGNAT 100.64.0.0/10
+  ];
 
   // Tampermonkey-storage key holding the user's opt-in host globs (JSON array).
   const STORE_KEY = "watchedHostGlobs";
