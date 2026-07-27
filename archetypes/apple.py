@@ -180,7 +180,16 @@ if target == "server":
 elif target == "swift":
     test_swift(_server)
 elif target == "apple":
-    test_server(_apple)
+    # Run apple.test_cmd here rather than borrowing rust.py's test_server: this
+    # archetype does not pull the rust module, so on an apple-only project that
+    # name is undefined and the action dies with a NameError before running a
+    # single test.
+    _cmd = _apple.get("test_cmd")
+    info("running: " + _cmd)
+    _rc = run_cmd(_cmd)
+    if _rc != 0:
+        err("tests failed"); sys.exit(_rc)
+    ok("tests passed")
 '''
 
 _CLEAN_PY = '''\
