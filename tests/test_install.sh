@@ -76,11 +76,38 @@ get_current_sha() {
     echo "$sha"
 }
 
+# Path to the developer's global gitignore, resolved under the REAL HOME.
+# install.sh decides "clean or dirty" with `git status --porcelain`, and the
+# tests run it under a sandbox HOME that has neither ~/.gitconfig nor
+# ~/.config/git/ignore. Without this, a file the developer's global ignore hides
+# — a stray ./admin left by a local install — reads as untracked inside the
+# sandbox, install.sh calls the tree dirty, and the up-to-date tests fail on a
+# checkout that is actually clean.
+global_excludes() {
+    local path
+    path="$(git config --global --get core.excludesFile 2>/dev/null || true)"
+    [[ -n "$path" ]] || path="${XDG_CONFIG_HOME:-$HOME/.config}/git/ignore"
+    path="${path/#\~/$HOME}"
+    [[ -f "$path" ]] && echo "$path"
+}
+
+GLOBAL_EXCLUDES="$(global_excludes)"
+
 run_install() {
     local home_dir="$1"; shift
     # Use --shell zsh so shell detection is deterministic regardless of the
     # shell running the test suite.
-    HOME="$home_dir" bash "$REPO/install.sh" --shell zsh "$@" 2>&1
+    # GIT_CONFIG_* (git 2.31+) carries the excludes file into every git call
+    # install.sh makes, which HOME= alone cannot reach.
+    if [[ -n "$GLOBAL_EXCLUDES" ]]; then
+        HOME="$home_dir" \
+        GIT_CONFIG_COUNT=1 \
+        GIT_CONFIG_KEY_0=core.excludesFile \
+        GIT_CONFIG_VALUE_0="$GLOBAL_EXCLUDES" \
+            bash "$REPO/install.sh" --shell zsh "$@" 2>&1
+    else
+        HOME="$home_dir" bash "$REPO/install.sh" --shell zsh "$@" 2>&1
+    fi
 }
 
 # ---------------------------------------------------------------------------
