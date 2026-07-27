@@ -2035,13 +2035,24 @@ def _resolve_mac_dev_process(cfg):
     """``pgrep -f`` pattern that uniquely identifies the running dev
     instance (so it isn't confused with prod). Default:
     ``<DevProductName>.app/Contents/MacOS/<process>``.
+
+    With ``mac_dev_rename = false`` there is no ``<name>Dev.app`` to match, so
+    the default pattern would match nothing: the loop would never find its own
+    app to kill and would report it never launched, while ``open -n`` stacked a
+    new window every rebuild. Match the build-products path instead — the prod
+    copy under /Applications still can't collide with it.
     """
     explicit = cfg.get("mac_dev_process")
     if explicit:
         return explicit
-    product = _resolve_mac_dev_product_name(cfg)
     binary = _resolve_mac_process(cfg)
-    return f"{product}.app/Contents/MacOS/{binary}" if (product and binary) else None
+    if not binary:
+        return None
+    if not cfg.get("mac_dev_rename", True):
+        config = cfg.get("mac_build_config", "Debug")
+        return f"/Build/Products/{config}/{binary}.app/Contents/MacOS/{binary}"
+    product = _resolve_mac_dev_product_name(cfg)
+    return f"{product}.app/Contents/MacOS/{binary}" if product else None
 
 
 def _make_mac_dev_running_check(cfg):

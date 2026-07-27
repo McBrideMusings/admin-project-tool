@@ -44,13 +44,15 @@ Process name resolution falls back through: explicit key → the scheme's `PRODU
 
 When `mac_dev_rename` is on and a dev product/display name resolves, the dev build is renamed so it can sit alongside the prod app.
 
+The rename also decides how `dev` finds its own running app between rebuilds. With the rename on, that's the `<name>Dev.app` bundle path; with it off, no such bundle exists, so `dev` matches the build-products path (`/Build/Products/<config>/<name>.app/…`) instead — still distinct from a prod copy in `/Applications`. Set `mac_dev_process` to override either.
+
 | Key | Default | Meaning |
 |---|---|---|
-| `mac_dev_rename` | `true` | Whether to rename the macOS dev build to the dev product/display name. |
+| `mac_dev_rename` | `true` | Whether to rename the macOS dev build to the dev product/display name. Also selects how the dev loop identifies its running app (above). |
 | `mac_dev_product_name` | `<base>Dev` | Dev build's product (bundle) name. |
 | `mac_dev_display_name` | `<base> Dev` | Dev build's display name. |
 | `ios_dev_display_name` | `<base> Dev` | iOS dev build's display name. |
-| `mac_dev_process` | — | Running-process name for the macOS dev build. |
+| `mac_dev_process` | `<DevProduct>.app/Contents/MacOS/<name>`, or the build-products path when `mac_dev_rename = false` | `pgrep -f` pattern identifying the running dev build. |
 
 ## Signing
 
