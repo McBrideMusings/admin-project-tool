@@ -884,3 +884,37 @@ def test_resolve_mac_dev_process_explicit_wins_over_rename_flag():
            "mac_dev_rename": False, "mac_dev_process": "custom-pattern"}
     assert ns["_resolve_mac_dev_process"](cfg) == "custom-pattern"
     print("OK: mac_dev_process overrides the no-rename fallback")
+
+
+def test_resolve_mac_dev_process_install_matches_the_install_path():
+    """`dev --install` launches from mac_install_path_dev, not the build products
+    dir — a pattern naming either default bundle would match nothing there."""
+    ns = _load_apple()
+    cfg = {"mac_scheme": "CCTool", "mac_process": "CCTool",
+           "mac_install_path_dev": "/Applications/CCToolDev.app"}
+    assert ns["_resolve_mac_dev_process"](cfg, install=True) == \
+        "/Applications/CCToolDev.app/Contents/MacOS/CCTool"
+
+
+def test_resolve_mac_dev_process_install_wins_over_the_rename_fallback():
+    ns = _load_apple()
+    cfg = {"mac_scheme": "CCTool", "mac_process": "CCTool", "mac_dev_rename": False,
+           "mac_install_path_dev": "/Applications/CCTool.app/"}
+    assert ns["_resolve_mac_dev_process"](cfg, install=True) == \
+        "/Applications/CCTool.app/Contents/MacOS/CCTool"
+
+
+def test_resolve_mac_dev_process_install_without_a_path_keeps_the_normal_pattern():
+    """--install errors out later when mac_install_path_dev is unset; until then the
+    pattern must stay the one the loop would otherwise launch."""
+    ns = _load_apple()
+    cfg = {"mac_scheme": "CCTool", "mac_process": "CCTool"}
+    assert ns["_resolve_mac_dev_process"](cfg, install=True) == \
+        "CCToolDev.app/Contents/MacOS/CCTool"
+
+
+def test_resolve_mac_dev_process_ignores_install_when_not_installing():
+    ns = _load_apple()
+    cfg = {"mac_scheme": "CCTool", "mac_process": "CCTool",
+           "mac_install_path_dev": "/Applications/CCToolDev.app"}
+    assert ns["_resolve_mac_dev_process"](cfg) == "CCToolDev.app/Contents/MacOS/CCTool"

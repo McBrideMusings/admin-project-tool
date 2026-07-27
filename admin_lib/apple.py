@@ -2031,16 +2031,22 @@ def _resolve_ios_dev_display_name(cfg):
     return cfg.get("ios_dev_display_name") or (f"{base} Dev" if base else None)
 
 
-def _resolve_mac_dev_process(cfg):
+def _resolve_mac_dev_process(cfg, install=False):
     """``pgrep -f`` pattern that uniquely identifies the running dev
     instance (so it isn't confused with prod). Default:
     ``<DevProductName>.app/Contents/MacOS/<process>``.
 
-    With ``mac_dev_rename = false`` there is no ``<name>Dev.app`` to match, so
-    the default pattern would match nothing: the loop would never find its own
-    app to kill and would report it never launched, while ``open -n`` stacked a
-    new window every rebuild. Match the build-products path instead — the prod
-    copy under /Applications still can't collide with it.
+    The pattern has to name the bundle the loop actually launches, or it matches
+    nothing: the loop never finds its own app to kill and reports that it never
+    launched, while ``open -n`` stacks a new window every rebuild. Two ways to
+    end up there, both handled here:
+
+    * ``mac_dev_rename = false`` — no ``<name>Dev.app`` is ever produced, so the
+      app runs straight out of the build-products directory.
+    * ``install=True`` (``dev --install``) — the app is copied to
+      ``mac_install_path_dev`` first and launched from there.
+
+    Neither pattern can collide with a prod copy under ``/Applications``.
     """
     explicit = cfg.get("mac_dev_process")
     if explicit:
@@ -2048,6 +2054,10 @@ def _resolve_mac_dev_process(cfg):
     binary = _resolve_mac_process(cfg)
     if not binary:
         return None
+    if install:
+        dev_install_path = cfg.get("mac_install_path_dev")
+        if dev_install_path:
+            return f"{dev_install_path.rstrip('/')}/Contents/MacOS/{binary}"
     if not cfg.get("mac_dev_rename", True):
         config = cfg.get("mac_build_config", "Debug")
         return f"/Build/Products/{config}/{binary}.app/Contents/MacOS/{binary}"
@@ -2055,7 +2065,7 @@ def _resolve_mac_dev_process(cfg):
     return f"{product}.app/Contents/MacOS/{binary}" if product else None
 
 
-def _make_mac_dev_running_check(cfg):
+def _make_mac_dev_running_check(cfg, install=False):
     """Return a callable that reports whether the dev mac instance is running.
 
     Uses ``pgrep -f <dev_name>`` where dev_name (e.g.
@@ -2064,7 +2074,7 @@ def _make_mac_dev_running_check(cfg):
     pattern won't match it. Falls back to ``pgrep -x mac_process`` if no
     dev product name is configured.
     """
-    dev_name = _resolve_mac_dev_process(cfg)
+    dev_name = _resolve_mac_dev_process(cfg, install=install)
     prod_name = _resolve_mac_process(cfg)
 
     if dev_name:
@@ -2082,16 +2092,16 @@ def _make_mac_dev_running_check(cfg):
     return lambda: False
 
 
-def _make_mac_dev_kill(cfg):
+def _make_mac_dev_kill(cfg, install=False):
     """Return a callable that kills only the dev instance (not prod), then waits
     for it to actually exit. SIGTERM first; escalates to SIGKILL if still alive
     after ~1.5s. Returning before the process is gone causes ``open -n`` to race
     with LaunchServices and silently activate the dying instance.
     """
     import time
-    dev_name = _resolve_mac_dev_process(cfg)
+    dev_name = _resolve_mac_dev_process(cfg, install=install)
     prod_name = _resolve_mac_process(cfg)
-    check_running = _make_mac_dev_running_check(cfg)
+    check_running = _make_mac_dev_running_check(cfg, install=install)
 
     if dev_name:
         def _send(sig):
@@ -2266,12 +2276,17 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=N
     project = _detect_project_path(cfg)
     config = cfg.get("mac_build_config", "Debug")
     process = _resolve_mac_process(cfg)
-    dev_process = _resolve_mac_dev_process(cfg) or process
+    dev_process = _resolve_mac_dev_process(cfg, install=install) or process
     bundle_id = _resolve_bundle(cfg, "mac", dev=True)
     subsystem = _resolve_subsystem(cfg, "mac", dev=True)
     extra_settings = _compose_dev_settings(cfg, bundle_id)
     build_action = "clean build" if clean else "build"
-    predicate = log_predicate(dev_process, subsystem, level=log_level)
+    # os_log's `process` field is the executable's name, never a path, so the
+    # pgrep pattern in dev_process can't be handed to it — a bundle-path pattern
+    # matches no log line and the predicate silently narrows to its subsystem
+    # half. The dev rename leaves the executable name alone, so prod and dev
+    # both log under `process`.
+    predicate = log_predicate(process, subsystem, level=log_level)
     app_pattern = _derived_glob(_resolve_derived_data_name(cfg), config, "", process)
 
     prebuild_cmd = cfg.get("prebuild_cmd")
@@ -2319,8 +2334,8 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=N
         predicate=predicate, app_pattern=app_pattern,
         extra_settings=extra_settings, build_action=build_action,
         pre_build=pre_build, post_build=post_build, pre_launch=pre_launch,
-        is_running_fn=_make_mac_dev_running_check(cfg),
-        kill_fn=_make_mac_dev_kill(cfg),
+        is_running_fn=_make_mac_dev_running_check(cfg, install=install),
+        kill_fn=_make_mac_dev_kill(cfg, install=install),
         output_config=output_config,
         # An icon swap is active iff build_icon_hooks returned hooks; refresh
         # the built app's icon cache so the swapped-in banner actually shows.

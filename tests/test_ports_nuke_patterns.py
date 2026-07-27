@@ -237,25 +237,33 @@ def _pid_alive(pid: int) -> bool:
         return True
 
 
-def test_port_entries_resolve_env_placeholders():
+def test_port_entries_resolve_env_placeholders(monkeypatch):
     """muxarr's dev port is ${PORT:-3300}; pidfile paths already resolved ${VAR}
-    but ports did not, forcing the port to be hardcoded and drift."""
-    import os as _os
+    but ports did not, forcing the port to be hardcoded and drift.
 
-    from admin_lib.ports_nuke import nuke_dev_from_config
+    The kill is stubbed out. Calling the real one asserted nothing about the
+    resolved value and reached for ports 3300/3350 on the developer's own
+    machine — with a dev server up it killed it and then failed on the changed
+    return code. Capturing the ports checks the thing the test is named for.
+    """
+    import admin_lib.ports_nuke as ports_nuke
 
-    prev = _os.environ.pop("PORT", None)
-    try:
-        # No listener on it — this asserts the value parses, not that it kills.
-        rc = nuke_dev_from_config({"ports": ["${PORT:-3300}", 3350]})
-        assert rc == 0
-        _os.environ["PORT"] = "3999"
-        rc = nuke_dev_from_config({"ports": ["${PORT:-3300}"]})
-        assert rc == 0
-    finally:
-        _os.environ.pop("PORT", None)
-        if prev is not None:
-            _os.environ["PORT"] = prev
+    seen = {}
+
+    def _capture(**kwargs):
+        seen.clear()
+        seen.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(ports_nuke, "nuke_dev_processes", _capture)
+
+    monkeypatch.delenv("PORT", raising=False)
+    assert ports_nuke.nuke_dev_from_config({"ports": ["${PORT:-3300}", 3350]}) == 0
+    assert seen["ports"] == [3300, 3350], seen["ports"]
+
+    monkeypatch.setenv("PORT", "3999")
+    assert ports_nuke.nuke_dev_from_config({"ports": ["${PORT:-3300}"]}) == 0
+    assert seen["ports"] == [3999], seen["ports"]
 
 
 def test_unresolvable_port_is_reported():
