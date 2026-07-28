@@ -9,7 +9,7 @@ All keys are **optional** unless noted — a wrapper that needs a missing key er
 | Key | Default | Meaning |
 |---|---|---|
 | `project_path` | auto-detect | Path to the `.xcworkspace`/`.xcodeproj`. When omitted, the first `*.xcworkspace` then `*.xcodeproj` in the project root is used; errors if none found (`_detect_project_path`). |
-| `prebuild_cmd` | — | Shell command run before every `xcodebuild` invocation (build/deploy/test, both platforms). |
+| `prebuild_cmd` | — | Shell command run once per invocation, before the project path resolves — so it covers `build`, `dev`, `deploy`, and `icons` on both platforms. Runs in `_run_prebuild_cmd`, called from `_detect_project_path`, which every apple action funnels through. A non-zero exit aborts the command. The motivating case is a generated `.xcodeproj` (XcodeGen, Tuist) kept out of version control: `prebuild_cmd = "xcodegen generate"` means a fresh clone or an edited spec can never be built against a missing or stale project. |
 | `derived_data_name` | — | DerivedData folder name; sets `-derivedDataPath`. |
 
 ## Schemes and build configurations

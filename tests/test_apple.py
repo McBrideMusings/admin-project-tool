@@ -918,3 +918,61 @@ def test_resolve_mac_dev_process_ignores_install_when_not_installing():
     cfg = {"mac_scheme": "CCTool", "mac_process": "CCTool",
            "mac_install_path_dev": "/Applications/CCToolDev.app"}
     assert ns["_resolve_mac_dev_process"](cfg) == "CCToolDev.app/Contents/MacOS/CCTool"
+
+
+# ---------------------------------------------------------------------------
+# prebuild_cmd
+# ---------------------------------------------------------------------------
+
+def _load_apple_with_run_cmd(rc=0):
+    """apple.py plus a recording run_cmd, which the stripped .core import
+    would otherwise leave undefined."""
+    ns = _load_apple()
+    calls = []
+
+    def _run_cmd(cmd, *a, **k):
+        calls.append(cmd)
+        return rc
+
+    ns["run_cmd"] = _run_cmd
+    return ns, calls
+
+
+def test_prebuild_cmd_runs_before_the_project_path_resolves():
+    ns, calls = _load_apple_with_run_cmd()
+    cfg = {"project_path": "App.xcodeproj", "prebuild_cmd": "xcodegen generate"}
+    assert ns["_detect_project_path"](cfg) == "App.xcodeproj"
+    assert calls == ["xcodegen generate"], calls
+    print("OK: prebuild_cmd runs before the project path resolves")
+
+
+def test_prebuild_cmd_runs_once_per_invocation():
+    """A single admin run resolves the project path many times; regenerating
+    on each would be wasted work."""
+    ns, calls = _load_apple_with_run_cmd()
+    cfg = {"project_path": "App.xcodeproj", "prebuild_cmd": "xcodegen generate"}
+    for _ in range(4):
+        ns["_detect_project_path"](cfg)
+    assert calls == ["xcodegen generate"], calls
+    print("OK: prebuild_cmd runs once per invocation")
+
+
+def test_no_prebuild_cmd_key_runs_nothing():
+    ns, calls = _load_apple_with_run_cmd()
+    assert ns["_detect_project_path"]({"project_path": "App.xcodeproj"}) == "App.xcodeproj"
+    assert calls == [], calls
+    print("OK: projects without prebuild_cmd are unaffected")
+
+
+def test_prebuild_cmd_failure_aborts():
+    """A stale or missing project must not be built against, so a failed
+    generate stops the command rather than falling through."""
+    ns, _ = _load_apple_with_run_cmd(rc=3)
+    cfg = {"project_path": "App.xcodeproj", "prebuild_cmd": "xcodegen generate"}
+    try:
+        ns["_detect_project_path"](cfg)
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("expected SystemExit when prebuild_cmd fails")
+    print("OK: prebuild_cmd failure aborts the command")

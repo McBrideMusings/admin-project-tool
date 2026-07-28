@@ -1633,8 +1633,40 @@ def dev_loop_device(project, scheme, config, subsystem, process,
 # ---------------------------------------------------------------------------
 
 
+_PREBUILD_RAN = set()
+
+
+def _run_prebuild_cmd(cfg):
+    """Run ``[apple] prebuild_cmd`` once per invocation, at the moment the
+    project path is resolved.
+
+    This lives here, rather than at the top of each command, because every
+    apple action funnels through ``_detect_project_path`` -- so a command
+    added later cannot forget to call it. It previously sat inline in
+    ``dev_mac``/``dev_ios``/``dev_device``/``deploy_mac``/``deploy_ios``, and
+    ``build_mac``/``build_ios`` were duly forgotten: ``admin build`` skipped
+    the prereq the docs promised runs before every xcodebuild.
+
+    The motivating case is a generated ``.xcodeproj`` (XcodeGen, Tuist) kept
+    out of version control, where the project is absent on a fresh clone and
+    stale after a spec edit.
+
+    Runs at most once per process: a single ``admin`` invocation resolves the
+    project path many times, and re-running the prereq each time would be
+    wasted work.
+    """
+    cmd = (cfg or {}).get("prebuild_cmd")
+    if not cmd or cmd in _PREBUILD_RAN:
+        return
+    _PREBUILD_RAN.add(cmd)
+    info("prereqs: " + cmd)
+    if run_cmd(cmd) != 0:
+        err("prereq command failed"); sys.exit(1)
+
+
 def _detect_project_path(cfg):
     """Return cfg['project_path'], or the first .xcworkspace/.xcodeproj in cwd."""
+    _run_prebuild_cmd(cfg)
     p = cfg.get("project_path")
     if p:
         return p
@@ -2289,12 +2321,6 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=N
     predicate = log_predicate(process, subsystem, level=log_level)
     app_pattern = _derived_glob(_resolve_derived_data_name(cfg), config, "", process)
 
-    prebuild_cmd = cfg.get("prebuild_cmd")
-    if prebuild_cmd:
-        info("prereqs: " + prebuild_cmd)
-        if run_cmd(prebuild_cmd) != 0:
-            err("prereq command failed"); sys.exit(1)
-
     pre_build, post_build = build_icon_hooks(cfg)
 
     pre_launch = None
@@ -2367,12 +2393,6 @@ def dev_ios(cfg, *, log_level="app", clean=False, output_config=None, launch_arg
     predicate = log_predicate(process, subsystem, level=log_level)
     app_pattern = _derived_glob(_resolve_derived_data_name(cfg), config, "-iphonesimulator", process)
 
-    prebuild_cmd = cfg.get("prebuild_cmd")
-    if prebuild_cmd:
-        info("prereqs: " + prebuild_cmd)
-        if run_cmd(prebuild_cmd) != 0:
-            err("prereq command failed"); sys.exit(1)
-
     sim_id = None
     device_name = os.environ.get("IOS_DEVICE") or cfg.get("ios_device")
     if device_name:
@@ -2415,12 +2435,6 @@ def deploy_mac(cfg, *, clean=False):
 
     restore_stranded_dev_icons(cfg)
 
-    prebuild_cmd = cfg.get("prebuild_cmd")
-    if prebuild_cmd:
-        info("prereqs: " + prebuild_cmd)
-        if run_cmd(prebuild_cmd) != 0:
-            err("prereq command failed"); sys.exit(1)
-
     info(f"Killing any running {process}...")
     subprocess.run(["pkill", "-x", process], capture_output=True)
 
@@ -2461,12 +2475,6 @@ def deploy_ios(cfg, *, clean=False):
     derived_name = _resolve_derived_data_name(cfg)
 
     restore_stranded_dev_icons(cfg)
-
-    prebuild_cmd = cfg.get("prebuild_cmd")
-    if prebuild_cmd:
-        info("prereqs: " + prebuild_cmd)
-        if run_cmd(prebuild_cmd) != 0:
-            err("prereq command failed"); sys.exit(1)
 
     device_id, device_name, _udid = find_connected_device()
     info(f"Deploying to {device_name}")
@@ -2521,12 +2529,6 @@ def dev_device(cfg, *, log_level="app", clean=False, output_config=None):
     extra_settings = _compose_dev_settings(cfg, bundle_id)
     build_action = "clean build" if clean else "build"
     app_pattern = _derived_glob(_resolve_derived_data_name(cfg), config, "-iphoneos", process)
-
-    prebuild_cmd = cfg.get("prebuild_cmd")
-    if prebuild_cmd:
-        info("prereqs: " + prebuild_cmd)
-        if run_cmd(prebuild_cmd) != 0:
-            err("prereq command failed"); sys.exit(1)
 
     pre_build, post_build = build_icon_hooks(cfg)
 
