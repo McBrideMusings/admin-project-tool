@@ -27,9 +27,16 @@ Runs per-project tasks from a short `admin.toml` manifest plus a library of comp
 
 ## Testing
 
-Tests run under `pytest` (dev-only dep — `admin_lib/` and the interpreter stay stdlib-only at runtime). Install with `pip install -r requirements-dev.txt`. New `tests/test_*.py` files are auto-discovered. Shell tests (`tests/test_install.sh`, etc.) are chained after pytest in `[actions.test]`.
+Tests run under `pytest` (dev-only dep — `admin_lib/` and the interpreter stay stdlib-only at runtime). New `tests/test_*.py` files are auto-discovered. Shell tests (`tests/test_install.sh`, etc.) are chained after pytest in `[actions.test]`.
 
-Run all: `./admin test`. Tests that exercise full dispatch write a temp `admin.toml` and run it through `admin-run` (see `tests/test_archetypes.py::_run_interpreter`).
+**pytest lives in `.venv`, not on any system python.** `python3 -m pytest` fails with `No module named pytest` and it looks like a missing dependency — it isn't:
+
+- Everything: `admin test` (pytest + the shell suite)
+- One file: `.venv/bin/pytest tests/test_apple.py`
+
+Only run `pip install -r requirements-dev.txt` when `.venv` is genuinely absent, and install it into the venv.
+
+Tests that exercise full dispatch write a temp `admin.toml` and run it through `admin-run` (see `tests/test_archetypes.py::_run_interpreter`).
 
 ## Common workflows
 
