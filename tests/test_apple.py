@@ -976,3 +976,102 @@ def test_prebuild_cmd_failure_aborts():
     else:
         raise AssertionError("expected SystemExit when prebuild_cmd fails")
     print("OK: prebuild_cmd failure aborts the command")
+
+
+# ---------------------------------------------------------------------------
+# Bootstrapping an appiconset that has no PNGs yet
+# ---------------------------------------------------------------------------
+
+def test_sizes_come_from_contents_json_when_no_pngs_exist():
+    """A brand-new appiconset is a Contents.json and nothing else, and that is
+    exactly when someone runs `admin icons regenerate` — to make the art. Sizing
+    the render off the PNGs already there cannot serve that case, so the catalog
+    is asked what it declares instead.
+    """
+    ns = _load_apple()
+    with tempfile.TemporaryDirectory() as root:
+        # A macOS catalog: `size` is in points and `scale` multiplies it, so
+        # 16x16@2x is a 32-pixel file — and 32x32@1x names that same file again.
+        with open(os.path.join(root, "Contents.json"), "w") as f:
+            f.write("""{
+              "images": [
+                {"filename": "icon_16.png", "idiom": "mac", "scale": "1x", "size": "16x16"},
+                {"filename": "icon_32.png", "idiom": "mac", "scale": "2x", "size": "16x16"},
+                {"filename": "icon_32.png", "idiom": "mac", "scale": "1x", "size": "32x32"},
+                {"filename": "icon_1024.png", "idiom": "mac", "scale": "2x", "size": "512x512"}
+              ],
+              "info": {"author": "xcode", "version": 1}
+            }""")
+
+        sizes = ns["_sizes_from_contents_json"](root)
+
+        assert sizes == {16: "icon_16.png", 32: "icon_32.png", 1024: "icon_1024.png"}, sizes
+    print("OK: mac Contents.json sizes resolve to pixel widths, scale included")
+
+
+def test_ios_contents_json_entries_have_no_scale():
+    """An iOS appiconset is one 1024px square with no `scale` key at all —
+    absent must read as 1x rather than dropping the entry.
+    """
+    ns = _load_apple()
+    with tempfile.TemporaryDirectory() as root:
+        with open(os.path.join(root, "Contents.json"), "w") as f:
+            f.write("""{
+              "images": [
+                {"filename": "AppIcon.png", "idiom": "universal", "platform": "ios", "size": "1024x1024"}
+              ],
+              "info": {"author": "xcode", "version": 1}
+            }""")
+
+        assert ns["_sizes_from_contents_json"](root) == {1024: "AppIcon.png"}
+    print("OK: iOS Contents.json entry without a scale resolves to 1024")
+
+
+def test_missing_or_unreadable_contents_json_yields_nothing():
+    ns = _load_apple()
+    with tempfile.TemporaryDirectory() as root:
+        assert ns["_sizes_from_contents_json"](root) == {}, "no Contents.json → nothing"
+
+        with open(os.path.join(root, "Contents.json"), "w") as f:
+            f.write("{ this is not json")
+        assert ns["_sizes_from_contents_json"](root) == {}, "unparseable → nothing, not a crash"
+    print("OK: a missing or unparseable Contents.json yields no sizes")
+
+
+# ---------------------------------------------------------------------------
+# `admin icons swap-dev` must not undo itself
+# ---------------------------------------------------------------------------
+
+def test_swap_dev_can_skip_the_exit_restore():
+    """A dev loop swaps, builds, and restores inside one process, so registering
+    the restore as an exit cleanup is what makes it safe. The standalone
+    `icons swap-dev` verb has no build in between: the same cleanup fires the
+    moment the command finishes and silently puts the originals back, so it
+    printed "dev icons swapped in" over a catalog it had already restored.
+    """
+    ns = _load_apple()
+    registered = []
+    ns["register_cleanup"] = registered.append
+
+    with tempfile.TemporaryDirectory() as root:
+        icon_dir = os.path.join(root, "AppIcon.appiconset")
+        os.makedirs(icon_dir)
+        with open(os.path.join(icon_dir, "icon_128.png"), "wb") as f:
+            f.write(b"PROD")
+        cfg = {"icons": {"mac_asset_dir": icon_dir}}
+
+        # Nothing to overlay a banner onto that PIL would accept, so stub the
+        # two mutations out: what is under test is whether the restore gets
+        # armed, not what the banner looks like.
+        ns["backup_icons"] = lambda *a, **k: None
+        ns["swap_dev_icons"] = lambda *a, **k: None
+        ns["restore_stranded_dev_icons"] = lambda *a, **k: None
+
+        pre, _post = ns["build_icon_hooks"](cfg, restore_on_exit=False)
+        pre()
+        assert registered == [], "swap-dev must not arm the restore that undoes it"
+
+        pre_loop, _ = ns["build_icon_hooks"](cfg)
+        pre_loop()
+        assert len(registered) == 1, "a dev loop still needs the restore armed"
+    print("OK: swap-dev skips the exit restore; the dev loop keeps it")

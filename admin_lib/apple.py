@@ -1866,6 +1866,46 @@ def _resolve_icon_dirs(cfg, platforms=("mac", "ios")):
     return result
 
 
+def _sizes_from_contents_json(src_dir):
+    """Return {pixel_width: filename} from an appiconset's ``Contents.json``.
+
+    Used to bootstrap an appiconset that has no PNGs yet — the case where
+    reading the sizes off the existing files cannot work, because making those
+    files is the point.
+
+    The pixel width is ``size`` times ``scale``, not ``size``: a macOS catalog
+    asks for ``16x16`` at ``2x`` and means a 32-pixel PNG, and lists the same
+    filename again as ``32x32`` at ``1x``. Collapsing on pixel width is
+    therefore correct and is what the PNG-reading path arrives at too. iOS
+    entries carry no ``scale`` at all, which reads as 1x.
+    """
+    contents = os.path.join(src_dir, "Contents.json")
+    if not os.path.isfile(contents):
+        return {}
+    try:
+        with open(contents) as fh:
+            data = json.load(fh)
+    except Exception:
+        warn(f"{contents} is not readable JSON — cannot take icon sizes from it")
+        return {}
+
+    result = {}
+    for image in data.get("images") or []:
+        fname = image.get("filename")
+        size = image.get("size") or ""
+        if not fname or "x" not in size:
+            continue
+        try:
+            points = float(size.split("x")[0])
+            scale = float((image.get("scale") or "1x").rstrip("x"))
+        except ValueError:
+            continue
+        width = int(round(points * scale))
+        if width > 0:
+            result[width] = fname
+    return result
+
+
 def _resolve_icon_composer(cfg):
     """Abs path to the Icon Composer ``.icon`` bundle from
     ``[apple.icons] mac_icon``, or None. Its presence routes the dev-icon
@@ -1899,11 +1939,13 @@ def _restore_stranded_icon_composer(icon_path, backup_dir):
     restore_icon_composer(icon_path, backup_dir)
 
 
-def _build_icon_composer_hooks(cfg, icon_path, backup_dir):
+def _build_icon_composer_hooks(cfg, icon_path, backup_dir, restore_on_exit=True):
     """(pre_build, post_build) for the Icon Composer ``.icon`` dev-banner swap.
 
     Mirrors the appiconset hooks: self-heal a stranded prior run, register the
-    restore as a cleanup hook before mutating, then inject the banner.
+    restore as a cleanup hook before mutating, then inject the banner —
+    including ``restore_on_exit``, so `admin icons swap-dev` leaves the banner
+    in place on this path too.
     """
     composer_backup = os.path.join(backup_dir, "icon-composer")
 
@@ -1914,7 +1956,7 @@ def _build_icon_composer_hooks(cfg, icon_path, backup_dir):
 
     def _pre():
         _restore_stranded_icon_composer(icon_path, composer_backup)
-        if not cleanup_registered[0]:
+        if restore_on_exit and not cleanup_registered[0]:
             register_cleanup(_post)
             cleanup_registered[0] = True
         swap_dev_icon_composer(icon_path, composer_backup)
@@ -1922,7 +1964,9 @@ def _build_icon_composer_hooks(cfg, icon_path, backup_dir):
     return _pre, _post
 
 
-def build_icon_hooks(cfg, platforms=("mac", "ios"), backup_dir="tmp/icon-backup"):
+def build_icon_hooks(
+    cfg, platforms=("mac", "ios"), backup_dir="tmp/icon-backup", restore_on_exit=True
+):
     """Return (pre_build, post_build) for dev-icon swap. (None, None) if
     [apple.icons] missing/empty so callers can pass directly to dev_loop_*.
 
@@ -1930,10 +1974,20 @@ def build_icon_hooks(cfg, platforms=("mac", "ios"), backup_dir="tmp/icon-backup"
     Ctrl-C'd dev run doesn't leak dev-overlay icons into the next deploy build.
     An ``[apple.icons] mac_icon`` (Xcode 26 Icon Composer) routes through the
     ``.icon`` banner swap; otherwise the appiconset PNG swap is used.
+
+    ``restore_on_exit=False`` skips that registration, and exists for exactly
+    one caller: ``admin icons swap-dev``, where the swap IS the whole command.
+    A dev loop swaps, builds, and restores inside one process, so the exit
+    cleanup is what makes it safe; the standalone verb has no build in between,
+    so the same cleanup fires the instant it finishes and silently undoes what
+    the user just asked for — it printed "dev icons swapped in" over a catalog
+    it had already put back.
     """
     icon_composer = _resolve_icon_composer(cfg)
     if icon_composer:
-        return _build_icon_composer_hooks(cfg, icon_composer, backup_dir)
+        return _build_icon_composer_hooks(
+            cfg, icon_composer, backup_dir, restore_on_exit=restore_on_exit
+        )
 
     icon_dirs = _resolve_icon_dirs(cfg, platforms)
     if not icon_dirs:
@@ -1962,7 +2016,7 @@ def build_icon_hooks(cfg, platforms=("mac", "ios"), backup_dir="tmp/icon-backup"
         # backup_icons or swap_dev_icons (PIL ops + filesystem copies), the
         # restore still runs. Once-only — register_cleanup has no dedup, so
         # repeated dev iterations would otherwise stack copies of _post.
-        if not cleanup_registered[0]:
+        if restore_on_exit and not cleanup_registered[0]:
             register_cleanup(_post)
             cleanup_registered[0] = True
         backup_icons(icon_dirs, backup_dir)
@@ -2663,7 +2717,19 @@ def regenerate_icons(cfg):
             except Exception:
                 continue
         if not size_to_file:
-            warn(f"{label}: no PNGs in {src_dir} — skipping")
+            # A brand-new appiconset has a Contents.json and no PNGs yet, and
+            # that is exactly when someone runs this: it is how the first set of
+            # art gets made. Reading the sizes off existing PNGs cannot serve
+            # that case, so fall back to what the catalog *declares* it wants.
+            size_to_file = _sizes_from_contents_json(src_dir)
+            if size_to_file:
+                info(f"{label}: no PNGs yet — taking sizes from Contents.json")
+
+        if not size_to_file:
+            warn(
+                f"{label}: {src_dir} declares no icons — it needs PNGs or a "
+                "Contents.json listing filenames and sizes"
+            )
             continue
 
         sizes = sorted(size_to_file.keys())
