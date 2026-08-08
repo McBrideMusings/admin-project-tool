@@ -114,3 +114,51 @@ def test_render_run_args_skips_bind_mount_with_unset_env(monkeypatch):
     out = render_run_args(cfg)
 
     assert "-v" not in out
+
+
+def test_render_run_args_expands_the_default_form_everywhere(monkeypatch):
+    """`${VAR:-default}` is the form the docker archetype's own templates are
+    written in — ports, user, and env all ship with it. Expansion here used to
+    match only the bare `${VAR}` form, so every one of these survived as literal
+    text: `docker run -p '${ETV_PORT_HOST:-8409}:8409'`, and the drift check
+    compared that string against the live container's real `8419`, reporting
+    three false drifts on a correctly configured project.
+    """
+    monkeypatch.setenv("PORT_HOST", "8419")
+    monkeypatch.delenv("UID_VAR", raising=False)
+    monkeypatch.delenv("TZ_VAR", raising=False)
+    cfg = {
+        "ports": [{"host": "${PORT_HOST:-8409}", "container": 8409}],
+        "user": "${UID_VAR:-99}:100",
+        "env": [{"name": "TZ", "value": "${TZ_VAR:-America/Chicago}"}],
+    }
+
+    out = render_run_args(cfg)
+
+    assert "${" not in out, out
+    assert "-p 8419:8409" in out
+    assert "--user 99:100" in out
+    assert "TZ=America/Chicago" in out
+
+
+def test_render_run_args_default_wins_only_when_var_is_unset(monkeypatch):
+    """A set var beats its default — otherwise .env could never override one."""
+    monkeypatch.setenv("PORT_HOST", "9001")
+    cfg = {"ports": [{"host": "${PORT_HOST:-8409}", "container": 80}]}
+
+    assert "-p 9001:80" in render_run_args(cfg)
+
+    monkeypatch.delenv("PORT_HOST", raising=False)
+
+    assert "-p 8409:80" in render_run_args(cfg)
+
+
+def test_render_run_args_empty_default_resolves_to_empty_not_dropped(monkeypatch):
+    """`${VAR:-}` is an explicit empty default, not an unresolved reference."""
+    monkeypatch.delenv("MAYBE_UNSET", raising=False)
+    cfg = {"env": [{"name": "OPTIONAL", "value": "${MAYBE_UNSET:-}"}]}
+
+    out = render_run_args(cfg)
+
+    assert "${" not in out
+    assert "OPTIONAL=" in out

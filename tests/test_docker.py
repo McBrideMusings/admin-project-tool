@@ -16,6 +16,14 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO / "admin_lib"
 
+sys.path.insert(0, str(REPO))
+
+# Real, not stubbed. docker.py shares core's placeholder pattern so `${VAR}` and
+# `${VAR:-default}` mean the same thing in a [docker_run] table as everywhere
+# else in the manifest; substituting a fake here would let the two drift apart
+# again without a test noticing.
+from admin_lib.core import COMPUTED_VARS, _ENV_VAR_RE  # noqa: E402
+
 
 def _load_docker():
     source = (LIB_DIR / "docker.py").read_text()
@@ -44,6 +52,8 @@ def _load_docker():
         "pick_target": lambda *a, **k: None,
         "require_host": lambda *a, **k: None,
         "ssh_cmd": lambda *a, **k: 0,
+        "COMPUTED_VARS": COMPUTED_VARS,
+        "_ENV_VAR_RE": _ENV_VAR_RE,
     }
     exec(compile(source, "docker.py", "exec"), ns)
     ns["_warnings"] = warnings
