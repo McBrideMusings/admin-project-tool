@@ -17,6 +17,8 @@ from collections import OrderedDict
 
 from .core import (
     C,
+    COMPUTED_VARS,
+    _ENV_VAR_RE,
     get_log_dir,
     get_log_file,
     get_urls,
@@ -674,24 +676,41 @@ def _is_trivial(v):
     return False
 
 
-_ENV_REF_RE = __import__("re").compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
-
-
 def _expand_env_refs(value, env_vars):
-    """Substitute ${VAR} references in `value` from `env_vars`. Returns
-    (substituted, all_resolved). all_resolved=False means at least one
-    ${VAR} couldn't be resolved — caller should drop the entry rather than
-    emit a literal ${VAR} that would poison the drift comparison.
+    """Substitute ${VAR} and ${VAR:-default} references in `value` from
+    `env_vars`. Returns (substituted, all_resolved). all_resolved=False means at
+    least one reference had neither a value nor a default — caller should drop
+    the entry rather than emit a literal ${VAR} that would poison the drift
+    comparison.
+
+    Shares `core._ENV_VAR_RE` with `core.resolve_env` rather than carrying its
+    own pattern: the manifest is written in one placeholder syntax, so a second
+    regex here can only ever be a narrower dialect of it. It was — it matched
+    only the bare `${VAR}` form, so every `${VAR:-default}` in a `[docker_run]`
+    table survived as a literal and the drift check compared that literal string
+    against the live container's real value. Every such entry read as drift, and
+    `--force` would have rendered `docker run` with the placeholder text still
+    in it.
+
+    What is deliberately NOT shared is `resolve_env`'s exit-on-missing: a
+    `[docker_run]` entry gated on an unset env var is dropped, not fatal.
     """
     all_resolved = True
+
     def sub(m):
         nonlocal all_resolved
-        v = env_vars.get(m.group(1))
-        if v is None:
-            all_resolved = False
-            return m.group(0)
-        return v
-    return _ENV_REF_RE.sub(sub, value), all_resolved
+        name, default = m.group(1), m.group(2)
+        v = env_vars.get(name)
+        if v is not None:
+            return v
+        if name in COMPUTED_VARS:
+            return COMPUTED_VARS[name]()
+        if default is not None:
+            return default
+        all_resolved = False
+        return m.group(0)
+
+    return _ENV_VAR_RE.sub(sub, value), all_resolved
 
 
 def _build_run_args_from_cfg(cfg, env_vars=None, env_file_vars=None):
@@ -833,9 +852,16 @@ def _build_run_args_from_cfg(cfg, env_vars=None, env_file_vars=None):
     # strips --user when it equals the image user, so without this knob the cfg
     # can't reproduce a non-image user and a --force deploy would silently drop
     # it — reverting to the image default and changing ownership of written files.
+    # `${VAR}` is expanded here for the same reason it is on ports and env: a UID
+    # is host-specific (Unraid's nobody is 99:100, another box's is not), so the
+    # committed manifest carries the reference and .env carries the number. An
+    # unresolved reference drops the flag rather than passing "${UID}" to docker,
+    # which would fail the run outright.
     user = cfg.get("user")
     if user:
-        args += ["--user", str(user)]
+        user, all_ok = _expand_env_refs(str(user), env_vars)
+        if all_ok:
+            args += ["--user", user]
 
     # Devices (e.g. /dev/dri)
     for d in cfg.get("devices") or ():
