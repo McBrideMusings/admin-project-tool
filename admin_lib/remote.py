@@ -202,9 +202,41 @@ def deploy_files(cfg, dry_run=False):
         target = dest
 
     excludes = [resolve_env(str(e)) for e in (cfg.get("exclude") or [])]
+
+    # `post_sync` runs where the files landed — over SSH for a remote target,
+    # locally when the target is this machine — because the thing it exists for
+    # is fixing up what the sync just wrote.
+    #
+    # The common case is ownership. rsync carries the sending machine's uid/gid
+    # onto directories it creates, and a container running as a fixed uid can
+    # then read but not write them; the app dies on first write and, under a
+    # restart policy, keeps dying. `post_sync = "chown -R 99:100 /path"` is the
+    # fix, and it has to run after the sync and before anything reads the result.
+    #
+    # This key was accepted by the manifest validator for some time before
+    # anything consumed it, so a manifest could declare it, pass `admin check`,
+    # and silently not run it — a worse failure than rejecting the key, because
+    # the config reads as though the problem is handled.
+    post_sync_cmd = cfg.get("post_sync")
+    post_sync = None
+    if post_sync_cmd:
+        post_sync_cmd = resolve_env(str(post_sync_cmd))
+
+        def post_sync(_dest, _cmd=post_sync_cmd, _host=host):
+            if dry_run:
+                info(f"Would run post_sync: {_cmd}")
+                return
+            info(f"post_sync: {_cmd}")
+            rc = ssh_cmd(_host, _cmd) if _host else subprocess.call(_cmd, shell=True)
+            if rc != 0:
+                # Loud, but not fatal to the sync: the files are already there,
+                # and reporting success here would hide a half-finished deploy.
+                err(f"post_sync failed (exit {rc}): {_cmd}")
+
     return sync(
         src, target,
         excludes=excludes or None,
         delete=bool(cfg.get("delete", False)),
         dry_run=dry_run,
+        post_sync=post_sync,
     )

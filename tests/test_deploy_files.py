@@ -100,6 +100,81 @@ def test_deploy_files_builds_remote_target(tmp_path, monkeypatch):
     assert seen["delete"] is False
 
 
+def test_deploy_files_passes_post_sync_through_to_sync(tmp_path, monkeypatch):
+    """The regression this exists for: `post_sync` was an accepted manifest key
+    that nothing consumed, so a deploy declaring it passed `admin check` and
+    then silently never ran it."""
+    src = tmp_path / "appdata"
+    src.mkdir()
+    seen = {}
+
+    monkeypatch.setattr(core, "sync", lambda s, d, **kw: seen.update(**kw) or 0)
+    monkeypatch.setattr(remote, "_is_local_host", lambda h: False)
+
+    remote.deploy_files({
+        "src": str(src),
+        "dest": "/mnt/app",
+        "host": "root@tower",
+        "post_sync": "chown -R 99:100 /mnt/app",
+    })
+
+    assert seen["post_sync"] is not None, "post_sync must reach core.sync"
+
+
+def test_post_sync_runs_on_the_target_over_ssh(tmp_path, monkeypatch):
+    """It has to run where the files landed — fixing ownership on the laptop
+    that sent them would do nothing."""
+    src = tmp_path / "appdata"
+    src.mkdir()
+    ran = {}
+
+    monkeypatch.setattr(core, "sync", lambda s, d, **kw: (kw["post_sync"](d), 0)[1])
+    monkeypatch.setattr(remote, "_is_local_host", lambda h: False)
+    monkeypatch.setattr(remote, "ssh_cmd", lambda h, c, **kw: ran.update(host=h, cmd=c) or 0)
+
+    remote.deploy_files({
+        "src": str(src),
+        "dest": "/mnt/app",
+        "host": "root@tower",
+        "post_sync": "chown -R 99:100 /mnt/app",
+    })
+
+    assert ran["host"] == "root@tower"
+    assert ran["cmd"] == "chown -R 99:100 /mnt/app"
+
+
+def test_post_sync_expands_env_placeholders(tmp_path, monkeypatch):
+    src = tmp_path / "appdata"
+    src.mkdir()
+    monkeypatch.setenv("TEST_UID", "99")
+    ran = {}
+
+    monkeypatch.setattr(core, "sync", lambda s, d, **kw: (kw["post_sync"](d), 0)[1])
+    monkeypatch.setattr(remote, "_is_local_host", lambda h: False)
+    monkeypatch.setattr(remote, "ssh_cmd", lambda h, c, **kw: ran.update(cmd=c) or 0)
+
+    remote.deploy_files({
+        "src": str(src),
+        "dest": "/mnt/app",
+        "host": "root@tower",
+        "post_sync": "chown -R ${TEST_UID}:100 /mnt/app",
+    })
+
+    assert ran["cmd"] == "chown -R 99:100 /mnt/app"
+
+
+def test_no_post_sync_declared_stays_none(tmp_path, monkeypatch):
+    src = tmp_path / "appdata"
+    src.mkdir()
+    seen = {}
+    monkeypatch.setattr(core, "sync", lambda s, d, **kw: seen.update(**kw) or 0)
+    monkeypatch.setattr(remote, "_is_local_host", lambda h: False)
+
+    remote.deploy_files({"src": str(src), "dest": "/mnt/app", "host": "root@tower"})
+
+    assert seen["post_sync"] is None
+
+
 def test_deploy_files_drops_host_when_running_on_the_target(tmp_path, monkeypatch):
     src = tmp_path / "appdata"
     src.mkdir()
