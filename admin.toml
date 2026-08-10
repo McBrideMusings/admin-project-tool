@@ -29,7 +29,7 @@ run  = "python3 ./admin-run check ."
 [actions.test]
 kind = "shell"
 desc = "Run full test suite (pytest + shell)"
-run  = ".venv/bin/pytest tests/ && bash tests/test_install.sh"
+run  = ".venv/bin/pytest tests/ && bash tests/test_install.sh && bash tests/test_uninstall.sh"
 
 [actions.install]
 kind = "shell-passthrough"
