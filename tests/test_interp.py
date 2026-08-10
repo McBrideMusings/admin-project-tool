@@ -130,6 +130,50 @@ def test_multi_target_child_with_empty_run_does_not_report_success(monkeypatch):
     assert called == [], "run_cmd must never be invoked for a blank target command"
 
 
+def test_running_log_shows_resolved_command_not_literal(monkeypatch, capsys):
+    """info('running: ...') must print the resolved command, not the literal
+    ${VAR} placeholder (issue #55). The log used to fire before resolve_env
+    ran inside run_cmd, so a set var still showed as its raw ${WHO} text."""
+    data = {
+        "project_name": "T",
+        "archetypes": [],
+        "commands": {"greet": {"desc": "g", "steps": ["greet"]}},
+        "actions": {"greet": {"kind": "shell", "run": "echo ${WHO}"}},
+    }
+    resolved = _resolve(data)
+    interp.register_all(resolved, "T")
+
+    monkeypatch.setenv("WHO", "world")
+    monkeypatch.setattr(interp, "run_cmd", lambda *a, **k: 0)
+    core._actions["greet"]([])
+    out = capsys.readouterr().out
+    assert "running: echo world" in out
+    assert "${WHO}" not in out
+
+
+def test_running_log_never_prints_literal_before_unset_var_error(monkeypatch, capsys):
+    """When a required var is unset, resolve_env fails fast — the 'running:'
+    line must never appear at all, rather than printing the literal
+    placeholder immediately before the 'not set' error (issue #55)."""
+    data = {
+        "project_name": "T",
+        "archetypes": [],
+        "commands": {"greet": {"desc": "g", "steps": ["greet"]}},
+        "actions": {"greet": {"kind": "shell", "run": "echo ${MISSING_VAR}"}},
+    }
+    resolved = _resolve(data)
+    interp.register_all(resolved, "T")
+
+    monkeypatch.delenv("MISSING_VAR", raising=False)
+    monkeypatch.setattr(interp, "run_cmd", lambda *a, **k: 0)
+    with pytest.raises(SystemExit) as exc_info:
+        core._actions["greet"]([])
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "running:" not in captured.out
+    assert "MISSING_VAR" in captured.err
+
+
 def test_python_kind_sees_config_globals():
     data = {
         "project_name": "T",

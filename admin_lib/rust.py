@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 
-from .core import info, ok, warn, err, run_cmd
+from .core import info, ok, warn, err, run_cmd, resolve_env
 
 
 def compute_source_hash(base_dir, src_dirs=None, extra_files=None):
@@ -204,7 +204,7 @@ def test_server(cfg):
     cmd = cfg.get("test_cmd")
     if not cmd:
         err("test_cmd not set"); sys.exit(1)
-    info("running: " + cmd)
+    info("running: " + resolve_env(cmd))
     rc = run_cmd(cmd)
     if rc != 0:
         err("tests failed"); sys.exit(rc)
@@ -216,7 +216,7 @@ def test_swift(cfg):
     cmd = cfg.get("swift_test_cmd")
     if not cmd:
         err("server.swift_test_cmd not set"); sys.exit(1)
-    info("running: " + cmd)
+    info("running: " + resolve_env(cmd))
     rc = run_cmd(cmd)
     if rc != 0:
         err("tests failed"); sys.exit(rc)
