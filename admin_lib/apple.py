@@ -1403,7 +1403,7 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
                    extra_settings="", build_action="build",
                    pre_build=None, post_build=None, pre_launch=None,
                    is_running_fn=None, kill_fn=None, output_config=None,
-                   refresh_icon=False):
+                   refresh_icon=False, launch_args=None):
     """Full macOS dev loop: build, launch, stream logs, reload on 'r' or SIGUSR1.
 
     Hook callbacks: pre_build/post_build wrap each build; pre_launch(app_path)
@@ -1411,6 +1411,9 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
     override the default pgrep/pkill -x process check. refresh_icon re-reads the
     built app's icon into LaunchServices before launch (set when a dev-icon swap
     is active, so a just-compiled banner isn't masked by a stale icon cache).
+    launch_args: optional list of strings appended to `open -n <app> --args ...`,
+    delivered to the app as its process arguments (mirrors install_and_launch_sim's
+    launch_args on the simulator path).
     """
     import time
     from .log_columns import make_column_formatter
@@ -1491,7 +1494,10 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
         first_launch = False
 
         info(f"Launching {app_path}")
-        subprocess.run(["open", "-n", app_path], check=True)
+        open_cmd = ["open", "-n", app_path]
+        if launch_args:
+            open_cmd.extend(["--args", *launch_args])
+        subprocess.run(open_cmd, check=True)
 
         appeared = False
         for _ in range(33):
@@ -2506,13 +2512,21 @@ def _derived_glob(scheme, config, platform_subdir, product_name):
     )
 
 
-def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=None):
-    """macOS dev loop driven by [apple] config. Swaps dev icons, builds, launches."""
+def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=None,
+           launch_args=None):
+    """macOS dev loop driven by [apple] config. Swaps dev icons, builds, launches.
+
+    launch_args: optional list of strings passed to the app on each launch
+    (as `open -n <app> --args ...`). Falls back to apple.launch_args in
+    admin.toml when not given explicitly.
+    """
     if output_config is None:
         output_config = globals().get("_OUTPUT_CONFIG")
     if not cfg:
         err("[apple] table missing from admin.toml"); sys.exit(1)
     cfg = _with_global_defaults(cfg, "apple")
+    if launch_args is None:
+        launch_args = cfg.get("launch_args")
     scheme = cfg.get("mac_scheme")
     if not scheme:
         err("apple.mac_scheme required"); sys.exit(1)
@@ -2577,6 +2591,7 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=N
         # An icon swap is active iff build_icon_hooks returned hooks; refresh
         # the built app's icon cache so the swapped-in banner actually shows.
         refresh_icon=pre_build is not None,
+        launch_args=launch_args,
     )
 
 
