@@ -1145,3 +1145,133 @@ def test_swap_dev_can_skip_the_exit_restore():
         pre_loop()
         assert len(registered) == 1, "a dev loop still needs the restore armed"
     print("OK: swap-dev skips the exit restore; the dev loop keeps it")
+
+
+# ---------------------------------------------------------------------------
+# #449 — `icons restore` after two un-restored `dev mac` runs must land on
+# the committed originals, not the bannered PNGs from the second run.
+#
+# `dev_loop_macos` calls post_build() (restore) right after every build, so
+# under normal operation the catalog is already clean long before the process
+# could exit. The bug only shows up when a run never reaches that restore —
+# closed terminal, SIGKILL, Ctrl-C mid-build — which `_load_apple()` already
+# models for every test here: it stubs `register_cleanup` to a no-op, so
+# calling `pre_build()` without ever calling `post_build()` *is* "the process
+# died before its cleanup ran." Two such runs in a row, then a call to
+# `icons restore` (`post_build()` from a fresh `build_icon_hooks()`, exactly
+# what `archetypes/apple.py`'s `icons restore` subcommand does), must land on
+# the byte-identical committed PNG — never the second run's bannered one.
+# ---------------------------------------------------------------------------
+
+def test_two_unrestored_dev_runs_then_icons_restore_is_byte_identical():
+    ns = _load_apple()
+    with tempfile.TemporaryDirectory() as root:
+        mac_dir = os.path.join(root, "AppIcon.appiconset")
+        os.makedirs(mac_dir)
+        committed = b"COMMITTED-ICON-BYTES"
+        icon_png = os.path.join(mac_dir, "icon_128.png")
+        with open(icon_png, "wb") as f:
+            f.write(committed)
+        cfg = {"icons": {"mac_asset_dir": mac_dir}}
+        backup_dir = os.path.join(root, "tmp", "icon-backup")
+
+        # Stand in for the real PIL banner overlay: what's under test is the
+        # backup/self-heal bookkeeping around the mutation, not the pixels.
+        def _fake_swap(icon_dirs, icon_config):
+            d = list(icon_dirs.values())[0]
+            for fname in os.listdir(d):
+                if fname.endswith(".png"):
+                    p = os.path.join(d, fname)
+                    with open(p, "rb") as f:
+                        data = f.read()
+                    with open(p, "wb") as f:
+                        f.write(data + b"-BANNER")
+            return True
+        ns["swap_dev_icons"] = _fake_swap
+
+        # Run 1: pre_build swaps the banner in; the process "dies" before its
+        # post_build restore ever runs (register_cleanup is a no-op here).
+        pre1, _post1 = ns["build_icon_hooks"](cfg, platforms=("mac",), backup_dir=backup_dir)
+        pre1()
+        with open(icon_png, "rb") as f:
+            assert f.read() == committed + b"-BANNER", "run 1 should apply the banner"
+
+        # Run 2: a fresh dev-mac invocation. Its pre_build must self-heal from
+        # the stranded backup (restore the true original) BEFORE re-backing-up,
+        # so the backup it leaves behind is the pristine committed PNG — not
+        # the bannered PNG this run is about to write over it.
+        pre2, _post2 = ns["build_icon_hooks"](cfg, platforms=("mac",), backup_dir=backup_dir)
+        pre2()
+        with open(os.path.join(backup_dir, "mac", "icon_128.png"), "rb") as f:
+            assert f.read() == committed, (
+                "backup after the second un-restored run must still be the "
+                "pristine committed PNG, not the bannered one from run 2"
+            )
+
+        # `admin icons restore` == a fresh build_icon_hooks()'s post_build().
+        _pre3, post3 = ns["build_icon_hooks"](cfg, platforms=("mac",), backup_dir=backup_dir)
+        post3()
+        with open(icon_png, "rb") as f:
+            assert f.read() == committed, (
+                "icons restore must leave the icon byte-identical to committed, "
+                "not put the banner back"
+            )
+    print("OK: two un-restored dev-mac runs + icons restore lands on the committed PNG")
+
+
+def test_two_unrestored_icon_composer_runs_then_icons_restore_is_byte_identical():
+    try:
+        from PIL import Image
+    except ImportError:
+        import pytest
+        pytest.skip("Pillow not installed")
+    sys.path.insert(0, str(LIB_DIR.parent))
+    try:
+        ns = _load_apple()
+        with tempfile.TemporaryDirectory() as root:
+            icon = os.path.join(root, "AppIcon.icon")
+            assets = os.path.join(icon, "Assets")
+            os.makedirs(assets)
+            pristine = json.dumps(
+                {"groups": [{"layers": [{"name": "icon-raw", "image-name": "icon-raw.png"}]}]},
+                indent=2,
+            ) + "\n"
+            json_path = os.path.join(icon, "icon.json")
+            with open(json_path, "w") as f:
+                f.write(pristine)
+            Image.new("RGBA", (64, 64), (10, 20, 30, 255)).save(
+                os.path.join(assets, "icon-raw.png"))
+
+            cfg = {"icons": {"mac_icon": icon}}
+            backup_dir = os.path.join(root, "tmp", "icon-backup")
+
+            # Run 1: swap in the banner group, "die" before the restore.
+            pre1, _post1 = ns["build_icon_hooks"](cfg, platforms=("mac",), backup_dir=backup_dir)
+            pre1()
+            with open(json_path) as f:
+                assert "dev-banner" in f.read(), "run 1 should inject the banner group"
+
+            # Run 2: self-heal must restore the pristine icon.json from run 1's
+            # backup BEFORE re-backing-up, so the backup left behind is the
+            # committed icon.json, not run 2's bannered one.
+            pre2, _post2 = ns["build_icon_hooks"](cfg, platforms=("mac",), backup_dir=backup_dir)
+            pre2()
+            backup_json = os.path.join(backup_dir, "icon-composer", "icon.json")
+            with open(backup_json) as f:
+                assert f.read() == pristine, (
+                    "backup after the second un-restored run must still be the "
+                    "pristine committed icon.json"
+                )
+
+            # `admin icons restore`.
+            _pre3, post3 = ns["build_icon_hooks"](cfg, platforms=("mac",), backup_dir=backup_dir)
+            post3()
+            with open(json_path) as f:
+                assert f.read() == pristine, (
+                    "icons restore must leave icon.json byte-identical to "
+                    "committed, not put the banner back"
+                )
+        print("OK: two un-restored icon-composer runs + icons restore lands on the "
+              "committed icon.json")
+    finally:
+        sys.path.remove(str(LIB_DIR.parent))
