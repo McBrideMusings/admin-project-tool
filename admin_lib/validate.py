@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from admin_lib.kinds import KNOWN_KINDS, CONFIGLESS_KINDS
+from admin_lib.kinds import KNOWN_KINDS, CONFIGLESS_KINDS, TARGET_CONSUMING_KINDS
 
 
 class ValidationError(Exception):
@@ -53,10 +53,6 @@ _GP_SUBTABLE_HINT = (
 
 _VALID_KEY_BINDING_FIELDS = {"label", "run", "action", "signal", "pid_file"}
 
-# Kinds whose factory actually reads `cmd.targets` — both are _make_multi_target
-# in admin_lib/interp.py. Under any other kind the targets get built into the
-# Command and then nothing ever runs them, which is always a manifest mistake.
-_TARGET_CONSUMING_KINDS = {"multi-target", "apple-dev-loop"}
 
 
 def _validate_gp_ints(data: dict, lead: str, exc: type[ValidationError]) -> None:
@@ -215,10 +211,11 @@ def validate_action(lead: str, data: dict, exc: type[ValidationError]) -> Valida
     else:
         targets = flat_targets
 
-    if targets and kind not in _TARGET_CONSUMING_KINDS:
+    if targets and kind not in TARGET_CONSUMING_KINDS:
+        expected = " or ".join(f'"{n}"' for n in sorted(TARGET_CONSUMING_KINDS))
         raise exc(
             f"{lead}: has target(s) {sorted(targets)} but kind is '{kind}' — "
-            'targets only run under kind = "multi-target" (or "apple-dev-loop"); '
+            f"targets only run under kind = {expected}; "
             'add that kind, or remove the target(s) if they were a mistake'
         )
 
