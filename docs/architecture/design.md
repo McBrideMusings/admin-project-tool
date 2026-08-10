@@ -214,12 +214,14 @@ Complex orchestration — ones that parse args, pick targets, branch on config p
 
 A `kind = "python"` (or `kind = "python-script"`) body is `exec`'d with a **flat namespace**: every top-level name from each `admin_lib` module the manifest pulls in — `manifest.modules` unioned with every archetype's declared `modules` (`admin_lib/interp.py::build_namespace`) — is available by **bare name**, no `import` line. Pulling in a module (via `archetypes = [...]` or an explicit `modules = [...]`) is therefore what makes its helpers callable. This is the contract a project uses to reuse library logic instead of re-implementing it in a sidecar script.
 
-**iOS simulator helpers** (`admin_lib/apple.py`, available once the `apple` module is pulled in) are the reusable set for driving a simulator from a python action:
+**Simulator helpers** (`admin_lib/apple.py`, available once the `apple` module is pulled in) are the reusable set for driving a simulator from a python action.
+
+They take a **platform** key — `"ios"` or `"tv"`, defaulting to `"ios"` — which indexes `SIM_PLATFORMS`, the one table holding everything that differs between simulator platforms: the device-name filter (`iPhone` / `Apple TV`), the xcodebuild destination (`iOS Simulator` / `tvOS Simulator`), the DerivedData SDK suffix (`-iphonesimulator` / `-appletvsimulator`), and the config-key prefix (`ios_` / `tv_`). Supporting a new simulator platform is a row in that table, not a second set of functions.
 
 | Helper | Signature | Behaviour |
 |---|---|---|
-| `resolve_simulator()` | `-> (device_id, name)` | Pick the best sim — already-booted first, else newest available iPhone. `sys.exit(1)` if none found. Does **not** boot. |
-| `ensure_booted_simulator()` | `-> (device_id, name)` | `resolve_simulator()`, open Simulator.app, then `simctl bootstatus -b` (boots if needed and blocks until boot completes). The returned id is immediately installable — no race. |
+| `resolve_simulator(platform="ios")` | `-> (device_id, name)` | Pick the best sim **of that platform** — already-booted first, else newest available. `sys.exit(1)` if none found. Does **not** boot. A booted device of another platform is skipped, not returned. |
+| `ensure_booted_simulator(platform="ios")` | `-> (device_id, name)` | `resolve_simulator(platform)`, open Simulator.app, then `simctl bootstatus -b` (boots if needed and blocks until boot completes). The returned id is immediately installable — no race. |
 | `boot_simulator(device_id)` | `-> None` | Issue `simctl boot` and open Simulator.app; **returns before boot completes**. Use `ensure_booted_simulator()` when you need a usable device. |
 | `find_simulator(device_name)` | `-> device_id \| None` | Find a sim by exact name; prefers a booted instance. |
 | `install_and_launch_sim(device_id, app_path, bundle_id, launch_args=None)` | `-> None` | `simctl install` then `simctl launch`; `launch_args` (list of str) are appended to the launch command as UIApplication launch arguments. |

@@ -688,13 +688,32 @@ def test_swap_dev_icon_composer_roundtrip():
 # resolve_simulator / ensure_booted_simulator
 # ---------------------------------------------------------------------------
 
-_BOOTED_LIST = "    iPhone 17 (312D27AE-281C-4CD5-865E-45A30CEBCC60) (Booted)\n"
+# The runtime header is not decoration — `simctl list devices booted` groups its
+# output by runtime exactly like the full listing, and that header is the only
+# thing distinguishing a booted Apple TV from a booted iPhone. This fixture used
+# to omit it, which made it the one arrangement the real command never produces.
+_BOOTED_LIST = (
+    "-- iOS 26.5 --\n"
+    "    iPhone 17 (312D27AE-281C-4CD5-865E-45A30CEBCC60) (Booted)\n"
+)
+_BOOTED_LIST_TV = (
+    "-- tvOS 26.5 --\n"
+    "    Apple TV 4K (3rd generation) (99999999-1111-2222-3333-444444444444) (Booted)\n"
+)
+_BOOTED_LIST_MIXED = (
+    "-- iOS 26.5 --\n"
+    "    iPhone 17 (312D27AE-281C-4CD5-865E-45A30CEBCC60) (Booted)\n"
+    "-- tvOS 26.5 --\n"
+    "    Apple TV 4K (3rd generation) (99999999-1111-2222-3333-444444444444) (Booted)\n"
+)
 _AVAILABLE_LIST = (
     "-- iOS 25.0 --\n"
     "    iPhone 15 (AAAAAAAA-1111-2222-3333-444444444444) (Shutdown)\n"
     "-- iOS 26.5 --\n"
     "    iPhone 16 (BBBBBBBB-1111-2222-3333-444444444444) (Shutdown)\n"
     "    iPhone 17 (CCCCCCCC-1111-2222-3333-444444444444) (Shutdown)\n"
+    "-- tvOS 26.5 --\n"
+    "    Apple TV 4K (3rd generation) (DDDDDDDD-1111-2222-3333-444444444444) (Shutdown)\n"
 )
 
 
@@ -736,6 +755,57 @@ def test_resolve_simulator_exits_when_no_iphones():
         print("OK: resolve_simulator exits 1 when no iPhone simulators exist")
         return
     raise AssertionError("expected SystemExit when no iPhone simulators exist")
+
+
+def test_resolve_simulator_tv_picks_apple_tv_when_none_booted():
+    ns = _load_apple(subprocess_run=_simctl_stub(available=_AVAILABLE_LIST))
+    did, name = ns["resolve_simulator"]("tv")
+    assert name == "Apple TV 4K (3rd generation)", name
+    assert did == "DDDDDDDD-1111-2222-3333-444444444444", did
+    print("OK: resolve_simulator('tv') picks the Apple TV, not the newest iPhone")
+
+
+def test_resolve_simulator_tv_returns_booted_apple_tv():
+    ns = _load_apple(subprocess_run=_simctl_stub(booted=_BOOTED_LIST_TV))
+    did, name = ns["resolve_simulator"]("tv")
+    assert did == "99999999-1111-2222-3333-444444444444", did
+    assert name == "Apple TV 4K (3rd generation)", name
+    print("OK: resolve_simulator('tv') returns the already-booted Apple TV")
+
+
+def test_resolve_simulator_ignores_a_booted_device_of_another_platform():
+    """The failure this prevents: a booted iPhone answering a request for an
+    Apple TV. The app then installs onto the wrong simulator and fails several
+    steps away from the wrong choice made here."""
+    ns = _load_apple(subprocess_run=_simctl_stub(booted=_BOOTED_LIST,
+                                                 available=_AVAILABLE_LIST))
+    did, name = ns["resolve_simulator"]("tv")
+    assert "Apple TV" in name, name
+    assert did == "DDDDDDDD-1111-2222-3333-444444444444", did
+
+    ns = _load_apple(subprocess_run=_simctl_stub(booted=_BOOTED_LIST_TV,
+                                                 available=_AVAILABLE_LIST))
+    did, name = ns["resolve_simulator"]("ios")
+    assert "iPhone" in name, name
+    print("OK: a booted simulator of the wrong platform is skipped, not returned")
+
+
+def test_resolve_simulator_picks_its_own_platform_from_a_mixed_booted_list():
+    ns = _load_apple(subprocess_run=_simctl_stub(booted=_BOOTED_LIST_MIXED))
+    assert ns["resolve_simulator"]("ios")[1] == "iPhone 17"
+    assert ns["resolve_simulator"]("tv")[1] == "Apple TV 4K (3rd generation)"
+    print("OK: with both booted, each platform gets its own")
+
+
+def test_resolve_simulator_rejects_an_unknown_platform():
+    ns = _load_apple(subprocess_run=_simctl_stub(available=_AVAILABLE_LIST))
+    try:
+        ns["resolve_simulator"]("watch")
+    except SystemExit as e:
+        assert e.code == 1, e.code
+        print("OK: resolve_simulator exits 1 on a platform with no SIM_PLATFORMS row")
+        return
+    raise AssertionError("expected SystemExit for an unknown platform")
 
 
 def test_ensure_booted_simulator_waits_for_boot_to_complete():

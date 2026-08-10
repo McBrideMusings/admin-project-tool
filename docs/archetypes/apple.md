@@ -18,8 +18,10 @@ All keys are **optional** unless noted — a wrapper that needs a missing key er
 |---|---|---|
 | `mac_scheme` | — | Xcode scheme for the macOS target. Required for any `mac` action. |
 | `ios_scheme` | — | Xcode scheme for the iOS target. Required for any `ios` action. |
+| `tv_scheme` | — | Xcode scheme for the tvOS target. Required for any `tv` action, and its presence is what puts `tv` in the `build` / `dev` target pickers at all. |
 | `mac_build_config` | `Debug` | Configuration for macOS `build`/`dev`. |
 | `ios_build_config` | `Debug` | Configuration for iOS `build`/`dev`. |
+| `tv_build_config` | `Debug` | Configuration for tvOS `build`/`dev`. |
 | `mac_deploy_config` | `Release` | Configuration for macOS `deploy`. |
 | `ios_deploy_config` | `Release` | Configuration for iOS `deploy`. |
 | `dev_build_settings` | — | Extra `KEY=value` `xcodebuild` build settings appended in **dev** builds only. |
@@ -74,6 +76,13 @@ Team is `IOS_DEVELOPMENT_TEAM` from the environment — not a key here.
 | Key | Meaning |
 |---|---|
 | `ios_device` | Simulator (or device) name for iOS `dev`/`deploy`. The `IOS_DEVICE` environment variable overrides it. When neither is set, the reusable simulator helpers pick the best available sim (see below). |
+| `tv_device` | Simulator name for tvOS `dev`/`build`, e.g. `Apple TV 4K (3rd generation)`. The `TV_DEVICE` environment variable overrides it. When neither is set, the newest available Apple TV simulator is picked. |
+
+A booted simulator only answers for its own platform — a booted iPhone is never
+returned to a `tv` action, and vice versa. If no simulator of the platform
+exists at all, the tvOS path says how to install the runtime
+(`xcodebuild -downloadPlatform tvOS`), which is the usual reason a fresh machine
+has none.
 
 ## Icons — the nested `[apple.icons]` table
 
