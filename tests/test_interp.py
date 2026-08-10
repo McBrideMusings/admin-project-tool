@@ -78,6 +78,58 @@ def test_reserved_verb_collision_is_caught_by_cli(tmp_path):
     assert "reserved" in rc.stderr.lower()
 
 
+def test_check_rejects_multi_target_subtables_missing_kind(tmp_path):
+    """`admin check` must fail on an action with sub-tables but no `kind` —
+    the exact repro from #443: [actions.dev] / [actions.dev.mac] with no
+    `kind = "multi-target"` used to pass `admin check` as `ok`."""
+    (tmp_path / "admin.toml").write_text(
+        'project_name = "T"\narchetypes = []\n'
+        '[commands.dev]\ndesc = "x"\nsteps = ["dev"]\n'
+        '[actions.dev]\ndesc = "Dev"\n'
+        '[actions.dev.mac]\nrun = "echo mac"\n'
+    )
+    rc = subprocess.run(
+        [sys.executable, str(REPO_DIR / "admin-run"), "--project-dir", str(tmp_path), "check"],
+        capture_output=True, text=True,
+    )
+    assert rc.returncode != 0
+    assert "kind" in rc.stderr.lower()
+
+
+def test_empty_run_string_does_not_report_success(monkeypatch):
+    """A shell action whose `run` ends up empty must fail loudly, never print
+    'complete' and exit 0 — the general runtime guard from #443, independent
+    of the parse-time check above (e.g. an explicit `run = ""`)."""
+    data = {
+        "project_name": "T",
+        "archetypes": [],
+        "commands": {"noop": {"desc": "n", "steps": ["noop"]}},
+        "actions": {"noop": {"kind": "shell", "run": ""}},
+    }
+    resolved = _resolve(data)
+    interp.register_all(resolved, "T")
+
+    called = []
+    monkeypatch.setattr(interp, "run_cmd", lambda *a, **k: called.append(a) or 0)
+    with pytest.raises(SystemExit) as exc_info:
+        core._actions["noop"]([])
+    assert exc_info.value.code != 0
+    assert called == [], "run_cmd must never be invoked for a blank command"
+
+
+def test_multi_target_child_with_empty_run_does_not_report_success(monkeypatch):
+    """Same guard, multi-target dispatch path: a target whose `run` is blank
+    must fail rather than silently succeeding."""
+    from admin_lib.manifest import Command
+    cmd = Command(name="build", run="", desc="Build", kind="multi-target", targets={"mac": ""})
+    monkeypatch.setattr(interp, "set_log_context", lambda *a, **k: None)
+    called = []
+    monkeypatch.setattr(interp, "run_cmd", lambda *a, **k: called.append(a) or 0)
+    with pytest.raises(SystemExit):
+        interp._make_multi_target(cmd, {})(["mac"])
+    assert called == [], "run_cmd must never be invoked for a blank target command"
+
+
 def test_python_kind_sees_config_globals():
     data = {
         "project_name": "T",
