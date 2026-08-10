@@ -71,6 +71,12 @@ Team is `IOS_DEVELOPMENT_TEAM` from the environment — not a key here.
 |---|---|
 | `subsystem` | `os_log` subsystem used to build the `log stream` predicate for `dev` console tailing. |
 
+## Launch arguments
+
+| Key | Meaning |
+|---|---|
+| `launch_args` | List of strings appended to the macOS `dev` launch as `open -n <app> --args ...`, so the app receives them as its own process arguments. Read by `dev_mac`. Mac only today — `dev_ios`/`dev_tv` take a `launch_args` parameter but nothing reads this key into it. |
+
 ## Simulator / device
 
 | Key | Meaning |
