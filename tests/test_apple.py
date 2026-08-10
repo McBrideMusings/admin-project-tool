@@ -26,14 +26,18 @@ class _FakeCompleted:
         self.stderr = stderr
 
 
-def _load_apple(subprocess_run=None, subprocess_popen=None):
+def _load_apple(subprocess_run=None, subprocess_popen=None,
+                 log_dir="/tmp", project_root="/tmp/project", warn=None):
     """Load apple.py into an isolated namespace with core/*and optionally
     subprocess.run / subprocess.Popen* stubbed.
 
     subprocess_run, if given, replaces subprocess.run in the loaded
     namespace so tests can assert what plutil/codesign would have been
     called with without actually invoking them. subprocess_popen does the
-    same for the detached `log stream` child.
+    same for the detached `log stream` child. log_dir/project_root back the
+    get_log_dir()/get_project_root() stubs (admin-project-tool#447 — the raw
+    xcodebuild log path is keyed on these). warn, if given, replaces the
+    warn() stub so a test can capture what diagnose_build_failure() reports.
     """
     source = (LIB_DIR / "apple.py").read_text()
     # Only .core is stripped, and only because ns below stubs its names to keep
@@ -52,9 +56,11 @@ def _load_apple(subprocess_run=None, subprocess_popen=None):
         "LOG_FILE": "/tmp/apple-test.log",
         "_children": [],
         "command": lambda *a, **k: (lambda f: f),
+        "get_log_dir": lambda: log_dir,
+        "get_project_root": lambda: project_root,
         "info": lambda *a, **k: None,
         "ok": lambda *a, **k: None,
-        "warn": lambda *a, **k: None,
+        "warn": warn or (lambda *a, **k: None),
         "err": lambda *a, **k: None,
         "register_cleanup": lambda *a, **k: None,
     }
@@ -199,6 +205,53 @@ def test_target_build_dir_ignores_stale_sibling_that_find_app_would_pick():
         assert resolved == just_built_app, resolved
     print("OK: target_build_dir-based resolution picks the just-built app, "
           "not the stale sibling find_app's mtime glob would return")
+
+
+# ---------------------------------------------------------------------------
+# _raw_build_log_path / diagnose_build_failure — admin-project-tool#447
+#
+# The raw xcodebuild log used to live at one fixed /tmp path shared by every
+# checkout on the machine, so two builds running from different
+# worktrees/clones of the same project overwrote each other's log with no
+# way to tell after the fact. _raw_build_log_path() keys the path on the
+# project's own tmp/ dir (get_log_dir()) instead.
+# ---------------------------------------------------------------------------
+
+def test_raw_build_log_path_is_under_the_projects_own_log_dir():
+    with tempfile.TemporaryDirectory() as d:
+        log_dir = os.path.join(d, "tmp")
+        ns = _load_apple(log_dir=log_dir)
+        result = ns["_raw_build_log_path"]()
+        assert result == os.path.join(log_dir, "admin-xcode-build.log"), result
+    print("OK: _raw_build_log_path is keyed on this project's own tmp/ dir, "
+          "not a machine-wide /tmp path")
+
+
+def test_diagnose_build_failure_reads_from_the_projects_own_log_dir():
+    with tempfile.TemporaryDirectory() as d:
+        log_dir = os.path.join(d, "tmp")
+        os.makedirs(log_dir)
+        log_path = os.path.join(log_dir, "admin-xcode-build.log")
+        with open(log_path, "w") as f:
+            f.write("# /some/project @ 2026-08-10 10:00:00\n")
+            f.write("errSecInternalComponent\n")
+
+        warnings = []
+        ns = _load_apple(log_dir=log_dir, warn=lambda msg: warnings.append(msg))
+        ns["diagnose_build_failure"]()
+        assert any("keychain is locked" in w for w in warnings), warnings
+    print("OK: diagnose_build_failure reads the log from this project's own "
+          "tmp/ dir rather than the old fixed /tmp path")
+
+
+def test_diagnose_build_failure_is_a_noop_when_no_log_written_yet():
+    with tempfile.TemporaryDirectory() as d:
+        log_dir = os.path.join(d, "tmp")  # deliberately not created
+        warnings = []
+        ns = _load_apple(log_dir=log_dir, warn=lambda msg: warnings.append(msg))
+        ns["diagnose_build_failure"]()  # must not raise FileNotFoundError
+        assert warnings == [], warnings
+    print("OK: diagnose_build_failure is a no-op when no raw log exists yet")
 
 
 # ---------------------------------------------------------------------------
