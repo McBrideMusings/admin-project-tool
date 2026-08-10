@@ -544,6 +544,33 @@ def test_memory_suffix_not_drift():
     print("OK: --memory 24g == 25769803776 bytes, no phantom drift")
 
 
+def test_argv_to_pair_set_value_starting_with_dash():
+    """A flag's value can legitimately start with "-" (e.g. a `--ulimit
+    core=-1` unlimited form, or a future flag whose value is a bare negative
+    number). The old startswith("-") heuristic read that value as the next
+    flag, silently dropping the real flag from the pair set — issue #387."""
+    ns = _load_docker()
+    args = ["--ulimit", "-1", "--cap-add", "SYS_NICE"]
+    pair_set = ns["_argv_to_pair_set"](args)
+    assert "--ulimit\t-1" in pair_set, f"got {pair_set!r}"
+    assert "--cap-add\tSYS_NICE" in pair_set, f"got {pair_set!r}"
+    assert "-1\t" not in pair_set, f"value misread as a flag: {pair_set!r}"
+    print("OK: dash-prefixed flag values are paired with their flag, not misread as a flag")
+
+
+def test_drift_detects_dash_value_flag_dropped_from_target():
+    """The regression this issue describes: a target-only flag whose value
+    starts with "-" must still surface as drift when missing from live —
+    not silently vanish because its value was misread as a flag."""
+    ns = _load_docker()
+    target = ["--ulimit", "-1", "--cap-add", "SYS_NICE"]
+    live = ["--cap-add", "SYS_NICE"]
+    in_target_only, in_live_only = ns["_compute_drift"](target, live)
+    assert in_target_only == ["--ulimit\t-1"], f"got {in_target_only!r}"
+    assert in_live_only == [], f"got {in_live_only!r}"
+    print("OK: --ulimit -1 missing from live is detected as drift, not silently dropped")
+
+
 def test_drift_detects_undeclared_live_field_strict():
     """Strict drift: live has a port mapping TOML doesn't declare → drift."""
     ns = _load_docker()

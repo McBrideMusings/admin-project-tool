@@ -1107,28 +1107,39 @@ def _normalize_mem_bytes(value):
 # so "24g" and "25769803776" don't read as divergent.
 _MEM_FLAGS = {"--memory", "-m", "--memory-swap", "--memory-reservation", "--shm-size"}
 
+# The only argv pieces `_build_run_args_from_cfg` and `_build_run_args_from_inspect`
+# ever emit as a standalone flag (no following value) — everything else these two
+# renderers produce is a flag immediately followed by its value. Pairing must key
+# off this arity, not off whether the next token happens to start with "-": a
+# value can legitimately start with "-" (e.g. a `--ulimit core=-1` form), and
+# reading that as "the next flag" would silently drop the real flag from the
+# pair set, so the drift comparison would report no drift at all (issue #387).
+_BOOLEAN_FLAGS = {"--privileged", "-t", "-i"}
+
 
 def _argv_to_pair_set(argv):
     """Canonicalize an argv-pieces list into a sortable set of (flag, value)
     strings, so two lists with different orderings compare cleanly.
 
-    Boolean flags (no value, e.g. --privileged) get an empty value.
-    Byte-size flags are normalized to a byte count so unit notation
-    ("24g" vs "25769803776") doesn't register as drift.
+    Boolean flags (no value, e.g. --privileged) get an empty value. Every
+    other flag is paired with the token right after it, regardless of what
+    that token looks like — see `_BOOLEAN_FLAGS`. Byte-size flags are
+    normalized to a byte count so unit notation ("24g" vs "25769803776")
+    doesn't register as drift.
     """
     pairs = set()
     i = 0
     while i < len(argv):
         flag = argv[i]
-        if i + 1 < len(argv) and not argv[i + 1].startswith("-"):
+        if flag in _BOOLEAN_FLAGS or i + 1 >= len(argv):
+            pairs.add(f"{flag}\t")
+            i += 1
+        else:
             value = argv[i + 1]
             if flag in _MEM_FLAGS:
                 value = _normalize_mem_bytes(value)
             pairs.add(f"{flag}\t{value}")
             i += 2
-        else:
-            pairs.add(f"{flag}\t")
-            i += 1
     return pairs
 
 
