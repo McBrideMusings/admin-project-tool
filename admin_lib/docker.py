@@ -18,10 +18,13 @@ from collections import OrderedDict
 from .core import (
     C,
     COMPUTED_VARS,
+    MASK_VALUE,
     _ENV_VAR_RE,
+    _log_write,
     get_log_dir,
     get_log_file,
     get_urls,
+    is_secret_env_name,
     _children,
     command,
     info,
@@ -432,6 +435,32 @@ def _parse_env_file(path):
     return out
 
 
+def _mask_env_assignment(assignment):
+    """Return a `NAME=VALUE` env assignment with VALUE replaced by MASK_VALUE
+    when NAME looks like a credential (issue #436); anything else — including a
+    string with no `=` — comes back unchanged.
+    """
+    name, sep, _ = assignment.partition("=")
+    if sep and is_secret_env_name(name):
+        return f"{name}={MASK_VALUE}"
+    return assignment
+
+
+def _mask_argv_for_display(argv):
+    """Return a copy of a `docker run` argv-pieces list with secret-looking
+    `-e NAME=VALUE` values replaced by MASK_VALUE (issue #436).
+
+    Display-only — the real argv (with real values) is what actually reaches
+    `docker run`. Never call this on the argv used to build the command that
+    gets executed or written to a restore script.
+    """
+    masked = list(argv)
+    for i in range(len(masked) - 1):
+        if masked[i] == "-e":
+            masked[i + 1] = _mask_env_assignment(masked[i + 1])
+    return masked
+
+
 def remote_recreate_container(host, image, container=None, target_cfg=None,
                               force=False, dry_run=False, skip_transfer=False):
     """Recreate a container on `host` from a local image.
@@ -499,7 +528,9 @@ def remote_recreate_container(host, image, container=None, target_cfg=None,
             if in_target_only or in_live_only:
                 if force:
                     warn("Drift detected — proceeding with --force (live state will be discarded):")
-                    print(_format_drift_report(in_target_only, in_live_only, refusing=False))
+                    report = _format_drift_report(in_target_only, in_live_only, refusing=False)
+                    print(report)
+                    _log_write(report)
                 else:
                     err(_format_drift_report(in_target_only, in_live_only))
                     return 1
@@ -517,13 +548,18 @@ def remote_recreate_container(host, image, container=None, target_cfg=None,
     health_shell = _health_check_shell(target_cfg) if target_cfg is not None else None
 
     if dry_run:
+        # Masked for display/log only — `remote_run` (built above from the
+        # unmasked `run_cmd_parts`) is what actually runs when dry_run=False,
+        # and is left untouched here.
+        display_run = " ".join(shlex.quote(p) for p in _mask_argv_for_display(run_cmd_parts))
         if provision:
             info(f"Dry run — bind-mount dirs that would be provisioned {location}:")
             for c in provision:
                 print(f"  {c}")
             print()
         info(f"Dry run — docker run command that would be executed {location}:")
-        print(f"  {remote_run}\n")
+        print(f"  {display_run}\n")
+        _log_write(f"  {display_run}")
         if health_shell:
             info("Dry run — post-deploy health check that would run:")
             print(f"  {health_shell}\n")
@@ -1130,9 +1166,20 @@ def _format_drift_report(in_target_only, in_live_only, refusing=True):
     if not in_target_only and not in_live_only:
         return ""
 
+    def _mask_entry(entry):
+        # Entries are "flag\tvalue" (see _argv_to_pair_set); a "-e" entry's
+        # value is "NAME=VALUE". Mask on the name, same as the dry-run
+        # preview and `admin env` — the diff still reports THAT the variable
+        # differs, just not what it differs by (issue #436 comment).
+        flag, value = entry.split("\t", 1)
+        if flag == "-e":
+            value = _mask_env_assignment(value)
+        return f"{flag}\t{value}"
+
     def _fmt_block(label, entries):
         if not entries:
             return ""
+        entries = [_mask_entry(e) for e in entries]
         rows = []
         flag_width = max(len(e.split("\t", 1)[0]) for e in entries)
         for entry in entries:

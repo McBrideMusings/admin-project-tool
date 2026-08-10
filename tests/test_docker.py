@@ -22,7 +22,7 @@ sys.path.insert(0, str(REPO))
 # `${VAR:-default}` mean the same thing in a [docker_run] table as everywhere
 # else in the manifest; substituting a fake here would let the two drift apart
 # again without a test noticing.
-from admin_lib.core import COMPUTED_VARS, _ENV_VAR_RE  # noqa: E402
+from admin_lib.core import COMPUTED_VARS, _ENV_VAR_RE, MASK_VALUE, is_secret_env_name  # noqa: E402
 
 
 def _load_docker():
@@ -34,6 +34,7 @@ def _load_docker():
     source = _re.sub(r"from \.[a-zA-Z_]+ import [^\n]+", "pass", source)
 
     warnings = []
+    logged = []
     ns: dict = {
         "C": type("C", (), {"DIM": "", "RESET": "", "GREEN": "", "RED": "", "YELLOW": ""})(),
         "get_log_dir": lambda: "/tmp",
@@ -54,9 +55,16 @@ def _load_docker():
         "ssh_cmd": lambda *a, **k: 0,
         "COMPUTED_VARS": COMPUTED_VARS,
         "_ENV_VAR_RE": _ENV_VAR_RE,
+        # Real, not stubbed — same rationale as COMPUTED_VARS/_ENV_VAR_RE above:
+        # the secret-masking heuristic (issue #436) must be the one core.py
+        # actually ships, or a test could pass against a fake that diverges.
+        "MASK_VALUE": MASK_VALUE,
+        "is_secret_env_name": is_secret_env_name,
+        "_log_write": lambda text: logged.append(text),
     }
     exec(compile(source, "docker.py", "exec"), ns)
     ns["_warnings"] = warnings
+    ns["_logged"] = logged
     return ns
 
 
@@ -1226,3 +1234,143 @@ def test_drift_report_omits_refusal_tail_under_force():
     assert "--force" not in forced
     default = ns["_format_drift_report"](["-v\t/a:/b"], [])
     assert "Refusing to deploy" in default
+
+
+# ---------------------------------------------------------------------------
+# Secret masking (issue #436) — dry-run preview, drift report, log persistence
+# ---------------------------------------------------------------------------
+
+def test_mask_argv_for_display_masks_only_secret_named_env():
+    ns = _load_docker()
+    argv = [
+        "docker", "run", "-d", "--name", "etv-station",
+        "-e", "PLEX_TOKEN=abc123secret",
+        "-e", "PLEX_URL=http://10.0.0.5:32400",
+        "-e", "TAUTULLI_API_KEY=xyz789",
+        "myimage",
+    ]
+    masked = ns["_mask_argv_for_display"](argv)
+    assert f"PLEX_TOKEN={ns['MASK_VALUE']}" in masked
+    assert f"TAUTULLI_API_KEY={ns['MASK_VALUE']}" in masked
+    assert "PLEX_URL=http://10.0.0.5:32400" in masked
+    assert "abc123secret" not in masked
+    assert "xyz789" not in masked
+    # original argv (used for the actually-executed docker run) is untouched
+    assert "PLEX_TOKEN=abc123secret" in argv
+    print("OK: only *_TOKEN/*_KEY/*_SECRET/*_PASSWORD env values are masked for display")
+
+
+def test_format_drift_report_masks_secret_env_value():
+    ns = _load_docker()
+    report = ns["_format_drift_report"](
+        ["-e\tPLEX_TOKEN=newsecret"],
+        ["-e\tPLEX_TOKEN=oldsecret", "-e\tPLEX_URL=http://10.0.0.9:32400"],
+    )
+    assert "newsecret" not in report
+    assert "oldsecret" not in report
+    assert f"PLEX_TOKEN={ns['MASK_VALUE']}" in report
+    # the variable name and the fact that it differs must still be visible
+    assert "PLEX_TOKEN" in report
+    # a non-secret-named var stays in the clear
+    assert "PLEX_URL=http://10.0.0.9:32400" in report
+    print("OK: drift report masks secret-named env values, keeps names + non-secret values visible")
+
+
+def test_remote_recreate_container_dry_run_masks_secret_but_not_real_run(monkeypatch, capsys):
+    """The dry-run preview must mask a *_TOKEN value on screen and in the log,
+    while the real docker run (dry_run=False) still gets the real value."""
+    ns = _load_docker()
+    ns["_is_local_host"] = lambda host: True
+
+    class _NotFoundProc:
+        returncode = 1
+        stdout = ""
+
+    monkeypatch.setattr(ns["subprocess"], "run", lambda *a, **k: _NotFoundProc())
+
+    cfg = {
+        "env": [
+            {"name": "PLEX_TOKEN", "value": "supersecretvalue123"},
+            {"name": "PLEX_URL", "value": "http://10.0.0.5:32400"},
+        ],
+    }
+
+    rc = ns["remote_recreate_container"](
+        "localhost", "myimage", container="admin-test-436",
+        target_cfg=cfg, dry_run=True,
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "supersecretvalue123" not in out
+    assert f"PLEX_TOKEN={ns['MASK_VALUE']}" in out
+    assert "PLEX_URL=http://10.0.0.5:32400" in out
+
+    # The dry-run line must reach the log file (masked) — issue #436's third
+    # complaint was that the leak persists in tmp/deploy.<timestamp>.log.
+    logged_text = "\n".join(ns["_logged"])
+    assert "supersecretvalue123" not in logged_text
+    assert f"PLEX_TOKEN={ns['MASK_VALUE']}" in logged_text
+
+    # A real (non-dry-run) run must NOT mask — the actually-executed docker
+    # run still needs the real token. run_cmd is stubbed to just record what
+    # it was asked to run.
+    executed = []
+    ns["run_cmd"] = lambda cmd, *a, **k: (executed.append(cmd), 0)[1]
+    rc2 = ns["remote_recreate_container"](
+        "localhost", "myimage", container="admin-test-436",
+        target_cfg=cfg, dry_run=False,
+    )
+    assert rc2 == 0
+    assert any("supersecretvalue123" in cmd for cmd in executed), (
+        f"the real docker run must carry the real secret value, got: {executed!r}"
+    )
+    print("OK: dry-run preview + log are masked; the real docker run still gets the real value")
+
+
+def test_remote_recreate_container_force_drift_masks_and_logs_secret(monkeypatch, capsys):
+    """A --force redeploy that hits drift on a *_TOKEN var must mask it in the
+    printed report AND in what reaches the log (issue #436 follow-up comment:
+    this path 'matters more' since it fires unprompted on an ordinary deploy)."""
+    import json as _json
+
+    ns = _load_docker()
+    ns["_is_local_host"] = lambda host: True
+
+    inspect_json = _json.dumps([{
+        "HostConfig": {},
+        "Config": {"Env": ["PLEX_TOKEN=oldsecretvalue", "PLEX_URL=http://10.0.0.9:32400"]},
+        "NetworkSettings": {},
+    }])
+
+    class _InspectProc:
+        returncode = 0
+        stdout = inspect_json
+
+    class _ImageInspectProc:
+        returncode = 1
+        stdout = ""
+
+    def _fake_run(argv, capture_output=True, text=True):
+        if argv[:3] == ["docker", "image", "inspect"]:
+            return _ImageInspectProc()
+        return _InspectProc()
+
+    monkeypatch.setattr(ns["subprocess"], "run", _fake_run)
+    ns["run_cmd"] = lambda *a, **k: 0
+
+    cfg = {"env": [{"name": "PLEX_TOKEN", "value": "newsecretvalue"}]}
+    rc = ns["remote_recreate_container"](
+        "localhost", "myimage", container="admin-test-436",
+        target_cfg=cfg, force=True, dry_run=True,
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "oldsecretvalue" not in out
+    assert "newsecretvalue" not in out
+    assert f"PLEX_TOKEN={ns['MASK_VALUE']}" in out
+    assert "http://10.0.0.9:32400" in out  # non-secret var stays visible
+
+    logged_text = "\n".join(ns["_logged"])
+    assert "oldsecretvalue" not in logged_text
+    assert "newsecretvalue" not in logged_text
+    print("OK: forced-redeploy drift report masks secret env in print AND log")
