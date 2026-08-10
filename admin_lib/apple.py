@@ -52,6 +52,7 @@ Explicit dev keys override the derived defaults.
 unset (i.e. PRODUCT_NAME == scheme, the Xcode default).
 """
 
+import datetime
 import glob
 import json
 import os
@@ -66,6 +67,7 @@ from .core import (
     command,
     get_log_dir,
     get_log_file,
+    get_project_root,
     info,
     ok,
     warn,
@@ -92,7 +94,18 @@ from .streams import stop_stream, stream_subprocess
 # Xcode build helpers
 # ---------------------------------------------------------------------------
 
-_RAW_BUILD_LOG = "/tmp/admin-xcode-build.log"
+_RAW_BUILD_LOG_NAME = "admin-xcode-build.log"
+
+
+def _raw_build_log_path():
+    """Path to the raw xcodebuild log, under this project's own tmp/ dir.
+
+    Keyed on the project (via get_log_dir(), which is <project_root>/tmp by
+    default) rather than one fixed /tmp path shared by the whole machine —
+    two builds running from different worktrees/clones of the same project
+    no longer overwrite each other's raw log (admin-project-tool#447).
+    """
+    return os.path.join(get_log_dir(), _RAW_BUILD_LOG_NAME)
 
 
 def find_app(pattern):
@@ -142,7 +155,7 @@ def target_build_dir(project, scheme, config, destination, extra_settings="",
 def diagnose_build_failure():
     """After a failed xcodebuild, check for known fixable errors and print remediation."""
     try:
-        with open(_RAW_BUILD_LOG, "r", errors="replace") as f:
+        with open(_raw_build_log_path(), "r", errors="replace") as f:
             content = f.read()
     except FileNotFoundError:
         return
@@ -156,8 +169,10 @@ def diagnose_build_failure():
 
 def xcodebuild_filtered(project, scheme, config, destination, action="build",
                          extra_settings="", allow_provisioning=True):
-    """Run xcodebuild with grep-filtered output. Raw log tee'd to
-    /tmp/admin-xcode-build.log. Returns rc.
+    """Run xcodebuild with grep-filtered output. Raw log tee'd to this
+    project's own tmp/admin-xcode-build.log (see _raw_build_log_path()),
+    prefixed with the project root and a timestamp so a log that somehow
+    still ends up stale or foreign identifies itself. Returns rc.
 
     Warning: extra_settings applies globally (incl. SwiftPM bundles). Only
     PRODUCT_BUNDLE_IDENTIFIER is SwiftPM-safe; PRODUCT_NAME and
@@ -181,8 +196,13 @@ def xcodebuild_filtered(project, scheme, config, destination, action="build",
     parts.append("2>&1")
 
     build_cmd = " ".join(parts)
+    log_path = _raw_build_log_path()
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(log_path, "w") as f:
+        f.write(f"# {get_project_root()} @ {now}\n")
     return run_cmd(
-        f'{build_cmd} | tee {_RAW_BUILD_LOG} | grep -E "BUILD|error:|warning:" ; exit ${{PIPESTATUS[0]}}'
+        f'{build_cmd} | tee -a "{log_path}" | grep -E "BUILD|error:|warning:" ; exit ${{PIPESTATUS[0]}}'
     )
 
 
