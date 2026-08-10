@@ -323,6 +323,45 @@ def test_dispatch_leading_flag_still_means_image(dispatch):
     assert [c[0] for c in calls] == ["recreate"]
 
 
+def test_dispatch_help_prints_usage_and_does_not_deploy(dispatch, capsys):
+    """`admin deploy --help` must never rebuild/recreate — it only prints usage."""
+    deploy_dispatch, calls = dispatch
+    assert deploy_dispatch(["--help"], deploy_cfg={"src": "d", "dest": "/x"}) == 0
+    assert calls == []
+    out = capsys.readouterr().out
+    assert "Usage: admin deploy [image|files|all] [--dry-run] [--force]" in out
+
+
+def test_dispatch_short_help_flag_also_prints_usage(dispatch, capsys):
+    """`admin deploy -h` is the same escape hatch as `--help`."""
+    deploy_dispatch, calls = dispatch
+    assert deploy_dispatch(["-h"], deploy_cfg={"src": "d", "dest": "/x"}) == 0
+    assert calls == []
+    assert "Usage: admin deploy" in capsys.readouterr().out
+
+
+def test_dispatch_unknown_flag_refuses_to_deploy(dispatch):
+    """A typo'd flag must not silently fall through to a full image deploy."""
+    deploy_dispatch, calls = dispatch
+    assert deploy_dispatch(["--dryrun"], deploy_cfg={"src": "d", "dest": "/x"}) == 1
+    assert calls == []
+
+
+def test_dispatch_checks_every_argument_not_just_the_first(dispatch):
+    """`admin deploy files --hlep` must fail loudly, not quietly drop the flag."""
+    deploy_dispatch, calls = dispatch
+    assert deploy_dispatch(["files", "--hlep"], deploy_cfg={"src": "d", "dest": "/x"}) == 1
+    assert calls == []
+
+
+def test_dispatch_two_targets_is_an_error_not_a_silent_pick(dispatch):
+    """`admin deploy image files` must not rebuild the image while quietly
+    dropping the files sync — a second valid target word is fatal too."""
+    deploy_dispatch, calls = dispatch
+    assert deploy_dispatch(["image", "files"], deploy_cfg={"src": "d", "dest": "/x"}) == 1
+    assert calls == []
+
+
 def test_dispatch_bare_asks_when_there_is_a_real_choice(dispatch, monkeypatch):
     """With a [deploy] table and a TTY, bare `admin deploy` asks rather than
     assuming — same convention as `admin logs`."""
