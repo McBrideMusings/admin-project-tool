@@ -37,6 +37,54 @@ def test_sync_remote_keeps_delete_by_default(tmp_path, monkeypatch):
     assert "--delete" in seen[0]
 
 
+def test_sync_remote_includes_chown_flag_when_given(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    src.mkdir()
+    seen = []
+    monkeypatch.setattr(core, "run_cmd", lambda cmd, **kw: seen.append(cmd) or 0)
+
+    core.sync(str(src), "root@host:/mnt/appdata", chown="99:100")
+
+    assert "--chown=99:100" in seen[0]
+
+
+def test_sync_remote_omits_chown_flag_when_absent(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    src.mkdir()
+    seen = []
+    monkeypatch.setattr(core, "run_cmd", lambda cmd, **kw: seen.append(cmd) or 0)
+
+    core.sync(str(src), "root@host:/mnt/appdata")
+
+    assert "--chown" not in seen[0]
+
+
+def test_sync_local_warns_when_chown_has_no_effect(tmp_path, monkeypatch):
+    """A local (non-remote) sync can't honour chown — shutil always writes as
+    whoever runs it — so setting it there must warn, not silently no-op."""
+    src = tmp_path / "src"
+    src.mkdir()
+    dest = tmp_path / "dest"
+    warned = []
+    monkeypatch.setattr(core, "warn", lambda msg: warned.append(msg))
+
+    core.sync(str(src), str(dest), chown="99:100")
+
+    assert warned and "99:100" in warned[0]
+
+
+def test_sync_local_no_warning_without_chown(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    src.mkdir()
+    dest = tmp_path / "dest"
+    warned = []
+    monkeypatch.setattr(core, "warn", lambda msg: warned.append(msg))
+
+    core.sync(str(src), str(dest))
+
+    assert warned == []
+
+
 def test_sync_dry_run_passes_flag_and_changes_nothing(tmp_path, monkeypatch):
     src = tmp_path / "src"
     src.mkdir()
@@ -175,6 +223,53 @@ def test_no_post_sync_declared_stays_none(tmp_path, monkeypatch):
     assert seen["post_sync"] is None
 
 
+def test_deploy_files_passes_chown_through_to_sync(tmp_path, monkeypatch):
+    src = tmp_path / "appdata"
+    src.mkdir()
+    seen = {}
+    monkeypatch.setattr(core, "sync", lambda s, d, **kw: seen.update(**kw) or 0)
+    monkeypatch.setattr(remote, "_is_local_host", lambda h: False)
+
+    remote.deploy_files({
+        "src": str(src),
+        "dest": "/mnt/app",
+        "host": "root@tower",
+        "chown": "99:100",
+    })
+
+    assert seen["chown"] == "99:100"
+
+
+def test_deploy_files_resolves_chown_env_placeholders(tmp_path, monkeypatch):
+    src = tmp_path / "appdata"
+    src.mkdir()
+    monkeypatch.setenv("TEST_UID", "99")
+    seen = {}
+    monkeypatch.setattr(core, "sync", lambda s, d, **kw: seen.update(**kw) or 0)
+    monkeypatch.setattr(remote, "_is_local_host", lambda h: False)
+
+    remote.deploy_files({
+        "src": str(src),
+        "dest": "/mnt/app",
+        "host": "root@tower",
+        "chown": "${TEST_UID}:100",
+    })
+
+    assert seen["chown"] == "99:100"
+
+
+def test_deploy_files_no_chown_declared_stays_none(tmp_path, monkeypatch):
+    src = tmp_path / "appdata"
+    src.mkdir()
+    seen = {}
+    monkeypatch.setattr(core, "sync", lambda s, d, **kw: seen.update(**kw) or 0)
+    monkeypatch.setattr(remote, "_is_local_host", lambda h: False)
+
+    remote.deploy_files({"src": str(src), "dest": "/mnt/app", "host": "root@tower"})
+
+    assert seen["chown"] is None
+
+
 def test_deploy_files_drops_host_when_running_on_the_target(tmp_path, monkeypatch):
     src = tmp_path / "appdata"
     src.mkdir()
@@ -217,6 +312,30 @@ def test_deploy_files_requires_src_and_dest():
 
 def test_deploy_files_errors_when_src_missing(tmp_path):
     assert remote.deploy_files({"src": str(tmp_path / "nope"), "dest": "/x"}) == 1
+
+
+# --- remote.deploy_cfg_with_chown_default -----------------------------------
+
+def test_chown_default_fills_in_from_user_when_unset():
+    out = remote.deploy_cfg_with_chown_default({"src": "d", "dest": "/x"}, "99:100")
+    assert out["chown"] == "99:100"
+
+
+def test_chown_default_leaves_explicit_chown_alone():
+    out = remote.deploy_cfg_with_chown_default(
+        {"src": "d", "dest": "/x", "chown": "42:42"}, "99:100",
+    )
+    assert out["chown"] == "42:42"
+
+
+def test_chown_default_noop_without_a_user():
+    cfg = {"src": "d", "dest": "/x"}
+    out = remote.deploy_cfg_with_chown_default(cfg, None)
+    assert out is cfg
+
+
+def test_chown_default_passes_through_none_deploy_cfg():
+    assert remote.deploy_cfg_with_chown_default(None, "99:100") is None
 
 
 # --- deploy_dispatch routing -----------------------------------------------
@@ -292,6 +411,17 @@ def test_manifest_accepts_valid_deploy_table(tmp_path):
         tmp_path,
     )
     assert m.deploy["src"] == "deploy/appdata"
+
+
+def test_manifest_accepts_deploy_chown_key(tmp_path):
+    m = _manifest(
+        '[deploy]\n'
+        'src = "deploy/appdata"\n'
+        'dest = "/mnt/user/appdata/app"\n'
+        'chown = "99:100"\n',
+        tmp_path,
+    )
+    assert m.deploy["chown"] == "99:100"
 
 
 def test_manifest_rejects_unknown_deploy_key(tmp_path):
