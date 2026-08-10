@@ -76,6 +76,35 @@ def err(msg):
 
 
 # ---------------------------------------------------------------------------
+# Secret-looking env var names (issue #436)
+# ---------------------------------------------------------------------------
+#
+# A `.env` value reaches the manifest as `${VAR}` specifically to keep it out
+# of anything read, copied, pasted, or shared — a `--dry-run` preview, an
+# `admin env` table, or a run-config drift report are exactly that. Detect on
+# the name (no manifest `secret = true` key — that's a schema change nobody
+# has asked for) and mask by value substitution everywhere those get
+# rendered for a human. The real value still reaches the actually-executed
+# `docker run`; only display/log surfaces are masked.
+
+MASK_VALUE = "••••"
+
+_SECRET_NAME_SUFFIXES = ("_TOKEN", "_KEY", "_SECRET", "_PASSWORD")
+
+
+def is_secret_env_name(name):
+    """True if `name` looks like it holds a credential, by suffix convention
+    (*_TOKEN, *_KEY, *_SECRET, *_PASSWORD). Case-insensitive since env var
+    casing isn't enforced. Doesn't inspect the value — a name-only heuristic,
+    so it can't catch a credential in an oddly-named var, and it can't be
+    wrong about the value (there's no value analysis to be wrong about).
+    """
+    if not name:
+        return False
+    return name.upper().endswith(_SECRET_NAME_SUFFIXES)
+
+
+# ---------------------------------------------------------------------------
 # URL status helpers
 # ---------------------------------------------------------------------------
 
@@ -518,7 +547,10 @@ def cmd_env(args):
         val = os.environ.get(name)
         if val is not None:
             status = f"{C.GREEN}set{C.RESET}"
-            shown = val if len(val) < 60 else val[:57] + "..."
+            if is_secret_env_name(name):
+                shown = MASK_VALUE
+            else:
+                shown = val if len(val) < 60 else val[:57] + "..."
             line = f"  {name:<{width}}  {status}  = {shown}"
         elif default is not None:
             line = f"  {name:<{width}}  {C.YELLOW}default{C.RESET}  = {default}"

@@ -309,6 +309,40 @@ def test_stamp_log_ignores_ansi_before_timestamp():
 
 
 # ---------------------------------------------------------------------------
+# Secret masking (issue #436) — is_secret_env_name + `admin env` table
+# ---------------------------------------------------------------------------
+
+def test_is_secret_env_name_matches_declared_suffixes():
+    assert core.is_secret_env_name("PLEX_TOKEN")
+    assert core.is_secret_env_name("TAUTULLI_API_KEY")
+    assert core.is_secret_env_name("DB_SECRET")
+    assert core.is_secret_env_name("ADMIN_PASSWORD")
+    assert core.is_secret_env_name("plex_token")  # case-insensitive
+    assert not core.is_secret_env_name("PLEX_URL")
+    assert not core.is_secret_env_name("APP_IMAGE")
+    assert not core.is_secret_env_name("")
+    assert not core.is_secret_env_name(None)
+
+
+def test_cmd_env_masks_secret_named_var_value(monkeypatch, capsys):
+    """`admin env`'s resolved-values table must mask a *_TOKEN value and leave
+    a non-secret-named var in the clear (issue #436)."""
+    _clear_registry()
+    monkeypatch.setenv("PLEX_TOKEN", "supersecretvalue123")
+    monkeypatch.setenv("PLEX_URL", "http://10.0.0.5:32400")
+    core.register_env_var("PLEX_TOKEN", used_by=["cmd:deploy"])
+    core.register_env_var("PLEX_URL", used_by=["cmd:deploy"])
+    try:
+        core.cmd_env([])
+        out = capsys.readouterr().out
+    finally:
+        _clear_registry()
+    assert "supersecretvalue123" not in out
+    assert f"= {core.MASK_VALUE}" in out
+    assert "http://10.0.0.5:32400" in out
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
