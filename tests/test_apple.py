@@ -297,7 +297,26 @@ def test_log_predicate_unknown_level_exits():
         assert e.code == 1, e.code
         print("OK: log_predicate exits non-zero on unknown level")
         return
-    raise AssertionError("expected SystemExit on unknown level")
+    raise AssertionError("log_predicate did not raise SystemExit on an unknown level")
+
+
+def test_log_predicate_unknown_level_names_accepted_set():
+    # admin-project-tool#445 — the rejection used to say only "Unknown log
+    # level: info", forcing a source read to learn the accepted set. It must
+    # now name every accepted level, derived from the same dict log_predicate
+    # dispatches on rather than typed out a second time.
+    seen = []
+    ns = _load_apple()
+    ns["err"] = lambda msg: seen.append(msg)
+    try:
+        ns["log_predicate"]("MyApp", "com.example.app", level="info")
+    except SystemExit:
+        pass
+    assert len(seen) == 1, seen
+    assert seen[0] == (
+        "Unknown log level: info (expected one of: app, debug, system, verbose)"
+    ), seen[0]
+    print("OK: log_predicate names the accepted set when rejecting an unknown level")
 
 
 # ---------------------------------------------------------------------------
