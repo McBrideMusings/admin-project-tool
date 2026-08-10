@@ -53,6 +53,7 @@ unset (i.e. PRODUCT_NAME == scheme, the Xcode default).
 """
 
 import datetime
+import fcntl
 import glob
 import json
 import os
@@ -106,6 +107,97 @@ def _raw_build_log_path():
     no longer overwrite each other's raw log (admin-project-tool#447).
     """
     return os.path.join(get_log_dir(), _RAW_BUILD_LOG_NAME)
+
+
+# ---------------------------------------------------------------------------
+# Xcode build lock — admin-project-tool#450
+# ---------------------------------------------------------------------------
+
+_XCODE_LOCK_NAME = "admin-xcode-build.lock"
+
+
+def _xcode_lock_path():
+    """Path to the Xcode build lock, under this project's own tmp/ dir.
+
+    Keyed on the project (via get_log_dir()) exactly like
+    _raw_build_log_path() is (admin-project-tool#447), so two
+    worktrees/clones building different branches never contend with each
+    other. Only two builds in the *same* checkout do.
+    """
+    return os.path.join(get_log_dir(), _XCODE_LOCK_NAME)
+
+
+def _acquire_xcode_lock(description):
+    """Take the exclusive per-checkout Xcode build lock, or refuse.
+
+    Two admin tasks against one checkout (`admin test apple` started while
+    `admin dev mac` is building, say) can both invoke xcodebuild; the
+    second silently queues behind Xcode's own build lock and just looks
+    like a slow build. Refusing outright beats a multi-minute wait that
+    nothing announces.
+
+    Returns an open file handle holding the lock — pass it to
+    _release_xcode_lock() when the build is done — or None, after printing
+    a refusal via err() naming the build already running.
+
+    Stale locks need no cleanup: flock(2) ties the lock to this open file
+    description, which the kernel drops once every fd referencing it is
+    gone, including when the holder is killed. There is no pid file to go
+    stale and nothing to delete by hand.
+    """
+    lock_path = _xcode_lock_path()
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    fh = open(lock_path, "a+")
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        # LOCK_NB's contended case — another holder has it. A genuine I/O
+        # failure (permission denied, a flaky mount) is a different OSError
+        # subclass and should propagate rather than be misreported as
+        # "another build is running".
+        fh.seek(0)
+        holder = fh.read().strip()
+        fh.close()
+        err(f"Refusing to start — {holder or 'another Xcode build'} is "
+            "already running in this checkout.")
+        return None
+    except OSError:
+        fh.close()
+        raise
+    fh.seek(0)
+    fh.truncate()
+    started = datetime.datetime.now().strftime("%H:%M:%S")
+    fh.write(f"{description}, started at {started} (pid {os.getpid()})")
+    fh.flush()
+    return fh
+
+
+def _release_xcode_lock(fh):
+    """Release and close a lock handle from _acquire_xcode_lock(). No-op on None."""
+    if fh is None:
+        return
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    finally:
+        fh.close()
+
+
+def run_locked_xcode(cmd, description):
+    """Run *cmd* — a shell command that itself invokes xcodebuild, e.g. a
+    project's ``[apple] test_cmd`` — under the same per-checkout lock
+    xcodebuild_filtered() takes, so a raw command configured in the
+    manifest can't run alongside a build/dev/deploy invocation.
+
+    Returns run_cmd(cmd)'s rc, or 1 without running cmd if another build
+    already holds the lock (its refusal has already been printed).
+    """
+    lock = _acquire_xcode_lock(description)
+    if lock is None:
+        return 1
+    try:
+        return run_cmd(cmd)
+    finally:
+        _release_xcode_lock(lock)
 
 
 def find_app(pattern):
@@ -174,6 +266,10 @@ def xcodebuild_filtered(project, scheme, config, destination, action="build",
     prefixed with the project root and a timestamp so a log that somehow
     still ends up stale or foreign identifies itself. Returns rc.
 
+    Holds the per-checkout Xcode build lock for the duration of the build,
+    and refuses outright — naming the build already running — if another
+    one in this checkout holds it (see _acquire_xcode_lock()).
+
     Warning: extra_settings applies globally (incl. SwiftPM bundles). Only
     PRODUCT_BUNDLE_IDENTIFIER is SwiftPM-safe; PRODUCT_NAME and
     INFOPLIST_KEY_CFBundleDisplayName cause "Multiple commands produce"
@@ -196,14 +292,21 @@ def xcodebuild_filtered(project, scheme, config, destination, action="build",
     parts.append("2>&1")
 
     build_cmd = " ".join(parts)
-    log_path = _raw_build_log_path()
-    os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(log_path, "w") as f:
-        f.write(f"# {get_project_root()} @ {now}\n")
-    return run_cmd(
-        f'{build_cmd} | tee -a "{log_path}" | grep -E "BUILD|error:|warning:" ; exit ${{PIPESTATUS[0]}}'
-    )
+    description = f'xcodebuild {action} -scheme "{scheme}" -destination "{destination}"'
+    lock = _acquire_xcode_lock(description)
+    if lock is None:
+        return 1
+    try:
+        log_path = _raw_build_log_path()
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(log_path, "w") as f:
+            f.write(f"# {get_project_root()} @ {now}\n")
+        return run_cmd(
+            f'{build_cmd} | tee -a "{log_path}" | grep -E "BUILD|error:|warning:" ; exit ${{PIPESTATUS[0]}}'
+        )
+    finally:
+        _release_xcode_lock(lock)
 
 
 def dev_macos_postprocess(built_app_path, dev_product_name, dev_display_name, sign_identity="-"):

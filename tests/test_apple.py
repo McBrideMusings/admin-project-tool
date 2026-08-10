@@ -8,6 +8,7 @@ resolve outside a package); #95 tracks replacing that workaround.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re as _re
@@ -252,6 +253,148 @@ def test_diagnose_build_failure_is_a_noop_when_no_log_written_yet():
         ns["diagnose_build_failure"]()  # must not raise FileNotFoundError
         assert warnings == [], warnings
     print("OK: diagnose_build_failure is a no-op when no raw log exists yet")
+
+
+# ---------------------------------------------------------------------------
+# Xcode build lock — admin-project-tool#450
+#
+# Two admin build tasks (`admin test apple`, `admin dev mac`, `admin build`)
+# against the same checkout could both invoke xcodebuild at once with
+# nothing stopping them — the second just looked like a slow build.
+# _acquire_xcode_lock()/_release_xcode_lock() wrap the build in a
+# per-checkout flock(2); a second acquire while the first is held refuses
+# outright rather than waiting or silently proceeding.
+#
+# flock(2) locks are tied to the *open file description*, not the pid, so a
+# second open() of the same lock path conflicts exactly like a second OS
+# process would — the tests below hold the lock on a real second fd rather
+# than mocking the refusal.
+# ---------------------------------------------------------------------------
+
+def _hold_xcode_lock(ns, holder=b""):
+    """Hold ns's Xcode build lock on a second fd, as a rival build would.
+
+    Returns the fd; close it to release. holder, if given, is written as
+    the description _acquire_xcode_lock() reads back when it refuses.
+    """
+    lock_path = ns["_xcode_lock_path"]()
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    if holder:
+        os.write(fd, holder)
+    return fd
+
+
+def test_acquire_xcode_lock_succeeds_when_uncontended():
+    with tempfile.TemporaryDirectory() as d:
+        ns = _load_apple(log_dir=d)
+        lock = ns["_acquire_xcode_lock"]("xcodebuild build -scheme Foo")
+        assert lock is not None
+        ns["_release_xcode_lock"](lock)
+    print("OK: _acquire_xcode_lock succeeds when nothing else holds it")
+
+
+def test_xcode_lock_path_is_under_the_projects_own_log_dir():
+    with tempfile.TemporaryDirectory() as d:
+        ns = _load_apple(log_dir=d)
+        result = ns["_xcode_lock_path"]()
+        assert result == os.path.join(d, "admin-xcode-build.lock"), result
+    print("OK: the Xcode build lock lives under this project's own tmp/ dir, "
+          "not one fixed machine-wide path")
+
+
+def test_acquire_xcode_lock_refuses_and_names_the_running_build():
+    with tempfile.TemporaryDirectory() as d:
+        ns = _load_apple(log_dir=d)
+        holder_fd = _hold_xcode_lock(
+            ns, b"xcodebuild test -scheme iptv-mac, started at 21:57:03 (pid 111)")
+
+        messages = []
+        ns["err"] = lambda *a, **k: messages.append(" ".join(str(x) for x in a))
+        result = ns["_acquire_xcode_lock"]("xcodebuild build -scheme iptv-ios")
+        assert result is None, result
+        assert any("21:57:03" in m for m in messages), messages
+        assert any("iptv-mac" in m for m in messages), messages
+
+        os.close(holder_fd)
+    print("OK: a second acquire refuses outright and names the build already "
+          "running, including its start time")
+
+
+def test_release_xcode_lock_lets_the_next_acquire_succeed():
+    with tempfile.TemporaryDirectory() as d:
+        ns = _load_apple(log_dir=d)
+        first = ns["_acquire_xcode_lock"]("build 1")
+        assert first is not None
+        ns["_release_xcode_lock"](first)
+
+        second = ns["_acquire_xcode_lock"]("build 2")
+        assert second is not None
+        ns["_release_xcode_lock"](second)
+    print("OK: releasing the lock lets a later build acquire it")
+
+
+def test_stale_lock_is_reclaimed_without_manual_cleanup():
+    """A holder killed by kill -9 or the OOM killer never runs its own
+    cleanup, so the lock must not depend on it doing so. Closing the
+    holder's fd without going through _release_xcode_lock() is the same
+    event the kernel generates when the holding process dies."""
+    with tempfile.TemporaryDirectory() as d:
+        ns = _load_apple(log_dir=d)
+        holder_fd = _hold_xcode_lock(ns)
+        os.close(holder_fd)  # simulates the holding process dying
+
+        result = ns["_acquire_xcode_lock"]("xcodebuild build -scheme iptv-mac")
+        assert result is not None, "a stale lock must not wedge later builds"
+        ns["_release_xcode_lock"](result)
+    print("OK: a lock abandoned by a dead process is reclaimed with no pid "
+          "file and no manual deletion")
+
+
+def test_two_different_checkouts_do_not_contend():
+    """Two worktrees/clones of the same project get their own lock file (via
+    get_log_dir()), so a build in one never refuses because of a build in
+    the other — only two builds in the *same* checkout should contend."""
+    with tempfile.TemporaryDirectory() as d1, tempfile.TemporaryDirectory() as d2:
+        ns1 = _load_apple(log_dir=d1)
+        ns2 = _load_apple(log_dir=d2)
+
+        lock1 = ns1["_acquire_xcode_lock"]("build in checkout 1")
+        assert lock1 is not None
+        lock2 = ns2["_acquire_xcode_lock"]("build in checkout 2")
+        assert lock2 is not None, \
+            "a build in a different checkout must not be blocked by this one"
+
+        ns1["_release_xcode_lock"](lock1)
+        ns2["_release_xcode_lock"](lock2)
+    print("OK: two different checkouts each get their own lock and never contend")
+
+
+def test_run_locked_xcode_runs_cmd_when_uncontended():
+    with tempfile.TemporaryDirectory() as d:
+        ns, calls = _load_apple_with_run_cmd(log_dir=d)
+        rc = ns["run_locked_xcode"]("xcodebuild test -scheme iptv-mac", "apple test_cmd")
+        assert rc == 0, rc
+        assert calls == ["xcodebuild test -scheme iptv-mac"], calls
+    print("OK: run_locked_xcode runs the command when the lock is free")
+
+
+def test_run_locked_xcode_refuses_without_running_cmd_when_locked():
+    """`admin test apple`'s apple.test_cmd runs outside xcodebuild_filtered,
+    so without this it would silently run alongside a build/dev/deploy
+    xcodebuild instead of taking the same lock."""
+    with tempfile.TemporaryDirectory() as d:
+        ns, calls = _load_apple_with_run_cmd(log_dir=d)
+        holder_fd = _hold_xcode_lock(ns)
+
+        rc = ns["run_locked_xcode"]("xcodebuild test -scheme iptv-mac", "apple test_cmd")
+        assert rc == 1, rc
+        assert calls == [], calls
+
+        os.close(holder_fd)
+    print("OK: run_locked_xcode refuses and never runs the test command "
+          "when another build already holds the lock")
 
 
 # ---------------------------------------------------------------------------
@@ -1142,10 +1285,10 @@ def test_resolve_mac_dev_process_ignores_install_when_not_installing():
 # prebuild_cmd
 # ---------------------------------------------------------------------------
 
-def _load_apple_with_run_cmd(rc=0):
+def _load_apple_with_run_cmd(rc=0, log_dir="/tmp"):
     """apple.py plus a recording run_cmd, which the stripped .core import
     would otherwise leave undefined."""
-    ns = _load_apple()
+    ns = _load_apple(log_dir=log_dir)
     calls = []
 
     def _run_cmd(cmd, *a, **k):
