@@ -300,27 +300,31 @@ def clean_ios(cfg):
 # Log predicates
 # ---------------------------------------------------------------------------
 
+_LOG_LEVEL_PREDICATES = {
+    "app": lambda process, subsystem: f"subsystem == '{subsystem}'",
+    "debug": lambda process, subsystem: (
+        f"(subsystem == '{subsystem}' OR process == '{process}') "
+        f"AND NOT (subsystem BEGINSWITH 'com.apple.launchservices') "
+        f"AND NOT (subsystem BEGINSWITH 'com.apple.runningboard')"
+    ),
+    "system": lambda process, subsystem: f"process == '{process}' AND subsystem != '{subsystem}'",
+    "verbose": lambda process, subsystem: f"process == '{process}'",
+}
+
+
 def log_predicate(process, subsystem, level="app"):
     """Return a macOS `log stream` predicate string for the given level.
 
-    Levels: app, debug, system, verbose.
+    `level` must be a key of _LOG_LEVEL_PREDICATES (app, debug, system,
+    verbose) — that dict is the single source of truth for the accepted
+    set, so the rejection message below can never drift from it.
     """
-    if level == "app":
-        return f"subsystem == '{subsystem}'"
-    elif level == "debug":
-        return (
-            f"(subsystem == '{subsystem}' OR process == '{process}') "
-            f"AND NOT (subsystem BEGINSWITH 'com.apple.launchservices') "
-            f"AND NOT (subsystem BEGINSWITH 'com.apple.runningboard')"
-        )
-    elif level == "system":
-        return f"process == '{process}' AND subsystem != '{subsystem}'"
-    elif level == "verbose":
-        return f"process == '{process}'"
-    else:
-        err(f"Unknown log level: {level}")
-        err("Valid levels: app (default), debug, system, verbose")
+    build = _LOG_LEVEL_PREDICATES.get(level)
+    if build is None:
+        expected = ", ".join(_LOG_LEVEL_PREDICATES)
+        err(f"Unknown log level: {level} (expected one of: {expected})")
         sys.exit(1)
+    return build(process, subsystem)
 
 
 # ---------------------------------------------------------------------------
