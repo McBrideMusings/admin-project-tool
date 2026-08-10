@@ -130,6 +130,21 @@ def _sync_core_globals(g: dict) -> None:
 # Per-kind closure factories (runtime equivalents of the old gen/fragments renderers)
 # ---------------------------------------------------------------------------
 
+# subprocess runs a blank command as a no-op that exits 0, which the factories
+# below would then report as success. validate_action catches the common cause
+# (targets under a kind that never runs them), but a `run` can still resolve to
+# empty at runtime — an explicit `run = ""`, say — so the factories check too.
+_EMPTY_CMD_ERR = "refusing to run an empty command"
+
+
+def _run_action_shell(cmd_str, **kwargs):
+    """run_cmd, but refuses to report success for a blank command."""
+    if not (cmd_str or "").strip():
+        err(_EMPTY_CMD_ERR)
+        return 1
+    return run_cmd(cmd_str, **kwargs)
+
+
 def _make_shell(cmd, ns):
     run = cmd.run
     name = cmd.name
@@ -139,7 +154,7 @@ def _make_shell(cmd, ns):
     def _fn(args):
         info(f"running: {run}")
         collected = [] if watch_kind else None
-        rc = run_cmd(run, pty=pty, collect=collected) if pty else run_cmd(run, collect=collected)
+        rc = _run_action_shell(run, pty=pty, collect=collected)
         if rc != 0:
             err(name + " failed")
             sys.exit(rc)
@@ -161,6 +176,9 @@ def _make_shell_passthrough(cmd, ns):
         quoted = " ".join(shlex.quote(a) for a in args)
         cmdline = run + ((" " + quoted) if quoted else "")
         info("running: " + cmdline)
+        if not cmdline.strip():
+            err(_EMPTY_CMD_ERR)
+            sys.exit(1)
         if interactive:
             warn = core.warn
             warn("interactive mode: output is not logged to tmp/run.log")
@@ -245,7 +263,7 @@ def _make_multi_target(cmd, ns):
         else:
             collected = [] if target_watch.get(picked) else None
             info(f"running [{name}:" + picked + "]: " + shell)
-            rc = run_cmd(shell, pty=target_pty.get(picked, False), collect=collected)
+            rc = _run_action_shell(shell, pty=target_pty.get(picked, False), collect=collected)
             if rc != 0:
                 err(name + " failed")
                 sys.exit(rc)
