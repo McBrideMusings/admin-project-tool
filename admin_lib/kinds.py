@@ -47,6 +47,8 @@ class Kind:
     name: str
     configless: bool = False           # body driven by a config table, not a `run` string
     modules: tuple[str, ...] = ()      # admin_lib modules auto-pulled when this kind is used
+    consumes_targets: bool = False     # factory reads cmd.targets; under any other kind
+                                       # declared targets are built and never run
     factory: Optional[Callable] = field(default=None, repr=False, compare=False)
 
 
@@ -57,14 +59,22 @@ class Kind:
 KINDS: dict[str, Kind] = {}
 
 
-def _kind(name: str, *, configless: bool = False, modules: tuple[str, ...] = ()) -> None:
-    KINDS[name] = Kind(name, configless=configless, modules=modules)
+def _kind(
+    name: str,
+    *,
+    configless: bool = False,
+    modules: tuple[str, ...] = (),
+    consumes_targets: bool = False,
+) -> None:
+    KINDS[name] = Kind(
+        name, configless=configless, modules=modules, consumes_targets=consumes_targets
+    )
 
 
 _kind("shell")
 _kind("shell-passthrough")
-_kind("multi-target")
-_kind("apple-dev-loop")
+_kind("multi-target", consumes_targets=True)
+_kind("apple-dev-loop", consumes_targets=True)
 _kind("python")
 _kind("python-script")
 _kind("http")
@@ -90,15 +100,19 @@ _kind("interactive-shell", modules=("ports", "log_server", "log_bridge", "keybin
 _kind("bridge-listen", configless=True, modules=("ports", "log_server", "log_bridge", "keybindings", "log_format"))
 
 
-# Derived views over KINDS — one source, three lenses. Kept as module-level names
+# Derived views over KINDS — one source, four lenses. Kept as module-level names
 # so the manifest/archetype validators read them directly:
 #   KNOWN_KINDS      — every valid kind name
 #   CONFIGLESS_KINDS — kinds whose body is a config table, not a `run` string
 #                      (validators skip the "needs run/targets" check for these)
 #   KIND_MODULES     — admin_lib modules a kind auto-pulls into scope, so a
 #                      project doesn't have to declare them (using the kind is enough)
+#   TARGET_CONSUMING_KINDS — kinds whose factory actually reads cmd.targets;
+#                      under any other kind, declared targets are built into the
+#                      Command and then never run, which is always a mistake
 KNOWN_KINDS = frozenset(KINDS)
 CONFIGLESS_KINDS = frozenset(n for n, k in KINDS.items() if k.configless)
+TARGET_CONSUMING_KINDS = frozenset(n for n, k in KINDS.items() if k.consumes_targets)
 KIND_MODULES: dict[str, list[str]] = {n: list(k.modules) for n, k in KINDS.items() if k.modules}
 
 # Keys accepted by the [deploy] table (admin_lib.remote.deploy_files consumes
