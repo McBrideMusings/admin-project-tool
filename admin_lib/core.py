@@ -1152,16 +1152,18 @@ def pick_target(targets, prompt="Select target", order=None):
     what makes that visible. (pick_target_or_none() reports its own tailored
     message and returns before reaching here, so this never double-prints.)
     """
+    display_order = order if order is not None else list(targets.keys())
+    items = [x for x in display_order if x]  # selectable entries only
+
     if not sys.stdout.isatty():
-        err(f"{prompt}: no target given and stdout is not a TTY — pass the target as an argument")
+        expected = f" (expected one of: {', '.join(items)})" if items else ""
+        err(f"{prompt}: no target given{expected} — stdout is not a TTY, pass the target as an argument")
         return None
 
     import tty
     import termios
     import shutil
 
-    display_order = order if order is not None else list(targets.keys())
-    items = [x for x in display_order if x]  # selectable entries only
     num = len(items)
     if num == 0:
         return None
