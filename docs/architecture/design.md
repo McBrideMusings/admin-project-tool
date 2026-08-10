@@ -78,6 +78,7 @@ dest    = "/mnt/user/appdata/my-app"             # path on the target, required
 host    = "${UNRAID_USER:-root}@${UNRAID_HOST}"  # omit for a local copy
 exclude = ["*.log"]                              # rsync --exclude patterns
 delete  = false                                  # default false
+chown   = "${APP_UID:-99}:${APP_GID:-100}"       # rsync --chown; see below
 ```
 
 `delete` defaults to **false**, unlike the underlying `core.sync`. A mirror
@@ -85,6 +86,18 @@ directory usually points at a folder the running app also writes into — a
 history file, a SQLite database, logs. Mirroring exactly would delete that state
 on every deploy. Set `delete = true` only when the local copy owns the whole
 directory.
+
+`chown` sets the `"UID:GID"` the target should own synced files as, passed
+straight to rsync's own `--chown`. Without it, rsync's `-a` carries the
+*sending* machine's owner and group onto every directory it creates on the
+target, so a container running as a different uid can read the mirror but not
+write to it. Left unset, the `docker` archetype defaults it to
+`[docker_run].user` when the project declares one
+(`admin_lib.remote.deploy_cfg_with_chown_default`) — the uid the directory has
+to be writable by in every case that comes up in practice. Remote (rsync)
+deploys only: a local (no-`host`) deploy warns and leaves ownership alone, since
+the files already land as whoever ran `admin` and there is no rsync side to
+reassign them.
 
 `host` is compared against the current machine first (`ADMIN_LOCAL`, then IP
 match), so the same manifest works when run *on* the target and from a laptop.
