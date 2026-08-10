@@ -203,6 +203,17 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
                 merged[label] = url
         urls = merged
 
+    # hide_urls: drop named urls from the final set entirely. Every renderer
+    # (header, health check, URL table, `open`) reads this merged dict, so
+    # dropping an entry here omits it everywhere at once.
+    for label in manifest.hide_urls:
+        if label not in urls:
+            raise ArchetypeError(
+                f"hide_urls references unknown url '{label}' "
+                f"(known: {sorted(urls)})"
+            )
+        del urls[label]
+        log.append(f"url '{label}' hidden by manifest hide_urls")
 
     # Compute display order.
     # Explicit order (manifest or archetype): use it as-is, auto-append any unlisted commands.
