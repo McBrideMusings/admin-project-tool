@@ -753,7 +753,7 @@ def _prune_extraneous(src_dir, dest, ignore=None):
                     pass
 
 
-def sync(src_dir, dest, excludes=None, post_sync=None, delete=True, dry_run=False):
+def sync(src_dir, dest, excludes=None, post_sync=None, delete=True, dry_run=False, chown=None):
     """Copy a directory to a local or remote destination via rsync or shutil.
 
     src_dir: local directory to sync from
@@ -766,6 +766,15 @@ def sync(src_dir, dest, excludes=None, post_sync=None, delete=True, dry_run=Fals
         False when the destination also holds files written *there* at runtime
         (databases, state files, logs): mirroring would delete them.
     dry_run: print what would be copied, change nothing.
+    chown: "UID:GID" the receiving side should own synced files/dirs as,
+        passed straight through as rsync's own --chown (remote branch only).
+        Without it, rsync's -a carries the *sending* machine's owner/group
+        over the wire and the remote receiver (running as root over SSH)
+        honours it — stamping the local user onto directories a container
+        running as a different uid then can't write into. Has no effect on
+        a local (non-remote) dest — a shutil copy always lands owned by
+        whoever runs it — and logs a warning if set there, since silently
+        ignoring it would look like the setting worked.
     Returns exit code.
     """
     is_remote = ":" in dest and "@" in dest.split(":")[0]
@@ -775,10 +784,11 @@ def sync(src_dir, dest, excludes=None, post_sync=None, delete=True, dry_run=Fals
         if excludes:
             exclude_flags = " ".join(f"--exclude '{e}'" for e in excludes)
         delete_flag = " --delete" if delete else ""
+        chown_flag = f" --chown={chown}" if chown else ""
         dry_flag = " --dry-run" if dry_run else ""
         info(f"Syncing to {dest}" + (" (dry run)" if dry_run else ""))
         rc = run_cmd(
-            f"rsync -avz{delete_flag}{dry_flag} {exclude_flags} {src_dir}/ {dest}/".strip()
+            f"rsync -avz{delete_flag}{chown_flag}{dry_flag} {exclude_flags} {src_dir}/ {dest}/".strip()
         )
         if rc != 0:
             err("rsync failed")
@@ -786,6 +796,8 @@ def sync(src_dir, dest, excludes=None, post_sync=None, delete=True, dry_run=Fals
         ok(f"Synced: {dest}")
     else:
         import shutil
+        if chown:
+            warn(f"chown={chown} has no effect on a local copy — files stay owned by whoever runs the sync")
         ignore = shutil.ignore_patterns(*excludes) if excludes else None
         if dry_run:
             info(f"Would copy {src_dir}/ -> {dest}/ (dry run)")
