@@ -1709,15 +1709,38 @@ def deploy_dispatch(args, run_cfg=None, deploy_cfg=None, template_cfg=None, buil
     from .unraid import ensure_docker_template
 
     args = list(args or [])
+
+    if "--help" in args or "-h" in args:
+        print(
+            "Usage: admin deploy [image|files|all] [--dry-run] [--force]\n\n"
+            "  image  rebuild the image and recreate the container (default)\n"
+            "  files  sync the [deploy] mirror directory only\n"
+            "  all    sync the mirror directory, then the image"
+        )
+        return 0
+
+    # A typo'd sub-target or flag must not fall through to a default. `admin
+    # deploy fiels` (or `admin deploy --dryrun`) silently rebuilding and
+    # recreating the container is the one failure here with real blast
+    # radius, so unknown words AND unknown flags are fatal — every argument
+    # is checked, not just the first. A second *valid* target word (`admin
+    # deploy image files`) is just as fatal: silently keeping the first and
+    # dropping the second would rebuild the image while quietly skipping the
+    # files sync the caller typed.
     target = None
-    if args and not args[0].startswith("-"):
-        # A typo'd sub-target must not fall through to a default. `admin deploy
-        # fiels` silently rebuilding and recreating the container is the one
-        # failure here with real blast radius, so unknown words are fatal.
-        if args[0] not in ("image", "files", "all"):
-            err(f"Unknown deploy target: {args[0]!r} (expected image, files, or all)")
+    for arg in args:
+        if arg.startswith("-"):
+            if arg not in ("--dry-run", "--force"):
+                err(f"Unknown deploy flag: {arg!r} (expected --dry-run or --force)")
+                return 1
+        elif arg not in ("image", "files", "all"):
+            err(f"Unknown deploy target: {arg!r} (expected image, files, or all)")
             return 1
-        target = args[0]
+        elif target is not None:
+            err(f"Deploy target given twice: {target!r} and {arg!r} (expected exactly one of image, files, or all)")
+            return 1
+        else:
+            target = arg
     dry_run = "--dry-run" in args
     force = "--force" in args
 
