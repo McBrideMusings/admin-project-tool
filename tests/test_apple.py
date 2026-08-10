@@ -1585,3 +1585,123 @@ def test_two_unrestored_icon_composer_runs_then_icons_restore_is_byte_identical(
               "committed icon.json")
     finally:
         sys.path.remove(str(LIB_DIR.parent))
+
+
+# ---------------------------------------------------------------------------
+# launch_args — admin-project-tool#442
+#
+# `admin dev ios` can hand launch arguments to the app it installs
+# (install_and_launch_sim / dev_simulator's launch_args). `admin dev mac` had
+# no equivalent: the `open -n <app>` launch took no arguments at all. dev_mac
+# and dev_loop_macos now take a launch_args list mirroring dev_ios's, default
+# to a new [apple] `launch_args` key, and append it to the open invocation as
+# `open -n <app> --args ...`.
+#
+# These can't drive a real GUI launch (no window, no process to observe) — the
+# only thing provable here is the argv construction: given a manifest with and
+# without apple.launch_args, what exact command gets handed to `open`.
+# ---------------------------------------------------------------------------
+
+def _dev_mac_cfg(**overrides):
+    """Minimal [apple] cfg that resolves through dev_mac without shelling
+    out — every resolver dev_mac calls before reaching dev_loop_macos is
+    given an explicit value so none of them falls back to `xcodebuild
+    -showBuildSettings` or a keychain lookup."""
+    cfg = {
+        "mac_scheme": "Foo",
+        "project_path": "Foo.xcodeproj",
+        "mac_process": "Foo",
+        "mac_bundle": "com.example.foo",
+    }
+    cfg.update(overrides)
+    return cfg
+
+
+def test_dev_mac_forwards_launch_args_from_apple_config():
+    """No launch_args passed explicitly — dev_mac must read the default off
+    the [apple] table's launch_args key, the way dev_ios's caller already
+    can, and forward it to dev_loop_macos."""
+    ns = _load_apple()
+    captured = {}
+    ns["dev_loop_macos"] = lambda **kwargs: captured.update(kwargs)
+
+    ns["dev_mac"](_dev_mac_cfg(launch_args=["--defaults-suite=throwaway"]))
+
+    assert captured["launch_args"] == ["--defaults-suite=throwaway"], captured.get("launch_args")
+    print("OK: dev_mac reads apple.launch_args and forwards it to dev_loop_macos")
+
+
+def test_dev_mac_launch_args_absent_without_the_config_key():
+    ns = _load_apple()
+    captured = {}
+    ns["dev_loop_macos"] = lambda **kwargs: captured.update(kwargs)
+
+    ns["dev_mac"](_dev_mac_cfg())
+
+    assert captured["launch_args"] is None, captured.get("launch_args")
+    print("OK: dev_mac forwards no launch_args when apple.launch_args is unset")
+
+
+def _run_dev_loop_macos_once(build_dir, launch_args):
+    """Drive dev_loop_macos through exactly one build/launch iteration and
+    return every argv handed to subprocess.run.
+
+    Every dependency dev_loop_macos calls other than the `open` launch itself
+    is stubbed to a deterministic no-op: xcodebuild/target-dir resolution
+    (build "succeeds" into build_dir), the os_log stream, the reload signal
+    file, and poll_for_reload (return False so the loop exits after one pass
+    instead of waiting on stdin/SIGUSR1). is_running_fn always reports the
+    app as up, so the loop never sleeps waiting for it to appear.
+    """
+    calls = []
+
+    def _run(cmd, *a, **k):
+        calls.append(cmd)
+        return _FakeCompleted(returncode=0)
+
+    ns = _load_apple(subprocess_run=_run)
+    ns["get_log_file"] = lambda: os.path.join(build_dir, "fake.log")
+    ns["setup_reload"] = lambda *a, **k: None
+    ns["cleanup_pid_file"] = lambda *a, **k: None
+    ns["xcodebuild_filtered"] = lambda *a, **k: 0
+    ns["target_build_dir"] = lambda *a, **k: build_dir
+    ns["stream_os_log"] = lambda *a, **k: (None, None, None)
+    ns["stop_stream"] = lambda *a, **k: None
+    ns["poll_for_reload"] = lambda *a, **k: False
+
+    ns["dev_loop_macos"](
+        project="Foo.xcodeproj", scheme="Foo", config="Debug",
+        destination="platform=macOS", process="Foo", subsystem="",
+        predicate='process == "Foo"', app_pattern="Foo.app",
+        pid_file=os.path.join(build_dir, "test.pid"),
+        is_running_fn=lambda: True, kill_fn=lambda: None,
+        launch_args=launch_args,
+    )
+    return calls
+
+
+def test_dev_loop_macos_open_call_carries_launch_args():
+    with tempfile.TemporaryDirectory() as build_dir:
+        os.mkdir(os.path.join(build_dir, "Foo.app"))
+        calls = _run_dev_loop_macos_once(
+            build_dir, launch_args=["--defaults-suite=throwaway"]
+        )
+
+    open_calls = [c for c in calls if c[:2] == ["open", "-n"]]
+    assert len(open_calls) == 1, open_calls
+    assert open_calls[0] == [
+        "open", "-n", os.path.join(build_dir, "Foo.app"),
+        "--args", "--defaults-suite=throwaway",
+    ], open_calls[0]
+    print("OK: dev_loop_macos appends --args <launch_args> to the open invocation")
+
+
+def test_dev_loop_macos_open_call_omits_args_flag_without_launch_args():
+    with tempfile.TemporaryDirectory() as build_dir:
+        os.mkdir(os.path.join(build_dir, "Foo.app"))
+        calls = _run_dev_loop_macos_once(build_dir, launch_args=None)
+
+    open_calls = [c for c in calls if c[:2] == ["open", "-n"]]
+    assert len(open_calls) == 1, open_calls
+    assert open_calls[0] == ["open", "-n", os.path.join(build_dir, "Foo.app")], open_calls[0]
+    print("OK: dev_loop_macos launches with a bare `open -n` when launch_args is unset")
