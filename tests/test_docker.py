@@ -558,6 +558,24 @@ def test_argv_to_pair_set_value_starting_with_dash():
     print("OK: dash-prefixed flag values are paired with their flag, not misread as a flag")
 
 
+def test_live_argv_for_drift_strips_dash_prefixed_image_workdir():
+    """_live_argv_for_drift had its own copy of the startswith("-") heuristic
+    _argv_to_pair_set was fixed for in #387 — same bug, different function
+    (issue #468). It decides whether to strip --workdir by comparing the
+    live value against the image's baked WorkingDir; when that value starts
+    with "-" (a legitimate path piece, e.g. a dir literally named "-app"),
+    the old heuristic misread it as "no value" and left a bare, unpaired
+    "--workdir" in the output instead of recognizing the match and
+    stripping it."""
+    ns = _load_docker()
+    live_inspect = _inspect(config={"WorkingDir": "-app"})
+    live = ns["_live_argv_for_drift"](live_inspect, image_workdir="-app")
+    assert "--workdir" not in live, \
+        f"--workdir should be stripped (matches image_workdir): {live!r}"
+    assert "-app" not in live, f"dash-prefixed value leaked into output: {live!r}"
+    print("OK: _live_argv_for_drift strips --workdir when its dash-prefixed value matches the image default")
+
+
 def test_drift_detects_dash_value_flag_dropped_from_target():
     """The regression this issue describes: a target-only flag whose value
     starts with "-" must still surface as drift when missing from live —
