@@ -101,6 +101,44 @@ def find_app(pattern):
     return max(matches, key=os.path.getmtime) if matches else None
 
 
+def target_build_dir(project, scheme, config, destination, extra_settings="",
+                      allow_provisioning=True):
+    """Ask xcodebuild for TARGET_BUILD_DIR: the exact directory the build for
+    this scheme/config/destination just wrote into. Returns None if the
+    query fails or the setting isn't in its output.
+
+    Not a DerivedData glob: Xcode keys each DerivedData directory by the
+    project's absolute path, so a scheme built from N different git
+    worktrees accumulates N DerivedData directories under the same
+    `<scheme>-*` prefix — including ones for worktrees that have since been
+    deleted. Globbing across all of them and picking the newest by mtime can
+    return a stale sibling's app instead of the one this build just produced
+    (admin-project-tool#448). Asking xcodebuild directly for the setting it
+    used names the one true directory, no search required.
+    """
+    parts = ["xcodebuild"]
+    if project:
+        flag = "-workspace" if project.endswith(".xcworkspace") else "-project"
+        parts.append(f'{flag} "{project}"')
+    parts.append(f'-scheme "{scheme}"')
+    parts.append(f'-configuration {config}')
+    parts.append(f'-destination "{destination}"')
+    parts.append("-showBuildSettings")
+    if extra_settings:
+        parts.append(extra_settings)
+    if allow_provisioning:
+        parts.append("-allowProvisioningUpdates")
+
+    result = subprocess.run(" ".join(parts), shell=True, capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.splitlines():
+        key, sep, value = line.strip().partition(" = ")
+        if sep and key == "TARGET_BUILD_DIR":
+            return value.strip() or None
+    return None
+
+
 def diagnose_build_failure():
     """After a failed xcodebuild, check for known fixable errors and print remediation."""
     try:
@@ -1403,9 +1441,20 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
             cleanup_pid_file(pid_file)
             sys.exit(1)
 
-        app_path = find_app(app_pattern)
-        if not app_path:
-            err("Could not find built app")
+        # Ask xcodebuild where this build wrote, never glob DerivedData for it
+        # (find_app) — see target_build_dir's docstring and #448.
+        build_dir = target_build_dir(project, scheme, config, destination, extra_settings)
+        if not build_dir:
+            err("BUILD SUCCEEDED but xcodebuild reported no TARGET_BUILD_DIR for "
+                f"{scheme} / {config} — can't tell which directory it built into.")
+            cleanup_pid_file(pid_file)
+            sys.exit(1)
+
+        app_path = os.path.join(build_dir, os.path.basename(app_pattern))
+        if not os.path.isdir(app_path):
+            err(f"BUILD SUCCEEDED but no app at {app_path}")
+            err("Not falling back to a DerivedData search — that's how a stale build from")
+            err("another worktree gets launched instead of this one.")
             cleanup_pid_file(pid_file)
             sys.exit(1)
 
