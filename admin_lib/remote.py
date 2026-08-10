@@ -165,12 +165,19 @@ def deploy_files(cfg, dry_run=False):
         host    = "${UNRAID_USER:-root}@${UNRAID_HOST}"   # omit for a local copy
         exclude = ["*.log"]                           # rsync --exclude patterns
         delete  = false                               # default false — see below
+        chown   = "${APP_UID:-99}:${APP_GID:-100}"    # UID:GID — see below
 
     ``delete`` defaults to **false** here, the opposite of :func:`core.sync`.
     A mirror directory usually points at a folder the running app also writes
     into (a history file, a database, logs). Mirroring exactly would delete
     that state on every deploy, so the safe default is additive; set
     ``delete = true`` when the local copy genuinely owns the whole directory.
+
+    ``chown`` is the "UID:GID" the target should own the synced files as,
+    handed to rsync as ``--chown``; :func:`core.sync` documents what goes wrong
+    without it. It has no default here — an archetype that also knows the uid
+    the app runs as fills it in first (see
+    :func:`deploy_cfg_with_chown_default`); ``deploy_files`` only reads it.
 
     Returns an exit code.
     """
@@ -202,6 +209,10 @@ def deploy_files(cfg, dry_run=False):
         target = dest
 
     excludes = [resolve_env(str(e)) for e in (cfg.get("exclude") or [])]
+
+    chown = cfg.get("chown")
+    if chown:
+        chown = resolve_env(str(chown))
 
     # `post_sync` runs where the files landed — over SSH for a remote target,
     # locally when the target is this machine — because the thing it exists for
@@ -239,4 +250,19 @@ def deploy_files(cfg, dry_run=False):
         delete=bool(cfg.get("delete", False)),
         dry_run=dry_run,
         post_sync=post_sync,
+        chown=chown,
     )
+
+
+def deploy_cfg_with_chown_default(deploy_cfg, user):
+    """Return ``deploy_cfg`` with ``chown`` defaulted to ``user`` (or None).
+
+    The uid a deployed directory has to be writable by is exactly the uid the
+    app already declares it runs as, so a project that states one shouldn't
+    have to type it twice. An explicit ``[deploy].chown`` always wins. Called
+    from the docker archetype's "deploy" action, which reads the uid off
+    ``[docker_run].user``.
+    """
+    if deploy_cfg and user and not deploy_cfg.get("chown"):
+        return dict(deploy_cfg, chown=user)
+    return deploy_cfg or None

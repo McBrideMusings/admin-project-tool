@@ -15,7 +15,11 @@ against the newly-loaded image; that path needs the container to exist already.
 
 A project can also declare a `[deploy]` table naming a local directory that
 mirrors one on the host (appdata, config, static assets). `admin deploy files`
-rsyncs it without rebuilding the image; `admin deploy all` does both.
+rsyncs it without rebuilding the image; `admin deploy all` does both. Those
+files land owned by `[deploy].chown = "UID:GID"`, which defaults to
+`[docker_run].user` — without either, rsync stamps the local machine's
+ownership onto the host directory and the container, running as a different
+uid, can't write its own files.
 
 `[docker_build] on_host = true, context = "<path on host>"` builds the image on
 the deploy target instead of locally, and skips the `docker save | docker load`
@@ -57,9 +61,11 @@ ARCHETYPE = {
         "deploy": {
             "kind": "python",
             "run": (
+                "_run_cfg = globals().get('_DOCKER_RUN_CONFIG') or {}\n"
                 "sys.exit(deploy_dispatch(args,"
-                " run_cfg=globals().get('_DOCKER_RUN_CONFIG') or None,"
-                " deploy_cfg=globals().get('_DEPLOY_CONFIG') or None,"
+                " run_cfg=_run_cfg or None,"
+                " deploy_cfg=deploy_cfg_with_chown_default("
+                "globals().get('_DEPLOY_CONFIG'), _run_cfg.get('user')),"
                 " template_cfg=globals().get('_INSTALL_TEMPLATE_CONFIG') or {},"
                 " build_cfg=globals().get('_DOCKER_BUILD_CONFIG') or None))"
             ),
