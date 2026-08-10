@@ -25,13 +25,20 @@ if rest:
         target = "mac"
     elif a in ("ios", "iphone"):
         target = "ios"
+    elif a in ("tv", "tvos", "appletv"):
+        target = "tv"
     elif a == "server":
         target = "server"
     else:
         err("unknown build target: " + rest[0]); sys.exit(1)
 
+cfg = globals().get("_APPLE_CONFIG") or {}
 _server = globals().get("_SERVER_CONFIG") or {}
 _choices = {"mac": "macOS client", "ios": "iOS client"}
+# Only offered when the project has a tvOS scheme — an apple project without
+# one should not be shown a target that cannot build.
+if cfg.get("tv_scheme"):
+    _choices["tv"] = "tvOS client"
 if _server:
     _choices["server"] = "server (all platforms)"
 
@@ -40,12 +47,13 @@ if not target:
     if not target:
         return
 
-cfg = globals().get("_APPLE_CONFIG") or {}
 set_log_context("build", target)
 if target == "mac":
     build_mac(cfg, force=force)
 elif target == "ios":
     build_ios(cfg, force=force)
+elif target == "tv":
+    build_tv(cfg, force=force)
 elif target == "server":
     build_server(_server, force=force)
 '''
@@ -62,6 +70,8 @@ while i < len(args):
         target = "mac"
     elif a in ("ios", "iphone", "simulator"):
         target = "ios"
+    elif a in ("tv", "tvos", "appletv"):
+        target = "tv"
     elif a == "device":
         target = "device"
     elif a == "server":
@@ -74,29 +84,34 @@ while i < len(args):
     elif a == "--install":
         install_mac = True
     elif a in ("-h", "--help"):
-        info("usage: ./admin dev [mac|ios|device|server] [--log app|debug|system|verbose] [--clean] [--install]")
+        info("usage: ./admin dev [mac|ios|tv|device|server] [--log app|debug|system|verbose] [--clean] [--install]")
         return
     else:
         err("unknown arg: " + a); sys.exit(1)
     i += 1
 
+cfg = globals().get("_APPLE_CONFIG") or {}
 _server = globals().get("_SERVER_CONFIG") or {}
 if target is None:
     _choices = {
         "mac": "mac",
         "ios": "ios simulator",
-        "device": "iOS device (build + install + logs)",
     }
+    # Only offered when the project has a tvOS scheme.
+    if cfg.get("tv_scheme"):
+        _choices["tv"] = "tvOS simulator"
+    _choices["device"] = "iOS device (build + install + logs)"
     if _server:
         _choices["server"] = "server with reload loop"
     target = pick_target(_choices, "dev — select target")
     if not target:
         return
 
-cfg = globals().get("_APPLE_CONFIG") or {}
 set_log_context("dev", target)
 if target == "mac":
     dev_mac(cfg, log_level=log_level, clean=force_clean, install=install_mac)
+elif target == "tv":
+    dev_tv(cfg, log_level=log_level, clean=force_clean)
 elif target == "device":
     dev_device(cfg, log_level=log_level, clean=force_clean)
 elif target == "server":
@@ -290,8 +305,8 @@ ARCHETYPE = {
     "modules": ["core", "icons", "apple", "log_format", "log_columns"],
     "urls": {},
     "commands": {
-        "build":  {"desc": "Build: mac | ios | server [--force]",                                    "steps": ["build"],  "group": 1, "priority": 10},
-        "dev":    {"desc": "Dev build + run (mac|ios|device|server) [--log LVL] [--clean] [--install]", "steps": ["dev"],   "group": 1, "priority": 20},
+        "build":  {"desc": "Build: mac | ios | tv | server [--force]",                                    "steps": ["build"],  "group": 1, "priority": 10},
+        "dev":    {"desc": "Dev build + run (mac|ios|tv|device|server) [--log LVL] [--clean] [--install]", "steps": ["dev"],   "group": 1, "priority": 20},
         "deploy": {"desc": "Build + install (mac|ios|server|bazzite) [--clean]",                     "steps": ["deploy"], "group": 1, "priority": 30},
         "test":   {"desc": "Run tests (server|swift|apple)",                                          "steps": ["test"],   "group": 2, "priority": 10},
         "clean":  {"desc": "Remove build artifacts (xcode|cargo)",                                   "steps": ["clean"],  "group": 2, "priority": 20},
@@ -299,8 +314,8 @@ ARCHETYPE = {
         "reload": {"desc": "Signal a running './admin dev' to rebuild and relaunch",                 "steps": ["reload"], "group": 2, "priority": 40},
     },
     "actions": {
-        "build":      {"kind": "python", "desc": "Build: mac | ios | server [--force]",                                    "run": _BUILD_PY},
-        "dev":        {"kind": "python", "desc": "Dev build + run (mac|ios|device|server) [--log LVL] [--clean] [--install]", "run": _DEV_PY},
+        "build":      {"kind": "python", "desc": "Build: mac | ios | tv | server [--force]",                                    "run": _BUILD_PY},
+        "dev":        {"kind": "python", "desc": "Dev build + run (mac|ios|tv|device|server) [--log LVL] [--clean] [--install]", "run": _DEV_PY},
         "deploy":     {"kind": "python", "desc": "Build + install (mac|ios|server|bazzite) [--clean]",                     "run": _DEPLOY_PY},
         "test":       {"kind": "python", "desc": "Run tests (server|swift|apple)",                                          "run": _TEST_PY},
         "clean":      {"kind": "python", "desc": "Remove build artifacts (xcode|cargo)",                                   "run": _CLEAN_PY},
@@ -308,6 +323,8 @@ ARCHETYPE = {
         "reload":     {"kind": "python", "desc": "Signal a running './admin dev' to rebuild and relaunch",                 "run": _RELOAD_PY},
         "build-ios":  {"kind": "apple",  "desc": "build iOS",               "run": "build_ios"},
         "dev-ios":    {"kind": "apple",  "desc": "dev iOS simulator",        "run": "dev_ios"},
+        "build-tv":   {"kind": "apple",  "desc": "build tvOS",             "run": "build_tv"},
+        "dev-tv":     {"kind": "apple",  "desc": "dev tvOS simulator",      "run": "dev_tv"},
         "dev-device": {"kind": "apple",  "desc": "dev iOS device",           "run": "dev_device"},
         "deploy-ios": {"kind": "apple",  "desc": "deploy iOS",               "run": "deploy_ios"},
         "clean-ios":  {"kind": "apple",  "desc": "clean Xcode DerivedData",  "run": "clean_ios"},

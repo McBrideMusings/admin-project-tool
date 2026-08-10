@@ -226,10 +226,14 @@ def clean_derived_data(project_name):
 
 
 def clean_ios(cfg):
-    """Remove Xcode DerivedData for the iOS scheme in cfg."""
-    scheme = cfg.get("ios_scheme") or cfg.get("mac_scheme")
+    """Remove Xcode DerivedData for the project in cfg.
+
+    DerivedData is per-project, not per-target, so any configured scheme names
+    the same tree — the fallback chain only exists to find one that is set.
+    """
+    scheme = cfg.get("ios_scheme") or cfg.get("mac_scheme") or cfg.get("tv_scheme")
     if not scheme:
-        err("apple.ios_scheme or apple.mac_scheme required for clean")
+        err("apple.ios_scheme, apple.mac_scheme or apple.tv_scheme required for clean")
         sys.exit(1)
     clean_derived_data(_resolve_derived_data_name(cfg) or scheme)
 
@@ -262,8 +266,51 @@ def log_predicate(process, subsystem, level="app"):
 
 
 # ---------------------------------------------------------------------------
-# iOS simulator helpers
+# Simulator helpers (iOS and tvOS)
 # ---------------------------------------------------------------------------
+
+# Everything that differs between one simulator platform and another, in one
+# place. Before this table each value was a string literal buried in a different
+# function — the device filter in resolve_simulator, the destination in the dev
+# loop, the SDK suffix in the DerivedData glob, the key prefix in every
+# _resolve_* helper — so adding a platform meant finding four unrelated lines
+# and hoping there was not a fifth. Adding visionOS or watchOS is now a row.
+#
+# device_match is a substring of the simulator's name as `simctl list devices`
+# prints it ("iPhone 17 Pro", "Apple TV 4K (3rd generation)"), and runtime_match
+# a substring of the runtime header above it ("-- iOS 26.5 --",
+# "-- tvOS 26.5 --"). Both are needed: the runtime header is what separates an
+# Apple TV simulator from an iPhone one when only the booted list is being read,
+# where there are no headers to group by.
+SIM_PLATFORMS = {
+    "ios": {
+        "label":         "iOS",
+        "destination":   "iOS Simulator",
+        "sdk_suffix":    "-iphonesimulator",
+        "device_match":  "iPhone",
+        "device_env":    "IOS_DEVICE",
+        "device_key":    "ios_device",
+    },
+    "tv": {
+        "label":         "tvOS",
+        "destination":   "tvOS Simulator",
+        "sdk_suffix":    "-appletvsimulator",
+        "device_match":  "Apple TV",
+        "device_env":    "TV_DEVICE",
+        "device_key":    "tv_device",
+    },
+}
+
+
+def _sim_platform(platform):
+    """Look up a SIM_PLATFORMS row, failing loudly on an unknown key."""
+    try:
+        return SIM_PLATFORMS[platform]
+    except KeyError:
+        err(f"unknown simulator platform {platform!r} — expected one of "
+            + ", ".join(sorted(SIM_PLATFORMS)))
+        sys.exit(1)
+
 
 _GLOBAL_ADMIN_CONFIG_CACHE = None
 _GLOBAL_ADMIN_CONFIG_LOADED = False
@@ -326,26 +373,44 @@ def find_simulator(device_name):
     return first_match
 
 
-def resolve_simulator():
-    """Pick the best simulator: already-booted first, then newest available iPhone.
+def resolve_simulator(platform="ios"):
+    """Pick the best simulator for a platform: already-booted first, then the
+    newest available device of that kind.
 
     Returns (device_id, device_name) or calls sys.exit(1).
+
+    The booted pass filters by platform too, which it did not have to when iOS
+    was the only platform. A booted iPhone is not a usable answer to "give me an
+    Apple TV" — installing a tvOS app on it fails with a message about the
+    wrong architecture, several steps away from the wrong choice made here.
     """
     import re
 
-    # 1. Check for already-booted simulators
+    plat = _sim_platform(platform)
+    runtime_match = plat["label"]
+    device_match = plat["device_match"]
+
+    # 1. An already-booted simulator of this platform. `simctl list devices
+    #    booted` groups by runtime the same way the full listing does, so the
+    #    header is what says which platform a booted device belongs to.
     result = subprocess.run(
         ["xcrun", "simctl", "list", "devices", "booted"],
         capture_output=True, text=True,
     )
+    current_runtime = None
     for line in result.stdout.splitlines():
+        runtime_m = re.match(r'^-- (.+) --$', line)
+        if runtime_m:
+            current_runtime = runtime_m.group(1)
+            continue
         m = re.search(r'^\s+(.+?)\s+\(([A-F0-9-]{36})\)\s+\(Booted\)', line)
-        if m:
+        if m and current_runtime and current_runtime.startswith(runtime_match):
             name, did = m.group(1), m.group(2)
             info(f"Using booted simulator: {name}")
             return did, name
 
-    # 2. No booted sim — parse all available iPhones, pick newest OS + newest model
+    # 2. None booted — parse all available devices of this platform, pick
+    #    newest OS + newest model.
     result = subprocess.run(
         ["xcrun", "simctl", "list", "devices", "available"],
         capture_output=True, text=True,
@@ -358,14 +423,16 @@ def resolve_simulator():
             current_runtime = runtime_m.group(1)
             continue
         device_m = re.search(r'^\s+(.+?)\s+\(([A-F0-9-]{36})\)\s+\(Shutdown\)', line)
-        if device_m and current_runtime:
+        if device_m and current_runtime and current_runtime.startswith(runtime_match):
             name = device_m.group(1)
             did = device_m.group(2)
-            if "iPhone" in name:
+            if device_match in name:
                 candidates.append((current_runtime, name, did))
 
     if not candidates:
-        err("No iPhone simulators found.")
+        err(f"No {device_match} simulators found.")
+        if platform != "ios":
+            err(f"Install the runtime with: xcodebuild -downloadPlatform {plat['label']}")
         sys.exit(1)
 
     # candidates are already in order from simctl output: grouped by runtime
@@ -388,14 +455,14 @@ def boot_simulator(device_id):
     subprocess.run(["open", "-a", "Simulator"])
 
 
-def ensure_booted_simulator():
+def ensure_booted_simulator(platform="ios"):
     """Resolve a simulator, boot it if needed, and wait until it finishes booting.
 
     Returns (device_id, device_name). Callers that install/launch on the returned
     id can do so immediately — `simctl bootstatus -b` boots the device when it
     isn't already and blocks until boot completes, so there is no race.
     """
-    device_id, name = resolve_simulator()
+    device_id, name = resolve_simulator(platform)
     subprocess.run(["open", "-a", "Simulator"])
     subprocess.run(["xcrun", "simctl", "bootstatus", device_id, "-b"])
     return device_id, name
@@ -1394,22 +1461,28 @@ def dev_loop_macos(project, scheme, config, destination, process, subsystem,
             return
 
 
-def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
-                 app_pattern, pid_file="/tmp/admin-run.pid",
-                 extra_settings="", build_action="build",
-                 bundle_id=None, sim_id=None,
-                 pre_build=None, post_build=None, display_name=None,
-                 output_config=None, launch_args=None):
-    """Full iOS simulator dev loop: build, install, stream logs, reload on 'r'/SIGUSR1.
+def dev_loop_simulator(project, scheme, config, subsystem, process, predicate,
+                       app_pattern, pid_file="/tmp/admin-run.pid",
+                       extra_settings="", build_action="build",
+                       bundle_id=None, sim_id=None,
+                       pre_build=None, post_build=None, display_name=None,
+                       output_config=None, launch_args=None, platform="ios"):
+    """Full simulator dev loop: build, install, stream logs, reload on 'r'/SIGUSR1.
+
+    Drives an iOS or a tvOS simulator — everything below is identical between
+    them except the xcodebuild destination, which comes from SIM_PLATFORMS.
 
     bundle_id:   bundle ID for launch/terminate (defaults to subsystem)
     sim_id:      simulator device ID (if None, auto-resolves via resolve_simulator)
     pre_build:   callable() run before each build (e.g. swap dev icons)
     post_build:  callable() run after each build completes (e.g. restore icons)
     launch_args: optional list of strings passed to the app on each launch
+    platform:    a SIM_PLATFORMS key — "ios" or "tv"
     """
     import time
     from .log_columns import make_column_formatter
+
+    plat = _sim_platform(platform)
 
     setup_reload(pid_file)
     sweep_orphan_log_streams(subsystem)
@@ -1417,11 +1490,11 @@ def dev_loop_ios(project, scheme, config, subsystem, process, predicate,
     launch_bundle = bundle_id or subsystem
 
     if sim_id is None:
-        sim_id, sim_name = ensure_booted_simulator()
+        sim_id, sim_name = ensure_booted_simulator(platform)
     else:
         boot_simulator(sim_id)
         subprocess.run(["xcrun", "simctl", "bootstatus", sim_id, "-b"])
-    destination = f"platform=iOS Simulator,id={sim_id}"
+    destination = f"platform={plat['destination']},id={sim_id}"
 
     while True:
         clear_rebuild_request()
@@ -1517,7 +1590,7 @@ def dev_loop_device(project, scheme, config, subsystem, process,
     os_log). bundle_id defaults to subsystem; device_id auto-resolves via
     find_connected_device when None. pre_build/post_build wrap each build cycle.
 
-    Loops on 'r'/SIGUSR1 like dev_loop_ios. The device log stream is only
+    Loops on 'r'/SIGUSR1 like dev_loop_simulator. The device log stream is only
     obtainable by owning the launch — `devicectl device process launch --console`
     attaches and waits, and there is no attach-to-running-process subcommand nor
     a `log stream --device` — so a rebuild has to tear the launched app down and
@@ -1781,8 +1854,8 @@ def _resolve_bundle(cfg, platform, *, dev=False):
     source of truth; the manifest can override. ``dev=True`` appends ``.dev``
     (or uses the explicit ``{platform}_dev_bundle`` key).
     """
-    if platform not in ("ios", "mac"):
-        raise ValueError(f"_resolve_bundle: unknown platform {platform!r} — expected 'ios' or 'mac'")
+    if platform not in ("ios", "mac", "tv"):
+        raise ValueError(f"_resolve_bundle: unknown platform {platform!r} — expected 'ios', 'mac' or 'tv'")
     key = platform
     prod = cfg.get(f"{key}_bundle") or _xcode_setting(
         cfg, cfg.get(f"{key}_scheme"), "PRODUCT_BUNDLE_IDENTIFIER"
@@ -1810,11 +1883,19 @@ def _resolve_mac_process(cfg):
             or cfg.get("mac_scheme"))
 
 
+def _resolve_sim_process(cfg, platform):
+    """PRODUCT_NAME for a simulator platform. Same fallback chain as
+    :func:`_resolve_mac_process`, with the config keys taken from the platform
+    prefix: ``ios_process``/``ios_scheme`` or ``tv_process``/``tv_scheme``.
+    """
+    return (cfg.get(f"{platform}_process")
+            or _xcode_setting(cfg, cfg.get(f"{platform}_scheme"), "PRODUCT_NAME")
+            or cfg.get(f"{platform}_scheme"))
+
+
 def _resolve_ios_process(cfg):
     """iOS PRODUCT_NAME. Same fallback chain as :func:`_resolve_mac_process`."""
-    return (cfg.get("ios_process")
-            or _xcode_setting(cfg, cfg.get("ios_scheme"), "PRODUCT_NAME")
-            or cfg.get("ios_scheme"))
+    return _resolve_sim_process(cfg, "ios")
 
 
 def _resolve_derived_data_name(cfg):
@@ -2111,10 +2192,17 @@ def _resolve_mac_dev_display_name(cfg):
     return cfg.get("mac_dev_display_name") or (f"{base} Dev" if base else None)
 
 
+def _resolve_sim_dev_display_name(cfg, platform):
+    """Home-screen label for a simulator platform's dev install.
+    Default: ``<process> Dev``.
+    """
+    base = _resolve_sim_process(cfg, platform)
+    return cfg.get(f"{platform}_dev_display_name") or (f"{base} Dev" if base else None)
+
+
 def _resolve_ios_dev_display_name(cfg):
     """Home-screen label for the iOS dev install. Default: ``<process> Dev``."""
-    base = _resolve_ios_process(cfg)
-    return cfg.get("ios_dev_display_name") or (f"{base} Dev" if base else None)
+    return _resolve_sim_dev_display_name(cfg, "ios")
 
 
 def _resolve_mac_dev_process(cfg, install=False):
@@ -2423,32 +2511,39 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=N
     )
 
 
-def dev_ios(cfg, *, log_level="app", clean=False, output_config=None, launch_args=None):
-    """iOS simulator dev loop driven by [apple] config.
+def dev_simulator(cfg, platform="ios", *, log_level="app", clean=False,
+                  output_config=None, launch_args=None):
+    """Simulator dev loop driven by [apple] config, for iOS or tvOS.
+
+    Every config key is read through the platform prefix — ``ios_scheme`` or
+    ``tv_scheme``, ``ios_device`` or ``tv_device`` — and the three values that
+    genuinely differ between the platforms come from SIM_PLATFORMS.
 
     launch_args: optional list of strings forwarded to xcrun simctl launch
-    so the running app receives them as UIApplication launch arguments.
+    so the running app receives them as launch arguments.
     """
+    plat = _sim_platform(platform)
     if output_config is None:
         output_config = globals().get("_OUTPUT_CONFIG")
     if not cfg:
         err("[apple] table missing from admin.toml"); sys.exit(1)
     cfg = _with_global_defaults(cfg, "apple")
-    scheme = cfg.get("ios_scheme")
+    scheme = cfg.get(f"{platform}_scheme")
     if not scheme:
-        err("apple.ios_scheme required"); sys.exit(1)
+        err(f"apple.{platform}_scheme required"); sys.exit(1)
     project = _detect_project_path(cfg)
-    config = cfg.get("ios_build_config", "Debug")
-    process = _resolve_ios_process(cfg)
-    bundle_id = _resolve_bundle(cfg, "ios", dev=True)
-    subsystem = _resolve_subsystem(cfg, "ios", dev=True)
+    config = cfg.get(f"{platform}_build_config", "Debug")
+    process = _resolve_sim_process(cfg, platform)
+    bundle_id = _resolve_bundle(cfg, platform, dev=True)
+    subsystem = _resolve_subsystem(cfg, platform, dev=True)
     extra_settings = _compose_dev_settings(cfg, bundle_id)
     build_action = "clean build" if clean else "build"
     predicate = log_predicate(process, subsystem, level=log_level)
-    app_pattern = _derived_glob(_resolve_derived_data_name(cfg), config, "-iphonesimulator", process)
+    app_pattern = _derived_glob(_resolve_derived_data_name(cfg), config,
+                                plat["sdk_suffix"], process)
 
     sim_id = None
-    device_name = os.environ.get("IOS_DEVICE") or cfg.get("ios_device")
+    device_name = os.environ.get(plat["device_env"]) or cfg.get(plat["device_key"])
     if device_name:
         sim_id = find_simulator(device_name)
         if not sim_id:
@@ -2456,20 +2551,34 @@ def dev_ios(cfg, *, log_level="app", clean=False, output_config=None, launch_arg
     if sim_id is None:
         if not device_name:
             info("No simulator pinned — auto-resolving.")
-        info("Pin one: set IOS_DEVICE env var, or set ios_device in [apple] of your project or ~/.admin/admin.toml")
+        info(f"Pin one: set {plat['device_env']} env var, or set {plat['device_key']} "
+             "in [apple] of your project or ~/.admin/admin.toml")
 
     pre_build, post_build = build_icon_hooks(cfg)
 
-    dev_loop_ios(
+    dev_loop_simulator(
         project=project, scheme=scheme, config=config,
         subsystem=subsystem, process=process, predicate=predicate,
         app_pattern=app_pattern, extra_settings=extra_settings,
         build_action=build_action, bundle_id=bundle_id, sim_id=sim_id,
         pre_build=pre_build, post_build=post_build,
-        display_name=_resolve_ios_dev_display_name(cfg),
+        display_name=_resolve_sim_dev_display_name(cfg, platform),
         output_config=output_config,
         launch_args=launch_args,
+        platform=platform,
     )
+
+
+def dev_ios(cfg, *, log_level="app", clean=False, output_config=None, launch_args=None):
+    """iOS simulator dev loop driven by [apple] config."""
+    dev_simulator(cfg, "ios", log_level=log_level, clean=clean,
+                  output_config=output_config, launch_args=launch_args)
+
+
+def dev_tv(cfg, *, log_level="app", clean=False, output_config=None, launch_args=None):
+    """tvOS simulator dev loop driven by [apple] config."""
+    dev_simulator(cfg, "tv", log_level=log_level, clean=clean,
+                  output_config=output_config, launch_args=launch_args)
 
 
 def deploy_mac(cfg, *, clean=False):
@@ -2619,34 +2728,45 @@ def build_mac(cfg, *, force=False):
     ok("macOS build succeeded")
 
 
-def build_ios(cfg, *, force=False):
-    """Build iOS client from [apple] config (no run, no install)."""
+def build_simulator(cfg, platform="ios", *, force=False):
+    """Build an iOS or tvOS client from [apple] config (no run, no install)."""
+    plat = _sim_platform(platform)
     if not cfg:
         err("[apple] table missing from admin.toml"); sys.exit(1)
     cfg = _with_global_defaults(cfg, "apple")
-    scheme = cfg.get("ios_scheme")
+    scheme = cfg.get(f"{platform}_scheme")
     if not scheme:
-        err("apple.ios_scheme required"); sys.exit(1)
+        err(f"apple.{platform}_scheme required"); sys.exit(1)
     project = _detect_project_path(cfg)
-    config = cfg.get("ios_build_config", "Debug")
-    sim = os.environ.get("IOS_DEVICE") or cfg.get("ios_device") or ""
+    config = cfg.get(f"{platform}_build_config", "Debug")
+    sim = os.environ.get(plat["device_env"]) or cfg.get(plat["device_key"]) or ""
     if sim:
-        dest = "platform=iOS Simulator,name=" + sim
+        dest = f"platform={plat['destination']},name=" + sim
     else:
-        # No simulator pinned — auto-resolve (booted first, then newest iPhone).
-        # The bare "platform=iOS Simulator" destination is ambiguous on machines
+        # No simulator pinned — auto-resolve (booted first, then newest device).
+        # The bare "platform=<X> Simulator" destination is ambiguous on machines
         # with multiple runtimes and causes xcodebuild to fail before compiling.
-        sim_id, _ = resolve_simulator()
-        dest = f"platform=iOS Simulator,id={sim_id}"
+        sim_id, _ = resolve_simulator(platform)
+        dest = f"platform={plat['destination']},id={sim_id}"
     build_action = "clean build" if force else "build"
     restore_stranded_dev_icons(cfg)
-    info(f"Building {scheme} ({config}) for iOS...")
+    info(f"Building {scheme} ({config}) for {plat['label']}...")
     rc = xcodebuild_filtered(project, scheme, config, dest, action=build_action,
                              extra_settings=_compose_sign_settings(cfg))
     if rc != 0:
         diagnose_build_failure()
         err("Build failed"); sys.exit(rc)
-    ok("iOS build succeeded")
+    ok(f"{plat['label']} build succeeded")
+
+
+def build_ios(cfg, *, force=False):
+    """Build iOS client from [apple] config (no run, no install)."""
+    build_simulator(cfg, "ios", force=force)
+
+
+def build_tv(cfg, *, force=False):
+    """Build tvOS client from [apple] config (no run, no install)."""
+    build_simulator(cfg, "tv", force=force)
 
 
 def get_ios_log_bundle(cfg, *, prod=False):
