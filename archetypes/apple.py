@@ -199,9 +199,15 @@ elif target == "apple":
     # archetype does not pull the rust module, so on an apple-only project that
     # name is undefined and the action dies with a NameError before running a
     # single test.
+    #
+    # test_cmd is a raw shell string, usually its own `xcodebuild ... test`
+    # invocation, so it goes through run_locked_xcode() rather than bare
+    # run_cmd(): otherwise it would run alongside a build/dev/deploy
+    # xcodebuild instead of taking the same per-checkout lock
+    # (admin-project-tool#450).
     _cmd = _apple.get("test_cmd")
     info("running: " + _cmd)
-    _rc = run_cmd(_cmd)
+    _rc = run_locked_xcode(_cmd, "apple test_cmd")
     if _rc != 0:
         err("tests failed"); sys.exit(_rc)
     ok("tests passed")
