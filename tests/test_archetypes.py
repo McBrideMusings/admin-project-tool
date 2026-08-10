@@ -868,6 +868,39 @@ def test_group_priority_on_action_level_gives_hint_via_load_archetype():
     print("OK: load_archetype also gives subtable hint for group/priority on action level")
 
 
+def test_load_archetype_rejects_order_referencing_unknown_command():
+    """load_archetype must catch an order entry with no matching command at load
+    time (issue #386) — not just at project-resolve time via resolve().
+
+    Regression guard: docker-unraid's order once listed 'dev' with no 'dev'
+    command declared; only a project that happened to resolve against that
+    archetype alone hit the error, so the broken archetype shipped undetected.
+    """
+    import shutil
+    import tempfile
+
+    arch_code = (
+        'ARCHETYPE = {\n'
+        '    "name": "test-bad-order",\n'
+        '    "modules": ["core"],\n'
+        '    "commands": {"build": {"desc": "Build", "steps": ["build"]}},\n'
+        '    "order": ["build", "dev"],\n'
+        '}\n'
+    )
+    tmp_dir = Path(tempfile.mkdtemp())
+    arch_file = tmp_dir / "test-bad-order.py"
+    arch_file.write_text(arch_code)
+    try:
+        try:
+            load_archetype(tmp_dir, "test-bad-order")
+            raise AssertionError("should have raised ArchetypeError for order referencing unknown command")
+        except ArchetypeError as e:
+            assert "order references unknown command 'dev'" in str(e), f"unexpected message: {e}"
+    finally:
+        shutil.rmtree(tmp_dir)
+    print("OK: load_archetype rejects order referencing an unknown command")
+
+
 def test_manifest_override_propagates_group_and_priority():
     """manifest [commands.X] overrides must carry group/priority into the resolved Command.
 
