@@ -107,6 +107,101 @@ def test_find_app_returns_newest_when_multiple():
 
 
 # ---------------------------------------------------------------------------
+# target_build_dir — admin-project-tool#448
+#
+# `admin dev mac` used to resolve the just-built .app with find_app(), a glob
+# across every `<scheme>-*` DerivedData directory the scheme has ever built
+# into (one per git worktree it was ever built from, including deleted
+# worktrees) picking the newest by mtime. That can return a stale sibling's
+# app instead of the one the build just produced. target_build_dir() instead
+# asks xcodebuild for TARGET_BUILD_DIR — the one directory the build for this
+# exact scheme/config/destination actually used.
+# ---------------------------------------------------------------------------
+
+def _show_build_settings_stub(build_dir=None, returncode=0):
+    """Fake subprocess.run answering `xcodebuild -showBuildSettings`.
+
+    build_dir=None yields real-looking output with the TARGET_BUILD_DIR line
+    left out, so the "setting missing" case is a scan over other settings
+    rather than a trivially empty stdout.
+    """
+    lines = [
+        'Build settings for action build and target "iptv-mac":',
+        "    ACTION = build",
+        "    CONFIGURATION = Debug",
+    ]
+    if build_dir is not None:
+        lines.append(f"    TARGET_BUILD_DIR = {build_dir}")
+    lines.append("    TARGET_NAME = iptv-mac")
+    stdout = "\n".join(lines) + "\n"
+
+    def _run(cmd, *a, **k):
+        return _FakeCompleted(returncode=returncode, stdout=stdout, stderr="")
+    return _run
+
+
+def test_target_build_dir_parses_setting():
+    ns = _load_apple(subprocess_run=_show_build_settings_stub("/tmp/fake-build-dir"))
+    result = ns["target_build_dir"]("Foo.xcodeproj", "Foo", "Debug", "platform=macOS")
+    assert result == "/tmp/fake-build-dir", result
+    print("OK: target_build_dir parses TARGET_BUILD_DIR from -showBuildSettings output")
+
+
+def test_target_build_dir_returns_none_when_setting_missing():
+    ns = _load_apple(subprocess_run=_show_build_settings_stub(build_dir=None))
+    result = ns["target_build_dir"]("Foo.xcodeproj", "Foo", "Debug", "platform=macOS")
+    assert result is None, result
+    print("OK: target_build_dir returns None when the setting isn't in the output")
+
+
+def test_target_build_dir_returns_none_on_query_failure():
+    ns = _load_apple(subprocess_run=_show_build_settings_stub("/tmp/x", returncode=1))
+    result = ns["target_build_dir"]("Foo.xcodeproj", "Foo", "Debug", "platform=macOS")
+    assert result is None, result
+    print("OK: target_build_dir returns None when xcodebuild exits non-zero")
+
+
+def test_target_build_dir_ignores_stale_sibling_that_find_app_would_pick():
+    """The #448 regression, reproduced at the path-resolution level.
+
+    Two DerivedData directories exist for the same scheme — one for the
+    worktree that just built (newer TARGET_BUILD_DIR per xcodebuild), one
+    stale sibling left behind by a deleted worktree whose .app happens to
+    have a *newer* mtime (e.g. last opened, re-signed, or just an unlucky
+    filesystem timestamp). find_app()'s mtime-max glob picks the stale one;
+    target_build_dir() + a direct join does not, because it never globs.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        def _derived_data(slug, mtime):
+            """One DerivedData products dir holding one built app."""
+            products = os.path.join(d, f"iptv-mac-{slug}", "Build", "Products", "Debug")
+            os.makedirs(products)
+            app = os.path.join(products, "iptv-mac Dev.app")
+            os.mkdir(app)
+            os.utime(app, (mtime, mtime))
+            return products, app
+
+        just_built_dir, just_built_app = _derived_data("fgrnssly", 1000000)
+        # Stale sibling has the newer mtime — the exact condition that made
+        # find_app()'s glob pick the wrong app in the reported bug.
+        _, stale_app = _derived_data("cclftyfv", 2000000)
+
+        ns = _load_apple(subprocess_run=_show_build_settings_stub(just_built_dir))
+        glob_pattern = os.path.join(
+            d, "iptv-mac-*", "Build", "Products", "Debug", "iptv-mac Dev.app"
+        )
+        assert ns["find_app"](glob_pattern) == stale_app
+
+        build_dir = ns["target_build_dir"](
+            "Foo.xcodeproj", "iptv-mac", "Debug", "platform=macOS"
+        )
+        resolved = os.path.join(build_dir, os.path.basename(glob_pattern))
+        assert resolved == just_built_app, resolved
+    print("OK: target_build_dir-based resolution picks the just-built app, "
+          "not the stale sibling find_app's mtime glob would return")
+
+
+# ---------------------------------------------------------------------------
 # log_predicate
 # ---------------------------------------------------------------------------
 
