@@ -176,15 +176,20 @@ def poll_for_reload(is_running_fn, timeout=1):
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
+_MAX_FAST_EXIT_ATTEMPTS = 3
+
+
 def run_with_reload(cmd, target, shell=True, formatter=None):
     """Run a long-lived process with SIGUSR1 reload + 'r' keypress support.
 
-    Uses selector-based I/O multiplexing. Supports quick-exit detection
-    with retry backoff.
+    Uses selector-based I/O multiplexing. A process that exits within 2s of
+    launch is relaunched after a 1s wait, up to _MAX_FAST_EXIT_ATTEMPTS
+    launches in total, then gives up and returns its exit code.
     """
     global _rebuild_requested
     pid_file = f"{_ADMIN_PID_PREFIX}-{target}.pid"
     os.makedirs(get_log_dir(), exist_ok=True)
+    fast_exit_count = 0
 
     with open(pid_file, "w") as f:
         f.write(str(os.getpid()))
@@ -314,13 +319,23 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
                 log_fh.close()
 
             if _rebuild_requested:
+                # A manual reload interrupts a process that was running, not
+                # a fast exit — reset the streak so a healthy run followed by
+                # 'r' doesn't quietly carry a fast-exit count into whatever
+                # launches next.
+                fast_exit_count = 0
                 continue
 
             elapsed = time.monotonic() - launch_time
             rc = proc.returncode
             if elapsed < 2.0:
-                warn(f"Process exited in {elapsed:.1f}s (code {rc}) — waiting before retry...")
-                time.sleep(1)
+                fast_exit_count += 1
+                exited = f"Process exited in {elapsed:.1f}s (code {rc})"
+                if fast_exit_count < _MAX_FAST_EXIT_ATTEMPTS:
+                    warn(f"{exited} — retrying ({fast_exit_count}/{_MAX_FAST_EXIT_ATTEMPTS})...")
+                    time.sleep(1)
+                    continue
+                warn(f"{exited} — giving up after {_MAX_FAST_EXIT_ATTEMPTS} attempts.")
             return rc
 
     except KeyboardInterrupt:
