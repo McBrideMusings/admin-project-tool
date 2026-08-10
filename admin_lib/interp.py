@@ -152,7 +152,7 @@ def _make_shell(cmd, ns):
     watch_kind = cmd.meta.get("watch")
 
     def _fn(args):
-        info(f"running: {run}")
+        info(f"running: {resolve_env(run)}")
         collected = [] if watch_kind else None
         rc = _run_action_shell(run, pty=pty, collect=collected)
         if rc != 0:
@@ -175,7 +175,7 @@ def _make_shell_passthrough(cmd, ns):
     def _fn(args):
         quoted = " ".join(shlex.quote(a) for a in args)
         cmdline = run + ((" " + quoted) if quoted else "")
-        info("running: " + cmdline)
+        info("running: " + resolve_env(cmdline))
         if not cmdline.strip():
             err(_EMPTY_CMD_ERR)
             sys.exit(1)
@@ -203,7 +203,7 @@ def _make_python_script(cmd, ns):
             sys.exit(1)
         quoted = " ".join(shlex.quote(a) for a in args)
         cmdline = shlex.quote(sys.executable) + " " + shlex.quote(run) + ((" " + quoted) if quoted else "")
-        info("running: " + cmdline)
+        info("running: " + resolve_env(cmdline))
         rc = run_cmd(cmdline)
         sys.exit(rc)
     return _fn
