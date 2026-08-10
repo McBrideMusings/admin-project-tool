@@ -17,6 +17,14 @@ Installs the interpreter (`admin_lib`, `gen/`, `archetypes/`, `detectors/`, and 
 | `--force` | Reinstall even when already up to date |
 | `--shell zsh\|bash\|sh` | Override shell detection for rc-file PATH setup |
 
+## Uninstall
+
+```bash
+./uninstall.sh
+```
+
+Removes everything `install.sh` writes to `~/.admin/` (`admin_lib`, `archetypes`, `detectors`, the `admin` entrypoint, `VERSION`) and the PATH entry `install.sh` added to your shell rc file. Anything else you've put under `~/.admin/` is left alone.
+
 ## Usage
 
 Once installed, `admin` is on your PATH. Run it from anywhere inside a project — it finds `admin.toml` by walking up from the current directory and interprets it at runtime. Editing `admin.toml` takes effect immediately; there is nothing to regenerate.
