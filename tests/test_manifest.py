@@ -128,6 +128,31 @@ def test_known_keys_produce_no_warning():
 
 
 # ---------------------------------------------------------------------------
+# hide_urls parsing — dropping the matching [urls] entries happens in
+# resolve(), so that half is covered in test_archetypes.py
+# ---------------------------------------------------------------------------
+
+def test_hide_urls_key_produces_no_warning():
+    warning = _capture_stderr(lambda: parse(_base_data(hide_urls=["prod"])))
+    assert warning == "", f"hide_urls should be a known key, got warning: {warning!r}"
+
+
+def test_hide_urls_parses_into_manifest():
+    m = parse(_base_data(hide_urls=["prod"]))
+    assert m.hide_urls == ["prod"]
+
+
+def test_hide_urls_defaults_empty():
+    m = parse(_base_data())
+    assert m.hide_urls == []
+
+
+def test_hide_urls_must_be_list_of_strings():
+    with _pytest_raises(ManifestError, "hide_urls"):
+        parse(_base_data(hide_urls="prod"))  # not a list
+
+
+# ---------------------------------------------------------------------------
 # [logging] round-trip
 # ---------------------------------------------------------------------------
 

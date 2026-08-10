@@ -1056,6 +1056,37 @@ def test_hide_commands_unknown_raises():
     raise AssertionError("expected ArchetypeError for unknown hide_commands entry")
 
 
+# ---------------------------------------------------------------------------
+# hide_urls: omit a url row everywhere admin renders urls
+# ---------------------------------------------------------------------------
+
+def test_hide_urls_omits_from_resolved_and_registered_urls():
+    m = _docker_manifest(
+        urls={"prod": "http://prod.example.test:8419", "dev": "http://localhost:8419"},
+        hide_urls=["prod"],
+    )
+    resolved = resolve(m, ARCH_DIR)
+    assert "prod" not in resolved.urls, "hidden url must not survive resolve()"
+    assert "dev" in resolved.urls, "non-hidden url must be untouched"
+
+    _clear_registry()
+    interp.register_all(resolved, m.project_name)
+    core._resolve_pending_urls()  # boot() normally does this after register_all
+    registered = dict(core.get_urls())
+    assert "prod" not in registered, "hidden url must not reach core.get_urls()"
+    assert "dev" in registered
+
+
+def test_hide_urls_unknown_raises():
+    m = _docker_manifest(urls={"dev": "http://localhost:8419"}, hide_urls=["nonesuch"])
+    try:
+        resolve(m, ARCH_DIR)
+    except ArchetypeError as e:
+        assert "nonesuch" in str(e)
+        return
+    raise AssertionError("expected ArchetypeError for unknown hide_urls entry")
+
+
 def test_archetype_logs_command_not_shadowed_by_builtin():
     """docker provides a `logs` command, so the builtin file-tailer
     registration must NOT be emitted (it would overwrite the real one)."""
