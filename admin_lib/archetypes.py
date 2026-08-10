@@ -73,6 +73,13 @@ def load_archetype(archetype_dir: Path, name: str) -> Archetype:
         validate_action_keys(f"{path}: action '{action_name}'", action_data, ArchetypeError)
     raw_order = list(data.get("order", []))
     normalized_order = ["" if e in ("", "---") else e for e in raw_order]
+    declared_commands = data.get("commands", {})
+    for entry in normalized_order:
+        if entry != SPACER and entry not in declared_commands:
+            raise ArchetypeError(
+                f"{path}: order references unknown command '{entry}' "
+                f"(known: {sorted(declared_commands)})"
+            )
     return Archetype(
         name=data.get("name", name),
         modules=list(data.get("modules", ["core"])),
