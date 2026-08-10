@@ -194,7 +194,6 @@ def test_logs_dump_preserves_raw_key_order():
         'dev = "/tmp/app.log"',       # dev after default_env
     ])
     m = parse(tomllib.loads(toml_src))
-    m.raw = tomllib.loads(toml_src)
     out = dump(m)
     prod_pos = out.index("prod")
     default_pos = out.index("default_env")
