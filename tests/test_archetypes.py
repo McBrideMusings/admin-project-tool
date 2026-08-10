@@ -167,6 +167,56 @@ def test_invalid_kind_rejected():
     print("OK: invalid kind rejected")
 
 
+def test_inline_subtables_without_multi_target_kind_rejected():
+    """An action with sub-tables but no (or the wrong) kind is always a mistake.
+
+    Regression guard for #443: leaving `kind = "multi-target"` off a parent
+    action with [actions.dev.mac]-style sub-tables used to be accepted — the
+    sub-tables were parsed as inline targets, but the default kind ("shell")
+    never reads `cmd.targets`, so nothing would ever run them. This must be
+    rejected at validate time instead of silently building a dead action.
+    """
+    try:
+        _to_command(
+            "dev",
+            {"desc": "Dev", "mac": {"run": "echo mac"}},
+            source="test", is_action=True,
+        )
+        assert False, "should have raised ArchetypeError"
+    except ArchetypeError as e:
+        assert "mac" in str(e)
+        assert "'shell'" in str(e)
+    print("OK: sub-tables with no kind rejected")
+
+    # Same hole, explicit wrong kind instead of the implicit default.
+    try:
+        _to_command(
+            "dev",
+            {"desc": "Dev", "kind": "http", "run": "http://x", "mac": {"run": "echo mac"}},
+            source="test", is_action=True,
+        )
+        assert False, "should have raised ArchetypeError"
+    except ArchetypeError as e:
+        assert "'http'" in str(e)
+    print("OK: sub-tables with an explicit non-multi-target kind rejected")
+
+
+def test_flat_targets_without_multi_target_kind_rejected():
+    """Same hole as above, via the flat `targets = {...}` form instead of
+    inline [actions.X.name] sub-tables — both feed the same `targets` field."""
+    try:
+        _to_command(
+            "dev",
+            {"desc": "Dev", "targets": {"mac": "echo mac"}},
+            source="test", is_action=True,
+        )
+        assert False, "should have raised ArchetypeError"
+    except ArchetypeError as e:
+        assert "mac" in str(e)
+        assert "'shell'" in str(e)
+    print("OK: flat targets with no kind rejected")
+
+
 def test_python_min_validation():
     for bad in ["3", "3.11.0", "abc", "3.11+", ""]:
         try:
