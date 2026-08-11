@@ -1650,3 +1650,27 @@ def test_local_deploy_with_optional_mounts_unchanged(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "/Users/pierce/Media:/media" in out
     print("OK: forced-redeploy drift report masks secret env in print AND log")
+
+
+def test_remote_deploy_without_mounts_still_resolves_env_values_locally(monkeypatch, capsys):
+    """A remote deploy whose config has no env-dependent mount path still
+    resolves `env` values from the deploy machine. Only *paths* have to come
+    from the target; a value like an API key is the deploy machine's to
+    supply, and resolving it against an empty dict would silently drop it
+    (_build_run_args_from_cfg warns and skips an unresolved ${VAR}), so the
+    container would come up missing its secret rather than failing."""
+    ns = _load_docker()
+    ns["_is_local_host"] = lambda host: False
+    monkeypatch.setenv("API_KEY", "sk-real-value")
+    monkeypatch.setattr(ns["subprocess"], "run", lambda *a, **k: _not_found_proc())
+
+    cfg = {"env": [{"name": "API_KEY", "value": "${API_KEY}"}]}
+    rc = ns["remote_recreate_container"](
+        "root@box", "myimage", container="admin-test-371f",
+        target_cfg=cfg, dry_run=True,
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    # The printed value is masked (secrets never reach stdout), so assert the
+    # flag is emitted at all — resolving against {} drops it entirely.
+    assert "API_KEY=" in out

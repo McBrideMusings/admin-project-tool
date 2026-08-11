@@ -600,7 +600,15 @@ def remote_recreate_container(host, image, container=None, target_cfg=None,
                         f"remote_env_file to a path on {host} that admin can read over ssh."
                     )
                     return 1
-                run_env_vars = {}
+                # No path depends on an env var, so nothing here can send the
+                # target a path from the wrong machine. Everything else a
+                # `${VAR}` reaches — an `env` value, a label, a port, the
+                # health-check URL — is a *value*, and the deploy machine is
+                # the right place to read a value from. Resolving those
+                # against {} would silently drop them: `_build_run_args_from_cfg`
+                # warns and skips an unresolved ${VAR}, so a container would
+                # come up missing its API key rather than failing.
+                run_env_vars = None
 
         args = _build_run_args_from_cfg(target_cfg, env_vars=run_env_vars, env_file_vars=env_file_vars)
         if container_exists:
