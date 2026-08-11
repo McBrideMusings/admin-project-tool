@@ -1544,13 +1544,8 @@ def remote_container_diff(host, image, container=None, output_format="text"):
         pairs = []
         i = 0
         while i < len(flat):
-            flag = flat[i]
-            if i + 1 < len(flat) and not flat[i + 1].startswith("-"):
-                pairs.append(f"{flag} {flat[i + 1]}")
-                i += 2
-            else:
-                pairs.append(flag)
-                i += 1
+            flag, value, i = _argv_pair_at(flat, i)
+            pairs.append(flag if value is None else f"{flag} {value}")
         return sorted(pairs)
 
     last_lines = _pair_args(last_args)
