@@ -688,6 +688,103 @@ def test_resolve_bundle_unknown_platform_raises():
 
 
 # ---------------------------------------------------------------------------
+# _compose_dev_settings (#331 — must never push one bundle ID onto every
+# target, since xcodebuild_filtered's extra_settings apply globally and that
+# collides an app-extension's identity with its parent app's)
+# ---------------------------------------------------------------------------
+
+def test_compose_dev_settings_default_emits_suffix():
+    ns = _load_apple_stubbed_xcode()
+    result = ns["_compose_dev_settings"]({"mac_bundle": "com.example.app"}, "mac")
+    assert result == "ADMIN_DEV_BUNDLE_SUFFIX=.dev", result
+    print("OK: _compose_dev_settings emits ADMIN_DEV_BUNDLE_SUFFIX=.dev for a default config")
+
+
+def test_compose_dev_settings_never_emits_product_bundle_identifier():
+    ns = _load_apple_stubbed_xcode()
+    cases = [
+        ({"mac_bundle": "com.example.app"}, "mac"),
+        ({"ios_bundle": "com.example.ios", "ios_dev_bundle": "com.example.ios.staging"}, "ios"),
+        ({}, "mac"),
+        ({"mac_bundle": "com.example.app", "dev_build_settings": "SWIFT_VERSION=5"}, "mac"),
+    ]
+    for cfg, platform in cases:
+        result = ns["_compose_dev_settings"](cfg, platform)
+        assert "PRODUCT_BUNDLE_IDENTIFIER" not in result, (cfg, result)
+    print("OK: _compose_dev_settings never emits PRODUCT_BUNDLE_IDENTIFIER under any config")
+
+
+def test_compose_dev_settings_no_bundle_resolvable_emits_nothing():
+    ns = _load_apple_stubbed_xcode(xcode_return=None)
+    result = ns["_compose_dev_settings"]({}, "mac")
+    assert result == "", result
+    print("OK: _compose_dev_settings emits nothing when no bundle can be resolved at all")
+
+
+def test_compose_dev_settings_explicit_dev_bundle_prefixed_by_prod():
+    ns = _load_apple_stubbed_xcode()
+    cfg = {"mac_bundle": "com.example.app", "mac_dev_bundle": "com.example.app.staging"}
+    result = ns["_compose_dev_settings"](cfg, "mac")
+    assert result == "ADMIN_DEV_BUNDLE_SUFFIX=.staging", result
+    print("OK: _compose_dev_settings derives the suffix from an explicit prod-plus-suffix dev bundle")
+
+
+def test_compose_dev_settings_explicit_dev_bundle_not_prod_plus_suffix_errors():
+    ns = _load_apple_stubbed_xcode()
+    cfg = {"mac_bundle": "com.example.app", "mac_dev_bundle": "com.other.app.dev"}
+    try:
+        ns["_compose_dev_settings"](cfg, "mac")
+    except SystemExit as e:
+        assert e.code == 1, e.code
+        print("OK: _compose_dev_settings errors when an explicit dev bundle isn't prod-plus-suffix")
+        return
+    raise AssertionError("expected SystemExit for a dev bundle that isn't prod plus a suffix")
+
+
+def test_compose_dev_settings_bad_dev_bundle_error_names_both_values():
+    seen = []
+    ns = _load_apple_stubbed_xcode()
+    ns["err"] = lambda msg: seen.append(msg)
+    cfg = {"mac_bundle": "com.example.app", "mac_dev_bundle": "com.other.app.dev"}
+    try:
+        ns["_compose_dev_settings"](cfg, "mac")
+    except SystemExit:
+        pass
+    assert len(seen) == 1, seen
+    assert "com.other.app.dev" in seen[0], seen[0]
+    assert "com.example.app" in seen[0], seen[0]
+    print("OK: _compose_dev_settings names both the bad dev bundle and the prod bundle it should extend")
+
+
+def test_compose_dev_settings_dev_build_settings_with_product_bundle_identifier_errors():
+    ns = _load_apple_stubbed_xcode()
+    cfg = {
+        "mac_bundle": "com.example.app",
+        "dev_build_settings": "PRODUCT_BUNDLE_IDENTIFIER=com.example.app.dev",
+    }
+    try:
+        ns["_compose_dev_settings"](cfg, "mac")
+    except SystemExit as e:
+        assert e.code == 1, e.code
+        print(
+            "OK: _compose_dev_settings hard-errors when dev_build_settings "
+            "names PRODUCT_BUNDLE_IDENTIFIER"
+        )
+        return
+    raise AssertionError(
+        "expected SystemExit when dev_build_settings contains PRODUCT_BUNDLE_IDENTIFIER"
+    )
+
+
+def test_compose_dev_settings_combines_extras_and_suffix_in_order():
+    ns = _load_apple_stubbed_xcode()
+    cfg = {"mac_bundle": "com.example.app", "dev_build_settings": "SWIFT_VERSION=5"}
+    result = ns["_compose_dev_settings"](cfg, "mac")
+    assert result == "SWIFT_VERSION=5 ADMIN_DEV_BUNDLE_SUFFIX=.dev", result
+    print("OK: _compose_dev_settings appends the suffix after dev_build_settings extras")
+
+
+# ---------------------------------------------------------------------------
 # sweep_orphan_log_streams (#353)
 # ---------------------------------------------------------------------------
 
