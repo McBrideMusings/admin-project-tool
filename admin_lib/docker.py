@@ -615,7 +615,7 @@ def remote_recreate_container(host, image, container=None, target_cfg=None,
             img_env, img_labels, img_workdir, img_user = _fetch_image_metadata(host, local, image)
             live_args = _live_argv_for_drift(
                 inspect, image_env=img_env, image_labels=img_labels,
-                image_workdir=img_workdir, image_user=img_user,
+                image_workdir=img_workdir, image_user=img_user, cfg=target_cfg,
             )
             in_target_only, in_live_only = _compute_drift(args, live_args)
             if in_target_only or in_live_only:
@@ -755,12 +755,6 @@ def remote_recreate_container(host, image, container=None, target_cfg=None,
     return 0
 
 
-_HOST_CFG_CONSUMED = frozenset({
-    "Binds", "PortBindings", "RestartPolicy", "NetworkMode", "ExtraHosts",
-    "Devices", "DeviceRequests", "CapAdd", "CapDrop", "Privileged", "Memory",
-    "Tmpfs", "Sysctls", "SecurityOpt", "GroupAdd", "Ulimits",
-})
-
 _HOST_CFG_EXPECTED = frozenset({
     # Runtime infrastructure — always-populated defaults, no docker run equivalent
     # LogConfig is always {"Type": "json-file", "Config": {}} by default; no --log-driver arg needed
@@ -779,15 +773,11 @@ _HOST_CFG_EXPECTED = frozenset({
     "Mounts",
 })
 
-_CONFIG_CONSUMED = frozenset({
-    "Env", "Labels", "User", "Hostname", "WorkingDir", "Tty", "OpenStdin",
-})
-
 _CONFIG_EXPECTED = frozenset({
     # Image-derived (intentionally not replayed — taken from new image)
     "Domainname", "AttachStdin", "AttachStdout", "AttachStderr", "ExposedPorts",
     "StdinOnce", "Cmd", "Healthcheck", "ArgsEscaped", "Image", "Volumes",
-    "Entrypoint", "OnBuild", "StopSignal", "StopTimeout", "Shell", "MacAddress",
+    "Entrypoint", "OnBuild", "StopSignal", "StopTimeout", "Shell",
 })
 
 
@@ -962,35 +952,16 @@ def _build_run_args_from_cfg(cfg, env_vars=None, env_file_vars=None):
     if restart and restart != "no":
         args += ["--restart", restart]
 
-    # Memory cap (--memory, e.g. "24g"). Blast-radius net: bounds container RAM so
-    # a runaway process (e.g. a VMAF ffmpeg buffering decoded frames) gets
-    # cgroup-OOM-killed inside the container instead of taking the host down. The
-    # inspect/drift side already reads HostConfig.Memory → --memory, so a deploy
-    # that sets this stays drift-clean.
-    memory = cfg.get("memory")
-    if memory:
-        args += ["--memory", str(memory)]
-
     # Network mode (rare in [docker_run] but supported for symmetry)
     network = cfg.get("network")
     if network and network != "default":
         args += ["--network", network]
 
-    # User (UID[:GID] or name). Unraid runs containers as nobody:users ("99:100"),
-    # which differs from the image's baked USER. The live-side drift filter only
-    # strips --user when it equals the image user, so without this knob the cfg
-    # can't reproduce a non-image user and a --force deploy would silently drop
-    # it — reverting to the image default and changing ownership of written files.
-    # `${VAR}` is expanded here for the same reason it is on ports and env: a UID
-    # is host-specific (Unraid's nobody is 99:100, another box's is not), so the
-    # committed manifest carries the reference and .env carries the number. An
-    # unresolved reference drops the flag rather than passing "${UID}" to docker,
-    # which would fail the run outright.
-    user = cfg.get("user")
-    if user:
-        user, all_ok = _expand_env_refs(str(user), env_vars)
-        if all_ok:
-            args += ["--user", user]
+    # `_DOCKER_FIELD_TABLE` (below) is the single declarative source both this
+    # function and `_build_run_args_from_inspect` render from — see the table's
+    # comment for the field list and for why (issue #388).
+    for row in _DOCKER_FIELD_TABLE:
+        args += _render_cfg_field(row, cfg, env_vars)
 
     # Devices (e.g. /dev/dri)
     for d in cfg.get("devices") or ():
@@ -1028,21 +999,6 @@ def _build_run_args_from_cfg(cfg, env_vars=None, env_file_vars=None):
                 warn(f"docker_run.labels: {key} value {lbl.get('value')!r} references unset env var — skipping")
                 continue
         args += ["--label", f"{key}={value}"]
-
-    # Linux capabilities + security knobs. `cap_add` is needed for e.g.
-    # intel_gpu_top (CAP_PERFMON → i915 perf PMU access). These mirror the
-    # HostConfig keys the drift filter reads back from `docker inspect`, so a
-    # deploy that sets them stays drift-clean.
-    for c in cfg.get("cap_add") or ():
-        args += ["--cap-add", c]
-    for c in cfg.get("cap_drop") or ():
-        args += ["--cap-drop", c]
-    if cfg.get("privileged"):
-        args += ["--privileged"]
-    for opt in cfg.get("security_opt") or ():
-        args += ["--security-opt", opt]
-    for key, val in (cfg.get("sysctls") or {}).items():
-        args += ["--sysctl", f"{key}={val}"]
 
     return args
 
@@ -1200,14 +1156,233 @@ def _normalize_mem_bytes(value):
 # so "24g" and "25769803776" don't read as divergent.
 _MEM_FLAGS = {"--memory", "-m", "--memory-swap", "--memory-reservation", "--shm-size"}
 
-# The only argv pieces `_build_run_args_from_cfg` and `_build_run_args_from_inspect`
-# ever emit as a standalone flag (no following value) — everything else these two
-# renderers produce is a flag immediately followed by its value. Pairing must key
-# off this arity, not off whether the next token happens to start with "-": a
-# value can legitimately start with "-" (e.g. a `--ulimit core=-1` form), and
-# reading that as "the next flag" would silently drop the real flag from the
-# pair set, so the drift comparison would report no drift at all (issue #387).
-_BOOLEAN_FLAGS = {"--privileged", "-t", "-i"}
+
+# ---------------------------------------------------------------------------
+# Field table — the single declarative list `_build_run_args_from_cfg` and
+# `_build_run_args_from_inspect` both render from (issue #388).
+#
+# Before this table existed, the two functions each carried their own
+# hand-written branch per field, kept in sync only by a person remembering
+# to edit both. They already fell out of sync once: six fields
+# (cap_add/cap_drop/privileged/security_opt/sysctls/memory/user) existed on
+# the `docker inspect` side for years before anyone added their `[docker_run]`
+# counterpart, so a container that had them could never go drift-clean no
+# matter what admin.toml said. A field in this table is read by both
+# renderers, so the two sides cannot disagree again — a new field is one row
+# here, not a pair of hand-written branches.
+#
+# Row keys:
+#   key    — the `[docker_run]` TOML key.
+#   flag   — the `docker run` flag it renders.
+#   shape  — how the value is shaped, one of:
+#              "repeated" — cfg value is a list of raw strings; each item
+#                           becomes one `flag value` pair. The inspect value
+#                           is a list read the same way (optionally passed
+#                           through `inspect_transform` first, for a field
+#                           whose `docker inspect` shape isn't already a list
+#                           of ready-to-use strings — e.g. Ulimits).
+#              "single"   — cfg/inspect value is a scalar; emitted as one
+#                           `flag value` pair when truthy.
+#              "boolean"  — cfg/inspect value is truthy/falsy; emits a bare
+#                           `flag` with no value.
+#              "kv"       — cfg/inspect value is a dict; each item becomes
+#                           `flag "k<kv_sep>v"` (`kv_omit_sep_if_empty` drops
+#                           the separator+value when v is falsy, matching
+#                           docker's own bare `--tmpfs /path` form).
+#   section / inspect_key — where to read the raw value from `docker
+#                           inspect` JSON: HostConfig (section="host") or
+#                           Config (section="config"), at that key. A row
+#                           needing a read that isn't a plain section+key
+#                           lookup (mac_address: falls back through
+#                           NetworkSettings and is suppressed on
+#                           host/none/container: network modes) supplies a
+#                           `reader(host_cfg, config, net_settings)` callable
+#                           instead, and omits section/inspect_key.
+#   inspect_transform      — optional; post-processes the raw inspect value
+#                           for "repeated" rows whose `docker inspect` shape
+#                           isn't already a list of ready-to-use strings.
+#   expand                — True: the cfg value goes through
+#                           `_expand_env_refs` before rendering (the field is
+#                           host-specific and belongs in .env, not in a
+#                           committed manifest — currently only `user`).
+#   image_field            — "workdir" | "user": `_live_argv_for_drift`
+#                           strips the live value when it equals the image's
+#                           own baked default for that field, exactly as it
+#                           already did for --workdir/--user before this
+#                           table existed.
+#   declared_only          — True: `_live_argv_for_drift` strips the live
+#                           value entirely unless `[docker_run]` actually
+#                           declares this key. Used for fields Docker
+#                           autogenerates when absent (hostname, mac
+#                           address) — an undeclared live value there is
+#                           noise, not drift.
+_DOCKER_FIELD_TABLE = [
+    {"key": "cap_add", "flag": "--cap-add", "shape": "repeated",
+     "section": "host", "inspect_key": "CapAdd"},
+    {"key": "cap_drop", "flag": "--cap-drop", "shape": "repeated",
+     "section": "host", "inspect_key": "CapDrop"},
+    {"key": "privileged", "flag": "--privileged", "shape": "boolean",
+     "section": "host", "inspect_key": "Privileged"},
+    {"key": "security_opt", "flag": "--security-opt", "shape": "repeated",
+     "section": "host", "inspect_key": "SecurityOpt"},
+    {"key": "sysctls", "flag": "--sysctl", "shape": "kv",
+     "section": "host", "inspect_key": "Sysctls"},
+    # Memory cap, e.g. "24g". Blast-radius net: bounds container RAM so a
+    # runaway process (e.g. a VMAF ffmpeg buffering decoded frames) gets
+    # cgroup-OOM-killed inside the container instead of taking the host down.
+    {"key": "memory", "flag": "--memory", "shape": "single",
+     "section": "host", "inspect_key": "Memory"},
+    # UID[:GID] or name. Unraid runs containers as nobody:users ("99:100"),
+    # which differs from the image's baked USER — without this knob the cfg
+    # can't reproduce a non-image user, and a --force deploy would silently
+    # drop it, reverting to the image default and changing ownership of
+    # written files. `expand`: a UID is host-specific (Unraid's nobody is
+    # 99:100, another box's is not), so the committed manifest carries the
+    # ${VAR} reference and .env carries the number.
+    {"key": "user", "flag": "--user", "shape": "single",
+     "section": "config", "inspect_key": "User",
+     "expand": True, "image_field": "user"},
+    {"key": "add_host", "flag": "--add-host", "shape": "repeated",
+     "section": "host", "inspect_key": "ExtraHosts"},
+    {"key": "tmpfs", "flag": "--tmpfs", "shape": "kv",
+     "section": "host", "inspect_key": "Tmpfs",
+     "kv_sep": ":", "kv_omit_sep_if_empty": True},
+    {"key": "group_add", "flag": "--group-add", "shape": "repeated",
+     "section": "host", "inspect_key": "GroupAdd"},
+    {"key": "ulimits", "flag": "--ulimit", "shape": "repeated",
+     "section": "host", "inspect_key": "Ulimits",
+     "inspect_transform": lambda raw: [
+         (f"{u.get('Name')}={u.get('Soft', 0)}"
+          if u.get("Soft", 0) == u.get("Hard", 0)
+          else f"{u.get('Name')}={u.get('Soft', 0)}:{u.get('Hard', 0)}")
+         for u in (raw or []) if u.get("Name")
+     ]},
+    {"key": "tty", "flag": "-t", "shape": "boolean",
+     "section": "config", "inspect_key": "Tty"},
+    {"key": "open_stdin", "flag": "-i", "shape": "boolean",
+     "section": "config", "inspect_key": "OpenStdin"},
+    {"key": "hostname", "flag": "--hostname", "shape": "single",
+     "section": "config", "inspect_key": "Hostname", "declared_only": True},
+    {"key": "workdir", "flag": "--workdir", "shape": "single",
+     "section": "config", "inspect_key": "WorkingDir", "image_field": "workdir"},
+    {"key": "mac_address", "flag": "--mac-address", "shape": "single",
+     "declared_only": True,
+     "reader": lambda host_cfg, config, net_settings: (
+         None
+         if (host_cfg.get("NetworkMode") or "") in ("host", "none")
+         or (host_cfg.get("NetworkMode") or "").startswith("container:")
+         else (config.get("MacAddress") or net_settings.get("MacAddress") or None)
+     )},
+]
+
+# Derived, not hand-maintained: every boolean-shaped row's flag — the only
+# argv pieces the two renderers ever emit as a standalone flag, everything
+# else being a flag immediately followed by its value. This is the small
+# version of the field table the issue that created it (#388) points at
+# directly: `_argv_pair_at` needs to know which flags take no value, and
+# before this table existed that set (`--privileged`, `-t`, `-i`) was its own
+# hand-written literal, a second copy of information the table above now owns.
+#
+# Pairing must key off this arity, not off whether the next token happens to
+# start with "-": a value can legitimately start with "-" (e.g. a
+# `--ulimit core=-1` form), and reading that as "the next flag" would silently
+# drop the real flag from the pair set, so the drift comparison would report
+# no drift at all (issue #387).
+_BOOLEAN_FLAGS = {row["flag"] for row in _DOCKER_FIELD_TABLE if row["shape"] == "boolean"}
+
+# Rows `_live_argv_for_drift` consults to decide whether a live-side value is
+# real drift or noise it should strip before comparison — keyed by flag for
+# an O(1) lookup per argv pair. Only rows with `image_field` or
+# `declared_only` participate; every other table field is compared as-is.
+_LIVE_STRIP_ROWS = {
+    row["flag"]: row for row in _DOCKER_FIELD_TABLE
+    if row.get("image_field") or row.get("declared_only")
+}
+
+# `docker inspect` keys `_build_run_args_from_inspect` translates into run args.
+# Anything outside these and the `_*_EXPECTED` sets above gets a "not
+# translated" warning. The table's own keys are derived rather than re-listed:
+# a hand-written copy would need a matching edit for every new row, and
+# forgetting it makes every deploy warn about a field that IS translated.
+_HOST_CFG_CONSUMED = frozenset(
+    {"Binds", "PortBindings", "RestartPolicy", "NetworkMode", "Devices", "DeviceRequests"}
+    | {row["inspect_key"] for row in _DOCKER_FIELD_TABLE if row.get("section") == "host"}
+)
+
+_CONFIG_CONSUMED = frozenset(
+    # MacAddress is consumed by the mac_address row's custom `reader`, which
+    # has no plain section/inspect_key for the comprehension to pick up.
+    {"Env", "Labels", "MacAddress"}
+    | {row["inspect_key"] for row in _DOCKER_FIELD_TABLE if row.get("section") == "config"}
+)
+
+
+def _render_field(row, value):
+    """Render one `_DOCKER_FIELD_TABLE` row's argv pieces from an already-
+    normalized value, dispatching on the row's `shape`.
+
+    Both sides render here: `_render_cfg_field` normalizes the `[docker_run]`
+    value first (env expansion), `_render_inspect_field` normalizes the
+    `docker inspect` value first (`inspect_transform`). Keeping the shape
+    dispatch in one place is the point of the table — a per-side copy of it is
+    how the two renderers disagreed in the first place.
+    """
+    flag = row["flag"]
+    shape = row["shape"]
+
+    if shape == "repeated":
+        return [piece for item in (value or ()) for piece in (flag, str(item))]
+
+    if shape == "boolean":
+        return [flag] if value else []
+
+    if shape == "kv":
+        sep = row.get("kv_sep", "=")
+        omit_sep_if_empty = row.get("kv_omit_sep_if_empty", False)
+        args = []
+        for k, v in (value or {}).items():
+            if omit_sep_if_empty and not v:
+                args += [flag, str(k)]
+            else:
+                args += [flag, f"{k}{sep}{v}"]
+        return args
+
+    # shape == "single"
+    return [flag, str(value)] if value else []
+
+
+def _render_cfg_field(row, cfg, env_vars):
+    """Render one `_DOCKER_FIELD_TABLE` row's argv pieces from a
+    `[docker_run]` cfg table. Shared by `_build_run_args_from_cfg`.
+
+    An `expand` row's value goes through `_expand_env_refs` first; an
+    unresolved `${VAR}` drops the field rather than emitting the literal
+    placeholder, which would read as drift against the live container.
+    """
+    value = cfg.get(row["key"])
+    if value and row.get("expand"):
+        value, all_resolved = _expand_env_refs(str(value), env_vars)
+        if not all_resolved:
+            return []
+    return _render_field(row, value)
+
+
+def _read_inspect_field(row, host_cfg, config, net_settings):
+    """Return the raw `docker inspect` value for one field-table row."""
+    if "reader" in row:
+        return row["reader"](host_cfg, config, net_settings)
+    section = host_cfg if row["section"] == "host" else config
+    return section.get(row["inspect_key"])
+
+
+def _render_inspect_field(row, raw):
+    """Render one `_DOCKER_FIELD_TABLE` row's argv pieces from the raw
+    `docker inspect` value `_read_inspect_field` returned. Shared by
+    `_build_run_args_from_inspect`.
+    """
+    if "inspect_transform" in row:
+        raw = row["inspect_transform"](raw)
+    return _render_field(row, raw)
 
 
 def _argv_pair_at(argv, i):
@@ -1318,21 +1493,30 @@ def _format_drift_report(in_target_only, in_live_only, refusing=True):
 
 
 def _live_argv_for_drift(inspect, image_env=None, image_labels=None,
-                         image_workdir=None, image_user=None):
+                         image_workdir=None, image_user=None, cfg=None):
     """Build the live-side argv for drift comparison.
 
     Strips noise that's never expressible from TOML so the report only shows
     actionable drift:
       - image-baked env vars (image_env: ["NAME=VALUE", ...])
       - image-baked labels (image_labels: {k: v})
-      - image's WorkingDir / User (when live matches)
-      - Docker autogen `--hostname <12-char-hex>` and `--mac-address` on bridge
+      - image's WorkingDir / User (when live matches) and any other
+        `image_field`-marked field table row
+      - `declared_only`-marked field table rows (hostname, mac_address) when
+        `cfg` doesn't declare them — Docker autogenerates both when absent,
+        so an undeclared live value is noise, not drift
       - default `--network bridge` (Docker's implicit default)
       - bind-mount `:rw` suffix (Docker's default mount mode)
+
+    `cfg` is the `[docker_run]` table the deploy is comparing against — only
+    needed to resolve `declared_only` rows; omit it (or pass a falsy value)
+    and every `declared_only` row strips unconditionally, same as before
+    those rows existed.
     """
     args = _build_run_args_from_inspect(inspect)
     image_env_set = set(image_env or [])
     image_labels = image_labels or {}
+    cfg = cfg or {}
 
     filtered = []
     i = 0
@@ -1358,21 +1542,23 @@ def _live_argv_for_drift(inspect, image_env=None, image_labels=None,
             k, v = val.split("=", 1)
             if image_labels.get(k) == v:
                 continue
-        # --hostname: always stripped. Cfg has no `hostname` field, so any
-        # value live carries is either Docker's autogen 12-hex (no signal) or
-        # an Unraid-GUI default (often the container name, also no signal).
-        # Preserving it would force every deploy through `--force` for no
-        # gain. If a project ever needs declared hostnames, add a knob then.
-        if flag == "--hostname":
-            continue
-        # Docker autogenerated MAC on bridge network (always per-container)
-        if flag == "--mac-address" and val:
-            continue
-        # WorkingDir / User baked into the image
-        if flag == "--workdir" and val == image_workdir:
-            continue
-        if flag == "--user" and val == image_user:
-            continue
+        # Field-table rows marked declared_only (hostname, mac_address) or
+        # image_field (workdir, user) — see _LIVE_STRIP_ROWS. Both gate on
+        # `not cfg.get(row["key"])`: an image_field row only auto-strips when
+        # cfg leaves the field undeclared. Without that gate, declaring
+        # workdir/user in [docker_run] equal to the image's own default
+        # stripped the live side unconditionally while the cfg side still
+        # rendered it — target has it, live doesn't, false drift on every
+        # deploy of an otherwise-correct config.
+        row = _LIVE_STRIP_ROWS.get(flag)
+        if row and not cfg.get(row["key"]):
+            if row.get("declared_only"):
+                continue
+            image_field = row.get("image_field")
+            if image_field == "workdir" and val == image_workdir:
+                continue
+            if image_field == "user" and val == image_user:
+                continue
         # Strip `:rw` from bind specs — rw is Docker's default mount mode
         if flag == "-v" and val and val.endswith(":rw"):
             filtered += [flag, val[:-3]]
@@ -1465,9 +1651,6 @@ def _build_run_args_from_inspect(inspect, warn_prefix=None):
     if net_mode and net_mode != "default":
         args += ["--network", net_mode]
 
-    for h in host_cfg.get("ExtraHosts") or []:
-        args += ["--add-host", h]
-
     for d in host_cfg.get("Devices") or []:
         path_on_host = d.get("PathOnHost", "")
         path_in_container = d.get("PathInContainer", "")
@@ -1500,58 +1683,15 @@ def _build_run_args_from_inspect(inspect, warn_prefix=None):
         elif count > 0:
             args += ["--gpus", str(count)]
 
-    for c in host_cfg.get("CapAdd") or []:
-        args += ["--cap-add", c]
-    for c in host_cfg.get("CapDrop") or []:
-        args += ["--cap-drop", c]
-
-    if host_cfg.get("Privileged"):
-        args += ["--privileged"]
-
-    for mount_path, opts in (host_cfg.get("Tmpfs") or {}).items():
-        spec = f"{mount_path}:{opts}" if opts else mount_path
-        args += ["--tmpfs", spec]
-
-    for key, val in (host_cfg.get("Sysctls") or {}).items():
-        args += ["--sysctl", f"{key}={val}"]
-
-    for opt in host_cfg.get("SecurityOpt") or []:
-        args += ["--security-opt", opt]
-
-    for group in host_cfg.get("GroupAdd") or []:
-        args += ["--group-add", group]
-
-    for u in host_cfg.get("Ulimits") or []:
-        name = u.get("Name", "")
-        soft = u.get("Soft", 0)
-        hard = u.get("Hard", 0)
-        if name:
-            spec = f"{name}={soft}" if soft == hard else f"{name}={soft}:{hard}"
-            args += ["--ulimit", spec]
-
     for k, v in (config.get("Labels") or {}).items():
         args += ["--label", f"{k}={v}"]
 
-    if config.get("User"):
-        args += ["--user", config["User"]]
-
-    if config.get("Hostname"):
-        args += ["--hostname", config["Hostname"]]
-
-    mac = config.get("MacAddress") or net_settings.get("MacAddress") or ""
-    if mac and net_mode not in ("host", "none") and not net_mode.startswith("container:"):
-        args += ["--mac-address", mac]
-
-    if config.get("WorkingDir"):
-        args += ["--workdir", config["WorkingDir"]]
-
-    if host_cfg.get("Memory"):
-        args += ["--memory", str(host_cfg["Memory"])]
-
-    if config.get("Tty"):
-        args += ["-t"]
-    if config.get("OpenStdin"):
-        args += ["-i"]
+    # Same `_DOCKER_FIELD_TABLE` `_build_run_args_from_cfg` renders from, so the
+    # live side can never carry a field the declared side has no way to
+    # express (issue #388).
+    for row in _DOCKER_FIELD_TABLE:
+        raw = _read_inspect_field(row, host_cfg, config, net_settings)
+        args += _render_inspect_field(row, raw)
 
     unknown_host = sorted(
         k for k, v in host_cfg.items()
