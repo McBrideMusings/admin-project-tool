@@ -1476,4 +1476,177 @@ def test_remote_recreate_container_force_drift_masks_and_logs_secret(monkeypatch
     logged_text = "\n".join(ns["_logged"])
     assert "oldsecretvalue" not in logged_text
     assert "newsecretvalue" not in logged_text
+
+
+# ---------------------------------------------------------------------------
+# remote_env_file — optional_mounts/bind_mounts host paths on a remote deploy
+# must be read on the target, not on the machine running `admin deploy`
+# (issue #371).
+# ---------------------------------------------------------------------------
+
+def _not_found_proc():
+    class P:
+        returncode = 1
+        stdout = ""
+    return P()
+
+
+def test_mount_env_deps_collects_optional_mounts_and_bind_mount_refs():
+    ns = _load_docker()
+    cfg = {
+        "optional_mounts": [{"env": "MOUNT_MEDIA", "container": "/media"}],
+        "bind_mounts": [
+            {"host": "${APPDATA_DIR}/x", "container": "/data"},
+            {"host": "/plain/path", "container": "/plain"},
+        ],
+    }
+    deps = ns["_mount_env_deps"](cfg)
+    assert set(deps) == {"MOUNT_MEDIA", "APPDATA_DIR"}
+
+
+def test_mount_env_deps_empty_when_nothing_references_env():
+    ns = _load_docker()
+    cfg = {"bind_mounts": [{"host": "/plain/path", "container": "/plain"}]}
+    assert ns["_mount_env_deps"](cfg) == []
+
+
+def test_read_remote_env_file_parses_ssh_output(monkeypatch):
+    ns = _load_docker()
+
+    class _Proc:
+        returncode = 0
+        stdout = "MOUNT_MEDIA=/mnt/user/media\n# comment\nOTHER=val\n"
+
+    calls = []
+
+    def _fake_run(argv, **kwargs):
+        calls.append(argv)
+        return _Proc()
+
+    monkeypatch.setattr(ns["subprocess"], "run", _fake_run)
+    result = ns["_read_remote_env_file"]("root@box", "/boot/config/admin.env")
+    assert result == {"MOUNT_MEDIA": "/mnt/user/media", "OTHER": "val"}
+    assert calls[0][:2] == ["ssh", "root@box"]
+    assert "cat" in calls[0][2] and "/boot/config/admin.env" in calls[0][2]
+
+
+def test_read_remote_env_file_missing_file_is_empty_not_fatal(monkeypatch):
+    ns = _load_docker()
+    monkeypatch.setattr(ns["subprocess"], "run", lambda *a, **k: _not_found_proc())
+    assert ns["_read_remote_env_file"]("root@box", "/nope") == {}
+
+
+def test_remote_deploy_optional_mounts_no_remote_env_file_errors(monkeypatch, capsys):
+    """A remote deploy with optional_mounts and no remote_env_file must refuse
+    before creating the container, naming the variable rather than silently
+    reading it from the deploy machine's own environment."""
+    ns = _load_docker()
+    ns["_is_local_host"] = lambda host: False
+    monkeypatch.setattr(ns["subprocess"], "run", lambda *a, **k: _not_found_proc())
+    errors = []
+    ns["err"] = lambda *a: errors.append(a[0] if a else "")
+
+    cfg = {"optional_mounts": [{"env": "MOUNT_MEDIA", "container": "/media"}]}
+    rc = ns["remote_recreate_container"](
+        "root@box", "myimage", container="admin-test-371",
+        target_cfg=cfg, dry_run=True,
+    )
+    assert rc == 1
+    assert any("MOUNT_MEDIA" in e and "remote_env_file" in e for e in errors), errors
+
+
+def test_remote_deploy_bind_mounts_env_ref_no_remote_env_file_errors(monkeypatch):
+    ns = _load_docker()
+    ns["_is_local_host"] = lambda host: False
+    monkeypatch.setattr(ns["subprocess"], "run", lambda *a, **k: _not_found_proc())
+    errors = []
+    ns["err"] = lambda *a: errors.append(a[0] if a else "")
+
+    cfg = {"bind_mounts": [{"host": "${APPDATA_DIR}", "container": "/data"}]}
+    rc = ns["remote_recreate_container"](
+        "root@box", "myimage", container="admin-test-371b",
+        target_cfg=cfg, dry_run=True,
+    )
+    assert rc == 1
+    assert any("APPDATA_DIR" in e for e in errors), errors
+
+
+def test_remote_deploy_with_remote_env_file_renders_targets_value(monkeypatch, capsys):
+    """With remote_env_file set, the mount is rendered from the value read on
+    the target over ssh — never from this process's own environment."""
+    ns = _load_docker()
+    ns["_is_local_host"] = lambda host: False
+    monkeypatch.setenv("MOUNT_MEDIA", "/Users/pierce/Media")  # deploy machine's own value
+
+    def _fake_run(argv, **kwargs):
+        if len(argv) >= 3 and isinstance(argv[2], str) and argv[2].startswith("cat "):
+            class _EnvProc:
+                returncode = 0
+                stdout = "MOUNT_MEDIA=/mnt/user/media\n"
+            return _EnvProc()
+        return _not_found_proc()
+
+    monkeypatch.setattr(ns["subprocess"], "run", _fake_run)
+
+    cfg = {
+        "remote_env_file": "/boot/config/admin.env",
+        "optional_mounts": [{"env": "MOUNT_MEDIA", "container": "/media"}],
+    }
+    rc = ns["remote_recreate_container"](
+        "root@box", "myimage", container="admin-test-371c",
+        target_cfg=cfg, dry_run=True,
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    # The target's value is used, never the deploy machine's own MOUNT_MEDIA.
+    assert "/mnt/user/media:/media" in out
+    assert "/Users/pierce/Media" not in out
+
+
+def test_remote_deploy_var_absent_from_remote_env_file_skips_mount_silently(monkeypatch, capsys):
+    """'Optional' means optional once the file being consulted is the
+    target's own — a var absent from remote_env_file must skip cleanly,
+    not error."""
+    ns = _load_docker()
+    ns["_is_local_host"] = lambda host: False
+
+    def _fake_run(argv, **kwargs):
+        if len(argv) >= 3 and isinstance(argv[2], str) and argv[2].startswith("cat "):
+            class _EnvProc:
+                returncode = 0
+                stdout = "OTHER_VAR=1\n"
+            return _EnvProc()
+        return _not_found_proc()
+
+    monkeypatch.setattr(ns["subprocess"], "run", _fake_run)
+
+    cfg = {
+        "remote_env_file": "/boot/config/admin.env",
+        "optional_mounts": [{"env": "MOUNT_MEDIA", "container": "/media"}],
+    }
+    rc = ns["remote_recreate_container"](
+        "root@box", "myimage", container="admin-test-371d",
+        target_cfg=cfg, dry_run=True,
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "-v" not in out or "/media" not in out
+
+
+def test_local_deploy_with_optional_mounts_unchanged(monkeypatch, capsys):
+    """A local deploy keeps resolving optional_mounts from os.environ exactly
+    as before remote_env_file existed — no remote_env_file required."""
+    ns = _load_docker()
+    ns["_is_local_host"] = lambda host: True
+    monkeypatch.setenv("MOUNT_MEDIA", "/Users/pierce/Media")
+    monkeypatch.setattr(ns["subprocess"], "run", lambda *a, **k: _not_found_proc())
+
+    cfg = {"optional_mounts": [{"env": "MOUNT_MEDIA", "container": "/media"}]}
+    rc = ns["remote_recreate_container"](
+        "localhost", "myimage", container="admin-test-371e",
+        target_cfg=cfg, dry_run=True,
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "/Users/pierce/Media:/media" in out
     print("OK: forced-redeploy drift report masks secret env in print AND log")
