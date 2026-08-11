@@ -589,6 +589,64 @@ def test_drift_detects_dash_value_flag_dropped_from_target():
     print("OK: --ulimit -1 missing from live is detected as drift, not silently dropped")
 
 
+def test_remote_container_diff_pairs_dash_prefixed_value(monkeypatch, capsys):
+    """remote_container_diff's own `_pair_args` closure carried a third copy
+    of the startswith("-") heuristic `_argv_to_pair_set` was fixed for in
+    #387 and `_live_argv_for_drift` was fixed for in #468 part 1 (issue
+    #468 part 2). A flag whose value starts with "-" (e.g. a working dir
+    literally named "-app") got split into two bare, unpaired tokens
+    instead of staying "--workdir -app" — so a real drift (the workdir was
+    removed on redeploy) rendered as two malformed diff lines instead of
+    one clean paired line.
+
+    Drives `remote_container_diff` end to end (mocked subprocess for the
+    remote `docker inspect` and the snapshot `cat`) and pins its whole
+    reported diff."""
+    import json as _json
+
+    ns = _load_docker()
+    ns["_is_local_host"] = lambda host: False
+
+    last_inspect = [{
+        "HostConfig": {},
+        "Config": {"WorkingDir": "-app"},
+        "NetworkSettings": {},
+    }]
+    curr_inspect = [{
+        "HostConfig": {},
+        "Config": {},
+        "NetworkSettings": {},
+    }]
+
+    class _Proc:
+        def __init__(self, payload):
+            self.returncode = 0
+            self.stdout = _json.dumps(payload)
+
+    def _fake_run(argv, capture_output=True, text=True):
+        if argv[:3] == ["ssh", "remotehost", "docker"]:
+            return _Proc(curr_inspect)
+        if argv[:2] == ["ssh", "remotehost"] and argv[2].startswith("cat "):
+            return _Proc(last_inspect)
+        raise AssertionError(f"unexpected subprocess.run call: {argv!r}")
+
+    monkeypatch.setattr(ns["subprocess"], "run", _fake_run)
+
+    rc = ns["remote_container_diff"](
+        "remotehost", "testimage", container="testcontainer", output_format="json",
+    )
+    assert rc == 1
+    result = _json.loads(capsys.readouterr().out)
+
+    assert result["diff"] == [
+        "--- last-deploy", "+++ current", "@@ -1 +0,0 @@", "---workdir -app",
+    ], (
+        f"--workdir and its dash-prefixed value must appear as one paired "
+        f"removal line, not two bare tokens: {result['diff']!r}"
+    )
+    print("OK: remote_container_diff pairs a dash-prefixed value with its flag instead of splitting it")
+
+
 def test_drift_detects_undeclared_live_field_strict():
     """Strict drift: live has a port mapping TOML doesn't declare → drift."""
     ns = _load_docker()
