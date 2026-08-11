@@ -409,30 +409,79 @@ def _docker_argv(host, local, argv):
     return argv if local else ["ssh", host, *argv]
 
 
+def _parse_env_text(text):
+    """Parse KEY=value env-file text — # comments, blank lines. Returns a dict.
+
+    Shared by `_parse_env_file` (reads local disk) and `_read_remote_env_file`
+    (reads the same shape over ssh) so a `[docker_run].remote_env_file` on the
+    target parses with the exact same rules as a local `env_file`.
+    """
+    out = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k = k.strip()
+        v = v.strip()
+        # Do NOT strip surrounding quotes: docker's --env-file injects the
+        # post-'=' string verbatim (quotes become literal chars in the value).
+        # Stripping here would render the wrong value and make the drift check
+        # fire forever (target FOO=bar baz vs live FOO="bar baz").
+        if k:
+            out[k] = v
+    return out
+
+
 def _parse_env_file(path):
     """Best-effort .env parser — KEY=value pairs, # comments, blank lines.
     Returns a dict. Missing file → empty dict (caller decides if that's OK).
     """
     if not path or not os.path.exists(path):
         return {}
-    out = {}
     with open(path, "r") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            k = k.strip()
-            v = v.strip()
-            # Do NOT strip surrounding quotes: docker's --env-file injects the
-            # post-'=' string verbatim (quotes become literal chars in the value).
-            # Stripping here would render the wrong value and make the drift check
-            # fire forever (target FOO=bar baz vs live FOO="bar baz").
-            if k:
-                out[k] = v
-    return out
+        return _parse_env_text(f.read())
+
+
+def _read_remote_env_file(host, path):
+    """Read a `remote_env_file` over ssh and parse it with `_parse_env_text`.
+
+    Always reads on `host` (never locally) — the whole point of
+    `remote_env_file` is that a mount/bind path only means something on the
+    machine it describes, so it must be read there, not on the machine
+    running `admin deploy`. A missing/unreadable file degrades to an empty
+    dict, same as `_parse_env_file`'s local-missing-file case — callers that
+    need to distinguish "file absent" from "var absent" don't exist yet, and
+    a hard error here would make a first deploy (before the target's env
+    file has been created) unrecoverable from the wrong direction.
+    """
+    import shlex
+    proc = subprocess.run(
+        ["ssh", host, f"cat {shlex.quote(path)}"],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        return {}
+    return _parse_env_text(proc.stdout)
+
+
+def _mount_env_deps(cfg):
+    """Return the env-var names `optional_mounts`/`bind_mounts` in `cfg` would
+    need resolved, in declaration order (names may repeat). Empty when
+    neither table references an env var at all.
+    """
+    names = []
+    for m in cfg.get("optional_mounts") or ():
+        env = m.get("env")
+        if env:
+            names.append(env)
+    for m in cfg.get("bind_mounts") or ():
+        host = str(m.get("host") or "")
+        if "${" in host:
+            names.extend(match[0] for match in _ENV_VAR_RE.findall(host))
+    return names
 
 
 def _mask_env_assignment(assignment):
@@ -472,6 +521,17 @@ def remote_recreate_container(host, image, container=None, target_cfg=None,
         table. If the container exists, diff target vs live; abort with a
         drift report unless `force=True`. If the container doesn't exist,
         create it from the cfg directly.
+
+    `[docker_run].remote_env_file` (str, absolute path on the *target*):
+    on a non-local deploy, `optional_mounts`/`bind_mounts` host paths that
+    reference `${VAR}` are resolved from this file, read over ssh — never
+    from this process's own environment, which describes the wrong machine.
+    Omitting it on a remote deploy is only safe when nothing needs
+    resolving; if `optional_mounts` or a `bind_mounts` host references a
+    var, the deploy is refused with the variable named rather than silently
+    reading (and mounting) this machine's answer on the target. Local
+    deploys (`_is_local_host(host)`) are unaffected — they keep resolving
+    from `os.environ` exactly as before this key existed.
 
     `force=True` skips the drift check (still computed, just doesn't abort).
     `dry_run=True` prints the would-run command instead of executing.
@@ -517,7 +577,32 @@ def remote_recreate_container(host, image, container=None, target_cfg=None,
         # TOML-canonical path: render from cfg, check drift, use cfg argv.
         env_file_path = target_cfg.get("env_file")
         env_file_vars = _parse_env_file(env_file_path) if env_file_path else {}
-        args = _build_run_args_from_cfg(target_cfg, env_file_vars=env_file_vars)
+
+        # `${VAR}` in optional_mounts/bind_mounts host paths must be read on
+        # the machine the path describes. Locally that's this process's own
+        # env (unchanged). Remotely it's `remote_env_file`, read over ssh —
+        # falling back to os.environ here would hand the target a path that
+        # only exists on the deploy machine (issue #371).
+        if local:
+            run_env_vars = None  # _build_run_args_from_cfg defaults to os.environ
+        else:
+            remote_env_file = target_cfg.get("remote_env_file")
+            if remote_env_file:
+                run_env_vars = _read_remote_env_file(host, remote_env_file)
+            else:
+                needed = _mount_env_deps(target_cfg)
+                if needed:
+                    named = ", ".join(sorted(set(needed)))
+                    err(
+                        f"docker_run references {named} to resolve an optional_mounts/"
+                        f"bind_mounts host path — reading it here would read this deploy "
+                        f"machine's value and mount it on {host}. Set [docker_run]."
+                        f"remote_env_file to a path on {host} that admin can read over ssh."
+                    )
+                    return 1
+                run_env_vars = {}
+
+        args = _build_run_args_from_cfg(target_cfg, env_vars=run_env_vars, env_file_vars=env_file_vars)
         if container_exists:
             img_env, img_labels, img_workdir, img_user = _fetch_image_metadata(host, local, image)
             live_args = _live_argv_for_drift(
