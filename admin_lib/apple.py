@@ -8,20 +8,33 @@ Dev vs. prod side-by-side installs
 The convention for letting a Debug ("dev") build coexist with a Release
 ("prod") build on the same machine / simulator / device:
 
-- macOS: pass ``PRODUCT_BUNDLE_IDENTIFIER=<mac-dev-bundle>`` as
-  ``extra_settings`` to ``xcodebuild_filtered`` during the Debug build, then
-  call ``dev_macos_postprocess(built, MAC_DEV_PRODUCT_NAME, MAC_DEV_DISPLAY_NAME)``
+admin never passes a literal ``PRODUCT_BUNDLE_IDENTIFIER`` as
+``extra_settings`` to ``xcodebuild_filtered`` — a setting passed that way
+applies to *every* target in the project (see ``xcodebuild_filtered``'s
+warning below), so naming one bundle ID there forces an app-extension
+target (a widget, a share extension, ...) to claim its parent app's
+identity, and the installer refuses it. Instead ``_compose_dev_settings``
+emits ``ADMIN_DEV_BUNDLE_SUFFIX=<suffix>`` (e.g. ``.dev``, derived by
+subtracting the prod bundle ID from the dev one), and each target's own
+``PRODUCT_BUNDLE_IDENTIFIER`` setting in the pbxproj must reference it —
+``com.foo.app$(ADMIN_DEV_BUNDLE_SUFFIX)`` for the app,
+``com.foo.app$(ADMIN_DEV_BUNDLE_SUFFIX).widgets`` for its widget — so each
+target derives its own suffixed identity and none can collide. Release
+builds pass no suffix, so the variable expands to nothing and prod IDs are
+unchanged. A project whose pbxproj hasn't been updated to reference the
+variable silently builds dev on top of prod (same ID, no side-by-side
+install) rather than failing loudly.
+
+- macOS: after the build, call
+  ``dev_macos_postprocess(built, MAC_DEV_PRODUCT_NAME, MAC_DEV_DISPLAY_NAME)``
   on the resulting ``.app`` to rename it, patch ``CFBundleDisplayName`` in
-  Info.plist, and re-sign ad-hoc. Do **not** put ``PRODUCT_BUNDLE_IDENTIFIER=``
-  into the manifest's ``dev_build_settings`` — that string is
-  platform-agnostic and would force one platform's bundle ID onto the other. The rename is what gives Finder / Launchpad
+  Info.plist, and re-sign ad-hoc. The rename is what gives Finder / Launchpad
   / Dock a distinct entry; the ad-hoc re-sign is required because the rename
   + plist patch invalidates the original signature.
 
-- iOS (simulator and device): pass
-  ``PRODUCT_BUNDLE_IDENTIFIER=<ios-dev-bundle>`` as ``extra_settings``. iOS
-  identifies installs by bundle ID, so a distinct dev bundle ID is sufficient
-  to install dev alongside prod on the same simulator or device. The ``.app``
+- iOS (simulator and device): the suffixed bundle ID is sufficient — iOS
+  identifies installs by bundle ID, so a distinct dev bundle ID lets dev
+  install alongside prod on the same simulator or device. The ``.app``
   filename itself stays the same; no rename is needed (and iOS wouldn't
   respect one anyway).
 
@@ -2589,23 +2602,61 @@ def _compose_sign_settings(cfg):
     return " ".join(parts)
 
 
-def _compose_dev_settings(cfg, dev_bundle_id):
-    """Combine cross-platform `dev_build_settings` with a platform-specific
-    PRODUCT_BUNDLE_IDENTIFIER (appended last so it wins). Warns if the manifest's
-    dev_build_settings already contains a PRODUCT_BUNDLE_IDENTIFIER (legacy).
+def _compose_dev_settings(cfg, platform):
+    """Combine cross-platform `dev_build_settings` with ADMIN_DEV_BUNDLE_SUFFIX
+    (appended last so it wins). Never emits PRODUCT_BUNDLE_IDENTIFIER: a
+    setting passed through xcodebuild_filtered's extra_settings applies to
+    every target in the project (see its docstring above, xcodebuild_filtered),
+    so naming one bundle ID there forces an app-extension target to claim
+    its parent app's identity and the simulator refuses to install it.
+
+    Instead each target's own PRODUCT_BUNDLE_IDENTIFIER in the pbxproj must
+    reference ``$(ADMIN_DEV_BUNDLE_SUFFIX)`` (e.g.
+    ``com.foo.app$(ADMIN_DEV_BUNDLE_SUFFIX)`` for the app,
+    ``com.foo.app$(ADMIN_DEV_BUNDLE_SUFFIX).widgets`` for its widget) so each
+    target derives its own suffixed identity and none can collide. The
+    suffix is derived by subtracting the resolved prod bundle ID from the
+    resolved dev one — normally ``.dev`` from the ``<prod>.dev`` default.
+
+    Hard errors (exits) rather than warning, because under this scheme a bad
+    value doesn't just misconfigure a nice-to-have — it silently glues the
+    old broken behavior back on:
+    - ``dev_build_settings`` containing PRODUCT_BUNDLE_IDENTIFIER — exactly
+      the string that breaks extensions.
+    - an explicit ``{platform}_dev_bundle`` that isn't the prod bundle ID
+      plus a suffix — unexpressible as a suffix, so falling back to the old
+      global override would reintroduce the bug silently.
     """
     extras = (cfg.get("dev_build_settings") or "").strip()
     if "PRODUCT_BUNDLE_IDENTIFIER" in extras:
-        warn(
-            "dev_build_settings contains PRODUCT_BUNDLE_IDENTIFIER — prefer "
-            "mac_dev_bundle / ios_dev_bundle keys; the platform-specific "
-            "value will override."
+        err(
+            "apple.dev_build_settings contains PRODUCT_BUNDLE_IDENTIFIER — a "
+            "setting passed to xcodebuild this way applies to every target "
+            "in the project, so it forces an app extension's bundle ID to "
+            "match its parent app's and the simulator refuses to install "
+            "it. Remove it — admin derives ADMIN_DEV_BUNDLE_SUFFIX from "
+            f"{platform}_dev_bundle instead; see the apple archetype docs."
         )
-    if not dev_bundle_id:
-        result = extras
-    else:
-        override = f"PRODUCT_BUNDLE_IDENTIFIER={dev_bundle_id}"
-        result = f"{extras} {override}".strip() if extras else override
+        sys.exit(1)
+
+    prod = _resolve_bundle(cfg, platform)
+    dev_bundle_id = _resolve_bundle(cfg, platform, dev=True)
+    suffix = ""
+    if dev_bundle_id:
+        if not prod or not dev_bundle_id.startswith(prod):
+            err(
+                f"apple.{platform}_dev_bundle ({dev_bundle_id!r}) is not the "
+                f"prod {platform}_bundle ({prod!r}) plus a suffix — "
+                "ADMIN_DEV_BUNDLE_SUFFIX can only express <prod bundle ID> + "
+                f"<suffix>. Drop the explicit {platform}_dev_bundle key to "
+                "default to <prod>.dev, or set it to the prod bundle ID "
+                "with a suffix appended."
+            )
+            sys.exit(1)
+        suffix = dev_bundle_id[len(prod):]
+
+    override = f"ADMIN_DEV_BUNDLE_SUFFIX={suffix}" if suffix else ""
+    result = f"{extras} {override}".strip() if extras else override
     sign = _compose_sign_settings(cfg)
     parts = [p for p in [result, sign] if p]
     return " ".join(parts)
@@ -2643,7 +2694,7 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=N
     dev_process = _resolve_mac_dev_process(cfg, install=install) or process
     bundle_id = _resolve_bundle(cfg, "mac", dev=True)
     subsystem = _resolve_subsystem(cfg, "mac", dev=True)
-    extra_settings = _compose_dev_settings(cfg, bundle_id)
+    extra_settings = _compose_dev_settings(cfg, "mac")
     build_action = "clean build" if clean else "build"
     # os_log's `process` field is the executable's name, never a path, so the
     # pgrep pattern in dev_process can't be handed to it — a bundle-path pattern
@@ -2727,7 +2778,7 @@ def dev_simulator(cfg, platform="ios", *, log_level="app", clean=False,
     process = _resolve_sim_process(cfg, platform)
     bundle_id = _resolve_bundle(cfg, platform, dev=True)
     subsystem = _resolve_subsystem(cfg, platform, dev=True)
-    extra_settings = _compose_dev_settings(cfg, bundle_id)
+    extra_settings = _compose_dev_settings(cfg, platform)
     build_action = "clean build" if clean else "build"
     predicate = log_predicate(process, subsystem, level=log_level)
     app_pattern = _derived_glob(_resolve_derived_data_name(cfg), config,
@@ -2880,7 +2931,7 @@ def dev_device(cfg, *, log_level="app", clean=False, output_config=None):
     process = _resolve_ios_process(cfg)
     bundle_id = _resolve_bundle(cfg, "ios", dev=True)
     subsystem = _resolve_subsystem(cfg, "ios", dev=True)
-    extra_settings = _compose_dev_settings(cfg, bundle_id)
+    extra_settings = _compose_dev_settings(cfg, "ios")
     build_action = "clean build" if clean else "build"
     app_pattern = _derived_glob(_resolve_derived_data_name(cfg), config, "-iphoneos", process)
 

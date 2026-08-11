@@ -56,6 +56,24 @@ The rename also decides how `dev` finds its own running app between rebuilds. Wi
 | `ios_dev_display_name` | `<base> Dev` | iOS dev build's display name. |
 | `mac_dev_process` | `<DevProduct>.app/Contents/MacOS/<name>`, or the build-products path when `mac_dev_rename = false` | `pgrep -f` pattern identifying the running dev build. |
 
+## Dev bundle-ID suffix (pbxproj setup required)
+
+`dev` never passes a literal `PRODUCT_BUNDLE_IDENTIFIER` as a build setting — `xcodebuild`'s `-scheme` build applies a setting passed that way to **every target in the project**, so naming one bundle ID there forces an app-extension target (a widget, a share extension, a notification service, ...) to claim its parent app's identity, and the simulator/device refuses to install the result ("Mismatched bundle IDs").
+
+Instead `dev` computes `ADMIN_DEV_BUNDLE_SUFFIX` — the difference between the resolved dev bundle ID and the resolved prod one (`mac_bundle`/`ios_bundle` vs. `mac_dev_bundle`/`ios_dev_bundle`, default `<prod>.dev`) — and passes only that as a build setting. **Each target's own `PRODUCT_BUNDLE_IDENTIFIER` in the Xcode project must reference it** for dev/prod side-by-side installs to work:
+
+```
+// app target
+PRODUCT_BUNDLE_IDENTIFIER = com.example.app$(ADMIN_DEV_BUNDLE_SUFFIX)
+
+// widget extension target
+PRODUCT_BUNDLE_IDENTIFIER = com.example.app$(ADMIN_DEV_BUNDLE_SUFFIX).widgets
+```
+
+A prod build passes no suffix, so `$(ADMIN_DEV_BUNDLE_SUFFIX)` expands to nothing and prod IDs are unaffected. **A project whose pbxproj hasn't been updated to reference the variable doesn't fail loudly** — it silently builds dev on top of prod (same bundle ID as the installed prod copy, so dev overwrites it instead of installing side-by-side).
+
+An explicit `mac_dev_bundle`/`ios_dev_bundle` that isn't the prod bundle ID plus a suffix can't be expressed as `ADMIN_DEV_BUNDLE_SUFFIX` and is a hard error naming both values — set it to `<prod bundle ID>` plus a suffix, or drop the key to get the `<prod>.dev` default. Putting `PRODUCT_BUNDLE_IDENTIFIER` into `dev_build_settings` is also a hard error for the same reason: that string is exactly what breaks extensions.
+
 ## Signing
 
 | Key | Meaning |
