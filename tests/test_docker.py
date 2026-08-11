@@ -1674,3 +1674,147 @@ def test_remote_deploy_without_mounts_still_resolves_env_values_locally(monkeypa
     # The printed value is masked (secrets never reach stdout), so assert the
     # flag is emitted at all — resolving against {} drops it entirely.
     assert "API_KEY=" in out
+
+
+# --- issue #388: the field table's round-trip contract -----------------------
+# These pin the property the table exists to guarantee: a value declared in
+# [docker_run] and the same value read back out of `docker inspect` must render
+# the identical flag, so the drift comparison reports nothing. Without them the
+# two renderers can fall back out of agreement exactly as they did before, and
+# nothing would say so until a deploy reported drift no one could silence.
+
+_ROUNDTRIP_CFG = {
+    "cap_add": ["SYS_NICE"],
+    "cap_drop": ["MKNOD"],
+    "privileged": True,
+    "security_opt": ["no-new-privileges"],
+    "sysctls": {"net.core.somaxconn": "1024"},
+    "memory": "24g",
+    "user": "99:100",
+    "add_host": ["myhost:1.2.3.4"],
+    "tmpfs": {"/scratch": "size=64m"},
+    "group_add": ["users"],
+    "ulimits": ["nofile=8192"],
+    "tty": True,
+    "open_stdin": True,
+    "hostname": "muxarr",
+    "workdir": "/app",
+    "mac_address": "02:42:ac:11:00:02",
+}
+
+_ROUNDTRIP_INSPECT_HOST = {
+    "CapAdd": ["SYS_NICE"],
+    "CapDrop": ["MKNOD"],
+    "Privileged": True,
+    "SecurityOpt": ["no-new-privileges"],
+    "Sysctls": {"net.core.somaxconn": "1024"},
+    "Memory": 24 * 1024 * 1024 * 1024,
+    "ExtraHosts": ["myhost:1.2.3.4"],
+    "Tmpfs": {"/scratch": "size=64m"},
+    "GroupAdd": ["users"],
+    "Ulimits": [{"Name": "nofile", "Soft": 8192, "Hard": 8192}],
+    "NetworkMode": "bridge",
+}
+
+_ROUNDTRIP_INSPECT_CONFIG = {
+    "User": "99:100",
+    "Tty": True,
+    "OpenStdin": True,
+    "Hostname": "muxarr",
+    "WorkingDir": "/app",
+    "MacAddress": "02:42:ac:11:00:02",
+}
+
+
+def test_field_table_every_row_round_trips_declared_to_live():
+    """Every row in _DOCKER_FIELD_TABLE renders the same flag from a declared
+    [docker_run] value as from the matching docker-inspect value, so a
+    correctly-declared container reports no drift. This is the property the
+    table exists to hold; it is checked row by row so a future row that only
+    implements one side fails here rather than in a deploy."""
+    ns = _load_docker()
+    cfg_argv = ns["_build_run_args_from_cfg"](_ROUNDTRIP_CFG, env_vars={})
+    live_argv = ns["_live_argv_for_drift"](
+        _inspect(host_cfg=_ROUNDTRIP_INSPECT_HOST, config=_ROUNDTRIP_INSPECT_CONFIG),
+        cfg=_ROUNDTRIP_CFG,
+    )
+    cfg_pairs = ns["_argv_to_pair_set"](cfg_argv)
+    live_pairs = ns["_argv_to_pair_set"](live_argv)
+
+    missing = []
+    for row in ns["_DOCKER_FIELD_TABLE"]:
+        flag = row["flag"]
+        declared = {p for p in cfg_pairs if p.split("\t")[0] == flag}
+        assert declared, f"{row['key']}: declared cfg rendered no {flag}: {cfg_argv!r}"
+        if not declared <= live_pairs:
+            missing.append((row["key"], sorted(declared), sorted(
+                p for p in live_pairs if p.split("\t")[0] == flag)))
+    assert not missing, f"declared-vs-live mismatch per field: {missing!r}"
+    print("OK: all %d field-table rows round-trip declared -> live"
+          % len(ns["_DOCKER_FIELD_TABLE"]))
+
+
+def test_field_table_declared_value_matching_image_default_is_not_drift():
+    """Declaring workdir equal to the image's own baked default must not report
+    drift. The live side strips a value that matches the image, so before this
+    was gated on the field being undeclared, the declared side kept --workdir
+    while the live side dropped it and every deploy reported a difference that
+    no edit could resolve."""
+    ns = _load_docker()
+    cfg = {"workdir": "/app"}
+    cfg_argv = ns["_build_run_args_from_cfg"](cfg, env_vars={})
+    live_argv = ns["_live_argv_for_drift"](
+        _inspect(config={"WorkingDir": "/app"}),
+        image_workdir="/app",
+        cfg=cfg,
+    )
+    in_target, in_live = ns["_compute_drift"](cfg_argv, live_argv)
+    assert not in_target and not in_live, (
+        f"declaring workdir == image default reported drift: "
+        f"target-only={in_target!r} live-only={in_live!r}")
+    print("OK: workdir declared equal to the image default is not drift")
+
+
+def test_field_table_undeclared_value_matching_image_default_still_strips():
+    """The pre-existing behaviour the gate must not break: when the config does
+    NOT declare workdir, a live value matching the image's default is still
+    stripped, so an image's own WORKDIR never shows up as drift."""
+    ns = _load_docker()
+    live_argv = ns["_live_argv_for_drift"](
+        _inspect(config={"WorkingDir": "/app"}),
+        image_workdir="/app",
+        cfg={},
+    )
+    assert "--workdir" not in live_argv, (
+        f"undeclared workdir matching the image should strip: {live_argv!r}")
+    print("OK: undeclared workdir matching the image default still strips")
+
+
+def test_field_table_real_workdir_mismatch_still_reports_drift():
+    """The gate must not silence a genuine difference: cfg declares one workdir,
+    the container is running another."""
+    ns = _load_docker()
+    cfg = {"workdir": "/app"}
+    cfg_argv = ns["_build_run_args_from_cfg"](cfg, env_vars={})
+    live_argv = ns["_live_argv_for_drift"](
+        _inspect(config={"WorkingDir": "/srv"}),
+        image_workdir="/app",
+        cfg=cfg,
+    )
+    in_target, in_live = ns["_compute_drift"](cfg_argv, live_argv)
+    assert any(p.startswith("--workdir") for p in in_target), (
+        f"a real workdir mismatch should surface as drift: "
+        f"target-only={in_target!r} live-only={in_live!r}")
+    print("OK: a genuine workdir mismatch still reports drift")
+
+
+def test_boolean_flags_derive_from_the_field_table():
+    """_BOOLEAN_FLAGS is derived from the table's boolean rows, not maintained
+    beside it. A second hand-written copy is what produced #387 and #468."""
+    ns = _load_docker()
+    from_table = {row["flag"] for row in ns["_DOCKER_FIELD_TABLE"]
+                  if row.get("shape") == "boolean"}
+    assert from_table <= set(ns["_BOOLEAN_FLAGS"]), (
+        f"boolean rows missing from _BOOLEAN_FLAGS: "
+        f"{from_table - set(ns['_BOOLEAN_FLAGS'])!r}")
+    print("OK: _BOOLEAN_FLAGS covers every boolean row in the field table")
