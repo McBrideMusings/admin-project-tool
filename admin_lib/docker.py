@@ -1871,11 +1871,16 @@ def ensure_deps(check_path, install_cmd):
 # Logs command
 # ---------------------------------------------------------------------------
 
-def remote_logs(host, image, container=None, tail=200, since=None, follow=True):
+def remote_logs(host, image, container=None, tail=None, since=None, follow=True):
     """Tail container logs locally or via SSH.
 
     since:  optional `docker logs --since` value in seconds (int). When set,
             history is shown from that point forward.
+    tail:   how many lines of history to print. None means "pick the right
+            default": 200 normally, but *everything in the window* when `since`
+            is set — a caller asking for the last two hours means the last two
+            hours, and a silent 200-line cap would hand back a truncated window
+            that looks like the whole thing.
     follow: when True, append `-f` to stream live (the default — plain
             `./admin logs live` follows). With a `--since` window and no
             explicit `-f`, callers pass follow=False to dump-and-exit.
@@ -1884,6 +1889,8 @@ def remote_logs(host, image, container=None, tail=200, since=None, follow=True):
     if container is None:
         container = _default_container_name(image)
     container_q = shlex.quote(container)
+    if tail is None:
+        tail = "all" if since is not None else 200
     flags = []
     if since is not None:
         flags.append(f"--since {int(since)}s")
@@ -1964,13 +1971,16 @@ def _newest_log(prefix, log_dir=None):
     return max(cands, key=os.path.getmtime)
 
 
-def tail_dev_log(prefix="dev", since=None, tail=100, follow=True):
+def tail_dev_log(prefix="dev", since=None, tail=None, follow=True):
     """Trail the newest local `<prefix>` log file.
 
-    since=None -> last `tail` lines, then follow.
+    since=None -> last `tail` lines (default 100), then follow.
     since=<seconds> -> print lines from (now - since) forward (keyed off the
         RFC3339 timestamps the backend emits), then follow. If no timestamped
         line falls within the window, warn and follow new output only.
+    tail=<n> with a `since` window -> the last n lines *of that window*, so
+        asking for both means what it reads like instead of one silently
+        winning. tail=None leaves the window whole.
     follow=False -> print and exit instead of trailing, for a caller that needs
         an answer rather than a stream (a script, a check after a deploy).
     """
@@ -1980,7 +1990,7 @@ def tail_dev_log(prefix="dev", since=None, tail=100, follow=True):
         return 1
     info(f"trailing {os.path.relpath(path)}")
     if since is None:
-        argv = ["tail", "-n", str(int(tail)), path]
+        argv = ["tail", "-n", str(int(100 if tail is None else tail)), path]
         if follow:
             argv.insert(-1, "-f")
         return subprocess.call(argv)
@@ -1988,6 +1998,8 @@ def tail_dev_log(prefix="dev", since=None, tail=100, follow=True):
     with open(path, errors="replace") as f:
         lines = f.readlines()
     filtered, matched = _lines_since(lines, cutoff)
+    if matched and tail is not None:
+        filtered = filtered[-int(tail):]
     if matched:
         sys.stdout.write("".join(filtered))
         sys.stdout.flush()
@@ -2126,7 +2138,9 @@ def logs_dispatch(args, image, host=None):
     forward and then keeps trailing, for both targets.
 
     `--no-follow` prints and exits instead of trailing, and `--tail N` sets how
-    much history it prints (default 200 for a container, 100 for a dev file).
+    much history it prints (default 200 for a container, 100 for a dev file, and
+    the whole window when `--from` is given — the two combine rather than one
+    silently overriding the other).
     Following is the right default for a person watching a run and the wrong
     one for anything that needs an answer and then continues — a script, a
     check after a deploy, an agent — which had no way to ask for one before.
@@ -2193,10 +2207,8 @@ def logs_dispatch(args, image, host=None):
         if host is None:
             user = os.environ.get("UNRAID_USER", "root")
             host = f"{user}@{os.environ.get('UNRAID_HOST')}"
-        return remote_logs(host, image, since=since, follow=follow,
-                           **({} if tail is None else {"tail": tail}))
-    return tail_dev_log(since=since, follow=follow,
-                        **({} if tail is None else {"tail": tail}))
+        return remote_logs(host, image, since=since, follow=follow, tail=tail)
+    return tail_dev_log(since=since, follow=follow, tail=tail)
 
 
 def register_logs_command(host, image):

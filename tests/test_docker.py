@@ -1163,6 +1163,24 @@ def test_logs_dispatch_dev_no_follow_omits_the_follow_flag():
         assert "7" in argv
 
 
+def test_logs_dispatch_from_without_tail_keeps_the_whole_window():
+    """A caller asking for the last two hours means the last two hours. The
+    old fixed --tail=200 silently capped that window and handed back a
+    truncated answer that looks complete."""
+    ns = _load_docker_logs()
+    ns["logs_dispatch"](["live", "--from", "00:02:00:00"], image="app:latest", host="root@box")
+    cmd = ns["_calls"]["run_cmd"][-1]
+    assert "--since 7200s" in cmd and "--tail=all" in cmd
+
+
+def test_logs_dispatch_from_with_explicit_tail_honours_both():
+    ns = _load_docker_logs()
+    ns["logs_dispatch"](["live", "--from", "00:02:00:00", "--tail", "10"],
+                        image="app:latest", host="root@box")
+    cmd = ns["_calls"]["run_cmd"][-1]
+    assert "--since 7200s" in cmd and "--tail=10" in cmd
+
+
 def test_logs_dispatch_bare_offers_only_dev_and_live():
     ns = _load_docker_logs(chosen="live")
     ns["logs_dispatch"]([], image="app:latest", host="root@box")
