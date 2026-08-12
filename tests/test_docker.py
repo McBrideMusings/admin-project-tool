@@ -1603,6 +1603,55 @@ def test_remote_deploy_with_remote_env_file_renders_targets_value(monkeypatch, c
     assert "/Users/pierce/Media" not in out
 
 
+def test_remote_deploy_provisions_from_the_targets_env_not_this_machines(monkeypatch, capsys):
+    """The mkdir/chown must resolve `${VAR}` from the same place the `-v` does.
+
+    They did not. The mount read `remote_env_file`; the provisioning read
+    `os.environ` and, finding nothing on a workstation, warned "references unset
+    env var — skipping provision" and created nothing — one line above a
+    `docker run` carrying that very path. Harmless where the directory already
+    exists, which is why it read as cosmetic; on a fresh host it is exactly the
+    uid-99 permission trap mkdir/chown exist to prevent.
+    """
+    ns = _load_docker()
+    ns["_is_local_host"] = lambda host: False
+    monkeypatch.delenv("APPDATA_DIR", raising=False)  # unset here, as on a real workstation
+
+    def _fake_run(argv, **kwargs):
+        if len(argv) >= 3 and isinstance(argv[2], str) and argv[2].startswith("cat "):
+            class _EnvProc:
+                returncode = 0
+                stdout = "APPDATA_DIR=/mnt/user/appdata/thing\n"
+            return _EnvProc()
+        return _not_found_proc()
+
+    monkeypatch.setattr(ns["subprocess"], "run", _fake_run)
+
+    cfg = {
+        "remote_env_file": "/boot/config/admin.env",
+        "bind_mounts": [
+            {
+                "host": "${APPDATA_DIR}",
+                "container": "/data",
+                "mkdir": True,
+                "chown": "99:100",
+            }
+        ],
+    }
+    rc = ns["remote_recreate_container"](
+        "root@box", "myimage", container="admin-test-provision",
+        target_cfg=cfg, dry_run=True,
+    )
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "mkdir -p /mnt/user/appdata/thing" in out
+    assert "chown 99:100 /mnt/user/appdata/thing" in out
+    assert "skipping provision" not in out
+    # And the mount it prepares is the one docker run actually mounts.
+    assert "/mnt/user/appdata/thing:/data" in out
+
+
 def test_remote_deploy_var_absent_from_remote_env_file_skips_mount_silently(monkeypatch, capsys):
     """'Optional' means optional once the file being consulted is the
     target's own — a var absent from remote_env_file must skip cleanly,
