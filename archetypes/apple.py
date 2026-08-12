@@ -19,28 +19,28 @@ _BUILD_PY = '''\
 target = None
 force = "--force" in args
 rest = [a for a in args if a != "--force"]
-if rest:
-    a = rest[0].lower()
-    if a in ("mac", "macos"):
-        target = "mac"
-    elif a in ("ios", "iphone"):
-        target = "ios"
-    elif a in ("tv", "tvos", "appletv"):
-        target = "tv"
-    elif a == "server":
-        target = "server"
-    else:
-        err("unknown build target: " + rest[0]); sys.exit(1)
 
 cfg = globals().get("_APPLE_CONFIG") or {}
 _server = globals().get("_SERVER_CONFIG") or {}
-_choices = {"mac": "macOS client", "ios": "iOS client"}
-# Only offered when the project has a tvOS scheme — an apple project without
-# one should not be shown a target that cannot build.
-if cfg.get("tv_scheme"):
-    _choices["tv"] = "tvOS client"
+# Platforms come from the manifest's scheme keys — never assumed. See
+# APPLE_PLATFORMS in admin_lib/apple.py.
+_labels = {"mac": "macOS client", "ios": "iOS client", "tv": "tvOS client"}
+_choices = {p: _labels[p] for p in apple_platforms(cfg)}
 if _server:
     _choices["server"] = "server (all platforms)"
+if not _choices:
+    err("no build target configured — set apple.mac_scheme, apple.ios_scheme or apple.tv_scheme")
+    sys.exit(1)
+
+if rest:
+    a = rest[0].lower()
+    target = "server" if a == "server" else resolve_apple_platform(a)
+    if target is None:
+        err("unknown build target: " + rest[0]); sys.exit(1)
+    if target not in _choices:
+        err("this project has no " + target + " build target (available: "
+            + ", ".join(_choices) + ")")
+        sys.exit(1)
 
 if not target:
     target = pick_target(_choices, "build — select target")
@@ -66,17 +66,7 @@ install_mac = False
 i = 0
 while i < len(args):
     a = args[i]
-    if a in ("mac", "macos"):
-        target = "mac"
-    elif a in ("ios", "iphone", "simulator"):
-        target = "ios"
-    elif a in ("tv", "tvos", "appletv"):
-        target = "tv"
-    elif a == "device":
-        target = "device"
-    elif a == "server":
-        target = "server"
-    elif a == "--log" and i + 1 < len(args):
+    if a == "--log" and i + 1 < len(args):
         i += 1
         log_level = args[i]
     elif a == "--clean":
@@ -87,22 +77,33 @@ while i < len(args):
         info("usage: ./admin dev [mac|ios|tv|device|server] [--log app|debug|system|verbose] [--clean] [--install]")
         return
     else:
-        err("unknown arg: " + a); sys.exit(1)
+        _p = a if a in ("device", "server") else resolve_apple_platform(a)
+        if _p is None:
+            err("unknown arg: " + a); sys.exit(1)
+        target = _p
     i += 1
 
 cfg = globals().get("_APPLE_CONFIG") or {}
 _server = globals().get("_SERVER_CONFIG") or {}
-if target is None:
-    _choices = {
-        "mac": "mac",
-        "ios": "ios simulator",
-    }
-    # Only offered when the project has a tvOS scheme.
-    if cfg.get("tv_scheme"):
-        _choices["tv"] = "tvOS simulator"
+# Platforms come from the manifest's scheme keys — never assumed. See
+# APPLE_PLATFORMS in admin_lib/apple.py.
+_labels = {"mac": "mac", "ios": "ios simulator", "tv": "tvOS simulator"}
+_choices = {p: _labels[p] for p in apple_platforms(cfg)}
+# `device` is the iOS-device path, so it exists only where an iOS scheme does.
+if "ios" in _choices:
     _choices["device"] = "iOS device (build + install + logs)"
-    if _server:
-        _choices["server"] = "server with reload loop"
+if _server:
+    _choices["server"] = "server with reload loop"
+if not _choices:
+    err("no dev target configured — set apple.mac_scheme, apple.ios_scheme or apple.tv_scheme")
+    sys.exit(1)
+
+if target is not None and target not in _choices:
+    err("this project has no " + target + " dev target (available: "
+        + ", ".join(_choices) + ")")
+    sys.exit(1)
+
+if target is None:
     target = pick_target(_choices, "dev — select target")
     if not target:
         return
@@ -124,11 +125,7 @@ _DEPLOY_PY = '''\
 target = None
 force_clean = False
 for a in args:
-    if a in ("mac", "macos"):
-        target = "mac"
-    elif a in ("ios", "iphone"):
-        target = "ios"
-    elif a in ("server", "docker"):
+    if a in ("server", "docker"):
         target = "server"
     elif a == "bazzite":
         target = "bazzite"
@@ -138,20 +135,34 @@ for a in args:
         info("usage: ./admin deploy <mac|ios|server|bazzite> [--clean]")
         return
     else:
-        err("unknown arg: " + a); sys.exit(1)
+        _p = resolve_apple_platform(a)
+        if _p is None:
+            err("unknown arg: " + a); sys.exit(1)
+        target = _p
 
 _server = globals().get("_SERVER_CONFIG") or {}
+cfg = globals().get("_APPLE_CONFIG") or {}
+# Platforms come from the manifest's scheme keys — never assumed. deploy has no
+# tvOS path, so it asks only about the platforms it can actually install.
+_choices = {p: p for p in apple_platforms(cfg, only=("mac", "ios"))}
+if _server:
+    _choices["server"] = "Docker → remote host"
+    if _server.get("bazzite_host_var") or _server.get("bazzite_cross_target"):
+        _choices["bazzite"] = "cross-compile → Bazzite"
+if not _choices:
+    err("no deploy target configured — set apple.mac_scheme or apple.ios_scheme")
+    sys.exit(1)
+
+if target is not None and target not in _choices:
+    err("this project has no " + target + " deploy target (available: "
+        + ", ".join(_choices) + ")")
+    sys.exit(1)
+
 if target is None:
-    _choices = {"mac": "mac", "ios": "ios"}
-    if _server:
-        _choices["server"] = "Docker → remote host"
-        if _server.get("bazzite_host_var") or _server.get("bazzite_cross_target"):
-            _choices["bazzite"] = "cross-compile → Bazzite"
     target = pick_target(_choices, "deploy — select target")
     if not target:
         return
 
-cfg = globals().get("_APPLE_CONFIG") or {}
 set_log_context("deploy", target)
 if target == "mac":
     deploy_mac(cfg, clean=force_clean)
@@ -306,9 +317,16 @@ ok("reload signal sent to PID " + str(pid))
 '''
 
 
+_APPID_PY = """\
+rc = appid(cfg, args)
+if rc:
+    sys.exit(rc)
+"""
+
+
 ARCHETYPE = {
     "name": "apple",
-    "modules": ["core", "icons", "apple", "log_format", "log_columns"],
+    "modules": ["core", "icons", "apple", "appstoreconnect", "log_format", "log_columns"],
     "urls": {},
     "commands": {
         "build":  {"desc": "Build: mac | ios | tv | server [--force]",                                    "steps": ["build"],  "group": 1, "priority": 10},
@@ -318,6 +336,7 @@ ARCHETYPE = {
         "clean":  {"desc": "Remove build artifacts (xcode|cargo)",                                   "steps": ["clean"],  "group": 2, "priority": 20},
         "icons":  {"desc": "Icons: regenerate | swap-dev | restore",                                 "steps": ["icons"],  "group": 2, "priority": 30},
         "reload": {"desc": "Signal a running './admin dev' to rebuild and relaunch",                 "steps": ["reload"], "group": 2, "priority": 40},
+        "appid":  {"desc": "App IDs: report, register, enable capabilities [--capability icloud]",   "steps": ["appid"],  "group": 2, "priority": 45},
     },
     "actions": {
         "build":      {"kind": "python", "desc": "Build: mac | ios | tv | server [--force]",                                    "run": _BUILD_PY},
@@ -327,6 +346,7 @@ ARCHETYPE = {
         "clean":      {"kind": "python", "desc": "Remove build artifacts (xcode|cargo)",                                   "run": _CLEAN_PY},
         "icons":      {"kind": "python", "desc": "Icons: regenerate | swap-dev | restore",                                 "run": _ICONS_PY},
         "reload":     {"kind": "python", "desc": "Signal a running './admin dev' to rebuild and relaunch",                 "run": _RELOAD_PY},
+        "appid":      {"kind": "python", "desc": "App IDs: report, register, enable capabilities [--capability icloud]",   "run": _APPID_PY},
         "build-ios":  {"kind": "apple",  "desc": "build iOS",               "run": "build_ios"},
         "dev-ios":    {"kind": "apple",  "desc": "dev iOS simulator",        "run": "dev_ios"},
         "build-tv":   {"kind": "apple",  "desc": "build tvOS",             "run": "build_tv"},

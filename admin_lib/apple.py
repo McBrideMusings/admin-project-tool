@@ -657,6 +657,42 @@ SIM_PLATFORMS = {
 }
 
 
+# Every Apple platform this archetype can drive, in menu order, each keyed by
+# the [apple] scheme key a project must set for that platform to exist at all.
+#
+# A project declares the platforms it has; the archetype never assumes one. An
+# iOS-only manifest offering a `mac` target is how `admin deploy` came to fail
+# with "apple.mac_scheme required" on a project that has no macOS target and
+# never claimed to (admin-project-tool: mac/ios were hardcoded into the build,
+# dev and deploy pickers while `tv` was correctly gated on tv_scheme).
+APPLE_PLATFORMS = {
+    "mac": {"scheme_key": "mac_scheme", "aliases": ("mac", "macos")},
+    "ios": {"scheme_key": "ios_scheme", "aliases": ("ios", "iphone", "simulator")},
+    "tv":  {"scheme_key": "tv_scheme",  "aliases": ("tv", "tvos", "appletv")},
+}
+
+
+def apple_platforms(cfg, only=None):
+    """Return the platform keys this project declares a scheme for, menu-ordered.
+
+    `only` restricts the answer to platforms a given command can actually
+    handle (e.g. deploy has no tvOS path), so a command never offers — or
+    accepts — a target it cannot run.
+    """
+    cfg = cfg or {}
+    return [p for p, meta in APPLE_PLATFORMS.items()
+            if cfg.get(meta["scheme_key"]) and (only is None or p in only)]
+
+
+def resolve_apple_platform(arg):
+    """Map a CLI alias ('macos', 'iphone', 'appletv', …) to a platform key, or None."""
+    a = str(arg).lower()
+    for p, meta in APPLE_PLATFORMS.items():
+        if a in meta["aliases"]:
+            return p
+    return None
+
+
 def _sim_platform(platform):
     """Look up a SIM_PLATFORMS row, failing loudly on an unknown key."""
     try:
@@ -3397,3 +3433,77 @@ def register_reload_command(pid_file="/tmp/admin-run.pid"):
             os.remove(pid_file)
             sys.exit(1)
         ok("Reload signal sent to PID %d" % pid)
+
+def appid(cfg, args):
+    """`admin appid [<bundle-id>] [--capability NAME ...] [--name "Display"]`
+
+    Registers an App ID and turns capabilities on, so the developer portal
+    stops being a step a person has to take between "the code is written" and
+    "the build signs". With no bundle id it reports on the ones this project
+    already builds, which is the question worth asking first — an identifier
+    that exists but lacks a capability fails a build by naming the capability,
+    not by naming itself.
+    """
+    from .appstoreconnect import (
+        AppStoreConnectError, CAPABILITY_ALIASES, capabilities, create_bundle_id,
+        credentials, enable_capability, find_bundle_id,
+    )
+
+    if credentials() is None:
+        err("No App Store Connect API key configured.")
+        err("Set APP_STORE_CONNECT_KEY_PATH, APP_STORE_CONNECT_KEY_ID and")
+        err("APP_STORE_CONNECT_ISSUER_ID — the key comes from App Store Connect ▸")
+        err("Users and Access ▸ Integrations, and is downloadable exactly once.")
+        return 1
+
+    wanted = []
+    display_name = None
+    identifiers = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--capability" and index + 1 < len(args):
+            raw = args[index + 1]
+            wanted.append(CAPABILITY_ALIASES.get(raw.lower(), raw.upper()))
+            index += 2
+        elif arg == "--name" and index + 1 < len(args):
+            display_name = args[index + 1]
+            index += 2
+        else:
+            identifiers.append(arg)
+            index += 1
+
+    if not identifiers:
+        # Whatever this project builds, both halves of the dev/release pair.
+        for platform in ("mac", "ios", "tv"):
+            for dev in (False, True):
+                found = _resolve_bundle(cfg, platform, dev=dev)
+                if found and found not in identifiers:
+                    identifiers.append(found)
+        if not identifiers:
+            err("no bundle identifiers found in this project, and none given")
+            return 1
+
+    failures = 0
+    for identifier in identifiers:
+        try:
+            resource = find_bundle_id(identifier)
+            if resource is None:
+                if not wanted and not display_name:
+                    warn(f"{identifier}: not registered")
+                    continue
+                info(f"{identifier}: registering")
+                resource = create_bundle_id(identifier, display_name or identifier)
+            already = capabilities(resource["id"])
+            for capability in wanted:
+                if capability in already:
+                    info(f"{identifier}: {capability} already on")
+                    continue
+                enable_capability(resource["id"], capability)
+                ok(f"{identifier}: {capability} enabled")
+                already.append(capability)
+            info(f"{identifier}: {', '.join(sorted(already)) or 'no capabilities'}")
+        except AppStoreConnectError as error:
+            err(f"{identifier}: {error}")
+            failures += 1
+    return 1 if failures else 0
