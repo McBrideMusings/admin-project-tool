@@ -2859,8 +2859,14 @@ def deploy_mac(cfg, *, clean=False):
         shutil.rmtree(install_path)
     shutil.copytree(app_path, install_path)
 
-    info(f"Launching {install_path}")
-    subprocess.run(["open", install_path], check=True)
+    # `open` pulls the app to the front and takes focus off whatever the
+    # developer was doing. That is what you want when deploying is the last step
+    # of a session, and not what you want when it is a step in the middle of one
+    # — a project whose deploy also installs binaries, or which is deployed on a
+    # loop, sets mac_deploy_launch = false in [apple] and gets its focus back.
+    if cfg.get("mac_deploy_launch", True):
+        info(f"Launching {install_path}")
+        subprocess.run(["open", install_path], check=True)
     ok(f"deploy mac → {install_path}")
 
 
