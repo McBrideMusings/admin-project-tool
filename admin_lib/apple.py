@@ -246,6 +246,7 @@ def target_build_dir(project, scheme, config, destination, extra_settings="",
         parts.append(extra_settings)
     if allow_provisioning:
         parts.append("-allowProvisioningUpdates")
+        parts.extend(app_store_connect_auth_flags())
 
     result = subprocess.run(" ".join(parts), shell=True, capture_output=True, text=True)
     if result.returncode != 0:
@@ -345,6 +346,50 @@ def diagnose_build_failure():
         _report_signed_out()
 
 
+def app_store_connect_auth_flags():
+    """The -authenticationKey* flags when an App Store Connect API key is
+    configured, or [] when one is not.
+
+    Why this exists: without it, every signed build depends on an Apple ID
+    being signed into Xcode's Accounts pane, and that login does not survive.
+    On this setup it vanished several times in a month, each time surfacing as
+    a provisioning-profile error that names a capability rather than an
+    account. With a key on disk, xcodebuild authenticates against the Apple
+    Developer website itself and the Xcode account stops mattering — including
+    for creating profiles under -allowProvisioningUpdates.
+
+    Read from the environment rather than a config table, because the key is a
+    credential: the path can sit in a machine's own .env while every project's
+    committed admin.toml stays free of it.
+
+        APP_STORE_CONNECT_KEY_PATH    path to AuthKey_<KEYID>.p8
+        APP_STORE_CONNECT_KEY_ID      the <KEYID> from that filename
+        APP_STORE_CONNECT_ISSUER_ID   the UUID from App Store Connect ▸
+                                      Users and Access ▸ Integrations
+
+    All three or nothing: xcodebuild rejects a partial set, and a build that
+    fails on a half-configured credential is worse than one that quietly does
+    what it did before.
+    """
+    path = os.environ.get("APP_STORE_CONNECT_KEY_PATH", "").strip()
+    key_id = os.environ.get("APP_STORE_CONNECT_KEY_ID", "").strip()
+    issuer = os.environ.get("APP_STORE_CONNECT_ISSUER_ID", "").strip()
+    if not (path and key_id and issuer):
+        return []
+
+    expanded = os.path.expanduser(os.path.expandvars(path))
+    if not os.path.isfile(expanded):
+        warn(f"APP_STORE_CONNECT_KEY_PATH points at {expanded}, which is not there —")
+        warn("falling back to whatever account Xcode has.")
+        return []
+
+    return [
+        f'-authenticationKeyPath "{expanded}"',
+        f'-authenticationKeyID "{key_id}"',
+        f'-authenticationKeyIssuerID "{issuer}"',
+    ]
+
+
 def xcodebuild_filtered(project, scheme, config, destination, action="build",
                          extra_settings="", allow_provisioning=True):
     """Run xcodebuild with grep-filtered output. Raw log tee'd to this
@@ -375,6 +420,7 @@ def xcodebuild_filtered(project, scheme, config, destination, action="build",
         parts.append(extra_settings)
     if allow_provisioning:
         parts.append("-allowProvisioningUpdates")
+        parts.extend(app_store_connect_auth_flags())
     parts.append("2>&1")
 
     build_cmd = " ".join(parts)
