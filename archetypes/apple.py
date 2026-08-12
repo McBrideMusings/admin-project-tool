@@ -59,6 +59,22 @@ elif target == "server":
 '''
 
 _DEV_PY = '''\
+cfg = globals().get("_APPLE_CONFIG") or {}
+_server = globals().get("_SERVER_CONFIG") or {}
+# Platforms come from the manifest's scheme keys — never assumed. See
+# APPLE_PLATFORMS in admin_lib/apple.py. Resolved before the args are read so
+# --help advertises this project's targets rather than every target that exists.
+_labels = {"mac": "mac", "ios": "ios simulator", "tv": "tvOS simulator"}
+_choices = {p: _labels[p] for p in apple_platforms(cfg)}
+# `device` is the iOS-device path, so it exists only where an iOS scheme does.
+if "ios" in _choices:
+    _choices["device"] = "iOS device (build + install + logs)"
+if _server:
+    _choices["server"] = "server with reload loop"
+if not _choices:
+    err("no dev target configured — set apple.mac_scheme, apple.ios_scheme or apple.tv_scheme")
+    sys.exit(1)
+
 target = None
 log_level = "app"
 force_clean = False
@@ -74,7 +90,8 @@ while i < len(args):
     elif a == "--install":
         install_mac = True
     elif a in ("-h", "--help"):
-        info("usage: ./admin dev [mac|ios|tv|device|server] [--log app|debug|system|verbose] [--clean] [--install]")
+        info("usage: ./admin dev [" + "|".join(_choices)
+             + "] [--log app|debug|system|verbose] [--clean] [--install]")
         return
     else:
         _p = a if a in ("device", "server") else resolve_apple_platform(a)
@@ -82,21 +99,6 @@ while i < len(args):
             err("unknown arg: " + a); sys.exit(1)
         target = _p
     i += 1
-
-cfg = globals().get("_APPLE_CONFIG") or {}
-_server = globals().get("_SERVER_CONFIG") or {}
-# Platforms come from the manifest's scheme keys — never assumed. See
-# APPLE_PLATFORMS in admin_lib/apple.py.
-_labels = {"mac": "mac", "ios": "ios simulator", "tv": "tvOS simulator"}
-_choices = {p: _labels[p] for p in apple_platforms(cfg)}
-# `device` is the iOS-device path, so it exists only where an iOS scheme does.
-if "ios" in _choices:
-    _choices["device"] = "iOS device (build + install + logs)"
-if _server:
-    _choices["server"] = "server with reload loop"
-if not _choices:
-    err("no dev target configured — set apple.mac_scheme, apple.ios_scheme or apple.tv_scheme")
-    sys.exit(1)
 
 if target is not None and target not in _choices:
     err("this project has no " + target + " dev target (available: "
@@ -122,6 +124,20 @@ else:
 '''
 
 _DEPLOY_PY = '''\
+_server = globals().get("_SERVER_CONFIG") or {}
+cfg = globals().get("_APPLE_CONFIG") or {}
+# Platforms come from the manifest's scheme keys — never assumed. deploy has no
+# tvOS path, so it asks only about the platforms it can actually install.
+# Resolved before the args are read so --help advertises this project's targets.
+_choices = {p: p for p in apple_platforms(cfg, only=("mac", "ios"))}
+if _server:
+    _choices["server"] = "Docker → remote host"
+    if _server.get("bazzite_host_var") or _server.get("bazzite_cross_target"):
+        _choices["bazzite"] = "cross-compile → Bazzite"
+if not _choices:
+    err("no deploy target configured — set apple.mac_scheme or apple.ios_scheme")
+    sys.exit(1)
+
 target = None
 force_clean = False
 for a in args:
@@ -132,26 +148,13 @@ for a in args:
     elif a == "--clean":
         force_clean = True
     elif a in ("-h", "--help"):
-        info("usage: ./admin deploy <mac|ios|server|bazzite> [--clean]")
+        info("usage: ./admin deploy <" + "|".join(_choices) + "> [--clean]")
         return
     else:
         _p = resolve_apple_platform(a)
         if _p is None:
             err("unknown arg: " + a); sys.exit(1)
         target = _p
-
-_server = globals().get("_SERVER_CONFIG") or {}
-cfg = globals().get("_APPLE_CONFIG") or {}
-# Platforms come from the manifest's scheme keys — never assumed. deploy has no
-# tvOS path, so it asks only about the platforms it can actually install.
-_choices = {p: p for p in apple_platforms(cfg, only=("mac", "ios"))}
-if _server:
-    _choices["server"] = "Docker → remote host"
-    if _server.get("bazzite_host_var") or _server.get("bazzite_cross_target"):
-        _choices["bazzite"] = "cross-compile → Bazzite"
-if not _choices:
-    err("no deploy target configured — set apple.mac_scheme or apple.ios_scheme")
-    sys.exit(1)
 
 if target is not None and target not in _choices:
     err("this project has no " + target + " deploy target (available: "

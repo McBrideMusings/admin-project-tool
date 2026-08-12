@@ -185,6 +185,23 @@ def test_no_apple_scheme_at_all_errors():
     print("OK: an [apple] table with no scheme key errors instead of offering targets")
 
 
+def test_help_advertises_only_this_projects_targets():
+    dev_help = " ".join(_run("dev", ["--help"], IOS_ONLY)["infos"])
+    assert "mac" not in dev_help, dev_help
+    assert "ios" in dev_help and "device" in dev_help, dev_help
+    deploy_help = " ".join(_run("deploy", ["--help"], IOS_ONLY)["infos"])
+    assert "mac" not in deploy_help, deploy_help
+    assert "ios" in deploy_help, deploy_help
+    print("OK: --help lists the project's own targets, not every target that exists")
+
+
+def test_help_still_lists_server_targets():
+    server = {"dir": "server", "bazzite_cross_target": "x86_64-unknown-linux-gnu"}
+    deploy_help = " ".join(_run("deploy", ["--help"], MAC_ONLY, server_cfg=server)["infos"])
+    assert "mac" in deploy_help and "server" in deploy_help and "bazzite" in deploy_help, deploy_help
+    print("OK: --help keeps the server/bazzite targets alongside the declared platforms")
+
+
 def test_unknown_arg_still_rejected():
     seen = _run("deploy", ["nintendo"], IOS_ONLY)
     assert any("unknown arg" in e for e in seen["errors"]), seen["errors"]
