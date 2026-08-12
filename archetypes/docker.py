@@ -38,7 +38,7 @@ ARCHETYPE = {
         "build":            {"desc": "Build the Docker image — locally for linux/amd64, or on the target when [docker_build].on_host", "steps": ["build"]},
         "deploy":           {"desc": "Deploy to Unraid — `image` (default), `files` ([deploy] mirror dir), or `all`; --dry-run to preview",     "steps": ["deploy"],           "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
         "diff":             {"desc": "Show run-config drift between current container and last deploy; --format json for CI",          "steps": ["diff"],             "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
-        "logs":             {"desc": "Tail logs — `dev` (newest local log) or `live` (container); --from DD:HH:MM:SS rolls back",                    "steps": ["logs"],             "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
+        "logs":             {"desc": "Tail logs — `dev` (newest local log) or `live` (container); --from DD:HH:MM:SS rolls back, --tail N --no-follow prints and exits",                    "steps": ["logs"],             "env": {"ADMIN_LOCAL": "${DEPLOY_LOCAL:-false}"}},
         "reload":           {"desc": "Build+run with reload loop (press r or SIGUSR1 to rebuild)",                                     "steps": ["reload"]},
         "run-args":         {"desc": "Print [docker_run] rendered to shlex-quoted `docker run` args (for external native-build scripts)", "steps": ["run-args"], "log": False},
         "open":             {"desc": "Open the deployed app URL",                                                                       "steps": ["open"]},
@@ -86,7 +86,7 @@ ARCHETYPE = {
             "run": (
                 "sys.exit(logs_dispatch(args, image=os.environ.get('APP_IMAGE')))"
             ),
-            "desc": "Tail logs — `dev` (newest local log) or `live` (container); --from DD:HH:MM:SS rolls back",
+            "desc": "Tail logs — `dev` (newest local log) or `live` (container); --from DD:HH:MM:SS rolls back, --tail N --no-follow prints and exits",
         },
         "reload": {
             "kind": "docker-reload-loop",

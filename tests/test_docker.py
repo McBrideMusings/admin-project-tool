@@ -1124,6 +1124,45 @@ def test_logs_dispatch_dev_tails_file_not_container():
         assert ns["_calls"]["run_cmd"] == []          # never hit docker logs
 
 
+def test_logs_dispatch_live_no_follow_prints_and_exits():
+    """`--no-follow` is what makes the log readable by anything that has to
+    continue afterwards. Without it the only way to read a container log was a
+    stream that never ends, so a script, a post-deploy check, or an agent hung
+    instead of getting an answer."""
+    ns = _load_docker_logs()
+    ns["logs_dispatch"](["live", "--tail", "5", "--no-follow"], image="app:latest", host="root@box")
+    cmd = ns["_calls"]["run_cmd"][-1]
+    assert "--tail=5" in cmd
+    assert " -f" not in cmd
+
+
+def test_logs_dispatch_live_tail_equals_form():
+    ns = _load_docker_logs()
+    ns["logs_dispatch"](["live", "--tail=40"], image="app:latest", host="root@box")
+    assert "--tail=40" in ns["_calls"]["run_cmd"][-1]
+
+
+def test_logs_dispatch_unknown_flag_errors_before_ssh():
+    """An unrecognised flag used to fall through unread and follow forever,
+    which reads as a hang rather than as a rejected argument."""
+    ns = _load_docker_logs()
+    rc = ns["logs_dispatch"](["live", "--tale", "5"], image="app:latest", host="root@box")
+    assert rc == 1 and ns["_calls"]["run_cmd"] == []
+
+
+def test_logs_dispatch_dev_no_follow_omits_the_follow_flag():
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "dev.log")
+        open(path, "w").write("x\n")
+        ns = _load_docker_logs(tmp_dir=d)
+        ns["logs_dispatch"](["dev", "--tail", "7", "--no-follow"], image="app:latest")
+        argv = ns["_calls"]["subprocess"][-1]
+        assert argv[-1] == path
+        assert "-f" not in argv
+        assert "7" in argv
+
+
 def test_logs_dispatch_bare_offers_only_dev_and_live():
     ns = _load_docker_logs(chosen="live")
     ns["logs_dispatch"]([], image="app:latest", host="root@box")
