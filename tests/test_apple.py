@@ -2007,3 +2007,48 @@ def test_a_key_path_that_is_not_there_falls_back_instead_of_failing():
     finally:
         _restore_env(old)
     print("OK: a missing key file falls back to the Xcode account")
+
+
+# --- Manual signing vs. capabilities: the combination that made a correct
+# --- App ID look wrong for an afternoon ---
+
+SANDBOX_ONLY = """<plist version="1.0"><dict>
+  <key>com.apple.security.app-sandbox</key><true/>
+  <key>com.apple.security.network.client</key><true/>
+</dict></plist>"""
+
+WITH_ICLOUD = """<plist version="1.0"><dict>
+  <key>com.apple.developer.ubiquity-kvstore-identifier</key>
+  <string>$(TeamIdentifierPrefix)$(CFBundleIdentifier)</string>
+</dict></plist>"""
+
+
+def _needs_profile(apple, text):
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "App.entitlements")
+        with open(path, "w") as f:
+            f.write(text)
+        apple_mod = apple["_target_needs_provisioning_profile"]
+        # Feed the paths directly rather than shelling out to xcodebuild.
+        apple["_entitlements_paths"] = lambda cfg: [path]
+        return apple_mod({})
+
+
+def test_a_sandboxed_app_still_signs_manually_with_the_stable_identity():
+    apple = _load_apple()
+    assert not _needs_profile(apple, SANDBOX_ONLY), (
+        "the sandbox is granted by the entitlement alone, so a plain Mac app must keep "
+        "the pinned manual identity that makes TCC grants survive a rebuild"
+    )
+    print("OK: sandbox-only entitlements keep manual signing")
+
+
+def test_an_icloud_entitlement_forces_automatic_signing():
+    apple = _load_apple()
+    assert _needs_profile(apple, WITH_ICLOUD), (
+        "CODE_SIGN_STYLE=Manual with an empty profile specifier tells xcodebuild never to "
+        "create a profile, so -allowProvisioningUpdates and an API key are both ignored and "
+        "the build fails naming the capability — which reads as 'the App ID is wrong' when "
+        "the App ID is fine"
+    )
+    print("OK: a com.apple.developer.* entitlement keeps automatic signing")
