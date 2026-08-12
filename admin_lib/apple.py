@@ -273,11 +273,24 @@ def xcode_is_signed_out(build_log_text):
     falls back to the cached wildcard team profile and then reports whatever
     capability that profile happens to lack. Chasing the capability is chasing
     a symptom.
+
+    One honest limit: "requires a provisioning profile with the <X> feature"
+    has two causes, and the log cannot tell them apart — nobody signed in, or
+    the App ID genuinely lacks that capability. So this returns True for both
+    and the message names both, in the order they are worth checking. Being
+    told to look at Accounts when the real problem is a capability costs a
+    glance; not being told anything costs an afternoon, which is what it cost
+    the day this was written.
     """
     if "No Accounts: Add a new account" in build_log_text:
         return True
-    # The wildcard-profile fallback, which is what a signed-out machine
-    # produces when the project needs a capability-bearing profile.
+    # What a signed-out machine actually prints, most of the time. xcodebuild
+    # only says "No Accounts" when it gets as far as trying to make a profile;
+    # short of that it reports the shortfall in whatever profile it fell back
+    # to. Both shapes were produced by the same machine, minutes apart, for the
+    # same cause.
+    if "requires a provisioning profile with the" in build_log_text:
+        return True
     return (
         'Provisioning profile "iOS Team Provisioning Profile: *"' in build_log_text
         or 'Provisioning profile "Mac Team Provisioning Profile: *"' in build_log_text
@@ -287,13 +300,19 @@ def xcode_is_signed_out(build_log_text):
 def _report_signed_out():
     """Say what happened and what to click. Kept separate from the retry so a
     non-interactive run still gets the explanation."""
-    warn("Xcode has no Apple ID signed in, so it cannot make a provisioning profile.")
-    warn("It fell back to the cached wildcard team profile, which is why the error")
-    warn("names a missing capability rather than a missing account.")
+    warn("This build could not get a provisioning profile carrying the capability it")
+    warn("asked for. Two things cause that, and the log cannot tell them apart:")
     warn("")
-    warn("  Xcode ▸ Settings (⌘,) ▸ Accounts ▸ + ▸ Apple ID ▸ sign in")
+    warn("  1. Xcode has no Apple ID signed in — by far the more common one, and it")
+    warn("     does not say so: it falls back to the cached wildcard team profile and")
+    warn("     then reports whatever that profile lacks.")
+    warn("       Xcode ▸ Settings (⌘,) ▸ Accounts ▸ + ▸ Apple ID ▸ sign in")
     warn("")
-    warn("Nothing else needs changing — no profile to download, no project setting.")
+    warn("  2. The App ID really is missing the capability.")
+    warn("       developer.apple.com/account ▸ Identifiers ▸ <your bundle id>")
+    warn("")
+    warn("Check 1 first. Neither needs a project setting changed or a profile")
+    warn("downloaded by hand.")
 
 
 def diagnose_build_failure():

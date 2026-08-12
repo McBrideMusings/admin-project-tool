@@ -1904,6 +1904,22 @@ def test_signed_out_is_detected_behind_the_wildcard_profile_symptom():
     print("OK: the wildcard-profile fallback reads as signed out")
 
 
+REQUIRES_PROFILE_LOG = """
+/Users/x/Projects/app/app.xcodeproj: error: "app" requires a provisioning profile with the iCloud feature. Select a provisioning profile in the Signing & Capabilities editor. (in target 'app')
+** BUILD FAILED **
+"""
+
+
+def test_the_shape_the_tool_actually_produces_is_detected():
+    apple = _load_apple()
+    assert apple["xcode_is_signed_out"](REQUIRES_PROFILE_LOG), (
+        "this is the message a real `admin build mac` produced on a signed-out machine — "
+        "the guard missed it on its first outing because it only knew the two shapes a "
+        "direct xcodebuild prints"
+    )
+    print("OK: 'requires a provisioning profile with the <X> feature' is detected")
+
+
 def test_an_ordinary_compile_error_is_not_read_as_signed_out():
     apple = _load_apple()
     assert not apple["xcode_is_signed_out"](ORDINARY_FAILURE_LOG), (
