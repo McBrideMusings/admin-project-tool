@@ -684,6 +684,21 @@ def apple_platforms(cfg, only=None):
             if cfg.get(meta["scheme_key"]) and (only is None or p in only)]
 
 
+def only_target(choices, cmd_name):
+    """Return the sole target when a project has exactly one, else None.
+
+    A one-row picker asks a question with a single possible answer. `test`
+    already skipped it; build/dev/deploy do the same through this. It says which
+    target it took, so a run with no prompt is never mistaken for a picker that
+    failed to appear.
+    """
+    if len(choices) != 1:
+        return None
+    target = next(iter(choices))
+    info(cmd_name + ": " + target + " is this project's only target")
+    return target
+
+
 def resolve_apple_platform(arg):
     """Map a CLI alias ('macos', 'iphone', 'appletv', …) to a platform key, or None."""
     a = str(arg).lower()
