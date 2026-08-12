@@ -270,11 +270,15 @@ def _status(c):
         info(f"installed but not loaded ({plist})")
         return
     # `launchctl print` is verbose; these three lines answer "is it up, as what
-    # pid, and did it die".
+    # pid, and did it die". Only the top level counts — the nested dictionaries
+    # (endpoints, domain) carry their own `state = active` lines, and printing
+    # those alongside the service's own state reads as three conflicting answers
+    # to one question. launchctl indents top-level keys with exactly one tab.
     wanted = ("state = ", "pid = ", "last exit code = ")
     for line in r.stdout.splitlines():
-        if line.strip().startswith(wanted):
-            print(line.rstrip())
+        if line.startswith("\t") and not line.startswith("\t\t"):
+            if line.lstrip().startswith(wanted):
+                print(line.strip())
 
 
 _VERBS = {
