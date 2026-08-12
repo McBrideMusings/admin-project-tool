@@ -2774,9 +2774,69 @@ def _compose_sign_settings(cfg):
         ident = resolve_signing_identity(cfg)
         if ident:
             parts.append(f'CODE_SIGN_IDENTITY="{ident}"')
-            parts.append("CODE_SIGN_STYLE=Manual")
-            parts.append("PROVISIONING_PROFILE_SPECIFIER=")
+            # Manual signing ONLY when the app needs no provisioning profile.
+            #
+            # `CODE_SIGN_STYLE=Manual` with an empty PROVISIONING_PROFILE_SPECIFIER
+            # tells xcodebuild to sign with an existing profile and never to make
+            # one — so `-allowProvisioningUpdates` and an App Store Connect API key
+            # are both ignored, and a target that declares any capability fails
+            # with a profile error naming that capability. Which reads exactly like
+            # the capability is missing from the App ID, and sends you to the
+            # developer portal to check something that was already right.
+            #
+            # An app with entitlements beyond the sandbox — iCloud, push, App
+            # Groups — must therefore keep automatic signing. The stable identity
+            # this block exists for (so macOS TCC grants survive a rebuild) is
+            # still pinned above; only the style is left alone.
+            if not _target_needs_provisioning_profile(cfg):
+                parts.append("CODE_SIGN_STYLE=Manual")
+                parts.append("PROVISIONING_PROFILE_SPECIFIER=")
     return " ".join(parts)
+
+
+def _target_needs_provisioning_profile(cfg):
+    """True when this project's entitlements require a profile that has to be
+    created or refreshed, rather than any profile at all.
+
+    Read from the entitlements files the manifest points at, because that is
+    where the requirement actually lives. The sandbox and its network client
+    are not in this class — they are granted by the entitlement alone — so a
+    plain sandboxed Mac app keeps the stable manual identity it had before.
+    """
+    keys_needing_a_profile = (
+        "com.apple.developer.",       # iCloud, App Groups, push, HealthKit, …
+        "aps-environment",
+    )
+    for path in _entitlements_paths(cfg):
+        try:
+            with open(path, "r", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        if any(k in text for k in keys_needing_a_profile):
+            return True
+    return False
+
+
+def _entitlements_paths(cfg):
+    """Every entitlements file this project might sign with, as absolute paths.
+
+    Sourced from the Xcode project rather than the manifest: admin.toml has no
+    entitlements key, and adding one would be a second place to keep the answer
+    correct. `-showBuildSettings` already knows.
+    """
+    root = get_project_root()
+    seen = []
+    for scheme_key in ("mac_scheme", "ios_scheme", "tv_scheme"):
+        scheme = cfg.get(scheme_key)
+        if not scheme:
+            continue
+        value = _xcode_setting(cfg, scheme, "CODE_SIGN_ENTITLEMENTS")
+        if value:
+            path = value if os.path.isabs(value) else os.path.join(root, value)
+            if path not in seen:
+                seen.append(path)
+    return seen
 
 
 def _compose_dev_settings(cfg, platform):
