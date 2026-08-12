@@ -16,15 +16,17 @@ All keys are **optional** unless noted — a wrapper that needs a missing key er
 
 | Key | Default | Meaning |
 |---|---|---|
-| `mac_scheme` | — | Xcode scheme for the macOS target. Required for any `mac` action. |
-| `ios_scheme` | — | Xcode scheme for the iOS target. Required for any `ios` action. |
-| `tv_scheme` | — | Xcode scheme for the tvOS target. Required for any `tv` action, and its presence is what puts `tv` in the `build` / `dev` target pickers at all. |
+| `mac_scheme` | — | Xcode scheme for the macOS target. Its presence is what puts `mac` in the `build` / `dev` / `deploy` target pickers at all. |
+| `ios_scheme` | — | Xcode scheme for the iOS target. Its presence is what puts `ios` — and `dev`'s `device` target — in the pickers at all. |
+| `tv_scheme` | — | Xcode scheme for the tvOS target. Its presence is what puts `tv` in the `build` / `dev` pickers at all (`deploy` has no tvOS path). |
 | `mac_build_config` | `Debug` | Configuration for macOS `build`/`dev`. |
 | `ios_build_config` | `Debug` | Configuration for iOS `build`/`dev`. |
 | `tv_build_config` | `Debug` | Configuration for tvOS `build`/`dev`. |
 | `mac_deploy_config` | `Release` | Configuration for macOS `deploy`. |
 | `ios_deploy_config` | `Release` | Configuration for iOS `deploy`. |
 | `dev_build_settings` | — | Extra `KEY=value` `xcodebuild` build settings appended in **dev** builds only. |
+
+**The archetype assumes no platform.** A project gets exactly the targets its scheme keys declare. An iOS-only manifest is never shown `mac`, and `admin deploy mac` there stops immediately, naming the targets the project does have, instead of getting as far as `deploy_mac` and reporting a missing `mac_scheme`. One source decides this for all three commands: `APPLE_PLATFORMS` / `apple_platforms()` / `resolve_apple_platform()` in `admin_lib/apple.py`. Adding a platform is one entry there plus a dispatch branch in the bodies. Cover: `tests/test_apple_platform_gating.py`.
 
 ## Process names (for kill / running-detection)
 

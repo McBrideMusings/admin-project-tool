@@ -318,6 +318,7 @@ ok("reload signal sent to PID " + str(pid))
 
 
 _APPID_PY = """\
+cfg = globals().get("_APPLE_CONFIG") or {}
 rc = appid(cfg, args)
 if rc:
     sys.exit(rc)
