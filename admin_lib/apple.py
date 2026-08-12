@@ -324,7 +324,7 @@ def xcodebuild_filtered(project, scheme, config, destination, action="build",
 
 def dev_macos_postprocess(built_app_path, dev_product_name, dev_display_name, sign_identity="-"):
     """Rename a Debug build .app → <dev_product_name>.app, patch
-    CFBundleDisplayName, re-sign. Returns the renamed path.
+    CFBundleName and CFBundleDisplayName, re-sign. Returns the renamed path.
 
     WHY RENAME THE .app AT ALL (the Dock-name gotcha) — ADR-0007:
     The macOS Dock's hover tooltip and Finder show the app's **.app filename**,
@@ -341,7 +341,7 @@ def dev_macos_postprocess(built_app_path, dev_product_name, dev_display_name, si
 
     The full name picture for a dev variant:
       • Dock hover tooltip / Finder  → the .app filename   (THIS rename)
-      • Menu-bar app menu            → CFBundleName         (project.yml)
+      • Menu-bar app menu            → CFBundleName         (patched here)
       • Some Finder/system surfaces  → CFBundleDisplayName  (patched here)
       • In-app strings (window title, welcome screen, etc.) → hardcoded in the
         app unless they read Bundle.main's CFBundleDisplayName; make them read it
@@ -378,6 +378,24 @@ def dev_macos_postprocess(built_app_path, dev_product_name, dev_display_name, si
     )
     if r.returncode != 0:
         warn(f"plutil failed to patch CFBundleDisplayName: "
+             f"{r.stderr.decode('utf-8', 'replace').strip()}")
+
+    # CFBundleName is what the menu bar at the top of the screen reads, and it
+    # is patched here rather than left to project.yml because a project using
+    # GENERATE_INFOPLIST_FILE = YES cannot set it there at all: Xcode's
+    # generated Info.plist derives CFBundleName from PRODUCT_NAME, and there is
+    # no INFOPLIST_KEY_CFBundleName to override it with. PRODUCT_NAME has to
+    # stay put (TEST_HOST and the built .app name depend on it), so the dev app
+    # ended up announcing itself as the production app in the one surface you
+    # look at while driving it. Patching it post-build, next to the display
+    # name, is the only place both spellings can be made to agree.
+    r = subprocess.run(
+        ["plutil", "-replace", "CFBundleName",
+         "-string", dev_product_name, plist_path],
+        capture_output=True,
+    )
+    if r.returncode != 0:
+        warn(f"plutil failed to patch CFBundleName: "
              f"{r.stderr.decode('utf-8', 'replace').strip()}")
 
     r = subprocess.run(
