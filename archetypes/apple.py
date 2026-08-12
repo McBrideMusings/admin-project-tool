@@ -34,6 +34,13 @@ if not _choices:
 
 if rest:
     a = rest[0].lower()
+    # A fourth per-command copy of --help handling, matching dev and deploy.
+    # admin-project-tool#456 is the structural fix (intercept it once in boot()
+    # for every command) and is still an open decision; without this line
+    # `admin build --help` reads "--help" as a target name and errors.
+    if a in ("-h", "--help"):
+        info("usage: ./admin build [" + "|".join(_choices) + "] [--force]")
+        return
     target = "server" if a == "server" else resolve_apple_platform(a)
     if target is None:
         err("unknown build target: " + rest[0]); sys.exit(1)
@@ -42,6 +49,8 @@ if rest:
             + ", ".join(_choices) + ")")
         sys.exit(1)
 
+if not target:
+    target = only_target(_choices, "build")
 if not target:
     target = pick_target(_choices, "build — select target")
     if not target:
@@ -106,6 +115,8 @@ if target is not None and target not in _choices:
     sys.exit(1)
 
 if target is None:
+    target = only_target(_choices, "dev")
+if target is None:
     target = pick_target(_choices, "dev — select target")
     if not target:
         return
@@ -162,6 +173,8 @@ if target is not None and target not in _choices:
     sys.exit(1)
 
 if target is None:
+    target = only_target(_choices, "deploy")
+if target is None:
     target = pick_target(_choices, "deploy — select target")
     if not target:
         return
@@ -193,15 +206,14 @@ if not _choices:
     err("no test_cmd configured in [server] or [apple]"); sys.exit(1)
 
 target = args[0] if args else None
-if not target:
-    if len(_choices) == 1:
-        target = next(iter(_choices))
-    else:
-        target = pick_target(_choices, "test — select target")
-        if not target:
-            return
-elif target not in _choices:
+if target and target not in _choices:
     err("unknown test target: " + target); sys.exit(1)
+if not target:
+    target = only_target(_choices, "test")
+if not target:
+    target = pick_target(_choices, "test — select target")
+    if not target:
+        return
 
 set_log_context("test", target)
 if target == "server":

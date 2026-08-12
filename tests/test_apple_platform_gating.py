@@ -18,7 +18,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from admin_lib.archetypes import load_archetype  # noqa: E402
-from admin_lib.apple import apple_platforms, resolve_apple_platform  # noqa: E402
+from admin_lib.apple import apple_platforms, only_target, resolve_apple_platform  # noqa: E402
 
 APPLE = load_archetype(REPO / "archetypes", "apple")
 
@@ -37,11 +37,18 @@ def _run(action, args, apple_cfg, server_cfg=None):
     Returns a dict with `menu` (what pick_target was offered, None if the body
     never got that far), `errors`, and `dispatched` (which platform handler ran).
     """
-    seen = {"menu": None, "errors": [], "infos": [], "dispatched": []}
+    seen = {"menu": None, "prompted": False, "errors": [], "infos": [], "dispatched": []}
 
     def _pick(menu, prompt, order=None):
         seen["menu"] = dict(menu)
+        seen["prompted"] = True
         return None  # cancel: the body returns without dispatching
+
+    def _only(choices, cmd):
+        # The real auto-select, but recording the target set it was asked
+        # about — a one-target project answers the same question with no prompt.
+        seen["menu"] = dict(choices)
+        return only_target(choices, cmd)
 
     def _record(name):
         return lambda *a, **k: seen["dispatched"].append(name)
@@ -55,6 +62,7 @@ def _run(action, args, apple_cfg, server_cfg=None):
         "_APPLE_CONFIG": dict(apple_cfg),
         "_SERVER_CONFIG": dict(server_cfg or {}),
         "apple_platforms": apple_platforms,
+        "only_target": _only,
         "resolve_apple_platform": resolve_apple_platform,
         "pick_target": _pick,
         "set_log_context": lambda *a, **k: None,
@@ -200,6 +208,44 @@ def test_help_still_lists_server_targets():
     deploy_help = " ".join(_run("deploy", ["--help"], MAC_ONLY, server_cfg=server)["infos"])
     assert "mac" in deploy_help and "server" in deploy_help and "bazzite" in deploy_help, deploy_help
     print("OK: --help keeps the server/bazzite targets alongside the declared platforms")
+
+
+def test_single_target_project_is_not_asked_which_target():
+    for action, expected in (("build", "build_ios"), ("deploy", "deploy_ios")):
+        seen = _run(action, [], IOS_ONLY)
+        assert seen["prompted"] is False, (action, seen)
+        assert seen["dispatched"] == [expected], (action, seen["dispatched"])
+    print("OK: a project with one target runs it instead of showing a one-row picker")
+
+
+def test_multi_target_project_still_gets_the_picker():
+    seen = _run("deploy", [], BOTH)
+    assert seen["prompted"] is True, seen
+    assert set(seen["menu"]) == {"mac", "ios"}, seen["menu"]
+    print("OK: a project with more than one target still gets asked")
+
+
+def test_only_target_reports_what_it_took():
+    printed = []
+    import admin_lib.apple as _apple
+    original = _apple.info
+    _apple.info = printed.append
+    try:
+        assert only_target({"ios": "ios"}, "deploy") == "ios"
+        assert only_target({"ios": "ios", "mac": "mac"}, "deploy") is None
+    finally:
+        _apple.info = original
+    assert printed and "ios" in printed[0] and "deploy" in printed[0], printed
+    print("OK: auto-select says which target it took, so a missing prompt is never a mystery")
+
+
+def test_build_help_is_not_read_as_a_target():
+    seen = _run("build", ["--help"], IOS_ONLY)
+    assert seen["errors"] == [], seen["errors"]
+    assert seen["dispatched"] == [], seen["dispatched"]
+    assert any("usage" in m and "ios" in m for m in seen["infos"]), seen["infos"]
+    assert not any("mac" in m for m in seen["infos"]), seen["infos"]
+    print("OK: `build --help` prints usage instead of erroring on '--help' as a target name")
 
 
 def test_unknown_arg_still_rejected():
