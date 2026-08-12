@@ -297,9 +297,21 @@ def xcode_is_signed_out(build_log_text):
     ) and "doesn't include" in build_log_text
 
 
+_signed_out_reported = False
+
+
 def _report_signed_out():
     """Say what happened and what to click. Kept separate from the retry so a
-    non-interactive run still gets the explanation."""
+    non-interactive run still gets the explanation.
+
+    Said once per run. The retry path reports before it offers, and the
+    caller's diagnose_build_failure() reports again on the way out — twelve
+    lines of identical advice twice over reads like two different problems.
+    """
+    global _signed_out_reported
+    if _signed_out_reported:
+        return
+    _signed_out_reported = True
     warn("This build could not get a provisioning profile carrying the capability it")
     warn("asked for. Two things cause that, and the log cannot tell them apart:")
     warn("")
