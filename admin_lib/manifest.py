@@ -34,6 +34,7 @@ _KNOWN_KEYS = {
     "exclude_modules", "hide_commands", "hide_urls", "inline", "logging",
     "dev_kill", "dev_precheck", "clean_dev", "vite_dev", "docker_dev", "docker_run", "docker_build", "deploy", "install_template",
     "fixtures", "log_bridge", "guards", "docs", "go", "raylib", "worktree",
+    "launchd",
     # Obsolete under interpreter mode (ADR-0006); tolerated silently on
     # un-migrated manifests, never written back. `admin migrate` strips it.
     "generator_commit",
@@ -88,6 +89,7 @@ class Manifest:
     docs: dict = field(default_factory=dict)      # [docs] — config for kind="docs" (dir, script)
     go: dict = field(default_factory=dict)        # [go] — config for kind="go" (binary, main)
     raylib: dict = field(default_factory=dict)    # [raylib] — config for kind="raylib" (binary, build_dir, cmake_flags, jobs, smoke_env, clean_dirs)
+    launchd: dict = field(default_factory=dict)   # [launchd] — macOS LaunchAgent config consumed by admin_lib.launchd
     log_bridge: dict = field(default_factory=dict)            # [log_bridge] — browser-console HTTP bridge config
     worktree: dict = field(default_factory=dict)              # [worktree] — worktree verb config (root, setup, copy)
     guards: dict[str, dict] = field(default_factory=dict)     # [guards.<name>] — user-defined shell guards
@@ -357,6 +359,43 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
                 f'"auto" (bare -j, one job per core), got {_j!r}'
             )
 
+    launchd_cfg = data.get("launchd", {}) or {}
+    if not isinstance(launchd_cfg, dict):
+        raise ManifestError(f"{source}: '[launchd]' must be a table")
+    if launchd_cfg:
+        _LAUNCHD_KNOWN = {
+            "label", "program", "args", "env", "inherit_path", "inherit_home",
+            "stdout", "stderr", "working_dir", "keep_alive", "run_at_load",
+            "throttle", "process_type", "nice", "start_interval",
+        }
+        unknown_launchd = set(launchd_cfg) - _LAUNCHD_KNOWN
+        if unknown_launchd:
+            raise ManifestError(
+                f"{source}: '[launchd]' unknown keys: {sorted(unknown_launchd)}, "
+                f"valid: {sorted(_LAUNCHD_KNOWN)}"
+            )
+        for _k in ("label", "program"):
+            if not isinstance(launchd_cfg.get(_k), str) or not launchd_cfg.get(_k):
+                raise ManifestError(f"{source}: '[launchd].{_k}' is required and must be a non-empty string")
+        for _k in ("stdout", "stderr", "working_dir", "process_type"):
+            if _k in launchd_cfg and not isinstance(launchd_cfg[_k], str):
+                raise ManifestError(f"{source}: '[launchd].{_k}' must be a string")
+        if "args" in launchd_cfg and not (
+            isinstance(launchd_cfg["args"], list)
+            and all(isinstance(x, str) for x in launchd_cfg["args"])
+        ):
+            raise ManifestError(f"{source}: '[launchd].args' must be a list of strings")
+        if "env" in launchd_cfg and not isinstance(launchd_cfg["env"], dict):
+            raise ManifestError(f"{source}: '[launchd].env' must be a table")
+        for _k in ("inherit_path", "inherit_home", "keep_alive", "run_at_load"):
+            if _k in launchd_cfg and not isinstance(launchd_cfg[_k], bool):
+                raise ManifestError(f"{source}: '[launchd].{_k}' must be a boolean")
+        for _k in ("throttle", "nice", "start_interval"):
+            if _k in launchd_cfg and (
+                not isinstance(launchd_cfg[_k], int) or isinstance(launchd_cfg[_k], bool)
+            ):
+                raise ManifestError(f"{source}: '[launchd].{_k}' must be an integer")
+
     logging_cfg = data.get("logging", {}) or {}
     if not isinstance(logging_cfg, dict):
         raise ManifestError(f"{source}: '[logging]' must be a table")
@@ -463,6 +502,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         docs=docs,
         go=go_cfg,
         raylib=raylib_cfg,
+        launchd=launchd_cfg,
         log_bridge=log_bridge,
         worktree=worktree_cfg,
         guards=guards,
