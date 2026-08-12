@@ -19,7 +19,7 @@ from .core import (
     C,
     COMPUTED_VARS,
     MASK_VALUE,
-    _ENV_VAR_RE,
+    iter_env_refs,
     _log_write,
     get_log_dir,
     get_log_file,
@@ -480,7 +480,7 @@ def _mount_env_deps(cfg):
     for m in cfg.get("bind_mounts") or ():
         host = str(m.get("host") or "")
         if "${" in host:
-            names.extend(match[0] for match in _ENV_VAR_RE.findall(host))
+            names.extend(name for _s, _e, name, _d in iter_env_refs(host))
     return names
 
 
@@ -811,9 +811,9 @@ def _expand_env_refs(value, env_vars):
     the entry rather than emit a literal ${VAR} that would poison the drift
     comparison.
 
-    Shares `core._ENV_VAR_RE` with `core.resolve_env` rather than carrying its
+    Shares `core.iter_env_refs` with `core.resolve_env` rather than carrying its
     own pattern: the manifest is written in one placeholder syntax, so a second
-    regex here can only ever be a narrower dialect of it. It was — it matched
+    scanner here can only ever be a narrower dialect of it. It was — it matched
     only the bare `${VAR}` form, so every `${VAR:-default}` in a `[docker_run]`
     table survived as a literal and the drift check compared that literal string
     against the live container's real value. Every such entry read as drift, and
@@ -823,22 +823,29 @@ def _expand_env_refs(value, env_vars):
     What is deliberately NOT shared is `resolve_env`'s exit-on-missing: a
     `[docker_run]` entry gated on an unset env var is dropped, not fatal.
     """
-    all_resolved = True
+    if not isinstance(value, str) or "${" not in value:
+        return value, True
 
-    def sub(m):
-        nonlocal all_resolved
-        name, default = m.group(1), m.group(2)
+    all_resolved = True
+    out = []
+    pos = 0
+    for start, end, name, default in iter_env_refs(value):
+        out.append(value[pos:start])
         v = env_vars.get(name)
         if v is not None:
-            return v
-        if name in COMPUTED_VARS:
-            return COMPUTED_VARS[name]()
-        if default is not None:
-            return default
-        all_resolved = False
-        return m.group(0)
-
-    return _ENV_VAR_RE.sub(sub, value), all_resolved
+            out.append(v)
+        elif name in COMPUTED_VARS:
+            out.append(COMPUTED_VARS[name]())
+        elif default is not None:
+            sub_text, sub_ok = _expand_env_refs(default, env_vars)
+            out.append(sub_text)
+            all_resolved = all_resolved and sub_ok
+        else:
+            all_resolved = False
+            out.append(value[start:end])
+        pos = end
+    out.append(value[pos:])
+    return "".join(out), all_resolved
 
 
 def _build_run_args_from_cfg(cfg, env_vars=None, env_file_vars=None):

@@ -394,8 +394,63 @@ atexit.register(_announce_log_end)
 # Environment variable interpolation
 # ---------------------------------------------------------------------------
 
-_ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 _referenced_env_vars: dict[str, dict] = {}
+
+
+def iter_env_refs(s):
+    """Yield (start, end, name, default) for each ${VAR} / ${VAR:-default} in s.
+
+    Brace-matched rather than regex-matched, so a default may itself contain a
+    placeholder: `${GOPATH_BIN:-${HOME}/go/bin}` yields one ref whose default is
+    the whole `${HOME}/go/bin`, not the truncated `${HOME`. The regex this
+    replaced stopped the default at the first `}` and produced a silently wrong
+    string — `${HOME/go/bin}` — which is the worst failure shape available,
+    because the caller gets a plausible path instead of an error.
+
+    `end` is exclusive. Anything that isn't a well-formed `${NAME}` or
+    `${NAME:-…}` — an unbalanced brace, a shell construct like `${x%.c}` — is
+    skipped, leaving it to whoever consumes the string next.
+    """
+    if not isinstance(s, str):
+        return
+    i = 0
+    while True:
+        start = s.find("${", i)
+        if start < 0:
+            return
+        depth = 0
+        close = -1
+        for j in range(start + 1, len(s)):
+            if s[j] == "{":
+                depth += 1
+            elif s[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    close = j
+                    break
+        if close < 0:
+            return  # unbalanced from here on; nothing further is well-formed
+        inner = s[start + 2:close]
+        sep = _find_default_sep(inner)
+        name = inner if sep < 0 else inner[:sep]
+        default = None if sep < 0 else inner[sep + 2:]
+        if _NAME_RE.match(name):
+            yield start, close + 1, name, default
+        i = close + 1
+
+
+def _find_default_sep(inner):
+    """Index of the `:-` separating name from default, at brace depth 0."""
+    depth = 0
+    for i, ch in enumerate(inner):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        elif ch == ":" and depth == 0 and inner[i + 1:i + 2] == "-":
+            return i
+    return -1
 
 
 #
@@ -474,26 +529,32 @@ def resolve_env(s):
     the environment; an explicit environment value still wins, so a project can
     pin one when the automatic answer is wrong.
 
+    A default may itself contain placeholders — `${GOPATH_BIN:-${HOME}/go/bin}`
+    is expanded the way it reads — and is only expanded when it is actually used.
+
     Fails fast with a clear error if a referenced var is unset and has no default.
     Returns the expanded string. Idempotent on strings with no placeholders.
     """
     if not isinstance(s, str) or "${" not in s:
         return s
 
-    def _sub(match):
-        name = match.group(1)
-        default = match.group(2)
+    out = []
+    pos = 0
+    for start, end, name, default in iter_env_refs(s):
+        out.append(s[pos:start])
         val = os.environ.get(name)
         if val is not None:
-            return val
-        if name in COMPUTED_VARS:
-            return COMPUTED_VARS[name]()
-        if default is not None:
-            return default
-        err(f"required env var {name} is not set")
-        sys.exit(2)
-
-    return _ENV_VAR_RE.sub(_sub, s)
+            out.append(val)
+        elif name in COMPUTED_VARS:
+            out.append(COMPUTED_VARS[name]())
+        elif default is not None:
+            out.append(resolve_env(default))
+        else:
+            err(f"required env var {name} is not set")
+            sys.exit(2)
+        pos = end
+    out.append(s[pos:])
+    return "".join(out)
 
 
 def resolve_computed(s):
@@ -506,17 +567,27 @@ def resolve_computed(s):
     and pass the rest through untouched.
 
     An explicit environment value still wins, matching resolve_env.
+
+    A placeholder that isn't ours is handed on verbatim, except that a computed
+    var nested inside its default is still substituted — the shell can expand its
+    own `${FOO}`, but there is nobody else who can answer `${LAN_IP}`.
     """
     if not isinstance(s, str) or "${" not in s:
         return s
 
-    def _sub(match):
-        name = match.group(1)
-        if name not in COMPUTED_VARS:
-            return match.group(0)  # not ours — hand it to the shell verbatim
-        return os.environ.get(name) or COMPUTED_VARS[name]()
-
-    return _ENV_VAR_RE.sub(_sub, s)
+    out = []
+    pos = 0
+    for start, end, name, default in iter_env_refs(s):
+        out.append(s[pos:start])
+        if name in COMPUTED_VARS:
+            out.append(os.environ.get(name) or COMPUTED_VARS[name]())
+        elif default is None:
+            out.append(s[start:end])
+        else:
+            out.append("${" + name + ":-" + resolve_computed(default) + "}")
+        pos = end
+    out.append(s[pos:])
+    return "".join(out)
 
 
 def _apply_cmd_env(env_map):
