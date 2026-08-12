@@ -1957,13 +1957,15 @@ def _newest_log(prefix, log_dir=None):
     return max(cands, key=os.path.getmtime)
 
 
-def tail_dev_log(prefix="dev", since=None):
+def tail_dev_log(prefix="dev", since=None, tail=100, follow=True):
     """Trail the newest local `<prefix>` log file.
 
-    since=None -> last 100 lines, then follow.
+    since=None -> last `tail` lines, then follow.
     since=<seconds> -> print lines from (now - since) forward (keyed off the
         RFC3339 timestamps the backend emits), then follow. If no timestamped
         line falls within the window, warn and follow new output only.
+    follow=False -> print and exit instead of trailing, for a caller that needs
+        an answer rather than a stream (a script, a check after a deploy).
     """
     path = _newest_log(prefix)
     if not path:
@@ -1971,7 +1973,10 @@ def tail_dev_log(prefix="dev", since=None):
         return 1
     info(f"trailing {os.path.relpath(path)}")
     if since is None:
-        return subprocess.call(["tail", "-n", "100", "-f", path])
+        argv = ["tail", "-n", str(int(tail)), path]
+        if follow:
+            argv.insert(-1, "-f")
+        return subprocess.call(argv)
     cutoff = time.time() - since
     with open(path, errors="replace") as f:
         lines = f.readlines()
@@ -1984,6 +1989,8 @@ def tail_dev_log(prefix="dev", since=None):
             f"no timestamped lines within the last {since}s in "
             f"{os.path.basename(path)}; trailing new output only"
         )
+    if not follow:
+        return 0
     return subprocess.call(["tail", "-n", "0", "-f", path])
 
 
@@ -2102,7 +2109,7 @@ def deploy_dispatch(args, run_cfg=None, deploy_cfg=None, template_cfg=None, buil
 
 
 def logs_dispatch(args, image, host=None):
-    """Route `./admin logs [dev|live] [--from DD:HH:MM:SS]`.
+    """Route `./admin logs [dev|live] [--from DD:HH:MM:SS] [--tail N] [--no-follow]`.
 
     No target -> a tiny dev|live picker (never a file list).
     `dev`  -> trail the newest local dev log file (tail_dev_log).
@@ -2110,6 +2117,16 @@ def logs_dispatch(args, image, host=None):
 
     `--from DD:HH:MM:SS` (relative offset) shows everything from that point
     forward and then keeps trailing, for both targets.
+
+    `--no-follow` prints and exits instead of trailing, and `--tail N` sets how
+    much history it prints (default 200 for a container, 100 for a dev file).
+    Following is the right default for a person watching a run and the wrong
+    one for anything that needs an answer and then continues — a script, a
+    check after a deploy, an agent — which had no way to ask for one before.
+
+    An unrecognised flag is an error rather than silently ignored: `--tail 5
+    --no-follow` used to fall through unread and follow forever, which reads
+    exactly like a hang.
     """
     args = list(args or [])
     target = args[0] if args and args[0] in ("dev", "live") else None
@@ -2125,23 +2142,54 @@ def logs_dispatch(args, image, host=None):
             return 0
 
     since = None
-    if "--from" in rest:
-        i = rest.index("--from")
-        if i + 1 >= len(rest):
-            err("--from requires a DD:HH:MM:SS value")
-            return 1
-        try:
-            since = _parse_since_offset(rest[i + 1])
-        except ValueError as e:
-            err(str(e))
+    tail = None
+    follow = True
+    i = 0
+    while i < len(rest):
+        arg = rest[i]
+        if arg == "--from":
+            if i + 1 >= len(rest):
+                err("--from requires a DD:HH:MM:SS value")
+                return 1
+            try:
+                since = _parse_since_offset(rest[i + 1])
+            except ValueError as e:
+                err(str(e))
+                return 1
+            i += 2
+        elif arg in ("--tail", "-n"):
+            if i + 1 >= len(rest):
+                err("--tail requires a line count")
+                return 1
+            try:
+                tail = int(rest[i + 1])
+            except ValueError:
+                err(f"--tail needs a number, got '{rest[i + 1]}'")
+                return 1
+            i += 2
+        elif arg.startswith("--tail="):
+            try:
+                tail = int(arg.split("=", 1)[1])
+            except ValueError:
+                err(f"--tail needs a number, got '{arg.split('=', 1)[1]}'")
+                return 1
+            i += 1
+        elif arg == "--no-follow":
+            follow = False
+            i += 1
+        else:
+            err(f"logs: unknown argument '{arg}' "
+                "(expected --from DD:HH:MM:SS, --tail N, or --no-follow)")
             return 1
 
     if target == "live":
         if host is None:
             user = os.environ.get("UNRAID_USER", "root")
             host = f"{user}@{os.environ.get('UNRAID_HOST')}"
-        return remote_logs(host, image, since=since, follow=True)
-    return tail_dev_log(since=since)
+        return remote_logs(host, image, since=since, follow=follow,
+                           **({} if tail is None else {"tail": tail}))
+    return tail_dev_log(since=since, follow=follow,
+                        **({} if tail is None else {"tail": tail}))
 
 
 def register_logs_command(host, image):
