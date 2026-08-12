@@ -80,7 +80,7 @@ An explicit `mac_dev_bundle`/`ios_dev_bundle` that isn't the prod bundle ID plus
 
 | Key | Meaning |
 |---|---|
-| `sign_identity` | Selector for the signing identity (matched against available identities). |
+| `sign_identity` | Selector for the signing identity (matched against available identities). Pins a stable certificate so macOS TCC grants survive a rebuild. **It no longer forces `CODE_SIGN_STYLE=Manual` on apps whose entitlements need a provisioning profile** — anything under `com.apple.developer.*` or `aps-environment` keeps automatic signing, and the identity is passed by name rather than by hash, because automatic signing rejects a hash. Manual style with an empty profile specifier tells `xcodebuild` never to create a profile, so a capability-bearing app failed with "requires a provisioning profile with the &lt;X&gt; feature" — an error that reads as a missing capability on a correctly-configured App ID. |
 | `code_sign_identity` | Explicit `CODE_SIGN_IDENTITY` value; only consulted when `sign_identity` is set and this is unset. |
 
 Team is `IOS_DEVELOPMENT_TEAM` from the environment — not a key here.
@@ -124,3 +124,28 @@ Read by the icon-rendering wrappers (see [ADR-0007](../adr/0007-apple-icon-rende
 ## Reusable simulator helpers
 
 The `admin_lib.apple` iOS-simulator helpers (`resolve_simulator`, `ensure_booted_simulator`, `install_and_launch_sim`, …) are callable by bare name from any `kind = "python"` action once the `apple` module is in scope — the calling contract, signatures, and a minimal example are tabulated under **"Reusable library helpers in `kind = "python"` bodies"** in [architecture/design.md](../architecture/design.md).
+
+## App Store Connect API key (optional, and worth it)
+
+Set these three in the machine's environment — never in `admin.toml`, since the path is a credential:
+
+```
+APP_STORE_CONNECT_KEY_PATH    path to AuthKey_<KEYID>.p8
+APP_STORE_CONNECT_KEY_ID      the <KEYID> from that filename
+APP_STORE_CONNECT_ISSUER_ID   UUID from App Store Connect > Users and Access > Integrations
+```
+
+With all three set:
+
+- Every `xcodebuild` the archetype runs carries `-authenticationKeyPath/-authenticationKeyID/-authenticationKeyIssuerID`, so signing and profile creation stop depending on an Apple ID being signed into Xcode. That login does not reliably persist, and when it lapses the failure names a capability rather than an account.
+- `admin appid` works:
+
+```sh
+admin appid                                       # report on this project's identifiers
+admin appid com.example.app --capability icloud   # enable a capability
+admin appid com.example.new --name "New" --capability push   # register, then enable
+```
+
+Capability names accept Apple's enum (`ICLOUD`, `PUSH_NOTIFICATIONS`, …) or the friendlier aliases in `admin_lib/appstoreconnect.py` (`icloud`, `push`, `app-groups`, …).
+
+All three variables or none: `xcodebuild` rejects a partial set, and a path pointing at a missing file falls back to whatever account Xcode has rather than failing every build on that machine.
