@@ -2772,7 +2772,14 @@ def _compose_sign_settings(cfg):
     # already pinned an explicit literal CODE_SIGN_IDENTITY above.
     if "sign_identity" in cfg and cfg.get("code_sign_identity") is None:
         ident = resolve_signing_identity(cfg)
-        if ident:
+        if ident and _target_needs_provisioning_profile(cfg):
+            # Automatic signing refuses a hash: "iptv-mac is automatically
+            # signed, but code signing identity <hash> has been manually
+            # specified". It accepts the identity by *name*, which is what
+            # sign_identity holds anyway ("Apple Development"), and which still
+            # pins the certificate family the TCC grants are keyed to.
+            parts.append(f'CODE_SIGN_IDENTITY="{resolve_env(str(cfg["sign_identity"]))}"')
+        elif ident:
             parts.append(f'CODE_SIGN_IDENTITY="{ident}"')
             # Manual signing ONLY when the app needs no provisioning profile.
             #
@@ -2788,9 +2795,9 @@ def _compose_sign_settings(cfg):
             # Groups — must therefore keep automatic signing. The stable identity
             # this block exists for (so macOS TCC grants survive a rebuild) is
             # still pinned above; only the style is left alone.
-            if not _target_needs_provisioning_profile(cfg):
-                parts.append("CODE_SIGN_STYLE=Manual")
-                parts.append("PROVISIONING_PROFILE_SPECIFIER=")
+            parts.append("CODE_SIGN_STYLE=Manual")
+            parts.append("PROVISIONING_PROFILE_SPECIFIER=")
+
     return " ".join(parts)
 
 
