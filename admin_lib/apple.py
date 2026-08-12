@@ -2724,35 +2724,49 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=N
 
     pre_build, post_build = build_icon_hooks(cfg)
 
-    pre_launch = None
+    # Two independent things can happen to the built app before it is launched:
+    # it can be renamed to the dev name, and it can be installed to a fixed
+    # path. dev_loop_macos has one pre_launch slot, and these two used to sit in
+    # the two halves of an if/else competing for it — so `dev --install`
+    # silently turned the dev rename OFF. The dev build installed under the
+    # production name, with the production name in the menu bar, and nothing
+    # said so. They are composed now: rename first, install what came out.
+    _dev_product = _resolve_mac_dev_product_name(cfg)
+    _dev_display = _resolve_mac_dev_display_name(cfg)
+    _rename = None
+    # Opt out of the dev rename/display-patch with mac_dev_rename = false — for
+    # projects that already differentiate their debug build at the Xcode level
+    # (distinct bundle ID, CFBundleDisplayName) and don't want a renamed
+    # "<name>Dev.app". Stable signing still applies via the build's CODE_SIGN
+    # flags; the rename is purely a Finder/Dock cosmetic.
+    if cfg.get("mac_dev_rename", True) and (_dev_product or _dev_display):
+        # Re-sign the renamed .app with the same stable identity the build
+        # used (not ad-hoc), so TCC grants survive the rename. "-" → ad-hoc
+        # when no sign_identity is configured (unchanged default).
+        _resign = (resolve_signing_identity(cfg) if "sign_identity" in cfg else None) or "-"
+
+        def _rename(built_app):
+            return dev_macos_postprocess(built_app, _dev_product, _dev_display, sign_identity=_resign)
+
+    _installer = None
     if install:
         dev_install_path = cfg.get("mac_install_path_dev")
         if not dev_install_path:
             err("--install requires apple.mac_install_path_dev in admin.toml")
             sys.exit(1)
 
-        def pre_launch(built_app):
+        def _installer(app_path):
             info(f"Installing to {dev_install_path}")
             if os.path.exists(dev_install_path):
                 shutil.rmtree(dev_install_path)
-            shutil.copytree(built_app, dev_install_path)
+            shutil.copytree(app_path, dev_install_path)
             return dev_install_path
-    else:
-        _dev_product = _resolve_mac_dev_product_name(cfg)
-        _dev_display = _resolve_mac_dev_display_name(cfg)
-        # Opt out of the dev rename/display-patch with mac_dev_rename = false —
-        # for projects that already differentiate their debug build at the Xcode
-        # level (distinct bundle ID, CFBundleDisplayName) and don't want a
-        # renamed "<name>Dev.app". Stable signing still applies via the build's
-        # CODE_SIGN flags; the rename is purely a Finder/Dock cosmetic.
-        if cfg.get("mac_dev_rename", True) and (_dev_product or _dev_display):
-            # Re-sign the renamed .app with the same stable identity the build
-            # used (not ad-hoc), so TCC grants survive the rename. "-" → ad-hoc
-            # when no sign_identity is configured (unchanged default).
-            _resign = (resolve_signing_identity(cfg) if "sign_identity" in cfg else None) or "-"
 
-            def pre_launch(built_app):
-                return dev_macos_postprocess(built_app, _dev_product, _dev_display, sign_identity=_resign)
+    if _rename and _installer:
+        def pre_launch(built_app):
+            return _installer(_rename(built_app))
+    else:
+        pre_launch = _rename or _installer
 
     dev_loop_macos(
         project=project, scheme=scheme, config=config,

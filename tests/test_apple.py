@@ -1728,6 +1728,70 @@ def test_dev_mac_forwards_launch_args_from_apple_config():
     print("OK: dev_mac reads apple.launch_args and forwards it to dev_loop_macos")
 
 
+def test_dev_mac_install_still_renames_the_dev_app():
+    """`dev --install` used to turn the dev rename off.
+
+    dev_loop_macos has one pre_launch slot, and the rename and the install
+    were the two halves of an if/else fighting over it. With --install the
+    project got a dev build installed under the production name, carrying the
+    production name in the menu bar, and no message said the rename had been
+    skipped. Both must happen now, rename first: what gets installed is the
+    renamed bundle, and pre_launch returns the install path.
+    """
+    ns = _load_apple()
+    captured = {}
+    ns["dev_loop_macos"] = lambda **kwargs: captured.update(kwargs)
+
+    order = []
+    ns["dev_macos_postprocess"] = (
+        lambda built, product, display, sign_identity="-":
+            order.append("rename") or os.path.join(os.path.dirname(built), f"{product}.app")
+    )
+
+    with tempfile.TemporaryDirectory() as d:
+        built = _make_fake_app(d, "Foo.app")
+        renamed = os.path.join(d, "Foo DEV.app")
+        os.makedirs(renamed, exist_ok=True)
+        install_path = os.path.join(d, "installed", "Foo DEV.app")
+
+        ns["dev_mac"](_dev_mac_cfg(
+            mac_dev_product_name="Foo DEV",
+            mac_install_path_dev=install_path,
+        ), install=True)
+
+        result = captured["pre_launch"](built)
+
+    assert order == ["rename"], f"rename must run, got {order}"
+    assert result == install_path, result
+    print("OK: dev_mac --install renames the dev app before installing it")
+
+
+def test_dev_mac_install_alone_when_nothing_to_rename():
+    """mac_dev_rename = false leaves the installer as the only pre_launch step
+    — composing must not invent a rename the project opted out of."""
+    ns = _load_apple()
+    captured = {}
+    ns["dev_loop_macos"] = lambda **kwargs: captured.update(kwargs)
+    def _no_rename(*a, **k):
+        raise AssertionError("rename must not run when mac_dev_rename is false")
+
+    ns["dev_macos_postprocess"] = _no_rename
+
+    with tempfile.TemporaryDirectory() as d:
+        built = _make_fake_app(d, "Foo.app")
+        install_path = os.path.join(d, "installed", "Foo.app")
+
+        ns["dev_mac"](_dev_mac_cfg(
+            mac_dev_product_name="Foo DEV",
+            mac_dev_rename=False,
+            mac_install_path_dev=install_path,
+        ), install=True)
+
+        assert captured["pre_launch"](built) == install_path
+
+    print("OK: mac_dev_rename = false keeps --install to the install alone")
+
+
 def test_dev_mac_launch_args_absent_without_the_config_key():
     ns = _load_apple()
     captured = {}
