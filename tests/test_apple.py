@@ -1926,3 +1926,84 @@ def test_an_ordinary_compile_error_is_not_read_as_signed_out():
         "a build that failed for an unrelated reason must not stop and ask about Apple IDs"
     )
     print("OK: an ordinary failure is left alone")
+
+
+# --- App Store Connect API key auth (so a signed build stops depending on an
+# --- Xcode login that does not survive) ---
+
+def _with_env(monkey, **values):
+    import os
+    old = {k: os.environ.get(k) for k in values}
+    for k, v in values.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+    return old
+
+
+def _restore_env(old):
+    import os
+    for k, v in old.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
+def test_no_key_configured_means_no_flags():
+    apple = _load_apple()
+    old = _with_env(None, APP_STORE_CONNECT_KEY_PATH=None,
+                    APP_STORE_CONNECT_KEY_ID=None, APP_STORE_CONNECT_ISSUER_ID=None)
+    try:
+        assert apple["app_store_connect_auth_flags"]() == []
+    finally:
+        _restore_env(old)
+    print("OK: an unconfigured machine builds exactly as it did before")
+
+
+def test_a_partial_configuration_is_ignored_rather_than_half_passed():
+    apple = _load_apple()
+    with tempfile.NamedTemporaryFile(suffix=".p8") as key:
+        old = _with_env(None, APP_STORE_CONNECT_KEY_PATH=key.name,
+                        APP_STORE_CONNECT_KEY_ID="ABC123DEFG",
+                        APP_STORE_CONNECT_ISSUER_ID=None)
+        try:
+            assert apple["app_store_connect_auth_flags"]() == [], (
+                "xcodebuild rejects a partial set outright, so half a credential must "
+                "read as no credential rather than as a broken build"
+            )
+        finally:
+            _restore_env(old)
+    print("OK: two of the three values is treated as none of them")
+
+
+def test_a_configured_key_produces_all_three_flags():
+    apple = _load_apple()
+    with tempfile.NamedTemporaryFile(suffix=".p8") as key:
+        old = _with_env(None, APP_STORE_CONNECT_KEY_PATH=key.name,
+                        APP_STORE_CONNECT_KEY_ID="ABC123DEFG",
+                        APP_STORE_CONNECT_ISSUER_ID="1234-issuer")
+        try:
+            flags = apple["app_store_connect_auth_flags"]()
+        finally:
+            _restore_env(old)
+    assert flags == [
+        f'-authenticationKeyPath "{key.name}"',
+        '-authenticationKeyID "ABC123DEFG"',
+        '-authenticationKeyIssuerID "1234-issuer"',
+    ], flags
+    print("OK: a configured key produces the three flags xcodebuild wants")
+
+
+def test_a_key_path_that_is_not_there_falls_back_instead_of_failing():
+    apple = _load_apple()
+    old = _with_env(None, APP_STORE_CONNECT_KEY_PATH="/nowhere/AuthKey_X.p8",
+                    APP_STORE_CONNECT_KEY_ID="X", APP_STORE_CONNECT_ISSUER_ID="Y")
+    try:
+        assert apple["app_store_connect_auth_flags"]() == [], (
+            "a stale path in a machine's .env must not break every build on it"
+        )
+    finally:
+        _restore_env(old)
+    print("OK: a missing key file falls back to the Xcode account")
