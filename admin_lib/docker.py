@@ -637,7 +637,16 @@ def remote_recreate_container(host, image, container=None, target_cfg=None,
     run_cmd_parts = ["docker", "run", "-d", "--name", container] + args + [image]
     remote_run = " ".join(shlex.quote(p) for p in run_cmd_parts)
 
-    provision = _provision_commands(target_cfg) if target_cfg is not None else []
+    # Same `run_env_vars` the `-v` arguments were rendered from. Without it this
+    # resolved `${VAR}` in a bind-mount host path against os.environ while the
+    # mount itself resolved against `remote_env_file`, so a workstation deploying
+    # to a remote host warned "references unset env var — skipping provision" and
+    # created nothing, one line above a `docker run` carrying that very path. The
+    # directory usually already exists, which is why it read as cosmetic; on a
+    # fresh host it is the uid-99 trap this function exists to prevent.
+    provision = (
+        _provision_commands(target_cfg, env_vars=run_env_vars) if target_cfg is not None else []
+    )
     health_shell = _health_check_shell(target_cfg) if target_cfg is not None else None
 
     if dry_run:
