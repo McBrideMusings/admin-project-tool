@@ -22,7 +22,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-_ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 _PY_ENV_RE = re.compile(
     r"""os\.environ\.get\(\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]"""
     r"""(?:\s*,\s*(?:['"]([^'"]*)['"]|[^)]+?))?\s*\)"""
@@ -210,24 +209,37 @@ def _safe_ident(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _scan_for_env_vars(text, pattern, seen: dict, origin: str) -> None:
-    """Extract env var names + defaults from a single string, tagging the origin."""
+    """Extract env var names + defaults from a single string, tagging the origin.
+
+    `pattern` of None means the `${VAR}` form, scanned brace-aware via
+    core.iter_env_refs so a var referenced only inside another's default —
+    `${GOPATH_BIN:-${HOME}/go/bin}` — is still reported by `admin env`.
+    """
     if not isinstance(text, str):
         return
-    from admin_lib.core import COMPUTED_VARS
+    from admin_lib.core import COMPUTED_VARS, iter_env_refs
 
-    for m in pattern.finditer(text):
-        name = m.group(1)
+    if pattern is None:
+        refs = [(name, default) for _s, _e, name, default in iter_env_refs(text)]
+        nested = [r for _n, d in refs if d for r in [d]]
+    else:
+        refs = [(m.group(1), m.group(2)) for m in pattern.finditer(text)]
+        nested = []
+
+    for name, default in refs:
         # Computed vars (${LAN_IP}) are answered at runtime, never by the user —
         # registering them here would make `admin env` demand a value and abort a
         # command that is perfectly runnable.
         if name in COMPUTED_VARS:
             continue
-        default = m.group(2)
         entry = seen.setdefault(name, {"default": default, "used_by": []})
         if entry["default"] is None and default is not None:
             entry["default"] = default
         if origin not in entry["used_by"]:
             entry["used_by"].append(origin)
+
+    for default in nested:
+        _scan_for_env_vars(default, None, seen, origin)
 
 
 def scan_env_vars(commands, urls=None, logs=None, config_tables=None) -> dict[str, dict]:
@@ -244,31 +256,31 @@ def scan_env_vars(commands, urls=None, logs=None, config_tables=None) -> dict[st
     for cmd in commands:
         origin = f"cmd:{cmd.name}"
         if cmd.kind != "steps":
-            _scan_for_env_vars(cmd.run, _ENV_VAR_RE, seen, origin)
+            _scan_for_env_vars(cmd.run, None, seen, origin)
         if cmd.kind == "python":
             _scan_for_env_vars(cmd.run, _PY_ENV_RE, seen, origin)
         if cmd.kind == "http" and cmd.meta.get("body"):
-            _scan_for_env_vars(cmd.meta["body"], _ENV_VAR_RE, seen, origin)
+            _scan_for_env_vars(cmd.meta["body"], None, seen, origin)
         for tname, tval in cmd.targets.items():
-            _scan_for_env_vars(tval, _ENV_VAR_RE, seen, f"{origin}:{tname}")
+            _scan_for_env_vars(tval, None, seen, f"{origin}:{tname}")
 
     for key, text in (urls or {}).items():
-        _scan_for_env_vars(text, _ENV_VAR_RE, seen, f"url:{key}")
+        _scan_for_env_vars(text, None, seen, f"url:{key}")
 
     for target_name, target in (logs or {}).items():
         # file kind: scan each env's path/host/user under logs.<target>.<env>
         for env_name, env_spec in target.get("envs", {}).items():
             origin = f"logs.{target_name}.{env_name}"
             for field in ("path", "host", "user"):
-                _scan_for_env_vars(env_spec.get(field), _ENV_VAR_RE, seen, origin)
+                _scan_for_env_vars(env_spec.get(field), None, seen, origin)
         # command/docker/pick kinds: scan flat string fields under logs.<target>
         origin = f"logs.{target_name}"
         for field in LOG_FLAT_FIELDS:
-            _scan_for_env_vars(target.get(field), _ENV_VAR_RE, seen, origin)
+            _scan_for_env_vars(target.get(field), None, seen, origin)
 
     for table_name, table in (config_tables or {}).items():
         if table:
-            _scan_config_table(table, _ENV_VAR_RE, seen, table_name)
+            _scan_config_table(table, None, seen, table_name)
 
     return seen
 

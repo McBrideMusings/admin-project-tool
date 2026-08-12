@@ -1866,3 +1866,47 @@ def test_dev_loop_macos_open_call_omits_args_flag_without_launch_args():
     assert len(open_calls) == 1, open_calls
     assert open_calls[0] == ["open", "-n", os.path.join(build_dir, "Foo.app")], open_calls[0]
     print("OK: dev_loop_macos launches with a bare `open -n` when launch_args is unset")
+
+
+# --- Xcode signed-out detection (the guard that turns a confusing profile
+# --- error back into "you are logged out", admin-project-tool: iptv-opr) ---
+
+NO_ACCOUNT_LOG = """
+# /Users/x/Projects/app @ 2026-08-12 16:50:00
+/Users/x/Projects/app/app.xcodeproj: error: No Accounts: Add a new account in Accounts settings. (in target 'app')
+** BUILD FAILED **
+"""
+
+WILDCARD_LOG = """
+/Users/x/Projects/app/app.xcodeproj: error: Provisioning profile "Mac Team Provisioning Profile: *" doesn't include the iCloud capability.
+** BUILD FAILED **
+"""
+
+ORDINARY_FAILURE_LOG = """
+/Users/x/Projects/app/Sources/App.swift:12:5: error: cannot find 'Foo' in scope
+** BUILD FAILED **
+"""
+
+
+def test_signed_out_is_detected_from_the_plain_message():
+    apple = _load_apple()
+    assert apple["xcode_is_signed_out"](NO_ACCOUNT_LOG)
+    print("OK: 'No Accounts' reads as signed out")
+
+
+def test_signed_out_is_detected_behind_the_wildcard_profile_symptom():
+    apple = _load_apple()
+    assert apple["xcode_is_signed_out"](WILDCARD_LOG), (
+        "a signed-out machine usually fails with a missing *capability* rather than a "
+        "missing account, because xcodebuild falls back to the cached wildcard profile — "
+        "reading only the plain message means the guard misses the common case"
+    )
+    print("OK: the wildcard-profile fallback reads as signed out")
+
+
+def test_an_ordinary_compile_error_is_not_read_as_signed_out():
+    apple = _load_apple()
+    assert not apple["xcode_is_signed_out"](ORDINARY_FAILURE_LOG), (
+        "a build that failed for an unrelated reason must not stop and ask about Apple IDs"
+    )
+    print("OK: an ordinary failure is left alone")

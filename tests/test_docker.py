@@ -18,11 +18,11 @@ LIB_DIR = REPO / "admin_lib"
 
 sys.path.insert(0, str(REPO))
 
-# Real, not stubbed. docker.py shares core's placeholder pattern so `${VAR}` and
+# Real, not stubbed. docker.py shares core's placeholder scanner so `${VAR}` and
 # `${VAR:-default}` mean the same thing in a [docker_run] table as everywhere
 # else in the manifest; substituting a fake here would let the two drift apart
 # again without a test noticing.
-from admin_lib.core import COMPUTED_VARS, _ENV_VAR_RE, MASK_VALUE, is_secret_env_name  # noqa: E402
+from admin_lib.core import COMPUTED_VARS, iter_env_refs, MASK_VALUE, is_secret_env_name  # noqa: E402
 
 
 def _load_docker():
@@ -54,8 +54,8 @@ def _load_docker():
         "require_host": lambda *a, **k: None,
         "ssh_cmd": lambda *a, **k: 0,
         "COMPUTED_VARS": COMPUTED_VARS,
-        "_ENV_VAR_RE": _ENV_VAR_RE,
-        # Real, not stubbed — same rationale as COMPUTED_VARS/_ENV_VAR_RE above:
+        "iter_env_refs": iter_env_refs,
+        # Real, not stubbed — same rationale as COMPUTED_VARS/iter_env_refs above:
         # the secret-masking heuristic (issue #436) must be the one core.py
         # actually ships, or a test could pass against a fake that diverges.
         "MASK_VALUE": MASK_VALUE,

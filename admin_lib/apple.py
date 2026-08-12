@@ -257,6 +257,45 @@ def target_build_dir(project, scheme, config, destination, extra_settings="",
     return None
 
 
+def xcode_is_signed_out(build_log_text):
+    """True when this build failed because Xcode has no Apple ID signed in.
+
+    Detected from the build log rather than by inspecting Xcode's own state,
+    because its preferences lie about this: the account row survives in
+    `com.apple.dt.Xcode`'s DVTDeveloperAccountManagerAppleIDLists while the
+    credential it points at is gone from the keychain, so "an account is
+    listed" and "an account is usable" are different facts and only the second
+    one matters. xcodebuild says so plainly when it matters; nothing else does.
+
+    The signing-out itself is not rare — on this setup it has happened several
+    times in a month — and what it costs is the confusing part: the build does
+    not say "signed out", it says the *profile* is wrong, because xcodebuild
+    falls back to the cached wildcard team profile and then reports whatever
+    capability that profile happens to lack. Chasing the capability is chasing
+    a symptom.
+    """
+    if "No Accounts: Add a new account" in build_log_text:
+        return True
+    # The wildcard-profile fallback, which is what a signed-out machine
+    # produces when the project needs a capability-bearing profile.
+    return (
+        'Provisioning profile "iOS Team Provisioning Profile: *"' in build_log_text
+        or 'Provisioning profile "Mac Team Provisioning Profile: *"' in build_log_text
+    ) and "doesn't include" in build_log_text
+
+
+def _report_signed_out():
+    """Say what happened and what to click. Kept separate from the retry so a
+    non-interactive run still gets the explanation."""
+    warn("Xcode has no Apple ID signed in, so it cannot make a provisioning profile.")
+    warn("It fell back to the cached wildcard team profile, which is why the error")
+    warn("names a missing capability rather than a missing account.")
+    warn("")
+    warn("  Xcode ▸ Settings (⌘,) ▸ Accounts ▸ + ▸ Apple ID ▸ sign in")
+    warn("")
+    warn("Nothing else needs changing — no profile to download, no project setting.")
+
+
 def diagnose_build_failure():
     """After a failed xcodebuild, check for known fixable errors and print remediation."""
     try:
@@ -270,6 +309,9 @@ def diagnose_build_failure():
         warn("Unlock it with:")
         warn("  security unlock-keychain ~/Library/Keychains/login.keychain-db")
         warn("  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k YOUR_PASSWORD ~/Library/Keychains/login.keychain-db")
+
+    if xcode_is_signed_out(content):
+        _report_signed_out()
 
 
 def xcodebuild_filtered(project, scheme, config, destination, action="build",
@@ -312,14 +354,54 @@ def xcodebuild_filtered(project, scheme, config, destination, action="build",
     try:
         log_path = _raw_build_log_path()
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
-        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(log_path, "w") as f:
-            f.write(f"# {get_project_root()} @ {now}\n")
-        return run_cmd(
-            f'{build_cmd} | tee -a "{log_path}" | grep -E "BUILD|error:|warning:" ; exit ${{PIPESTATUS[0]}}'
-        )
+        piped = f'{build_cmd} | tee -a "{log_path}" | grep -E "BUILD|error:|warning:" ; exit ${{PIPESTATUS[0]}}'
+
+        # Two attempts at most, and the second only ever happens because a
+        # person signed in between them.
+        for attempt in (1, 2):
+            now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(log_path, "w") as f:
+                f.write(f"# {get_project_root()} @ {now}\n")
+            rc = run_cmd(piped)
+            if rc == 0 or attempt == 2:
+                return rc
+            if not _offer_xcode_sign_in(log_path):
+                return rc
     finally:
         _release_xcode_lock(lock)
+
+
+def _offer_xcode_sign_in(log_path):
+    """After a signed-out failure, stop and wait for the person to sign in.
+    Returns True when they say they have and the build should be retried.
+
+    **Only when someone is there.** A cron run, an agent's build, anything with
+    no terminal on stdin gets the explanation and the failure — a prompt nobody
+    can answer is a hang, and this is exactly the kind of guard that would
+    otherwise turn an unattended nightly into a machine sitting on a question
+    until morning.
+    """
+    try:
+        with open(log_path, "r", errors="replace") as f:
+            content = f.read()
+    except FileNotFoundError:
+        return False
+
+    if not xcode_is_signed_out(content):
+        return False
+
+    _report_signed_out()
+
+    if not sys.stdin.isatty():
+        warn("Not a terminal, so not waiting — sign in and run this again.")
+        return False
+
+    try:
+        answer = input("Signed in? Press Return to retry, or Ctrl-C to stop: ")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    return answer.strip().lower() not in {"n", "no", "q", "quit"}
 
 
 def dev_macos_postprocess(built_app_path, dev_product_name, dev_display_name, sign_identity="-"):
