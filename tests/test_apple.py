@@ -2096,3 +2096,112 @@ def test_find_connected_device_exits_when_no_apple_tv_is_paired():
     else:
         raise AssertionError("an unpaired Apple TV must exit, not deploy to the iPhone")
     print("OK: no paired Apple TV exits instead of falling back to the iPhone")
+
+
+# --- ensure_device_registered: the orchestration around the API calls, which
+# --- runs on every device deploy and must never be the thing that fails one ---
+
+def _registration_ns(monkeypatch, existing=None, warnings=None, calls=None, has_key=True):
+    """apple.py with the App Store Connect calls replaced by recorders."""
+    apple = _load_apple(warn=lambda m, *a, **k: (warnings if warnings is not None else []).append(m))
+    calls = calls if calls is not None else []
+
+    class _Err(RuntimeError):
+        pass
+
+    fake = type("fake", (), {})()
+    fake.AppStoreConnectError = _Err
+    fake.credentials = lambda: ("k", "i", "s") if has_key else None
+    fake.missing_credential_reason = lambda: "not configured — unset: APP_STORE_CONNECT_KEY_ID"
+    fake.find_device = lambda udid: (calls.append(("find", udid)), existing)[1]
+    fake.register_device = lambda udid, name: calls.append(("register", udid, name))
+    fake.enable_device = lambda resource: calls.append(("enable", resource))
+
+    # `from .appstoreconnect import …` inside the function body resolves through
+    # this module entry, which is how the real relative import is intercepted.
+    # monkeypatch.setitem so the real module is back for the next test — swapping
+    # it permanently broke test_appstoreconnect_devices.py, which imports it.
+    import sys as _sys
+    monkeypatch.setitem(_sys.modules, "admin_lib.appstoreconnect", fake)
+    return apple, fake, calls
+
+
+def test_an_unknown_device_is_registered_before_the_build(monkeypatch):
+    apple, _fake, calls = _registration_ns(monkeypatch, existing=None)
+    apple["ensure_device_registered"]("00008110-000E6860012A401E", "Office")
+    assert calls == [("find", "00008110-000E6860012A401E"),
+                     ("register", "00008110-000E6860012A401E", "Office")], calls
+    print("OK: a device Apple has never seen is registered")
+
+
+def test_an_already_registered_device_is_left_alone(monkeypatch):
+    apple, _fake, calls = _registration_ns(monkeypatch, existing={"id": "D1", "attributes": {"status": "ENABLED"}})
+    apple["ensure_device_registered"]("UDID", "Office")
+    assert calls == [("find", "UDID")], calls
+    print("OK: a registered device costs one lookup and no writes")
+
+
+def test_a_disabled_device_is_re_enabled(monkeypatch):
+    apple, _fake, calls = _registration_ns(monkeypatch, existing={"id": "D2", "attributes": {"status": "DISABLED"}})
+    apple["ensure_device_registered"]("UDID", "Office")
+    assert ("enable", "D2") in calls, calls
+    print("OK: a disabled device is re-enabled, not mistaken for a working one")
+
+
+def test_no_api_key_warns_and_lets_the_build_continue(monkeypatch):
+    warnings = []
+    apple, _fake, calls = _registration_ns(monkeypatch, warnings=warnings, has_key=False)
+    apple["ensure_device_registered"]("UDID", "Office")
+    assert calls == [], calls
+    assert warnings and "unset" in warnings[0], warnings
+    print("OK: no key names what is unset instead of stopping the deploy")
+
+
+def test_an_api_failure_warns_and_lets_the_build_continue(monkeypatch):
+    warnings = []
+    apple, fake, _calls = _registration_ns(monkeypatch, warnings=warnings)
+
+    def _boom(udid):
+        raise fake.AppStoreConnectError("POST /devices → 409: already exists")
+
+    fake.find_device = _boom
+    apple["ensure_device_registered"]("UDID", "Office")
+    assert warnings and "Could not register" in warnings[0], warnings
+    print("OK: an API failure never takes the deploy down with it")
+
+
+# --- Which device, when several of one platform are connected ---
+
+def _devices(*rows):
+    return [{"identifier": f"{name}-ID",
+             "deviceProperties": {"name": name},
+             "hardwareProperties": {"platform": platform, "deviceType": kind, "udid": f"{name}-UDID"},
+             "connectionProperties": {"transportType": "wired"}}
+            for name, platform, kind in rows]
+
+
+def test_a_pinned_device_type_picks_the_iphone_over_the_ipad():
+    apple = _load_apple()
+    apple["_list_devices"] = lambda: _devices(("iPad", "iOS", "iPad"), ("Phone", "iOS", "iPhone"))
+    apple["os"].environ["IOS_DEVICE_TYPE"] = "iPhone"
+    try:
+        assert apple["find_connected_device"]("ios")[1] == "Phone"
+    finally:
+        del apple["os"].environ["IOS_DEVICE_TYPE"]
+    print("OK: IOS_DEVICE_TYPE settles iPhone vs iPad instead of list order")
+
+
+def test_the_config_can_pin_the_device_type_too():
+    apple = _load_apple()
+    apple["_list_devices"] = lambda: _devices(("iPad", "iOS", "iPad"), ("Phone", "iOS", "iPhone"))
+    assert apple["find_connected_device"]("ios", {"ios_device_type": "iPad"})[1] == "iPad"
+    print("OK: [apple] ios_device_type pins the device without an env var")
+
+
+def test_two_devices_and_no_pin_says_so():
+    warnings = []
+    apple = _load_apple(warn=lambda m, *a, **k: warnings.append(m))
+    apple["_list_devices"] = lambda: _devices(("iPad", "iOS", "iPad"), ("Phone", "iOS", "iPhone"))
+    apple["find_connected_device"]("ios")
+    assert any("2 iOS devices connected" in w for w in warnings), warnings
+    print("OK: an ambiguous pick is announced, not made silently")

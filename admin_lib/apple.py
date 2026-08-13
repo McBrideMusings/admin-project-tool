@@ -668,6 +668,11 @@ DEVICE_PLATFORMS = {
         "destination": "generic/platform=iOS",
         "sdk_suffix":  "-iphoneos",
         "platform":    "iOS",
+        # An iPhone and an iPad both report platform "iOS", so the platform
+        # filter alone still leaves `deploy ios` taking whichever devicectl
+        # happens to list first. `device_types` is the tie-break, and
+        # `ios_device_type` in [apple] (or IOS_DEVICE_TYPE) picks one.
+        "device_types": ("iPhone", "iPad"),
         "connect_hint": (
             "Connect via USB, or enable wireless debugging:",
             "  Xcode > Window > Devices and Simulators > select device > Connect via network",
@@ -678,6 +683,7 @@ DEVICE_PLATFORMS = {
         "destination": "generic/platform=tvOS",
         "sdk_suffix":  "-appletvos",
         "platform":    "tvOS",
+        "device_types": ("appleTV",),
         # An Apple TV has no port to plug into — pairing is network-only and
         # one-time, and until it is done devicectl does not list the device at
         # all, which reads as "deploy is broken" rather than "not paired yet".
@@ -1004,7 +1010,7 @@ def _extract_device_info(device):
     return device_id, device_name, udid, transport
 
 
-def find_connected_device(platform="ios"):
+def find_connected_device(platform="ios", cfg=None):
     """Find a connected device of the given platform via xcrun devicectl.
 
     Returns (device_id, device_name, udid) or calls sys.exit(1).
@@ -1016,17 +1022,43 @@ def find_connected_device(platform="ios"):
     iPhone show up in the same array — the platform filter is what stops
     `deploy ios` handing an iPhone build to the Apple TV that happened to be
     listed first.
+
+    An iPhone and an iPad are *both* platform "iOS", so with both connected the
+    platform filter still leaves a coin toss. `[apple] ios_device_type` (or the
+    IOS_DEVICE_TYPE env var) names one — "iPhone" or "iPad" — and with more than
+    one candidate left the choice is printed rather than made silently.
     """
     plat = _device_platform(platform)
+    cfg = cfg or {}
     info(f"Finding connected {plat['label']} device...")
     devices = [d for d in _list_devices()
                if d.get("hardwareProperties", {}).get("platform") == plat["platform"]]
+
+    wanted = (os.environ.get(f"{platform.upper()}_DEVICE_TYPE")
+              or cfg.get(f"{platform}_device_type"))
+    if wanted and devices:
+        matching = [d for d in devices
+                    if d.get("hardwareProperties", {}).get("deviceType", "").lower() == wanted.lower()]
+        if matching:
+            devices = matching
+        else:
+            warn(f"no connected {wanted} — falling back to any {plat['label']} device")
 
     if not devices:
         err(f"No connected {plat['label']} device found.")
         for line in plat["connect_hint"]:
             err(line)
         sys.exit(1)
+
+    if len(devices) > 1:
+        names = ", ".join(
+            f"{d.get('deviceProperties', {}).get('name', '?')} "
+            f"({d.get('hardwareProperties', {}).get('deviceType', '?')})"
+            for d in devices
+        )
+        warn(f"{len(devices)} {plat['label']} devices connected: {names}")
+        warn(f"Using the first. Pin one with {platform}_device_type in [apple] "
+             f"or {platform.upper()}_DEVICE_TYPE.")
 
     device_id, device_name, udid, _ = _extract_device_info(devices[0])
     info(f"Target device: {device_name} ({device_id})")
@@ -2053,14 +2085,19 @@ def dev_loop_simulator(project, scheme, config, subsystem, process, predicate,
 def dev_loop_device(project, scheme, config, subsystem, process,
                     app_pattern, pid_file="/tmp/admin-run.pid",
                     extra_settings="", build_action="build",
-                    bundle_id=None, device_id=None, udid=None,
+                    bundle_id=None,
                     pre_build=None, post_build=None, display_name=None,
                     skip_build=False, output_config=None):
     """Build, install, and run on a physical iOS device with log streaming.
 
     Launches via `devicectl --console` with OS_ACTIVITY_DT_MODE=YES (non-redacted
-    os_log). bundle_id defaults to subsystem; device_id auto-resolves via
-    find_connected_device when None. pre_build/post_build wrap each build cycle.
+    os_log). bundle_id defaults to subsystem. pre_build/post_build wrap each
+    build cycle.
+
+    The device is always resolved here. It used to be passable as `device_id`,
+    with a branch that took the *identifier* as the display name and skipped
+    registering the device with the team — a path nothing has ever called, so
+    the only thing it could do was give a future caller a half-working deploy.
 
     Loops on 'r'/SIGUSR1 like dev_loop_simulator. The device log stream is only
     obtainable by owning the launch — `devicectl device process launch --console`
@@ -2075,11 +2112,8 @@ def dev_loop_device(project, scheme, config, subsystem, process,
         output_config = globals().get("_OUTPUT_CONFIG")
     launch_bundle = bundle_id or subsystem
 
-    if device_id is None:
-        device_id, device_name, udid = find_connected_device()
-        ensure_device_registered(udid, device_name)
-    else:
-        device_name = device_id
+    device_id, device_name, udid = find_connected_device()
+    ensure_device_registered(udid, device_name)
 
     destination = "generic/platform=iOS"
 
@@ -3244,13 +3278,14 @@ def ensure_device_registered(udid, name):
     so the build still runs and reports Apple's own error.
     """
     from .appstoreconnect import (
-        AppStoreConnectError, credentials, enable_device, find_device, register_device,
+        AppStoreConnectError, credentials, enable_device, find_device,
+        missing_credential_reason, register_device,
     )
 
     if not udid:
         return
     if credentials() is None:
-        warn("No App Store Connect API key — skipping device registration.")
+        warn(f"Skipping device registration — App Store Connect key {missing_credential_reason()}")
         return
     try:
         existing = find_device(udid)
@@ -3290,7 +3325,7 @@ def deploy_device(cfg, platform="ios", *, clean=False):
 
     restore_stranded_dev_icons(cfg)
 
-    device_id, device_name, udid = find_connected_device(platform)
+    device_id, device_name, udid = find_connected_device(platform, cfg)
     info(f"Deploying to {device_name}")
     ensure_device_registered(udid, device_name)
 
