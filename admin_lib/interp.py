@@ -26,7 +26,7 @@ from __future__ import annotations
 import os
 import sys
 
-from admin_lib import core
+from admin_lib import core, frame
 from admin_lib.core import (
     add_spacer,
     command,
@@ -138,6 +138,18 @@ def _sync_core_globals(g: dict) -> None:
 _EMPTY_CMD_ERR = "refusing to run an empty command"
 
 
+def _enter_frame(label, urls):
+    """Pin `urls` to the bottom of the terminal for the life of this action.
+
+    No-op when the action declares no urls; frame.activate() also declines when
+    stdout is not a terminal, so piped and CI runs are unaffected.
+    """
+    if not urls:
+        return
+    from admin_lib.core import get_log_file
+    frame.activate(label, frame.resolve_urls(urls), get_log_file())
+
+
 def _run_action_shell(cmd_str, **kwargs):
     """run_cmd, but refuses to report success for a blank command."""
     if not (cmd_str or "").strip():
@@ -151,11 +163,16 @@ def _make_shell(cmd, ns):
     name = cmd.name
     pty = bool(cmd.meta.get("pty"))
     watch_kind = cmd.meta.get("watch")
+    urls = cmd.meta.get("urls")
 
     def _fn(args):
-        info(f"running: {resolve_env(run)}")
-        collected = [] if watch_kind else None
-        rc = _run_action_shell(run, pty=pty, collect=collected)
+        _enter_frame(name, urls)
+        try:
+            info(f"running: {resolve_env(run)}")
+            collected = [] if watch_kind else None
+            rc = _run_action_shell(run, pty=pty, collect=collected)
+        finally:
+            frame.deactivate()
         if rc != 0:
             err(name + " failed")
             sys.exit(rc)
@@ -231,6 +248,14 @@ def _make_multi_target(cmd, ns):
         resolved_target_requires[tname] = list(parent_requires) if override is None else list(override)
     has_requires = any(resolved_target_requires.values())
 
+    # Same inherit rule for the footer: parent default unless the child overrides.
+    parent_urls = cmd.meta.get("urls") or []
+    target_urls_meta = cmd.meta.get("target_urls", {})
+    resolved_target_urls = {}
+    for tname in targets:
+        override = target_urls_meta.get(tname)
+        resolved_target_urls[tname] = list(parent_urls) if override is None else list(override)
+
     def _fn(args):
         if args and not args[0].startswith("-"):
             picked, rest_args = args[0], args[1:]
@@ -263,8 +288,12 @@ def _make_multi_target(cmd, ns):
             run_command(shell[1:], rest_args)
         else:
             collected = [] if target_watch.get(picked) else None
-            info(f"running [{name}:" + picked + "]: " + shell)
-            rc = _run_action_shell(shell, pty=target_pty.get(picked, False), collect=collected)
+            _enter_frame(f"{name}:{picked}", resolved_target_urls.get(picked))
+            try:
+                info(f"running [{name}:" + picked + "]: " + shell)
+                rc = _run_action_shell(shell, pty=target_pty.get(picked, False), collect=collected)
+            finally:
+                frame.deactivate()
             if rc != 0:
                 err(name + " failed")
                 sys.exit(rc)
@@ -681,9 +710,13 @@ def _make_interactive_shell(cmd, ns):
         # expand its own vars but cannot compute these. resolve_computed leaves
         # every non-computed ${VAR} untouched, so shell-locals still work.
         resolved = resolve_computed(run)
-        info(f"running: {resolved}")
-        fmt = make_formatter()
-        rc = run_with_keybindings(resolved, keys, label=name, formatter=fmt)
+        _enter_frame(name, cmd.meta.get("urls"))
+        try:
+            info(f"running: {resolved}")
+            fmt = make_formatter()
+            rc = run_with_keybindings(resolved, keys, label=name, formatter=fmt)
+        finally:
+            frame.deactivate()
         if rc not in (0, 130):
             err(name + " failed")
             sys.exit(rc)

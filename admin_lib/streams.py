@@ -15,9 +15,9 @@ went and grew its own copy rather than find them.
 """
 from __future__ import annotations
 
-import sys
 import threading
 
+from . import frame
 from .core import _children
 from .reload import _wait_or_kill
 
@@ -36,8 +36,7 @@ def stream_subprocess(proc, log_file=None, formatter=None):
         try:
             for line in proc.stdout:
                 out = formatter(line) if formatter else line
-                sys.stdout.write(out)
-                sys.stdout.flush()
+                frame.write(out)
                 if log_fh:
                     log_fh.write(out)
                     log_fh.flush()

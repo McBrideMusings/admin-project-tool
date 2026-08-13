@@ -55,6 +55,36 @@ A project can opt into browser-console-to-admin-log forwarding by adding `[log_b
 
 The userscript is project-agnostic — no prod URLs baked in. It decides which pages to forward at runtime: `localhost`/`127.0.0.1`/`0.0.0.0` are always candidates, and any other host is opt-in via a single Tampermonkey menu command ("Log bridge: watch `<host>`", a host-labelled toggle) that stores an auto-derived glob in `GM` storage. The per-project prod hostname lives only in that project's `admin.toml` `[log_bridge].hosts` (advertised via `/health`), which remains the authoritative final match — so a new project needs one menu click, never a script edit.
 
+## Pinned URL footer
+
+An action that declares `urls` runs inside a DECSTBM scroll region: its output scrolls in the top rows while `admin_lib/frame.py` pins a footer to the bottom — a status row (action label + elapsed time), the absolute log path, then one row per URL. Every row is an OSC 8 hyperlink, so the log path (as `file://`) and the URLs are clickable. This exists because a dev server prints its URLs once and then buries them under thousands of lines; the port you need is the one thing guaranteed to have scrolled away.
+
+**The trade:** lines scrolled out of a *partial* scroll region do not enter the terminal's scrollback. That is acceptable only because a framed action is already writing the same output to `LOG_FILE`, timestamped and ANSI-stripped — history moves from scrollback into a file rather than being lost. `admin logs` reads it back.
+
+```toml
+[urls]                                     # the existing project-level table
+local = "http://localhost:8787"
+lan   = "http://${LAN_IP}:8787"
+
+[actions.dev]
+kind = "multi-target"
+urls = ["local"]                           # default footer for every target
+
+[actions.dev.cf]
+run  = "bun run dev:cf"
+urls = ["local", "lan", "http://127.0.0.1:9999"]   # override for this target
+
+[actions.dev.devvit]
+run  = "bun run dev:devvit"
+urls = []                                  # explicit opt-out — no footer
+```
+
+An entry naming a key of the top-level `[urls]` table resolves to that entry, label and all; anything else is a literal URL, and `${VAR}` in either is expanded at dispatch time (so a URL can carry a port the action's `env` just set). A bare-string URL labels itself and prints in one column instead of two. Per-target inheritance works exactly like `requires`: `meta["target_urls"]` holds `None` for "inherit the parent" and a list (including `[]`) for "replace it".
+
+**Activation.** Presence of `urls` on the dispatched action is the only switch — there is no separate `frame = true`, which would just be a way to declare URLs that never show. `frame.activate` declines when stdout is not a terminal (piped output, CI), when `ADMIN_NO_FRAME` is set, or when a frame is already up; one process runs one dev loop, the same assumption `admin_lib/reload.py` makes.
+
+**Pipeline.** `validate.py` checks the `urls` shape (parent and per-target); `archetypes.py` normalises entries to `{label, url}` and builds `meta["urls"]`/`meta["target_urls"]`; `interp.py` calls `_enter_frame` in the shell, multi-target, and interactive-shell closures and always `frame.deactivate()`s in a `finally`. Child output reaches the terminal through `frame.write`, which repaints the footer after each chunk — so every pump must call it rather than `sys.stdout.write` (today: both loops in `core.run_cmd`, `streams.stream_subprocess`, `reload.py`, `keybindings.py`). `frame.apply_winsize` sizes a child's pty to the *region*, not the screen; without it a child that positions its own cursor (wrangler, vite, metro) paints over the footer. `logtail.py` is deliberately not wired — `admin logs` reads logs and never runs under a frame.
+
 ## Guards
 
 A project can gate any action or multi-target target behind a named precondition by listing guard names in `requires`. Built-in guards (`git-clean`, `git-pushed`, `deps-fresh`) are registered by `admin_lib/guards.py`; user-defined ones live in `[guards.<name>]` tables. The full design and rejected alternatives live in [ADR-0005](docs/adr/0005-guards-and-requires.md).

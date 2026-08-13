@@ -681,7 +681,12 @@ def _run_cmd_pty(cmd, log_fh, formatter, collect=None):
     import pty
     import select
 
+    from . import frame
+
     master_fd, slave_fd = pty.openpty()
+    # Size the child to the scroll region when a frame is up, so a child that
+    # positions its own cursor cannot paint over the pinned footer.
+    frame.apply_winsize(master_fd)
     proc = subprocess.Popen(
         cmd, shell=True,
         stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
@@ -706,8 +711,7 @@ def _run_cmd_pty(cmd, log_fh, formatter, collect=None):
                 while b"\n" in buf:
                     raw_line, buf = buf.split(b"\n", 1)
                     line = raw_line.rstrip(b"\r").decode("utf-8", errors="replace") + "\n"
-                    sys.stdout.write(formatter(line) if formatter else _stamp_log(line))
-                    sys.stdout.flush()
+                    frame.write(formatter(line) if formatter else _stamp_log(line))
                     if log_fh:
                         log_fh.write(_stamp_log(_ANSI_ESCAPE_RE.sub("", line)))
                         log_fh.flush()
@@ -736,8 +740,7 @@ def _run_cmd_pty(cmd, log_fh, formatter, collect=None):
             _children.remove(proc)
         if buf:
             line = buf.rstrip(b"\r").decode("utf-8", errors="replace")
-            sys.stdout.write(formatter(line) if formatter else _stamp_log(line))
-            sys.stdout.flush()
+            frame.write(formatter(line) if formatter else _stamp_log(line))
             if log_fh:
                 log_fh.write(_stamp_log(_ANSI_ESCAPE_RE.sub("", line)))
             if collect is not None:
@@ -772,11 +775,11 @@ def run_cmd(cmd, shell=True, capture_log=True, formatter=None, pty=False, collec
         bufsize=1, universal_newlines=True,
     )
     _children.append(proc)
+    from . import frame
     try:
         for line in proc.stdout:
             display = formatter(line) if formatter else _stamp_log(line)
-            sys.stdout.write(display)
-            sys.stdout.flush()
+            frame.write(display)
             if log_fh:
                 log_fh.write(_stamp_log(_ANSI_ESCAPE_RE.sub("", line)))
                 log_fh.flush()

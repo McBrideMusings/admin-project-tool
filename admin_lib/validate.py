@@ -44,7 +44,7 @@ VALID_COMMAND_KEYS = {"desc", "steps", "log_file", "log_retain", "log", "group",
 # Keys an [actions.X] table may carry.
 VALID_ACTION_KEYS = {"run", "desc", "kind", "targets", "method", "body", "src", "log_file",
                      "log_retain", "log", "interactive", "keys", "requires", "watch",
-                     "excludes", "hosts"}
+                     "excludes", "hosts", "urls"}
 
 _GP_SUBTABLE_HINT = (
     " 'group' and 'priority' belong on inline target subtables "
@@ -53,6 +53,30 @@ _GP_SUBTABLE_HINT = (
 
 _VALID_KEY_BINDING_FIELDS = {"label", "run", "action", "signal", "pid_file"}
 
+
+
+def _validate_urls(value, lead: str, exc: type[ValidationError]) -> None:
+    """Raise unless `urls` is a list of bare URL strings or {label, url} tables."""
+    if not isinstance(value, list):
+        raise exc(
+            f"{lead}: 'urls' must be a list of URL strings or "
+            "{{ label = \"…\", url = \"…\" }} tables"
+        )
+    for entry in value:
+        if isinstance(entry, str):
+            continue
+        if not isinstance(entry, dict):
+            raise exc(
+                f"{lead}: 'urls' entry {entry!r} must be a URL string or a "
+                "{{ label = \"…\", url = \"…\" }} table"
+            )
+        unknown = set(entry) - {"label", "url"}
+        if unknown:
+            raise exc(f"{lead}: 'urls' entry has unknown key(s) {sorted(unknown)}; valid: ['label', 'url']")
+        if not isinstance(entry.get("url"), str) or not entry["url"].strip():
+            raise exc(f"{lead}: 'urls' entry {entry!r} needs a non-empty 'url' string")
+        if "label" in entry and not isinstance(entry["label"], str):
+            raise exc(f"{lead}: 'urls' entry {entry!r} 'label' must be a string")
 
 
 def _validate_gp_ints(data: dict, lead: str, exc: type[ValidationError]) -> None:
@@ -192,6 +216,9 @@ def validate_action(lead: str, data: dict, exc: type[ValidationError]) -> Valida
         if not isinstance(parent_requires, list) or not all(isinstance(r, str) for r in parent_requires):
             raise exc(f"{lead}: 'requires' must be a list of guard-name strings")
 
+    if "urls" in data:
+        _validate_urls(data["urls"], lead, exc)
+
     if inline_targets_raw:
         for tname, tdata in inline_targets_raw.items():
             if "action" not in tdata and "run" not in tdata:
@@ -207,6 +234,8 @@ def validate_action(lead: str, data: dict, exc: type[ValidationError]) -> Valida
                     )
             if "env" in tdata and not isinstance(tdata["env"], dict):
                 raise exc(f"{lead}: target '{tname}' 'env' must be a table of NAME = value")
+            if "urls" in tdata:
+                _validate_urls(tdata["urls"], f"{lead}: target '{tname}'", exc)
         targets = inline_targets_raw
     else:
         targets = flat_targets
