@@ -125,6 +125,16 @@ filters on `hardwareProperties.platform` before taking the first row. Without
 that filter, a paired Apple TV listed first became the target of `deploy ios`
 and the iPhone build was pushed at the TV.
 
+**The device is registered with the team automatically.** Before the build, both
+paths call `ensure_device_registered()`, which looks the hardware UDID up in App
+Store Connect and POSTs it if Apple has never seen it (and re-enables it if it
+was disabled). Without that, a new device fails the build with *"Your team has
+no devices from which to generate a provisioning profile"* — a message about the
+team, so it reads as a broken account rather than as an unregistered device, and
+the old fix was a trip to the developer portal. `-allowProvisioningUpdates`
+creates profiles but never registers hardware, which is why the API key has to
+do it explicitly. No key configured → a warning, and the build runs anyway.
+
 An Apple TV has no cable to plug in: pairing is network-only and one-time — on
 the Apple TV, Settings → Remotes and Devices → Remote App and Devices, then
 Xcode → Window → Devices and Simulators on the Mac and type the PIN. Until that

@@ -190,6 +190,46 @@ def create_bundle_id(identifier, name, platform="UNIVERSAL", opener=None):
     return request("POST", "/bundleIds", body=body, opener=opener).get("data", {})
 
 
+def find_device(udid, opener=None):
+    """The API's resource for a hardware UDID, or None if the team has never
+    registered that device. Filtered server-side, like find_bundle_id."""
+    result = request("GET", f"/devices?filter[udid]={udid}&limit=200", opener=opener)
+    for item in result.get("data", []):
+        if item.get("attributes", {}).get("udid") == udid:
+            return item
+    return None
+
+
+def register_device(udid, name, platform="IOS", opener=None):
+    """Add a device to the team so a development profile can include it.
+
+    `platform` is Apple's BundleIdPlatform enum, which has no tvOS member —
+    an Apple TV, an iPhone and an Apple Watch are all IOS devices here, and
+    Apple derives the device class from the UDID itself.
+    """
+    body = {
+        "data": {
+            "type": "devices",
+            "attributes": {"udid": udid, "name": name, "platform": platform},
+        }
+    }
+    return request("POST", "/devices", body=body, opener=opener).get("data", {})
+
+
+def enable_device(device_resource, opener=None):
+    """Flip a DISABLED device back to ENABLED. A disabled device is still
+    listed, so a plain existence check would call it registered while profiles
+    keep leaving it out."""
+    body = {
+        "data": {
+            "type": "devices",
+            "id": device_resource,
+            "attributes": {"status": "ENABLED"},
+        }
+    }
+    return request("PATCH", f"/devices/{device_resource}", body=body, opener=opener).get("data", {})
+
+
 def capabilities(bundle_id_resource, opener=None):
     """Which capabilities are already enabled, as Apple's enum values."""
     # No `limit` here: the API answers "The parameter 'limit' can not be used
