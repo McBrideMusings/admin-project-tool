@@ -2076,7 +2076,8 @@ def dev_loop_device(project, scheme, config, subsystem, process,
     launch_bundle = bundle_id or subsystem
 
     if device_id is None:
-        device_id, device_name, _udid = find_connected_device()
+        device_id, device_name, udid = find_connected_device()
+        ensure_device_registered(udid, device_name)
     else:
         device_name = device_id
 
@@ -3228,6 +3229,44 @@ def deploy_mac(cfg, *, clean=False):
     ok(f"deploy mac → {install_path}")
 
 
+def ensure_device_registered(udid, name):
+    """Make sure the team knows this device before a signed build asks Apple
+    for a profile that has to include it.
+
+    A device Apple has never seen fails the build with "Your team has no
+    devices from which to generate a provisioning profile" — a message about
+    the team, not about the device sitting on the desk, which is why plugging
+    in a second phone or pairing an Apple TV used to mean a trip to the
+    developer portal. `-allowProvisioningUpdates` creates profiles but never
+    registers hardware, so the API key has to do it explicitly.
+
+    Best-effort: with no API key, or on any API failure, this warns and returns
+    so the build still runs and reports Apple's own error.
+    """
+    from .appstoreconnect import (
+        AppStoreConnectError, credentials, enable_device, find_device, register_device,
+    )
+
+    if not udid:
+        return
+    if credentials() is None:
+        warn("No App Store Connect API key — skipping device registration.")
+        return
+    try:
+        existing = find_device(udid)
+        if existing is None:
+            info(f"Registering {name} ({udid}) with the team...")
+            register_device(udid, name)
+            ok(f"{name} registered")
+            return
+        if existing.get("attributes", {}).get("status") == "DISABLED":
+            info(f"{name} is registered but disabled — re-enabling...")
+            enable_device(existing["id"])
+            ok(f"{name} enabled")
+    except AppStoreConnectError as e:
+        warn(f"Could not register {name} with the team: {e}")
+
+
 def deploy_device(cfg, platform="ios", *, clean=False):
     """Build and install a production app on a connected iOS or tvOS device.
 
@@ -3251,8 +3290,9 @@ def deploy_device(cfg, platform="ios", *, clean=False):
 
     restore_stranded_dev_icons(cfg)
 
-    device_id, device_name, _udid = find_connected_device(platform)
+    device_id, device_name, udid = find_connected_device(platform)
     info(f"Deploying to {device_name}")
+    ensure_device_registered(udid, device_name)
 
     info(f"Building {scheme} for device ({config})...")
     rc = xcodebuild_filtered(project, scheme, config, plat["destination"],
