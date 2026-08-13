@@ -657,6 +657,49 @@ SIM_PLATFORMS = {
 }
 
 
+# The physical-device counterpart of SIM_PLATFORMS: everything that differs
+# between installing on an iPhone and installing on an Apple TV. `platform` is
+# the value `xcrun devicectl list devices` reports under
+# hardwareProperties.platform, and is what keeps a paired Apple TV from being
+# picked as the target of `deploy ios` (both are CoreDevices in the same list).
+DEVICE_PLATFORMS = {
+    "ios": {
+        "label":       "iOS",
+        "destination": "generic/platform=iOS",
+        "sdk_suffix":  "-iphoneos",
+        "platform":    "iOS",
+        "connect_hint": (
+            "Connect via USB, or enable wireless debugging:",
+            "  Xcode > Window > Devices and Simulators > select device > Connect via network",
+        ),
+    },
+    "tv": {
+        "label":       "tvOS",
+        "destination": "generic/platform=tvOS",
+        "sdk_suffix":  "-appletvos",
+        "platform":    "tvOS",
+        # An Apple TV has no port to plug into — pairing is network-only and
+        # one-time, and until it is done devicectl does not list the device at
+        # all, which reads as "deploy is broken" rather than "not paired yet".
+        "connect_hint": (
+            "Pair the Apple TV once, over the network:",
+            "  Apple TV: Settings > Remotes and Devices > Remote App and Devices (leave it open)",
+            "  Mac: Xcode > Window > Devices and Simulators > select the Apple TV > enter the PIN",
+        ),
+    },
+}
+
+
+def _device_platform(platform):
+    """Look up a DEVICE_PLATFORMS row, failing loudly on an unknown key."""
+    try:
+        return DEVICE_PLATFORMS[platform]
+    except KeyError:
+        err(f"unknown device platform {platform!r} — expected one of "
+            + ", ".join(sorted(DEVICE_PLATFORMS)))
+        sys.exit(1)
+
+
 # Every Apple platform this archetype can drive, in menu order, each keyed by
 # the [apple] scheme key a project must set for that platform to exist at all.
 #
@@ -676,8 +719,7 @@ def apple_platforms(cfg, only=None):
     """Return the platform keys this project declares a scheme for, menu-ordered.
 
     `only` restricts the answer to platforms a given command can actually
-    handle (e.g. deploy has no tvOS path), so a command never offers — or
-    accepts — a target it cannot run.
+    handle, so a command never offers — or accepts — a target it cannot run.
     """
     cfg = cfg or {}
     return [p for p, meta in APPLE_PLATFORMS.items()
@@ -962,21 +1004,28 @@ def _extract_device_info(device):
     return device_id, device_name, udid, transport
 
 
-def find_connected_device():
-    """Find a connected iOS device via xcrun devicectl.
+def find_connected_device(platform="ios"):
+    """Find a connected device of the given platform via xcrun devicectl.
 
     Returns (device_id, device_name, udid) or calls sys.exit(1).
     device_id is the CoreDevice identifier (for devicectl commands).
     udid is the hardware UDID.
     Accepts any connection type (USB or network).
+
+    devicectl lists every paired CoreDevice together, so an Apple TV and an
+    iPhone show up in the same array — the platform filter is what stops
+    `deploy ios` handing an iPhone build to the Apple TV that happened to be
+    listed first.
     """
-    info("Finding connected iOS device...")
-    devices = _list_devices()
+    plat = _device_platform(platform)
+    info(f"Finding connected {plat['label']} device...")
+    devices = [d for d in _list_devices()
+               if d.get("hardwareProperties", {}).get("platform") == plat["platform"]]
 
     if not devices:
-        err("No connected iOS device found.")
-        err("Connect via USB, or enable wireless debugging:")
-        err("  Xcode > Window > Devices and Simulators > select device > Connect via network")
+        err(f"No connected {plat['label']} device found.")
+        for line in plat["connect_hint"]:
+            err(line)
         sys.exit(1)
 
     device_id, device_name, udid, _ = _extract_device_info(devices[0])
@@ -3179,35 +3228,41 @@ def deploy_mac(cfg, *, clean=False):
     ok(f"deploy mac → {install_path}")
 
 
-def deploy_ios(cfg, *, clean=False):
-    """Build and install a production iOS app on a connected device (USB or wireless). No icon swap."""
+def deploy_device(cfg, platform="ios", *, clean=False):
+    """Build and install a production app on a connected iOS or tvOS device.
+
+    Every value that differs between an iPhone and an Apple TV comes from the
+    platform prefix (``ios_scheme`` / ``tv_scheme``, ``ios_deploy_config`` /
+    ``tv_deploy_config``) or the DEVICE_PLATFORMS row. No icon swap.
+    """
+    plat = _device_platform(platform)
     if not cfg:
         err("[apple] table missing from admin.toml"); sys.exit(1)
     cfg = _with_global_defaults(cfg, "apple")
-    scheme = cfg.get("ios_scheme")
+    scheme = cfg.get(f"{platform}_scheme")
     if not scheme:
-        err("apple.ios_scheme required"); sys.exit(1)
+        err(f"apple.{platform}_scheme required"); sys.exit(1)
     project = _detect_project_path(cfg)
-    config = cfg.get("ios_deploy_config", "Release")
-    process = _resolve_ios_process(cfg)
-    bundle_id = _resolve_bundle(cfg, "ios")
+    config = cfg.get(f"{platform}_deploy_config", "Release")
+    process = _resolve_sim_process(cfg, platform)
+    bundle_id = _resolve_bundle(cfg, platform)
     build_action = "clean build" if clean else "build"
     derived_name = _resolve_derived_data_name(cfg)
 
     restore_stranded_dev_icons(cfg)
 
-    device_id, device_name, _udid = find_connected_device()
+    device_id, device_name, _udid = find_connected_device(platform)
     info(f"Deploying to {device_name}")
 
     info(f"Building {scheme} for device ({config})...")
-    rc = xcodebuild_filtered(project, scheme, config, "generic/platform=iOS",
+    rc = xcodebuild_filtered(project, scheme, config, plat["destination"],
                              action=build_action,
                              extra_settings=_compose_sign_settings(cfg))
     if rc != 0:
         diagnose_build_failure()
         err("Build failed"); sys.exit(rc)
 
-    app_path = find_app(_derived_glob(derived_name, config, "-iphoneos", process))
+    app_path = find_app(_derived_glob(derived_name, config, plat["sdk_suffix"], process))
     if not app_path:
         err("Could not find built app"); sys.exit(1)
 
@@ -3218,13 +3273,26 @@ def deploy_ios(cfg, *, clean=False):
         rc = install_on_device(device_id, app_path)
         if rc != 0:
             err("Install failed after retry.")
-            err("Try plugging in via USB cable for a more reliable connection.")
+            if platform == "tv":
+                err("Keep the Apple TV awake and on the same network as this Mac.")
+            else:
+                err("Try plugging in via USB cable for a more reliable connection.")
             sys.exit(rc)
 
     if bundle_id:
         info(f"Launching {bundle_id}")
         launch_on_device(device_id, bundle_id)
-    ok(f"deploy ios → {device_name}")
+    ok(f"deploy {platform} → {device_name}")
+
+
+def deploy_ios(cfg, *, clean=False):
+    """Build and install a production iOS app on a connected device (USB or wireless)."""
+    deploy_device(cfg, "ios", clean=clean)
+
+
+def deploy_tv(cfg, *, clean=False):
+    """Build and install a production tvOS app on a paired Apple TV (network)."""
+    deploy_device(cfg, "tv", clean=clean)
 
 
 def dev_device(cfg, *, log_level="app", clean=False, output_config=None):

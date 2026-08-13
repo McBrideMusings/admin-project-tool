@@ -18,12 +18,13 @@ All keys are **optional** unless noted — a wrapper that needs a missing key er
 |---|---|---|
 | `mac_scheme` | — | Xcode scheme for the macOS target. Its presence is what puts `mac` in the `build` / `dev` / `deploy` target pickers at all. |
 | `ios_scheme` | — | Xcode scheme for the iOS target. Its presence is what puts `ios` — and `dev`'s `device` target — in the pickers at all. |
-| `tv_scheme` | — | Xcode scheme for the tvOS target. Its presence is what puts `tv` in the `build` / `dev` pickers at all (`deploy` has no tvOS path). |
+| `tv_scheme` | — | Xcode scheme for the tvOS target. Its presence is what puts `tv` in the `build` / `dev` / `deploy` pickers at all. `dev tv` runs the tvOS simulator; `deploy tv` builds Release and installs on a paired Apple TV. |
 | `mac_build_config` | `Debug` | Configuration for macOS `build`/`dev`. |
 | `ios_build_config` | `Debug` | Configuration for iOS `build`/`dev`. |
 | `tv_build_config` | `Debug` | Configuration for tvOS `build`/`dev`. |
 | `mac_deploy_config` | `Release` | Configuration for macOS `deploy`. |
 | `ios_deploy_config` | `Release` | Configuration for iOS `deploy`. |
+| `tv_deploy_config` | `Release` | Configuration for tvOS `deploy`. |
 | `dev_build_settings` | — | Extra `KEY=value` `xcodebuild` build settings appended in **dev** builds only. |
 
 **The archetype assumes no platform.** A project gets exactly the targets its scheme keys declare. An iOS-only manifest is never shown `mac`, and `admin deploy mac` there stops immediately, naming the targets the project does have, instead of getting as far as `deploy_mac` and reporting a missing `mac_scheme`. One source decides this for all three commands: `APPLE_PLATFORMS` / `apple_platforms()` / `resolve_apple_platform()` in `admin_lib/apple.py`. Adding a platform is one entry there plus a dispatch branch in the bodies. Cover: `tests/test_apple_platform_gating.py`.
@@ -109,6 +110,26 @@ returned to a `tv` action, and vice versa. If no simulator of the platform
 exists at all, the tvOS path says how to install the runtime
 (`xcodebuild -downloadPlatform tvOS`), which is the usual reason a fresh machine
 has none.
+
+### Physical devices (`deploy ios` / `deploy tv`)
+
+Both go through `deploy_device()`, which builds for the real SDK
+(`generic/platform=iOS` → `-iphoneos`, `generic/platform=tvOS` → `-appletvos`),
+installs with `xcrun devicectl device install app`, and launches the production
+bundle ID. `DEVICE_PLATFORMS` in `admin_lib/apple.py` holds everything that
+differs between the two.
+
+`xcrun devicectl list devices` returns every paired CoreDevice in one array — a
+phone and an Apple TV side by side — so `find_connected_device(platform)`
+filters on `hardwareProperties.platform` before taking the first row. Without
+that filter, a paired Apple TV listed first became the target of `deploy ios`
+and the iPhone build was pushed at the TV.
+
+An Apple TV has no cable to plug in: pairing is network-only and one-time — on
+the Apple TV, Settings → Remotes and Devices → Remote App and Devices, then
+Xcode → Window → Devices and Simulators on the Mac and type the PIN. Until that
+is done devicectl does not list it, and `deploy tv` says so with those steps
+rather than failing on a missing device.
 
 ## Icons — the nested `[apple.icons]` table
 

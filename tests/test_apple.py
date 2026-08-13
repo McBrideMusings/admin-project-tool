@@ -2052,3 +2052,47 @@ def test_an_icloud_entitlement_forces_automatic_signing():
         "the App ID is fine"
     )
     print("OK: a com.apple.developer.* entitlement keeps automatic signing")
+
+
+# --- Device platform filter: devicectl lists an Apple TV and an iPhone in one
+# --- array, so `deploy ios` must not hand an iPhone build to the Apple TV ---
+
+MIXED_DEVICES = [
+    {"identifier": "TV-ID",
+     "deviceProperties": {"name": "Living Room"},
+     "hardwareProperties": {"platform": "tvOS", "udid": "TV-UDID"},
+     "connectionProperties": {"transportType": "localNetwork"}},
+    {"identifier": "PHONE-ID",
+     "deviceProperties": {"name": "Pierce's iPhone"},
+     "hardwareProperties": {"platform": "iOS", "udid": "PHONE-UDID"},
+     "connectionProperties": {"transportType": "localNetwork"}},
+]
+
+
+def _with_devices(devices):
+    apple = _load_apple()
+    apple["_list_devices"] = lambda: list(devices)
+    return apple
+
+
+def test_find_connected_device_picks_the_iphone_not_the_apple_tv():
+    apple = _with_devices(MIXED_DEVICES)
+    assert apple["find_connected_device"]("ios")[:2] == ("PHONE-ID", "Pierce's iPhone")
+    print("OK: an Apple TV listed first does not become the iOS deploy target")
+
+
+def test_find_connected_device_picks_the_apple_tv_for_tv():
+    apple = _with_devices(MIXED_DEVICES)
+    assert apple["find_connected_device"]("tv")[:2] == ("TV-ID", "Living Room")
+    print("OK: `deploy tv` targets the Apple TV")
+
+
+def test_find_connected_device_exits_when_no_apple_tv_is_paired():
+    apple = _with_devices([MIXED_DEVICES[1]])
+    try:
+        apple["find_connected_device"]("tv")
+    except SystemExit as e:
+        assert e.code == 1, e.code
+    else:
+        raise AssertionError("an unpaired Apple TV must exit, not deploy to the iPhone")
+    print("OK: no paired Apple TV exits instead of falling back to the iPhone")

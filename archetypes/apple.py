@@ -137,16 +137,15 @@ else:
 _DEPLOY_PY = '''\
 _server = globals().get("_SERVER_CONFIG") or {}
 cfg = globals().get("_APPLE_CONFIG") or {}
-# Platforms come from the manifest's scheme keys — never assumed. deploy has no
-# tvOS path, so it asks only about the platforms it can actually install.
-# Resolved before the args are read so --help advertises this project's targets.
-_choices = {p: p for p in apple_platforms(cfg, only=("mac", "ios"))}
+# Platforms come from the manifest's scheme keys — never assumed. Resolved
+# before the args are read so --help advertises this project's targets.
+_choices = {p: p for p in apple_platforms(cfg, only=("mac", "ios", "tv"))}
 if _server:
     _choices["server"] = "Docker → remote host"
     if _server.get("bazzite_host_var") or _server.get("bazzite_cross_target"):
         _choices["bazzite"] = "cross-compile → Bazzite"
 if not _choices:
-    err("no deploy target configured — set apple.mac_scheme or apple.ios_scheme")
+    err("no deploy target configured — set apple.mac_scheme, apple.ios_scheme or apple.tv_scheme")
     sys.exit(1)
 
 target = None
@@ -184,6 +183,8 @@ if target == "mac":
     deploy_mac(cfg, clean=force_clean)
 elif target == "ios":
     deploy_ios(cfg, clean=force_clean)
+elif target == "tv":
+    deploy_tv(cfg, clean=force_clean)
 elif target == "server":
     deploy_server_docker(_server)
 elif target == "bazzite":
@@ -347,7 +348,7 @@ ARCHETYPE = {
     "commands": {
         "build":  {"desc": "Build: mac | ios | tv | server [--force]",                                    "steps": ["build"],  "group": 1, "priority": 10},
         "dev":    {"desc": "Dev build + run (mac|ios|tv|device|server) [--log LVL] [--clean] [--install]", "steps": ["dev"],   "group": 1, "priority": 20},
-        "deploy": {"desc": "Build + install (mac|ios|server|bazzite) [--clean]",                     "steps": ["deploy"], "group": 1, "priority": 30},
+        "deploy": {"desc": "Build + install (mac|ios|tv|server|bazzite) [--clean]",                     "steps": ["deploy"], "group": 1, "priority": 30},
         "test":   {"desc": "Run tests (server|swift|apple)",                                          "steps": ["test"],   "group": 2, "priority": 10},
         "clean":  {"desc": "Remove build artifacts (xcode|cargo)",                                   "steps": ["clean"],  "group": 2, "priority": 20},
         "icons":  {"desc": "Icons: regenerate | swap-dev | restore",                                 "steps": ["icons"],  "group": 2, "priority": 30},
@@ -357,7 +358,7 @@ ARCHETYPE = {
     "actions": {
         "build":      {"kind": "python", "desc": "Build: mac | ios | tv | server [--force]",                                    "run": _BUILD_PY},
         "dev":        {"kind": "python", "desc": "Dev build + run (mac|ios|tv|device|server) [--log LVL] [--clean] [--install]", "run": _DEV_PY},
-        "deploy":     {"kind": "python", "desc": "Build + install (mac|ios|server|bazzite) [--clean]",                     "run": _DEPLOY_PY},
+        "deploy":     {"kind": "python", "desc": "Build + install (mac|ios|tv|server|bazzite) [--clean]",                     "run": _DEPLOY_PY},
         "test":       {"kind": "python", "desc": "Run tests (server|swift|apple)",                                          "run": _TEST_PY},
         "clean":      {"kind": "python", "desc": "Remove build artifacts (xcode|cargo)",                                   "run": _CLEAN_PY},
         "icons":      {"kind": "python", "desc": "Icons: regenerate | swap-dev | restore",                                 "run": _ICONS_PY},
@@ -369,6 +370,7 @@ ARCHETYPE = {
         "dev-tv":     {"kind": "apple",  "desc": "dev tvOS simulator",      "run": "dev_tv"},
         "dev-device": {"kind": "apple",  "desc": "dev iOS device",           "run": "dev_device"},
         "deploy-ios": {"kind": "apple",  "desc": "deploy iOS",               "run": "deploy_ios"},
+        "deploy-tv":  {"kind": "apple",  "desc": "deploy tvOS",              "run": "deploy_tv"},
         "clean-ios":  {"kind": "apple",  "desc": "clean Xcode DerivedData",  "run": "clean_ios"},
     },
 }
