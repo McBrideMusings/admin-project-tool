@@ -318,6 +318,22 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
     )
 
 
+def _norm_urls(raw) -> list[dict]:
+    """Normalise `urls` to [{label, url}]. A bare string labels itself.
+
+    ${VAR} is left intact — it is expanded at dispatch time by
+    admin_lib.frame.resolve_urls, so a URL can carry a port set by the action's env.
+    """
+    out = []
+    for entry in raw:
+        if isinstance(entry, str):
+            out.append({"label": entry, "url": entry})
+        else:
+            url = str(entry["url"])
+            out.append({"label": str(entry.get("label", url)), "url": url})
+    return out
+
+
 def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> Command:
     if not is_action:
         # Schema validation lives in admin_lib.validate; here we only build.
@@ -369,6 +385,10 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
     # action-level guard list for flat actions).
     if "requires" in data:
         meta["requires"] = [str(r) for r in data["requires"]]
+    # Parent-level `urls` (the footer for a flat action, or the default footer
+    # for multi-target children).
+    if "urls" in data:
+        meta["urls"] = _norm_urls(data["urls"])
     if "watch" in data:
         meta["watch"] = str(data["watch"])
     if "excludes" in data:
@@ -407,6 +427,18 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
                 target_requires[tname] = None
         if any_override:
             meta["target_requires"] = target_requires
+        # Per-target `urls` overrides, same inherit rule as `requires`:
+        # None = use the parent's footer, an explicit list (including []) replaces it.
+        target_urls: dict[str, list[dict] | None] = {}
+        any_url_override = False
+        for tname, tdata in inline_targets_raw.items():
+            if "urls" in tdata:
+                target_urls[tname] = _norm_urls(tdata["urls"])
+                any_url_override = True
+            else:
+                target_urls[tname] = None
+        if any_url_override:
+            meta["target_urls"] = target_urls
         if any(tdata.get("group", 0) != 0 or tdata.get("priority", 0) != 0 for tdata in inline_targets_raw.values()):
             sorted_tgts = sorted(
                 inline_targets_raw.items(),

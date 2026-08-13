@@ -28,6 +28,7 @@ from .core import (
     warn,
     err,
 )
+from . import frame
 from .log_bridge import start_log_bridge, stop_log_bridge
 
 
@@ -195,11 +196,9 @@ def run_with_keybindings(cmd, keys, *, label=None, formatter=None, shell=True):
                         _line_buf += text
                         while "\n" in _line_buf:
                             line, _line_buf = _line_buf.split("\n", 1)
-                            sys.stdout.write(formatter(line + "\n"))
-                        sys.stdout.flush()
+                            frame.write(formatter(line + "\n"))
                     else:
-                        sys.stdout.write(text)
-                        sys.stdout.flush()
+                        frame.write(text)
 
         if proc.stdout:
             remaining = proc.stdout.read()
@@ -211,12 +210,11 @@ def run_with_keybindings(cmd, keys, *, label=None, formatter=None, shell=True):
                     _line_buf += text
                     while "\n" in _line_buf:
                         line, _line_buf = _line_buf.split("\n", 1)
-                        sys.stdout.write(formatter(line + "\n"))
+                        frame.write(formatter(line + "\n"))
                     if _line_buf:
-                        sys.stdout.write(formatter(_line_buf + "\n"))
+                        frame.write(formatter(_line_buf + "\n"))
                 else:
-                    sys.stdout.write(text)
-                sys.stdout.flush()
+                    frame.write(text)
 
         elapsed = time.monotonic() - launch_time
         rc = proc.returncode

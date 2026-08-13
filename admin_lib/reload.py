@@ -32,6 +32,7 @@ import subprocess
 import sys
 import time
 
+from . import frame
 from .core import _children, get_log_dir, get_log_file, info, register_cleanup, warn
 
 _ADMIN_PID_PREFIX = "/tmp/admin-run"
@@ -231,13 +232,12 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
             _line_buf += text
             while "\n" in _line_buf:
                 line, _line_buf = _line_buf.split("\n", 1)
-                sys.stdout.write(formatter(line + "\n"))
+                frame.write(formatter(line + "\n"))
             if final and _line_buf:
-                sys.stdout.write(formatter(_line_buf + "\n"))
+                frame.write(formatter(_line_buf + "\n"))
                 _line_buf = ""
         else:
-            sys.stdout.write(text)
-        sys.stdout.flush()
+            frame.write(text)
 
     try:
         while True:
