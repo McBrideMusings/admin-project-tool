@@ -67,6 +67,30 @@ def credentials():
     return expanded, key_id, issuer
 
 
+def missing_credential_reason():
+    """Why `credentials()` said no, in one line — or None when it said yes.
+
+    "No App Store Connect API key configured" is the right message for unset
+    variables and the wrong one for a key path with a typo in it: the key is
+    configured, it is the file that is not there, and being told to configure
+    what you already configured sends you to the wrong place.
+    """
+    path = os.environ.get("APP_STORE_CONNECT_KEY_PATH", "").strip()
+    key_id = os.environ.get("APP_STORE_CONNECT_KEY_ID", "").strip()
+    issuer = os.environ.get("APP_STORE_CONNECT_ISSUER_ID", "").strip()
+    unset = [name for name, value in (
+        ("APP_STORE_CONNECT_KEY_PATH", path),
+        ("APP_STORE_CONNECT_KEY_ID", key_id),
+        ("APP_STORE_CONNECT_ISSUER_ID", issuer),
+    ) if not value]
+    if unset:
+        return "not configured — unset: " + ", ".join(unset)
+    expanded = os.path.expanduser(os.path.expandvars(path))
+    if not os.path.isfile(expanded):
+        return f"APP_STORE_CONNECT_KEY_PATH points at a file that is not there: {expanded}"
+    return None
+
+
 def _b64(data: bytes) -> str:
     """base64url, unpadded — what JWS wants."""
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
