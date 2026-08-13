@@ -149,7 +149,13 @@ def request(method, path, body=None, opener=None):
         with send(req, timeout=30) as response:
             raw = response.read()
             return json.loads(raw) if raw else {}
-    except urllib.error.HTTPError as error:
+    except urllib.error.URLError as error:
+        # Only HTTPError carries a body worth unpacking. A plain URLError is no
+        # DNS, no route, or the timeout above — and it used to escape as a
+        # traceback, so a device deploy with the network down died before
+        # xcodebuild ran instead of building against the cached profile.
+        if not isinstance(error, urllib.error.HTTPError):
+            raise AppStoreConnectError(f"{method} {path} → {error.reason}") from None
         detail = error.read().decode(errors="replace")
         try:
             errors = json.loads(detail).get("errors", [])
@@ -159,6 +165,8 @@ def request(method, path, body=None, opener=None):
         except ValueError:
             pass
         raise AppStoreConnectError(f"{method} {path} → {error.code}: {detail}") from None
+    except TimeoutError as error:
+        raise AppStoreConnectError(f"{method} {path} → timed out: {error}") from None
 
 
 def find_bundle_id(identifier, opener=None):
