@@ -32,12 +32,20 @@ def _slug_from_app_image():
 
 
 def ensure_docker_template(cfg):
-    """Auto-install the Unraid Docker GUI template on first deploy if needed.
+    """Sync the Unraid Docker GUI template to the host on every deploy.
 
     No-op when:
     - The local template XML doesn't exist (nothing to install)
     - UNRAID_HOST isn't configured
-    - The template is already present on the host
+
+    This used to skip whenever the file already existed on the host, which made
+    it a first-deploy convenience rather than a sync: every later edit to the
+    repo's template — a new device mapping, a changed port, a new env var —
+    stayed local, and the GUI kept describing a container that no longer matched
+    the one being deployed. Anyone who then edited the container through the
+    Unraid GUI got the stale template's answer written back over the live
+    config. The template is a few KB and the deploy is already pushing an image,
+    so there is nothing to save by being clever: it goes every time.
 
     Non-fatal: warns on scp failure so a bad template never blocks a deploy.
     """
@@ -58,15 +66,12 @@ def ensure_docker_template(cfg):
     full_host = f"{user}@{host}"
 
     dst = f"{_UNRAID_TEMPLATES_DIR}/my-{name}.xml"
-    if ssh_cmd(full_host, f"test -f {dst}", check=False) == 0:
-        return
-
-    info(f"First deploy: installing Unraid template → {full_host}:{dst}")
+    info(f"Syncing Unraid template → {full_host}:{dst}")
     rc = scp_to(src, full_host, dst)
     if rc == 0:
-        ok(f"Template installed as my-{name}.xml in Unraid Docker GUI")
+        ok(f"Template synced as my-{name}.xml in Unraid Docker GUI")
     else:
-        warn("Template install failed (non-fatal) — run: ./admin install-template")
+        warn("Template sync failed (non-fatal) — run: ./admin install-template")
 
 
 def install_docker_template_from_config(cfg):

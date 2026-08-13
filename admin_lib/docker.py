@@ -1265,6 +1265,15 @@ _DOCKER_FIELD_TABLE = [
      "kv_sep": ":", "kv_omit_sep_if_empty": True},
     {"key": "group_add", "flag": "--group-add", "shape": "repeated",
      "section": "host", "inspect_key": "GroupAdd"},
+    # Alternate container runtime, e.g. "nvidia" for NVENC/CUDA on an Unraid
+    # box with the Nvidia-Driver plugin. `--gpus` is the other way in, but it
+    # needs nvidia-container-runtime registered as a *default* runtime; naming
+    # the runtime works wherever the plugin put it, which is what Unraid's own
+    # GUI templates emit. `declared_only`, because docker reports a Runtime for
+    # every container ("runc" when nothing asked) — an undeclared live value is
+    # noise, not drift, exactly like hostname.
+    {"key": "runtime", "flag": "--runtime", "shape": "single",
+     "section": "host", "inspect_key": "Runtime", "declared_only": True},
     {"key": "ulimits", "flag": "--ulimit", "shape": "repeated",
      "section": "host", "inspect_key": "Ulimits",
      "inspect_transform": lambda raw: [
