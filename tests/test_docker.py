@@ -1806,6 +1806,7 @@ _ROUNDTRIP_CFG = {
     "hostname": "muxarr",
     "workdir": "/app",
     "mac_address": "02:42:ac:11:00:02",
+    "runtime": "nvidia",
 }
 
 _ROUNDTRIP_INSPECT_HOST = {
@@ -1820,6 +1821,7 @@ _ROUNDTRIP_INSPECT_HOST = {
     "GroupAdd": ["users"],
     "Ulimits": [{"Name": "nofile", "Soft": 8192, "Hard": 8192}],
     "NetworkMode": "bridge",
+    "Runtime": "nvidia",
 }
 
 _ROUNDTRIP_INSPECT_CONFIG = {
