@@ -287,6 +287,10 @@ def resolve(manifest: Manifest, archetype_dir: Path) -> ResolvedManifest:
     # raises the injected ArchetypeError.
     validate_requires(actions, manifest.guards, ArchetypeError)
 
+    # Every `urls` entry must be a real URL or name a row of the [urls] table.
+    from admin_lib.frame import validate_url_refs
+    validate_url_refs(actions, manifest.urls, ArchetypeError)
+
     # Validate `action = "@name"` keybindings reference known actions.
     for action_name, action in actions.items():
         for keychar, binding in action.keys.items():
