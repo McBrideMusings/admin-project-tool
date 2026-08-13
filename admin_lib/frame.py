@@ -190,9 +190,16 @@ def activate(label, urls, log_path):
     return _active
 
 
-def deactivate():
+def deactivate(f):
+    """Tear down the frame `f` started. Ignores any frame it does not own.
+
+    A multi-target whose target delegates (`action = "dev-cf"`) puts two actions
+    on the stack. The inner one's activate() is declined — a frame is already up
+    — so it holds None, and None must mean "tear down nothing": an unconditional
+    teardown would strip the outer footer while the outer action is still running.
+    """
     global _active
-    if _active is None:
+    if f is None or _active is None or f is not _active:
         return
     _active.leave()
     _active = None
@@ -224,6 +231,30 @@ def apply_winsize(fd):
         pass
 
 
+def validate_url_refs(actions, project_urls, exc):
+    """Reject a `urls` entry that is neither a real URL nor a key of [urls].
+
+    Without this a typo ("local" when the table calls it "dev-cf") silently
+    becomes a literal, and the footer paints a row reading `● local` that goes
+    nowhere. Runs at resolve time, so `admin check` catches it.
+    """
+    known = set(project_urls or {})
+    for name, cmd in actions.items():
+        groups = [(None, cmd.meta.get("urls") or [])]
+        groups += [(t, u or []) for t, u in (cmd.meta.get("target_urls") or {}).items()]
+        for target, entries in groups:
+            for entry in entries:
+                url = entry["url"] if isinstance(entry, dict) else entry
+                if "://" in url or url in known:
+                    continue
+                where = f"action '{name}'" + (f" target '{target}'" if target else "")
+                hint = f"known [urls] names: {sorted(known)}" if known else "no [urls] table is defined"
+                raise exc(
+                    f"{where}: urls entry '{url}' is not a URL and does not name "
+                    f"an entry in the project's [urls] table — {hint}"
+                )
+
+
 def resolve_urls(raw):
     """Turn an action's declared `urls` into [(label, url)] for the footer.
 
@@ -234,7 +265,7 @@ def resolve_urls(raw):
        declared for `print_url_status` instead of restating the string.
     2. ${VAR} is expanded, so a URL can carry a port the action's env just set.
     """
-    from admin_lib.core import get_urls, resolve_env
+    from admin_lib.core import get_urls, resolve_computed, resolve_env
     project = dict(get_urls())
     out = []
     for entry in raw or []:
@@ -245,5 +276,7 @@ def resolve_urls(raw):
             label = str(entry.get("label", url))
         if url in project:                 # a name from the top-level [urls] table
             label, url = url, project[url]
-        out.append((label, resolve_env(url)))
+        # resolve_computed first: ${LAN_IP} and friends are derived, not env vars,
+        # and resolve_env would leave them as literal text in the footer.
+        out.append((label, resolve_env(resolve_computed(url))))
     return [(label, url) for label, url in out if url]

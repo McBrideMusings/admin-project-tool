@@ -141,13 +141,17 @@ _EMPTY_CMD_ERR = "refusing to run an empty command"
 def _enter_frame(label, urls):
     """Pin `urls` to the bottom of the terminal for the life of this action.
 
+    Returns the frame it started, or None — pass that back to frame.deactivate()
+    so an inner action that declares its own urls tears down only its own frame
+    and leaves an outer one standing.
+
     No-op when the action declares no urls; frame.activate() also declines when
     stdout is not a terminal, so piped and CI runs are unaffected.
     """
     if not urls:
-        return
+        return None
     from admin_lib.core import get_log_file
-    frame.activate(label, frame.resolve_urls(urls), get_log_file())
+    return frame.activate(label, frame.resolve_urls(urls), get_log_file())
 
 
 def _run_action_shell(cmd_str, **kwargs):
@@ -166,13 +170,13 @@ def _make_shell(cmd, ns):
     urls = cmd.meta.get("urls")
 
     def _fn(args):
-        _enter_frame(name, urls)
+        f = _enter_frame(name, urls)
         try:
             info(f"running: {resolve_env(run)}")
             collected = [] if watch_kind else None
             rc = _run_action_shell(run, pty=pty, collect=collected)
         finally:
-            frame.deactivate()
+            frame.deactivate(f)
         if rc != 0:
             err(name + " failed")
             sys.exit(rc)
@@ -284,16 +288,21 @@ def _make_multi_target(cmd, ns):
                 if rc != 0:
                     sys.exit(rc)
         shell = targets[picked]
+        # The footer belongs to the target the user picked, whether that target
+        # runs a shell string itself or delegates to another action.
+        f = _enter_frame(f"{name}:{picked}", resolved_target_urls.get(picked))
         if shell.startswith("@"):
-            run_command(shell[1:], rest_args)
+            try:
+                run_command(shell[1:], rest_args)
+            finally:
+                frame.deactivate(f)
         else:
             collected = [] if target_watch.get(picked) else None
-            _enter_frame(f"{name}:{picked}", resolved_target_urls.get(picked))
             try:
                 info(f"running [{name}:" + picked + "]: " + shell)
                 rc = _run_action_shell(shell, pty=target_pty.get(picked, False), collect=collected)
             finally:
-                frame.deactivate()
+                frame.deactivate(f)
             if rc != 0:
                 err(name + " failed")
                 sys.exit(rc)
@@ -710,13 +719,13 @@ def _make_interactive_shell(cmd, ns):
         # expand its own vars but cannot compute these. resolve_computed leaves
         # every non-computed ${VAR} untouched, so shell-locals still work.
         resolved = resolve_computed(run)
-        _enter_frame(name, cmd.meta.get("urls"))
+        f = _enter_frame(name, cmd.meta.get("urls"))
         try:
             info(f"running: {resolved}")
             fmt = make_formatter()
             rc = run_with_keybindings(resolved, keys, label=name, formatter=fmt)
         finally:
-            frame.deactivate()
+            frame.deactivate(f)
         if rc not in (0, 130):
             err(name + " failed")
             sys.exit(rc)

@@ -193,3 +193,50 @@ def test_elapsed_formats_seconds_minutes_and_hours():
     assert frame._elapsed(9) == "9s"
     assert frame._elapsed(125) == "2m05s"
     assert frame._elapsed(7325) == "2h02m"
+
+
+# ---------------------------------------------------------------------------
+# Cross-reference validation (runs at `admin check`)
+# ---------------------------------------------------------------------------
+
+class _Err(Exception):
+    pass
+
+
+def _actions(**metas):
+    return {name: _to_command(name, data, "test", is_action=True) for name, data in metas.items()}
+
+
+def test_an_entry_naming_a_row_of_the_urls_table_passes():
+    actions = _actions(dev={"run": "true", "urls": ["dev-cf"]})
+    frame.validate_url_refs(actions, {"dev-cf": "http://localhost:8787"}, _Err)
+
+
+def test_a_literal_url_passes_even_with_no_urls_table():
+    actions = _actions(dev={"run": "true", "urls": ["http://localhost:3000"]})
+    frame.validate_url_refs(actions, {}, _Err)
+
+
+def test_a_name_that_matches_nothing_is_an_error_not_a_literal():
+    actions = _actions(dev={"run": "true", "urls": ["local"]})
+    with pytest.raises(_Err, match="is not a URL and does not name"):
+        frame.validate_url_refs(actions, {"dev-cf": "http://localhost:8787"}, _Err)
+
+
+def test_the_error_names_the_target_the_bad_entry_is_on():
+    actions = _actions(dev={"kind": "multi-target", "cf": {"run": "true", "urls": ["lan"]}})
+    with pytest.raises(_Err, match="target 'cf'"):
+        frame.validate_url_refs(actions, {"dev-cf": "http://x"}, _Err)
+
+
+# ---------------------------------------------------------------------------
+# A delegating target still gets a footer
+# ---------------------------------------------------------------------------
+
+def test_deactivate_ignores_a_frame_it_does_not_own(monkeypatch):
+    """An inner action's teardown must not rip down the outer action's footer."""
+    outer = frame.Frame("dev:cf", [("a", "http://a")], "/tmp/x.log")
+    monkeypatch.setattr(frame, "_active", outer)
+    frame.deactivate(None)          # inner action never activated — leaves outer alone
+    assert frame._active is outer
+    monkeypatch.setattr(frame, "_active", None)
