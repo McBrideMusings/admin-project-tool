@@ -74,7 +74,8 @@ def _run(action, args, apple_cfg, server_cfg=None):
     }
     for fn in ("build_mac", "build_ios", "build_tv", "build_server",
                "dev_mac", "dev_ios", "dev_tv", "dev_device", "dev_server",
-               "deploy_mac", "deploy_ios", "deploy_server_docker", "deploy_bazzite_server"):
+               "deploy_mac", "deploy_ios", "deploy_tv",
+               "deploy_server_docker", "deploy_bazzite_server"):
         ns[fn] = _record(fn)
 
     body = APPLE.actions[action]["run"]
@@ -183,6 +184,22 @@ def test_declared_platform_still_dispatches():
     assert _run("dev", ["ios"], IOS_ONLY)["dispatched"] == ["dev_ios"]
     assert _run("deploy", ["macos"], MAC_ONLY)["dispatched"] == ["deploy_mac"]
     print("OK: a platform the project does declare still runs")
+
+
+TV_ONLY = {"project_path": "App.xcodeproj", "tv_scheme": "App-tv"}
+
+
+def test_deploy_tv_dispatches_on_a_tv_project():
+    assert _run("deploy", ["tv"], TV_ONLY)["dispatched"] == ["deploy_tv"]
+    assert _run("deploy", ["appletv"], TV_ONLY)["dispatched"] == ["deploy_tv"]
+    print("OK: `deploy tv` installs on a paired Apple TV instead of erroring")
+
+
+def test_deploy_tv_rejected_on_a_project_without_a_tv_scheme():
+    seen = _run("deploy", ["tv"], IOS_ONLY)
+    assert seen["dispatched"] == [], seen["dispatched"]
+    assert any("no tv deploy target" in e for e in seen["errors"]), seen["errors"]
+    print("OK: `deploy tv` on a project with no tvOS target errors up front")
 
 
 def test_no_apple_scheme_at_all_errors():
