@@ -164,10 +164,13 @@ def test_command_with_multi_target_step_announces_log_once(monkeypatch, tmp_path
     announce_lines = [line for line in err_out.splitlines() if "logging to:" in line]
     assert len(announce_lines) == 1, f"expected exactly one announcement, got {announce_lines}"
 
-    # The announced path is the one output actually went to: LOG_FILE was set
-    # once, at the step-runner, and never rebound by the inner multi-target call.
-    assert "dev." in os.path.basename(core.LOG_FILE)
-    assert "dev-cf" not in os.path.basename(core.LOG_FILE)
+    # One announcement, and it names the target that actually ran. Both layers
+    # name the log — the step-runner says "dev", the multi-target says "dev-cf" —
+    # and the innermost name wins because it is the one that says which target
+    # this run was.
+    assert "dev-cf." in os.path.basename(core.LOG_FILE), (
+        f"the target must survive to the filename, got {core.LOG_FILE}"
+    )
 
 
 def test_running_log_shows_resolved_command_not_literal(monkeypatch, capsys):

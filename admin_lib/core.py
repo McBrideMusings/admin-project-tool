@@ -43,7 +43,10 @@ def _log_write(text: str):
 
     Must never call info/ok/warn/err — those call back into _log_write.
     """
-    if not LOG_FILE or LOG_CONFIG.get("enabled") is False:
+    if LOG_CONFIG.get("enabled") is False:
+        return
+    _materialize_log_context()
+    if not LOG_FILE:
         return
     plain = _ANSI_ESCAPE_RE.sub("", text)
     if not plain.endswith("\n"):
@@ -194,12 +197,13 @@ _log_context_active = False
 
 def _init(project_name, project_root=None):
     """Initialize module state. Called by boot()."""
-    global _project_name, _project_root, LOG_DIR, LOG_FILE, _log_context_active
+    global _project_name, _project_root, LOG_DIR, LOG_FILE, _log_context_active, _pending_context
     _project_name = project_name
     _project_root = project_root or os.getcwd()
     LOG_DIR = os.path.join(_project_root, "tmp")
     LOG_FILE = os.path.join(LOG_DIR, "run.log")
     _log_context_active = False
+    _pending_context = None
 
 
 def get_log_dir() -> str:
@@ -208,7 +212,13 @@ def get_log_dir() -> str:
 
 
 def get_log_file() -> str:
-    """Return the current LOG_FILE (late-binding for package import contexts)."""
+    """Return the current LOG_FILE (late-binding for package import contexts).
+
+    Asking for the path is a use, so it settles a pending name (see
+    _materialize_log_context) — a caller that got a path and then found the log
+    somewhere else would be worse than announcing slightly early.
+    """
+    _materialize_log_context()
     return LOG_FILE
 
 
@@ -284,6 +294,9 @@ def _announce_log_end():
     _log_context_active = False
 
 
+_pending_context = None  # (kind, value, retain) named but not yet created
+
+
 def _log_context_taken():
     """True if a log context is already live and owns LOG_FILE.
 
@@ -299,45 +312,68 @@ def _log_context_taken():
 
 
 def set_log_context(*parts, retain=None):
-    """Redirect LOG_FILE to a timestamped log for this command run.
+    """Name this run's log file — deferred, not created yet.
 
-    Example: set_log_context("dev") → tmp/dev.2026-05-01_143022.log
-    Old files matching the stem are pruned to retain the N most recent.
+    Example: set_log_context("dev", "cf") → tmp/dev-cf.2026-05-01_143022.log
 
-    A no-op if a log context is already active (see _log_context_taken) — the
-    outer call's file and announcement stand, and this call inherits them.
+    Nothing is created or announced here. `admin dev cf` passes through two
+    layers that each name a log — the command's step-runner says "dev", then the
+    multi-target target says "dev-cf" — and the *innermost* name is the useful
+    one, because it says which target actually ran. So the name is held pending
+    and the last one set before the log is first used wins. Materialising
+    eagerly is what created two files and announced both (issue #474);
+    announcing the outer name and keeping it would lose the target from every
+    filename instead.
+
+    Once the file exists, a later call inherits it rather than re-pointing at a
+    new one — see _log_context_taken.
     """
-    global LOG_FILE, _log_context_active
+    global _pending_context
     if LOG_CONFIG.get("enabled") is False:
         return
     if _log_context_taken():
         return
     name = "-".join(str(p) for p in parts if p)
-    ts = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    LOG_FILE = os.path.join(LOG_DIR, f"{name}.{ts}.log")
-    os.makedirs(LOG_DIR, exist_ok=True)
-    open(LOG_FILE, "w").close()
-    _prune_logs(name, retain)
-    _log_context_active = True
-    _announce_log_start()
+    _pending_context = ("stem", name, retain)
 
 
 def set_log_context_path(path, retain=None):
-    """Redirect LOG_FILE to an explicit path (for log_file overrides in admin.toml).
+    """Name an explicit log path for this run (a `log_file` override) — deferred.
 
-    A no-op if a log context is already active (see _log_context_taken) — a
-    nested action's declared log_file inherits the caller's active log rather
-    than stealing it.
+    Same rule as set_log_context: held pending, innermost wins, created on first
+    use. A no-op once the file exists.
     """
-    global LOG_FILE, _log_context_active
+    global _pending_context
     if LOG_CONFIG.get("enabled") is False:
         return
     if _log_context_taken():
         return
-    LOG_FILE = path if os.path.isabs(path) else os.path.join(_project_root, path)
-    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
-    _rotate_log(LOG_FILE, retain)
-    open(LOG_FILE, "w").close()
+    _pending_context = ("path", path, retain)
+
+
+def _materialize_log_context():
+    """Create and announce the pending log file. Called on first actual use.
+
+    This is the moment the name stops changing: whoever asks for LOG_FILE, or
+    writes the first line, fixes it. Every entry point that touches the log has
+    to come through here first, or it reads the stale path.
+    """
+    global LOG_FILE, _log_context_active, _pending_context
+    if _pending_context is None or _log_context_active:
+        return
+    kind, value, retain = _pending_context
+    _pending_context = None
+    if kind == "stem":
+        ts = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        LOG_FILE = os.path.join(LOG_DIR, f"{value}.{ts}.log")
+        os.makedirs(LOG_DIR, exist_ok=True)
+        open(LOG_FILE, "w").close()
+        _prune_logs(value, retain)
+    else:
+        LOG_FILE = value if os.path.isabs(value) else os.path.join(_project_root, value)
+        os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+        _rotate_log(LOG_FILE, retain)
+        open(LOG_FILE, "w").close()
     _log_context_active = True
     _announce_log_start()
 
@@ -795,6 +831,7 @@ def run_cmd(cmd, shell=True, capture_log=True, formatter=None, pty=False, collec
     """
     cmd = resolve_env(cmd)
     os.makedirs(LOG_DIR, exist_ok=True)
+    _materialize_log_context()
     log_fh = None
     if capture_log and LOG_CONFIG.get("enabled") is not False and LOG_FILE:
         log_fh = open(LOG_FILE, "a")
