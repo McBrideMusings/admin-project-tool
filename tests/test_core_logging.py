@@ -121,7 +121,9 @@ def test_set_log_context_creates_timestamped_file():
         core.configure_logging({})
         core._init("test", d)
         core.set_log_context("dev", "macos")
-        assert os.path.exists(core.LOG_FILE), "set_log_context must create the log file"
+        # The name is held pending; asking for the path is what creates the file.
+        core.get_log_file()
+        assert os.path.exists(core.LOG_FILE), "using the log context must create the file"
         import re
         assert re.search(r"dev-macos\.\d{4}-\d{2}-\d{2}_\d{6}\.log$", core.LOG_FILE), (
             f"expected timestamped filename, got {core.LOG_FILE}"
@@ -144,17 +146,34 @@ def test_set_log_context_prunes_old_files():
         assert len(remaining) <= 3, f"should keep at most 3, got {len(remaining)}: {remaining}"
 
 
-def test_set_log_context_inherits_when_context_already_active():
-    """A nested set_log_context call while a context is active must inherit
-    the outer LOG_FILE instead of creating a second file (issue #474)."""
+def test_the_innermost_name_wins_while_the_context_is_still_pending():
+    """`admin dev cf` names the log twice — "dev" at the step-runner, then
+    "dev-cf" at the target. The target's name is the useful one, so the later
+    call wins for as long as nothing has used the log yet (issue #474)."""
     with tempfile.TemporaryDirectory() as d:
         core.configure_logging({})
         core._init("test", d)
         core.set_log_context("dev")
-        outer_log_file = core.LOG_FILE
+        core.set_log_context("dev", "cf")
+        core.get_log_file()
+        assert "dev-cf." in os.path.basename(core.LOG_FILE), (
+            f"the target's name must survive to the filename, got {core.LOG_FILE}"
+        )
+        remaining = glob.glob(os.path.join(d, "tmp", "*.log"))
+        assert len(remaining) == 1, f"only the innermost name may create a file, got {remaining}"
+
+
+def test_set_log_context_inherits_once_the_file_exists():
+    """After the log is in use, a later call inherits it rather than pointing at
+    a new file — that is what stopped the first file being orphaned empty."""
+    with tempfile.TemporaryDirectory() as d:
+        core.configure_logging({})
+        core._init("test", d)
+        core.set_log_context("dev")
+        outer_log_file = core.get_log_file()      # materialises it
         core.set_log_context("dev", "cf")
         assert core.LOG_FILE == outer_log_file, (
-            "nested set_log_context must not rebind LOG_FILE"
+            "a call after the file exists must not rebind LOG_FILE"
         )
         remaining = glob.glob(os.path.join(d, "tmp", "*.log"))
         assert len(remaining) == 1, f"nested call must not create a second log file, got {remaining}"
