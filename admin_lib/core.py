@@ -194,11 +194,12 @@ _log_context_active = False
 
 def _init(project_name, project_root=None):
     """Initialize module state. Called by boot()."""
-    global _project_name, _project_root, LOG_DIR, LOG_FILE
+    global _project_name, _project_root, LOG_DIR, LOG_FILE, _log_context_active
     _project_name = project_name
     _project_root = project_root or os.getcwd()
     LOG_DIR = os.path.join(_project_root, "tmp")
     LOG_FILE = os.path.join(LOG_DIR, "run.log")
+    _log_context_active = False
 
 
 def get_log_dir() -> str:
@@ -283,14 +284,33 @@ def _announce_log_end():
     _log_context_active = False
 
 
+def _log_context_taken():
+    """True if a log context is already live and owns LOG_FILE.
+
+    A nested set_log_context / set_log_context_path call (a multi-target
+    action re-scoping under a step-runner, an @-ref step, a kind="python"
+    action declaring its own log_file) must inherit the outer context instead
+    of replacing it — otherwise the outer command announces a log path,
+    creates the file, and the inner call immediately abandons it, leaving the
+    first-announced file permanently empty (issue #474). Whichever call sets
+    the context first wins; every nested call is a no-op.
+    """
+    return _log_context_active and bool(LOG_FILE)
+
+
 def set_log_context(*parts, retain=None):
     """Redirect LOG_FILE to a timestamped log for this command run.
 
     Example: set_log_context("dev") → tmp/dev.2026-05-01_143022.log
     Old files matching the stem are pruned to retain the N most recent.
+
+    A no-op if a log context is already active (see _log_context_taken) — the
+    outer call's file and announcement stand, and this call inherits them.
     """
     global LOG_FILE, _log_context_active
     if LOG_CONFIG.get("enabled") is False:
+        return
+    if _log_context_taken():
         return
     name = "-".join(str(p) for p in parts if p)
     ts = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
@@ -303,9 +323,16 @@ def set_log_context(*parts, retain=None):
 
 
 def set_log_context_path(path, retain=None):
-    """Redirect LOG_FILE to an explicit path (for log_file overrides in admin.toml)."""
+    """Redirect LOG_FILE to an explicit path (for log_file overrides in admin.toml).
+
+    A no-op if a log context is already active (see _log_context_taken) — a
+    nested action's declared log_file inherits the caller's active log rather
+    than stealing it.
+    """
     global LOG_FILE, _log_context_active
     if LOG_CONFIG.get("enabled") is False:
+        return
+    if _log_context_taken():
         return
     LOG_FILE = path if os.path.isabs(path) else os.path.join(_project_root, path)
     os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
