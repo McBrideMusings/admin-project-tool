@@ -130,6 +130,46 @@ def test_multi_target_child_with_empty_run_does_not_report_success(monkeypatch):
     assert called == [], "run_cmd must never be invoked for a blank target command"
 
 
+def test_command_with_multi_target_step_announces_log_once(monkeypatch, tmp_path, capsys):
+    """A command whose only step is a multi-target action must announce its
+    log path exactly once, at the leaf target, not once for the outer command
+    and again when the multi-target action re-scopes (issue #474).
+
+    Before the fix: _make_step_runner's set_log_context("dev") creates and
+    announces tmp/dev.<ts>.log, then _make_multi_target's
+    set_log_context("dev", "cf") immediately replaces it with a second
+    tmp/dev-cf.<ts>.log and announces that too — orphaning the first file at
+    0 bytes forever.
+    """
+    data = {
+        "project_name": "T",
+        "archetypes": [],
+        "commands": {"dev": {"desc": "Dev", "steps": ["dev"]}},
+        "actions": {
+            "dev": {
+                "kind": "multi-target",
+                "targets": {"cf": {"run": "echo hi"}},
+            },
+        },
+    }
+    resolved = _resolve(data)
+    core.configure_logging({})
+    core._init("T", str(tmp_path))
+    interp.register_all(resolved, "T")
+
+    monkeypatch.setattr(interp, "run_cmd", lambda *a, **k: 0)
+    core._all_commands()["dev"]["func"]([])
+
+    err_out = capsys.readouterr().err
+    announce_lines = [line for line in err_out.splitlines() if "logging to:" in line]
+    assert len(announce_lines) == 1, f"expected exactly one announcement, got {announce_lines}"
+
+    # The announced path is the one output actually went to: LOG_FILE was set
+    # once, at the step-runner, and never rebound by the inner multi-target call.
+    assert "dev." in os.path.basename(core.LOG_FILE)
+    assert "dev-cf" not in os.path.basename(core.LOG_FILE)
+
+
 def test_running_log_shows_resolved_command_not_literal(monkeypatch, capsys):
     """info('running: ...') must print the resolved command, not the literal
     ${VAR} placeholder (issue #55). The log used to fire before resolve_env
