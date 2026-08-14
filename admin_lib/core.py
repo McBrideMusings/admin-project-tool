@@ -672,6 +672,20 @@ def _stamp_log(text):
     return f"{ts} {text}"
 
 
+def _cmd_pump(log_fh, formatter, collect):
+    """Build the OutputPump shared by run_cmd's pty and pipe paths: the
+    terminal gets timestamped text (ANSI intact), the log gets the same
+    text with escape sequences stripped.
+    """
+    from .streams import OutputPump
+
+    return OutputPump(
+        log_fh, formatter=formatter, collect=collect,
+        log_transform=lambda t: _stamp_log(_ANSI_ESCAPE_RE.sub("", t)),
+        display_transform=_stamp_log,
+    )
+
+
 def _run_cmd_pty(cmd, log_fh, formatter, collect=None):
     """Run cmd inside a pseudo-TTY so isatty() checks pass (e.g. wrangler dev).
 
@@ -695,6 +709,8 @@ def _run_cmd_pty(cmd, log_fh, formatter, collect=None):
     os.close(slave_fd)
     _children.append(proc)
 
+    pump = _cmd_pump(log_fh, formatter, collect)
+
     buf = b""
     try:
         while True:
@@ -711,12 +727,7 @@ def _run_cmd_pty(cmd, log_fh, formatter, collect=None):
                 while b"\n" in buf:
                     raw_line, buf = buf.split(b"\n", 1)
                     line = raw_line.rstrip(b"\r").decode("utf-8", errors="replace") + "\n"
-                    frame.write(formatter(line) if formatter else _stamp_log(line))
-                    if log_fh:
-                        log_fh.write(_stamp_log(_ANSI_ESCAPE_RE.sub("", line)))
-                        log_fh.flush()
-                    if collect is not None:
-                        collect.append(line)
+                    pump.write(line)
             if proc.poll() is not None:
                 try:
                     while True:
@@ -740,11 +751,8 @@ def _run_cmd_pty(cmd, log_fh, formatter, collect=None):
             _children.remove(proc)
         if buf:
             line = buf.rstrip(b"\r").decode("utf-8", errors="replace")
-            frame.write(formatter(line) if formatter else _stamp_log(line))
-            if log_fh:
-                log_fh.write(_stamp_log(_ANSI_ESCAPE_RE.sub("", line)))
-            if collect is not None:
-                collect.append(line)
+            pump.write(line)
+            pump.flush()  # this trailing chunk has no \n of its own to trigger it
 
     return proc.returncode
 
@@ -775,16 +783,10 @@ def run_cmd(cmd, shell=True, capture_log=True, formatter=None, pty=False, collec
         bufsize=1, universal_newlines=True,
     )
     _children.append(proc)
-    from . import frame
+    pump = _cmd_pump(log_fh, formatter, collect)
     try:
         for line in proc.stdout:
-            display = formatter(line) if formatter else _stamp_log(line)
-            frame.write(display)
-            if log_fh:
-                log_fh.write(_stamp_log(_ANSI_ESCAPE_RE.sub("", line)))
-                log_fh.flush()
-            if collect is not None:
-                collect.append(line)
+            pump.write(line)
     finally:
         proc.wait()
         _children.remove(proc)
