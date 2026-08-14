@@ -28,8 +28,8 @@ from .core import (
     warn,
     err,
 )
-from . import frame
 from .log_bridge import start_log_bridge, stop_log_bridge
+from .streams import OutputPump
 
 
 def _safe_ident(name: str) -> str:
@@ -165,7 +165,7 @@ def run_with_keybindings(cmd, keys, *, label=None, formatter=None, shell=True):
     if keys:
         info(_format_banner(keys, label))
 
-    _line_buf = ""
+    pump = OutputPump(log_fh, formatter=formatter)
     launch_time = time.monotonic()
     try:
         while proc.poll() is None:
@@ -189,32 +189,13 @@ def run_with_keybindings(cmd, keys, *, label=None, formatter=None, shell=True):
                     continue
                 data = key.fileobj.read1(4096) if hasattr(key.fileobj, "read1") else os.read(key.fileobj.fileno(), 4096)
                 if data:
-                    text = data.decode("utf-8", errors="replace")
-                    log_fh.write(text)
-                    log_fh.flush()
-                    if formatter:
-                        _line_buf += text
-                        while "\n" in _line_buf:
-                            line, _line_buf = _line_buf.split("\n", 1)
-                            frame.write(formatter(line + "\n"))
-                    else:
-                        frame.write(text)
+                    pump.write(data.decode("utf-8", errors="replace"))
 
         if proc.stdout:
             remaining = proc.stdout.read()
             if remaining:
-                text = remaining.decode("utf-8", errors="replace")
-                log_fh.write(text)
-                log_fh.flush()
-                if formatter:
-                    _line_buf += text
-                    while "\n" in _line_buf:
-                        line, _line_buf = _line_buf.split("\n", 1)
-                        frame.write(formatter(line + "\n"))
-                    if _line_buf:
-                        frame.write(formatter(_line_buf + "\n"))
-                else:
-                    frame.write(text)
+                pump.write(remaining.decode("utf-8", errors="replace"))
+            pump.flush()
 
         elapsed = time.monotonic() - launch_time
         rc = proc.returncode
