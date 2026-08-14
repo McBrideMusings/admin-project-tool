@@ -131,14 +131,51 @@ def test_set_log_context_creates_timestamped_file():
 def test_set_log_context_prunes_old_files():
     with tempfile.TemporaryDirectory() as d:
         core.configure_logging({})
-        core._init("test", d)
         os.makedirs(os.path.join(d, "tmp"), exist_ok=True)
         import time
         for i in range(4):
+            # Reset between calls — set_log_context now inherits an already-
+            # active context (issue #474), so without resetting, calls 2-4
+            # would be no-ops and this loop would stop testing pruning.
+            core._init("test", d)
             core.set_log_context("dev", retain=3)
             time.sleep(0.01)
         remaining = glob.glob(os.path.join(d, "tmp", "dev.*.log"))
         assert len(remaining) <= 3, f"should keep at most 3, got {len(remaining)}: {remaining}"
+
+
+def test_set_log_context_inherits_when_context_already_active():
+    """A nested set_log_context call while a context is active must inherit
+    the outer LOG_FILE instead of creating a second file (issue #474)."""
+    with tempfile.TemporaryDirectory() as d:
+        core.configure_logging({})
+        core._init("test", d)
+        core.set_log_context("dev")
+        outer_log_file = core.LOG_FILE
+        core.set_log_context("dev", "cf")
+        assert core.LOG_FILE == outer_log_file, (
+            "nested set_log_context must not rebind LOG_FILE"
+        )
+        remaining = glob.glob(os.path.join(d, "tmp", "*.log"))
+        assert len(remaining) == 1, f"nested call must not create a second log file, got {remaining}"
+
+
+def test_set_log_context_path_inherits_when_context_already_active():
+    """A nested set_log_context_path call (e.g. a kind=\"python\" action's
+    declared log_file) while a context is active must inherit the outer
+    LOG_FILE instead of stealing it (issue #474)."""
+    with tempfile.TemporaryDirectory() as d:
+        core.configure_logging({})
+        core._init("test", d)
+        core.set_log_context("dev")
+        outer_log_file = core.LOG_FILE
+        core.set_log_context_path("custom/build.log")
+        assert core.LOG_FILE == outer_log_file, (
+            "nested set_log_context_path must not rebind LOG_FILE"
+        )
+        assert not os.path.exists(os.path.join(d, "custom", "build.log")), (
+            "nested set_log_context_path must not create the declared path"
+        )
 
 
 # ---------------------------------------------------------------------------
