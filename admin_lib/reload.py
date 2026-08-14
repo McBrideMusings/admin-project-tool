@@ -32,8 +32,8 @@ import subprocess
 import sys
 import time
 
-from . import frame
 from .core import _children, get_log_dir, get_log_file, info, register_cleanup, warn
+from .streams import OutputPump
 
 _ADMIN_PID_PREFIX = "/tmp/admin-run"
 _rebuild_requested = False
@@ -213,40 +213,14 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
     signal.signal(signal.SIGINT, _on_sigint)
     signal.signal(signal.SIGTERM, _on_sigterm)
 
-    _line_buf = ""
-
-    def _emit(text, final=False):
-        """Write one chunk of child output to the log file and the terminal.
-
-        The log file always gets the raw text. The terminal gets it through the
-        formatter, which is why the chunk is re-split into whole lines first: a
-        read lands wherever the pipe happened to fill, and a formatter that lays
-        out columns can only do that on a complete line. `final` emits whatever
-        partial line is still buffered — correct only once the child is gone and
-        no newline is coming, hence the flag rather than doing it every chunk.
-        """
-        nonlocal _line_buf
-        log_fh.write(text)
-        log_fh.flush()
-        if formatter:
-            _line_buf += text
-            while "\n" in _line_buf:
-                line, _line_buf = _line_buf.split("\n", 1)
-                frame.write(formatter(line + "\n"))
-            if final and _line_buf:
-                frame.write(formatter(_line_buf + "\n"))
-                _line_buf = ""
-        else:
-            frame.write(text)
-
     try:
         while True:
             _rebuild_requested = False
-            _line_buf = ""
             launch_time = time.monotonic()
             info(f"Starting {target}...")
 
             log_fh = open(get_log_file(), "a")
+            pump = OutputPump(log_fh, formatter=formatter)
             proc = subprocess.Popen(
                 cmd, shell=shell,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -290,18 +264,18 @@ def run_with_reload(cmd, target, shell=True, formatter=None):
                             continue
                         data = key.fileobj.read1(4096) if hasattr(key.fileobj, 'read1') else os.read(key.fileobj.fileno(), 4096)
                         if data:
-                            _emit(data.decode("utf-8", errors="replace"))
+                            pump.write(data.decode("utf-8", errors="replace"))
 
                 if proc.stdout:
                     # Unconditionally final, even when the drain reads nothing:
                     # the select loop usually consumes the child's last chunk
                     # itself, so an `if remaining:` guard here would skip the
                     # flush exactly when a trailing newline-less line (a bare
-                    # `$ ` prompt, a progress line) is still sitting in
-                    # _line_buf, and the terminal would never show it.
+                    # `$ ` prompt, a progress line) is still sitting in the
+                    # pump's line buffer, and the terminal would never show it.
                     remaining = proc.stdout.read()
-                    _emit(remaining.decode("utf-8", errors="replace") if remaining else "",
-                          final=True)
+                    pump.write(remaining.decode("utf-8", errors="replace") if remaining else "")
+                    pump.flush()
             finally:
                 sel.close()
                 if old_term is not None:
