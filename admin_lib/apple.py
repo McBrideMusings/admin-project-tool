@@ -1460,6 +1460,42 @@ def restore_icons(icon_dirs, backup_dir):
 
 
 # ---------------------------------------------------------------------------
+# tvOS `.brandassets` dev-banner swap
+#
+# The tvOS layered icon stack (see admin_lib/icons.py's tvOS section) is a
+# directory tree, not a flat set of PNGs, so it can't go through
+# backup_icons/swap_dev_icons/restore_icons above. Same backup -> swap ->
+# restore -> self-heal shape, generalized from "copy files by name" to "copy
+# the whole tree".
+# ---------------------------------------------------------------------------
+
+_TV_BACKUP_LABEL = "tv-brandassets"
+
+
+def backup_tv_icons(brandassets_dir, backup_dir):
+    """Back up a tvOS `.brandassets` catalog to backup_dir before mutating it."""
+    import shutil
+    dest = os.path.join(backup_dir, _TV_BACKUP_LABEL)
+    if os.path.isdir(dest):
+        shutil.rmtree(dest)
+    if os.path.isdir(brandassets_dir):
+        shutil.copytree(brandassets_dir, dest)
+
+
+def restore_tv_icons(brandassets_dir, backup_dir):
+    """Restore a tvOS `.brandassets` catalog from backup and clean up."""
+    import shutil
+    src = os.path.join(backup_dir, _TV_BACKUP_LABEL)
+    if not os.path.isdir(src):
+        return
+    if os.path.isdir(brandassets_dir):
+        shutil.rmtree(brandassets_dir)
+    shutil.copytree(src, brandassets_dir)
+    if os.path.isdir(backup_dir):
+        shutil.rmtree(backup_dir)
+
+
+# ---------------------------------------------------------------------------
 # Icon Composer (.icon) dev-banner swap
 #
 # Xcode 26 projects use a single layered `.icon` bundle (icon.json + Assets/)
@@ -2443,9 +2479,17 @@ def _resolve_subsystem(cfg, platform="mac", *, dev=False):
 
 
 def _resolve_icon_dirs(cfg, platforms=("mac", "ios")):
-    """Return {platform: abs_path} for platforms that have an asset dir configured."""
+    """Return {platform: abs_path} for platforms that have an asset dir
+    configured. "tv" resolves to the `.brandassets` folder path, not a flat
+    appiconset — callers that iterate PNGs in the returned dir (backup_icons,
+    swap_dev_icons, restore_icons, the size-sniffing loop in
+    regenerate_icons) only ever get "mac"/"ios" via their default
+    `platforms`; tv is resolved through this same key_map but consumed
+    separately by the tv-specific generate_tv_icons()/apply_tv_dev_banner()
+    functions, which understand its nested imagestack/imageset layout.
+    """
     icons_cfg = cfg.get("icons") or {}
-    key_map = {"mac": "mac_asset_dir", "ios": "ios_asset_dir"}
+    key_map = {"mac": "mac_asset_dir", "ios": "ios_asset_dir", "tv": "tv_asset_dir"}
     result = {}
     for plat in platforms:
         rel = icons_cfg.get(key_map[plat])
@@ -2552,34 +2596,11 @@ def _build_icon_composer_hooks(cfg, icon_path, backup_dir, restore_on_exit=True)
     return _pre, _post
 
 
-def build_icon_hooks(
-    cfg, platforms=("mac", "ios"), backup_dir="tmp/icon-backup", restore_on_exit=True
-):
-    """Return (pre_build, post_build) for dev-icon swap. (None, None) if
-    [apple.icons] missing/empty so callers can pass directly to dev_loop_*.
-
-    pre_build also registers post_build as a cleanup hook — required so a
-    Ctrl-C'd dev run doesn't leak dev-overlay icons into the next deploy build.
-    An ``[apple.icons] mac_icon`` (Xcode 26 Icon Composer) routes through the
-    ``.icon`` banner swap; otherwise the appiconset PNG swap is used.
-
-    ``restore_on_exit=False`` skips that registration, and exists for exactly
-    one caller: ``admin icons swap-dev``, where the swap IS the whole command.
-    A dev loop swaps, builds, and restores inside one process, so the exit
-    cleanup is what makes it safe; the standalone verb has no build in between,
-    so the same cleanup fires the instant it finishes and silently undoes what
-    the user just asked for — it printed "dev icons swapped in" over a catalog
-    it had already put back.
+def _build_appiconset_hooks(cfg, icon_dirs, platforms, backup_dir, restore_on_exit=True):
+    """(pre_build, post_build) for the flat mac/iOS appiconset PNG dev-banner
+    swap. Extracted out of build_icon_hooks so it can be composed alongside
+    the tv brandassets hooks below.
     """
-    icon_composer = _resolve_icon_composer(cfg)
-    if icon_composer:
-        return _build_icon_composer_hooks(
-            cfg, icon_composer, backup_dir, restore_on_exit=restore_on_exit
-        )
-
-    icon_dirs = _resolve_icon_dirs(cfg, platforms)
-    if not icon_dirs:
-        return (None, None)
     icon_kwargs = _icon_generation_kwargs(cfg)
     # With glyph config, swap_dev_icons regenerates the icon from the glyph and
     # adds the banner (apple-coding-tool, apple-notepad). Without it — a real-art
@@ -2599,7 +2620,7 @@ def build_icon_hooks(
         # originals with the current DEV PNGs and lose the only remaining
         # copy. Restore first so the catalog is back to a known-clean
         # state, then back up that.
-        restore_stranded_dev_icons(cfg, platforms, backup_dir)
+        _restore_stranded_appiconset_dev_icons(cfg, platforms, backup_dir)
         # Register cleanup BEFORE we mutate anything. If SIGINT lands during
         # backup_icons or swap_dev_icons (PIL ops + filesystem copies), the
         # restore still runs. Once-only — register_cleanup has no dedup, so
@@ -2609,6 +2630,122 @@ def build_icon_hooks(
             cleanup_registered[0] = True
         backup_icons(icon_dirs, backup_dir)
         swap_dev_icons(icon_dirs, icon_kwargs)
+
+    return _pre, _post
+
+
+def _tv_icon_backup_dir(backup_dir):
+    """tv's own backup root — a sibling of, not nested under, the shared
+    mac/iOS ``backup_dir``. ``restore_icons()`` (the flat appiconset path)
+    wholesale-``rmtree``s the directory it's handed once it's done, so if tv
+    nested its backup inside that same directory, composing tv with an
+    appiconset in one ``build_icon_hooks`` call would let either system's
+    restore delete the other's still-pending backup out from under it —
+    whichever runs last (or self-heals first) wins and the other's dev icons
+    never come back. A distinct root removes the shared-directory hazard
+    instead of trying to order around it.
+    """
+    return f"{backup_dir}-tv"
+
+
+def _restore_stranded_tv_icons(brandassets_dir, backup_dir):
+    """tv analog of _restore_stranded_appiconset_dev_icons: if a prior dev run
+    was SIGKILL'd before its post-build restore, the pristine `.brandassets`
+    tree backed up by backup_tv_icons is still sitting in backup_dir. Restore
+    it before a fresh build so a DEV banner can't be baked into a release.
+    """
+    if not os.path.isdir(os.path.join(backup_dir, _TV_BACKUP_LABEL)):
+        return
+    warn(f"Stranded dev tv icons found for {brandassets_dir} (interrupted dev run?) — restoring original")
+    restore_tv_icons(brandassets_dir, backup_dir)
+
+
+def _build_tv_icon_hooks(cfg, brandassets_dir, backup_dir, restore_on_exit=True):
+    """(pre_build, post_build) for the tvOS `.brandassets` dev-banner swap.
+    Mirrors _build_appiconset_hooks: self-heal a stranded prior run, back up
+    the pristine catalog, then either regenerate it from glyph_* with the
+    banner baked in, or overlay the banner on the committed art in place —
+    same has_glyph branch swap_dev_icons uses for mac/iOS.
+    """
+    from .icons import generate_tv_icons, apply_tv_dev_banner
+
+    icon_kwargs = _icon_generation_kwargs(cfg)
+    has_glyph = bool(icon_kwargs.get("glyph_text") or icon_kwargs.get("glyph_svg"))
+
+    def _post():
+        restore_tv_icons(brandassets_dir, backup_dir)
+
+    cleanup_registered = [False]
+
+    def _pre():
+        _restore_stranded_tv_icons(brandassets_dir, backup_dir)
+        if restore_on_exit and not cleanup_registered[0]:
+            register_cleanup(_post)
+            cleanup_registered[0] = True
+        backup_tv_icons(brandassets_dir, backup_dir)
+        if has_glyph:
+            info("Generating dev tv icons...")
+            generate_tv_icons(brandassets_dir, dev=True, **icon_kwargs)
+        else:
+            info("Generating dev tv icons...")
+            apply_tv_dev_banner(brandassets_dir)
+
+    return _pre, _post
+
+
+def build_icon_hooks(
+    cfg, platforms=("mac", "ios"), backup_dir="tmp/icon-backup", restore_on_exit=True
+):
+    """Return (pre_build, post_build) for dev-icon swap. (None, None) if
+    [apple.icons] has no mac/iOS/tv asset dirs configured, so callers can pass
+    directly to dev_loop_*.
+
+    pre_build also registers post_build as a cleanup hook — required so a
+    Ctrl-C'd dev run doesn't leak dev-overlay icons into the next deploy build.
+    An ``[apple.icons] mac_icon`` (Xcode 26 Icon Composer) routes the mac/iOS
+    side through the ``.icon`` banner swap; otherwise the appiconset PNG swap
+    is used. ``tv_asset_dir`` is independent of that choice and always goes
+    through the tvOS `.brandassets` layered-stack swap when configured, so a
+    project can mix Icon Composer for mac with a tvOS brandassets catalog.
+
+    ``restore_on_exit=False`` skips that registration, and exists for exactly
+    one caller: ``admin icons swap-dev``, where the swap IS the whole command.
+    A dev loop swaps, builds, and restores inside one process, so the exit
+    cleanup is what makes it safe; the standalone verb has no build in between,
+    so the same cleanup fires the instant it finishes and silently undoes what
+    the user just asked for — it printed "dev icons swapped in" over a catalog
+    it had already put back.
+    """
+    hook_pairs = []
+
+    icon_composer = _resolve_icon_composer(cfg)
+    if icon_composer:
+        hook_pairs.append(_build_icon_composer_hooks(
+            cfg, icon_composer, backup_dir, restore_on_exit=restore_on_exit
+        ))
+    else:
+        icon_dirs = _resolve_icon_dirs(cfg, platforms)
+        if icon_dirs:
+            hook_pairs.append(_build_appiconset_hooks(
+                cfg, icon_dirs, platforms, backup_dir, restore_on_exit=restore_on_exit
+            ))
+
+    tv_dir = _resolve_icon_dirs(cfg, ("tv",)).get("tv")
+    if tv_dir:
+        hook_pairs.append(_build_tv_icon_hooks(
+            cfg, tv_dir, _tv_icon_backup_dir(backup_dir), restore_on_exit=restore_on_exit
+        ))
+
+    if not hook_pairs:
+        return (None, None)
+
+    def _pre():
+        for pre, _post in hook_pairs:
+            pre()
+
+    def _post():
+        for _pre, post in hook_pairs:
+            post()
 
     return _pre, _post
 
@@ -2659,16 +2796,8 @@ def patch_ios_display_name(app_path, display_name):
     info(f'Display name → "{display_name}"')
 
 
-def restore_stranded_dev_icons(cfg, platforms=("mac", "ios"), backup_dir="tmp/icon-backup"):
-    """If a previous dev run was interrupted before its post-build restore,
-    its dev-overlay PNGs are still sitting in the asset catalog. Recover the
-    originals from ``backup_dir`` (left behind by the interrupted run) before
-    a fresh build so we don't bake DEV-banner icons into a production deploy.
-    """
-    icon_composer = _resolve_icon_composer(cfg)
-    if icon_composer:
-        _restore_stranded_icon_composer(icon_composer, os.path.join(backup_dir, "icon-composer"))
-        return
+def _restore_stranded_appiconset_dev_icons(cfg, platforms, backup_dir):
+    """mac/iOS appiconset half of restore_stranded_dev_icons — see there."""
     if not os.path.isdir(backup_dir):
         return
     icon_dirs = _resolve_icon_dirs(cfg, platforms)
@@ -2676,6 +2805,26 @@ def restore_stranded_dev_icons(cfg, platforms=("mac", "ios"), backup_dir="tmp/ic
         return
     warn(f"Stranded dev icons found in {backup_dir} (interrupted dev run?) — restoring originals")
     restore_icons(icon_dirs, backup_dir)
+
+
+def restore_stranded_dev_icons(cfg, platforms=("mac", "ios"), backup_dir="tmp/icon-backup"):
+    """If a previous dev run was interrupted before its post-build restore,
+    its dev-overlay PNGs are still sitting in the asset catalog(s). Recover
+    the originals from ``backup_dir`` (left behind by the interrupted run)
+    before a fresh build so we don't bake DEV-banner icons into a production
+    deploy. The mac/iOS side (Icon Composer or flat appiconset) and the tv
+    `.brandassets` side are independent — a project can have either, both,
+    or neither configured, so both are checked unconditionally.
+    """
+    icon_composer = _resolve_icon_composer(cfg)
+    if icon_composer:
+        _restore_stranded_icon_composer(icon_composer, os.path.join(backup_dir, "icon-composer"))
+    else:
+        _restore_stranded_appiconset_dev_icons(cfg, platforms, backup_dir)
+
+    tv_dir = _resolve_icon_dirs(cfg, ("tv",)).get("tv")
+    if tv_dir:
+        _restore_stranded_tv_icons(tv_dir, _tv_icon_backup_dir(backup_dir))
 
 
 def _resolve_mac_dev_bundle(cfg):
@@ -3495,6 +3644,10 @@ def clean_generated_icons(cfg, backup_dir="tmp/icon-backup"):
     if os.path.isdir(backup_dir):
         info(f"removing stranded icon backup: {backup_dir}")
         shutil.rmtree(backup_dir)
+    tv_backup_dir = _tv_icon_backup_dir(backup_dir)
+    if os.path.isdir(tv_backup_dir):
+        info(f"removing stranded tv icon backup: {tv_backup_dir}")
+        shutil.rmtree(tv_backup_dir)
     regenerate_icons(cfg)
 
 
@@ -3506,10 +3659,11 @@ def regenerate_icons(cfg):
     the source of truth; running this makes committed PNGs match the glyph
     config. No backup is kept.
     """
-    from .icons import generate_icons
+    from .icons import generate_icons, generate_tv_icons
 
     icon_dirs = _resolve_icon_dirs(cfg)
-    if not icon_dirs:
+    tv_dir = _resolve_icon_dirs(cfg, ("tv",)).get("tv")
+    if not icon_dirs and not tv_dir:
         err("no icon asset dirs configured in [apple.icons]"); sys.exit(1)
     kwargs = _icon_generation_kwargs(cfg)
     if not (kwargs.get("glyph_text") or kwargs.get("glyph_svg")):
@@ -3570,6 +3724,13 @@ def regenerate_icons(cfg):
             any_success = True
         finally:
             shutil.rmtree(tmp_out, ignore_errors=True)
+
+    if tv_dir:
+        if generate_tv_icons(tv_dir, dev=False, **kwargs):
+            ok(f"tv: regenerated brandassets in {tv_dir}")
+            any_success = True
+        else:
+            err("tv: icon generation failed")
 
     if not any_success:
         sys.exit(1)

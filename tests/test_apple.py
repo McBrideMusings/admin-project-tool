@@ -932,6 +932,167 @@ def test_swap_dev_icons_overlays_banner_without_glyph():
         sys.path.remove(str(LIB_DIR.parent))
 
 
+# ---------------------------------------------------------------------------
+# tvOS `.brandassets` dev-banner swap
+# ---------------------------------------------------------------------------
+
+def _make_tv_brandassets(ns, root, **icon_kwargs):
+    """Generate a real .brandassets tree via the module under test so these
+    tests exercise the actual layout generate_tv_icons() produces, not a
+    hand-rolled stand-in."""
+    from admin_lib.icons import generate_tv_icons
+    brand = os.path.join(root, "brand.brandassets")
+    generate_tv_icons(brand, **icon_kwargs)
+    return brand
+
+
+def test_resolve_icon_dirs_includes_tv_asset_dir():
+    ns = _load_apple()
+    cfg = {"icons": {"tv_asset_dir": "Assets.xcassets/Brand.brandassets"}}
+    dirs = ns["_resolve_icon_dirs"](cfg, ("tv",))
+    assert dirs["tv"] == os.path.abspath("Assets.xcassets/Brand.brandassets")
+    print("OK: _resolve_icon_dirs resolves tv_asset_dir through the same key_map")
+
+
+def test_backup_and_restore_tv_icons_roundtrip():
+    try:
+        import PIL  # noqa: F401
+    except ImportError:
+        import pytest
+        pytest.skip("Pillow not installed")
+    ns = _load_apple()
+    with tempfile.TemporaryDirectory() as root:
+        brand = _make_tv_brandassets(ns, root, bg_color="#123456", glyph_text="X")
+        front = os.path.join(
+            brand, "App Icon.imagestack", "Front.imagestacklayer", "Content.imageset", "Front.png"
+        )
+        before = open(front, "rb").read()
+        backup_dir = os.path.join(root, "icon-backup-tv")
+
+        ns["backup_tv_icons"](brand, backup_dir)
+        with open(front, "wb") as f:
+            f.write(b"DEVoverwrite")
+
+        ns["restore_tv_icons"](brand, backup_dir)
+        assert open(front, "rb").read() == before
+        assert not os.path.exists(backup_dir), "restore_tv_icons must clean up its backup dir"
+    print("OK: backup_tv_icons + restore_tv_icons round-trip restores the pristine catalog")
+
+
+def test_build_icon_hooks_returns_none_when_no_icons_configured():
+    ns = _load_apple()
+    pre, post = ns["build_icon_hooks"]({"icons": {}})
+    assert pre is None and post is None
+    print("OK: build_icon_hooks is a no-op with no mac/ios/tv asset dirs configured")
+
+
+def test_build_icon_hooks_tv_only_swap_and_restore_roundtrip():
+    try:
+        import PIL  # noqa: F401
+    except ImportError:
+        import pytest
+        pytest.skip("Pillow not installed")
+    ns = _load_apple()
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as root:
+        try:
+            os.chdir(root)
+            brand = _make_tv_brandassets(ns, root, bg_color="#123456", glyph_text="X")
+            front = os.path.join(
+                brand, "App Icon.imagestack", "Front.imagestacklayer", "Content.imageset", "Front.png"
+            )
+            before = open(front, "rb").read()
+
+            cfg = {"icons": {"tv_asset_dir": brand, "bg_color": "#123456", "glyph_text": "X"}}
+            pre, post = ns["build_icon_hooks"](cfg)
+            assert pre is not None and post is not None
+
+            pre()
+            assert open(front, "rb").read() != before, "swap-in must bake the DEV banner into Front"
+            post()
+            assert open(front, "rb").read() == before, "restore must bring back the pristine catalog"
+        finally:
+            os.chdir(cwd)
+    print("OK: build_icon_hooks swaps in and restores a tv-only .brandassets catalog")
+
+
+def test_build_icon_hooks_combined_mac_and_tv_do_not_clobber_each_others_backup():
+    """Regression test: a shared backup_dir for the mac appiconset swap and
+    the tv brandassets swap must not collide. restore_icons() (the mac/iOS
+    path) wholesale-rmtree's the directory it's given once done; if tv nested
+    its backup inside that same directory, whichever side's restore ran last
+    would delete the other's still-pending backup out from under it.
+    """
+    try:
+        import PIL  # noqa: F401
+    except ImportError:
+        import pytest
+        pytest.skip("Pillow not installed")
+    ns = _load_apple()
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as root:
+        try:
+            os.chdir(root)
+            mac_dir = os.path.join(root, "AppIcon.appiconset")
+            os.makedirs(mac_dir)
+            from PIL import Image
+            mac_png = os.path.join(mac_dir, "icon_128.png")
+            Image.new("RGBA", (128, 128), (10, 10, 10, 255)).save(mac_png)
+            mac_before = open(mac_png, "rb").read()
+
+            brand = _make_tv_brandassets(ns, root, bg_color="#123456", glyph_text="X")
+            front = os.path.join(
+                brand, "App Icon.imagestack", "Front.imagestacklayer", "Content.imageset", "Front.png"
+            )
+            tv_before = open(front, "rb").read()
+
+            cfg = {"icons": {"mac_asset_dir": mac_dir, "tv_asset_dir": brand}}
+            pre, post = ns["build_icon_hooks"](cfg, platforms=("mac",))
+            pre()
+            assert open(mac_png, "rb").read() != mac_before
+            assert open(front, "rb").read() != tv_before
+            post()
+
+            assert open(mac_png, "rb").read() == mac_before, "mac restore must succeed"
+            assert open(front, "rb").read() == tv_before, (
+                "tv restore must succeed even though it shares a backup_dir with mac"
+            )
+        finally:
+            os.chdir(cwd)
+    print("OK: mac appiconset + tv brandassets swaps share a backup_dir without clobbering each other")
+
+
+def test_restore_stranded_dev_icons_heals_tv_independently_of_mac():
+    try:
+        import PIL  # noqa: F401
+    except ImportError:
+        import pytest
+        pytest.skip("Pillow not installed")
+    ns = _load_apple()
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as root:
+        try:
+            os.chdir(root)
+            brand = _make_tv_brandassets(ns, root, bg_color="#123456", glyph_text="X")
+            front = os.path.join(
+                brand, "App Icon.imagestack", "Front.imagestacklayer", "Content.imageset", "Front.png"
+            )
+            before = open(front, "rb").read()
+
+            cfg = {"icons": {"tv_asset_dir": brand, "bg_color": "#123456", "glyph_text": "X"}}
+            # Simulate a SIGKILL'd dev run: swap in, never restore.
+            pre, _post = ns["build_icon_hooks"](cfg, restore_on_exit=False)
+            pre()
+            assert open(front, "rb").read() != before
+
+            # A fresh command self-heals before doing anything else.
+            ns["restore_stranded_dev_icons"](cfg)
+            assert open(front, "rb").read() == before
+        finally:
+            os.chdir(cwd)
+    print("OK: restore_stranded_dev_icons self-heals a stranded tv dev-icon swap")
+
+
 def test_inject_and_strip_banner_layer():
     ns = _load_apple()
     doc = {"groups": [{
