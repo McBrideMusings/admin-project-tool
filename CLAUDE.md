@@ -2,6 +2,26 @@
 
 Runs per-project tasks from a short `admin.toml` manifest plus a library of composable archetypes. The installed tool **interprets** `admin.toml` at runtime (ADR-0006) — a project commits only the manifest; the `admin` command (installed on PATH at `~/.admin/admin`) finds it by walking up from `$PWD`. `admin compile` packages a standalone `./admin` (a zipapp) for the rare case the tool isn't installed. See `docs/architecture/design.md` for the full architecture.
 
+## `admin.toml` is NOT committed — this overrides the README
+
+**Do not commit `admin.toml` to any repository except this one. Do not suggest committing it. Do not "fix" a project whose `admin.toml` is untracked — that is the intended state.**
+
+`README.md` says a project commits only `admin.toml`. That describes how this tool will work **once it is public**, and it is deliberately left accurate for that future. It is not how things work today.
+
+Today the tool is private. An `admin.toml` sitting in a public repository advertises the tool, its verbs, and its manifest format, and the tool is not ready to be advertised. So `admin.toml` is caught by a **global** ignore rule on the developer's machine (`~/.config/git/ignore`), which applies to every repository at once rather than per-project. This repo is the single exception and tracks its own.
+
+Consequences that look like bugs and are not:
+
+- A fresh `git worktree` has no `admin.toml`, so every `admin` command is dead inside it. That is expected. Seed the file into the worktree — `admin worktree` (`admin_lib/wtverbs.py`) is where that belongs — rather than committing it.
+- No branch can carry a change to `admin.toml`, so config edits happen in the primary checkout only.
+- A fresh clone on a new machine has no task runner until the manifest is copied over by hand.
+
+When the tool goes public this section is what gets deleted, and the README becomes true as written.
+
+### Secrets in manifests
+
+Some `admin.toml` files embed secrets today, which is a second and independent reason not to commit them — and a design gap in the tool rather than a rule for humans to remember. Environment variables are the current workaround and have not been evaluated against the alternatives. Before any manifest is committed anywhere, it gets audited for secrets. See the open design work on giving the tool a real answer for this.
+
 ## What this repo is
 
 - **`admin-run`** — the interpreter CLI (installed as `~/.admin/admin`). Reads a project's `admin.toml`, merges archetypes, registers live command/action callables, and dispatches. Tool verbs: `new`, `check`, `compile`, `branch`, `worktree`.
