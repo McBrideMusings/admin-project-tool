@@ -367,7 +367,7 @@ def nuke_dev_processes(
     supervisor_markers=None,
     patterns=(),
 ):
-    """Bulletproof dev-server cleanup. Four passes, each a fallback for the previous.
+    """Bulletproof dev-server cleanup. Four kill passes plus a verify pass.
 
     Why: simple "kill the bun process I just started" fails the moment a
     previous run was force-killed, ssh-disconnected, OOM'd, or left a stale
@@ -382,7 +382,13 @@ def nuke_dev_processes(
     via `kill_stale_supervisors` — catches the case where the listener is
     already dead but its watcher would respawn one on the next file change.
 
-    Returns: number of distinct pids killed.
+    Pass (5) re-checks every declared port and kills whatever is bound to it
+    now. Killing pids is the means; free ports are the promise, and the two
+    come apart whenever a supervisor respawns a listener between pass 1 and the
+    end of the sweep — you get "dev server stopped" with the ports still held
+    by pids nobody reported killing.
+
+    Returns: list of ports still held after the verify pass. Empty == success.
     """
     project_root = os.path.abspath(project_root)
     js_paths = {os.path.join(project_root, name) for name in js_files}
@@ -404,11 +410,8 @@ def nuke_dev_processes(
     # is the slow part on a wedged mount — so compute it at most once, lazily,
     # and reuse it across every busy port rather than re-sweeping per port.
     fallback_holders = None
-    for entry in ports:
-        if isinstance(entry, (tuple, list)):
-            port, _label = entry[0], (entry[1] if len(entry) > 1 else None)
-        else:
-            port = entry
+    port_list = [e[0] if isinstance(e, (tuple, list)) else e for e in ports]
+    for port in port_list:
         holders = port_holders(port)
         if not holders and not port_free(port):
             # Busy but lsof couldn't name it (macOS + a stale mount that hangs
@@ -527,11 +530,33 @@ def nuke_dev_processes(
         # count for the summary line.
         killed.update([f"sup{i}" for i in range(sup_count)])
 
+    # 5. Verify the ports are actually free, and kill whatever still holds one.
+    #
+    # A respawn loop (`admin dev local` relaunches a child the moment it exits)
+    # re-binds a port within a second of pass 1 clearing it, under a pid no
+    # earlier pass ever saw. Without this the command exits 0 announcing
+    # "dev server stopped" while the next `admin dev` dies on "port in use".
+    still_held = []
+    for port in port_list:
+        for _ in range(2):
+            if port_free(port):
+                break
+            holders = port_holders(port) or project_dev_holders(project_root)
+            if not holders:
+                break
+            _kill_set({h["pid"] for h in holders}, f"port-{port} respawned holders")
+        if not port_free(port):
+            still_held.append(port)
+
     if killed:
         ok(f"dev server stopped ({len(killed)} processes)")
-    else:
+    elif not still_held:
         info("nothing was running")
-    return len(killed)
+    for port in still_held:
+        holders = port_holders(port)
+        who = ", ".join(f"pid {h['pid']} ({h['command']})" for h in holders) or "unknown"
+        err(f"port {port} is STILL held after the sweep: {who}")
+    return still_held
 
 
 def nuke_dev_from_config(cfg):
@@ -539,6 +564,9 @@ def nuke_dev_from_config(cfg):
 
     Schema: ports, pidfiles, js_files, web_subdirs, runtimes, patterns. ${VAR} placeholders
     in path/default strings are resolved via core.resolve_env at call time.
+
+    Returns an exit code: 0 when every declared port ended up free, 1 when one
+    is still held.
     """
     if not cfg:
         info("nothing was running")
@@ -575,7 +603,7 @@ def nuke_dev_from_config(cfg):
             ports.append((_port(entry.get("port")), entry.get("label")))
         else:
             ports.append(_port(entry))
-    return nuke_dev_processes(
+    still_held = nuke_dev_processes(
         project_root=os.getcwd(),
         ports=ports,
         pidfiles=pidfiles,
@@ -585,6 +613,7 @@ def nuke_dev_from_config(cfg):
         supervisor_markers=tuple(cfg.get("supervisor_markers") or ()) or None,
         patterns=tuple(cfg.get("patterns") or ()),
     )
+    return 1 if still_held else 0
 
 
 # ---------------------------------------------------------------------------

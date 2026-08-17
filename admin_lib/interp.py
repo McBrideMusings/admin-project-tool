@@ -625,7 +625,9 @@ def _make_kill_port(cmd, ns):
 def _make_nuke_dev(cmd, ns):
     def _fn(args):
         from admin_lib.ports_nuke import nuke_dev_from_config
-        nuke_dev_from_config(ns.get("_DEV_KILL_CONFIG") or {})
+        rc = nuke_dev_from_config(ns.get("_DEV_KILL_CONFIG") or {})
+        if rc:
+            sys.exit(rc)
     return _fn
 
 
