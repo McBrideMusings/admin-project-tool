@@ -59,6 +59,7 @@ class InterpError(Exception):
 # keyed by the global name the body reads (e.g. globals().get("_APPLE_CONFIG")).
 _CONFIG_GLOBALS = {
     "_APPLE_CONFIG": "apple",
+    "_ELECTRON_CONFIG": "electron",
     "_REACT_NATIVE_CONFIG": "react_native",
     "_SERVER_CONFIG": "server",
     "_OUTPUT_CONFIG": "output",
