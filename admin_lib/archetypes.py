@@ -488,7 +488,7 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
 # at the end, which may cause import-ordering issues in the flat bundle namespace.
 _MODULE_ORDER = [
     "core", "cache", "icons", "remote", "ports", "ports_nuke", "cleanup",
-    "reload", "streams", "apple", "android", "metro", "react_native", "rust",
+    "reload", "streams", "apple", "electron", "android", "metro", "react_native", "rust",
     "docker", "unraid", "web_dev", "keybindings", "godist",
     "log_format", "log_columns", "logtail",
     "install", "watch",
