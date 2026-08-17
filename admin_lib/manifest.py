@@ -88,6 +88,7 @@ class Manifest:
     fixtures: dict = field(default_factory=dict)  # [fixtures] — config for kind="fixtures-generate"/"fixtures-reset"
     docs: dict = field(default_factory=dict)      # [docs] — config for kind="docs" (dir, script)
     go: dict = field(default_factory=dict)        # [go] — config for kind="go" (binary, main)
+    go_dist: dict = field(default_factory=dict)   # [go_dist] — config for admin_lib.godist.build_go_dist (cross-compile matrix)
     raylib: dict = field(default_factory=dict)    # [raylib] — config for kind="raylib" (binary, build_dir, cmake_flags, jobs, smoke_env, clean_dirs)
     launchd: dict = field(default_factory=dict)   # [launchd] — macOS LaunchAgent config consumed by admin_lib.launchd
     log_bridge: dict = field(default_factory=dict)            # [log_bridge] — browser-console HTTP bridge config
@@ -331,6 +332,30 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         if _k in go_cfg and not isinstance(go_cfg[_k], str):
             raise ManifestError(f"{source}: '[go].{_k}' must be a string")
 
+    go_dist_cfg = data.get("go_dist", {}) or {}
+    if not isinstance(go_dist_cfg, dict):
+        raise ManifestError(f"{source}: '[go_dist]' must be a table")
+    _GO_DIST_KNOWN = {
+        "source_dir", "out_dir", "binary", "targets", "stamp",
+        "version_flag", "extra_ldflags", "trimpath", "cgo_enabled",
+    }
+    unknown_go_dist = set(go_dist_cfg) - _GO_DIST_KNOWN
+    if unknown_go_dist:
+        raise ManifestError(
+            f"{source}: '[go_dist]' unknown keys: {sorted(unknown_go_dist)}, "
+            f"valid: {sorted(_GO_DIST_KNOWN)}"
+        )
+    for _k in ("source_dir", "out_dir", "binary", "version_flag", "extra_ldflags"):
+        if _k in go_dist_cfg and not isinstance(go_dist_cfg[_k], str):
+            raise ManifestError(f"{source}: '[go_dist].{_k}' must be a string")
+    for _k in ("stamp", "trimpath"):
+        if _k in go_dist_cfg and not isinstance(go_dist_cfg[_k], bool):
+            raise ManifestError(f"{source}: '[go_dist].{_k}' must be a boolean")
+    if "targets" in go_dist_cfg:
+        _targets = go_dist_cfg["targets"]
+        if not isinstance(_targets, list) or not all(isinstance(t, str) for t in _targets):
+            raise ManifestError(f"{source}: '[go_dist].targets' must be a list of strings")
+
     raylib_cfg = data.get("raylib", {}) or {}
     if not isinstance(raylib_cfg, dict):
         raise ManifestError(f"{source}: '[raylib]' must be a table")
@@ -501,6 +526,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         fixtures=fixtures,
         docs=docs,
         go=go_cfg,
+        go_dist=go_dist_cfg,
         raylib=raylib_cfg,
         launchd=launchd_cfg,
         log_bridge=log_bridge,

@@ -74,6 +74,7 @@ _CONFIG_GLOBALS = {
     "_FIXTURES_CONFIG": "fixtures",
     "_DOCS_CONFIG": "docs",
     "_GO_CONFIG": "go",
+    "_GO_DIST_CONFIG": "go_dist",
     "_RAYLIB_CONFIG": "raylib",
     "_LAUNCHD_CONFIG": "launchd",
 }
