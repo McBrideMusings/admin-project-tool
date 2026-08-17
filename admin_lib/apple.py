@@ -2487,9 +2487,18 @@ def _resolve_icon_dirs(cfg, platforms=("mac", "ios")):
     `platforms`; tv is resolved through this same key_map but consumed
     separately by the tv-specific generate_tv_icons()/apply_tv_dev_banner()
     functions, which understand its nested imagestack/imageset layout.
+
+    "mac-dev"/"ios-dev" resolve a SEPARATE, permanently-committed appiconset
+    carrying the DEV banner baked in (as opposed to build_icon_hooks' runtime
+    swap-and-restore of a single catalog) — for a project that ships two
+    static asset catalogs and switches between them via
+    ASSETCATALOG_COMPILER_APPICON_NAME per build configuration.
     """
     icons_cfg = cfg.get("icons") or {}
-    key_map = {"mac": "mac_asset_dir", "ios": "ios_asset_dir", "tv": "tv_asset_dir"}
+    key_map = {
+        "mac": "mac_asset_dir", "ios": "ios_asset_dir", "tv": "tv_asset_dir",
+        "mac-dev": "mac_dev_asset_dir", "ios-dev": "ios_dev_asset_dir",
+    }
     result = {}
     for plat in platforms:
         rel = icons_cfg.get(key_map[plat])
@@ -3651,23 +3660,13 @@ def clean_generated_icons(cfg, backup_dir="tmp/icon-backup"):
     regenerate_icons(cfg)
 
 
-def regenerate_icons(cfg):
-    """Regenerate production icons from [apple.icons] config into the asset catalogs.
-
-    Detects sizes from the existing PNGs in each appiconset and overwrites
-    them with freshly generated ones (no DEV overlay). The asset catalog is
-    the source of truth; running this makes committed PNGs match the glyph
-    config. No backup is kept.
+def _regenerate_appiconset_dir(label, src_dir, kwargs, dev):
+    """Regenerate one flat appiconset directory in place, sizes taken from its
+    own committed PNGs (or Contents.json for a not-yet-populated catalog).
+    Returns True on success, False if skipped/failed. Shared by the prod and
+    permanently-committed-dev paths in regenerate_icons.
     """
-    from .icons import generate_icons, generate_tv_icons
-
-    icon_dirs = _resolve_icon_dirs(cfg)
-    tv_dir = _resolve_icon_dirs(cfg, ("tv",)).get("tv")
-    if not icon_dirs and not tv_dir:
-        err("no icon asset dirs configured in [apple.icons]"); sys.exit(1)
-    kwargs = _icon_generation_kwargs(cfg)
-    if not (kwargs.get("glyph_text") or kwargs.get("glyph_svg")):
-        err("[apple.icons] needs glyph_text or glyph_svg"); sys.exit(1)
+    from .icons import generate_icons
 
     try:
         from PIL import Image as _Img
@@ -3676,54 +3675,87 @@ def regenerate_icons(cfg):
 
     import tempfile
 
+    if not os.path.isdir(src_dir):
+        warn(f"{label}: {src_dir} not a directory — skipping")
+        return False
+    size_to_file = {}
+    for fname in os.listdir(src_dir):
+        if not fname.lower().endswith(".png"):
+            continue
+        try:
+            with _Img.open(os.path.join(src_dir, fname)) as im:
+                size_to_file[im.width] = fname
+        except Exception:
+            continue
+    if not size_to_file:
+        # A brand-new appiconset has a Contents.json and no PNGs yet, and
+        # that is exactly when someone runs this: it is how the first set of
+        # art gets made. Reading the sizes off existing PNGs cannot serve
+        # that case, so fall back to what the catalog *declares* it wants.
+        size_to_file = _sizes_from_contents_json(src_dir)
+        if size_to_file:
+            info(f"{label}: no PNGs yet — taking sizes from Contents.json")
+
+    if not size_to_file:
+        warn(
+            f"{label}: {src_dir} declares no icons — it needs PNGs or a "
+            "Contents.json listing filenames and sizes"
+        )
+        return False
+
+    sizes = sorted(size_to_file.keys())
+    tmp_out = tempfile.mkdtemp(prefix=f"prod-icons-{label}-")
+    try:
+        gen_kwargs = dict(kwargs)
+        gen_kwargs["sizes"] = sizes
+        gen_kwargs["output_dir"] = tmp_out
+        gen_kwargs["dev"] = dev
+        if not generate_icons(**gen_kwargs):
+            err(f"{label}: icon generation failed")
+            return False
+        for size, orig_fname in size_to_file.items():
+            gen_path = os.path.join(tmp_out, f"{size}.png")
+            if os.path.isfile(gen_path):
+                shutil.copy2(gen_path, os.path.join(src_dir, orig_fname))
+        ok(f"{label}: regenerated {len(sizes)} icons in {src_dir}")
+        return True
+    finally:
+        shutil.rmtree(tmp_out, ignore_errors=True)
+
+
+def regenerate_icons(cfg):
+    """Regenerate icons from [apple.icons] config into the asset catalogs.
+
+    Detects sizes from the existing PNGs in each appiconset and overwrites
+    them with freshly generated ones. The asset catalog is the source of
+    truth; running this makes committed PNGs match the glyph config. No
+    backup is kept.
+
+    mac_asset_dir/ios_asset_dir regenerate with no DEV overlay. A companion
+    mac_dev_asset_dir/ios_dev_asset_dir (a SEPARATE, permanently-committed
+    catalog — see _resolve_icon_dirs) regenerates with the DEV banner baked
+    in, for a project that switches catalogs via
+    ASSETCATALOG_COMPILER_APPICON_NAME per build configuration instead of
+    swapping one catalog at build time (build_icon_hooks).
+    """
+    from .icons import generate_tv_icons
+
+    icon_dirs = _resolve_icon_dirs(cfg)
+    dev_icon_dirs = _resolve_icon_dirs(cfg, ("mac-dev", "ios-dev"))
+    tv_dir = _resolve_icon_dirs(cfg, ("tv",)).get("tv")
+    if not icon_dirs and not dev_icon_dirs and not tv_dir:
+        err("no icon asset dirs configured in [apple.icons]"); sys.exit(1)
+    kwargs = _icon_generation_kwargs(cfg)
+    if not (kwargs.get("glyph_text") or kwargs.get("glyph_svg")):
+        err("[apple.icons] needs glyph_text or glyph_svg"); sys.exit(1)
+
     any_success = False
     for label, src_dir in icon_dirs.items():
-        if not os.path.isdir(src_dir):
-            warn(f"{label}: {src_dir} not a directory — skipping")
-            continue
-        size_to_file = {}
-        for fname in os.listdir(src_dir):
-            if not fname.lower().endswith(".png"):
-                continue
-            try:
-                with _Img.open(os.path.join(src_dir, fname)) as im:
-                    size_to_file[im.width] = fname
-            except Exception:
-                continue
-        if not size_to_file:
-            # A brand-new appiconset has a Contents.json and no PNGs yet, and
-            # that is exactly when someone runs this: it is how the first set of
-            # art gets made. Reading the sizes off existing PNGs cannot serve
-            # that case, so fall back to what the catalog *declares* it wants.
-            size_to_file = _sizes_from_contents_json(src_dir)
-            if size_to_file:
-                info(f"{label}: no PNGs yet — taking sizes from Contents.json")
-
-        if not size_to_file:
-            warn(
-                f"{label}: {src_dir} declares no icons — it needs PNGs or a "
-                "Contents.json listing filenames and sizes"
-            )
-            continue
-
-        sizes = sorted(size_to_file.keys())
-        tmp_out = tempfile.mkdtemp(prefix=f"prod-icons-{label}-")
-        try:
-            gen_kwargs = dict(kwargs)
-            gen_kwargs["sizes"] = sizes
-            gen_kwargs["output_dir"] = tmp_out
-            gen_kwargs["dev"] = False
-            if not generate_icons(**gen_kwargs):
-                err(f"{label}: icon generation failed")
-                continue
-            for size, orig_fname in size_to_file.items():
-                gen_path = os.path.join(tmp_out, f"{size}.png")
-                if os.path.isfile(gen_path):
-                    shutil.copy2(gen_path, os.path.join(src_dir, orig_fname))
-            ok(f"{label}: regenerated {len(sizes)} icons in {src_dir}")
+        if _regenerate_appiconset_dir(label, src_dir, kwargs, dev=False):
             any_success = True
-        finally:
-            shutil.rmtree(tmp_out, ignore_errors=True)
+        dev_dir = dev_icon_dirs.get(f"{label}-dev")
+        if dev_dir and _regenerate_appiconset_dir(f"{label}-dev", dev_dir, kwargs, dev=True):
+            any_success = True
 
     if tv_dir:
         if generate_tv_icons(tv_dir, dev=False, **kwargs):
