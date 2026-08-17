@@ -33,7 +33,7 @@ _KNOWN_KEYS = {
     "commands", "actions", "order", "logs", "apple", "react_native", "server", "output",
     "exclude_modules", "hide_commands", "hide_urls", "inline", "logging",
     "dev_kill", "dev_precheck", "clean_dev", "vite_dev", "docker_dev", "docker_run", "docker_build", "deploy", "install_template",
-    "fixtures", "log_bridge", "guards", "docs", "go", "raylib", "worktree",
+    "fixtures", "log_bridge", "guards", "docs", "go", "go_dist", "raylib", "worktree",
     "launchd",
     # Obsolete under interpreter mode (ADR-0006); tolerated silently on
     # un-migrated manifests, never written back. `admin migrate` strips it.
