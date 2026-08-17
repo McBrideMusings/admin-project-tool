@@ -228,3 +228,90 @@ def test_unknown_verb_exits_nonzero(tmp_path):
     with pytest.raises(SystemExit) as e:
         launchd.launchd_service(_cfg(tmp_path), ["frobnicate"])
     assert e.value.code == 1
+
+
+# ---------------------------------------------------------------------------
+# `source` — atomic binary swap
+# ---------------------------------------------------------------------------
+
+def test_install_with_source_copies_a_missing_binary_into_place(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    cfg = _cfg(tmp_path)
+    built = tmp_path / "built" / "myserver"
+    built.parent.mkdir(parents=True)
+    built.write_text("#!/bin/sh\necho v2\n")
+    built.chmod(0o755)
+    program = tmp_path / "installed" / "myserver"
+    cfg["program"] = str(program)
+    cfg["source"] = str(built)
+
+    _stub_launchctl(tmp_path, loaded=False)
+    launchd._install(launchd._read_config(cfg))
+
+    assert program.exists()
+    assert program.read_text() == built.read_text()
+
+
+def test_install_with_source_skips_when_binary_and_plist_are_unchanged(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    cfg = _cfg(tmp_path)
+    built = tmp_path / "built" / "myserver"
+    built.parent.mkdir(parents=True)
+    built.write_text("#!/bin/sh\nexit 0\n")
+    built.chmod(0o755)
+    program = tmp_path / "installed" / "myserver"
+    program.parent.mkdir(parents=True)
+    program.write_text(built.read_text())
+    program.chmod(0o755)
+    cfg["program"] = str(program)
+    cfg["source"] = str(built)
+    c = launchd._read_config(cfg)
+
+    plist = tmp_path / "home" / "Library" / "LaunchAgents" / "com.example.myserver.plist"
+    plist.parent.mkdir(parents=True)
+    plist.write_bytes(launchd._render(c))
+
+    calls = _stub_launchctl(tmp_path, loaded=True)
+    launchd._install(c)
+
+    text = calls.read_text()
+    assert "bootstrap" not in text
+    assert "kickstart" not in text
+    assert "bootout" not in text
+
+
+def test_install_with_source_swaps_a_changed_binary_without_touching_an_unchanged_plist(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    cfg = _cfg(tmp_path)
+    built = tmp_path / "built" / "myserver"
+    built.parent.mkdir(parents=True)
+    built.write_text("#!/bin/sh\necho v2\n")
+    built.chmod(0o755)
+    program = tmp_path / "installed" / "myserver"
+    program.parent.mkdir(parents=True)
+    program.write_text("#!/bin/sh\necho v1\n")
+    program.chmod(0o755)
+    cfg["program"] = str(program)
+    cfg["source"] = str(built)
+    c = launchd._read_config(cfg)
+
+    plist = tmp_path / "home" / "Library" / "LaunchAgents" / "com.example.myserver.plist"
+    plist.parent.mkdir(parents=True)
+    plist.write_bytes(launchd._render(c))
+
+    calls = _stub_launchctl(tmp_path, loaded=True)
+    launchd._install(c)
+
+    assert program.read_text() == built.read_text()
+    # plist unchanged -> kickstart, not a full bootout+bootstrap
+    assert "kickstart" in calls.read_text()
+    assert "bootstrap" not in calls.read_text()
+
+
+def test_atomic_install_binary_leaves_no_temp_file_behind(tmp_path):
+    src = tmp_path / "src"
+    src.write_text("hello")
+    dest = tmp_path / "dest"
+    launchd._atomic_install_binary(str(src), str(dest))
+    assert dest.read_text() == "hello"
+    assert list(tmp_path.glob("dest.new.*")) == []

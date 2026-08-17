@@ -6,8 +6,10 @@ Generic: any Go project configures source_dir/out_dir/binary/targets via a
 [go_dist] config table. No project-specific paths live here.
 """
 
+import glob
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 
@@ -101,3 +103,40 @@ def build_go_dist(cfg):
 
     ok("done — " + str(count) + " binaries" + (" + VERSION" if version_flag else ""))
     return 0
+
+
+def stage_dist(cfg, dest_dir):
+    """Copy a [go_dist]-built matrix (binary-* + VERSION) into `dest_dir`.
+
+    For an app that bundles the cross-compiled binaries as a resource — e.g. an
+    iOS app's folder reference so a real device (no access to the build
+    machine's filesystem) still has something to connect through. Fails loudly
+    when the source dist/ is missing rather than silently shipping a bundle
+    with nothing to connect through.
+
+    Returns the number of binaries staged.
+    """
+    out_dir = resolve_env(cfg.get("out_dir", "dist"))
+    binary = cfg.get("binary")
+    if not binary:
+        err("go_dist.binary not set"); sys.exit(1)
+
+    version_path = os.path.join(out_dir, "VERSION")
+    if not os.path.isfile(version_path):
+        err(f"no {version_path} — run: admin build dist"); sys.exit(1)
+
+    os.makedirs(dest_dir, exist_ok=True)
+    for stale in glob.glob(os.path.join(dest_dir, binary + "-*")):
+        os.remove(stale)
+    stale_version = os.path.join(dest_dir, "VERSION")
+    if os.path.exists(stale_version):
+        os.remove(stale_version)
+
+    staged = 0
+    for src in glob.glob(os.path.join(out_dir, binary + "-*")):
+        shutil.copy2(src, dest_dir)
+        staged += 1
+    shutil.copy2(version_path, dest_dir)
+
+    ok(f"staged {staged} {binary} binaries + VERSION -> {dest_dir}")
+    return staged

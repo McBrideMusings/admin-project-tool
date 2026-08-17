@@ -389,7 +389,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         raise ManifestError(f"{source}: '[launchd]' must be a table")
     if launchd_cfg:
         _LAUNCHD_KNOWN = {
-            "label", "program", "args", "env", "inherit_path", "inherit_home",
+            "label", "program", "source", "args", "env", "inherit_path", "inherit_home",
             "stdout", "stderr", "working_dir", "keep_alive", "run_at_load",
             "throttle", "process_type", "nice", "start_interval",
         }
@@ -402,7 +402,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         for _k in ("label", "program"):
             if not isinstance(launchd_cfg.get(_k), str) or not launchd_cfg.get(_k):
                 raise ManifestError(f"{source}: '[launchd].{_k}' is required and must be a non-empty string")
-        for _k in ("stdout", "stderr", "working_dir", "process_type"):
+        for _k in ("source", "stdout", "stderr", "working_dir", "process_type"):
             if _k in launchd_cfg and not isinstance(launchd_cfg[_k], str):
                 raise ManifestError(f"{source}: '[launchd].{_k}' must be a string")
         if "args" in launchd_cfg and not (
