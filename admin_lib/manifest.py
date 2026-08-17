@@ -34,7 +34,7 @@ _KNOWN_KEYS = {
     "exclude_modules", "hide_commands", "hide_urls", "inline", "logging",
     "dev_kill", "dev_precheck", "clean_dev", "vite_dev", "docker_dev", "docker_run", "docker_build", "deploy", "install_template",
     "fixtures", "log_bridge", "guards", "docs", "go", "go_dist", "raylib", "worktree",
-    "launchd",
+    "launchd", "electron",
     # Obsolete under interpreter mode (ADR-0006); tolerated silently on
     # un-migrated manifests, never written back. `admin migrate` strips it.
     "generator_commit",
@@ -91,6 +91,7 @@ class Manifest:
     go_dist: dict = field(default_factory=dict)   # [go_dist] — config for admin_lib.godist.build_go_dist (cross-compile matrix)
     raylib: dict = field(default_factory=dict)    # [raylib] — config for kind="raylib" (binary, build_dir, cmake_flags, jobs, smoke_env, clean_dirs)
     launchd: dict = field(default_factory=dict)   # [launchd] — macOS LaunchAgent config consumed by admin_lib.launchd
+    electron: dict = field(default_factory=dict)  # [electron] table — Electron shell config, raw dict
     log_bridge: dict = field(default_factory=dict)            # [log_bridge] — browser-console HTTP bridge config
     worktree: dict = field(default_factory=dict)              # [worktree] — worktree verb config (root, setup, copy)
     guards: dict[str, dict] = field(default_factory=dict)     # [guards.<name>] — user-defined shell guards
@@ -205,6 +206,10 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
     react_native = data.get("react_native", {}) or {}
     if not isinstance(react_native, dict):
         raise ManifestError(f"{source}: '[react_native]' must be a table")
+
+    electron = data.get("electron", {}) or {}
+    if not isinstance(electron, dict):
+        raise ManifestError(f"{source}: '[electron]' must be a table")
 
     server = data.get("server", {}) or {}
     if not isinstance(server, dict):
@@ -511,6 +516,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
         logs=logs,
         apple=apple,
         react_native=react_native,
+        electron=electron,
         server=server,
         output=output,
         logging=logging_cfg,
