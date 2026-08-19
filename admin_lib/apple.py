@@ -3035,7 +3035,7 @@ def resolve_signing_identity(cfg):
     return None
 
 
-def _compose_sign_settings(cfg):
+def _compose_sign_settings(cfg, platform=None):
     """Build xcodebuild build-setting overrides for code signing from [apple] config.
 
     Reads code_sign_identity, development_team, code_sign_style. Resolves
@@ -3044,6 +3044,10 @@ def _compose_sign_settings(cfg):
     identity is resolved dynamically from the keychain (see
     :func:`resolve_signing_identity`) and signed manually — no hash in config.
     Returns empty string when none of the keys are present.
+
+    ``platform``: "ios" | "tv" | "mac" | None. Device platforms always need a
+    provisioning profile (unlike mac, which can run manually-signed with no
+    profile at all) — see :func:`_target_needs_provisioning_profile`.
     """
     from .core import resolve_env
     parts = []
@@ -3065,7 +3069,7 @@ def _compose_sign_settings(cfg):
     # already pinned an explicit literal CODE_SIGN_IDENTITY above.
     if "sign_identity" in cfg and cfg.get("code_sign_identity") is None:
         ident = resolve_signing_identity(cfg)
-        if ident and _target_needs_provisioning_profile(cfg):
+        if ident and _target_needs_provisioning_profile(cfg, platform):
             # Automatic signing refuses a hash: "iptv-mac is automatically
             # signed, but code signing identity <hash> has been manually
             # specified". It accepts the identity by *name*, which is what
@@ -3094,15 +3098,27 @@ def _compose_sign_settings(cfg):
     return " ".join(parts)
 
 
-def _target_needs_provisioning_profile(cfg):
-    """True when this project's entitlements require a profile that has to be
-    created or refreshed, rather than any profile at all.
+def _target_needs_provisioning_profile(cfg, platform=None):
+    """True when this target cannot be signed and installed without a real,
+    creatable-or-refreshable provisioning profile.
 
-    Read from the entitlements files the manifest points at, because that is
-    where the requirement actually lives. The sandbox and its network client
-    are not in this class — they are granted by the entitlement alone — so a
-    plain sandboxed Mac app keeps the stable manual identity it had before.
+    Every iOS/tvOS device install needs one unconditionally — there is no
+    "no profile at all" path on those platforms, unlike a locally-run mac
+    build. So platform in ("ios", "tv") short-circuits to True here; forcing
+    manual signing with an empty PROVISIONING_PROFILE_SPECIFIER on a device
+    build fails every time with "requires a provisioning profile", which
+    reads exactly like a missing capability rather than a signing-style bug.
+
+    For mac (or when platform is unspecified, for backward compatibility),
+    read from the entitlements files the manifest points at, because that is
+    where the requirement actually lives there. The sandbox and its network
+    client are not in this class — they are granted by the entitlement alone
+    — so a plain sandboxed Mac app keeps the stable manual identity it had
+    before.
     """
+    if platform in ("ios", "tv"):
+        return True
+
     keys_needing_a_profile = (
         "com.apple.developer.",       # iCloud, App Groups, push, HealthKit, …
         "aps-environment",
@@ -3194,7 +3210,7 @@ def _compose_dev_settings(cfg, platform):
 
     override = f"ADMIN_DEV_BUNDLE_SUFFIX={suffix}" if suffix else ""
     result = f"{extras} {override}".strip() if extras else override
-    sign = _compose_sign_settings(cfg)
+    sign = _compose_sign_settings(cfg, platform)
     parts = [p for p in [result, sign] if p]
     return " ".join(parts)
 
@@ -3397,7 +3413,7 @@ def deploy_mac(cfg, *, clean=False):
     info(f"Building {scheme} ({config})...")
     rc = xcodebuild_filtered(project, scheme, config, "platform=macOS",
                              action=build_action,
-                             extra_settings=_compose_sign_settings(cfg))
+                             extra_settings=_compose_sign_settings(cfg, "mac"))
     if rc != 0:
         err("Build failed"); sys.exit(rc)
 
@@ -3490,7 +3506,7 @@ def deploy_device(cfg, platform="ios", *, clean=False):
     info(f"Building {scheme} for device ({config})...")
     rc = xcodebuild_filtered(project, scheme, config, plat["destination"],
                              action=build_action,
-                             extra_settings=_compose_sign_settings(cfg))
+                             extra_settings=_compose_sign_settings(cfg, platform))
     if rc != 0:
         diagnose_build_failure()
         err("Build failed"); sys.exit(rc)
@@ -3579,7 +3595,7 @@ def build_mac(cfg, *, force=False):
     info(f"Building {scheme} ({config}) for macOS...")
     rc = xcodebuild_filtered(project, scheme, config, "platform=macOS",
                              action=build_action,
-                             extra_settings=_compose_sign_settings(cfg))
+                             extra_settings=_compose_sign_settings(cfg, "mac"))
     if rc != 0:
         diagnose_build_failure()
         err("Build failed"); sys.exit(rc)
@@ -3610,7 +3626,7 @@ def build_simulator(cfg, platform="ios", *, force=False):
     restore_stranded_dev_icons(cfg)
     info(f"Building {scheme} ({config}) for {plat['label']}...")
     rc = xcodebuild_filtered(project, scheme, config, dest, action=build_action,
-                             extra_settings=_compose_sign_settings(cfg))
+                             extra_settings=_compose_sign_settings(cfg, platform))
     if rc != 0:
         diagnose_build_failure()
         err("Build failed"); sys.exit(rc)
