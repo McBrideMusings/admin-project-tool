@@ -1199,14 +1199,24 @@ def _tui_menu():
             results = pool.map(lambda lu: check_url(lu[1].rstrip("/") + "/health"), _urls)
         url_statuses = [(label, url, live) for (label, url), live in zip(_urls, results)]
 
-    # Total rows draw() will emit — must match exactly so _make_home reserves
-    # the right amount of space and no scrolling pushes URL lines off screen.
+    # Fixed rows draw() always emits around the scrollable command list —
+    # name+blank, URL status block, blank+hint — must match exactly so
+    # _make_home reserves the right amount of space. The command list itself
+    # is windowed to whatever's left of the terminal, the same fix
+    # pick_target got for the identical unbounded-reservation bug: writing
+    # more newlines than the terminal has rows scrolls the viewport out from
+    # under the reserved position, and every redraw after that paints over
+    # stale content instead of replacing it.
     n_url_rows = len(url_statuses) + (1 if url_statuses else 0)  # status lines + blank after
-    total_lines = 2 + n_url_rows + num + 2  # name+blank, urls, items, blank+hint
+    fixed_rows = 2 + n_url_rows + 2  # name+blank, urls, blank+hint
 
-    _home = _make_home(fd, total_lines)
+    term_rows = shutil.get_terminal_size((80, 24)).lines
+    window = _window_size(num, term_rows, reserved=fixed_rows)
+    _home = _make_home(fd, fixed_rows + window)
+    offset = 0  # items index of the window's first visible row
 
     def draw():
+        nonlocal offset
         cols = shutil.get_terminal_size((80, 24)).columns
         prefix_width = 4 if cols > 4 else 0
         gap = 1
@@ -1215,7 +1225,12 @@ def _tui_menu():
         name_width = max((_display_width(name) for name in command_names), default=0)
         name_width = min(name_width, max(0, cols - prefix_width - gap - min_desc))
         max_desc = max(0, cols - prefix_width - name_width - gap)
-        hint = f"  [arrows/j/k] navigate  [enter] run  [o] open config{env_hint}  [q/esc] quit"[:cols]
+        counter = f"[{sel + 1}/{num}]  " if num > window else ""
+        hint = f"  {counter}[arrows/j/k] navigate  [enter] run  [o] open config{env_hint}  [q/esc] quit"[
+            :cols
+        ]
+
+        offset = _scroll_offset(offset, sel, window, num)
 
         _home()
         sys.stdout.write(f"{C.BOLD}{_project_name}{C.RESET}\n\n")
@@ -1223,7 +1238,7 @@ def _tui_menu():
             sys.stdout.write(format_url_status(label, url, live, url_label_width) + "\n")
         if url_statuses:
             sys.stdout.write("\n")
-        for i, name in enumerate(items):
+        for i, name in enumerate(items[offset : offset + window], start=offset):
             if _is_spacer(name):
                 sys.stdout.write("\n")
                 continue
@@ -1279,6 +1294,22 @@ def _tui_menu():
 # ---------------------------------------------------------------------------
 # pick_target — sub-TUI for selecting among options
 # ---------------------------------------------------------------------------
+
+def _window_size(total_rows, term_rows, reserved=3):
+    """How many rows of a scrollable list to show at once: the terminal's own
+    height minus `reserved` (rows the caller always draws around the
+    scrollable region — a prompt line and a hint line, by default), floored
+    at 1 so a pathologically short terminal still gets a picker rather than a
+    zero- or negative-size reservation. Never more than `total_rows` — a
+    short list doesn't grow a window bigger than itself.
+
+    `reserved` is a parameter, not a baked-in 3, because `_tui_menu` reserves
+    a different fixed amount around its own scrollable region (a header line,
+    a URL status block, a hint line) than `pick_target` does (just a prompt
+    and a hint) — same windowing math, different fixed overhead.
+    """
+    return max(1, min(total_rows, term_rows - reserved))
+
 
 def _scroll_offset(offset, sel_row, window, total_rows):
     """Slide `offset` the minimum amount needed to keep `sel_row` inside
@@ -1351,7 +1382,7 @@ def pick_target(targets, prompt="Select target", order=None):
     # the full list — the fixed height `_make_home` reserves must never
     # exceed what a single redraw can actually paint.
     term_rows = shutil.get_terminal_size((80, 24)).lines
-    window = max(1, min(len(display_order), term_rows - 3))
+    window = _window_size(len(display_order), term_rows)
     _home = _make_home(fd, window + 1)  # one row per visible entry + hint
     offset = 0  # display_order index of the window's first visible row
 
