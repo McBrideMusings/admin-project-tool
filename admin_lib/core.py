@@ -1280,6 +1280,23 @@ def _tui_menu():
 # pick_target — sub-TUI for selecting among options
 # ---------------------------------------------------------------------------
 
+def _scroll_offset(offset, sel_row, window, total_rows):
+    """Slide `offset` the minimum amount needed to keep `sel_row` inside
+    `[offset, offset+window)`, then clamp to the valid range.
+
+    Pure and TTY-free on purpose — this is the part of `pick_target`'s
+    windowing that a test can exercise without a real terminal. Moving by the
+    minimum (rather than re-centering on every move) is what makes paging
+    past the visible window one item at a time scroll one row at a time
+    instead of jumping a whole page.
+    """
+    if sel_row < offset:
+        offset = sel_row
+    elif sel_row >= offset + window:
+        offset = sel_row - window + 1
+    return max(0, min(offset, max(0, total_rows - window)))
+
+
 def pick_target(targets, prompt="Select target", order=None):
     """Show an inline TUI picker for sub-targets. Returns the chosen key or None.
 
@@ -1291,9 +1308,23 @@ def pick_target(targets, prompt="Select target", order=None):
     nothing, which is indistinguishable from success in a script; the message is
     what makes that visible. (pick_target_or_none() reports its own tailored
     message and returns before reaching here, so this never double-prints.)
+
+    Scrolls rather than growing past the terminal: `_make_home` reserves a
+    fixed number of rows up front and every redraw re-homes to that exact
+    spot, so a list taller than the terminal — writing more newlines than the
+    screen has rows — scrolls the viewport out from under the reserved
+    position. Every subsequent redraw then lands on the wrong row and paints
+    over old content instead of replacing it, which is what produced
+    duplicated/ghosted rows for a 60+ item list (etv-station#watch). Windowing
+    to the terminal's height keeps the reserved row count within what a
+    single screen can actually hold.
     """
     display_order = order if order is not None else list(targets.keys())
     items = [x for x in display_order if x]  # selectable entries only
+    # display_order index of each selectable item, parallel to `items` — lets
+    # the scroll window track the selection's row position even when spacer
+    # ("") entries are mixed in among the selectable ones.
+    item_rows = [i for i, e in enumerate(display_order) if e]
 
     if not sys.stdout.isatty():
         expected = f" (expected one of: {', '.join(items)})" if items else ""
@@ -1314,9 +1345,18 @@ def pick_target(targets, prompt="Select target", order=None):
 
     sys.stdout.write(f"{C.BOLD}{prompt}{C.RESET}\n")
     sys.stdout.flush()
-    _home = _make_home(fd, len(display_order) + 1)  # one row per entry + hint
+
+    # Reserve at most what the terminal can show in one screen (leaving room
+    # for the prompt line already written above and the hint line below), not
+    # the full list — the fixed height `_make_home` reserves must never
+    # exceed what a single redraw can actually paint.
+    term_rows = shutil.get_terminal_size((80, 24)).lines
+    window = max(1, min(len(display_order), term_rows - 3))
+    _home = _make_home(fd, window + 1)  # one row per visible entry + hint
+    offset = 0  # display_order index of the window's first visible row
 
     def draw():
+        nonlocal offset
         cols = shutil.get_terminal_size((80, 24)).columns
         prefix_width = 4 if cols > 4 else 0  # "  > " / "    "
         gap = 2
@@ -1325,8 +1365,10 @@ def pick_target(targets, prompt="Select target", order=None):
         name_width = min(name_width, max(0, cols - prefix_width - gap - min_desc))
         max_desc = max(0, cols - prefix_width - name_width - gap)
 
+        offset = _scroll_offset(offset, item_rows[sel], window, len(display_order))
+
         _home()
-        for entry in display_order:
+        for entry in display_order[offset : offset + window]:
             if not entry:
                 sys.stdout.write("\n")
                 continue
@@ -1338,7 +1380,8 @@ def pick_target(targets, prompt="Select target", order=None):
             else:
                 prefix = "    " if prefix_width else ""
                 sys.stdout.write(f"{prefix}{C.DIM}{name}{C.RESET}{' ' * gap}{desc}\n")
-        hint = "  [arrows/j/k] navigate  [enter] select  [q/esc] cancel"[:cols]
+        counter = f"[{sel + 1}/{num}]  " if num > window else ""
+        hint = f"  {counter}[arrows/j/k] navigate  [enter] select  [q/esc] cancel"[:cols]
         sys.stdout.write(f"{C.DIM}{hint}{C.RESET}\n")
         sys.stdout.flush()
 
