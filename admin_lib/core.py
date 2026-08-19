@@ -1380,7 +1380,11 @@ def pick_target(targets, prompt="Select target", order=None):
             else:
                 prefix = "    " if prefix_width else ""
                 sys.stdout.write(f"{prefix}{C.DIM}{name}{C.RESET}{' ' * gap}{desc}\n")
-        counter = f"[{sel + 1}/{num}]  " if num > window else ""
+        # Gated on whether the *display* overflows the window (spacer rows
+        # count too, since they still take up a scrolled-past row), not on
+        # `num` (selectable items only) — a list padded with enough spacers
+        # can scroll while `num <= window`, and the counter must still show.
+        counter = f"[{sel + 1}/{num}]  " if len(display_order) > window else ""
         hint = f"  {counter}[arrows/j/k] navigate  [enter] select  [q/esc] cancel"[:cols]
         sys.stdout.write(f"{C.DIM}{hint}{C.RESET}\n")
         sys.stdout.flush()

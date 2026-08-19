@@ -79,6 +79,23 @@ class TestScrollOffset:
     def test_a_list_no_taller_than_the_window_never_scrolls(self):
         assert core._scroll_offset(offset=0, sel_row=4, window=10, total_rows=5) == 0
 
+    def test_spacer_rows_count_toward_the_scroll_window_like_any_other_row(self):
+        # display_order = a, "", b, "", c, "", d, "", e, "", f  (6 items, 5
+        # spacers, 11 display rows). `item_rows` — the mapping pick_target
+        # itself builds from display_order — puts "d" at display row 6.
+        display_order = ["a", "", "b", "", "c", "", "d", "", "e", "", "f"]
+        item_rows = [i for i, e in enumerate(display_order) if e]
+        assert item_rows == [0, 2, 4, 6, 8, 10]
+
+        # Selecting "d" (items index 3) with a 4-row window starting at 0
+        # must scroll exactly enough to bring row 6 into view — including
+        # the spacer rows in between, not just counting selectable items.
+        offset = core._scroll_offset(
+            offset=0, sel_row=item_rows[3], window=4, total_rows=len(display_order)
+        )
+        assert offset == 3
+        assert display_order[offset : offset + 4] == ["", "c", "", "d"]
+
 
 def test_pick_target_reserves_no_more_rows_than_the_terminal_has(monkeypatch):
     """The historical bug: `_make_home` reserved `len(display_order) + 1`
@@ -116,3 +133,35 @@ def test_pick_target_reserves_no_more_rows_than_the_terminal_has(monkeypatch):
     # (window + 1 hint row) must be too — never the full 65-row list.
     assert reserved["menu_lines"] < 65
     assert reserved["menu_lines"] <= 15
+
+
+def test_pick_target_counter_appears_when_spacers_push_the_list_past_the_window(
+    monkeypatch, capsys
+):
+    """The counter used to gate on `num` (selectable items only), so a list
+    with few selectable items but enough spacer rows to overflow the window
+    scrolled silently — the user had no indication anything was off-screen.
+    It must gate on whether the *display* overflows, spacers included.
+    """
+    import shutil
+    import termios
+
+    monkeypatch.setattr(core.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(shutil, "get_terminal_size", lambda fallback: os.terminal_size((80, 13)))
+    monkeypatch.setattr(core, "read_key", lambda: "q")
+    monkeypatch.setattr(core.sys.stdin, "fileno", lambda: 0)
+    monkeypatch.setattr(termios, "tcgetattr", lambda fd: None)
+    monkeypatch.setattr(termios, "tcsetattr", lambda fd, when, attrs: None)
+
+    # 6 selectable items <= window (13-row terminal -> window=10), but 12
+    # spacer rows push display_order to 18 entries -- past the window.
+    targets = {"a": "x", "b": "x", "c": "x", "d": "x", "e": "x", "f": "x"}
+    order = []
+    for key in targets:
+        order.append(key)
+        order.extend([""] * 2)  # two spacer rows after every item
+
+    core.pick_target(targets, prompt="Pick", order=order)
+
+    out = capsys.readouterr().out
+    assert "[1/6]" in out, "counter must show even though num (6) <= window"
