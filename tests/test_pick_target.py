@@ -97,6 +97,28 @@ class TestScrollOffset:
         assert display_order[offset : offset + 4] == ["", "c", "", "d"]
 
 
+class TestWindowSize:
+    """`_window_size` is what stops `_make_home` from ever reserving more
+    rows than the terminal has — the fix's whole point. These pin its floor
+    behavior at pathologically short terminals directly, rather than only
+    inferring it from `pick_target`'s reservation as
+    `test_pick_target_reserves_no_more_rows_than_the_terminal_has` does.
+    """
+
+    def test_normal_terminal_leaves_room_for_prompt_and_hint(self):
+        assert core._window_size(total_rows=100, term_rows=24) == 21
+
+    def test_short_list_never_grows_the_window_past_itself(self):
+        assert core._window_size(total_rows=5, term_rows=24) == 5
+
+    def test_floors_at_one_row_for_a_terminal_shorter_than_the_reserved_lines(self):
+        for term_rows in (3, 2, 1, 0, -5):
+            assert core._window_size(total_rows=100, term_rows=term_rows) == 1
+
+    def test_floors_at_one_even_when_the_list_is_also_short(self):
+        assert core._window_size(total_rows=1, term_rows=0) == 1
+
+
 def test_pick_target_reserves_no_more_rows_than_the_terminal_has(monkeypatch):
     """The historical bug: `_make_home` reserved `len(display_order) + 1`
     rows regardless of terminal height, so a list taller than the terminal
