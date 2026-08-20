@@ -45,6 +45,19 @@ CAPABILITY_ALIASES = {
     "sign-in-with-apple": "APPLE_ID_AUTH",
 }
 
+# A few capabilities are rejected without a settings array, so a caller asking
+# only for the capability by name gets a 409 that names the missing setting
+# rather than the capability. Defaulting them here keeps every call site honest
+# instead of making each one remember.
+#
+# ICLOUD without a version fails with "cannot have the CloudkitVersion 'null'".
+# XCODE_6 is CloudKit; XCODE_5 is the legacy documents/key-value store only.
+# Keys are Apple's: CapabilitySetting.key and CapabilityOption.key.
+# https://developer.apple.com/documentation/appstoreconnectapi/capabilitysetting
+CAPABILITY_DEFAULT_SETTINGS = {
+    "ICLOUD": [{"key": "ICLOUD_VERSION", "options": [{"key": "XCODE_6"}]}],
+}
+
 
 class AppStoreConnectError(RuntimeError):
     pass
@@ -288,6 +301,8 @@ def enable_capability(bundle_id_resource, capability_type, settings=None, opener
             },
         }
     }
+    if settings is None:
+        settings = CAPABILITY_DEFAULT_SETTINGS.get(capability_type)
     if settings:
         body["data"]["attributes"]["settings"] = settings
     return request("POST", "/bundleIdCapabilities", body=body, opener=opener).get("data", {})
