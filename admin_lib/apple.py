@@ -204,6 +204,10 @@ def run_locked_xcode(cmd, description):
     Returns run_cmd(cmd)'s rc, or 1 without running cmd if another build
     already holds the lock (its refusal has already been printed).
     """
+    # Exports XCODE_SPM_CLONE_DIR into this process's environment, which the
+    # raw command inherits — see shared_spm_clone_dir() for the `${VAR:+...}`
+    # snippet a test_cmd uses to pick it up.
+    shared_spm_clone_dir()
     lock = _acquire_xcode_lock(description)
     if lock is None:
         return 1
@@ -211,6 +215,81 @@ def run_locked_xcode(cmd, description):
         return run_cmd(cmd)
     finally:
         _release_xcode_lock(lock)
+
+
+_SPM_CLONE_DIR = None
+
+
+def shared_spm_clone_dir():
+    """One SwiftPM clone directory per repository, shared by every git
+    worktree of it. Returns the path, or None when sharing is off.
+
+    Why this exists: `orchestrate` gives each swarm worker its own git
+    worktree, and Xcode keys DerivedData by the project's absolute path, so
+    every worktree builds a full tree of its own. On iptv-mac each tree is
+    6.2-6.9 GB and 2.1 GB of that is SourcePackages — the same VLCKit
+    checkout, cloned again per worktree. Thirteen of them filled a 926 GB
+    disk to 6.1 GiB free on 2026-08-20 and killed an orchestration round
+    with ENOSPC.
+
+    Only the clone directory is shared, never DerivedData itself. Measured
+    2026-08-20, two worktrees building the same scheme at the same moment:
+
+      - one shared `-derivedDataPath`: the loser dies with `unable to attach
+        DB: ... build.db: database is locked`, rc 65, and both write the same
+        `Build/Products/<Config>/<app>` so the winner's binary silently
+        replaces the loser's while the loser prints BUILD SUCCEEDED.
+      - one shared `-clonedSourcePackagesDirPath`, DerivedData per worktree:
+        both rc 0, each tree kept its own product. 2.1 GB once instead of
+        per worktree, and the second worktree's cold build fell 55s -> 19s
+        because the clone was already there.
+
+    Per repository, not per machine: two projects pinning different versions
+    of the same package sharing one clone directory was not measured, so it
+    is not done. Repo identity comes from `git rev-parse --git-common-dir`,
+    which every worktree of a repo answers identically.
+
+    `XCODE_SPM_CLONE_DIR` in the environment overrides the path, and is also
+    exported so a project's raw `test_cmd` can pass the flag itself:
+
+        ${XCODE_SPM_CLONE_DIR:+-clonedSourcePackagesDirPath "$XCODE_SPM_CLONE_DIR"}
+
+    `ADMIN_SHARED_SPM=0` turns the whole thing off.
+    """
+    global _SPM_CLONE_DIR
+    if _SPM_CLONE_DIR is not None:
+        return _SPM_CLONE_DIR or None
+
+    if os.environ.get("ADMIN_SHARED_SPM") == "0":
+        _SPM_CLONE_DIR = ""
+        return None
+
+    path = os.environ.get("XCODE_SPM_CLONE_DIR")
+    if not path:
+        root = get_project_root() or os.getcwd()
+        result = subprocess.run(["git", "rev-parse", "--git-common-dir"],
+                                cwd=root, capture_output=True, text=True)
+        if result.returncode != 0:
+            _SPM_CLONE_DIR = ""
+            return None
+        common = os.path.abspath(os.path.join(root, result.stdout.strip()))
+        repo = os.path.basename(os.path.dirname(common))
+        if not repo:
+            _SPM_CLONE_DIR = ""
+            return None
+        path = os.path.expanduser(
+            f"~/Library/Developer/Xcode/SharedSourcePackages/{repo}")
+
+    os.makedirs(path, exist_ok=True)
+    _SPM_CLONE_DIR = path
+    os.environ["XCODE_SPM_CLONE_DIR"] = path
+    return path
+
+
+def _spm_clone_flag():
+    """The `-clonedSourcePackagesDirPath` flag for xcodebuild, or None."""
+    path = shared_spm_clone_dir()
+    return f'-clonedSourcePackagesDirPath "{path}"' if path else None
 
 
 def find_app(pattern):
@@ -242,6 +321,11 @@ def target_build_dir(project, scheme, config, destination, extra_settings="",
     parts.append(f'-configuration {config}')
     parts.append(f'-destination "{destination}"')
     parts.append("-showBuildSettings")
+    # Same flag the build used, or this query resolves against a different
+    # package graph than the one that produced the app.
+    spm = _spm_clone_flag()
+    if spm:
+        parts.append(spm)
     if extra_settings:
         parts.append(extra_settings)
     if allow_provisioning:
@@ -415,6 +499,9 @@ def xcodebuild_filtered(project, scheme, config, destination, action="build",
     parts.append(f'-scheme "{scheme}"')
     parts.append(f'-configuration {config}')
     parts.append(f'-destination "{destination}"')
+    spm = _spm_clone_flag()
+    if spm:
+        parts.append(spm)
     parts.append(action)
     if extra_settings:
         parts.append(extra_settings)
