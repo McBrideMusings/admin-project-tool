@@ -382,6 +382,30 @@ def xcode_is_signed_out(build_log_text):
     ) and "doesn't include" in build_log_text
 
 
+def app_store_connect_key_rejected(build_log_text):
+    """True when xcodebuild refused the API key itself.
+
+    Distinct from xcode_is_signed_out(), and the two look identical downstream:
+    both end at the wildcard team profile reporting a missing capability. The
+    difference is upstream and this one line is the only place it shows:
+
+        error: Authentication failed: Make sure a bearer token was provided,
+        it is properly configured and signed, and it has not expired.
+
+    Worth separating because the remedies are opposites. Signed-out means add
+    an account. This means the account (if any) is being *ignored*, because
+    -authenticationKey* takes precedence over it — so passing the key turns a
+    machine that could have signed into one that cannot.
+
+    Observed 2026-08-21 on Xcode 26.6: a key that creates provisioning profiles
+    over the App Store Connect API without complaint is rejected here. Same key,
+    same issuer, 18ms of clock skew, Team key not Individual. Whatever the cause,
+    it is not something a caller can fix by configuring differently, so the only
+    useful response is to stop passing the key and let the account work.
+    """
+    return "Authentication failed: Make sure a bearer token was provided" in build_log_text
+
+
 _signed_out_reported = False
 
 
@@ -430,9 +454,14 @@ def diagnose_build_failure():
         _report_signed_out()
 
 
+_asc_key_rejected = False
+
+
 def app_store_connect_auth_flags():
     """The -authenticationKey* flags when an App Store Connect API key is
-    configured, or [] when one is not.
+    configured, or [] when one is not — and [] for the rest of the run once a
+    build has shown xcodebuild rejecting the key (see
+    app_store_connect_key_rejected).
 
     Why this exists: without it, every signed build depends on an Apple ID
     being signed into Xcode's Accounts pane, and that login does not survive.
@@ -455,6 +484,9 @@ def app_store_connect_auth_flags():
     fails on a half-configured credential is worse than one that quietly does
     what it did before.
     """
+    if _asc_key_rejected:
+        return []
+
     path = os.environ.get("APP_STORE_CONNECT_KEY_PATH", "").strip()
     key_id = os.environ.get("APP_STORE_CONNECT_KEY_ID", "").strip()
     issuer = os.environ.get("APP_STORE_CONNECT_ISSUER_ID", "").strip()
@@ -505,12 +537,19 @@ def xcodebuild_filtered(project, scheme, config, destination, action="build",
     parts.append(action)
     if extra_settings:
         parts.append(extra_settings)
-    if allow_provisioning:
-        parts.append("-allowProvisioningUpdates")
-        parts.extend(app_store_connect_auth_flags())
-    parts.append("2>&1")
 
-    build_cmd = " ".join(parts)
+    def _compose():
+        """The command line as it stands now. Re-composed between attempts
+        because app_store_connect_auth_flags() can go empty mid-run once the
+        key has been rejected."""
+        tail = list(parts)
+        if allow_provisioning:
+            tail.append("-allowProvisioningUpdates")
+            tail.extend(app_store_connect_auth_flags())
+        tail.append("2>&1")
+        return " ".join(tail)
+
+    build_cmd = _compose()
     description = f'xcodebuild {action} -scheme "{scheme}" -destination "{destination}"'
     lock = _acquire_xcode_lock(description)
     if lock is None:
@@ -518,17 +557,37 @@ def xcodebuild_filtered(project, scheme, config, destination, action="build",
     try:
         log_path = _raw_build_log_path()
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
-        piped = f'{build_cmd} | tee -a "{log_path}" | grep -E "BUILD|error:|warning:" ; exit ${{PIPESTATUS[0]}}'
+        def _piped(cmd):
+            return f'{cmd} | tee -a "{log_path}" | grep -E "BUILD|error:|warning:" ; exit ${{PIPESTATUS[0]}}'
 
-        # Two attempts at most, and the second only ever happens because a
-        # person signed in between them.
+        # Two attempts at most. The second happens for one of two reasons: a
+        # person signed in between them, or the first attempt showed xcodebuild
+        # refusing the API key and the retry drops it. The key case needs nobody
+        # present, so it is checked first — an unattended build fixes itself.
+        global _asc_key_rejected
         for attempt in (1, 2):
             now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             with open(log_path, "w") as f:
                 f.write(f"# {get_project_root()} @ {now}\n")
-            rc = run_cmd(piped)
+            rc = run_cmd(_piped(build_cmd))
             if rc == 0 or attempt == 2:
                 return rc
+
+            try:
+                with open(log_path, "r", errors="replace") as f:
+                    log_text = f.read()
+            except FileNotFoundError:
+                log_text = ""
+
+            if app_store_connect_key_rejected(log_text) and not _asc_key_rejected:
+                warn("xcodebuild rejected the App Store Connect API key:")
+                warn("  Authentication failed: Make sure a bearer token was provided …")
+                warn("The key is not the only way in, and passing it overrides the Apple ID")
+                warn("signed into Xcode. Retrying without it, on the account instead.")
+                _asc_key_rejected = True
+                build_cmd = _compose()
+                continue
+
             if not _offer_xcode_sign_in(log_path):
                 return rc
     finally:
