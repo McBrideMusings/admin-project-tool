@@ -271,3 +271,58 @@ def validate_action(lead: str, data: dict, exc: type[ValidationError]) -> Valida
         parse_keys(data["keys"], lead, exc)
 
     return ValidatedAction(kind, inline_targets_raw, flat_targets)
+
+
+# ---------------------------------------------------------------------------
+# Advisories — well-formed manifests that will still misbehave at runtime
+# ---------------------------------------------------------------------------
+
+# `react-native run-ios` / `run-android` (and Expo's run:) build, install AND
+# launch in one step, and start Metro by opening a NEW Terminal window through
+# node_modules/.generated/launchPackager.command. Two consequences, both of
+# which have bitten a real project (term, 2026-08-21):
+#
+#   * the bundler lands in a fresh terminal tab nobody asked for, outside
+#     admin's process/log tracking, so `admin down` cannot stop it.
+#   * the RN CLI drives its own xcodebuild and never reads [apple], so
+#     development_team / code_sign_style in the manifest are ignored and the
+#     build dies with "Signing for X requires a development team" even though
+#     IOS_DEVELOPMENT_TEAM is exported.
+#
+# The react_native module exists precisely to replace it: ensure_metro_for()
+# runs Metro detached with a pid/log file, and dev_ios() builds through
+# admin_lib.apple with the manifest's signing settings.
+_RN_CLI_PATTERNS = (
+    "react-native run-ios",
+    "react-native run-android",
+    "expo run:ios",
+    "expo run:android",
+)
+
+_RN_CLI_ADVICE = (
+    "the React Native CLI opens a new Terminal window for Metro and runs its own "
+    "xcodebuild, ignoring [apple] signing settings (development_team). Use the "
+    "react_native module instead: add \"react_native\" to modules, a [react_native] "
+    "table with app_dir, and call ensure_metro_for(_rn) + dev_ios(...) from a "
+    "kind = \"python\" action"
+)
+
+
+def _action_bodies(cmd) -> list[str]:
+    """Every shell/python body a Command carries — its own `run` plus targets."""
+    bodies = [cmd.run or ""]
+    for val in (cmd.targets or {}).values():
+        bodies.append(val if isinstance(val, str) else (val or {}).get("run", "") or "")
+    return bodies
+
+
+def lint_commands(commands: dict) -> list[str]:
+    """Non-fatal advisories over resolved commands/actions. Returns messages."""
+    out = []
+    for name in sorted(commands):
+        cmd = commands[name]
+        body = "\n".join(_action_bodies(cmd))
+        hit = next((p for p in _RN_CLI_PATTERNS if p in body), None)
+        if hit:
+            out.append(f"'{name}' runs `{hit}` — {_RN_CLI_ADVICE}")
+    return out

@@ -59,6 +59,10 @@ def ok(msg):
     print(f"\033[32m{msg}\033[0m")
 
 
+def warn(msg):
+    print(f"\033[33mwarning: {msg}\033[0m")
+
+
 def _find_project_dir(start: Path) -> Path | None:
     """Walk up from `start` looking for an admin.toml. Returns the dir or None."""
     cur = start.resolve()
@@ -105,6 +109,9 @@ def cmd_check(project_dir: Path, show_namespace: bool = False) -> int:
         f"{len(resolved.commands)} commands, {len(resolved.actions)} actions, "
         f"{len(resolved.modules)} modules"
     )
+    from admin_lib.validate import lint_commands
+    for msg in lint_commands({**resolved.commands, **resolved.actions}):
+        warn(msg)
     if show_namespace:
         _print_namespace(resolved)
     return 0
