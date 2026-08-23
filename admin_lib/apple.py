@@ -3274,6 +3274,11 @@ def _target_needs_provisioning_profile(cfg, platform=None):
             with open(path, "r", errors="replace") as f:
                 text = f.read()
         except OSError:
+            # Say so. An unreadable entitlements file makes this function
+            # answer False, which forces manual signing and fails the build
+            # with a message naming a capability — pointing at the developer
+            # portal instead of at the path that could not be read.
+            warn(f"entitlements file not readable, assuming no profile needed: {path}")
             continue
         if any(k in text for k in keys_needing_a_profile):
             return True
@@ -3285,19 +3290,36 @@ def _entitlements_paths(cfg):
 
     Sourced from the Xcode project rather than the manifest: admin.toml has no
     entitlements key, and adding one would be a second place to keep the answer
-    correct. `-showBuildSettings` already knows.
+    correct. The pbxproj already knows.
+
+    CODE_SIGN_ENTITLEMENTS is relative to SRCROOT — the directory holding the
+    .xcodeproj — NOT to the repo root. Those are the same directory only when
+    the project sits at the top of the repo. Resolving against the repo root
+    instead silently produced a nonexistent path for any project nested one
+    level down (open-assistant keeps its .xcodeproj in hermes-companion/), the
+    caller's `except OSError: continue` swallowed the miss, and
+    _target_needs_provisioning_profile then answered False for an app that
+    declares iCloud. The visible result was `admin deploy mac` failing with
+    "requires a provisioning profile with the iCloud feature" while the App ID
+    had the capability all along — the exact wrong-thing-to-check this
+    function exists to prevent.
+
+    SRCROOT is taken from _detect_project_path rather than a build setting:
+    _xcode_target_settings reads the pbxproj directly, and SRCROOT is supplied
+    by xcodebuild at build time, so it never appears there.
     """
-    root = get_project_root()
+    srcroot = os.path.dirname(_detect_project_path(cfg)) or get_project_root()
     seen = []
     for scheme_key in ("mac_scheme", "ios_scheme", "tv_scheme"):
         scheme = cfg.get(scheme_key)
         if not scheme:
             continue
         value = _xcode_setting(cfg, scheme, "CODE_SIGN_ENTITLEMENTS")
-        if value:
-            path = value if os.path.isabs(value) else os.path.join(root, value)
-            if path not in seen:
-                seen.append(path)
+        if not value:
+            continue
+        path = value if os.path.isabs(value) else os.path.join(srcroot, value)
+        if path not in seen:
+            seen.append(path)
     return seen
 
 
