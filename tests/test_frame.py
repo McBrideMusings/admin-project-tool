@@ -177,6 +177,28 @@ def test_the_status_row_names_the_action_and_the_elapsed_time():
     assert "dev:cf" in row and "0s" in row
 
 
+def test_the_status_row_carries_the_herdr_pane_id_when_present(monkeypatch):
+    monkeypatch.setenv("HERDR_ENV", "1")
+    monkeypatch.setenv("HERDR_PANE_ID", "wHC:p1")
+    row = _frame([("a", "http://a")])._rows()[0]
+    assert "wHC:p1" in row
+
+
+def test_the_status_row_is_unchanged_outside_herdr(monkeypatch):
+    monkeypatch.delenv("HERDR_ENV", raising=False)
+    monkeypatch.delenv("HERDR_PANE_ID", raising=False)
+    row = _frame([("a", "http://a")])._rows()[0]
+    assert row == f"{frame._DIM}── dev:cf · 0s {'─' * (100 - len(' dev:cf · 0s ') - 2)}{frame._RESET}"
+
+
+def test_herdr_env_set_but_pane_id_empty_is_treated_as_not_in_herdr(monkeypatch):
+    monkeypatch.setenv("HERDR_ENV", "1")
+    monkeypatch.setenv("HERDR_PANE_ID", "")
+    row = _frame([("a", "http://a")])._rows()[0]
+    assert frame.Frame("dev:cf", [], "/tmp/x.log").pane_id is None
+    assert "·" in row  # still has label · elapsed, just no third segment
+
+
 def test_a_self_labelled_url_is_not_printed_twice():
     row = _frame([("http://localhost:8787", "http://localhost:8787")])._rows()[2]
     assert row.count("http://localhost:8787") == 2  # the OSC 8 target and its text, no label
