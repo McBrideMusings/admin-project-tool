@@ -2,8 +2,9 @@
 
 An action that declares `urls` gets a DECSTBM scroll region: its output scrolls
 in the top rows while a footer holds the action label, elapsed time, the
-absolute log path, and every declared URL. Rows are OSC 8 hyperlinks, so the
-log path and the URLs are both clickable.
+herdr pane id (when running inside herdr), the absolute log path, and every
+declared URL. Rows are OSC 8 hyperlinks, so the log path and the URLs are both
+clickable.
 
 The trade this makes: lines scrolled out of a *partial* scroll region do not
 enter the terminal's scrollback. That is acceptable here only because every
@@ -63,6 +64,17 @@ def _clip(text, width):
     return text if len(text) <= width else text[: max(0, width - 1)] + "…"
 
 
+def _herdr_pane_id():
+    """The herdr pane id, or None when not running inside herdr.
+
+    HERDR_ENV=1 is the presence test; HERDR_PANE_ID set-but-empty still counts
+    as "not in herdr" rather than printing an empty segment.
+    """
+    if os.environ.get("HERDR_ENV") != "1":
+        return None
+    return os.environ.get("HERDR_PANE_ID") or None
+
+
 class Frame:
     """Scroll region + footer. Rows 1..N-h scroll; the footer owns the rest."""
 
@@ -74,6 +86,7 @@ class Frame:
         self.rows, self.cols = _term_size()
         self.active = False
         self._ticker = None
+        self.pane_id = _herdr_pane_id()
 
     @property
     def height(self):
@@ -159,7 +172,10 @@ class Frame:
         return out
 
     def _status_row(self):
-        text = f" {self.label} · {_elapsed(time.monotonic() - self.started)} "
+        text = f" {self.label} · {_elapsed(time.monotonic() - self.started)}"
+        if self.pane_id:
+            text += f" · {self.pane_id}"
+        text += " "
         rule = "─" * max(0, self.cols - len(text) - 2)
         return f"{_DIM}──{text}{rule}{_RESET}"
 
