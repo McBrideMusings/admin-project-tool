@@ -42,6 +42,7 @@ import hashlib
 import json
 import os
 import plistlib
+import re
 import struct
 import subprocess
 import sys
@@ -49,7 +50,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from .core import err, info, ok, warn
+from .core import err, info, iter_env_refs, ok, resolve_env, warn
 
 TAMPERMONKEY_ID = "dhdgffkkebhmkfjojejmpbldmpobfkfo"  # Chrome Web Store, stable
 
@@ -109,11 +110,40 @@ def script_header(source: str) -> dict[str, str]:
     return out
 
 
+_ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+
+def expand_env_placeholders(src: str) -> str:
+    """Expand `${NAME}` / `${NAME:-default}` in a userscript for UPPER_CASE names only.
+
+    The script is JavaScript, so it is full of template-literal `${host}` /
+    `${target.port}` that must survive untouched; only a shell-style name
+    (`^[A-Z][A-Z0-9_]*$`) is treated as an environment placeholder. Each one goes
+    through `core.resolve_env`, so defaults nest and an unset var with no default
+    aborts the provisioning instead of embedding a literal.
+    """
+    if "${" not in src:
+        return src
+    out, pos = [], 0
+    for start, end, name, _default in iter_env_refs(src):
+        out.append(src[pos:start])
+        ref = src[start:end]
+        out.append(resolve_env(ref) if _ENV_NAME_RE.match(name) else ref)
+        pos = end
+    out.append(src[pos:])
+    return "".join(out)
+
+
 def build_provisioning(script_paths: list[Path]) -> dict:
-    """TM export-format document carrying the given scripts, enabled."""
+    """TM export-format document carrying the given scripts, enabled.
+
+    Environment placeholders in a script (see `expand_env_placeholders`) are
+    expanded before it is embedded, so the committed source can name machines
+    without carrying their addresses.
+    """
     scripts = []
     for p in script_paths:
-        src = p.read_text(encoding="utf-8")
+        src = expand_env_placeholders(p.read_text(encoding="utf-8"))
         hdr = script_header(src)
         if "name" not in hdr:
             raise ValueError(f"{p}: no @name in ==UserScript== header")

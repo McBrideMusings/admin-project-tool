@@ -1472,7 +1472,7 @@ def _format_drift_report(in_target_only, in_live_only, refusing=True):
 
           target has, live missing:
             --gpus      all
-            -p          100.64.0.10:9091:9091/tcp
+            -p          192.0.2.10:9091:9091/tcp
 
           live has, target missing:
             -p          :9091:9091/tcp

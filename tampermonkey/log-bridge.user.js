@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         admin-project-tool log bridge
 // @namespace    https://github.com/McBrideMusings/admin-project-tool
-// @version      0.2.1
+// @version      0.2.2
 // @description  Ships console.log/info/warn/error/debug from the browser to a locally-running admin-project-tool listener, so client and server logs interleave in one file. localhost/127.0.0.1 is always watched; any other host is opt-in via a single Tampermonkey menu command. Forwards only when a matching listener is actually running.
 // @match        *://*/*
 // @run-at       document-start
@@ -11,8 +11,8 @@
 // @grant        GM_registerMenuCommand
 // @grant        unsafeWindow
 // @connect      127.0.0.1
-// @connect      100.64.0.11
-// @connect      100.64.0.10
+// @connect      ${TAILSCALE_HOST_MAC}
+// @connect      ${TAILSCALE_HOST_UNRAID}
 // ==/UserScript==
 
 // ----------------------------------------------------------------------------
@@ -40,14 +40,22 @@
 (function () {
   "use strict";
 
-  // ----- Edit these to suit your tailnet. -----
+  // ----- Machine addresses come from the environment, never from this file. -----
+  //
+  // The UPPER_CASE dollar-brace placeholders below (and on the @connect lines
+  // above) are expanded by `admin tampermonkey`
+  // (admin_lib/tampermonkey.py::expand_env_placeholders) from the deploying
+  // shell's environment before the script is embedded in the browser policy.
+  // Lower-case template literals elsewhere in this file are left alone. The
+  // committed file never carries a real address; the values live in the
+  // machine's .env.
 
   // Hosts to probe for a running admin-project-tool listener. localhost first;
   // then this machine's Tailscale IPs (the browser runs on the Mac).
   const PROBE_HOSTS = [
     "127.0.0.1",
-    "100.64.0.11",   // primary dev machine (tailnet)
-    "100.64.0.10", // second machine (tailnet)
+    "${TAILSCALE_HOST_MAC}",   // primary dev machine (tailnet)
+    "${TAILSCALE_HOST_UNRAID}", // second machine (tailnet)
   ];
 
   // Must cover every machine's [log_bridge] port_range (default 9988-9999).
