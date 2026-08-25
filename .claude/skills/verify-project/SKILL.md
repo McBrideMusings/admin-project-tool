@@ -34,8 +34,8 @@ manifest proves almost nothing about merge behaviour:
 python3 ./admin-run check <path to a sibling project that uses archetypes>   # e.g. ~/Projects/repo-dash
 ```
 
-Observed on a good run (2026-08-12), the archetype/manifest merge is visible in the output
-and is the part worth reading:
+On a good run the archetype/manifest merge is visible in the output and is the part worth
+reading (counts vary per project):
 
 ```
 merge: command 'deploy' overridden by manifest
@@ -46,7 +46,7 @@ merge: command 'clean' overridden by manifest
 ok: Repo — 10 commands, 9 actions, 1 modules
 ```
 
-Against this repo's own manifest: `ok: admin-project-tool — 3 commands, 3 actions, 1 modules`.
+Against this repo's own manifest the line is `ok: admin-project-tool — N commands, N actions, 1 modules`, with N matching `[commands.*]` / `[actions.*]` in `admin.toml`.
 
 A pass is the `ok:` line plus counts that match what the manifest actually declares. A
 resolution error names the problem directly (unknown kind, missing action referenced by a
@@ -58,8 +58,8 @@ step, unknown guard, a command colliding with the reserved verbs `new`/`check`/`
 .venv/bin/pytest tests/ -q
 ```
 
-961 passed in ~67s on 2026-08-12. Use the repo's own `.venv/bin/pytest` — a bare `pytest`
-picks up whatever is on PATH.
+Expect roughly a thousand tests in about a minute. Use the repo's own `.venv/bin/pytest` —
+a bare `pytest` picks up whatever is on PATH.
 
 `admin test` additionally runs `tests/test_install.sh` and `tests/test_uninstall.sh`, which
 touch the real `~/.admin`. Run those deliberately, not as a reflex, and expect the
