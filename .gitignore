@@ -10,6 +10,3 @@ docs/.vitepress/dist/
 node_modules/
 .venv/
 *.local.*
-
-# Local verify rig — machine-specific, never committed
-.claude/skills/verify-project/
