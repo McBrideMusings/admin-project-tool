@@ -39,6 +39,20 @@ def test_hash_objects_concatenate_child_hashes_in_sorted_key_order_without_keys(
     assert tm.tm_hash({"q": 1, "r": "b"}) == expect
 
 
+def test_hash_prints_integral_floats_like_js():
+    assert tm.tm_hash(1.0) == _sha("number:1")
+    assert tm.tm_hash(1.5) == _sha("number:1.5")
+
+
+def test_leveldb_log_kv_survives_a_torn_tail(tmp_path):
+    db = tmp_path / "db"
+    db.mkdir()
+    good = _log_record(1, [(b"a", b"v")])
+    torn = struct.pack("<IHB", 0, 40, 1) + struct.pack("<QI", 2, 3) + b"\x01\x05ab"  # truncated batch
+    (db / "000001.log").write_bytes(good + torn)
+    assert tm.leveldb_log_kv(db) == {b"a": b"v"}
+
+
 def test_hash_arrays_are_ordered():
     assert tm.tm_hash([1, "b"]) == _sha(_sha("number:1") + _sha("string:b"))
     assert tm.tm_hash([1, "b"]) != tm.tm_hash(["b", 1])
@@ -150,9 +164,28 @@ def _fake_provision_env(monkeypatch, tmp_path, running=True):
     monkeypatch.setattr(tm, "is_running", lambda a: running)
     monkeypatch.setattr(tm, "quit_browser", lambda a, timeout=30.0: order.append("quit") or True)
     monkeypatch.setattr(tm, "write_policies", lambda e, ids: order.append("write") or [tmp_path / f"{b}.plist" for b in ids])
-    monkeypatch.setattr(tm, "drop_user_level_policy", lambda b: False)
+    monkeypatch.setattr(tm, "read_policy", lambda b: [])
     monkeypatch.setattr(tm, "launch_browser", lambda a: order.append("launch"))
     return p, order
+
+
+def test_provision_is_a_no_op_when_the_forced_policy_already_carries_the_hash(monkeypatch, tmp_path):
+    p, order = _fake_provision_env(monkeypatch, tmp_path)
+    current = tm.policy_entry(tm.build_provisioning([p]))["hash"]
+    monkeypatch.setattr(tm, "read_policy", lambda b: [{"hash": current, "url": "data:x"}])
+    assert tm.provision([p]) == 0
+    assert order == []  # no sudo, no quit, no relaunch
+
+
+def test_provision_reports_a_failed_sudo_instead_of_raising(monkeypatch, tmp_path):
+    p, order = _fake_provision_env(monkeypatch, tmp_path)
+
+    def boom(e, ids):
+        raise tm.subprocess.CalledProcessError(1, ["sudo"])
+
+    monkeypatch.setattr(tm, "write_policies", boom)
+    assert tm.provision([p]) == 1
+    assert order == []
 
 
 def test_provision_writes_then_quits_and_relaunches_a_running_browser(monkeypatch, tmp_path):
