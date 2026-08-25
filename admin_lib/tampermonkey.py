@@ -12,10 +12,11 @@ policy, and on macOS a per-extension policy is an ordinary preference domain:
 
 So installing a script is: build the JSON, hash it the way TM does, write one
 plist into that domain with `defaults import`. No server is needed — the JSON
-travels inside a `data:` URL. Chromium re-reads user-level policy on launch
-and on its periodic policy refresh; TM then applies it on its next service
-worker start. Every profile of the browser sees the same policy, which is the
-point: one command, every profile.
+travels inside a `data:` URL. Chromium reads user-level policy at launch, so a
+running browser is quit (it restores its windows) and relaunched around the
+write; TM then applies the policy on its next service worker start. Every
+profile of the browser sees the same policy, which is the point: one command,
+every profile.
 
 The hash (`1:<sha256>`) is TM's structural hash of the *parsed* JSON, not of
 the bytes: leaves hash as sha256("<typeof>:<value>"), arrays hash the
@@ -42,6 +43,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from .core import err, info, ok, warn
@@ -164,6 +166,30 @@ def read_policy(bundle_id: str) -> list[dict]:
 def clear_policy(bundle_id: str) -> None:
     subprocess.run(["defaults", "delete", policy_domain(bundle_id)],
                    capture_output=True)
+
+
+# ---------------------------------------------------------------------------
+# Browser lifecycle: Chromium reads user-level policy at launch
+# ---------------------------------------------------------------------------
+
+def is_running(app: Path) -> bool:
+    r = subprocess.run(["pgrep", "-f", f"{app}/Contents/MacOS/"], capture_output=True)
+    return r.returncode == 0
+
+
+def quit_browser(app: Path, timeout: float = 30.0) -> bool:
+    """Ask the app to quit (it restores its windows on relaunch); wait for exit."""
+    subprocess.run(["osascript", "-e", f'quit app "{app}"'], capture_output=True)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not is_running(app):
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def launch_browser(app: Path) -> None:
+    subprocess.run(["open", "-a", str(app)], check=False)
 
 
 # ---------------------------------------------------------------------------
@@ -301,23 +327,41 @@ def status(names: list[str] | None = None) -> dict:
 # CLI: python3 -m admin_lib.tampermonkey [--status] [--browser NAME] SCRIPT...
 # ---------------------------------------------------------------------------
 
-def provision(script_paths: list[Path], names: list[str] | None = None) -> int:
+def provision(script_paths: list[Path], names: list[str] | None = None,
+              restart: bool = True) -> int:
+    """Write the policy for every installed target browser.
+
+    With `restart` (the default) a running browser is quit first and relaunched
+    after the write, because Chromium loads user-level policy at launch; without
+    it the policy waits for the browser's next launch or periodic refresh.
+    """
     doc = build_provisioning(script_paths)
     entry = policy_entry(doc)
-    targets = [(n, b) for n, (b, app, _) in BROWSERS.items()
+    targets = [(n, b, app) for n, (b, app, _) in BROWSERS.items()
                if app.exists() and (not names or n in names)]
     if not targets:
         err("no supported browser installed (Arc, Chrome, Brave)")
         return 1
-    for name, bundle in targets:
+    rc = 0
+    for name, bundle, app in targets:
+        relaunch = False
+        if restart and is_running(app):
+            info(f"{name}: quitting so the policy is read at launch…")
+            if quit_browser(app):
+                relaunch = True
+            else:
+                err(f"{name}: did not quit within 30s — policy written anyway; relaunch it yourself")
+                rc = 1
         domain = write_policy(bundle, entry)
         ok(f"{name}: jsonImport policy written to {domain} ({entry['hash'][:12]}…)")
+        if relaunch:
+            launch_browser(app)
+            ok(f"{name}: relaunched")
     for s in doc["scripts"]:
         info(f"  script: {s['name']}")
-    info("the browser re-reads user policy on launch or its next periodic refresh; "
-         "Tampermonkey applies it when its service worker next starts. "
-         "Check with: python3 -m admin_lib.tampermonkey --status")
-    return 0
+    info("Tampermonkey applies the policy when its service worker next starts. "
+         "Check with: admin tampermonkey-status")
+    return rc
 
 
 def print_status(names: list[str] | None = None) -> int:
@@ -343,6 +387,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--status", action="store_true", help="report policy/delivery/install state and exit")
     ap.add_argument("--clear", action="store_true", help="remove the policy domain(s) and exit")
     ap.add_argument("--json", action="store_true", help="with --status: machine-readable output")
+    ap.add_argument("--no-restart", action="store_true",
+                    help="write the policy without quitting/relaunching a running browser")
     a = ap.parse_args(argv)
     if a.clear:
         for n, (b, app, _) in BROWSERS.items():
@@ -361,7 +407,7 @@ def main(argv: list[str] | None = None) -> int:
     if missing:
         err(f"not a file: {', '.join(map(str, missing))}")
         return 1
-    return provision(a.scripts, a.browser)
+    return provision(a.scripts, a.browser, restart=not a.no_restart)
 
 
 if __name__ == "__main__":
