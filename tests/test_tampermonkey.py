@@ -68,6 +68,38 @@ def test_build_provisioning_reads_name_and_base64_utf8_source(tmp_path):
     assert base64.b64decode(s["source"]).decode("utf-8") == SCRIPT
 
 
+def test_build_provisioning_expands_env_placeholders(monkeypatch, tmp_path):
+    monkeypatch.setenv("TM_TEST_HOST", "192.0.2.10")
+    p = tmp_path / "demo.user.js"
+    p.write_text(SCRIPT.replace("console.log", '// @connect ${TM_TEST_HOST}\nconsole.log'),
+                 encoding="utf-8")
+    (s,) = tm.build_provisioning([p])["scripts"]
+    src = base64.b64decode(s["source"]).decode("utf-8")
+    assert "// @connect 192.0.2.10" in src and "${" not in src
+
+
+def test_expand_env_placeholders_leaves_js_template_literals(monkeypatch, tmp_path):
+    monkeypatch.setenv("TM_TEST_HOST", "192.0.2.10")
+    monkeypatch.delenv("host", raising=False)
+    js = ('const h = "${TM_TEST_HOST}";\n'
+          'const u = `http://${host}:${target.port}/log`;\n'
+          'const d = "${TM_TEST_MISSING:-fallback}";\n'
+          'const re = /[.+?^${}()|[\\]\\\\]/g;\n')
+    out = tm.expand_env_placeholders(js)
+    assert 'const h = "192.0.2.10";' in out
+    assert "`http://${host}:${target.port}/log`" in out
+    assert 'const d = "fallback";' in out
+    assert "/[.+?^${}()|[\\]\\\\]/g" in out
+
+
+def test_build_provisioning_fails_on_unset_placeholder(monkeypatch, tmp_path):
+    monkeypatch.delenv("TM_TEST_UNSET", raising=False)
+    p = tmp_path / "demo.user.js"
+    p.write_text(SCRIPT + 'const h = "${TM_TEST_UNSET}";\n', encoding="utf-8")
+    with pytest.raises(SystemExit):
+        tm.build_provisioning([p])
+
+
 def test_build_provisioning_requires_name(tmp_path):
     p = tmp_path / "x.user.js"
     p.write_text("// ==UserScript==\n// @version 1\n// ==/UserScript==\n")

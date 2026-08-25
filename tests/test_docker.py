@@ -437,7 +437,7 @@ _MUXARR_CFG = {
     "container_name": "muxarr",
     "gpu": "all",
     "restart": "unless-stopped",
-    "ports": [{"host": "100.114.249.118:9091", "container": 9091}],
+    "ports": [{"host": "192.0.2.10:9091", "container": 9091}],
     "bind_mounts": [
         {"host": "/mnt/user/appdata/muxarr", "container": "/config"},
     ],
@@ -457,7 +457,7 @@ def test_cfg_renderer_emits_gpu_and_device():
     assert "--device\t/dev/dri:/dev/dri" in pair_set
     assert "--restart\tunless-stopped" in pair_set
     assert "-v\t/mnt/user/appdata/muxarr:/config" in pair_set
-    assert "-p\t100.114.249.118:9091:9091/tcp" in pair_set
+    assert "-p\t192.0.2.10:9091:9091/tcp" in pair_set
     assert "-e\tPORT=9091" in pair_set
     print("OK: cfg renderer emits expected pairs for muxarr-shape config")
 
@@ -511,7 +511,7 @@ def test_drift_detects_missing_gpu_in_live():
     live_inspect = _inspect(
         host_cfg={
             "Binds": ["/mnt/user/appdata/muxarr:/config"],
-            "PortBindings": {"9091/tcp": [{"HostIp": "100.114.249.118", "HostPort": "9091"}]},
+            "PortBindings": {"9091/tcp": [{"HostIp": "192.0.2.10", "HostPort": "9091"}]},
             "RestartPolicy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
             "Devices": [{"PathOnHost": "/dev/dri", "PathInContainer": "/dev/dri", "CgroupPermissions": "rwm"}],
             "DeviceRequests": None,  # <-- GPU lost
@@ -655,7 +655,7 @@ def test_drift_detects_undeclared_live_field_strict():
         host_cfg={
             "Binds": ["/mnt/user/appdata/muxarr:/config"],
             "PortBindings": {
-                "9091/tcp": [{"HostIp": "100.114.249.118", "HostPort": "9091"}],
+                "9091/tcp": [{"HostIp": "192.0.2.10", "HostPort": "9091"}],
                 "9999/tcp": [{"HostIp": "", "HostPort": "9999"}],  # <-- not in TOML
             },
             "RestartPolicy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
@@ -677,7 +677,7 @@ def test_drift_clean_when_target_matches_live():
     live_inspect = _inspect(
         host_cfg={
             "Binds": ["/mnt/user/appdata/muxarr:/config"],
-            "PortBindings": {"9091/tcp": [{"HostIp": "100.114.249.118", "HostPort": "9091"}]},
+            "PortBindings": {"9091/tcp": [{"HostIp": "192.0.2.10", "HostPort": "9091"}]},
             "RestartPolicy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
             "Devices": [{"PathOnHost": "/dev/dri", "PathInContainer": "/dev/dri", "CgroupPermissions": "rwm"}],
             "DeviceRequests": [{"Driver": "nvidia", "Count": -1, "Capabilities": [["gpu"]]}],
@@ -831,9 +831,9 @@ def test_env_substitution_mixed_literal_and_ref():
     ns = _load_docker()
     cfg = {"env": [{"name": "RADARR_URL", "value": "http://${RADARR_HOST}:7878"}]}
     args = ns["_build_run_args_from_cfg"](
-        cfg, env_vars={"RADARR_HOST": "100.114.249.118"}
+        cfg, env_vars={"RADARR_HOST": "192.0.2.10"}
     )
-    assert args == ["-e", "RADARR_URL=http://100.114.249.118:7878"]
+    assert args == ["-e", "RADARR_URL=http://192.0.2.10:7878"]
     print("OK: mixed literal + ${VAR} substitution")
 
 
