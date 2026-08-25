@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import getpass
 import glob
 import hashlib
 import json
@@ -80,6 +81,8 @@ def tm_hash(value) -> str:
     if isinstance(value, bool):
         return _sha("boolean:true" if value else "boolean:false")
     if isinstance(value, (int, float)):
+        if isinstance(value, float) and value.is_integer():
+            value = int(value)  # JS prints 1.0 as "1"
         return _sha(f"number:{value}")
     if isinstance(value, str):
         return _sha(f"string:{value}")
@@ -142,7 +145,7 @@ def policy_entry(doc: dict) -> dict:
 #: `defaults write`) is only RECOMMENDED, and chrome.storage.managed drops
 #: everything but MANDATORY (policy_value_store.cc: "Only include mandatory
 #: policies for now"). Root-owned, hence the sudo below.
-MANAGED_PREFS_DIR = Path("/Library/Managed Preferences") / os.environ.get("USER", "")
+MANAGED_PREFS_DIR = Path("/Library/Managed Preferences") / getpass.getuser()
 
 
 def policy_domain(bundle_id: str, ext_id: str = TAMPERMONKEY_ID) -> str:
@@ -189,18 +192,14 @@ def clear_policies(bundle_ids: list[str]) -> None:
         subprocess.run(["sudo", "rm", "-f", *paths], check=True)
 
 
-def drop_user_level_policy(bundle_id: str) -> bool:
-    """Remove a `defaults write`-level copy of the domain (RECOMMENDED, inert)."""
-    r = subprocess.run(["defaults", "delete", policy_domain(bundle_id)], capture_output=True)
-    return r.returncode == 0
-
-
 # ---------------------------------------------------------------------------
 # Browser lifecycle: Chromium reads user-level policy at launch
 # ---------------------------------------------------------------------------
 
 def is_running(app: Path) -> bool:
-    r = subprocess.run(["pgrep", "-f", f"{app}/Contents/MacOS/"], capture_output=True)
+    """True when this user's main browser process (not a helper) is up."""
+    r = subprocess.run(["pgrep", "-u", str(os.getuid()), "-f", f"^{app}/Contents/MacOS/[^/ ]+( |$)"],
+                       capture_output=True)
     return r.returncode == 0
 
 
@@ -269,28 +268,35 @@ def leveldb_log_kv(db_dir: Path) -> dict[bytes, bytes | None]:
     """Newest value per key from a LevelDB's *.log files; None = deleted."""
     latest: dict[bytes, tuple[int, bytes | None]] = {}
     for log in sorted(glob.glob(str(db_dir / "*.log"))):
-        for batch in _log_batches(Path(log)):
-            if len(batch) < 12:
-                continue
-            seq, cnt = struct.unpack("<QI", batch[:12])
-            i = 0 + 12
-            for n in range(cnt):
-                if i >= len(batch):
-                    break
-                kind = batch[i]
-                i += 1
-                klen, i = _varint(batch, i)
-                key = batch[i:i + klen]
-                i += klen
-                val = None
-                if kind == 1:
-                    vlen, i = _varint(batch, i)
-                    val = batch[i:i + vlen]
-                    i += vlen
-                prev = latest.get(key)
-                if prev is None or seq + n > prev[0]:
-                    latest[key] = (seq + n, val)
+        try:
+            for batch in _log_batches(Path(log)):
+                _merge_batch(batch, latest)
+        except (IndexError, struct.error):
+            continue  # torn tail — the browser is mid-write; keep what parsed
     return {k: v for k, (_, v) in latest.items()}
+
+
+def _merge_batch(batch: bytes, latest: dict[bytes, tuple[int, bytes | None]]) -> None:
+    if len(batch) < 12:
+        return
+    seq, cnt = struct.unpack("<QI", batch[:12])
+    i = 12
+    for n in range(cnt):
+        if i >= len(batch):
+            return
+        kind = batch[i]
+        i += 1
+        klen, i = _varint(batch, i)
+        key = batch[i:i + klen]
+        i += klen
+        val = None
+        if kind == 1:
+            vlen, i = _varint(batch, i)
+            val = batch[i:i + vlen]
+            i += vlen
+        prev = latest.get(key)
+        if prev is None or seq + n > prev[0]:
+            latest[key] = (seq + n, val)
 
 
 def profiles(user_data: Path) -> dict[str, str]:
@@ -369,13 +375,23 @@ def provision(script_paths: list[Path], names: list[str] | None = None,
     if not targets:
         err("no supported browser installed (Arc, Chrome, Brave)")
         return 1
-    paths = write_policies(entry, [b for _, b, _ in targets])
-    for (name, bundle, _), p in zip(targets, paths):
+    stale = []
+    for name, bundle, app in targets:
+        if [e.get("hash") for e in read_policy(bundle)] == [entry["hash"]]:
+            ok(f"{name}: policy already current ({entry['hash'][:12]}…) — nothing to do")
+        else:
+            stale.append((name, bundle, app))
+    if not stale:
+        return 0
+    try:
+        paths = write_policies(entry, [b for _, b, _ in stale])
+    except subprocess.CalledProcessError as e:
+        err(f"could not write {MANAGED_PREFS_DIR} (sudo failed or no tty): {e}")
+        return 1
+    for (name, _, _), p in zip(stale, paths):
         ok(f"{name}: jsonImport policy written to {p} ({entry['hash'][:12]}…)")
-        if drop_user_level_policy(bundle):
-            info(f"{name}: removed the user-level copy in ~/Library/Preferences (Chromium ignores it)")
     rc = 0
-    for name, _, app in targets:
+    for name, _, app in stale:
         if not (restart and is_running(app)):
             continue
         info(f"{name}: quitting so the policy is read at launch…")
@@ -398,10 +414,10 @@ def print_status(names: list[str] | None = None) -> int:
         warn("no supported browser installed")
         return 1
     for name, b in st.items():
-        info(f"{name}: policy hashes in defaults: {[h[:12] + '…' for h in b['policy']] or 'none'}")
+        info(f"{name}: policy hashes in Managed Preferences: {[str(h)[:12] + '…' for h in b['policy']] or 'none'}")
         for label, p in b["profiles"].items():
-            d = [h[:12] + "…" for h in p["delivered"]] or "none"
-            c = [h[:12] + "…" for h in p["consumed"]] or "none"
+            d = [str(h)[:12] + "…" for h in p["delivered"]] or "none"
+            c = [str(h)[:12] + "…" for h in p["consumed"]] or "none"
             print(f"  [{label}] delivered: {d}  consumed: {c}")
             for n, v in sorted(p["installed"].items()):
                 print(f"           installed (seen in log): {n} {v}")
@@ -422,8 +438,7 @@ def main(argv: list[str] | None = None) -> int:
         chosen = [(n, b) for n, (b, app, _) in BROWSERS.items()
                   if app.exists() and (not a.browser or n in a.browser)]
         clear_policies([b for _, b in chosen])
-        for n, b in chosen:
-            drop_user_level_policy(b)
+        for n, _ in chosen:
             ok(f"{n}: policy removed")
         return 0
     if a.status:
