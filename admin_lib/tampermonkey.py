@@ -11,12 +11,14 @@ policy, and on macOS a per-extension policy is an ordinary preference domain:
     <browser bundle id>.extensions.<extension id>   →   { jsonImport = [...] }
 
 So installing a script is: build the JSON, hash it the way TM does, write one
-plist into that domain with `defaults import`. No server is needed — the JSON
-travels inside a `data:` URL. Chromium reads user-level policy at launch, so a
-running browser is quit (it restores its windows) and relaunched around the
-write; TM then applies the policy on its next service worker start. Every
-profile of the browser sees the same policy, which is the point: one command,
-every profile.
+plist per browser into `/Library/Managed Preferences/<user>/<domain>.plist`
+(one sudo — that directory is the *forced* layer, and Chromium only hands
+MANDATORY policy to chrome.storage.managed; a plain `defaults write` lands as
+RECOMMENDED and is silently dropped). No server is needed — the JSON travels
+inside a `data:` URL. Chromium reads the policy at launch, so a running browser
+is quit (it restores its windows) and relaunched after the write; TM then
+applies the policy on its next service worker start. Every profile of the
+browser sees the same policy, which is the point: one command, every profile.
 
 The hash (`1:<sha256>`) is TM's structural hash of the *parsed* JSON, not of
 the bytes: leaves hash as sha256("<typeof>:<value>"), arrays hash the
@@ -135,37 +137,62 @@ def policy_entry(doc: dict) -> dict:
 # Policy write / read (macOS preference domains)
 # ---------------------------------------------------------------------------
 
+#: Where macOS keeps *forced* preferences for the current user. Chromium tags a
+#: value from here MANDATORY; the same key in ~/Library/Preferences (a plain
+#: `defaults write`) is only RECOMMENDED, and chrome.storage.managed drops
+#: everything but MANDATORY (policy_value_store.cc: "Only include mandatory
+#: policies for now"). Root-owned, hence the sudo below.
+MANAGED_PREFS_DIR = Path("/Library/Managed Preferences") / os.environ.get("USER", "")
+
+
 def policy_domain(bundle_id: str, ext_id: str = TAMPERMONKEY_ID) -> str:
     return f"{bundle_id}.extensions.{ext_id}"
 
 
-def write_policy(bundle_id: str, entry: dict) -> str:
-    """Replace the domain's `jsonImport` with [entry]. Returns the domain."""
-    domain = policy_domain(bundle_id)
-    with tempfile.NamedTemporaryFile(suffix=".plist", delete=False) as f:
-        plistlib.dump({"jsonImport": [entry]}, f)
-        path = f.name
-    try:
-        subprocess.run(["defaults", "import", domain, path], check=True)
-    finally:
-        os.unlink(path)
-    return domain
+def policy_path(bundle_id: str) -> Path:
+    return MANAGED_PREFS_DIR / f"{policy_domain(bundle_id)}.plist"
+
+
+def write_policies(entry: dict, bundle_ids: list[str]) -> list[Path]:
+    """Install {jsonImport: [entry]} as a forced preference for each bundle id.
+
+    One `sudo` prompt covers every browser: the plists are staged in a temp
+    dir and installed root-owned in a single call.
+    """
+    staged: list[Path] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for b in bundle_ids:
+            p = Path(tmp) / policy_path(b).name
+            with open(p, "wb") as f:
+                plistlib.dump({"jsonImport": [entry]}, f)
+            staged.append(p)
+        subprocess.run(["sudo", "-p", f"[admin tampermonkey] sudo password (writes {MANAGED_PREFS_DIR}): ",
+                        "install", "-d", "-m", "755", "-o", "root", "-g", "wheel", str(MANAGED_PREFS_DIR)],
+                       check=True)
+        subprocess.run(["sudo", "install", "-m", "644", "-o", "root", "-g", "wheel",
+                        *map(str, staged), str(MANAGED_PREFS_DIR)], check=True)
+    return [policy_path(b) for b in bundle_ids]
 
 
 def read_policy(bundle_id: str) -> list[dict]:
-    domain = policy_domain(bundle_id)
-    r = subprocess.run(["defaults", "export", domain, "-"], capture_output=True)
-    if r.returncode != 0 or not r.stdout.strip():
-        return []
+    p = policy_path(bundle_id)
     try:
-        return list(plistlib.loads(r.stdout).get("jsonImport", []))
-    except Exception:
+        with open(p, "rb") as f:
+            return list(plistlib.load(f).get("jsonImport", []))
+    except (OSError, ValueError):
         return []
 
 
-def clear_policy(bundle_id: str) -> None:
-    subprocess.run(["defaults", "delete", policy_domain(bundle_id)],
-                   capture_output=True)
+def clear_policies(bundle_ids: list[str]) -> None:
+    paths = [str(policy_path(b)) for b in bundle_ids if policy_path(b).exists()]
+    if paths:
+        subprocess.run(["sudo", "rm", "-f", *paths], check=True)
+
+
+def drop_user_level_policy(bundle_id: str) -> bool:
+    """Remove a `defaults write`-level copy of the domain (RECOMMENDED, inert)."""
+    r = subprocess.run(["defaults", "delete", policy_domain(bundle_id)], capture_output=True)
+    return r.returncode == 0
 
 
 # ---------------------------------------------------------------------------
@@ -342,21 +369,22 @@ def provision(script_paths: list[Path], names: list[str] | None = None,
     if not targets:
         err("no supported browser installed (Arc, Chrome, Brave)")
         return 1
+    paths = write_policies(entry, [b for _, b, _ in targets])
+    for (name, bundle, _), p in zip(targets, paths):
+        ok(f"{name}: jsonImport policy written to {p} ({entry['hash'][:12]}…)")
+        if drop_user_level_policy(bundle):
+            info(f"{name}: removed the user-level copy in ~/Library/Preferences (Chromium ignores it)")
     rc = 0
-    for name, bundle, app in targets:
-        relaunch = False
-        if restart and is_running(app):
-            info(f"{name}: quitting so the policy is read at launch…")
-            if quit_browser(app):
-                relaunch = True
-            else:
-                err(f"{name}: did not quit within 30s — policy written anyway; relaunch it yourself")
-                rc = 1
-        domain = write_policy(bundle, entry)
-        ok(f"{name}: jsonImport policy written to {domain} ({entry['hash'][:12]}…)")
-        if relaunch:
+    for name, _, app in targets:
+        if not (restart and is_running(app)):
+            continue
+        info(f"{name}: quitting so the policy is read at launch…")
+        if quit_browser(app):
             launch_browser(app)
             ok(f"{name}: relaunched")
+        else:
+            err(f"{name}: did not quit within 30s — relaunch it yourself")
+            rc = 1
     for s in doc["scripts"]:
         info(f"  script: {s['name']}")
     info("Tampermonkey applies the policy when its service worker next starts. "
@@ -391,10 +419,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="write the policy without quitting/relaunching a running browser")
     a = ap.parse_args(argv)
     if a.clear:
-        for n, (b, app, _) in BROWSERS.items():
-            if app.exists() and (not a.browser or n in a.browser):
-                clear_policy(b)
-                ok(f"{n}: policy domain removed")
+        chosen = [(n, b) for n, (b, app, _) in BROWSERS.items()
+                  if app.exists() and (not a.browser or n in a.browser)]
+        clear_policies([b for _, b in chosen])
+        for n, b in chosen:
+            drop_user_level_policy(b)
+            ok(f"{n}: policy removed")
         return 0
     if a.status:
         if a.json:
