@@ -122,3 +122,33 @@ def test_profile_status_reads_delivery_and_installed_scripts(tmp_path):
     st = tm.profile_status(tmp_path, "Profile 1")
     assert st["delivered"] == ["1:abc"]
     assert st["installed"] == {"demo bridge": "1.2.3"}
+
+
+def test_provision_quits_running_browser_writes_then_relaunches(monkeypatch, tmp_path):
+    p = tmp_path / "demo.user.js"
+    p.write_text(SCRIPT, encoding="utf-8")
+    app = tmp_path / "Fake.app"
+    app.mkdir()
+    monkeypatch.setattr(tm, "BROWSERS", {"Fake": ("fake.bundle", app, tmp_path)})
+    order = []
+    monkeypatch.setattr(tm, "is_running", lambda a: True)
+    monkeypatch.setattr(tm, "quit_browser", lambda a, timeout=30.0: order.append("quit") or True)
+    monkeypatch.setattr(tm, "write_policy", lambda b, e: order.append("write") or "fake.bundle.extensions.x")
+    monkeypatch.setattr(tm, "launch_browser", lambda a: order.append("launch"))
+    assert tm.provision([p]) == 0
+    assert order == ["quit", "write", "launch"]
+
+
+def test_provision_no_restart_leaves_browser_alone(monkeypatch, tmp_path):
+    p = tmp_path / "demo.user.js"
+    p.write_text(SCRIPT, encoding="utf-8")
+    app = tmp_path / "Fake.app"
+    app.mkdir()
+    monkeypatch.setattr(tm, "BROWSERS", {"Fake": ("fake.bundle", app, tmp_path)})
+    order = []
+    monkeypatch.setattr(tm, "is_running", lambda a: True)
+    monkeypatch.setattr(tm, "quit_browser", lambda a, timeout=30.0: order.append("quit") or True)
+    monkeypatch.setattr(tm, "write_policy", lambda b, e: order.append("write") or "d")
+    monkeypatch.setattr(tm, "launch_browser", lambda a: order.append("launch"))
+    assert tm.provision([p], restart=False) == 0
+    assert order == ["write"]
