@@ -73,20 +73,36 @@ def test_policy_entry_embeds_document_as_data_url_and_hashes_parsed_value(tmp_pa
     assert json.loads(base64.b64decode(e["url"][len(prefix):])) == doc
 
 
-def test_write_policy_imports_a_plist_with_real_booleans(monkeypatch):
-    seen = {}
+def test_write_policies_installs_forced_plists_root_owned_in_one_sudo(monkeypatch, tmp_path):
+    monkeypatch.setattr(tm, "MANAGED_PREFS_DIR", tmp_path / "managed")
+    calls = []
 
     def fake_run(cmd, check=False, **kw):
-        assert cmd[:2] == ["defaults", "import"]
-        seen["domain"] = cmd[2]
-        seen["plist"] = plistlib.load(open(cmd[3], "rb"))
+        calls.append(cmd)
+        if cmd[:2] == ["sudo", "install"]:  # the file install: capture the staged plists
+            for src in cmd[cmd.index("wheel") + 1:-1]:
+                calls.append(("staged", Path(src).name, plistlib.load(open(src, "rb"))))
 
     monkeypatch.setattr(tm.subprocess, "run", fake_run)
     entry = {"hash": "1:ab", "url": "data:x", "haltOnError": False, "installAsSystemScripts": False}
-    domain = tm.write_policy("company.thebrowser.Browser", entry)
-    assert domain == seen["domain"] == "company.thebrowser.Browser.extensions." + tm.TAMPERMONKEY_ID
-    assert seen["plist"] == {"jsonImport": [entry]}
-    assert seen["plist"]["jsonImport"][0]["haltOnError"] is False
+    paths = tm.write_policies(entry, ["company.thebrowser.Browser", "com.brave.Browser"])
+    assert paths == [tmp_path / "managed" / f"company.thebrowser.Browser.extensions.{tm.TAMPERMONKEY_ID}.plist",
+                     tmp_path / "managed" / f"com.brave.Browser.extensions.{tm.TAMPERMONKEY_ID}.plist"]
+    sudo_calls = [c for c in calls if isinstance(c, list)]
+    assert [c[:2] for c in sudo_calls] == [["sudo", "-p"], ["sudo", "install"]]
+    assert sudo_calls[1][-1] == str(tmp_path / "managed") and "-o" in sudo_calls[1] and "root" in sudo_calls[1]
+    staged = [c for c in calls if isinstance(c, tuple)]
+    assert [s[1] for s in staged] == [p.name for p in paths]
+    assert all(s[2] == {"jsonImport": [entry]} and s[2]["jsonImport"][0]["haltOnError"] is False for s in staged)
+
+
+def test_read_policy_reads_the_forced_plist(monkeypatch, tmp_path):
+    monkeypatch.setattr(tm, "MANAGED_PREFS_DIR", tmp_path)
+    entry = {"hash": "1:ab", "url": "data:x"}
+    with open(tm.policy_path("x.y"), "wb") as f:
+        plistlib.dump({"jsonImport": [entry]}, f)
+    assert tm.read_policy("x.y") == [entry]
+    assert tm.read_policy("nope") == []
 
 
 def _log_record(seq, puts):
@@ -124,31 +140,34 @@ def test_profile_status_reads_delivery_and_installed_scripts(tmp_path):
     assert st["installed"] == {"demo bridge": "1.2.3"}
 
 
-def test_provision_quits_running_browser_writes_then_relaunches(monkeypatch, tmp_path):
+def _fake_provision_env(monkeypatch, tmp_path, running=True):
     p = tmp_path / "demo.user.js"
     p.write_text(SCRIPT, encoding="utf-8")
     app = tmp_path / "Fake.app"
     app.mkdir()
     monkeypatch.setattr(tm, "BROWSERS", {"Fake": ("fake.bundle", app, tmp_path)})
     order = []
-    monkeypatch.setattr(tm, "is_running", lambda a: True)
+    monkeypatch.setattr(tm, "is_running", lambda a: running)
     monkeypatch.setattr(tm, "quit_browser", lambda a, timeout=30.0: order.append("quit") or True)
-    monkeypatch.setattr(tm, "write_policy", lambda b, e: order.append("write") or "fake.bundle.extensions.x")
+    monkeypatch.setattr(tm, "write_policies", lambda e, ids: order.append("write") or [tmp_path / f"{b}.plist" for b in ids])
+    monkeypatch.setattr(tm, "drop_user_level_policy", lambda b: False)
     monkeypatch.setattr(tm, "launch_browser", lambda a: order.append("launch"))
+    return p, order
+
+
+def test_provision_writes_then_quits_and_relaunches_a_running_browser(monkeypatch, tmp_path):
+    p, order = _fake_provision_env(monkeypatch, tmp_path)
     assert tm.provision([p]) == 0
-    assert order == ["quit", "write", "launch"]
+    assert order == ["write", "quit", "launch"]
 
 
 def test_provision_no_restart_leaves_browser_alone(monkeypatch, tmp_path):
-    p = tmp_path / "demo.user.js"
-    p.write_text(SCRIPT, encoding="utf-8")
-    app = tmp_path / "Fake.app"
-    app.mkdir()
-    monkeypatch.setattr(tm, "BROWSERS", {"Fake": ("fake.bundle", app, tmp_path)})
-    order = []
-    monkeypatch.setattr(tm, "is_running", lambda a: True)
-    monkeypatch.setattr(tm, "quit_browser", lambda a, timeout=30.0: order.append("quit") or True)
-    monkeypatch.setattr(tm, "write_policy", lambda b, e: order.append("write") or "d")
-    monkeypatch.setattr(tm, "launch_browser", lambda a: order.append("launch"))
+    p, order = _fake_provision_env(monkeypatch, tmp_path)
     assert tm.provision([p], restart=False) == 0
+    assert order == ["write"]
+
+
+def test_provision_does_not_launch_a_browser_that_was_not_running(monkeypatch, tmp_path):
+    p, order = _fake_provision_env(monkeypatch, tmp_path, running=False)
+    assert tm.provision([p]) == 0
     assert order == ["write"]
