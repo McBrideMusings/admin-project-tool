@@ -179,3 +179,34 @@ def test_reuse_timestamp_falls_back_to_now_without_one():
     f._use_color = False
     out = f.format_line("[INFO] [client] hi\n")
     assert out.startswith(datetime.datetime.now().strftime("%H:%M"))
+
+
+# -- hashed scope colors -------------------------------------------------------
+
+def test_scope_color_is_stable_and_case_insensitive():
+    from admin_lib.log_format import scope_color
+    assert scope_color("supabase") == scope_color("SUPABASE")
+    assert scope_color("supabase") == scope_color("supabase")   # pure function
+    assert scope_color("supabase") != scope_color("api")
+
+
+def test_colorize_scopes_colors_tags_but_not_levels():
+    from admin_lib.log_format import colorize_scopes, scope_color
+    out = colorize_scopes("[ERROR] [api] boom")
+    assert out == f"[ERROR] [{scope_color('api')}api\x1b[0m] boom"
+
+
+def test_colorize_scopes_ignores_json_arrays_and_escape_sequences():
+    from admin_lib.log_format import colorize_scopes
+    # A JSON array printed into a message, an empty value, and a line that has
+    # already been level-colorized (its escapes contain "[31m") must all survive.
+    for line in ('scripts ["https://a.js","https://b.js"]', "count=0 userIds=[]",
+                 "[\x1b[31mERROR\x1b[0m] boom"):
+        assert colorize_scopes(line) == line
+
+
+def test_scope_colors_suppressed_by_env(monkeypatch):
+    monkeypatch.setenv("ADMIN_NO_SCOPE_COLORS", "1")
+    f = LogFormatter()
+    f._use_color = True
+    assert "38;5;" not in f.format_line("[api] hello\n")

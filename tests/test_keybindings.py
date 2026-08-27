@@ -345,7 +345,7 @@ def test_bridge_sink_formats_client_lines_like_the_wrapped_process():
     frame.write = written.append
     try:
         kb._install_bridge_sink(kb.make_formatter())
-        log_server._emit_sink("2026-08-27T17:19:01.723Z [ERROR] [client] boom\n")
+        log_server._emit_sink("2026-08-27T17:19:01.723Z [ERROR] [CLIENT] boom\n")
     finally:
         frame.write = real_write
         log_server.set_log_server_sink(None)
@@ -354,4 +354,4 @@ def test_bridge_sink_formats_client_lines_like_the_wrapped_process():
     line = written[0]
     assert re.match(r"^\d{2}:\d{2}:\d{2}  ", line)          # admin's own stamp column
     assert "2026-08-27T17:19" not in line                    # raw ISO stamp replaced
-    assert "[client] boom" in line
+    assert "[CLIENT] boom" in line
