@@ -10,6 +10,7 @@ sys.path.insert(0, str(REPO))
 
 from admin_lib.log_format import (  # noqa: E402
     LogFormatter,
+    normalize_timestamp,
     parse_json_log_line,
     strip_log_timestamp,
 )
@@ -145,3 +146,36 @@ def test_strip_log_timestamp_no_match():
     ts, rest = strip_log_timestamp("no timestamp here")
     assert ts == ""
     assert rest == "no timestamp here"
+
+
+# -- timestamp reuse ----------------------------------------------------------
+
+def test_normalize_timestamp_utc_converts_to_local():
+    import datetime
+    expect = (datetime.datetime(2026, 8, 27, 17, 19, 1, tzinfo=datetime.timezone.utc)
+              .astimezone().strftime("%H:%M:%S"))
+    assert normalize_timestamp("2026-08-27T17:19:01.723Z") == expect
+
+
+def test_normalize_timestamp_bare_time_kept():
+    assert normalize_timestamp("13:18:56.412") == "13:18:56"
+
+
+def test_normalize_timestamp_unparseable_returns_none():
+    assert normalize_timestamp("not-a-time-at-all") is None
+
+
+def test_reuse_timestamp_prints_the_lines_own_time():
+    f = LogFormatter(reuse_timestamp=True)
+    f._use_color = False
+    out = f.format_line("2026-08-27T17:19:01.723Z [INFO] [client] hi\n")
+    assert out.endswith("[INFO] [client] hi\n")
+    assert out.startswith(normalize_timestamp("2026-08-27T17:19:01.723Z"))
+
+
+def test_reuse_timestamp_falls_back_to_now_without_one():
+    import datetime
+    f = LogFormatter(reuse_timestamp=True)
+    f._use_color = False
+    out = f.format_line("[INFO] [client] hi\n")
+    assert out.startswith(datetime.datetime.now().strftime("%H:%M"))

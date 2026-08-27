@@ -77,6 +77,24 @@ installed tool to be reinstalled afterwards.
 - The pytest run writes its log under a temp dir, not this repo's `tmp/` — the
   `→ wrote: .../T/tmp…/tmp/run.log` line at the end is normal, not a stray path bug.
 
+## Log-bridge rendering
+
+Bridged browser lines must be indistinguishable from the wrapped process's own output.
+Verify without a browser by POSTing a batch at a live listener:
+
+```bash
+curl -s -X POST http://127.0.0.1:9988/log -H 'Content-Type: application/json' \
+  -d '[{"timestamp":"2026-08-27T17:19:01.723Z","level":"error","message":"boom\n    at f (a.js:1)","host":"localhost"}]'
+```
+
+- Pass: the terminal running the action prints `HH:MM:SS  [ERROR] [client] boom` with ERROR
+  in the same red as the server's own `[ERROR]`, the continuation line indented under it and
+  stamped too, and the pinned footer still intact (the line goes through `frame.write`).
+- The `HH:MM:SS` shown is the *entry's* timestamp converted to local time, not arrival —
+  a stamp an hour off means `LogFormatter(reuse_timestamp=True)` lost the tz conversion.
+- Uncolored, ISO-stamped, footer-overwriting lines mean the sink was never installed;
+  `keybindings._install_bridge_sink` is what wires it.
+
 ## Tampermonkey provisioning (`admin tampermonkey`)
 
 `admin_lib/tampermonkey.py` installs `tampermonkey/log-bridge.user.js` into every profile

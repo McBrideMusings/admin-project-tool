@@ -7,10 +7,14 @@ import datetime
 
 from .core import C
 
+# Each pattern eats at most ONE space after the stamp, not the whole run: the
+# rest is the line's own indentation, and a stack trace's continuation lines are
+# unreadable without it (they are what a log file's timestamped multi-line
+# records mostly consist of).
 _TIMESTAMP_PATTERNS = [
-    re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[.,]\d+([+-]\d{4}|Z)?\s*"),
-    re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}([+-]\d{4}|Z)?\s*"),
-    re.compile(r"^\d{2}:\d{2}:\d{2}[.,]?\d*\s*"),
+    re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[.,]\d+([+-]\d{4}|Z)?[ \t]?"),
+    re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}([+-]\d{4}|Z)?[ \t]?"),
+    re.compile(r"^\d{2}:\d{2}:\d{2}[.,]?\d*[ \t]?"),
 ]
 
 
@@ -24,6 +28,41 @@ def strip_log_timestamp(line: str) -> tuple[str, str]:
         if m:
             return line[:m.end()].rstrip(), line[m.end():]
     return "", line
+
+
+_BARE_TIME_RE = re.compile(r"^(\d{2}):(\d{2}):(\d{2})")
+
+
+def normalize_timestamp(ts: str, fmt: str = "%H:%M:%S") -> str | None:
+    """Render a timestamp already present in a log line as local `fmt`.
+
+    Accepts what `strip_log_timestamp` yields: an ISO-8601 stamp (`Z`, an
+    offset, or naive) or a bare `HH:MM:SS[.f]` wall clock. A stamp carrying a
+    timezone is converted to local time, so a browser's UTC `2026-08-27T17:19:01.723Z`
+    prints in the same column, in the same zone, as a local process's own lines.
+    Returns None when nothing parses — the caller falls back to arrival time.
+    """
+    s = ts.strip()
+    if not s:
+        return None
+    m = _BARE_TIME_RE.match(s)
+    if m:
+        h, mi, sec = (int(g) for g in m.groups())
+        try:
+            return datetime.datetime.now().replace(
+                hour=h, minute=mi, second=sec, microsecond=0).strftime(fmt)
+        except ValueError:
+            return None
+    s = s.replace(",", ".")
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone()
+    return dt.strftime(fmt)
 
 
 _LEVEL_COLORS = [
@@ -79,8 +118,18 @@ def parse_json_log_line(line: str) -> dict | None:
 
 
 class LogFormatter:
-    def __init__(self, timestamp_fmt="%H:%M:%S"):
+    """Stamp every line with one timestamp format and colorize its level.
+
+    reuse_timestamp: when the line already carries its own timestamp, print
+    that (converted to local time) instead of the moment the line arrived.
+    Off by default — a subprocess's stamp is usually a duplicate of now(). On
+    for sources where arrival time is a lie: log-bridge entries batched up to a
+    second in the browser, and a log file replayed by `admin logs`.
+    """
+
+    def __init__(self, timestamp_fmt="%H:%M:%S", reuse_timestamp=False):
         self._fmt = timestamp_fmt
+        self._reuse_timestamp = reuse_timestamp
         self._use_color = sys.stdout.isatty()
 
     def format_line(self, raw_line):
@@ -88,15 +137,19 @@ class LogFormatter:
         if not line.strip():
             return raw_line
 
+        ts = None
         parsed = parse_json_log_line(line)
         if parsed is not None:
             line = self._render_json(parsed)
         else:
-            line = self._strip_timestamp(line)
+            stamp, line = strip_log_timestamp(line)
+            if self._reuse_timestamp and stamp:
+                ts = normalize_timestamp(stamp, self._fmt)
             if self._use_color:
                 line = self._colorize_level(line)
 
-        ts = datetime.datetime.now().strftime(self._fmt)
+        if ts is None:
+            ts = datetime.datetime.now().strftime(self._fmt)
         return f"{ts}  {line}\n"
 
     def _render_json(self, parsed: dict) -> str:
@@ -114,10 +167,6 @@ class LogFormatter:
             parts.append(f"{C.DIM}{logger}{C.RESET}" if self._use_color else logger)
         parts.append(message)
         return "  ".join(parts)
-
-    def _strip_timestamp(self, line: str) -> str:
-        _, rest = strip_log_timestamp(line)
-        return rest
 
     def _colorize_level(self, line):
         for pat, color in _LEVEL_COLORS:

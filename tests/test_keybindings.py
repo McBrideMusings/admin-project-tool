@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -330,3 +331,27 @@ def test_run_inline_spawns_subshell():
 # Runner
 # ---------------------------------------------------------------------------
 
+
+
+def test_bridge_sink_formats_client_lines_like_the_wrapped_process():
+    """A bridged browser line and a wrapped-process line render identically:
+    same timestamp column, same level color, and both through frame.write so
+    the pinned footer survives."""
+    import admin_lib.keybindings as kb
+    from admin_lib import frame, log_server
+
+    written = []
+    real_write = frame.write
+    frame.write = written.append
+    try:
+        kb._install_bridge_sink(kb.make_formatter())
+        log_server._emit_sink("2026-08-27T17:19:01.723Z [ERROR] [client] boom\n")
+    finally:
+        frame.write = real_write
+        log_server.set_log_server_sink(None)
+
+    assert len(written) == 1
+    line = written[0]
+    assert re.match(r"^\d{2}:\d{2}:\d{2}  ", line)          # admin's own stamp column
+    assert "2026-08-27T17:19" not in line                    # raw ISO stamp replaced
+    assert "[client] boom" in line

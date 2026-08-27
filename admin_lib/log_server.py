@@ -48,11 +48,45 @@ def set_log_server_state(*, log_path, hosts, project, pid, started_at, port):
     _LOG_BRIDGE_STATE["port"] = port
 
 
+# Console levels → the level words admin's formatter knows how to color
+# (admin_lib/log_format._LEVEL_COLORS). `console.log` is the browser's default
+# level and carries no severity of its own — it maps to INFO so a bridged line
+# and a server line at the same severity print the same word in the same color.
+_CONSOLE_LEVELS = {
+    "log": "INFO",
+    "info": "INFO",
+    "warn": "WARN",
+    "warning": "WARN",
+    "error": "ERROR",
+    "debug": "DEBUG",
+    "trace": "TRACE",
+}
+
+
 def format_log_bridge_entry(entry: dict) -> str:
+    """One bridged console entry as one or more log lines.
+
+    Shape is `<iso-timestamp> [LEVEL] [client] <message>` — the same
+    `[LEVEL] <scope> message` order a server process prints, so both streams
+    render identically once admin's formatter strips the timestamp and
+    colorizes the level. The full ISO stamp stays in the file because the file
+    is the only place the entry's own time survives; `admin logs` and the live
+    terminal both re-render it as local `HH:MM:SS`.
+
+    A message carrying newlines (a stack trace) becomes one stamped line per
+    physical line, indentation preserved, with the level and `[client]` tag on
+    the head line only — how a server's multi-line output already arrives, one
+    pipe read per line.
+    """
     ts = entry.get("timestamp") or datetime.datetime.now(datetime.timezone.utc).isoformat()
-    level = (entry.get("level") or "log").lower()
-    msg = entry.get("message") or ""
-    return f"{ts} [client] [{level}] {msg}\n"
+    raw = (entry.get("level") or "log").lower()
+    level = _CONSOLE_LEVELS.get(raw, raw.upper())
+    msg = (entry.get("message") or "").rstrip("\n")
+    head, *rest = msg.split("\n")
+    out = f"{ts} [{level}] [client] {head}\n"
+    for cont in rest:
+        out += f"{ts} {cont}\n"
+    return out
 
 
 def _entry_host(entry: dict) -> str:
@@ -79,7 +113,11 @@ def append_log_bridge_entries(entries: Iterable[dict], *, user_agent: str = "") 
     if seen_key and seen_key not in _SEEN_CLIENTS:
         _SEEN_CLIENTS.add(seen_key)
         lines.append(f"[log-bridge] client connected: {host or 'unknown host'}  ({user_agent or 'unknown'})\n")
-    lines.extend(format_log_bridge_entry(e) for e in entries_list)
+    for e in entries_list:
+        # One physical line per element — an entry whose message spans several
+        # lines expands here, so the sink (a line-at-a-time formatter) stamps
+        # every one of them rather than only the first.
+        lines.extend(format_log_bridge_entry(e).splitlines(keepends=True))
     with open(path, "a") as f:
         f.writelines(lines)
     if _emit_sink is not None:
