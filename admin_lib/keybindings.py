@@ -29,7 +29,10 @@ from .core import (
     err,
 )
 from .log_bridge import start_log_bridge, stop_log_bridge
+from .log_format import make_formatter
+from .log_server import set_log_server_sink
 from .streams import OutputPump
+from . import frame
 
 
 def _safe_ident(name: str) -> str:
@@ -115,6 +118,25 @@ def _format_banner(keys, label):
     return prefix + " · ".join(parts)
 
 
+def _install_bridge_sink(formatter):
+    """Route log-bridge lines through this action's formatter and `frame.write`.
+
+    Without a sink the bridge writes straight to stdout: unstamped, uncolored,
+    and — under a pinned footer — painting over the footer rows. The sink puts
+    browser lines on the same path the wrapped process's own output takes, so
+    the two streams are indistinguishable in the terminal.
+
+    Bridge lines get their own LogFormatter rather than the caller's, because
+    only they carry a timestamp worth keeping (the browser's, up to a second
+    older than arrival — see the batching in tampermonkey/log-bridge.user.js).
+    """
+    if formatter is None:
+        set_log_server_sink(frame.write)
+        return
+    fmt = make_formatter(reuse_timestamp=True)
+    set_log_server_sink(lambda line: frame.write(fmt(line)))
+
+
 def run_with_keybindings(cmd, keys, *, label=None, formatter=None, shell=True):
     """Run `cmd` as a long-lived subprocess; dispatch keystrokes to bindings.
 
@@ -125,6 +147,7 @@ def run_with_keybindings(cmd, keys, *, label=None, formatter=None, shell=True):
     """
     os.makedirs(get_log_dir(), exist_ok=True)
     start_log_bridge(get_log_file())
+    _install_bridge_sink(formatter)
     _user_exit = False
 
     def _on_sigint(signum, frame):
@@ -222,5 +245,6 @@ def run_with_keybindings(cmd, keys, *, label=None, formatter=None, shell=True):
             _children.remove(proc)
         log_fh.close()
         stop_log_bridge()
+        set_log_server_sink(None)
         signal.signal(signal.SIGINT, old_sigint)
         signal.signal(signal.SIGTERM, old_sigterm)

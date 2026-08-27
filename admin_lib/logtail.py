@@ -56,8 +56,8 @@ class LineRenderer:
     stdout is not a TTY, so piped/captured output stays plain.
     """
 
-    def __init__(self, highlight=None):
-        self._fmt = make_formatter()
+    def __init__(self, highlight=None, reuse_timestamp=False):
+        self._fmt = make_formatter(reuse_timestamp=reuse_timestamp)
         self._use_color = sys.stdout.isatty()
         self._patterns = []
         for pat in highlight or []:
@@ -291,7 +291,7 @@ def _start_bridge_session(highlight):
         return lambda: None
     # Bridged [client] lines render through the same formatter+highlight as the
     # tailed source, so the two streams look uniform when interleaved.
-    set_log_server_sink(LineRenderer(highlight).write)
+    set_log_server_sink(LineRenderer(highlight, reuse_timestamp=True).write)
     # append_log_bridge_entries needs a real log_path or it drops entries; fall
     # back to a temp file when the command isn't tee'd to one.
     start_log_bridge(get_log_file() or "/tmp/admin-project-tool-logs-bridge.log")

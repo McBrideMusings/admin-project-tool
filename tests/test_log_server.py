@@ -36,10 +36,10 @@ def test_sink_receives_lines_and_suppresses_stdout(tmp_path, capsys):
     assert written == 1
     # Sink got the banner line + the entry line; nothing went to raw stdout.
     assert any("client connected" in ln for ln in received)
-    assert any("[client] [info] hi" in ln for ln in received)
+    assert any("[INFO] [client] hi" in ln for ln in received)
     assert capsys.readouterr().out == ""
     # File append still happens regardless of the sink.
-    assert "[client] [info] hi" in log_file.read_text()
+    assert "[INFO] [client] hi" in log_file.read_text()
 
 
 def test_format_entry_includes_timestamp_level_message():
@@ -48,12 +48,12 @@ def test_format_entry_includes_timestamp_level_message():
         "level": "WARN",
         "message": "hello",
     })
-    assert out == "2026-05-19T14:23:01.234Z [client] [warn] hello\n"
+    assert out == "2026-05-19T14:23:01.234Z [WARN] [client] hello\n"
 
 
 def test_format_entry_synthesizes_timestamp_when_missing():
     out = log_server.format_log_bridge_entry({"message": "x"})
-    assert " [client] [log] x\n" in out
+    assert " [INFO] [client] x\n" in out
 
 
 def test_append_entries_noop_when_log_path_unset():
@@ -74,8 +74,8 @@ def test_append_entries_writes_lines_to_log_path(tmp_path):
     assert written == 2
     contents = log_file.read_text().splitlines()
     assert len(contents) == 2
-    assert "[client] [info] first" in contents[0]
-    assert "[client] [error] second" in contents[1]
+    assert "[INFO] [client] first" in contents[0]
+    assert "[ERROR] [client] second" in contents[1]
 
 
 def test_append_entries_appends_to_existing_log(tmp_path):
@@ -87,7 +87,7 @@ def test_append_entries_appends_to_existing_log(tmp_path):
     log_server.append_log_bridge_entries([{"message": "added"}])
     lines = log_file.read_text().splitlines()
     assert lines[0] == "preexisting line"
-    assert "[client] [log] added" in lines[1]
+    assert "[INFO] [client] added" in lines[1]
 
 
 def test_connect_banner_prints_host_and_browser_once(tmp_path):
@@ -195,9 +195,9 @@ def test_log_endpoint_appends_to_log_file(running_server):
     assert body == {"written": 2}
     # The first POST from a new client also emits a one-time `client connected`
     # banner line ahead of the entries — filter it out before indexing entries.
-    entry_lines = [ln for ln in log_file.read_text().splitlines() if "[client] [" in ln]
-    assert "[client] [info] m1" in entry_lines[0]
-    assert "[client] [error] m2" in entry_lines[1]
+    entry_lines = [ln for ln in log_file.read_text().splitlines() if "[client] " in ln]
+    assert "[INFO] [client] m1" in entry_lines[0]
+    assert "[ERROR] [client] m2" in entry_lines[1]
 
 
 def test_log_endpoint_rejects_non_array(running_server):
@@ -218,3 +218,27 @@ def test_unknown_path_returns_404(running_server):
     with pytest.raises(urllib.error.HTTPError) as exc:
         urllib.request.urlopen(f"http://127.0.0.1:{port}/something-else", timeout=2)
     assert exc.value.code == 404
+
+
+def test_multiline_message_becomes_one_stamped_line_each(tmp_path):
+    """A stack trace arrives as one entry with newlines; it must land as one
+    timestamped line per physical line, the way a server's own trace does."""
+    log_file = tmp_path / "session.log"
+    log_server.set_log_server_state(
+        log_path=str(log_file), hosts=["x"], project="p", pid=1, started_at="t", port=1,
+    )
+    received = []
+    log_server.set_log_server_sink(received.append)
+    log_server.append_log_bridge_entries([{
+        "timestamp": "2026-08-27T17:19:01.723Z",
+        "level": "error",
+        "message": "boom\n    at f (a.js:1)\n    at g (a.js:2)",
+        "host": "app.example.net",
+    }])
+    entry_lines = [ln for ln in received if "client connected" not in ln]
+    assert entry_lines == [
+        "2026-08-27T17:19:01.723Z [ERROR] [client] boom\n",
+        "2026-08-27T17:19:01.723Z     at f (a.js:1)\n",
+        "2026-08-27T17:19:01.723Z     at g (a.js:2)\n",
+    ]
+    assert log_file.read_text().endswith("2026-08-27T17:19:01.723Z     at g (a.js:2)\n")
