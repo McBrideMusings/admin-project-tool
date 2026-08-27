@@ -7,6 +7,7 @@ configured. Stdlib only — http.server + threading.
 from __future__ import annotations
 
 import json
+import re
 import socket
 import sys
 import threading
@@ -15,11 +16,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Iterable
 from urllib.parse import urlparse
 
+from .log_format import normalize_timestamp
+
 _SEEN_CLIENTS: set[str] = set()
 
 # Optional per-line output sink. When set, emitted client lines go through it
 # instead of a raw stdout write — `admin logs` uses this to render bridged
-# [client] lines through the same LineRenderer as the tailed stream. The
+# [CLIENT] lines through the same LineRenderer as the tailed stream. The
 # log-file append is unaffected. None restores the default stdout behavior.
 _emit_sink = None
 
@@ -63,10 +66,37 @@ _CONSOLE_LEVELS = {
 }
 
 
+# An app's own logger prefix, printed *into* the console message: a wall clock,
+# then its own level. reddit-poker's is built at apps/devvit/src/lib/logger.ts,
+# and the shape is common enough to be worth unwrapping — every such line
+# otherwise arrives double-stamped and double-levelled, with the browser's level
+# wrong on top of it (a logger that routes debug through console.log reports as
+# `log`). Anything after the level — `[Messaging]`, a client id — is the app's
+# own scope and is kept.
+_INNER_PREFIX_RE = re.compile(
+    r"^\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\s+"
+    r"\[(ERROR|ERR|FATAL|CRIT|CRITICAL|WARN|WARNING|INFO|DEBUG|TRACE|LOG)\]\s*",
+    re.IGNORECASE,
+)
+
+
+def unwrap_inner_prefix(msg: str) -> tuple[str | None, str]:
+    """Split an app-logger prefix off a console message.
+
+    Returns (level, remainder) — (None, msg) when the message has no such
+    prefix. The stripped timestamp is discarded: the entry's own ISO timestamp
+    is the same instant and carries a date, so nothing is lost.
+    """
+    m = _INNER_PREFIX_RE.match(msg)
+    if not m:
+        return None, msg
+    return m.group(1).upper(), msg[m.end():]
+
+
 def format_log_bridge_entry(entry: dict) -> str:
     """One bridged console entry as one or more log lines.
 
-    Shape is `<iso-timestamp> [LEVEL] [client] <message>` — the same
+    Shape is `<iso-timestamp> [LEVEL] [CLIENT] <message>` — the same
     `[LEVEL] <scope> message` order a server process prints, so both streams
     render identically once admin's formatter strips the timestamp and
     colorizes the level. The full ISO stamp stays in the file because the file
@@ -74,7 +104,7 @@ def format_log_bridge_entry(entry: dict) -> str:
     terminal both re-render it as local `HH:MM:SS`.
 
     A message carrying newlines (a stack trace) becomes one stamped line per
-    physical line, indentation preserved, with the level and `[client]` tag on
+    physical line, indentation preserved, with the level and `[CLIENT]` tag on
     the head line only — how a server's multi-line output already arrives, one
     pipe read per line.
     """
@@ -82,11 +112,38 @@ def format_log_bridge_entry(entry: dict) -> str:
     raw = (entry.get("level") or "log").lower()
     level = _CONSOLE_LEVELS.get(raw, raw.upper())
     msg = (entry.get("message") or "").rstrip("\n")
+    inner, msg = unwrap_inner_prefix(msg)
+    if inner:
+        # The app's own level beats the browser's: a logger that sends debug
+        # through console.log is reported by the browser as `log`.
+        level = _CONSOLE_LEVELS.get(inner.lower(), inner)
     head, *rest = msg.split("\n")
-    out = f"{ts} [{level}] [client] {head}\n"
+    out = f"{ts} [{level}] [CLIENT] {head}\n"
     for cont in rest:
         out += f"{ts} {cont}\n"
     return out
+
+
+def _in_time_order(entries: Iterable[dict]) -> list[dict]:
+    """Sort one POSTed batch by the entries' own timestamps.
+
+    The userscript buffers from document-start but only starts flushing once
+    its listener probe resolves, so a frame's first POST is a backlog whose
+    entries can predate lines another frame already delivered. Sorting the batch
+    puts that backlog in order; a stable sort with the previous valid key
+    carried forward leaves an entry with an unparseable timestamp exactly where
+    the client put it.
+    """
+    out = list(entries)
+    keys = []
+    last = ""
+    for e in out:
+        ts = e.get("timestamp")
+        parsed = normalize_timestamp(ts, "%Y-%m-%dT%H:%M:%S.%f") if ts else None
+        if parsed is not None:
+            last = parsed
+        keys.append(last)
+    return [e for _, e in sorted(zip(keys, out), key=lambda p: p[0])]
 
 
 def _entry_host(entry: dict) -> str:
@@ -105,7 +162,7 @@ def append_log_bridge_entries(entries: Iterable[dict], *, user_agent: str = "") 
     path = _LOG_BRIDGE_STATE["log_path"]
     if not path:
         return 0
-    entries_list = list(entries)
+    entries_list = _in_time_order(entries)
     lines = []
     host = _entry_host(entries_list[0]) if entries_list else ""
     # One connect banner per host (not per line) — notes the host + browser once.

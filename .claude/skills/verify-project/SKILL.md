@@ -87,9 +87,15 @@ curl -s -X POST http://127.0.0.1:9988/log -H 'Content-Type: application/json' \
   -d '[{"timestamp":"2026-08-27T17:19:01.723Z","level":"error","message":"boom\n    at f (a.js:1)","host":"localhost"}]'
 ```
 
-- Pass: the terminal running the action prints `HH:MM:SS  [ERROR] [client] boom` with ERROR
+- Pass: the terminal running the action prints `HH:MM:SS  [ERROR] [CLIENT] boom` with ERROR
   in the same red as the server's own `[ERROR]`, the continuation line indented under it and
   stamped too, and the pinned footer still intact (the line goes through `frame.write`).
+- Post a message shaped like an app's own logger — `"17:36:32.366 [DEBUG] [Messaging] hi"` — and
+  the rendered line must read `HH:MM:SS  [DEBUG] [CLIENT] [Messaging] hi`: the app's level, one
+  timestamp, `[Messaging]` kept. Two timestamps or an `[INFO]` means `unwrap_inner_prefix` missed it.
+- Post a batch with its entries out of order; they must land sorted. Scope tags (`[CLIENT]`,
+  `[Messaging]`) must each be a color, stable across reruns — `ADMIN_NO_SCOPE_COLORS=1` turns
+  that off, which is the fastest way to confirm a coloring bug isn't a terminal-palette problem.
 - The `HH:MM:SS` shown is the *entry's* timestamp converted to local time, not arrival —
   a stamp an hour off means `LogFormatter(reuse_timestamp=True)` lost the tz conversion.
 - Uncolored, ISO-stamped, footer-overwriting lines mean the sink was never installed;

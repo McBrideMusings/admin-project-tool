@@ -1,9 +1,11 @@
 """Generic log formatter — consistent timestamps and level coloring for subprocess output."""
 
 import json
+import os
 import re
 import sys
 import datetime
+import zlib
 
 from .core import C
 
@@ -79,6 +81,63 @@ _LEVEL_COLOR_MAP = {
     "DEBUG": C.DIM, "TRACE": C.DIM,
 }
 
+_LEVEL_WORDS = frozenset(_LEVEL_COLOR_MAP) | {"LOG", "NOTICE", "VERBOSE"}
+
+# Scope tags — `[api]`, `[supabase]`, `[Messaging]` — are an open set: every
+# project invents its own and there are hundreds, so no fixed table can cover
+# them. Each is colored by a hash of its own text instead. CRC32 (not the
+# builtin hash(), which is salted per process) makes the color a pure function
+# of the label: the same tag is the same color in every project, in every run,
+# and in a log file replayed a year later, with nothing cached anywhere.
+# 56 xterm-256 indices, mid-brightness so they read on a light *and* a dark
+# terminal. Deliberately excludes three families: near-cyan, near-red and
+# near-yellow, which would be mistaken for an INFO/ERROR/WARN level word. Size
+# is the collision budget — a project runs 20-30 distinct tags, and at 24
+# colors two of them shared a hue often enough to notice.
+_SCOPE_PALETTE = (
+    32, 33, 38, 39, 41, 42, 43, 47, 48, 49,
+    61, 62, 63, 66, 67, 68, 69, 71, 72, 73, 74, 77, 78, 79,
+    104, 105, 106, 107, 108, 109, 110, 111, 113, 114, 115,
+    133, 134, 135, 139, 140, 141, 143, 144, 145, 146, 147,
+    169, 170, 171, 175, 176, 177, 178, 179, 180, 181,
+)
+
+# A bracketed token, letter-led and space-free. Deliberately narrow: it must not
+# match a JSON array printed into a message (`["https://…"]`), an empty
+# `userIds=[]`, or the `[31m` inside an escape sequence already in the line.
+_SCOPE_RE = re.compile(r"\[([A-Za-z][\w.:@/+-]*)\]")
+
+
+def scope_color(label: str) -> str:
+    """The stable escape sequence for a scope label. Case-insensitive.
+
+    Two dimensions, not one: a hue from the palette, plus bold or not from the
+    next bits of the same hash. 56 hues alone put ~3 collisions in a 20-tag
+    project (`api` and `supabase` among them, which is exactly the pair you
+    read side by side); 112 renderings roughly halve that. Weight is the only
+    second axis available that stays legible on every terminal — brightness and
+    background both fail on someone's color scheme.
+    """
+    h = zlib.crc32(label.lower().encode())
+    idx = _SCOPE_PALETTE[h % len(_SCOPE_PALETTE)]
+    bold = (h // len(_SCOPE_PALETTE)) % 2
+    return f"\033[1;38;5;{idx}m" if bold else f"\033[38;5;{idx}m"
+
+
+def colorize_scopes(line: str) -> str:
+    """Color every bracketed scope tag by hash, leaving the brackets plain.
+
+    Level words are skipped — severity already has meaning-carrying colors from
+    `_LEVEL_COLORS`, and giving ERROR an arbitrary hue would bury it.
+    """
+    def _sub(m):
+        label = m.group(1)
+        if label.upper() in _LEVEL_WORDS:
+            return m.group(0)
+        return f"[{scope_color(label)}{label}{C.RESET}]"
+    return _SCOPE_RE.sub(_sub, line)
+
+
 _JSON_MESSAGE_KEYS = ("message", "msg", "event")
 _JSON_LEVEL_KEYS = ("level", "levelname", "severity")
 _JSON_LOGGER_KEYS = ("logger", "name", "logger_name")
@@ -131,6 +190,7 @@ class LogFormatter:
         self._fmt = timestamp_fmt
         self._reuse_timestamp = reuse_timestamp
         self._use_color = sys.stdout.isatty()
+        self._scope_colors = not os.environ.get("ADMIN_NO_SCOPE_COLORS")
 
     def format_line(self, raw_line):
         line = raw_line.rstrip("\n")
@@ -147,6 +207,8 @@ class LogFormatter:
                 ts = normalize_timestamp(stamp, self._fmt)
             if self._use_color:
                 line = self._colorize_level(line)
+                if self._scope_colors:
+                    line = colorize_scopes(line)
 
         if ts is None:
             ts = datetime.datetime.now().strftime(self._fmt)

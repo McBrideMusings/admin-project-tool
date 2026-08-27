@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         admin-project-tool log bridge
 // @namespace    https://github.com/McBrideMusings/admin-project-tool
-// @version      0.2.2
+// @version      0.2.3
 // @description  Ships console.log/info/warn/error/debug from the browser to a locally-running admin-project-tool listener, so client and server logs interleave in one file. localhost/127.0.0.1 is always watched; any other host is opt-in via a single Tampermonkey menu command. Forwards only when a matching listener is actually running.
 // @match        *://*/*
 // @run-at       document-start
@@ -316,6 +316,13 @@
         headers: { "Content-Type": "application/json" },
       });
     };
+    // Flush the backlog immediately rather than waiting out the first interval.
+    // patchConsole buffers from document-start but this only runs once the
+    // listener probe resolves, so by now the buffer holds everything the page
+    // logged during discovery — up to a second older than lines another frame
+    // has already delivered. Sending it at once keeps the listener's view close
+    // to chronological; log_server sorts each batch to finish the job.
+    flush();
     const id = setInterval(flush, BATCH_INTERVAL_MS);
     // Stop the timer (and flush what's left) when the page goes away — otherwise
     // it keeps firing against a stale target for the page's lifetime.
