@@ -393,6 +393,15 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
     # for multi-target children).
     if "urls" in data:
         meta["urls"] = _norm_urls(data["urls"])
+    # `footer` forces the frame on for an action with no URLs to show. The
+    # footer's first two rows — the elapsed-time rule and the log-file path —
+    # are the part you want from a long-running process you are watching; the
+    # URL rows are a bonus that not every such action has. Without this the only
+    # way to get a log path pinned where you can copy it was to invent a URL.
+    # Tri-state on purpose: absent means "decide from urls", and an explicit
+    # false suppresses a footer a parent target would otherwise pass down.
+    if "footer" in data:
+        meta["footer"] = bool(data["footer"])
     if "watch" in data:
         meta["watch"] = str(data["watch"])
     if "excludes" in data:
@@ -443,6 +452,18 @@ def _to_command(name: str, data: dict, source: str, is_action: bool = False) -> 
                 target_urls[tname] = None
         if any_url_override:
             meta["target_urls"] = target_urls
+        # Per-target `footer`, same tri-state inherit rule: None = take the
+        # parent's answer, True/False decide for this target alone.
+        target_footer: dict[str, bool | None] = {}
+        any_footer_override = False
+        for tname, tdata in inline_targets_raw.items():
+            if "footer" in tdata:
+                target_footer[tname] = bool(tdata["footer"])
+                any_footer_override = True
+            else:
+                target_footer[tname] = None
+        if any_footer_override:
+            meta["target_footer"] = target_footer
         if any(tdata.get("group", 0) != 0 or tdata.get("priority", 0) != 0 for tdata in inline_targets_raw.values()):
             sorted_tgts = sorted(
                 inline_targets_raw.items(),
