@@ -140,20 +140,26 @@ def _sync_core_globals(g: dict) -> None:
 _EMPTY_CMD_ERR = "refusing to run an empty command"
 
 
-def _enter_frame(label, urls):
-    """Pin `urls` to the bottom of the terminal for the life of this action.
+def _enter_frame(label, urls, footer=None):
+    """Pin a footer to the bottom of the terminal for the life of this action.
 
     Returns the frame it started, or None — pass that back to frame.deactivate()
-    so an inner action that declares its own urls tears down only its own frame
+    so an inner action that declares its own footer tears down only its own frame
     and leaves an outer one standing.
 
-    No-op when the action declares no urls; frame.activate() also declines when
-    stdout is not a terminal, so piped and CI runs are unaffected.
+    `footer` is the action's explicit answer and overrides the URL list in both
+    directions: true pins the footer for an action with nothing to link (you
+    still get the elapsed-time rule and the log-file path, which is the half
+    worth having on a long-running process), false suppresses one an action
+    would otherwise get. None means "decide from urls", the original behaviour.
+
+    frame.activate() also declines when stdout is not a terminal, so piped and
+    CI runs are unaffected either way.
     """
-    if not urls:
+    if not (urls if footer is None else footer):
         return None
     from admin_lib.core import get_log_file
-    return frame.activate(label, frame.resolve_urls(urls), get_log_file())
+    return frame.activate(label, frame.resolve_urls(urls or []), get_log_file())
 
 
 def _run_action_shell(cmd_str, **kwargs):
@@ -170,9 +176,10 @@ def _make_shell(cmd, ns):
     pty = bool(cmd.meta.get("pty"))
     watch_kind = cmd.meta.get("watch")
     urls = cmd.meta.get("urls")
+    footer = cmd.meta.get("footer")
 
     def _fn(args):
-        f = _enter_frame(name, urls)
+        f = _enter_frame(name, urls, footer)
         try:
             info(f"running: {resolve_env(run)}")
             collected = [] if watch_kind else None
@@ -262,6 +269,17 @@ def _make_multi_target(cmd, ns):
         override = target_urls_meta.get(tname)
         resolved_target_urls[tname] = list(parent_urls) if override is None else list(override)
 
+    # And for the explicit `footer` answer, which overrides the URL list either
+    # way. Stays tri-state through the merge: a target that says nothing inherits
+    # the parent's `footer`, which is itself None when the parent said nothing —
+    # and None hands the decision back to the resolved URL list.
+    parent_footer = cmd.meta.get("footer")
+    target_footer_meta = cmd.meta.get("target_footer", {})
+    resolved_target_footer = {}
+    for tname in targets:
+        override = target_footer_meta.get(tname)
+        resolved_target_footer[tname] = parent_footer if override is None else override
+
     def _fn(args):
         if args and not args[0].startswith("-"):
             picked, rest_args = args[0], args[1:]
@@ -292,7 +310,11 @@ def _make_multi_target(cmd, ns):
         shell = targets[picked]
         # The footer belongs to the target the user picked, whether that target
         # runs a shell string itself or delegates to another action.
-        f = _enter_frame(f"{name}:{picked}", resolved_target_urls.get(picked))
+        f = _enter_frame(
+            f"{name}:{picked}",
+            resolved_target_urls.get(picked),
+            resolved_target_footer.get(picked),
+        )
         if shell.startswith("@"):
             try:
                 run_command(shell[1:], rest_args)
@@ -723,7 +745,7 @@ def _make_interactive_shell(cmd, ns):
         # expand its own vars but cannot compute these. resolve_computed leaves
         # every non-computed ${VAR} untouched, so shell-locals still work.
         resolved = resolve_computed(run)
-        f = _enter_frame(name, cmd.meta.get("urls"))
+        f = _enter_frame(name, cmd.meta.get("urls"), cmd.meta.get("footer"))
         try:
             info(f"running: {resolved}")
             fmt = make_formatter()

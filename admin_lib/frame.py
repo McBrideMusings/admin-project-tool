@@ -191,11 +191,16 @@ class Frame:
 def activate(label, urls, log_path):
     """Start a frame. No-op (returns None) when framing can't or shouldn't apply.
 
-    Skipped when: no URLs declared, stdout is not a terminal (piped output, CI),
-    ADMIN_NO_FRAME is set, or a frame is already up.
+    Skipped when: stdout is not a terminal (piped output, CI), ADMIN_NO_FRAME is
+    set, or a frame is already up.
+
+    An empty `urls` is NOT a reason to skip. The caller — interp._enter_frame —
+    owns the should-there-be-a-footer question, and an action carrying
+    `footer = true` deliberately arrives here with nothing to link; `_rows()`
+    already degrades to the status rule plus the log path, and `height` to 2.
     """
     global _active
-    if _active is not None or not urls:
+    if _active is not None:
         return None
     if os.environ.get("ADMIN_NO_FRAME"):
         return None

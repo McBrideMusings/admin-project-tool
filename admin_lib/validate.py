@@ -44,7 +44,7 @@ VALID_COMMAND_KEYS = {"desc", "steps", "log_file", "log_retain", "log", "group",
 # Keys an [actions.X] table may carry.
 VALID_ACTION_KEYS = {"run", "desc", "kind", "targets", "method", "body", "src", "log_file",
                      "log_retain", "log", "interactive", "keys", "requires", "watch",
-                     "excludes", "hosts", "urls"}
+                     "excludes", "hosts", "urls", "footer"}
 
 _GP_SUBTABLE_HINT = (
     " 'group' and 'priority' belong on inline target subtables "
@@ -77,6 +77,19 @@ def _validate_urls(value, lead: str, exc: type[ValidationError]) -> None:
             raise exc(f"{lead}: 'urls' entry {entry!r} needs a non-empty 'url' string")
         if "label" in entry and not isinstance(entry["label"], str):
             raise exc(f"{lead}: 'urls' entry {entry!r} 'label' must be a string")
+
+
+def _validate_footer(value, lead: str, exc: type[ValidationError]) -> None:
+    """Raise unless `footer` is a plain bool.
+
+    TOML has no truthy strings, so `footer = "true"` is a typo the author wants
+    told about rather than silently accepted as true by a bare bool() cast.
+    """
+    if not isinstance(value, bool):
+        raise exc(
+            f"{lead}: 'footer' must be true or false "
+            "(true pins the footer even with no urls to show)"
+        )
 
 
 def _validate_gp_ints(data: dict, lead: str, exc: type[ValidationError]) -> None:
@@ -219,6 +232,9 @@ def validate_action(lead: str, data: dict, exc: type[ValidationError]) -> Valida
     if "urls" in data:
         _validate_urls(data["urls"], lead, exc)
 
+    if "footer" in data:
+        _validate_footer(data["footer"], lead, exc)
+
     if inline_targets_raw:
         for tname, tdata in inline_targets_raw.items():
             if "action" not in tdata and "run" not in tdata:
@@ -236,6 +252,8 @@ def validate_action(lead: str, data: dict, exc: type[ValidationError]) -> Valida
                 raise exc(f"{lead}: target '{tname}' 'env' must be a table of NAME = value")
             if "urls" in tdata:
                 _validate_urls(tdata["urls"], f"{lead}: target '{tname}'", exc)
+            if "footer" in tdata:
+                _validate_footer(tdata["footer"], f"{lead}: target '{tname}'", exc)
         targets = inline_targets_raw
     else:
         targets = flat_targets

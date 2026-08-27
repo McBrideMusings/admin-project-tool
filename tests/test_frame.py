@@ -14,7 +14,7 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from admin_lib import core, frame  # noqa: E402
+from admin_lib import core, frame, interp  # noqa: E402
 from admin_lib.archetypes import ArchetypeError, _to_command  # noqa: E402
 from admin_lib.validate import ValidationError, validate_action  # noqa: E402
 
@@ -92,6 +92,102 @@ def test_a_child_can_opt_out_with_an_empty_list():
 
 
 # ---------------------------------------------------------------------------
+# `footer` — the explicit answer, for an action with no URL worth showing
+# ---------------------------------------------------------------------------
+
+def test_footer_true_is_carried_into_meta():
+    assert _meta({"run": "true", "footer": True})["footer"] is True
+
+
+def test_an_action_that_says_nothing_carries_no_footer_key():
+    # Absent, not False — absent means "decide from urls", which is what every
+    # manifest written before this key relies on.
+    assert "footer" not in _meta({"run": "true", "urls": ["local"]})
+
+
+def test_a_child_footer_override_is_recorded_and_siblings_inherit():
+    meta = _meta({
+        "kind": "multi-target",
+        "devvit": {"run": "true", "footer": True},
+        "cf": {"run": "true"},
+    })
+    assert meta["target_footer"]["devvit"] is True
+    assert meta["target_footer"]["cf"] is None  # None means "inherit the parent"
+
+
+def test_no_target_footer_table_when_no_child_overrides():
+    meta = _meta({"kind": "multi-target", "cf": {"run": "true"}})
+    assert "target_footer" not in meta
+
+
+def test_a_child_can_suppress_an_inherited_footer():
+    # The thing `urls = []` could never express once the parent declared urls:
+    # this target wants no footer at all, not an empty one.
+    meta = _meta({
+        "kind": "multi-target",
+        "urls": ["local"],
+        "quiet": {"run": "true", "footer": False},
+    })
+    assert meta["target_footer"]["quiet"] is False
+
+
+def test_footer_must_be_a_bool():
+    with pytest.raises(Exception) as e:
+        _meta({"run": "true", "footer": "true"})
+    assert "'footer' must be true or false" in str(e.value)
+
+
+def test_footer_is_validated_on_inline_targets_too():
+    with pytest.raises(Exception) as e:
+        _meta({"kind": "multi-target", "cf": {"run": "true", "footer": 1}})
+    assert "'footer' must be true or false" in str(e.value)
+
+
+# ---------------------------------------------------------------------------
+# _enter_frame — where "should there be a footer at all" is actually decided
+# ---------------------------------------------------------------------------
+
+def _entered(monkeypatch, urls, footer):
+    """Capture what _enter_frame would hand frame.activate, tty or not."""
+    seen = {}
+
+    def fake_activate(label, resolved, log_path):
+        seen["label"], seen["urls"], seen["log"] = label, resolved, log_path
+        return object()
+
+    monkeypatch.setattr(core, "_urls", [])
+    monkeypatch.setattr(frame, "activate", fake_activate)
+    f = interp._enter_frame("dev:x", urls, footer)
+    return f, seen
+
+
+def test_no_urls_and_no_footer_key_still_means_no_frame(monkeypatch):
+    f, seen = _entered(monkeypatch, [], None)
+    assert f is None and seen == {}
+
+
+def test_urls_alone_still_raise_a_frame(monkeypatch):
+    f, seen = _entered(monkeypatch, ["http://x"], None)
+    assert f is not None
+    assert seen["urls"] == [("http://x", "http://x")]
+
+
+def test_footer_true_raises_a_frame_with_no_url_rows(monkeypatch):
+    # The whole feature: a footer whose only content is the status rule and the
+    # log path, so the file name is pinned where it can be copied without
+    # cancelling the process that is still writing to it.
+    f, seen = _entered(monkeypatch, None, True)
+    assert f is not None
+    assert seen["urls"] == []
+    assert frame.Frame(seen["label"], seen["urls"], seen["log"]).height == 2
+
+
+def test_footer_false_suppresses_a_frame_the_urls_would_have_raised(monkeypatch):
+    f, seen = _entered(monkeypatch, ["http://x"], False)
+    assert f is None and seen == {}
+
+
+# ---------------------------------------------------------------------------
 # Dispatch-time resolution
 # ---------------------------------------------------------------------------
 
@@ -127,8 +223,14 @@ def test_activate_declines_when_stdout_is_not_a_terminal():
     assert frame._active is None
 
 
-def test_activate_declines_when_there_are_no_urls():
+def test_activate_no_longer_declines_just_because_there_are_no_urls(monkeypatch):
+    # An empty list used to be its own decline. It isn't any more: `footer = true`
+    # is the whole point of a footer with nothing to link, and _enter_frame owns
+    # the decision. Every other guard still applies, which is why this asserts
+    # through the tty gate rather than by activating a real frame under pytest.
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False, raising=False)
     assert frame.activate("dev", [], "/tmp/x.log") is None
+    assert frame._active is None
 
 
 def test_activate_declines_when_admin_no_frame_is_set(monkeypatch):
