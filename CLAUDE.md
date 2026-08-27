@@ -62,12 +62,14 @@ Tests that exercise full dispatch write a temp `admin.toml` and run it through `
 
 | Goal | Command |
 |---|---|
-| Validate this repo's `admin.toml` (parse + resolve) | `./admin build` (runs `admin-run check .`) |
-| Install / reinstall to `~/.admin/` | `./admin deploy` |
-| Run full test suite | `./admin test` |
+| Validate this repo's `admin.toml` (parse + resolve) | `./admin-run build` (runs `admin-run check .`) |
+| Install / reinstall to `~/.admin/` | `bash install.sh`, or `admin deploy` to also provision the userscript |
+| Run full test suite | `./admin-run test` |
 | Build a standalone `./admin` for a project | `admin compile [DIR]` |
 
 Pre-install (or while developing the tool), invoke the interpreter directly with `./admin-run <verb-or-command>` instead of the PATH `admin`.
+
+**Never `./admin <cmd>` in this repo.** That name belongs to an `admin compile` zipapp, which embeds a *frozen copy* of the manifest — so it runs whatever every command meant on the day it was built, with no warning that it is doing so. Nothing regenerates it: `admin-run check` validates and `admin compile` is the only writer. Use `./admin-run` here, or the PATH `admin`.
 
 ## Log bridge
 
