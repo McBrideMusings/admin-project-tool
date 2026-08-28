@@ -105,6 +105,11 @@ func detectApple(root string) *Match {
 			matches := sortedGlob(pattern)
 			var filtered []string
 			for _, m := range matches {
+				// filepath.Glob matches leading dots, but Python's pathlib.glob does not.
+				// Reject dot-prefixed basenames to match Python's behaviour (detectors/apple.py:28).
+				if strings.HasPrefix(filepath.Base(m), ".") {
+					continue
+				}
 				if searchable(m, root, appleVendored) {
 					filtered = append(filtered, m)
 				}
