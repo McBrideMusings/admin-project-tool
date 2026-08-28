@@ -357,6 +357,21 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 			sort.Strings(unknown)
 			return nil, errf("%s: '[deploy]' has unknown key(s): %s", source, joinStrings(unknown, ", "))
 		}
+		for _, required := range []string{"src", "dest"} {
+			if !truthy(deploy[required]) {
+				return nil, errf("%s: '[deploy].%s' is required", source, required)
+			}
+		}
+		if v, present := deploy["exclude"]; present && v != nil {
+			if _, ok := v.([]any); !ok {
+				return nil, errf("%s: '[deploy].exclude' must be a list", source)
+			}
+		}
+		if v, present := deploy["delete"]; present && v != nil {
+			if _, ok := v.(bool); !ok {
+				return nil, errf("%s: '[deploy].delete' must be true or false", source)
+			}
+		}
 	}
 	m.Deploy = deploy
 
@@ -547,6 +562,31 @@ func stringSlice(data map[string]any, key, source string) ([]string, error) {
 		return nil, errf("%s: '%s' must be a list of strings", source, key)
 	}
 	return list, nil
+}
+
+// truthy mirrors Python's truthiness for deploy.get(key) checks:
+// nil/absent → false; string → v != ""; bool → v; []any/map[string]any → len > 0;
+// int64/float64 → != 0; anything else → true.
+func truthy(v any) bool {
+	if v == nil {
+		return false
+	}
+	switch val := v.(type) {
+	case string:
+		return val != ""
+	case bool:
+		return val
+	case []any:
+		return len(val) > 0
+	case map[string]any:
+		return len(val) > 0
+	case int64:
+		return val != 0
+	case float64:
+		return val != 0
+	default:
+		return true
+	}
 }
 
 func parseUrls(data map[string]any, source string) (map[string]string, error) {
