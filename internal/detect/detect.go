@@ -14,9 +14,10 @@ package detect
 // that located package.json can seed [react_native].app_dir, for instance).
 // A detector returns nil when the project doesn't match its stack.
 type Match struct {
-	Archetypes  []string
-	URLs        map[string]string
-	ProjectName string
+	Archetypes     []string
+	URLs           map[string]string
+	ProjectName    string
+	HasProjectName bool // distinguish "not set" from "set to empty string" (mirrors admin_lib/detectors.py:80-81)
 	// Tables holds every other key a detector returns, passed through as a
 	// manifest table verbatim — e.g. Tables["apple"] = map[string]any{"project_path": "ios/App.xcodeproj"}.
 	Tables map[string]any
@@ -127,7 +128,9 @@ func Propose(root string) (archetypes []string, urls map[string]string, projectN
 		for k, v := range m.URLs {
 			urls[k] = v
 		}
-		if m.ProjectName != "" {
+		// Python merges project_name based on presence, not truthiness (admin_lib/detectors.py:80-81).
+		// Later detectors can explicitly clear it by setting HasProjectName=true with ProjectName="".
+		if m.HasProjectName {
 			projectName = m.ProjectName
 		}
 		for k, v := range m.Tables {
