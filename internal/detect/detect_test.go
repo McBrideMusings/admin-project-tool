@@ -328,21 +328,69 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
+// parityPython locates a Python interpreter capable of running the
+// reference admin_lib detector loader (stdlib-only, so any interpreter
+// works — no venv is actually required) and fails the test loudly if none
+// is found, rather than letting the parity check silently report success
+// without comparing anything. Candidates, in order: <root>/.venv/bin/python
+// (if present), then "python3" and "python" on PATH. Each candidate is
+// version-gated at >= 3.11 — matching admin.toml's python_min — since a
+// stray python2 or old python3 on PATH must not produce a bogus failure;
+// any error or non-zero exit from the probe just moves on to the next
+// candidate. If nothing qualifies, ADMIN_SKIP_PYTHON_PARITY opts out with a
+// skip; otherwise the test fails and names both ways out.
+func parityPython(t *testing.T, root string) string {
+	t.Helper()
+
+	var candidates []string
+	venvPython := filepath.Join(root, ".venv", "bin", "python")
+	if _, err := os.Stat(venvPython); err == nil {
+		candidates = append(candidates, venvPython)
+	}
+	if p, err := exec.LookPath("python3"); err == nil {
+		candidates = append(candidates, p)
+	}
+	if p, err := exec.LookPath("python"); err == nil {
+		candidates = append(candidates, p)
+	}
+
+	const versionCheck = "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)"
+	for _, c := range candidates {
+		cmd := exec.Command(c, "-c", versionCheck)
+		if err := cmd.Run(); err == nil {
+			return c
+		}
+	}
+
+	if os.Getenv("ADMIN_SKIP_PYTHON_PARITY") != "" {
+		t.Skip("no usable Python >= 3.11 interpreter found — ADMIN_SKIP_PYTHON_PARITY set, skipping parity check")
+	}
+	t.Fatalf(
+		"no usable Python >= 3.11 interpreter found (searched %s, python3, python on PATH) — "+
+			"this test exists to catch Go/Python detector divergence and must not report success "+
+			"without running it; install python3 >= 3.11, or set ADMIN_SKIP_PYTHON_PARITY=1 to explicitly opt out",
+		venvPython,
+	)
+	return "" // unreachable: t.Fatalf stops the test
+}
+
 // TestParityWithPythonDetectors shells out to the reference admin_lib
 // detector loader against the same fixture trees the Go tests exercise and
 // diffs the archetype sets, the strongest evidence this port matches
-// today's behaviour. It skips cleanly (never fails) when the repo root or
-// its .venv isn't available, so `go test ./...` stays hermetic on a fresh
-// checkout or the installed ~/.admin copy.
+// today's behaviour. It fails when no Python interpreter capable of running
+// the reference implementation can be found — a parity check that could not
+// run must not report success — and skips only when the Python source
+// itself is absent (a stripped checkout or the installed ~/.admin copy) or
+// when ADMIN_SKIP_PYTHON_PARITY is explicitly set.
 func TestParityWithPythonDetectors(t *testing.T) {
 	root := repoRoot(t)
 	if root == "" {
 		t.Skip("repo root (go.mod) not found — skipping Python parity check")
 	}
-	python := filepath.Join(root, ".venv", "bin", "python")
-	if _, err := os.Stat(python); err != nil {
-		t.Skip(".venv/bin/python not found — skipping Python parity check")
+	if _, err := os.Stat(filepath.Join(root, "admin_lib", "detectors.py")); err != nil {
+		t.Skip("admin_lib/detectors.py not found — Python reference source is not present, skipping parity check")
 	}
+	python := parityPython(t, root)
 
 	cases := []struct {
 		name  string
