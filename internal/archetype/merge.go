@@ -79,12 +79,16 @@ func Resolve(project *manifest.Manifest, sp SearchPath) (*manifest.Manifest, []s
 		if err != nil {
 			return nil, nil, err
 		}
-		merge(dst, arch.Partial, fmt.Sprintf("archetype '%s'", name), &log, o)
+		if err := merge(dst, arch.Partial, fmt.Sprintf("archetype '%s'", name), false, &log, o); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	// The project always wins (ADR-0009): overlay it last regardless of
 	// whether any archetypes were loaded.
-	merge(dst, project, "manifest", &log, o)
+	if err := merge(dst, project, "manifest", true, &log, o); err != nil {
+		return nil, nil, err
+	}
 
 	// Raw is debugging-only and stays the project's own decoded TOML, never
 	// an archetype's.
@@ -97,7 +101,14 @@ func Resolve(project *manifest.Manifest, sp SearchPath) (*manifest.Manifest, []s
 // merge folds src into dst in place, per ADR-0002: no inheritance, no
 // override blocks, last write wins on every key. srcLabel identifies src in
 // the merge log ("archetype 'a'" or "manifest").
-func merge(dst, src *manifest.Manifest, srcLabel string, log *[]string, o *origins) {
+//
+// isManifest distinguishes the two callers of merge: archetype-to-archetype
+// [commands.X] collisions keep whole-value replacement (Python:145-151,
+// ADR-0002 last-wins), while the final manifest overlay merges each
+// [commands.X] override onto the archetype-provided command field by field
+// (admin_lib/archetypes.py:155-185) — ADR-0009: the manifest references, the
+// archetype implements, so naming one field must not delete the rest.
+func merge(dst, src *manifest.Manifest, srcLabel string, isManifest bool, log *[]string, o *origins) error {
 	if src.ProjectName != "" {
 		dst.ProjectName = src.ProjectName
 	}
@@ -118,7 +129,13 @@ func merge(dst, src *manifest.Manifest, srcLabel string, log *[]string, o *origi
 	}
 
 	mergeMap(dst.Urls, src.Urls, srcLabel, "url", o.urls, log)
-	mergeMap(dst.Overrides, src.Overrides, srcLabel, "command", o.overrides, log)
+	if isManifest {
+		if err := mergeCommandOverrides(dst.Overrides, src.Overrides, srcLabel, o.overrides, log); err != nil {
+			return err
+		}
+	} else {
+		mergeMap(dst.Overrides, src.Overrides, srcLabel, "command", o.overrides, log)
+	}
 	mergeMap(dst.Custom, src.Custom, srcLabel, "custom command", o.custom, log)
 	mergeMap(dst.Actions, src.Actions, srcLabel, "action", o.actions, log)
 	mergeMap(dst.Logs, src.Logs, srcLabel, "log", o.logs, log)
@@ -158,6 +175,8 @@ func merge(dst, src *manifest.Manifest, srcLabel string, log *[]string, o *origi
 
 	dst.Unknown = mergeStringSet(dst.Unknown, src.Unknown)
 	sort.Strings(dst.Unknown)
+
+	return nil
 }
 
 // mergeStringSet appends src's entries onto dst, de-duplicated, preserving
@@ -204,6 +223,91 @@ func mergeMap[V any](dst, src map[string]V, srcLabel, label string, origin map[s
 		dst[k] = src[k]
 		origin[k] = srcLabel
 	}
+}
+
+// mergeCommandOverrides merges the project manifest's [commands.X] overrides
+// onto dst, one field at a time, per admin_lib/archetypes.py:155-185 — the
+// manifest-only counterpart to mergeMap's whole-value replacement.
+//
+// When a command name already exists (contributed by an archetype), each
+// field of the override wins when present and otherwise falls back to dst's
+// existing value, so naming only `desc` cannot delete `steps`. When the name
+// does not already exist, the override must carry `steps` — an override with
+// no archetype behind it and no steps of its own resolves to nothing, which
+// Python treats as a manifest error rather than a silently empty command.
+func mergeCommandOverrides(dst, src map[string]manifest.Command, srcLabel string, origin map[string]string, log *[]string) error {
+	for _, k := range sortedKeys(src) {
+		override := src[k]
+		base, exists := dst[k]
+		if !exists {
+			if override.Steps == nil {
+				return fmt.Errorf(
+					"manifest [commands.%s] must include 'steps' (a list of action names). "+
+						"No archetype provides this command. Move run/kind/targets to [actions].", k)
+			}
+			dst[k] = override
+			origin[k] = srcLabel
+			continue
+		}
+
+		if prev, exists := origin[k]; exists {
+			*log = append(*log, fmt.Sprintf("command '%s' from '%s' overridden by %s", k, prev, srcLabel))
+		}
+
+		merged := manifest.Command{Raw: override.Raw}
+
+		if override.HasDesc {
+			merged.Desc, merged.HasDesc = override.Desc, true
+		} else {
+			merged.Desc, merged.HasDesc = base.Desc, base.HasDesc
+		}
+
+		if override.Steps != nil {
+			merged.Steps = append([]string(nil), override.Steps...)
+		} else {
+			merged.Steps = append([]string(nil), base.Steps...)
+		}
+
+		if override.HasGroup {
+			merged.Group, merged.HasGroup = override.Group, true
+		} else {
+			merged.Group, merged.HasGroup = base.Group, base.HasGroup
+		}
+
+		if override.HasPriority {
+			merged.Priority, merged.HasPriority = override.Priority, true
+		} else {
+			merged.Priority, merged.HasPriority = base.Priority, base.HasPriority
+		}
+
+		if override.HasLogFile {
+			merged.LogFile, merged.HasLogFile = override.LogFile, true
+		} else {
+			merged.LogFile, merged.HasLogFile = base.LogFile, base.HasLogFile
+		}
+
+		if override.HasLog {
+			merged.Log, merged.HasLog = override.Log, true
+		} else {
+			merged.Log, merged.HasLog = base.Log, base.HasLog
+		}
+
+		if override.HasRetain {
+			merged.LogRetain, merged.HasRetain = override.LogRetain, true
+		} else {
+			merged.LogRetain, merged.HasRetain = base.LogRetain, base.HasRetain
+		}
+
+		if override.Env != nil {
+			merged.Env = override.Env
+		} else if base.Env != nil {
+			merged.Env = base.Env
+		}
+
+		dst[k] = merged
+		origin[k] = srcLabel
+	}
+	return nil
 }
 
 func sortedKeys[V any](m map[string]V) []string {
