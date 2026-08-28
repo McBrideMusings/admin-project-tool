@@ -1,0 +1,29 @@
+name = "simple"
+modules = ["core"]
+
+[commands.build]
+desc = "Build the project"
+steps = ["build"]
+
+[commands.test]
+desc = "Run tests"
+steps = ["test"]
+
+[commands.clean]
+desc = "Remove build artifacts"
+steps = ["clean"]
+
+[actions.build]
+kind = "shell"
+run = "echo 'TODO: set run in admin.toml [actions.build]'"
+desc = "Build the project"
+
+[actions.test]
+kind = "shell"
+run = "echo 'TODO: set run in admin.toml [actions.test]'"
+desc = "Run tests"
+
+[actions.clean]
+kind = "shell"
+run = "echo 'TODO: set run in admin.toml [actions.clean]'"
+desc = "Remove build artifacts"

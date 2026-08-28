@@ -52,10 +52,14 @@ type Command struct {
 	Env         map[string]string
 	LogFile     string
 	HasLogFile  bool
-	Log         string
-	HasLog      bool
-	LogRetain   int
-	HasRetain   bool
+	// Log is the raw `log` value — a string (a log-source name) or a bool
+	// (Python's admin_lib/archetypes.py:352 does bool(data["log"]) at merge
+	// time rather than typing it at parse time, e.g. archetypes/docker.py's
+	// [commands.run-args] sets `log = false`). Kept untyped here to match.
+	Log       any
+	HasLog    bool
+	LogRetain int
+	HasRetain bool
 	// Raw holds every key not in the known Command key set (desc, steps,
 	// log_file, log_retain, log, group, priority, env) — including kind/run/
 	// targets when a manifest mistakenly puts them on a command.
@@ -465,11 +469,12 @@ func toCommand(val map[string]any) (Command, error) {
 			}
 			cmd.LogFile, cmd.HasLogFile = s, true
 		case "log":
-			s, ok := v.(string)
-			if !ok {
-				return cmd, errf("'log' must be a string")
+			switch v.(type) {
+			case string, bool:
+				cmd.Log, cmd.HasLog = v, true
+			default:
+				return cmd, errf("'log' must be a string or a boolean")
 			}
-			cmd.Log, cmd.HasLog = s, true
 		case "log_retain":
 			n, ok := asInt(v)
 			if !ok {

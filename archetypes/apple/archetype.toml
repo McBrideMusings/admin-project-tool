@@ -1,0 +1,130 @@
+name = "apple"
+modules = ["core", "icons", "apple", "appstoreconnect", "log_format", "log_columns"]
+
+[commands.build]
+desc = "Build: mac | ios | tv | server [--force]"
+steps = ["build"]
+group = 1
+priority = 10
+
+[commands.dev]
+desc = "Dev build + run (mac|ios|tv|device|server) [--log LVL] [--clean] [--install]"
+steps = ["dev"]
+group = 1
+priority = 20
+
+[commands.deploy]
+desc = "Build + install (mac|ios|tv|server|bazzite) [--clean]"
+steps = ["deploy"]
+group = 1
+priority = 30
+
+[commands.test]
+desc = "Run tests (server|swift|apple)"
+steps = ["test"]
+group = 2
+priority = 10
+
+[commands.clean]
+desc = "Remove build artifacts (xcode|cargo)"
+steps = ["clean"]
+group = 2
+priority = 20
+
+[commands.icons]
+desc = "Icons: regenerate | swap-dev | restore"
+steps = ["icons"]
+group = 2
+priority = 30
+
+[commands.reload]
+desc = "Signal a running './admin dev' to rebuild and relaunch"
+steps = ["reload"]
+group = 2
+priority = 40
+
+[commands.appid]
+desc = "App IDs: report, register, enable capabilities [--capability icloud]"
+steps = ["appid"]
+group = 2
+priority = 45
+
+[actions.build]
+kind = "python"
+desc = "Build: mac | ios | tv | server [--force]"
+run = "scripts/build.py"
+
+[actions.dev]
+kind = "python"
+desc = "Dev build + run (mac|ios|tv|device|server) [--log LVL] [--clean] [--install]"
+run = "scripts/dev.py"
+
+[actions.deploy]
+kind = "python"
+desc = "Build + install (mac|ios|tv|server|bazzite) [--clean]"
+run = "scripts/deploy.py"
+
+[actions.test]
+kind = "python"
+desc = "Run tests (server|swift|apple)"
+run = "scripts/test.py"
+
+[actions.clean]
+kind = "python"
+desc = "Remove build artifacts (xcode|cargo)"
+run = "scripts/clean.py"
+
+[actions.icons]
+kind = "python"
+desc = "Icons: regenerate | swap-dev | restore"
+run = "scripts/icons.py"
+
+[actions.reload]
+kind = "python"
+desc = "Signal a running './admin dev' to rebuild and relaunch"
+run = "scripts/reload.py"
+
+[actions.appid]
+kind = "python"
+desc = "App IDs: report, register, enable capabilities [--capability icloud]"
+run = "scripts/appid.py"
+
+[actions.build-ios]
+kind = "apple"
+desc = "build iOS"
+run = "build_ios"
+
+[actions.dev-ios]
+kind = "apple"
+desc = "dev iOS simulator"
+run = "dev_ios"
+
+[actions.build-tv]
+kind = "apple"
+desc = "build tvOS"
+run = "build_tv"
+
+[actions.dev-tv]
+kind = "apple"
+desc = "dev tvOS simulator"
+run = "dev_tv"
+
+[actions.dev-device]
+kind = "apple"
+desc = "dev iOS device"
+run = "dev_device"
+
+[actions.deploy-ios]
+kind = "apple"
+desc = "deploy iOS"
+run = "deploy_ios"
+
+[actions.deploy-tv]
+kind = "apple"
+desc = "deploy tvOS"
+run = "deploy_tv"
+
+[actions.clean-ios]
+kind = "apple"
+desc = "clean Xcode DerivedData"
+run = "clean_ios"

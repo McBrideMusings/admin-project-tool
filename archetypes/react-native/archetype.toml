@@ -1,0 +1,20 @@
+name = "react-native"
+modules = ["core", "reload", "apple", "android", "metro", "react_native", "log_columns"]
+
+[commands.dev]
+desc = "Run a React Native dev target (ios | device | android)"
+steps = ["dev"]
+
+[commands.metro]
+desc = "Start the Metro bundler, or `metro stop` to stop it"
+steps = ["metro"]
+
+[actions.dev]
+kind = "python"
+run = "scripts/dev.py"
+desc = "Run a React Native dev target (ios | device | android)"
+
+[actions.metro]
+kind = "python"
+run = "scripts/metro.py"
+desc = "Start the Metro bundler, or `metro stop` to stop it"

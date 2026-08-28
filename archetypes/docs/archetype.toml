@@ -1,0 +1,12 @@
+name = "docs"
+modules = ["core"]
+
+[commands.docs]
+desc = "Serve the docs site with hot reload"
+steps = ["docs"]
+group = 2
+priority = 30
+
+[actions.docs]
+kind = "docs"
+desc = "Serve the docs site with hot reload"

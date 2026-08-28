@@ -1,0 +1,46 @@
+name = "forge-engine"
+modules = ["core"]
+
+[commands.build]
+desc = "Build the engine for a target OS (mac | windows | linux)"
+steps = ["build"]
+group = 1
+priority = 10
+
+[commands.dev]
+desc = "Run a sample game (auto-picks if one, picker if many)"
+steps = ["dev"]
+group = 1
+priority = 20
+
+[commands.test]
+desc = "Run unit tests (none wired up yet)"
+steps = ["test"]
+group = 2
+priority = 10
+
+[commands.clean]
+desc = "Remove engine/zig-cache and engine/zig-out"
+steps = ["clean"]
+group = 2
+priority = 20
+
+[actions.build]
+kind = "python"
+desc = "Build the engine for a target OS (mac | windows | linux)"
+run = "scripts/build.py"
+
+[actions.dev]
+kind = "python"
+desc = "Run a sample game (auto-picks if one, picker if many)"
+run = "scripts/dev.py"
+
+[actions.test]
+kind = "python"
+desc = "Run unit tests (none wired up yet)"
+run = "scripts/test.py"
+
+[actions.clean]
+kind = "python"
+desc = "Remove engine/zig-cache and engine/zig-out"
+run = "scripts/clean.py"
