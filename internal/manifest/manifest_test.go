@@ -299,6 +299,21 @@ func TestParseMalformedNamesOffendingKey(t *testing.T) {
 			wantSubstr: "'[deploy]' has unknown key(s): bogus",
 		},
 		{
+			name:       "deploy missing src",
+			toml:       "project_name = \"x\"\n[deploy]\ndest = \"b\"\n",
+			wantSubstr: "'[deploy].src' is required",
+		},
+		{
+			name:       "deploy exclude not a list",
+			toml:       "project_name = \"x\"\n[deploy]\nsrc = \"a\"\ndest = \"b\"\nexclude = \"a\"\n",
+			wantSubstr: "'[deploy].exclude' must be a list",
+		},
+		{
+			name:       "deploy delete not a bool",
+			toml:       "project_name = \"x\"\n[deploy]\nsrc = \"a\"\ndest = \"b\"\ndelete = \"yes\"\n",
+			wantSubstr: "'[deploy].delete' must be true or false",
+		},
+		{
 			name:       "docs is not a validation site — [docs] must at least be a table",
 			toml:       "project_name = \"x\"\ndocs = \"not-a-table\"\n",
 			wantSubstr: "'[docs]' must be a table",
