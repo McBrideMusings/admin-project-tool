@@ -90,6 +90,83 @@ steps = ["custom-build"]
 	}
 }
 
+func TestManifestOverrideFallsBackToArchetypeFields(t *testing.T) {
+	root := t.TempDir()
+	writeArchetypeDir(t, root, "docker", `
+[commands.build]
+desc     = "archetype build"
+steps    = ["docker-build"]
+group    = 2
+priority = 5
+log_file = "build.log"
+
+[commands.build.env]
+FOO = "bar"
+`, false)
+	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
+
+	project := projectManifest(t, `
+project_name = "widget"
+archetypes   = ["docker"]
+
+[commands.build]
+desc = "project build"
+`)
+
+	merged, _, err := Resolve(project, sp)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	got := merged.Overrides["build"]
+	if got.Desc != "project build" {
+		t.Errorf("Desc = %q, want %q", got.Desc, "project build")
+	}
+	if len(got.Steps) != 1 || got.Steps[0] != "docker-build" {
+		t.Errorf("Steps = %v, want [docker-build] (archetype's steps must survive a desc-only override)", got.Steps)
+	}
+	if got.Group != 2 {
+		t.Errorf("Group = %d, want 2 (fallback to archetype)", got.Group)
+	}
+	if got.Priority != 5 {
+		t.Errorf("Priority = %d, want 5 (fallback to archetype)", got.Priority)
+	}
+	if got.LogFile != "build.log" || !got.HasLogFile {
+		t.Errorf("LogFile = %q (has=%v), want %q (has=true)", got.LogFile, got.HasLogFile, "build.log")
+	}
+	if got.Env["FOO"] != "bar" {
+		t.Errorf("Env[FOO] = %q, want %q (fallback to archetype's env)", got.Env["FOO"], "bar")
+	}
+}
+
+func TestManifestOverrideWithoutStepsAndNoArchetypeIsError(t *testing.T) {
+	root := t.TempDir()
+	writeArchetypeDir(t, root, "docker", `
+[commands.build]
+desc  = "archetype build"
+steps = ["docker-build"]
+`, false)
+	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
+
+	project := projectManifest(t, `
+project_name = "widget"
+archetypes   = ["docker"]
+
+[commands.deploy]
+desc = "no archetype provides this"
+`)
+
+	_, _, err := Resolve(project, sp)
+	if err == nil {
+		t.Fatal("Resolve: got nil error, want an error naming 'deploy' and '[actions]'")
+	}
+	if !strings.Contains(err.Error(), "deploy") {
+		t.Errorf("error = %q, want it to name the command 'deploy'", err.Error())
+	}
+	if !strings.Contains(err.Error(), "[actions]") {
+		t.Errorf("error = %q, want it to mention moving run/kind/targets to [actions]", err.Error())
+	}
+}
+
 func TestNoArchetypesResolvesCleanly(t *testing.T) {
 	// No archetype directories exist anywhere on the search path.
 	home := t.TempDir()

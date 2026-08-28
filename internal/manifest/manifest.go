@@ -42,18 +42,20 @@ func errf(format string, args ...any) *Error {
 // command anyway, they land in Raw rather than raising — rejecting that is
 // the later validation ticket's job, not the parser's.
 type Command struct {
-	Desc       string
-	HasDesc    bool
-	Steps      []string
-	Group      int
-	Priority   int
-	Env        map[string]string
-	LogFile    string
-	HasLogFile bool
-	Log        string
-	HasLog     bool
-	LogRetain  int
-	HasRetain  bool
+	Desc        string
+	HasDesc     bool
+	Steps       []string
+	Group       int
+	HasGroup    bool
+	Priority    int
+	HasPriority bool
+	Env         map[string]string
+	LogFile     string
+	HasLogFile  bool
+	Log         string
+	HasLog      bool
+	LogRetain   int
+	HasRetain   bool
 	// Raw holds every key not in the known Command key set (desc, steps,
 	// log_file, log_retain, log, group, priority, env) — including kind/run/
 	// targets when a manifest mistakenly puts them on a command.
@@ -435,13 +437,13 @@ func toCommand(val map[string]any) (Command, error) {
 			if !ok {
 				return cmd, errf("'group' must be an integer")
 			}
-			cmd.Group = n
+			cmd.Group, cmd.HasGroup = n, true
 		case "priority":
 			n, ok := asInt(v)
 			if !ok {
 				return cmd, errf("'priority' must be an integer")
 			}
-			cmd.Priority = n
+			cmd.Priority, cmd.HasPriority = n, true
 		case "env":
 			table, ok := v.(map[string]any)
 			if !ok {
