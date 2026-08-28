@@ -24,7 +24,20 @@ a local dist/ directory, pushes the binary plus the portable
 `resources/install_service_remote.sh` installer over scp, and runs it there —
 no Python or the admin tool needs to be present on the remote host.
 
-Four things here are less obvious than they look, and all were paid for once:
+Five things here are less obvious than they look, and all were paid for once:
+
+Minimal environment and login-shell-only dotenv files. launchd hands an agent
+`/usr/bin:/bin:/usr/sbin:/sbin` and HOME and nothing else — no secrets a
+developer keeps in `~/.claude/.env` as `export FOO=bar` lines sourced by
+`~/.zshrc` for *interactive* shells only. A non-interactive `admin deploy`
+(the shape every agent and CI run uses) sees zero of those vars, so
+`env = { FOO = "${FOO}" }` in `[launchd]` — which resolves through
+`resolve_env` against `os.environ` — silently resolves to nothing, or hard-
+fails if the var has no default. `env_file` + `env_file_keys` exist to read
+the dotenv file directly at generation time instead of trusting the shell to
+have sourced it, tolerating the `export ` prefix that a plain `KEY=value`
+parser (and `core._load_dotenv`, which only reads `<project_root>/.env`
+anyway) rejects.
 
 PATH. launchd hands an agent `/usr/bin:/bin:/usr/sbin:/sbin` and nothing else. A
 process that shells out to anything installed by Homebrew, a language toolchain,
@@ -68,6 +81,7 @@ _KNOWN_KEYS = {
     "label", "program", "source", "args", "env", "inherit_path", "inherit_home",
     "stdout", "stderr", "working_dir", "keep_alive", "run_at_load",
     "throttle", "process_type", "nice", "start_interval",
+    "env_file", "env_file_keys",
 }
 
 _USAGE = """usage: admin service <install|uninstall|status|restart|stop|start>
@@ -98,6 +112,40 @@ def _resolve(value):
     if isinstance(value, dict):
         return {k: _resolve(v) for k, v in value.items()}
     return value
+
+
+def _parse_env_file(path):
+    """Read KEY=value lines out of a dotenv-style file (e.g. ~/.claude/.env).
+
+    Export-prefix-tolerant and quote-stripping, unlike `core._load_dotenv`
+    (which only reads `<project_root>/.env` and whose `_ENV_KEY_RE` rejects a
+    key of `export FOO`) and `docker.py`'s `_parse_env_text` (which does
+    neither). A missing file is not fatal — mirrors push.go's own posture
+    that a bad or absent value degrades a feature, never the process — it
+    just means the caller's allowlisted keys resolve to nothing.
+    """
+    if not path or not os.path.isfile(path):
+        if path:
+            warn(f"[launchd]: env_file {path!r} not found — no values loaded from it")
+        return {}
+    out = {}
+    with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[len("export "):].lstrip()
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            if key:
+                out[key] = value
+    return out
 
 
 def _read_config(cfg):
@@ -139,6 +187,21 @@ def _read_config(cfg):
     for key in ("stdout", "stderr", "working_dir"):
         value = _resolve(cfg.get(key) or "")
         out[key] = os.path.expanduser(value) if value else ""
+
+    # env_file/env_file_keys: lift an ALLOWLISTED set of names out of a dotenv
+    # file (e.g. ~/.claude/.env) at generation time, rather than trusting the
+    # deploying shell to have sourced it — see the module docstring. The
+    # allowlist is mandatory: without env_file_keys, nothing is lifted, since
+    # a dotenv file used this way typically holds many unrelated secrets that
+    # must never end up in a LaunchAgent plist wholesale.
+    env_file = _resolve(cfg.get("env_file") or "")
+    env_file_keys = [str(k) for k in (cfg.get("env_file_keys") or [])]
+    if env_file and env_file_keys:
+        loaded = _parse_env_file(os.path.expanduser(env_file))
+        lifted = {k: loaded[k] for k in env_file_keys if loaded.get(k)}
+        # Explicit `env` wins over anything lifted from the file.
+        out["env"] = {**lifted, **out["env"]}
+
     return out
 
 

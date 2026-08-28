@@ -397,6 +397,7 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
             "label", "program", "source", "args", "env", "inherit_path", "inherit_home",
             "stdout", "stderr", "working_dir", "keep_alive", "run_at_load",
             "throttle", "process_type", "nice", "start_interval",
+            "env_file", "env_file_keys",
         }
         unknown_launchd = set(launchd_cfg) - _LAUNCHD_KNOWN
         if unknown_launchd:
@@ -417,6 +418,13 @@ def parse(data: dict, source: str = "<dict>") -> Manifest:
             raise ManifestError(f"{source}: '[launchd].args' must be a list of strings")
         if "env" in launchd_cfg and not isinstance(launchd_cfg["env"], dict):
             raise ManifestError(f"{source}: '[launchd].env' must be a table")
+        if "env_file" in launchd_cfg and not isinstance(launchd_cfg["env_file"], str):
+            raise ManifestError(f"{source}: '[launchd].env_file' must be a string")
+        if "env_file_keys" in launchd_cfg and not (
+            isinstance(launchd_cfg["env_file_keys"], list)
+            and all(isinstance(x, str) for x in launchd_cfg["env_file_keys"])
+        ):
+            raise ManifestError(f"{source}: '[launchd].env_file_keys' must be a list of strings")
         for _k in ("inherit_path", "inherit_home", "keep_alive", "run_at_load"):
             if _k in launchd_cfg and not isinstance(launchd_cfg[_k], bool):
                 raise ManifestError(f"{source}: '[launchd].{_k}' must be a boolean")
