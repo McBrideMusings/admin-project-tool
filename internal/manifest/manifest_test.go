@@ -181,6 +181,39 @@ dest = "/srv/app"
 	}
 }
 
+func TestParsePartialAllowsMissingProjectName(t *testing.T) {
+	data := map[string]any{
+		"name": "docker",
+		"commands": map[string]any{
+			"build": map[string]any{
+				"desc":  "Build the image",
+				"steps": []any{"docker-build"},
+			},
+		},
+	}
+
+	m, err := ParsePartial(data, "docker/archetype.toml")
+	if err != nil {
+		t.Fatalf("ParsePartial: %v", err)
+	}
+	if m.ProjectName != "" {
+		t.Errorf("ProjectName = %q, want empty for a partial manifest", m.ProjectName)
+	}
+	if len(m.Unknown) != 0 {
+		t.Errorf("Unknown = %v, want none — 'name' must be a known top-level key", m.Unknown)
+	}
+	if _, ok := m.Overrides["build"]; !ok {
+		t.Errorf("Overrides = %v, want 'build' parsed", m.Overrides)
+	}
+
+	// Parse still rejects the same data for lacking project_name.
+	if _, err := Parse(data, "docker/archetype.toml"); err == nil {
+		t.Fatal("Parse: want error for missing project_name, got nil")
+	} else if !strings.Contains(err.Error(), "'project_name' is required") {
+		t.Errorf("Parse error = %q, want to mention project_name", err.Error())
+	}
+}
+
 func TestParsePreservesEnvPlaceholders(t *testing.T) {
 	dir := writeManifest(t, `
 project_name = "envtest"
