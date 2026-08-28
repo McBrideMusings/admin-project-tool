@@ -1,0 +1,38 @@
+name = "firefox-extension"
+modules = ["core"]
+
+[commands.dev]
+desc = "Launch Firefox Nightly with the extension loaded"
+steps = ["dev"]
+
+[commands.build]
+desc = "Package the extension as a .xpi"
+steps = ["build"]
+
+[commands.lint]
+desc = "Lint manifest and sources"
+steps = ["lint"]
+
+[commands.clean]
+desc = "Remove build artifacts"
+steps = ["clean"]
+
+[actions.dev]
+kind = "shell"
+run = "web-ext run --firefox=nightly"
+desc = "Launch Firefox Nightly with the extension loaded"
+
+[actions.build]
+kind = "shell"
+run = "web-ext build --overwrite-dest"
+desc = "Package the extension as a .xpi"
+
+[actions.lint]
+kind = "shell"
+run = "web-ext lint"
+desc = "Lint manifest and sources"
+
+[actions.clean]
+kind = "shell"
+run = "rm -rf web-ext-artifacts"
+desc = "Remove build artifacts"

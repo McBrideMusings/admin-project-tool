@@ -1,0 +1,56 @@
+name = "go-cli"
+modules = ["core"]
+
+[commands.build]
+desc = "Compile all packages"
+steps = ["build"]
+
+[commands.test]
+desc = "Run all tests"
+steps = ["test"]
+
+[commands.vet]
+desc = "Run go vet"
+steps = ["vet"]
+
+[commands.fmt]
+desc = "Format source files"
+steps = ["fmt"]
+
+[commands.deploy]
+desc = "Install binaries into GOBIN"
+steps = ["deploy"]
+
+[commands.clean]
+desc = "Remove build artifacts"
+steps = ["clean"]
+
+[actions.build]
+kind = "go"
+run = "build"
+desc = "Compile all packages"
+
+[actions.test]
+kind = "shell"
+run = "go test ./..."
+desc = "Run all tests"
+
+[actions.vet]
+kind = "shell"
+run = "go vet ./..."
+desc = "Run go vet"
+
+[actions.fmt]
+kind = "shell"
+run = "gofmt -w ."
+desc = "Format source files"
+
+[actions.deploy]
+kind = "go"
+run = "install"
+desc = "Install binaries into GOBIN"
+
+[actions.clean]
+kind = "go"
+run = "clean"
+desc = "Remove build artifacts"
