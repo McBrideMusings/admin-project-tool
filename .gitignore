@@ -17,3 +17,7 @@ node_modules/
 .beads-credential-key
 .beads/proxieddb/
 .playwright-mcp/
+
+# Go build artifacts
+/bin/
+/admin-project-tool
