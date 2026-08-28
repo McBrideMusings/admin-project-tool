@@ -137,6 +137,9 @@ type Manifest struct {
 var knownTopLevelKeys = map[string]bool{
 	"project_name": true, "python_min": true, "archetypes": true, "modules": true, "urls": true,
 	"commands": true, "actions": true, "order": true, "logs": true, "apple": true, "react_native": true,
+	// An archetype.toml may name itself (internal/archetype reads the
+	// directory name as canonical and only tolerates this key).
+	"name":   true,
 	"server": true, "output": true, "exclude_modules": true, "hide_commands": true, "hide_urls": true,
 	"inline": true, "logging": true, "dev_kill": true, "dev_precheck": true, "clean_dev": true,
 	"vite_dev": true, "docker_dev": true, "docker_run": true, "docker_build": true, "deploy": true,
@@ -170,15 +173,35 @@ func Load(projectDir string) (*Manifest, error) {
 
 // Parse turns an already-decoded TOML table into a Manifest. source is used
 // only to prefix error messages (typically the file path Load read from).
+// project_name is required, matching admin_toml's own manifest.
 func Parse(data map[string]any, source string) (*Manifest, error) {
+	return parse(data, source, true)
+}
+
+// ParsePartial turns an already-decoded TOML table into a Manifest using the
+// same grammar as Parse, but without requiring project_name — the shape an
+// archetype.toml uses (internal/archetype), since an archetype contributes a
+// partial manifest (ADR-0002) rather than a standalone project. Every other
+// check is identical to Parse.
+func ParsePartial(data map[string]any, source string) (*Manifest, error) {
+	return parse(data, source, false)
+}
+
+// parse is Parse and ParsePartial's shared body. requireName gates only the
+// project_name check; everything else is identical between the two callers.
+func parse(data map[string]any, source string, requireName bool) (*Manifest, error) {
 	m := &Manifest{Raw: data}
 
 	name, ok := data["project_name"]
 	nameStr, isStr := name.(string)
-	if !ok || !isStr || nameStr == "" {
-		return nil, errf("%s: 'project_name' is required (string)", source)
+	if requireName {
+		if !ok || !isStr || nameStr == "" {
+			return nil, errf("%s: 'project_name' is required (string)", source)
+		}
 	}
-	m.ProjectName = nameStr
+	if isStr {
+		m.ProjectName = nameStr
+	}
 
 	pythonMin := "3.11"
 	if v, present := data["python_min"]; present {
