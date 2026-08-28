@@ -16,6 +16,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/create"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
+	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/shim"
 	"github.com/McBrideMusings/admin-project-tool/internal/tui"
 )
@@ -44,8 +45,15 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-// Execute runs the root command.
+// Execute runs the root command. It first validates the kind catalog is
+// fully covered by registered factories (internal/kinds) — this makes an
+// incomplete catalog a clean startup error in addition to the init-time
+// panic factories.go raises, and gives that check a path reachable without
+// killing the process.
 func Execute() error {
+	if err := kinds.Validate(); err != nil {
+		return err
+	}
 	rootCmd.SetArgs(dispatchArgs(os.Args[1:]))
 	return rootCmd.ExecuteContext(context.Background())
 }
