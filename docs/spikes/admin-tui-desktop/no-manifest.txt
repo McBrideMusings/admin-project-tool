@@ -1,0 +1,30 @@
+ admin · admin-project-tool                                    feat/one-tool-go-merge           
+ [ Repo ]  Issues    Live    Config                                                             
+────────────────────────────────────────────────────────────────────────────────────────────────
+ BRANCHES                                                                                       
+ ▸ main                            ↑0  ↓0        4d    Initial commit                           
+                                                                                                
+ WORKTREES                                                                                      
+   (none)                                                                                       
+                                                                                                
+ STASHES                                                                                        
+   (none)                                                                                       
+                                                                                                
+ No admin.toml in this project, so there is no Commands tab. A tab the                          
+ project cannot support is absent, never present-but-disabled.                                  
+                                                                                                
+   admin new    scaffold a manifest here                                                        
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ move   ⏎ checkout   tab switch   q quit                                                     

@@ -1,0 +1,30 @@
+ admin · admin-project-tool                                    feat/one-tool-go-merge           
+   Commands  [ Repo ]  Issues    Live    Config                                                 
+────────────────────────────────────────────────────────────────────────────────────────────────
+ BRANCHES                                                                                       
+   feat/one-tool-go-merge          ↑1  ↓0   wt   2m    docs(adr): Lua and Bash are the          
+ ▸ main                            ↑0  ↓0        15h   Merge pull request #1016                 
+   fix-detector-parity-skip        ↑1  ↓0   wt   2d    fix(detect): fail parity test            
+                                                                                                
+ WORKTREES                                                                                      
+   ~/.worktrees/admin-project-tool/fix-detector-parity-skip     clean                           
+                                                                                                
+ STASHES                                                                                        
+   (none)                                                                                       
+                                                                                                
+ RECENT                                                                                         
+   db2711a  docs(adr): Lua and Bash are the archetype authoring languages   2m                  
+   f738934  feat(launchd): lift allowlisted env vars from a dotenv file     3h                  
+   1023714  chore(beads): close admin-3rgp.34, file .36 blocking .35        3h                  
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ move   ⏎ checkout   w worktree   f fetch   tab switch   q quit                              

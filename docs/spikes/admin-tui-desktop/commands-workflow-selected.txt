@@ -1,0 +1,30 @@
+ admin · admin-project-tool                                    feat/one-tool-go-merge           
+ [ Commands ]  Repo    Issues    Live    Config                                                 
+────────────────────────────────────────────────────────────────────────────────────────────────
+   COMMAND          LAST RUN    │ retire-merged                                                 
+                                │ ──────────────────────────────────────────────────────────    
+   build            2h ago      │ kind      workflow                                            
+   check            2h ago      │ archetype (manifest)                                          
+   deploy           18m ago     │ source    query                                               
+   docs             —           │ last run  never                                               
+   logs             —           │                                                               
+ ▸ retire-merged    never       │ TARGETS  resolved now · 4 match                               
+   test             6m ago      │   fix-detector-parity-skip                                    
+                                │   go-transient-kind-factories                                 
+                                │   docs-adr-lua                                                
+                                │   launchd-env-file                                            
+                                │                                                               
+                                │ A query-sourced workflow lists here                           
+                                │ and runs bare. A selection-sourced                            
+                                │ one does not appear in this list —                            
+                                │ it is offered on a row instead.                               
+                                │                                                               
+                                │                                                               
+                                │                                                               
+                                │                                                               
+                                │                                                               
+                                │                                                               
+                                │                                                               
+                                │                                                               
+────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ move   ⏎ run over 4 targets   tab switch   ? help   q quit                                  

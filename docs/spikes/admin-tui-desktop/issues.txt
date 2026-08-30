@@ -1,0 +1,30 @@
+ admin · admin-project-tool                                    feat/one-tool-go-merge           
+   Commands    Repo  [ Issues ]  Live    Config                                                 
+────────────────────────────────────────────────────────────────────────────────────────────────
+ READY                                                             tracker: beads               
+   admin-3rgp.36  P1  Embed a Lua VM and define the host API                                    
+ ▸ admin-3rgp.19  P1  Rebuild the reference frames for the settled design                       
+   admin-3rgp.7   P1  Decide how admin <command> reaches the CLI, and wire it                   
+                                                                                                
+ BLOCKED                                                                                        
+   admin-3rgp.20  P1  Commands tab with the resolved-action reader     ← .19                    
+   admin-3rgp.28  P1  The live-work tab: agent workers and processes   ← .19                    
+   admin-3rgp.35  P1  Implement the transient kind factories           ← .36                    
+   admin-3rgp.37  P1  Rewrite the 14 archetypes in Lua and Bash        ← .36                    
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ move   ⏎ open   c claim   b branch   tab switch   q quit                                    

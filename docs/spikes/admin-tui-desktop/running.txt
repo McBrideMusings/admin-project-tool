@@ -1,0 +1,30 @@
+ admin · admin-project-tool                                    feat/one-tool-go-merge           
+ [ Commands ]  Repo    Issues    Live    Config                                                 
+────────────────────────────────────────────────────────────────────────────────────────────────
+   COMMAND          LAST RUN    │ test  ·  running  ·  00:41                                    
+                                │ ──────────────────────────────────────────────────────────    
+   build            2h ago      │ ok   internal/archetype   cached                              
+   check            2h ago      │ ok   internal/detect      0.63s                               
+   deploy           18m ago     │ ok   internal/kinds       cached                              
+   docs             —           │ ok   internal/manifest    cached                              
+   logs             —           │ ..   internal/tui                                             
+ ▸ test             running     │                                                               
+                                │ log  ~/.admin/logs/test.log                                   
+                                │                                                               
+                                │ A transient kind runs inline in this                          
+                                │ frame. A long-running kind would be                           
+                                │ dispatched to a pane and listed under                         
+                                │ the live-work tab instead.                                    
+                                │                                                               
+                                │                                                               
+                                │                                                               
+                                │                                                               
+                                │                                                               
+                                │                                                               
+                                │                                                               
+                                │                                                               
+                                │                                                               
+                                │                                                               
+                                │                                                               
+────────────────────────────────────────────────────────────────────────────────────────────────
+ c cancel   L full log   tab switch   q quit                                                    
