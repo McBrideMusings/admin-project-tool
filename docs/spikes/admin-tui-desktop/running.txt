@@ -1,20 +1,20 @@
- admin · admin-project-tool                                    feat/one-tool-go-merge           
- [ Commands ]  Repo    Issues    Live    Config                                                 
+ admin · admin-project-tool                                              feat/one-tool-go-merge 
+  Commands   Repo    Issues    Live    Config                                                   
 ────────────────────────────────────────────────────────────────────────────────────────────────
    COMMAND          LAST RUN    │ test  ·  running  ·  00:41                                    
                                 │ ──────────────────────────────────────────────────────────    
-   build            2h ago      │ ok   internal/archetype   cached                              
-   check            2h ago      │ ok   internal/detect      0.63s                               
-   deploy           18m ago     │ ok   internal/kinds       cached                              
-   docs             —           │ ok   internal/manifest    cached                              
-   logs             —           │ ..   internal/tui                                             
- ▸ test             running     │                                                               
-                                │ log  ~/.admin/logs/test.log                                   
+   build            2h ago      │ kind      sequence                                            
+   check            2h ago      │ archetype (manifest)                                          
+   deploy           18m ago     │ last run  6m ago                                              
+   docs             —           │ log       ~/.admin/logs/test.log                              
+   logs             —           │                                                               
+   retire-merged    never       │ OUTPUT                                                        
+ ▸ test             running     │   ok   internal/archetype   cached                            
+                                │   ok   internal/detect      0.63s                             
+                                │   ok   internal/kinds       cached                            
+                                │   ..   internal/tui                                           
                                 │                                                               
-                                │ A transient kind runs inline in this                          
-                                │ frame. A long-running kind would be                           
-                                │ dispatched to a pane and listed under                         
-                                │ the live-work tab instead.                                    
+                                │                                                               
                                 │                                                               
                                 │                                                               
                                 │                                                               
@@ -27,4 +27,4 @@
                                 │                                                               
                                 │                                                               
 ────────────────────────────────────────────────────────────────────────────────────────────────
- c cancel   L full log   tab switch   q quit                                                    
+ ↑↓ move   ⏎ run   ⇥ switch tab   / filter   m toggle manifest   q quit                         
