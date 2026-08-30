@@ -1,23 +1,23 @@
- admin · admin-project-tool                                    feat/one-tool-go-merge           
-   Commands    Repo  [ Issues ]  Live    Config                                                 
+ admin · admin-project-tool                                              feat/one-tool-go-merge 
+   Commands    Repo   Issues   Live    Config                                                   
 ────────────────────────────────────────────────────────────────────────────────────────────────
- READY                                                                                          
-   admin-3rgp.36  P1  Embed a Lua VM and define the host API                                    
- ▸ admin-3rgp.19  P1  Rebuild the reference frames for the settled design                       
-                                                                                                
-        ┌──────────────────────────────────────────────────────────────┐                        
-        │  Dispatch admin-3rgp.19                                      │                        
-        │                                                              │                        
-        │    agent      claude                                         │                        
-        │    model      sonnet                                         │                        
-        │    branch     rebuild-reference-frames                        │                       
-        │    worktree   ~/.worktrees/admin-project-tool/rebuild-refe…   │                       
-        │    lands to   feat/one-tool-go-merge                         │                        
-        │                                                              │                        
-        │    ⏎ dispatch          e edit          esc cancel            │                        
-        └──────────────────────────────────────────────────────────────┘                        
-                                                                                                
-                                                                                                
+ READY            tracker: beads              │ admin-3rgp.36   P1  open                        
+ ▸ P1 Embed a Lua VM and define the host …    │ ──────────────────────────────────────────────  
+   P1 Two deployment paths: go install, a…    │ Embed a Lua VM and define the host API          
+   P1 Decide how admin <command> reaches …    │                                                 
+                                              │ READY  no open blockers                         
+ BLOCKED                                      │                                                 
+   P1 Commands t┌──────────────────────────────────────────────────────────────┐                
+   P1 The live-w│  Dispatch admin-3rgp.36                                      │                
+   P1 Implement │                                                              │                
+   P1 Rewrite th│    agent     claude                                          │                
+                │    model     sonnet                                          │                
+                │    branch    embed-lua-vm                                    │                
+                │    worktree  ~/.worktrees/admin-project-tool/embed-lua-vm    │                
+                │    lands to  feat/one-tool-go-merge                          │                
+                │                                                              │                
+                │    ⏎ dispatch     e edit     esc cancel                      │                
+                └──────────────────────────────────────────────────────────────┘                
                                                                                                 
                                                                                                 
                                                                                                 

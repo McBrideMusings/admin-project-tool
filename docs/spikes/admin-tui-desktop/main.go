@@ -1,22 +1,31 @@
-// Reference-frame renderer for the admin dashboard TUI (admin-3rgp.19).
+// Reference prototype for the admin dashboard TUI (admin-3rgp.19).
 //
-// Throwaway. Renders the settled design as ten 96x30 text frames, one per named
-// state, and writes them beside this file. Text rather than screenshots because
-// the surface IS a character grid — a dumped frame is how a UI change is checked
-// at the surface in this codebase.
+// Throwaway, but runnable. This is the settled design as a real bubbletea app —
+// tabs switch, lists move, the reader pane tracks the selection, the dispatch
+// sheet opens and closes. Run it and drive it:
 //
-// Colour is deliberately absent from the output. The palette rules live in
-// internal/tui/design_parity_test.go (16-colour ANSI theme slots, active tab is
-// a pill and the only background-painted element on the tab bar). A .txt frame
-// pins geometry; the tests pin colour.
+//	go run ./docs/spikes/admin-tui-desktop
 //
-//	go run main.go
+// The ten committed .txt frames are dumps of this same View(), not hand-written
+// strings, so a frame can never drift from the prototype it claims to depict:
+//
+//	go run ./docs/spikes/admin-tui-desktop -dump
+//
+// Colour follows the rules pinned by internal/tui/design_parity_test.go: 16-colour
+// ANSI theme slots, never hardcoded RGB, and the active tab is a pill — the only
+// background-painted element on the tab bar. Dumps are ANSI-stripped, so a .txt
+// pins geometry while the parity tests pin colour.
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 const (
@@ -24,357 +33,644 @@ const (
 	H = 30
 )
 
-// ---------- frame primitives ----------
+// ---------- palette: ANSI slots only ----------
 
-type frame struct {
-	rows []string
-	// fill is the template used for padding rows. A two-column frame sets it so
-	// the divider runs the full height instead of stopping at the last row with
-	// content — a column rule that ends mid-frame reads as a broken layout.
-	fill string
+var (
+	dim      = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(8))
+	cyan     = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(6))
+	green    = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(2))
+	yellow   = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(3))
+	red      = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(1))
+	magenta  = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(5))
+	bold     = lipgloss.NewStyle().Bold(true)
+	pill     = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(0)).Background(lipgloss.ANSIColor(6)).Bold(true)
+	inactive = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(7))
+)
+
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func strip(s string) string { return ansiRe.ReplaceAllString(s, "") }
+
+// vw is visible width — runes after ANSI is removed. Box-drawing characters are
+// three bytes each, so byte length is always wrong here.
+func vw(s string) int { return len([]rune(strip(s))) }
+
+func pad(s string, w int) string {
+	if n := vw(s); n < w {
+		return s + strings.Repeat(" ", w-n)
+	}
+	return s
 }
 
-// row renders one list row. The selection marker occupies its own leading cell so
-// a selected row's text stays on the same column as its neighbours.
-func row(selected bool, s string) string {
-	if selected {
-		return "▸ " + s
+// ---------- data ----------
+
+type cmd struct {
+	name, last, kind, arch, note string
+	// n, kind, run, contributing archetype — the reader names the archetype
+	// per STEP, not per command, because a merged command routinely mixes them.
+	steps    [][4]string
+	workflow bool
+	targets  []string
+}
+
+var commandList = []cmd{
+	{name: "build", last: "2h ago", kind: "shell", arch: "go-cli",
+		steps: [][4]string{{"1", "shell", "go build ./...", "go-cli"}}},
+	{name: "check", last: "2h ago", kind: "shell", arch: "(manifest)",
+		steps: [][4]string{{"1", "shell", "admin check .", "(manifest)"}}},
+	{name: "deploy", last: "18m ago", kind: "sequence", arch: "(manifest)",
+		note: "exit 0 · 41s",
+		steps: [][4]string{
+			{"1", "shell", "bash install.sh", "simple"},
+			{"2", "lua", "scripts/provision.lua", "apple"},
+			{"3", "shell", "admin check .", "(manifest)"},
+		}},
+	{name: "docs", last: "—", kind: "shell", arch: "docs",
+		steps: [][4]string{{"1", "shell", "bun run docs:dev", "docs"}}},
+	{name: "logs", last: "—", kind: "logs", arch: "(manifest)",
+		steps: [][4]string{{"1", "logs", "admin logs dev", "docker"}}},
+	{name: "retire-merged", last: "never", kind: "workflow", arch: "(manifest)", workflow: true,
+		targets: []string{"fix-detector-parity-skip", "go-transient-kind-factories", "docs-adr-lua", "launchd-env-file"}},
+	{name: "test", last: "6m ago", kind: "sequence", arch: "(manifest)",
+		steps: [][4]string{
+			{"1", "go", "go test ./...", "go-cli"},
+			{"2", "shell", "bash tests/test_install.sh", "(manifest)"},
+		}},
+}
+
+type branch struct {
+	name, ahead, behind, wt, age, subject string
+	current                               bool
+}
+
+var branches = []branch{
+	{name: "feat/one-tool-go-merge", ahead: "1", behind: "0", wt: "", age: "2m", subject: "docs(adr): Lua and Bash are the archetype", current: true},
+	{name: "fix-detector-parity-skip", ahead: "1", behind: "0", wt: "wt", age: "2d", subject: "fix(detect): fail parity test instead of"},
+	{name: "main", ahead: "0", behind: "0", wt: "", age: "15h", subject: "Merge pull request #1016"},
+}
+
+type issue struct{ id, pri, title, blocker string }
+
+var ready = []issue{
+	{"admin-3rgp.36", "P1", "Embed a Lua VM and define the host API", ""},
+	{"admin-3rgp.29", "P1", "Two deployment paths: go install, archetypes", ""},
+	{"admin-3rgp.7", "P1", "Decide how admin <command> reaches the CLI", ""},
+}
+
+var blocked = []issue{
+	{"admin-3rgp.20", "P1", "Commands tab with the resolved-action reader", ".19"},
+	{"admin-3rgp.28", "P1", "The live-work tab: workers and processes", ".19"},
+	{"admin-3rgp.35", "P1", "Implement the transient kind factories", ".36"},
+	{"admin-3rgp.37", "P1", "Rewrite the 14 archetypes in Lua and Bash", ".36"},
+}
+
+type worker struct{ state, id, branch, doing, pane string }
+
+var workers = []worker{
+	{"running", "admin-3rgp.36", "embed-lua-vm", "writing internal/lua/host.go", "pane 3"},
+	{"waiting", "admin-3rgp.7", "cli-identity", "needs input: root command name", "pane 4"},
+	{"done", "admin-3rgp.34", "fix-parity-skip", "verdict PASS · c31e994", "pane 2"},
+	{"failed", "admin-3rgp.33", "detector-clear", "go test ./internal/detect FAIL", "pane 5"},
+}
+
+var processes = []worker{
+	{"running", "admin docs", "vitepress dev", "http://localhost:5173", "pane 1"},
+}
+
+var configRows = [][3]string{
+	{"tracker", "beads", "admin.toml"},
+	{"uses_pull_requests", "false", "admin.toml"},
+	{"identity.login", "pierce", "admin.toml"},
+	{"worktree_root", "~/.worktrees/admin-project-tool", "default"},
+	{"populate_patterns", "admin.toml, .env*, CLAUDE.local.md", "default"},
+	{"default_agent", "claude", "default"},
+	{"concurrency_ceiling", "4", "admin.toml"},
+	{"enter.branch", "checkout", "default"},
+	{"enter.issue", "open", "default"},
+}
+
+// ---------- model ----------
+
+type tabID int
+
+const (
+	tCommands tabID = iota
+	tRepo
+	tIssues
+	tLive
+	tConfig
+)
+
+type Model struct {
+	tab        tabID
+	cur        map[tabID]int
+	sheet      bool
+	running    bool
+	noManifest bool
+}
+
+func New() Model { return Model{cur: map[tabID]int{}} }
+
+// tabs returns the visible tabs. A tab the project cannot support is absent, not
+// disabled — no manifest means no Commands tab at all.
+func (m Model) tabs() []struct {
+	id   tabID
+	name string
+} {
+	all := []struct {
+		id   tabID
+		name string
+	}{
+		{tCommands, "Commands"}, {tRepo, "Repo"}, {tIssues, "Issues"},
+		{tLive, "Live"}, {tConfig, "Config"},
+	}
+	if m.noManifest {
+		return all[1:]
+	}
+	return all
+}
+
+func (m Model) rowsOn(t tabID) int {
+	switch t {
+	case tCommands:
+		return len(commandList)
+	case tRepo:
+		return len(branches)
+	case tIssues:
+		return len(ready) + len(blocked)
+	case tLive:
+		return len(workers) + len(processes)
+	}
+	return 0
+}
+
+func (m Model) Init() tea.Cmd { return nil }
+
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	k, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	if m.sheet {
+		switch k.String() {
+		case "esc", "q":
+			m.sheet = false
+		case "enter":
+			m.sheet = false
+		}
+		return m, nil
+	}
+	switch k.String() {
+	case "q", "ctrl+c":
+		return m, tea.Quit
+	case "tab", "right", "l":
+		vis := m.tabs()
+		for i, t := range vis {
+			if t.id == m.tab {
+				m.tab = vis[(i+1)%len(vis)].id
+				return m, nil
+			}
+		}
+		m.tab = vis[0].id
+	case "shift+tab", "left", "h":
+		vis := m.tabs()
+		for i, t := range vis {
+			if t.id == m.tab {
+				m.tab = vis[(i-1+len(vis))%len(vis)].id
+				return m, nil
+			}
+		}
+	case "down", "j":
+		if n := m.rowsOn(m.tab); n > 0 {
+			m.cur[m.tab] = (m.cur[m.tab] + 1) % n
+		}
+	case "up", "k":
+		if n := m.rowsOn(m.tab); n > 0 {
+			m.cur[m.tab] = (m.cur[m.tab] - 1 + n) % n
+		}
+	case "enter":
+		if m.tab == tIssues {
+			m.sheet = true
+		}
+		if m.tab == tCommands {
+			m.running = !m.running
+		}
+	case "m":
+		m.noManifest = !m.noManifest
+		m.tab = tRepo
+	}
+	return m, nil
+}
+
+// ---------- view ----------
+
+func (m Model) View() string {
+	var b []string
+	b = append(b, m.headerRow())
+	b = append(b, m.tabBar())
+	b = append(b, strings.Repeat("─", W))
+	body := m.body()
+	// header + tab bar + rule + body + rule + footer == H
+	for len(body) < H-5 {
+		body = append(body, m.fill())
+	}
+	b = append(b, body[:H-5]...)
+	b = append(b, strings.Repeat("─", W))
+	b = append(b, pad(" "+dim.Render(m.keys()), W))
+	if m.sheet {
+		b = overlay(b, sheetBox())
+	}
+	for i := range b {
+		b[i] = pad(b[i], W)
+	}
+	return strings.Join(b, "\n")
+}
+
+func (m Model) headerRow() string {
+	l := " " + bold.Render("admin") + dim.Render(" · admin-project-tool")
+	r := cyan.Render("feat/one-tool-go-merge") + " "
+	return l + strings.Repeat(" ", max(1, W-vw(l)-vw(r))) + r
+}
+
+func (m Model) tabBar() string {
+	var sb strings.Builder
+	sb.WriteString(" ")
+	for _, t := range m.tabs() {
+		if t.id == m.tab {
+			sb.WriteString(pill.Render(" " + t.name + " "))
+		} else {
+			sb.WriteString(inactive.Render("  " + t.name + "  "))
+		}
+	}
+	return sb.String()
+}
+
+func (m Model) fill() string {
+	if m.tab == tCommands && !m.noManifest {
+		return split("", "", 30)
+	}
+	if m.tab == tIssues && !m.sheet {
+		return split("", "", 44)
+	}
+	return ""
+}
+
+func (m Model) keys() string {
+	if m.sheet {
+		return "⏎ dispatch   e edit   esc cancel"
+	}
+	switch m.tab {
+	case tCommands:
+		return "↑↓ move   ⏎ run   ⇥ switch tab   / filter   m toggle manifest   q quit"
+	case tRepo:
+		return "↑↓ move   ⏎ checkout   w worktree   f fetch   ⇥ switch tab   q quit"
+	case tIssues:
+		return "↑↓ move   ⏎ dispatch   c claim   b branch   ⇥ switch tab   q quit"
+	case tLive:
+		return "↑↓ move   a attach   k kill   r retry   ⇥ switch tab   q quit"
+	}
+	return "↑↓ move   ⇥ switch tab   q quit"
+}
+
+func split(l, r string, lw int) string {
+	return " " + pad(l, lw) + dim.Render(" │ ") + r
+}
+
+func rowMark(sel bool, s string) string {
+	if sel {
+		return cyan.Render("▸ ") + s
 	}
 	return "  " + s
 }
 
-func (f *frame) add(s string) { f.rows = append(f.rows, s) }
+func (m Model) body() []string {
+	switch m.tab {
+	case tCommands:
+		return m.viewCommands()
+	case tRepo:
+		return m.viewRepo()
+	case tIssues:
+		return m.viewIssues()
+	case tLive:
+		return m.viewLive()
+	case tConfig:
+		return m.viewConfig()
+	}
+	return nil
+}
 
-func (f *frame) rule(ch string) { f.add(strings.Repeat(ch, W)) }
-
-// tabbar renders the tab strip. The active tab is drawn as a pill — in the real
-// TUI that is a themed background; in text it is the bracket pair, and it is the
-// only decorated element on the line.
-func (f *frame) tabbar(tabs []string, active int) {
-	var b strings.Builder
-	b.WriteString(" ")
-	for i, t := range tabs {
-		if i == active {
-			b.WriteString("[ " + t + " ]")
-		} else {
-			b.WriteString("  " + t + "  ")
+func (m Model) viewCommands() []string {
+	lw := 30
+	sel := m.cur[tCommands]
+	c := commandList[sel]
+	var right []string
+	right = append(right, bold.Render(c.name)+running(m.running, c.name))
+	right = append(right, dim.Render(strings.Repeat("─", 58)))
+	right = append(right, dim.Render("kind      ")+c.kind)
+	right = append(right, dim.Render("archetype ")+c.arch)
+	right = append(right, dim.Render("last run  ")+c.last+ifs(c.note != "", " · "+c.note))
+	right = append(right, dim.Render("log       ")+"~/.admin/logs/"+c.name+".log")
+	right = append(right, "")
+	if c.workflow {
+		right = append(right, dim.Render("source    ")+"query")
+		right = append(right, "")
+		right = append(right, bold.Render("TARGETS")+dim.Render("  resolved now · 4 match"))
+		for _, t := range c.targets {
+			right = append(right, "  "+t)
+		}
+		right = append(right, "")
+		right = append(right, dim.Render("A query-sourced workflow lists here and"))
+		right = append(right, dim.Render("runs bare. A selection-sourced one does"))
+		right = append(right, dim.Render("not appear — it is offered on a row."))
+	} else if m.running && c.name == "test" {
+		right = append(right, bold.Render("OUTPUT"))
+		for _, l := range []string{
+			green.Render("ok") + "   internal/archetype   cached",
+			green.Render("ok") + "   internal/detect      0.63s",
+			green.Render("ok") + "   internal/kinds       cached",
+			dim.Render("..") + "   internal/tui",
+		} {
+			right = append(right, "  "+l)
+		}
+	} else {
+		right = append(right, bold.Render("STEPS"))
+		for _, s := range c.steps {
+			right = append(right, "  "+dim.Render(s[0]+"  ")+pad(s[1], 10)+s[2])
+			right = append(right, "     "+dim.Render("from  ")+magenta.Render(s[3]))
+			right = append(right, "")
 		}
 	}
-	f.add(pad(b.String()))
-}
 
-// footer is the context-sensitive keybinding row. A key that works but is never
-// displayed does not exist, so every frame carries its own.
-func (f *frame) footer(keys string) { f.add(pad(" " + keys)) }
-
-// pad is rune-aware on purpose: the frames use box-drawing characters, which are
-// three bytes each in UTF-8. A byte-counting pad truncates a 96-column rule to 32
-// columns and reports success.
-func pad(s string) string {
-	r := []rune(s)
-	if len(r) > W {
-		return string(r[:W])
+	var left []string
+	left = append(left, dim.Render("  COMMAND          LAST RUN"))
+	left = append(left, "")
+	for i, cc := range commandList {
+		last := cc.last
+		if m.running && cc.name == "test" {
+			last = yellow.Render("running")
+		}
+		left = append(left, rowMark(i == sel, pad(cc.name, 16)+" "+dim.Render(last)))
 	}
-	return s + strings.Repeat(" ", W-len(r))
-}
 
-// split lays one row of the Commands tab's two-column split.
-func split(left, right string, leftW int) string {
-	r := []rune(left)
-	if len(r) > leftW {
-		r = r[:leftW]
+	n := max(len(left), len(right))
+	out := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, split(at(left, i), at(right, i), lw))
 	}
-	l := string(r) + strings.Repeat(" ", leftW-len(r))
-	return pad(" " + l + " │ " + right)
+	return out
 }
 
-// finish pads the frame to exactly H rows, then appends the footer last.
-func (f *frame) finish(keys string) string {
-	for len(f.rows) < H-2 {
-		f.add(f.fill)
+func running(on bool, name string) string {
+	if on && name == "test" {
+		return dim.Render("  ·  ") + yellow.Render("running") + dim.Render("  ·  00:41")
 	}
-	f.rows = f.rows[:H-2]
-	f.rule("─")
-	f.footer(keys)
-	for i, r := range f.rows {
-		f.rows[i] = pad(r)
+	return ""
+}
+
+func (m Model) viewRepo() []string {
+	sel := m.cur[tRepo]
+	var o []string
+	o = append(o, " "+bold.Render("BRANCHES"))
+	for i, b := range branches {
+		mark := "  "
+		if b.current {
+			mark = green.Render("* ")
+		}
+		wt := "  "
+		if b.wt != "" {
+			wt = magenta.Render("wt")
+		}
+		line := pad(b.name, 32) + dim.Render("↑")+ b.ahead + dim.Render(" ↓") + b.behind + "  " + wt +
+			dim.Render("  "+pad(b.age, 5)+b.subject)
+		o = append(o, " "+rowMark(i == sel, mark+line))
 	}
-	return strings.Join(f.rows, "\n") + "\n"
+	o = append(o, "")
+	o = append(o, " "+bold.Render("WORKTREES"))
+	o = append(o, "   ~/.worktrees/admin-project-tool/fix-detector-parity-skip     "+green.Render("clean"))
+	o = append(o, "")
+	o = append(o, " "+bold.Render("STASHES")+dim.Render("   (none)")) // empty section collapses to one line
+	o = append(o, "")
+	o = append(o, " "+bold.Render("RECENT"))
+	for _, c := range [][2]string{
+		{"d7d90d7", "docs(spikes): rebuild the admin dashboard reference frames"},
+		{"db2711a", "docs(adr): Lua and Bash are the archetype authoring languages"},
+		{"f738934", "feat(launchd): lift allowlisted env vars from a dotenv file"},
+	} {
+		o = append(o, "   "+yellow.Render(c[0])+"  "+dim.Render(c[1]))
+	}
+	return o
 }
 
-func header(title string) *frame {
-	f := &frame{}
-	f.add(pad(" admin · admin-project-tool                                    feat/one-tool-go-merge"))
-	return f
-}
-
-var tabsFull = []string{"Commands", "Repo", "Issues", "Live", "Config"}
-
-// ---------- the ten states ----------
-
-func cmdRow(sel bool, name, last string) string {
-	return row(sel, fmt.Sprintf("%-16s %s", name, last))
-}
-
-func commands() string {
-	f := header("")
-	f.tabbar(tabsFull, 0)
-	f.rule("─")
-	lw := 30
-	f.fill = split("", "", lw)
-	f.add(split("  COMMAND          LAST RUN", "deploy", lw))
-	f.add(split("", strings.Repeat("─", 58), lw))
-	f.add(split(cmdRow(false, "build", "2h ago"), "kind      sequence  ·  3 steps", lw))
-	f.add(split(cmdRow(false, "check", "2h ago"), "archetype (manifest)", lw))
-	f.add(split(cmdRow(true, "deploy", "18m ago"), "last run  18m ago · exit 0 · 41s", lw))
-	f.add(split(cmdRow(false, "docs", "—"), "log       ~/.admin/logs/deploy.log", lw))
-	f.add(split(cmdRow(false, "logs", "—"), "", lw))
-	f.add(split(cmdRow(false, "test", "6m ago"), "STEPS", lw))
-	f.add(split("", "  1  install      shell", lw))
-	f.add(split("", "     bash install.sh", lw))
-	f.add(split("", "     from  archetype: simple", lw))
-	f.add(split("", "", lw))
-	f.add(split("", "  2  tampermonkey  lua", lw))
-	f.add(split("", "     scripts/provision.lua", lw))
-	f.add(split("", "     from  archetype: apple", lw))
-	f.add(split("", "", lw))
-	f.add(split("", "  3  verify        shell", lw))
-	f.add(split("", "     admin check .", lw))
-	f.add(split("", "     from  (manifest)", lw))
-	return f.finish("↑↓ move   ⏎ run   tab switch   / filter   ? help   q quit")
-}
-
-func commandsWorkflowSelected() string {
-	f := header("")
-	f.tabbar(tabsFull, 0)
-	f.rule("─")
-	lw := 30
-	f.fill = split("", "", lw)
-	f.add(split("  COMMAND          LAST RUN", "retire-merged", lw))
-	f.add(split("", strings.Repeat("─", 58), lw))
-	f.add(split(cmdRow(false, "build", "2h ago"), "kind      workflow", lw))
-	f.add(split(cmdRow(false, "check", "2h ago"), "archetype (manifest)", lw))
-	f.add(split(cmdRow(false, "deploy", "18m ago"), "source    query", lw))
-	f.add(split(cmdRow(false, "docs", "—"), "last run  never", lw))
-	f.add(split(cmdRow(false, "logs", "—"), "", lw))
-	f.add(split(cmdRow(true, "retire-merged", "never"), "TARGETS  resolved now · 4 match", lw))
-	f.add(split(cmdRow(false, "test", "6m ago"), "  fix-detector-parity-skip", lw))
-	f.add(split("", "  go-transient-kind-factories", lw))
-	f.add(split("", "  docs-adr-lua", lw))
-	f.add(split("", "  launchd-env-file", lw))
-	f.add(split("", "", lw))
-	f.add(split("", "A query-sourced workflow lists here", lw))
-	f.add(split("", "and runs bare. A selection-sourced", lw))
-	f.add(split("", "one does not appear in this list —", lw))
-	f.add(split("", "it is offered on a row instead.", lw))
-	return f.finish("↑↓ move   ⏎ run over 4 targets   tab switch   ? help   q quit")
-}
-
-func repo() string {
-	f := header("")
-	f.tabbar(tabsFull, 1)
-	f.rule("─")
-	f.add(pad(" BRANCHES"))
-	f.add(pad("   feat/one-tool-go-merge          ↑1  ↓0   wt   2m    docs(adr): Lua and Bash are the"))
-	f.add(pad(" ▸ main                            ↑0  ↓0        15h   Merge pull request #1016"))
-	f.add(pad("   fix-detector-parity-skip        ↑1  ↓0   wt   2d    fix(detect): fail parity test"))
-	f.add(pad(""))
-	f.add(pad(" WORKTREES"))
-	f.add(pad("   ~/.worktrees/admin-project-tool/fix-detector-parity-skip     clean"))
-	f.add(pad(""))
-	f.add(pad(" STASHES"))
-	f.add(pad("   (none)"))
-	f.add(pad(""))
-	f.add(pad(" RECENT"))
-	f.add(pad("   db2711a  docs(adr): Lua and Bash are the archetype authoring languages   2m"))
-	f.add(pad("   f738934  feat(launchd): lift allowlisted env vars from a dotenv file     3h"))
-	f.add(pad("   1023714  chore(beads): close admin-3rgp.34, file .36 blocking .35        3h"))
-	return f.finish("↑↓ move   ⏎ checkout   w worktree   f fetch   tab switch   q quit")
-}
-
-func issues() string {
-	f := header("")
-	f.tabbar(tabsFull, 2)
-	f.rule("─")
-	f.add(pad(" READY                                                             tracker: beads"))
-	f.add(pad("   admin-3rgp.36  P1  Embed a Lua VM and define the host API"))
-	f.add(pad(" ▸ admin-3rgp.19  P1  Rebuild the reference frames for the settled design"))
-	f.add(pad("   admin-3rgp.7   P1  Decide how admin <command> reaches the CLI, and wire it"))
-	f.add(pad(""))
-	f.add(pad(" BLOCKED"))
-	f.add(pad("   admin-3rgp.20  P1  Commands tab with the resolved-action reader     ← .19"))
-	f.add(pad("   admin-3rgp.28  P1  The live-work tab: agent workers and processes   ← .19"))
-	f.add(pad("   admin-3rgp.35  P1  Implement the transient kind factories           ← .36"))
-	f.add(pad("   admin-3rgp.37  P1  Rewrite the 14 archetypes in Lua and Bash        ← .36"))
-	return f.finish("↑↓ move   ⏎ open   c claim   b branch   tab switch   q quit")
-}
-
-func issuesSelected() string {
-	f := header("")
-	f.tabbar(tabsFull, 2)
-	f.rule("─")
+func (m Model) viewIssues() []string {
 	lw := 44
-	f.fill = split("", "", lw)
-	f.add(split("READY", "admin-3rgp.19                    P1  open", lw))
-	f.add(split(row(false, "admin-3rgp.36  P1  Embed a Lua VM"), strings.Repeat("─", 44), lw))
-	f.add(split(row(true, "admin-3rgp.19  P1  Rebuild the ref"), "Rebuild the reference frames for the", lw))
-	f.add(split(row(false, "admin-3rgp.7   P1  Decide how admi"), "settled design.", lw))
-	f.add(split("", "", lw))
-	f.add(split("BLOCKED", "BLOCKS", lw))
-	f.add(split("  admin-3rgp.20  P1  Commands tab wit", "  .20  Commands tab with the reader", lw))
-	f.add(split("  admin-3rgp.28  P1  The live-work ta", "  .28  The live-work tab", lw))
-	f.add(split("  admin-3rgp.35  P1  Implement the tr", "  .29  Two deployment paths", lw))
-	f.add(split("  admin-3rgp.37  P1  Rewrite the 14 a", "", lw))
-	f.add(split("", "LABELS  afk", lw))
-	return f.finish("↑↓ move   ⏎ open   c claim   b branch   tab switch   q quit")
-}
+	sel := m.cur[tIssues]
+	all := append(append([]issue{}, ready...), blocked...)
+	cursel := all[sel]
 
-func dispatchSheet() string {
-	f := header("")
-	f.tabbar(tabsFull, 2)
-	f.rule("─")
-	f.add(pad(" READY"))
-	f.add(pad("   admin-3rgp.36  P1  Embed a Lua VM and define the host API"))
-	f.add(pad(" ▸ admin-3rgp.19  P1  Rebuild the reference frames for the settled design"))
-	f.add(pad(""))
-	f.add(pad("        ┌──────────────────────────────────────────────────────────────┐"))
-	f.add(pad("        │  Dispatch admin-3rgp.19                                      │"))
-	f.add(pad("        │                                                              │"))
-	f.add(pad("        │    agent      claude                                         │"))
-	f.add(pad("        │    model      sonnet                                         │"))
-	f.add(pad("        │    branch     rebuild-reference-frames                        │"))
-	f.add(pad("        │    worktree   ~/.worktrees/admin-project-tool/rebuild-refe…   │"))
-	f.add(pad("        │    lands to   feat/one-tool-go-merge                         │"))
-	f.add(pad("        │                                                              │"))
-	f.add(pad("        │    ⏎ dispatch          e edit          esc cancel            │"))
-	f.add(pad("        └──────────────────────────────────────────────────────────────┘"))
-	return f.finish("⏎ dispatch   e edit   esc cancel")
-}
-
-func swarm() string {
-	f := header("")
-	f.tabbar(tabsFull, 3)
-	f.rule("─")
-	f.add(pad(" AGENT WORKERS"))
-	f.add(pad("   running   admin-3rgp.36  embed-lua-vm      writing internal/lua/host.go   pane 3"))
-	f.add(pad(" ▸ waiting   admin-3rgp.7   cli-identity      needs input: root command name  pane 4"))
-	f.add(pad("   done      admin-3rgp.34  fix-parity-skip   verdict PASS · c31e994          pane 2"))
-	f.add(pad("   failed    admin-3rgp.33  detector-clear    go test ./internal/detect FAIL  pane 5"))
-	f.add(pad(""))
-	f.add(pad(" LONG-RUNNING PROCESSES"))
-	f.add(pad("   running   admin docs     vitepress dev     http://localhost:5173           pane 1"))
-	f.add(pad(""))
-	f.add(pad(" One registry, both kinds. \"waiting\" is distinguishable from \"running\""))
-	f.add(pad(" without attaching to anything."))
-	return f.finish("↑↓ move   a attach   k kill   r retry   tab switch   q quit")
-}
-
-func config() string {
-	f := header("")
-	f.tabbar(tabsFull, 4)
-	f.rule("─")
-	f.add(pad(" RESOLVED CONFIGURATION                                    source: admin.toml"))
-	f.add(pad(""))
-	f.add(pad("   tracker                beads                              admin.toml"))
-	f.add(pad("   uses_pull_requests     false                              admin.toml"))
-	f.add(pad("   identity.login         pierce                             admin.toml"))
-	f.add(pad("   identity.emails        piercermcbride@gmail.com           admin.toml"))
-	f.add(pad("   worktree_root          ~/.worktrees/admin-project-tool    default"))
-	f.add(pad("   populate_patterns      admin.toml, .env*, CLAUDE.local.md default"))
-	f.add(pad("   default_agent          claude                             default"))
-	f.add(pad("   concurrency_ceiling    4                                  admin.toml"))
-	f.add(pad("   enter.branch           checkout                           default"))
-	f.add(pad("   enter.issue            open                               default"))
-	f.add(pad(""))
-	f.add(pad(" Values render resolved. Editing the manifest from here is out of scope."))
-	return f.finish("↑↓ move   tab switch   q quit")
-}
-
-func running() string {
-	f := header("")
-	f.tabbar(tabsFull, 0)
-	f.rule("─")
-	lw := 30
-	f.fill = split("", "", lw)
-	f.add(split("  COMMAND          LAST RUN", "test  ·  running  ·  00:41", lw))
-	f.add(split("", strings.Repeat("─", 58), lw))
-	f.add(split(cmdRow(false, "build", "2h ago"), "ok   internal/archetype   cached", lw))
-	f.add(split(cmdRow(false, "check", "2h ago"), "ok   internal/detect      0.63s", lw))
-	f.add(split(cmdRow(false, "deploy", "18m ago"), "ok   internal/kinds       cached", lw))
-	f.add(split(cmdRow(false, "docs", "—"), "ok   internal/manifest    cached", lw))
-	f.add(split(cmdRow(false, "logs", "—"), "..   internal/tui", lw))
-	f.add(split(cmdRow(true, "test", "running"), "", lw))
-	f.add(split("", "log  ~/.admin/logs/test.log", lw))
-	f.add(split("", "", lw))
-	f.add(split("", "A transient kind runs inline in this", lw))
-	f.add(split("", "frame. A long-running kind would be", lw))
-	f.add(split("", "dispatched to a pane and listed under", lw))
-	f.add(split("", "the live-work tab instead.", lw))
-	return f.finish("c cancel   L full log   tab switch   q quit")
-}
-
-func noManifest() string {
-	f := header("")
-	// No manifest means no Commands tab at all — absent, not disabled.
-	f.tabbar([]string{"Repo", "Issues", "Live", "Config"}, 0)
-	f.rule("─")
-	f.add(pad(" BRANCHES"))
-	f.add(pad(" ▸ main                            ↑0  ↓0        4d    Initial commit"))
-	f.add(pad(""))
-	f.add(pad(" WORKTREES"))
-	f.add(pad("   (none)"))
-	f.add(pad(""))
-	f.add(pad(" STASHES"))
-	f.add(pad("   (none)"))
-	f.add(pad(""))
-	f.add(pad(" No admin.toml in this project, so there is no Commands tab. A tab the"))
-	f.add(pad(" project cannot support is absent, never present-but-disabled."))
-	f.add(pad(""))
-	f.add(pad("   admin new    scaffold a manifest here"))
-	return f.finish("↑↓ move   ⏎ checkout   tab switch   q quit")
-}
-
-// ---------- driver ----------
-
-func main() {
-	states := []struct {
-		name string
-		body string
-	}{
-		{"commands", commands()},
-		{"commands-workflow-selected", commandsWorkflowSelected()},
-		{"repo", repo()},
-		{"issues", issues()},
-		{"issues-selected", issuesSelected()},
-		{"dispatch-sheet", dispatchSheet()},
-		{"swarm", swarm()},
-		{"config", config()},
-		{"running", running()},
-		{"no-manifest", noManifest()},
+	var left []string
+	left = append(left, bold.Render("READY")+dim.Render("            tracker: beads"))
+	for i, is := range ready {
+		left = append(left, rowMark(i == sel, dim.Render(is.pri)+" "+trunc(is.title, 36)))
+	}
+	left = append(left, "")
+	left = append(left, bold.Render("BLOCKED"))
+	for i, is := range blocked {
+		left = append(left, rowMark(len(ready)+i == sel, dim.Render(is.pri)+" "+trunc(is.title, 30)+red.Render(" ←"+is.blocker)))
 	}
 
+	var right []string
+	right = append(right, bold.Render(cursel.id)+dim.Render("   "+cursel.pri+"  open"))
+	right = append(right, dim.Render(strings.Repeat("─", 46)))
+	right = append(right, cursel.title)
+	right = append(right, "")
+	if cursel.blocker != "" {
+		right = append(right, bold.Render("BLOCKED BY"))
+		right = append(right, "  "+red.Render("admin-3rgp"+cursel.blocker))
+	} else {
+		right = append(right, bold.Render("READY")+dim.Render("  no open blockers"))
+	}
+	right = append(right, "")
+	right = append(right, bold.Render("LABELS")+dim.Render("  afk"))
+	right = append(right, "")
+	right = append(right, dim.Render("⏎ opens the dispatch sheet."))
+
+	n := max(len(left), len(right))
+	out := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, split(at(left, i), at(right, i), lw))
+	}
+	return out
+}
+
+func (m Model) viewLive() []string {
+	sel := m.cur[tLive]
+	stateCol := map[string]lipgloss.Style{
+		"running": green, "waiting": yellow, "done": dim, "failed": red,
+	}
+	var o []string
+	o = append(o, " "+bold.Render("AGENT WORKERS"))
+	for i, w := range workers {
+		o = append(o, " "+rowMark(i == sel, stateCol[w.state].Render(pad(w.state, 9))+pad(w.id, 15)+pad(w.branch, 18)+dim.Render(pad(w.doing, 32)+w.pane)))
+	}
+	o = append(o, "")
+	o = append(o, " "+bold.Render("LONG-RUNNING PROCESSES"))
+	for i, w := range processes {
+		o = append(o, " "+rowMark(len(workers)+i == sel, stateCol[w.state].Render(pad(w.state, 9))+pad(w.id, 15)+pad(w.branch, 18)+dim.Render(pad(w.doing, 32)+w.pane)))
+	}
+	o = append(o, "")
+	o = append(o, dim.Render(" One registry, both kinds. \"waiting\" is distinguishable from \"running\""))
+	o = append(o, dim.Render(" without attaching to anything."))
+	return o
+}
+
+func (m Model) viewConfig() []string {
+	var o []string
+	o = append(o, " "+bold.Render("RESOLVED CONFIGURATION")+dim.Render("                          source"))
+	o = append(o, "")
+	for _, r := range configRows {
+		src := dim.Render(r[2])
+		if r[2] == "admin.toml" {
+			src = cyan.Render(r[2])
+		}
+		o = append(o, "   "+pad(r[0], 22)+pad(r[1], 36)+src)
+	}
+	o = append(o, "")
+	o = append(o, dim.Render(" Values render resolved. Editing the manifest from here is out of scope."))
+	return o
+}
+
+func sheetBox() []string {
+	w := 62
+	var o []string
+	o = append(o, "┌"+strings.Repeat("─", w)+"┐")
+	add := func(s string) { o = append(o, "│"+pad(s, w)+"│") }
+	add("  " + bold.Render("Dispatch admin-3rgp.36"))
+	add("")
+	add("    " + dim.Render("agent     ") + "claude")
+	add("    " + dim.Render("model     ") + "sonnet")
+	add("    " + dim.Render("branch    ") + "embed-lua-vm")
+	add("    " + dim.Render("worktree  ") + "~/.worktrees/admin-project-tool/embed-lua-vm")
+	add("    " + dim.Render("lands to  ") + cyan.Render("feat/one-tool-go-merge"))
+	add("")
+	add("    " + green.Render("⏎ dispatch") + "     e edit     " + dim.Render("esc cancel"))
+	o = append(o, "└"+strings.Repeat("─", w)+"┘")
+	return o
+}
+
+// overlay centres a box over the frame body.
+func overlay(base, box []string) []string {
+	top := (H - len(box)) / 2
+	left := (W - vw(box[0])) / 2
+	out := append([]string{}, base...)
+	for i, l := range box {
+		y := top + i
+		if y < 3 || y >= H-2 {
+			continue
+		}
+		row := []rune(strip(out[y]))
+		for len(row) < W {
+			row = append(row, ' ')
+		}
+		out[y] = string(row[:left]) + l + string(row[min(len(row), left+vw(l)):])
+	}
+	return out
+}
+
+// ---------- helpers ----------
+
+func at(s []string, i int) string {
+	if i < len(s) {
+		return s[i]
+	}
+	return ""
+}
+func ifs(c bool, s string) string {
+	if c {
+		return s
+	}
+	return ""
+}
+func trunc(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n-1]) + "…"
+	}
+	return s
+}
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// ---------- dump ----------
+
+type state struct {
+	name  string
+	apply func(*Model)
+}
+
+var states = []state{
+	{"commands", func(m *Model) { m.tab = tCommands; m.cur[tCommands] = 2 }},
+	{"commands-workflow-selected", func(m *Model) { m.tab = tCommands; m.cur[tCommands] = 5 }},
+	{"repo", func(m *Model) { m.tab = tRepo }},
+	{"issues", func(m *Model) { m.tab = tIssues }},
+	{"issues-selected", func(m *Model) { m.tab = tIssues; m.cur[tIssues] = 3 }},
+	{"dispatch-sheet", func(m *Model) { m.tab = tIssues; m.sheet = true }},
+	{"swarm", func(m *Model) { m.tab = tLive; m.cur[tLive] = 1 }},
+	{"config", func(m *Model) { m.tab = tConfig }},
+	{"running", func(m *Model) { m.tab = tCommands; m.cur[tCommands] = 6; m.running = true }},
+	{"no-manifest", func(m *Model) { m.noManifest = true; m.tab = tRepo }},
+}
+
+func dump(dir string) int {
+	lipgloss.SetColorProfile(0) // Ascii: no escapes in the dumped frames
 	bad := 0
 	for _, s := range states {
-		lines := strings.Split(strings.TrimRight(s.body, "\n"), "\n")
+		m := New()
+		s.apply(&m)
+		body := strip(m.View())
+		lines := strings.Split(body, "\n")
 		if len(lines) != H {
 			fmt.Printf("FAIL %-28s %d rows, want %d\n", s.name, len(lines), H)
 			bad++
 		}
 		for i, l := range lines {
-			if len([]rune(l)) != W {
-				fmt.Printf("FAIL %-28s row %d is %d cols, want %d\n", s.name, i, len([]rune(l)), W)
+			if n := len([]rune(l)); n != W {
+				fmt.Printf("FAIL %-28s row %d is %d cols, want %d\n", s.name, i, n, W)
 				bad++
 			}
 		}
-		if err := os.WriteFile(s.name+".txt", []byte(s.body), 0o644); err != nil {
+		if err := os.WriteFile(dir+"/"+s.name+".txt", []byte(body+"\n"), 0o644); err != nil {
 			fmt.Println("write:", err)
-			os.Exit(1)
+			return 1
 		}
 		fmt.Printf("ok   %-28s %dx%d\n", s.name, W, H)
 	}
 	if bad > 0 {
 		fmt.Printf("\n%d geometry violations\n", bad)
-		os.Exit(1)
+		return 1
 	}
 	fmt.Printf("\n%d frames, all %dx%d\n", len(states), W, H)
+	return 0
+}
+
+func main() {
+	d := flag.Bool("dump", false, "write the reference frames as .txt and exit")
+	dir := flag.String("dir", ".", "directory to write frames into")
+	flag.Parse()
+	if *d {
+		os.Exit(dump(*dir))
+	}
+	if _, err := tea.NewProgram(New(), tea.WithAltScreen()).Run(); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
 }
