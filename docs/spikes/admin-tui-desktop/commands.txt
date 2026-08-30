@@ -1,0 +1,30 @@
+ admin · admin-project-tool                                    feat/one-tool-go-merge           
+ [ Commands ]  Repo    Issues    Live    Config                                                 
+────────────────────────────────────────────────────────────────────────────────────────────────
+   COMMAND          LAST RUN    │ deploy                                                        
+                                │ ──────────────────────────────────────────────────────────    
+   build            2h ago      │ kind      sequence  ·  3 steps                                
+   check            2h ago      │ archetype (manifest)                                          
+ ▸ deploy           18m ago     │ last run  18m ago · exit 0 · 41s                              
+   docs             —           │ log       ~/.admin/logs/deploy.log                            
+   logs             —           │                                                               
+   test             6m ago      │ STEPS                                                         
+                                │   1  install      shell                                       
+                                │      bash install.sh                                          
+                                │      from  archetype: simple                                  
+                                │                                                               
+                                │   2  tampermonkey  lua                                        
+                                │      scripts/provision.lua                                    
+                                │      from  archetype: apple                                   
+                                │                                                               
+                                │   3  verify        shell                                      
+                                │      admin check .                                            
+                                │      from  (manifest)                                         
+                                │                                                               
+                                │                                                               
+                                │                                                               
+                                │                                                               
+                                │                                                               
+                                │                                                               
+────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ move   ⏎ run   tab switch   / filter   ? help   q quit                                      
