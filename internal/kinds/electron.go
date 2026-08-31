@@ -83,7 +83,12 @@ func makeElectron(name string, action manifest.Action, m *manifest.Manifest, _ *
 			rc, err := electron.DevElectron(cfg, root,
 				electron.DevOptions{Info: h.Info},
 				func(cmd, target string) int {
-					return reload.RunWithReload(cmd, target, reload.Options{})
+					return reload.RunWithReload(cmd, target, reload.Options{
+						Stdout: h.Stdout,
+						LogFn:  h.AppendLog,
+						Info:   h.Info,
+						Warn:   h.Warn,
+					})
 				})
 			if err != nil {
 				return fmt.Errorf("action %q: %w", name, err)

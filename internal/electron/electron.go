@@ -77,12 +77,22 @@ func (c Config) serverDistDirname() string {
 	return "server-dist"
 }
 
+// electronBin returns the electron binary's ABSOLUTE path. It is checked
+// relative to desktopDir (admin runs from the project root, so a repo-relative
+// desktop_dir resolves there) but returned absolute, because DevElectron runs
+// it from a shell that has already `cd`'d into desktopDir — joining the two
+// relative paths there produced apps/desktop/apps/desktop/node_modules/... and
+// exited 126.
 func electronBin(desktopDir string) (string, error) {
 	bin := filepath.Join(desktopDir, "node_modules/.bin/electron")
 	if _, err := os.Stat(bin); err != nil {
 		return "", fmt.Errorf("electron binary not found at %s — run `npm install` in %s", bin, desktopDir)
 	}
-	return bin, nil
+	abs, err := filepath.Abs(bin)
+	if err != nil {
+		return "", err
+	}
+	return abs, nil
 }
 
 // builtAppPath finds electron-builder's `dir` target output — named `mac`
