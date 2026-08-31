@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
+	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
@@ -158,6 +159,90 @@ func TestCheckCommandRoutingReportsBothOverridesAndCustom(t *testing.T) {
 	}
 	if !strings.Contains(got, "empty") || !strings.Contains(got, "steps") {
 		t.Fatalf("error %q is missing the custom-command violation", got)
+	}
+}
+
+// -- kinds.ValidateWorkflows, wired into runCheck ---------------------------
+
+// TestRunCheckRejectsAWorkflowWithNoTargetSource is admin-3rgp.24's
+// acceptance criterion at the `admin check` level: a workflow declaring
+// neither `over = "selection"` nor `over = { query = ... }` fails check,
+// naming the missing key — caught here rather than surfacing only at
+// dispatch.
+func TestRunCheckRejectsAWorkflowWithNoTargetSource(t *testing.T) {
+	dir := t.TempDir()
+	toml := `project_name = "checktest"
+
+[commands.custom.retire-merged]
+desc = "retire merged worktrees"
+steps = ["retire-merged"]
+
+[actions.retire-merged]
+kind = "workflow"
+`
+	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, ok, err := resolveProjectManifest(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("resolveProjectManifest = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("resolveProjectManifest ok=false, want true")
+	}
+	err = kinds.ValidateWorkflows(m.Actions)
+	if err == nil {
+		t.Fatal("kinds.ValidateWorkflows = nil, want an error naming the missing 'over' key")
+	}
+	got := err.Error()
+	if !strings.Contains(got, "retire-merged") || !strings.Contains(got, "over") {
+		t.Fatalf("error %q does not name the action and the missing key", got)
+	}
+}
+
+// TestRunCheckAcceptsBothWorkflowTargetSources proves a selection-sourced
+// and a query-sourced workflow both pass `admin check` and parse to the
+// right source.
+func TestRunCheckAcceptsBothWorkflowTargetSources(t *testing.T) {
+	dir := t.TempDir()
+	toml := `project_name = "checktest"
+
+[actions.retire-merged]
+kind = "workflow"
+over = "selection"
+
+[actions.review-waiting]
+kind = "workflow"
+over.query = "label:review-me"
+`
+	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, ok, err := resolveProjectManifest(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("resolveProjectManifest = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("resolveProjectManifest ok=false, want true")
+	}
+	if err := kinds.ValidateWorkflows(m.Actions); err != nil {
+		t.Fatalf("kinds.ValidateWorkflows = %v, want nil", err)
+	}
+
+	selTarget, err := kinds.ParseWorkflowOver("retire-merged", m.Actions["retire-merged"])
+	if err != nil {
+		t.Fatalf("ParseWorkflowOver(retire-merged) = %v, want nil", err)
+	}
+	if selTarget.Source != kinds.WorkflowSourceSelection || selTarget.AppearsInCommandList() {
+		t.Fatalf("retire-merged: got %+v, want selection-sourced and absent from the Command list", selTarget)
+	}
+
+	qTarget, err := kinds.ParseWorkflowOver("review-waiting", m.Actions["review-waiting"])
+	if err != nil {
+		t.Fatalf("ParseWorkflowOver(review-waiting) = %v, want nil", err)
+	}
+	if qTarget.Source != kinds.WorkflowSourceQuery || !qTarget.AppearsInCommandList() || qTarget.Query != "label:review-me" {
+		t.Fatalf("review-waiting: got %+v, want query-sourced, present in the Command list, query %q", qTarget, "label:review-me")
 	}
 }
 
