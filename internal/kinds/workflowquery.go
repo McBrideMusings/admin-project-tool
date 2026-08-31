@@ -41,7 +41,7 @@ var listBeads = bd.List
 //
 //   - "ready": every non-closed bead with no open blocker — bd's own
 //     "available to start" definition (bd.IsBlocked against bd.OpenSet),
-//     matching the PRD's "review everything waiting on me" story (#17).
+//     which is what "review everything waiting on me" resolves to.
 //   - "label:<name>": every non-closed bead carrying that label — the exact
 //     form admin-3rgp.24's own test fixture already used
 //     (workflow_test.go's `over = { query = "label:review-me" }`) before

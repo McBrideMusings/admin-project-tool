@@ -10,7 +10,7 @@
 // and Config are NOT redrawn here — they are rendered by calling
 // internal/tui.Frame, repo-dash's own exported headless seam, so the prototype
 // shows what those tabs actually look like rather than a reconstruction that
-// drifts. PRD.md:124 names that seam as the one for everything visual.
+// drifts. That headless seam is the one everything visual renders through.
 //
 // Which tracker tabs exist is a property of the repo, not a setting: repo-dash
 // derives it from hasBeads and usesPRs (internal/tui/model.go:352). A repo with
