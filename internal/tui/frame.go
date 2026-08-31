@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,9 +18,11 @@ type FrameOptions struct {
 	// key, and "tab" / "enter" / "esc" / "space" / "up" / "down" / "left" /
 	// "right" name themselves.
 	Keys []string
-	// Settle is how long background loads get to land before the frame is taken.
-	// The dashboard's own first paint is instant off local git, so this is the
-	// wait for that load to arrive, not for the network.
+	// Settle is a backstop, not the normal wait: drain returns as soon as no
+	// command is in flight, and Settle only bounds how long a genuinely stuck
+	// command (one that never delivers) can hold up the frame. The dashboard's
+	// own first paint is instant off local git, so quiescence is ordinarily
+	// reached in microseconds; Settle exists for the pathological case.
 	Settle time.Duration
 }
 
@@ -60,12 +63,12 @@ func Frame(ctx context.Context, m Model, opts FrameOptions) string {
 	return p.model.View()
 }
 
-// Frames renders several frames of one dashboard from a single load. Settle is a
-// deadline rather than a quiescence check, so calling Frame once per key
-// sequence pays that whole wait every time — five views of the same repo cost
-// five loads of it. Here the load happens once and every sequence starts from a
-// copy of the settled model, which is what makes a tool that shows many views of
-// one repo (a prototype, a docs dump, a regression sweep) practical.
+// Frames renders several frames of one dashboard from a single load. Calling
+// Frame once per key sequence would re-run Init and pay its own settle wait
+// every time — five views of the same repo cost five loads of it. Here the
+// load happens once and every sequence starts from a copy of the settled
+// model, which is what makes a tool that shows many views of one repo (a
+// prototype, a docs dump, a regression sweep) practical.
 //
 // Each sequence gets its own copy, so a mode toggle in one cannot leak into the
 // next — `g` twice across two sequences would otherwise turn tree mode back off.
@@ -105,16 +108,28 @@ func Frames(ctx context.Context, m Model, opts FrameOptions, seqs [][]string) []
 type pump struct {
 	msgs  chan tea.Msg
 	model Model
+	// inFlight counts commands that have been started but have not yet
+	// delivered (or been dropped). drain treats zero as quiescent. It is only
+	// ever touched from the pump's own goroutine (via run, synchronously, for
+	// increments) and from each command's own goroutine (for its decrement),
+	// so drain never races its own increments against its own read.
+	inFlight int32
 }
 
 // run executes a command off the loop and feeds its result back. A tea.Batch
 // arrives as a BatchMsg holding more commands, so it recurses rather than
-// delivering the batch itself as a message the model would ignore.
+// delivering the batch itself as a message the model would ignore. The
+// in-flight counter is incremented here, synchronously, before the goroutine
+// starts, and decremented only after the result (or each recursed
+// sub-command) has been handed off — so a reader that observes zero is
+// guaranteed there is nothing left to arrive.
 func (p *pump) run(cmd tea.Cmd) {
 	if cmd == nil {
 		return
 	}
+	atomic.AddInt32(&p.inFlight, 1)
 	go func() {
+		defer atomic.AddInt32(&p.inFlight, -1)
 		msg := cmd()
 		if batch, ok := msg.(tea.BatchMsg); ok {
 			for _, c := range batch {
@@ -141,12 +156,26 @@ func (p *pump) apply(msg tea.Msg) {
 	p.run(cmd)
 }
 
-// drain applies messages until d passes. It is a deadline, not a quiescence
-// check, because the dashboard is never quiet — the sync poll is always
-// outstanding, so waiting for zero in-flight commands would wait a full interval.
-func (p *pump) drain(d time.Duration) {
-	deadline := time.After(d)
+// drain applies messages until the pump is quiescent — no command started by
+// this drain (or by a message it applied) is still in flight — with backstop
+// as a hard ceiling for the pathological case of a command that never
+// delivers. Quiescence, not the backstop, is the normal exit: a recurring
+// command (the dashboard's sync poll re-arms itself via its own tea.Cmd)
+// still reads as quiescent the instant it is between ticks, which is true
+// almost all the time, so this returns as soon as real work is done instead
+// of always paying the full backstop like a fixed deadline did.
+func (p *pump) drain(backstop time.Duration) {
+	deadline := time.After(backstop)
 	for {
+		select {
+		case msg := <-p.msgs:
+			p.apply(msg)
+			continue
+		default:
+		}
+		if atomic.LoadInt32(&p.inFlight) == 0 {
+			return
+		}
 		select {
 		case msg := <-p.msgs:
 			p.apply(msg)
