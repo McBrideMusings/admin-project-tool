@@ -172,6 +172,120 @@ func TestApplyDevBannerToPNGFileFlattensAlpha(t *testing.T) {
 	}
 }
 
+// --- ApplyTVDevBanner (overlay-in-place, admin-3rgp.49) ------------------
+
+// writeRectPNG is writePNG's non-square sibling — tvOS layers and Top
+// Shelf images are rectangular, not square.
+func writeRectPNG(t *testing.T, path string, w, h int, c color.Color) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.Set(x, y, c)
+		}
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// fakeBrandassets writes just enough of a real-art .brandassets tree —
+// Front/Middle/Back PNGs for one imagestack, plus one Top Shelf image — for
+// ApplyTVDevBanner to walk, without going through GenerateTVIcons.
+func fakeBrandassets(t *testing.T, root string) string {
+	t.Helper()
+	brand := filepath.Join(root, "App.brandassets")
+	writeRectPNG(t,tvLayerPNG(brand, "App Icon.imagestack", "Front", "Front.png"), 400, 240, color.Transparent)
+	writeRectPNG(t,tvLayerPNG(brand, "App Icon.imagestack", "Middle", "Middle.png"), 400, 240, color.Transparent)
+	writeRectPNG(t,tvLayerPNG(brand, "App Icon.imagestack", "Back", "Back.png"), 400, 240, color.NRGBA{R: 30, G: 30, B: 46, A: 255})
+	writeRectPNG(t,filepath.Join(brand, "Top Shelf Image.imageset", "tv.png"), 1920, 720, color.NRGBA{R: 30, G: 30, B: 46, A: 255})
+	return brand
+}
+
+func TestApplyTVDevBannerTouchesOnlyFrontAndTopShelf(t *testing.T) {
+	root := t.TempDir()
+	brand := fakeBrandassets(t, root)
+
+	backBefore, err := os.ReadFile(tvLayerPNG(brand, "App Icon.imagestack", "Back", "Back.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	middleBefore, err := os.ReadFile(tvLayerPNG(brand, "App Icon.imagestack", "Middle", "Middle.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	frontBefore, err := os.ReadFile(tvLayerPNG(brand, "App Icon.imagestack", "Front", "Front.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ok := ApplyTVDevBanner(testHost(t), brand); !ok {
+		t.Fatal("ApplyTVDevBanner returned false")
+	}
+
+	backAfter, _ := os.ReadFile(tvLayerPNG(brand, "App Icon.imagestack", "Back", "Back.png"))
+	if string(backAfter) != string(backBefore) {
+		t.Error("Back layer must be untouched by the overlay")
+	}
+	middleAfter, _ := os.ReadFile(tvLayerPNG(brand, "App Icon.imagestack", "Middle", "Middle.png"))
+	if string(middleAfter) != string(middleBefore) {
+		t.Error("Middle layer must be untouched by the overlay")
+	}
+	frontAfter, _ := os.ReadFile(tvLayerPNG(brand, "App Icon.imagestack", "Front", "Front.png"))
+	if string(frontAfter) == string(frontBefore) {
+		t.Error("Front layer must carry the banner after overlay")
+	}
+
+	topShelf := decodePNG(t, filepath.Join(brand, "Top Shelf Image.imageset", "tv.png"))
+	painted := false
+	b := topShelf.Bounds()
+	for y := b.Min.Y; y < b.Max.Y && !painted; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, _ := topShelf.At(x, y).RGBA()
+			if r>>8 > 150 && g>>8 < 100 && bl>>8 < 100 {
+				painted = true
+				break
+			}
+		}
+	}
+	if !painted {
+		t.Error("Top Shelf image should carry the red banner stripe somewhere")
+	}
+}
+
+func TestApplyTVDevBannerPreservesAlphaOnFront(t *testing.T) {
+	root := t.TempDir()
+	brand := fakeBrandassets(t, root)
+
+	if ok := ApplyTVDevBanner(testHost(t), brand); !ok {
+		t.Fatal("ApplyTVDevBanner returned false")
+	}
+
+	front := decodePNG(t, tvLayerPNG(brand, "App Icon.imagestack", "Front", "Front.png"))
+	// A corner far from the banner's bottom-right stripe should still be
+	// transparent — unlike ApplyDevBannerToPNGFile, this overlay must not
+	// flatten the Front layer to opaque RGB.
+	if _, _, _, a := front.At(0, 0).RGBA(); a != 0 {
+		t.Errorf("Front corner alpha = %d, want fully transparent (alpha preserved, not flattened)", a)
+	}
+}
+
+func TestApplyTVDevBannerSkipsMissingDirs(t *testing.T) {
+	root := t.TempDir()
+	brand := filepath.Join(root, "Empty.brandassets")
+	if ok := ApplyTVDevBanner(testHost(t), brand); !ok {
+		t.Error("ApplyTVDevBanner on a brandassets tree with no matching dirs should still return true (no-op, not an error)")
+	}
+}
+
 // --- Icon Composer (.icon) banner inject / strip -------------------------
 
 func TestIconComposerInjectBannerIsIdempotent(t *testing.T) {
