@@ -109,7 +109,7 @@ func runAppleVerb(verb, action string, cfg map[string]any, args []string) error 
 // not overridden in [apple], via apple.xcode_setting.
 
 func appleProject(cfg map[string]any) string {
-	p, _ := luahost.DetectProjectPath(cfgString(cfg, "project", ""))
+	p, _ := luahost.DetectProjectPath(cfgString(cfg, "project_path", ""))
 	return p
 }
 
