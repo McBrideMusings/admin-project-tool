@@ -167,6 +167,19 @@ func cfgMap(m map[string]any, key string) map[string]any {
 	return map[string]any{}
 }
 
+// cfgStrings reads a list-valued key off a raw config table as a []string,
+// skipping any element that isn't a string — used for the plain string-list
+// tables like [dev_kill].js_files/web_subdirs/runtimes.
+func cfgStrings(m map[string]any, key string) []string {
+	var out []string
+	for _, v := range cfgList(m, key) {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // cfgStringMap reads every string-valued key off a raw table — used for
 // entries like backend_extra_env / dev_env, which the manifest declares as
 // {NAME = "value", ...}.

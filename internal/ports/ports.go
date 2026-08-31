@@ -30,6 +30,45 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// psParent returns pid's parent pid and the parent's command line, via `ps`
+// — portable across macOS and Linux, unlike reading /proc/<pid>/stat for the
+// ppid field (which this package doesn't otherwise need, since holder
+// detection already has the pid from /proc/net/tcp or lsof/fuser directly).
+// Returns (0, "") when ps is unavailable, times out, or pid has no parent.
+func psParent(pid int) (int, string) {
+	psPath, err := exec.LookPath("ps")
+	if err != nil {
+		return 0, ""
+	}
+	out, err := exec.Command(psPath, "-p", strconv.Itoa(pid), "-o", "ppid=").Output()
+	if err != nil {
+		return 0, ""
+	}
+	ppidStr := strings.TrimSpace(string(out))
+	if ppidStr == "" {
+		return 0, ""
+	}
+	ppid, err := strconv.Atoi(ppidStr)
+	if err != nil {
+		return 0, ""
+	}
+	return ppid, psCommand(ppid)
+}
+
+// psCommand returns pid's full command line via `ps`, or "" when ps is
+// unavailable, times out, or pid is gone.
+func psCommand(pid int) string {
+	psPath, err := exec.LookPath("ps")
+	if err != nil {
+		return ""
+	}
+	out, err := exec.Command(psPath, "-p", strconv.Itoa(pid), "-o", "command=").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // probe is one bind attempt PortFree makes.
 type probe struct{ network, host string }
 
@@ -82,42 +121,157 @@ func PortFree(port int) bool {
 	return true
 }
 
-// Holder is one process found listening on a probed port.
+// Holder is one process found listening on a probed port — the Go port of
+// admin_lib/ports.py::port_holders' per-entry dict shape ({pid, command,
+// parent_pid, parent_command}).
 type Holder struct {
-	PID     int
-	Command string
+	PID           int
+	Command       string
+	ParentPID     int    // 0 means unknown
+	ParentCommand string // "" means unknown
 }
 
-// PortHolders names the process(es) listening on port via the `lsof` CLI —
-// the macOS-first half of admin_lib/ports.py::port_holders (the /proc walk
-// and `fuser` fallback are Linux-only paths this package does not carry;
-// admin-3rgp.15 owns filling those in for parity on Linux). Returns nil,
-// never an error, when lsof is absent or times out — a caller must treat
-// "no holders named" as "could not identify", not "port is free" (PortFree
-// is the only source of truth for that).
+// PortHolders names the process(es) listening on port — the Go port of
+// admin_lib/ports.py::port_holders' detection chain: /proc/net/tcp{,6} +
+// /proc/<pid>/fd (Linux, no external deps), then `fuser`, then `lsof`
+// (macOS/BSD). Every pid found is enriched with its parent's pid/command via
+// `ps`, matching Python's per-holder _ps_parent call. Returns nil, never an
+// error, when every detection method is unavailable or times out — a caller
+// must treat "no holders named" as "could not identify", not "port is free"
+// (PortFree is the only source of truth for that).
 func PortHolders(port int) []Holder {
-	lsofPath, err := exec.LookPath("lsof")
-	if err != nil {
-		return nil
-	}
-	out, err := exec.Command(lsofPath, "-nP", fmt.Sprintf("-iTCP:%d", port), "-sTCP:LISTEN").Output()
-	if err != nil {
-		return nil
-	}
+	pids := portHolderPIDs(port, 2*time.Second)
 	var holders []Holder
-	lines := strings.Split(string(out), "\n")
-	for _, line := range lines[1:] { // skip header
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
+	seen := map[int]bool{}
+	for _, pid := range pids {
+		if seen[pid] {
 			continue
 		}
-		pid, err := strconv.Atoi(fields[1])
+		seen[pid] = true
+		ppid, pcmd := psParent(pid)
+		cmd := psCommand(pid)
+		if cmd == "" {
+			cmd = "?"
+		}
+		holders = append(holders, Holder{PID: pid, Command: cmd, ParentPID: ppid, ParentCommand: pcmd})
+	}
+	return holders
+}
+
+// portHolderPIDs finds listener pids via /proc/net/tcp{,6}, then `fuser`,
+// then `lsof` — the Go port of admin_lib/ports.py::_port_holder_pids.
+func portHolderPIDs(port int, timeout time.Duration) []int {
+	if pids := pidsForSocketInodes(procNetListeners(port)); len(pids) > 0 {
+		return pids
+	}
+
+	if fuserPath, err := exec.LookPath("fuser"); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		out, _ := exec.CommandContext(ctx, fuserPath, "-n", "tcp", strconv.Itoa(port)).Output()
+		cancel()
+		var pids []int
+		for _, tok := range strings.Fields(string(out)) {
+			if pid, err := strconv.Atoi(tok); err == nil {
+				pids = append(pids, pid)
+			}
+		}
+		if len(pids) > 0 {
+			return pids
+		}
+	}
+
+	if lsofPath, err := exec.LookPath("lsof"); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		out, _ := exec.CommandContext(ctx, lsofPath, "-nP", fmt.Sprintf("-iTCP:%d", port), "-sTCP:LISTEN").Output()
+		cancel()
+		var pids []int
+		lines := strings.Split(string(out), "\n")
+		for _, line := range lines[1:] { // skip header
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			if pid, err := strconv.Atoi(fields[1]); err == nil {
+				pids = append(pids, pid)
+			}
+		}
+		return pids
+	}
+
+	return nil
+}
+
+// procNetListeners parses /proc/net/tcp{,6} for sockets in LISTEN state on
+// port, returning their inode strings — the Go port of
+// admin_lib/ports.py::_proc_net_listeners. Absent on any non-Linux host (and
+// most containers without /proc/net/tcp), in which case it returns nil and
+// portHolderPIDs falls through to fuser/lsof.
+func procNetListeners(port int) []string {
+	portHex := fmt.Sprintf("%04X", port)
+	var inodes []string
+	for _, path := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		f, err := os.Open(path)
 		if err != nil {
 			continue
 		}
-		holders = append(holders, Holder{PID: pid, Command: fields[0]})
+		scanner := bufio.NewScanner(f)
+		scanner.Scan() // skip header
+		for scanner.Scan() {
+			fields := strings.Fields(scanner.Text())
+			if len(fields) < 10 {
+				continue
+			}
+			if fields[3] != "0A" { // 0A == TCP_LISTEN
+				continue
+			}
+			if !strings.HasSuffix(fields[1], ":"+portHex) {
+				continue
+			}
+			inodes = append(inodes, fields[9])
+		}
+		f.Close()
 	}
-	return holders
+	return inodes
+}
+
+// pidsForSocketInodes walks /proc/<pid>/fd once looking for any socket fd
+// matching inodes — the Go port of admin_lib/ports.py::_pids_for_socket_inodes.
+func pidsForSocketInodes(inodes []string) []int {
+	if len(inodes) == 0 {
+		return nil
+	}
+	targets := map[string]bool{}
+	for _, ino := range inodes {
+		targets["socket:["+ino+"]"] = true
+	}
+	selfPID := os.Getpid()
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil
+	}
+	var pids []int
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || pid == selfPID {
+			continue
+		}
+		fdDir := fmt.Sprintf("/proc/%d/fd", pid)
+		fds, err := os.ReadDir(fdDir)
+		if err != nil {
+			continue
+		}
+		for _, fd := range fds {
+			target, err := os.Readlink(fdDir + "/" + fd.Name())
+			if err != nil {
+				continue
+			}
+			if targets[target] {
+				pids = append(pids, pid)
+				break
+			}
+		}
+	}
+	return pids
 }
 
 // PreflightPort is the Go port of admin_lib/ports.py::preflight_port: ensure
@@ -145,6 +299,13 @@ func PreflightPort(port int, label string) bool {
 	}
 	for _, h := range holders {
 		fmt.Fprintf(os.Stderr, "  pid %6d: %s\n", h.PID, h.Command)
+		if h.ParentPID != 0 {
+			parentCmd := h.ParentCommand
+			if parentCmd == "" {
+				parentCmd = "?"
+			}
+			fmt.Fprintf(os.Stderr, "          parent pid %d: %s\n", h.ParentPID, parentCmd)
+		}
 	}
 
 	proceed := true
@@ -161,20 +322,14 @@ func PreflightPort(port int, label string) bool {
 		fmt.Fprintf(os.Stderr, "Stdin is not a TTY — force-killing port %d%s holders.\n", port, tag)
 	}
 
-	for _, h := range holders {
-		_ = syscall.Kill(h.PID, syscall.SIGTERM)
+	pids := make([]int, len(holders))
+	for i, h := range holders {
+		pids[i] = h.PID
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if PortFree(port) {
-			return true
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	for _, h := range holders {
-		_ = syscall.Kill(h.PID, syscall.SIGKILL)
-	}
-	time.Sleep(200 * time.Millisecond)
+	KillPIDs(pids, 3*time.Second)
+	// Re-probe with bind, not pid-liveness: a child can respawn, or the
+	// socket can linger after the pid dies — the bind probe is the real
+	// answer, matching admin_lib/ports.py::preflight_port.
 	return PortFree(port)
 }
 
