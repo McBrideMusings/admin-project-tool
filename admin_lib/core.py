@@ -766,6 +766,22 @@ def _cmd_pump(log_fh, formatter, collect):
     )
 
 
+def _decode_utf8_prefix(buf):
+    """Decode as much of `buf` as forms whole UTF-8 characters.
+
+    Returns (text, remainder). A 4096-byte read can land mid-character, and
+    decoding that with errors="replace" turns one character into two U+FFFD and
+    corrupts the log permanently. Holding the incomplete tail until its rest
+    arrives costs one iteration of the loop.
+    """
+    for cut in range(len(buf), max(len(buf) - 4, -1), -1):
+        try:
+            return buf[:cut].decode("utf-8"), buf[cut:]
+        except UnicodeDecodeError:
+            continue
+    return buf.decode("utf-8", errors="replace"), b""
+
+
 def _run_cmd_pty(cmd, log_fh, formatter, collect=None):
     """Run cmd inside a pseudo-TTY so isatty() checks pass (e.g. wrangler dev).
 
@@ -792,22 +808,57 @@ def _run_cmd_pty(cmd, log_fh, formatter, collect=None):
     pump = _cmd_pump(log_fh, formatter, collect)
 
     buf = b""
+    # Forward the user's keystrokes into the pty. Without this the child's stdin
+    # is a slave fd nobody ever writes to, so anything that prompts hangs
+    # forever — the parent owns the real terminal and was dropping every byte.
+    # Not gated on isatty(): a piped stdin (`printf 'deploy\n' | admin …`, a CI
+    # runner, a test) must reach the child too. EOF unregisters it below so a
+    # closed or /dev/null stdin cannot spin the loop.
+    try:
+        stdin_fd = sys.stdin.fileno()
+    except (AttributeError, ValueError, OSError):
+        stdin_fd = None
+    watch = [master_fd] + ([stdin_fd] if stdin_fd is not None else [])
     try:
         while True:
             try:
-                r, _, _ = select.select([master_fd], [], [], 0.05)
+                r, _, _ = select.select(watch, [], [], 0.05)
             except (OSError, ValueError):
                 break
-            if r:
+            if not r:
+                # Idle: show a buffered newline-less tail, which is what a
+                # prompt looks like from out here.
+                pump.flush_partial()
+            if stdin_fd is not None and stdin_fd in r:
+                try:
+                    key = os.read(stdin_fd, 4096)
+                except OSError:
+                    key = b""
+                if key:
+                    try:
+                        os.write(master_fd, key)
+                    except OSError:
+                        pass
+                else:
+                    # EOF. Stop watching it — a closed stdin stays "readable"
+                    # forever and would peg a core. Leave the pty open: the
+                    # child may still have plenty to say.
+                    watch = [fd for fd in watch if fd != stdin_fd]
+                    stdin_fd = None
+            if master_fd in r:
                 try:
                     data = os.read(master_fd, 4096)
                 except OSError:
                     break
+                # Split on newlines inside the pump, not here: it is the pump
+                # that has to hold a newline-less tail so flush_partial() can
+                # show it while the child waits. Decode on a boundary-safe
+                # buffer so a multi-byte character split across two reads is
+                # not mangled.
                 buf += data
-                while b"\n" in buf:
-                    raw_line, buf = buf.split(b"\n", 1)
-                    line = raw_line.rstrip(b"\r").decode("utf-8", errors="replace") + "\n"
-                    pump.write(line)
+                text, buf = _decode_utf8_prefix(buf)
+                if text:
+                    pump.write(text.replace("\r\n", "\n"))
             if proc.poll() is not None:
                 try:
                     while True:
@@ -830,9 +881,8 @@ def _run_cmd_pty(cmd, log_fh, formatter, collect=None):
         if proc in _children:
             _children.remove(proc)
         if buf:
-            line = buf.rstrip(b"\r").decode("utf-8", errors="replace")
-            pump.write(line)
-            pump.flush()  # this trailing chunk has no \n of its own to trigger it
+            pump.write(buf.decode("utf-8", errors="replace").replace("\r\n", "\n"))
+        pump.flush()  # a trailing chunk has no \n of its own to trigger it
 
     return proc.returncode
 
