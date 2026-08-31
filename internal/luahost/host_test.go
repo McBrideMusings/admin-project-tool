@@ -38,6 +38,59 @@ err("boom")`, nil); err != nil {
 	}
 }
 
+func TestConfigArrayOfTablesReachesLuaAsArray(t *testing.T) {
+	// TOML's `[[docker_run.ports]]` array-of-tables shape decodes to Go's
+	// []map[string]any, a distinct concrete type from []any — admin-3rgp.37
+	// found every such field (docker_run.ports/bind_mounts/env/labels, ...)
+	// falling through toLuaValue's default branch and reaching a Lua body as
+	// a stringified Go value (`ipairs` on it then errors "table expected,
+	// got string") instead of an iterable array table.
+	h, out, _ := newTestHost(t)
+	cfg := map[string]any{
+		"ports": []map[string]any{
+			{"host": int64(8080), "container": int64(80)},
+			{"host": int64(9090), "container": int64(90)},
+		},
+	}
+	err := h.Exec(`
+for _, p in ipairs(config.ports) do
+  info(tostring(p.host) .. "->" .. tostring(p.container))
+end
+`, cfg)
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"8080->80", "9090->90"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output %q missing %q", got, want)
+		}
+	}
+}
+
+func TestPrintIsPlainNoColorNoLog(t *testing.T) {
+	h, out, _ := newTestHost(t)
+	h.SetLogContext([]string{"printtest"}, 0)
+	if err := h.Exec(`print("docker run -d --name x image")`, nil); err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	got := out.String()
+	if got != "docker run -d --name x image\n" {
+		t.Fatalf("print output not plain/verbatim: %q", got)
+	}
+	if strings.Contains(got, "\x1b[") {
+		t.Fatalf("print output carries an ANSI escape: %q", got)
+	}
+	logPath := h.MaterializeLogFile()
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("reading log file: %v", err)
+	}
+	if strings.Contains(string(data), "docker run") {
+		t.Fatalf("print() must not write to the log, but log contains: %q", data)
+	}
+}
+
 func TestConfigReachesLuaAsTable(t *testing.T) {
 	h, out, _ := newTestHost(t)
 	cfg := map[string]any{
