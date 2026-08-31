@@ -56,10 +56,21 @@ type Variant struct {
 // Axes are orthogonal to variant on purpose: flipping direction must not reset
 // which screen you are looking at, because comparing one screen across two
 // directions is the entire job.
+//
+// Hotkey binds the axis to alt+<letter> as well as its F-key. Prefer it: a
+// multiplexer or terminal emulator routinely eats F-keys, and alt+<letter> is
+// almost never bound by a TUI, so it stays out of the design's way.
+//
+// NoDump keeps a live-only axis out of the dump's cross product. Use it for
+// anything that changes how the design looks to you rather than what state it
+// is in — a theme, a width probe. Without it, every such toggle doubles the
+// number of frames written.
 type Axis struct {
 	Key    string
 	Label  string
 	Values []string
+	Hotkey string
+	NoDump bool
 }
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m|\x1b\][^\x07\x1b]*(\x07|\x1b\\)`)
@@ -148,9 +159,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		// F1..F9 cycle axis 1..9 — chosen so the design keeps every ordinary key.
+		// Axis hotkeys: alt+<letter> when declared, plus F1..F9 by position.
+		// Both are chosen so the design keeps every ordinary key.
 		for i, a := range Axes {
-			if i < 9 && msg.String() == fmt.Sprintf("f%d", i+1) {
+			k := msg.String()
+			if (a.Hotkey != "" && k == "alt+"+a.Hotkey) || (i < 9 && k == fmt.Sprintf("f%d", i+1)) {
 				m.axes[a.Key] = (m.axes[a.Key] + 1) % max(1, len(a.Values))
 				return m, nil
 			}
@@ -205,7 +218,11 @@ func (m model) bar() string {
 		if i >= 9 {
 			break
 		}
-		b.WriteString(k.Render(fmt.Sprintf(" F%d ", i+1)))
+		hk := fmt.Sprintf("F%d", i+1)
+		if a.Hotkey != "" {
+			hk = "⌥" + a.Hotkey
+		}
+		b.WriteString(k.Render(" " + hk + " "))
 		b.WriteString(c.Render(fmt.Sprintf("%s: %s ", a.Label, m.state().Get(a.Key))))
 	}
 	b.WriteString(k.Render(" ⇧Q "))
@@ -227,7 +244,7 @@ func slug(s string) string {
 func combos() []map[string]string {
 	out := []map[string]string{{}}
 	for _, a := range Axes {
-		if len(a.Values) == 0 {
+		if len(a.Values) == 0 || a.NoDump {
 			continue
 		}
 		var next []map[string]string
@@ -246,10 +263,23 @@ func combos() []map[string]string {
 	return out
 }
 
-func dump(dir string, w, h int) int {
+func dump(dir string, w, h int, only string) int {
 	lipgloss.SetColorProfile(0) // Ascii — a dumped frame pins geometry, not colour
+	sel := Variants
+	if only != "" {
+		sel = nil
+		for _, v := range Variants {
+			if strings.EqualFold(v.Name, only) || slug(v.Name) == slug(only) {
+				sel = append(sel, v)
+			}
+		}
+		if len(sel) == 0 {
+			fmt.Printf("no variant named %q\n", only)
+			return 1
+		}
+	}
 	bad, wrote := 0, 0
-	for vi, v := range Variants {
+	for vi, v := range sel {
 		for _, c := range combos() {
 			if v.Reset != nil {
 				v.Reset() // a frame must not inherit the previous frame's cursor
@@ -257,7 +287,7 @@ func dump(dir string, w, h int) int {
 			body := Strip(v.Render(State{Values: c, W: w, H: h}))
 			lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
 			name := stateName(c)
-			if len(Variants) > 1 {
+			if len(sel) > 1 {
 				name = slug(v.Name) + "-" + name
 			}
 			if len(lines) != h {
@@ -315,6 +345,7 @@ func main() {
 	dir := flag.String("dir", ".", "directory to write frames into")
 	w := flag.Int("w", DumpWidth, "dump width in columns")
 	h := flag.Int("h", DumpHeight, "dump height in rows")
+	only := flag.String("variant", "", "dump only this variant, and write unprefixed filenames")
 	flag.Parse()
 
 	if len(Variants) == 0 {
@@ -322,7 +353,7 @@ func main() {
 		os.Exit(1)
 	}
 	if *d {
-		os.Exit(dump(*dir, *w, *h))
+		os.Exit(dump(*dir, *w, *h, *only))
 	}
 	if _, err := tea.NewProgram(newModel(), tea.WithAltScreen()).Run(); err != nil {
 		fmt.Println(err)
