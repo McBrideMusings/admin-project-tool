@@ -7,46 +7,65 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/McBrideMusings/admin-project-tool/internal/create"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/resolve"
 )
 
 var branchCmd = &cobra.Command{
-	Use:   "branch <input>",
-	Short: "Create a worktree from a branch name, issue/PR number, or GitHub URL",
-	Long: `Create a worktree from any of:
+	Use:   "branch [input]",
+	Short: "Resolve input to a branch and check it out in the current working tree",
+	Long: `Resolve any of the following to a branch and create/check it out right
+here — no worktree, no separate directory:
 
   branch name        my-feature            (new branch, forked from origin/<default>)
                      feat/existing         (checks it out if it already exists)
   issue/PR number    42  or  #42
   PR URL             https://github.com/owner/repo/pull/123
   issue URL          https://github.com/owner/repo/issues/45
-  project board URL  https://github.com/orgs/Org/projects/1/...?issue=Org|repo|45
 
-New branches always fork from origin/<default>, never from whatever the main
-working tree is currently checked out on.`,
-	Args: cobra.ExactArgs(1),
+A branch that already has an on-disk worktree elsewhere still just gets
+checked out here; it does not move or duplicate that worktree.
+
+With no input, opens the dashboard so you can pick one instead.
+
+--prune deletes local branches that are provably safe to drop (merged into
+the default branch, PR-merged on GitHub, remote-gone, or fully pushed) —
+origin is never touched, and a branch holding commits that live nowhere else
+is never offered.
+
+Contrast 'admin worktree <input>', which resolves the same input set but
+creates a SEPARATE worktree for the branch, leaving the current one alone.`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		yes, _ := cmd.Flags().GetBool("yes")
-		return runBranch(cmd.Context(), args[0], yes)
+		prune, _ := cmd.Flags().GetBool("prune")
+		if prune {
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			yes, _ := cmd.Flags().GetBool("yes")
+			return runPrune(cmd.Context(), pruneBranches, dryRun, yes)
+		}
+		if len(args) == 0 {
+			return runDashboard(cmd.Context())
+		}
+		return runBranchCheckout(cmd.Context(), args[0])
 	},
 }
 
 func init() {
-	branchCmd.Flags().BoolP("yes", "y", false, "skip the confirmation prompt")
+	branchCmd.Flags().BoolP("yes", "y", false, "skip the confirmation prompt (--prune only)")
+	branchCmd.Flags().Bool("prune", false, "delete local branches that are provably safe to drop")
+	branchCmd.Flags().Bool("dry-run", false, "with --prune, list what would be deleted without deleting it")
 }
 
-func runBranch(ctx context.Context, input string, skipConfirm bool) error {
-	repoRoot, err := git.RepoRoot(ctx)
-	if err != nil {
+// runBranchCheckout resolves input and creates/checks out the branch in the
+// current working tree — no worktree. Contrast runWorktree (cmd/worktree.go),
+// which resolves the same input set into a separate worktree.
+func runBranchCheckout(ctx context.Context, input string) error {
+	if _, err := git.RepoRoot(ctx); err != nil {
 		return err
 	}
 	// A missing or non-GitHub origin is not fatal here. Only an issue/PR number or
 	// a GitHub URL needs the repo's name-with-owner; a typed branch name is pure
-	// git and works in a repo with no remote at all. Resolution reports the
-	// GitHub-shaped inputs as unsupported when nwo is empty, so failing this early
-	// would refuse to make a worktree in a local repo over a lookup it never needs.
+	// git and works in a repo with no remote at all.
 	nwo, _ := git.OriginNWO(ctx)
 
 	plan, err := resolve.BranchInput(ctx, nwo, input)
@@ -54,44 +73,18 @@ func runBranch(ctx context.Context, input string, skipConfirm bool) error {
 		return err
 	}
 
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintf(os.Stderr, "  Detected: %s\n", plan.Summary)
-	fmt.Fprintf(os.Stderr, "  Branch:   %s\n", plan.Branch)
-	if plan.Existing {
-		fmt.Fprintln(os.Stderr, "  Action:   check out existing branch")
-	} else if def := git.DefaultBranch(ctx); def != "" {
-		// DefaultBranch falls back to a local main/master when there is no
-		// origin/HEAD, so the name alone doesn't say the fork point is on a remote.
-		// Printing "origin/main" in a repo with no origin names a ref that doesn't
-		// exist, and the branch would in fact fork from the local one.
-		from := def
-		if git.BranchExistsRemote(ctx, def) {
-			from = "origin/" + def
-		}
-		fmt.Fprintf(os.Stderr, "  From:     %s\n", from)
-	}
-	fmt.Fprintln(os.Stderr)
-
-	if !skipConfirm {
-		if !confirm("Continue? (enter/y: yes · esc/n: cancel) ") {
-			fmt.Fprintln(os.Stderr, "Cancelled.")
-			return nil
-		}
-	}
-
 	// A PR head lives on the contributor's fork when the PR came from one, so it
-	// has to be fetched into a local branch before the worktree can attach to it.
+	// has to be fetched into a local branch before it can be checked out here.
 	if plan.PRNum > 0 {
 		if err := git.FetchPRHead(ctx, plan.PRNum, plan.Branch); err != nil {
 			return err
 		}
 	}
 
-	res, err := create.Worktree(ctx, repoRoot, plan.Branch)
+	action, err := git.CheckoutOrCreate(ctx, plan.Branch)
 	if err != nil {
 		return err
 	}
-	reportPopulate(res)
-	emitCD(repoRoot, res.Path)
+	fmt.Fprintf(os.Stderr, "%s branch %s\n", action, plan.Branch)
 	return nil
 }
