@@ -90,11 +90,20 @@ func TestActivateCommandAttachesWhenLive(t *testing.T) {
 // rather than implementing it" for the one on-enter case genuinely out of
 // this ticket's scope.
 //
-// MUTATION EVIDENCE: delete the `if wd.workflow != nil { ...; return m, nil }`
-// guard so a workflow row falls through to the idle-dispatch branch, and
-// this test fails: "activateCommand dispatched a workflow row directly,
-// want the admin-3rgp.26 deferral status."
-func TestActivateCommandDefersQuerySourcedWorkflow(t *testing.T) {
+// UPDATED when admin-3rgp.26 landed in the same round as this test. The
+// original asserted the deferral SEAM — no Cmd, and a status naming .26 as
+// the owner — which was correct only while nothing ran a workflow. .26 filled
+// that seam, so this now asserts the real behaviour it was standing in for.
+// The claim under test is unchanged and is the point of admin-3rgp.23: a
+// workflow row must NOT take the plain command-dispatch path. It takes the
+// resolve-then-confirm path instead, because a query can match more than the
+// user expects and this dispatches real agents into real worktrees.
+//
+// MUTATION EVIDENCE: delete the `if wd.workflow != nil { ... }` guard in
+// activateCommand so a workflow row falls through to the idle-dispatch
+// branch, and this test fails — wfResolving stays false and wfQuery stays
+// empty, because the confirm flow was never entered.
+func TestActivateCommandStartsWorkflowConfirmNotDirectDispatch(t *testing.T) {
 	m := workTestModel(&manifest.Manifest{
 		Custom:  map[string]manifest.Command{"review": {Steps: []string{"review"}}},
 		Actions: map[string]manifest.Action{"review": {"kind": "workflow", "over": map[string]any{"query": "label:review"}}},
@@ -107,12 +116,21 @@ func TestActivateCommandDefersQuerySourcedWorkflow(t *testing.T) {
 	wd := &workRowData{cmdName: "review", workflow: &target}
 
 	updated, cmd := m.activateCommand(wd)
-	if cmd != nil {
-		t.Errorf("activateCommand returned a non-nil Cmd for a query-sourced workflow, want nil (nothing dispatched yet)")
+	if cmd == nil {
+		t.Errorf("activateCommand returned a nil Cmd, want the query resolution to start")
 	}
 	um := updated.(Model)
-	if got := um.status; got == "" || !strings.Contains(got, "admin-3rgp.26") {
-		t.Errorf("status = %q, want it to name admin-3rgp.26 as the deferred owner", got)
+	if !um.wfResolving {
+		t.Errorf("wfResolving = false, want true — the confirm flow was never entered, so the row took the plain dispatch path")
+	}
+	if um.wfOpen {
+		t.Errorf("wfOpen = true, want false — nothing may be offered for confirmation before the query has resolved")
+	}
+	if um.wfQuery != "label:review" {
+		t.Errorf("wfQuery = %q, want %q", um.wfQuery, "label:review")
+	}
+	if got := um.status; !strings.Contains(got, "label:review") {
+		t.Errorf("status = %q, want it to name the query being resolved", got)
 	}
 }
 
