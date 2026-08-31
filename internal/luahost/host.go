@@ -20,7 +20,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -174,12 +177,51 @@ func dirOf(p string) string {
 	return "."
 }
 
-// pruneRetain is a stub for admin_lib/core.py's _prune_logs(stem, retain):
-// deleting older same-stem logs beyond `retain`. Left a no-op (retain is
-// accepted but not enforced) — pruning policy is not part of this ticket's
-// scope (embedding the VM and the host API), and a no-op prune never loses a
-// log, only fails to clean one up. Tracked as a follow-up.
-func (h *Host) pruneRetain(pc *pendingContext) bool { return true }
+// pruneRetain deletes older same-stem logs beyond `retain`, matching
+// admin_lib/core.py's _prune_logs(stem, retain). Errors are silently swallowed
+// — pruning is best-effort. If retain is 0, no pruning happens (matching
+// Python's None semantics). Only stem-based logs are pruned (when pc.stem is
+// true); path-based logs are handled elsewhere via rotation.
+func (h *Host) pruneRetain(pc *pendingContext) bool {
+	// Only prune stem-based logs; path-based ones (pc.stem == false) use
+	// rotation instead (handled separately if needed).
+	if !pc.stem {
+		return true
+	}
+	// retain==0 means "no pruning", matching Python's None.
+	if pc.retain == 0 {
+		return true
+	}
+	// Find all files matching {LogDir}/{stem}.*.log and prune to retain count.
+	pattern := filepath.Join(h.LogDir, escapedGlob(pc.value)+".*.log")
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return true // best-effort: if glob fails, just skip pruning
+	}
+	if len(matches) <= pc.retain {
+		return true // nothing to prune
+	}
+	// Sort matches to get chronological order (format is YYYY-MM-DD_HHMMSS).
+	sort.Strings(matches)
+	// Delete all but the last `retain` files.
+	for _, path := range matches[:len(matches)-pc.retain] {
+		_ = os.Remove(path) // best-effort: ignore errors
+	}
+	return true
+}
+
+// escapedGlob escapes special characters in a stem name for use in filepath.Glob.
+// The Go glob spec only treats * and ? as special, but we escape them anyway
+// to match the spirit of glob.escape() from Python's glob module.
+func escapedGlob(s string) string {
+	// Only * and ? are special in filepath.Glob; we escape them.
+	// [ and ] are also special in POSIX glob but filepath.Glob doesn't treat them specially.
+	// To be safe, we replace *, ?, and [ with [*], [?], [[]
+	s = strings.ReplaceAll(s, "[", "[[]")
+	s = strings.ReplaceAll(s, "*", "[*]")
+	s = strings.ReplaceAll(s, "?", "[?]")
+	return s
+}
 
 // writeLine writes a single already-terminated line to w, ignoring errors —
 // used by run_cmd's live-streaming path.
