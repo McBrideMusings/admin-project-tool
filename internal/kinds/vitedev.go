@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/ports"
@@ -300,10 +299,10 @@ func runViteDev(h *luahost.Host, o viteDevOptions) int {
 	// reaches the shell otherwise.
 	backendCmd := "cd " + shellQuote(o.BackendDir) + " && exec env " + envStr + " " + o.BackendCmd
 	return reload.RunWithReload(backendCmd, "dev", reload.Options{
-		Out:   func(s string) { frame.Write(h.Stdout, s) },
-		LogFn: h.LogWrite,
-		Info:  h.Info,
-		Warn:  h.Warn,
+		Stdout: h.Stdout,
+		LogFn:  h.AppendLog,
+		Info:   h.Info,
+		Warn:   h.Warn,
 	})
 }
 

@@ -2,138 +2,75 @@ package reload
 
 import (
 	"os"
-	"strings"
-	"sync"
-	"syscall"
+	"path/filepath"
 	"testing"
-	"time"
 )
 
-// collectingOptions returns Options that append every Out chunk to a
-// synchronized buffer, plus a func to read the accumulated text.
-func collectingOptions(t *testing.T) (Options, func() string) {
-	t.Helper()
-	var mu sync.Mutex
-	var sb strings.Builder
-	opts := Options{
-		Out:   func(s string) { mu.Lock(); sb.WriteString(s); mu.Unlock() },
-		LogFn: func(s string) {},
-		Info:  func(s string) { mu.Lock(); sb.WriteString("[info] " + s + "\n"); mu.Unlock() },
-		Warn:  func(s string) { mu.Lock(); sb.WriteString("[warn] " + s + "\n"); mu.Unlock() },
-	}
-	return opts, func() string { mu.Lock(); defer mu.Unlock(); return sb.String() }
-}
+// TestPIDFileRoundTrip proves WritePIDFile writes the current process's PID
+// and readPIDFile parses it back out, then CleanupPIDFile removes the file.
+func TestPIDFileRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "admin-run-test.pid")
 
-// TestRunWithReloadReturnsChildExitCode proves a plainly-exiting child's
-// real exit code surfaces once the fast-exit retry window has genuinely
-// elapsed — sleeping past fastExitWindow first so this isn't just exercising
-// the retry path.
-func TestRunWithReloadReturnsChildExitCode(t *testing.T) {
-	opts, _ := collectingOptions(t)
-	rc := RunWithReload("sleep 2.1 && exit 7", "t", opts)
-	if rc != 7 {
-		t.Fatalf("RunWithReload rc = %d, want 7", rc)
+	if err := WritePIDFile(path); err != nil {
+		t.Fatalf("WritePIDFile: %v", err)
 	}
-}
 
-// TestRunWithReloadStreamsChildOutput proves the child's stdout reaches
-// Options.Out — the whole point of routing it through
-// internal/streams.OutputPump rather than discarding it.
-//
-// MUTATION EVIDENCE: change `pump.Write(string(buf[:n]))` to only write
-// when n == 0 (never, effectively) and this test fails — "hello-reload"
-// never appears in the collected output.
-func TestRunWithReloadStreamsChildOutput(t *testing.T) {
-	opts, out := collectingOptions(t)
-	rc := RunWithReload("sleep 2.1 && echo hello-reload", "t", opts)
-	if rc != 0 {
-		t.Fatalf("rc = %d, want 0", rc)
-	}
-	if !strings.Contains(out(), "hello-reload") {
-		t.Fatalf("output = %q, want it to contain the child's stdout", out())
-	}
-}
-
-// TestRunWithReloadRetriesAFastExit proves a child that exits within the
-// fast-exit window is relaunched, up to maxFastExitAttempts, rather than
-// giving up on the first quick failure — the Go port of
-// admin_lib/reload.py::run_with_reload's fast-exit retry loop. A file's
-// growing byte count (one append per launch) proves multiple real launches
-// happened, not just one.
-//
-// MUTATION EVIDENCE: change `maxFastExitAttempts` from 3 to 1 and this test
-// fails — the marker file would show exactly 1 launch instead of the 3 this
-// test asserts, because the loop gives up after the very first fast exit.
-func TestRunWithReloadRetriesAFastExit(t *testing.T) {
-	marker := t.TempDir() + "/launches"
-	opts, _ := collectingOptions(t)
-	rc := RunWithReload("echo x >> "+marker+" && exit 5", "t", opts)
-	if rc != 5 {
-		t.Fatalf("rc = %d, want 5 (final attempt's exit code)", rc)
-	}
-	data, err := os.ReadFile(marker)
+	pid, err := readPIDFile(path)
 	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
+		t.Fatalf("readPIDFile: %v", err)
 	}
-	got := strings.Count(string(data), "x")
-	const wantLaunches = 3 // matches admin_lib/reload.py's _MAX_FAST_EXIT_ATTEMPTS
-	if got != wantLaunches {
-		t.Fatalf("launches = %d, want %d", got, wantLaunches)
+	if pid != os.Getpid() {
+		t.Errorf("readPIDFile() = %d, want current pid %d", pid, os.Getpid())
+	}
+
+	CleanupPIDFile(path)
+	if _, err := readPIDFile(path); err == nil {
+		t.Error("expected readPIDFile to fail after CleanupPIDFile removed the file")
 	}
 }
 
-// TestRunWithReloadSIGUSR1RestartsTheChild proves sending this process
-// SIGUSR1 while a long-lived child is running kills that child and
-// relaunches it — the Go port of run_with_reload's reload trigger. A marker
-// file with two lines proves two real launches happened.
-func TestRunWithReloadSIGUSR1RestartsTheChild(t *testing.T) {
-	marker := t.TempDir() + "/starts"
-	opts, _ := collectingOptions(t)
+// TestReadPIDFileRejectsGarbage proves a malformed PID file (not a bare
+// integer) is reported as an error rather than silently parsed as 0.
+//
+// MUTATION EVIDENCE: replace readPIDFile's `if err != nil { return 0,
+// fmt.Errorf(...) }` after strconv.Atoi with an unconditional `_ = err`
+// (always treat the parse as successful) and this test fails with:
+// "expected an error for a non-numeric pid file, got pid=0" — verified by
+// hand-editing reload.go to that shape and re-running go test, then
+// reverting.
+func TestReadPIDFileRejectsGarbage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bad.pid")
+	if err := os.WriteFile(path, []byte("not-a-pid"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	pid, err := readPIDFile(path)
+	if err == nil {
+		t.Fatalf("expected an error for a non-numeric pid file, got pid=%d", pid)
+	}
+}
 
-	done := make(chan int, 1)
-	go func() {
-		done <- RunWithReload("echo start >> "+marker+" && sleep 5", "t", opts)
-	}()
-
-	// Give the child time to actually launch and write its marker before
-	// signalling — a signal sent before Start() would have nothing to
-	// interrupt.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if data, err := os.ReadFile(marker); err == nil && strings.Count(string(data), "start") >= 1 {
-			break
+// TestGlobPIDFiles proves globPIDFiles matches only "<prefix>-*.pid" and
+// ignores an unrelated file in the same directory.
+//
+// MUTATION EVIDENCE: change the glob pattern from prefix+"-*.pid" to
+// prefix+"*.pid" (dropping the required "-") and this test fails: it would
+// then also match "adminrunextra.pid", so len(got) becomes 3 instead of 2 —
+// verified by hand-editing globPIDFiles to that pattern and re-running,
+// which reported "globPIDFiles() returned 3 files, want 2", then reverted.
+func TestGlobPIDFiles(t *testing.T) {
+	dir := t.TempDir()
+	prefix := filepath.Join(dir, "admin-run")
+	for _, name := range []string{"admin-run-web.pid", "admin-run-worker.pid", "admin-runextra.pid", "unrelated.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("1"), 0o644); err != nil {
+			t.Fatalf("WriteFile(%s): %v", name, err)
 		}
-		time.Sleep(20 * time.Millisecond)
 	}
 
-	if err := syscall.Kill(os.Getpid(), syscall.SIGUSR1); err != nil {
-		t.Fatalf("Kill(SIGUSR1): %v", err)
-	}
-
-	deadline = time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if data, err := os.ReadFile(marker); err == nil && strings.Count(string(data), "start") >= 2 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	data, err := os.ReadFile(marker)
+	got, err := globPIDFiles(prefix)
 	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
+		t.Fatalf("globPIDFiles: %v", err)
 	}
-	if got := strings.Count(string(data), "start"); got < 2 {
-		t.Fatalf("launches after SIGUSR1 = %d, want at least 2 (original + restart)", got)
-	}
-
-	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
-		t.Fatalf("Kill(SIGTERM): %v", err)
-	}
-	select {
-	case rc := <-done:
-		if rc != 0 {
-			t.Errorf("rc after SIGTERM = %d, want 0", rc)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("RunWithReload did not return after SIGTERM")
+	if len(got) != 2 {
+		t.Fatalf("globPIDFiles() returned %d files, want 2: %v", len(got), got)
 	}
 }

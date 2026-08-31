@@ -41,14 +41,6 @@ func (h *Host) Err(msg string) {
 	h.logWrite("ERROR: " + msg)
 }
 
-// LogWrite appends text (plain, ANSI-stripped) to the active log file with
-// no terminal output of its own — the exported form of logWrite for a
-// caller outside this package that already prints through its own path
-// (internal/kinds/vitedev.go's reload.Options.Out, wired to frame.Write
-// directly) and only needs the log-file half of what Info/Ok/Warn/Err do
-// together.
-func (h *Host) LogWrite(text string) { h.logWrite(text) }
-
 // SetLogContext names this run's log file by joining non-empty parts with
 // "-", deferred until first actual use — see pendingContext's doc comment.
 // retain <= 0 means "no pruning" (Python's retain=None). A no-op once a
@@ -78,6 +70,17 @@ func (h *Host) SetLogContextPath(path string, retain int) {
 // is already live and owns LogFile.
 func (h *Host) logContextTaken() bool {
 	return h.logContextActive && h.logFile != ""
+}
+
+// AppendLog appends text (ANSI-stripped, newline-terminated) to the active
+// log file, materializing a pending log context on first use — the same
+// path Info/Ok/Warn/Err already write through. Exported so a caller outside
+// this package (internal/reload's long-running dev loop, which streams a
+// child process's own output rather than a message Host itself composed)
+// can feed that output into the same log file Info/Ok/Warn/Err use, without
+// duplicating the log-context materialization logic here.
+func (h *Host) AppendLog(text string) {
+	h.logWrite(text)
 }
 
 func joinNonEmpty(parts []string, sep string) string {
