@@ -71,12 +71,38 @@ func reentryCommandLine(name string, args []string) string {
 }
 
 // recordLiveWork adds a running entry for a successfully-dispatched
-// long-running action to the process-wide live-work registry.
-func recordLiveWork(name, kind, paneID string) {
-	livework.Default.Add(&livework.Entry{
-		ID:     paneID,
+// long-running action to the process-wide live-work registry, keyed on the
+// action's own name (stable across a Retry, which opens a brand new pane
+// under the same name) rather than the pane ID itself. args is kept only so
+// Retry can re-run dispatchToPane exactly as it ran the first time.
+func recordLiveWork(name, kind, paneID string, args []string) {
+	e := &livework.Entry{
+		ID:     name,
 		Name:   name,
 		Kind:   kind,
 		PaneID: paneID,
-	})
+	}
+	e.Ops = livework.Ops{
+		Attach: func() error { return shim.FocusPane(e.PaneID) },
+		Kill: func() error {
+			if err := shim.ClosePane(e.PaneID); err != nil {
+				return err
+			}
+			livework.Default.SetState(e.ID, livework.StateExited, nil)
+			return nil
+		},
+		// Retry re-dispatches to a fresh pane and re-adds the entry under
+		// the same ID (name) — Add's documented overwrite-in-place behavior
+		// is what keeps this the same row rather than a second one
+		// appearing beside the stale failed entry.
+		Retry: func() error {
+			newPaneID, err := dispatchToPane(name, args)
+			if err != nil {
+				return err
+			}
+			recordLiveWork(name, kind, newPaneID, args)
+			return nil
+		},
+	}
+	livework.Default.Add(e)
 }

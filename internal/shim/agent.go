@@ -1,6 +1,9 @@
 package shim
 
-import "os/exec"
+import (
+	"encoding/json"
+	"os/exec"
+)
 
 // StartAgent starts a herdr-recognized coding agent of kind in the existing
 // pane paneID, named name — `herdr agent start <name> --kind <kind> --pane
@@ -26,4 +29,28 @@ func StartAgent(name, kind, paneID string) error {
 func PromptAndWait(name, prompt string) error {
 	cmd := exec.Command("herdr", "agent", "prompt", name, prompt, "--wait")
 	return cmd.Run()
+}
+
+// AgentStatus reports herdr's own status word for the named agent — idle,
+// done, blocked, working, or unknown, per `herdr agent get <target>`. It is
+// how a workflow target that just settled (PromptAndWait returned with no
+// error) is told apart as "waiting on input" (blocked) rather than actually
+// finished (idle/done): PromptAndWait itself blocks until any of those three
+// settle states is reached, so its return alone can't distinguish them.
+func AgentStatus(name string) (string, error) {
+	out, err := exec.Command("herdr", "agent", "get", name).Output()
+	if err != nil {
+		return "", err
+	}
+	var resp struct {
+		Result struct {
+			Agent struct {
+				Status string `json:"agent_status"`
+			} `json:"agent"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return "", err
+	}
+	return resp.Result.Agent.Status, nil
 }
