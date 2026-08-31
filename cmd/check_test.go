@@ -352,6 +352,118 @@ over.query = "label:review-me"
 	}
 }
 
+// -- checkQueryWorkflowTracker (admin-3rgp.53) ------------------------------
+
+// TestCheckQueryWorkflowTrackerNoTrackerDeclaredPasses proves a project that
+// declares no tracker at all is untouched by this check — HasTracker false
+// must not be conflated with "declared non-beads".
+func TestCheckQueryWorkflowTrackerNoTrackerDeclaredPasses(t *testing.T) {
+	m := &manifest.Manifest{
+		Actions: map[string]manifest.Action{
+			"review-waiting": {"kind": "workflow", "over": map[string]any{"query": "label:review-me"}},
+		},
+	}
+	if err := checkQueryWorkflowTracker(m); err != nil {
+		t.Fatalf("checkQueryWorkflowTracker = %v, want nil (no tracker declared)", err)
+	}
+}
+
+// TestCheckQueryWorkflowTrackerBeadsPasses proves an explicitly-declared
+// beads tracker also passes — ResolveQuery's own resolver.
+func TestCheckQueryWorkflowTrackerBeadsPasses(t *testing.T) {
+	m := &manifest.Manifest{
+		Tracker:    "beads",
+		HasTracker: true,
+		Actions: map[string]manifest.Action{
+			"review-waiting": {"kind": "workflow", "over": map[string]any{"query": "label:review-me"}},
+		},
+	}
+	if err := checkQueryWorkflowTracker(m); err != nil {
+		t.Fatalf("checkQueryWorkflowTracker = %v, want nil (tracker = beads)", err)
+	}
+}
+
+// TestCheckQueryWorkflowTrackerSelectionSourcedPasses proves a
+// selection-sourced workflow is never flagged, whatever the tracker: it
+// never resolves a query at all.
+func TestCheckQueryWorkflowTrackerSelectionSourcedPasses(t *testing.T) {
+	m := &manifest.Manifest{
+		Tracker:    "github",
+		HasTracker: true,
+		Actions: map[string]manifest.Action{
+			"retire-merged": {"kind": "workflow", "over": "selection"},
+		},
+	}
+	if err := checkQueryWorkflowTracker(m); err != nil {
+		t.Fatalf("checkQueryWorkflowTracker = %v, want nil (selection-sourced)", err)
+	}
+}
+
+// TestCheckQueryWorkflowTrackerRejectsGithubQueryWorkflow is the ticket's
+// headline acceptance criterion: a query-sourced workflow declared in a
+// project whose tracker is github fails, and the error names the action,
+// the query, and the tracker so the manifest can be fixed from the message
+// alone.
+//
+// MUTATION EVIDENCE: with the `m.Tracker == "beads"` early-return condition
+// inverted (so it fires when tracker is NOT beads instead), this test
+// failed with:
+//
+//	checkQueryWorkflowTracker = <nil>, want an error naming the action, query, and tracker
+//
+// (reverted after confirming the failure).
+func TestCheckQueryWorkflowTrackerRejectsGithubQueryWorkflow(t *testing.T) {
+	m := &manifest.Manifest{
+		Tracker:    "github",
+		HasTracker: true,
+		Actions: map[string]manifest.Action{
+			"review-waiting": {"kind": "workflow", "over": map[string]any{"query": "label:review-me"}},
+		},
+	}
+	err := checkQueryWorkflowTracker(m)
+	if err == nil {
+		t.Fatal("checkQueryWorkflowTracker = nil, want an error naming the action, query, and tracker")
+	}
+	got := err.Error()
+	for _, want := range []string{"review-waiting", "label:review-me", "github"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("error %q does not mention %q", got, want)
+		}
+	}
+	var ve *validate.Error
+	if !errors.As(err, &ve) {
+		t.Fatal("checkQueryWorkflowTracker's error is not a *validate.Error")
+	}
+}
+
+// TestCheckQueryWorkflowTrackerReportsEveryOffendingAction proves multiple
+// query-sourced workflows on a non-beads tracker are all reported, not just
+// the first, and a non-workflow action alongside them is left alone.
+func TestCheckQueryWorkflowTrackerReportsEveryOffendingAction(t *testing.T) {
+	m := &manifest.Manifest{
+		Tracker:    "github",
+		HasTracker: true,
+		Actions: map[string]manifest.Action{
+			"review-waiting": {"kind": "workflow", "over": map[string]any{"query": "label:review-me"}},
+			"ready-work":     {"kind": "workflow", "over": map[string]any{"query": "ready"}},
+			"build":          {"kind": "shell", "run": "echo build"},
+		},
+	}
+	err := checkQueryWorkflowTracker(m)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	got := err.Error()
+	for _, want := range []string{"review-waiting", "ready-work"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("error %q does not name %q", got, want)
+		}
+	}
+	if strings.Contains(got, "build") {
+		t.Fatalf("error %q incorrectly flags the non-workflow action", got)
+	}
+}
+
 // -- checkTargetDir -----------------------------------------------------------
 
 func TestCheckTargetDirDefaultsToCwd(t *testing.T) {
