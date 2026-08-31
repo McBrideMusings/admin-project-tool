@@ -43,10 +43,10 @@ var reservedCmdVerbs = []string{"branch", "prs", "populate", "help", "completion
 // (archetypesListCmd) uses: home archetypes, then this checkout's own.
 //
 // ok is false only when dir has no admin.toml at all — never paired with a
-// non-nil err — so a caller can tell "no manifest here" (fall through
-// silently, per ADR-0011 §2's "a project with no admin.toml keeps exactly
-// today's behaviour") apart from "a manifest is here and it's broken" (a
-// real error the caller should not swallow the same way).
+// non-nil err — so a caller can tell "no manifest here" (no project commands
+// exist; an unrecognized word is simply unknown) apart from "a manifest is
+// here and it's broken" (a real error the caller should not swallow the same
+// way).
 func resolveProjectManifest(ctx context.Context, dir string) (m *manifest.Manifest, ok bool, err error) {
 	if _, statErr := os.Stat(filepath.Join(dir, manifest.Filename)); statErr != nil {
 		return nil, false, nil

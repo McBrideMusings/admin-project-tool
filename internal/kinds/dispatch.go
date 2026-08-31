@@ -70,11 +70,32 @@ func resolveCommand(m *manifest.Manifest, name string) (manifest.Command, bool) 
 // callers outside this package that only need to know whether a name would
 // dispatch, not run it. cmd.dispatchArgs (admin-3rgp.7) is the first real
 // caller: it needs this to decide, for a bare CLI argument, whether the
-// project's admin.toml claims that name before falling back to branch
-// shorthand.
+// project's admin.toml claims that name — and if not, to report an unknown
+// command (ADR-0014).
 func HasCommand(m *manifest.Manifest, name string) bool {
 	_, ok := resolveCommand(m, name)
 	return ok
+}
+
+// CommandNames returns every command name m declares — custom and
+// archetype-provided, de-duplicated and sorted. It exists so the CLI can name
+// what a project actually offers when a typed word matches nothing: an
+// unknown command is a dead end, and the list of live ones is the whole
+// remedy.
+func CommandNames(m *manifest.Manifest) []string {
+	seen := map[string]bool{}
+	for name := range m.Custom {
+		seen[name] = true
+	}
+	for name := range m.Overrides {
+		seen[name] = true
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // currentDispatch lets a running action's Runner invoke another declared

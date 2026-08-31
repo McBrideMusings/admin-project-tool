@@ -1,8 +1,10 @@
 // Package cmd wires the CLI: the bare `admin` command launches the
-// dashboard; `admin new` creates a worktree; `admin <command>` runs a
-// command declared in the project's admin.toml (ADR-0011). Anything that
-// needs to cd the parent shell is emitted as a sentinel after the TUI tears
-// down (see internal/shim).
+// dashboard; `admin branch` / `admin worktree` create a branch or a worktree
+// from an issue, a PR or a name; `admin <command>` runs a command declared in
+// the project's admin.toml (ADR-0011). A word that is neither is an error;
+// there is no fall-through (ADR-0014). Anything that needs to cd the parent
+// shell is emitted as a sentinel after the TUI tears down (see
+// internal/shim).
 package cmd
 
 import (
@@ -64,21 +66,25 @@ func Execute() error {
 	return rootCmd.ExecuteContext(context.Background())
 }
 
-// dispatchArgs resolves a bare first argument per ADR-0011 §2's order:
+// dispatchArgs resolves a bare first argument in two steps:
 //
-//  1. A tool verb or an existing cmd/ verb (branch, prs, populate, plus
-//     cobra's help/completion) — handled by the loop below.
+//  1. A tool verb or an existing cmd/ verb (branch, worktree, prs, populate,
+//     plus cobra's help/completion) — handled by the loop below.
 //  2. A command declared in the current project's admin.toml — handled by
-//     manifestCommandArgs.
-//  3. Otherwise, branch shorthand, exactly as before this ticket: `admin
-//     <input>` behaves like `admin branch <input>`.
+//     registerManifestCommand.
 //
-// Step 2 is skipped (falling straight to step 3) whenever the project has no
-// admin.toml at all, so a project with no manifest keeps exactly today's
-// behaviour — every unrecognized bare argument is branch input. An
-// admin.toml that IS present but fails to parse or resolve is not skipped:
-// it blocks the fall-through and reports the manifest problem instead
-// (admin-3rgp.52) — see registerManifestCommand.
+// A word matching neither is an error naming what it could have been. There
+// is deliberately no third step: `admin <anything>` used to mean `admin
+// branch --yes <anything>`, so in any project without an admin.toml — which
+// is every fresh clone, since the manifest is never committed — a typed
+// command name silently created and checked out a git branch wearing it
+// (ADR-0011 amendment, admin-oeqo). Creating a branch or a worktree is
+// what the reserved `branch` and `worktree` verbs are for, and typing the
+// verb is the whole cost of never guessing again.
+//
+// An admin.toml that is present but fails to parse or resolve reports the
+// manifest problem rather than "unknown command" (admin-3rgp.52) — see
+// registerManifestCommand.
 func dispatchArgs(args []string) []string {
 	if len(args) == 0 {
 		return args
@@ -89,7 +95,7 @@ func dispatchArgs(args []string) []string {
 	}
 	// Cobra registers its built-in help/completion commands lazily during Execute,
 	// so force them in now — otherwise `repo completion zsh` (wired in .zshrc) and
-	// `repo help` would be misread as branch input.
+	// `repo help` would be reported as unknown commands.
 	rootCmd.InitDefaultHelpCmd()
 	rootCmd.InitDefaultCompletionCmd()
 	for _, c := range rootCmd.Commands() {
@@ -100,9 +106,50 @@ func dispatchArgs(args []string) []string {
 	if registerManifestCommand(first) {
 		return args
 	}
-	// The bare shorthand is the "just make it" path — skip branch's confirm prompt.
-	// The explicit `admin branch <input>` still confirms unless -y is passed.
-	return append([]string{"branch", "--yes"}, args...)
+	registerUnknownCommand(first)
+	return args
+}
+
+// registerUnknownCommand wires a hidden command under name whose RunE is the
+// "this word means nothing here" error. It is registered rather than left to
+// cobra's own unknown-command error so the message can name the actual
+// remedy: the project's real command list, or the fact that there is no
+// admin.toml here at all, plus the two verbs that create git refs — which is
+// what a word like "dev" used to do to a repo by accident.
+func registerUnknownCommand(name string) {
+	rootCmd.AddCommand(&cobra.Command{
+		Use:                name,
+		Hidden:             true,
+		DisableFlagParsing: true,
+		RunE: func(cmd *cobra.Command, cmdArgs []string) error {
+			return unknownCommandError(name)
+		},
+	})
+}
+
+// unknownCommandError builds that message. The two cases differ in what is
+// worth saying: with a manifest, the fix is usually a name in it; without
+// one, the project has no task runner at all and no command name could have
+// worked.
+func unknownCommandError(name string) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "unknown command %q", name)
+
+	wd, wdErr := os.Getwd()
+	if wdErr == nil {
+		if m, ok, err := resolveProjectManifest(context.Background(), wd); ok && err == nil {
+			if names := kinds.CommandNames(m); len(names) > 0 {
+				fmt.Fprintf(&b, " — admin.toml declares: %s", strings.Join(names, ", "))
+			} else {
+				b.WriteString(" — admin.toml declares no commands")
+			}
+		} else if !ok {
+			fmt.Fprintf(&b, " — no admin.toml in %s, so this project has no admin commands", wd)
+		}
+	}
+
+	fmt.Fprintf(&b, "\nto create a branch or worktree named %q: admin branch %s | admin worktree %s", name, name, name)
+	return fmt.Errorf("%s", b.String())
 }
 
 // registerManifestCommand resolves the project manifest at the current
@@ -110,23 +157,18 @@ func dispatchArgs(args []string) []string {
 // command for it to rootCmd (so the normal SetArgs/Execute flow below runs
 // it) and returns true.
 //
-// It returns false — meaning "keep looking, fall through to branch
-// shorthand" — only in the one case ADR-0011 §2 reserves for that: there is
-// no admin.toml here at all. Two other cases both return true, which blocks
-// the branch-shorthand fall-through, but differ in what gets registered:
+// It returns false — meaning "this name is not a project command" — in two
+// cases, both of which leave the caller to report an unknown command: there
+// is no admin.toml here at all, or the manifest resolves fine and simply
+// doesn't declare that name.
 //
-//   - The manifest resolves fine but doesn't declare a command called name:
-//     no command is registered, and dispatchArgs' caller falls through
-//     anyway (registerManifestCommand still returns false here — a resolved
-//     manifest without a matching name is exactly the "not for me" case a
-//     bare argument like a branch name legitimately hits).
-//   - The manifest EXISTS but fails to parse or resolve: this used to be
-//     silently treated as "no match", which sent every bare argument in a
-//     broken-manifest project straight to branch shorthand — admin-3rgp.52,
-//     which mutated git state with no warning the manifest was even
-//     invalid. Now a present-but-broken manifest registers an error command
-//     under name whose RunE reports the manifest problem, and returns true
-//     so the caller never reaches the branch fallback.
+// The third case returns true without the name being a command: the manifest
+// EXISTS but fails to parse or resolve. That used to be silently treated as
+// "no match", which sent every bare argument in a broken-manifest project
+// straight to branch shorthand — admin-3rgp.52, which mutated git state with
+// no warning the manifest was even invalid. It registers an error command
+// under name whose RunE reports the manifest problem, so a broken manifest is
+// never reported as a typo.
 func registerManifestCommand(name string) bool {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -134,11 +176,11 @@ func registerManifestCommand(name string) bool {
 	}
 	m, ok, err := resolveProjectManifest(context.Background(), wd)
 	if !ok {
-		return false // no admin.toml at all — ADR-0011 §2's one fall-through case
+		return false // no admin.toml at all — nothing here declares commands
 	}
 	if err != nil {
 		// admin.toml exists but failed to parse/resolve: a hard error naming
-		// the problem, never a fall-through to branch shorthand (admin-3rgp.52).
+		// the problem, never a typo report (admin-3rgp.52).
 		rootCmd.AddCommand(&cobra.Command{
 			Use:                name,
 			Short:              "admin.toml is invalid",
