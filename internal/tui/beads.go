@@ -56,7 +56,11 @@ func (m Model) beadRows() []rowItem {
 		return m.beadTreeRows(cols)
 	}
 	ready, inProgress, blocked := groupBeads(m.beads)
-	l := beadLayoutFor(m.beadCols, cols, m.beadCtx(false), ready, inProgress, blocked)
+	ctx := m.beadCtx(false)
+	for _, s := range [][]bd.Bead{ready, inProgress, blocked} {
+		sortBeadsBy(s, m.trackSort, ctx.unblocks)
+	}
+	l := beadLayoutFor(m.beadCols, cols, ctx, ready, inProgress, blocked)
 
 	secs := []struct {
 		title string
