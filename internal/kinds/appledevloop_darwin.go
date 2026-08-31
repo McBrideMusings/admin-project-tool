@@ -20,8 +20,10 @@ package kinds
 //     starters in apple_console_darwin.go.
 //
 // See apple_darwin.go's package doc comment for what is deliberately not
-// ported (bundle-suffix layer, icon-swap hooks, App Store Connect device
-// registration, is_running/kill overrides).
+// ported (mac dev-rename/re-sign postprocessing, icon-swap hooks, App Store
+// Connect device registration, is_running/kill overrides). The dev/prod
+// bundle-suffix convention layer (applesign_darwin.go's
+// appleComposeDevSettings) IS wired into every build call below.
 
 import (
 	"fmt"
@@ -60,6 +62,10 @@ func appleDevMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 	if len(launchArgs) == 0 {
 		launchArgs = cfgStrings(cfg, "launch_args")
 	}
+	extraSettings, err := appleComposeDevSettings(cfg, h, project, "mac")
+	if err != nil {
+		return err
+	}
 
 	cleanup, err := reload.SetupReload(appleDevPIDFile)
 	if err != nil {
@@ -76,6 +82,7 @@ func appleDevMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 		res, err := h.XcodebuildFiltered(luahost.XcodebuildOptions{
 			Project: project, Scheme: scheme, Config: config,
 			Destination: "platform=macOS", Action: appleBuildAction(f.clean),
+			ExtraSettings: extraSettings,
 		})
 		if err != nil {
 			return err
@@ -91,6 +98,7 @@ func appleDevMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 
 		buildDir, _ := luahost.TargetBuildDir(luahost.XcodebuildOptions{
 			Project: project, Scheme: scheme, Config: config, Destination: "platform=macOS",
+			ExtraSettings: extraSettings,
 		})
 		if buildDir == "" {
 			h.Err("BUILD SUCCEEDED but xcodebuild reported no TARGET_BUILD_DIR")
@@ -190,6 +198,10 @@ func appleDevSimulator(cfg map[string]any, h *luahost.Host, platform string, f a
 	if len(launchArgs) == 0 {
 		launchArgs = cfgStrings(cfg, "launch_args")
 	}
+	extraSettings, err := appleComposeDevSettings(cfg, h, project, platform)
+	if err != nil {
+		return err
+	}
 
 	cleanup, err := reload.SetupReload(appleDevPIDFile)
 	if err != nil {
@@ -248,6 +260,7 @@ func appleDevSimulator(cfg map[string]any, h *luahost.Host, platform string, f a
 		res, err := h.XcodebuildFiltered(luahost.XcodebuildOptions{
 			Project: project, Scheme: scheme, Config: config,
 			Destination: destination, Action: appleBuildAction(f.clean),
+			ExtraSettings: extraSettings,
 		})
 		if err != nil {
 			return err
@@ -345,6 +358,10 @@ func appleDevDevice(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 	if err != nil {
 		return err
 	}
+	extraSettings, err := appleComposeDevSettings(cfg, h, project, "ios")
+	if err != nil {
+		return err
+	}
 
 	cleanup, err := reload.SetupReload(appleDevPIDFile)
 	if err != nil {
@@ -362,6 +379,7 @@ func appleDevDevice(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 		res, err := h.XcodebuildFiltered(luahost.XcodebuildOptions{
 			Project: project, Scheme: scheme, Config: config,
 			Destination: "generic/platform=iOS", Action: appleBuildAction(f.clean),
+			ExtraSettings: extraSettings,
 		})
 		if err != nil {
 			return err

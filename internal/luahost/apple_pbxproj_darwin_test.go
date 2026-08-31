@@ -143,6 +143,70 @@ func TestXcodeSettingRejectsVariableSubstitution(t *testing.T) {
 	}
 }
 
+func TestXcodeSettingExpandsResolvableSubstitution(t *testing.T) {
+	// The dev/prod bundle-suffix convention (_compose_dev_settings in
+	// admin_lib/apple.py) writes a suffix key right into the same
+	// buildSettings dict as the templated bundle id — e.g.
+	// PRODUCT_BUNDLE_ID_SUFFIX = "" in Release, ".dev" in Debug. This is the
+	// case XcodeSetting can actually resolve without running xcodebuild.
+	objects := map[string]any{
+		"TARGET1": map[string]any{
+			"isa":                    "PBXNativeTarget",
+			"name":                   "MyApp",
+			"buildConfigurationList": "CFGLIST1",
+		},
+		"CFGLIST1": map[string]any{"buildConfigurations": []any{"CFG_DEBUG"}},
+		"CFG_DEBUG": map[string]any{
+			"name": "Debug",
+			"buildSettings": map[string]any{
+				"PRODUCT_BUNDLE_IDENTIFIER": "com.example.app$(PRODUCT_BUNDLE_ID_SUFFIX)",
+				"PRODUCT_BUNDLE_ID_SUFFIX":  "",
+			},
+		},
+	}
+	path := "/fake/resolvable-sub.xcodeproj"
+	pbxprojCacheMu.Lock()
+	pbxprojCache[path] = map[string]any{"objects": objects}
+	pbxprojCacheMu.Unlock()
+	defer resetPBXProjCache()
+
+	val, ok := XcodeSetting(path, "MyApp", "PRODUCT_BUNDLE_IDENTIFIER")
+	if !ok || val != "com.example.app" {
+		t.Errorf("got (%q, %v), want (\"com.example.app\", true)", val, ok)
+	}
+}
+
+func TestXcodeSettingRejectsSubstitutionOfAbsentKey(t *testing.T) {
+	// ADMIN_DEV_BUNDLE_SUFFIX is never written into the pbxproj — it's only
+	// ever supplied on the xcodebuild command line by _compose_dev_settings.
+	// A pbxproj-only read (no build) can't know its value, so this must stay
+	// unresolved rather than silently copying the literal "$(...)" token
+	// into whatever the caller does next (the live bug this guards against).
+	objects := map[string]any{
+		"TARGET1": map[string]any{
+			"isa":                    "PBXNativeTarget",
+			"name":                   "MyApp",
+			"buildConfigurationList": "CFGLIST1",
+		},
+		"CFGLIST1": map[string]any{"buildConfigurations": []any{"CFG_DEBUG"}},
+		"CFG_DEBUG": map[string]any{
+			"name": "Debug",
+			"buildSettings": map[string]any{
+				"PRODUCT_BUNDLE_IDENTIFIER": "com.example.app$(ADMIN_DEV_BUNDLE_SUFFIX)",
+			},
+		},
+	}
+	path := "/fake/absent-key-sub.xcodeproj"
+	pbxprojCacheMu.Lock()
+	pbxprojCache[path] = map[string]any{"objects": objects}
+	pbxprojCacheMu.Unlock()
+	defer resetPBXProjCache()
+
+	if val, ok := XcodeSetting(path, "MyApp", "PRODUCT_BUNDLE_IDENTIFIER"); ok {
+		t.Errorf("got (%q, true), want unresolved (ADMIN_DEV_BUNDLE_SUFFIX isn't in buildSettings)", val)
+	}
+}
+
 func TestReadPBXProjMissingFileReturnsEmpty(t *testing.T) {
 	defer resetPBXProjCache()
 	got := ReadPBXProj(filepath.Join(t.TempDir(), "Nonexistent.xcodeproj"))
