@@ -138,6 +138,20 @@ var Kinds = map[string]Kind{
 	"install-template":   {Name: "install-template", Configless: true, Modules: []string{"remote", "unraid"}},
 	"interactive-shell":  {Name: "interactive-shell", Modules: []string{"ports", "log_server", "log_bridge", "keybindings", "log_format"}},
 	"bridge-listen":      {Name: "bridge-listen", Configless: true, Modules: []string{"ports", "log_server", "log_bridge", "keybindings", "log_format"}, Lifetime: LongRunning},
+
+	// workflow (admin-3rgp.24): "run this same thing over many targets",
+	// declared via `over` rather than a `run` string, so Configless: true —
+	// the same reason clean-dev/vite-dev/docs/etc. above are. Lifetime:
+	// LongRunning is the deliberate call: once admin-3rgp.25 lands, a
+	// workflow's whole point is fanning its targets out into their own git
+	// worktrees under a concurrency ceiling and keeping them running while
+	// the caller's terminal is free for other work — exactly docker-dev/
+	// vite-dev's shape, not a one-shot that returns when its own work is
+	// done. ConsumesTargets stays false: that field means "reads the
+	// action's `targets` table" (multi-target's shape), and a workflow's
+	// targets come from `over` (a row selection or a resolved query), never
+	// a declared `targets` table.
+	"workflow": {Name: "workflow", Configless: true, Lifetime: LongRunning},
 }
 
 // KnownKinds is every valid kind name, sorted — derived from Kinds so a new

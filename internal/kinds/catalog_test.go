@@ -31,20 +31,23 @@ func pythonKindNames(t *testing.T) ([]string, bool) {
 	return names, true
 }
 
-// adr0010Divergence is the one deliberate, permanent difference between this
+// adr0010Divergence is the deliberate, permanent differences between this
 // catalog and admin_lib/kinds.py: ADR-0010 deletes kind="python" and
 // kind="python-script" from the Go side and adds kind="lua" in their place.
 // admin_lib/kinds.py is not migrated kind-by-kind — it is deleted wholesale
 // by admin-3rgp.30 — so it still declares the two Python kinds and knows
-// nothing of "lua". TestCatalogMatchesPythonKinds accounts for exactly this
-// gap rather than either ignoring the cross-check or asserting a false
-// exact-match.
+// nothing of "lua". kind="workflow" (admin-3rgp.24) is a second, unrelated
+// addition: a brand-new Go-only kind with no Python counterpart at all
+// (there was never a workflow concept in admin_lib), not a port of anything
+// pythonKindNames could ever find. TestCatalogMatchesPythonKinds accounts
+// for both gaps rather than either ignoring the cross-check or asserting a
+// false exact-match.
 var adr0010Divergence = struct {
 	removedFromGo []string // declared in Python, deliberately absent from Go
 	addedInGo     []string // declared in Go, deliberately absent from Python
 }{
 	removedFromGo: []string{"python", "python-script"},
-	addedInGo:     []string{"lua"},
+	addedInGo:     []string{"lua", "workflow"},
 }
 
 // TestCatalogMatchesPythonKinds proves every kind the Python KINDS catalog
