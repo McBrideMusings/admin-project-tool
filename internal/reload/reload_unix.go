@@ -344,6 +344,25 @@ func killAndWait(c *exec.Cmd, exitCh <-chan error, sig syscall.Signal) {
 	}
 }
 
+// KillProcessGroup sends sig to c's whole process group and waits up to 5s
+// for it to exit before escalating to SIGKILL — exported so a caller outside
+// this package needing the same generic "tear down a child I launched with
+// Setpgid" teardown (internal/keybindings's own subprocess loop) uses this
+// one implementation rather than writing a second copy of it.
+func KillProcessGroup(c *exec.Cmd, exitCh <-chan error, sig syscall.Signal) {
+	killAndWait(c, exitCh, sig)
+}
+
+// StartKeyReader puts stdin into cbreak mode and streams single bytes read
+// from it on the returned channel, exactly like the reader RunWithReload
+// uses for its own 'r'/Ctrl-C keys — exported so internal/keybindings's
+// arbitrary-keymap loop reads stdin the same way rather than a second raw-
+// mode reader. restore is always safe to call, including when raw mode was
+// never entered.
+func StartKeyReader() (keys <-chan byte, restore func()) {
+	return startKeyReader()
+}
+
 // SignalAll sends SIGUSR1 to every admin-managed dev target whose PID file
 // matches prefix (or the subset whose target name contains filter, when
 // filter is non-empty). Stale PID files (parse failure, or a process that is

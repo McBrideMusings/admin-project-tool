@@ -57,8 +57,8 @@ func registerBuiltins(r *Registry) {
 	r.MustRegister("fixtures-generate", makeFixturesGenerate)
 	r.MustRegister("fixtures-reset", makeFixturesReset)
 	r.MustRegister("install-template", makeInstallTemplate)
-	r.MustRegister("interactive-shell", notImplemented("interactive-shell"))
-	r.MustRegister("bridge-listen", notImplemented("bridge-listen"))
+	r.MustRegister("interactive-shell", makeInteractiveShell)
+	r.MustRegister("bridge-listen", makeBridgeListen)
 }
 
 // init registers every declared kind's (stub) factory into Default, then

@@ -114,3 +114,85 @@ func TestWrapIsIdempotentAndPreservesMessage(t *testing.T) {
 		t.Fatal("Wrap(nil) should be nil")
 	}
 }
+
+// TestParseKeysAcceptsEachBindingShape proves the three exclusive binding
+// shapes (run / action / signal+pid_file) all parse clean, and that a
+// leading "@" on an action reference is stripped.
+func TestParseKeysAcceptsEachBindingShape(t *testing.T) {
+	raw := map[string]any{
+		"r": map[string]any{"run": "echo hi", "label": "restart"},
+		"a": map[string]any{"action": "@build"},
+		"s": map[string]any{"signal": "TERM", "pid_file": "/tmp/x.pid"},
+	}
+	keys, err := ParseKeys(raw, `action "dev"`)
+	if err != nil {
+		t.Fatalf("ParseKeys = %v, want nil", err)
+	}
+	if keys["r"].Run != "echo hi" || keys["r"].Label != "restart" {
+		t.Fatalf("run binding = %+v", keys["r"])
+	}
+	if keys["a"].Action != "build" {
+		t.Fatalf("action binding = %+v, want Action=build (@ stripped)", keys["a"])
+	}
+	if keys["s"].Signal != "TERM" || keys["s"].PidFile != "/tmp/x.pid" {
+		t.Fatalf("signal binding = %+v", keys["s"])
+	}
+}
+
+// TestParseKeysRejectsMultiCharKey proves a key that isn't a single
+// character is rejected — the Go port of parse_keys's own check, exercised
+// here because it is easy to accidentally satisfy with a Go map[string]any
+// where "keychar" could be any string.
+func TestParseKeysRejectsMultiCharKey(t *testing.T) {
+	raw := map[string]any{"ab": map[string]any{"run": "echo hi"}}
+	if _, err := ParseKeys(raw, `action "dev"`); err == nil {
+		t.Fatal("ParseKeys = nil, want an error for a multi-character key")
+	}
+}
+
+// TestParseKeysRejectsReservedKeys proves Ctrl-C (\x03) and Ctrl-D (\x04)
+// are refused as bindable keys — they are the loop's own exit keys.
+func TestParseKeysRejectsReservedKeys(t *testing.T) {
+	for _, reserved := range []string{"\x03", "\x04"} {
+		raw := map[string]any{reserved: map[string]any{"run": "echo hi"}}
+		if _, err := ParseKeys(raw, `action "dev"`); err == nil {
+			t.Fatalf("ParseKeys(%q) = nil, want an error (reserved)", reserved)
+		}
+	}
+}
+
+// TestParseKeysRejectsConflictingTargets proves a binding naming more than
+// one of run/action/signal is refused rather than picking one silently.
+func TestParseKeysRejectsConflictingTargets(t *testing.T) {
+	raw := map[string]any{"r": map[string]any{"run": "echo hi", "action": "build"}}
+	if _, err := ParseKeys(raw, `action "dev"`); err == nil {
+		t.Fatal("ParseKeys = nil, want an error for conflicting run+action")
+	}
+}
+
+// TestParseKeysRequiresPidFileWithSignal proves 'signal' without 'pid_file'
+// (and vice versa) is refused — a signal binding is useless without
+// somewhere to read the target PID from.
+func TestParseKeysRequiresPidFileWithSignal(t *testing.T) {
+	raw := map[string]any{"s": map[string]any{"signal": "TERM"}}
+	if _, err := ParseKeys(raw, `action "dev"`); err == nil {
+		t.Fatal("ParseKeys = nil, want an error for signal without pid_file")
+	}
+}
+
+// TestParseKeysRejectsUnknownField proves a typo'd binding field is caught
+// at validation time instead of silently ignored.
+func TestParseKeysRejectsUnknownField(t *testing.T) {
+	raw := map[string]any{"r": map[string]any{"run": "echo hi", "bogus": "x"}}
+	if _, err := ParseKeys(raw, `action "dev"`); err == nil {
+		t.Fatal("ParseKeys = nil, want an error for an unknown binding field")
+	}
+}
+
+// TestParseKeysRejectsNonTableKeys proves a `keys` value that isn't itself
+// a table (e.g. a string) is rejected up front.
+func TestParseKeysRejectsNonTableKeys(t *testing.T) {
+	if _, err := ParseKeys("nope", `action "dev"`); err == nil {
+		t.Fatal("ParseKeys = nil, want an error for a non-table keys value")
+	}
+}
