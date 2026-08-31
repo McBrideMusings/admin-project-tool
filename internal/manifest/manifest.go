@@ -84,6 +84,23 @@ type Manifest struct {
 	ProjectName string
 	PythonMin   string
 
+	// Tracker names which issue tracker the project uses ("beads", "github",
+	// or any other value the tracker tab wants to recognize) — a declared
+	// key rather than something sniffed from repo layout (admin-3rgp.22).
+	// HasTracker distinguishes "declared empty" (never — an empty string is
+	// rejected at parse) from "not declared at all", which the Config tab
+	// renders as "no tracker declared" rather than guessing one.
+	Tracker    string
+	HasTracker bool
+	// UsesPullRequests declares whether the project's workflow goes through
+	// pull requests, independent of Tracker — a repo can use beads for
+	// issues and still open PRs, or use GitHub Issues with no PR step at
+	// all. HasUsesPullRequests marks whether the manifest (or an archetype)
+	// actually set it; the Config tab shows the false default as defaulted
+	// when it is unset.
+	UsesPullRequests    bool
+	HasUsesPullRequests bool
+
 	Archetypes     []string
 	Modules        []string
 	Order          []string
@@ -141,7 +158,8 @@ type Manifest struct {
 
 // knownTopLevelKeys mirrors admin_lib/manifest.py::_KNOWN_KEYS.
 var knownTopLevelKeys = map[string]bool{
-	"project_name": true, "python_min": true, "archetypes": true, "modules": true, "urls": true,
+	"project_name": true, "python_min": true, "tracker": true, "uses_pull_requests": true,
+	"archetypes": true, "modules": true, "urls": true,
 	"commands": true, "actions": true, "order": true, "logs": true, "apple": true, "react_native": true,
 	// An archetype.toml may name itself (internal/archetype reads the
 	// directory name as canonical and only tolerates this key).
@@ -221,6 +239,21 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 		return nil, errf("%s: 'python_min' must be MAJOR.MINOR (e.g. '3.11'), got '%s'", source, pythonMin)
 	}
 	m.PythonMin = pythonMin
+
+	if v, present := data["tracker"]; present {
+		s, ok := v.(string)
+		if !ok || s == "" {
+			return nil, errf("%s: 'tracker' must be a non-empty string", source)
+		}
+		m.Tracker, m.HasTracker = s, true
+	}
+	if v, present := data["uses_pull_requests"]; present {
+		b, ok := v.(bool)
+		if !ok {
+			return nil, errf("%s: 'uses_pull_requests' must be true or false", source)
+		}
+		m.UsesPullRequests, m.HasUsesPullRequests = b, true
+	}
 
 	var err error
 	if m.Archetypes, err = stringSlice(data, "archetypes", source); err != nil {

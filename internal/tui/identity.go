@@ -12,11 +12,18 @@ import (
 
 // settingsMsg carries the parts of the merged config the dashboard keeps on the
 // model — who you are, and which columns the Beads pane draws — plus whether this
-// launch was the one that seeded the identity.
+// launch was the one that seeded the identity. merged/global/local carry the
+// whole config three ways (merged, global file alone, local file alone) so
+// the Config tab (admin-3rgp.21) can say which file — or neither — declared
+// each field, not just its final resolved value.
 type settingsMsg struct {
-	id     config.Identity
-	beads  config.Beads
-	seeded bool
+	id      config.Identity
+	beads   config.Beads
+	seeded  bool
+	merged  config.Config
+	global  config.Config
+	local   config.Config
+	loadErr string
 }
 
 // loadConfigCmd resolves who you are, seeding the global config on first run.
@@ -39,10 +46,18 @@ func loadConfigCmd(ctx context.Context, repoRoot string) tea.Cmd {
 		if err != nil {
 			// A config that will not parse must not silently mean "nothing is yours":
 			// that files every branch under Unsorted with no hint why. The identity
-			// stays zero and the Config tab shows the parse error it already surfaces.
-			return settingsMsg{}
+			// stays zero and the Config tab shows the parse error instead of a value.
+			return settingsMsg{loadErr: err.Error()}
 		}
-		return settingsMsg{id: cfg.Identity, beads: cfg.Beads, seeded: seeded}
+		// Reading each file alone (in addition to the merge above) is what
+		// lets the Config tab say which file declared a field rather than
+		// only its final value. Either read failing here is already the
+		// same failure config.Load would have hit, so it can't happen
+		// without err above already firing — global/local are read only for
+		// display, never let a real load error through silently.
+		global, _ := config.LoadGlobal()
+		local, _ := config.LoadLocal(repoRoot)
+		return settingsMsg{id: cfg.Identity, beads: cfg.Beads, seeded: seeded, merged: cfg, global: global, local: local}
 	}
 }
 

@@ -621,7 +621,9 @@ func (m Model) keymap() [][2]string {
 		// No `o`: a bead lives in a local database and has no page to open.
 		return [][2]string{{"↑↓", "move"}, {"↵", "start work"}, {"d", "detail"}, {"g", "tree"}, {"/", "filter"}, {"r", "refresh"}, {"q", "quit"}, tabKey}
 	case tabConfig:
-		return [][2]string{{"⇥", "global/local"}, {"↵", "edit"}, {"q", "quit"}, tabKey}
+		// Read-only readout of resolved values (admin-3rgp.21) — nothing to
+		// move a cursor over or edit.
+		return [][2]string{{"q", "quit"}, tabKey}
 	}
 	return nil
 }
