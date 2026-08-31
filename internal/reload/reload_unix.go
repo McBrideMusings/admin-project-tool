@@ -187,7 +187,16 @@ func RunWithReload(cmd, target string, opts Options) int {
 		c.Stderr = pw
 
 		pump := &streams.OutputPump{
-			Out:       func(s string) { frame.Write(opts.Stdout, s) },
+			// Options documents Stdout as optional ("Left nil, RunWithReload
+			// writes nowhere"), but frame.Write hands a nil io.Writer to
+			// io.WriteString, which panics on the child's first line of
+			// output — a crash in the caller's process, not a quiet no-op.
+			Out: func(s string) {
+				if opts.Stdout == nil {
+					return
+				}
+				frame.Write(opts.Stdout, s)
+			},
 			LogFn:     opts.LogFn,
 			Formatter: opts.Formatter,
 		}
