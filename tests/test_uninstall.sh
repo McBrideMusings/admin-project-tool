@@ -8,6 +8,13 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 PASS=0
 FAIL=0
 
+# These tests run install.sh, which compiles the Go binary, and `go` derives its
+# caches from HOME — which every test overrides to sandbox ~/.admin. Left alone,
+# the module set lands in the temp HOME 0555 and the trailing `rm -rf "$T"`
+# fails, killing the run under set -e. See tests/test_install.sh for the same fix.
+export GOMODCACHE="$(go env GOMODCACHE)"
+export GOCACHE="$(go env GOCACHE)"
+
 # On macOS, zsh writes to .zprofile; on Linux, .zshrc.
 if [[ "$(uname -s)" == "Darwin" ]]; then
     ZSH_RC=".zprofile"

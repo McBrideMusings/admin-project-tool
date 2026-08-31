@@ -8,6 +8,15 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 PASS=0
 FAIL=0
 
+# install.sh compiles the Go binary, and `go` derives its module and build
+# caches from HOME — which every test below overrides to sandbox ~/.admin. Left
+# alone, each install re-downloads the module set into the temp HOME and writes
+# it 0555, so the trailing `rm -rf "$T"` fails and set -e kills the run. Pin both
+# caches to the real ones: what these tests isolate is the install destination,
+# never the toolchain's cache.
+export GOMODCACHE="$(go env GOMODCACHE)"
+export GOCACHE="$(go env GOCACHE)"
+
 # On macOS, zsh writes to .zprofile; on Linux, .zshrc.
 if [[ "$(uname -s)" == "Darwin" ]]; then
     ZSH_RC=".zprofile"
@@ -127,7 +136,13 @@ assert_file_exists "admin_lib copied" "$T/.admin/admin_lib"
 assert_file_exists "manifest frontend folded into admin_lib" "$T/.admin/admin_lib/manifest.py"
 assert_file_exists "archetype data dir copied" "$T/.admin/archetypes"
 assert_file_exists "detector data dir copied" "$T/.admin/detectors"
-assert_file_exists "admin interpreter copied" "$T/.admin/admin"
+assert_file_exists "admin binary built" "$T/.admin/admin"
+assert_file_exists "admin-py fallback installed" "$T/.admin/admin-py"
+if [[ -x "$T/.admin/admin" && ! -L "$T/.admin/admin" ]] && file "$T/.admin/admin" | grep -q 'executable'; then
+    ok "admin is a compiled binary, not the Python entry"
+else
+    fail "admin is a compiled binary, not the Python entry" "$(file "$T/.admin/admin")"
+fi
 assert_file_contains "PATH added to rc" '.admin' "$T/$ZSH_RC"
 rm -rf "$T"
 
@@ -278,7 +293,14 @@ assert_contains "reports edits are live" "edits are live" "$out"
 assert_symlink "admin_lib symlinked" "$T/.admin/admin_lib"
 assert_symlink "archetype data dir symlinked" "$T/.admin/archetypes"
 assert_symlink "detector data dir symlinked" "$T/.admin/detectors"
-assert_symlink "admin interpreter symlinked" "$T/.admin/admin"
+# --link makes Python edits live; the binary is compiled either way, so `admin`
+# is a real file in both modes and only admin-py is ever a symlink.
+assert_symlink "admin-py symlinked" "$T/.admin/admin-py"
+if [[ -L "$T/.admin/admin" ]]; then
+    fail "admin binary is not symlinked under --link" "unexpectedly a symlink"
+else
+    ok "admin binary is not symlinked under --link"
+fi
 assert_file_contains "VERSION records the linked source" "linked:$REPO" "$T/.admin/VERSION"
 
 # An edit to the source tree must be visible through the link with no reinstall
