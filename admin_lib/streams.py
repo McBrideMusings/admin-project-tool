@@ -62,6 +62,10 @@ class OutputPump:
         self.log_transform = log_transform
         self.display_transform = display_transform
         self._line_buf = ""
+        # How much of _line_buf flush_partial() has already put on screen. A
+        # formatter lays out whole lines, so anything shown early is shown raw
+        # and must not be re-emitted when the line finally completes.
+        self._emitted = 0
 
     def write(self, text):
         """Feed one chunk (a whole line or an arbitrary read) through the pump."""
@@ -74,9 +78,29 @@ class OutputPump:
             self._line_buf += text
             while "\n" in self._line_buf:
                 line, self._line_buf = self._line_buf.split("\n", 1)
-                frame.write(self.formatter(line + "\n"))
+                if self._emitted:
+                    frame.write(line[self._emitted:] + "\n")
+                    self._emitted = 0
+                else:
+                    frame.write(self.formatter(line + "\n"))
         else:
             frame.write(self.display_transform(text) if self.display_transform else text)
+
+    def flush_partial(self):
+        """Show a newline-less tail while the child is STILL RUNNING.
+
+        A prompt is the case this exists for: `write("Type \"deploy\": ")` has no
+        newline, so the formatter path holds it and the user stares at a blank
+        terminal while the child blocks on stdin. Callers drive this from their
+        idle path (a select timeout), which is the only moment that reliably
+        means "the child has stopped talking and may be waiting on us".
+
+        Shown raw, not formatted — the line is incomplete, so there is nothing
+        for a column-laying formatter to lay out yet.
+        """
+        if self.formatter and len(self._line_buf) > self._emitted:
+            frame.write(self._line_buf[self._emitted:])
+            self._emitted = len(self._line_buf)
 
     def flush(self):
         """Emit a trailing, newline-less partial line once the child is gone.
@@ -86,8 +110,12 @@ class OutputPump:
         there is no formatter or nothing buffered.
         """
         if self.formatter and self._line_buf:
-            frame.write(self.formatter(self._line_buf + "\n"))
+            if self._emitted:
+                frame.write(self._line_buf[self._emitted:] + "\n")
+            else:
+                frame.write(self.formatter(self._line_buf + "\n"))
             self._line_buf = ""
+            self._emitted = 0
 
 
 def stream_subprocess(proc, log_file=None, formatter=None):

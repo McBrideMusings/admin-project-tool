@@ -121,3 +121,56 @@ def test_no_log_fh_is_a_noop_for_logging(capsys):
     pump = OutputPump()
     pump.write("hello\n")
     assert capsys.readouterr().out == "hello\n"
+
+
+def test_flush_partial_shows_a_prompt_while_the_child_still_runs(capsys):
+    """A prompt has no trailing newline, so the formatter path holds it and the
+    user stares at a blank terminal while the child blocks on stdin. Callers
+    drive flush_partial() from their idle path to get it on screen.
+    """
+    pump = OutputPump(formatter=lambda line: "X " + line)
+    pump.write('About to overwrite. Type "deploy": ')
+    assert capsys.readouterr().out == ""
+    pump.flush_partial()
+    assert capsys.readouterr().out == 'About to overwrite. Type "deploy": '
+
+
+def test_flush_partial_does_not_duplicate_when_the_line_completes(capsys):
+    """Whatever flush_partial() already put on screen must not be re-emitted
+    when the newline finally arrives — only the remainder is."""
+    pump = OutputPump(formatter=lambda line: "X " + line)
+    pump.write("Type deploy: ")
+    pump.flush_partial()
+    capsys.readouterr()
+    pump.write("ok\n")
+    assert capsys.readouterr().out == "ok\n"
+
+
+def test_flush_partial_is_idempotent(capsys):
+    """An idle loop calls it every tick. Only new bytes may reach the screen."""
+    pump = OutputPump(formatter=lambda line: "X " + line)
+    pump.write("waiting")
+    pump.flush_partial()
+    capsys.readouterr()
+    pump.flush_partial()
+    assert capsys.readouterr().out == ""
+
+
+def test_flush_after_flush_partial_emits_only_the_remainder(capsys):
+    """The child died mid-line after we had already shown part of it."""
+    pump = OutputPump(formatter=lambda line: "X " + line)
+    pump.write("Type deploy: ")
+    pump.flush_partial()
+    capsys.readouterr()
+    pump.write("aborted")
+    pump.flush()
+    assert capsys.readouterr().out == "aborted\n"
+
+
+def test_flush_partial_is_a_noop_without_a_formatter(capsys):
+    """No formatter means write() already showed it; flushing again duplicates."""
+    pump = OutputPump()
+    pump.write("Type deploy: ")
+    capsys.readouterr()
+    pump.flush_partial()
+    assert capsys.readouterr().out == ""
