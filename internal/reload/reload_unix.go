@@ -65,8 +65,8 @@ func SetupReload(pidFile string) (cleanup func(), err error) {
 // signal generation left on — the same tty.setcbreak Python's poll_for_reload
 // and run_with_reload both use) and streams single bytes read from it on the
 // returned channel. restore undoes the terminal mode change; it is always
-// safe to call, including when raw mode was never entered (stdin not a tty,
-// or MakeRaw failed) — restore is then a no-op. The reader goroutine exits
+// safe to call, including when cbreak mode was never entered (stdin not a
+// tty, or the ioctl failed) — restore is then a no-op. The reader goroutine exits
 // (closing the channel) once the fd hits EOF or an error, which happens on
 // Restore since that unblocks the pending Read with the terminal back in
 // canonical mode... in practice the goroutine simply leaks blocked in Read
@@ -78,7 +78,7 @@ func startKeyReader() (keys <-chan byte, restore func()) {
 	if !xterm.IsTerminal(fd) {
 		return nil, func() {}
 	}
-	state, err := xterm.MakeRaw(fd)
+	state, err := makeCbreak(fd)
 	if err != nil {
 		return nil, func() {}
 	}
@@ -98,7 +98,7 @@ func startKeyReader() (keys <-chan byte, restore func()) {
 			}
 		}
 	}()
-	return ch, func() { _ = xterm.Restore(fd, state) }
+	return ch, func() { _ = restoreTerm(fd, state) }
 }
 
 // PollForReload blocks until a reload is requested (SIGUSR1, or 'r'/'R' on a
@@ -315,7 +315,11 @@ func waitForExitOrSignal(c *exec.Cmd, sigCh <-chan os.Signal, keys <-chan byte, 
 				}
 				killAndWait(c, exitCh, syscall.SIGTERM)
 				return outcomeReload
-			case b == 0x03: // Ctrl-C, read directly since raw mode disables ISIG
+			// Cbreak mode leaves ISIG on, so a terminal Ctrl-C normally
+			// arrives on sigCh as a real SIGINT and never gets here. This
+			// stays for the case where 0x03 is piped/typed into a stdin
+			// whose ISIG is off.
+			case b == 0x03:
 				killAndWait(c, exitCh, syscall.SIGINT)
 				return outcomeSigint
 			}
