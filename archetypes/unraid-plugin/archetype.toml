@@ -1,0 +1,87 @@
+name = "unraid-plugin"
+modules = ["core", "remote", "unraid"]
+
+[commands.build]
+desc = "Build plugin (no-op by default)"
+steps = ["build"]
+
+[commands.deploy]
+desc = "Push plugin source to Unraid USB"
+steps = ["deploy"]
+
+[commands.deploy.env]
+ADMIN_LOCAL = "${DEPLOY_LOCAL:-false}"
+
+[commands.register]
+desc = "Register/install the plugin on Unraid"
+steps = ["register"]
+
+[commands.register.env]
+ADMIN_LOCAL = "${DEPLOY_LOCAL:-false}"
+
+[commands.uninstall]
+desc = "Uninstall the plugin from Unraid"
+steps = ["uninstall"]
+
+[commands.uninstall.env]
+ADMIN_LOCAL = "${DEPLOY_LOCAL:-false}"
+
+[actions.build]
+kind = "shell"
+run = "echo 'unraid-plugin: no build step (source files are pushed directly)'"
+desc = "Build plugin (no-op by default)"
+
+[actions.deploy]
+kind = "lua"
+desc = "Push plugin source to Unraid USB"
+run = '''
+-- Go port (admin-3rgp.37) of admin_lib/remote.py::deploy_files's rsync call
+-- as used by the unraid-plugin archetype's "deploy" action (the plain
+-- Unraid-USB rsync push, not the [deploy]-table mirror-directory shape).
+local al = (env("ADMIN_LOCAL") or ""):lower()
+local is_local = (al == "1" or al == "true" or al == "yes")
+local user = env("UNRAID_USER") or "root"
+local host = user .. "@" .. (env("UNRAID_HOST") or "")
+local plugin = env("PLUGIN_NAME")
+local dest = "/boot/config/plugins/" .. tostring(plugin)
+local dest_arg = is_local and dest or (host .. ":" .. dest)
+if not run_cmd("rsync -av --delete ./ " .. dest_arg .. "/") then
+  error("unraid-plugin deploy: rsync failed")
+end
+'''
+
+[actions.register]
+kind = "lua"
+desc = "Register/install the plugin on Unraid"
+run = '''
+-- Go port (admin-3rgp.37) of admin_lib/remote.py::ssh_cmd as used by the
+-- unraid-plugin archetype's "register" action.
+local al = (env("ADMIN_LOCAL") or ""):lower()
+local is_local = (al == "1" or al == "true" or al == "yes")
+local user = env("UNRAID_USER") or "root"
+local host = user .. "@" .. (env("UNRAID_HOST") or "")
+local plugin = env("PLUGIN_NAME")
+local remote_cmd = "installplg /boot/config/plugins/" .. tostring(plugin) .. "/" .. tostring(plugin) .. ".plg"
+local cmd = is_local and remote_cmd or ("ssh " .. host .. " " .. remote_cmd)
+if not run_cmd(cmd) then
+  error("unraid-plugin register: installplg failed")
+end
+'''
+
+[actions.uninstall]
+kind = "lua"
+desc = "Uninstall the plugin from Unraid"
+run = '''
+-- Go port (admin-3rgp.37) of admin_lib/remote.py::ssh_cmd as used by the
+-- unraid-plugin archetype's "uninstall" action.
+local al = (env("ADMIN_LOCAL") or ""):lower()
+local is_local = (al == "1" or al == "true" or al == "yes")
+local user = env("UNRAID_USER") or "root"
+local host = user .. "@" .. (env("UNRAID_HOST") or "")
+local plugin = env("PLUGIN_NAME")
+local remote_cmd = "removeplg " .. tostring(plugin)
+local cmd = is_local and remote_cmd or ("ssh " .. host .. " " .. remote_cmd)
+if not run_cmd(cmd) then
+  error("unraid-plugin uninstall: removeplg failed")
+end
+'''

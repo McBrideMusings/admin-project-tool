@@ -1,0 +1,61 @@
+name = "cloudflare-workers"
+modules = ["core"]
+
+[urls]
+dev = "http://localhost:8787"
+prod = "${PROD_URL:-http://localhost:8787}"
+
+[commands.dev]
+desc = "Run the Worker locally (wrangler dev)"
+steps = ["worker-dev"]
+group = 1
+priority = 20
+
+[commands.deploy]
+desc = "Deploy the Worker + assets (wrangler deploy)"
+steps = ["worker-deploy"]
+group = 1
+priority = 30
+
+[commands.migrate]
+desc = "Apply D1 migrations (remote)"
+steps = ["d1-migrate"]
+group = 2
+priority = 10
+
+[commands.migrate-local]
+desc = "Apply D1 migrations against the local dev D1"
+steps = ["d1-migrate-local"]
+group = 2
+priority = 20
+
+[commands.tail]
+desc = "Stream live production logs (wrangler tail)"
+steps = ["worker-tail"]
+group = 2
+priority = 30
+
+[actions.worker-dev]
+kind = "shell"
+run = "npx wrangler dev"
+desc = "Run the Worker locally (wrangler dev)"
+
+[actions.worker-deploy]
+kind = "shell"
+run = "npx wrangler deploy"
+desc = "Deploy the Worker + assets (wrangler deploy)"
+
+[actions.d1-migrate]
+kind = "shell"
+run = "npx wrangler d1 migrations apply ${D1_DATABASE_NAME} --remote"
+desc = "Apply D1 migrations (remote)"
+
+[actions.d1-migrate-local]
+kind = "shell"
+run = "npx wrangler d1 migrations apply ${D1_DATABASE_NAME} --local"
+desc = "Apply D1 migrations against the local dev D1"
+
+[actions.worker-tail]
+kind = "shell"
+run = "npx wrangler tail"
+desc = "Stream live production logs (wrangler tail)"

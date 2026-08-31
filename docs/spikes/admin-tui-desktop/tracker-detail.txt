@@ -1,0 +1,30 @@
+ admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+  Work 12    Repo    Beads 227    Config                                                        
+                                                                                                
+                                                                                                
+                                                                                                
+     ┌─[ Bead ]─[ Graph ]─[ Blocking ]──────────────────────────────────────────────[ ✕ ]─┐     
+     │ One tool: merge repo-dash into admin as a single Go binary                         │     
+     │ epic · P1 · open · piercermcbride                                                  │     
+     │                                                                                    │     
+     │ `admin` and `repo-dash` become one Go binary installed with `go install`. The      │     
+     │ binary is both the manifest interpreter and the repo dashboard.                    │     
+     │                                                                                    │     
+     │ Settled decisions this epic implements:                                            │     
+     │                                                                                    │     
+     │ - **One Go binary.** `admin_lib/` is ported from Python to Go. ADR-0001            │     
+     │   (stdlib-only) is superseded — its purpose was a dependency-free artifact, which a│     
+     │   static binary achieves more completely. Third-party Go dependencies are fine.    │     
+     │ - **One repo.** repo-dash's Go source moves into this repository as first-class    │     
+     │   source and is edited in place. repo-dash is archived. Nothing here ever imports  │     
+     │   `github.com/McBrideMusings/repo` — the merge is a move, not a dependency.        │     
+     │ - **Command Tab layout.** The dashboard lands on the Commands tab, a two-column    │     
+     │   split with a resolved-action reader beside the list. Then Repo, the tracker tab, │     
+     │   Swarm, Config.                                                                   │     
+     │ ↓ 13 more — ↑↓ scrolls                                                             │     
+     │ ←  →  switch      ↑↓  scroll      esc  close                                       │     
+     └────────────────────────────────────────────────────────────────────────────────────┘     
+                                                                                                
+                                                                                                
+────────────────────────────────────────────────────────────────────────────────────────────────
+ ← → switch · ↑↓ scroll · esc close                                                             
