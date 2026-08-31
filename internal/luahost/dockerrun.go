@@ -1,0 +1,203 @@
+package luahost
+
+import (
+	"github.com/McBrideMusings/admin-project-tool/internal/dockerrun"
+	lua "github.com/yuin/gopher-lua"
+)
+
+// registerDockerRun binds internal/dockerrun (admin-3rgp.37's pure Go port of
+// admin_lib/docker.py's cfg<->argv renderers and drift/mask helpers) into the
+// `dockerrun` global table. The docker archetype's run-args, deploy, and diff
+// actions all call through this table rather than each carrying its own copy
+// of the field-table renderer — issue #388's own lesson (the cfg->argv and
+// inspect->argv directions drifted apart once already because each was
+// hand-written separately) applies just as much to "two Lua bodies
+// implementing the same direction" as it did to the original two Python
+// functions.
+func (h *Host) registerDockerRun(L *lua.LState) {
+	tbl := L.NewTable()
+
+	// dockerrun.build_args_from_cfg(cfg[, env_vars[, env_file_vars]]) -> argv
+	// env_vars/env_file_vars: an optional {NAME=VALUE} table. Omitting
+	// env_vars means "read the admin process's own environment" (matches
+	// admin_lib's env_vars=None -> os.environ default).
+	tbl.RawSetString("build_args_from_cfg", L.NewFunction(func(L *lua.LState) int {
+		cfg, _ := fromLuaValue(L.CheckTable(1)).(map[string]any)
+		envVars := optionalStringMap(L, 2)
+		envFileVars := optionalStringMap(L, 3)
+		args := dockerrun.BuildArgsFromCfg(cfg, envVars, envFileVars, h.Warn)
+		L.Push(stringSliceToLua(L, args))
+		return 1
+	}))
+
+	// dockerrun.build_args_from_inspect(inspect) -> argv
+	tbl.RawSetString("build_args_from_inspect", L.NewFunction(func(L *lua.LState) int {
+		inspect, _ := fromLuaValue(L.CheckTable(1)).(map[string]any)
+		args := dockerrun.BuildArgsFromInspect(inspect)
+		L.Push(stringSliceToLua(L, args))
+		return 1
+	}))
+
+	// dockerrun.compute_drift(target_argv, live_argv) -> in_target_only, in_live_only
+	tbl.RawSetString("compute_drift", L.NewFunction(func(L *lua.LState) int {
+		target := tableToStringSlice(L.CheckTable(1))
+		live := tableToStringSlice(L.CheckTable(2))
+		inTargetOnly, inLiveOnly := dockerrun.ComputeDrift(target, live)
+		L.Push(stringSliceToLua(L, inTargetOnly))
+		L.Push(stringSliceToLua(L, inLiveOnly))
+		return 2
+	}))
+
+	// dockerrun.format_drift_report(in_target_only, in_live_only[, refusing]) -> string
+	tbl.RawSetString("format_drift_report", L.NewFunction(func(L *lua.LState) int {
+		inTargetOnly := tableToStringSlice(L.CheckTable(1))
+		inLiveOnly := tableToStringSlice(L.CheckTable(2))
+		refusing := true
+		if b, ok := L.Get(3).(lua.LBool); ok {
+			refusing = bool(b)
+		}
+		L.Push(lua.LString(dockerrun.FormatDriftReport(inTargetOnly, inLiveOnly, refusing)))
+		return 1
+	}))
+
+	// dockerrun.live_argv_for_drift(inspect, image_env, image_labels, image_workdir, image_user, cfg) -> argv
+	tbl.RawSetString("live_argv_for_drift", L.NewFunction(func(L *lua.LState) int {
+		inspect, _ := fromLuaValue(L.CheckTable(1)).(map[string]any)
+		var imageEnv []string
+		if t, ok := L.Get(2).(*lua.LTable); ok {
+			imageEnv = tableToStringSlice(t)
+		}
+		imageLabels := optionalStringMap(L, 3)
+		imageWorkdir := L.OptString(4, "")
+		imageUser := L.OptString(5, "")
+		var cfg map[string]any
+		if t, ok := L.Get(6).(*lua.LTable); ok {
+			cfg, _ = fromLuaValue(t).(map[string]any)
+		}
+		args := dockerrun.LiveArgvForDrift(inspect, imageEnv, imageLabels, imageWorkdir, imageUser, cfg)
+		L.Push(stringSliceToLua(L, args))
+		return 1
+	}))
+
+	// dockerrun.mask_argv_for_display(argv) -> argv
+	tbl.RawSetString("mask_argv_for_display", L.NewFunction(func(L *lua.LState) int {
+		argv := tableToStringSlice(L.CheckTable(1))
+		L.Push(stringSliceToLua(L, dockerrun.MaskArgvForDisplay(argv)))
+		return 1
+	}))
+
+	// dockerrun.mask_env_assignment("NAME=VALUE") -> masked string
+	tbl.RawSetString("mask_env_assignment", L.NewFunction(func(L *lua.LState) int {
+		L.Push(lua.LString(dockerrun.MaskEnvAssignment(L.CheckString(1))))
+		return 1
+	}))
+
+	// dockerrun.is_secret_env_name(name) -> bool
+	tbl.RawSetString("is_secret_env_name", L.NewFunction(func(L *lua.LState) int {
+		L.Push(lua.LBool(dockerrun.IsSecretEnvName(L.CheckString(1))))
+		return 1
+	}))
+
+	// dockerrun.default_container_name(image) -> string
+	tbl.RawSetString("default_container_name", L.NewFunction(func(L *lua.LState) int {
+		L.Push(lua.LString(dockerrun.DefaultContainerName(L.CheckString(1))))
+		return 1
+	}))
+
+	// dockerrun.restore_image_from_inspect(inspect, image) -> string
+	tbl.RawSetString("restore_image_from_inspect", L.NewFunction(func(L *lua.LState) int {
+		inspect, _ := fromLuaValue(L.CheckTable(1)).(map[string]any)
+		L.Push(lua.LString(dockerrun.RestoreImageFromInspect(inspect, L.CheckString(2))))
+		return 1
+	}))
+
+	// dockerrun.provision_commands(cfg[, env_vars]) -> {shell_cmd, ...}
+	tbl.RawSetString("provision_commands", L.NewFunction(func(L *lua.LState) int {
+		cfg, _ := fromLuaValue(L.CheckTable(1)).(map[string]any)
+		envVars := optionalStringMap(L, 2)
+		cmds := dockerrun.ProvisionCommands(cfg, envVars, h.Warn)
+		L.Push(stringSliceToLua(L, cmds))
+		return 1
+	}))
+
+	// dockerrun.health_check_shell(cfg[, env_vars]) -> string or nil
+	tbl.RawSetString("health_check_shell", L.NewFunction(func(L *lua.LState) int {
+		cfg, _ := fromLuaValue(L.CheckTable(1)).(map[string]any)
+		envVars := optionalStringMap(L, 2)
+		shell := dockerrun.HealthCheckShell(cfg, envVars, h.Warn)
+		if shell == "" {
+			L.Push(lua.LNil)
+			return 1
+		}
+		L.Push(lua.LString(shell))
+		return 1
+	}))
+
+	// dockerrun.mount_env_deps(cfg) -> {name, ...}
+	tbl.RawSetString("mount_env_deps", L.NewFunction(func(L *lua.LState) int {
+		cfg, _ := fromLuaValue(L.CheckTable(1)).(map[string]any)
+		L.Push(stringSliceToLua(L, dockerrun.MountEnvDeps(cfg)))
+		return 1
+	}))
+
+	// dockerrun.build_deploy_sync_plan(cfg, env_vars, is_local, dry_run) ->
+	// plan (table with src/dest/target/is_remote/host/rsync_cmd/chown/
+	// post_sync_cmd) or nil, errors (array of strings)
+	tbl.RawSetString("build_deploy_sync_plan", L.NewFunction(func(L *lua.LState) int {
+		cfg, _ := fromLuaValue(L.CheckTable(1)).(map[string]any)
+		envVars := optionalStringMap(L, 2)
+		isLocal := lua.LVAsBool(L.Get(3))
+		dryRun := lua.LVAsBool(L.Get(4))
+		plan, errs := dockerrun.BuildDeploySyncPlan(cfg, envVars, isLocal, dryRun)
+		if plan == nil {
+			L.Push(lua.LNil)
+			L.Push(stringSliceToLua(L, errs))
+			return 2
+		}
+		out := L.NewTable()
+		out.RawSetString("src", lua.LString(plan.Src))
+		out.RawSetString("dest", lua.LString(plan.Dest))
+		out.RawSetString("target", lua.LString(plan.Target))
+		out.RawSetString("is_remote", lua.LBool(plan.IsRemote))
+		out.RawSetString("host", lua.LString(plan.Host))
+		out.RawSetString("rsync_cmd", lua.LString(plan.RsyncCmd))
+		out.RawSetString("chown", lua.LString(plan.Chown))
+		out.RawSetString("post_sync_cmd", lua.LString(plan.PostSyncCmd))
+		L.Push(out)
+		L.Push(L.NewTable())
+		return 2
+	}))
+
+	// dockerrun.parse_env_text(text) -> {NAME = value, ...}
+	tbl.RawSetString("parse_env_text", L.NewFunction(func(L *lua.LState) int {
+		parsed := dockerrun.ParseEnvText(L.CheckString(1))
+		out := L.NewTable()
+		for k, v := range parsed {
+			out.RawSetString(k, lua.LString(v))
+		}
+		L.Push(out)
+		return 1
+	}))
+
+	L.SetGlobal("dockerrun", tbl)
+}
+
+// optionalStringMap reads argument idx as a Lua {NAME=VALUE} table into a Go
+// map[string]string, or returns nil (meaning "not supplied") when the
+// argument is absent/nil — the shape dockerrun's BuildArgsFromCfg and
+// siblings use to mean "fall back to process env" vs. "use exactly this map".
+func optionalStringMap(L *lua.LState, idx int) map[string]string {
+	t, ok := L.Get(idx).(*lua.LTable)
+	if !ok {
+		return nil
+	}
+	return stringTableToMap(t)
+}
+
+func stringSliceToLua(L *lua.LState, s []string) *lua.LTable {
+	tbl := L.NewTable()
+	for i, v := range s {
+		tbl.RawSetInt(i+1, lua.LString(v))
+	}
+	return tbl
+}
