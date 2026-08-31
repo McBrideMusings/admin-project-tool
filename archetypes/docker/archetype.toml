@@ -44,37 +44,336 @@ desc = "Open the deployed app URL"
 steps = ["open"]
 
 [actions.build]
-kind = "python"
+kind = "lua"
 desc = "Build the Docker image — locally for linux/amd64, or on the target when [docker_build].on_host"
 run = '''
-_target = (globals().get('_DOCKER_RUN_CONFIG') or {}).get('target')
-_bcfg = globals().get('_DOCKER_BUILD_CONFIG') or {}
-if _bcfg.get('on_host'):
-    _user = os.environ.get('UNRAID_USER', 'root')
-    _host = f"{_user}@{os.environ.get('UNRAID_HOST')}"
-    sys.exit(remote_docker_build(_host, os.environ.get('APP_IMAGE'), _build_context(_bcfg), target=_target))
-docker_build(os.environ.get('APP_IMAGE'), platform='linux/amd64', target=_target)'''
+-- Go port (admin-3rgp.37) of admin_lib/docker.py's docker_build/remote_docker_build,
+-- as called from the docker archetype's "build" action.
+local run_cfg = config.docker_run or {}
+local build_cfg = config.docker_build or {}
+local target = run_cfg.target
+local image = env("APP_IMAGE")
+
+local function shq(s)
+  return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
+-- Brace-matched ${VAR} / ${VAR:-default} expansion — the Lua port of
+-- admin_lib/core.py::iter_env_refs + _expand_env_refs, minus COMPUTED_VARS
+-- (e.g. ${LAN_IP}): env() only reads real process env vars, so a computed
+-- name comes back nil and is treated as unresolved, same as any other unset
+-- var with no default. Returns (expanded, all_resolved).
+local function expand_refs(value)
+  if type(value) ~= "string" or not value:find("${", 1, true) then
+    return value, true
+  end
+  local out, pos, all_ok = {}, 1, true
+  while true do
+    local s = value:find("${", pos, true)
+    if not s then
+      table.insert(out, value:sub(pos))
+      break
+    end
+    table.insert(out, value:sub(pos, s - 1))
+    local depth, j, close = 1, s + 2, nil
+    while j <= #value do
+      local c = value:sub(j, j)
+      if c == "{" then depth = depth + 1
+      elseif c == "}" then
+        depth = depth - 1
+        if depth == 0 then close = j break end
+      end
+      j = j + 1
+    end
+    if not close then
+      table.insert(out, value:sub(s))
+      pos = #value + 1
+      break
+    end
+    local inner = value:sub(s + 2, close - 1)
+    local sep_depth, sep = 0, nil
+    for k = 1, #inner do
+      local c = inner:sub(k, k)
+      if c == "{" then sep_depth = sep_depth + 1
+      elseif c == "}" then sep_depth = sep_depth - 1
+      elseif c == ":" and sep_depth == 0 and inner:sub(k + 1, k + 1) == "-" then
+        sep = k
+        break
+      end
+    end
+    local name = sep and inner:sub(1, sep - 1) or inner
+    local default = sep and inner:sub(sep + 2) or nil
+    local v = env(name)
+    if v ~= nil then
+      table.insert(out, v)
+    elseif default ~= nil then
+      local sub, sub_ok = expand_refs(default)
+      table.insert(out, sub)
+      if not sub_ok then all_ok = false end
+    else
+      all_ok = false
+      table.insert(out, value:sub(s, close))
+    end
+    pos = close + 1
+  end
+  return table.concat(out), all_ok
+end
+
+local function is_local_host(host)
+  local al = (env("ADMIN_LOCAL") or ""):lower()
+  if al == "1" or al == "true" or al == "yes" then return true end
+  local addr = host:match("@(.+)$") or host
+  return addr == "localhost" or addr == "127.0.0.1" or addr == "::1"
+end
+
+if build_cfg.on_host then
+  local user = env("UNRAID_USER") or "root"
+  local host = user .. "@" .. (env("UNRAID_HOST") or "")
+  local context, ctx_ok = expand_refs(build_cfg.context or "")
+  if not build_cfg.context or build_cfg.context == "" or not ctx_ok or context == "" then
+    err("[docker_build].on_host is set but 'context' is missing or references an unset env var")
+    error("docker build: missing context")
+  end
+  local build_cmd = "cd " .. shq(context) .. " && docker build "
+  if target then build_cmd = build_cmd .. "--target " .. shq(target) .. " " end
+  build_cmd = build_cmd .. "-t " .. shq(image) .. " ."
+  local local_build = is_local_host(host)
+  info("Building " .. tostring(image) .. " on " .. (local_build and "this host" or host) .. " in " .. context .. "...")
+  local cmd = local_build and build_cmd or ("ssh " .. shq(host) .. " " .. shq(build_cmd))
+  if not run_cmd(cmd) then error("docker build (remote) failed") end
+else
+  local target_note = target and (" (target=" .. target .. ")") or ""
+  info("Building Docker image: " .. tostring(image) .. target_note .. "...")
+  local cmd = "docker build --platform linux/amd64 "
+  if target then cmd = cmd .. "--target " .. shq(target) .. " " end
+  cmd = cmd .. "-t " .. shq(image) .. " ."
+  if not run_cmd(cmd) then error("docker build failed") end
+end
+'''
 
 [actions.deploy]
-kind = "python"
+kind = "lua"
 desc = "Deploy to Unraid — `image` (default, rebuild + recreate from [docker_run]), `files` ([deploy] mirror dir only), or `all`; --force to override drift, --dry-run to preview"
 run = '''
-_run_cfg = globals().get('_DOCKER_RUN_CONFIG') or {}
-sys.exit(deploy_dispatch(args, run_cfg=_run_cfg or None, deploy_cfg=deploy_cfg_with_chown_default(globals().get('_DEPLOY_CONFIG'), _run_cfg.get('user')), template_cfg=globals().get('_INSTALL_TEMPLATE_CONFIG') or {}, build_cfg=globals().get('_DOCKER_BUILD_CONFIG') or None))'''
+-- STUB (admin-3rgp.37): not ported. admin_lib/docker.py::deploy_dispatch calls
+-- remote_recreate_container (~280 lines: docker-inspect snapshotting, a
+-- health check, and a REFUSAL to recreate on unexpected live drift unless
+-- --force — the safety net that stops a deploy from silently clobbering a
+-- hand-tweaked Unraid container) plus deploy_files ([deploy] rsync mirror)
+-- and ensure_docker_template. It also needs the cfg->argv renderer this
+-- archetype's "run-args" action ported (_build_run_args_from_cfg) AND the
+-- inspect->argv reverse direction (_build_run_args_from_inspect,
+-- _DOCKER_FIELD_TABLE, _compute_drift) that "diff" below stubs out for the
+-- same reason. This is substantial unported admin_lib logic — a ticket of
+-- its own, not a body to half-port under time pressure on a safety-critical
+-- deploy path. File a follow-up under admin-3rgp before relying on this
+-- action; until then, deploy by hand or keep using the legacy Python tool.
+err("docker deploy is not ported to the Go tool yet — needs its own ticket " ..
+    "(remote_recreate_container's drift-refusal + snapshot pipeline, admin_lib/docker.py:513-793)")
+error("docker deploy not ported")
+'''
 
 [actions.diff]
-kind = "python"
+kind = "lua"
 desc = "Show run-config drift between current container and last deploy; --format json for CI"
 run = '''
-user = os.environ.get('UNRAID_USER', 'root')
-host = f"{user}@{os.environ.get('UNRAID_HOST')}"
-output_format = 'json' if '--format' in args else 'text'
-sys.exit(remote_container_diff(host, os.environ.get('APP_IMAGE'), output_format=output_format))'''
+-- STUB (admin-3rgp.37): not ported. admin_lib/docker.py::remote_container_diff
+-- needs _build_run_args_from_inspect (~100 lines: reads live `docker inspect`
+-- JSON back through the same _DOCKER_FIELD_TABLE "run-args" renders forward
+-- from cfg) plus _compute_drift/_argv_to_pair_set and a unified diff — the
+-- reverse half of the config<->argv renderer this archetype's "run-args"
+-- action only ports one direction of. A ticket of its own; see "deploy"
+-- above for the sibling stub this shares its unported dependency with.
+err("docker diff is not ported to the Go tool yet — needs its own ticket " ..
+    "(the docker-inspect drift comparison, admin_lib/docker.py:1640-1845)")
+error("docker diff not ported")
+'''
 
 [actions.logs]
-kind = "python"
+kind = "lua"
 desc = "Tail logs — `dev` (newest local log) or `live` (container); --from DD:HH:MM:SS rolls back, --tail N --no-follow prints and exits"
-run = "sys.exit(logs_dispatch(args, image=os.environ.get('APP_IMAGE')))"
+run = '''
+-- Go port (admin-3rgp.37) of admin_lib/docker.py::logs_dispatch +
+-- tail_dev_log + remote_logs, as called from the docker archetype's "logs"
+-- action.
+local function shq(s)
+  return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
+local target = nil
+local rest = {}
+if args[1] == "dev" or args[1] == "live" then
+  target = args[1]
+  for i = 2, #args do table.insert(rest, args[i]) end
+else
+  for i = 1, #args do table.insert(rest, args[i]) end
+end
+
+if not target then
+  local menu = {
+    {key = "dev", description = "dev   local dev server logs"},
+    {key = "live", description = "live  deployed container logs"},
+  }
+  target = pick_target(menu, "which logs?")
+  if not target then return end
+end
+
+-- DD:HH:MM:SS (or a shorter right-aligned form) -> total seconds.
+local function parse_since(spec)
+  local nums = {}
+  for part in spec:gmatch("[^:]+") do
+    local n = tonumber(part)
+    if not n then return nil, "bad --from value: " .. spec end
+    table.insert(nums, n)
+  end
+  if #nums == 0 or #nums > 4 then
+    return nil, "--from expects DD:HH:MM:SS (or a shorter right-aligned form), got '" .. spec .. "'"
+  end
+  local mult = {1, 60, 3600, 86400}
+  local total = 0
+  for i = 0, #nums - 1 do
+    local n = nums[#nums - i]
+    if n < 0 then return nil, "--from fields must be non-negative, got " .. spec end
+    total = total + n * mult[i + 1]
+  end
+  return total, nil
+end
+
+local since, tail, follow = nil, nil, true
+local i = 1
+while i <= #rest do
+  local a = rest[i]
+  if a == "--from" then
+    if i + 1 > #rest then err("--from requires a DD:HH:MM:SS value"); error("logs: bad --from") end
+    local secs, e = parse_since(rest[i + 1])
+    if not secs then err(e); error("logs: bad --from") end
+    since = secs
+    i = i + 2
+  elseif a == "--tail" or a == "-n" then
+    if i + 1 > #rest then err("--tail requires a line count"); error("logs: bad --tail") end
+    local n = tonumber(rest[i + 1])
+    if not n then err("--tail needs a number, got '" .. rest[i + 1] .. "'"); error("logs: bad --tail") end
+    tail = n
+    i = i + 2
+  elseif a:match("^%-%-tail=") then
+    local v = a:sub(8)
+    local n = tonumber(v)
+    if not n then err("--tail needs a number, got '" .. v .. "'"); error("logs: bad --tail") end
+    tail = n
+    i = i + 1
+  elseif a == "--no-follow" then
+    follow = false
+    i = i + 1
+  else
+    err("logs: unknown argument '" .. a .. "' (expected --from DD:HH:MM:SS, --tail N, or --no-follow)")
+    error("logs: unknown argument")
+  end
+end
+
+if target == "live" then
+  local image = env("APP_IMAGE") or ""
+  local user = env("UNRAID_USER") or "root"
+  local host = user .. "@" .. (env("UNRAID_HOST") or "")
+  local base = image:match("^[^:]*")
+  local container = base:match("[^/]+$") or base
+  local t = tail
+  if t == nil then t = since and "all" or 200 end
+  local flags = {}
+  if since then table.insert(flags, "--since " .. tostring(math.floor(since)) .. "s") end
+  if follow then table.insert(flags, "-f") end
+  table.insert(flags, "--tail=" .. tostring(t))
+  local logs_cmd = "docker logs " .. table.concat(flags, " ") .. " " .. shq(container)
+  local al = (env("ADMIN_LOCAL") or ""):lower()
+  local is_local = (al == "1" or al == "true" or al == "yes")
+  local cmd = is_local and logs_cmd or ("ssh " .. shq(host) .. " " .. logs_cmd)
+  if not run_cmd(cmd) then error("logs: docker logs failed") end
+  return
+end
+
+-- target == "dev": trail the newest local dev log file. Newest-by-filename
+-- (the timestamp stem sorts lexicographically, oldest to newest) rather than
+-- newest-by-mtime (admin_lib's tail_dev_log) — there is no host binding for
+-- file mtimes in this VM; correct for every dev log set_log_context creates
+-- (always timestamped), an approximation only for a hand-placed bare
+-- "dev.log" with no timestamp suffix.
+local matches = glob.match("tmp/dev.log")
+for _, m in ipairs(glob.match("tmp/dev.*.log")) do table.insert(matches, m) end
+if #matches == 0 then
+  err("no dev logs found in tmp")
+  error("logs: no dev logs found")
+end
+table.sort(matches)
+local path = matches[#matches]
+info("trailing " .. path)
+
+if since == nil then
+  local n = tail or 100
+  local cmd = "tail -n " .. tostring(n) .. " "
+  if follow then cmd = cmd .. "-f " end
+  cmd = cmd .. shq(path)
+  if not run_cmd(cmd) then error("logs: tail failed") end
+  return
+end
+
+-- --from on the dev log: filter locally by each line's leading RFC3339
+-- timestamp. "now" comes from the shell's own clock (`date +%s`), written
+-- to a scratch file rather than read off run_cmd's return value — run_cmd
+-- streams a command's stdout to the terminal live as it runs (that's the
+-- point, for a real build/deploy), so capturing the epoch that way would
+-- also print it to the user's screen. This VM has no wall-clock binding.
+local now_path = "tmp/.admin-logs-now"
+if not run_cmd("date +%s > " .. shq(now_path)) then
+  error("logs: could not read current time")
+end
+local now = tonumber((fs.read(now_path) or ""):match("%d+")) or 0
+run_cmd("rm -f " .. shq(now_path))
+local cutoff = now - since
+
+local text = fs.read(path) or ""
+local lines = {}
+for line in (text .. "\n"):gmatch("([^\n]*)\n") do table.insert(lines, line) end
+if #lines > 0 and lines[#lines] == "" then table.remove(lines) end
+
+-- RFC3339 UTC -> epoch seconds via a Julian-day civil calendar (no calendar
+-- support in this VM's math/string/table/base libraries).
+local function ts_epoch(line)
+  local clean = line:gsub("\027%[[%d;]*m", "")
+  local y, mo, d, h, mi, s = clean:match("^%s*(%d%d%d%d)-(%d%d)-(%d%d)T(%d%d):(%d%d):(%d%d)")
+  if not y then return nil end
+  local yy, mm, dd = tonumber(y), tonumber(mo), tonumber(d)
+  local a = math.floor((14 - mm) / 12)
+  local yv = yy + 4800 - a
+  local mv = mm + 12 * a - 3
+  local jdn = dd + math.floor((153 * mv + 2) / 5) + 365 * yv + math.floor(yv / 4) - math.floor(yv / 100) + math.floor(yv / 400) - 32045
+  local epoch_day = jdn - 2440588
+  return epoch_day * 86400 + tonumber(h) * 3600 + tonumber(mi) * 60 + tonumber(s)
+end
+
+local filtered, started = {}, false
+for _, line in ipairs(lines) do
+  if not started then
+    local ep = ts_epoch(line)
+    if ep and ep >= cutoff then started = true end
+  end
+  if started then table.insert(filtered, line) end
+end
+
+if started and tail then
+  local start_i = math.max(1, #filtered - tail + 1)
+  local trimmed = {}
+  for j = start_i, #filtered do table.insert(trimmed, filtered[j]) end
+  filtered = trimmed
+end
+
+if started then
+  if #filtered > 0 then print(table.concat(filtered, "\n")) end
+else
+  warn("no timestamped lines within the last " .. tostring(since) .. "s in " .. path .. "; trailing new output only")
+end
+
+if not follow then return end
+if not run_cmd("tail -n 0 -f " .. shq(path)) then error("logs: tail -f failed") end
+'''
 
 [actions.reload]
 kind = "docker-reload-loop"
@@ -82,11 +381,328 @@ run = "docker build -t ${APP_IMAGE} . && docker run --rm ${APP_IMAGE}"
 desc = "Build+run with reload loop (press r or SIGUSR1 to rebuild)"
 
 [actions.run-args]
-kind = "python"
+kind = "lua"
 desc = "Print [docker_run] rendered to shlex-quoted `docker run` args (for external native-build scripts). Expands env_file into -e NAME=VALUE tokens, so any secrets appear in stdout — treat the output as sensitive."
 run = '''
-_run_cfg = globals().get('_DOCKER_RUN_CONFIG') or {}
-print(render_run_args(_run_cfg))'''
+-- Go port (admin-3rgp.37) of admin_lib/docker.py::render_run_args +
+-- _build_run_args_from_cfg + _DOCKER_FIELD_TABLE (cfg -> argv direction
+-- only — the reverse, docker-inspect -> argv direction, is what "diff" and
+-- "deploy" above still need and stub out). Lets an external native-build
+-- script capture `$(admin run-args)` instead of re-parsing admin.toml
+-- itself (issue #429) — output goes through print(), not info(), because
+-- info() always wraps its argument in an ANSI colour code, which would
+-- corrupt a captured string.
+local docker_run = config.docker_run or {}
+
+local function shq(s)
+  return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
+local function add(t, ...)
+  for _, v in ipairs({...}) do table.insert(t, v) end
+end
+
+local function truthy(v)
+  if v == nil or v == false or v == "" or v == 0 then return false end
+  if type(v) == "table" and next(v) == nil then return false end
+  return true
+end
+
+-- Brace-matched ${VAR} / ${VAR:-default} expansion — the Lua port of
+-- admin_lib/core.py::iter_env_refs + _expand_env_refs, minus COMPUTED_VARS
+-- (e.g. ${LAN_IP}): env() only reads real process env vars, so a computed
+-- name comes back nil and is treated as unresolved, same as any other unset
+-- var with no default. Returns (expanded, all_resolved).
+local function expand_refs(value)
+  if type(value) ~= "string" or not value:find("${", 1, true) then
+    return value, true
+  end
+  local out, pos, all_ok = {}, 1, true
+  while true do
+    local s = value:find("${", pos, true)
+    if not s then
+      table.insert(out, value:sub(pos))
+      break
+    end
+    table.insert(out, value:sub(pos, s - 1))
+    local depth, j, close = 1, s + 2, nil
+    while j <= #value do
+      local c = value:sub(j, j)
+      if c == "{" then depth = depth + 1
+      elseif c == "}" then
+        depth = depth - 1
+        if depth == 0 then close = j break end
+      end
+      j = j + 1
+    end
+    if not close then
+      table.insert(out, value:sub(s))
+      pos = #value + 1
+      break
+    end
+    local inner = value:sub(s + 2, close - 1)
+    local sep_depth, sep = 0, nil
+    for k = 1, #inner do
+      local c = inner:sub(k, k)
+      if c == "{" then sep_depth = sep_depth + 1
+      elseif c == "}" then sep_depth = sep_depth - 1
+      elseif c == ":" and sep_depth == 0 and inner:sub(k + 1, k + 1) == "-" then
+        sep = k
+        break
+      end
+    end
+    local name = sep and inner:sub(1, sep - 1) or inner
+    local default = sep and inner:sub(sep + 2) or nil
+    local v = env(name)
+    if v ~= nil then
+      table.insert(out, v)
+    elseif default ~= nil then
+      local sub, sub_ok = expand_refs(default)
+      table.insert(out, sub)
+      if not sub_ok then all_ok = false end
+    else
+      all_ok = false
+      table.insert(out, value:sub(s, close))
+    end
+    pos = close + 1
+  end
+  return table.concat(out), all_ok
+end
+
+local args_out = {}
+
+-- Bind mounts (absolute host paths in prod; no host_root rewriting).
+local function mount_flag(host, container, mode)
+  if mode and mode ~= "rw" then
+    return host .. ":" .. container .. ":" .. mode
+  end
+  return host .. ":" .. container
+end
+
+for _, m in ipairs(docker_run.bind_mounts or {}) do
+  local host, container = m.host, m.container
+  if host and container then
+    host = tostring(host)
+    local ok_ = true
+    if host:find("${", 1, true) then
+      host, ok_ = expand_refs(host)
+      if not ok_ then
+        warn("docker_run.bind_mounts: host '" .. m.host .. "' references unset env var — skipping")
+      end
+    end
+    if ok_ then add(args_out, "-v", mount_flag(host, container, m.mode)) end
+  end
+end
+
+-- Optional mounts gated on host env vars.
+for _, m in ipairs(docker_run.optional_mounts or {}) do
+  local envname, container = m.env, m.container
+  if envname and container then
+    local host = env(envname)
+    if host then host = host:match("^%s*(.-)%s*$") end
+    if host and host ~= "" then
+      add(args_out, "-v", mount_flag(host, container, m.mode))
+    end
+  end
+end
+
+-- Anonymous volumes.
+for _, p in ipairs(docker_run.anonymous_volumes or {}) do
+  local path = (type(p) == "string") and p or p.path
+  if path then add(args_out, "-v", path) end
+end
+
+-- Ports — host may be int, "PORT", or "IP:PORT"; container is int.
+for _, p in ipairs(docker_run.ports or {}) do
+  local host_port = p.host
+  local cont_port = p.container or host_port
+  if host_port ~= nil then
+    local host_str = tostring(host_port)
+    local ok_ = true
+    if host_str:find("${", 1, true) then
+      host_str, ok_ = expand_refs(host_str)
+      if not ok_ then
+        warn("docker_run.ports: host '" .. tostring(host_port) .. "' references unset env var — skipping")
+      end
+    end
+    if ok_ then
+      local host_ip, last_colon = "", nil
+      for k = #host_str, 1, -1 do
+        if host_str:sub(k, k) == ":" then last_colon = k break end
+      end
+      if last_colon then
+        host_ip = host_str:sub(1, last_colon - 1)
+        host_str = host_str:sub(last_colon + 1)
+      end
+      local spec
+      if host_ip ~= "" then
+        spec = host_ip .. ":" .. host_str .. ":" .. tostring(cont_port) .. "/tcp"
+      else
+        spec = host_str .. ":" .. tostring(cont_port) .. "/tcp"
+      end
+      add(args_out, "-p", spec)
+    end
+  end
+end
+
+-- Env list — literal -e flags. `name` with no `value` inherits from process
+-- env; `value = "${X}"` substitutes from process env at render time.
+local seen_env_names = {}
+for _, e in ipairs(docker_run.env or {}) do
+  local name = e.name
+  if name then
+    seen_env_names[name] = true
+    if e.value == nil then
+      local resolved = env(name)
+      if resolved == nil then
+        warn("docker_run.env: '" .. name .. "' has no value and is not in process env — skipping")
+      else
+        add(args_out, "-e", name .. "=" .. resolved)
+      end
+    else
+      local resolved, ok_ = expand_refs(tostring(e.value))
+      if not ok_ then
+        warn("docker_run.env: " .. name .. " value '" .. tostring(e.value) .. "' references unset env var — skipping")
+      else
+        add(args_out, "-e", name .. "=" .. resolved)
+      end
+    end
+  end
+end
+
+-- env_file — merge in any keys not already set by the literal env list, so
+-- cfg.env wins on conflict (matches docker's --env / --env-file order).
+if docker_run.env_file then
+  local text = fs.read(docker_run.env_file)
+  if text then
+    local env_file_vars, names = {}, {}
+    for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+      local trimmed = line:match("^%s*(.-)%s*$")
+      if trimmed ~= "" and trimmed:sub(1, 1) ~= "#" then
+        local eq = trimmed:find("=", 1, true)
+        if eq then
+          local k = trimmed:sub(1, eq - 1):match("^%s*(.-)%s*$")
+          local v = trimmed:sub(eq + 1)
+          if k ~= "" and env_file_vars[k] == nil then
+            env_file_vars[k] = v
+            table.insert(names, k)
+          end
+        end
+      end
+    end
+    table.sort(names)
+    for _, name in ipairs(names) do
+      if not seen_env_names[name] then
+        add(args_out, "-e", name .. "=" .. env_file_vars[name])
+      end
+    end
+  end
+end
+
+-- Restart policy / network mode.
+if docker_run.restart and docker_run.restart ~= "no" then
+  add(args_out, "--restart", docker_run.restart)
+end
+if docker_run.network and docker_run.network ~= "default" then
+  add(args_out, "--network", docker_run.network)
+end
+
+-- `_DOCKER_FIELD_TABLE` (admin_lib/docker.py:1235) is the single declarative
+-- source both the cfg->argv and inspect->argv renderers render from
+-- (issue #388); only the cfg side is needed here.
+local FIELD_TABLE = {
+  {key = "cap_add", flag = "--cap-add", shape = "repeated"},
+  {key = "cap_drop", flag = "--cap-drop", shape = "repeated"},
+  {key = "privileged", flag = "--privileged", shape = "boolean"},
+  {key = "security_opt", flag = "--security-opt", shape = "repeated"},
+  {key = "sysctls", flag = "--sysctl", shape = "kv"},
+  {key = "memory", flag = "--memory", shape = "single"},
+  {key = "user", flag = "--user", shape = "single", expand = true},
+  {key = "add_host", flag = "--add-host", shape = "repeated"},
+  {key = "tmpfs", flag = "--tmpfs", shape = "kv", kv_sep = ":", kv_omit_sep_if_empty = true},
+  {key = "group_add", flag = "--group-add", shape = "repeated"},
+  {key = "runtime", flag = "--runtime", shape = "single"},
+  {key = "ulimits", flag = "--ulimit", shape = "repeated"},
+  {key = "tty", flag = "-t", shape = "boolean"},
+  {key = "open_stdin", flag = "-i", shape = "boolean"},
+  {key = "hostname", flag = "--hostname", shape = "single"},
+  {key = "workdir", flag = "--workdir", shape = "single"},
+  {key = "mac_address", flag = "--mac-address", shape = "single"},
+}
+
+local function render_field(row, value)
+  local flag, shape = row.flag, row.shape
+  local out = {}
+  if shape == "repeated" then
+    for _, item in ipairs(value or {}) do add(out, flag, tostring(item)) end
+  elseif shape == "boolean" then
+    if truthy(value) then add(out, flag) end
+  elseif shape == "kv" then
+    local sep = row.kv_sep or "="
+    for k, v in pairs(value or {}) do
+      if row.kv_omit_sep_if_empty and not truthy(v) then
+        add(out, flag, tostring(k))
+      else
+        add(out, flag, tostring(k) .. sep .. tostring(v))
+      end
+    end
+  else
+    if truthy(value) then add(out, flag, tostring(value)) end
+  end
+  return out
+end
+
+for _, row in ipairs(FIELD_TABLE) do
+  local value = docker_run[row.key]
+  if value and row.expand then
+    local expanded, ok_ = expand_refs(tostring(value))
+    value = ok_ and expanded or nil
+  end
+  for _, piece in ipairs(render_field(row, value)) do add(args_out, piece) end
+end
+
+-- Devices (e.g. /dev/dri).
+for _, d in ipairs(docker_run.devices or {}) do
+  if d.host then
+    local container = d.container or d.host
+    local perms = d.permissions or "rwm"
+    local spec = d.host .. ":" .. container
+    if perms ~= "rwm" then spec = spec .. ":" .. perms end
+    add(args_out, "--device", spec)
+  end
+end
+
+-- GPU.
+local gpu = docker_run.gpu
+if gpu == true or gpu == "all" then
+  add(args_out, "--gpus", "all")
+elseif type(gpu) == "table" and #gpu > 0 then
+  add(args_out, "--gpus", table.concat(gpu, ","))
+elseif type(gpu) == "string" and gpu ~= "" then
+  add(args_out, "--gpus", gpu)
+end
+
+-- Labels.
+for _, lbl in ipairs(docker_run.labels or {}) do
+  if lbl.key then
+    local value, skip = lbl.value or "", false
+    if value ~= "" then
+      local expanded, ok_ = expand_refs(tostring(value))
+      if ok_ then
+        value = expanded
+      else
+        warn("docker_run.labels: " .. lbl.key .. " value '" .. tostring(lbl.value) .. "' references unset env var — skipping")
+        skip = true
+      end
+    end
+    if not skip then add(args_out, "--label", lbl.key .. "=" .. value) end
+  end
+end
+
+local quoted = {}
+for _, a in ipairs(args_out) do table.insert(quoted, shq(a)) end
+print(table.concat(quoted, " "))
+'''
 
 [actions.open]
 kind = "shell"
