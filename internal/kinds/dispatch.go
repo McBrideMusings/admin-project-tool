@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/guards"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
@@ -81,11 +82,27 @@ var currentDispatch func(name string, args []string) error
 // args. While the Runner runs, currentDispatch is set so a multi-target
 // target's `action = "other"` can call back into RunAction for another step
 // without needing its own Manifest/Registry reference.
+//
+// Every non-multi-target action is wrapped with its own `requires` check
+// before the Runner fires — the Go port of admin_lib/interp.py's "wraps
+// each flat action with a run_requires([...]) check" (ADR-0005). A
+// kind="multi-target" action is deliberately excluded here: its `requires`
+// is only the *default* the picked target inherits, and which target gets
+// picked isn't known until the Runner itself runs, so the multi-target
+// factory resolves and checks per-target requires inside its own closure
+// (internal/kinds/multitarget.go) instead.
 func RunAction(m *manifest.Manifest, r *Registry, name string, args []string) error {
 	action, ok := m.Actions[name]
 	if !ok {
 		return fmt.Errorf("action %q: not declared in [actions]", name)
 	}
+	// guards.Register is idempotent (it just re-adds the same shell-backed
+	// funcs to the registry), so registering m's user-defined guards on
+	// every RunAction call — rather than needing a separate one-time
+	// "interpreter setup" phase, which the Go CLI doesn't have yet
+	// (admin-3rgp.7) — keeps every requires check below reachable without
+	// requiring a caller to remember a setup step.
+	guards.Register(m.Guards)
 	kind, _ := actionString(action, "kind")
 	if kind == "" {
 		kind = "shell"
@@ -94,6 +111,17 @@ func RunAction(m *manifest.Manifest, r *Registry, name string, args []string) er
 	if !ok {
 		return fmt.Errorf("action %q: unknown kind %q", name, kind)
 	}
+
+	if kind != "multi-target" {
+		reqs, err := guards.RequiresOf(action)
+		if err != nil {
+			return fmt.Errorf("action %q: %w", name, err)
+		}
+		if err := guards.RunRequires(reqs); err != nil {
+			return fmt.Errorf("action %q: %w", name, err)
+		}
+	}
+
 	runner, err := factory(name, action, m)
 	if err != nil {
 		return fmt.Errorf("action %q: %w", name, err)
@@ -113,7 +141,16 @@ func RunAction(m *manifest.Manifest, r *Registry, name string, args []string) er
 // produces a non-zero result" (that "non-zero result" surfaces here as a
 // non-nil error; mapping it to a process exit code is CLI wiring, out of
 // this ticket's scope).
+//
+// Before dispatching, it runs guards.RunGlobalPreflight(name) — the
+// always-on deps-fresh check ADR-0005 requires before every command,
+// skipped for the exempt diagnostic verbs (logs, kill) and memoized so a
+// command with several steps (each stepping through RunAction) only pays
+// for it once.
 func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string) error {
+	if err := guards.RunGlobalPreflight(name); err != nil {
+		return err
+	}
 	cmd, ok := resolveCommand(m, name)
 	if !ok {
 		return fmt.Errorf("unknown command %q", name)
