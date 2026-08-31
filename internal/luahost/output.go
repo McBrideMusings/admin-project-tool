@@ -41,6 +41,14 @@ func (h *Host) Err(msg string) {
 	h.logWrite("ERROR: " + msg)
 }
 
+// LogWrite appends text (plain, ANSI-stripped) to the active log file with
+// no terminal output of its own — the exported form of logWrite for a
+// caller outside this package that already prints through its own path
+// (internal/kinds/vitedev.go's reload.Options.Out, wired to frame.Write
+// directly) and only needs the log-file half of what Info/Ok/Warn/Err do
+// together.
+func (h *Host) LogWrite(text string) { h.logWrite(text) }
+
 // SetLogContext names this run's log file by joining non-empty parts with
 // "-", deferred until first actual use — see pendingContext's doc comment.
 // retain <= 0 means "no pruning" (Python's retain=None). A no-op once a
