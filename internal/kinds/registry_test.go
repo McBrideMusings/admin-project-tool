@@ -80,19 +80,18 @@ func TestDefaultRegistryIsComplete(t *testing.T) {
 	}
 }
 
-// TestStubFactoryErrorsAtDispatch proves the placeholder factories fail only
-// when their Runner is actually invoked (dispatch time), never when the
-// factory itself is built or registered (startup time). "apple-dev-loop" is
-// used here rather than "shell" — admin-3rgp.35 replaced shell's stub with a
-// real implementation, and admin-3rgp.15 replaced raylib's — so
-// apple-dev-loop (still out of scope, ported by admin-3rgp.12 later) is now
-// the representative still-a-stub kind.
+// TestStubFactoryErrorsAtDispatch proves notImplemented's placeholder
+// Runner fails only when actually invoked (dispatch time), never when the
+// factory itself is built (startup time) — the property every real kind
+// factory in registerBuiltins relies on being able to replace a stub
+// without changing when the coverage check (Registry.Validate) can catch a
+// missing one. As of admin-3rgp.12 (which replaced "apple"/"apple-dev-loop",
+// the last two stubs) registerBuiltins has no notImplemented(...) calls left
+// — this test exercises the helper directly rather than through a catalog
+// kind, since there is no longer a stub kind to point it at.
 func TestStubFactoryErrorsAtDispatch(t *testing.T) {
-	f, ok := Default.Lookup("apple-dev-loop")
-	if !ok {
-		t.Fatal("apple-dev-loop should have a registered factory")
-	}
-	run, err := f("apple-dev-loop", manifest.Action{}, nil)
+	f := notImplemented("some-kind")
+	run, err := f("some-kind", manifest.Action{}, nil)
 	if err != nil {
 		t.Fatalf("building the runner should not itself error, got %v", err)
 	}

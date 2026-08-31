@@ -108,11 +108,13 @@ Bound by [admin-3rgp.38](https://github.com/McBrideMusings/admin-project-tool/is
 from `admin_lib/apple.py`. Registered only on darwin builds (`apple_register_darwin.go`); a
 non-darwin build gets a no-op `registerApple` (`apple_stub.go`) and the global `apple` table is
 simply absent — the same "undefined global" a body gets for typoing any other host function
-name, rather than a table of functions that all error. This is still a **partial** port — the
-OS-facing primitives (xcodebuild, simctl, devicectl, codesign, log parsing), pbxproj parsing, and
-icon backup/dev-banner-swap/restore are bound; a from-scratch glyph-based icon generator and the
-continuous dev-loop/console-attach paths are not — see "What is intentionally not here yet" below
-for what remains and why.
+name, rather than a table of functions that all error. This table itself is a **partial** port —
+the OS-facing primitives (xcodebuild, simctl, devicectl, codesign, log parsing), pbxproj parsing,
+and icon backup/dev-banner-swap/restore are bound; a from-scratch glyph-based icon generator is
+not — see "What is intentionally not here yet" below. Continuous dev-loop supervision and attached
+device console output, this table's other historical gap, are covered too, but as the Go-side
+`kind = "apple"`/`kind = "apple-dev-loop"` action kinds rather than more entries in this table —
+see "What kind=\"apple\"/kind=\"apple-dev-loop\" cover" just below the table.
 
 All error paths that the Python original reported via `warn()`/`err()` mid-call are relayed the
 same way here (the Lua binding calls `h.Warn`/`h.Err`), so a body sees the identical explanatory
@@ -153,25 +155,52 @@ text, not just a bare `nil`.
 | `apple.swap_dev_icons_banner(icon_dirs)` | `(table) -> bool` | Overlays a red diagonal dev banner (stdlib-rendered — see below) onto every `*.png` in each `icon_dirs[label]`, in place, flattening to opaque RGB so macOS renders the icon full-bleed. Binds only `swap_dev_icons`' "overlay the existing icon art" path (`admin_lib/apple.py`'s `has_glyph=False` branch) — see below for what's not bound. Returns `false` if any file failed to process. |
 | `apple.swap_dev_icon_composer(icon_path, backup_dir)` / `apple.restore_icon_composer(icon_path, backup_dir)` | `(string, string) -> bool` / `(string, string) -> ()` | Injects (or removes) an opaque `DEV`-banner group into an Icon Composer `.icon` bundle's `icon.json`, rendering the banner asset sized to `Assets/icon-raw.png` (or 1024 if absent). `swap` backs up the pristine `icon.json` to `backup_dir` first and returns `false` (no error) if `icon.json` is missing — not an Icon-Composer-shaped bundle. `restore` prefers the byte-exact backup, else strips the banner group from whatever's on disk, and removes the generated banner asset and `backup_dir` either way. |
 
-## What is intentionally not here yet
+## What kind="apple"/kind="apple-dev-loop" cover (admin-3rgp.12)
 
-- **Continuous dev-loop supervision** — `admin_lib/apple.py`'s `dev_mac`/`dev_ios`/`dev_tv`/
-  `dev_device`: build once, launch, then rebuild-and-relaunch on a signal from a separate
-  `admin reload` invocation, streaming the running app's logs the whole time. The blocker this
-  item used to name — the reload-flag + output-pump machinery not existing in Go yet — is gone:
-  `internal/reload` and `internal/streams.OutputPump` have both landed. This is now unimplemented
-  scope, not a missing capability: composing a rebuild-on-signal loop, launch-and-log-attach, and
-  the dev/prod bundle-suffix decisions (see the pbxproj-introspection item below) into one body is
-  a substantial piece of work in its own right, deferred again by admin-3rgp.38 for the same
-  reason the icon subsystem and pbxproj parsing were the first time: 4,044 lines of
-  `admin_lib/apple.py` do not fit one pass. The primitives those loops are built from
-  (`apple.xcodebuild`, `apple.ensure_booted_simulator`, `apple.install_and_launch_sim`,
-  `apple.dev_macos_postprocess`, `apple.launch_on_device`, `apple.read_pbxproj`,
-  `apple.xcode_target_settings`) are all bound, so wiring the actual loop is composition against
-  an existing `OutputPump`/`reload` API, not a second research effort or a second copy of either.
-- **Attached device console output** (`launch_on_device`'s `--console` mode in the Python
-  original) — blocks on the child's stdout until the app exits, through `OutputPump` for the same
-  reason as the dev loop above; deferred for the same reason.
+Continuous dev-loop supervision (`dev_mac`/`dev_ios`/`dev_tv`/`dev_device`) and attached device
+console output — the two items this section used to list as deferred — are ported, but **not**
+as `apple.*` Lua bindings. They live in `internal/kinds` (`apple_darwin.go`,
+`appledevloop_darwin.go`) as the Go implementation of `kind = "apple"` (one verb per `run` value —
+`build_mac`, `dev_ios`, `deploy_tv`, `clean_ios`, ...) and `kind = "apple-dev-loop"` (the same
+target-picker shape as `kind = "multi-target"`, registered to the same factory, classified
+`LongRunning` so it dispatches into its own herdr pane). A Lua archetype body never calls these
+directly — they're a manifest-driven action kind, the same shape `docker-dev`/`vite-dev` already
+are — composing:
+
+- `internal/reload`'s caller-owned shape (`SetupReload`/`PollForReload`/`IsRebuildRequested`/
+  `ClearRebuildRequest`) for the "run the whole build-install-launch cycle again" signal.
+- `internal/streams.OutputPump` for the attached log/console stream.
+- The already-bound primitives below (`apple.xcodebuild` et al., called directly from Go as
+  `luahost.XcodebuildFiltered` and siblings — no Lua VM involved) for every OS-facing call, plus
+  two new Go-only starters for the long-running streams the bound primitives don't cover:
+  `luahost.StreamMacLog` (`log stream` / `simctl spawn ... log stream`) and
+  `luahost.StartDeviceConsole` (`devicectl device process launch --console`).
+
+Real-machine verified (a genuine multi-target `.xcodeproj`, this ticket's pass): `build_mac`,
+`build_ios` (simulator auto-resolve), `clean_ios`, and a full `dev_mac` cycle — build, launch,
+attach `log stream`, detect the launched app dying, tear down and return with no error. Not
+exercised end to end this pass: `dev_ios`/`dev_tv` (needs a booted simulator, not run against
+one), `dev_device`/`deploy_ios`/`deploy_tv` (need a paired physical device), and anything reading
+App Store Connect credentials (no key configured in this environment).
+
+Deliberately NOT ported by kind="apple" either — same three items admin-3rgp.38 already deferred,
+still open:
+
+- The dev/prod bundle-suffix convention layer (`_compose_dev_settings`, `_entitlements_paths`,
+  `_target_needs_provisioning_profile`) and the mac dev-rename/re-sign postprocessing
+  (`dev_macos_postprocess`) it would feed — a dev build here builds with the project's own
+  signing settings, unpatched. Observed live in this pass: a project whose
+  `PRODUCT_BUNDLE_IDENTIFIER` is composed via an `.xcconfig` variable
+  (`$(SCRATCHPAD_BUNDLE_ID_SUFFIX)`) gets that substitution back as a literal string in the
+  resolved log predicate — `apple.xcode_setting`'s own documented limitation, not a bug in the
+  dev loop, but a concrete case where the missing bundle-suffix layer would matter.
+- Dev-icon-swap hooks (`build_icon_hooks`) around each build — `apple.backup_icons`/
+  `apple.swap_dev_icons_banner`/`apple.restore_icons` are bound and callable, just not wired into
+  a pre/post-build hook here yet.
+- App Store Connect device registration (`ensure_device_registered`) — lives in
+  `admin_lib/appstoreconnect.py`, a separate module this ticket does not port; a device deploy
+  that would need it still reports Apple's own "team has no devices" error, just not pre-empted.
+
 - **Glyph-based fresh icon generation** (`admin_lib/apple.py`'s `swap_dev_icons` when a
   `glyph_text`/`glyph_svg` is configured, and all of `admin_lib/icons.py`'s `generate_icons` /
   `generate_tv_icons` — composing a background, glyph, and font/SVG art into a brand-new icon set
