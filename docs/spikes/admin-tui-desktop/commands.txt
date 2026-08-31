@@ -1,30 +1,30 @@
- admin · admin-project-tool                                              feat/one-tool-go-merge 
-  Commands   Repo    Issues    Live    Config                                                   
+ admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+  Commands 7    Repo    Issues 7    Live 5    Config                                            
+                                                                                                
+ ◇ build                    │ deploy                                                            
+ ◇ check                    │ ────────────────────────────────────────────────────────────────  
+ ◆ deploy                   │ kind      sequence                                                
+ ◇ docs                     │ archetype (manifest)                                              
+ ◇ logs                     │ last run  18m ago · exit 0 · 41s                                  
+ ◇ retire-merged            │ log       ~/.admin/logs/deploy.log                                
+ ◇ test                     │                                                                   
+                            │ Steps                                                             
+                            │   1  shell     bash install.sh                                    
+                            │      from  simple                                                 
+                            │                                                                   
+                            │   2  lua       scripts/provision.lua                              
+                            │      from  apple                                                  
+                            │                                                                   
+                            │   3  shell     admin check .                                      
+                            │      from  (manifest)                                             
+                            │                                                                   
+                            │                                                                   
+                            │                                                                   
+                            │                                                                   
+                            │                                                                   
+                            │                                                                   
+                            │                                                                   
+                            │                                                                   
+                            │                                                                   
 ────────────────────────────────────────────────────────────────────────────────────────────────
-   COMMAND          LAST RUN    │ deploy                                                        
-                                │ ────────────────────────────────────────────────────────────  
-   build            2h ago      │ kind      sequence                                            
-   check            2h ago      │ archetype (manifest)                                          
- ▸ deploy           18m ago     │ last run  18m ago · exit 0 · 41s                              
-   docs             —           │ log       ~/.admin/logs/deploy.log                            
-   logs             —           │                                                               
-   retire-merged    never       │ STEPS                                                         
-   test             6m ago      │   1  shell     bash install.sh                                
-                                │      from  simple                                             
-                                │                                                               
-                                │   2  lua       scripts/provision.lua                          
-                                │      from  apple                                              
-                                │                                                               
-                                │   3  shell     admin check .                                  
-                                │      from  (manifest)                                         
-                                │                                                               
-                                │                                                               
-                                │                                                               
-                                │                                                               
-                                │                                                               
-                                │                                                               
-                                │                                                               
-                                │                                                               
-                                │                                                               
-────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move   ⏎ run   ⇥ switch tab   / filter   ? help   q quit                                    
+ ↑↓ move · ↵ run · / filter · L log · ←→ tab · q quit                                           

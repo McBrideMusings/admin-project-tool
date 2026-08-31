@@ -1,30 +1,30 @@
- admin · admin-project-tool                                              feat/one-tool-go-merge 
-  Commands   Repo    Issues    Live    Config                                                   
+ admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+  Commands 7    Repo    Issues 7    Live 5    Config                                            
+                                                                                                
+ ◇ build                    │ test  ·  running  ·  00:41                                        
+ ◇ check                    │ ────────────────────────────────────────────────────────────────  
+ ◇ deploy                   │ kind      sequence                                                
+ ◇ docs                     │ archetype (manifest)                                              
+ ◇ logs                     │ last run  6m ago                                                  
+ ◇ retire-merged            │ log       ~/.admin/logs/test.log                                  
+ ◆ test ●                   │                                                                   
+                            │ Output                                                            
+                            │   ok   internal/archetype   cached                                
+                            │   ok   internal/detect      0.63s                                 
+                            │   ok   internal/kinds       cached                                
+                            │   ..   internal/tui                                               
+                            │                                                                   
+                            │                                                                   
+                            │                                                                   
+                            │                                                                   
+                            │                                                                   
+                            │                                                                   
+                            │                                                                   
+                            │                                                                   
+                            │                                                                   
+                            │                                                                   
+                            │                                                                   
+                            │                                                                   
+                            │                                                                   
 ────────────────────────────────────────────────────────────────────────────────────────────────
-   COMMAND          LAST RUN    │ test  ·  running  ·  00:41                                    
-                                │ ────────────────────────────────────────────────────────────  
-   build            2h ago      │ kind      sequence                                            
-   check            2h ago      │ archetype (manifest)                                          
-   deploy           18m ago     │ last run  6m ago                                              
-   docs             —           │ log       ~/.admin/logs/test.log                              
-   logs             —           │                                                               
-   retire-merged    never       │ OUTPUT                                                        
- ▸ test             running     │   ok   internal/archetype   cached                            
-                                │   ok   internal/detect      0.63s                             
-                                │   ok   internal/kinds       cached                            
-                                │   ..   internal/tui                                           
-                                │                                                               
-                                │                                                               
-                                │                                                               
-                                │                                                               
-                                │                                                               
-                                │                                                               
-                                │                                                               
-                                │                                                               
-                                │                                                               
-                                │                                                               
-                                │                                                               
-                                │                                                               
-                                │                                                               
-────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move   ⏎ run   ⇥ switch tab   / filter   ? help   q quit                                    
+ ↑↓ move · ↵ run · / filter · L log · ←→ tab · q quit                                           

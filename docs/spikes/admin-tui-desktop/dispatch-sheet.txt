@@ -1,18 +1,18 @@
- admin · admin-project-tool                                              feat/one-tool-go-merge 
-   Commands    Repo   Issues   Live    Config                                                   
+ admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+  Commands 7    Repo    Issues 7    Live 5    Config                                            
+                                                                                                
+ Ready                                                                                        3 
 ────────────────────────────────────────────────────────────────────────────────────────────────
- READY   tracker: beads                       │ admin-3rgp.29   P1  open                        
-   P1 Embed a Lua VM and define the hos…      │ ──────────────────────────────────────────────  
- ▸ P1 Two deployment paths: go install,…      │ Two deployment paths: go install, archetypes    
-   P1 Decide how admin <command> reache…      │                                                 
-                                              │ READY  no open blockers                         
- BLOCKED                                      │                                                 
-   P1 Commands ta┌────────────────────────────────────────────────────────────┐                 
-   P1 The live-wo│  Dispatch admin-3rgp.29                                    │                 
-   P1 Implement t│                                                            │                 
-   P1 Rewrite the│    agent     claude                                        │                 
-                 │    model     sonnet                                        │                 
-                 │    branch    two-deployment-paths                          │                 
+   admin-3rgp.36   Embed a Lua VM and define the host API                                 afk   
+ ▸ admin-3rgp.29   Two deployment paths: go install, archetypes                           afk   
+   admin-3rgp.7    Decide how admin <command> reaches the CLI                        decision   
+                                                                                                
+ Blocked         ┌────────────────────────────────────────────────────────────┐               4 
+─────────────────│  Dispatch admin-3rgp.29                                    │─────────────────
+   admin-3rgp.20 │                                                            │         ← .19   
+   admin-3rgp.28 │    agent     claude                                        │         ← .19   
+   admin-3rgp.35 │    model     sonnet                                        │         ← .36   
+   admin-3rgp.37 │    branch    two-deployment-paths                          │         ← .36   
                  │    worktree  ~/.worktrees/…/two-deployment-paths           │                 
                  │    lands to  feat/one-tool-go-merge                        │                 
                  │                                                            │                 
@@ -27,4 +27,4 @@
                                                                                                 
                                                                                                 
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ⏎ dispatch   e edit   esc cancel                                                               
+ ⏎ dispatch · e edit · esc cancel                                                               
