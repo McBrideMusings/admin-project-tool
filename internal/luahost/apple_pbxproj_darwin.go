@@ -22,6 +22,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 )
 
@@ -190,17 +192,80 @@ func XcodeTargetSettings(projectPath, scheme, configuration string) map[string]a
 	return settings
 }
 
-// XcodeSetting returns buildSettings[key] for scheme's target, and false if
-// the key is missing, non-string, or an unresolved Xcode variable
-// substitution like "$(TARGET_NAME)" — the caller can't act on that without
-// a proper expansion pass, so it's treated the same as absent.
+// xcodeVarRefRe matches a single $(KEY) build-setting reference — the form
+// PRODUCT_BUNDLE_IDENTIFIER takes in a project that follows the dev/prod
+// bundle-suffix convention (docs/architecture in admin_lib/apple.py's
+// _compose_dev_settings): "com.foo.app$(ADMIN_DEV_BUNDLE_SUFFIX)".
+var xcodeVarRefRe = regexp.MustCompile(`\$\(([A-Za-z_][A-Za-z0-9_]*)\)`)
+
+// expandXcodeValue resolves every $(KEY) reference in val by substituting
+// settings[KEY]'s own (recursively expanded) value, so a bundle id like
+// "com.foo.app$(PRODUCT_BUNDLE_ID_SUFFIX)" composes into a real value when
+// the referenced setting is itself written into the same buildSettings dict
+// (a common pattern: the suffix key sits right next to the templated one).
+// Returns ok=false when any reference can't be resolved this way — a key
+// absent from buildSettings entirely (e.g. ADMIN_DEV_BUNDLE_SUFFIX, which is
+// only ever supplied on the xcodebuild command line, never written into the
+// project) or a cycle (a setting that references itself, directly or
+// through another setting — visited guards this exactly the way Xcode's own
+// evaluator refuses to expand a cycle further). A value with no "$(" at all
+// is returned unchanged.
+//
+// This is deliberately more capable than admin_lib/apple.py's
+// _xcode_setting, which only rejects a value that *starts* with "$" — a
+// value with an embedded, unresolved "$(...)" elsewhere in the string (e.g.
+// after a literal prefix) passed straight through in the Python original.
+// That is the exact bug observed live: an uncomposed bundle id containing a
+// literal "$(...)" token reaching a `log stream` predicate. Treating any
+// unresolved reference — not just a leading one — as "value absent" is what
+// makes the caller fall back to composing the id instead of copying it.
+func expandXcodeValue(settings map[string]any, val string, visited map[string]bool) (string, bool) {
+	if !strings.Contains(val, "$(") {
+		return val, true
+	}
+	ok := true
+	expanded := xcodeVarRefRe.ReplaceAllStringFunc(val, func(match string) string {
+		if !ok {
+			return match
+		}
+		key := xcodeVarRefRe.FindStringSubmatch(match)[1]
+		if visited[key] {
+			ok = false
+			return match
+		}
+		raw, exists := settings[key].(string)
+		if !exists {
+			ok = false
+			return match
+		}
+		next := make(map[string]bool, len(visited)+1)
+		for k, v := range visited {
+			next[k] = v
+		}
+		next[key] = true
+		resolved, subOk := expandXcodeValue(settings, raw, next)
+		if !subOk {
+			ok = false
+			return match
+		}
+		return resolved
+	})
+	if !ok {
+		return "", false
+	}
+	return expanded, true
+}
+
+// XcodeSetting returns buildSettings[key] for scheme's target — expanding
+// any $(OTHER_KEY) reference against the same buildSettings dict — and false
+// if the key is missing, non-string, or still contains an unresolved
+// reference after expansion. See expandXcodeValue for what "unresolved"
+// covers.
 func XcodeSetting(projectPath, scheme, key string) (string, bool) {
-	val, ok := XcodeTargetSettings(projectPath, scheme, "Debug")[key].(string)
+	settings := XcodeTargetSettings(projectPath, scheme, "Debug")
+	val, ok := settings[key].(string)
 	if !ok || val == "" {
 		return "", false
 	}
-	if val[0] == '$' {
-		return "", false
-	}
-	return val, true
+	return expandXcodeValue(settings, val, map[string]bool{key: true})
 }
