@@ -107,8 +107,11 @@ whether the project uses pull requests, identity login and emails, worktree root
 patterns, per-row-type Enter actions, default agent, and concurrency ceiling. The Config tab
 renders the resolved values.
 
-**Naming — open.** The live-work tab's name is undecided. "Workers" is wrong for a dev server;
-"Swarm" is a candidate. It needs a name that covers an agent and a process equally.
+**Naming — resolved by dissolution.** This was an open question: the live-work tab's name, with
+"Workers" wrong for a dev server and "Swarm" a candidate. It no longer needs answering, because
+the prototype settled that there is no live-work tab to name. Commands and live work are one
+list under one cursor on the **Work** tab, with a detail pane whose shape follows the row's
+kind. The tab set is Work, Repo, the tracker tab, Config.
 
 ## Testing Decisions
 
@@ -135,7 +138,6 @@ it covered, replaced by a Go test at one of the two seams above.
 - **The orchestrator that keeps work moving on its own.** Watching workers, deciding one is
   stuck, nudging or closing it, and re-dispatching as a dependency frontier advances. The live
   registry is the substrate it will need; the deciding is not in this spec.
-- **The live-work tab's final name.** Placeholder until decided.
 - **Editing the Manifest from the Config tab.** The tab renders resolved values; writing them
   back is later work.
 - **`admin compile`'s replacement.** A Go binary is already standalone, so the zipapp path has
