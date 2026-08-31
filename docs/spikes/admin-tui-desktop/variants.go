@@ -22,6 +22,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -70,6 +71,7 @@ var Variants = []Variant{{
 	Render:  render,
 	Key:     onKey,
 	Reset:   func() { selDelta = 0 },
+	OnDump:  func() { Blocking = true },
 }}
 
 // ---- the real tabs, rendered by repo-dash itself ----
@@ -120,47 +122,107 @@ var embedded = map[string][]string{
 var (
 	frameMu    sync.Mutex
 	frameCache = map[string][]string{}
+	warming    = map[string]bool{}
+	warmWG     sync.WaitGroup
+	// Blocking is set by the dump, which must not capture a placeholder: a
+	// reference frame that says "loading…" is worse than no frame at all.
+	Blocking bool
 )
 
-// realTab returns repo-dash's own frame from the body down — body, rule AND
-// footer. The footer has to come too: in a modal state it IS the mode. The
-// new-worktree prompt, the filter query and its match count, the delete
-// confirm and "press any key to dismiss" are all drawn there (view.go:500),
-// so a spliced-off footer hides the very thing those screens exist to show.
+// warm loads one repo ONCE and renders every embedded screen from it. Settle is
+// a deadline, not a quiescence check (frame.go:108), so a Frame call per screen
+// paid that full second every time — fourteen screens over three repos was ~40
+// seconds of waiting spread across the session, and it landed on whichever tab
+// you pressed next. Frames snapshots them all from one load instead.
 //
-// Its frame is header, tab bar, blank, then the rest, so asking for h+3 rows
-// and dropping the first 3 yields exactly h.
-//
-// Cached because Frame runs the real Init commands and waits for them to land;
-// re-rendering on every keystroke would make the prototype unusable.
-func realTab(src repoSrc, keys []string, w, h int) []string {
-	ck := fmt.Sprintf("%s|%s|%d|%d", src.root, strings.Join(keys, ","), w, h)
+// Runs off the render path so the first paint is instant; screens fill in as
+// their repo lands, and the harness's tick repaints when they do.
+func warm(src repoSrc, w, h int) {
+	wk := fmt.Sprintf("%s|%d|%d", src.root, w, h)
 	frameMu.Lock()
-	if rows, ok := frameCache[ck]; ok {
+	if warming[wk] {
 		frameMu.Unlock()
-		return rows
+		return
 	}
+	warming[wk] = true
 	frameMu.Unlock()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	m := tui.New(ctx, src.root, src.nwo, src.branch, "main")
-	out := tui.Frame(ctx, m, tui.FrameOptions{
-		Width: w, Height: h + 3, Keys: keys, Settle: 900 * time.Millisecond,
-	})
-	lines := strings.Split(out, "\n")
-	body := []string{dim.Render("   (no frame)")}
-	if len(lines) > 3 {
-		body = lines[3:]
+	warmWG.Add(1)
+	run := func() {
+		defer warmWG.Done()
+		names := make([]string, 0, len(embedded))
+		for n := range embedded {
+			names = append(names, n)
+		}
+		sort.Strings(names) // deterministic, so the dump is too
+		seqs := make([][]string, len(names))
+		for i, n := range names {
+			seqs[i] = embedded[n]
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		m := tui.New(ctx, src.root, src.nwo, src.branch, "main")
+		outs := tui.Frames(ctx, m, tui.FrameOptions{
+			Width: w, Height: h + 3, Settle: 900 * time.Millisecond,
+		}, seqs)
+
+		frameMu.Lock()
+		for i, n := range names {
+			lines := strings.Split(outs[i], "\n")
+			body := []string{dim.Render("   (no frame)")}
+			if len(lines) > 3 {
+				body = lines[3:]
+			}
+			rows := make([]string, h)
+			for j := range rows {
+				rows[j] = at(body, j)
+			}
+			frameCache[key(src, n, w, h)] = rows
+		}
+		frameMu.Unlock()
 	}
-	rows := make([]string, h)
-	for i := range rows {
-		rows[i] = at(body, i)
+	if Blocking {
+		run()
+		return
 	}
+	go run()
+}
+
+func key(src repoSrc, screen string, w, h int) string {
+	return fmt.Sprintf("%s|%s|%d|%d", src.root, screen, w, h)
+}
+
+// realTab returns a warmed frame, or a placeholder while its repo is still
+// loading. It never blocks the render: a prototype that stalls a second on every
+// tab press cannot be judged, because what you are judging is how it feels.
+//
+// The frame includes repo-dash's own rule AND footer — in a modal state the
+// footer IS the mode (view.go:500): the new-worktree prompt, the filter query
+// and its match count, the delete confirm all live there.
+func realTab(src repoSrc, screen string, w, h int) []string {
 	frameMu.Lock()
-	frameCache[ck] = rows
+	rows, ok := frameCache[key(src, screen, w, h)]
 	frameMu.Unlock()
-	return rows
+	if ok {
+		return rows
+	}
+	warm(src, w, h)
+	if Blocking {
+		warmWG.Wait()
+		frameMu.Lock()
+		rows, ok = frameCache[key(src, screen, w, h)]
+		frameMu.Unlock()
+		if ok {
+			return rows
+		}
+	}
+	out := make([]string, h)
+	for i := range out {
+		out[i] = ""
+	}
+	out[0] = dim.Render("   loading " + src.nwo + "…")
+	return out
 }
 
 // ---- work tab: the design ----
@@ -460,10 +522,10 @@ func render(s State) string {
 	}
 
 	rows := []string{header(w, src), tabBar(sp, w, s.Get("tracker")), ""}
-	if ks, ok := embedded[name]; ok {
+	if _, ok := embedded[name]; ok {
 		// repo-dash draws its own rule and footer for these — including the
 		// modal footers, which are the mode.
-		body := realTab(src, ks, w, h-3)
+		body := realTab(src, name, w, h-3)
 		for len(body) < h-3 {
 			body = append(body, "")
 		}

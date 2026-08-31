@@ -60,6 +60,45 @@ func Frame(ctx context.Context, m Model, opts FrameOptions) string {
 	return p.model.View()
 }
 
+// Frames renders several frames of one dashboard from a single load. Settle is a
+// deadline rather than a quiescence check, so calling Frame once per key
+// sequence pays that whole wait every time — five views of the same repo cost
+// five loads of it. Here the load happens once and every sequence starts from a
+// copy of the settled model, which is what makes a tool that shows many views of
+// one repo (a prototype, a docs dump, a regression sweep) practical.
+//
+// Each sequence gets its own copy, so a mode toggle in one cannot leak into the
+// next — `g` twice across two sequences would otherwise turn tree mode back off.
+// Model is a value type; the maps behind it are only read while rendering.
+func Frames(ctx context.Context, m Model, opts FrameOptions, seqs [][]string) []string {
+	if opts.Width <= 0 {
+		opts.Width = 120
+	}
+	if opts.Height <= 0 {
+		opts.Height = 40
+	}
+	if opts.Settle <= 0 {
+		opts.Settle = 2 * time.Second
+	}
+
+	p := &pump{msgs: make(chan tea.Msg, 64), model: m}
+	p.apply(tea.WindowSizeMsg{Width: opts.Width, Height: opts.Height})
+	p.run(p.model.Init())
+	p.drain(opts.Settle)
+	base := p.model
+
+	out := make([]string, len(seqs))
+	for i, seq := range seqs {
+		p.model = base
+		for _, k := range seq {
+			p.apply(keyMsg(k))
+			p.drain(60 * time.Millisecond)
+		}
+		out[i] = p.model.View()
+	}
+	return out
+}
+
 // pump is a single-goroutine Bubble Tea loop: commands run in the background and
 // deliver onto msgs, and only this goroutine ever touches the model — the same
 // discipline the real program keeps, which is what makes the frame trustworthy.
