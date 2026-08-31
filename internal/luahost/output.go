@@ -41,6 +41,22 @@ func (h *Host) Err(msg string) {
 	h.logWrite("ERROR: " + msg)
 }
 
+// Print writes msg plus a newline to Stdout verbatim — no colour, no log
+// write. The Go port of Python's bare print() builtin, which a handful of
+// admin_lib bodies (docker.py's render_run_args, remote_container_diff's
+// --format json path) used for output a caller captures and re-parses
+// (`$(admin run-args)`, `admin diff --format json`) rather than a diagnostic
+// a person reads on a terminal. info/ok/warn/err all wrap msg in an ANSI
+// colour code unconditionally (see above) and are therefore unusable for
+// that shape: a `[actions.X] log = false` command capturing `$(...)` would
+// get the escape codes baked into the captured string. Added by
+// admin-3rgp.37 (docker's `run-args` action is the first Lua body needing
+// it) — no host verb existed for "write plain stdout" before this.
+// Host function: print(msg).
+func (h *Host) Print(msg string) {
+	fmt.Fprintf(h.Stdout, "%s\n", msg)
+}
+
 // SetLogContext names this run's log file by joining non-empty parts with
 // "-", deferred until first actual use — see pendingContext's doc comment.
 // retain <= 0 means "no pruning" (Python's retain=None). A no-op once a

@@ -31,6 +31,7 @@ surface stays exactly what this page lists rather than whatever Lua's stdlib hap
 | `ok(msg)` | `(string) -> ()` | Prints `msg` in green to stdout, appends it to the active log. |
 | `warn(msg)` | `(string) -> ()` | Prints `msg` in yellow to stderr, appends `"WARNING: msg"` to the active log. |
 | `err(msg)` | `(string) -> ()` | Prints `msg` in red to stderr, appends `"ERROR: msg"` to the active log. |
+| `print(msg)` | `(string) -> ()` | Writes `msg` plus a newline to stdout verbatim — no colour, no log write. For output a caller captures and re-parses (`$(admin run-args)`, `admin diff --format json`) rather than a diagnostic a person reads: `info`/`ok`/`warn`/`err` all wrap `msg` in an ANSI colour code unconditionally, which corrupts a captured string. Added by [admin-3rgp.37](https://github.com/McBrideMusings/admin-project-tool/issues) for the docker archetype's `run-args` action — the Go port of Python's bare `print()` builtin. |
 
 ## Log context
 
