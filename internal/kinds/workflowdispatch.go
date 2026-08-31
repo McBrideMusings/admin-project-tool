@@ -266,7 +266,9 @@ func dispatchOne(actionName, agentKind string, t Target, wt create.Result) Targe
 			return nil
 		},
 	}
-	livework.Default.Add(e)
+	if err := livework.Default.Add(e); err != nil {
+		return TargetResult{Target: t.Name, WorktreePath: wt.Path, PaneID: paneID, Err: err}
+	}
 
 	runErr := runAgent(agentName, t.Prompt)
 	if runErr != nil {
