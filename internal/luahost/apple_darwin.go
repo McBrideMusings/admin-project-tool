@@ -19,19 +19,16 @@ package luahost
 // primitives an archetype's Lua body composes into build/dev/deploy
 // commands — running xcodebuild, resolving and driving simulators and
 // physical devices, code-signing, pbxproj parsing, icon backup/dev-banner-
-// swap/restore, and the small string/log-parsing helpers those need. Three
-// things admin_lib/apple.py also contains are still NOT ported here — see
-// docs/architecture/lua-host-api.md's "What is intentionally not here yet"
-// for the full reasoning:
+// swap/restore, glyph-based fresh icon generation, and the small
+// string/log-parsing helpers those need. Two things admin_lib/apple.py also
+// contains are still NOT ported here — see docs/architecture/lua-host-api.md's
+// "What is intentionally not here yet" for the full reasoning:
 //
 //   - Continuous dev-loop supervision (dev_mac/dev_ios/dev_tv/dev_device's
 //     rebuild-on-signal loop) and attached device console output. The
 //     reload+output-pump machinery this needs now exists (internal/reload,
 //     internal/streams.OutputPump) — this is unimplemented scope, not a
 //     missing capability.
-//   - Glyph-based fresh icon generation (admin_lib/icons.py's
-//     generate_icons/generate_tv_icons) — needs a font-rendering and/or
-//     SVG-rasterizing dependency; see apple_icons_darwin.go's doc comment.
 //   - The dev/prod bundle-suffix convention layer built on top of pbxproj
 //     parsing (_compose_dev_settings, _entitlements_paths) — project-
 //     specific convention-following over what apple.xcode_target_settings

@@ -110,9 +110,9 @@ non-darwin build gets a no-op `registerApple` (`apple_stub.go`) and the global `
 simply absent — the same "undefined global" a body gets for typoing any other host function
 name, rather than a table of functions that all error. This table itself is a **partial** port —
 the OS-facing primitives (xcodebuild, simctl, devicectl, codesign, log parsing), pbxproj parsing,
-and icon backup/dev-banner-swap/restore are bound; a from-scratch glyph-based icon generator is
-not — see "What is intentionally not here yet" below. Continuous dev-loop supervision and attached
-device console output, this table's other historical gap, are covered too, but as the Go-side
+icon backup/dev-banner-swap/restore, and glyph-based fresh icon generation are bound — see "What
+is intentionally not here yet" below for what remains unbound. Continuous dev-loop supervision and
+attached device console output, this table's other historical gap, are covered too, but as the Go-side
 `kind = "apple"`/`kind = "apple-dev-loop"` action kinds rather than more entries in this table —
 see "What kind=\"apple\"/kind=\"apple-dev-loop\" cover" just below the table.
 
@@ -154,6 +154,8 @@ text, not just a bare `nil`.
 | `apple.backup_tv_icons(brandassets_dir, backup_dir)` / `apple.restore_tv_icons(brandassets_dir, backup_dir)` | `(string, string) -> ()` | Same shape as `backup_icons`/`restore_icons`, but for a tvOS `.brandassets` catalog — a directory tree, not a flat set of PNGs, so it's copied whole rather than by filename. |
 | `apple.swap_dev_icons_banner(icon_dirs)` | `(table) -> bool` | Overlays a red diagonal dev banner (stdlib-rendered — see below) onto every `*.png` in each `icon_dirs[label]`, in place, flattening to opaque RGB so macOS renders the icon full-bleed. Binds only `swap_dev_icons`' "overlay the existing icon art" path (`admin_lib/apple.py`'s `has_glyph=False` branch) — see below for what's not bound. Returns `false` if any file failed to process. |
 | `apple.swap_dev_icon_composer(icon_path, backup_dir)` / `apple.restore_icon_composer(icon_path, backup_dir)` | `(string, string) -> bool` / `(string, string) -> ()` | Injects (or removes) an opaque `DEV`-banner group into an Icon Composer `.icon` bundle's `icon.json`, rendering the banner asset sized to `Assets/icon-raw.png` (or 1024 if absent). `swap` backs up the pristine `icon.json` to `backup_dir` first and returns `false` (no error) if `icon.json` is missing — not an Icon-Composer-shaped bundle. `restore` prefers the byte-exact backup, else strips the banner group from whatever's on disk, and removes the generated banner asset and `backup_dir` either way. |
+| `apple.generate_icons(sizes, output_dir[, {bg_color=, glyph_svg=, glyph_text=, glyph_color=, glyph_scale=, dev=, filename_format=}])` | `(number[], string, table?) -> bool` | Renders a flat mac/iOS appiconset ladder — one PNG per entry in `sizes` — into `output_dir`, always flattened to opaque RGB (ADR-0007). Precedence is `glyph_svg` (a path to an `.svg` file) over `glyph_text` over a plain `bg_color` square; `dev` overlays the same stdlib-rendered banner `swap_dev_icons_banner` uses. `glyph_scale` (default `0.55`) is the glyph's fraction of the icon's shorter side. `filename_format` defaults to `"{size}.png"`. Returns `false` after warning (via `h.Err`) if any size fails to render — a bad `glyph_svg` path or malformed color aborts the whole call, matching the Python original's "warn, build continues without custom icons" contract, not a crash. |
+| `apple.generate_tv_icons(brandassets_dir[, {bg_color=, glyph_svg=, glyph_text=, glyph_color=, glyph_scale=, dev=}])` | `(string, table?) -> bool` | Generates a complete tvOS `.brandassets` catalog (both `App Icon` imagestacks' Front/Middle/Back layers, both Top Shelf image sets, and every `Contents.json`) from the same glyph inputs `generate_icons` takes. Always overwrites `brandassets_dir`. The `Back` layer of every imagestack is always opaque (tvOS errors on a transparent bottom layer); `Middle` is always a transparent spacer; only `Front` and the Top Shelf images carry the glyph and the `dev` banner. Returns `false` after warning on failure, same contract as `generate_icons`. |
 
 ## What kind="apple"/kind="apple-dev-loop" cover (admin-3rgp.12)
 
@@ -201,13 +203,6 @@ still open:
   `admin_lib/appstoreconnect.py`, a separate module this ticket does not port; a device deploy
   that would need it still reports Apple's own "team has no devices" error, just not pre-empted.
 
-- **Glyph-based fresh icon generation** (`admin_lib/apple.py`'s `swap_dev_icons` when a
-  `glyph_text`/`glyph_svg` is configured, and all of `admin_lib/icons.py`'s `generate_icons` /
-  `generate_tv_icons` — composing a background, glyph, and font/SVG art into a brand-new icon set
-  at every declared size). `apple.swap_dev_icons_banner` binds the far more common "overlay the
-  shipped icon art with a dev banner" path; generating icons from scratch needs a font-rendering
-  and/or SVG-rasterizing dependency this pass didn't take on — see `apple_icons_darwin.go`'s file
-  doc comment for the full reasoning and the dependency options it names.
 - **Xcode-project introspection for the dev/prod bundle-suffix scheme** (`_compose_dev_settings`,
   `_entitlements_paths`, `_target_needs_provisioning_profile`) — derives `ADMIN_DEV_BUNDLE_SUFFIX`
   and decides whether a target needs a real provisioning profile, built on top of the pbxproj

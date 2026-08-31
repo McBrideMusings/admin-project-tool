@@ -132,3 +132,17 @@ func tableToStringSlice(tbl *lua.LTable) []string {
 	}
 	return out
 }
+
+// tableToIntSlice reads a Lua array-of-numbers argument (the icon `sizes`
+// list apple.generate_icons takes) into a Go []int, skipping non-number
+// entries rather than erroring — same tolerance policy as
+// tableToStringSlice.
+func tableToIntSlice(tbl *lua.LTable) []int {
+	out := make([]int, 0, tbl.Len())
+	for i := 1; i <= tbl.Len(); i++ {
+		if n, ok := tbl.RawGetInt(i).(lua.LNumber); ok {
+			out = append(out, int(n))
+		}
+	}
+	return out
+}
