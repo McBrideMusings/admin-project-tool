@@ -51,6 +51,11 @@ func resolveProjectManifest(ctx context.Context, dir string) (m *manifest.Manife
 	if _, statErr := os.Stat(filepath.Join(dir, manifest.Filename)); statErr != nil {
 		return nil, false, nil
 	}
+	// Before Load, not after: archetype.Resolve eagerly resolves env-bearing
+	// config (validate_url_refs, [log_bridge].hosts), so .env has to be in the
+	// environment already or those ${VAR:-default} refs fall back to their
+	// defaults. Same ordering as admin_lib/interp.py::interpret.
+	manifest.LoadDotenv(dir)
 	project, err := manifest.Load(dir)
 	if err != nil {
 		return nil, true, err

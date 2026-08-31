@@ -250,7 +250,11 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest) 
 			return currentDispatch(t.action, rest)
 		}
 
-		run := strings.TrimSpace(manifest.ResolveComputed(t.run))
+		expanded, err := manifest.ResolveEnv(t.run)
+		if err != nil {
+			return fmt.Errorf("action %q: target %q: %w", name, picked, err)
+		}
+		run := strings.TrimSpace(expanded)
 		if run == "" {
 			h.Err(emptyCmdErr)
 			return fmt.Errorf("action %q: target %q: %s", name, picked, emptyCmdErr)

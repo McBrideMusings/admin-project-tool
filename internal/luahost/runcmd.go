@@ -7,6 +7,7 @@ import (
 	"os/exec"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
+	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/streams"
 )
 
@@ -50,6 +51,18 @@ type RunCmdResult struct {
 // exactly the bytes this used to write directly.
 // Host function: run_cmd(cmd[, {dir=path, capture_log=bool}]).
 func (h *Host) RunCmd(cmd string, opts RunCmdOptions) (RunCmdResult, error) {
+	// Every string reaching a shell is expanded here and nowhere else, matching
+	// admin_lib/core.py::run_cmd ("Strings are passed through resolve_env()
+	// first"). A caller that resolves first is unaffected — a resolved string
+	// has no "${" left to expand — but a caller that forgets no longer ships a
+	// literal ${VAR} to /bin/sh, which expands an unset name to the empty
+	// string and runs anyway: that is how `ssh ${UNRAID_USER:-root}@${UNRAID_HOST}`
+	// became `ssh root@` and reported "Could not resolve hostname" instead of a
+	// missing-variable error.
+	cmd, err := manifest.ResolveEnv(cmd)
+	if err != nil {
+		return RunCmdResult{}, err
+	}
 	c := exec.Command("/bin/sh", "-c", cmd)
 	c.Dir = opts.Dir
 	if c.Dir == "" {

@@ -73,6 +73,7 @@ func loadWorkManifest(repoRoot string) (project, merged *manifest.Manifest, sp a
 	if _, statErr := os.Stat(filepath.Join(repoRoot, manifest.Filename)); statErr != nil {
 		return nil, nil, nil, false, nil
 	}
+	manifest.LoadDotenv(repoRoot) // same ordering as cmd.resolveProjectManifest
 	project, err = manifest.Load(repoRoot)
 	if err != nil {
 		return nil, nil, nil, true, err

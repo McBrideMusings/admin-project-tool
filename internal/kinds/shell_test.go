@@ -55,34 +55,72 @@ func TestShellEmptyRunIsRefused(t *testing.T) {
 	}
 }
 
-// TestShellResolvesComputedNotEnv proves `run` goes through
-// manifest.ResolveComputed rather than manifest.ResolveEnv: a shell-local
-// reference the shell itself can expand (here simulated by an env var this
-// process sets, since ResolveComputed only special-cases ComputedVars and
-// otherwise passes ${NAME} straight through to the shell) must reach the
-// shell as a literal placeholder, not be resolved (or fatally error) by the
-// Go layer first.
+// TestShellResolvesEnvBeforeTheShellSeesIt proves `run` goes through
+// manifest.ResolveEnv — the same call admin_lib/core.py::run_cmd makes on
+// every command string — rather than being handed to /bin/sh with its
+// ${VAR} placeholders intact. Handing them over is what let
+// `ssh ${UNRAID_USER:-root}@${UNRAID_HOST}` run as `ssh root@`: the shell
+// expands an unset name to the empty string and executes anyway.
 //
-// MUTATION EVIDENCE: with makeShell's ResolveComputed call swapped for
-// ResolveEnv, this test fails — a ${NOT_SET_ANYWHERE} placeholder with no
-// default and no matching environment variable makes ResolveEnv return an
-// error, so the Runner returned by the mutated factory never runs the shell
-// at all and the marker file this test checks for is never created.
-func TestShellResolvesComputedNotEnv(t *testing.T) {
+// A ${VAR} that resolves to nothing is a hard error, not an empty string.
+// A body that genuinely needs a shell-local writes it unbraced ($x), which
+// manifest.IterEnvRefs does not match and therefore does not touch.
+func TestShellResolvesEnvBeforeTheShellSeesIt(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	t.Setenv("MARKER_NAME", "resolved")
 
-	runner, err := makeShell("passthrough", manifest.Action{
-		"run": `NOT_SET_ANYWHERE=ok; touch "${NOT_SET_ANYWHERE}-marker.txt"`,
+	runner, err := makeShell("marker", manifest.Action{
+		"run": `touch "${MARKER_NAME}-${MISSING_VAR:-default}.txt"`,
 	}, nil)
 	if err != nil {
 		t.Fatalf("makeShell: %v", err)
 	}
 	if err := runner(nil); err != nil {
-		t.Fatalf("runner() = %v, want nil (the shell resolves its own local var)", err)
+		t.Fatalf("runner() = %v, want nil", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "ok-marker.txt")); err != nil {
-		t.Fatalf("shell-local ${NOT_SET_ANYWHERE} was not left for the shell to expand: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, "resolved-default.txt")); err != nil {
+		t.Fatalf("${MARKER_NAME}/${MISSING_VAR:-default} were not expanded before the shell ran: %v", err)
+	}
+
+	// Unbraced shell-locals are left alone.
+	local, err := makeShell("local", manifest.Action{
+		"run": `x=ok; touch "$x-local.txt"`,
+	}, nil)
+	if err != nil {
+		t.Fatalf("makeShell: %v", err)
+	}
+	if err := local(nil); err != nil {
+		t.Fatalf("runner() = %v, want nil (unbraced $x is the shell's own)", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "ok-local.txt")); err != nil {
+		t.Fatalf("unbraced $x was not left for the shell: %v", err)
+	}
+}
+
+// TestShellFailsOnUnresolvableVar is the half that makes the error useful:
+// a ${VAR} with no value and no default stops the action with a message
+// naming the variable, instead of running the command with a hole in it.
+func TestShellFailsOnUnresolvableVar(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	os.Unsetenv("NOT_SET_ANYWHERE")
+
+	runner, err := makeShell("deploy", manifest.Action{
+		"run": `touch "${NOT_SET_ANYWHERE}-marker.txt"`,
+	}, nil)
+	if err != nil {
+		t.Fatalf("makeShell: %v", err)
+	}
+	runErr := runner(nil)
+	if runErr == nil {
+		t.Fatal("runner() = nil, want an error naming the unresolved variable")
+	}
+	if !strings.Contains(runErr.Error(), "NOT_SET_ANYWHERE") {
+		t.Errorf("error %q does not name the variable", runErr)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "-marker.txt")); err == nil {
+		t.Error("the command ran with an empty expansion instead of failing")
 	}
 }
 
