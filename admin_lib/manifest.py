@@ -107,6 +107,58 @@ class ManifestError(ValidationError):
     pass
 
 
+# Manifest fields that are archetype/module config tables — raw dicts whose string
+# values are handed to core.resolve_env when the owning kind runs. Command and
+# action `run` strings are deliberately absent: an `interactive-shell` body goes
+# through resolve_computed instead (interp.py:746), which passes an unresolvable
+# ${VAR} to the shell on purpose, so a shell-local there is legal and must not be
+# reported as a broken reference.
+CONFIG_TABLE_FIELDS = (
+    "apple", "react_native", "server", "electron", "output", "logging",
+    "dev_kill", "dev_precheck", "clean_dev", "vite_dev", "docker_dev",
+    "deploy", "docker_run", "docker_build", "install_template", "fixtures",
+    "docs", "go", "go_dist", "raylib", "launchd", "log_bridge", "worktree",
+)
+
+
+def config_tables(m: "Manifest") -> dict:
+    """The manifest's non-empty config tables, keyed by table name.
+
+    One list, read by both the runtime registrar (interp._register_env_vars) and
+    `admin check`'s env pass, so a new table becomes visible to both at once.
+    """
+    return {name: getattr(m, name) for name in CONFIG_TABLE_FIELDS if getattr(m, name)}
+
+
+def unresolvable_env_refs(m: "Manifest") -> list[tuple[str, str, str]]:
+    """Return (var, origin, state) for every config-table ${VAR} that would abort a run.
+
+    A reference with no default whose variable is unset, or set to the empty
+    string, makes core.resolve_env exit(2) the moment the owning command runs.
+    Reporting it from `admin check` moves that failure off the build and onto the
+    one command whose job is to say whether the manifest is usable — which matters
+    most for a key the consumer would otherwise skip silently rather than abort on.
+
+    `origin` is the dotted config path (e.g. "apple.development_team").
+    """
+    import os
+
+    from admin_lib.core import COMPUTED_VARS
+    from admin_lib.kinds import scan_env_vars
+
+    bad = []
+    for var, entry in scan_env_vars([], config_tables=config_tables(m)).items():
+        if entry["default"] is not None or var in COMPUTED_VARS:
+            continue
+        val = os.environ.get(var)
+        if val:
+            continue
+        state = "set but empty" if val == "" else "not set"
+        for origin in entry["used_by"] or ["(unknown)"]:
+            bad.append((var, origin, state))
+    return sorted(bad)
+
+
 def load(project_dir: Path) -> Manifest:
     """Load and validate admin.toml from project_dir. Raises ManifestError."""
     path = project_dir / MANIFEST_FILENAME

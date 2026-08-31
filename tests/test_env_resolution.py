@@ -102,6 +102,46 @@ def test_computed_var_beats_a_default(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# A var set to "" is treated as unset (oa-jsy.2)
+#
+# `development_team = "${HERMES_DEV_TEAM}"` with that var empty used to resolve
+# to "", which _compose_sign_settings then dropped — no DEVELOPMENT_TEAM reached
+# xcodebuild, the build fell back to ad-hoc signing, and every entitlement needing
+# a provisioning profile was stripped from a "BUILD SUCCEEDED" app.
+# ---------------------------------------------------------------------------
+
+def test_empty_var_without_a_default_exits_like_an_unset_one(monkeypatch):
+    monkeypatch.setenv("EMPTY_ONE", "")
+    with pytest.raises(SystemExit) as e:
+        resolve_env("${EMPTY_ONE}")
+    assert e.value.code == 2
+
+
+def test_empty_var_error_says_set_but_empty(monkeypatch, capsys):
+    monkeypatch.setenv("EMPTY_ONE", "")
+    with pytest.raises(SystemExit):
+        resolve_env("${EMPTY_ONE}")
+    assert "EMPTY_ONE is set but empty" in capsys.readouterr().err
+
+
+def test_empty_var_falls_through_to_its_default(monkeypatch):
+    """What POSIX `:-` means, and what the ${VAR:-default} syntax advertises."""
+    monkeypatch.setenv("EMPTY_ONE", "")
+    assert resolve_env("${EMPTY_ONE:-fallback}") == "fallback"
+
+
+def test_an_explicitly_written_empty_default_is_still_allowed(monkeypatch):
+    """`${VAR:-}` is a deliberate empty, not a missing value — it must not exit."""
+    monkeypatch.delenv("DEFINITELY_UNSET_XYZ", raising=False)
+    assert resolve_env("pre-${DEFINITELY_UNSET_XYZ:-}-post") == "pre--post"
+
+
+def test_empty_computed_var_is_computed_rather_than_left_empty(monkeypatch):
+    monkeypatch.setenv("LAN_IP", "")
+    assert resolve_env("${LAN_IP}") not in ("", "${LAN_IP}")
+
+
+# ---------------------------------------------------------------------------
 # resolve_computed
 # ---------------------------------------------------------------------------
 

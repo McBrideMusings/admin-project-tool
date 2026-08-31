@@ -56,6 +56,14 @@ var ComputedVars = map[string]func() string{
 // entry point) decides how to fail rather than the library killing the
 // process out from under it.
 //
+// A variable set to the empty string counts as unset, which is what POSIX ${VAR:-}
+// already means and what the placeholder syntax advertises. Returning "" instead
+// hands the caller a value it cannot tell from an absent key, and callers drop it:
+// that is how `development_team = "${HERMES_DEV_TEAM}"` reached xcodebuild as no
+// DEVELOPMENT_TEAM at all, silently downgrading a "BUILD SUCCEEDED" app to ad-hoc
+// signing with every provisioning-profile entitlement stripped (oa-jsy.2). An
+// explicitly written empty default (${VAR:-}) is a deliberate empty and is kept.
+//
 // A string with no "${" is returned unchanged without scanning it — matches
 // Python's fast path and keeps this a no-op on the overwhelming majority of
 // strings that never contain a placeholder.
@@ -68,7 +76,8 @@ func ResolveEnv(s string) (string, error) {
 	pos := 0
 	for _, ref := range refs {
 		b.WriteString(s[pos:ref.Start])
-		if v, ok := os.LookupEnv(ref.Name); ok {
+		v, isSet := os.LookupEnv(ref.Name)
+		if v != "" {
 			b.WriteString(v)
 		} else if fn, ok := ComputedVars[ref.Name]; ok {
 			b.WriteString(fn())
@@ -79,7 +88,11 @@ func ResolveEnv(s string) (string, error) {
 			}
 			b.WriteString(resolved)
 		} else {
-			return "", fmt.Errorf("required env var %s is not set", ref.Name)
+			state := "not set"
+			if isSet {
+				state = "set but empty"
+			}
+			return "", fmt.Errorf("required env var %s is %s", ref.Name, state)
 		}
 		pos = ref.End
 	}

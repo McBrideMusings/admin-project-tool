@@ -596,6 +596,15 @@ def resolve_env(s):
     is expanded the way it reads — and is only expanded when it is actually used.
 
     Fails fast with a clear error if a referenced var is unset and has no default.
+    **A var set to the empty string counts as unset**, matching what POSIX `:-`
+    already means: `${VAR:-default}` takes the default, and a bare `${VAR}` is an
+    error rather than a silent "". Anything else lets a caller receive an empty
+    string it cannot distinguish from an absent key, and then quietly drop it —
+    which is how `development_team = "${HERMES_DEV_TEAM}"` reached xcodebuild as
+    no DEVELOPMENT_TEAM at all, downgrading a signed build to ad-hoc and stripping
+    every entitlement that needs a provisioning profile (oa-jsy.2). An explicitly
+    written empty default (`${VAR:-}`) is still a deliberate empty and is kept.
+
     Returns the expanded string. Idempotent on strings with no placeholders.
     """
     if not isinstance(s, str) or "${" not in s:
@@ -606,14 +615,15 @@ def resolve_env(s):
     for start, end, name, default in iter_env_refs(s):
         out.append(s[pos:start])
         val = os.environ.get(name)
-        if val is not None:
+        if val:
             out.append(val)
         elif name in COMPUTED_VARS:
             out.append(COMPUTED_VARS[name]())
         elif default is not None:
             out.append(resolve_env(default))
         else:
-            err(f"required env var {name} is not set")
+            state = "set but empty" if val == "" else "not set"
+            err(f"required env var {name} is {state}")
             sys.exit(2)
         pos = end
     out.append(s[pos:])

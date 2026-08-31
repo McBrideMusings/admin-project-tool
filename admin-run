@@ -104,6 +104,11 @@ def cmd_check(project_dir: Path, show_namespace: bool = False) -> int:
         return 1
     for event in resolved.merge_log:
         info(f"merge: {event}")
+    # Before the ok line — a manifest whose ${VAR}s cannot resolve is not ok, and
+    # printing both a green summary and a nonzero exit is how the first one gets
+    # believed.
+    if _check_env_refs(project_dir, resolved.manifest):
+        return 1
     ok(
         f"ok: {resolved.manifest.project_name} — "
         f"{len(resolved.commands)} commands, {len(resolved.actions)} actions, "
@@ -115,6 +120,28 @@ def cmd_check(project_dir: Path, show_namespace: bool = False) -> int:
     if show_namespace:
         _print_namespace(resolved)
     return 0
+
+
+def _check_env_refs(project_dir: Path, manifest) -> int:
+    """Report config-table ${VAR} references that no environment value satisfies.
+
+    Runs against the same environment a real command would see — the project's
+    .env is loaded first, exactly as boot does — so what check reports is what the
+    next `admin build` would hit. A var set to the empty string is reported like an
+    unset one, because resolve_env now treats the two the same.
+    """
+    from admin_lib.core import _load_dotenv
+    from admin_lib.manifest import unresolvable_env_refs
+
+    _load_dotenv(str(project_dir))
+    bad = unresolvable_env_refs(manifest)
+    if not bad:
+        return 0
+    for var, origin, state in bad:
+        err(f"{origin} = ${{{var}}} — {var} is {state} and the reference has no default")
+    info("give the reference a default (${VAR:-value}), export the variable, "
+         "or remove the key")
+    return 1
 
 
 def _print_namespace(resolved) -> None:

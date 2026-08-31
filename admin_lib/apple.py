@@ -3204,10 +3204,20 @@ def _compose_sign_settings(cfg, platform=None):
     ):
         val = cfg.get(manifest_key)
         if val is None:
+            # Genuinely absent — a legitimate skip, and the only silent one.
             continue
         val = resolve_env(str(val))
-        if val:
-            parts.append(f'{xcode_key}="{val}"')
+        if not val:
+            # A ${VAR} can no longer land here: resolve_env exits(2) when the
+            # variable is unset or empty. So this is a literal "" in admin.toml —
+            # a key the author wrote and meant, producing nothing. Dropping it
+            # silently is what shipped an ad-hoc-signed app with no entitlements
+            # (oa-jsy.2); say so instead.
+            warn(f"[apple].{manifest_key} is empty — no {xcode_key} will be passed "
+                 "to xcodebuild, so the build falls back to ad-hoc signing and "
+                 "loses every entitlement that needs a provisioning profile")
+            continue
+        parts.append(f'{xcode_key}="{val}"')
 
     # Dynamic identity: resolve [apple].sign_identity against the keychain to a
     # concrete hash and sign manually, so dev builds get a stable signature
