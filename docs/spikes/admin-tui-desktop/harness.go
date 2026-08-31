@@ -31,10 +31,25 @@ func (s State) Get(key string) string     { return s.Values[key] }
 
 // Variant is one direction being compared. Render returns the design's frame:
 // exactly H lines of exactly W visible columns. The harness checks both.
+//
+// Key is optional and is what makes the prototype interactive. Every key the
+// harness does not claim is offered to it; return true if the design handled it.
+// `set` writes an axis value, which is how a design's own navigation (a tab bar,
+// a screen change) drives the same state the dump enumerates — so what you drive
+// by hand and what gets dumped can never diverge. A design may also mutate its
+// own package state and return true; the harness re-renders after every key.
+// Reset is optional and returns the design's own state to its starting point.
+// A design that keeps live state outside State — a cursor offset, a scroll
+// position — needs it, because that state is package-level and otherwise
+// survives into the next dump frame and the next test. The harness calls it at
+// startup and before every dumped frame, so a dump is deterministic no matter
+// what ran before it.
 type Variant struct {
 	Name    string
 	Caption string
 	Render  func(State) string
+	Key     func(key string, s State, set func(axis, value string)) bool
+	Reset   func()
 }
 
 // Axis is a state dimension — which screen, which error, which connection state.
@@ -77,6 +92,9 @@ type model struct {
 
 func newModel() model {
 	m := model{axes: map[string]int{}}
+	if len(Variants) > 0 && Variants[0].Reset != nil {
+		Variants[0].Reset()
+	}
 	return m
 }
 
@@ -115,7 +133,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "Q":
+		case "ctrl+c", "Q", "q":
+			// `q` quits too: almost every TUI binds it that way, so a design
+			// whose footer says "q quit" would otherwise advertise a dead key.
 			return m, tea.Quit
 		case "]", "shift+right":
 			if len(Variants) > 0 {
@@ -135,10 +155,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-	}
-	// Everything the harness did not claim belongs to the design.
-	if h, ok := any(Variants[m.vi]).(interface{ Key(tea.Msg) }); ok {
-		h.Key(msg)
+		// Everything else belongs to the design. This is what makes the
+		// prototype interactive rather than a slideshow of dumped states.
+		if fn := Variants[m.vi].Key; fn != nil {
+			fn(msg.String(), m.state(), func(axis, value string) {
+				for _, a := range Axes {
+					if a.Key != axis {
+						continue
+					}
+					for i, v := range a.Values {
+						if v == value {
+							m.axes[axis] = i
+							return
+						}
+					}
+				}
+			})
+		}
 	}
 	return m, nil
 }
@@ -218,6 +251,9 @@ func dump(dir string, w, h int) int {
 	bad, wrote := 0, 0
 	for vi, v := range Variants {
 		for _, c := range combos() {
+			if v.Reset != nil {
+				v.Reset() // a frame must not inherit the previous frame's cursor
+			}
 			body := Strip(v.Render(State{Values: c, W: w, H: h}))
 			lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
 			name := stateName(c)
