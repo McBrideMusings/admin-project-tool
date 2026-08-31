@@ -117,6 +117,69 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// cfgString reads a string-valued key off a raw config table (as decoded
+// from TOML into map[string]any by a [xxx_config]-style manifest table),
+// returning def when the key is absent or not a string.
+func cfgString(m map[string]any, key, def string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return def
+}
+
+// cfgInt reads an int-valued key off a raw config table. TOML integers
+// decode as int64 via BurntSushi/toml; int is accepted too for callers
+// building a table by hand (tests).
+func cfgInt(m map[string]any, key string, def int) int {
+	switch n := m[key].(type) {
+	case int64:
+		return int(n)
+	case int:
+		return n
+	default:
+		return def
+	}
+}
+
+// cfgBool reads a bool-valued key off a raw config table, returning def when
+// the key is absent or not a bool.
+func cfgBool(m map[string]any, key string, def bool) bool {
+	if v, ok := m[key].(bool); ok {
+		return v
+	}
+	return def
+}
+
+// cfgList reads a list-valued key off a raw config table — TOML decodes a
+// TOML array as []any. Returns nil for an absent or non-list key.
+func cfgList(m map[string]any, key string) []any {
+	v, _ := m[key].([]any)
+	return v
+}
+
+// cfgMap reads a table-valued key off a raw config table — TOML decodes a
+// TOML table as map[string]any. Returns an empty (never nil) map for an
+// absent or non-table key, so callers can index it unconditionally.
+func cfgMap(m map[string]any, key string) map[string]any {
+	if v, ok := m[key].(map[string]any); ok {
+		return v
+	}
+	return map[string]any{}
+}
+
+// cfgStringMap reads every string-valued key off a raw table — used for
+// entries like backend_extra_env / dev_env, which the manifest declares as
+// {NAME = "value", ...}.
+func cfgStringMap(m map[string]any) map[string]string {
+	out := map[string]string{}
+	for k, v := range m {
+		if s, ok := v.(string); ok {
+			out[k] = s
+		}
+	}
+	return out
+}
+
 // sortedStringKeys returns m's keys sorted — used wherever a kind factory
 // needs a stable display or dispatch order over a raw decoded TOML table
 // (multi-target's inline target subtables and flat targets table alike),
