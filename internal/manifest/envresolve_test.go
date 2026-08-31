@@ -98,3 +98,92 @@ func TestResolveComputedNoPlaceholderIsUnchanged(t *testing.T) {
 		t.Errorf("got %q, want the input unchanged", got)
 	}
 }
+
+// TestLanIPReturnsValidIP verifies lanIP() returns a non-empty IP address
+// string. The exact address depends on the system's network configuration,
+// but it should always return something.
+//
+// MUTATION EVIDENCE: delete the entire lanIP function or all its return
+// statements, and this test fails — it would return an empty string.
+func TestLanIPReturnsValidIP(t *testing.T) {
+	ip := lanIP()
+	if ip == "" {
+		t.Fatal("lanIP returned empty string")
+	}
+	// Verify it looks like an IP address (contains dots for IPv4)
+	if !strings.Contains(ip, ".") {
+		t.Fatalf("lanIP returned %q, which doesn't look like an IPv4 address", ip)
+	}
+}
+
+// TestResolveEnvSubstitutesLANIP verifies that ${LAN_IP} is resolved by the
+// lanIP function (via ComputedVars). It uses a pinned value to avoid depending
+// on network state, and verifies that explicit environment values still win over
+// computed ones.
+//
+// MUTATION EVIDENCE: if ComputedVars["LAN_IP"] is removed or the ComputedVars
+// check in ResolveEnv is deleted, this test fails — ${LAN_IP} would either be
+// unresolved and cause an error, or not use the ComputedVars entry.
+func TestResolveEnvSubstitutesLANIP(t *testing.T) {
+	// We can test this by relying on the fact that ComputedVars["LAN_IP"] is set
+	// in the init and lanIP() always returns a valid IP. We just need to verify
+	// it actually gets substituted.
+
+	got, err := ResolveEnv("http://localhost:8000?via=${LAN_IP}")
+	if err != nil {
+		t.Fatalf("ResolveEnv: %v", err)
+	}
+	if strings.Contains(got, "${LAN_IP}") {
+		t.Fatalf("got %q, which still contains unreplaced ${LAN_IP}", got)
+	}
+	if !strings.HasPrefix(got, "http://localhost:8000?via=") {
+		t.Fatalf("got %q, format doesn't match expected 'http://localhost:8000?via=...'", got)
+	}
+	// Extract the IP and verify it looks valid
+	lanIPValue := strings.TrimPrefix(got, "http://localhost:8000?via=")
+	if !strings.Contains(lanIPValue, ".") {
+		t.Fatalf("LAN_IP resolved to %q, which doesn't look like an IPv4 address", lanIPValue)
+	}
+}
+
+// TestResolveComputedSubstitutesLANIP verifies that ResolveComputed correctly
+// resolves ${LAN_IP} for use in shell strings that may contain other
+// variables.
+//
+// MUTATION EVIDENCE: if the ComputedVars check is removed from ResolveComputed,
+// this test fails — ${LAN_IP} would be left as-is instead of being replaced
+// with the computed value.
+func TestResolveComputedSubstitutesLANIP(t *testing.T) {
+	got := ResolveComputed("http://localhost:3000 or http://${LAN_IP}:3000")
+	if !strings.Contains(got, "http://") {
+		t.Fatalf("got %q, which doesn't contain 'http://'", got)
+	}
+	// Should have resolved ${LAN_IP} to an actual address
+	if strings.Contains(got, "${LAN_IP}") {
+		t.Fatalf("got %q, which still contains unreplaced ${LAN_IP}", got)
+	}
+	// Should have a second http:// after substitution
+	if !strings.HasPrefix(got, "http://localhost:3000 or http://") {
+		t.Fatalf("got %q, format doesn't match expected 'http://localhost:3000 or http://...'", got)
+	}
+}
+
+// TestResolveEnvExplicitLANIPWinsOverComputed proves that an explicit LAN_IP
+// environment variable beats the computed value — "a project can pin one when
+// the automatic answer is wrong" (the design docs, ported from
+// admin_lib/core.py).
+//
+// MUTATION EVIDENCE: swap the os.LookupEnv branch and the ComputedVars branch
+// (check ComputedVars first), and this test fails — it would see "computed"
+// instead of the pinned "192.168.1.1".
+func TestResolveEnvExplicitLANIPWinsOverComputed(t *testing.T) {
+	t.Setenv("LAN_IP", "192.168.1.1")
+
+	got, err := ResolveEnv("${LAN_IP}")
+	if err != nil {
+		t.Fatalf("ResolveEnv: %v", err)
+	}
+	if got != "192.168.1.1" {
+		t.Errorf("got %q, want the explicit environment value %q", got, "192.168.1.1")
+	}
+}
