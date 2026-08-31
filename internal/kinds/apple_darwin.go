@@ -11,11 +11,14 @@
 // is a documented gap in docs/architecture/lua-host-api.md's "What is
 // intentionally not here yet", not a silent omission:
 //
-//   - The dev/prod bundle-suffix convention layer (_compose_dev_settings,
-//     _entitlements_paths, _target_needs_provisioning_profile) and the mac
-//     dev-rename/re-sign postprocessing (dev_macos_postprocess) it feeds.
-//     A dev build here builds with the project's own signing settings,
-//     unpatched — no bundle-id suffix, no product/display-name rename.
+//   - The mac dev-rename/re-sign postprocessing (DevMacOSPostprocess is
+//     bound in internal/luahost/apple_darwin.go and callable, but nothing
+//     here calls it) — a dev mac build is not renamed/re-signed to a
+//     distinct Finder/Dock entry. The dev/prod bundle-suffix convention
+//     layer itself (_compose_dev_settings, _entitlements_paths,
+//     _target_needs_provisioning_profile) IS ported — see
+//     applesign_darwin.go — and its ADMIN_DEV_BUNDLE_SUFFIX override is
+//     wired into every dev-loop build in appledevloop_darwin.go.
 //   - Dev-icon-swap hooks (build_icon_hooks: backup/swap-banner/restore
 //     around each build). apple.backup_icons/apple.swap_dev_icons_banner/
 //     apple.restore_icons are bound and callable from a future pass; wiring
@@ -184,6 +187,7 @@ func appleBuildFlat(cfg map[string]any, h *luahost.Host, platform, destination s
 	res, err := h.XcodebuildFiltered(luahost.XcodebuildOptions{
 		Project: project, Scheme: scheme, Config: config,
 		Destination: destination, Action: appleBuildAction(f.clean),
+		ExtraSettings: appleComposeSignSettings(cfg, h, project, platform),
 	})
 	if err != nil {
 		return err
@@ -273,6 +277,7 @@ func appleDeployMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 	res, err := h.XcodebuildFiltered(luahost.XcodebuildOptions{
 		Project: project, Scheme: scheme, Config: config,
 		Destination: "platform=macOS", Action: appleBuildAction(f.clean),
+		ExtraSettings: appleComposeSignSettings(cfg, h, project, "mac"),
 	})
 	if err != nil {
 		return err
@@ -328,6 +333,7 @@ func appleDeployDevice(cfg map[string]any, h *luahost.Host, platform string, f a
 	res, err := h.XcodebuildFiltered(luahost.XcodebuildOptions{
 		Project: project, Scheme: scheme, Config: config,
 		Destination: sdk.destination, Action: appleBuildAction(f.clean),
+		ExtraSettings: appleComposeSignSettings(cfg, h, project, platform),
 	})
 	if err != nil {
 		return err
