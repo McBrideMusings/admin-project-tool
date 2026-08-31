@@ -83,8 +83,8 @@ if [[ ! -e "$DEST_DIR" ]]; then
     echo "admin-project-tool: $DEST_DIR does not exist — nothing to uninstall"
 else
     rm -rf "$DEST_DIR/admin_lib" "$DEST_DIR/archetypes" "$DEST_DIR/detectors"
-    rm -f  "$DEST_DIR/admin" "$DEST_DIR/VERSION"
-    echo "  removed $DEST_DIR/{admin_lib,archetypes,detectors,admin,VERSION}"
+    rm -f  "$DEST_DIR/admin" "$DEST_DIR/admin-py" "$DEST_DIR/VERSION"
+    echo "  removed $DEST_DIR/{admin_lib,archetypes,detectors,admin,admin-py,VERSION}"
 
     # Leave any unrelated content in $DEST_DIR alone; only remove the
     # directory itself if install.sh's artifacts were all it contained.

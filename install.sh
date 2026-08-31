@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
-# Install admin_lib to ~/.admin/ for use by per-project admin scripts.
-# Smart install: detects existing version, skips reinstall when up to date.
+# Install admin to ~/.admin/. Smart install: detects existing version, skips
+# reinstall when up to date.
 #
 # Usage: ./install.sh [--link] [--force] [--shell zsh|bash|sh]
 #
-# Default installs a COPY, so edits to this source tree do not affect the
-# installed tool until the next install — a stale ~/.admin surfaces only as a
-# bare "NameError: name 'x' is not defined" from a project's action. --link
-# symlinks instead, so edits are live and that failure cannot happen. Once
-# linked, a plain install leaves the links alone; --force switches back to a copy.
+# `admin` is the Go binary (main.go + cmd/ + internal/), built here and dropped
+# at ~/.admin/admin. A compiled binary cannot be symlinked back to source, so it
+# is rebuilt on EVERY run, --link included.
+#
+# `admin-py` is the outgoing Python interpreter, installed alongside it. It
+# exists only to cover the verbs the Go binary does not carry yet — `new` and
+# `compile` — and is deleted along with admin_lib/ when admin-3rgp.30 closes.
+# Do not add callers.
+#
+# Default installs a COPY of the Python half, so edits to this source tree do
+# not affect admin-py until the next install. --link symlinks instead. Once
+# linked, a plain install leaves the links alone; --force switches back to a
+# copy. Neither mode changes how the binary is handled.
 
 set -euo pipefail
 
@@ -46,15 +54,22 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)'; then
-    echo "error: admin-project-tool requires Python 3.9+ (found: $(python3 --version 2>&1))" >&2
+# Go is required: it builds `admin` itself.
+if ! command -v go >/dev/null 2>&1; then
+    echo "error: admin-project-tool requires the Go toolchain to build admin" >&2
+    echo "  install it: https://go.dev/dl/  (or: brew install go)" >&2
     exit 1
 fi
-if ! python3 -c 'import tomllib' 2>/dev/null && ! python3 -c 'import tomli' 2>/dev/null; then
-    echo "error: tomllib not available for $(python3 --version 2>&1)" >&2
-    echo "  Python 3.11+ has tomllib in stdlib. For Python 3.9/3.10:" >&2
-    echo "  pip install tomli" >&2
-    exit 1
+
+# Python is optional and on its way out — it only installs admin-py. A machine
+# without it gets the binary and a note, never a failed install.
+WANT_PY=1
+if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null; then
+    WANT_PY=0
+    PY_SKIP_REASON="Python 3.9+ not found"
+elif ! python3 -c 'import tomllib' 2>/dev/null && ! python3 -c 'import tomli' 2>/dev/null; then
+    WANT_PY=0
+    PY_SKIP_REASON="tomllib unavailable for $(python3 --version 2>&1) (pip install tomli)"
 fi
 
 # ------------------------------------------------------------------
@@ -79,68 +94,90 @@ INSTALLED_SHA="none"
 # Helpers
 # ------------------------------------------------------------------
 
-do_install() {
+# Build the Go binary straight onto $DEST_DIR/admin. Called by every branch of
+# the main logic including "already linked" and "already up to date": source
+# edits reach admin_lib live through a symlink, but a binary only changes when
+# something compiles it, so skipping this is how ~/.admin/admin goes stale.
+build_binary() {
     mkdir -p "$DEST_DIR"
 
+    # rm first: from a pre-Go install $DEST_DIR/admin is a symlink to admin-run,
+    # and `go build -o` would follow it and write the binary over the source file.
+    rm -f "$DEST_DIR/admin"
+    ( cd "$SRC_DIR" && go build -o "$DEST_DIR/admin" . )
+    chmod +x "$DEST_DIR/admin"
+    echo "  admin (go) built -> $DEST_DIR/admin"
+}
+
+# admin-py: the outgoing Python interpreter. Covers `new` and `compile`, the two
+# verbs the Go binary does not carry. Goes away with admin-3rgp.30.
+install_python() {
+    local mode="$1"   # copy | link
+
     rm -rf "$DEST_DIR/admin_lib"
-    cp -R "$SRC_DIR/admin_lib" "$DEST_DIR/admin_lib"
+    rm -f  "$DEST_DIR/admin-py"
+
+    if [[ "$WANT_PY" != "1" ]]; then
+        echo "  admin-py skipped: $PY_SKIP_REASON"
+        return
+    fi
+
+    if [[ "$mode" == "link" ]]; then
+        ln -s "$SRC_DIR/admin_lib" "$DEST_DIR/admin_lib"
+        ln -s "$SRC_DIR/admin-run" "$DEST_DIR/admin-py"
+    else
+        cp -R "$SRC_DIR/admin_lib" "$DEST_DIR/admin_lib"
+        cp    "$SRC_DIR/admin-run" "$DEST_DIR/admin-py"
+        chmod +x "$DEST_DIR/admin-py"
+    fi
 
     LIB_VERSION="$(python3 -c "
 import sys; sys.path.insert(0, '$DEST_DIR')
 from admin_lib import __version__; print(__version__)
 ")"
+    echo "  admin-py $LIB_VERSION ${mode}ed -> $DEST_DIR/admin-py"
+}
 
-    rm -f  "$DEST_DIR/init-admin-v2"
-    rm -f  "$DEST_DIR/init-admin"
-    rm -f  "$DEST_DIR/bundle"
+# Artifacts from installs this one supersedes: the pre-interpreter generator
+# (admin-gen, hooks/, templates/), the pre-move gen/ dir, and the old bundler.
+clean_stale() {
+    rm -f  "$DEST_DIR/init-admin-v2" "$DEST_DIR/init-admin" \
+           "$DEST_DIR/bundle" "$DEST_DIR/admin-gen"
+    rm -rf "$DEST_DIR/gen" "$DEST_DIR/hooks" "$DEST_DIR/templates"
+}
 
-    # The manifest frontend (manifest/archetypes/kinds/compile/detectors) now
-    # lives inside admin_lib/ (copied above); only the archetype + detector DATA
-    # dirs are top-level. rm the stale gen/ so an upgrade from a pre-move install
-    # drops it.
-    rm -rf "$DEST_DIR/gen" "$DEST_DIR/archetypes" "$DEST_DIR/detectors"
+do_install() {
+    mkdir -p "$DEST_DIR"
+    clean_stale
+
+    rm -rf "$DEST_DIR/archetypes" "$DEST_DIR/detectors"
     cp -R "$SRC_DIR/archetypes" "$DEST_DIR/archetypes"
     cp -R "$SRC_DIR/detectors"  "$DEST_DIR/detectors"
-    # rm first: coming from a --link install, $DEST_DIR/admin is a symlink back
-    # to admin-run, and cp would resolve it and copy the file onto itself
-    # ("are identical (not copied)"), failing the install under set -e.
-    rm -f "$DEST_DIR/admin"
-    cp    "$SRC_DIR/admin-run"  "$DEST_DIR/admin"
-    chmod +x "$DEST_DIR/admin"
 
-    # Clean up artifacts from the pre-interpreter (generator) install: admin-gen,
-    # the SessionStart hook, and the (now removed) shim templates are gone (ADR-0006).
-    rm -f  "$DEST_DIR/admin-gen"
-    rm -rf "$DEST_DIR/hooks" "$DEST_DIR/templates"
+    build_binary
+    install_python copy
 
     echo "$CURRENT_SHA" > "$DEST_DIR/VERSION"
-    echo "  admin_lib $LIB_VERSION installed (archetypes/, detectors/, admin)"
+    echo "  archetypes/ and detectors/ copied"
     echo "  VERSION=$CURRENT_SHA"
 }
 
 do_link() {
     mkdir -p "$DEST_DIR"
+    clean_stale
 
     # No trailing slashes: rm -rf on a symlink removes the link, never the
     # source tree it points at.
-    rm -rf "$DEST_DIR/admin_lib" "$DEST_DIR/archetypes" "$DEST_DIR/detectors" "$DEST_DIR/gen"
-    rm -f  "$DEST_DIR/admin" "$DEST_DIR/init-admin-v2" "$DEST_DIR/init-admin" \
-           "$DEST_DIR/bundle" "$DEST_DIR/admin-gen"
-    rm -rf "$DEST_DIR/hooks" "$DEST_DIR/templates"
-
-    ln -s "$SRC_DIR/admin_lib"  "$DEST_DIR/admin_lib"
+    rm -rf "$DEST_DIR/archetypes" "$DEST_DIR/detectors"
     ln -s "$SRC_DIR/archetypes" "$DEST_DIR/archetypes"
     ln -s "$SRC_DIR/detectors"  "$DEST_DIR/detectors"
-    ln -s "$SRC_DIR/admin-run"  "$DEST_DIR/admin"
 
-    LIB_VERSION="$(python3 -c "
-import sys; sys.path.insert(0, '$DEST_DIR')
-from admin_lib import __version__; print(__version__)
-")"
+    build_binary
+    install_python link
 
     echo "linked:$SRC_DIR" > "$DEST_DIR/VERSION"
-    echo "  admin_lib $LIB_VERSION linked (archetypes/, detectors/, admin)"
-    echo "  $DEST_DIR -> $SRC_DIR — edits are live, no reinstall needed"
+    echo "  archetypes/ and detectors/ linked"
+    echo "  $DEST_DIR -> $SRC_DIR — Python edits are live; admin is rebuilt each install"
 }
 
 # Detect the shell running this script. Prefers ps(1) over $SHELL because
@@ -213,8 +250,11 @@ if [[ "$LINK" == "1" ]]; then
     do_link
 elif [[ "$IS_LINKED" == "1" && "$FORCE" != "1" ]]; then
     # Don't silently revert a linked install back to a copy — that would quietly
-    # reintroduce the staleness this mode exists to remove.
-    echo "admin-project-tool: linked to $(readlink "$DEST_DIR/admin_lib") — edits are already live, nothing to copy"
+    # reintroduce the staleness this mode exists to remove. The binary is still
+    # rebuilt: nothing about a symlinked admin_lib recompiles Go.
+    echo "admin-project-tool: linked to $(readlink "$DEST_DIR/admin_lib") — Python edits are already live"
+    build_binary
+    install_python link
     echo "  (--force to switch back to a copied install)"
 elif [[ "$FORCE" == "1" ]]; then
     echo "admin-project-tool: force-installing to $DEST_DIR"
@@ -230,6 +270,7 @@ elif [[ "$CURRENT_SHA" == *+dirty ]]; then
     do_install
 else
     echo "admin-project-tool: already up to date ($CURRENT_SHA)"
+    build_binary
 fi
 
 verify_path

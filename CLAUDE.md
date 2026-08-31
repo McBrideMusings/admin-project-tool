@@ -28,7 +28,9 @@ Some `admin.toml` files embed secrets today, which is a second and independent r
 - **`admin_lib/`** — runtime helpers (logging, port management, log tailing, Apple build helpers, etc.) imported as a real package. `admin_lib/interp.py` is the interpreter: one closure factory per action kind. It also holds the manifest frontend: `manifest.py` (parser), `archetypes.py` (archetype merger), `kinds.py` (kind metadata + ${VAR} scanner), `validate.py` (command/action schema validation — `ValidationError` umbrella; see [ADR-0008](docs/adr/0008-centralized-schema-validation.md)), `compile.py` (standalone zipapp), `detectors.py` (detector loader). Stdlib only.
 - **`archetypes/`** — partial manifests per project type (apple, react-native, hugo, docker, rust-tauri, etc.). Mixins, not monoliths. (The data dir — the merger code is `admin_lib/archetypes.py`.)
 - **`detectors/`** — heuristics that suggest archetypes from a project's file layout. (The data dir — the loader is `admin_lib/detectors.py`.)
-- **`install.sh`** — installs the interpreter + `admin_lib` + the `archetypes`/`detectors` data dirs to `~/.admin/` and puts `~/.admin` on PATH so `admin` runs from any project.
+- **`install.sh`** — builds the Go binary and installs it as `~/.admin/admin`, installs the Python interpreter alongside it as `~/.admin/admin-py`, copies (or links) `admin_lib` + the `archetypes`/`detectors` data dirs, and puts `~/.admin` on PATH so `admin` runs from any project. The binary is recompiled on every run including `--link`, since nothing else recompiles Go.
+
+**`admin` on PATH is the Go binary; `admin-py` is the outgoing Python one.** admin-py exists only for what Go has not absorbed yet — the `new` and `compile` verbs, and six action kinds (`command`, `docker`, `file`, `pick`, `python`, `python-script`) that 10 of 51 local projects still declare. Tracked by `admin-3rgp.54` and `admin-3rgp.55`, which block the deletion ticket `admin-3rgp.30`. Do not add callers of `admin-py`.
 
 ## Design principles (don't violate)
 
