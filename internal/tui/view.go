@@ -349,6 +349,15 @@ func (m Model) headerLine(width int) string {
 		// the next successful one clears it — otherwise a section silently keeps
 		// showing data older than the header's age label admits.
 		right = []seg{{t: "⚠ sync failed", fg: cRed}}
+	case m.active == tabBeads || m.active == tabIssues:
+		// The active sort order, named so it's readable without opening
+		// anything (admin-wihc). Freshness still shows alongside it — the
+		// order is the more actionable fact, but the data's age doesn't stop
+		// mattering because the list got reordered.
+		right = []seg{{t: "sort: " + m.trackSort.label(), fg: cDim}}
+		if m.haveData {
+			right = append(right, seg{t: "  ", fg: cFaint}, m.freshnessSeg())
+		}
 	case m.haveData:
 		right = []seg{m.freshnessSeg()}
 	}
@@ -642,10 +651,10 @@ func (m Model) keymap() [][2]string {
 	case tabPRs:
 		return [][2]string{{"↑↓", "move"}, {"↵", "checkout"}, {"o", "open"}, {"i", "issue"}, {"/", "filter"}, {"r", "refresh row"}, {"⇧R", "refresh all"}, {"q", "quit"}, tabKey}
 	case tabIssues:
-		return [][2]string{{"↑↓", "move"}, {"↵", "start work"}, {"o", "open"}, {"space", "select"}, {"w", "workflow"}, {"/", "filter"}, {"r", "refresh row"}, {"⇧R", "refresh all"}, {"q", "quit"}, tabKey}
+		return [][2]string{{"↑↓", "move"}, {"↵", "start work"}, {"o", "open"}, {"space", "select"}, {"s", "sort"}, {"w", "workflow"}, {"/", "filter"}, {"r", "refresh row"}, {"⇧R", "refresh all"}, {"q", "quit"}, tabKey}
 	case tabBeads:
 		// No `o`: a bead lives in a local database and has no page to open.
-		return [][2]string{{"↑↓", "move"}, {"↵", "start work"}, {"d", "detail"}, {"g", "tree"}, {"space", "select"}, {"w", "workflow"}, {"/", "filter"}, {"r", "refresh"}, {"q", "quit"}, tabKey}
+		return [][2]string{{"↑↓", "move"}, {"↵", "start work"}, {"d", "detail"}, {"g", "tree"}, {"space", "select"}, {"s", "sort"}, {"w", "workflow"}, {"/", "filter"}, {"r", "refresh"}, {"q", "quit"}, tabKey}
 	case tabConfig:
 		// Read-only readout of resolved values (admin-3rgp.21) — nothing to
 		// move a cursor over or edit.

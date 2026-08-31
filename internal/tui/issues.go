@@ -29,6 +29,9 @@ const (
 // instead of each row's right cluster floating to its own width.
 func (m Model) issueRows() []rowItem {
 	mine, unassigned, others := m.groupIssues()
+	for _, s := range [][]gh.IssueItem{mine, unassigned, others} {
+		sortIssuesBy(s, m.trackSort)
+	}
 	cols := m.cols()
 	numW, statusW, labelW := m.issueColumnWidths(cols, mine, unassigned, others)
 

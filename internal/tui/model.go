@@ -131,7 +131,7 @@ type Model struct {
 	active tab
 	cursor [numTabs]int
 
-	// Repo (local) tab: lazygit-style panes with independent cursors + a sort.
+	// Repo (local) tab: lazygit-style panes with independent cursors.
 	pane       localPane
 	paneCursor [numPanes]int
 
@@ -164,6 +164,14 @@ type Model struct {
 	beadPrefix  string // bd workspace prefix, stripped off every displayed id
 	beadTree    bool   // "g": dependency tree instead of the flat, grouped list
 	beads       []bd.Bead
+	// trackSort is the active order for the tracker list — the Beads tab's flat
+	// list and the Issues tab — cycled by `s` (see tracksort.go). It is shared
+	// across both tabs rather than kept per-tab: one key, one order, named in
+	// the header. Session-scoped only: it lives on Model and resets on restart,
+	// same as beadTree. It does not reach beadTreeRows — the dependency tree's
+	// order already comes from the graph itself, and an arbitrary sort would
+	// scramble the blocker-above-blocked shape that view exists to show.
+	trackSort trackSort
 	haveBeads   bool
 	beadsErr    string
 	// beadCols is [beads] columns from the merged config — which columns the pane
@@ -1488,6 +1496,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.active == tabLocal && m.pane == paneBranches {
 			m.setStatus("pulling…", cDim)
 			return m, pullCmd(m.ctx, m.repoRoot)
+		}
+	case "s":
+		if m.active == tabBeads || m.active == tabIssues {
+			m.trackSort = m.trackSort.next()
+			m.cursor[m.active] = 0
+			m.setStatus("sorted: "+m.trackSort.label(), cDim)
 		}
 	case "g":
 		if m.active == tabBeads {
