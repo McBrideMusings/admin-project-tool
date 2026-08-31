@@ -1,0 +1,29 @@
+package shim
+
+import "os/exec"
+
+// StartAgent starts a herdr-recognized coding agent of kind in the existing
+// pane paneID, named name — `herdr agent start <name> --kind <kind> --pane
+// <paneID>`. The pane must already exist and be at an idle shell prompt;
+// this never splits or creates one (see SplitPane). Output is discarded:
+// callers read state back through AgentWait/AgentDone rather than parsing
+// `agent start`'s own JSON, matching OpenInHerdr's own reasoning for
+// dropping stdout/stderr.
+func StartAgent(name, kind, paneID string) error {
+	cmd := exec.Command("herdr", "agent", "start", name, "--kind", kind, "--pane", paneID)
+	return cmd.Run()
+}
+
+// PromptAndWait sends prompt to the named agent and blocks until herdr
+// observes the agent settle into idle, done, or blocked — `herdr agent
+// prompt <name> <prompt> --wait`. This is admin-3rgp.25's concurrency-
+// ceiling mechanism: the goroutine dispatching one workflow target calls
+// this and does not return (so does not free its ceiling slot) until the
+// agent it started has actually stopped working, exactly the "no more than
+// the ceiling run at once" acceptance criterion asks for — there is no
+// separate polling loop because herdr's own --wait already blocks on the
+// real lifecycle transition instead of a guessed one.
+func PromptAndWait(name, prompt string) error {
+	cmd := exec.Command("herdr", "agent", "prompt", name, prompt, "--wait")
+	return cmd.Run()
+}
