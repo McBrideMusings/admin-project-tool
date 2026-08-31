@@ -118,6 +118,28 @@ func TestDispatchArgsToolVerbBeatsManifestCommand(t *testing.T) {
 	}
 }
 
+// TestDispatchArgsWorktreeVerbBeatsBranchShorthand pins ADR-0011 §2 step 1 for
+// the "worktree" verb specifically: it is a registered cmd/ verb (listed by
+// name in the ADR alongside branch/prs/populate), so "admin worktree <input>"
+// must dispatch straight to it rather than falling through to branch
+// shorthand as "branch --yes worktree <input>" — which is what a caller gets
+// if worktreeCmd is ever dropped from rootCmd.
+//
+// MUTATION EVIDENCE: commenting out rootCmd.AddCommand(worktreeCmd) in
+// cmd/root.go makes this fail with:
+//
+//	dispatchArgs = [branch --yes worktree my-feature], want [worktree my-feature]
+func TestDispatchArgsWorktreeVerbBeatsBranchShorthand(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	got := dispatchArgs([]string{"worktree", "my-feature"})
+	want := []string{"worktree", "my-feature"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("dispatchArgs = %v, want %v", got, want)
+	}
+}
+
 // TestRootCmdIdentity is ADR-0011 §1: the root command is named "admin",
 // with "repo" surviving only as a cobra alias.
 //

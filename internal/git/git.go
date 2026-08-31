@@ -664,6 +664,48 @@ func Checkout(ctx context.Context, branch string) error {
 	return mutator(ctx, "checkout", branch)
 }
 
+// CheckoutNewBranch creates branch in the cwd repo and switches to it, forked
+// from base (or, when base is "", from HEAD). Unlike AddNewBranch this is the
+// in-place counterpart: no worktree, just `git checkout -b`.
+func CheckoutNewBranch(ctx context.Context, branch, base string) error {
+	args := []string{"checkout", "-b", branch}
+	if base != "" {
+		args = append(args, base)
+	}
+	return mutator(ctx, args...)
+}
+
+// CheckoutOrCreate creates/checks out branch in the cwd repo — no worktree —
+// and reports which it did. Attachment is derived from git's own state, never
+// guessed by a caller: already on it is a no-op; existing locally is a plain
+// switch; existing only on origin is fetched then switched (auto-tracking);
+// existing nowhere forks a new branch from OriginBase (origin/<default>, or
+// HEAD when there is no default to fork from).
+func CheckoutOrCreate(ctx context.Context, branch string) (action string, err error) {
+	if CurrentBranch(ctx) == branch {
+		return "already on", nil
+	}
+	if BranchExistsLocal(ctx, branch) {
+		if err := Checkout(ctx, branch); err != nil {
+			return "", err
+		}
+		return "switched to", nil
+	}
+	if BranchExistsRemote(ctx, branch) {
+		if err := FetchBranch(ctx, branch); err != nil {
+			return "", err
+		}
+		if err := Checkout(ctx, branch); err != nil {
+			return "", err
+		}
+		return "checked out", nil
+	}
+	if err := CheckoutNewBranch(ctx, branch, OriginBase(ctx)); err != nil {
+		return "", err
+	}
+	return "created", nil
+}
+
 // Pull runs `git pull --ff-only` in the cwd repo. A dashboard keypress must never
 // silently author a merge commit or rewrite local commits, and without an explicit
 // strategy git refuses outright ("Need to specify how to reconcile divergent
