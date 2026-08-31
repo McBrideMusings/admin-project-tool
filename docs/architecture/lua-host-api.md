@@ -54,6 +54,8 @@ Process supervision (a long-running dev-server loop with reload) is explicitly *
 `run_cmd` — that logic lives in the host's own reload/output-pump machinery per the project's
 "never re-hand-roll the pump" rule, not in a Lua body.
 
+| `run_action(name[, arg, ...])` | `(string, string...) -> nil` | Dispatches another declared action by name with the given string arguments, raising a Lua error if it fails — the port of the `run_command` a `kind="python"` body had in scope. Two shapes need it and have no other form: a picker that routes to one of several sub-actions, and a teardown that runs three of them in order. `run_cmd` cannot stand in, because it shells out and a shell cannot reach a sibling action. Backed by `Host.RunAction`, wired from `makeLua`'s `*Surface`; a Host built outside a kind dispatch leaves it nil and the call raises rather than silently doing nothing. |
+
 | `run_group(commands[, {dir=path}])` | `({tag=string, cmd=string}[], table?) -> number` | Runs every `commands[i].cmd` concurrently through `/bin/sh -c`, prefixing each one's output with `"[tag] "` as it streams — the Go port (admin-3rgp.37) of the one archetype body ADR-0010 names as NOT becoming Lua: a multi-process dev loop (forge-engine's workspace mode) that used raw `threading.Lock` + `subprocess.Popen` + `poll`/`wait` in Python. Composes `internal/streams.OutputPump` (one per child, tagging its lines) with this repo's own process/signal handling — not a third hand-rolled pump. Ctrl+C is forwarded to every still-running child, given 5s, then killed. Returns the highest exit code across every child (0 if all exited zero), matching the Python original's `sys.exit(max(rcs))`. |
 
 ## Target selection
