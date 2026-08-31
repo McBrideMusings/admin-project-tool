@@ -33,6 +33,7 @@ func (h *Host) NewState(cfg map[string]any) *lua.LState {
 	registerCapabilities(L)
 	h.registerApple(L)
 	h.registerMetro(L)
+	h.registerDockerRun(L)
 
 	if cfg == nil {
 		cfg = map[string]any{}
