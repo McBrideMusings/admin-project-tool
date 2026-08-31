@@ -1,10 +1,11 @@
 package luahost
 
 import (
-	"bufio"
+	"bytes"
 	"io"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
@@ -70,6 +71,19 @@ func (h *Host) RunCmd(cmd string, opts RunCmdOptions) (RunCmdResult, error) {
 	}
 	c.Env = os.Environ()
 
+	// os/exec gives a nil Stdin the NULL DEVICE, not the parent's stdin, so
+	// leaving it unset made every action's child read instant EOF. Anything that
+	// asks a question got an empty answer and failed in milliseconds — `admin
+	// grafana deploy` read "" where it wanted the word "deploy", so it aborted
+	// and looked like a hang. Assigning the *os.File directly hands the child
+	// the real fd, which is what keeps a terminal a terminal; a non-file reader
+	// (tests) falls back to exec's copying pipe.
+	if f, ok := h.Stdin.(*os.File); ok {
+		c.Stdin = f
+	} else if h.Stdin != nil {
+		c.Stdin = h.Stdin
+	}
+
 	pr, pw := io.Pipe()
 	c.Stdout = pw
 	c.Stderr = pw
@@ -82,16 +96,75 @@ func (h *Host) RunCmd(cmd string, opts RunCmdOptions) (RunCmdResult, error) {
 		pump.LogFn = h.logWrite
 	}
 
+	// Read raw chunks rather than scanning whole lines. A prompt has no trailing
+	// newline, so a line scanner holds it until the child writes one — which it
+	// never does, because it is blocked waiting for the answer to the prompt it
+	// just wrote. The result is a blank terminal that looks like a hang. Chunks
+	// go to a channel so the consumer can notice a gap in output and show
+	// whatever partial line is pending.
+	chunks := make(chan []byte, 16)
+	readErr := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := pr.Read(buf)
+			if n > 0 {
+				b := make([]byte, n)
+				copy(b, buf[:n])
+				chunks <- b
+			}
+			if err != nil {
+				if err == io.EOF {
+					err = nil
+				}
+				readErr <- err
+				close(chunks)
+				return
+			}
+		}
+	}()
+
 	done := make(chan error, 1)
 	go func() {
-		scanner := bufio.NewScanner(pr)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-		for scanner.Scan() {
-			line := scanner.Text() + "\n"
-			collected = append(collected, line...)
-			pump.Write(line)
+		var pending []byte
+		// Long enough that a child mid-write is not chopped, short enough that a
+		// prompt appears as fast as a person can react to it.
+		const idle = 120 * time.Millisecond
+		timer := time.NewTimer(idle)
+		defer timer.Stop()
+		flushPending := func() {
+			if len(pending) > 0 {
+				pump.Write(string(pending))
+				pending = nil
+			}
 		}
-		done <- scanner.Err()
+		for {
+			select {
+			case b, ok := <-chunks:
+				if !ok {
+					flushPending()
+					done <- <-readErr
+					return
+				}
+				collected = append(collected, b...)
+				pending = append(pending, b...)
+				// Emit every complete line immediately; hold only the tail.
+				if i := bytes.LastIndexByte(pending, '\n'); i >= 0 {
+					pump.Write(string(pending[:i+1]))
+					pending = pending[i+1:]
+				}
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(idle)
+			case <-timer.C:
+				flushPending()
+				timer.Reset(idle)
+			}
+		}
 	}()
 
 	startErr := c.Start()
