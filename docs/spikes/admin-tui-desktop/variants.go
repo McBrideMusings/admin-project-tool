@@ -33,6 +33,10 @@ var Axes = []Axis{
 		"commands", "commands-workflow-selected", "repo", "issues", "issues-selected",
 		"dispatch-sheet", "swarm", "config", "running", "no-manifest",
 	}},
+	// Live-only on purpose. Empty is a real condition the design has to survive,
+	// but dumping it would multiply every frame name by two and break the paths
+	// .20 and .28 cite. NoDump keeps it drivable without touching the dump.
+	{Key: "data", Label: "Data", Values: []string{"populated", "empty"}, Hotkey: "e", NoDump: true},
 }
 
 var (
@@ -68,13 +72,22 @@ var screens = map[string]screenSpec{
 	"no-manifest":                {tab: 1, noMan: true},
 }
 
-var Variants = []Variant{{
-	Name:    "Settled",
-	Caption: "the design settled in docs/PRD.md:82-111",
-	Render:  render,
-	Key:     onKey,
-	Reset:   func() { selDelta = 0 },
-}}
+var Variants = []Variant{
+	{
+		Name:    "Settled",
+		Caption: "Commands and live work as separate tabs — the design in docs/PRD.md:82-111",
+		Render:  render,
+		Key:     onKey,
+		Reset:   func() { selDelta = 0 },
+	},
+	{
+		Name:    "Combined",
+		Caption: "one Work tab holding both, with the reader compressed to fit",
+		Render:  renderCombined,
+		Key:     onKeyCombined,
+		Reset:   func() { selDelta = 0 },
+	},
+}
 
 // selDelta is the live cursor offset on top of whatever row the current screen
 // starts on. Reset clears it, so a dumped frame never inherits the previous
@@ -157,7 +170,7 @@ func render(s State) string {
 	}
 
 	rows := []string{header(w), tabBar(sp, w), ""}
-	body := bodyOf(sp, w, h-5)
+	body := bodyOf(sp, w, h-5, s.Is("data", "empty"))
 	for len(body) < h-5 {
 		body = append(body, fillRow(sp, w))
 	}
@@ -311,7 +324,7 @@ var cmds = []cmdRow{
 			{"2", "shell", "bash tests/test_install.sh", "(manifest)"}}},
 }
 
-func commandsBody(sp screenSpec, w int) []string {
+func commandsBody(sp screenSpec, w int, empty bool) []string {
 	sel := wrap(sp.cmdSel, len(cmds))
 	c := cmds[sel]
 
@@ -319,12 +332,16 @@ func commandsBody(sp screenSpec, w int) []string {
 	// the reader's fields, and repeating it in the list spent the width the
 	// longest command name needs.
 	var left []string
-	for i, cc := range cmds {
-		row := cc.name
-		if sp.running && cc.name == "test" {
-			row += " " + yl.Render("●")
+	if empty {
+		left = []string{dim.Render(" no commands"), "", dim.Render(" admin.toml declares none.")}
+	} else {
+		for i, cc := range cmds {
+			row := cc.name
+			if sp.running && cc.name == "test" {
+				row += " " + yl.Render("●")
+			}
+			left = append(left, mark(i == sel, row))
 		}
-		left = append(left, mark(i == sel, row))
 	}
 
 	title := bo.Render(c.name)
@@ -464,7 +481,7 @@ func issuesBody(sp screenSpec, w int) []string {
 
 // ---- live work ----
 
-func liveBody(w int) []string {
+func liveBody(w int, empty bool) []string {
 	st := map[string]lipgloss.Style{"running": gr, "waiting": yl, "done": dim, "failed": rd}
 	row := func(sel bool, s, id, br, doing, where string) string {
 		cursor := "  "
@@ -473,6 +490,9 @@ func liveBody(w int) []string {
 		}
 		return " " + cursor + st[s].Render(Pad(s, 9)) + Pad(id, 16) + Pad(br, 18) +
 			dim.Render(Pad(doing, maxInt(6, w-53))+where)
+	}
+	if empty {
+		return append(section("Agent workers", 0, w), dim.Render("   nothing running"))
 	}
 	out := section("Agent workers", 4, w)
 	out = append(out,
@@ -554,18 +574,18 @@ func overlaySheet(rows []string, w, h int) []string {
 
 // ---- routing ----
 
-func bodyOf(sp screenSpec, w, h int) []string {
+func bodyOf(sp screenSpec, w, h int, empty bool) []string {
 	switch {
 	case sp.noMan:
 		return repoBody(w, h, true)
 	case sp.tab == 0:
-		return commandsBody(sp, w)
+		return commandsBody(sp, w, empty)
 	case sp.tab == 1:
 		return repoBody(w, h, false)
 	case sp.tab == 2:
 		return issuesBody(sp, w)
 	case sp.tab == 3:
-		return liveBody(w)
+		return liveBody(w, empty)
 	}
 	return configBody(w)
 }
@@ -600,4 +620,202 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// ---- variant 2: Combined ----
+//
+// Folds live work into the landing tab, so the four things you do in a session —
+// see a command, run it, watch what it started, jump to it — are one screen
+// instead of two. The cost is the reader: it drops from the full right column to
+// a fixed block, so a long run line truncates. That trade is the question this
+// variant exists to answer.
+
+var combinedTabs = []string{"commands", "repo", "issues", "config"}
+
+func onKeyCombined(key string, s State, set func(axis, value string)) bool {
+	cur := s.Get("screen")
+	if cur == "" {
+		cur = "commands"
+	}
+	idx := 0
+	for i, t := range combinedTabs {
+		if screens[t].tab == screens[cur].tab {
+			idx = i
+		}
+	}
+	switch key {
+	case "tab", "right", "l":
+		set("screen", combinedTabs[(idx+1)%len(combinedTabs)])
+		selDelta = 0
+		return true
+	case "shift+tab", "left", "h":
+		set("screen", combinedTabs[(idx-1+len(combinedTabs))%len(combinedTabs)])
+		selDelta = 0
+		return true
+	}
+	return onKey(key, s, set)
+}
+
+func renderCombined(s State) string {
+	w, h := s.W, s.H
+	if w <= 0 {
+		w = DumpWidth
+	}
+	if h <= 0 {
+		h = DumpHeight
+	}
+	name := s.Get("screen")
+	if name == "" {
+		name = "commands"
+	}
+	sp := screens[name]
+
+	rows := []string{header(w), tabBarCombined(sp, w), ""}
+	body := combinedBody(sp, w, h-5, s.Is("data", "empty"))
+	for len(body) < h-5 {
+		body = append(body, "")
+	}
+	rows = append(rows, body[:h-5]...)
+	rows = append(rows, strings.Repeat("─", w), Pad(" "+dim.Render(keysCombined(sp)), w))
+	if sp.sheet {
+		rows = overlaySheet(rows, w, h)
+	}
+	for i := range rows {
+		rows[i] = Pad(rows[i], w)
+	}
+	return strings.Join(rows, "\n")
+}
+
+func tabBarCombined(sp screenSpec, w int) string {
+	defs := []tabDef{{"Work", 12}, {"Repo", 0}, {"Issues", 7}, {"Config", 0}}
+	if sp.noMan {
+		defs = defs[1:]
+	}
+	active := 0
+	switch sp.tab {
+	case 0, 3:
+		active = 0
+	case 1:
+		active = 1
+	case 2:
+		active = 2
+	case 4:
+		active = 3
+	}
+	if sp.noMan {
+		active--
+	}
+	var b strings.Builder
+	b.WriteString(" ")
+	for i, t := range defs {
+		label := " " + t.name
+		if t.count > 0 {
+			label += " " + fmt.Sprint(t.count)
+		}
+		label += " "
+		if i == active {
+			b.WriteString(pill.Render(label))
+		} else {
+			b.WriteString(dim.Render(label))
+		}
+		b.WriteString("  ")
+	}
+	return Pad(b.String(), w)
+}
+
+func combinedBody(sp screenSpec, w, h int, empty bool) []string {
+	switch {
+	case sp.noMan:
+		return repoBody(w, h, true)
+	case sp.tab == 1:
+		return repoBody(w, h, false)
+	case sp.tab == 2:
+		return issuesBody(sp, w)
+	case sp.tab == 4:
+		return configBody(w)
+	}
+
+	// The live block is fixed height at the bottom; commands take what is left.
+	live := liveCompact(w, empty)
+	cmdH := h - len(live) - 1
+	if cmdH < 4 {
+		cmdH = 4
+	}
+
+	sel := wrap(sp.cmdSel, len(cmds))
+	c := cmds[sel]
+
+	var left []string
+	if empty {
+		left = []string{dim.Render(" no commands")}
+	} else {
+		for i, cc := range cmds {
+			row := cc.name
+			if sp.running && cc.name == "test" {
+				row += " " + yl.Render("●")
+			}
+			left = append(left, mark(i == sel, row))
+		}
+	}
+
+	// The compressed reader: identity and the run lines, nothing else. No rule,
+	// no blank spacers, no per-step "from" line — the archetype rides on the
+	// step row instead.
+	var right []string
+	title := bo.Render(c.name) + dim.Render("  "+c.kind+" · "+c.arch+" · "+c.last)
+	if sp.running && c.name == "test" {
+		title = bo.Render(c.name) + dim.Render("  ") + yl.Render("running 00:41")
+	}
+	right = append(right, title)
+	switch {
+	case c.targets != nil:
+		right = append(right, dim.Render("query · 4 targets"))
+		for _, t := range c.targets {
+			right = append(right, "  "+t)
+		}
+	case sp.running && c.name == "test":
+		right = append(right,
+			gr.Render("ok")+" internal/detect "+dim.Render("0.63s"),
+			dim.Render("..")+" internal/tui")
+	default:
+		for _, st := range c.steps {
+			right = append(right, dim.Render(st[0]+" ")+Pad(st[1], 9)+st[2]+dim.Render("  "+st[3]))
+		}
+	}
+
+	out := make([]string, 0, h)
+	for i := 0; i < cmdH; i++ {
+		out = append(out, split(at(left, i), at(right, i), w))
+	}
+	out = append(out, live...)
+	return out
+}
+
+func liveCompact(w int, empty bool) []string {
+	st := map[string]lipgloss.Style{"running": gr, "waiting": yl, "done": dim, "failed": rd}
+	row := func(s, id, doing, where string) string {
+		return "   " + st[s].Render(Pad(s, 8)) + Pad(id, 16) +
+			dim.Render(Pad(doing, maxInt(6, w-36))+where)
+	}
+	if empty {
+		return append(section("Live work", 0, w), dim.Render("   nothing running"))
+	}
+	out := section("Live work", 5, w)
+	out = append(out,
+		row("running", "admin-3rgp.36", "writing internal/lua/host.go", "pane 3"),
+		row("waiting", "admin-3rgp.7", "needs input: root command name", "pane 4"),
+		row("failed", "admin-3rgp.33", "go test ./internal/detect FAIL", "pane 5"),
+		row("running", "admin docs", "vitepress dev · localhost:5173", "pane 1"),
+	)
+	return out
+}
+
+func keysCombined(sp screenSpec) string {
+	switch {
+	case sp.sheet:
+		return "⏎ dispatch · e edit · esc cancel"
+	case sp.tab == 0 || sp.tab == 3:
+		return "↑↓ move · ↵ run · a attach · k kill · / filter · ←→ tab · q quit"
+	}
+	return keys(sp)
 }
