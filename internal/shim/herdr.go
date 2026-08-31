@@ -3,6 +3,7 @@ package shim
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 )
@@ -109,6 +110,48 @@ func SplitPane(cwd string) (string, error) {
 // independently of this process from this point on.
 func RunInPane(paneID, command string) error {
 	return exec.Command("herdr", "pane", "run", paneID, command).Run()
+}
+
+// ClosePane closes paneID — `herdr pane close <paneID>` — the mechanism
+// behind the live-work registry's "kill" operation
+// (internal/livework.Ops.Kill): closing the pane is a clean, definitive
+// stop for both a bare long-running process and an agent worker, since
+// both are, at bottom, a herdr pane.
+func ClosePane(paneID string) error {
+	return exec.Command("herdr", "pane", "close", paneID).Run()
+}
+
+// FocusPane brings paneID's workspace and tab to the front — the mechanism
+// behind the live-work registry's "attach" operation
+// (internal/livework.Ops.Attach). herdr has no single verb to focus an
+// arbitrary pane by ID: `herdr pane focus` only moves focus in a direction
+// relative to a pane that already has it. A pane's workspace and tab ARE
+// each focusable directly by ID, and a pane is always visible within its
+// own tab once that tab is frontmost, so focusing both is the real
+// mechanism "attaching" needs.
+func FocusPane(paneID string) error {
+	out, err := exec.Command("herdr", "pane", "get", paneID).Output()
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Result struct {
+			Pane struct {
+				WorkspaceID string `json:"workspace_id"`
+				TabID       string `json:"tab_id"`
+			} `json:"pane"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return err
+	}
+	if resp.Result.Pane.WorkspaceID == "" || resp.Result.Pane.TabID == "" {
+		return fmt.Errorf("herdr pane get %s: missing workspace_id/tab_id", paneID)
+	}
+	if err := exec.Command("herdr", "workspace", "focus", resp.Result.Pane.WorkspaceID).Run(); err != nil {
+		return err
+	}
+	return exec.Command("herdr", "tab", "focus", resp.Result.Pane.TabID).Run()
 }
 
 // Available reports whether repo is running in a herdr pane with the herdr CLI
