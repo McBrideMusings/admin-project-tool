@@ -55,8 +55,9 @@ const (
 	rowPR
 	rowIssue
 	rowBead
-	rowCommand // Work tab: a declared admin.toml command, idle or live
-	rowWorker  // Work tab: a livework.Entry with no command behind it
+	rowCommand       // Work tab: a declared admin.toml command, idle or live
+	rowCommandTarget // Work tab: one target of an expanded multi-target command
+	rowWorker        // Work tab: a livework.Entry with no command behind it
 )
 
 // rowItem is one line in a view. Selectable rows carry an action payload.
@@ -317,6 +318,13 @@ type Model struct {
 	// computeOrigins. A key missing from the map was never declared, which
 	// the Config tab shows as defaulted rather than guessing a source.
 	keyOrigin map[string]string
+	// expandedCmd is the ONE Work-tab command whose targets are currently
+	// listed beneath it, or "" for none. A command with targets is a
+	// collapse toggle: enter on it opens its target list and closes
+	// whatever was open before, so exactly one submenu is ever on screen.
+	// Held on the Model rather than on the row because workRows() rebuilds
+	// every rowItem from scratch on each frame.
+	expandedCmd string
 
 	// Config tab (admin-3rgp.21): the merged config.Config plus the global-
 	// only and local-only reads, so each field's origin (global file, local
@@ -1627,6 +1635,8 @@ func (m Model) activate() (tea.Model, tea.Cmd) {
 		return m.quitWith(&PendingAction{Kind: "create-cd", Branch: branch, RepoRoot: m.repoRoot})
 	case rowCommand:
 		return m.activateCommand(r.work)
+	case rowCommandTarget:
+		return m.activateCommandTarget(r.work)
 	case rowWorker:
 		return m.attachEntry(r.work.worker)
 	}

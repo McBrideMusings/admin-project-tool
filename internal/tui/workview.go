@@ -110,6 +110,10 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 		rest = 6
 	}
 
+	if r.kind == rowCommandTarget {
+		return marker + renderTargetRow(wd, selected, nameW, rest)
+	}
+
 	if r.kind == rowWorker {
 		e := wd.worker
 		name := padEnd(truncR(e.ID, nameW), nameW)
@@ -118,7 +122,19 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 		return marker + name + state + " " + faintStyle.Render(act)
 	}
 
+	// A command with targets opens a submenu instead of running: it wears a
+	// disclosure arrow — ▸ closed, ▾ open — in the name column. The arrow
+	// goes here rather than replacing the cursor diamond so the row still
+	// shows, by shape alone, whether the cursor is on it.
 	name := padEnd(truncR(wd.cmdName, nameW), nameW)
+	if len(wd.targets) > 0 {
+		arrow := "▸ "
+		if wd.expanded {
+			arrow = "▾ "
+		}
+		inner := maxi(nameW-2, 4)
+		name = faintStyle.Render(arrow) + padEnd(truncR(wd.cmdName, inner), inner)
+	}
 	if wd.live != nil {
 		state := renderLiveState(wd.live.State)
 		pane := ""
@@ -132,6 +148,26 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 	kind := padEnd(truncR(wd.cmdKind, stateW), stateW)
 	desc := truncR(wd.cmdDesc, maxi(rest-stateW, 4))
 	return marker + name + faintStyle.Render(kind+desc)
+}
+
+// renderTargetRow renders one target of an expanded command: a tree
+// connector under the parent, then the target key in the same name column
+// every other row uses, indented by the connector's two cells so the
+// submenu reads as belonging to the row above it. The cursor marker is
+// already rendered by the caller, so this starts at the connector.
+func renderTargetRow(wd *workRowData, selected bool, nameW, rest int) string {
+	connector := "├ "
+	if wd.targetLast {
+		connector = "└ "
+	}
+	keyW := maxi(nameW-2, 4)
+	key := padEnd(truncR(wd.targetKey, keyW), keyW)
+	name := key
+	if selected {
+		name = lipgloss.NewStyle().Foreground(cCyan).Render(key)
+	}
+	hint := truncR(wd.targetRun, maxi(rest-2, 4))
+	return faintStyle.Render(connector) + name + faintStyle.Render(hint)
 }
 
 // renderWorkDetail is the polymorphic half: a command shows
@@ -178,18 +214,23 @@ func workerDetail(e *livework.Entry, w int) []string {
 }
 
 func commandDetail(wd *workRowData, w int) []string {
+	title := wd.cmdName
+	if wd.targetKey != "" {
+		title += " " + wd.targetKey
+	}
 	out := []string{
-		lipgloss.NewStyle().Bold(true).Render(wd.cmdName),
+		lipgloss.NewStyle().Bold(true).Render(title),
 		faintStyle.Render(wd.cmdKind + "  ·  " + wd.cmdArchetype),
 		"",
-		faintStyle.Render("last run"),
 	}
-	if wd.lastRun.IsZero() {
-		out = append(out, "  never")
-	} else {
-		out = append(out, "  "+humanizeAge(time.Since(wd.lastRun)))
+	if len(wd.targets) > 0 {
+		out = append(out, faintStyle.Render("targets"))
+		for _, t := range wd.targets {
+			out = append(out, "  "+truncR(t, maxi(w-2, 4)))
+		}
+		out = append(out, "")
 	}
-	out = append(out, "", faintStyle.Render("log"))
+	out = append(out, faintStyle.Render("log"))
 	if wd.logPath != "" {
 		out = append(out, "  "+faintStyle.Render(truncR(wd.logPath, maxi(w-2, 4))))
 	} else {
