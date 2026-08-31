@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
@@ -489,5 +492,189 @@ footer = true
 	}
 	if err := frame.ValidateFooterRefs(m.Actions); err != nil {
 		t.Fatalf("frame.ValidateFooterRefs = %v, want nil", err)
+	}
+}
+
+// -- checkAntiPatterns (admin-3rgp.9, ADR-0009) -----------------------------
+
+// TestCheckAntiPatternsFlagsAMultilineRun is the ticket's first acceptance
+// criterion: a project-declared action whose run is a multi-line string is
+// reported, naming the action and the ADR.
+//
+// MUTATION EVIDENCE: with the `strings.Contains(ref.run, "\n")` check in
+// checkAntiPatterns replaced by `false` (simulating the rule being silently
+// dropped), this test fails with:
+//
+//	checkAntiPatterns found 0 anti-patterns, want 1 naming "deploy" and rule "multiline-run"
+func TestCheckAntiPatternsFlagsAMultilineRun(t *testing.T) {
+	dir := t.TempDir()
+	toml := "project_name = \"checktest\"\n\n" +
+		"[actions.deploy]\n" +
+		"kind = \"shell\"\n" +
+		"run = \"\"\"\n" +
+		"set -euo pipefail\n" +
+		"echo one\n" +
+		"echo two\n" +
+		"\"\"\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	project, err := manifest.Load(dir)
+	if err != nil {
+		t.Fatalf("manifest.Load = %v, want nil", err)
+	}
+	found := checkAntiPatterns(project)
+	if len(found) != 1 || found[0].Action != "deploy" || found[0].Rule != AntiPatternMultilineRun {
+		t.Fatalf("checkAntiPatterns = %+v, want 1 naming \"deploy\" and rule %q", found, AntiPatternMultilineRun)
+	}
+	if !strings.Contains(found[0].Message, "deploy") || !strings.Contains(found[0].Message, "ADR-0009") {
+		t.Fatalf("message %q does not name the action and the ADR", found[0].Message)
+	}
+}
+
+// TestCheckAntiPatternsFlagsASidecarScript is the ticket's second acceptance
+// criterion: a project-declared action whose run invokes a script the
+// project keeps is reported, naming the action, the script, and the ADR.
+//
+// MUTATION EVIDENCE: with sidecarScriptRe replaced by a pattern that never
+// matches (`regexp.MustCompile("$^")`), this test fails with:
+//
+//	checkAntiPatterns found 0 anti-patterns, want 1 naming "deploy" and rule "sidecar-script"
+func TestCheckAntiPatternsFlagsASidecarScript(t *testing.T) {
+	dir := t.TempDir()
+	toml := `project_name = "checktest"
+
+[actions.deploy]
+kind = "shell"
+run  = "./tools/dev-run.sh"
+`
+	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	project, err := manifest.Load(dir)
+	if err != nil {
+		t.Fatalf("manifest.Load = %v, want nil", err)
+	}
+	found := checkAntiPatterns(project)
+	if len(found) != 1 || found[0].Action != "deploy" || found[0].Rule != AntiPatternSidecarScript {
+		t.Fatalf("checkAntiPatterns = %+v, want 1 naming \"deploy\" and rule %q", found, AntiPatternSidecarScript)
+	}
+	if !strings.Contains(found[0].Message, "./tools/dev-run.sh") {
+		t.Fatalf("message %q does not name the script", found[0].Message)
+	}
+}
+
+// TestCheckAntiPatternsCleanManifestReportsNothing is the ticket's third
+// acceptance criterion: a manifest with neither anti-pattern reports
+// nothing — a single-line run naming no script.
+func TestCheckAntiPatternsCleanManifestReportsNothing(t *testing.T) {
+	dir := t.TempDir()
+	toml := `project_name = "checktest"
+
+[actions.deploy]
+kind = "shell"
+run  = "bun run deploy"
+`
+	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	project, err := manifest.Load(dir)
+	if err != nil {
+		t.Fatalf("manifest.Load = %v, want nil", err)
+	}
+	if found := checkAntiPatterns(project); len(found) != 0 {
+		t.Fatalf("checkAntiPatterns = %+v, want none", found)
+	}
+}
+
+// TestCheckAntiPatternsIgnoresLuaKind proves kind="lua" is out of this
+// ticket's scope: ADR-0010's makeLua comment is explicit that a lua body's
+// `run` is always inline source, never a script-path reference, so neither
+// ADR-0009 rule fires on one — even a multi-line body, which is simply what
+// a lua action always looks like.
+func TestCheckAntiPatternsIgnoresLuaKind(t *testing.T) {
+	dir := t.TempDir()
+	toml := `project_name = "checktest"
+
+[actions.deploy]
+kind = "lua"
+run  = "info('a')\ninfo('b')\n"
+`
+	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	project, err := manifest.Load(dir)
+	if err != nil {
+		t.Fatalf("manifest.Load = %v, want nil", err)
+	}
+	if found := checkAntiPatterns(project); len(found) != 0 {
+		t.Fatalf("checkAntiPatterns = %+v, want none (kind=\"lua\" run is always inline source, out of this ticket's scope)", found)
+	}
+}
+
+// TestCheckAntiPatternsFlagsAMultiTargetTarget proves the check descends
+// into an inline multi-target subtable's own `run`, reporting it under its
+// dotted path ("dev.cf") rather than missing it because the parent action
+// has no top-level `run` of its own.
+func TestCheckAntiPatternsFlagsAMultiTargetTarget(t *testing.T) {
+	dir := t.TempDir()
+	toml := `project_name = "checktest"
+
+[actions.dev]
+kind = "multi-target"
+
+[actions.dev.cf]
+run = "./tools/dev-run.sh"
+`
+	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	project, err := manifest.Load(dir)
+	if err != nil {
+		t.Fatalf("manifest.Load = %v, want nil", err)
+	}
+	found := checkAntiPatterns(project)
+	if len(found) != 1 || found[0].Action != "dev.cf" || found[0].Rule != AntiPatternSidecarScript {
+		t.Fatalf("checkAntiPatterns = %+v, want 1 naming \"dev.cf\" and rule %q", found, AntiPatternSidecarScript)
+	}
+}
+
+// TestRunCheckReportsAntiPatternsAndExitsZero is the ticket's fourth
+// acceptance criterion end to end: `admin check` on a manifest with an
+// ADR-0009 anti-pattern still exits zero, and the finding reaches stderr.
+func TestRunCheckReportsAntiPatternsAndExitsZero(t *testing.T) {
+	dir := t.TempDir()
+	toml := `project_name = "checktest"
+
+[commands.custom.deploy]
+desc  = "deploy"
+steps = ["deploy"]
+
+[actions.deploy]
+kind = "shell"
+run  = "./tools/dev-run.sh"
+`
+	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	old := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	err := runCheck(cmd, []string{dir})
+	w.Close()
+	os.Stderr = old
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+
+	if err != nil {
+		t.Fatalf("runCheck = %v, want nil (an ADR-0009 anti-pattern reports, it does not fail)", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "deploy") || !strings.Contains(out, "ADR-0009") {
+		t.Fatalf("runCheck stderr %q does not report the anti-pattern", out)
 	}
 }
