@@ -58,7 +58,7 @@ func Run(raw map[string]any, args []string, r Reporter) error {
 	case "status":
 		return status(c, r)
 	case "restart":
-		if err := launchctl(r, true, "kickstart", "-k", domain()+"/"+c.Label); err != nil {
+		if err := launchctl(true, "kickstart", "-k", domain()+"/"+c.Label); err != nil {
 			return err
 		}
 		r.Ok("restarted " + c.Label)
@@ -81,7 +81,7 @@ func plistPath(label string) string {
 
 func domain() string { return fmt.Sprintf("gui/%d", os.Getuid()) }
 
-func launchctl(r Reporter, check bool, args ...string) error {
+func launchctl(check bool, args ...string) error {
 	cmd := exec.Command("launchctl", args...)
 	var out, errBuf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errBuf
@@ -107,7 +107,7 @@ func isLoaded(label string) bool {
 	return ok
 }
 
-func bootout(label string) { _ = launchctl(nil, false, "bootout", domain()+"/"+label) }
+func bootout(label string) { _ = launchctl(false, "bootout", domain()+"/"+label) }
 
 // waitUnloaded blocks until label is really gone from launchd's tables.
 // bootout of a KeepAlive job is async — the old process is still tearing down
@@ -171,7 +171,7 @@ func install(c Config, r Reporter) error {
 		// Unchanged and already registered: restarting in place picks up a
 		// freshly built binary without creating a new Background Task
 		// Management record (see the package doc).
-		if err := launchctl(r, true, "kickstart", "-k", domain()+"/"+c.Label); err != nil {
+		if err := launchctl(true, "kickstart", "-k", domain()+"/"+c.Label); err != nil {
 			return err
 		}
 		r.Ok("restarted " + c.Label + " (plist unchanged)")
@@ -185,10 +185,10 @@ func install(c Config, r Reporter) error {
 	// bootout first so a changed plist replaces the running agent instead of
 	// failing with "service already loaded".
 	bootout(c.Label)
-	if err := launchctl(r, true, "bootstrap", domain(), plist); err != nil {
+	if err := launchctl(true, "bootstrap", domain(), plist); err != nil {
 		return err
 	}
-	_ = launchctl(r, false, "enable", domain()+"/"+c.Label)
+	_ = launchctl(false, "enable", domain()+"/"+c.Label)
 
 	verb := "installed and loaded"
 	if hadPlist {
@@ -215,7 +215,7 @@ func start(c Config, r Reporter) error {
 	if _, err := os.Stat(plist); err != nil {
 		return fmt.Errorf("%s does not exist — run `admin service install` first", plist)
 	}
-	if err := launchctl(r, true, "bootstrap", domain(), plist); err != nil {
+	if err := launchctl(true, "bootstrap", domain(), plist); err != nil {
 		return err
 	}
 	r.Ok("loaded " + c.Label)
