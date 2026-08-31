@@ -348,20 +348,47 @@ type Model struct {
 	wfErr       string
 	wfAgent     string
 	wfCeiling   int
+	// wfFromSelection distinguishes a confirm overlay opened from the tracker
+	// picker below from one opened by a query-sourced Work-tab row: only the
+	// former should clear trackerSelected once dispatch actually fires (see
+	// selectionworkflow.go's dispatchTrackerSelection), and wfQuery alone
+	// can't tell the two apart — a selection-sourced workflow still names a
+	// real action, it just never had a query to resolve.
+	wfFromSelection bool
+
+	// trackerSelected is the Beads/Issues tabs' multi-select for a
+	// selection-sourced Workflow (admin-3rgp.27, selectionworkflow.go): every
+	// selected row's tracker id (a bead id, or a GitHub issue number as a
+	// string), keyed the same "map length is the mode" way `selected` above
+	// keys branch names — a completely different feature (running a
+	// Workflow over picked rows, not staging branches for deletion), so it
+	// gets its own map rather than overloading branch-name keys with tracker
+	// ids that could theoretically collide with one.
+	trackerSelected map[string]bool
+
+	// Workflow picker overlay: `w` with a nonempty trackerSelected opens it,
+	// listing every selection-sourced Workflow (selectionWorkflows) so the
+	// user picks which one runs over the selection; enter on a candidate
+	// hands off into the very same confirm overlay above (wfOpen etc.) — see
+	// selectionworkflow.go's own doc comment for the full three-step flow.
+	swOpen    bool
+	swOptions []workCmdRow
+	swCursor  int
 }
 
 // New builds the dashboard model. The cheap git context (root, nwo, branch) is
 // gathered by the caller and passed in so the first frame can render immediately.
 func New(ctx context.Context, repoRoot, nwo, current, def string) Model {
 	m := Model{
-		ctx:      ctx,
-		repoRoot: repoRoot,
-		nwo:      nwo,
-		current:  current,
-		def:      def,
-		active:   tabLocal,
-		herdr:    shim.Available(),
-		selected: map[string]bool{},
+		ctx:             ctx,
+		repoRoot:        repoRoot,
+		nwo:             nwo,
+		current:         current,
+		def:             def,
+		active:          tabLocal,
+		herdr:           shim.Available(),
+		selected:        map[string]bool{},
+		trackerSelected: map[string]bool{},
 	}
 	project, merged, sp, ok, err := loadWorkManifest(repoRoot)
 	switch {
@@ -1204,6 +1231,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// The workflow-picker overlay (admin-3rgp.27) owns the keyboard while the
+	// user is choosing which selection-sourced Workflow to run over the
+	// tracker selection — see selectionworkflow.go. It always closes into
+	// either the confirm overlay below or nothing, so it sits directly ahead
+	// of that check.
+	if m.swOpen {
+		return m.workflowPickerKey(msg.String())
+	}
+
 	// The workflow confirm overlay (admin-3rgp.26) owns the keyboard while a
 	// query is resolving or its resolved set is up for confirmation: nothing
 	// underneath (the Work tab's own cursor, dispatch, anything else) can
@@ -1475,6 +1511,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.nameCands = nil
 			m.nameSel = -1
 		}
+		if m.active == tabBeads || m.active == tabIssues {
+			return m.startWorkflowPicker()
+		}
 	case "enter":
 		return m.activate()
 	case "alt+enter", "W":
@@ -1490,6 +1529,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// the protected main row or a branch checked out elsewhere, `space` leaves
 			// the pane exactly as it found it.
 			m.toggleBranchSelection()
+		}
+		if m.active == tabBeads || m.active == tabIssues {
+			m.toggleTrackerSelection()
 		}
 	case "x":
 		// With a selection, x takes the whole batch — a mixed pick (some proven
