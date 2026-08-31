@@ -29,6 +29,7 @@ func TestClassifyEveryKindHasALifetime(t *testing.T) {
 		"server-reload":      true,
 		"apple-dev-loop":     true,
 		"bridge-listen":      true,
+		"workflow":           true,
 	}
 	for name, k := range Kinds {
 		got := k.Lifetime == LongRunning

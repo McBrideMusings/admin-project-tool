@@ -59,6 +59,58 @@ archetypes   = ["a", "b"]
 	}
 }
 
+// TestWorkflowActionMergesFromArchetypesLikeAnyAction is admin-3rgp.24's
+// acceptance criterion "Workflows merge from archetypes the same way
+// commands and actions do": a kind="workflow" action contributed by an
+// archetype is overridden by the project the same whole-value-replacement
+// way any other action is (internal/archetype/merge.go's mergeMap over
+// dst.Actions carries no kind-specific branch), and the project's own
+// kind="workflow" action from a second archetype layer merges the same way
+// too.
+func TestWorkflowActionMergesFromArchetypesLikeAnyAction(t *testing.T) {
+	root := t.TempDir()
+	writeArchetypeDir(t, root, "wf", `
+[actions.retire-merged]
+kind = "workflow"
+over = "selection"
+`, false)
+	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
+
+	project := projectManifest(t, `
+project_name = "widget"
+archetypes   = ["wf"]
+
+[actions.retire-merged]
+kind = "workflow"
+over.query = "label:merged"
+
+[actions.review-waiting]
+kind = "workflow"
+over = "selection"
+`)
+
+	merged, _, err := Resolve(project, sp)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	// The project's own [actions.retire-merged] replaces the archetype's
+	// whole-value, same as an ordinary action collision.
+	over, ok := merged.Actions["retire-merged"]["over"].(map[string]any)
+	if !ok {
+		t.Fatalf("Actions[retire-merged][over] = %#v, want the project's table override", merged.Actions["retire-merged"]["over"])
+	}
+	if over["query"] != "label:merged" {
+		t.Fatalf("Actions[retire-merged][over][query] = %v, want %q", over["query"], "label:merged")
+	}
+
+	// An action the project alone declares (no archetype contributed it)
+	// merges through untouched.
+	if got := merged.Actions["review-waiting"]["over"]; got != "selection" {
+		t.Fatalf("Actions[review-waiting][over] = %v, want %q", got, "selection")
+	}
+}
+
 func TestManifestOverridesArchetype(t *testing.T) {
 	root := t.TempDir()
 	writeArchetypeDir(t, root, "docker", `
