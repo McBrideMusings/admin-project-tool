@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -314,5 +315,157 @@ info(json.encode(payload))
 	}
 	if want := []any{"a", "b", "c"}; !reflect.DeepEqual(items, want) {
 		t.Fatalf("items = %v, want %v", items, want)
+	}
+}
+
+func TestSetLogContextRetentionPrunesOldLogs(t *testing.T) {
+	// Test that pruning deletes logs older than the retain count,
+	// keeping only the newest N files.
+	dir := t.TempDir()
+	h := New(dir)
+	var out, errOut bytes.Buffer
+	h.Stdout = &out
+	h.Stderr = &errOut
+
+	tmpDir := filepath.Join(dir, "tmp")
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create 5 pre-existing log files with the stem "mylog" and timestamps.
+	// We'll use fixed timestamps to ensure consistent chronological ordering.
+	existingLogs := []string{
+		"mylog.2026-01-01_100000.log",
+		"mylog.2026-01-02_100000.log",
+		"mylog.2026-01-03_100000.log",
+		"mylog.2026-01-04_100000.log",
+		"mylog.2026-01-05_100000.log",
+	}
+	for _, name := range existingLogs {
+		path := filepath.Join(tmpDir, name)
+		if err := os.WriteFile(path, []byte("old log content"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Call set_log_context with retain=3, which should keep only the 3 newest
+	// and delete the 2 oldest.
+	err := h.Exec(`
+set_log_context("mylog", {retain=3})
+info("new log entry")
+`, nil)
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+
+	// After materialization, there should be exactly 4 files:
+	// - The 3 oldest pre-existing files from existingLogs should be deleted
+	// - The 2 newest pre-existing files should remain
+	// - The new file created by set_log_context should be added
+	// Total: 2 (kept) + 1 (new) = 3 files
+
+	// Wait, that's not right. The retain value applies after creating the new log.
+	// So: 5 (pre-existing) + 1 (new) = 6 total, then prune to 3, leaving 3 files.
+	// The 3 kept should be the 3 newest: the 2 most recent pre-existing files
+	// plus the newly created file.
+
+	matches, err := filepath.Glob(filepath.Join(tmpDir, "mylog.*.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(matches)
+
+	// We should have 3 files left: the 3 newest (chronologically).
+	if len(matches) != 3 {
+		t.Fatalf("expected 3 log files after pruning, got %d: %v", len(matches), matches)
+	}
+
+	// Verify the survivors are the correct ones (the 3 newest):
+	// The expected remaining files should be:
+	// - mylog.2026-01-03_100000.log
+	// - mylog.2026-01-04_100000.log
+	// - mylog.2026-01-05_100000.log
+	// - plus the new materialized log (which has the current timestamp)
+	// Wait, after pruning to 3, we should only have 3 total, not 4.
+
+	// Let me reconsider the logic:
+	// - Before materialization: 5 pre-existing files
+	// - During materialization: new file is created
+	// - pruneRetain is called: should keep 3 most recent
+	// - After pruning: 3 files remain (the 3 newest)
+
+	// So the survivors should be the 2 most recent pre-existing ones
+	// (2026-01-04 and 2026-01-05) plus the newly created one.
+	// But when sorted lexicographically, the new one will sort after 2026-01-05
+	// because it has today's date.
+
+	// Verify the two oldest pre-existing logs were deleted:
+	for _, name := range existingLogs[:3] {
+		path := filepath.Join(tmpDir, name)
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be deleted, but it still exists", name)
+		}
+	}
+
+	// Verify the two newest pre-existing logs still exist:
+	for _, name := range existingLogs[3:5] {
+		path := filepath.Join(tmpDir, name)
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected %s to still exist, but got error: %v", name, err)
+		}
+	}
+
+	// Verify the new log was created and contains the expected content:
+	if h.LogFile() == "" {
+		t.Fatal("expected a materialized log file")
+	}
+	if _, err := os.Stat(h.LogFile()); err != nil {
+		t.Fatalf("new log file should exist: %v", err)
+	}
+}
+
+func TestSetLogContextRetentionZeroNoops(t *testing.T) {
+	// When retain=0, no pruning should happen.
+	dir := t.TempDir()
+	h := New(dir)
+	var out, errOut bytes.Buffer
+	h.Stdout = &out
+	h.Stderr = &errOut
+
+	tmpDir := filepath.Join(dir, "tmp")
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create some pre-existing log files.
+	existingLogs := []string{
+		"test.2026-01-01_100000.log",
+		"test.2026-01-02_100000.log",
+	}
+	for _, name := range existingLogs {
+		path := filepath.Join(tmpDir, name)
+		if err := os.WriteFile(path, []byte("old log"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Call set_log_context with retain=0, which should NOT prune.
+	err := h.Exec(`
+set_log_context("test", {retain=0})
+info("entry")
+`, nil)
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+
+	// All files should still exist (no pruning happened).
+	matches, err := filepath.Glob(filepath.Join(tmpDir, "test.*.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// We should have 3 files: the 2 pre-existing + the 1 new one.
+	if len(matches) != 3 {
+		t.Fatalf("expected 3 log files (no pruning), got %d: %v", len(matches), matches)
 	}
 }

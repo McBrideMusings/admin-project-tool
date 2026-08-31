@@ -63,6 +63,18 @@ func resolveCommand(m *manifest.Manifest, name string) (manifest.Command, bool) 
 	return manifest.Command{}, false
 }
 
+// HasCommand reports whether m declares a command named name (custom or
+// archetype-provided) — the read-only half of resolveCommand exposed for
+// callers outside this package that only need to know whether a name would
+// dispatch, not run it. cmd.dispatchArgs (admin-3rgp.7) is the first real
+// caller: it needs this to decide, for a bare CLI argument, whether the
+// project's admin.toml claims that name before falling back to branch
+// shorthand.
+func HasCommand(m *manifest.Manifest, name string) bool {
+	_, ok := resolveCommand(m, name)
+	return ok
+}
+
 // currentDispatch lets a running action's Runner invoke another declared
 // action by name — the multi-target kind's `action = "other"` delegation
 // (ADR-0003's whole point: "one action can back multiple commands" and
