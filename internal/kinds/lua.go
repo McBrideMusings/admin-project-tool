@@ -58,7 +58,7 @@ func luaErrorMessage(err error) string {
 //     inline key literally named "go" would shadow config.go), which is an
 //     acceptable, documented edge case: no archetype in this repo names an
 //     inline config key after another archetype's domain.
-func makeLua(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
+func makeLua(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
 	source, _ := actionString(action, "run")
 	cfg := archetypeConfigTables(m)
 	if inline, ok := action["config"].(map[string]any); ok {
@@ -71,6 +71,9 @@ func makeLua(name string, action manifest.Action, m *manifest.Manifest, _ *Surfa
 			return fmt.Errorf("action %q: kind=\"lua\" needs 'run' (a Lua body)", name)
 		}
 		h := newHost()
+		if surf != nil {
+			h.RunAction = surf.action
+		}
 		if err := h.Exec(source, cfg, args...); err != nil {
 			h.Err(name + " failed: " + luaErrorMessage(err))
 			return fmt.Errorf("action %q: %w", name, err)

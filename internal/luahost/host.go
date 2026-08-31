@@ -51,6 +51,18 @@ type Host struct {
 	Stderr io.Writer
 	Stdin  io.Reader
 
+	// RunAction, when set, backs the `run_action(name, ...)` Lua global: run
+	// another declared action from inside this one. admin_lib/interp.py's
+	// namespace carried run_command for exactly this, and several archetype
+	// bodies were built on it — a picker that routes to one of several
+	// sub-actions, a teardown that runs three of them in order. Nothing in the
+	// Lua surface replaced it, so those bodies had no expressible form at all:
+	// run_cmd shells out, and a shell cannot reach a sibling action.
+	//
+	// Left nil (a Host built outside a kind dispatch, or a test), calling
+	// run_action from Lua raises rather than silently doing nothing.
+	RunAction func(name string, args []string) error
+
 	// logFile is the materialized path once a pending context is realized.
 	// Empty until then, exactly like Python's LOG_FILE.
 	logFile          string

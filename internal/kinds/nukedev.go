@@ -3,6 +3,7 @@ package kinds
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -93,21 +94,35 @@ func buildPidfileSpecs(cfg map[string]any) []ports.PidfileSpec {
 
 // buildPatternSpecs reads `[dev_kill].patterns[]` — a bare string or a
 // {match=, regex=, global=} table — into []ports.PatternSpec.
-func buildPatternSpecs(cfg map[string]any) []ports.PatternSpec {
+//
+// A GLOBAL pattern given a relative, non-regex path is anchored to projectRoot
+// before matching. Global means "match this anywhere, not just under the
+// working directory", which is the only way to reach a process whose own cwd
+// is elsewhere (an Electron dev app launched out of dist-dev). Left relative,
+// such a pattern also matches the identical path inside every OTHER checkout
+// of the same repo — so a worktree-scoped teardown would kill a sibling
+// worktree's dev app. Anchoring keeps the reach global while keeping the
+// target this checkout's.
+func buildPatternSpecs(cfg map[string]any, projectRoot string) []ports.PatternSpec {
 	var out []ports.PatternSpec
 	for _, raw := range cfgList(cfg, "patterns") {
 		switch v := raw.(type) {
 		case string:
-			out = append(out, ports.PatternSpec{Match: v})
+			out = append(out, ports.PatternSpec{Match: manifest.ResolveComputed(v)})
 		case map[string]any:
-			match := cfgString(v, "match", "")
+			match := manifest.ResolveComputed(cfgString(v, "match", ""))
 			if match == "" {
 				continue
 			}
+			regex := cfgBool(v, "regex", false)
+			global := cfgBool(v, "global", false)
+			if global && !regex && !filepath.IsAbs(match) && strings.Contains(match, "/") {
+				match = filepath.Join(projectRoot, match)
+			}
 			out = append(out, ports.PatternSpec{
 				Match:  match,
-				Regex:  cfgBool(v, "regex", false),
-				Global: cfgBool(v, "global", false),
+				Regex:  regex,
+				Global: global,
 			})
 		}
 	}
@@ -149,12 +164,17 @@ func makeNukeDev(name string, action manifest.Action, m *manifest.Manifest, _ *S
 			return fmt.Errorf("action %q: %w", name, err)
 		}
 
+		root, err := os.Getwd()
+		if err != nil {
+			root = "."
+		}
+
 		opts := ports.NukeDevOptions{
 			Ports:      portSpecs,
 			Pidfiles:   buildPidfileSpecs(cfg),
 			JSFiles:    cfgStrings(cfg, "js_files"),
 			WebSubdirs: cfgStrings(cfg, "web_subdirs"),
-			Patterns:   buildPatternSpecs(cfg),
+			Patterns:   buildPatternSpecs(cfg, root),
 		}
 		if rt := cfgStrings(cfg, "runtimes"); len(rt) > 0 {
 			opts.Runtimes = rt
@@ -163,11 +183,7 @@ func makeNukeDev(name string, action manifest.Action, m *manifest.Manifest, _ *S
 			opts.SupervisorMarkers = sm
 		}
 
-		cwd, err := os.Getwd()
-		if err != nil {
-			cwd = "."
-		}
-		report := ports.NukeDevProcesses(cwd, opts)
+		report := ports.NukeDevProcesses(root, opts)
 
 		for _, r := range report.Killed {
 			label := "TERM"

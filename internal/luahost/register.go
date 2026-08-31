@@ -28,6 +28,7 @@ func (h *Host) NewState(cfg map[string]any) *lua.LState {
 	h.registerOutput(L)
 	h.registerLogContext(L)
 	h.registerRunCmd(L)
+	h.registerRunAction(L)
 	h.registerRunGroup(L)
 	h.registerTargets(L)
 	registerCapabilities(L)
@@ -138,6 +139,29 @@ func (h *Host) registerRunCmd(L *lua.LState) {
 		L.Push(lua.LBool(res.Ok))
 		L.Push(lua.LString(res.Output))
 		return 2
+	}))
+}
+
+// registerRunAction binds run_action(name[, arg, ...]) — dispatch another
+// declared action by name, with the given string arguments, and raise a Lua
+// error if it fails. The Go port of the run_command a kind="python" body had
+// in scope. See Host.RunAction for why the Lua surface needs it.
+func (h *Host) registerRunAction(L *lua.LState) {
+	L.SetGlobal("run_action", L.NewFunction(func(L *lua.LState) int {
+		name := L.CheckString(1)
+		if h.RunAction == nil {
+			L.RaiseError("run_action: not available in this context")
+			return 0
+		}
+		args := make([]string, 0, L.GetTop()-1)
+		for i := 2; i <= L.GetTop(); i++ {
+			args = append(args, lua.LVAsString(L.Get(i)))
+		}
+		if err := h.RunAction(name, args); err != nil {
+			L.RaiseError("run_action(%s): %v", name, err)
+			return 0
+		}
+		return 0
 	}))
 }
 
