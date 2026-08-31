@@ -43,6 +43,17 @@ command shadowed by the shorthand is *silent*: `admin deploy` quietly creates a 
 called `deploy`. A branch name shadowed by a manifest command is *loud*: the command runs
 and the user sees it run. Prefer the failure the user can see.
 
+**An admin.toml that exists but fails to parse or resolve is a hard error, never a
+fall-through.** Step 2 needs a resolved manifest to see any command names in it, so a
+project whose admin.toml is malformed has none to offer — every bare argument used to fall
+straight through to step 3, silently running `admin branch --yes <name>` against a project
+whose manifest was broken and never even validated. Step 2 is now three-way, not two: no
+admin.toml at all still falls through to step 3 exactly as before; a manifest that resolves
+but doesn't declare the given name falls through too (that name may legitimately be a
+branch); a manifest that is *present but fails to resolve* blocks the fall-through and
+reports the manifest problem instead, whatever the bare argument was. Only the first case
+is silent by design — the other two both surface something before touching git.
+
 ### 3. Tool verbs and `cmd/` verbs win collisions, and `admin check` reports them
 
 A manifest may not declare a command whose name is a tool verb or an existing `cmd/` verb.
@@ -62,7 +73,8 @@ user should learn which before the command they typed does something unexpected.
 - `cmd/root.go`'s `dispatchArgs` grows a manifest-command lookup between the subcommand scan
   and the branch fallback. It must resolve the manifest to do this, so a project with no
   `admin.toml` keeps exactly today's behaviour — every unrecognized bare argument is branch
-  input.
+  input. A project whose `admin.toml` exists but fails to resolve does not: it gets a hard
+  error naming the manifest problem instead.
 - A project that today has a branch it reaches as `repo <name>` and a manifest command of the
   same name changes behaviour: the command wins. This is the intended trade from §2.
 - `admin check` gains a failure mode that no existing manifest has been tested against.
