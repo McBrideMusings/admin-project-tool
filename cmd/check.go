@@ -75,6 +75,9 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	if err := kinds.ValidateWorkflows(m.Actions); err != nil {
 		problems = append(problems, validate.Wrap(err))
 	}
+	if err := checkQueryWorkflowTracker(m); err != nil {
+		problems = append(problems, validate.Wrap(err))
+	}
 
 	// ADR-0009's own anti-patterns are reported, never failed (admin-3rgp.9):
 	// the project's *own* admin.toml is checked against the un-merged
@@ -296,6 +299,54 @@ func checkUnknownKinds(m *manifest.Manifest) error {
 		if !declared {
 			problems = append(problems, fmt.Sprintf("action %q: unknown kind %q", name, kindStr))
 		}
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return validate.Errorf("%s", strings.Join(problems, "\n"))
+}
+
+// checkQueryWorkflowTracker is admin-3rgp.53: a query-sourced workflow
+// (`over = { query = "..." }`) resolves its targets against the beads
+// tracker only (internal/kinds/workflowquery.go's ResolveQuery) — there is
+// no GitHub-backed resolver, and the user's 2026-08-31 decision on this
+// ticket was to fail loudly at check time rather than build one. A project
+// that declares tracker = "github" (or any non-beads value) and also
+// declares a query-sourced workflow has an action that provably cannot
+// resolve its targets and therefore cannot run, so — matching
+// checkUnknownKinds' precedent (admin-3rgp.50: a manifest that cannot run
+// must not pass validation) — this is an ERROR, not a warning.
+//
+// A project that declares no tracker at all (m.HasTracker == false) must
+// not start failing check over this: HasTracker false means "not declared",
+// and the tool's own default resolution path is beads regardless, so only a
+// project that explicitly opts into a non-beads tracker is reported.
+// Reports every offending action, not just the first.
+func checkQueryWorkflowTracker(m *manifest.Manifest) error {
+	if !m.HasTracker || m.Tracker == "beads" {
+		return nil
+	}
+	var problems []string
+	for _, name := range sortedActionNames(m.Actions) {
+		action := m.Actions[name]
+		kindStr, _ := action["kind"].(string)
+		if kindStr != "workflow" {
+			continue
+		}
+		target, err := kinds.ParseWorkflowOver(name, action)
+		if err != nil {
+			// Malformed `over` is kinds.ValidateWorkflows' problem to report;
+			// nothing more to check here for this action.
+			continue
+		}
+		if target.Source != kinds.WorkflowSourceQuery {
+			continue
+		}
+		problems = append(problems, fmt.Sprintf(
+			"action %q: over.query %q can only resolve against the beads tracker, but tracker = %q — "+
+				"there is no GitHub-backed query resolver (admin-3rgp.53); use over = \"selection\" instead or switch tracker to \"beads\"",
+			name, target.Query, m.Tracker,
+		))
 	}
 	if len(problems) == 0 {
 		return nil
