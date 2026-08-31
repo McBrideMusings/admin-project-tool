@@ -205,3 +205,35 @@ func sortedStringKeys(m map[string]any) []string {
 	sort.Strings(out)
 	return out
 }
+
+// envResolver expands ${VAR} in a CONFIG VALUE with manifest.ResolveEnv —
+// against the real environment — rather than ResolveComputed, which expands
+// only the small ComputedVars set and deliberately leaves a plain ${HOME}
+// intact for a shell to expand later. That leniency is right for an action's
+// `run` string, which does reach a shell, and wrong for every value consumed
+// in Go: an unexpanded "${HOME}/..." is a literal path that does not exist,
+// and a dev_env entry set to the literal "${CLIENT_URL:-http://...}" is what
+// the child process then reads.
+//
+// Errors are collected rather than returned per call, so a config builder's
+// assignments stay one expression each; the factory checks firstErr once.
+type envResolver struct{ firstErr error }
+
+func (r *envResolver) s(v string) string {
+	out, err := manifest.ResolveEnv(v)
+	if err != nil {
+		if r.firstErr == nil {
+			r.firstErr = err
+		}
+		return v
+	}
+	return out
+}
+
+func (r *envResolver) all(in []string) []string {
+	out := make([]string, len(in))
+	for i, v := range in {
+		out[i] = r.s(v)
+	}
+	return out
+}

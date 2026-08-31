@@ -43,7 +43,10 @@ func makeElectron(name string, action manifest.Action, m *manifest.Manifest, _ *
 			return fmt.Errorf("action %q: [electron] table missing from admin.toml", name)
 		}
 		h := newHost()
-		cfg := electronConfig(raw)
+		cfg, err := electronConfig(raw)
+		if err != nil {
+			return fmt.Errorf("action %q: [electron]: %w", name, err)
+		}
 		root, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("action %q: %w", name, err)
@@ -94,29 +97,28 @@ func makeElectron(name string, action manifest.Action, m *manifest.Manifest, _ *
 }
 
 // electronConfig maps the `[electron]` manifest table onto electron.Config.
-// Every string goes through manifest.ResolveComputed so `${CLIENT_URL:-...}`
-// in dev_env means the same thing it does everywhere else in a manifest —
-// dev_env is the one table in here that routinely carries a reference.
-func electronConfig(raw map[string]any) electron.Config {
+// dev_env is the table that routinely carries a reference — term's
+// CLIENT_URL = "${CLIENT_URL:-http://localhost:5173/}" — and DevElectron
+// os.Setenv's those values straight into the child, so they have to be
+// resolved here rather than left for a shell that never runs.
+func electronConfig(raw map[string]any) (electron.Config, error) {
+	rv := &envResolver{}
 	devEnv := map[string]string{}
 	for k, v := range cfgStringMap(cfgMap(raw, "dev_env")) {
-		devEnv[k] = manifest.ResolveComputed(v)
+		devEnv[k] = rv.s(v)
 	}
-	watch := cfgStrings(raw, "watch_files")
-	for i, w := range watch {
-		watch[i] = manifest.ResolveComputed(w)
-	}
-	return electron.Config{
-		DesktopDir:        manifest.ResolveComputed(cfgString(raw, "desktop_dir", "")),
-		AppName:           manifest.ResolveComputed(cfgString(raw, "app_name", "")),
-		InstallDir:        manifest.ResolveComputed(cfgString(raw, "install_dir", "")),
-		OutDir:            manifest.ResolveComputed(cfgString(raw, "out_dir", "")),
-		WebSourceDir:      manifest.ResolveComputed(cfgString(raw, "web_source_dir", "")),
-		WebDistDirname:    manifest.ResolveComputed(cfgString(raw, "web_dist_dirname", "")),
-		ServerDistDir:     manifest.ResolveComputed(cfgString(raw, "server_dist_dir", "")),
-		ServerDistDirname: manifest.ResolveComputed(cfgString(raw, "server_dist_dirname", "")),
-		WatchFiles:        watch,
+	cfg := electron.Config{
+		DesktopDir:        rv.s(cfgString(raw, "desktop_dir", "")),
+		AppName:           rv.s(cfgString(raw, "app_name", "")),
+		InstallDir:        rv.s(cfgString(raw, "install_dir", "")),
+		OutDir:            rv.s(cfgString(raw, "out_dir", "")),
+		WebSourceDir:      rv.s(cfgString(raw, "web_source_dir", "")),
+		WebDistDirname:    rv.s(cfgString(raw, "web_dist_dirname", "")),
+		ServerDistDir:     rv.s(cfgString(raw, "server_dist_dir", "")),
+		ServerDistDirname: rv.s(cfgString(raw, "server_dist_dirname", "")),
+		WatchFiles:        rv.all(cfgStrings(raw, "watch_files")),
 		DevEnv:            devEnv,
-		DevDistDirVar:     manifest.ResolveComputed(cfgString(raw, "dev_dist_dir_var", "")),
+		DevDistDirVar:     rv.s(cfgString(raw, "dev_dist_dir_var", "")),
 	}
+	return cfg, rv.firstErr
 }
