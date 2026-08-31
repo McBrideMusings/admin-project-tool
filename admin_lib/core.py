@@ -689,7 +689,12 @@ def cmd_env(args):
         default = entry["default"]
         used_by = entry["used_by"]
         val = os.environ.get(name)
-        if val is not None:
+        # An empty value is not a value — resolve_env treats it as unset (ADR-0013),
+        # so listing it green as "set" would tell you the manifest is fine while
+        # every command using it exits 2. EMPTY is called out separately from UNSET
+        # because the fix differs: one has a .env line to correct, the other has
+        # none to add.
+        if val:
             status = f"{C.GREEN}set{C.RESET}"
             if is_secret_env_name(name):
                 shown = MASK_VALUE
@@ -698,6 +703,8 @@ def cmd_env(args):
             line = f"  {name:<{width}}  {status}  = {shown}"
         elif default is not None:
             line = f"  {name:<{width}}  {C.YELLOW}default{C.RESET}  = {default}"
+        elif val == "":
+            line = f"  {name:<{width}}  {C.RED}EMPTY{C.RESET}  (set to \"\" — required)"
         else:
             line = f"  {name:<{width}}  {C.RED}UNSET{C.RESET}  (required)"
         if used_by:
