@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
 
 // ShouldActivate is the pure decision admin_lib/interp.py's _enter_frame
@@ -93,13 +94,38 @@ var reservedTargetKeys = map[string]bool{
 	"kind": true, "desc": true, "targets": true, "urls": true, "footer": true,
 }
 
+// walkActionAndTargets calls fn once for act itself (target == "") and once
+// for every inline target subtable act carries (a kind="multi-target"
+// action's per-target override) — the traversal both ValidateURLRefs and
+// ValidateFooterRefs need: an action's own urls/footer, plus each target's
+// own. Order is deterministic (target keys sorted) so a caller reporting
+// every problem it finds does so in a stable order.
+func walkActionAndTargets(act manifest.Action, fn func(target string, tbl map[string]any)) {
+	fn("", act)
+	keys := make([]string, 0, len(act))
+	for k := range act {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if reservedTargetKeys[k] {
+			continue
+		}
+		if tbl, ok := act[k].(map[string]any); ok {
+			fn(k, tbl)
+		}
+	}
+}
+
 // ValidateURLRefs rejects a `urls` entry that is neither a real URL (a
 // "://" substring) nor a key of projectURLs — the manifest's top-level
 // [urls] table. Without this a typo ("local" when the table calls it
 // "dev-cf") would silently become a literal, painting a footer row that
 // goes nowhere. Meant to run at `admin check` / resolve time, mirroring
 // admin_lib/frame.py's validate_url_refs; walks both an action's own `urls`
-// and every inline target subtable's.
+// and every inline target subtable's, and — unlike a fail-fast raise —
+// collects every bad entry across every action and target into one *Error
+// so `admin check` can report all of them in one pass, not just the first.
 func ValidateURLRefs(actions map[string]manifest.Action, projectURLs map[string]string) error {
 	names := make([]string, 0, len(actions))
 	for n := range actions {
@@ -107,41 +133,30 @@ func ValidateURLRefs(actions map[string]manifest.Action, projectURLs map[string]
 	}
 	sort.Strings(names)
 
+	var problems []string
 	for _, name := range names {
-		act := actions[name]
-		if err := validateURLEntries(name, "", act["urls"], projectURLs); err != nil {
-			return err
-		}
-
-		targetKeys := make([]string, 0, len(act))
-		for k := range act {
-			targetKeys = append(targetKeys, k)
-		}
-		sort.Strings(targetKeys)
-		for _, k := range targetKeys {
-			if reservedTargetKeys[k] {
-				continue
-			}
-			tbl, ok := act[k].(map[string]any)
-			if !ok {
-				continue
-			}
-			if err := validateURLEntries(name, k, tbl["urls"], projectURLs); err != nil {
-				return err
-			}
-		}
+		walkActionAndTargets(actions[name], func(target string, tbl map[string]any) {
+			problems = append(problems, validateURLEntries(name, target, tbl["urls"], projectURLs)...)
+		})
 	}
-	return nil
+	if len(problems) == 0 {
+		return nil
+	}
+	return validate.Errorf("%s", strings.Join(problems, "\n"))
 }
 
-func validateURLEntries(actionName, target string, raw any, known map[string]string) error {
+// validateURLEntries returns one message per bad entry in raw (nil/empty
+// when raw is absent or every entry is fine), rather than stopping at the
+// first — so a urls list with several typos is reported all at once.
+func validateURLEntries(actionName, target string, raw any, known map[string]string) []string {
 	if raw == nil {
 		return nil
 	}
 	list, ok := raw.([]any)
 	if !ok {
-		return fmt.Errorf("action %q: 'urls' must be a list", actionName)
+		return []string{fmt.Sprintf("action %q: 'urls' must be a list", actionName)}
 	}
+	var out []string
 	for _, item := range list {
 		var u string
 		switch v := item.(type) {
@@ -171,9 +186,44 @@ func validateURLEntries(actionName, target string, raw any, known map[string]str
 			sort.Strings(names)
 			hint = fmt.Sprintf("known [urls] names: %v", names)
 		}
-		return fmt.Errorf(
+		out = append(out, fmt.Sprintf(
 			"%s: urls entry %q is not a URL and does not name an entry in the project's [urls] table — %s",
-			where, u, hint)
+			where, u, hint))
 	}
-	return nil
+	return out
+}
+
+// ValidateFooterRefs rejects a `footer` value, on an action or any of its
+// inline target subtables, that is present but not a plain bool — the Go
+// port of admin_lib/validate.py::_validate_footer, run at `admin check`
+// time over the whole manifest rather than per-action at parse time.
+// Collects every bad `footer` across every action and target, mirroring
+// ValidateURLRefs's "report everything" shape.
+func ValidateFooterRefs(actions map[string]manifest.Action) error {
+	names := make([]string, 0, len(actions))
+	for n := range actions {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	var problems []string
+	for _, name := range names {
+		walkActionAndTargets(actions[name], func(target string, tbl map[string]any) {
+			v, present := tbl["footer"]
+			if !present {
+				return
+			}
+			where := fmt.Sprintf("action %q", name)
+			if target != "" {
+				where += fmt.Sprintf(" target %q", target)
+			}
+			if err := validate.Footer(where, v); err != nil {
+				problems = append(problems, err.Error())
+			}
+		})
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return validate.Errorf("%s", strings.Join(problems, "\n"))
 }
