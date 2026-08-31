@@ -146,13 +146,17 @@ type Model struct {
 	haveData  bool
 	inflight  int // in-flight background work (the sync, row refreshes); header spins while > 0
 
-	// Beads: a repo with a beads workspace tracks its work there instead of in
-	// GitHub issues, so the Issues tab is replaced by the Beads tab and the issue
-	// section is never fetched. beadsProbed records that the `bd where` probe has
-	// answered — the launch sync waits for it, so a beads repo never spends the
-	// `gh` call the answer would have made pointless. beadsErr holds a workspace
-	// this build can't read (a schema the `bd` on PATH doesn't agree with), which
-	// the pane shows in place of rows rather than passing off as an empty backlog.
+	// Beads: whether the Beads tab is drawn at all comes from the declared
+	// tracker key alone (trackerKind), never from these fields. The probe
+	// they hold only runs for a repo that already declared tracker = "beads"
+	// (Init), and decides what's inside that tab: hasBeads is whether the `bd
+	// where` probe actually found a workspace, beadsProbed records that the
+	// probe has answered — the launch sync waits for it, so a beads repo
+	// never spends the `gh` issues call before knowing whether it needs one.
+	// beadsErr holds either "declared but not found" or a workspace this
+	// build can't read (a schema the `bd` on PATH doesn't agree with), which
+	// the pane shows in place of rows rather than passing off as an empty
+	// backlog.
 	hasBeads    bool
 	beadsProbed bool
 	beadPrefix  string // bd workspace prefix, stripped off every displayed id
@@ -360,10 +364,17 @@ func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def),
 		loadCacheCmd(m.nwo),
-		detectBeadsCmd(m.ctx, m.repoRoot),
 		startWatchCmd(m.ctx),
 		syncTickCmd(),
 		loadConfigCmd(m.ctx, m.repoRoot),
+	}
+	if m.trackerKind() == "beads" {
+		// The `bd where` probe only runs for a repo that declared tracker =
+		// "beads" — its answer feeds the tab's content (which bead workspace,
+		// or an error if none is found), never whether the tab is drawn at
+		// all. A repo that declared "github" or "none" has no reason to pay
+		// for this subprocess.
+		cmds = append(cmds, detectBeadsCmd(m.ctx, m.repoRoot))
 	}
 	if m.manifestOK {
 		// A herdr pane or agent worker changes state (running → waiting →
@@ -390,15 +401,27 @@ func syncTickCmd() tea.Cmd {
 	return tea.Tick(data.PollInterval, func(time.Time) tea.Msg { return syncTickMsg{} })
 }
 
-// usesPRs reports whether there is an open PR to look at right now. That, and
-// not a history of merges, is what the tab is for: a repo that used PRs once and
-// has moved to committing straight onto main would otherwise carry a tab that is
-// empty every time it is opened, and no merge ever falls back out of GitHub to
-// clear it. The value rides on m.remote, so the answer comes off the on-disk
-// cache at launch and re-decides itself on every sync: open a PR and the tab is
-// back within the poll, merge the last one and it goes away again.
-func (m Model) usesPRs() bool {
-	return len(m.remote.PRs) > 0
+// trackerKind returns the manifest's declared tracker ("beads", "github",
+// "none", or any other value a future tracker tab wants to recognize), or ""
+// when the manifest declares none (including when there is no manifest at
+// all — m.manifest is nil exactly when m.manifestOK is false, since New()
+// only ever sets the two together). Nothing here falls back to a `bd where`
+// probe or any other guess — admin-3rgp.22 replaces exactly that inference
+// with the declared key admin-3rgp.21 added to admin.toml.
+func (m Model) trackerKind() string {
+	if m.manifest == nil || !m.manifest.HasTracker {
+		return ""
+	}
+	return m.manifest.Tracker
+}
+
+// wantsPRs reports whether the manifest declares uses_pull_requests = true.
+// Undeclared defaults to false — the same default the Config tab shows
+// (configtab.go's manifestConfigLines). The PRs tab's presence follows this
+// declaration alone: zero open PRs is a legitimate state prRows renders as an
+// empty section, not a reason for the tab itself to disappear.
+func (m Model) wantsPRs() bool {
+	return m.manifest != nil && m.manifest.HasUsesPullRequests && m.manifest.UsesPullRequests
 }
 
 // selectMode reports whether the Branches pane is in multi-select, which is
@@ -412,25 +435,30 @@ func (m Model) selectMode() bool {
 }
 
 // visibleTabs is the tab bar, in the order it is drawn. Only the Repo tab is
-// unconditional: PRs and Issues need a GitHub remote to mean anything, the PRs
-// tab additionally needs a PR open right now, and a repo whose work
-// lives in beads shows Beads where Issues would be. The digit keys index this
-// list, so `3` is whatever the third drawn tab happens to be.
+// unconditional: Work needs a manifest, PRs needs uses_pull_requests declared
+// true, and the tracker tab is Issues or Beads depending on the declared
+// tracker (or absent when none is declared). Both PRs and Issues still need a
+// GitHub remote to mean anything; Beads does not, since beads is a local
+// database. None of the three infers itself from live repo state — not from
+// how many PRs happen to be open, and not from a `bd where` probe of the repo
+// — that inference is exactly what admin-3rgp.22 replaced with the declared
+// keys admin-3rgp.21 added. The digit keys index this list, so `3` is
+// whatever the third drawn tab happens to be.
 func (m Model) visibleTabs() []tab {
 	var tabs []tab
 	if m.manifestOK {
 		tabs = append(tabs, tabWork)
 	}
 	tabs = append(tabs, tabLocal)
-	if m.nwo != "" {
-		if m.usesPRs() {
-			tabs = append(tabs, tabPRs)
-		}
-		if !m.hasBeads {
+	if m.nwo != "" && m.wantsPRs() {
+		tabs = append(tabs, tabPRs)
+	}
+	switch m.trackerKind() {
+	case "github":
+		if m.nwo != "" {
 			tabs = append(tabs, tabIssues)
 		}
-	}
-	if m.hasBeads {
+	case "beads":
 		tabs = append(tabs, tabBeads)
 	}
 	tabs = append(tabs, tabConfig)
@@ -614,10 +642,11 @@ func (m *Model) switchTab(t tab) {
 	m.clampCursor()
 }
 
-// settleActiveTab moves off a tab that has just stopped being drawn — the PRs
-// tab in a repo whose last PR merged out of the recent window while the
-// dashboard was open. Without it the bar drops the tab while its pane stays on
-// screen, leaving a view no key can leave and no label points at.
+// settleActiveTab moves off a tab that has just stopped being drawn. Every
+// tab's presence is a declared, session-static fact now (admin-3rgp.22), so
+// this has no live trigger left in practice — it stays as the one guard
+// against landing on a tab index that turns out not to be drawn, rather than
+// leaving a view no key can leave and no label points at.
 func (m *Model) settleActiveTab() {
 	if m.tabIndex(m.active) < 0 {
 		m.active = tabLocal
@@ -655,20 +684,27 @@ func (m *Model) switchTabAt(n int) {
 // and always syncs; the staleness check is what stops a relaunch in a fresh
 // terminal from re-fetching data the disk cache already holds.
 func (m *Model) startSyncCmd(force bool) tea.Cmd {
-	if m.syncing || !(force || m.remote.Stale(!m.hasBeads)) {
+	withIssues := m.trackerKind() == "github"
+	if m.syncing || !(force || m.remote.Stale(withIssues)) {
 		return nil
 	}
 	m.syncing = true
 	m.inflight++
-	return syncCmd(m.ctx, m.nwo, !m.hasBeads)
+	return syncCmd(m.ctx, m.nwo, withIssues)
 }
 
-// launchSyncCmd fires the one-time launch sync, but only once both things that
-// decide its shape have landed: local git (so a PR row paints with its worktree
-// overlay the first time it is drawn) and the beads probe (so a beads-backed repo
-// never spends the issue query whose answer nothing would render).
+// launchSyncCmd fires the one-time launch sync, but only once local git has
+// landed (so a PR row paints with its worktree overlay the first time it is
+// drawn) — and, for a repo that declared tracker = "beads", only once the
+// probe that workspace's data comes from has also answered. Whether the sync
+// itself asks GitHub for issues is decided by the declared tracker alone
+// (startSyncCmd), so a "github" or "none" tracker never waits on the probe at
+// all.
 func (m *Model) launchSyncCmd() tea.Cmd {
-	if m.synced || !m.haveLocal || !m.beadsProbed {
+	if m.synced || !m.haveLocal {
+		return nil
+	}
+	if m.trackerKind() == "beads" && !m.beadsProbed {
 		return nil
 	}
 	m.synced = true
@@ -767,18 +803,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.launchSyncCmd()
 
 	case beadsDetectedMsg:
-		// The probe answered: this repo either keeps its work in beads or it
-		// doesn't. Either way the tab bar is now settled and the launch sync knows
-		// whether to ask GitHub for issues.
+		// The probe answered: does a beads workspace actually exist here. This
+		// only fires for a repo that already declared tracker = "beads" (see
+		// Init), so the Beads tab itself is never at stake — it's already
+		// drawn on the declaration alone. This decides what's inside it: real
+		// rows, or the "declared but not found" state below.
 		m.beadsProbed = true
 		m.hasBeads = msg.present
 		m.beadPrefix = msg.ws.Prefix
 		m.beadsErr = ""
-		if msg.err != nil {
+		switch {
+		case msg.err != nil:
 			m.beadsErr = msg.err.Error()
-		}
-		if !m.hasBeads && m.active == tabBeads {
-			m.switchTab(tabLocal)
+		case !msg.present:
+			m.beadsErr = `tracker = "beads" is declared, but no beads workspace was found here`
 		}
 		var cmds []tea.Cmd
 		if m.hasBeads && m.beadsErr == "" {
