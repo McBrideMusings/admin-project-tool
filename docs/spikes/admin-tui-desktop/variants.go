@@ -136,11 +136,11 @@ var (
 	Blocking bool
 )
 
-// warm loads one repo ONCE and renders every embedded screen from it. Settle is
-// a deadline, not a quiescence check (frame.go:108), so a Frame call per screen
-// paid that full second every time — fourteen screens over three repos was ~40
-// seconds of waiting spread across the session, and it landed on whichever tab
-// you pressed next. Frames snapshots them all from one load instead.
+// warm loads one repo ONCE and renders every embedded screen from it. A Frame
+// call per screen re-runs Init and pays its own settle wait every time —
+// fourteen screens over three repos was ~40 seconds of waiting spread across
+// the session, and it landed on whichever tab you pressed next. Frames
+// snapshots them all from one load instead.
 //
 // Runs off the render path so the first paint is instant; screens fill in as
 // their repo lands, and the harness's tick repaints when they do.
@@ -170,8 +170,12 @@ func warm(src repoSrc, w, h int) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		m := tui.New(ctx, src.root, src.nwo, src.branch, "main")
+		// Settle is a backstop now (frame.go), not the normal wait — Frames
+		// returns as soon as the load is quiescent, so a generous ceiling
+		// costs nothing on the common path and only matters for a genuinely
+		// slow git call under real contention (admin-3rgp.44).
 		outs := tui.Frames(ctx, m, tui.FrameOptions{
-			Width: w, Height: h + 3, Settle: 900 * time.Millisecond,
+			Width: w, Height: h + 3, Settle: 8 * time.Second,
 		}, seqs)
 
 		frameMu.Lock()
