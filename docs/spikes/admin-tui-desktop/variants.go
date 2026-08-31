@@ -318,28 +318,28 @@ func fillRow(sp screenSpec, w int) string {
 // ---- commands ----
 
 type cmdRow struct {
-	name, last, kind, arch, note string
-	steps                        [][4]string
-	targets                      []string
+	name, last, kind, arch, note, desc string
+	steps                              [][4]string
+	targets                            []string
 }
 
 var cmds = []cmdRow{
-	{name: "build", last: "2h ago", kind: "shell", arch: "go-cli",
+	{name: "build", desc: "Compile the binary", last: "2h ago", kind: "shell", arch: "go-cli",
 		steps: [][4]string{{"1", "shell", "go build ./...", "go-cli"}}},
-	{name: "check", last: "2h ago", kind: "shell", arch: "(manifest)",
+	{name: "check", desc: "Parse and resolve admin.toml", last: "2h ago", kind: "shell", arch: "(manifest)",
 		steps: [][4]string{{"1", "shell", "admin check .", "(manifest)"}}},
-	{name: "deploy", last: "18m ago", kind: "sequence", arch: "(manifest)", note: "exit 0 · 41s",
+	{name: "deploy", desc: "Install to ~/.admin, provision the userscript", last: "18m ago", kind: "sequence", arch: "(manifest)", note: "exit 0 · 41s",
 		steps: [][4]string{
 			{"1", "shell", "bash install.sh", "simple"},
 			{"2", "lua", "scripts/provision.lua", "apple"},
 			{"3", "shell", "admin check .", "(manifest)"}}},
-	{name: "docs", last: "—", kind: "shell", arch: "docs",
+	{name: "docs", desc: "Serve the docs site with hot reload", last: "—", kind: "shell", arch: "docs",
 		steps: [][4]string{{"1", "shell", "bun run docs:dev", "docs"}}},
-	{name: "logs", last: "—", kind: "logs", arch: "docker",
+	{name: "logs", desc: "Tail a log target", last: "—", kind: "logs", arch: "docker",
 		steps: [][4]string{{"1", "logs", "admin logs dev", "docker"}}},
-	{name: "retire-merged", last: "never", kind: "workflow", arch: "(manifest)",
+	{name: "retire-merged", desc: "Remove worktrees whose branch is merged", last: "never", kind: "workflow", arch: "(manifest)",
 		targets: []string{"fix-detector-parity-skip", "go-transient-kind-factories", "docs-adr-lua", "launchd-env-file"}},
-	{name: "test", last: "6m ago", kind: "sequence", arch: "(manifest)",
+	{name: "test", desc: "pytest plus the shell suite", last: "6m ago", kind: "sequence", arch: "(manifest)",
 		steps: [][4]string{
 			{"1", "go", "go test ./...", "go-cli"},
 			{"2", "shell", "bash tests/test_install.sh", "(manifest)"}}},
@@ -742,7 +742,8 @@ func renderLiveFirst(s State) string {
 			out = append(out, dim.Render("   no commands"))
 		} else {
 			for i, cc := range cmds {
-				out = append(out, " "+mark(i == sel, Pad(cc.name, 20))+dim.Render(cc.kind))
+				out = append(out, " "+mark(i == sel, Pad(cc.name, 18))+
+					dim.Render(Pad(cc.kind, 9)+trunc(cc.desc, maxInt(6, w-32))))
 			}
 		}
 		strip := readerStrip(cmds[sel], w, 4)
@@ -825,7 +826,7 @@ func renderInterleaved(s State) string {
 					row += liveStyle[r.state].Render(Pad(r.state, 9)) +
 						dim.Render(Pad(r.doing, maxInt(6, w-52))+r.where)
 				} else {
-					row += dim.Render(Pad(cc.kind, 9) + Pad("last run "+cc.last, maxInt(6, w-52)))
+					row += dim.Render(Pad(cc.kind, 9) + trunc(cc.desc, maxInt(6, w-52)))
 				}
 				out = append(out, row)
 			}
@@ -1002,7 +1003,7 @@ func renderDetailRight(s State) string {
 				row += liveStyle[lr.state].Render(Pad(lr.state, 9)) +
 					dim.Render(Pad(trunc(lr.doing, dw), dw)+" "+lr.where)
 			} else {
-				row += dim.Render(Pad(r.cmd.kind, 9) + "last run " + r.cmd.last)
+				row += dim.Render(Pad(r.cmd.kind, 9) + trunc(r.cmd.desc, maxInt(6, lw-27)))
 			}
 			left = append(left, row)
 		}
