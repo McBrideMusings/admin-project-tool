@@ -41,25 +41,80 @@ func removeRootCommand(t *testing.T, name string) {
 	}
 }
 
-// TestDispatchArgsNoManifestFallsToBranchShorthand is the ADR-0011 §2
-// "a project with no admin.toml keeps exactly today's behaviour" acceptance
-// criterion: with no admin.toml at cwd, a bare unrecognized argument still
-// becomes branch shorthand.
-func TestDispatchArgsNoManifestFallsToBranchShorthand(t *testing.T) {
+// runRegistered finds the command dispatchArgs registered under name and
+// returns the error its RunE produces. It fails the test if nothing was
+// registered — "dispatchArgs handled it" is exactly the claim these tests
+// make, so an absent command is a failure, not a skip.
+func runRegistered(t *testing.T, name string) error {
+	t.Helper()
+	for _, c := range rootCmd.Commands() {
+		if c.Name() == name {
+			return c.RunE(c, nil)
+		}
+	}
+	t.Fatalf("dispatchArgs registered no command under %q", name)
+	return nil
+}
+
+// TestDispatchArgsNoManifestIsUnknownCommand is admin-oeqo's core
+// acceptance criterion: with no admin.toml at cwd, a bare unrecognized
+// argument is an error, NOT a branch. This is the exact shape that made
+// `admin dev` in a fresh clone create and check out a branch called "dev".
+//
+// MUTATION EVIDENCE: restoring the old fall-through
+// (`return append([]string{"branch", "--yes"}, args...)`) makes this fail with:
+//
+//	dispatchArgs = [branch --yes my-feature], want [my-feature]
+func TestDispatchArgsNoManifestIsUnknownCommand(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	t.Cleanup(func() { removeRootCommand(t, "my-feature") })
 
 	got := dispatchArgs([]string{"my-feature"})
-	want := []string{"branch", "--yes", "my-feature"}
+	want := []string{"my-feature"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("dispatchArgs = %v, want %v", got, want)
+		t.Fatalf("dispatchArgs = %v, want %v (a bare word must never become branch input)", got, want)
+	}
+
+	err := runRegistered(t, "my-feature")
+	if err == nil {
+		t.Fatal("RunE = nil, want an unknown-command error")
+	}
+	for _, want := range []string{`unknown command "my-feature"`, "no admin.toml", "admin branch my-feature", "admin worktree my-feature"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err.Error(), want)
+		}
 	}
 }
 
-// TestDispatchArgsManifestCommandBeatsBranchShorthand is ADR-0011 §2's
-// resolution order step 2: a name the project's admin.toml declares as a
-// command dispatches through it rather than falling to branch shorthand.
-func TestDispatchArgsManifestCommandBeatsBranchShorthand(t *testing.T) {
+// TestDispatchArgsUnknownNameWithManifestListsCommands covers the other half
+// of the unknown-command message: in a project that HAS a manifest, the
+// remedy is a name from it, so the error names what the manifest declares.
+func TestDispatchArgsUnknownNameWithManifestListsCommands(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeManifest(t, dir, "deploy")
+	t.Cleanup(func() { removeRootCommand(t, "some-branch-name") })
+
+	got := dispatchArgs([]string{"some-branch-name"})
+	want := []string{"some-branch-name"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("dispatchArgs = %v, want %v", got, want)
+	}
+
+	err := runRegistered(t, "some-branch-name")
+	if err == nil {
+		t.Fatal("RunE = nil, want an unknown-command error")
+	}
+	if !strings.Contains(err.Error(), "deploy") {
+		t.Errorf("error %q does not name the manifest's own commands", err.Error())
+	}
+}
+
+// TestDispatchArgsManifestCommandDispatches is ADR-0011 §2's resolution
+// order step 2: a name the project's admin.toml declares as a command
+// dispatches through it rather than being reported unknown.
+func TestDispatchArgsManifestCommandDispatches(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	writeManifest(t, dir, "deploy")
@@ -79,22 +134,6 @@ func TestDispatchArgsManifestCommandBeatsBranchShorthand(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("dispatchArgs matched the manifest command but never registered it on rootCmd")
-	}
-}
-
-// TestDispatchArgsManifestCommandNotMatchingFallsThrough proves a manifest
-// present at cwd that simply doesn't declare the given name still falls
-// through to branch shorthand — the manifest lookup is a lookup, not an
-// unconditional claim on every bare argument.
-func TestDispatchArgsManifestCommandNotMatchingFallsThrough(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	writeManifest(t, dir, "deploy")
-
-	got := dispatchArgs([]string{"some-branch-name"})
-	want := []string{"branch", "--yes", "some-branch-name"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("dispatchArgs = %v, want %v", got, want)
 	}
 }
 
@@ -119,18 +158,17 @@ func TestDispatchArgsToolVerbBeatsManifestCommand(t *testing.T) {
 	}
 }
 
-// TestDispatchArgsWorktreeVerbBeatsBranchShorthand pins ADR-0011 §2 step 1 for
-// the "worktree" verb specifically: it is a registered cmd/ verb (listed by
-// name in the ADR alongside branch/prs/populate), so "admin worktree <input>"
-// must dispatch straight to it rather than falling through to branch
-// shorthand as "branch --yes worktree <input>" — which is what a caller gets
-// if worktreeCmd is ever dropped from rootCmd.
+// TestDispatchArgsWorktreeVerbIsRegistered pins step 1 for the "worktree"
+// verb specifically. `branch` and `worktree` are the only two ways to create
+// a git ref now that the bare-word fall-through is gone (admin-oeqo), so
+// each must actually be on rootCmd — a dropped worktreeCmd would turn
+// `admin worktree my-feature` into an unknown-command error with no
+// replacement.
 //
 // MUTATION EVIDENCE: commenting out rootCmd.AddCommand(worktreeCmd) in
-// cmd/root.go makes this fail with:
-//
-//	dispatchArgs = [branch --yes worktree my-feature], want [worktree my-feature]
-func TestDispatchArgsWorktreeVerbBeatsBranchShorthand(t *testing.T) {
+// cmd/root.go makes this fail — dispatchArgs registers an unknown-command
+// stub under "worktree" instead of matching the real verb.
+func TestDispatchArgsWorktreeVerbIsRegistered(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -144,9 +182,10 @@ func TestDispatchArgsWorktreeVerbBeatsBranchShorthand(t *testing.T) {
 // TestDispatchArgsBrokenManifestErrorsNotBranch is admin-3rgp.52's fixture
 // exactly: an admin.toml that EXISTS but fails to resolve (missing
 // project_name, per internal/manifest's own requirement) must produce a
-// manifest error, never a fall-through to branch shorthand — a fall-through
-// here is what let `admin run-args` silently `git checkout -b run-args`
-// against a live repo. dispatchArgs still returns the bare args unchanged
+// manifest error, never a fall-through — the fall-through here is what let
+// `admin run-args` silently `git checkout -b run-args` against a live repo,
+// and with the fall-through gone (ADR-0014) the same silence would now
+// misreport a declared command as a typo. dispatchArgs returns the bare args unchanged
 // (matching the "handled here" shape it already uses for a real manifest
 // command), but the command it registered under that name must report the
 // manifest problem instead of running anything or falling through.
@@ -154,7 +193,7 @@ func TestDispatchArgsWorktreeVerbBeatsBranchShorthand(t *testing.T) {
 // MUTATION EVIDENCE: reverting registerManifestCommand's err-handling to the
 // old `if !ok || err != nil { return false }` makes this fail with:
 //
-//	dispatchArgs = [branch --yes run-args], want [run-args]
+//	RunE error = `unknown command "run-args" …`, want it to report the invalid manifest
 func TestDispatchArgsBrokenManifestErrorsNotBranch(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -199,19 +238,36 @@ run = "echo hi"
 	}
 }
 
-// TestDispatchArgsNoManifestStillFallsThroughWithBrokenSibling re-confirms
-// (alongside TestDispatchArgsNoManifestFallsToBranchShorthand) that the
-// broken-manifest fix did not touch the other branch of the same
-// conditional: a directory with NO admin.toml at all still falls through to
-// branch shorthand exactly as ADR-0011 §2 requires.
-func TestDispatchArgsNoManifestStillFallsThroughWithBrokenSibling(t *testing.T) {
+// TestDispatchArgsBrokenManifestBeatsUnknownCommand pins the distinction the
+// two error paths have to keep: a broken manifest reports the manifest
+// problem, never "unknown command", which would send the user hunting for a
+// typo in a name their manifest does declare.
+func TestDispatchArgsBrokenManifestBeatsUnknownCommand(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	body := `archetypes = []
+[commands.deploy]
+desc = "x"
+steps = ["deploy"]
+[actions.deploy]
+kind = "shell"
+run = "echo hi"
+`
+	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write admin.toml: %v", err)
+	}
+	t.Cleanup(func() { removeRootCommand(t, "whatever-branch") })
 
-	got := dispatchArgs([]string{"whatever-branch"})
-	want := []string{"branch", "--yes", "whatever-branch"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("dispatchArgs = %v, want %v", got, want)
+	dispatchArgs([]string{"whatever-branch"})
+	err := runRegistered(t, "whatever-branch")
+	if err == nil {
+		t.Fatal("RunE = nil, want the manifest error")
+	}
+	if !strings.Contains(err.Error(), "admin.toml is invalid") {
+		t.Fatalf("RunE error = %q, want it to report the invalid manifest", err.Error())
+	}
+	if strings.Contains(err.Error(), "unknown command") {
+		t.Fatalf("RunE error = %q, want the manifest problem rather than a typo report", err.Error())
 	}
 }
 

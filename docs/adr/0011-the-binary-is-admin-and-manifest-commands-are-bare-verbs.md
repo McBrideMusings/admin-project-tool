@@ -1,8 +1,14 @@
 # ADR-0011: The binary is `admin`, and manifest commands are bare verbs
 
-**Status:** Accepted
+**Status:** Accepted — §2 step 3 amended by [ADR-0014](0014-no-bare-word-fallback-branch-and-worktree-are-verbs.md)
 **Date:** 2026-08-31
 **Context:** [ADR-0006](0006-interpreter-mode.md), the one-binary epic (admin-3rgp)
+
+> **Amendment.** §2's step 3 (the branch shorthand) no longer exists: a bare word matching
+> no verb and no manifest command is an error. `admin.toml` is never committed, so step 2
+> is skipped in every fresh clone and step 3 turned every typed command name into a git
+> checkout. See [ADR-0014](0014-no-bare-word-fallback-branch-and-worktree-are-verbs.md).
+> §1, §3 and the rest of §2 stand as written.
 
 ## Decision
 
