@@ -40,13 +40,20 @@ type SearchPath []Source
 // inside this package, so callers (and tests) can point them at real
 // directories without mutating process state.
 func DefaultSearchPath(homeDir, repoDir string) SearchPath {
-	homeArchetypes := filepath.Join(homeDir, ".admin", "archetypes")
+	homeArchetypes := HomeArchetypesDir(homeDir)
 	repoArchetypes := filepath.Join(repoDir, ".admin", "archetypes")
 	return SearchPath{
 		{Label: "embedded", FS: embedded()},
 		{Label: homeArchetypes, FS: os.DirFS(homeArchetypes)},
 		{Label: repoArchetypes, FS: os.DirFS(repoArchetypes)},
 	}
+}
+
+// HomeArchetypesDir is where the archetype deployment path (Deploy, in
+// deploy.go) writes and where DefaultSearchPath's home slot reads —
+// ~/.admin/archetypes/, kept in one place so the two can never drift apart.
+func HomeArchetypesDir(homeDir string) string {
+	return filepath.Join(homeDir, ".admin", "archetypes")
 }
 
 // embedded is the reserved slot for archetypes promoted directly into the
