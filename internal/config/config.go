@@ -58,12 +58,24 @@ type Beads struct {
 	Columns []string `toml:"columns"`
 }
 
+// Workflow configures dispatching a kind="workflow" action's targets
+// (admin-3rgp.25): which herdr agent kind a target runs when its own action
+// declares no `agent` override, and how many targets run at once when the
+// action declares no ceiling of its own. Empty/zero mean "unset" — the
+// dispatcher's own DefaultCeiling and a required, explicitly-set agent are
+// what actually apply, not a value invented here.
+type Workflow struct {
+	Agent   string `toml:"agent"`
+	Ceiling int    `toml:"ceiling"`
+}
+
 // Config is the merged global + per-repo configuration.
 type Config struct {
 	Populate  []Entry   `toml:"populate"`
 	Worktrees Worktrees `toml:"worktrees"`
 	Identity  Identity  `toml:"identity"`
 	Beads     Beads     `toml:"beads"`
+	Workflow  Workflow  `toml:"workflow"`
 }
 
 // Owns reports whether a git author email is one of yours. Comparison is
@@ -143,6 +155,15 @@ func Load(repoRoot string) (Config, error) {
 		// wrote.
 		if len(part.Beads.Columns) > 0 {
 			cfg.Beads.Columns = part.Beads.Columns
+		}
+		// Workflow, like Identity.Login, is a single current value rather than
+		// something to accumulate: a per-repo agent/ceiling replaces the global
+		// one outright.
+		if a := strings.TrimSpace(part.Workflow.Agent); a != "" {
+			cfg.Workflow.Agent = a
+		}
+		if part.Workflow.Ceiling > 0 {
+			cfg.Workflow.Ceiling = part.Workflow.Ceiling
 		}
 	}
 	// Default any unset mode to symlink.
