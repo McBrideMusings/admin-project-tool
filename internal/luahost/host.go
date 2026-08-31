@@ -87,6 +87,19 @@ func New(projectRoot string) *Host {
 // — forces nothing; a body that never calls set_log_context just gets "".
 func (h *Host) LogFile() string { return h.logFile }
 
+// MaterializeLogFile forces any pending log context to be created now and
+// returns its path — the Go port of admin_lib/core.py's get_log_file(),
+// where "asking for the path is a use": a caller (the pinned footer wants
+// to print a log path before the action has necessarily written a line)
+// that read a path and then found the log created somewhere else later
+// would be worse than announcing it slightly early. Plain LogFile() does
+// NOT do this — a Lua body reading a global must not create a log file
+// just by asking what it's named. Empty when no context was ever set.
+func (h *Host) MaterializeLogFile() string {
+	h.materializeLogContext()
+	return h.logFile
+}
+
 // ansiEscape strips every ANSI escape sequence, not just SGR colour codes —
 // a log file should carry no escape sequences at all, matching
 // admin_lib/core.py's _ANSI_ESCAPE_RE.

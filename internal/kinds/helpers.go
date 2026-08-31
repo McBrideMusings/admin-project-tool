@@ -69,6 +69,32 @@ func actionStringList(a manifest.Action, key string) ([]string, bool) {
 	return out, true
 }
 
+// actionBool reads a bool-valued key off a raw manifest.Action. present is
+// false both when the key is absent and when it holds a non-bool value —
+// mirrors admin_lib's cmd.meta.get("footer") returning None either way; a
+// caller that needs to tell "absent" from "wrong type" apart validates the
+// manifest separately (admin-3rgp.8's job, not this ticket's).
+func actionBool(a manifest.Action, key string) (val bool, present bool) {
+	v, ok := a[key]
+	if !ok {
+		return false, false
+	}
+	b, ok := v.(bool)
+	return b, ok
+}
+
+// actionURLs reads the raw `urls` key off a manifest.Action as the []any
+// TOML decodes an array into — frame.ResolveURLs takes it from here.
+// Absent or non-list is treated the same as "no urls declared" (nil); a
+// non-list value is validate.go's job to reject, not this ticket's.
+func actionURLs(a manifest.Action) []any {
+	v, ok := a["urls"].([]any)
+	if !ok {
+		return nil
+	}
+	return v
+}
+
 // orDefault returns s unless it's empty, in which case it returns def.
 func orDefault(s, def string) string {
 	if s == "" {
