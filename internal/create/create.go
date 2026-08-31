@@ -67,13 +67,13 @@ func Worktree(ctx context.Context, repoRoot, branch string) (Result, error) {
 		// no-op — return its path so the caller just cd's in (populate already
 		// ran when it was first made). Only a dir that ISN'T a worktree is a
 		// real problem worth failing on.
-		if isRegisteredWorktree(ctx, path) {
+		if IsRegisteredWorktree(ctx, path) {
 			return Result{Path: path, Branch: branch}, nil
 		}
 		// Worktree paths are keyed on the repo's basename, so two checkouts with
 		// the same directory name under different parents (~/work/foo and
 		// ~/personal/foo) compute the same path. The dir sitting there is then a
-		// real worktree — just another repo's — and isRegisteredWorktree, scoped
+		// real worktree — just another repo's — and IsRegisteredWorktree, scoped
 		// to this repo, says no. Name that case instead of claiming the path
 		// isn't a worktree at all.
 		if owner := worktreeOwner(ctx, path); owner != "" {
@@ -116,10 +116,17 @@ func Worktree(ctx context.Context, repoRoot, branch string) (Result, error) {
 	return res, nil
 }
 
-// isRegisteredWorktree reports whether path is a worktree git already knows
+// IsRegisteredWorktree reports whether path is a worktree git already knows
 // about. Compares resolved paths so a symlinked repo root (e.g. /Users vs
 // /private on macOS) still matches.
-func isRegisteredWorktree(ctx context.Context, path string) bool {
+//
+// Exported for admin-3rgp.25's dispatch machinery: a worktree this package
+// created can vanish before a queued target under a concurrency ceiling
+// actually starts (a background sweeper, or a person cleaning up by hand),
+// and the dispatcher must re-check this exact fact — "is this still a real
+// worktree" — immediately before starting, rather than trusting the path it
+// got back from Worktree minutes or hours earlier.
+func IsRegisteredWorktree(ctx context.Context, path string) bool {
 	wts, err := git.Worktrees(ctx)
 	if err != nil {
 		return false
