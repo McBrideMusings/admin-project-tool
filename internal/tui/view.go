@@ -177,6 +177,9 @@ func (m Model) renderBodyHits(width, bodyHeight int) ([]string, []hitTarget) {
 	case m.confirming || m.deleting:
 		content = m.renderModalBody(width, contentH)
 		hits = noneHits(len(content))
+	case m.wfResolving || m.wfOpen:
+		content = m.renderWorkflowConfirmBody(width, contentH)
+		hits = noneHits(len(content))
 	case m.active == tabWork:
 		content, hits = m.renderWorkBody(width, contentH)
 	case m.active == tabLocal:
