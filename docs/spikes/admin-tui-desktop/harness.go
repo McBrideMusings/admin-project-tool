@@ -70,15 +70,29 @@ func Pad(s string, w int) string {
 }
 
 type model struct {
-	vi    int
-	axes  map[string]int
-	w, h  int
-	ready bool
+	vi   int
+	axes map[string]int
+	w, h int
 }
 
 func newModel() model {
 	m := model{axes: map[string]int{}}
 	return m
+}
+
+// size is the design's own area: the terminal minus the harness bar, floored so
+// a zero or absurd WindowSizeMsg can never produce a negative slice bound. A
+// terminal that reports 0x0 — a pty that has not been sized yet, a multiplexer
+// pane mid-attach — is normal, not an error, and must still render.
+func (m model) size() (int, int) {
+	w, h := m.w, m.h-1
+	if w < 1 {
+		w = DumpWidth
+	}
+	if h < 1 {
+		h = DumpHeight
+	}
+	return w, h
 }
 
 func (m model) state() State {
@@ -88,7 +102,8 @@ func (m model) state() State {
 			v[a.Key] = a.Values[m.axes[a.Key]%len(a.Values)]
 		}
 	}
-	return State{Values: v, W: m.w, H: m.h - 1}
+	w, h := m.size()
+	return State{Values: v, W: w, H: h}
 }
 
 func (m model) Init() tea.Cmd { return nil }
@@ -96,7 +111,7 @@ func (m model) Init() tea.Cmd { return nil }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.w, m.h, m.ready = msg.Width, msg.Height, true
+		m.w, m.h = msg.Width, msg.Height
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -129,17 +144,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	if !m.ready {
-		return ""
-	}
+	w, h := m.size()
 	body := Variants[m.vi].Render(m.state())
 	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
-	for len(lines) < m.h-1 {
+	for len(lines) < h {
 		lines = append(lines, "")
 	}
-	lines = lines[:m.h-1]
+	lines = lines[:h]
 	for i := range lines {
-		lines[i] = Pad(lines[i], m.w)
+		lines[i] = Pad(lines[i], w)
 	}
 	return strings.Join(lines, "\n") + "\n" + m.bar()
 }
@@ -164,7 +177,8 @@ func (m model) bar() string {
 	}
 	b.WriteString(k.Render(" ⇧Q "))
 	b.WriteString(c.Render("quit "))
-	return c.Render(Pad(b.String(), m.w))
+	w, _ := m.size()
+	return c.Render(Pad(b.String(), w))
 }
 
 // ---- dump ----
