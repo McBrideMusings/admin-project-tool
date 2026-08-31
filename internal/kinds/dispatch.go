@@ -94,7 +94,7 @@ func RunAction(m *manifest.Manifest, r *Registry, name string, args []string) er
 	if !ok {
 		return fmt.Errorf("action %q: unknown kind %q", name, kind)
 	}
-	runner, err := factory(name, action)
+	runner, err := factory(name, action, m)
 	if err != nil {
 		return fmt.Errorf("action %q: %w", name, err)
 	}

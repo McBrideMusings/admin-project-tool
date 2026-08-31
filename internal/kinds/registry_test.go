@@ -7,7 +7,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-func stubFactory(name string, action manifest.Action) (Runner, error) {
+func stubFactory(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
 	return func(args []string) error { return nil }, nil
 }
 
@@ -91,7 +91,7 @@ func TestStubFactoryErrorsAtDispatch(t *testing.T) {
 	if !ok {
 		t.Fatal("raylib should have a registered factory")
 	}
-	run, err := f("raylib", manifest.Action{})
+	run, err := f("raylib", manifest.Action{}, nil)
 	if err != nil {
 		t.Fatalf("building the runner should not itself error, got %v", err)
 	}

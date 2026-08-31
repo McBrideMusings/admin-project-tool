@@ -14,15 +14,16 @@ var goModes = map[string]bool{"build": true, "install": true, "clean": true}
 // admin_lib/interp.py::_make_go. `run` names the mode (build|install|clean,
 // default "build"), not a shell command.
 //
-// Python reads the binary/main path config from the manifest-level [go]
-// table (ns.get("_GO_CONFIG")), injected by the interpreter's namespace
-// build. A Factory here only receives (name, action) — no Manifest — so
-// this ticket reads `binary`/`main` as the action's own inline keys instead
-// (`[actions.build].binary`). Wiring a project-level [go] table into every
-// kind="go" action generically is the same gap makeLua's doc comment
-// flags for [actions.X.config]; tracked as a follow-up rather than solved
-// here by threading Manifest into every Factory signature.
-func makeGoKind(name string, action manifest.Action) (Runner, error) {
+// binary/main come from the manifest-level [go] table (m.Go), exactly as
+// Python's _make_go reads ns.get("_GO_CONFIG") — admin-3rgp.43 is what makes
+// that table reachable here: a Factory now receives the resolved Manifest,
+// not just the one action being dispatched. There is deliberately no
+// per-action inline override (an [actions.X].binary key): Python's
+// _make_go never had one either, so adding one here would be new surface
+// with no precedent to port, and a project builds at most a handful of Go
+// binaries through this kind, all of which already share the single project-
+// level [go] table.
+func makeGoKind(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
 	mode, _ := actionString(action, "run")
 	if mode == "" {
 		mode = "build"
@@ -31,8 +32,9 @@ func makeGoKind(name string, action manifest.Action) (Runner, error) {
 		return nil, fmt.Errorf(
 			"action %q: kind=\"go\" run must be one of build|install|clean, got %q", name, mode)
 	}
-	binary, _ := actionString(action, "binary")
-	main, _ := actionString(action, "main")
+	cfg := archetypeConfigTable(m, "go")
+	binary, _ := cfg["binary"].(string)
+	main, _ := cfg["main"].(string)
 
 	return func(args []string) error {
 		var run string

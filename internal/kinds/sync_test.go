@@ -14,7 +14,7 @@ func TestSyncCopiesFiles(t *testing.T) {
 	writeFile(t, root, "dist/index.html", "<html></html>")
 	writeFile(t, root, "dist/assets/app.js", "console.log(1)")
 
-	runner, err := makeSync("deploy", manifest.Action{"run": "out", "src": "dist/"})
+	runner, err := makeSync("deploy", manifest.Action{"run": "out", "src": "dist/"}, nil)
 	if err != nil {
 		t.Fatalf("makeSync: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestSyncDeletesExtraneousDestFiles(t *testing.T) {
 	writeFile(t, root, "dist/keep.txt", "keep")
 	writeFile(t, root, "out/stale.txt", "stale")
 
-	runner, err := makeSync("deploy", manifest.Action{"run": "out", "src": "dist/"})
+	runner, err := makeSync("deploy", manifest.Action{"run": "out", "src": "dist/"}, nil)
 	if err != nil {
 		t.Fatalf("makeSync: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestSyncExcludesArePreserved(t *testing.T) {
 
 	runner, err := makeSync("deploy", manifest.Action{
 		"run": "out", "src": "dist/", "excludes": []any{"*.db"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("makeSync: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestSyncExcludesArePreserved(t *testing.T) {
 // TestSyncMissingRunIsRejected proves kind="sync" requires 'run' (the
 // destination), matching admin_lib/validate.py's "sync kind requires 'run'".
 func TestSyncMissingRunIsRejected(t *testing.T) {
-	if _, err := makeSync("bad", manifest.Action{}); err == nil {
+	if _, err := makeSync("bad", manifest.Action{}, nil); err == nil {
 		t.Fatal("makeSync with no 'run' should error")
 	}
 }
@@ -102,7 +102,7 @@ func TestSyncDefaultSrcIsDist(t *testing.T) {
 	t.Chdir(root)
 	writeFile(t, root, "dist/only.txt", "x")
 
-	runner, err := makeSync("deploy", manifest.Action{"run": "out"})
+	runner, err := makeSync("deploy", manifest.Action{"run": "out"}, nil)
 	if err != nil {
 		t.Fatalf("makeSync: %v", err)
 	}

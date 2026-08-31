@@ -20,7 +20,7 @@ const emptyCmdErr = "refusing to run an empty command"
 // manifest.ResolveComputed, not ResolveEnv: a shell body may reference its
 // own shell-local variables (${x} from `x=$(...)`), which ResolveEnv would
 // wrongly treat as an unresolved required var and error on.
-func makeShell(name string, action manifest.Action) (Runner, error) {
+func makeShell(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
 	run, _ := actionString(action, "run")
 	return func(args []string) error {
 		cmd := strings.TrimSpace(manifest.ResolveComputed(run))
@@ -49,7 +49,7 @@ func makeShell(name string, action manifest.Action) (Runner, error) {
 // admin-3rgp.11's territory, not this ticket's). Runner args are appended to
 // `run`, each shell-quoted, so a caller-supplied argument can never be
 // re-interpreted as shell syntax.
-func makeShellPassthrough(name string, action manifest.Action) (Runner, error) {
+func makeShellPassthrough(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
 	run, _ := actionString(action, "run")
 	return func(args []string) error {
 		cmdline := run
