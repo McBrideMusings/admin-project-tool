@@ -75,7 +75,10 @@ func Execute() error {
 //
 // Step 2 is skipped (falling straight to step 3) whenever the project has no
 // admin.toml at all, so a project with no manifest keeps exactly today's
-// behaviour — every unrecognized bare argument is branch input.
+// behaviour — every unrecognized bare argument is branch input. An
+// admin.toml that IS present but fails to parse or resolve is not skipped:
+// it blocks the fall-through and reports the manifest problem instead
+// (admin-3rgp.52) — see registerManifestCommand.
 func dispatchArgs(args []string) []string {
 	if len(args) == 0 {
 		return args
@@ -105,21 +108,46 @@ func dispatchArgs(args []string) []string {
 // registerManifestCommand resolves the project manifest at the current
 // working directory and, if it declares a command named name, adds a cobra
 // command for it to rootCmd (so the normal SetArgs/Execute flow below runs
-// it) and returns true. It returns false — never an error — both when there
-// is no admin.toml here and when name isn't one of its commands; either way
-// dispatchArgs falls through to branch shorthand unchanged. A present but
-// invalid admin.toml is treated the same as "no match" here rather than
-// surfacing its parse error: this keeps a broken manifest from turning an
-// otherwise-uninvolved bare argument into a resolve error, at the cost of a
-// silent fall-through the (separate) check verb is what actually catches.
+// it) and returns true.
+//
+// It returns false — meaning "keep looking, fall through to branch
+// shorthand" — only in the one case ADR-0011 §2 reserves for that: there is
+// no admin.toml here at all. Two other cases both return true, which blocks
+// the branch-shorthand fall-through, but differ in what gets registered:
+//
+//   - The manifest resolves fine but doesn't declare a command called name:
+//     no command is registered, and dispatchArgs' caller falls through
+//     anyway (registerManifestCommand still returns false here — a resolved
+//     manifest without a matching name is exactly the "not for me" case a
+//     bare argument like a branch name legitimately hits).
+//   - The manifest EXISTS but fails to parse or resolve: this used to be
+//     silently treated as "no match", which sent every bare argument in a
+//     broken-manifest project straight to branch shorthand — admin-3rgp.52,
+//     which mutated git state with no warning the manifest was even
+//     invalid. Now a present-but-broken manifest registers an error command
+//     under name whose RunE reports the manifest problem, and returns true
+//     so the caller never reaches the branch fallback.
 func registerManifestCommand(name string) bool {
 	wd, err := os.Getwd()
 	if err != nil {
 		return false
 	}
 	m, ok, err := resolveProjectManifest(context.Background(), wd)
-	if !ok || err != nil {
-		return false
+	if !ok {
+		return false // no admin.toml at all — ADR-0011 §2's one fall-through case
+	}
+	if err != nil {
+		// admin.toml exists but failed to parse/resolve: a hard error naming
+		// the problem, never a fall-through to branch shorthand (admin-3rgp.52).
+		rootCmd.AddCommand(&cobra.Command{
+			Use:                name,
+			Short:              "admin.toml is invalid",
+			DisableFlagParsing: true,
+			RunE: func(cmd *cobra.Command, cmdArgs []string) error {
+				return fmt.Errorf("admin.toml is invalid: %w", err)
+			},
+		})
+		return true
 	}
 	if !kinds.HasCommand(m, name) {
 		return false

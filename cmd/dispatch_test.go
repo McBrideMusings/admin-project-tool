@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -135,6 +136,80 @@ func TestDispatchArgsWorktreeVerbBeatsBranchShorthand(t *testing.T) {
 
 	got := dispatchArgs([]string{"worktree", "my-feature"})
 	want := []string{"worktree", "my-feature"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("dispatchArgs = %v, want %v", got, want)
+	}
+}
+
+// TestDispatchArgsBrokenManifestErrorsNotBranch is admin-3rgp.52's fixture
+// exactly: an admin.toml that EXISTS but fails to resolve (missing
+// project_name, per internal/manifest's own requirement) must produce a
+// manifest error, never a fall-through to branch shorthand — a fall-through
+// here is what let `admin run-args` silently `git checkout -b run-args`
+// against a live repo. dispatchArgs still returns the bare args unchanged
+// (matching the "handled here" shape it already uses for a real manifest
+// command), but the command it registered under that name must report the
+// manifest problem instead of running anything or falling through.
+//
+// MUTATION EVIDENCE: reverting registerManifestCommand's err-handling to the
+// old `if !ok || err != nil { return false }` makes this fail with:
+//
+//	dispatchArgs = [branch --yes run-args], want [run-args]
+func TestDispatchArgsBrokenManifestErrorsNotBranch(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// No project_name: internal/manifest.Load rejects this at resolve time.
+	body := `archetypes = []
+[commands.run-args]
+desc = "x"
+steps = ["run-args"]
+[actions.run-args]
+kind = "shell"
+run = "echo hi"
+`
+	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write admin.toml: %v", err)
+	}
+	t.Cleanup(func() { removeRootCommand(t, "run-args") })
+
+	got := dispatchArgs([]string{"run-args"})
+	want := []string{"run-args"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("dispatchArgs = %v, want %v (a broken manifest must not fall through to branch shorthand)", got, want)
+	}
+
+	var found *cobra.Command
+	for _, c := range rootCmd.Commands() {
+		if c.Name() == "run-args" {
+			found = c
+		}
+	}
+	if found == nil {
+		t.Fatal("dispatchArgs matched the broken manifest but registered no command to report it")
+	}
+	err := found.RunE(found, nil)
+	if err == nil {
+		t.Fatal("RunE = nil, want an error naming the manifest problem")
+	}
+	if !strings.Contains(err.Error(), "admin.toml is invalid") {
+		t.Fatalf("RunE error = %q, want it to say the manifest is invalid", err.Error())
+	}
+	if !strings.Contains(err.Error(), "project_name") {
+		t.Fatalf("RunE error = %q, want it to name the actual manifest problem (project_name)", err.Error())
+	}
+}
+
+// TestDispatchArgsNoManifestStillFallsThroughWithBrokenSibling re-confirms
+// (alongside TestDispatchArgsNoManifestFallsToBranchShorthand) that the
+// broken-manifest fix did not touch the other branch of the same
+// conditional: a directory with NO admin.toml at all still falls through to
+// branch shorthand exactly as ADR-0011 §2 requires.
+func TestDispatchArgsNoManifestStillFallsThroughWithBrokenSibling(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	got := dispatchArgs([]string{"whatever-branch"})
+	want := []string{"branch", "--yes", "whatever-branch"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("dispatchArgs = %v, want %v", got, want)
 	}
