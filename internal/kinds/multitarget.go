@@ -39,7 +39,7 @@ type multiTargetEntry struct {
 // or name = "@other-action" for delegation) — the two are mutually
 // exclusive, matching validate_action's "cannot mix targets with inline
 // target subtables".
-func makeMultiTarget(name string, action manifest.Action) (Runner, error) {
+func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
 	desc, _ := actionString(action, "desc")
 	if desc == "" {
 		desc = name

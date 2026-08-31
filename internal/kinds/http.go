@@ -24,7 +24,7 @@ const httpClientTimeout = 15 * time.Second
 // resolution failure (an unset ${VAR} the URL or body references, with no
 // default) is a hard error here, matching resolve_env's own
 // sys.exit(2)-equivalent behaviour.
-func makeHTTP(name string, action manifest.Action) (Runner, error) {
+func makeHTTP(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
 	urlTmpl, ok := actionString(action, "run")
 	if !ok || urlTmpl == "" {
 		return nil, fmt.Errorf(`action %q: kind="http" requires 'run' (the URL)`, name)
