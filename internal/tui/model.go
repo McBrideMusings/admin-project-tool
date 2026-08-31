@@ -1437,9 +1437,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filtering = true
 		m.filter = ""
 	case "r":
-		// The Work tab has no `r`: retry was removed because restarting a
-		// worker under the same identity is not something every producer can
-		// honour or every kind of work can survive. Kill it and start again.
+		// The Work tab has no `r` at all. It used to mean retry, which was
+		// removed because restarting a live thing under the same identity is
+		// not something every producer can honour. It must not silently become
+		// "refresh" by falling through either: the Work tab renders the live
+		// registry and the resolved manifest, neither of which a refresh
+		// fetches, so `r` there would spend a network sync to redraw the same
+		// rows. `R` still syncs everything from any tab.
+		if m.active == tabWork {
+			return m, nil
+		}
 		// The Beads tab has no per-row refresh: re-reading the whole workspace is
 		// one local query, so there is nothing a single bead would save.
 		if m.active == tabBeads {
