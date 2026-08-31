@@ -67,7 +67,7 @@ var screens = map[string]screenSpec{
 	"issues":                     {tab: 2, issueSel: 1},
 	"issues-selected":            {tab: 2, issueSel: 3},
 	"dispatch-sheet":             {tab: 2, issueSel: 1, sheet: true},
-	"swarm":                      {tab: 3},
+	"swarm":                      {tab: 3, cmdSel: 7},
 	"config":                     {tab: 4},
 	"no-manifest":                {tab: 1, noMan: true},
 }
@@ -81,9 +81,9 @@ var Variants = []Variant{
 		Reset:   func() { selDelta = 0 },
 	},
 	{
-		Name:    "Combined",
-		Caption: "one Work tab; live work is a block under the commands",
-		Render:  renderCombined,
+		Name:    "Detail-right",
+		Caption: "interleaved rows, with a third of the screen showing whatever the cursor is on",
+		Render:  renderDetailRight,
 		Key:     onKeyCombined,
 		Reset:   func() { selDelta = 0 },
 	},
@@ -421,7 +421,7 @@ func repoBody(w, h int, noMan bool) []string {
 
 	var branches []string
 	if noMan {
-		branches = []string{mark(true, Pad("main", lw-12) + dim.Render("4d"))}
+		branches = []string{mark(true, Pad("main", lw-12)+dim.Render("4d"))}
 	} else {
 		branches = []string{
 			mark(true, Pad("feat/one-tool-go-merge", lw-12)+dim.Render("2m")),
@@ -643,13 +643,10 @@ func maxInt(a, b int) int {
 	return b
 }
 
-// ---- variant 2: Combined ----
+// ---- shared navigation for the Work-tab variants ----
 //
-// Folds live work into the landing tab, so the four things you do in a session —
-// see a command, run it, watch what it started, jump to it — are one screen
-// instead of two. The cost is the reader: it drops from the full right column to
-// a fixed block, so a long run line truncates. That trade is the question this
-// variant exists to answer.
+// Four tabs instead of five: live work is folded into Work, so the tab cycle is
+// shorter. Everything else falls through to the Settled variant's handler.
 
 var combinedTabs = []string{"commands", "repo", "issues", "config"}
 
@@ -675,170 +672,6 @@ func onKeyCombined(key string, s State, set func(axis, value string)) bool {
 		return true
 	}
 	return onKey(key, s, set)
-}
-
-func renderCombined(s State) string {
-	w, h := s.W, s.H
-	if w <= 0 {
-		w = DumpWidth
-	}
-	if h <= 0 {
-		h = DumpHeight
-	}
-	name := s.Get("screen")
-	if name == "" {
-		name = "commands"
-	}
-	sp := screens[name]
-
-	rows := []string{header(w), tabBarCombined(sp, w), ""}
-	body := combinedBody(sp, w, h-5, s.Is("data", "empty"))
-	for len(body) < h-5 {
-		body = append(body, "")
-	}
-	rows = append(rows, body[:h-5]...)
-	rows = append(rows, strings.Repeat("─", w), Pad(" "+dim.Render(keysCombined(sp)), w))
-	if sp.sheet {
-		rows = overlaySheet(rows, w, h)
-	}
-	for i := range rows {
-		rows[i] = Pad(rows[i], w)
-	}
-	return strings.Join(rows, "\n")
-}
-
-func tabBarCombined(sp screenSpec, w int) string {
-	defs := []tabDef{{"Work", 12}, {"Repo", 0}, {"Issues", 7}, {"Config", 0}}
-	if sp.noMan {
-		defs = defs[1:]
-	}
-	active := 0
-	switch sp.tab {
-	case 0, 3:
-		active = 0
-	case 1:
-		active = 1
-	case 2:
-		active = 2
-	case 4:
-		active = 3
-	}
-	if sp.noMan {
-		active--
-	}
-	var b strings.Builder
-	b.WriteString(" ")
-	for i, t := range defs {
-		label := " " + t.name
-		if t.count > 0 {
-			label += " " + fmt.Sprint(t.count)
-		}
-		label += " "
-		if i == active {
-			b.WriteString(pill.Render(label))
-		} else {
-			b.WriteString(dim.Render(label))
-		}
-		b.WriteString("  ")
-	}
-	return Pad(b.String(), w)
-}
-
-func combinedBody(sp screenSpec, w, h int, empty bool) []string {
-	switch {
-	case sp.noMan:
-		return repoBody(w, h, true)
-	case sp.tab == 1:
-		return repoBody(w, h, false)
-	case sp.tab == 2:
-		return issuesBody(sp, w)
-	case sp.tab == 4:
-		return configBody(w)
-	}
-
-	// The live block is fixed height at the bottom; commands take what is left.
-	live := liveCompact(w, empty)
-	cmdH := h - len(live) - 1
-	if cmdH < 4 {
-		cmdH = 4
-	}
-
-	sel := wrap(sp.cmdSel, len(cmds))
-	c := cmds[sel]
-
-	var left []string
-	if empty {
-		left = []string{dim.Render(" no commands")}
-	} else {
-		for i, cc := range cmds {
-			row := cc.name
-			if sp.running && cc.name == "test" {
-				row += " " + yl.Render("●")
-			}
-			left = append(left, mark(i == sel, row))
-		}
-	}
-
-	// The compressed reader: identity and the run lines, nothing else. No rule,
-	// no blank spacers, no per-step "from" line — the archetype rides on the
-	// step row instead.
-	var right []string
-	title := bo.Render(c.name) + dim.Render("  "+c.kind+" · "+c.arch+" · "+c.last)
-	if sp.running && c.name == "test" {
-		title = bo.Render(c.name) + dim.Render("  ") + yl.Render("running 00:41")
-	}
-	right = append(right, title)
-	switch {
-	case c.targets != nil:
-		right = append(right, dim.Render("query · 4 targets"))
-		for _, t := range c.targets {
-			right = append(right, "  "+t)
-		}
-	case sp.running && c.name == "test":
-		right = append(right,
-			gr.Render("ok")+" internal/detect "+dim.Render("0.63s"),
-			dim.Render("..")+" internal/tui")
-	default:
-		for _, st := range c.steps {
-			right = append(right, dim.Render(st[0]+" ")+Pad(st[1], 9)+st[2]+dim.Render("  "+st[3]))
-		}
-	}
-
-	out := make([]string, 0, h)
-	for i := 0; i < cmdH; i++ {
-		out = append(out, split(at(left, i), at(right, i), w))
-	}
-	out = append(out, live...)
-	return out
-}
-
-func liveCompact(w int, empty bool) []string {
-	st := map[string]lipgloss.Style{"running": gr, "waiting": yl, "done": dim, "failed": rd}
-	row := func(s, id, doing, where string) string {
-		return "   " + st[s].Render(Pad(s, 8)) + Pad(id, 16) +
-			dim.Render(Pad(doing, maxInt(6, w-36))+where)
-	}
-	if empty {
-		return append(section("Live work", 0, w), dim.Render("   nothing running"))
-	}
-	out := section("Live work", 5, w)
-	out = append(out,
-		row("running", "admin-3rgp.36", "writing internal/lua/host.go", "pane 3"),
-		row("waiting", "admin-3rgp.7", "needs input: root command name", "pane 4"),
-		row("failed", "admin-3rgp.33", "go test ./internal/detect FAIL", "pane 5"),
-		row("running", "admin docs", "vitepress dev · localhost:5173", "pane 1"),
-	)
-	return out
-}
-
-func keysCombined(sp screenSpec) string {
-	switch {
-	case sp.sheet:
-		return "⏎ dispatch · e edit · esc cancel"
-	case sp.tab == 0 || sp.tab == 3:
-		return "↑↓ move · ↵ run · a attach · k kill · / filter · ←→ tab · q quit"
-	}
-	return keys(sp)
 }
 
 // ---- shared pieces for the live-prominent variants ----
@@ -1106,4 +939,153 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// ---- Detail-right ----
+//
+// The interleaved list on the left two thirds, and a detail pane on the right
+// third that shows whatever the cursor is on — a command or a worker. One
+// cursor over one list of two kinds of thing, which is the interleaved claim
+// taken seriously: if they really are one list, the reader has to handle both.
+
+type workRow struct {
+	cmd    *cmdRow
+	worker *liveRow
+}
+
+// workRows is the single list the cursor traverses: every command, then every
+// worker that has no command behind it. Order is stable so the cursor does not
+// jump when something starts or stops.
+func workRows(empty bool) []workRow {
+	if empty {
+		return nil
+	}
+	var out []workRow
+	for i := range cmds {
+		out = append(out, workRow{cmd: &cmds[i]})
+	}
+	for i := range liveRows {
+		if liveRows[i].cmd == "" {
+			out = append(out, workRow{worker: &liveRows[i]})
+		}
+	}
+	return out
+}
+
+func renderDetailRight(s State) string {
+	return chrome(s, func(sp screenSpec, w, h int, empty bool) []string {
+		rows := workRows(empty)
+		if len(rows) == 0 {
+			return append(section("Work", 0, w),
+				dim.Render("   nothing here yet — admin.toml declares no commands"))
+		}
+		sel := wrap(sp.cmdSel, len(rows))
+		lw := w*2/3 - 2
+		rw := w - lw - 3
+
+		live := map[string]*liveRow{}
+		for i := range liveRows {
+			if liveRows[i].cmd != "" {
+				live[liveRows[i].cmd] = &liveRows[i]
+			}
+		}
+
+		var left []string
+		left = append(left, dim.Render(" Commands"))
+		for i, r := range rows {
+			if r.cmd == nil {
+				continue
+			}
+			row := mark(i == sel, Pad(r.cmd.name, 16))
+			if lr, ok := live[r.cmd.name]; ok {
+				dw := maxInt(4, lw-34)
+				row += liveStyle[lr.state].Render(Pad(lr.state, 9)) +
+					dim.Render(Pad(trunc(lr.doing, dw), dw)+" "+lr.where)
+			} else {
+				row += dim.Render(Pad(r.cmd.kind, 9) + "last run " + r.cmd.last)
+			}
+			left = append(left, row)
+		}
+		left = append(left, "", dim.Render(" Workers"))
+		for i, r := range rows {
+			if r.worker == nil {
+				continue
+			}
+			dw := maxInt(4, lw-34)
+			row := mark(i == sel, Pad(r.worker.id, 16)) +
+				liveStyle[r.worker.state].Render(Pad(r.worker.state, 9)) +
+				dim.Render(Pad(trunc(r.worker.doing, dw), dw)+" "+r.worker.where)
+			left = append(left, row)
+		}
+
+		right := detailOf(rows[sel], rw)
+
+		out := make([]string, 0, h)
+		for i := 0; i < h; i++ {
+			out = append(out, " "+Pad(at(left, i), lw)+dim.Render("│ ")+at(right, i))
+		}
+		return out
+	}, []tabDef{{"Work", 12}, {"Repo", 0}, {"Issues", 7}, {"Config", 0}},
+		"↑↓ move · ↵ run or attach · k kill · r retry · ←→ tab · q quit")
+}
+
+// detailOf is the polymorphic half: the pane's shape follows the row's kind, so
+// the two never have to be squeezed into one set of fields.
+func detailOf(r workRow, w int) []string {
+	if r.worker != nil {
+		wk := r.worker
+		return []string{
+			bo.Render(wk.id),
+			liveStyle[wk.state].Render(wk.state) + dim.Render("  ·  "+wk.where),
+			"",
+			dim.Render("now"),
+			"  " + wk.doing,
+			"",
+			dim.Render("branch"),
+			"  " + cy.Render("embed-lua-vm"),
+			dim.Render("worktree"),
+			"  " + dim.Render("~/.worktrees/…/embed-lua-vm"),
+			dim.Render("elapsed"),
+			"  12m",
+			"",
+			dim.Render("a") + " attach   " + dim.Render("k") + " kill   " + dim.Render("r") + " retry",
+		}
+	}
+	c := r.cmd
+	out := []string{
+		bo.Render(c.name),
+		dim.Render(c.kind + "  ·  " + c.arch),
+		"",
+		dim.Render("last run"),
+		"  " + c.last,
+	}
+	if c.note != "" {
+		out = append(out, "  "+dim.Render(c.note))
+	}
+	out = append(out, "", dim.Render("log"), "  "+dim.Render("~/.admin/logs/"+c.name+".log"), "")
+	if c.targets != nil {
+		out = append(out, dim.Render("targets")+dim.Render("  query · 4"))
+		for _, t := range c.targets {
+			out = append(out, "  "+trunc(t, w-3))
+		}
+		return out
+	}
+	out = append(out, dim.Render("steps"))
+	for _, st := range c.steps {
+		out = append(out, "  "+dim.Render(st[0]+" ")+st[1])
+		out = append(out, "    "+trunc(st[2], w-5))
+		out = append(out, "    "+dim.Render("from ")+mg.Render(st[3]))
+	}
+	return out
+}
+
+func trunc(s string, n int) string {
+	r := []rune(s)
+	if n < 2 {
+		return ""
+	}
+	if len(r) > n {
+		return string(r[:n-1]) + "…"
+	}
+	return s
 }
