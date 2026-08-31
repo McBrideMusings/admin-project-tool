@@ -8,8 +8,10 @@ signature here does not change without updating this page in the same commit.
 
 Implementation: [`internal/luahost`](https://github.com/McBrideMusings/admin-project-tool/tree/main/internal/luahost)
 (`github.com/yuin/gopher-lua`, pure Go, Lua 5.1, no cgo). `internal/luahost.Host.Exec(source,
-config)` is the entrypoint an action kind's factory calls to run a Lua body — wiring an actual
-`kind = "lua"` into `internal/kinds` is [admin-3rgp.35](https://github.com/McBrideMusings/admin-project-tool/issues), not this page's concern.
+config)` is the entrypoint `kind = "lua"`'s factory (`internal/kinds`'s `makeLua`) calls to run
+a Lua body — `run` holds the body's source text, exactly as `kind = "python"`'s `run` held a
+Python code block before this ADR replaced it. An inline `[actions.X.config]` table on the
+action, if present, becomes the `config` global.
 
 A Lua body gets Lua's `base`, `table`, `string` and `math` libraries. It does **not** get `os`
 or `io` — anything that touches the process goes through a host function instead, so the
@@ -93,3 +95,10 @@ whatever `map[string]any` its caller hands it.
 - **A richer `pick_target` picker** — arrow-key navigation, scrolling for long lists. The
   current numbered-list picker meets the acceptance criterion (in-process, no subprocess) but
   not the original's UI fidelity.
+- **Manifest-level archetype config tables reaching a Lua body automatically.** Python's
+  interpreter exposes a whole table like `[apple]` to a `kind = "python"` body by convention
+  (`_CONFIG_GLOBALS`), because its namespace-builder sees the full resolved Manifest. A Go
+  `kinds.Factory` only receives `(name string, action manifest.Action)` — no Manifest — so
+  `makeLua` can only expose what the action itself carries inline (`[actions.X.config]`).
+  Wiring a project-level table into every `kind = "lua"` action generically needs either a
+  wider Factory signature or a second dispatch-time pass; tracked as a follow-up.

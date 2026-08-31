@@ -26,18 +26,23 @@ func notImplemented(kind string) Factory {
 // looping would make invariant 2 ("a declared kind with no registered
 // factory fails at startup") vacuously true and unfalsifiable, since every
 // declared kind would always end up registered by construction.
+//
+// admin-3rgp.35 replaces eight of these stubs with real implementations:
+// shell, shell-passthrough, lua, go, npm, http, sync, multi-target — the set
+// ADR-0010's amendment to that ticket settles on (nine minus the deleted
+// python/python-script, plus lua). Every other kind stays a stub; later
+// tickets (admin-3rgp.12/.13/.14/.15/.18) replace them the same way.
 func registerBuiltins(r *Registry) {
-	r.MustRegister("shell", notImplemented("shell"))
-	r.MustRegister("shell-passthrough", notImplemented("shell-passthrough"))
-	r.MustRegister("multi-target", notImplemented("multi-target"))
+	r.MustRegister("shell", makeShell)
+	r.MustRegister("shell-passthrough", makeShellPassthrough)
+	r.MustRegister("multi-target", makeMultiTarget)
 	r.MustRegister("apple-dev-loop", notImplemented("apple-dev-loop"))
-	r.MustRegister("python", notImplemented("python"))
-	r.MustRegister("python-script", notImplemented("python-script"))
-	r.MustRegister("http", notImplemented("http"))
-	r.MustRegister("npm", notImplemented("npm"))
-	r.MustRegister("go", notImplemented("go"))
+	r.MustRegister("lua", makeLua)
+	r.MustRegister("http", makeHTTP)
+	r.MustRegister("npm", makeNpm)
+	r.MustRegister("go", makeGoKind)
 	r.MustRegister("raylib", notImplemented("raylib"))
-	r.MustRegister("sync", notImplemented("sync"))
+	r.MustRegister("sync", makeSync)
 	r.MustRegister("apple", notImplemented("apple"))
 	r.MustRegister("clean-dev", notImplemented("clean-dev"))
 	r.MustRegister("vite-dev", notImplemented("vite-dev"))
