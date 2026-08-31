@@ -1,30 +1,30 @@
  admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
-  Commands 7    Repo    Issues 7    Live 5    Config                                            
+  Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
- Resolved configuration                                                                       9 
-────────────────────────────────────────────────────────────────────────────────────────────────
-   tracker               beads                                                   admin.toml     
-   uses_pull_requests    false                                                   admin.toml     
-   identity.login        pierce                                                  admin.toml     
-   worktree_root         ~/.worktrees/admin-project-tool                         default        
-   populate_patterns     admin.toml, .env*, CLAUDE.local.md                      default        
-   default_agent         claude                                                  default        
-   concurrency_ceiling   4                                                       admin.toml     
-   enter.branch          checkout                                                default        
-   enter.issue           open                                                    default        
+  Global   Local                                                                                
+  /Users/pierce/.config/repo/config.toml                                                        
                                                                                                 
+  # repo — global config. Per-repo overrides live in <repo>/.repo/config.toml.                  
                                                                                                 
+  # Gitignored files brought from the primary repo into each new worktree.                      
+  # mode = "symlink" (default) points at the primary repo's file; mode = "copy"                 
+  # gives the worktree its own so it can diverge.                                               
+  #                                                                                             
+  # This is the ONLY config for worktree population. Both paths that create a                   
+  # worktree read it: `repo branch` at create time, and Claude Code via                         
+  # ~/.claude/hooks/worktree-link-locals.sh, which shells out to `repo populate`                
+  # on SessionStart and CwdChanged rather than parsing anything itself.                         
+  #                                                                                             
+  # A pattern is glob-matched against the PRIMARY repo, and the primary repo is                 
+  # derived from the worktree, so a pattern can never reach into a different                    
+  # project. That property is structural, not a check — it is what the herdr                    
+  # plugin this replaced got wrong, hardcoding one repo's path and stamping its                 
+  # skills into every worktree on the machine.                                                  
+  #                                                                                             
+  # A path git tracks is skipped whatever the pattern says (repo 0ea1e9d), which                
+  # is what makes the directory globs below safe: they exist for the LOCAL entries              
+  # beside the committed ones.                                                                  
                                                                                                 
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
+  # Local-only skills, plugins and settings. Committed ones are skipped as tracked.             
 ────────────────────────────────────────────────────────────────────────────────────────────────
  ↑↓ move · ←→ tab · q quit                                                                      

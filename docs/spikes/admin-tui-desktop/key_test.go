@@ -83,3 +83,28 @@ func TestEnterOpensTheDispatchSheet(t *testing.T) {
 		t.Fatalf("after enter, screen = %q, want dispatch-sheet", got)
 	}
 }
+
+// The tracker tweak swaps which repo the embedded frame renders, because which
+// tracker tabs exist is a property of the repo (hasBeads/usesPRs), not a setting.
+func TestTrackerTweakSwapsTheEmbeddedRepo(t *testing.T) {
+	beads := Strip(render(State{
+		Values: map[string]string{"screen": "issues", "tracker": "beads"}, W: 96, H: 30}))
+	github := Strip(render(State{
+		Values: map[string]string{"screen": "issues", "tracker": "github"}, W: 96, H: 30}))
+
+	if !strings.Contains(beads, "Beads") {
+		t.Errorf("beads side did not draw a Beads tab")
+	}
+	if !strings.Contains(github, "Issues") {
+		t.Errorf("github side did not draw an Issues tab")
+	}
+	if !strings.Contains(beads, "admin-project-tool") {
+		t.Errorf("beads side is not this repo")
+	}
+	if !strings.Contains(github, "etv-station") {
+		t.Errorf("github side is not etv-station")
+	}
+	if beads == github {
+		t.Errorf("the tweak changed nothing")
+	}
+}

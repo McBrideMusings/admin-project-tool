@@ -1,30 +1,30 @@
  admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
-  Commands 7    Repo    Issues 7    Live 5    Config                                            
+  Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
- ◇ build                    │ retire-merged                                                     
- ◇ check                    │ ────────────────────────────────────────────────────────────────  
- ◇ deploy                   │ kind      workflow                                                
- ◇ docs                     │ archetype (manifest)                                              
- ◇ logs                     │ last run  never                                                   
- ◆ retire-merged            │ log       ~/.admin/logs/retire-merged.log                         
- ◇ test                     │                                                                   
-                            │ source    query                                                   
-                            │                                                                   
-                            │ Targets  resolved now · 4 match                                   
-                            │   fix-detector-parity-skip                                        
-                            │   go-transient-kind-factories                                     
-                            │   docs-adr-lua                                                    
-                            │   launchd-env-file                                                
-                            │                                                                   
-                            │                                                                   
-                            │                                                                   
-                            │                                                                   
-                            │                                                                   
-                            │                                                                   
-                            │                                                                   
-                            │                                                                   
-                            │                                                                   
-                            │                                                                   
-                            │                                                                   
+  Commands                                                     │ retire-merged                  
+ ◇ build           shell    Compile the binary                 │ workflow  ·  (manifest)        
+ ◇ check           shell    Parse and resolve admin.toml       │                                
+ ◇ deploy          sequence Install to ~/.admin, provision the…│ last run                       
+ ◇ docs            running  vitepress dev · localhost:5… pane 1│   never                        
+ ◇ logs            logs     Tail a log target                  │                                
+ ◆ retire-merged   workflow Remove worktrees whose branch is m…│ log                            
+ ◇ test            running  internal/tui · 00:41         pane 6│   ~/.admin/logs/retire-merged.l
+                                                               │                                
+  Workers                                                      │ targets  query · 4             
+ ◇ admin-3rgp.36   running  writing internal/lua/host.go pane 3│   fix-detector-parity-skip     
+ ◇ admin-3rgp.7    waiting  needs input: root command n… pane 4│   go-transient-kind-factories  
+ ◇ admin-3rgp.33   failed   go test ./internal/detect F… pane 5│   docs-adr-lua                 
+                                                               │   launchd-env-file             
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ run · / filter · L log · ←→ tab · q quit                                           
+ ↑↓ move · ↵ run or attach · k kill · r retry · ←→ tab · q quit                                 

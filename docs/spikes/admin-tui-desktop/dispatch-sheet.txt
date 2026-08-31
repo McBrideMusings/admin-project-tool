@@ -1,30 +1,30 @@
  admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
-  Commands 7    Repo    Issues 7    Live 5    Config                                            
+  Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
- Ready                                                                                        3 
+ Ready                                                                                       202
 ────────────────────────────────────────────────────────────────────────────────────────────────
-   admin-3rgp.36   Embed a Lua VM and define the host API                                 afk   
- ▸ admin-3rgp.29   Two deployment paths: go install, archetypes                           afk   
-   admin-3rgp.7    Decide how admin <command> reaches the CLI                        decision   
-                                                                                                
- Blocked         ┌────────────────────────────────────────────────────────────┐               4 
-─────────────────│  Dispatch admin-3rgp.29                                    │─────────────────
-   admin-3rgp.20 │                                                            │         ← .19   
-   admin-3rgp.28 │    agent     claude                                        │         ← .19   
-   admin-3rgp.35 │    model     sonnet                                        │         ← .36   
-   admin-3rgp.37 │    branch    two-deployment-paths                          │         ← .36   
-                 │    worktree  ~/.worktrees/…/two-deployment-paths           │                 
-                 │    lands to  feat/one-tool-go-merge                        │                 
-                 │                                                            │                 
-                 │    ⏎ dispatch     e edit     esc cancel                    │                 
-                 └────────────────────────────────────────────────────────────┘                 
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
+▸ 3rgp     P1  epic     One tool: merge repo-dash into admin as a sing…                       2d
+  3rgp.36  P1  task     Embed a Lua VM and define the host API archety…  14                   2d
+  3rgp.7   P1  task     Decide how admin <command> reaches the CLI, an…  17  afk              2d
+  3rgp.29  P1  task     Two deployment paths: go install for the binar…   1  afk              2d
+  lk2r     P2  task     Parallel URL checks in register_open_command                          3d
+  qajk     P2  ta┌────────────────────────────────────────────────────────────┐               3d
+  3geg     P2  ta│  Dispatch admin-3rgp.29                                    │               3d
+  uwa0     P2  ta│                                                            │               3d
+  x69j     P2  ta│    agent     claude                                        │               3d
+  uw2p     P2  ta│    model     sonnet                                        │               3d
+  8hwt     P2  ta│    branch    two-deployment-paths                          │               3d
+  uo84     P2  ta│    lands to  feat/one-tool-go-merge                        │               3d
+  bsx6     P2  ta│                                                            │               3d
+  zjts     P2  ta│    ⏎ dispatch     e edit     esc cancel                    │               3d
+  d98p     P2  ta└────────────────────────────────────────────────────────────┘               3d
+  943s     P2  task     Add log level filtering to LogFormatter                               3d
+  cfj8     P2  task     Align run_parallel label widths for consistent…                       3d
+  lj5f     P2  task     init-admin should scaffold dev/prod split for …                       3d
+  q2a1     P2  task     Re-bundle all projects after bundler bugfixes …                       3d
+  l3gr     P2  task     v2: unit tests for order list + spacer resolut…                       3d
+  5l8a     P2  task     v2: dump_manifest round-trip test for order fi…                       3d
+  nslj     P2  task     v2: archetypes should declare a default order                         3d
+  ↓ 208 more                                                                                    
 ────────────────────────────────────────────────────────────────────────────────────────────────
  ⏎ dispatch · e edit · esc cancel                                                               
