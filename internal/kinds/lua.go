@@ -5,7 +5,25 @@ import (
 	"strings"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	lua "github.com/yuin/gopher-lua"
 )
+
+// luaErrorMessage returns just the raised value's text for a Lua runtime
+// error, dropping gopher-lua's stack trace when present. *lua.ApiError's own
+// Error() always concatenates "<message>\n<trace>" (state.go), so a body
+// that calls error("build failed") — the only way a kind="lua" action can
+// signal failure, there being no Python-style bare sys.exit(1) — would
+// otherwise print a "[G]: in function 'error' ..." traceback to the user on
+// every deliberate, expected failure (an unknown build target, a failed
+// xcodebuild), not just a genuine bug in the body. Falls back to err.Error()
+// for anything that isn't an *lua.ApiError (a Go-side error Exec itself
+// returned, e.g. a syntax error) so no information is lost there.
+func luaErrorMessage(err error) string {
+	if apiErr, ok := err.(*lua.ApiError); ok {
+		return apiErr.Object.String()
+	}
+	return err.Error()
+}
 
 // makeLua is kind="lua"'s factory — the piece admin-3rgp.36's
 // docs/architecture/lua-host-api.md explicitly deferred to this ticket:
@@ -53,8 +71,8 @@ func makeLua(name string, action manifest.Action, m *manifest.Manifest) (Runner,
 			return fmt.Errorf("action %q: kind=\"lua\" needs 'run' (a Lua body)", name)
 		}
 		h := newHost()
-		if err := h.Exec(source, cfg); err != nil {
-			h.Err(name + " failed: " + err.Error())
+		if err := h.Exec(source, cfg, args...); err != nil {
+			h.Err(name + " failed: " + luaErrorMessage(err))
 			return fmt.Errorf("action %q: %w", name, err)
 		}
 		h.Ok(name + " complete")

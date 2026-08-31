@@ -28,9 +28,11 @@ func (h *Host) NewState(cfg map[string]any) *lua.LState {
 	h.registerOutput(L)
 	h.registerLogContext(L)
 	h.registerRunCmd(L)
+	h.registerRunGroup(L)
 	h.registerTargets(L)
 	registerCapabilities(L)
 	h.registerApple(L)
+	h.registerMetro(L)
 
 	if cfg == nil {
 		cfg = map[string]any{}
@@ -47,9 +49,21 @@ func (h *Host) NewState(cfg map[string]any) *lua.LState {
 // archetype config as a Lua table" (acceptance criterion). Wiring an actual
 // "lua" kind into internal/kinds is admin-3rgp.35's job; Exec is what that
 // kind's factory calls.
-func (h *Host) Exec(source string, cfg map[string]any) error {
+//
+// args (variadic so every pre-existing 2-argument call site keeps compiling
+// unchanged) becomes the `args` global — a Lua array of the CLI arguments
+// the action was invoked with, exactly as the Python original's bare `args`
+// name held sys.argv's tail. admin-3rgp.37 is the first caller that needs
+// this: a body doing its own target-selection/flag-parsing (`./admin build
+// windows`, `./admin dev --clean`) has to see what was typed.
+func (h *Host) Exec(source string, cfg map[string]any, args ...string) error {
 	L := h.NewState(cfg)
 	defer L.Close()
+	argsTbl := L.NewTable()
+	for i, a := range args {
+		argsTbl.RawSetInt(i+1, lua.LString(a))
+	}
+	L.SetGlobal("args", argsTbl)
 	return L.DoString(source)
 }
 
@@ -125,6 +139,41 @@ func (h *Host) registerRunCmd(L *lua.LState) {
 	}))
 }
 
+// registerRunGroup binds run_group({{tag=, cmd=}, ...}[, {dir=}]) -> exit
+// code (0 if every command exited zero) — the Lua entrypoint for
+// Host.RunGroup, ADR-0010's named exception ("moves into the host") for the
+// one archetype body that supervises several concurrent child processes with
+// tagged, interleaved output.
+func (h *Host) registerRunGroup(L *lua.LState) {
+	L.SetGlobal("run_group", L.NewFunction(func(L *lua.LState) int {
+		tbl := L.CheckTable(1)
+		n := tbl.Len()
+		cmds := make([]GroupCmd, 0, n)
+		for i := 1; i <= n; i++ {
+			row, ok := tbl.RawGetInt(i).(*lua.LTable)
+			if !ok {
+				continue
+			}
+			tag, _ := row.RawGetString("tag").(lua.LString)
+			cmd, _ := row.RawGetString("cmd").(lua.LString)
+			cmds = append(cmds, GroupCmd{Tag: string(tag), Cmd: string(cmd)})
+		}
+		dir := ""
+		if opts, ok := L.Get(2).(*lua.LTable); ok {
+			if d, ok := opts.RawGetString("dir").(lua.LString); ok {
+				dir = string(d)
+			}
+		}
+		code, err := h.RunGroup(cmds, dir)
+		if err != nil {
+			L.RaiseError("run_group: %v", err)
+			return 0
+		}
+		L.Push(lua.LNumber(code))
+		return 1
+	}))
+}
+
 // entriesFromLuaTable reads a Lua array of {key=..., description=...} rows
 // (pick_target/only_target's argument shape) into []TargetEntry, preserving
 // array order — the reason the argument is an array and not a plain
@@ -186,4 +235,10 @@ func registerCapabilities(L *lua.LState) {
 	plistTbl := L.NewTable()
 	plistTbl.RawSetString("read", L.NewFunction(plistRead))
 	L.SetGlobal("plist", plistTbl)
+
+	fsTbl := L.NewTable()
+	fsTbl.RawSetString("read", L.NewFunction(fsRead))
+	L.SetGlobal("fs", fsTbl)
+
+	L.SetGlobal("env", L.NewFunction(envGet))
 }
