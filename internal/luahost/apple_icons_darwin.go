@@ -319,6 +319,91 @@ func SwapDevIconsBanner(iconDirs map[string]string) (bool, error) {
 	return ok, nil
 }
 
+// ApplyTVDevBanner overlays the dev banner onto an EXISTING tvOS
+// .brandassets tree in place, without regenerating anything — the overlay
+// counterpart to GenerateTVIcons for a project that ships its own tvOS art
+// rather than a glyph config. Mirrors admin_lib/icons.py's
+// apply_tv_dev_banner: only the topmost Front layer of each imagestack
+// (tvIconStacks, from apple_icons_generate_darwin.go) and the Top Shelf
+// images get the banner, matching Apple's own guidance to keep markup on the
+// uppermost layer — Back and Middle are never touched, so ADR-0007's
+// "Back must be fully opaque" rule is never at stake here.
+//
+// Unlike ApplyDevBannerToPNGFile (the flat appiconset overlay), this does
+// NOT flatten to opaque RGB: it preserves whatever alpha channel the source
+// PNG already carries, matching the Python original's
+// Image.open(...).convert("RGBA") + paste round-trip — the Front layer is
+// meant to float transparently over Middle/Back, so flattening it here
+// would reintroduce exactly the inset-icon bug ADR-0007 exists to avoid on
+// the *other* layers.
+func ApplyTVDevBanner(h *Host, brandassetsDir string) bool {
+	for _, stack := range tvIconStacks {
+		frontDir := filepath.Join(brandassetsDir, stack.Name, "Front.imagestacklayer", "Content.imageset")
+		if err := overlayDevBannerDir(frontDir); err != nil {
+			h.Err(fmt.Sprintf("apple.apply_tv_dev_banner: %v", err))
+			return false
+		}
+	}
+	for _, set := range tvTopShelfSets {
+		if err := overlayDevBannerDir(filepath.Join(brandassetsDir, set.Name)); err != nil {
+			h.Err(fmt.Sprintf("apple.apply_tv_dev_banner: %v", err))
+			return false
+		}
+	}
+	return true
+}
+
+// overlayDevBannerDir overlays a rectangular dev banner (sized to each
+// image's own bounds) onto every *.png directly inside dir, in place. A
+// missing directory is a no-op, not an error — mirrors
+// admin_lib/icons.py's _overlay_dev_banner_dir. A file that fails to decode
+// as a PNG is skipped, also matching the Python original's per-file
+// try/except; any other failure (a banner that fails to encode/write)
+// aborts and is returned to the caller, matching apply_tv_dev_banner's
+// outer try/except aborting the whole operation on a non-decode error.
+func overlayDevBannerDir(dir string) error {
+	if !isDir(dir) {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		name := strings.ToLower(e.Name())
+		if e.IsDir() || !strings.HasSuffix(name, ".png") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		f, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		src, err := png.Decode(f)
+		f.Close()
+		if err != nil {
+			continue
+		}
+
+		bounds := src.Bounds()
+		banner := makeDevBannerRect(bounds.Dx(), bounds.Dy())
+		out := image.NewNRGBA(bounds)
+		draw.Draw(out, bounds, src, bounds.Min, draw.Src)
+		draw.Draw(out, banner.Bounds().Add(bounds.Min), banner, image.Point{}, draw.Over)
+
+		outFile, err := os.Create(path)
+		if err != nil {
+			return err
+		}
+		err = png.Encode(outFile, out)
+		outFile.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // --- Icon Composer (.icon) banner inject / strip -----------------------
 
 const (
