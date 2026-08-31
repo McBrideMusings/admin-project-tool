@@ -253,8 +253,50 @@ type workCmdRow struct {
 // on manifest.Command. hide_commands is dropped, and a workflow whose `over`
 // is "selection" never appears here at all — WorkflowTarget.
 // AppearsInCommandList (internal/kinds/workflow.go) is the single source of
-// truth for that rule.
+// truth for that rule, applied by workTabInclude below.
 func (m Model) declaredCommands() []workCmdRow {
+	return m.collectCommands(m.workTabInclude)
+}
+
+// workTabInclude is declaredCommands' filter: every command except a
+// selection-sourced kind="workflow" one, which never appears in the Work
+// tab's command list — see AppearsInCommandList's own doc comment for why.
+func (m Model) workTabInclude(c manifest.Command) bool {
+	if a, ok := m.soleAction(c); ok && actionKind(a) == "workflow" {
+		if target, err := kinds.ParseWorkflowOver(c.Steps[0], a); err == nil && !target.AppearsInCommandList() {
+			return false
+		}
+	}
+	return true
+}
+
+// selectionWorkflows is the picker's own candidate list (admin-3rgp.27,
+// selectionworkflow.go): every declared command that IS a selection-sourced
+// kind="workflow" action — workTabInclude's exact complement — in the same
+// stable order declaredCommands uses, so a command lists in the same
+// relative place whichever of the two lists it belongs to.
+func (m Model) selectionWorkflows() []workCmdRow {
+	return m.collectCommands(m.isSelectionWorkflow)
+}
+
+// isSelectionWorkflow reports whether c is a kind="workflow" action whose
+// `over` is "selection" — the one predicate selectionWorkflows needs beyond
+// what soleAction/actionKind/ParseWorkflowOver already give declaredCommands.
+func (m Model) isSelectionWorkflow(c manifest.Command) bool {
+	a, ok := m.soleAction(c)
+	if !ok || actionKind(a) != "workflow" {
+		return false
+	}
+	target, err := kinds.ParseWorkflowOver(c.Steps[0], a)
+	return err == nil && target.Source == kinds.WorkflowSourceSelection
+}
+
+// collectCommands walks every declared command (manifest order when set,
+// else group/priority/name) exactly as declaredCommands always has, handing
+// each one to include so the two lists above can share every rule except
+// which side of AppearsInCommandList they want: hide_commands, dedup against
+// Custom/Overrides, and the manifest-order-vs-grouped-fallback ordering.
+func (m Model) collectCommands(include func(manifest.Command) bool) []workCmdRow {
 	if !m.manifestOK {
 		return nil
 	}
@@ -272,13 +314,8 @@ func (m Model) declaredCommands() []workCmdRow {
 	seen := map[string]bool{}
 	var out []workCmdRow
 	add := func(name string, c manifest.Command) {
-		if hidden[name] || seen[name] {
+		if hidden[name] || seen[name] || !include(c) {
 			return
-		}
-		if a, ok := m.soleAction(c); ok && actionKind(a) == "workflow" {
-			if target, err := kinds.ParseWorkflowOver(c.Steps[0], a); err == nil && !target.AppearsInCommandList() {
-				return
-			}
 		}
 		seen[name] = true
 		out = append(out, workCmdRow{name: name, cmd: c})

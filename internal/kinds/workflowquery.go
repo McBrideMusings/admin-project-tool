@@ -86,17 +86,21 @@ func ResolveQuery(ctx context.Context, repoRoot, query string) ([]Target, error)
 
 	targets := make([]Target, len(matched))
 	for i, b := range matched {
-		targets[i] = Target{
-			Name: b.ID,
-			// The same "one worktree, one /implement pass" shape this dashboard's
-			// own dispatch machinery (DispatchTargets) and the project's swarm
-			// tooling already use for every issue-driven agent run — a
-			// query-resolved bead is handled exactly like any other tracked item
-			// handed to a worker, never a bespoke prompt format invented here.
-			Prompt: fmt.Sprintf("/implement %s continuous", b.ID),
-		}
+		targets[i] = Target{Name: b.ID, Prompt: ImplementPrompt(b.ID)}
 	}
 	return targets, nil
+}
+
+// ImplementPrompt is the one prompt shape every issue-driven Workflow target
+// gets, whichever invocation path built it: the same "one worktree, one
+// /implement pass" this dashboard's own dispatch machinery and the project's
+// swarm tooling already use for every tracked-item agent run. ResolveQuery
+// (query-sourced) and internal/tui's selection-sourced picker (admin-3rgp.27)
+// both call this rather than each formatting their own — a bare id is the
+// only input either has, so there is nothing invocation-path-specific left
+// to vary.
+func ImplementPrompt(id string) string {
+	return fmt.Sprintf("/implement %s continuous", id)
 }
 
 func hasLabel(labels []string, name string) bool {
