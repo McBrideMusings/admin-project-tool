@@ -27,4 +27,4 @@
   nslj     P2  task     v2: archetypes should declare a default order                         3d
   ↓ 208 more                                                                                    
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ start work · o open · / filter · ←→ tab                                            
+ ↑↓ move · ↵ start work · d detail · g tree · / filter · r refresh · q quit · ←→ tab            

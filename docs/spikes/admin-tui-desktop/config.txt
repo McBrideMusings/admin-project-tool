@@ -27,4 +27,4 @@
                                                                                                 
   # Local-only skills, plugins and settings. Committed ones are skipped as tracked.             
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ←→ tab · q quit                                                                      
+ ⇥ global/local · ↵ edit · q quit · ←→ tab                                                      

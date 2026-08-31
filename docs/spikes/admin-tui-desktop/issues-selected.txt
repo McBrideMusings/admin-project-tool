@@ -3,8 +3,8 @@
                                                                                                 
  Ready                                                                                       202
 ────────────────────────────────────────────────────────────────────────────────────────────────
-▸ 3rgp     P1  epic     One tool: merge repo-dash into admin as a sing…                       2d
-  3rgp.36  P1  task     Embed a Lua VM and define the host API archety…  14                   2d
+  3rgp     P1  epic     One tool: merge repo-dash into admin as a sing…                       2d
+▸ 3rgp.36  P1  task     Embed a Lua VM and define the host API archety…  14                   2d
   3rgp.7   P1  task     Decide how admin <command> reaches the CLI, an…  17  afk              2d
   3rgp.29  P1  task     Two deployment paths: go install for the binar…   1  afk              2d
   lk2r     P2  task     Parallel URL checks in register_open_command                          3d
@@ -27,4 +27,4 @@
   nslj     P2  task     v2: archetypes should declare a default order                         3d
   ↓ 208 more                                                                                    
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ start work · o open · / filter · ←→ tab                                            
+ ↑↓ move · ↵ start work · d detail · g tree · / filter · r refresh · q quit · ←→ tab            

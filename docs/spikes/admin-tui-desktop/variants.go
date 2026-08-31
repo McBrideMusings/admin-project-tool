@@ -38,13 +38,19 @@ const (
 
 var Axes = []Axis{
 	{Key: "screen", Label: "Screen", Hotkey: "s", Values: []string{
+		// The ten reference frames .19 names, first so their filenames are stable.
 		"commands", "commands-workflow-selected", "repo", "issues", "issues-selected",
 		"dispatch-sheet", "swarm", "config", "running", "no-manifest",
+		// Every other surface repo-dash draws — see INVENTORY.md. Each is the real
+		// frame, reached by driving the same keys a person would press.
+		"repo-commits", "repo-filter", "repo-new-worktree",
+		"tracker-detail", "tracker-graph", "tracker-blocking", "tracker-tree", "tracker-filter",
+		"config-local",
 	}},
 	// Both live-only. Dumping either would multiply every frame name and break
 	// the paths .20 and .28 cite by.
 	{Key: "data", Label: "Data", Values: []string{"populated", "empty"}, Hotkey: "e", NoDump: true},
-	{Key: "tracker", Label: "Tracker", Values: []string{"beads", "github"}, Hotkey: "r", NoDump: true},
+	{Key: "tracker", Label: "Tracker", Values: []string{"beads", "github", "prs"}, Hotkey: "r", NoDump: true},
 }
 
 var (
@@ -76,29 +82,59 @@ var trackerRepos = map[string]repoSrc{
 		"McBrideMusings/admin-project-tool", "feat/one-tool-go-merge"},
 	// No .beads/, so the same code draws Repo · Issues · Config instead.
 	"github": {"/Users/pierce/Projects/etv-station", "McBrideMusings/etv-station", "main"},
+	// usesPRs() is len(remote.PRs) > 0 (model.go:333) — the PRs tab exists only
+	// while the repo actually has open PRs, so seeing it needs a repo that does.
+	"prs": {"/Users/pierce/Projects/nts-desktop", "McBrideMusings/nts-desktop", "main"},
 }
 
-// Digit keys index the drawn tabs (model.go:349), and both repos above draw
-// three: 1 Repo, 2 the tracker, 3 Config.
+// Digit keys index the drawn tabs (model.go:349); both repos above draw three:
+// 1 Repo, 2 the tracker, 3 Config. Everything past the tab is the same key a
+// person presses — see INVENTORY.md for the full map.
 const (
 	keyRepo    = "1"
 	keyTracker = "2"
 	keyConfig  = "3"
 )
 
+// embedded maps a screen to the keys that reach it in repo-dash. A screen absent
+// here is one the prototype draws itself.
+var embedded = map[string][]string{
+	"repo":              {keyRepo},
+	"no-manifest":       {keyRepo},
+	"repo-commits":      {keyRepo, "tab"},
+	"repo-filter":       {keyRepo, "/"},
+	"repo-new-worktree": {keyRepo, "w"},
+
+	"issues":           {keyTracker},
+	"issues-selected":  {keyTracker, "down"},
+	"tracker-detail":   {keyTracker, "d"},
+	"tracker-graph":    {keyTracker, "d", "right"},
+	"tracker-blocking": {keyTracker, "d", "right", "right"},
+	"tracker-tree":     {keyTracker, "g"},
+	"tracker-filter":   {keyTracker, "/"},
+
+	"config":       {keyConfig},
+	"config-local": {keyConfig, "tab"},
+}
+
 var (
 	frameMu    sync.Mutex
 	frameCache = map[string][]string{}
 )
 
-// realTab returns the body rows of repo-dash's own frame for one tab. Its frame
-// is header, tab bar, blank, body, rule, footer — so the body is everything
-// between, and asking for h+5 rows yields exactly h of them.
+// realTab returns repo-dash's own frame from the body down — body, rule AND
+// footer. The footer has to come too: in a modal state it IS the mode. The
+// new-worktree prompt, the filter query and its match count, the delete
+// confirm and "press any key to dismiss" are all drawn there (view.go:500),
+// so a spliced-off footer hides the very thing those screens exist to show.
+//
+// Its frame is header, tab bar, blank, then the rest, so asking for h+3 rows
+// and dropping the first 3 yields exactly h.
 //
 // Cached because Frame runs the real Init commands and waits for them to land;
 // re-rendering on every keystroke would make the prototype unusable.
-func realTab(src repoSrc, key string, w, h int) []string {
-	ck := fmt.Sprintf("%s|%s|%d|%d", src.root, key, w, h)
+func realTab(src repoSrc, keys []string, w, h int) []string {
+	ck := fmt.Sprintf("%s|%s|%d|%d", src.root, strings.Join(keys, ","), w, h)
 	frameMu.Lock()
 	if rows, ok := frameCache[ck]; ok {
 		frameMu.Unlock()
@@ -110,12 +146,12 @@ func realTab(src repoSrc, key string, w, h int) []string {
 	defer cancel()
 	m := tui.New(ctx, src.root, src.nwo, src.branch, "main")
 	out := tui.Frame(ctx, m, tui.FrameOptions{
-		Width: w, Height: h + 5, Keys: []string{key}, Settle: 1200 * time.Millisecond,
+		Width: w, Height: h + 3, Keys: keys, Settle: 900 * time.Millisecond,
 	})
 	lines := strings.Split(out, "\n")
 	body := []string{dim.Render("   (no frame)")}
-	if len(lines) > 5 {
-		body = lines[3 : len(lines)-2]
+	if len(lines) > 3 {
+		body = lines[3:]
 	}
 	rows := make([]string, h)
 	for i := range rows {
@@ -148,6 +184,18 @@ var screens = map[string]screenSpec{
 	"swarm":                      {tab: 0, cmdSel: 7},
 	"config":                     {tab: 3},
 	"no-manifest":                {tab: 1, noMan: true},
+
+	// The embedded modes. tab drives only the prototype's own tab bar and
+	// footer; the body comes from repo-dash via the key sequence in `embedded`.
+	"repo-commits":      {tab: 1},
+	"repo-filter":       {tab: 1},
+	"repo-new-worktree": {tab: 1},
+	"tracker-detail":    {tab: 2},
+	"tracker-graph":     {tab: 2},
+	"tracker-blocking":  {tab: 2},
+	"tracker-tree":      {tab: 2},
+	"tracker-filter":    {tab: 2},
+	"config-local":      {tab: 3},
 }
 
 var selDelta int
@@ -411,26 +459,23 @@ func render(s State) string {
 		src = trackerRepos["beads"]
 	}
 
-	var body []string
-	switch {
-	case sp.noMan:
-		body = realTab(src, keyRepo, w, h-5)
-	case sp.tab == 1:
-		body = realTab(src, keyRepo, w, h-5)
-	case sp.tab == 2:
-		body = realTab(src, keyTracker, w, h-5)
-	case sp.tab == 3:
-		body = realTab(src, keyConfig, w, h-5)
-	default:
-		body = workBody(sp, w, h-5, empty)
-	}
-
 	rows := []string{header(w, src), tabBar(sp, w, s.Get("tracker")), ""}
-	for len(body) < h-5 {
-		body = append(body, "")
+	if ks, ok := embedded[name]; ok {
+		// repo-dash draws its own rule and footer for these — including the
+		// modal footers, which are the mode.
+		body := realTab(src, ks, w, h-3)
+		for len(body) < h-3 {
+			body = append(body, "")
+		}
+		rows = append(rows, body[:h-3]...)
+	} else {
+		body := workBody(sp, w, h-5, empty)
+		for len(body) < h-5 {
+			body = append(body, "")
+		}
+		rows = append(rows, body[:h-5]...)
+		rows = append(rows, strings.Repeat("─", w), Pad(" "+dim.Render(keys(sp)), w))
 	}
-	rows = append(rows, body[:h-5]...)
-	rows = append(rows, strings.Repeat("─", w), Pad(" "+dim.Render(keys(sp)), w))
 	if sp.sheet {
 		rows = overlaySheet(rows, w, h)
 	}
@@ -456,8 +501,11 @@ func header(w int, src repoSrc) string {
 
 func tabBar(sp screenSpec, w int, tracker string) string {
 	trackerTab := "Beads 227"
-	if tracker == "github" {
+	switch tracker {
+	case "github":
 		trackerTab = "Issues 99"
+	case "prs":
+		trackerTab = "PRs 5"
 	}
 	defs := []string{"Work 12", "Repo", trackerTab, "Config"}
 	active := sp.tab
