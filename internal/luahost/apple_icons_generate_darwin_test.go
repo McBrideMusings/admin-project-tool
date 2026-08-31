@@ -3,19 +3,16 @@
 package luahost
 
 import (
+	"bytes"
 	"encoding/json"
 	"image"
 	"image/png"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
-
-// testSVG is a minimal, oksvg-parsable SVG glyph: a solid red circle on a
-// transparent viewBox. Real enough to exercise renderSVGGlyph without
-// depending on any file the repo would otherwise ship.
-const testSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" fill="#ff0000"/></svg>`
 
 // testHost returns a Host with a real Stdout/Stderr (so Err/Warn don't panic
 // on a nil writer) and logging inert — no set_log_context call means
@@ -23,15 +20,6 @@ const testSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><
 func testHost(t *testing.T) *Host {
 	t.Helper()
 	return New(t.TempDir())
-}
-
-func writeTestSVG(t *testing.T) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "glyph.svg")
-	if err := os.WriteFile(path, []byte(testSVG), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return path
 }
 
 func decodePNG(t *testing.T, path string) image.Image {
@@ -126,21 +114,47 @@ func TestGenerateIconsCustomFilenameFormat(t *testing.T) {
 	}
 }
 
-func TestGenerateIconsGlyphSVGRendersOverSolidBackground(t *testing.T) {
-	svgPath := writeTestSVG(t)
+// TestGenerateIconsGlyphSVGFailsWithClearMessage exercises admin-3rgp.48's
+// hard requirement: a configured glyph_svg must fail loudly, naming the
+// dropped capability, never silently render a blank or wrong icon.
+func TestGenerateIconsGlyphSVGFailsWithClearMessage(t *testing.T) {
 	root := t.TempDir()
-	ok := GenerateIcons(testHost(t), []int{64}, root, IconOptions{
+	h := testHost(t)
+	var stderr bytes.Buffer
+	h.Stderr = &stderr
+
+	ok := GenerateIcons(h, []int{64}, root, IconOptions{
 		BGColor:  "#000000",
-		GlyphSVG: svgPath,
+		GlyphSVG: "/some/glyph.svg",
 	})
-	if !ok {
-		t.Fatal("GenerateIcons returned false")
+	if ok {
+		t.Fatal("GenerateIcons should fail when glyph_svg is configured")
 	}
-	img := decodePNG(t, filepath.Join(root, "64.png"))
-	// Center pixel should show the red circle, not the black background.
-	r, g, b, _ := img.At(32, 32).RGBA()
-	if r>>8 < 150 || g>>8 > 80 || b>>8 > 80 {
-		t.Errorf("center pixel = (%d,%d,%d), want red glyph over black bg", r>>8, g>>8, b>>8)
+	if _, err := os.Stat(filepath.Join(root, "64.png")); err == nil {
+		t.Error("no icon should be written when glyph_svg is rejected")
+	}
+	msg := stderr.String()
+	if !strings.Contains(msg, "glyph_svg") || !strings.Contains(msg, "admin-3rgp.48") {
+		t.Errorf("error message %q does not name the dropped capability", msg)
+	}
+}
+
+// TestGenerateTVIconsGlyphSVGFailsWithClearMessage is the tvOS analog: the
+// Front-layer render is the one that touches the glyph, and it must reject
+// glyph_svg the same way generate_icons does.
+func TestGenerateTVIconsGlyphSVGFailsWithClearMessage(t *testing.T) {
+	root := t.TempDir()
+	brand := filepath.Join(root, "App.brandassets")
+	h := testHost(t)
+	var stderr bytes.Buffer
+	h.Stderr = &stderr
+
+	ok := GenerateTVIcons(h, brand, IconOptions{BGColor: "#123456", GlyphSVG: "/some/glyph.svg"})
+	if ok {
+		t.Fatal("GenerateTVIcons should fail when glyph_svg is configured")
+	}
+	if !strings.Contains(stderr.String(), "glyph_svg") {
+		t.Errorf("error message %q does not name the dropped capability", stderr.String())
 	}
 }
 
@@ -175,13 +189,6 @@ func TestGenerateIconsInvalidBGColorFailsGracefully(t *testing.T) {
 	ok := GenerateIcons(testHost(t), []int{16}, t.TempDir(), IconOptions{BGColor: "not-a-color"})
 	if ok {
 		t.Error("expected false for an invalid bg_color")
-	}
-}
-
-func TestGenerateIconsMissingSVGFailsGracefully(t *testing.T) {
-	ok := GenerateIcons(testHost(t), []int{16}, t.TempDir(), IconOptions{GlyphSVG: "/does/not/exist.svg"})
-	if ok {
-		t.Error("expected false when glyph_svg points at a missing file")
 	}
 }
 

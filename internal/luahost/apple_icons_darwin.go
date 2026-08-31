@@ -32,15 +32,15 @@ package luahost
 //     than one reading "DEV"; the stripe alone already answers "is this the
 //     dev build" for the workflow's purpose (a glance at the Home Screen).
 //   - swap_dev_icons' has_glyph=True branch — generate_icons() compositing a
-//     configured glyph_text/glyph_svg onto a fresh background at every
-//     declared size — needed font rendering and/or an SVG rasterizer, both
-//     real dependencies. Those are now taken (golang.org/x/image's font
-//     stack + github.com/fyne-io/oksvg) and generate_icons/generate_tv_icons
-//     are bound in full — see apple_icons_generate_darwin.go's file doc
-//     comment for the dependency comparison and the decision it records.
+//     configured glyph onto a fresh background at every declared size —
+//     needed font rendering as a real dependency. golang.org/x/image's font
+//     stack was taken for that; generate_icons/generate_tv_icons are bound
+//     in full — see apple_icons_generate_darwin.go's file doc comment for
+//     the dependency comparison and decision (including admin-3rgp.48's
+//     later removal of SVG glyph support and its oksvg/rasterx dependency).
 //     This file's own dev-banner rendering deliberately stays stdlib-only
-//     even so: it needs no font or SVG capability at all (a plain ribbon,
-//     no text), so taking on the new dependency here would buy nothing.
+//     even so: it needs no font capability at all (a plain ribbon, no
+//     text), so taking on that dependency here would buy nothing.
 //
 // Backup/restore (backup_icons, restore_icons, backup_tv_icons,
 // restore_tv_icons) are plain file-copy operations with no imaging
