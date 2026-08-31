@@ -60,6 +60,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -81,7 +82,7 @@ const Usage = `usage: admin service <install|uninstall|status|restart|stop|start
 // error, not a silently ignored line — a typo'd `stdout_path` that quietly
 // produced a service with no log is the failure this prevents.
 var KnownKeys = []string{
-	"label", "program", "source", "args", "env", "inherit_path", "inherit_home",
+	"label", "program", "source", "args", "args_cmd", "env", "inherit_path", "inherit_home",
 	"stdout", "stderr", "working_dir", "keep_alive", "run_at_load",
 	"throttle", "process_type", "nice", "start_interval",
 	"env_file", "env_file_keys",
@@ -188,6 +189,25 @@ func ReadConfig(raw map[string]any, r Reporter) (Config, error) {
 	// Explicit `env` wins over anything lifted from the file.
 	for k, v := range mapOf(raw, "env") {
 		c.Env[k] = resolve(v)
+	}
+
+	// args_cmd: a shell command whose stdout is split on whitespace and
+	// appended to args, evaluated at install time. Some services can only be
+	// told what to bind to once the machine is in front of you — a tailnet
+	// address that exists only while the VPN is up, a port picked from what is
+	// free, an interface name. `${VAR}` cannot express that: it resolves
+	// against the environment of a non-interactive `admin deploy`, which is
+	// exactly the shell that knows none of it. A command that prints nothing,
+	// or fails, contributes no args rather than failing the install — a
+	// service that falls back to a narrower bind address is right, and one
+	// that refuses to deploy because the VPN is down is not.
+	if cmdStr := resolve(str(raw, "args_cmd")); cmdStr != "" {
+		out, err := exec.Command("/bin/sh", "-c", cmdStr).Output()
+		if err != nil {
+			r.Warn(fmt.Sprintf("[launchd]: args_cmd failed, no extra args added: %v", err))
+		} else if extra := strings.Fields(string(out)); len(extra) > 0 {
+			c.Args = append(c.Args, extra...)
+		}
 	}
 
 	return c, nil
