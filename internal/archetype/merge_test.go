@@ -195,3 +195,58 @@ steps = ["compile"]
 		t.Errorf("ProjectName = %q, want %q", merged.ProjectName, "widget")
 	}
 }
+
+// TestResolveRejectsUnknownGuardReference is ADR-0005's resolve-phase audit,
+// exercised through the real Resolve entry point rather than calling
+// guards.ValidateRequires directly: a `requires` naming a guard that is
+// neither a built-in nor a manifest-declared [guards.<name>] table must
+// fail Resolve itself, since a project's admin.toml is invalid without
+// ever loading any archetype.
+func TestResolveRejectsUnknownGuardReference(t *testing.T) {
+	home := t.TempDir()
+	repo := t.TempDir()
+	sp := DefaultSearchPath(home, repo)
+
+	project := projectManifest(t, `
+project_name = "widget"
+
+[actions.deploy]
+kind     = "shell"
+run      = "true"
+requires = ["no-such-guard"]
+`)
+
+	_, _, err := Resolve(project, sp)
+	if err == nil {
+		t.Fatal("Resolve: got nil error, want a validation error naming the unknown guard")
+	}
+	if !strings.Contains(err.Error(), "no-such-guard") {
+		t.Errorf("error = %q, want it to name the unknown guard", err.Error())
+	}
+}
+
+// TestResolveAcceptsUserDefinedGuardReference proves the audit sees guards
+// contributed by the project manifest itself (not just built-ins) —
+// [guards.<name>] and the requires referencing it live in the same file.
+func TestResolveAcceptsUserDefinedGuardReference(t *testing.T) {
+	home := t.TempDir()
+	repo := t.TempDir()
+	sp := DefaultSearchPath(home, repo)
+
+	project := projectManifest(t, `
+project_name = "widget"
+
+[guards.no-tag]
+run  = "true"
+fail = "already tagged"
+
+[actions.deploy]
+kind     = "shell"
+run      = "true"
+requires = ["git-clean", "no-tag"]
+`)
+
+	if _, _, err := Resolve(project, sp); err != nil {
+		t.Fatalf("Resolve: %v, want nil — both requires names resolve", err)
+	}
+}
