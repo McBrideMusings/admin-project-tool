@@ -36,12 +36,12 @@ func TestArrowsMoveTheCursor(t *testing.T) {
 	// The commands screen starts on deploy (index 2), so one down is docs and
 	// two is logs. The reader must follow the cursor, not just the marker.
 	m = send(m, "down")
-	if v := m.View(); !strings.Contains(v, "▸ docs") {
+	if v := m.View(); !strings.Contains(v, "◆ docs") {
 		t.Errorf("one down from deploy did not land on docs")
 	}
 	m = send(m, "down")
 	v := m.View()
-	if !strings.Contains(v, "▸ logs") {
+	if !strings.Contains(v, "◆ logs") {
 		t.Errorf("two downs from deploy did not land on logs")
 	}
 	if !strings.Contains(v, "admin logs dev") {
@@ -53,7 +53,7 @@ func TestUpWrapsBackwards(t *testing.T) {
 	m := newModel()
 	m.w, m.h = 120, 40
 	m = send(m, "up") // deploy -> check
-	if v := m.View(); !strings.Contains(v, "▸ check") {
+	if v := m.View(); !strings.Contains(v, "◆ check") {
 		t.Errorf("up from deploy did not land on check")
 	}
 }
@@ -65,7 +65,7 @@ func TestTabSwitchesTabs(t *testing.T) {
 	if got := m.state().Get("screen"); got != "repo" {
 		t.Fatalf("after tab, screen = %q, want repo", got)
 	}
-	if v := m.View(); !strings.Contains(v, "BRANCHES") {
+	if v := m.View(); !strings.Contains(v, "Branches") {
 		t.Errorf("repo screen did not render")
 	}
 }
