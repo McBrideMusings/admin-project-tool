@@ -384,6 +384,61 @@ func TestLoadRepoOwnManifest(t *testing.T) {
 	}
 }
 
+// TestParseTrackerAndUsesPullRequests covers admin-3rgp.21's two new
+// top-level manifest keys: declared, undeclared (Has* stays false so the
+// Config tab can tell "false" from "never set"), and rejected wrong types.
+func TestParseTrackerAndUsesPullRequests(t *testing.T) {
+	dir := writeManifest(t, `
+project_name       = "widget-app"
+tracker            = "beads"
+uses_pull_requests = true
+`)
+	m, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !m.HasTracker || m.Tracker != "beads" {
+		t.Errorf("Tracker = %q, HasTracker = %v, want \"beads\", true", m.Tracker, m.HasTracker)
+	}
+	if !m.HasUsesPullRequests || !m.UsesPullRequests {
+		t.Errorf("UsesPullRequests = %v, HasUsesPullRequests = %v, want true, true", m.UsesPullRequests, m.HasUsesPullRequests)
+	}
+
+	dir2 := writeManifest(t, `project_name = "widget-app"`)
+	m2, err := Load(dir2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if m2.HasTracker {
+		t.Error("HasTracker = true for a manifest that never declared 'tracker'")
+	}
+	if m2.HasUsesPullRequests {
+		t.Error("HasUsesPullRequests = true for a manifest that never declared 'uses_pull_requests'")
+	}
+
+	cases := []struct {
+		name       string
+		toml       string
+		wantSubstr string
+	}{
+		{"tracker not a string", "project_name = \"x\"\ntracker = 3\n", "'tracker' must be a non-empty string"},
+		{"tracker empty string", "project_name = \"x\"\ntracker = \"\"\n", "'tracker' must be a non-empty string"},
+		{"uses_pull_requests not a bool", "project_name = \"x\"\nuses_pull_requests = \"yes\"\n", "'uses_pull_requests' must be true or false"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := writeManifest(t, c.toml)
+			_, err := Load(dir)
+			if err == nil {
+				t.Fatalf("Load(%s) succeeded, want error", c.name)
+			}
+			if !contains(err.Error(), c.wantSubstr) {
+				t.Errorf("Load(%s) error = %q, want substring %q", c.name, err.Error(), c.wantSubstr)
+			}
+		})
+	}
+}
+
 func equalSlices(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
