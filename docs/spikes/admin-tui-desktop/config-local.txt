@@ -1,0 +1,30 @@
+ admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+  Work 12    Repo    Beads 227    Config                                                        
+                                                                                                
+  Global   Local                                                                                
+  /Users/pierce/Projects/admin-project-tool/.repo/config.toml                                   
+                                                                                                
+  no file yet — ↵ to create                                                                     
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+────────────────────────────────────────────────────────────────────────────────────────────────
+ ⇥ global/local · ↵ edit · q quit · ←→ tab                                                      

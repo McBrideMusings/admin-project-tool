@@ -107,4 +107,12 @@ func TestTrackerTweakSwapsTheEmbeddedRepo(t *testing.T) {
 	if beads == github {
 		t.Errorf("the tweak changed nothing")
 	}
+
+	// usesPRs() is len(remote.PRs) > 0, so the PRs tab only exists on a repo
+	// with open PRs — a third repo is the only way to see it at all.
+	prs := Strip(render(State{
+		Values: map[string]string{"screen": "issues", "tracker": "prs"}, W: 96, H: 30}))
+	if !strings.Contains(prs, "PRs") {
+		t.Errorf("prs side did not draw a PRs tab")
+	}
 }
