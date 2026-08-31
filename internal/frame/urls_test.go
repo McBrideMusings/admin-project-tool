@@ -143,3 +143,78 @@ func TestValidateURLRefsRejectsANonListURLsValue(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// TestValidateURLRefsReportsEveryBadEntryNotJustTheFirst is admin-3rgp.8's
+// acceptance criterion ("reports all of them") applied to url refs: two
+// unrelated actions each with a bad entry must both show up in one error.
+//
+// MUTATION EVIDENCE: with ValidateURLRefs's loop changed to `return
+// validate.Errorf(...)` on the first bad entry (restoring the old
+// fail-fast shape) instead of accumulating into `problems`, this test
+// failed with:
+//
+//	error "action \"a\": urls entry \"nowhere-a\" is not a URL and does not
+//	name an entry in the project's [urls] table — no [urls] table is
+//	defined" is missing action "b"'s bad entry (nowhere-b)
+//
+// (reverted after confirming the failure).
+func TestValidateURLRefsReportsEveryBadEntryNotJustTheFirst(t *testing.T) {
+	actions := map[string]manifest.Action{
+		"a": {"run": "true", "urls": []any{"nowhere-a"}},
+		"b": {"run": "true", "urls": []any{"nowhere-b"}},
+	}
+	err := ValidateURLRefs(actions, map[string]string{})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	got := err.Error()
+	if !strings.Contains(got, "nowhere-a") || !strings.Contains(got, "nowhere-b") {
+		t.Fatalf("error %q is missing one action's bad entry", got)
+	}
+}
+
+// -- ValidateFooterRefs ------------------------------------------------------
+
+func TestValidateFooterRefsAcceptsABoolAndPassesWithNone(t *testing.T) {
+	actions := map[string]manifest.Action{
+		"dev":  {"run": "true", "footer": true},
+		"prod": {"run": "true"},
+	}
+	if err := ValidateFooterRefs(actions); err != nil {
+		t.Fatalf("ValidateFooterRefs = %v, want nil", err)
+	}
+}
+
+// TestValidateFooterRefsRejectsANonBool is the ticket's acceptance
+// criterion applied to footer: `footer = "true"` is a typo TOML's lack of
+// truthy strings makes worth reporting, not silently accepting.
+func TestValidateFooterRefsRejectsANonBool(t *testing.T) {
+	actions := map[string]manifest.Action{
+		"dev": {"run": "true", "footer": "true"},
+	}
+	err := ValidateFooterRefs(actions)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if got := err.Error(); !strings.Contains(got, "'footer' must be true or false") || !strings.Contains(got, `action "dev"`) {
+		t.Fatalf("got %q", got)
+	}
+}
+
+// TestValidateFooterRefsNamesTheTargetTheBadEntryIsOn mirrors
+// TestTheErrorNamesTheTargetTheBadEntryIsOn for footer instead of urls.
+func TestValidateFooterRefsNamesTheTargetTheBadEntryIsOn(t *testing.T) {
+	actions := map[string]manifest.Action{
+		"dev": {
+			"kind": "multi-target",
+			"cf":   map[string]any{"run": "true", "footer": "nope"},
+		},
+	}
+	err := ValidateFooterRefs(actions)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if got := err.Error(); !strings.Contains(got, `target "cf"`) {
+		t.Fatalf("got %q", got)
+	}
+}
