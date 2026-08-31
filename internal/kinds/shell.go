@@ -18,15 +18,20 @@ const emptyCmdErr = "refusing to run an empty command"
 // makeShell is kind="shell"'s factory — the Go port of
 // admin_lib/interp.py::_make_shell, minus the watch-kind piece (still
 // untouched — no ticket claims it yet). `run` is resolved with
-// manifest.ResolveComputed, not ResolveEnv: a shell body may reference its
-// own shell-local variables (${x} from `x=$(...)`), which ResolveEnv would
-// wrongly treat as an unresolved required var and error on.
+// manifest.ResolveEnv, the same call admin_lib/core.py::run_cmd makes on
+// every command string: a manifest writes ${VAR} precisely so the value can
+// live in .env instead of the file, and handing the placeholder to /bin/sh
+// instead expands an unset name to "" and runs the command anyway.
 func makeShell(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
 	run, _ := actionString(action, "run")
 	rawURLs := actionURLs(action)
 	footerVal, hasFooter := actionBool(action, "footer")
 	return func(args []string) error {
-		cmd := strings.TrimSpace(manifest.ResolveComputed(run))
+		expanded, err := manifest.ResolveEnv(run)
+		if err != nil {
+			return fmt.Errorf("action %q: %w", name, err)
+		}
+		cmd := strings.TrimSpace(expanded)
 		h := newHost()
 		if cmd == "" {
 			h.Err(emptyCmdErr)
@@ -69,7 +74,11 @@ func makeShellPassthrough(name string, action manifest.Action, m *manifest.Manif
 			}
 			cmdline += " " + strings.Join(quoted, " ")
 		}
-		resolved := strings.TrimSpace(manifest.ResolveComputed(cmdline))
+		expanded, err := manifest.ResolveEnv(cmdline)
+		if err != nil {
+			return fmt.Errorf("action %q: %w", name, err)
+		}
+		resolved := strings.TrimSpace(expanded)
 		h := newHost()
 		if resolved == "" {
 			h.Err(emptyCmdErr)
