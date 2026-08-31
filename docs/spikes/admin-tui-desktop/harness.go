@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -50,6 +51,10 @@ type Variant struct {
 	Render  func(State) string
 	Key     func(key string, s State, set func(axis, value string)) bool
 	Reset   func()
+	// OnDump runs once before any frame is dumped. A design that loads
+	// asynchronously to keep the live prototype responsive uses it to switch to
+	// a blocking path — a reference frame reading "loading…" is worse than none.
+	OnDump func()
 }
 
 // Axis is a state dimension — which screen, which error, which connection state.
@@ -135,10 +140,22 @@ func (m model) state() State {
 	return State{Values: v, W: w, H: h}
 }
 
-func (m model) Init() tea.Cmd { return nil }
+// tick repaints on a slow cadence so a design that loads anything in the
+// background can fill in without inventing its own message plumbing. Cheap: a
+// prototype redraw is a string build, and 4/s is well under what a terminal
+// notices.
+func tick() tea.Cmd {
+	return tea.Tick(250*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+type tickMsg time.Time
+
+func (m model) Init() tea.Cmd { return tick() }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tickMsg:
+		return m, tick()
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 		return m, nil
@@ -265,6 +282,11 @@ func combos() []map[string]string {
 
 func dump(dir string, w, h int, only string) int {
 	lipgloss.SetColorProfile(0) // Ascii — a dumped frame pins geometry, not colour
+	for _, v := range Variants {
+		if v.OnDump != nil {
+			v.OnDump()
+		}
+	}
 	sel := Variants
 	if only != "" {
 		sel = nil

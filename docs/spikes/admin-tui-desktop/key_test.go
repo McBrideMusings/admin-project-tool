@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -65,6 +66,11 @@ func TestTabSwitchesTabs(t *testing.T) {
 	if got := m.state().Get("screen"); got != "repo" {
 		t.Fatalf("after tab, screen = %q, want repo", got)
 	}
+	// The Repo tab is repo-dash's own frame, loaded off the render path, so a
+	// cold render returns a placeholder by design. Take the blocking path to
+	// assert on content.
+	Blocking = true
+	defer func() { Blocking = false }()
 	if v := m.View(); !strings.Contains(v, "Branches") {
 		t.Errorf("repo screen did not render")
 	}
@@ -114,5 +120,26 @@ func TestTrackerTweakSwapsTheEmbeddedRepo(t *testing.T) {
 		Values: map[string]string{"screen": "issues", "tracker": "prs"}, W: 96, H: 30}))
 	if !strings.Contains(prs, "PRs") {
 		t.Errorf("prs side did not draw a PRs tab")
+	}
+}
+
+// A tab press must never wait on a load. The embedded frames come from a repo
+// that takes about a second to settle, so rendering them synchronously made
+// every tab toggle stall — and what a prototype is being judged on is how it
+// feels.
+func TestTabPressNeverBlocks(t *testing.T) {
+	frameMu.Lock()
+	frameCache = map[string][]string{}
+	warming = map[string]bool{}
+	frameMu.Unlock()
+	Blocking = false
+	defer func() { Blocking = false }()
+
+	for _, screen := range []string{"repo", "issues", "tracker-graph", "config"} {
+		start := time.Now()
+		render(State{Values: map[string]string{"screen": screen}, W: 96, H: 30})
+		if d := time.Since(start); d > 100*time.Millisecond {
+			t.Errorf("%s blocked for %v — a tab press must not wait on a load", screen, d)
+		}
 	}
 }
