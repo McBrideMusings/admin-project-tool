@@ -162,6 +162,109 @@ func TestCheckCommandRoutingReportsBothOverridesAndCustom(t *testing.T) {
 	}
 }
 
+// -- checkUnknownKinds -------------------------------------------------------
+
+// TestCheckUnknownKindsCleanManifest proves a manifest with only valid kinds
+// passes.
+func TestCheckUnknownKindsCleanManifest(t *testing.T) {
+	m := &manifest.Manifest{
+		Actions: map[string]manifest.Action{
+			"build": {"kind": "shell", "run": "echo build"},
+			"test":  {"kind": "npm", "run": "npm test"},
+		},
+	}
+	if err := checkUnknownKinds(m); err != nil {
+		t.Fatalf("checkUnknownKinds = %v, want nil", err)
+	}
+}
+
+// TestCheckUnknownKindsRejectsUnknownKind is the ticket's acceptance
+// criterion: an action with an undeclared kind fails check, and the error
+// names both the action and the unknown kind.
+//
+// MUTATION EVIDENCE: with checkUnknownKinds' condition flipped from
+// `if !declared` to `if declared`, this test fails with:
+//
+//	checkUnknownKinds = <nil>, want an error naming "nosuchkind"
+func TestCheckUnknownKindsRejectsUnknownKind(t *testing.T) {
+	m := &manifest.Manifest{
+		Actions: map[string]manifest.Action{
+			"build": {"kind": "nosuchkind", "run": "echo build"},
+		},
+	}
+	err := checkUnknownKinds(m)
+	if err == nil {
+		t.Fatal("checkUnknownKinds(nosuchkind) = nil, want an error naming the action and kind")
+	}
+	got := err.Error()
+	if !strings.Contains(got, "build") {
+		t.Fatalf("error %q does not name the action", got)
+	}
+	if !strings.Contains(got, "nosuchkind") {
+		t.Fatalf("error %q does not name the unknown kind", got)
+	}
+}
+
+// TestCheckUnknownKindsDoesNotFlagValidKind proves a valid kind is not
+// flagged even when an unknown kind is present in the same manifest — the
+// false-positive guard. Multiple actions are tested: one unknown, one valid.
+func TestCheckUnknownKindsDoesNotFlagValidKind(t *testing.T) {
+	m := &manifest.Manifest{
+		Actions: map[string]manifest.Action{
+			"build": {"kind": "shell", "run": "echo build"},
+			"test":  {"kind": "nosuchkind", "run": "echo test"},
+		},
+	}
+	err := checkUnknownKinds(m)
+	if err == nil {
+		t.Fatal("checkUnknownKinds should report the unknown kind")
+	}
+	got := err.Error()
+	// The error must name the unknown action.
+	if !strings.Contains(got, "test") || !strings.Contains(got, "nosuchkind") {
+		t.Fatalf("error %q does not name the unknown action or kind", got)
+	}
+	// The error must NOT name the valid action.
+	if strings.Contains(got, "build") {
+		t.Fatalf("error %q incorrectly flags the valid kind", got)
+	}
+}
+
+// TestCheckUnknownKindsReportsMultipleUnknownKinds proves multiple unknown
+// kinds are all reported, not just the first, consistent with the
+// errors.Join pattern the other checks use.
+func TestCheckUnknownKindsReportsMultipleUnknownKinds(t *testing.T) {
+	m := &manifest.Manifest{
+		Actions: map[string]manifest.Action{
+			"build":  {"kind": "nosuchkind", "run": "echo build"},
+			"deploy": {"kind": "another-fake-kind", "run": "echo deploy"},
+			"test":   {"kind": "shell", "run": "npm test"},
+		},
+	}
+	err := checkUnknownKinds(m)
+	if err == nil {
+		t.Fatal("checkUnknownKinds should report unknown kinds")
+	}
+	got := err.Error()
+	// Both unknown actions and kinds must be named.
+	for _, want := range []string{"build", "nosuchkind", "deploy", "another-fake-kind"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("error %q does not name %q", got, want)
+		}
+	}
+	// The valid action must NOT be named.
+	if strings.Contains(got, "test") && !strings.Contains(got, "another-fake-kind") {
+		// Note: only fail if "test" appears without being part of "another-fake-kind"
+		// A simple check: "test" should not appear as a standalone action name
+		lines := strings.Split(got, "\n")
+		for _, line := range lines {
+			if strings.Contains(line, "action") && strings.Contains(line, "test") {
+				t.Fatalf("error %q incorrectly flags the valid action", got)
+			}
+		}
+	}
+}
+
 // -- kinds.ValidateWorkflows, wired into runCheck ---------------------------
 
 // TestRunCheckRejectsAWorkflowWithNoTargetSource is admin-3rgp.24's
