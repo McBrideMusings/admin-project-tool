@@ -122,6 +122,115 @@ func KnownCommandKeys() map[string]bool {
 	return out
 }
 
+// KeyBinding is one entry in an interactive-shell/bridge-listen action's
+// `keys` table, normalized by ParseKeys — the Go port of the dict
+// admin_lib/validate.py::parse_keys returns per key. Exactly one of
+// Run/Action/Signal is set (ParseKeys enforces that); PidFile is set
+// together with Signal, never alone.
+type KeyBinding struct {
+	Label   string
+	Run     string
+	Action  string
+	Signal  string
+	PidFile string
+}
+
+// validKeyBindingFields mirrors admin_lib/validate.py's
+// _VALID_KEY_BINDING_FIELDS.
+var validKeyBindingFields = map[string]bool{
+	"label": true, "run": true, "action": true, "signal": true, "pid_file": true,
+}
+
+// ParseKeys validates the raw `keys` table on an interactive-shell/
+// bridge-listen action and returns a normalized copy keyed by the single
+// keychar — the Go port of admin_lib/validate.py::parse_keys. raw is
+// whatever TOML decoded action["keys"] into (map[string]any, each value
+// itself a map[string]any) — nil/absent is not this function's job to
+// distinguish from "declared empty"; a caller with an absent `keys` key
+// should skip calling ParseKeys entirely and use a nil map. lead names the
+// action ("action \"dev\"") so every message names both the key and the
+// action it came from.
+func ParseKeys(raw any, lead string) (map[string]KeyBinding, *Error) {
+	rawMap, ok := raw.(map[string]any)
+	if !ok {
+		return nil, Errorf("%s: 'keys' must be a table", lead)
+	}
+	out := make(map[string]KeyBinding, len(rawMap))
+	for keychar, rawBinding := range rawMap {
+		if len([]rune(keychar)) != 1 {
+			return nil, Errorf("%s: key %q must be a single character", lead, keychar)
+		}
+		if keychar == "\x03" || keychar == "\x04" {
+			return nil, Errorf("%s: key %q is reserved (Ctrl-C / Ctrl-D)", lead, keychar)
+		}
+		binding, ok := rawBinding.(map[string]any)
+		if !ok {
+			return nil, Errorf("%s: keys.%s must be a table", lead, keychar)
+		}
+		var unknown []string
+		for k := range binding {
+			if !validKeyBindingFields[k] {
+				unknown = append(unknown, k)
+			}
+		}
+		if len(unknown) > 0 {
+			sort.Strings(unknown)
+			return nil, Errorf("%s: keys.%s has unknown fields %s, valid: [action label pid_file run signal]",
+				lead, keychar, unknown)
+		}
+		var targets []string
+		for _, f := range []string{"run", "action", "signal"} {
+			if _, ok := binding[f]; ok {
+				targets = append(targets, f)
+			}
+		}
+		if len(targets) == 0 {
+			return nil, Errorf("%s: keys.%s must have one of 'run', 'action', or 'signal'", lead, keychar)
+		}
+		if len(targets) > 1 {
+			sort.Strings(targets)
+			return nil, Errorf("%s: keys.%s has conflicting targets %s — pick one", lead, keychar, targets)
+		}
+		_, hasSignal := binding["signal"]
+		_, hasPidFile := binding["pid_file"]
+		if hasSignal && !hasPidFile {
+			return nil, Errorf("%s: keys.%s has 'signal' but no 'pid_file'", lead, keychar)
+		}
+		if hasPidFile && !hasSignal {
+			return nil, Errorf("%s: keys.%s has 'pid_file' but no 'signal'", lead, keychar)
+		}
+		kb := KeyBinding{}
+		strField := func(name string, dst *string) *Error {
+			v, ok := binding[name]
+			if !ok {
+				return nil
+			}
+			s, ok := v.(string)
+			if !ok {
+				return Errorf("%s: keys.%s.%s must be a string", lead, keychar, name)
+			}
+			*dst = s
+			return nil
+		}
+		for _, f := range []struct {
+			name string
+			dst  *string
+		}{
+			{"label", &kb.Label}, {"run", &kb.Run}, {"signal", &kb.Signal}, {"pid_file", &kb.PidFile},
+		} {
+			if err := strField(f.name, f.dst); err != nil {
+				return nil, err
+			}
+		}
+		if err := strField("action", &kb.Action); err != nil {
+			return nil, err
+		}
+		kb.Action = strings.TrimPrefix(kb.Action, "@")
+		out[keychar] = kb
+	}
+	return out, nil
+}
+
 // Footer rejects a `footer` value that is present but not a plain bool.
 // TOML has no truthy strings, so `footer = "true"` is a typo worth telling
 // the author about rather than silently accepted as true (or, worse,
