@@ -19,6 +19,9 @@ import (
 // for anything that isn't an *lua.ApiError (a Go-side error Exec itself
 // returned, e.g. a syntax error) so no information is lost there.
 func luaErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
 	if apiErr, ok := err.(*lua.ApiError); ok {
 		return apiErr.Object.String()
 	}
@@ -75,8 +78,15 @@ func makeLua(name string, action manifest.Action, m *manifest.Manifest, surf *Su
 			h.RunAction = surf.action
 		}
 		if err := h.Exec(source, cfg, args...); err != nil {
-			h.Err(name + " failed: " + luaErrorMessage(err))
-			return fmt.Errorf("action %q: %w", name, err)
+			msg := luaErrorMessage(err)
+			h.Err(name + " failed: " + msg)
+			// The RETURNED error is stripped too, not just the printed line.
+			// *lua.ApiError.Error() concatenates "<message>\n<trace>", so
+			// wrapping err with %w put a "stack traceback: [G]: in function
+			// 'error'" dump on the CLI's own error line after the clean one —
+			// on every deliberate, expected failure (an unknown build target,
+			// a failing test suite), not just a real bug in the body.
+			return fmt.Errorf("action %q: %s", name, msg)
 		}
 		h.Ok(name + " complete")
 		return nil
