@@ -1,7 +1,6 @@
 package kinds
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -144,10 +143,16 @@ func TestLuaArgsReachBody(t *testing.T) {
 // would make every deliberate, expected failure look like an interpreter
 // bug.
 //
+// The assertion is on the RETURNED error, not on an unwrapped inner one. The
+// returned error is what the CLI prints, and it used to be the raw
+// *lua.ApiError via %w — so the clean h.Err line was immediately followed by a
+// "stack traceback: [G]: in function 'error'" dump on the error line beneath
+// it. makeLua now formats the stripped message with %s, so there is
+// deliberately nothing left to unwrap.
+//
 // MUTATION EVIDENCE: change luaErrorMessage's `apiErr.Object.String()` to
-// `err.Error()` unconditionally (the pre-fix behaviour), and this test
-// fails: the returned message contains "stack traceback" instead of being
-// exactly "build failed".
+// `err.Error()` unconditionally, or makeLua's `%s` back to `%w`, and this test
+// fails: the returned message contains "stack traceback".
 func TestLuaErrorMessageDropsStackTrace(t *testing.T) {
 	t.Chdir(t.TempDir())
 	runner, mkErr := makeLua("build", manifest.Action{"run": `error("build failed")`}, nil, nil)
@@ -158,18 +163,27 @@ func TestLuaErrorMessageDropsStackTrace(t *testing.T) {
 	if runErr == nil {
 		t.Fatal("runner() = nil, want an error")
 	}
-	// Unwrap the %w-wrapped error back to the raw *lua.ApiError makeLua saw,
-	// via the same luaErrorMessage function under test.
-	inner := errors.Unwrap(runErr)
-	got := luaErrorMessage(inner)
+	got := runErr.Error()
 	// Lua's error() prepends "<chunk>:line: " position info at its default
 	// level — kept (it is not a stack trace); only the "stack traceback"
 	// block is what this fix drops.
 	if !strings.HasSuffix(got, "build failed") {
-		t.Fatalf("luaErrorMessage = %q, want it to end with %q", got, "build failed")
+		t.Fatalf("error = %q, want it to end with %q", got, "build failed")
 	}
 	if strings.Contains(got, "traceback") {
-		t.Fatalf("luaErrorMessage leaked a stack trace: %q", got)
+		t.Fatalf("error leaked a stack trace: %q", got)
+	}
+	if !strings.Contains(got, `action "build"`) {
+		t.Errorf("error = %q, want it to name the action", got)
+	}
+}
+
+// luaErrorMessage must tolerate a nil error rather than dereferencing it — it
+// is called on whatever Exec hands back, and a nil there should not turn a
+// clean run into a segfault.
+func TestLuaErrorMessageHandlesNil(t *testing.T) {
+	if got := luaErrorMessage(nil); got != "" {
+		t.Errorf("luaErrorMessage(nil) = %q, want empty", got)
 	}
 }
 

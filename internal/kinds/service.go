@@ -2,6 +2,7 @@ package kinds
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/service"
@@ -31,14 +32,10 @@ func makeLaunchd(name string, action manifest.Action, m *manifest.Manifest, _ *S
 	raw := archetypeConfigTable(m, "launchd")
 	dist := archetypeConfigTable(m, "go_dist")
 	defaultVerb, _ := actionString(action, "run")
-	if defaultVerb != "" {
-		switch defaultVerb {
-		case "install", "uninstall", "status", "restart", "stop", "start":
-		default:
-			return nil, fmt.Errorf(
-				`action %q: kind="launchd" run=%q is not a verb (install | uninstall | status | restart | stop | start)`,
-				name, defaultVerb)
-		}
+	if defaultVerb != "" && !isServiceVerb(defaultVerb) {
+		return nil, fmt.Errorf(
+			`action %q: kind="launchd" run=%q is not a verb (%s)`,
+			name, defaultVerb, strings.Join(serviceVerbs, " | "))
 	}
 
 	return func(args []string) error {
@@ -47,17 +44,7 @@ func makeLaunchd(name string, action manifest.Action, m *manifest.Manifest, _ *S
 		}
 		h := newHost()
 
-		verb, host := "", ""
-		for _, a := range args {
-			switch {
-			case a == "--uninstall":
-				verb = "uninstall"
-			case verb == "" && !isHostArg(a):
-				verb = a
-			case isHostArg(a):
-				host = a
-			}
-		}
+		verb, host := splitServiceArgs(args)
 
 		if host != "" {
 			if verb == "uninstall" {
@@ -85,21 +72,39 @@ func makeLaunchd(name string, action manifest.Action, m *manifest.Manifest, _ *S
 	}, nil
 }
 
-// isHostArg recognises the `user@host` / bare-hostname positional that routes
-// a service verb to the SSH path. A bare word that is also a verb name is a
-// verb; anything containing "@" or "." is a host.
-func isHostArg(a string) bool {
-	if a == "" || a[0] == '-' {
-		return false
-	}
-	switch a {
-	case "install", "uninstall", "status", "restart", "stop", "start":
-		return false
-	}
-	for _, c := range a {
-		if c == '@' || c == '.' {
+// serviceVerbs is the closed set the CLI accepts, shared by the factory's
+// `run` validation and splitServiceArgs.
+var serviceVerbs = []string{"install", "uninstall", "status", "restart", "stop", "start"}
+
+func isServiceVerb(a string) bool {
+	for _, v := range serviceVerbs {
+		if a == v {
 			return true
 		}
 	}
 	return false
+}
+
+// splitServiceArgs separates a service invocation into its verb and its
+// optional remote host — the decision that routes local-vs-SSH.
+//
+// A hostname is whatever is LEFT OVER once the verbs and flags are taken, not
+// a word that looks like one. Matching a host by shape — anything containing
+// "@" or "." — read `admin deploy server unraid`, an ordinary tailnet short
+// name, as a verb and failed with "unknown service verb: unraid".
+func splitServiceArgs(args []string) (verb, host string) {
+	for _, a := range args {
+		switch {
+		case a == "--uninstall":
+			verb = "uninstall"
+		case a == "" || a[0] == '-':
+			// Any other flag belongs to nobody here; ignore it rather than
+			// mistaking it for a host.
+		case verb == "" && isServiceVerb(a):
+			verb = a
+		default:
+			host = a
+		}
+	}
+	return verb, host
 }
