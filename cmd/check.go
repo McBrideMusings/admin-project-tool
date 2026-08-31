@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
+	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
@@ -64,6 +65,9 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		problems = append(problems, validate.Wrap(err))
 	}
 	if err := frame.ValidateFooterRefs(m.Actions); err != nil {
+		problems = append(problems, validate.Wrap(err))
+	}
+	if err := kinds.ValidateWorkflows(m.Actions); err != nil {
 		problems = append(problems, validate.Wrap(err))
 	}
 
