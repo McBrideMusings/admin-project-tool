@@ -82,16 +82,17 @@ func TestDefaultRegistryIsComplete(t *testing.T) {
 
 // TestStubFactoryErrorsAtDispatch proves the placeholder factories fail only
 // when their Runner is actually invoked (dispatch time), never when the
-// factory itself is built or registered (startup time). "raylib" is used
-// here rather than "shell" — admin-3rgp.35 replaced shell's stub with a real
-// implementation, so raylib (still out of scope, ported by admin-3rgp.12/.15
-// later) is the representative still-a-stub kind.
+// factory itself is built or registered (startup time). "apple-dev-loop" is
+// used here rather than "shell" — admin-3rgp.35 replaced shell's stub with a
+// real implementation, and admin-3rgp.15 replaced raylib's — so
+// apple-dev-loop (still out of scope, ported by admin-3rgp.12 later) is now
+// the representative still-a-stub kind.
 func TestStubFactoryErrorsAtDispatch(t *testing.T) {
-	f, ok := Default.Lookup("raylib")
+	f, ok := Default.Lookup("apple-dev-loop")
 	if !ok {
-		t.Fatal("raylib should have a registered factory")
+		t.Fatal("apple-dev-loop should have a registered factory")
 	}
-	run, err := f("raylib", manifest.Action{}, nil)
+	run, err := f("apple-dev-loop", manifest.Action{}, nil)
 	if err != nil {
 		t.Fatalf("building the runner should not itself error, got %v", err)
 	}
