@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
@@ -13,14 +14,12 @@ import (
 // that are never themselves a target name — everything else whose value is
 // a table is an inline target subtable (admin_lib/validate.py's
 // inline_targets: "keys whose value is a dict and not a reserved action
-// key"). Narrower than Python's full VALID_ACTION_KEYS since this ticket
-// doesn't implement guards/urls/footer/keys (admin-3rgp.10/.11/.18) — those
-// stay usable as ordinary map values on an action without being
-// misidentified as a target, because callers of this ticket's factories
-// don't parse them anyway; the day one of those tickets lands, its own keys
-// join this set.
+// key"). "urls"/"footer" joined this set with admin-3rgp.11 (its own
+// footer/urls inheritance) — "keys" (admin-3rgp.18) hasn't landed yet, so
+// it stays usable as an ordinary map value on an action without being
+// misidentified as a target until that ticket claims it too.
 var multiTargetReserved = map[string]bool{
-	"kind": true, "desc": true, "targets": true,
+	"kind": true, "desc": true, "targets": true, "urls": true, "footer": true,
 }
 
 // multiTargetEntry is one resolved target: either a shell command to run
@@ -30,20 +29,58 @@ type multiTargetEntry struct {
 	action string
 }
 
+// targetFrameMeta is one target's own urls/footer declaration, captured at
+// build time from its inline subtable — the per-target half of
+// admin_lib/interp.py::_make_multi_target's resolved_target_urls/
+// resolved_target_footer. hasURLs/hasFooter distinguish "declared, even as
+// an empty list / false" from "absent, inherit the parent" — a target with
+// urls = [] deliberately opts OUT of an inherited footer, which is not the
+// same thing as never mentioning urls at all.
+type targetFrameMeta struct {
+	urls      []any
+	hasURLs   bool
+	footer    bool
+	hasFooter bool
+}
+
+// resolveTargetFrame applies the inherit rule a picked target's urls/footer
+// follow: parent default, unless the target's own inline subtable declared
+// the key at all (tm.hasURLs / tm.hasFooter) — declaring it as an empty
+// list or an explicit `footer = false` is a real override, not "nothing to
+// inherit". Pulled out of makeMultiTarget's closure as a pure function so
+// the inherit rule itself — the thing this ticket's acceptance criteria
+// actually name — is unit-testable without standing up a Host or a Runner.
+func resolveTargetFrame(parentURLs []any, parentHasFooter, parentFooterVal bool, tm targetFrameMeta) (urls []any, hasFooter, footerVal bool) {
+	urls, hasFooter, footerVal = parentURLs, parentHasFooter, parentFooterVal
+	if tm.hasURLs {
+		urls = tm.urls
+	}
+	if tm.hasFooter {
+		hasFooter, footerVal = true, tm.footer
+	}
+	return
+}
+
 // makeMultiTarget is kind="multi-target"'s factory — the Go port of
-// admin_lib/interp.py::_make_multi_target, minus per-target requires/urls/
-// footer inheritance (admin-3rgp.10/.11, out of this ticket's scope).
+// admin_lib/interp.py::_make_multi_target, including per-target urls/footer
+// inheritance (parent default, child override, child opt-out with an empty
+// list or an explicit `footer = false`). Per-target `requires` (guards) is
+// still admin-3rgp.10's, not this ticket's.
 //
 // Both target shapes Python supports are ported: inline subtables
 // ([actions.dev.cf] run = "...") and the flat `targets` table (name = "..."
 // or name = "@other-action" for delegation) — the two are mutually
 // exclusive, matching validate_action's "cannot mix targets with inline
-// target subtables".
+// target subtables". Per-target urls/footer overrides only exist on the
+// inline-subtable shape, which is the only one with room for extra keys; a
+// flat-table target always just inherits the parent's urls/footer.
 func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
 	desc, _ := actionString(action, "desc")
 	if desc == "" {
 		desc = name
 	}
+	parentURLs := actionURLs(action)
+	parentFooterVal, parentHasFooter := actionBool(action, "footer")
 
 	inline := map[string]map[string]any{}
 	for k, v := range action {
@@ -61,6 +98,7 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest) 
 	}
 
 	targets := map[string]multiTargetEntry{}
+	frameMeta := map[string]targetFrameMeta{}
 	var order []string
 
 	if len(inline) > 0 {
@@ -74,6 +112,15 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest) 
 			}
 			targets[k] = multiTargetEntry{run: run, action: act}
 			order = append(order, k)
+
+			var tm targetFrameMeta
+			if u, ok := tbl["urls"].([]any); ok {
+				tm.urls, tm.hasURLs = u, true
+			}
+			if f, ok := tbl["footer"].(bool); ok {
+				tm.footer, tm.hasFooter = f, true
+			}
+			frameMeta[k] = tm
 		}
 	} else if hasFlat {
 		for _, k := range sortedStringKeys(flatRaw) {
@@ -127,6 +174,14 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest) 
 			return fmt.Errorf("action %q: unknown target %q", name, picked)
 		}
 		h.SetLogContext([]string{name, picked}, 0)
+
+		// The footer belongs to the target the user picked, whether that
+		// target runs a shell string itself or delegates to another
+		// action.
+		urlsForTarget, hasFooterForTarget, footerForTarget := resolveTargetFrame(
+			parentURLs, parentHasFooter, parentFooterVal, frameMeta[picked])
+		f := enterFrame(h, fmt.Sprintf("%s:%s", name, picked), urlsForTarget, hasFooterForTarget, footerForTarget, m)
+		defer frame.Deactivate(f)
 
 		if t.action != "" {
 			if currentDispatch == nil {
