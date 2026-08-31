@@ -1,8 +1,10 @@
 package kinds
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
@@ -106,6 +108,68 @@ func TestLuaInlineConfigOverridesManifestTable(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "marker.txt")); err != nil {
 		t.Fatalf("inline config did not override the manifest-level table: %v", err)
+	}
+}
+
+// TestLuaArgsReachBody proves the Runner's args slice reaches the Lua body
+// as the `args` global — admin-3rgp.37's addition, needed by every rewritten
+// body that does its own target/flag parsing (`./admin build windows`).
+//
+// MUTATION EVIDENCE: change makeLua's `h.Exec(source, cfg, args...)` to
+// `h.Exec(source, cfg)` (drop the args), and this test fails: `args[1]` is
+// nil in Lua, `args[1] == "windows"` is false, err("missing") fires,
+// marker.txt is never created, and the Runner returns a non-nil error.
+func TestLuaArgsReachBody(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	runner, err := makeLua("build", manifest.Action{
+		"run": `if args[1] == "windows" and #args == 1 then run_cmd("touch marker.txt") else err("missing") end`,
+	}, nil)
+	if err != nil {
+		t.Fatalf("makeLua: %v", err)
+	}
+	if err := runner([]string{"windows"}); err != nil {
+		t.Fatalf("runner() = %v, want nil", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "marker.txt")); err != nil {
+		t.Fatalf("args did not reach the Lua body: %v", err)
+	}
+}
+
+// TestLuaErrorMessageDropsStackTrace proves luaErrorMessage strips
+// gopher-lua's stack trace from a body's error("...") call, keeping just the
+// message a body's `error()` raised — the message an unknown-target/failed-
+// build path prints, not a "[G]: in function 'error'" traceback dump that
+// would make every deliberate, expected failure look like an interpreter
+// bug.
+//
+// MUTATION EVIDENCE: change luaErrorMessage's `apiErr.Object.String()` to
+// `err.Error()` unconditionally (the pre-fix behaviour), and this test
+// fails: the returned message contains "stack traceback" instead of being
+// exactly "build failed".
+func TestLuaErrorMessageDropsStackTrace(t *testing.T) {
+	t.Chdir(t.TempDir())
+	runner, mkErr := makeLua("build", manifest.Action{"run": `error("build failed")`}, nil)
+	if mkErr != nil {
+		t.Fatalf("makeLua: %v", mkErr)
+	}
+	runErr := runner(nil)
+	if runErr == nil {
+		t.Fatal("runner() = nil, want an error")
+	}
+	// Unwrap the %w-wrapped error back to the raw *lua.ApiError makeLua saw,
+	// via the same luaErrorMessage function under test.
+	inner := errors.Unwrap(runErr)
+	got := luaErrorMessage(inner)
+	// Lua's error() prepends "<chunk>:line: " position info at its default
+	// level — kept (it is not a stack trace); only the "stack traceback"
+	// block is what this fix drops.
+	if !strings.HasSuffix(got, "build failed") {
+		t.Fatalf("luaErrorMessage = %q, want it to end with %q", got, "build failed")
+	}
+	if strings.Contains(got, "traceback") {
+		t.Fatalf("luaErrorMessage leaked a stack trace: %q", got)
 	}
 }
 

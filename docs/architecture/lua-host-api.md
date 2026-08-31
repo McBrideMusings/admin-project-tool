@@ -17,6 +17,12 @@ A Lua body gets Lua's `base`, `table`, `string` and `math` libraries. It does **
 or `io` — anything that touches the process goes through a host function instead, so the
 surface stays exactly what this page lists rather than whatever Lua's stdlib happens to expose.
 
+## Arguments
+
+| Global | Shape | Behaviour |
+|---|---|---|
+| `args` | `string[]` | The CLI arguments the action was invoked with — `args[1]`, `args[2]`, ... (1-indexed, per Lua array convention), `#args` for the count. Mirrors the Python original's bare `args` name (`sys.argv`'s tail). Always present, as an empty table when no arguments were given. |
+
 ## Output
 
 | Function | Signature | Behaviour |
@@ -47,6 +53,8 @@ Process supervision (a long-running dev-server loop with reload) is explicitly *
 `run_cmd` — that logic lives in the host's own reload/output-pump machinery per the project's
 "never re-hand-roll the pump" rule, not in a Lua body.
 
+| `run_group(commands[, {dir=path}])` | `({tag=string, cmd=string}[], table?) -> number` | Runs every `commands[i].cmd` concurrently through `/bin/sh -c`, prefixing each one's output with `"[tag] "` as it streams — the Go port (admin-3rgp.37) of the one archetype body ADR-0010 names as NOT becoming Lua: a multi-process dev loop (forge-engine's workspace mode) that used raw `threading.Lock` + `subprocess.Popen` + `poll`/`wait` in Python. Composes `internal/streams.OutputPump` (one per child, tagging its lines) with this repo's own process/signal handling — not a third hand-rolled pump. Ctrl+C is forwarded to every still-running child, given 5s, then killed. Returns the highest exit code across every child (0 if all exited zero), matching the Python original's `sys.exit(max(rcs))`. |
+
 ## Target selection
 
 | Function | Signature | Behaviour |
@@ -59,6 +67,24 @@ raw-mode arrow-key TUI — it satisfies the "same process, no subprocess" requir
 degrades the same way on a non-TTY, but is a plainer interaction. A richer in-terminal picker
 is a follow-up, not a requirement this page's functions fail to meet.
 
+## Environment
+
+| Function | Signature | Behaviour |
+|---|---|---|
+| `env(name)` | `(string) -> string?` | Reads a process environment variable, or `nil` if unset. A Lua body gets neither `os` nor `io`, so this is the one narrow read-only exception — most bodies never need it, since embedding `"${VAR}"` directly in a string passed to `run_cmd` lets `/bin/sh -c` resolve it without Lua seeing the value; this exists for the smaller set of bodies that branch in Lua on whether a var is set. |
+
+## React Native — Metro
+
+Bound by [admin-3rgp.37](https://github.com/McBrideMusings/admin-project-tool/issues), wiring
+`internal/metro` (admin-3rgp.14's self-contained Go port of `admin_lib/metro.py`) into a Lua
+table for the first time — that package's own doc comment named this exact gap.
+
+| Function | Signature | Behaviour |
+|---|---|---|
+| `metro.ensure(app_dir[, {port=, log_file=, pid_file=}])` | `(string, table?) -> bool` | Starts Metro in `app_dir` unless one is already answering `/status` on `port` (default `8081`). Returns whether it started a new process. `log_file`/`pid_file` default under the active log directory (`tmp/metro.log`, `tmp/metro.pid`). Raises a Lua error if a freshly started Metro exits immediately or never answers within 60s — the same "must not continue toward a build that would only show a red screen" contract the Python original enforced with `RuntimeError`. |
+| `metro.stop([{port=, pid_file=}])` | `(table?) -> bool` | Stops a Metro started by `ensure`, returning whether one was actually stopped. |
+| `metro.running([port])` | `(number?) -> bool` | True if a Metro bundler is answering `/status` on `port` (default `8081`). |
+
 ## Capabilities bound from Go
 
 ADR-0010: "Bind capability from Go (JSON, globbing, plist) rather than expecting it from Lua's
@@ -69,6 +95,7 @@ stdlib." Each is a small table of functions, not a global function of its own.
 | `json.encode(value)` | `(any) -> string` | Encodes a Lua table/string/number/boolean/nil to JSON via `encoding/json`. |
 | `json.decode(text)` | `(string) -> any` | Parses JSON into the equivalent Lua table/string/number/boolean/nil. |
 | `glob.match(pattern[, dir])` | `(string, string?) -> string[]` | `filepath.Glob` rooted at `dir` (default `"."`), returned as an array of matched paths. |
+| `fs.read(path)` | `(string) -> string?` | Reads a whole text file, or `nil` if it can't be read. The general "a body needs a file's contents" capability where `plist.read`/`glob.match` don't apply. |
 | `plist.read(path)` | `(string) -> table` | Reads an XML-format `.plist`'s top-level `<dict>` into a table. `<true/>`/`<false/>` become booleans, `<integer>`/`<real>` become numbers, everything else (including `<string>`, nested `<array>`/`<dict>`) is read as its raw text. Binary plists and writing are **not implemented** — a body needing either is a follow-up. |
 
 ## Configuration
