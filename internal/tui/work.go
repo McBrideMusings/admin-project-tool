@@ -32,9 +32,13 @@ type workRowData struct {
 	steps        []workStepInfo
 	// workflow is non-nil only for a query-sourced kind="workflow" command
 	// (a selection-sourced one never reaches this list at all — see
-	// declaredCommands). Actually dispatching it — resolving the query and
-	// confirming the resolved set — is admin-3rgp.26's job.
-	workflow *kinds.WorkflowTarget
+	// declaredCommands). workflowAction is that same step's raw action body
+	// — kept alongside workflow because admin-3rgp.26's resolve/confirm/
+	// dispatch chain (workflowconfirm.go) needs the whole action, not just
+	// its parsed `over`, to resolve the configured agent and hand off to
+	// kinds.DispatchTargets exactly as it would from any other caller.
+	workflow       *kinds.WorkflowTarget
+	workflowAction manifest.Action
 	// live is the livework.Entry currently backing this command, if any —
 	// set only for a process-kind entry (Worker == nil); a genuine agent
 	// worker never folds into a command row, it gets its own row below.
@@ -404,6 +408,7 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 	if a, ok := m.soleAction(cr.cmd); ok && actionKind(a) == "workflow" {
 		if target, err := kinds.ParseWorkflowOver(cr.cmd.Steps[0], a); err == nil {
 			wd.workflow = &target
+			wd.workflowAction = a
 		}
 	}
 	wd.lastRun, wd.logPath = commandLastRun(m.repoRoot, cr.cmd)
@@ -507,14 +512,13 @@ func dispatchCommandCmd(m *manifest.Manifest, name string) tea.Cmd {
 }
 
 // activateCommand handles enter on a command row: a query-sourced workflow
-// is left to admin-3rgp.26 (resolving its query and confirming the set
-// belongs there, not to a bare enter here); an already-live command attaches
-// to its pane instead of dispatching a second run on top of the one that
-// owns its log file and registry entry; anything else dispatches.
+// resolves its query and opens the confirm overlay rather than dispatching
+// directly (admin-3rgp.26 — see workflowconfirm.go); an already-live command
+// attaches to its pane instead of dispatching a second run on top of the one
+// that owns its log file and registry entry; anything else dispatches.
 func (m Model) activateCommand(wd *workRowData) (tea.Model, tea.Cmd) {
 	if wd.workflow != nil {
-		m.setStatus("dispatching a query-sourced workflow needs confirmation — admin-3rgp.26", cDim)
-		return m, nil
+		return m.startWorkflowConfirm(wd)
 	}
 	if wd.live != nil {
 		return m.attachEntry(wd.live)
