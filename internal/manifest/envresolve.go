@@ -2,21 +2,50 @@ package manifest
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strings"
 )
 
+// lanIP returns the address another device on this network reaches this machine
+// at, by asking the routing table which source address it would use to reach an
+// off-link host. It does not actually send traffic — UDP has no handshake, so
+// connect() only does the route lookup. The target is TEST-NET-1 (192.0.2.1),
+// which is reserved and unroutable.
+//
+// If the primary lookup fails (no route, offline, all interfaces down), falls
+// back to resolving the local hostname, and finally falls back to 127.0.0.1 if
+// that fails too.
+//
+// This is the Go port of admin_lib/core.py::lan_ip.
+func lanIP() string {
+	conn, err := net.Dial("udp", "192.0.2.1:1")
+	if err == nil {
+		defer conn.Close()
+		if addr, ok := conn.LocalAddr().(*net.UDPAddr); ok && addr.IP != nil {
+			return addr.IP.String()
+		}
+	}
+
+	// Fallback: resolve the local hostname
+	if hostname, err := os.Hostname(); err == nil {
+		if addr, err := net.LookupHost(hostname); err == nil && len(addr) > 0 {
+			return addr[0]
+		}
+	}
+
+	// Ultimate fallback
+	return "127.0.0.1"
+}
+
 // ComputedVars maps a computed ${VAR} name (one not read from the plain
 // environment) to the function that computes it — the Go port of
-// admin_lib/core.py's COMPUTED_VARS dict, which today holds only
-// {"LAN_IP": lan_ip}. Left empty here: porting the network-interface lookup
-// that computes LAN_IP is a tracked gap, not a silent one — it is consumed
-// by the log bridge and the web/interactive-shell kinds (admin-3rgp.14,
-// .18), neither of which is in this ticket's eight transient kinds. An
-// explicit environment value still wins over a computed one, exactly as in
-// Python, so nothing here needs to change once LAN_IP is ported: a future
-// ComputedVars["LAN_IP"] = lanIP just starts being consulted.
-var ComputedVars = map[string]func() string{}
+// admin_lib/core.py's COMPUTED_VARS dict, which holds {"LAN_IP": lanIP}.
+// An explicit environment value still wins over a computed one, exactly as in
+// Python, so a project can pin one when the automatic answer is wrong.
+var ComputedVars = map[string]func() string{
+	"LAN_IP": lanIP,
+}
 
 // ResolveEnv expands every ${VAR} / ${VAR:-default} in s against the process
 // environment, falling back to ComputedVars and then to the reference's own
