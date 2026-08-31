@@ -73,16 +73,34 @@ stdlib." Each is a small table of functions, not a global function of its own.
 
 ## Configuration
 
-Every Lua body runs with a global `config` table set from its archetype's config (the table
-that, in `admin.toml`, lives under a key like `[apple]` and is projected into
-`internal/manifest.Manifest.Apple` and siblings — see [ADR-0009](../adr/0009-manifests-reference-archetypes-carry-implementation.md)).
-This replaces the Python interpreter's `globals().get("_APPLE_CONFIG")` lookup: the config
-reaches the body as a real, nested Lua table (`config.ios_scheme`, `config.nested.field`,
-`config.list[1]`), not a name looked up in a shared namespace.
+Every Lua body runs with a global `config` table, built by `internal/kinds.makeLua`
+(admin-3rgp.43) in two layers:
 
-Wiring a specific archetype's config table into `config` for a given action kind is the calling
-factory's job (`internal/kinds`), not `internal/luahost`'s — `Host.Exec(source, cfg)` takes
-whatever `map[string]any` its caller hands it.
+1. Every non-empty manifest-level archetype config table — the ones that, in `admin.toml`, live
+   under a key like `[apple]` or `[go]` and project into `internal/manifest.Manifest.Apple`,
+   `.Go`, and siblings (see [ADR-0009](../adr/0009-manifests-reference-archetypes-carry-implementation.md))
+   — is placed under its own admin.toml name: `config.go`, `config.apple`, `config.server`, and
+   so on (`internal/kinds.archetypeConfigTables`). Every table is exposed unconditionally to
+   every Lua body, regardless of which kind is running — the same shape as the Python
+   interpreter's `_CONFIG_GLOBALS` (`_APPLE_CONFIG`, `_GO_CONFIG`, ...), which likewise injected
+   every table into the exec namespace unconditionally and let a body read whichever name it was
+   authored against. A `kinds.Factory` carries the full resolved `*manifest.Manifest`
+   (admin-3rgp.43's signature change — see `internal/kinds/registry.go`'s `Factory` doc comment),
+   so `makeLua` can reach any of these tables without a per-action record of which archetype an
+   action came from (`manifest.Action` is a bare `map[string]any` with no such provenance field).
+2. An optional inline `[actions.X.config]` table is merged on top, at the top level, so an
+   action can still pass its own ad hoc values (`config.value`) the way the original single-table
+   design worked. An inline key wins on collision with a domain-table name (an inline key
+   literally named `go` would shadow `config.go`).
+
+A body reads a nested field the normal way: `config.go.binary`, `config.apple.ios_scheme`,
+`config.nested.field`, `config.list[1]`. This replaces the Python interpreter's
+`globals().get("_APPLE_CONFIG")` lookup with a real, nested Lua table under one predictable
+global rather than N string-prefixed globals.
+
+Wiring these tables into `config` is entirely `internal/kinds`' job — `internal/luahost.Host.Exec(source,
+cfg)` is unchanged by admin-3rgp.43 and still just takes whatever `map[string]any` its caller
+hands it as the `config` global.
 
 ## Apple platform verbs
 
@@ -155,10 +173,6 @@ text, not just a bare `nil`.
 - **A richer `pick_target` picker** — arrow-key navigation, scrolling for long lists. The
   current numbered-list picker meets the acceptance criterion (in-process, no subprocess) but
   not the original's UI fidelity.
-- **Manifest-level archetype config tables reaching a Lua body automatically.** Python's
-  interpreter exposes a whole table like `[apple]` to a `kind = "python"` body by convention
-  (`_CONFIG_GLOBALS`), because its namespace-builder sees the full resolved Manifest. A Go
-  `kinds.Factory` only receives `(name string, action manifest.Action)` — no Manifest — so
-  `makeLua` can only expose what the action itself carries inline (`[actions.X.config]`).
-  Wiring a project-level table into every `kind = "lua"` action generically needs either a
-  wider Factory signature or a second dispatch-time pass; tracked as a follow-up.
+
+Manifest-level archetype config tables reaching a Lua body automatically — the gap this section
+used to list here — is closed by admin-3rgp.43: see "Configuration" above.

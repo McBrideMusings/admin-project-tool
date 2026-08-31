@@ -22,7 +22,7 @@ func pkgRunner(dirpath string) string {
 
 // makeNpm is kind="npm"'s factory — the Go port of
 // admin_lib/interp.py::_make_npm. `run` is the package.json script name.
-func makeNpm(name string, action manifest.Action) (Runner, error) {
+func makeNpm(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
 	script, ok := actionString(action, "run")
 	if !ok || script == "" {
 		return nil, fmt.Errorf(`action %q: kind="npm" requires 'run' (a package.json script name)`, name)
