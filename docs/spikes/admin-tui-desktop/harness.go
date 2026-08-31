@@ -161,7 +161,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "Q", "q":
+		// `q` is released to the design: the dashboard binds it to quit, and
+		// quitting with hosted processes running is a confirm worth prototyping.
+		// ⇧Q and ctrl+c still leave the harness.
+		case "ctrl+c", "Q":
 			// `q` quits too: almost every TUI binds it that way, so a design
 			// whose footer says "q quit" would otherwise advertise a dead key.
 			return m, tea.Quit

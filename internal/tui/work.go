@@ -694,9 +694,9 @@ func (m Model) attachEntry(e *livework.Entry) (tea.Model, tea.Cmd) {
 }
 
 // currentLiveEntry resolves the row under the cursor to the livework.Entry
-// its a/k/r actions operate on: a worker row's own entry, or a command
+// its a/k actions operate on: a worker row's own entry, or a command
 // row's currently-running entry (nil for an idle command, or any other row
-// — a, k and r are then no-ops).
+// — a and k are then no-ops).
 func (m Model) currentLiveEntry() *livework.Entry {
 	r, ok := m.currentRow()
 	if !ok || r.work == nil {
@@ -725,20 +725,6 @@ func (m Model) killCurrentWork() (tea.Model, tea.Cmd) {
 		m.setStatus("kill failed: "+err.Error(), cRed)
 	} else {
 		m.setStatus("killed "+id, cDim)
-	}
-	return m, nil
-}
-
-func (m Model) retryCurrentWork() (tea.Model, tea.Cmd) {
-	e := m.currentLiveEntry()
-	if e == nil || e.Ops.Retry == nil {
-		return m, nil
-	}
-	id := e.ID
-	if err := e.Ops.Retry(); err != nil {
-		m.setStatus("retry failed: "+err.Error(), cRed)
-	} else {
-		m.setStatus("retrying "+id, cCyan)
 	}
 	return m, nil
 }

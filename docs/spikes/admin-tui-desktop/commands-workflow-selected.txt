@@ -2,19 +2,19 @@
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
   Commands                                                     │ retire-merged                  
- ◇ build           shell    Compile the binary                 │ workflow  ·  (manifest)        
+ ◇ ▸ build         multi-tarBuild: mac | ios | tv | server [--…│ workflow  ·  (manifest)        
  ◇ check           shell    Parse and resolve admin.toml       │                                
- ◇ deploy          sequence Install to ~/.admin, provision the…│ last run                       
- ◇ docs            running  vitepress dev · localhost:5… pane 1│   never                        
+ ◇ deploy          sequence Install to ~/.admin, provision the…│ log                            
+ ◇ docs            running  vitepress dev · localhost:5… hosted│   ~/.admin/logs/retire-merged.l
  ◇ logs            logs     Tail a log target                  │                                
- ◆ retire-merged   workflow Remove worktrees whose branch is m…│ log                            
- ◇ test            running  internal/tui · 00:41         pane 6│   ~/.admin/logs/retire-merged.l
+ ◆ retire-merged   workflow Remove worktrees whose branch is m…│ targets  query · 4             
+ ◇ test            waiting  Enter a number, or q to can… hosted│   fix-detector-parity-skip     
+                                                               │   go-transient-kind-factories  
+  Workers                                                      │   docs-adr-lua                 
+ ◇ admin-3rgp.36   running  writing internal/lua/host.go pane 3│   launchd-env-file             
+ ◇ admin-3rgp.7    waiting  needs input: root command n… pane 4│                                
+ ◇ admin-3rgp.33   failed   go test ./internal/detect F… pane 5│                                
                                                                │                                
-  Workers                                                      │ targets  query · 4             
- ◇ admin-3rgp.36   running  writing internal/lua/host.go pane 3│   fix-detector-parity-skip     
- ◇ admin-3rgp.7    waiting  needs input: root command n… pane 4│   go-transient-kind-factories  
- ◇ admin-3rgp.33   failed   go test ./internal/detect F… pane 5│   docs-adr-lua                 
-                                                               │   launchd-env-file             
                                                                │                                
                                                                │                                
                                                                │                                
@@ -27,4 +27,4 @@
                                                                │                                
                                                                │                                
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ run or attach · k kill · r retry · ←→ tab · q quit                                 
+ ↑↓ move · ↵ run or open · →← submenu · k kill · q/esc quit                                     

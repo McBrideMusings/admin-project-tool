@@ -158,3 +158,79 @@ func TestShellPassthroughEmptyIsRefused(t *testing.T) {
 		t.Fatal("runner() = nil, want an error for a blank command")
 	}
 }
+
+// TestShellPassthroughInteractiveInheritsStdout is the regression test for the
+// bug that made `admin prototype` render a 96x30 monochrome island of a
+// full-screen TUI: the Go port silently dropped the `interactive` knob, so the
+// child ran through RunCmd's pipe. A piped child gets no window size and no
+// TTY, so it falls back to a fixed default and turns color off.
+//
+// The assertion is the one that actually matters and cannot be faked: the
+// child's stdout must be the SAME open file as this process's stdout, proven
+// by having the child write to fd 1 and reading it back from a real file
+// swapped in as os.Stdout. A piped or captured implementation writes somewhere
+// else and this fails.
+func TestShellPassthroughInteractiveInheritsStdout(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	f, err := os.Create(filepath.Join(dir, "out.txt"))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	defer f.Close()
+	orig := os.Stdout
+	os.Stdout = f
+	t.Cleanup(func() { os.Stdout = orig })
+
+	runner, err := makeShellPassthrough("proto",
+		manifest.Action{"run": "printf inherited", "interactive": true}, nil)
+	if err != nil {
+		t.Fatalf("makeShellPassthrough: %v", err)
+	}
+	if err := runner(nil); err != nil {
+		t.Fatalf("runner() = %v, want nil", err)
+	}
+	os.Stdout = orig
+
+	got, err := os.ReadFile(filepath.Join(dir, "out.txt"))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(got) != "inherited" {
+		t.Fatalf("child stdout = %q, want %q — interactive must hand over the "+
+			"real stdout, not a pipe", got, "inherited")
+	}
+}
+
+// TestShellPassthroughInteractiveNonZeroExitIsError proves the handover still
+// reports failure: a raw terminal passthrough that swallowed exit codes would
+// make every broken prototype look like it ran fine.
+func TestShellPassthroughInteractiveNonZeroExitIsError(t *testing.T) {
+	t.Chdir(t.TempDir())
+	runner, err := makeShellPassthrough("fails",
+		manifest.Action{"run": "exit 3", "interactive": true}, nil)
+	if err != nil {
+		t.Fatalf("makeShellPassthrough: %v", err)
+	}
+	err = runner(nil)
+	if err == nil {
+		t.Fatal("runner() = nil, want an error for a nonzero exit")
+	}
+	if !strings.Contains(err.Error(), "exit 3") {
+		t.Fatalf("error = %q, want it to name the exit code", err)
+	}
+}
+
+// TestShellPassthroughNonInteractiveStillLogs guards the other side: without
+// the knob, the existing captured path is unchanged.
+func TestShellPassthroughNonInteractiveStillLogs(t *testing.T) {
+	t.Chdir(t.TempDir())
+	runner, err := makeShellPassthrough("plain", manifest.Action{"run": "true"}, nil)
+	if err != nil {
+		t.Fatalf("makeShellPassthrough: %v", err)
+	}
+	if err := runner(nil); err != nil {
+		t.Fatalf("runner() = %v, want nil", err)
+	}
+}

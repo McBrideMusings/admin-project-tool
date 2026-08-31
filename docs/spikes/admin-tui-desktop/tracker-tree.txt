@@ -1,30 +1,30 @@
  admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
-▸ 3rgp     P1  epic        One tool: merge repo-dash into admin as a s…                       2d
-  3rgp.36  P1  task        Embed a Lua VM and define the host API arch…  14                   2d
-  3rgp.37  P1  task          └╴ Rewrite the 14 archetypes in Lua and B…                       2d
-  3rgp.35  P1  task          └╴ Implement the transient kind factories   12                   2d
-  3rgp.11  P1  task            └╴ Frame, output pump and log rendering   10  afk              2d
-  3rgp.17  P1  task              └╴ Kinds carry a lifetime; long-r…  +1   5  afk              2d
-  3rgp.28  P1  task                └╴ The Swarm tab: agent workers…  +1   3  afk              2d
-  3rgp.30  P1  task                └╴ Delete the Python, drop com…  +11      afk              2d
-  3rgp.31  P3  task                └╴ Retire the prototype referen…  +4      afk              2d
-  16ju.1   P4  task                └╴ Scope the orchestrator                 hitl             2d
-  3rgp.18  P2  task                └╴ Port interactive-shell, the log …   1  afk              2d
-  3rgp.15  P2  task              └╴ Port ports, process cleanup an…  +1   1  afk              2d
-  3rgp.14  P2  task              └╴ Port the Node and web kinds  +1       1  afk              2d
-  3rgp.13  P2  task              └╴ Port the Docker and remote kin…  +1   1  afk              2d
-  3rgp.12  P2  task              └╴ Port the Apple kinds  +1              1  afk              2d
-  3rgp.10  P2  task            └╴ Guards, requires and the global pref…   1  afk              2d
-  3rgp.7   P1  task        Decide how admin <command> reaches the CLI,…  17  afk              2d
-  3rgp.8   P1  task          └╴ Validation and the check verb            13  afk              2d
-  3rgp.24  P1  task            └╴ The workflow kind and its target sou…   7  afk              2d
-  3rgp.25  P1  task              └╴ Worktree per target under a co…  +1   6  afk              2d
-  3rgp.27  P2  task                └╴ Selection-sourced workflows …  +1   2  afk              2d
-  3rgp.26  P2  task                └╴ Query-sourced workflows run …  +1   2  afk              2d
-  3rgp.20  P1  task            └╴ Commands tab with the resolved-actio…   7  afk              2d
-  ↓ 204 more                                                                                    
+▸ 3rgp.60  P1  task        Live-work registry addresses a pty as well a…  3  afk              1h
+  3rgp.61  P1  task          └╴ Dashboard runs commands on a hosted…  +1  2  afk              1h
+  3rgp.63  P2  task            └╴ Quitting the dashboard confirms befor…     afk              1h
+  3rgp.62  P2  task            └╴ Kill and retry a hosted process from …     afk              1h
+  3rgp.59  P1  task        Hosted dispatch entry point that cannot open…  3  afk              1h
+  7nh3     P1  bug         Two dolt sql-servers for one beads workspace…  1                   2h
+  3rgp.56  P1  bug           └╴ internal/bd has no timeout: a hung bd l…                      2h
+  3rgp.54  P1  task        Port the six action kinds the Go binary is m…  1                   2h
+  3rgp.30  P1  task          └╴ Delete the Python, drop compile, su…  +2     afk              2h
+  y5o6     P1  task        Detectors are ported but unreachable: nothin…                      3h
+  a5km     P1  task        Port the log reader: there is no admin logs …                      3h
+  3rgp     P1  epic        One tool: merge repo-dash into admin as a si…                     14h
+  fy95     P2  bug         admin check does not reserve every cmd/ verb…                      1h
+  3rgp.58  P2  task        Terminal ladder for workspace dispatch            afk              1h
+  3rgp.57  P2  feature     Multi-target picker runs as a stdin prompt o…                      2h
+  3rgp.55  P2  task        Register the `new` verb in the Go binary       1                   2h
+  26ge     P2  task        Userscript provisioning has no Go port — the…                      3h
+  auqf     P2  bug         test_sign.py designated-requirement test fai…                      3h
+  eptp     P2  feature     Move _log_bridge_allocate_port into ports.py…     enhancement      3h
+  7us9     P2  task        Wire VitePress docs preview into the admin r…                      3h
+  98v9     P2  task        Ghost 'admin-tool' skill entry in Claude Cod…                      3h
+  hocp     P2  task        Code review subagents can't access other rep…                      3h
+  bsx6     P2  task        Migrate apple-coding-tool to dispatch_target                       3h
+  ↓ 63 more                                                                                     
 ────────────────────────────────────────────────────────────────────────────────────────────────
  dependency tree — blockers sit above what they block                                           
- ↑↓ move · ↵ start work · d detail · g tree · / filter · r refresh · q quit · ←→ tab            
+ ↑↓ move · ↵ start work · d detail · g tree · space select · w workflow · q quit · ←→ tab       

@@ -1,30 +1,30 @@
  admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
- Ready                                                                                       202
+ Ready                                                                                        81
 ────────────────────────────────────────────────────────────────────────────────────────────────
-▸ 3rgp     P1  epic     One tool: merge repo-dash into admin as a sing…                       2d
-  3rgp.36  P1  task     Embed a Lua VM and define the host API archety…  14                   2d
-  3rgp.7   P1  task     Decide how admin <command> reaches the CLI, an…  17  afk              2d
-  3rgp.29  P1  task     Two deployment paths: go install for the binar…   1  afk              2d
-  lk2r     P2  task     Parallel URL checks in register_open_command                          3d
-  qajk     P2  task     Configurable health check endpoint per URL                            3d
-  3geg     P2  task     Clickable URLs in TUI home screen                                     3d
-  uwa0     P2  task     Web component detection for non-server project…                       3d
-  x69j     P2  task     Add platform param to docker_deploy                                   3d
-  uw2p     P2  task     Multi-scheme xcodeproj detection                                      3d
-  8hwt     P2  task     Icon config generation for multi-target apple                         3d
-  uo84     P2  task     Add --dry-run to multi-target generation                              3d
-  bsx6     P2  task     Migrate apple-coding-tool to dispatch_target                          3d
-  zjts     P2  task     Re-bundle all admin scripts after icons module…                       3d
-  d98p     P2  task     Add direct icons module detection in bundler                          3d
-  943s     P2  task     Add log level filtering to LogFormatter                               3d
-  cfj8     P2  task     Align run_parallel label widths for consistent…                       3d
-  lj5f     P2  task     init-admin should scaffold dev/prod split for …                       3d
-  q2a1     P2  task     Re-bundle all projects after bundler bugfixes …                       3d
-  l3gr     P2  task     v2: unit tests for order list + spacer resolut…                       3d
-  5l8a     P2  task     v2: dump_manifest round-trip test for order fi…                       3d
-  nslj     P2  task     v2: archetypes should declare a default order                         3d
-  ↓ 208 more                                                                                    
+▸ 3rgp.60  P1  task     Live-work registry addresses a pty as well as a…  3  afk              1h
+  3rgp.59  P1  task     Hosted dispatch entry point that cannot open a …  3  afk              1h
+  7nh3     P1  bug      Two dolt sql-servers for one beads workspace de…  1                   2h
+  3rgp.54  P1  task     Port the six action kinds the Go binary is miss…  1                   2h
+  y5o6     P1  task     Detectors are ported but unreachable: nothing i…                      3h
+  a5km     P1  task     Port the log reader: there is no admin logs ver…                      3h
+  3rgp     P1  epic     One tool: merge repo-dash into admin as a singl…                     14h
+  fy95     P2  bug      admin check does not reserve every cmd/ verb — …                      1h
+  3rgp.58  P2  task     Terminal ladder for workspace dispatch               afk              1h
+  3rgp.57  P2  feature  Multi-target picker runs as a stdin prompt outs…                      2h
+  3rgp.55  P2  task     Register the `new` verb in the Go binary          1                   2h
+  26ge     P2  task     Userscript provisioning has no Go port — the lo…                      3h
+  auqf     P2  bug      test_sign.py designated-requirement test fails …                      3h
+  eptp     P2  feature  Move _log_bridge_allocate_port into ports.py as…     enhancement      3h
+  7us9     P2  task     Wire VitePress docs preview into the admin runn…                      3h
+  98v9     P2  task     Ghost 'admin-tool' skill entry in Claude Code s…                      3h
+  hocp     P2  task     Code review subagents can't access other repos                        3h
+  bsx6     P2  task     Migrate apple-coding-tool to dispatch_target                          3h
+  d2s0     P2  task     Spike: parallel worktrees each rebuild the whol…                      3h
+  n2ci     P2  task     Migrate downstream Apple projects to apple.dev_…                      3h
+  m2y1     P2  task     Audit downstream projects for commands-as-routi…                      3h
+  dc8y     P2  task     Generalize the restart-hotkey dev loop beyond t…     variance         3h
+  ↓ 67 more                                                                                     
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ start work · d detail · g tree · / filter · r refresh · q quit · ←→ tab            
+ ↑↓ move · ↵ start work · d detail · g tree · space select · w workflow · q quit · ←→ tab       
