@@ -137,6 +137,7 @@ func registerManifestCommand(name string) bool {
 
 func init() {
 	rootCmd.AddCommand(branchCmd)
+	rootCmd.AddCommand(worktreeCmd)
 	rootCmd.AddCommand(prsCmd)
 	rootCmd.AddCommand(populateCmd)
 
