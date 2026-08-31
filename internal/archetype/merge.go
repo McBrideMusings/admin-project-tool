@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/guards"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
@@ -94,6 +95,13 @@ func Resolve(project *manifest.Manifest, sp SearchPath) (*manifest.Manifest, []s
 	// an archetype's.
 	dst.Raw = project.Raw
 	dst.Archetypes = append([]string(nil), project.Archetypes...)
+
+	// ADR-0005's resolve-phase audit: every `requires` reference (action-level
+	// and per multi-target target) must resolve to a known guard now that
+	// archetype merging is done and dst.Guards holds every user-defined one.
+	if err := guards.ValidateRequires(dst); err != nil {
+		return nil, nil, err
+	}
 
 	return dst, log, nil
 }
