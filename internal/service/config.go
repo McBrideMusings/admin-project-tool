@@ -137,25 +137,29 @@ func ReadConfig(raw map[string]any, r Reporter) (Config, error) {
 		return Config{}, fmt.Errorf("[launchd]: unknown keys: %v, valid: %v", unknown, KnownKeys)
 	}
 
+	rv := &resolver{}
 	c := Config{
-		Label:         resolve(str(raw, "label")),
-		Program:       resolve(str(raw, "program")),
-		Source:        resolve(str(raw, "source")),
-		Args:          resolveAll(strList(raw, "args")),
+		Label:         rv.s(str(raw, "label")),
+		Program:       rv.s(str(raw, "program")),
+		Source:        rv.s(str(raw, "source")),
+		Args:          rv.all(strList(raw, "args")),
 		Env:           map[string]string{},
 		InheritPath:   boolOr(raw, "inherit_path", true),
 		InheritHome:   boolOr(raw, "inherit_home", true),
 		KeepAlive:     boolOr(raw, "keep_alive", true),
 		RunAtLoad:     boolOr(raw, "run_at_load", true),
 		Throttle:      intPtr(raw, "throttle"),
-		ProcessType:   orDefault(resolve(str(raw, "process_type")), "Background"),
+		ProcessType:   orDefault(rv.s(str(raw, "process_type")), "Background"),
 		Nice:          intPtr(raw, "nice"),
 		StartInterval: intPtr(raw, "start_interval"),
-		Stdout:        expand(resolve(str(raw, "stdout"))),
-		Stderr:        expand(resolve(str(raw, "stderr"))),
-		WorkingDir:    expand(resolve(str(raw, "working_dir"))),
+		Stdout:        expand(rv.s(str(raw, "stdout"))),
+		Stderr:        expand(rv.s(str(raw, "stderr"))),
+		WorkingDir:    expand(rv.s(str(raw, "working_dir"))),
 	}
 
+	if rv.firstErr != nil {
+		return Config{}, fmt.Errorf("[launchd]: %w", rv.firstErr)
+	}
 	if c.Label == "" {
 		return Config{}, fmt.Errorf("[launchd]: 'label' is required (e.g. com.example.myserver)")
 	}
@@ -176,7 +180,7 @@ func ReadConfig(raw map[string]any, r Reporter) (Config, error) {
 	// env_file_keys nothing is lifted, since a dotenv file used this way
 	// typically holds many unrelated secrets that must never end up in a
 	// LaunchAgent plist wholesale.
-	envFile := expand(resolve(str(raw, "env_file")))
+	envFile := expand(rv.s(str(raw, "env_file")))
 	envKeys := strList(raw, "env_file_keys")
 	if envFile != "" && len(envKeys) > 0 {
 		loaded := parseEnvFile(envFile, r)
@@ -188,7 +192,7 @@ func ReadConfig(raw map[string]any, r Reporter) (Config, error) {
 	}
 	// Explicit `env` wins over anything lifted from the file.
 	for k, v := range mapOf(raw, "env") {
-		c.Env[k] = resolve(v)
+		c.Env[k] = rv.s(v)
 	}
 
 	// args_cmd: a shell command whose stdout is split on whitespace and
@@ -201,7 +205,7 @@ func ReadConfig(raw map[string]any, r Reporter) (Config, error) {
 	// or fails, contributes no args rather than failing the install — a
 	// service that falls back to a narrower bind address is right, and one
 	// that refuses to deploy because the VPN is down is not.
-	if cmdStr := resolve(str(raw, "args_cmd")); cmdStr != "" {
+	if cmdStr := rv.s(str(raw, "args_cmd")); cmdStr != "" {
 		out, err := exec.Command("/bin/sh", "-c", cmdStr).Output()
 		if err != nil {
 			r.Warn(fmt.Sprintf("[launchd]: args_cmd failed, no extra args added: %v", err))
@@ -257,12 +261,31 @@ func parseEnvFile(path string, r Reporter) map[string]string {
 
 // --- small config readers -------------------------------------------------
 
-func resolve(s string) string { return manifest.ResolveComputed(s) }
+// resolver expands ${VAR} with manifest.ResolveEnv — against the real
+// environment — rather than ResolveComputed, which expands only the small
+// ComputedVars set and deliberately leaves a plain ${HOME} intact for a shell
+// to handle later. Nothing in this package reaches a shell: `program` is
+// exec'd by launchd from a plist, so an unexpanded "${HOME}/..." is a literal
+// path that does not exist. Errors are collected rather than returned per
+// call, so ReadConfig's assignments stay one expression each; err() reports
+// the first one.
+type resolver struct{ firstErr error }
 
-func resolveAll(in []string) []string {
+func (r *resolver) s(v string) string {
+	out, err := manifest.ResolveEnv(v)
+	if err != nil {
+		if r.firstErr == nil {
+			r.firstErr = err
+		}
+		return v
+	}
+	return out
+}
+
+func (r *resolver) all(in []string) []string {
 	out := make([]string, len(in))
-	for i, s := range in {
-		out[i] = resolve(s)
+	for i, v := range in {
+		out[i] = r.s(v)
 	}
 	return out
 }

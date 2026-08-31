@@ -17,8 +17,11 @@ import (
 // deletion silently broke every `deploy server` in the fleet. internal/service
 // is the restored implementation and this is the factory it was missing.
 //
-// Verbs come from the CLI, not from `run`: `admin service install`,
-// `... uninstall|status|restart|stop|start`. A bare invocation prints usage.
+// Verbs come from the CLI: `admin service install`,
+// `... uninstall|status|restart|stop|start`. `run`, when set, is the verb a
+// bare invocation takes — a `deploy server` target sets run = "install"
+// because "deploy" already said what to do, while a `service` command leaves
+// it unset so a bare call prints usage.
 //
 // Remote: `admin service <verb> user@host` routes to the SSH path instead of
 // the local one. Push needs the [go_dist] matrix, which the action reads from
@@ -27,6 +30,16 @@ import (
 func makeLaunchd(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	raw := archetypeConfigTable(m, "launchd")
 	dist := archetypeConfigTable(m, "go_dist")
+	defaultVerb, _ := actionString(action, "run")
+	if defaultVerb != "" {
+		switch defaultVerb {
+		case "install", "uninstall", "status", "restart", "stop", "start":
+		default:
+			return nil, fmt.Errorf(
+				`action %q: kind="launchd" run=%q is not a verb (install | uninstall | status | restart | stop | start)`,
+				name, defaultVerb)
+		}
+	}
 
 	return func(args []string) error {
 		if len(raw) == 0 {
@@ -58,10 +71,17 @@ func makeLaunchd(name string, action manifest.Action, m *manifest.Manifest, _ *S
 			return service.DeployRemote(raw, host, manifest.ResolveComputed(distDir), binary, h)
 		}
 
-		if verb == "" && len(args) == 0 {
+		if verb == "" {
+			// A bare `admin service` prints usage; a bare `admin deploy server`
+			// should install, because "deploy" already said what to do. The
+			// action decides which it is by declaring `run` as its default
+			// verb — no default means usage.
+			verb = defaultVerb
+		}
+		if verb == "" {
 			return service.Run(raw, nil, h)
 		}
-		return service.Run(raw, []string{orDefault(verb, "install")}, h)
+		return service.Run(raw, []string{verb}, h)
 	}, nil
 }
 

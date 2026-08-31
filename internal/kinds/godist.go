@@ -30,7 +30,10 @@ func makeGoDist(name string, action manifest.Action, m *manifest.Manifest, _ *Su
 			return fmt.Errorf("action %q: [go_dist] table missing from admin.toml", name)
 		}
 		h := newHost()
-		cfg := goDistConfig(raw)
+		cfg, err := goDistConfig(raw)
+		if err != nil {
+			return fmt.Errorf("action %q: [go_dist]: %w", name, err)
+		}
 
 		if verb == "stage" {
 			dest := destDefault
@@ -53,20 +56,18 @@ func makeGoDist(name string, action manifest.Action, m *manifest.Manifest, _ *Su
 	}, nil
 }
 
-func goDistConfig(raw map[string]any) godist.Config {
-	targets := cfgStrings(raw, "targets")
-	for i, t := range targets {
-		targets[i] = manifest.ResolveComputed(t)
-	}
-	return godist.Config{
-		SourceDir:    manifest.ResolveComputed(cfgString(raw, "source_dir", "")),
-		OutDir:       manifest.ResolveComputed(cfgString(raw, "out_dir", "")),
-		Binary:       manifest.ResolveComputed(cfgString(raw, "binary", "")),
-		Targets:      targets,
+func goDistConfig(raw map[string]any) (godist.Config, error) {
+	rv := &envResolver{}
+	cfg := godist.Config{
+		SourceDir:    rv.s(cfgString(raw, "source_dir", "")),
+		OutDir:       rv.s(cfgString(raw, "out_dir", "")),
+		Binary:       rv.s(cfgString(raw, "binary", "")),
+		Targets:      rv.all(cfgStrings(raw, "targets")),
 		Stamp:        cfgBool(raw, "stamp", true),
-		VersionFlag:  manifest.ResolveComputed(cfgString(raw, "version_flag", "")),
-		ExtraLdflags: manifest.ResolveComputed(cfgString(raw, "extra_ldflags", "")),
+		VersionFlag:  rv.s(cfgString(raw, "version_flag", "")),
+		ExtraLdflags: rv.s(cfgString(raw, "extra_ldflags", "")),
 		Trimpath:     cfgBool(raw, "trimpath", true),
 		CgoEnabled:   cfgString(raw, "cgo_enabled", ""),
 	}
+	return cfg, rv.firstErr
 }
