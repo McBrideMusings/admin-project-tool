@@ -31,17 +31,17 @@ import (
 //	anonymous_volumes  []string | []{path}
 //	env                []{name, value?}
 func buildDockerDevCmd(cfg map[string]any) (string, error) {
-	image := cfgString(cfg, "image_tag")
+	image := cfgString(cfg, "image_tag", "")
 	if image == "" {
 		return "", fmt.Errorf("'image_tag' is required")
 	}
-	context := cfgString(cfg, "build_context")
+	context := cfgString(cfg, "build_context", "")
 	if context == "" {
 		context = "."
 	}
-	target := cfgString(cfg, "target")
+	target := cfgString(cfg, "target", "")
 
-	hostRoot := cfgString(cfg, "host_root")
+	hostRoot := cfgString(cfg, "host_root", "")
 	if hostRoot == "" {
 		if cwd, err := os.Getwd(); err == nil {
 			hostRoot = cwd
@@ -62,7 +62,7 @@ func buildDockerDevCmd(cfg map[string]any) (string, error) {
 
 	runArgv := []string{"docker", "run", "--rm"}
 
-	if name := cfgString(cfg, "container_name"); name != "" {
+	if name := cfgString(cfg, "container_name", ""); name != "" {
 		runArgv = append(runArgv, "--name", name)
 	}
 
@@ -102,12 +102,12 @@ func buildDockerDevCmd(cfg map[string]any) (string, error) {
 	}
 
 	for _, mnt := range asMapSlice(cfg["bind_mounts"]) {
-		host := cfgString(mnt, "host")
-		container := cfgString(mnt, "container")
+		host := cfgString(mnt, "host", "")
+		container := cfgString(mnt, "container", "")
 		if host == "" || container == "" {
 			continue
 		}
-		mode := cfgString(mnt, "mode")
+		mode := cfgString(mnt, "mode", "")
 		hostResolved := host
 		if !filepath.IsAbs(host) {
 			hostResolved = filepath.Clean(filepath.Join(hostRoot, host))
@@ -123,11 +123,11 @@ func buildDockerDevCmd(cfg map[string]any) (string, error) {
 	// actually usable, not just visible — required for GPU/VAAPI passthrough
 	// (a bind mount alone doesn't work).
 	for _, d := range asMapSlice(cfg["devices"]) {
-		host := cfgString(d, "host")
+		host := cfgString(d, "host", "")
 		if host == "" {
 			continue
 		}
-		container := cfgString(d, "container")
+		container := cfgString(d, "container", "")
 		if container == "" {
 			container = host
 		}
@@ -148,7 +148,7 @@ func buildDockerDevCmd(cfg map[string]any) (string, error) {
 		case string:
 			path = val
 		case map[string]any:
-			path = cfgString(val, "path")
+			path = cfgString(val, "path", "")
 		}
 		if path != "" {
 			runArgv = append(runArgv, "-v", path)
@@ -161,13 +161,13 @@ func buildDockerDevCmd(cfg map[string]any) (string, error) {
 	// invocation, exactly as the Python original does.
 	var optionalMountShell []string
 	for _, m := range asMapSlice(cfg["optional_mounts"]) {
-		env := cfgString(m, "env")
-		container := cfgString(m, "container")
+		env := cfgString(m, "env", "")
+		container := cfgString(m, "container", "")
 		if env == "" || container == "" {
 			continue
 		}
 		suffix := ""
-		if mode := cfgString(m, "mode"); mode != "" {
+		if mode := cfgString(m, "mode", ""); mode != "" {
 			suffix = ":" + mode
 		}
 		optionalMountShell = append(optionalMountShell,
@@ -175,19 +175,19 @@ func buildDockerDevCmd(cfg map[string]any) (string, error) {
 	}
 
 	envFileShell := ""
-	if envFile := cfgString(cfg, "env_file"); envFile != "" {
+	if envFile := cfgString(cfg, "env_file", ""); envFile != "" {
 		envFileShell = fmt.Sprintf(`[ -f %s ] && set -- "$@" --env-file %s`, shellQuote(envFile), shellQuote(envFile))
 	}
 
 	for _, e := range asMapSlice(cfg["env"]) {
-		name := cfgString(e, "name")
+		name := cfgString(e, "name", "")
 		if name == "" {
 			continue
 		}
 		if val, ok := e["value"]; !ok || val == nil {
 			runArgv = append(runArgv, "-e", name)
 		} else {
-			runArgv = append(runArgv, "-e", name+"="+cfgString(e, "value"))
+			runArgv = append(runArgv, "-e", name+"="+cfgString(e, "value", ""))
 		}
 	}
 

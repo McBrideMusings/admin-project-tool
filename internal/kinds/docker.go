@@ -150,13 +150,6 @@ func asMapSlice(v any) []map[string]any {
 	return out
 }
 
-// cfgString reads m[key] as a string, returning "" for anything else
-// (absent, wrong type).
-func cfgString(m map[string]any, key string) string {
-	s, _ := m[key].(string)
-	return s
-}
-
 // cfgNumberString renders m[key] — an int64, float64, or string in TOML's
 // decoded shape — as a plain decimal string, for a value used to build a
 // shell argv (a port number). Returns "", false for anything else, including
@@ -178,7 +171,7 @@ func cfgNumberString(m map[string]any, key string) (string, bool) {
 // admin_lib/docker.py::docker_dev_from_config's pre-loop.
 func makeBindMountDirs(cfg map[string]any) error {
 	for _, m := range asMapSlice(cfg["bind_mounts"]) {
-		host := cfgString(m, "host")
+		host := cfgString(m, "host", "")
 		if host == "" || strings.HasPrefix(host, "/") {
 			continue
 		}

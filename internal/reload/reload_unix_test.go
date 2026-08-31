@@ -3,6 +3,7 @@
 package reload
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -215,5 +216,111 @@ func TestRunWithReloadSigusr1Reloads(t *testing.T) {
 	}
 	if startCount < 2 {
 		t.Errorf("saw %d 'Starting' banners, want at least 2 (initial + post-reload)", startCount)
+	}
+}
+
+// TestRunWithReloadReturnsChildExitCodeAfterFastExitWindow proves a child
+// that runs past the fast-exit window still surfaces its real exit code —
+// this isn't just exercising the retry path.
+func TestRunWithReloadReturnsChildExitCodeAfterFastExitWindow(t *testing.T) {
+	rc := RunWithReload("sleep 2.1 && exit 7", "t", Options{})
+	if rc != 7 {
+		t.Fatalf("RunWithReload rc = %d, want 7", rc)
+	}
+}
+
+// TestRunWithReloadStreamsChildOutput proves the child's stdout reaches
+// Options.Stdout (via frame.Write) — the whole point of routing it through
+// internal/streams.OutputPump rather than discarding it.
+//
+// MUTATION EVIDENCE: change RunWithReload's pump wiring to never call
+// pump.Write and this test fails — "hello-reload" never appears in Stdout.
+func TestRunWithReloadStreamsChildOutput(t *testing.T) {
+	var buf bytes.Buffer
+	rc := RunWithReload("sleep 2.1 && echo hello-reload", "t", Options{Stdout: &buf})
+	if rc != 0 {
+		t.Fatalf("rc = %d, want 0", rc)
+	}
+	if !strings.Contains(buf.String(), "hello-reload") {
+		t.Fatalf("output = %q, want it to contain the child's stdout", buf.String())
+	}
+}
+
+// TestRunWithReloadRetriesAFastExitExactCount complements
+// TestRunWithReloadFastExitGivesUp by counting real launches directly (via
+// a marker file appended once per launch) rather than only checking the
+// final Warn banner — proving maxFastExitAttempts bounds the retry loop,
+// not just that it eventually gives up.
+//
+// MUTATION EVIDENCE: change maxFastExitAttempts from 3 to 1 and this test
+// fails — the marker file shows 1 launch instead of the 3 asserted here.
+func TestRunWithReloadRetriesAFastExitExactCount(t *testing.T) {
+	marker := t.TempDir() + "/launches"
+	rc := RunWithReload("echo x >> "+marker+" && exit 5", "t", Options{})
+	if rc != 5 {
+		t.Fatalf("rc = %d, want 5 (final attempt's exit code)", rc)
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	got := strings.Count(string(data), "x")
+	const wantLaunches = 3 // matches maxFastExitAttempts
+	if got != wantLaunches {
+		t.Fatalf("launches = %d, want %d", got, wantLaunches)
+	}
+}
+
+// TestRunWithReloadSIGUSR1RestartsTheChildProcess complements
+// TestRunWithReloadSigusr1Reloads by proving a real second process actually
+// launched (via a growing marker file), not just that the Info banner fired.
+func TestRunWithReloadSIGUSR1RestartsTheChildProcess(t *testing.T) {
+	marker := t.TempDir() + "/starts"
+
+	done := make(chan int, 1)
+	go func() {
+		done <- RunWithReload("echo start >> "+marker+" && sleep 5", "t", Options{})
+	}()
+
+	// Give the child time to actually launch and write its marker before
+	// signalling — a signal sent before Start() would have nothing to
+	// interrupt.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(marker); err == nil && strings.Count(string(data), "start") >= 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if err := syscall.Kill(os.Getpid(), syscall.SIGUSR1); err != nil {
+		t.Fatalf("Kill(SIGUSR1): %v", err)
+	}
+
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(marker); err == nil && strings.Count(string(data), "start") >= 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if got := strings.Count(string(data), "start"); got < 2 {
+		t.Fatalf("launches after SIGUSR1 = %d, want at least 2 (original + restart)", got)
+	}
+
+	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatalf("Kill(SIGTERM): %v", err)
+	}
+	select {
+	case rc := <-done:
+		if rc != 0 {
+			t.Errorf("rc after SIGTERM = %d, want 0", rc)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("RunWithReload did not return after SIGTERM")
 	}
 }
