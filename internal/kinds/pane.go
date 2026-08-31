@@ -10,6 +10,7 @@
 package kinds
 
 import (
+	"log"
 	"os"
 	"strings"
 
@@ -104,5 +105,7 @@ func recordLiveWork(name, kind, paneID string, args []string) {
 			return nil
 		},
 	}
-	livework.Default.Add(e)
+	if err := livework.Default.Add(e); err != nil {
+		log.Printf("recordLiveWork: %v", err)
+	}
 }

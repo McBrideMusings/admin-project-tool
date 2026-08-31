@@ -250,10 +250,12 @@ func TestWorkRowsOneListOneCursor(t *testing.T) {
 	// test-scoped ID that no other test in this package can collide with.
 	worker := &livework.Entry{
 		ID: "test-work-rows-worker", Name: "test-work-rows-worker",
-		State: livework.StateWaiting, Activity: "needs input",
+		State: livework.StateWaiting, Activity: "needs input", PaneID: "pane-worker",
 		Worker: &livework.WorkerInfo{Branch: "some-branch", Worktree: "/tmp/some-branch"},
 	}
-	livework.Default.Add(worker)
+	if err := livework.Default.Add(worker); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
 
 	rows := mm.workRows()
 	var kinds []rowKind
@@ -310,7 +312,9 @@ func TestWorkRowsFoldsAProcessEntryIntoItsCommandRow(t *testing.T) {
 		ID: "test-fold-process-entry", Name: "dev-server",
 		State: livework.StateRunning, Activity: "localhost:5173", PaneID: "pane 9",
 	}
-	livework.Default.Add(e)
+	if err := livework.Default.Add(e); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
 
 	// livework.Default is a process-wide singleton (internal/livework's own
 	// doc comment: "one registry per process"), so other tests in this
