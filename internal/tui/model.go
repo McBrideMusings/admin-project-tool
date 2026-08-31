@@ -18,6 +18,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
+	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/shim"
 )
@@ -326,6 +327,27 @@ type Model struct {
 	cfgGlobal config.Config
 	cfgLocal  config.Config
 	cfgErr    string
+
+	// Workflow confirm overlay (admin-3rgp.26): a query-sourced workflow row
+	// (Work tab) never dispatches on a bare enter. Enter instead resolves the
+	// query (wfResolving, while the resolveWorkflowCmd is in flight) and this
+	// overlay is what shows the resolved set before anything runs — the
+	// epic's "a query matching nine things must not be able to start nine
+	// agents without the set having been seen." wfErr holds either a
+	// resolution failure or "matched nothing"; either way there is nothing to
+	// confirm and the overlay's only key is dismiss. A real, non-empty
+	// wfTargets is what the confirm key (enter/y) hands to
+	// dispatchWorkflowCmd — esc/n (or dismissing an error/empty result)
+	// closes the overlay having dispatched nothing.
+	wfResolving bool
+	wfOpen      bool
+	wfName      string
+	wfAction    manifest.Action
+	wfQuery     string
+	wfTargets   []kinds.Target
+	wfErr       string
+	wfAgent     string
+	wfCeiling   int
 }
 
 // New builds the dashboard model. The cheap git context (root, nwo, branch) is
@@ -1015,6 +1037,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case workflowResolvedMsg:
+		m.workflowResolved(msg)
+		return m, nil
+
+	case workflowDispatchDoneMsg:
+		m.workflowDispatchDone(msg)
+		return m, nil
+
 	case workTickMsg:
 		// Re-arm unconditionally, exactly like syncTickMsg — this is the Work
 		// tab's only wake source for a livework.Entry another goroutine mutated
@@ -1172,6 +1202,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus("cancelled", cDim)
 		}
 		return m, nil
+	}
+
+	// The workflow confirm overlay (admin-3rgp.26) owns the keyboard while a
+	// query is resolving or its resolved set is up for confirmation: nothing
+	// underneath (the Work tab's own cursor, dispatch, anything else) can
+	// react to a keypress meant for "does this resolved set actually run".
+	if m.wfResolving || m.wfOpen {
+		return m.workflowConfirmKey(msg.String())
 	}
 
 	// The bead overlay owns the keyboard while it is up, the same way the
