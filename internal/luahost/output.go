@@ -72,6 +72,17 @@ func (h *Host) logContextTaken() bool {
 	return h.logContextActive && h.logFile != ""
 }
 
+// AppendLog appends text (ANSI-stripped, newline-terminated) to the active
+// log file, materializing a pending log context on first use — the same
+// path Info/Ok/Warn/Err already write through. Exported so a caller outside
+// this package (internal/reload's long-running dev loop, which streams a
+// child process's own output rather than a message Host itself composed)
+// can feed that output into the same log file Info/Ok/Warn/Err use, without
+// duplicating the log-context materialization logic here.
+func (h *Host) AppendLog(text string) {
+	h.logWrite(text)
+}
+
 func joinNonEmpty(parts []string, sep string) string {
 	out := ""
 	for _, p := range parts {
