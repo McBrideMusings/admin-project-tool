@@ -99,8 +99,9 @@ mac_dev_product_name = "Macterm Dev"   # → dev app renamed "Macterm Dev.app" (
 
 [apple.icons]
 mac_asset_dir = "Path/To/Assets.xcassets/AppIcon.appiconset"
-# glyph_svg / glyph_text / bg_color → generate from a glyph (regenerate path);
+# glyph_text / bg_color → generate from a glyph (regenerate path);
 # omit the glyph → the dev-loop swap overlays the banner on the committed art.
+# glyph_svg is no longer supported (admin-3rgp.48) — text glyphs only.
 ```
 
 - Generate/refresh production icons: `admin icons regenerate`

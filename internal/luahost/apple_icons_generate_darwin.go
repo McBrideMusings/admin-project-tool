@@ -7,17 +7,14 @@ package luahost
 // unbound pending a dependency decision (see that comment for the earlier
 // reasoning; ADR-0001's stdlib-only rule was superseded for this epic
 // specifically so this decision could be made). Ports admin_lib/icons.py's
-// generate_icons and generate_tv_icons: compositing a configured
-// glyph_text/glyph_svg over a background at every declared size, for both
-// the flat mac/iOS appiconset ladder and the tvOS layered .brandassets
-// stack.
+// generate_icons and generate_tv_icons: compositing a configured glyph_text
+// over a background at every declared size, for both the flat mac/iOS
+// appiconset ladder and the tvOS layered .brandassets stack.
 //
-// # The dependency decision
+// # The dependency decision (admin-3rgp.48)
 //
-// Two rendering capabilities are needed: drawing text with a font, and
-// rasterizing an SVG glyph. Candidates considered, judged against the same
-// bar admin-3rgp.36 used for gopher-lua (pure Go, no cgo, cross-compiles,
-// actively maintained):
+// Two rendering capabilities were considered: drawing text with a font, and
+// rasterizing an SVG glyph.
 //
 //   - Text: golang.org/x/image's font/opentype + font/gofont/goregular —
 //     the Go team's own extended-stdlib module. Pure Go, no cgo, actively
@@ -25,20 +22,18 @@ package luahost
 //     real TTF (Go Regular) as Go source, so there is no system-font lookup
 //     to port and no font file to bundle separately. Clears the bar easily;
 //     taken.
-//   - SVG: github.com/fyne-io/oksvg + github.com/srwiley/rasterx. Pure Go,
-//     no cgo, cross-compiles (both are plain image/path math, no platform
-//     code). fyne-io/oksvg is a maintained fork of srwiley/oksvg — the
-//     upstream srwiley/oksvg and srwiley/rasterx have had no commits since
-//     2022, which would fail "actively maintained" outright; the fyne-io
-//     fork is the one the Fyne GUI toolkit ships and updates against real
-//     use (last release Sept 2025), so it is the dependency actually taken
-//     even though its own rasterx dependency is the same unmaintained code.
-//     That's a real, named trade-off, not a clean pass — but rasterx is
-//     small, narrowly scoped (path-fill rasterization only, no network/parse
-//     surface), and has had no bug reports serious enough for Fyne itself to
-//     replace it. Taken with that caveat recorded here rather than silently.
-//   - github.com/tdewolff/canvas — also pure Go and does SVG rasterization,
-//     but its go.mod pulls in Fyne, Gio, go-gl (OpenGL bindings), a MySQL
+//   - SVG: github.com/fyne-io/oksvg + github.com/srwiley/rasterx were taken
+//     briefly (admin-3rgp.38) and then dropped (admin-3rgp.48). oksvg pulls
+//     in srwiley/rasterx, which has had no commits since 2022 — an
+//     unmaintained dependency reached transitively rather than chosen
+//     directly, for a narrow feature (compositing an SVG glyph onto an app
+//     icon) that text glyphs already cover for this tool's own use. The
+//     user's decision (admin-3rgp.48 NOTES): drop SVG glyph support
+//     entirely rather than vendor around the unmaintained dependency. A
+//     configured glyph_svg now fails loudly (see renderGlyph) instead of
+//     silently rendering nothing.
+//   - github.com/tdewolff/canvas — pure Go and does SVG rasterization, but
+//     its go.mod pulls in Fyne, Gio, go-gl (OpenGL bindings), a MySQL
 //     driver, a MongoDB driver, and dozens of other unrelated packages
 //     having nothing to do with rendering a PNG. Rejected on dependency
 //     footprint alone — a static binary that vendors an OpenGL binding to
@@ -46,10 +41,10 @@ package luahost
 //     supposed to buy here.
 //   - Hand-rolled SVG path parsing + golang.org/x/image/vector rasterizing —
 //     zero third-party dependency, but reimplements a real parser (path
-//     commands including arcs, transforms, viewBox, style attributes) that
-//     oksvg already gets right; CLAUDE.md's "name existing candidates before
-//     a custom parser" rule argues directly against this for a
-//     feature this narrow.
+//     commands including arcs, transforms, viewBox, style attributes).
+//     CLAUDE.md's "name existing candidates before a custom parser" rule
+//     argues directly against this for a feature this narrow — and the
+//     feature itself was dropped rather than rebuilt.
 //
 // # A deliberate simplification versus the Python original
 //
@@ -81,8 +76,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/fyne-io/oksvg"
-	"github.com/srwiley/rasterx"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/gofont/goregular"
 	"golang.org/x/image/font/opentype"
@@ -154,34 +147,33 @@ func drawCenteredText(dst draw.Image, w, h int, text string, fg color.Color, pix
 	return nil
 }
 
-// renderSVGGlyph rasterizes the SVG file at svgPath into a w×h RGBA image,
-// scaled to fit the target box (oksvg.SetTarget handles the viewBox scale).
-func renderSVGGlyph(w, h int, svgPath string) (*image.RGBA, error) {
-	icon, err := oksvg.ReadIcon(svgPath, oksvg.WarnErrorMode)
-	if err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", svgPath, err)
-	}
-	icon.SetTarget(0, 0, float64(w), float64(h))
-	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	scanner := rasterx.NewScannerGV(w, h, img, img.Bounds())
-	raster := rasterx.NewDasher(w, h, scanner)
-	icon.Draw(raster, 1.0)
-	return img, nil
-}
+// errSVGGlyphDropped is returned whenever a caller configures glyph_svg —
+// SVG glyph rendering was dropped in admin-3rgp.48 (github.com/fyne-io/oksvg
+// and its unmaintained-since-2022 github.com/srwiley/rasterx dependency were
+// removed entirely), and the user's decision there was explicit: a
+// configured glyph_svg must fail loudly naming the dropped capability, never
+// silently render nothing or fall back to a blank icon.
+var errSVGGlyphDropped = fmt.Errorf("glyph_svg is no longer supported: SVG glyph rendering was dropped (admin-3rgp.48) because it depended on an unmaintained package; use glyph_text instead")
 
 // renderGlyph paints bg (which may itself carry alpha — a.0 renders a
 // transparent w×h canvas, used for tvOS's transparent layers) over a w×h
-// canvas, then centers a glyph on top: glyphSVG (a path to an .svg file)
-// takes precedence over glyphText, which takes precedence over no glyph at
-// all (a plain bg-colored square). Returns an error only when a requested
-// glyph fails to render (a missing/malformed SVG, an unparseable font size)
-// — callers treat that as "generation failed for this size", matching the
-// Python original's outer try/except-and-warn contract, not a hard crash.
+// canvas, then centers a glyph on top: glyphText renders as text, or a
+// plain bg-colored square when both glyph inputs are empty. glyphSVG is no
+// longer a supported input — it always fails with errSVGGlyphDropped rather
+// than silently rendering nothing (admin-3rgp.48). Returns an error when a
+// requested glyph fails to render (glyph_svg configured at all, or an
+// unparseable font size) — callers treat that as "generation failed for
+// this size", matching the Python original's outer try/except-and-warn
+// contract, not a hard crash.
 func renderGlyph(w, h int, bg color.NRGBA, glyphSVG, glyphText string, fg color.NRGBA, scale float64) (*image.NRGBA, error) {
 	img := image.NewNRGBA(image.Rect(0, 0, w, h))
 	draw.Draw(img, img.Bounds(), image.NewUniform(bg), image.Point{}, draw.Src)
 
-	if glyphSVG == "" && glyphText == "" {
+	if glyphSVG != "" {
+		return nil, errSVGGlyphDropped
+	}
+
+	if glyphText == "" {
 		return img, nil
 	}
 
@@ -194,23 +186,13 @@ func renderGlyph(w, h int, bg color.NRGBA, glyphSVG, glyphText string, fg color.
 		glyphSize = 1
 	}
 
-	var glyph image.Image
-	if glyphSVG != "" {
-		g, err := renderSVGGlyph(glyphSize, glyphSize, glyphSVG)
-		if err != nil {
-			return nil, err
-		}
-		glyph = g
-	} else {
-		g := image.NewNRGBA(image.Rect(0, 0, glyphSize, glyphSize))
-		fontSize := int(float64(glyphSize) * 0.9)
-		if fontSize < 1 {
-			fontSize = 1
-		}
-		if err := drawCenteredText(g, glyphSize, glyphSize, glyphText, fg, fontSize); err != nil {
-			return nil, err
-		}
-		glyph = g
+	glyph := image.NewNRGBA(image.Rect(0, 0, glyphSize, glyphSize))
+	fontSize := int(float64(glyphSize) * 0.9)
+	if fontSize < 1 {
+		fontSize = 1
+	}
+	if err := drawCenteredText(glyph, glyphSize, glyphSize, glyphText, fg, fontSize); err != nil {
+		return nil, err
 	}
 
 	offX, offY := (w-glyphSize)/2, (h-glyphSize)/2
