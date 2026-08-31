@@ -82,13 +82,16 @@ func TestDefaultRegistryIsComplete(t *testing.T) {
 
 // TestStubFactoryErrorsAtDispatch proves the placeholder factories fail only
 // when their Runner is actually invoked (dispatch time), never when the
-// factory itself is built or registered (startup time).
+// factory itself is built or registered (startup time). "raylib" is used
+// here rather than "shell" — admin-3rgp.35 replaced shell's stub with a real
+// implementation, so raylib (still out of scope, ported by admin-3rgp.12/.15
+// later) is the representative still-a-stub kind.
 func TestStubFactoryErrorsAtDispatch(t *testing.T) {
-	f, ok := Default.Lookup("shell")
+	f, ok := Default.Lookup("raylib")
 	if !ok {
-		t.Fatal("shell should have a registered factory")
+		t.Fatal("raylib should have a registered factory")
 	}
-	run, err := f("shell", manifest.Action{})
+	run, err := f("raylib", manifest.Action{})
 	if err != nil {
 		t.Fatalf("building the runner should not itself error, got %v", err)
 	}

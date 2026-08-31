@@ -11,8 +11,15 @@
 //     dispatch (Registry.Validate, called from factories.go's init() and
 //     again from cmd.Execute).
 //
-// kind = "python" and kind = "python-script" are declared kinds and stay
-// declared — an earlier draft proposed deleting them; that was reversed.
+// kind = "python" and kind = "python-script" are GONE from this catalog.
+// ADR-0010 (docs/adr/0010-lua-and-bash-are-the-authoring-languages.md)
+// reverses the earlier reversal recorded above: Bash (kind = "shell") and
+// Lua (kind = "lua", dispatching through internal/luahost) are the two
+// archetype authoring languages, full stop. No Python kind is declared here,
+// even though admin_lib/kinds.py (the Python interpreter being replaced)
+// still declares "python" and "python-script" — that file is deleted
+// wholesale by admin-3rgp.30, not migrated kind-by-kind, so the two
+// catalogs are expected to diverge on exactly this one point until then.
 package kinds
 
 import "sort"
@@ -52,8 +59,7 @@ var Kinds = map[string]Kind{
 	"shell-passthrough":  {Name: "shell-passthrough"},
 	"multi-target":       {Name: "multi-target", ConsumesTargets: true},
 	"apple-dev-loop":     {Name: "apple-dev-loop", ConsumesTargets: true},
-	"python":             {Name: "python"},
-	"python-script":      {Name: "python-script"},
+	"lua":                {Name: "lua"},
 	"http":               {Name: "http"},
 	"npm":                {Name: "npm"},
 	"go":                 {Name: "go"},
