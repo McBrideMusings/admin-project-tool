@@ -398,6 +398,44 @@ def test_cmd_env_masks_secret_named_var_value(monkeypatch, capsys):
     assert "http://10.0.0.5:32400" in out
 
 
+def test_cmd_env_reports_an_empty_var_as_empty_not_set(monkeypatch, capsys):
+    """resolve_env exits 2 on a var exported empty (ADR-0013), so `admin env` —
+    the command whose whole job is saying which vars still need a value — must not
+    list it green as "set". EMPTY is distinct from UNSET: one has a .env line to
+    correct, the other has none to add."""
+    _clear_registry()
+    monkeypatch.setenv("ADMIN_TEST_BLANK", "")
+    monkeypatch.delenv("ADMIN_TEST_ABSENT", raising=False)
+    core.register_env_var("ADMIN_TEST_BLANK", used_by=["cmd:build"])
+    core.register_env_var("ADMIN_TEST_ABSENT", used_by=["cmd:build"])
+    try:
+        core.cmd_env([])
+        out = capsys.readouterr().out
+    finally:
+        _clear_registry()
+    blank = next(ln for ln in out.splitlines() if "ADMIN_TEST_BLANK" in ln)
+    absent = next(ln for ln in out.splitlines() if "ADMIN_TEST_ABSENT" in ln)
+    assert "EMPTY" in blank
+    assert f"{core.C.GREEN}set{core.C.RESET}" not in blank
+    assert "UNSET" in absent
+
+
+def test_cmd_env_still_prefers_a_default_over_the_empty_marker(monkeypatch, capsys):
+    """${VAR:-fallback} with VAR empty resolves to the default, so the listing
+    must say 'default', not 'EMPTY'."""
+    _clear_registry()
+    monkeypatch.setenv("ADMIN_TEST_BLANK", "")
+    core.register_env_var("ADMIN_TEST_BLANK", default="fallback", used_by=["cmd:build"])
+    try:
+        core.cmd_env([])
+        out = capsys.readouterr().out
+    finally:
+        _clear_registry()
+    line = next(ln for ln in out.splitlines() if "ADMIN_TEST_BLANK" in ln)
+    assert "default" in line and "fallback" in line
+    assert "EMPTY" not in line
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
