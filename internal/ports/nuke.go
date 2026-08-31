@@ -368,24 +368,50 @@ func NukeDevProcesses(projectRoot string, opts NukeDevOptions) NukeReport {
 				continue
 			}
 		}
-		hasArgv0Prefix := false
+		// argv0 prefix catches a binary invoked by its own path. It misses the
+		// common shape, though: `node <dir>/node_modules/.bin/vite` has argv0
+		// "node" and the interesting path in argv[1], so check every argument.
+		hasArgvPrefix := false
 		for _, d := range webDirs {
-			if strings.HasPrefix(p.Argv0, d+string(os.PathSeparator)) {
-				hasArgv0Prefix = true
+			prefix := d + string(os.PathSeparator)
+			if strings.HasPrefix(p.Argv0, prefix) {
+				hasArgvPrefix = true
+				break
+			}
+			for _, tok := range p.Argv {
+				if strings.HasPrefix(tok, prefix) {
+					hasArgvPrefix = true
+					break
+				}
+			}
+			if hasArgvPrefix {
 				break
 			}
 		}
-		if hasArgv0Prefix {
+		if hasArgvPrefix {
 			stragglers = append(stragglers, p.PID)
 			continue
 		}
-		for _, d := range webDirs {
-			if p.Cwd == d || strings.HasPrefix(p.Cwd, d+string(os.PathSeparator)) {
-				for _, marker := range webMarkers {
-					if strings.Contains(p.Cmdline, marker) {
-						stragglers = append(stragglers, p.PID)
-						break
-					}
+		// The cwd branch needs PidCwd, exactly as the port and pidfile passes
+		// above do: `ps` cannot report a working directory, so Process.Cwd is
+		// always "" on macOS (process.go's ps fallback sets it empty), and
+		// comparing "" against a web dir made this whole branch dead there —
+		// a `npm run dev` vite survived every teardown.
+		//
+		// The marker test comes FIRST even though it used to be innermost:
+		// PidCwd shells out per process, so asking it about every process on
+		// the machine turned a sub-second sweep into minutes. Almost nothing
+		// matches a web marker, so this ordering pays for lsof only on the
+		// handful of candidates that could possibly qualify.
+		if len(webDirs) > 0 && matchesAny(p.Cmdline, webMarkers) {
+			cwd := p.Cwd
+			if cwd == "" {
+				cwd = PidCwd(p.PID, 2*time.Second)
+			}
+			for _, d := range webDirs {
+				if cwd == d || strings.HasPrefix(cwd, d+string(os.PathSeparator)) {
+					stragglers = append(stragglers, p.PID)
+					break
 				}
 			}
 		}
@@ -524,6 +550,16 @@ func containerRunning(name string) bool {
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.TrimSpace(line) == name {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesAny reports whether s contains any of the substrings.
+func matchesAny(s string, substrings []string) bool {
+	for _, sub := range substrings {
+		if strings.Contains(s, sub) {
 			return true
 		}
 	}

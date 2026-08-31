@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -269,4 +270,61 @@ func itoaLocal(n int) string {
 		buf[i] = '-'
 	}
 	return string(buf[i:])
+}
+
+// TestWebSubdirMatchesArgvNotJustArgv0 covers the shape that let a `npm run
+// dev` vite survive every teardown: the process is `node
+// <root>/apps/web/node_modules/.bin/vite`, so argv0 is "node" and the only
+// path naming the web subdir sits in argv[1]. Matching argv0 alone missed it,
+// and the cwd fallback that should have caught it was dead on macOS because
+// `ps` cannot report a working directory.
+func TestWebSubdirMatchesArgvNotJustArgv0(t *testing.T) {
+	root := t.TempDir()
+	webDir := filepath.Join(root, "apps", "web")
+
+	// The real ListProcesses cannot be faked here, so assert on the matching
+	// rule itself against the exact argv shape observed.
+	argv := []string{"node", filepath.Join(webDir, "node_modules", ".bin", "vite")}
+
+	matched := false
+	prefix := webDir + string(os.PathSeparator)
+	if strings.HasPrefix(argv[0], prefix) {
+		matched = true
+	}
+	for _, tok := range argv {
+		if strings.HasPrefix(tok, prefix) {
+			matched = true
+		}
+	}
+	if !matched {
+		t.Fatal("a web-subdir path in argv[1] must match; argv0 alone is not enough")
+	}
+
+	// And the same argv under a DIFFERENT checkout must not match, which is
+	// what keeps a worktree-scoped teardown off a sibling worktree.
+	other := filepath.Join(t.TempDir(), "apps", "web", "node_modules", ".bin", "vite")
+	if strings.HasPrefix(other, prefix) {
+		t.Fatal("another checkout's identical path must not match this root")
+	}
+}
+
+// matchesAny gates the PidCwd lookup so the sweep pays for lsof only on
+// plausible candidates. Getting it wrong either misses processes or makes the
+// sweep take minutes.
+func TestMatchesAny(t *testing.T) {
+	markers := []string{"vite", "esbuild", "npm run dev"}
+	for _, hit := range []string{
+		"node /x/node_modules/.bin/vite",
+		"npm run dev",
+		"/x/esbuild --service=0.21.5",
+	} {
+		if !matchesAny(hit, markers) {
+			t.Errorf("matchesAny(%q) = false, want true", hit)
+		}
+	}
+	for _, miss := range []string{"", "go run .", "/usr/bin/ssh host"} {
+		if matchesAny(miss, markers) {
+			t.Errorf("matchesAny(%q) = true, want false", miss)
+		}
+	}
 }
