@@ -1,11 +1,10 @@
 package luahost
 
 import (
-	"bufio"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
+	"time"
 )
 
 // TargetEntry is one row of a pick_target menu: a stable key and its
@@ -29,23 +28,45 @@ func isTTY(f *os.File) bool {
 	return (info.Mode() & os.ModeCharDevice) != 0
 }
 
+// PickOutcome distinguishes the three ways PickTarget can end. Cancelling
+// and failing to prompt are both "no key" but they are not the same event:
+// a cancel is the user answering the question, so a caller must not report
+// it as the "no target given — pass one as an argument" failure that a
+// non-TTY stdin earns.
+type PickOutcome int
+
+const (
+	// PickChosen — the returned key is the user's selection.
+	PickChosen PickOutcome = iota
+	// PickCancelled — the user dismissed the picker (Esc/q/Ctrl-C, or EOF).
+	// Nothing is wrong; the caller should exit quietly.
+	PickCancelled
+	// PickUnavailable — the picker could not run (no entries, stdin isn't a
+	// terminal, raw mode refused). PickTarget has already printed why.
+	PickUnavailable
+)
+
 // PickTarget prompts for one of order (in order — matching admin_lib's
 // display_order, "" entries render as a blank spacer row exactly as
-// Python's pick_target does) and returns the chosen key, or ("", false) if
-// there was nothing to pick from, the terminal isn't interactive, or the
-// user cancelled.
+// Python's pick_target does, and are filtered out of items below so the
+// picker's cursor only ever lands on a real target) and returns the chosen
+// key with PickChosen, or "" with PickCancelled / PickUnavailable.
 //
 // This runs entirely in-process against h.Stdin/h.Stdout/h.Stderr — the
 // acceptance criterion ADR-0010 exists to satisfy ("pick_target prompts
-// from the same process, with no subprocess and no wire protocol"). It
-// trades the Python original's raw-mode arrow-key picker for a numbered
-// list read from a line of stdin: still no subprocess, still one process,
-// and it degrades the same way (no TTY → explicit error naming the
-// expected values, never a hang). A richer in-terminal picker is tracked as
-// a follow-up, not required by this ticket's acceptance criteria.
+// from the same process, with no subprocess and no wire protocol"). On a
+// real terminal (unix) it is an in-place arrow-key picker: Up/Down (and
+// k/j) move a highlighted cursor, Enter selects, Esc/q/Ctrl-C cancel, and
+// each keystroke redraws the same block of lines in place — the Go port of
+// admin_lib/core.py's read_key()-driven TUI loop applied to pick_target's
+// flat list. On Windows, where this repo has no raw-mode terminal support
+// (see internal/reload's Windows stub), it falls back to the original
+// numbered-list prompt read from a line of stdin. Both platforms degrade
+// identically off a TTY: no target given → an explicit error naming the
+// expected values, never a hang.
 // Host function: pick_target(targets_table[, prompt]) — targets_table is an
 // ordered array of {key=..., description=...} rows.
-func (h *Host) PickTarget(entries []TargetEntry, prompt string) (string, bool) {
+func (h *Host) PickTarget(entries []TargetEntry, prompt string) (string, PickOutcome) {
 	items := make([]TargetEntry, 0, len(entries))
 	for _, e := range entries {
 		if e.Key != "" {
@@ -53,7 +74,7 @@ func (h *Host) PickTarget(entries []TargetEntry, prompt string) (string, bool) {
 		}
 	}
 	if len(items) == 0 {
-		return "", false
+		return "", PickUnavailable
 	}
 
 	stdinFile, isFile := h.Stdin.(*os.File)
@@ -67,31 +88,101 @@ func (h *Host) PickTarget(entries []TargetEntry, prompt string) (string, bool) {
 			expected = " (expected one of: " + strings.Join(keys, ", ") + ")"
 		}
 		h.Err(fmt.Sprintf("%s: no target given%s — stdin is not a TTY, pass the target as an argument", prompt, expected))
-		return "", false
+		return "", PickUnavailable
 	}
 
-	fmt.Fprintf(h.Stdout, "%s%s%s\n", ansiBold, prompt, ansiReset)
-	for i, e := range items {
-		fmt.Fprintf(h.Stdout, "  %d) %s  %s%s%s\n", i+1, e.Key, ansiDim, e.Description, ansiReset)
-	}
-	fmt.Fprintf(h.Stdout, "%sEnter a number, or q to cancel:%s ", ansiDim, ansiReset)
+	return h.runArrowPicker(items, prompt)
+}
 
-	reader := bufio.NewReader(stdinFile)
-	line, err := reader.ReadString('\n')
-	if err != nil && line == "" {
-		fmt.Fprintln(h.Stdout)
-		return "", false
+// pickerKey is one decoded keystroke from the arrow-key picker's raw byte
+// stream — the parsed shape readPickerKey and the picker's render loop
+// operate on, kept separate from raw bytes so the decoding logic is
+// testable without a real terminal.
+type pickerKey int
+
+const (
+	pickerKeyNone pickerKey = iota
+	pickerKeyUp
+	pickerKeyDown
+	pickerKeyEnter
+	pickerKeyCancel
+	pickerKeyOther
+)
+
+// readPickerKey pulls one decoded keystroke off ch, which streams raw bytes
+// from a terminal in cbreak mode (see internal/reload.StartKeyReader — the
+// same byte-at-a-time reader internal/keybindings already reuses for its
+// own key loop rather than each caller opening the terminal in raw mode a
+// second time). It mirrors admin_lib/core.py's read_key(): Ctrl-C and a
+// closed channel (EOF) both cancel; a bare Esc byte followed by nothing
+// else within escTimeout is a cancel; "\x1b[A"/"\x1b[B" are up/down; 'k'/'j'
+// are up/down; Enter (\r or \n) selects; 'q'/'Q' cancels; anything else is
+// pickerKeyOther and is ignored by the render loop.
+//
+// escTimeout mirrors Python's select(..., 0.1) wait for the rest of an
+// arrow-key escape sequence — tests pass a short duration since a closed
+// or already-populated channel never actually blocks for it.
+func readPickerKey(ch <-chan byte, escTimeout time.Duration) pickerKey {
+	b, ok := <-ch
+	if !ok {
+		return pickerKeyCancel
 	}
-	line = strings.TrimSpace(line)
-	if line == "" || strings.EqualFold(line, "q") {
-		return "", false
+	switch b {
+	case 0x03: // Ctrl-C
+		return pickerKeyCancel
+	case 0x1b: // Esc, or the start of an arrow-key escape sequence
+		var b2 byte
+		select {
+		case v, ok := <-ch:
+			if !ok {
+				return pickerKeyCancel
+			}
+			b2 = v
+		case <-time.After(escTimeout):
+			return pickerKeyCancel
+		}
+		if b2 != '[' {
+			return pickerKeyOther
+		}
+		select {
+		case b3, ok := <-ch:
+			if !ok {
+				return pickerKeyOther
+			}
+			switch b3 {
+			case 'A':
+				return pickerKeyUp
+			case 'B':
+				return pickerKeyDown
+			default:
+				return pickerKeyOther
+			}
+		case <-time.After(escTimeout):
+			return pickerKeyOther
+		}
+	case '\r', '\n':
+		return pickerKeyEnter
+	case 'q', 'Q':
+		return pickerKeyCancel
+	case 'k', 'K':
+		return pickerKeyUp
+	case 'j', 'J':
+		return pickerKeyDown
+	default:
+		return pickerKeyOther
 	}
-	n, err := strconv.Atoi(line)
-	if err != nil || n < 1 || n > len(items) {
-		h.Err(fmt.Sprintf("%s: %q is not a valid choice", prompt, line))
-		return "", false
+}
+
+// wrapCursor moves cur by delta (+1 down, -1 up) within a list of n items,
+// wrapping past either end — the pure arithmetic behind the picker's
+// Up/Down handling, split out so it's testable without a render loop.
+// n <= 0 returns 0 (PickTarget never calls the picker with zero items, but
+// this stays total rather than panicking).
+func wrapCursor(cur, delta, n int) int {
+	if n <= 0 {
+		return 0
 	}
-	return items[n-1].Key, true
+	return ((cur+delta)%n + n) % n
 }
 
 // OnlyTarget returns the sole entry in choices when there is exactly one,

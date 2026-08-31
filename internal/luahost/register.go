@@ -201,8 +201,8 @@ func (h *Host) registerTargets(L *lua.LState) {
 	L.SetGlobal("pick_target", L.NewFunction(func(L *lua.LState) int {
 		entries := entriesFromLuaTable(L.CheckTable(1))
 		prompt := L.OptString(2, "Select target")
-		key, ok := h.PickTarget(entries, prompt)
-		if !ok {
+		key, outcome := h.PickTarget(entries, prompt)
+		if outcome != PickChosen {
 			L.Push(lua.LNil)
 			return 1
 		}
