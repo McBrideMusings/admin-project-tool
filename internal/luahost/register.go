@@ -30,6 +30,7 @@ func (h *Host) NewState(cfg map[string]any) *lua.LState {
 	h.registerRunCmd(L)
 	h.registerTargets(L)
 	registerCapabilities(L)
+	h.registerApple(L)
 
 	if cfg == nil {
 		cfg = map[string]any{}

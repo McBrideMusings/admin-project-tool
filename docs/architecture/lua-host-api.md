@@ -84,13 +84,73 @@ Wiring a specific archetype's config table into `config` for a given action kind
 factory's job (`internal/kinds`), not `internal/luahost`'s — `Host.Exec(source, cfg)` takes
 whatever `map[string]any` its caller hands it.
 
+## Apple platform verbs
+
+Bound by [admin-3rgp.38](https://github.com/McBrideMusings/admin-project-tool/issues), ported
+from `admin_lib/apple.py`. Registered only on darwin builds (`apple_register_darwin.go`); a
+non-darwin build gets a no-op `registerApple` (`apple_stub.go`) and the global `apple` table is
+simply absent — the same "undefined global" a body gets for typoing any other host function
+name, rather than a table of functions that all error. This is a **partial** port — see "What is
+intentionally not here yet" below for the pieces of `apple.py` this ticket did not bind, and why.
+
+All error paths that the Python original reported via `warn()`/`err()` mid-call are relayed the
+same way here (the Lua binding calls `h.Warn`/`h.Err`), so a body sees the identical explanatory
+text, not just a bare `nil`.
+
+| Function | Signature | Behaviour |
+|---|---|---|
+| `apple.sim_platforms()` / `apple.device_platforms()` | `() -> string[]` | The registered simulator/device platform keys (`"ios"`, `"tv"`), sorted. |
+| `apple.log_predicate(process, subsystem[, level])` | `(string, string, string?) -> string` | A macOS `log stream` predicate for level `"app"` (default), `"debug"`, `"system"`, or `"verbose"`. |
+| `apple.xcode_is_signed_out(log_text)` | `(string) -> bool` | True when `log_text` shows a build that failed for lack of a signed-in Apple ID. |
+| `apple.app_store_connect_key_rejected(log_text)` | `(string) -> bool` | True when `log_text` shows xcodebuild refusing an `-authenticationKey*` credential outright. |
+| `apple.diagnose_build_failure(log_path)` | `(string) -> ()` | Reads `log_path` and `warn()`s known-fixable remediation (a locked login keychain, a signed-out Xcode). |
+| `apple.app_store_connect_auth_flags()` | `() -> string[]` | The `-authenticationKey*` xcodebuild flags when `APP_STORE_CONNECT_KEY_PATH`/`_KEY_ID`/`_ISSUER_ID` are all set and the key file exists on disk, else `{}`. |
+| `apple.find_app(pattern)` | `(string) -> string?` | Globs `pattern` (`~` expanded) and returns the newest match by mtime, or `nil`. |
+| `apple.clean_derived_data(project_name)` | `(string) -> ()` | Removes every `~/Library/Developer/Xcode/DerivedData/<project_name>-*` directory. |
+| `apple.resolve_signing_identity([selector])` | `(string?) -> string?` | Resolves a code-signing identity's SHA-1 hash from the keychain; `selector` is a case-insensitive substring of the identity description. Warns and returns `nil` on no match or an ambiguous one. |
+| `apple.sign(path[, {identity=, identifier=, deep=}])` | `(string, table?) -> string?` | Code-signs `path` with a stable `identifier` so TCC grants survive a rebuild; returns the identity used, or `nil` (with `err()`) on failure. |
+| `apple.dev_macos_postprocess(built_app_path, dev_product_name, dev_display_name[, sign_identity])` | `(string, string, string, string?) -> string` | Renames a Debug `.app`, patches `CFBundleName`/`CFBundleDisplayName`, re-signs; returns the renamed path. |
+| `apple.target_build_dir({project=, scheme=, config=, destination=, extra_settings=, allow_provisioning=})` | `(table) -> string?` | Asks xcodebuild for `TARGET_BUILD_DIR` — the exact directory a build wrote into, rather than a DerivedData glob (which is keyed by absolute path and multiplies per git worktree). |
+| `apple.xcodebuild({project=, scheme=, config=, destination=, action=, extra_settings=, allow_provisioning=})` | `(table) -> (bool, string)` | Runs xcodebuild with grep-filtered output under the per-checkout build lock, full log at `<LogDir>/admin-xcode-build.log`. Retries once on a rejected App Store Connect key, and once on a signed-out Xcode when `run_cmd`'s stdin is an interactive terminal (prints instructions, waits for Return). Returns `ok` and the filtered output. |
+| `apple.find_simulator(device_name)` | `(string) -> string?` | Finds a simulator by exact name, preferring a booted instance. |
+| `apple.resolve_simulator(platform)` | `(string) -> (string?, string?)` | Picks the best simulator for `"ios"`/`"tv"`: booted first, else newest available. Returns device id and name. |
+| `apple.boot_simulator(device_id)` | `(string) -> ()` | Issues `simctl boot` and opens Simulator.app. Returns once boot is requested, not once it completes. |
+| `apple.ensure_booted_simulator(platform)` | `(string) -> (string?, string?)` | Resolves a simulator and blocks until it has finished booting. |
+| `apple.install_and_launch_sim(device_id, app_path, bundle_id[, launch_args])` | `(string, string, string, string[]?) -> ()` | Installs and launches, passing `launch_args` as `UIApplication` launch arguments. |
+| `apple.terminate_sim_app(device_id, bundle_id)` / `apple.is_sim_app_running(device_id, bundle_id)` | `(string, string) -> ()` / `(string, string) -> bool` | |
+| `apple.app_bundle_identifier(app_path)` | `(string) -> string?` | Reads `CFBundleIdentifier` via PlistBuddy (handles binary Info.plist, unlike `plist.read`). |
+| `apple.find_connected_device(platform[, device_type])` | `(string, string?) -> (string?, string?, string?)` | Finds a connected physical device via devicectl; returns id, name, udid. `device_type` (e.g. `"iPhone"`) disambiguates when more than one candidate of the platform is connected. |
+| `apple.install_on_device(device_id, app_path)` | `(string, string) -> bool` | |
+| `apple.launch_on_device(device_id, bundle_id[, env])` | `(string, string, table?) -> bool` | One-shot launch (terminates any existing instance first); `env` is a string→string table of launch environment variables. Does **not** attach console output — see below. |
+| `apple.terminate_device_app(device_id, bundle_id)` / `apple.is_device_app_running(device_id, bundle_id)` | `(string, string) -> ()` / `(string, string) -> bool` | |
+
 ## What is intentionally not here yet
 
-- **Platform verbs** (`build_ios`, `dev_mac`, `deploy_tv` and siblings) — the Apple-specific
-  build/deploy logic ported from `admin_lib/apple.py`. These are business logic for one
-  archetype, not general host-VM plumbing, and porting `apple.py`'s ~900 lines of
-  `xcodebuild`/`simctl`/codesigning orchestration is its own scoped effort. Filed as a
-  follow-up rather than guessed at here.
+- **Continuous dev-loop supervision** — `admin_lib/apple.py`'s `dev_mac`/`dev_ios`/`dev_tv`/
+  `dev_device`: build once, launch, then rebuild-and-relaunch on a signal from a separate
+  `admin reload` invocation, streaming the running app's logs the whole time. This needs the
+  reload-flag + output-pump machinery the repo's hard rule says lives in one place
+  (`admin_lib/reload.py` + `admin_lib/streams.OutputPump` in Python) — and that machinery has
+  not yet been ported to Go ([admin-3rgp.11](https://github.com/McBrideMusings/admin-project-tool/issues),
+  [admin-3rgp.17](https://github.com/McBrideMusings/admin-project-tool/issues)). Binding a loop
+  now would mean re-hand-rolling the pump in Lua or in this package, which is exactly the mistake
+  the project's OutputPump rule exists to prevent. The primitives those loops are built from
+  (`apple.xcodebuild`, `apple.ensure_booted_simulator`, `apple.install_and_launch_sim`,
+  `apple.dev_macos_postprocess`, `apple.launch_on_device`) are bound, so wiring the actual loop
+  once the pump lands in Go is composition, not a second research effort.
+- **Attached device console output** (`launch_on_device`'s `--console` mode in the Python
+  original) — blocks on the child's stdout until the app exits, which is output-pump territory
+  for the same reason as the dev loop above.
+- **The icon backup/swap/composer subsystem** (`admin_lib/apple.py`'s `backup_icons`,
+  `swap_dev_icons`, `restore_icons`, and the whole Icon Composer JSON-patching subsystem —
+  roughly 1000 lines). A distinct concern (build-time asset substitution for dev-vs-prod icon
+  differentiation) from the platform verbs this ticket names, not attempted here.
+- **Xcode-project introspection for the dev/prod bundle-suffix scheme** (`_detect_project_path`,
+  `_read_pbxproj`, `_compose_dev_settings`, `_entitlements_paths`) — parses a project's
+  `.pbxproj` directly to derive `ADMIN_DEV_BUNDLE_SUFFIX` and decide whether a target needs a
+  real provisioning profile. This is project-specific convention-following over a file format,
+  not a general host capability; a Lua body can still pass a fully composed `extra_settings`
+  string into `apple.xcodebuild` today, just not have this derivation done for it.
 - **Log pruning** (`retain`) — accepted, not enforced (see above).
 - **A richer `pick_target` picker** — arrow-key navigation, scrolling for long lists. The
   current numbered-list picker meets the acceptance criterion (in-process, no subprocess) but
