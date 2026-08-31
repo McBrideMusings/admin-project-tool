@@ -2,7 +2,7 @@
   Commands   Repo    Issues    Live    Config                                                   
 ────────────────────────────────────────────────────────────────────────────────────────────────
    COMMAND          LAST RUN    │ deploy                                                        
-                                │ ──────────────────────────────────────────────────────────    
+                                │ ────────────────────────────────────────────────────────────  
    build            2h ago      │ kind      sequence                                            
    check            2h ago      │ archetype (manifest)                                          
  ▸ deploy           18m ago     │ last run  18m ago · exit 0 · 41s                              
@@ -27,4 +27,4 @@
                                 │                                                               
                                 │                                                               
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move   ⏎ run   ⇥ switch tab   / filter   m toggle manifest   q quit                         
+ ↑↓ move   ⏎ run   ⇥ switch tab   / filter   ? help   q quit                                    

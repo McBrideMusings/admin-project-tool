@@ -1,23 +1,23 @@
  admin · admin-project-tool                                              feat/one-tool-go-merge 
    Commands    Repo   Issues   Live    Config                                                   
 ────────────────────────────────────────────────────────────────────────────────────────────────
- READY            tracker: beads              │ admin-3rgp.36   P1  open                        
- ▸ P1 Embed a Lua VM and define the host …    │ ──────────────────────────────────────────────  
-   P1 Two deployment paths: go install, a…    │ Embed a Lua VM and define the host API          
-   P1 Decide how admin <command> reaches …    │                                                 
+ READY   tracker: beads                       │ admin-3rgp.29   P1  open                        
+   P1 Embed a Lua VM and define the hos…      │ ──────────────────────────────────────────────  
+ ▸ P1 Two deployment paths: go install,…      │ Two deployment paths: go install, archetypes    
+   P1 Decide how admin <command> reache…      │                                                 
                                               │ READY  no open blockers                         
  BLOCKED                                      │                                                 
-   P1 Commands t┌──────────────────────────────────────────────────────────────┐                
-   P1 The live-w│  Dispatch admin-3rgp.36                                      │                
-   P1 Implement │                                                              │                
-   P1 Rewrite th│    agent     claude                                          │                
-                │    model     sonnet                                          │                
-                │    branch    embed-lua-vm                                    │                
-                │    worktree  ~/.worktrees/admin-project-tool/embed-lua-vm    │                
-                │    lands to  feat/one-tool-go-merge                          │                
-                │                                                              │                
-                │    ⏎ dispatch     e edit     esc cancel                      │                
-                └──────────────────────────────────────────────────────────────┘                
+   P1 Commands ta┌────────────────────────────────────────────────────────────┐                 
+   P1 The live-wo│  Dispatch admin-3rgp.29                                    │                 
+   P1 Implement t│                                                            │                 
+   P1 Rewrite the│    agent     claude                                        │                 
+                 │    model     sonnet                                        │                 
+                 │    branch    two-deployment-paths                          │                 
+                 │    worktree  ~/.worktrees/…/two-deployment-paths           │                 
+                 │    lands to  feat/one-tool-go-merge                        │                 
+                 │                                                            │                 
+                 │    ⏎ dispatch     e edit     esc cancel                    │                 
+                 └────────────────────────────────────────────────────────────┘                 
                                                                                                 
                                                                                                 
                                                                                                 

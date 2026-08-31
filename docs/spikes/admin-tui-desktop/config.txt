@@ -1,7 +1,7 @@
  admin · admin-project-tool                                              feat/one-tool-go-merge 
    Commands    Repo    Issues    Live   Config                                                  
 ────────────────────────────────────────────────────────────────────────────────────────────────
- RESOLVED CONFIGURATION                          source                                         
+ RESOLVED CONFIGURATION                    source                                               
                                                                                                 
    tracker               beads                               admin.toml                         
    uses_pull_requests    false                               admin.toml                         

@@ -2,7 +2,7 @@
   Commands   Repo    Issues    Live    Config                                                   
 ────────────────────────────────────────────────────────────────────────────────────────────────
    COMMAND          LAST RUN    │ retire-merged                                                 
-                                │ ──────────────────────────────────────────────────────────    
+                                │ ────────────────────────────────────────────────────────────  
    build            2h ago      │ kind      workflow                                            
    check            2h ago      │ archetype (manifest)                                          
    deploy           18m ago     │ last run  never                                               
@@ -16,9 +16,9 @@
                                 │   docs-adr-lua                                                
                                 │   launchd-env-file                                            
                                 │                                                               
-                                │ A query-sourced workflow lists here and                       
-                                │ runs bare. A selection-sourced one does                       
-                                │ not appear — it is offered on a row.                          
+                                │ A query-sourced workflow lists here and runs                  
+                                │ bare. A selection-sourced one does not appear —               
+                                │ it is offered on a row instead.                               
                                 │                                                               
                                 │                                                               
                                 │                                                               
@@ -27,4 +27,4 @@
                                 │                                                               
                                 │                                                               
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move   ⏎ run   ⇥ switch tab   / filter   m toggle manifest   q quit                         
+ ↑↓ move   ⏎ run   ⇥ switch tab   / filter   ? help   q quit                                    

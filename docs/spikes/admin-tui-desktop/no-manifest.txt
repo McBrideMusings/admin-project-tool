@@ -2,19 +2,19 @@
   Repo   Issues    Live    Config                                                               
 ────────────────────────────────────────────────────────────────────────────────────────────────
  BRANCHES                                                                                       
- ▸ * feat/one-tool-go-merge          ↑1 ↓0      2m   docs(adr): Lua and Bash are the archetype  
-     fix-detector-parity-skip        ↑1 ↓0  wt  2d   fix(detect): fail parity test instead of   
-     main                            ↑0 ↓0      15h  Merge pull request #1016                   
+ ▸ * main                            ↑0 ↓0        4d   Initial commit                           
                                                                                                 
  WORKTREES                                                                                      
-   ~/.worktrees/admin-project-tool/fix-detector-parity-skip     clean                           
+   (none)                                                                                       
                                                                                                 
  STASHES   (none)                                                                               
                                                                                                 
- RECENT                                                                                         
-   d7d90d7  docs(spikes): rebuild the admin dashboard reference frames                          
-   db2711a  docs(adr): Lua and Bash are the archetype authoring languages                       
-   f738934  feat(launchd): lift allowlisted env vars from a dotenv file                         
+ No admin.toml here, so there is no Commands tab. A tab the project                             
+ cannot support is absent, never present-but-disabled.                                          
+                                                                                                
+   admin new    scaffold a manifest here                                                        
+                                                                                                
+                                                                                                
                                                                                                 
                                                                                                 
                                                                                                 
@@ -27,4 +27,4 @@
                                                                                                 
                                                                                                 
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move   ⏎ checkout   w worktree   f fetch   ⇥ switch tab   q quit                            
+ ↑↓ move   ⏎ checkout   ⇥ switch tab   q quit                                                   
