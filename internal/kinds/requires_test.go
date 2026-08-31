@@ -82,7 +82,7 @@ func TestMultiTargetChildRequiresOverridesParent(t *testing.T) {
 		"requires": []any{"parent-fails"},
 		"cf":       map[string]any{"run": "touch cf.txt", "requires": []any{"child-ok"}},
 	}
-	runner, err := makeMultiTarget("deploy", action, nil)
+	runner, err := makeMultiTarget("deploy", action, nil, nil)
 	if err != nil {
 		t.Fatalf("makeMultiTarget: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestMultiTargetChildEmptyRequiresIsExplicitOptOut(t *testing.T) {
 		"requires": []any{"parent-fails"},
 		"devvit":   map[string]any{"run": "touch devvit.txt", "requires": []any{}},
 	}
-	runner, err := makeMultiTarget("deploy", action, nil)
+	runner, err := makeMultiTarget("deploy", action, nil, nil)
 	if err != nil {
 		t.Fatalf("makeMultiTarget: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestMultiTargetChildInheritsParentRequiresWhenAbsent(t *testing.T) {
 		"requires":  []any{"parent-fails"},
 		"mainframe": map[string]any{"run": "touch mainframe.txt"}, // no requires: inherits
 	}
-	runner, err := makeMultiTarget("deploy", action, nil)
+	runner, err := makeMultiTarget("deploy", action, nil, nil)
 	if err != nil {
 		t.Fatalf("makeMultiTarget: %v", err)
 	}

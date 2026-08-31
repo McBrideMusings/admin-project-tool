@@ -20,7 +20,7 @@ var raylibModes = map[string]bool{"build": true, "run": true, "smoke": true, "cl
 // CMake configure/build/run/smoke/clean skeleton and differed only in
 // binary name, cmake flags, job count, the smoke env var, and which dirs
 // clean removes — all of which are [raylib] config, read once here.
-func makeRaylib(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeRaylib(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	mode, _ := actionString(action, "run")
 	mode = strings.TrimSpace(mode)
 	if mode == "" {

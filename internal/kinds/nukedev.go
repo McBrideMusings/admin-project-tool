@@ -121,7 +121,7 @@ func buildPatternSpecs(cfg map[string]any) []ports.PatternSpec {
 // zero, matching admin_lib/ports_nuke.py::nuke_dev_from_config's `if not
 // cfg` branch — a nuke-dev command declared but never configured must never
 // be treated as an error.
-func makeNukeDev(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeNukeDev(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	cfg := archetypeConfigTable(m, "dev_kill")
 
 	return func(args []string) error {

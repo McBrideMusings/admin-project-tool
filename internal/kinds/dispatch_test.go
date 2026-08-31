@@ -1,6 +1,8 @@
 package kinds
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -157,4 +159,180 @@ func readFile(t *testing.T, dir, relPath string) string {
 	t.Helper()
 	data := mustReadFile(t, dir, relPath)
 	return string(data)
+}
+
+// blockingFactory returns a Factory whose Runner signals reached, blocks
+// until release is closed, then delegates to nestedName on its OWN surf —
+// the shape admin-3rgp.69 depends on: the surf a Runner closes over must be
+// the one built for ITS OWN dispatch, never whatever another goroutine's
+// RunAction call happened to leave behind in shared state. Registered under
+// "http" purely because that kind name is declared in the catalog and
+// otherwise unused by these tests; the factory ignores the action entirely.
+func blockingFactory(reached chan<- struct{}, release <-chan struct{}, nestedName string) Factory {
+	return func(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
+		return func(args []string) error {
+			reached <- struct{}{}
+			<-release
+			return surf.Action(nestedName, nil)
+		}, nil
+	}
+}
+
+// TestConcurrentRunActionsDoNotClobberSurfaces is this ticket's central
+// acceptance criterion: two RunAction calls running concurrently in one
+// process each resolve nested delegation against their own manifest and
+// registry. Before this ticket, dispatch.go parked the nested-dispatch
+// surface in a package-level `currentSurface` var: goroutine A's RunAction
+// call sets it, blocks mid-run (mirroring a hosted dashboard's overlapping
+// commands, admin-3rgp.61), and goroutine B's RunAction call — started while
+// A is still blocked — overwrites the same var for its own dispatch. When A
+// is finally released and calls its own nested delegation, it would read
+// whatever B (still mid-run, not yet restored) last set, and run B's
+// "finish" action against B's manifest instead of its own.
+//
+// MUTATION EVIDENCE: reintroduce the package-level currentSurface var and
+// have runAction read/write it instead of building and passing a *Surface
+// per call, and this test fails — a.txt is missing (or b.txt exists early)
+// because A's nested delegation resolved against manifest B's "finish"
+// action while B was still mid-run holding the shared var.
+func TestConcurrentRunActionsDoNotClobberSurfaces(t *testing.T) {
+	dir := t.TempDir()
+	markerA := filepath.Join(dir, "a.txt")
+	markerB := filepath.Join(dir, "b.txt")
+
+	reachedA, releaseA := make(chan struct{}), make(chan struct{})
+	reachedB, releaseB := make(chan struct{}), make(chan struct{})
+
+	rA := NewRegistry()
+	rA.MustRegister("http", blockingFactory(reachedA, releaseA, "finish"))
+	rA.MustRegister("shell", makeShell)
+	mA := &manifest.Manifest{
+		Actions: map[string]manifest.Action{
+			"dev":    {"kind": "http"},
+			"finish": {"kind": "shell", "run": "touch " + markerA},
+		},
+	}
+
+	rB := NewRegistry()
+	rB.MustRegister("http", blockingFactory(reachedB, releaseB, "finish"))
+	rB.MustRegister("shell", makeShell)
+	mB := &manifest.Manifest{
+		Actions: map[string]manifest.Action{
+			"dev":    {"kind": "http"},
+			"finish": {"kind": "shell", "run": "touch " + markerB},
+		},
+	}
+
+	errA := make(chan error, 1)
+	errB := make(chan error, 1)
+	go func() { errA <- RunAction(mA, rA, "dev", nil) }()
+	<-reachedA // A is now blocked mid-run, holding surfA.
+
+	go func() { errB <- RunAction(mB, rB, "dev", nil) }()
+	<-reachedB // B is now ALSO blocked mid-run, holding surfB — both overlap.
+
+	// Release A first while B is still mid-run: with the old package-level
+	// var this is exactly the window where A's nested delegation would read
+	// B's surface instead of its own.
+	close(releaseA)
+	if err := <-errA; err != nil {
+		t.Fatalf("RunAction(mA) = %v, want nil", err)
+	}
+	assertFileExists(t, dir, "a.txt")
+	assertFileMissing(t, dir, "b.txt")
+
+	close(releaseB)
+	if err := <-errB; err != nil {
+		t.Fatalf("RunAction(mB) = %v, want nil", err)
+	}
+	assertFileExists(t, dir, "b.txt")
+}
+
+// TestConcurrentMultiTargetDelegationResolvesOwnManifest is the multi-target
+// half of the same acceptance criterion: a target's `action = "other"`
+// delegation (multitarget.go:299's `surf.action(...)` call) resolves against
+// its own command's manifest while a second, unrelated RunAction dispatch is
+// still mid-run in the same process.
+func TestConcurrentMultiTargetDelegationResolvesOwnManifest(t *testing.T) {
+	dir := t.TempDir()
+	markerA := filepath.Join(dir, "a.txt")
+	markerB := filepath.Join(dir, "b.txt")
+
+	reachedA, releaseA := make(chan struct{}), make(chan struct{})
+
+	// A: an unrelated dispatch that blocks mid-run and never touches B's
+	// manifest or registry at all.
+	rA := NewRegistry()
+	rA.MustRegister("http", func(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
+		return func(args []string) error {
+			reachedA <- struct{}{}
+			<-releaseA
+			return os.WriteFile(markerA, []byte("a\n"), 0o644)
+		}, nil
+	})
+	mA := &manifest.Manifest{Actions: map[string]manifest.Action{"dev": {"kind": "http"}}}
+
+	// B: a multi-target action whose single target delegates to another
+	// declared action via `action = "other"`.
+	rB := NewRegistry()
+	rB.MustRegister("multi-target", makeMultiTarget)
+	rB.MustRegister("shell", makeShell)
+	mB := &manifest.Manifest{
+		Actions: map[string]manifest.Action{
+			"dev": {
+				"kind": "multi-target",
+				"only": map[string]any{"action": "finish"},
+			},
+			"finish": {"kind": "shell", "run": "touch " + markerB},
+		},
+	}
+
+	errA := make(chan error, 1)
+	go func() { errA <- RunAction(mA, rA, "dev", nil) }()
+	<-reachedA // A is mid-run and stays there for the rest of this test.
+
+	if err := RunAction(mB, rB, "dev", nil); err != nil {
+		t.Fatalf("RunAction(mB) = %v, want nil", err)
+	}
+	assertFileExists(t, dir, "b.txt")
+
+	select {
+	case err := <-errA:
+		t.Fatalf("RunAction(mA) finished (err=%v) before release — it should still be mid-run", err)
+	default:
+	}
+
+	close(releaseA)
+	if err := <-errA; err != nil {
+		t.Fatalf("RunAction(mA) = %v, want nil", err)
+	}
+	assertFileExists(t, dir, "a.txt")
+}
+
+// TestNilSurfaceReturnsUnchangedDispatchError proves a factory's Runner
+// invoked directly, outside any dispatch — the case where surf is nil — still
+// returns the pre-existing error text naming kinds.RunAction/RunCommand, on
+// both the action and command halves of Surface.
+func TestNilSurfaceReturnsUnchangedDispatchError(t *testing.T) {
+	var s *Surface
+
+	err := s.Action("some-action", nil)
+	if err == nil {
+		t.Fatal("(*Surface)(nil).Action should error")
+	}
+	want := `action "some-action": dispatching a nested action requires running through ` +
+		`kinds.RunAction/RunCommand rather than invoking a factory's Runner directly`
+	if err.Error() != want {
+		t.Errorf("Action error = %q, want %q", err.Error(), want)
+	}
+
+	err = s.Command("some-command", nil)
+	if err == nil {
+		t.Fatal("(*Surface)(nil).Command should error")
+	}
+	wantCmd := `command "some-command": dispatching a nested command requires running through ` +
+		`kinds.RunAction/RunCommand rather than invoking a factory's Runner directly`
+	if err.Error() != wantCmd {
+		t.Errorf("Command error = %q, want %q", err.Error(), wantCmd)
+	}
 }

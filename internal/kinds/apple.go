@@ -16,7 +16,7 @@ import (
 // devicectl don't exist anywhere else) and apple_other.go (a clear
 // "macOS only" error everywhere else), following the same build-tag split
 // internal/luahost's Apple surface already uses.
-func makeApple(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeApple(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	verb, ok := actionString(action, "run")
 	if !ok || verb == "" {
 		return nil, fmt.Errorf(`action %q: kind="apple" requires 'run'`, name)

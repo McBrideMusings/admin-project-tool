@@ -23,7 +23,7 @@ var goModes = map[string]bool{"build": true, "install": true, "clean": true}
 // with no precedent to port, and a project builds at most a handful of Go
 // binaries through this kind, all of which already share the single project-
 // level [go] table.
-func makeGoKind(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeGoKind(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	mode, _ := actionString(action, "run")
 	if mode == "" {
 		mode = "build"
