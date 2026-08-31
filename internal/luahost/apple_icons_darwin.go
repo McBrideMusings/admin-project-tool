@@ -20,7 +20,7 @@ package luahost
 // dependency (the epic's amendment already retires ADR-0001's dependency
 // ban, so this is allowed), or find a smaller capability that needs none.
 //
-// This file takes the second path, deliberately short of parity:
+// This file takes the second path for the banner overlay specifically:
 //
 //   - The dev banner is rendered with the standard library alone
 //     (image/draw/color/png) as a solid diagonal ribbon — no text, no font
@@ -33,12 +33,14 @@ package luahost
 //     dev build" for the workflow's purpose (a glance at the Home Screen).
 //   - swap_dev_icons' has_glyph=True branch — generate_icons() compositing a
 //     configured glyph_text/glyph_svg onto a fresh background at every
-//     declared size — is NOT bound. That needs font rendering (text) and/or
-//     an SVG rasterizer, both real dependencies with their own tradeoffs
-//     (golang.org/x/image/font + a bundled TTF, or an SVG library), and is
-//     the smaller-used feature: producing a from-scratch icon set, versus
-//     banner-swapping an icon set that already exists. Binding it is future
-//     work with its own dependency decision, not a stdlib gap to paper over.
+//     declared size — needed font rendering and/or an SVG rasterizer, both
+//     real dependencies. Those are now taken (golang.org/x/image's font
+//     stack + github.com/fyne-io/oksvg) and generate_icons/generate_tv_icons
+//     are bound in full — see apple_icons_generate_darwin.go's file doc
+//     comment for the dependency comparison and the decision it records.
+//     This file's own dev-banner rendering deliberately stays stdlib-only
+//     even so: it needs no font or SVG capability at all (a plain ribbon,
+//     no text), so taking on the new dependency here would buy nothing.
 //
 // Backup/restore (backup_icons, restore_icons, backup_tv_icons,
 // restore_tv_icons) are plain file-copy operations with no imaging

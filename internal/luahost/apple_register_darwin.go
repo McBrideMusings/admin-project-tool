@@ -397,7 +397,56 @@ func (h *Host) registerApple(L *lua.LState) {
 		return 0
 	})
 
+	// --- Glyph-based fresh icon generation (admin-3rgp.38) ---------------
+
+	set("generate_icons", func(L *lua.LState) int {
+		sizes := tableToIntSlice(L.CheckTable(1))
+		outputDir := L.CheckString(2)
+		opts := iconOptionsFromTable(L.OptTable(3, L.NewTable()))
+		ok := GenerateIcons(h, sizes, outputDir, opts)
+		L.Push(lua.LBool(ok))
+		return 1
+	})
+
+	set("generate_tv_icons", func(L *lua.LState) int {
+		brandassetsDir := L.CheckString(1)
+		opts := iconOptionsFromTable(L.OptTable(2, L.NewTable()))
+		ok := GenerateTVIcons(h, brandassetsDir, opts)
+		L.Push(lua.LBool(ok))
+		return 1
+	})
+
 	L.SetGlobal("apple", tbl)
+}
+
+// iconOptionsFromTable reads the {bg_color=, glyph_svg=, glyph_text=,
+// glyph_color=, glyph_scale=, dev=, filename_format=} shape shared by
+// apple.generate_icons and apple.generate_tv_icons (filename_format is
+// generate_icons-only; generate_tv_icons ignores it since a tvOS catalog's
+// filenames are fixed by Apple's schema). Every field is optional — Go's
+// zero values (empty string, 0 scale, false) are exactly IconOptions'
+// "unset, use the default" values, so a missing key needs no special case.
+func iconOptionsFromTable(t *lua.LTable) IconOptions {
+	str := func(key string) string {
+		if s, ok := t.RawGetString(key).(lua.LString); ok {
+			return string(s)
+		}
+		return ""
+	}
+	opts := IconOptions{
+		BGColor:     str("bg_color"),
+		GlyphSVG:    str("glyph_svg"),
+		GlyphText:   str("glyph_text"),
+		GlyphColor:  str("glyph_color"),
+		FilenameFmt: str("filename_format"),
+	}
+	if n, ok := t.RawGetString("glyph_scale").(lua.LNumber); ok {
+		opts.GlyphScale = float64(n)
+	}
+	if b, ok := t.RawGetString("dev").(lua.LBool); ok {
+		opts.Dev = bool(b)
+	}
+	return opts
 }
 
 // xcodebuildOptionsFromTable reads the {project=, scheme=, config=,
