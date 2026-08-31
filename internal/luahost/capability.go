@@ -39,6 +39,26 @@ func jsonDecode(L *lua.LState) int {
 	return 1
 }
 
+// envGet implements env(name): reads a process environment variable,
+// returning nil when unset. A Lua body gets neither `os` nor `io` (this
+// package's doc comment), so this is the one narrow, read-only capability
+// bound from Go in their place — most bodies never need it at all, since
+// embedding "${VAR}" directly in a string passed to run_cmd lets /bin/sh -c
+// resolve it without Lua ever seeing the value; this exists for the smaller
+// set of bodies (an archetype's own deploy-target dispatch, e.g.) that
+// branch in Lua on whether a var is set, the way the Python original's
+// os.environ.get(...) let a body check without spawning a shell.
+func envGet(L *lua.LState) int {
+	name := L.CheckString(1)
+	v, ok := os.LookupEnv(name)
+	if !ok {
+		L.Push(lua.LNil)
+		return 1
+	}
+	L.Push(lua.LString(v))
+	return 1
+}
+
 // globMatch implements glob.match(pattern[, dir]): filepath.Glob rooted at
 // dir (default "."), returned as a Lua array of matched paths. Bound from Go
 // rather than hand-rolled in Lua, per ADR-0010.
@@ -55,6 +75,23 @@ func globMatch(L *lua.LState) int {
 		tbl.RawSetInt(i+1, lua.LString(m))
 	}
 	L.Push(tbl)
+	return 1
+}
+
+// fsRead implements fs.read(path): reads a whole text file as a string, or
+// nil if it can't be read. A Lua body gets no `io` library (this package's
+// doc comment) — this is the one general "read a file's contents" capability
+// bound from Go in its place, for the case plist.read/glob.match don't cover
+// (an archetype's own small config file, e.g. forge-engine's
+// forge.workspace.toml project list).
+func fsRead(L *lua.LState) int {
+	path := L.CheckString(1)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		L.Push(lua.LNil)
+		return 1
+	}
+	L.Push(lua.LString(data))
 	return 1
 }
 

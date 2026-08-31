@@ -157,6 +157,43 @@ info(decoded.targets[1])
 	}
 }
 
+// TestFsReadReturnsFileContents proves fs.read(path) reaches the real file
+// on disk.
+//
+// MUTATION EVIDENCE: change fsRead's `os.ReadFile(path)` call to
+// `os.ReadFile(path + ".nope")` (read the wrong path), and this test fails:
+// the file doesn't exist under that name, ok is false, L.Push(lua.LNil)
+// fires instead, and `contents` reads as "nil" rather than the real text.
+func TestFsReadReturnsFileContents(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(path, []byte("hello from disk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h, out, _ := newTestHost(t)
+	err := h.Exec(`info(tostring(fs.read("`+path+`")))`, nil)
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if !strings.Contains(out.String(), "hello from disk") {
+		t.Fatalf("expected fs.read to return the file's contents, got %q", out.String())
+	}
+}
+
+// TestFsReadReturnsNilForMissingFile proves a missing file comes back as nil
+// rather than raising a Lua error — a body should be able to check
+// `if fs.read(path) then ...` without wrapping every call in pcall.
+func TestFsReadReturnsNilForMissingFile(t *testing.T) {
+	h, out, _ := newTestHost(t)
+	err := h.Exec(`info(tostring(fs.read("/does/not/exist/at/all.txt")))`, nil)
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if !strings.Contains(out.String(), "nil") {
+		t.Fatalf("expected fs.read of a missing file to be nil, got %q", out.String())
+	}
+}
+
 func TestGlobMatch(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"a.lua", "b.lua", "c.txt"} {

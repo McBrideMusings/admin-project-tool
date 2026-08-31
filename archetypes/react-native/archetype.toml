@@ -1,20 +1,88 @@
+# React Native's `[apple].project_path` must be set explicitly in the
+# project's admin.toml — e.g. project_path = "<app_dir>/ios/App.xcworkspace".
+# The Python original (admin_lib/react_native.py::apple_config_for) derived
+# it automatically from [react_native].app_dir + a glob when unset; a
+# kind="apple" leaf action here reads m.Apple directly at Go dispatch time,
+# with no way for a Lua pre-step to hand it a computed override, so that
+# auto-derivation did not carry over. One explicit config line replaces it.
 name = "react-native"
 modules = ["core", "reload", "apple", "android", "metro", "react_native", "log_columns"]
 
 [commands.dev]
 desc = "Run a React Native dev target (ios | device | android)"
-steps = ["dev"]
+steps = ["metro-ensure", "dev-pick"]
 
 [commands.metro]
 desc = "Start the Metro bundler, or `metro stop` to stop it"
 steps = ["metro"]
 
-[actions.dev]
-kind = "python"
-run = "scripts/dev.py"
-desc = "Run a React Native dev target (ios | device | android)"
+[actions.metro-ensure]
+kind = "lua"
+desc = "Ensure Metro is running before any dev target builds"
+run = '''
+local rn = config.react_native or {}
+local app_dir = rn.app_dir
+if not app_dir then
+  err("react_native.app_dir required — path to the dir holding package.json")
+  error("react_native.app_dir required")
+end
+if #glob.match(app_dir) == 0 then
+  err("react_native.app_dir does not exist: " .. app_dir)
+  error("react_native.app_dir does not exist: " .. app_dir)
+end
+metro.ensure(app_dir, {port = rn.metro_port or 8081})
+'''
+
+[actions.dev-pick]
+kind = "multi-target"
+desc = "dev — select target"
+
+[actions.dev-pick.ios]
+action = "dev-ios"
+
+[actions.dev-pick.device]
+action = "dev-device"
+
+[actions.dev-pick.android]
+action = "dev-android"
+
+[actions.dev-ios]
+kind = "apple"
+desc = "iOS simulator (Metro + build + install + logs)"
+run = "dev_ios"
+
+[actions.dev-device]
+kind = "apple"
+desc = "iOS device (Metro + build + install + logs)"
+run = "dev_device"
+
+[actions.dev-android]
+kind = "lua"
+desc = "Android emulator/device (Metro + build + install) — not yet ported"
+run = '''
+err("android dev loop is not ported to the Go tool yet")
+info("admin_lib/android.py's dev_loop_android has no Go/Lua equivalent — see the tracker for the follow-up")
+error("android dev loop not ported")
+'''
 
 [actions.metro]
-kind = "python"
-run = "scripts/metro.py"
+kind = "lua"
 desc = "Start the Metro bundler, or `metro stop` to stop it"
+run = '''
+local rn = config.react_native or {}
+local port = rn.metro_port or 8081
+if args[1] == "stop" then
+  if metro.stop({port = port}) then
+    ok("Metro stopped")
+  else
+    info("no Metro running")
+  end
+  return
+end
+local app_dir = rn.app_dir
+if not app_dir then
+  err("react_native.app_dir required — path to the dir holding package.json")
+  error("react_native.app_dir required")
+end
+metro.ensure(app_dir, {port = port})
+'''
