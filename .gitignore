@@ -21,3 +21,8 @@ node_modules/
 # Go build artifacts
 /bin/
 /admin-project-tool
+
+# Spike build output — `go build ./...` inside a spike dir drops a binary
+# beside its own source, and the spikes are committed reference material.
+docs/spikes/*/admin-tui-desktop
+docs/spikes/**/*.test
