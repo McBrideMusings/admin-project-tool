@@ -43,8 +43,31 @@ type workRowData struct {
 	// set only for a process-kind entry (Worker == nil); a genuine agent
 	// worker never folds into a command row, it gets its own row below.
 	live    *livework.Entry
-	lastRun time.Time
 	logPath string
+	// targets is a kind="multi-target" sole step's target list, in the
+	// order kinds.TargetKeys gives (the same order the CLI picker offers).
+	// Non-empty is exactly the condition that makes this row a collapse
+	// toggle instead of something enter dispatches: enter opens the target
+	// list beneath it and closes whatever was open before.
+	targets []string
+	// targetRuns maps each target key to what it does — its shell command,
+	// or "@action" when it delegates — so the expanded submenu says what
+	// each row will run rather than restating its own name.
+	targetRuns map[string]string
+	// expanded mirrors Model.expandedCmd for this row, resolved once when
+	// the row is built so both the child-row builder and the renderer read
+	// one value instead of each re-consulting the Model.
+	expanded bool
+
+	// Target rows (rowCommandTarget): one target of an expanded command.
+	// cmdName holds the PARENT command's name on these rows too, so
+	// dispatch reads the same field on either shape.
+	targetKey string
+	// targetRun is that target's own run command, shown beside its name.
+	targetRun string
+	// targetLast marks the final target of an expanded command, so the
+	// renderer can close the tree with └ instead of ├.
+	targetLast bool
 
 	// Worker rows (rowWorker):
 	worker *livework.Entry
@@ -213,16 +236,17 @@ func (m Model) commandSteps(c manifest.Command) []workStepInfo {
 	return out
 }
 
-// commandLastRun is the best-effort "last run" and "log" the detail pane
-// shows: a glob over internal/luahost's own log directory convention
+// commandLogPath is the "log" the detail pane shows: a glob over
+// internal/luahost's own log directory convention
 // (<repoRoot>/tmp/<stem>.<timestamp>.log — internal/luahost/host.go's LogDir
 // default) for each of the command's step names, taking the newest match
-// across all of them. This is real filesystem state, not a persistence
-// layer this ticket invents: a step whose body never calls
-// set_log_context(name) under its own action name simply has nothing to
-// find, and degrades to "never" rather than a fabricated guess.
-func commandLastRun(repoRoot string, c manifest.Command) (last time.Time, logPath string) {
+// across all of them. This is real filesystem state, not a persistence layer:
+// a step whose body never calls set_log_context(name) under its own action
+// name simply has nothing to find, and degrades to "none yet".
+func commandLogPath(repoRoot string, c manifest.Command) string {
 	logDir := filepath.Join(repoRoot, "tmp")
+	var last time.Time
+	var logPath string
 	for _, step := range c.Steps {
 		matches, _ := filepath.Glob(filepath.Join(logDir, step+".*.log"))
 		for _, p := range matches {
@@ -235,7 +259,7 @@ func commandLastRun(repoRoot string, c manifest.Command) (last time.Time, logPat
 			}
 		}
 	}
-	return last, logPath
+	return logPath
 }
 
 // workCmdRow pairs a declared command's name with its parsed body — what
@@ -443,14 +467,61 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 		steps:        m.commandSteps(cr.cmd),
 		live:         liveEntryFor(cr.cmd, byName),
 	}
-	if a, ok := m.soleAction(cr.cmd); ok && actionKind(a) == "workflow" {
-		if target, err := kinds.ParseWorkflowOver(cr.cmd.Steps[0], a); err == nil {
-			wd.workflow = &target
-			wd.workflowAction = a
+	if a, ok := m.soleAction(cr.cmd); ok {
+		switch actionKind(a) {
+		case "workflow":
+			if target, err := kinds.ParseWorkflowOver(cr.cmd.Steps[0], a); err == nil {
+				wd.workflow = &target
+				wd.workflowAction = a
+			}
+		case "multi-target":
+			// A single-target action isn't a menu — the CLI picks that
+			// target without prompting (makeMultiTarget's "is this
+			// project's only target"), so the row stays a plain dispatch
+			// rather than an expander that opens onto one child.
+			if keys := kinds.TargetKeys(a); len(keys) > 1 {
+				wd.targets = keys
+				wd.targetRuns = map[string]string{}
+				for _, k := range keys {
+					wd.targetRuns[k] = kinds.TargetSummary(a, k)
+				}
+				wd.expanded = m.expandedCmd == cr.name
+			}
 		}
 	}
-	wd.lastRun, wd.logPath = commandLastRun(m.repoRoot, cr.cmd)
+	wd.logPath = commandLogPath(m.repoRoot, cr.cmd)
 	return rowItem{kind: rowCommand, label: cr.name + " " + cr.cmd.Desc, work: wd}
+}
+
+// targetRows is the expanded submenu: one rowCommandTarget per target of
+// parent, or nothing at all when parent is collapsed or has no targets. The
+// children sit directly under their parent in the same flat row list, so
+// every cursor, filter, window and hit-test rule already written for the
+// Work tab applies to them with no special case.
+func targetRows(parent rowItem) []rowItem {
+	wd := parent.work
+	if wd == nil || !wd.expanded {
+		return nil
+	}
+	out := make([]rowItem, 0, len(wd.targets))
+	for i, key := range wd.targets {
+		out = append(out, rowItem{
+			kind:  rowCommandTarget,
+			label: wd.cmdName + " " + key,
+			work: &workRowData{
+				cmdName:      wd.cmdName,
+				cmdDesc:      wd.cmdDesc,
+				cmdKind:      wd.cmdKind,
+				cmdArchetype: wd.cmdArchetype,
+				steps:        wd.steps,
+				logPath:      wd.logPath,
+				targetKey:    key,
+				targetRun:    wd.targetRuns[key],
+				targetLast:   i == len(wd.targets)-1,
+			},
+		})
+	}
+	return out
 }
 
 // workRows builds the Work tab's one combined list: every declared command
@@ -475,7 +546,9 @@ func (m Model) workRows() []rowItem {
 	if len(cmdRows) > 0 {
 		rows = append(rows, headerRow("Commands"))
 		for _, cr := range cmdRows {
-			rows = append(rows, m.commandRowItem(cr, byName))
+			item := m.commandRowItem(cr, byName)
+			rows = append(rows, item)
+			rows = append(rows, targetRows(item)...)
 		}
 	}
 	workers := liveWorkers()
@@ -504,7 +577,7 @@ func (m Model) workRows() []rowItem {
 func (m Model) workRowCount() int {
 	n := 0
 	for _, r := range m.workRows() {
-		if r.kind == rowCommand || r.kind == rowWorker {
+		if r.kind == rowCommand || r.kind == rowCommandTarget || r.kind == rowWorker {
 			n++
 		}
 	}
@@ -531,10 +604,15 @@ type workDispatchDoneMsg struct {
 type cmdExecCommand struct {
 	manifest *manifest.Manifest
 	name     string
+	// args are the command's positional arguments — empty for a plain
+	// dispatch, or the one picked target for a multi-target command
+	// expanded in the list. kinds.RunCommand forwards them to every step,
+	// which is how makeMultiTarget skips its own picker.
+	args []string
 }
 
 func (c *cmdExecCommand) Run() error {
-	return kinds.RunCommand(c.manifest, kinds.Default, c.name, nil)
+	return kinds.RunCommand(c.manifest, kinds.Default, c.name, c.args)
 }
 func (c *cmdExecCommand) SetStdin(io.Reader)  {}
 func (c *cmdExecCommand) SetStdout(io.Writer) {}
@@ -542,8 +620,8 @@ func (c *cmdExecCommand) SetStderr(io.Writer) {}
 
 // dispatchCommandCmd runs name via tea.Exec — see cmdExecCommand's doc
 // comment for why dispatch cannot be a plain background tea.Cmd.
-func dispatchCommandCmd(m *manifest.Manifest, name string) tea.Cmd {
-	c := &cmdExecCommand{manifest: m, name: name}
+func dispatchCommandCmd(m *manifest.Manifest, name string, args ...string) tea.Cmd {
+	c := &cmdExecCommand{manifest: m, name: name, args: args}
 	return tea.Exec(c, func(err error) tea.Msg {
 		return workDispatchDoneMsg{name: name, err: err}
 	})
@@ -561,7 +639,45 @@ func (m Model) activateCommand(wd *workRowData) (tea.Model, tea.Cmd) {
 	if wd.live != nil {
 		return m.attachEntry(wd.live)
 	}
+	// A command with targets is a menu, not a run: enter opens its target
+	// list and closes whichever one was open, so exactly one submenu is
+	// ever on screen. Nothing dispatches until enter lands on a target.
+	if len(wd.targets) > 0 {
+		if m.expandedCmd == wd.cmdName {
+			m.expandedCmd = ""
+		} else {
+			m.expandedCmd = wd.cmdName
+		}
+		// Toggling inserts or removes rows above and below, so the cursor's
+		// index no longer means the row it meant a moment ago — closing a
+		// submenu that sat above this one would slide a different command
+		// under the cursor. Re-find the row that was just pressed and put
+		// the cursor back on it.
+		return m.focusCommandRow(wd.cmdName), nil
+	}
 	return m, dispatchCommandCmd(m.manifest, wd.cmdName)
+}
+
+// focusCommandRow puts the cursor back on the rowCommand named name, after a
+// toggle has changed how many rows sit above it. A name that no longer has a
+// row (impossible in practice — the toggle came from that very row) leaves
+// the cursor alone rather than jumping it somewhere arbitrary.
+func (m Model) focusCommandRow(name string) Model {
+	for i, r := range m.visibleRows() {
+		if r.kind == rowCommand && r.work != nil && r.work.cmdName == name {
+			m.cursor[m.active] = i
+			break
+		}
+	}
+	return m
+}
+
+// activateCommandTarget handles enter on one target of an expanded command:
+// it dispatches the parent command with that target as its argument, which
+// is exactly what `admin <cmd> <target>` does from a shell — makeMultiTarget
+// takes args[0] as the picked target and never raises its own picker.
+func (m Model) activateCommandTarget(wd *workRowData) (tea.Model, tea.Cmd) {
+	return m, dispatchCommandCmd(m.manifest, wd.cmdName, wd.targetKey)
 }
 
 // attachEntry focuses e's pane. A nil e or one with no Attach op (a producer

@@ -73,6 +73,57 @@ func resolveTargetFrame(parentURLs []any, parentHasFooter, parentFooterVal bool,
 	return
 }
 
+// TargetKeys returns a kind="multi-target" action's target names in the
+// order the picker offers them: inline target subtables first (sorted by
+// sortInlineKeys), otherwise the flat `targets` table's keys. Returns nil
+// for an action that declares neither, so a caller can use a non-empty
+// result as "this action has subcommands" without a second kind check.
+//
+// makeMultiTarget builds its own `order` from this function rather than
+// re-deriving the same two sorts, so what the TUI lists under an expanded
+// command and what the picker offers cannot drift apart.
+func TargetKeys(action manifest.Action) []string {
+	inline := map[string]map[string]any{}
+	for k, v := range action {
+		if multiTargetReserved[k] {
+			continue
+		}
+		if tbl, ok := v.(map[string]any); ok {
+			inline[k] = tbl
+		}
+	}
+	if len(inline) > 0 {
+		return sortInlineKeys(inline)
+	}
+	if flat, ok := action["targets"].(map[string]any); ok {
+		return sortedStringKeys(flat)
+	}
+	return nil
+}
+
+// TargetSummary returns what one target of a multi-target action actually
+// does: its `run` shell command, or "@<action>" when it delegates to
+// another declared action. Empty for a key that is neither (a malformed
+// target — makeMultiTarget is where that becomes an error; a display caller
+// just shows nothing rather than refusing to draw the row).
+func TargetSummary(action manifest.Action, key string) string {
+	if tbl, ok := action[key].(map[string]any); ok && !multiTargetReserved[key] {
+		if s, ok := tbl["run"].(string); ok {
+			return s
+		}
+		if s, ok := tbl["action"].(string); ok {
+			return "@" + s
+		}
+		return ""
+	}
+	if flat, ok := action["targets"].(map[string]any); ok {
+		if s, ok := flat[key].(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
 // makeMultiTarget is kind="multi-target"'s factory — the Go port of
 // admin_lib/interp.py::_make_multi_target, with BOTH per-target inheritance
 // mechanisms:
@@ -123,10 +174,10 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest) 
 
 	targets := map[string]multiTargetEntry{}
 	frameMeta := map[string]targetFrameMeta{}
-	var order []string
+	order := TargetKeys(action)
 
 	if len(inline) > 0 {
-		for _, k := range sortInlineKeys(inline) {
+		for _, k := range order {
 			tbl := inline[k]
 			run, hasRun := tbl["run"].(string)
 			act, hasAct := tbl["action"].(string)
@@ -153,7 +204,6 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest) 
 				entry.requires, entry.requiresSet = reqs, true
 			}
 			targets[k] = entry
-			order = append(order, k)
 
 			var tm targetFrameMeta
 			if u, ok := tbl["urls"].([]any); ok {
@@ -165,7 +215,7 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest) 
 			frameMeta[k] = tm
 		}
 	} else if hasFlat {
-		for _, k := range sortedStringKeys(flatRaw) {
+		for _, k := range order {
 			s, ok := flatRaw[k].(string)
 			if !ok {
 				return nil, fmt.Errorf(
@@ -176,7 +226,6 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest) 
 			} else {
 				targets[k] = multiTargetEntry{run: s}
 			}
-			order = append(order, k)
 		}
 	}
 	if len(targets) == 0 {
