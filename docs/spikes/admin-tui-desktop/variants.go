@@ -82,8 +82,29 @@ var Variants = []Variant{
 	},
 	{
 		Name:    "Combined",
-		Caption: "one Work tab holding both, with the reader compressed to fit",
+		Caption: "one Work tab; live work is a block under the commands",
 		Render:  renderCombined,
+		Key:     onKeyCombined,
+		Reset:   func() { selDelta = 0 },
+	},
+	{
+		Name:    "Live-first",
+		Caption: "live work leads, commands follow, reader demoted to a band",
+		Render:  renderLiveFirst,
+		Key:     onKeyCombined,
+		Reset:   func() { selDelta = 0 },
+	},
+	{
+		Name:    "Peers",
+		Caption: "commands and live work as equal columns; the reader pays",
+		Render:  renderPeers,
+		Key:     onKeyCombined,
+		Reset:   func() { selDelta = 0 },
+	},
+	{
+		Name:    "Interleaved",
+		Caption: "no live section — a running command says so on its own row",
+		Render:  renderInterleaved,
 		Key:     onKeyCombined,
 		Reset:   func() { selDelta = 0 },
 	},
@@ -818,4 +839,271 @@ func keysCombined(sp screenSpec) string {
 		return "↑↓ move · ↵ run · a attach · k kill · / filter · ←→ tab · q quit"
 	}
 	return keys(sp)
+}
+
+// ---- shared pieces for the live-prominent variants ----
+
+type liveRow struct{ state, id, doing, where, cmd string }
+
+var liveRows = []liveRow{
+	{"running", "admin-3rgp.36", "writing internal/lua/host.go", "pane 3", ""},
+	{"waiting", "admin-3rgp.7", "needs input: root command name", "pane 4", ""},
+	{"failed", "admin-3rgp.33", "go test ./internal/detect FAIL", "pane 5", ""},
+	{"running", "admin docs", "vitepress dev · localhost:5173", "pane 1", "docs"},
+	{"running", "admin test", "internal/tui · 00:41", "pane 6", "test"},
+}
+
+var liveStyle = map[string]lipgloss.Style{
+	"running": gr, "waiting": yl, "done": dim, "failed": rd,
+}
+
+// readerStrip is the reader reduced to a bottom band: identity, then one line
+// per step. The variants that promote live work all pay for it here.
+func readerStrip(c cmdRow, w int, lines int) []string {
+	out := []string{
+		" " + bo.Render(c.name) + dim.Render("  "+c.kind+" · "+c.arch+" · last run "+c.last),
+	}
+	switch {
+	case c.targets != nil:
+		out = append(out, dim.Render("   query · ")+strings.Join(c.targets[:2], ", ")+dim.Render(", +2"))
+	default:
+		for _, st := range c.steps {
+			out = append(out, "   "+dim.Render(st[0]+" ")+Pad(st[1], 9)+st[2]+dim.Render("  "+st[3]))
+		}
+	}
+	for len(out) < lines {
+		out = append(out, "")
+	}
+	return out[:lines]
+}
+
+func liveLine(sel bool, r liveRow, w int) string {
+	cursor := "  "
+	if sel {
+		cursor = cy.Render("▸ ")
+	}
+	return " " + cursor + liveStyle[r.state].Render(Pad(r.state, 9)) + Pad(r.id, 16) +
+		dim.Render(Pad(r.doing, maxInt(6, w-36))+r.where)
+}
+
+// ---- variant 3: Live-first ----
+//
+// Live work leads and commands follow. The bet: in a session with anything
+// running, what is running is the thing you came to look at, and a list of
+// commands you are not currently executing is reference material.
+
+func renderLiveFirst(s State) string {
+	return chrome(s, func(sp screenSpec, w, h int, empty bool) []string {
+		sel := wrap(sp.cmdSel, len(cmds))
+		out := section("Live work", len(liveRows), w)
+		if empty {
+			out = append(out, dim.Render("   nothing running"))
+		} else {
+			for i, r := range liveRows {
+				out = append(out, liveLine(i == 0, r, w))
+			}
+		}
+		out = append(out, "")
+		out = append(out, section("Commands", len(cmds), w)...)
+		if empty {
+			out = append(out, dim.Render("   no commands"))
+		} else {
+			for i, cc := range cmds {
+				out = append(out, " "+mark(i == sel, Pad(cc.name, 20))+dim.Render(cc.kind))
+			}
+		}
+		strip := readerStrip(cmds[sel], w, 4)
+		for len(out) < h-len(strip)-1 {
+			out = append(out, "")
+		}
+		out = append(out[:h-len(strip)-1], append([]string{strings.Repeat("─", w)}, strip...)...)
+		return out
+	}, []tabDef{{"Work", 12}, {"Repo", 0}, {"Issues", 7}, {"Config", 0}},
+		"↑↓ move · a attach · k kill · ↵ run · ←→ tab · q quit")
+}
+
+// ---- variant 4: Peer columns ----
+//
+// Commands left, live work right, at equal weight, with the reader demoted to a
+// band underneath both. Neither is subordinate; the reader is.
+
+func renderPeers(s State) string {
+	return chrome(s, func(sp screenSpec, w, h int, empty bool) []string {
+		sel := wrap(sp.cmdSel, len(cmds))
+		lw := w/2 - 1
+		rw := w - lw - 3
+
+		var left, right []string
+		left = append(left, " "+bo.Render("Commands")+dim.Render("  7"))
+		right = append(right, " "+bo.Render("Live work")+dim.Render("  5"))
+		if empty {
+			left = append(left, "", dim.Render(" no commands"))
+			right = append(right, "", dim.Render(" nothing running"))
+		} else {
+			// No kind column: half a screen cannot carry it without cutting
+			// words, and a truncated word reads as a bug rather than a trade.
+			// The kind is in the reader band directly below.
+			for i, cc := range cmds {
+				left = append(left, mark(i == sel, cc.name))
+			}
+			for _, r := range liveRows {
+				right = append(right, " "+liveStyle[r.state].Render(Pad(r.state, 8))+
+					Pad(r.id, maxInt(4, rw-18))+dim.Render(r.where))
+			}
+		}
+
+		strip := readerStrip(cmds[sel], w, 4)
+		colH := h - len(strip) - 1
+		out := make([]string, 0, h)
+		for i := 0; i < colH; i++ {
+			out = append(out, " "+Pad(at(left, i), lw)+dim.Render("│")+" "+at(right, i))
+		}
+		out = append(out, strings.Repeat("─", w))
+		return append(out, strip...)
+	}, []tabDef{{"Work", 12}, {"Repo", 0}, {"Issues", 7}, {"Config", 0}},
+		"↑↓ move · ⇥ pane · a attach · ↵ run · ←→ tab · q quit")
+}
+
+// ---- variant 5: Interleaved ----
+//
+// No separate live section at all: a command that is running says so on its own
+// row, and an agent worker with no command behind it is just another row. One
+// list, one cursor. The strongest claim — that "a command" and "a thing running"
+// were never two kinds of object — and the one that breaks if they diverge.
+
+func renderInterleaved(s State) string {
+	return chrome(s, func(sp screenSpec, w, h int, empty bool) []string {
+		sel := wrap(sp.cmdSel, len(cmds))
+		live := map[string]liveRow{}
+		if !empty {
+			for _, r := range liveRows {
+				if r.cmd != "" {
+					live[r.cmd] = r
+				}
+			}
+		}
+		out := section("Work", len(cmds)+3, w)
+		if empty {
+			out = append(out, dim.Render("   nothing here yet — admin.toml declares no commands"))
+		} else {
+			for i, cc := range cmds {
+				row := " " + mark(i == sel, Pad(cc.name, 18))
+				if r, ok := live[cc.name]; ok {
+					row += liveStyle[r.state].Render(Pad(r.state, 9)) +
+						dim.Render(Pad(r.doing, maxInt(6, w-52))+r.where)
+				} else {
+					row += dim.Render(Pad(cc.kind, 9) + Pad("last run "+cc.last, maxInt(6, w-52)))
+				}
+				out = append(out, row)
+			}
+			out = append(out, "")
+			out = append(out, section("Workers", 3, w)...)
+			for _, r := range liveRows {
+				if r.cmd == "" {
+					out = append(out, liveLine(false, r, w))
+				}
+			}
+		}
+		strip := readerStrip(cmds[sel], w, 4)
+		for len(out) < h-len(strip)-1 {
+			out = append(out, "")
+		}
+		out = append(out[:h-len(strip)-1], append([]string{strings.Repeat("─", w)}, strip...)...)
+		return out
+	}, []tabDef{{"Work", 12}, {"Repo", 0}, {"Issues", 7}, {"Config", 0}},
+		"↑↓ move · ↵ run or attach · k kill · ←→ tab · q quit")
+}
+
+// chrome is the frame every live-prominent variant shares: header, its own tab
+// bar, the body it supplies, and a footer. Only the body differs, which is what
+// keeps the comparison about the one thing under test.
+func chrome(s State, body func(screenSpec, int, int, bool) []string, tabs []tabDef, foot string) string {
+	w, h := s.W, s.H
+	if w <= 0 {
+		w = DumpWidth
+	}
+	if h <= 0 {
+		h = DumpHeight
+	}
+	name := s.Get("screen")
+	if name == "" {
+		name = "commands"
+	}
+	sp := screens[name]
+	empty := s.Is("data", "empty")
+
+	var b []string
+	switch {
+	case sp.noMan:
+		b = repoBody(w, h-5, true)
+	case sp.tab == 1:
+		b = repoBody(w, h-5, false)
+	case sp.tab == 2:
+		b = issuesBody(sp, w)
+	case sp.tab == 4:
+		b = configBody(w)
+	default:
+		b = body(sp, w, h-5, empty)
+	}
+
+	rows := []string{header(w), tabBarOf(tabs, sp, w), ""}
+	for len(b) < h-5 {
+		b = append(b, "")
+	}
+	rows = append(rows, b[:h-5]...)
+	f := foot
+	if sp.tab == 1 || sp.tab == 2 || sp.tab == 4 || sp.noMan {
+		f = keys(sp)
+	}
+	rows = append(rows, strings.Repeat("─", w), Pad(" "+dim.Render(f), w))
+	if sp.sheet {
+		rows = overlaySheet(rows, w, h)
+	}
+	for i := range rows {
+		rows[i] = Pad(rows[i], w)
+	}
+	return strings.Join(rows, "\n")
+}
+
+func tabBarOf(defs []tabDef, sp screenSpec, w int) string {
+	if sp.noMan {
+		defs = defs[1:]
+	}
+	active := 0
+	switch sp.tab {
+	case 0, 3:
+		active = 0
+	case 1:
+		active = 1
+	case 2:
+		active = 2
+	case 4:
+		active = 3
+	}
+	if sp.noMan {
+		active--
+	}
+	var b strings.Builder
+	b.WriteString(" ")
+	for i, t := range defs {
+		label := " " + t.name
+		if t.count > 0 {
+			label += " " + fmt.Sprint(t.count)
+		}
+		label += " "
+		if i == active {
+			b.WriteString(pill.Render(label))
+		} else {
+			b.WriteString(dim.Render(label))
+		}
+		b.WriteString("  ")
+	}
+	return Pad(b.String(), w)
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
