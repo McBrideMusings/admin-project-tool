@@ -47,7 +47,17 @@ var adr0010Divergence = struct {
 	addedInGo     []string // declared in Go, deliberately absent from Python
 }{
 	removedFromGo: []string{"python", "python-script"},
-	addedInGo:     []string{"lua", "workflow"},
+	addedInGo: []string{
+		"lua", "workflow",
+		// Capability kinds with no Python counterpart, because under the
+		// Python interpreter these were library functions a kind="python"
+		// body called (dev_electron, launchd_service, build_go_dist,
+		// install_agent_skill, run_with_reload) rather than kinds. ADR-0010
+		// removes the body that could call them, so each capability needs its
+		// own dispatch shape — that is what these five are. pythonKindNames
+		// could never find them: kinds.py has no such entries to find.
+		"electron", "reload-loop", "launchd", "go-dist", "agent-skill",
+	},
 }
 
 // TestCatalogMatchesPythonKinds proves every kind the Python KINDS catalog

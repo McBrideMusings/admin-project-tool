@@ -121,8 +121,20 @@ func buildPatternSpecs(cfg map[string]any) []ports.PatternSpec {
 // zero, matching admin_lib/ports_nuke.py::nuke_dev_from_config's `if not
 // cfg` branch — a nuke-dev command declared but never configured must never
 // be treated as an error.
+//
+// An inline `[actions.X.config]` table REPLACES [dev_kill] for that action
+// (ADR-0005's "inheritance is replace-not-merge"). One project-wide teardown
+// spec is the common case, but not the only one: a worktree-scoped teardown
+// has to kill this checkout's own dev processes while deliberately declaring
+// NO ports, so that the port-based passes — the only ones not scoped to the
+// working directory — cannot reach a standing service every other client
+// depends on. Merging would make that impossible to express, since [dev_kill]'s
+// ports would always survive into it.
 func makeNukeDev(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	cfg := archetypeConfigTable(m, "dev_kill")
+	if inline, ok := action["config"].(map[string]any); ok {
+		cfg = inline
+	}
 
 	return func(args []string) error {
 		h := newHost()

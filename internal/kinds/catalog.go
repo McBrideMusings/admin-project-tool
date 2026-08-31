@@ -112,11 +112,29 @@ type Kind struct {
 //     what the *action* pulls into scope, not what its kind's factory does
 //     with the terminal.
 var Kinds = map[string]Kind{
-	"shell":              {Name: "shell"},
-	"shell-passthrough":  {Name: "shell-passthrough"},
-	"multi-target":       {Name: "multi-target", ConsumesTargets: true},
-	"apple-dev-loop":     {Name: "apple-dev-loop", ConsumesTargets: true, Lifetime: LongRunning},
-	"lua":                {Name: "lua"},
+	"shell":             {Name: "shell"},
+	"shell-passthrough": {Name: "shell-passthrough"},
+	"multi-target":      {Name: "multi-target", ConsumesTargets: true},
+	"apple-dev-loop":    {Name: "apple-dev-loop", ConsumesTargets: true, Lifetime: LongRunning},
+	"lua":               {Name: "lua"},
+
+	// Capability kinds whose Go implementations existed with no way to reach
+	// them. internal/electron was a complete port with zero callers;
+	// internal/reload's loop was reachable only through docker-dev/vite-dev;
+	// [launchd] and [go_dist] were parsed into the manifest and read by no
+	// factory at all. Each of these is the missing dispatch shape, not new
+	// behaviour — see each factory's doc comment.
+	"electron": {Name: "electron", Modules: []string{"electron", "reload"}},
+	// reload-loop is Transient for interactive-shell's reason, not
+	// docker-reload-loop's: RunWithReload restarts the child on SIGUSR1 *or an
+	// 'r'/'R' keypress when stdin is a terminal*, so routing it into a herdr
+	// pane would silently disconnect it from the keyboard half of its own
+	// contract.
+	"reload-loop": {Name: "reload-loop", Modules: []string{"reload"}},
+	"launchd":     {Name: "launchd", Configless: true, Modules: []string{"launchd"}},
+	"go-dist":     {Name: "go-dist", Modules: []string{"godist"}},
+	"agent-skill": {Name: "agent-skill"},
+
 	"http":               {Name: "http"},
 	"npm":                {Name: "npm"},
 	"go":                 {Name: "go"},
