@@ -175,6 +175,43 @@ func Load(repoRoot string) (Config, error) {
 	return cfg, nil
 }
 
+// LoadGlobal reads only the global config file — no per-repo overlay — so a
+// caller can tell what the global file alone declares (the Config tab's
+// per-field origin: admin-3rgp.21). Missing file is not an error and
+// returns a zero Config, matching Load's own convention.
+func LoadGlobal() (Config, error) {
+	return loadOne(GlobalPath())
+}
+
+// LoadLocal reads only the per-repo config file — no global overlay. See
+// LoadGlobal.
+func LoadLocal(repoRoot string) (Config, error) {
+	return loadOne(RepoPath(repoRoot))
+}
+
+// loadOne reads a single config file, applying the same populate-mode
+// default Load applies after merging both files. Used by LoadGlobal/
+// LoadLocal, which read one file at a time rather than Load's merge, so each
+// needs the same default applied independently.
+func loadOne(path string) (Config, error) {
+	var cfg Config
+	if path == "" {
+		return cfg, nil
+	}
+	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+		if os.IsNotExist(err) {
+			return cfg, nil
+		}
+		return cfg, err
+	}
+	for i := range cfg.Populate {
+		if cfg.Populate[i].Mode == "" {
+			cfg.Populate[i].Mode = Symlink
+		}
+	}
+	return cfg, nil
+}
+
 // WorktreeRoot resolves the parent directory for worktrees from an
 // already-loaded config: the WORKTREE_ROOT env override wins, then the
 // [worktrees] root config key, then DefaultWorktreeRoot. A leading ~ is expanded

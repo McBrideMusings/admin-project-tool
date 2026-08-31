@@ -173,13 +173,49 @@ func TestComputeOriginsPrefersManifestOverArchetype(t *testing.T) {
 			"build": {Desc: "from manifest", Steps: []string{"build"}},
 		},
 	}
-	cmds, actions := computeOrigins(project, sp)
+	cmds, actions, _ := computeOrigins(project, sp)
 	if cmds["build"] != "(manifest)" {
 		t.Errorf(`cmds["build"] = %q, want "(manifest)"`, cmds["build"])
 	}
 	// The action itself is only declared by the archetype.
 	if actions["build"] != "demo" {
 		t.Errorf(`actions["build"] = %q, want "demo"`, actions["build"])
+	}
+}
+
+// TestComputeOriginsTracksScalarKeyOrigin is admin-3rgp.21's Config-tab-facing
+// half of computeOrigins: tracker/uses_pull_requests get the same
+// archetype-vs-manifest origin tracking as commands and actions, and a key
+// neither side declares is simply absent from the map (never a guessed
+// origin for a value that was never set).
+func TestComputeOriginsTracksScalarKeyOrigin(t *testing.T) {
+	dir := t.TempDir()
+	archDir := filepath.Join(dir, "beads-tracker")
+	if err := os.MkdirAll(archDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "tracker = \"beads\"\nuses_pull_requests = false\n"
+	if err := os.WriteFile(filepath.Join(archDir, "archetype.toml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sp := archetype.SearchPath{{Label: "test", FS: os.DirFS(dir)}}
+
+	// The project overrides tracker itself, so that key's origin should read
+	// "(manifest)" while uses_pull_requests still reads back to the
+	// archetype that's the only one to declare it.
+	project := &manifest.Manifest{
+		Archetypes: []string{"beads-tracker"},
+		Tracker:    "github", HasTracker: true,
+	}
+	_, _, keys := computeOrigins(project, sp)
+	if keys["tracker"] != "(manifest)" {
+		t.Errorf(`keys["tracker"] = %q, want "(manifest)"`, keys["tracker"])
+	}
+	if keys["uses_pull_requests"] != "beads-tracker" {
+		t.Errorf(`keys["uses_pull_requests"] = %q, want "beads-tracker"`, keys["uses_pull_requests"])
+	}
+	if _, declared := keys["python_min"]; declared {
+		t.Errorf(`keys["python_min"] present (%q); no such tracked key exists, want absent`, keys["python_min"])
 	}
 }
 
