@@ -2,10 +2,12 @@ package luahost
 
 import (
 	"bufio"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/frame"
+	"github.com/McBrideMusings/admin-project-tool/internal/streams"
 )
 
 // RunCmdOptions mirrors the handful of admin_lib/core.py run_cmd knobs a Lua
@@ -38,6 +40,14 @@ type RunCmdResult struct {
 // return. This is the in-process replacement ADR-0010 calls for: no
 // subprocess-of-a-subprocess wire protocol, just Go's os/exec directly from
 // the host function a Lua body calls.
+//
+// Every line reaches the terminal through internal/streams.OutputPump,
+// which is in turn the only thing that calls internal/frame.Write — the
+// repo's "the output pump exists in exactly one place" rule (this ticket,
+// admin-3rgp.11). h.Stdout stays the actual destination (frame.Write writes
+// to whatever writer it's given and only repaints a footer if one is
+// active on that same writer), so a test that redirects h.Stdout still sees
+// exactly the bytes this used to write directly.
 // Host function: run_cmd(cmd[, {dir=path, capture_log=bool}]).
 func (h *Host) RunCmd(cmd string, opts RunCmdOptions) (RunCmdResult, error) {
 	c := exec.Command("/bin/sh", "-c", cmd)
@@ -52,18 +62,21 @@ func (h *Host) RunCmd(cmd string, opts RunCmdOptions) (RunCmdResult, error) {
 	c.Stderr = pw
 
 	var collected []byte
+	pump := &streams.OutputPump{
+		Out: func(s string) { frame.Write(h.Stdout, s) },
+	}
+	if opts.CaptureLog {
+		pump.LogFn = h.logWrite
+	}
+
 	done := make(chan error, 1)
 	go func() {
 		scanner := bufio.NewScanner(pr)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
-			line := scanner.Text()
+			line := scanner.Text() + "\n"
 			collected = append(collected, line...)
-			collected = append(collected, '\n')
-			fmt.Fprintln(h.Stdout, line)
-			if opts.CaptureLog {
-				h.logWrite(line)
-			}
+			pump.Write(line)
 		}
 		done <- scanner.Err()
 	}()

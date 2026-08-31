@@ -181,3 +181,69 @@ func TestMultiTargetDelegationWithoutDispatchIsError(t *testing.T) {
 		t.Fatal("runner([cf]) for a delegating target with no dispatch context should error")
 	}
 }
+
+// -- resolveTargetFrame: parent default, child override, child opt-out ------
+
+func TestResolveTargetFrameParentURLsBecomeTheDefault(t *testing.T) {
+	parentURLs := []any{"local"}
+	urls, hasFooter, footerVal := resolveTargetFrame(parentURLs, false, false, targetFrameMeta{})
+	if len(urls) != 1 || urls[0] != "local" {
+		t.Fatalf("got urls=%v", urls)
+	}
+	if hasFooter || footerVal {
+		t.Fatalf("got hasFooter=%v footerVal=%v, want both false (nothing declared)", hasFooter, footerVal)
+	}
+}
+
+func TestResolveTargetFrameChildOverrideReplacesParentURLs(t *testing.T) {
+	parentURLs := []any{"local"}
+	childURLs := []any{"local", "lan"}
+	urls, _, _ := resolveTargetFrame(parentURLs, false, false, targetFrameMeta{urls: childURLs, hasURLs: true})
+	if len(urls) != 2 || urls[0] != "local" || urls[1] != "lan" {
+		t.Fatalf("got %v, want %v", urls, childURLs)
+	}
+}
+
+func TestResolveTargetFrameChildCanOptOutWithAnEmptyList(t *testing.T) {
+	urls, _, _ := resolveTargetFrame([]any{"local"}, false, false, targetFrameMeta{urls: []any{}, hasURLs: true})
+	if urls == nil || len(urls) != 0 {
+		t.Fatalf("got %v, want an empty (non-nil-semantics) override", urls)
+	}
+}
+
+func TestResolveTargetFrameChildFooterOverrideIsRecorded(t *testing.T) {
+	_, hasFooter, footerVal := resolveTargetFrame(nil, false, false, targetFrameMeta{footer: true, hasFooter: true})
+	if !hasFooter || !footerVal {
+		t.Fatalf("got hasFooter=%v footerVal=%v, want true,true", hasFooter, footerVal)
+	}
+}
+
+func TestResolveTargetFrameSiblingWithNoOverrideInheritsParentFooter(t *testing.T) {
+	_, hasFooter, footerVal := resolveTargetFrame(nil, true, true, targetFrameMeta{})
+	if !hasFooter || !footerVal {
+		t.Fatalf("got hasFooter=%v footerVal=%v, want the parent's true,true", hasFooter, footerVal)
+	}
+}
+
+func TestResolveTargetFrameChildCanSuppressAnInheritedFooter(t *testing.T) {
+	// urls=[] on the parent could never express "no footer at all" once
+	// the parent declared urls — this is the thing footer=false is for.
+	parentURLs := []any{"local"}
+	_, hasFooter, footerVal := resolveTargetFrame(parentURLs, false, false, targetFrameMeta{footer: false, hasFooter: true})
+	if !hasFooter || footerVal {
+		t.Fatalf("got hasFooter=%v footerVal=%v, want true,false", hasFooter, footerVal)
+	}
+}
+
+// TestMultiTargetReservedKeysIncludeURLsAndFooter proves a parent-level
+// `urls`/`footer` key is never misidentified as an inline target subtable —
+// it can't be today regardless (urls is a list, footer is a bool, neither
+// is a map[string]any), but this asserts the documented invariant directly
+// rather than relying on that incidental type mismatch.
+func TestMultiTargetReservedKeysIncludeURLsAndFooter(t *testing.T) {
+	for _, k := range []string{"urls", "footer"} {
+		if !multiTargetReserved[k] {
+			t.Errorf("expected %q to be a reserved (non-target) key", k)
+		}
+	}
+}

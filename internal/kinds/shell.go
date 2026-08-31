@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
@@ -15,13 +16,15 @@ import (
 const emptyCmdErr = "refusing to run an empty command"
 
 // makeShell is kind="shell"'s factory — the Go port of
-// admin_lib/interp.py::_make_shell, minus the frame/footer and watch-kind
-// pieces (admin-3rgp.11, out of this ticket's scope). `run` is resolved with
+// admin_lib/interp.py::_make_shell, minus the watch-kind piece (still
+// untouched — no ticket claims it yet). `run` is resolved with
 // manifest.ResolveComputed, not ResolveEnv: a shell body may reference its
 // own shell-local variables (${x} from `x=$(...)`), which ResolveEnv would
 // wrongly treat as an unresolved required var and error on.
 func makeShell(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
 	run, _ := actionString(action, "run")
+	rawURLs := actionURLs(action)
+	footerVal, hasFooter := actionBool(action, "footer")
 	return func(args []string) error {
 		cmd := strings.TrimSpace(manifest.ResolveComputed(run))
 		h := newHost()
@@ -29,6 +32,8 @@ func makeShell(name string, action manifest.Action, m *manifest.Manifest) (Runne
 			h.Err(emptyCmdErr)
 			return fmt.Errorf("action %q: %s", name, emptyCmdErr)
 		}
+		f := enterFrame(h, name, rawURLs, hasFooter, footerVal, m)
+		defer frame.Deactivate(f)
 		h.Info("running: " + cmd)
 		res, err := h.RunCmd(cmd, luahost.RunCmdOptions{CaptureLog: true})
 		if err != nil {
@@ -45,12 +50,16 @@ func makeShell(name string, action manifest.Action, m *manifest.Manifest) (Runne
 
 // makeShellPassthrough is kind="shell-passthrough"'s factory — the Go port
 // of admin_lib/interp.py::_make_shell_passthrough, minus the `interactive`
-// knob (a raw, unlogged terminal passthrough — a frame/terminal concern,
-// admin-3rgp.11's territory, not this ticket's). Runner args are appended to
-// `run`, each shell-quoted, so a caller-supplied argument can never be
-// re-interpreted as shell syntax.
+// knob (a raw, unlogged terminal passthrough — genuinely separate from the
+// footer/pump work: interactive mode explicitly skips logging and run_cmd
+// both, so there is nothing here for this ticket's pump to sit on top of;
+// tracked as a follow-up). Runner args are appended to `run`, each
+// shell-quoted, so a caller-supplied argument can never be re-interpreted
+// as shell syntax.
 func makeShellPassthrough(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
 	run, _ := actionString(action, "run")
+	rawURLs := actionURLs(action)
+	footerVal, hasFooter := actionBool(action, "footer")
 	return func(args []string) error {
 		cmdline := run
 		if len(args) > 0 {
@@ -66,6 +75,8 @@ func makeShellPassthrough(name string, action manifest.Action, m *manifest.Manif
 			h.Err(emptyCmdErr)
 			return fmt.Errorf("action %q: %s", name, emptyCmdErr)
 		}
+		f := enterFrame(h, name, rawURLs, hasFooter, footerVal, m)
+		defer frame.Deactivate(f)
 		h.Info("running: " + resolved)
 		res, err := h.RunCmd(resolved, luahost.RunCmdOptions{CaptureLog: true})
 		if err != nil {
