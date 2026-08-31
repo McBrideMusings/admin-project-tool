@@ -24,12 +24,45 @@ package kinds
 
 import "sort"
 
+// Lifetime is admin-3rgp.17's addition to the catalog: whether a kind's
+// dispatch returns control once its own work is done (Transient, running
+// inline in the existing frame — today's behaviour for every kind, and the
+// zero value so every entry below that doesn't name a Lifetime keeps it) or
+// spawns its own herdr pane and returns immediately, registering itself in
+// the live-work registry (LongRunning). See dispatch.go's RunActionRouted
+// for where that routing actually happens, and internal/livework for the
+// registry. With no herdr pane available (internal/shim.Available()),
+// a LongRunning kind falls back to running inline exactly like a Transient
+// one — that fallback is the default path (HERDR_ENV=1 is usually absent)
+// and must never surface as an error, a warning, or a hang.
+type Lifetime int
+
+const (
+	// Transient runs inline in the current frame/process and returns only
+	// once its own work is finished — the shell/build/one-shot kinds, and
+	// every kind not explicitly marked LongRunning below.
+	Transient Lifetime = iota
+
+	// LongRunning dispatches into its own herdr pane and returns
+	// immediately: the dev-loop kinds meant to keep running in the
+	// background while the caller's terminal is free for other work.
+	LongRunning
+)
+
+func (l Lifetime) String() string {
+	if l == LongRunning {
+		return "long-running"
+	}
+	return "transient"
+}
+
 // Kind is one action kind's validation metadata — name, whether its body is
 // a config table rather than a `run` string, which admin_lib-equivalent
-// modules it auto-pulls, and whether its factory actually reads a target
-// map. This is a direct port of admin_lib/kinds.py's Kind dataclass, minus
-// the `factory` field: Go keeps the factory in the Registry rather than
-// mutating the catalog record, so Kinds stays an immutable map.
+// modules it auto-pulls, whether its factory actually reads a target map,
+// and its Lifetime (admin-3rgp.17). This is a direct port of
+// admin_lib/kinds.py's Kind dataclass, minus the `factory` field: Go keeps
+// the factory in the Registry rather than mutating the catalog record, so
+// Kinds stays an immutable map.
 type Kind struct {
 	Name string
 
@@ -46,6 +79,10 @@ type Kind struct {
 	// targets; under any other kind, declared targets are built and never
 	// run, which is always a mistake.
 	ConsumesTargets bool
+
+	// Lifetime is Transient unless set to LongRunning below. Zero value
+	// (Transient) means most entries in Kinds need no change at all.
+	Lifetime Lifetime
 }
 
 // Kinds is the canonical action-kind catalog — the single source of truth.
@@ -54,11 +91,31 @@ type Kind struct {
 // declared kind left without a factory, so the catalog and the factories
 // cannot drift. This mirrors admin_lib/kinds.py's KINDS dict exactly,
 // including python and python-script.
+// Lifetime classification (admin-3rgp.17): the epic names five long-running
+// dev-loop kinds explicitly — docker-dev, docker-reload-loop, vite-dev,
+// server-reload, apple-dev-loop ("apple dev loops") — and says everything
+// else is transient ("shell, go, npm, http, sync and friends"). Every other
+// kind below is transient for that reason, with two worth calling out:
+//
+//   - interactive-shell is long-lived in wall-clock terms but is NOT marked
+//     LongRunning: its whole job is reading the user's own keystrokes
+//     (Modules includes "keybindings") to drive live-reload from the
+//     terminal the user is sitting at. Routing it into a herdr pane would
+//     silently disconnect it from the keyboard it exists to read — worse
+//     than today's behaviour, not an improvement — so it stays inline.
+//   - bridge-listen (`tail -f /dev/null`, parking a shell so the log
+//     bridge's HTTP listener stays up for the browser-console forwarder)
+//     takes no input at all and is meant to be started and left running
+//     while the caller goes on to do other things — exactly what a herdr
+//     pane is for. It IS marked LongRunning despite sharing
+//     interactive-shell's module list, because the module list describes
+//     what the *action* pulls into scope, not what its kind's factory does
+//     with the terminal.
 var Kinds = map[string]Kind{
 	"shell":              {Name: "shell"},
 	"shell-passthrough":  {Name: "shell-passthrough"},
 	"multi-target":       {Name: "multi-target", ConsumesTargets: true},
-	"apple-dev-loop":     {Name: "apple-dev-loop", ConsumesTargets: true},
+	"apple-dev-loop":     {Name: "apple-dev-loop", ConsumesTargets: true, Lifetime: LongRunning},
 	"lua":                {Name: "lua"},
 	"http":               {Name: "http"},
 	"npm":                {Name: "npm"},
@@ -67,12 +124,12 @@ var Kinds = map[string]Kind{
 	"sync":               {Name: "sync"},
 	"apple":              {Name: "apple"},
 	"clean-dev":          {Name: "clean-dev", Configless: true},
-	"vite-dev":           {Name: "vite-dev", Configless: true},
+	"vite-dev":           {Name: "vite-dev", Configless: true, Lifetime: LongRunning},
 	"print-urls":         {Name: "print-urls", Configless: true},
 	"docs":               {Name: "docs", Configless: true},
-	"docker-reload-loop": {Name: "docker-reload-loop", Modules: []string{"docker"}},
-	"docker-dev":         {Name: "docker-dev", Configless: true, Modules: []string{"docker"}},
-	"server-reload":      {Name: "server-reload", Configless: true, Modules: []string{"docker"}},
+	"docker-reload-loop": {Name: "docker-reload-loop", Modules: []string{"docker"}, Lifetime: LongRunning},
+	"docker-dev":         {Name: "docker-dev", Configless: true, Modules: []string{"docker"}, Lifetime: LongRunning},
+	"server-reload":      {Name: "server-reload", Configless: true, Modules: []string{"docker"}, Lifetime: LongRunning},
 	"kill-port":          {Name: "kill-port", Modules: []string{"ports", "ports_nuke"}},
 	"nuke-dev":           {Name: "nuke-dev", Configless: true, Modules: []string{"ports", "ports_nuke"}},
 	"dev-precheck":       {Name: "dev-precheck", Configless: true, Modules: []string{"ports", "ports_nuke"}},
@@ -80,7 +137,7 @@ var Kinds = map[string]Kind{
 	"fixtures-reset":     {Name: "fixtures-reset", Configless: true, Modules: []string{"cleanup", "fixtures"}},
 	"install-template":   {Name: "install-template", Configless: true, Modules: []string{"remote", "unraid"}},
 	"interactive-shell":  {Name: "interactive-shell", Modules: []string{"ports", "log_server", "log_bridge", "keybindings", "log_format"}},
-	"bridge-listen":      {Name: "bridge-listen", Configless: true, Modules: []string{"ports", "log_server", "log_bridge", "keybindings", "log_format"}},
+	"bridge-listen":      {Name: "bridge-listen", Configless: true, Modules: []string{"ports", "log_server", "log_bridge", "keybindings", "log_format"}, Lifetime: LongRunning},
 }
 
 // KnownKinds is every valid kind name, sorted — derived from Kinds so a new
@@ -133,6 +190,19 @@ var KindModules = func() map[string][]string {
 			out[name] = mods
 		}
 	}
+	return out
+}()
+
+// LongRunningKinds is every kind marked Lifetime: LongRunning, sorted —
+// derived from Kinds, mirroring the other derived views above.
+var LongRunningKinds = func() []string {
+	out := make([]string, 0)
+	for name, k := range Kinds {
+		if k.Lifetime == LongRunning {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
 	return out
 }()
 

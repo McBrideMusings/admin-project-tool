@@ -13,6 +13,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/guards"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/shim"
 )
 
 // pureRoutingKeys are the action-only fields ADR-0003
@@ -140,10 +141,65 @@ func RunAction(m *manifest.Manifest, r *Registry, name string, args []string) er
 	}
 
 	prev := currentDispatch
-	currentDispatch = func(n string, a []string) error { return RunAction(m, r, n, a) }
+	currentDispatch = func(n string, a []string) error { return RunActionRouted(m, r, n, a) }
 	defer func() { currentDispatch = prev }()
 
 	return runner(args)
+}
+
+// RunActionRouted is admin-3rgp.17's lifetime-aware entry point: the one
+// every *new* dispatch should call instead of RunAction directly —
+// RunCommand's step loop below, and RunAction's own currentDispatch (so a
+// multi-target target delegating to another action, `action = "other"`,
+// routes exactly the same way a top-level command step does).
+//
+// When name's declared kind is Lifetime: LongRunning (internal/kinds
+// catalog.go) and a herdr pane is available (internal/shim.Available()), it
+// dispatches into a new pane and returns immediately — the action's own
+// Runner never executes in this process at all; it executes in the pane,
+// reached via the hidden "__run-action" re-entry command. That pane's ID is
+// recorded in internal/livework's process-wide registry.
+//
+// In every other case — a Transient kind, an undeclared action (RunAction
+// below produces the right "not declared" error for that), or a
+// LongRunning kind with shim.ErrHerdrUnavailable — it falls through to
+// RunAction and behaves exactly as before this ticket: inline, in the
+// current frame. That fallback is the default path in practice (HERDR_ENV=1
+// is usually unset) and must never itself error, warn, or hang; the only
+// way dispatchToPane's error reaches the caller is a herdr call that was
+// actually attempted and actually failed (a real error worth surfacing),
+// never "herdr isn't here".
+func RunActionRouted(m *manifest.Manifest, r *Registry, name string, args []string) error {
+	if action, ok := m.Actions[name]; ok && actionLifetime(action) == LongRunning {
+		kind, _ := actionString(action, "kind")
+		paneID, err := dispatchToPane(name, args)
+		switch {
+		case err == nil:
+			recordLiveWork(name, kind, paneID)
+			return nil
+		case err != shim.ErrHerdrUnavailable:
+			return fmt.Errorf("action %q: dispatch to herdr pane: %w", name, err)
+		}
+		// err == shim.ErrHerdrUnavailable: fall through to the inline path.
+	}
+	return RunAction(m, r, name, args)
+}
+
+// actionLifetime resolves name's declared kind (defaulting to "shell",
+// matching RunAction's own default) and returns its catalog Lifetime,
+// Transient for an undeclared kind — RunAction is what reports "unknown
+// kind" as a real error; this helper only decides routing and must never be
+// the place that surfaces that error.
+func actionLifetime(action manifest.Action) Lifetime {
+	kind, _ := actionString(action, "kind")
+	if kind == "" {
+		kind = "shell"
+	}
+	k, ok := Declared(kind)
+	if !ok {
+		return Transient
+	}
+	return k.Lifetime
 }
 
 // RunCommand executes name's steps against m using r, in declared order,
@@ -174,7 +230,7 @@ func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string) e
 		return fmt.Errorf("command %q has no steps", name)
 	}
 	for _, step := range cmd.Steps {
-		if err := RunAction(m, r, step, args); err != nil {
+		if err := RunActionRouted(m, r, step, args); err != nil {
 			return fmt.Errorf("command %q: %w", name, err)
 		}
 	}
