@@ -1,30 +1,30 @@
  admin · admin-project-tool                                              feat/one-tool-go-merge 
    Commands    Repo   Issues   Live    Config                                                   
 ────────────────────────────────────────────────────────────────────────────────────────────────
- READY            tracker: beads              │ admin-3rgp.20   P1  open                        
-   P1 Embed a Lua VM and define the host …    │ ──────────────────────────────────────────────  
-   P1 Two deployment paths: go install, a…    │ Commands tab with the resolved-action reader    
-   P1 Decide how admin <command> reaches …    │                                                 
+ READY   tracker: beads                       │ admin-3rgp.20   P1  open                        
+   P1 Embed a Lua VM and define the hos…      │ ──────────────────────────────────────────────  
+   P1 Two deployment paths: go install,…      │ Commands tab with the resolved-action reader    
+   P1 Decide how admin <command> reache…      │                                                 
                                               │ BLOCKED BY                                      
  BLOCKED                                      │   admin-3rgp.19                                 
- ▸ P1 Commands tab with the resolve… ←.19     │                                                 
-   P1 The live-work tab: workers an… ←.19     │ LABELS  afk                                     
-   P1 Implement the transient kind … ←.36     │                                                 
-   P1 Rewrite the 14 archetypes in … ←.36     │ ⏎ opens the dispatch sheet.                     
-                                              │                                                 
-                                              │                                                 
-                                              │                                                 
-                                              │                                                 
-                                              │                                                 
-                                              │                                                 
-                                              │                                                 
-                                              │                                                 
-                                              │                                                 
-                                              │                                                 
-                                              │                                                 
-                                              │                                                 
-                                              │                                                 
-                                              │                                                 
-                                              │                                                 
+ ▸ P1 Commands tab with the resol… ←.19       │                                                 
+   P1 The live-work tab: workers … ←.19       │ LABELS  afk                                     
+   P1 Implement the transient kin… ←.36       │                                                 
+   P1 Rewrite the 14 archetypes i… ←.36       │                                                 
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
 ────────────────────────────────────────────────────────────────────────────────────────────────
  ↑↓ move   ⏎ dispatch   c claim   b branch   ⇥ switch tab   q quit                              
