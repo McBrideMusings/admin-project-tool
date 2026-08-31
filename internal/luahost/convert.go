@@ -38,6 +38,18 @@ func toLuaValue(L *lua.LState, v any) lua.LValue {
 			tbl.RawSetInt(i+1, toLuaValue(L, item))
 		}
 		return tbl
+	case []map[string]any:
+		// TOML's array-of-tables (`[[docker_run.ports]]` and siblings) decodes
+		// to this concrete type, not []any — encountered by admin-3rgp.37
+		// porting the docker archetype's run-args action, where every
+		// []map[string]any config field (bind_mounts, ports, env, labels, ...)
+		// fell through to the default branch below and reached the Lua body
+		// as a stringified Go value instead of an array table.
+		tbl := L.NewTable()
+		for i, item := range val {
+			tbl.RawSetInt(i+1, toLuaValue(L, item))
+		}
+		return tbl
 	case []string:
 		tbl := L.NewTable()
 		for i, item := range val {

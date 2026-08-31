@@ -78,6 +78,7 @@ func (h *Host) registerOutput(L *lua.LState) {
 	reg1("ok", h.Ok)
 	reg1("warn", h.Warn)
 	reg1("err", h.Err)
+	reg1("print", h.Print)
 }
 
 func (h *Host) registerLogContext(L *lua.LState) {
