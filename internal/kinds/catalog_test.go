@@ -31,10 +31,26 @@ func pythonKindNames(t *testing.T) ([]string, bool) {
 	return names, true
 }
 
-// TestCatalogMatchesPythonKinds proves acceptance criterion 1 ("every kind
-// the Python KINDS catalog declared is declared here") by reading
-// admin_lib/kinds.py directly, rather than asserting a hand-copied list that
-// could drift from the source it was ported from.
+// adr0010Divergence is the one deliberate, permanent difference between this
+// catalog and admin_lib/kinds.py: ADR-0010 deletes kind="python" and
+// kind="python-script" from the Go side and adds kind="lua" in their place.
+// admin_lib/kinds.py is not migrated kind-by-kind — it is deleted wholesale
+// by admin-3rgp.30 — so it still declares the two Python kinds and knows
+// nothing of "lua". TestCatalogMatchesPythonKinds accounts for exactly this
+// gap rather than either ignoring the cross-check or asserting a false
+// exact-match.
+var adr0010Divergence = struct {
+	removedFromGo []string // declared in Python, deliberately absent from Go
+	addedInGo     []string // declared in Go, deliberately absent from Python
+}{
+	removedFromGo: []string{"python", "python-script"},
+	addedInGo:     []string{"lua"},
+}
+
+// TestCatalogMatchesPythonKinds proves every kind the Python KINDS catalog
+// declares is declared here too, MODULO the ADR-0010 divergence recorded
+// above — by reading admin_lib/kinds.py directly, rather than asserting a
+// hand-copied list that could drift from the source it was ported from.
 func TestCatalogMatchesPythonKinds(t *testing.T) {
 	pyNames, ok := pythonKindNames(t)
 	if !ok {
@@ -44,12 +60,27 @@ func TestCatalogMatchesPythonKinds(t *testing.T) {
 		t.Fatal("found admin_lib/kinds.py but extracted zero _kind(...) names — regex likely stale")
 	}
 
+	removed := map[string]bool{}
+	for _, n := range adr0010Divergence.removedFromGo {
+		removed[n] = true
+	}
 	for _, name := range pyNames {
+		if removed[name] {
+			continue
+		}
 		if _, ok := Kinds[name]; !ok {
 			t.Errorf("Python declares kind %q but internal/kinds.Kinds does not", name)
 		}
 	}
+
+	added := map[string]bool{}
+	for _, n := range adr0010Divergence.addedInGo {
+		added[n] = true
+	}
 	for name := range Kinds {
+		if added[name] {
+			continue
+		}
 		found := false
 		for _, py := range pyNames {
 			if py == name {
@@ -63,15 +94,18 @@ func TestCatalogMatchesPythonKinds(t *testing.T) {
 	}
 }
 
-// TestPythonKindsStayDeclared guards against a regression this ticket's
-// context explicitly calls out: an earlier draft of the epic proposed
-// deleting python and python-script kinds. That was reversed — they stay
-// declared like any other kind.
-func TestPythonKindsStayDeclared(t *testing.T) {
+// TestADR0010KindSet guards the reversal this ticket's context explicitly
+// calls out: an earlier draft of the epic kept python/python-script
+// declared. ADR-0010 reverses that again — they are deleted, and kind="lua"
+// takes their place as the embedded-VM authoring language.
+func TestADR0010KindSet(t *testing.T) {
 	for _, name := range []string{"python", "python-script"} {
-		if _, ok := Kinds[name]; !ok {
-			t.Errorf("kind %q must stay declared in Kinds", name)
+		if _, ok := Kinds[name]; ok {
+			t.Errorf("kind %q must NOT be declared (ADR-0010 deletes it)", name)
 		}
+	}
+	if _, ok := Kinds["lua"]; !ok {
+		t.Error(`kind "lua" must be declared (ADR-0010 adds it)`)
 	}
 }
 
