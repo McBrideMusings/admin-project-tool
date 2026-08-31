@@ -102,6 +102,12 @@ var runAgent = func(name, prompt string) error {
 	return shim.PromptAndWait(name, prompt)
 }
 
+// agentStatus is dispatchOne's post-wait status check, swapped out in tests
+// like startAgent/runAgent. See shim.AgentStatus's doc comment for why this
+// is needed at all: PromptAndWait's return alone can't tell "the agent hit
+// an approval/question prompt" apart from "the agent actually finished".
+var agentStatus = shim.AgentStatus
+
 // ResolveAgent returns the herdr agent kind a workflow target runs: the
 // action's own `agent` key when it is a non-empty string, else the
 // project's configured [workflow].agent default. ok is false when neither
@@ -230,16 +236,53 @@ func dispatchOne(actionName, agentKind string, t Target, wt create.Result) Targe
 	// target appears in the live registry with its pane handle", which
 	// means a reader of the registry mid-dispatch, not only after every
 	// target has finished.
-	livework.Default.Add(&livework.Entry{
-		ID: paneID, Name: actionName, Kind: "workflow", PaneID: paneID,
-	})
+	//
+	// Keyed on agentName, not paneID: agentName is stable across a Retry
+	// (which starts a new agent under the same name in a new pane), so the
+	// entry Retry re-adds under this same ID replaces this one in place
+	// rather than appearing as a second row beside a stale failed entry.
+	e := &livework.Entry{
+		ID:     agentName,
+		Name:   actionName,
+		Kind:   "workflow",
+		PaneID: paneID,
+		Worker: &livework.WorkerInfo{Branch: wt.Branch, Worktree: wt.Path},
+	}
+	e.Ops = livework.Ops{
+		Attach: func() error { return shim.FocusPane(e.PaneID) },
+		Kill: func() error {
+			if err := shim.ClosePane(e.PaneID); err != nil {
+				return err
+			}
+			livework.Default.SetState(e.ID, livework.StateExited, nil)
+			return nil
+		},
+		// Retry re-runs this exact target against its existing worktree
+		// (never a fresh one — a worker never removes its own worktree, so
+		// there's nothing to recreate) in the background and returns
+		// immediately, matching how DispatchTargets originally launched it.
+		Retry: func() error {
+			go dispatchOne(actionName, agentKind, t, wt)
+			return nil
+		},
+	}
+	livework.Default.Add(e)
 
 	runErr := runAgent(agentName, t.Prompt)
 	if runErr != nil {
-		livework.Default.SetState(paneID, livework.StateFailed, runErr)
+		livework.Default.SetState(agentName, livework.StateFailed, runErr)
 		return TargetResult{Target: t.Name, WorktreePath: wt.Path, PaneID: paneID, Err: runErr}
 	}
-	livework.Default.SetState(paneID, livework.StateExited, nil)
+
+	// PromptAndWait settles on idle, done, OR blocked — an agent waiting on
+	// an approval or question prompt returns exactly like one that actually
+	// finished, so the settled status has to be re-checked to tell "waiting
+	// on input" apart from "still working"/"done" without attaching.
+	if status, statusErr := agentStatus(agentName); statusErr == nil && status == "blocked" {
+		livework.Default.SetState(agentName, livework.StateWaiting, nil)
+	} else {
+		livework.Default.SetState(agentName, livework.StateExited, nil)
+	}
 	return TargetResult{Target: t.Name, WorktreePath: wt.Path, PaneID: paneID}
 }
 

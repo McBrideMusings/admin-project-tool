@@ -175,7 +175,7 @@ func RunActionRouted(m *manifest.Manifest, r *Registry, name string, args []stri
 		paneID, err := dispatchToPane(name, args)
 		switch {
 		case err == nil:
-			recordLiveWork(name, kind, paneID)
+			recordLiveWork(name, kind, paneID, args)
 			return nil
 		case err != shim.ErrHerdrUnavailable:
 			return fmt.Errorf("action %q: dispatch to herdr pane: %w", name, err)
