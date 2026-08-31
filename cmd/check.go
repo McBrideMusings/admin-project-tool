@@ -61,6 +61,9 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	if err := checkCommandRouting(m); err != nil {
 		problems = append(problems, validate.Wrap(err))
 	}
+	if err := checkUnknownKinds(m); err != nil {
+		problems = append(problems, validate.Wrap(err))
+	}
 	if err := frame.ValidateURLRefs(m.Actions, m.Urls); err != nil {
 		problems = append(problems, validate.Wrap(err))
 	}
@@ -85,6 +88,34 @@ func checkTargetDir(args []string) (string, error) {
 		return args[0], nil
 	}
 	return os.Getwd()
+}
+
+// checkUnknownKinds verifies that every action's kind exists in the kinds
+// catalog — admin-3rgp.50. Uses kinds.Declared() to check if a kind exists.
+// Reports every offending action, not just the first.
+func checkUnknownKinds(m *manifest.Manifest) error {
+	var problems []string
+	for _, name := range sortedActionNames(m.Actions) {
+		action := m.Actions[name]
+		kindVal, ok := action["kind"]
+		if !ok {
+			// kind is required by validation elsewhere; skip here if missing
+			continue
+		}
+		kindStr, ok := kindVal.(string)
+		if !ok {
+			// kind must be a string; skip non-string kinds (validation error elsewhere)
+			continue
+		}
+		_, declared := kinds.Declared(kindStr)
+		if !declared {
+			problems = append(problems, fmt.Sprintf("action %q: unknown kind %q", name, kindStr))
+		}
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return validate.Errorf("%s", strings.Join(problems, "\n"))
 }
 
 // checkCommandRouting is ADR-0003 / design principle 2 (checkReservedCollisions'
@@ -122,6 +153,15 @@ func checkCommandRouting(m *manifest.Manifest) error {
 func sortedCommandNames(cmds map[string]manifest.Command) []string {
 	names := make([]string, 0, len(cmds))
 	for name := range cmds {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func sortedActionNames(actions map[string]manifest.Action) []string {
+	names := make([]string, 0, len(actions))
+	for name := range actions {
 		names = append(names, name)
 	}
 	sort.Strings(names)
