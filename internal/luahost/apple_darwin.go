@@ -15,26 +15,27 @@ package luahost
 // expecting it from Lua's stdlib") exactly like json/glob/plist already are.
 //
 // Scope of this file and its siblings (apple_xcode.go, apple_devices.go,
-// apple_register.go): the OS-facing primitives an archetype's Lua body
-// composes into build/dev/deploy commands — running xcodebuild, resolving
-// and driving simulators and physical devices, code-signing, and the
-// small string/log-parsing helpers those need. Three things admin_lib/
-// apple.py also contains are deliberately NOT ported here — see
+// apple_register.go, apple_pbxproj.go, apple_icons.go): the OS-facing
+// primitives an archetype's Lua body composes into build/dev/deploy
+// commands — running xcodebuild, resolving and driving simulators and
+// physical devices, code-signing, pbxproj parsing, icon backup/dev-banner-
+// swap/restore, and the small string/log-parsing helpers those need. Three
+// things admin_lib/apple.py also contains are still NOT ported here — see
 // docs/architecture/lua-host-api.md's "What is intentionally not here yet"
 // for the full reasoning:
 //
 //   - Continuous dev-loop supervision (dev_mac/dev_ios/dev_tv/dev_device's
-//     rebuild-on-signal loop) — needs the reload+output-pump machinery
-//     admin-3rgp.11/.17/.35 have not yet ported to Go. Binding it now would
-//     mean re-hand-rolling the pump, which the repo's hard rule forbids.
-//   - The icon backup/swap/composer subsystem (admin_lib/apple.py's
-//     backup_icons/swap_dev_icons/icon-composer functions, ~1000 lines) —
-//     a distinct concern (build-time asset substitution) from the platform
-//     verbs this ticket names.
-//   - Xcode-project introspection for the dev/prod bundle-suffix scheme
-//     (_detect_project_path, _read_pbxproj, _compose_dev_settings,
-//     _entitlements_paths) — pbxproj parsing and a project-specific naming
-//     convention, not a general host capability.
+//     rebuild-on-signal loop) and attached device console output. The
+//     reload+output-pump machinery this needs now exists (internal/reload,
+//     internal/streams.OutputPump) — this is unimplemented scope, not a
+//     missing capability.
+//   - Glyph-based fresh icon generation (admin_lib/icons.py's
+//     generate_icons/generate_tv_icons) — needs a font-rendering and/or
+//     SVG-rasterizing dependency; see apple_icons_darwin.go's doc comment.
+//   - The dev/prod bundle-suffix convention layer built on top of pbxproj
+//     parsing (_compose_dev_settings, _entitlements_paths) — project-
+//     specific convention-following over what apple.xcode_target_settings
+//     already returns, not a further parsing capability.
 
 import (
 	"errors"
