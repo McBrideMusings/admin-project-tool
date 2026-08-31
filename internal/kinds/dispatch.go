@@ -8,6 +8,7 @@ package kinds
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -160,15 +161,23 @@ func RunAction(m *manifest.Manifest, r *Registry, name string, args []string) er
 // reached via the hidden "__run-action" re-entry command. That pane's ID is
 // recorded in internal/livework's process-wide registry.
 //
-// In every other case — a Transient kind, an undeclared action (RunAction
-// below produces the right "not declared" error for that), or a
-// LongRunning kind with shim.ErrHerdrUnavailable — it falls through to
-// RunAction and behaves exactly as before this ticket: inline, in the
-// current frame. That fallback is the default path in practice (HERDR_ENV=1
-// is usually unset) and must never itself error, warn, or hang; the only
-// way dispatchToPane's error reaches the caller is a herdr call that was
-// actually attempted and actually failed (a real error worth surfacing),
-// never "herdr isn't here".
+// In every other case it falls through to RunAction and runs inline, in
+// the current frame:
+//
+//   - A Transient kind, or an undeclared action (RunAction below produces
+//     the right "not declared" error for that) — never reached the pane
+//     path at all.
+//   - A LongRunning kind with shim.ErrHerdrUnavailable — herdr simply
+//     isn't usable here (HERDR_ENV unset, or no herdr on PATH). This is
+//     the default path in practice and stays completely silent: no
+//     warning, nothing printed, nothing logged. Every manifest without
+//     HERDR_ENV=1 must see zero behaviour change from before this ticket.
+//   - A LongRunning kind where herdr IS available but the split itself
+//     failed — daemon not running, workspace gone, split refused
+//     (admin-3rgp.46). This is a genuine failure worth knowing about, but
+//     "the multiplexer hiccuped" must never be the reason a dev loop dies:
+//     it prints exactly one warning line naming the failure, then runs
+//     inline exactly like the silent-fallback case.
 func RunActionRouted(m *manifest.Manifest, r *Registry, name string, args []string) error {
 	if action, ok := m.Actions[name]; ok && actionLifetime(action) == LongRunning {
 		kind, _ := actionString(action, "kind")
@@ -177,10 +186,15 @@ func RunActionRouted(m *manifest.Manifest, r *Registry, name string, args []stri
 		case err == nil:
 			recordLiveWork(name, kind, paneID, args)
 			return nil
-		case err != shim.ErrHerdrUnavailable:
-			return fmt.Errorf("action %q: dispatch to herdr pane: %w", name, err)
+		case err == shim.ErrHerdrUnavailable:
+			// Herdr isn't usable here at all — fall through to the inline
+			// path silently; this is the default path in practice.
+		default:
+			// Herdr is available but the split itself failed — degrade to
+			// inline with one warning line rather than aborting the
+			// action outright (admin-3rgp.46).
+			fmt.Fprintf(os.Stderr, "warning: action %q: herdr split failed, running inline: %v\n", name, err)
 		}
-		// err == shim.ErrHerdrUnavailable: fall through to the inline path.
 	}
 	return RunAction(m, r, name, args)
 }
