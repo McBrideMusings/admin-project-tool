@@ -300,6 +300,103 @@ func (h *Host) registerApple(L *lua.LState) {
 		return 1
 	})
 
+	// --- pbxproj parsing (admin-3rgp.38) ---------------------------------
+
+	set("find_project_path", func(L *lua.LState) int {
+		path, err := DetectProjectPath(L.OptString(1, ""))
+		if err != nil {
+			L.RaiseError("apple.find_project_path: %v", err)
+			return 0
+		}
+		if path == "" {
+			L.Push(lua.LNil)
+			return 1
+		}
+		L.Push(lua.LString(path))
+		return 1
+	})
+
+	set("read_pbxproj", func(L *lua.LState) int {
+		L.Push(toLuaValue(L, map[string]any(ReadPBXProj(L.CheckString(1)))))
+		return 1
+	})
+
+	set("xcode_target_settings", func(L *lua.LState) int {
+		projectPath := L.CheckString(1)
+		scheme := L.CheckString(2)
+		configuration := L.OptString(3, "Debug")
+		L.Push(toLuaValue(L, map[string]any(XcodeTargetSettings(projectPath, scheme, configuration))))
+		return 1
+	})
+
+	set("xcode_setting", func(L *lua.LState) int {
+		val, ok := XcodeSetting(L.CheckString(1), L.CheckString(2), L.CheckString(3))
+		if !ok {
+			L.Push(lua.LNil)
+			return 1
+		}
+		L.Push(lua.LString(val))
+		return 1
+	})
+
+	// --- Icon backup / dev-banner swap / restore (admin-3rgp.38) ---------
+
+	set("backup_icons", func(L *lua.LState) int {
+		if err := BackupIcons(stringTableToMap(L.CheckTable(1)), L.CheckString(2)); err != nil {
+			L.RaiseError("apple.backup_icons: %v", err)
+		}
+		return 0
+	})
+
+	set("restore_icons", func(L *lua.LState) int {
+		if err := RestoreIcons(stringTableToMap(L.CheckTable(1)), L.CheckString(2)); err != nil {
+			L.RaiseError("apple.restore_icons: %v", err)
+		}
+		return 0
+	})
+
+	set("backup_tv_icons", func(L *lua.LState) int {
+		if err := BackupTVIcons(L.CheckString(1), L.CheckString(2)); err != nil {
+			L.RaiseError("apple.backup_tv_icons: %v", err)
+		}
+		return 0
+	})
+
+	set("restore_tv_icons", func(L *lua.LState) int {
+		if err := RestoreTVIcons(L.CheckString(1), L.CheckString(2)); err != nil {
+			L.RaiseError("apple.restore_tv_icons: %v", err)
+		}
+		return 0
+	})
+
+	set("swap_dev_icons_banner", func(L *lua.LState) int {
+		ok, err := SwapDevIconsBanner(stringTableToMap(L.CheckTable(1)))
+		if err != nil {
+			L.RaiseError("apple.swap_dev_icons_banner: %v", err)
+			return 0
+		}
+		L.Push(lua.LBool(ok))
+		return 1
+	})
+
+	set("swap_dev_icon_composer", func(L *lua.LState) int {
+		ok, err := SwapDevIconComposer(L.CheckString(1), L.CheckString(2))
+		if err != nil {
+			h.Err(err.Error())
+			L.Push(lua.LBool(false))
+			return 1
+		}
+		L.Push(lua.LBool(ok))
+		return 1
+	})
+
+	set("restore_icon_composer", func(L *lua.LState) int {
+		if err := RestoreIconComposer(L.CheckString(1), L.CheckString(2)); err != nil {
+			L.RaiseError("apple.restore_icon_composer: %v", err)
+		}
+		return 0
+	})
+
 	L.SetGlobal("apple", tbl)
 }
 
