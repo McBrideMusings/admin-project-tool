@@ -127,6 +127,7 @@ func (m Model) startWorkflowConfirm(wd *workRowData) (tea.Model, tea.Cmd) {
 	}
 	m.wfResolving = true
 	m.wfOpen = false
+	m.wfFromSelection = false
 	m.wfName = wd.cmdName
 	m.wfAction = wd.workflowAction
 	m.wfQuery = wd.workflow.Query
@@ -201,10 +202,21 @@ func (m Model) workflowConfirmKey(key string) (tea.Model, tea.Cmd) {
 	if canDispatch && (key == "enter" || key == "y" || key == "Y") {
 		name, action, targets := m.wfName, m.wfAction, m.wfTargets
 		m.wfOpen = false
+		if m.wfFromSelection {
+			// admin-3rgp.27: only a selection-sourced dispatch owns
+			// trackerSelected — a query-sourced one (wfFromSelection false)
+			// never touched it and must leave it alone. Cleared only once
+			// dispatch is actually confirmed, not when the picker merely
+			// opened this overlay, so backing out with esc/n leaves the
+			// selection intact for a second try at a different workflow.
+			m.trackerSelected = map[string]bool{}
+			m.wfFromSelection = false
+		}
 		m.setStatus(fmt.Sprintf("dispatching %s over %d target(s)…", name, len(targets)), cCyan)
 		return m, dispatchWorkflowCmd(m.repoRoot, name, action, targets)
 	}
 	m.wfOpen = false
+	m.wfFromSelection = false
 	m.setStatus("cancelled", cDim)
 	return m, nil
 }
@@ -256,7 +268,14 @@ func (m Model) workflowConfirmContent() (title, badge string, lines [][]seg) {
 		}
 	}
 
-	lines = append(lines, []seg{{t: " query   ", fg: cFaint}, {t: m.wfQuery, fg: cFg}})
+	// The label names what wfQuery actually holds: a real query string for a
+	// query-sourced workflow, or admin-3rgp.27's own "N selected row(s)" for
+	// a picker-originated one — "query" would misdescribe the latter.
+	srcLabel := " query   "
+	if m.wfFromSelection {
+		srcLabel = " over    "
+	}
+	lines = append(lines, []seg{{t: srcLabel, fg: cFaint}, {t: m.wfQuery, fg: cFg}})
 	agent := m.wfAgent
 	if agent == "" {
 		agent = "(none)"

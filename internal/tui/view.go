@@ -177,6 +177,9 @@ func (m Model) renderBodyHits(width, bodyHeight int) ([]string, []hitTarget) {
 	case m.confirming || m.deleting:
 		content = m.renderModalBody(width, contentH)
 		hits = noneHits(len(content))
+	case m.swOpen:
+		content = m.renderWorkflowPickerBody(width, contentH)
+		hits = noneHits(len(content))
 	case m.wfResolving || m.wfOpen:
 		content = m.renderWorkflowConfirmBody(width, contentH)
 		hits = noneHits(len(content))
@@ -330,6 +333,13 @@ func (m Model) headerLine(width int) string {
 	}
 	var right []seg
 	switch {
+	case m.trackerSelectMode() && (m.active == tabBeads || m.active == tabIssues):
+		// The count is the whole visibility contract for admin-3rgp.27's
+		// acceptance criterion "the count is visible": the per-row checkmark
+		// says WHICH rows, this says HOW MANY, and it takes priority over the
+		// header's usual sync/freshness readout because it's the more
+		// actionable fact while a selection is in progress.
+		right = []seg{{t: fmt.Sprintf("%d selected", len(m.trackerSelected)), fg: cGreen}}
 	case m.creating:
 		right = []seg{{t: "⟳ " + m.createLabel, fg: cCyan}}
 	case m.isRefreshing():
@@ -500,7 +510,20 @@ func (m Model) renderRow(r rowItem, selected bool, width int) string {
 	case rowText:
 		return renderSegs(fitSegs([]seg{{t: "   "}, {t: r.label, fg: cFaint}}, width), nil)
 	}
-	left := append([]seg{leadSeg(selected)}, r.leftSegs...)
+	left := []seg{leadSeg(selected)}
+	// The tracker multi-select checkbox (admin-3rgp.27): a fixed two-column
+	// glyph on every rowBead/rowIssue row once mode is on, so a row's title
+	// starts at the same column whether that row is picked or not — the same
+	// "the checkbox is always drawn, blank when it doesn't apply" contract
+	// gutterSegs already keeps for the Branches pane's own checkbox.
+	if (r.kind == rowBead || r.kind == rowIssue) && m.trackerSelectMode() {
+		mark := seg{t: "  "}
+		if m.trackerSelected[trackerRowID(r)] {
+			mark = seg{t: "✓ ", fg: cGreen}
+		}
+		left = append(left, mark)
+	}
+	left = append(left, r.leftSegs...)
 	line := composeLR(left, r.rightSegs, width)
 	if selected {
 		return renderSegs(fitSegs(line, width), cSel)
@@ -619,10 +642,10 @@ func (m Model) keymap() [][2]string {
 	case tabPRs:
 		return [][2]string{{"↑↓", "move"}, {"↵", "checkout"}, {"o", "open"}, {"i", "issue"}, {"/", "filter"}, {"r", "refresh row"}, {"⇧R", "refresh all"}, {"q", "quit"}, tabKey}
 	case tabIssues:
-		return [][2]string{{"↑↓", "move"}, {"↵", "start work"}, {"o", "open"}, {"/", "filter"}, {"r", "refresh row"}, {"⇧R", "refresh all"}, {"q", "quit"}, tabKey}
+		return [][2]string{{"↑↓", "move"}, {"↵", "start work"}, {"o", "open"}, {"space", "select"}, {"w", "workflow"}, {"/", "filter"}, {"r", "refresh row"}, {"⇧R", "refresh all"}, {"q", "quit"}, tabKey}
 	case tabBeads:
 		// No `o`: a bead lives in a local database and has no page to open.
-		return [][2]string{{"↑↓", "move"}, {"↵", "start work"}, {"d", "detail"}, {"g", "tree"}, {"/", "filter"}, {"r", "refresh"}, {"q", "quit"}, tabKey}
+		return [][2]string{{"↑↓", "move"}, {"↵", "start work"}, {"d", "detail"}, {"g", "tree"}, {"space", "select"}, {"w", "workflow"}, {"/", "filter"}, {"r", "refresh"}, {"q", "quit"}, tabKey}
 	case tabConfig:
 		// Read-only readout of resolved values (admin-3rgp.21) — nothing to
 		// move a cursor over or edit.
@@ -636,14 +659,19 @@ func (m Model) keymap() [][2]string {
 //
 // The outer render truncates the footer to the terminal width, so an overlong
 // keymap silently loses whatever sits at its end — which is always `←→ tab`, the
-// one binding every view shares. That made adding a key to any pane a way to
-// delete the tab hint from the footer. Pairs are dropped from the end of the
-// middle backwards instead, so the first pair (movement) and the last (the shared
-// tab hint) always survive.
+// one binding every view shares, and every tab but the Branches pane's own puts
+// `q quit` directly ahead of it. That made adding a key to any pane a way to
+// delete the tab hint from the footer — and, once a keymap grew past what fit
+// at a real terminal width (admin-3rgp.27 adding `space`/`w` to the Beads and
+// Issues tabs is exactly this), a way to delete `quit` itself, silently,
+// before any other pair. Pairs are dropped from the end of the middle
+// backwards instead, keeping the LAST TWO throughout — the first pair
+// (movement), and the last two together (however this view's list ends;
+// `q quit` immediately before `←→ tab` on every other tab) always survive.
 func (m Model) keybar(width int) string {
 	pairs := m.keymap()
-	for len(pairs) > 2 && keybarWidth(pairs) > width {
-		pairs = append(pairs[:len(pairs)-2:len(pairs)-2], pairs[len(pairs)-1])
+	for len(pairs) > 3 && keybarWidth(pairs) > width {
+		pairs = append(pairs[:len(pairs)-3:len(pairs)-3], pairs[len(pairs)-2:]...)
 	}
 	segs := []seg{{t: " "}}
 	for i, p := range pairs {
