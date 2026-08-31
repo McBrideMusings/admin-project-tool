@@ -276,11 +276,16 @@ func TestRunActionRoutedDispatchesLongRunningToPane(t *testing.T) {
 			"dev-server": {"kind": "vite-dev"},
 		},
 	}
-	if err := RunActionRouted(m, r, "dev-server", nil); err != nil {
-		t.Fatalf("RunActionRouted = %v, want nil", err)
-	}
+	stderr := captureStderr(t, func() {
+		if err := RunActionRouted(m, r, "dev-server", nil); err != nil {
+			t.Fatalf("RunActionRouted = %v, want nil", err)
+		}
+	})
 	if inlineRan {
 		t.Error("a LongRunning kind with herdr available must NOT run its Runner inline")
+	}
+	if stderr != "" {
+		t.Errorf("stderr = %q, want empty — a successful split must print no warning", stderr)
 	}
 
 	entries := livework.Default.List()
@@ -305,4 +310,111 @@ func TestRunActionRoutedDispatchesLongRunningToPane(t *testing.T) {
 	if !strings.Contains(log, "__run-action dev-server") {
 		t.Errorf("herdr log = %q, want `pane run` to type the __run-action re-entry command", log)
 	}
+}
+
+// withFakeHerdrSplitFails puts a fake `herdr` on PATH whose `pane split`
+// always fails (nonzero exit, no JSON) — herdr IS available (HERDR_ENV=1,
+// herdr on PATH) but the split itself is refused, the admin-3rgp.46 case:
+// daemon not running, workspace gone, split refused. Any other subcommand
+// is also logged but not expected to be called.
+func withFakeHerdrSplitFails(t *testing.T, logPath string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake herdr script is a POSIX shell script")
+	}
+	dir := t.TempDir()
+	script := fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %s
+case "$1 $2" in
+  "pane split")
+    echo "daemon not running" >&2
+    exit 1
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+`, shellQuote(logPath))
+	path := filepath.Join(dir, "herdr")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HERDR_ENV", "1")
+}
+
+// TestRunActionRoutedSplitFailureDegradesToInlineWithWarning is the new
+// admin-3rgp.46 behaviour: herdr IS available but the pane split itself
+// fails. The action must still run — inline, in this process, producing
+// its real side effect — must NOT appear in the live-work registry, and
+// must print exactly one warning line to stderr naming the herdr failure.
+// This is the case that must not regress into either neighbour: silently
+// swallowed (the ErrHerdrUnavailable path) or a hard abort (today's bug).
+func TestRunActionRoutedSplitFailureDegradesToInlineWithWarning(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "herdr-calls.log")
+	withFakeHerdrSplitFails(t, logPath)
+
+	before := len(livework.Default.List())
+
+	r := NewRegistry()
+	r.MustRegister("vite-dev", func(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+		return func(args []string) error {
+			return os.WriteFile(filepath.Join(dir, "ran.txt"), []byte("inline\n"), 0o644)
+		}, nil
+	})
+
+	m := &manifest.Manifest{
+		Actions: map[string]manifest.Action{
+			"dev-server": {"kind": "vite-dev"},
+		},
+	}
+
+	stderr := captureStderr(t, func() {
+		if err := RunActionRouted(m, r, "dev-server", nil); err != nil {
+			t.Fatalf("RunActionRouted = %v, want nil (degrade to inline)", err)
+		}
+	})
+
+	assertFileExists(t, dir, "ran.txt")
+
+	after := livework.Default.List()
+	if len(after) != before {
+		t.Errorf("live-work registry grew from %d to %d entries — a failed split must fall back "+
+			"to inline and never register itself", before, len(after))
+	}
+
+	lines := strings.Split(strings.TrimRight(stderr, "\n"), "\n")
+	if len(lines) != 1 || lines[0] == "" {
+		t.Fatalf("stderr = %q, want exactly one warning line", stderr)
+	}
+	if !strings.Contains(stderr, "dev-server") {
+		t.Errorf("warning line = %q, want it to name the action", stderr)
+	}
+	if !strings.Contains(strings.ToLower(stderr), "herdr") {
+		t.Errorf("warning line = %q, want it to name the herdr failure", stderr)
+	}
+}
+
+// captureStderr redirects os.Stderr for the duration of fn and returns
+// everything written to it, restoring the original os.Stderr afterward.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 64*1024)
+	n, _ := r.Read(buf)
+	return string(buf[:n])
 }
