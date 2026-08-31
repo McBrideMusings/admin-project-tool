@@ -672,6 +672,23 @@ func (m Model) focusCommandRow(name string) Model {
 	return m
 }
 
+// expandCommand opens name's submenu — the arrow-key counterpart of enter's
+// toggle in activateCommand, used only when the row is known collapsed
+// (right on a parent row that has one).
+func (m Model) expandCommand(name string) (tea.Model, tea.Cmd) {
+	m.expandedCmd = name
+	return m.focusCommandRow(name), nil
+}
+
+// collapseCommand closes whichever submenu is open and puts the cursor back
+// on its parent row — the shared body for left and esc from either the
+// parent row itself or one of its target rows, so the cursor never lands on
+// a target row that the collapse just removed.
+func (m Model) collapseCommand(name string) (tea.Model, tea.Cmd) {
+	m.expandedCmd = ""
+	return m.focusCommandRow(name), nil
+}
+
 // activateCommandTarget handles enter on one target of an expanded command:
 // it dispatches the parent command with that target as its argument, which
 // is exactly what `admin <cmd> <target>` does from a shell — makeMultiTarget
