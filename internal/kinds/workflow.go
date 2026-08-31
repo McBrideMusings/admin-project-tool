@@ -1,7 +1,7 @@
 // workflow.go is kind="workflow"'s definition (admin-3rgp.24): the manifest
 // shape, its validation, and the catalog/factory wiring that makes it a real
 // declared kind. A Workflow expresses "run this same thing over many
-// targets" (docs/PRD.md's Workflow story) and declares WHERE those targets
+// targets" and declares WHERE those targets
 // come from via its `over` key — that declaration is the whole reason this
 // file exists, per the epic's settled decision:
 //
@@ -54,7 +54,8 @@ const (
 	// runnable row and can run bare, but only after the resolved set is
 	// confirmed with the user (admin-3rgp.26) — resolving a query to a set
 	// and acting on it without showing what was resolved is the failure
-	// mode the PRD calls out explicitly.
+	// mode this design exists to prevent, since a query can match more than
+	// the user expects and dispatch puts real agents in real worktrees.
 	WorkflowSourceQuery
 )
 
@@ -80,9 +81,9 @@ type WorkflowTarget struct {
 }
 
 // AppearsInCommandList reports whether a workflow with this target source
-// should be offered in the Commands tab — the PRD's "a query-sourced
-// Workflow appears in the Command list... a selection-sourced Workflow does
-// not appear in the Command list" rule, in one place so the later TUI
+// should be offered in the Commands tab — the epic's rule that a
+// query-sourced Workflow appears in the Command list while a
+// selection-sourced one does not, in one place so the later TUI
 // ticket (admin-3rgp.20/.26) has a single source of truth to consult rather
 // than re-deriving the rule from WorkflowSource itself.
 func (t WorkflowTarget) AppearsInCommandList() bool {
