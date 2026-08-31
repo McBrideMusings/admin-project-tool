@@ -1,19 +1,19 @@
- admin · admin-project-tool                                              feat/one-tool-go-merge 
-   Commands    Repo    Issues    Live   Config                                                  
+ admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+  Commands 7    Repo    Issues 7    Live 5    Config                                            
+                                                                                                
+ Resolved configuration                                                                       9 
 ────────────────────────────────────────────────────────────────────────────────────────────────
- RESOLVED CONFIGURATION                    source                                               
+   tracker               beads                                                   admin.toml     
+   uses_pull_requests    false                                                   admin.toml     
+   identity.login        pierce                                                  admin.toml     
+   worktree_root         ~/.worktrees/admin-project-tool                         default        
+   populate_patterns     admin.toml, .env*, CLAUDE.local.md                      default        
+   default_agent         claude                                                  default        
+   concurrency_ceiling   4                                                       admin.toml     
+   enter.branch          checkout                                                default        
+   enter.issue           open                                                    default        
                                                                                                 
-   tracker               beads                               admin.toml                         
-   uses_pull_requests    false                               admin.toml                         
-   identity.login        pierce                              admin.toml                         
-   worktree_root         ~/.worktrees/admin-project-tool     default                            
-   populate_patterns     admin.toml, .env*, CLAUDE.local.md  default                            
-   default_agent         claude                              default                            
-   concurrency_ceiling   4                                   admin.toml                         
-   enter.branch          checkout                            default                            
-   enter.issue           open                                default                            
                                                                                                 
- Values render resolved. Editing the manifest from here is out of scope.                        
                                                                                                 
                                                                                                 
                                                                                                 
@@ -27,4 +27,4 @@
                                                                                                 
                                                                                                 
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move   ⇥ switch tab   q quit                                                                
+ ↑↓ move · ←→ tab · q quit                                                                      

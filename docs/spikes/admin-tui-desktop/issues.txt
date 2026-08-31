@@ -1,18 +1,18 @@
- admin · admin-project-tool                                              feat/one-tool-go-merge 
-   Commands    Repo   Issues   Live    Config                                                   
+ admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+  Commands 7    Repo    Issues 7    Live 5    Config                                            
+                                                                                                
+ Ready                                                                                        3 
 ────────────────────────────────────────────────────────────────────────────────────────────────
- READY   tracker: beads                       │ admin-3rgp.29   P1  open                        
-   P1 Embed a Lua VM and define the hos…      │ ──────────────────────────────────────────────  
- ▸ P1 Two deployment paths: go install,…      │ Two deployment paths: go install, archetypes    
-   P1 Decide how admin <command> reache…      │                                                 
-                                              │ READY  no open blockers                         
- BLOCKED                                      │                                                 
-   P1 Commands tab with the resol… ←.19       │ LABELS  afk                                     
-   P1 The live-work tab: workers … ←.19       │                                                 
-   P1 Implement the transient kin… ←.36       │                                                 
-   P1 Rewrite the 14 archetypes i… ←.36       │                                                 
+   admin-3rgp.36   Embed a Lua VM and define the host API                                 afk   
+ ▸ admin-3rgp.29   Two deployment paths: go install, archetypes                           afk   
+   admin-3rgp.7    Decide how admin <command> reaches the CLI                        decision   
                                                                                                 
-                                                                                                
+ Blocked                                                                                      4 
+────────────────────────────────────────────────────────────────────────────────────────────────
+   admin-3rgp.20   Commands tab with the resolved-action reader                         ← .19   
+   admin-3rgp.28   The live-work tab: workers and processes                             ← .19   
+   admin-3rgp.35   Implement the transient kind factories                               ← .36   
+   admin-3rgp.37   Rewrite the 14 archetypes in Lua and Bash                            ← .36   
                                                                                                 
                                                                                                 
                                                                                                 
@@ -27,4 +27,4 @@
                                                                                                 
                                                                                                 
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move   ⏎ dispatch   c claim   b branch   ⇥ switch tab   q quit                              
+ ↑↓ move · ↵ dispatch · c claim · b branch · / filter · ←→ tab                                  

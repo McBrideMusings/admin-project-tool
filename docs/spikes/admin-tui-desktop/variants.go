@@ -3,18 +3,21 @@
 // harness.go supplies the picker, the axes, the footer bar, the geometry
 // assertion and the dump. This file is the design.
 //
-//	admin prototype admin-tui-desktop     drive it — F1 cycles the screen
+//	admin prototype admin-tui-desktop     drive it — tab/←→ switch, ↑↓ move, ⏎ act
 //	go run . -dump -dir .                 write the ten reference frames
 //
 // One axis, ten values, named exactly as admin-3rgp.19 lists them, so the dump
 // produces the filenames .20 and .28 cite by path.
 //
-// Everything renders at s.W × s.H — the LIVE terminal size — and only the dump
-// pins 96×30. A design that renders at a constant does not fill the window and
-// cannot answer whether it survives 80 columns, which is the whole question.
+// Repo and the list tabs deliberately reproduce repo-dash's own rendering —
+// header line, counted tab bar, titled panes, section-header-plus-rule rows —
+// because those tabs already exist and the merge does not restyle them. The
+// reference is internal/tui's protoModel, dumped headless. Only Commands and
+// the live-work tab are new.
 package main
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -74,13 +77,10 @@ var Variants = []Variant{{
 }}
 
 // selDelta is the live cursor offset on top of whatever row the current screen
-// starts on. The dump never sees it — dump renders before any key is pressed —
-// so the committed frames stay deterministic while the prototype still moves.
+// starts on. Reset clears it, so a dumped frame never inherits the previous
+// frame's cursor.
 var selDelta int
 
-// tabScreens is the screen each tab lands on, in tab-bar order. Tab navigation
-// drives the same `screen` axis the dump enumerates, so what you drive by hand
-// and what gets dumped cannot diverge.
 var tabScreens = []string{"commands", "repo", "issues", "swarm", "config"}
 
 func onKey(key string, s State, set func(axis, value string)) bool {
@@ -106,8 +106,6 @@ func onKey(key string, s State, set func(axis, value string)) bool {
 		selDelta--
 		return true
 	case "enter":
-		// Every control is live, the reject path included: ⏎ opens the sheet on
-		// Issues and toggles the running state on Commands; esc backs out.
 		switch cur {
 		case "issues", "issues-selected":
 			set("screen", "dispatch-sheet")
@@ -136,7 +134,6 @@ func onKey(key string, s State, set func(axis, value string)) bool {
 	return false
 }
 
-// wrap applies the live cursor offset to a screen's starting row.
 func wrap(base, n int) int {
 	if n <= 0 {
 		return 0
@@ -144,7 +141,7 @@ func wrap(base, n int) int {
 	return ((base+selDelta)%n + n) % n
 }
 
-// ---- rendering, all of it sized from s.W / s.H ----
+// ---- frame ----
 
 func render(s State) string {
 	w, h := s.W, s.H
@@ -159,7 +156,7 @@ func render(s State) string {
 		sp = screens["commands"]
 	}
 
-	rows := []string{header(w), tabBar(sp, w), strings.Repeat("─", w)}
+	rows := []string{header(w), tabBar(sp, w), ""}
 	body := bodyOf(sp, w, h-5)
 	for len(body) < h-5 {
 		body = append(body, fillRow(sp, w))
@@ -176,18 +173,25 @@ func render(s State) string {
 	return strings.Join(rows, "\n")
 }
 
+// header mirrors repo-dash: repo, branch, worktree state, right-aligned
+// freshness word.
 func header(w int) string {
-	l := " " + bo.Render("admin") + dim.Render(" · admin-project-tool")
-	r := cy.Render("feat/one-tool-go-merge") + " "
-	gap := w - VW(l) - VW(r)
+	l := "admin-project-tool   " + cy.Render("feat/one-tool-go-merge") + "  " + gr.Render("✔ clean")
+	r := dim.Render("live")
+	gap := w - VW(l) - VW(r) - 2
 	if gap < 1 {
 		gap = 1
 	}
-	return l + strings.Repeat(" ", gap) + r
+	return " " + l + strings.Repeat(" ", gap) + r
 }
 
-func tabNames(sp screenSpec) []string {
-	all := []string{"Commands", "Repo", "Issues", "Live", "Config"}
+type tabDef struct {
+	name  string
+	count int
+}
+
+func tabDefs(sp screenSpec) []tabDef {
+	all := []tabDef{{"Commands", 7}, {"Repo", 0}, {"Issues", 7}, {"Live", 5}, {"Config", 0}}
 	if sp.noMan {
 		return all[1:]
 	}
@@ -195,26 +199,76 @@ func tabNames(sp screenSpec) []string {
 }
 
 func tabBar(sp screenSpec, w int) string {
-	names := tabNames(sp)
+	defs := tabDefs(sp)
 	active := sp.tab
 	if sp.noMan {
-		active-- // Commands is absent, not disabled — indices shift
+		active--
 	}
 	var b strings.Builder
 	b.WriteString(" ")
-	for i, n := range names {
-		if i == active {
-			b.WriteString(pill.Render(" " + n + " "))
-		} else {
-			b.WriteString(dim.Render("  " + n + "  "))
+	for i, t := range defs {
+		label := " " + t.name
+		if t.count > 0 {
+			label += " " + fmt.Sprint(t.count)
 		}
+		label += " "
+		if i == active {
+			b.WriteString(pill.Render(label))
+		} else {
+			b.WriteString(dim.Render(label))
+		}
+		b.WriteString("  ")
 	}
 	return Pad(b.String(), w)
 }
 
-// leftW is the command list's column. It stays fixed while the reader takes the
-// rest, so a wider terminal grows the pane that benefits from width.
-const leftW = 30
+// section is repo-dash's list-tab pattern: a label, a right-aligned count, a rule.
+func section(label string, count, w int) []string {
+	c := fmt.Sprint(count)
+	gap := w - 1 - VW(label) - len(c) - 1
+	if gap < 1 {
+		gap = 1
+	}
+	return []string{
+		" " + bo.Render(label) + strings.Repeat(" ", gap) + dim.Render(c),
+		strings.Repeat("─", w),
+	}
+}
+
+// pane draws a titled box — repo-dash's Branches / Recent-commits shape.
+func pane(title string, count, w int, body []string, h int) []string {
+	inner := w - 2
+	head := "─ " + title + " "
+	tail := ""
+	if count > 0 {
+		tail = fmt.Sprint(count) + " "
+	}
+	// VW, not len: the leading ─ is three bytes, and a byte count makes the box
+	// shorter than its contents so the right edge drifts.
+	fill := inner - VW(head) - VW(tail)
+	if fill < 1 {
+		fill = 1
+	}
+	out := []string{dim.Render("┌" + head + strings.Repeat("─", fill) + tail + "┐")}
+	for i := 0; i < h-2; i++ {
+		line := ""
+		if i < len(body) {
+			line = body[i]
+		}
+		out = append(out, dim.Render("│")+Pad(line, inner)+dim.Render("│"))
+	}
+	out = append(out, dim.Render("└"+strings.Repeat("─", inner)+"┘"))
+	return out
+}
+
+func mark(sel bool, s string) string {
+	if sel {
+		return cy.Render("◆ ") + s
+	}
+	return dim.Render("◇ ") + s
+}
+
+const leftW = 26
 
 func split(l, r string, w int) string {
 	return " " + Pad(l, leftW) + dim.Render(" │ ") + r
@@ -227,12 +281,7 @@ func fillRow(sp screenSpec, w int) string {
 	return ""
 }
 
-func mark(sel bool, s string) string {
-	if sel {
-		return cy.Render("▸ ") + s
-	}
-	return "  " + s
-}
+// ---- commands ----
 
 type cmdRow struct {
 	name, last, kind, arch, note string
@@ -262,39 +311,27 @@ var cmds = []cmdRow{
 			{"2", "shell", "bash tests/test_install.sh", "(manifest)"}}},
 }
 
-func bodyOf(sp screenSpec, w, h int) []string {
-	switch {
-	case sp.noMan:
-		return repoBody(sp, w, true)
-	case sp.tab == 0:
-		return commandsBody(sp, w)
-	case sp.tab == 1:
-		return repoBody(sp, w, false)
-	case sp.tab == 2:
-		return issuesBody(sp, w)
-	case sp.tab == 3:
-		return liveBody(w)
-	}
-	return configBody(w)
-}
-
 func commandsBody(sp screenSpec, w int) []string {
 	sel := wrap(sp.cmdSel, len(cmds))
 	c := cmds[sel]
-	var left, right []string
-	left = append(left, dim.Render("  COMMAND          LAST RUN"), "")
+
+	// Names only. No column header, and no last-run column: last run is one of
+	// the reader's fields, and repeating it in the list spent the width the
+	// longest command name needs.
+	var left []string
 	for i, cc := range cmds {
-		last := dim.Render(cc.last)
+		row := cc.name
 		if sp.running && cc.name == "test" {
-			last = yl.Render("running")
+			row += " " + yl.Render("●")
 		}
-		left = append(left, mark(i == sel, Pad(cc.name, 16)+" "+last))
+		left = append(left, mark(i == sel, row))
 	}
 
 	title := bo.Render(c.name)
 	if sp.running && c.name == "test" {
 		title += dim.Render("  ·  ") + yl.Render("running") + dim.Render("  ·  00:41")
 	}
+	var right []string
 	right = append(right, title, dim.Render(strings.Repeat("─", maxInt(10, w-leftW-6))))
 	right = append(right, dim.Render("kind      ")+c.kind)
 	right = append(right, dim.Render("archetype ")+c.arch)
@@ -308,15 +345,12 @@ func commandsBody(sp screenSpec, w int) []string {
 	switch {
 	case c.targets != nil:
 		right = append(right, dim.Render("source    ")+"query", "")
-		right = append(right, bo.Render("TARGETS")+dim.Render("  resolved now · 4 match"))
+		right = append(right, bo.Render("Targets")+dim.Render("  resolved now · 4 match"))
 		for _, t := range c.targets {
 			right = append(right, "  "+t)
 		}
-		right = append(right, "", dim.Render("A query-sourced workflow lists here and runs"),
-			dim.Render("bare. A selection-sourced one does not appear —"),
-			dim.Render("it is offered on a row instead."))
 	case sp.running && c.name == "test":
-		right = append(right, bo.Render("OUTPUT"))
+		right = append(right, bo.Render("Output"))
 		for _, l := range []string{
 			gr.Render("ok") + "   internal/archetype   " + dim.Render("cached"),
 			gr.Render("ok") + "   internal/detect      " + dim.Render("0.63s"),
@@ -326,7 +360,7 @@ func commandsBody(sp screenSpec, w int) []string {
 			right = append(right, "  "+l)
 		}
 	default:
-		right = append(right, bo.Render("STEPS"))
+		right = append(right, bo.Render("Steps"))
 		for _, st := range c.steps {
 			right = append(right, "  "+dim.Render(st[0]+"  ")+Pad(st[1], 10)+st[2])
 			right = append(right, "     "+dim.Render("from  ")+mg.Render(st[3]), "")
@@ -341,117 +375,119 @@ func commandsBody(sp screenSpec, w int) []string {
 	return out
 }
 
-func repoBody(sp screenSpec, w int, noMan bool) []string {
-	var o []string
-	o = append(o, " "+bo.Render("BRANCHES"))
+// ---- repo ----
+
+func repoBody(w, h int, noMan bool) []string {
+	lw := w * 58 / 100
+	rw := w - lw - 3
+
+	var branches []string
 	if noMan {
-		o = append(o, " "+mark(true, gr.Render("* ")+Pad("main", 32)+dim.Render("↑0 ↓0        4d   Initial commit")))
-		o = append(o, "", " "+bo.Render("WORKTREES"), dim.Render("   (none)"))
-		o = append(o, "", " "+bo.Render("STASHES")+dim.Render("   (none)"), "")
-		o = append(o, dim.Render(" No admin.toml here, so there is no Commands tab. A tab the project"))
-		o = append(o, dim.Render(" cannot support is absent, never present-but-disabled."), "")
-		o = append(o, "   "+cy.Render("admin new")+dim.Render("    scaffold a manifest here"))
-		return o
-	}
-	for i, b := range []struct {
-		name, a, bh, wt, age, subj string
-		cur                        bool
-	}{
-		{"feat/one-tool-go-merge", "1", "0", "", "2m", "docs(spikes): rebuild the dashboard prototype", true},
-		{"fix-detector-parity-skip", "1", "0", "wt", "2d", "fix(detect): fail parity test instead of skip", false},
-		{"main", "0", "0", "", "15h", "Merge pull request #1016", false},
-	} {
-		pre := "  "
-		if b.cur {
-			pre = gr.Render("* ")
+		branches = []string{mark(true, Pad("main", lw-12) + dim.Render("4d"))}
+	} else {
+		branches = []string{
+			mark(true, Pad("feat/one-tool-go-merge", lw-12)+dim.Render("2m")),
+			"",
+			dim.Render(" Continue Working  ── you · keep ──────  1"),
+			mark(false, Pad("fix-detector-parity-skip", lw-16)+mg.Render("wt")+"  "+dim.Render("2d")),
+			dim.Render("   ↳ commit fix(detect): fail parity test…"),
+			"",
+			dim.Render(" Merged  ── keep ──────────────────────  1"),
+			mark(false, Pad("main", lw-12)+dim.Render("15h")),
 		}
-		wt := "  "
-		if b.wt != "" {
-			wt = mg.Render("wt")
-		}
-		o = append(o, " "+mark(i == 0, pre+Pad(b.name, 28)+dim.Render("↑"+b.a+" ↓"+b.bh)+"  "+wt+dim.Render("  "+Pad(b.age, 5)+b.subj)))
 	}
-	o = append(o, "", " "+bo.Render("WORKTREES"))
-	o = append(o, "   ~/.worktrees/admin-project-tool/fix-detector-parity-skip     "+gr.Render("clean"))
-	o = append(o, "", " "+bo.Render("STASHES")+dim.Render("   (none)")) // empty section collapses to one line
-	o = append(o, "", " "+bo.Render("RECENT"))
-	for _, c := range [][2]string{
-		{"1758e7b", "docs(spikes): rebuild the admin dashboard prototype"},
-		{"db2711a", "docs(adr): Lua and Bash are the archetype authoring languages"},
-		{"f738934", "feat(launchd): lift allowlisted env vars from a dotenv file"},
-	} {
-		o = append(o, "   "+yl.Render(c[0])+"  "+dim.Render(c[1]))
+	left := pane("Branches", len(branches), lw, branches, h)
+
+	commits := []string{
+		yl.Render("fdf3b2e") + dim.Render("  feat(spikes): interactive…   2m"),
+		yl.Render("db2711a") + dim.Render("  docs(adr): Lua and Bash…     3h"),
 	}
-	return o
+	if noMan {
+		commits = []string{yl.Render("a1b2c3d") + dim.Render("  Initial commit              4d")}
+	}
+	topH := h - 6
+	right := pane("Recent commits", len(commits), rw, commits, topH)
+	right = append(right, pane("Stashes", 0, rw, []string{dim.Render("(none)")}, h-topH)...)
+
+	out := make([]string, 0, h)
+	for i := 0; i < h; i++ {
+		out = append(out, " "+at(left, i)+" "+at(right, i))
+	}
+	return out
 }
 
-type issueRow struct{ id, pri, title, blocker string }
+// ---- issues ----
+
+type issueRow struct{ id, title, meta string }
 
 var readyIssues = []issueRow{
-	{"admin-3rgp.36", "P1", "Embed a Lua VM and define the host API", ""},
-	{"admin-3rgp.29", "P1", "Two deployment paths: go install, archetypes", ""},
-	{"admin-3rgp.7", "P1", "Decide how admin <command> reaches the CLI", ""},
+	{"admin-3rgp.36", "Embed a Lua VM and define the host API", "afk"},
+	{"admin-3rgp.29", "Two deployment paths: go install, archetypes", "afk"},
+	{"admin-3rgp.7", "Decide how admin <command> reaches the CLI", "decision"},
 }
 
 var blockedIssues = []issueRow{
-	{"admin-3rgp.20", "P1", "Commands tab with the resolved-action reader", ".19"},
-	{"admin-3rgp.28", "P1", "The live-work tab: workers and processes", ".19"},
-	{"admin-3rgp.35", "P1", "Implement the transient kind factories", ".36"},
-	{"admin-3rgp.37", "P1", "Rewrite the 14 archetypes in Lua and Bash", ".36"},
+	{"admin-3rgp.20", "Commands tab with the resolved-action reader", "← .19"},
+	{"admin-3rgp.28", "The live-work tab: workers and processes", "← .19"},
+	{"admin-3rgp.35", "Implement the transient kind factories", "← .36"},
+	{"admin-3rgp.37", "Rewrite the 14 archetypes in Lua and Bash", "← .36"},
+}
+
+func issueLine(sel bool, is issueRow, w int, blocked bool) string {
+	cursor := "  "
+	if sel {
+		cursor = cy.Render("▸ ")
+	}
+	meta := dim.Render(is.meta)
+	if blocked {
+		meta = rd.Render(is.meta)
+	}
+	titleW := maxInt(10, w-22-VW(is.meta))
+	return " " + cursor + Pad(is.id, 16) + Pad(is.title, titleW) + meta
 }
 
 func issuesBody(sp screenSpec, w int) []string {
 	all := append(append([]issueRow{}, readyIssues...), blockedIssues...)
 	isel := wrap(sp.issueSel, len(all))
-	cur := all[isel]
-	rw := 44
 
-	var left, right []string
-	left = append(left, bo.Render("READY")+dim.Render("   tracker: beads"))
+	out := section("Ready", len(readyIssues), w)
 	for i, is := range readyIssues {
-		left = append(left, mark(i == isel, dim.Render(is.pri)+" "+trunc(is.title, 34)))
+		out = append(out, issueLine(i == isel, is, w, false))
 	}
-	left = append(left, "", bo.Render("BLOCKED"))
+	out = append(out, "")
+	out = append(out, section("Blocked", len(blockedIssues), w)...)
 	for i, is := range blockedIssues {
-		left = append(left, mark(len(readyIssues)+i == isel,
-			dim.Render(is.pri)+" "+trunc(is.title, 28)+rd.Render(" ←"+is.blocker)))
-	}
-
-	right = append(right, bo.Render(cur.id)+dim.Render("   "+cur.pri+"  open"))
-	right = append(right, dim.Render(strings.Repeat("─", maxInt(10, w-rw-6))))
-	right = append(right, cur.title, "")
-	if cur.blocker != "" {
-		right = append(right, bo.Render("BLOCKED BY"), "  "+rd.Render("admin-3rgp"+cur.blocker))
-	} else {
-		right = append(right, bo.Render("READY")+dim.Render("  no open blockers"))
-	}
-	right = append(right, "", bo.Render("LABELS")+dim.Render("  afk"))
-
-	n := maxInt(len(left), len(right))
-	out := make([]string, 0, n)
-	for i := 0; i < n; i++ {
-		out = append(out, " "+Pad(at(left, i), rw)+dim.Render(" │ ")+at(right, i))
+		out = append(out, issueLine(len(readyIssues)+i == isel, is, w, true))
 	}
 	return out
 }
 
+// ---- live work ----
+
 func liveBody(w int) []string {
 	st := map[string]lipgloss.Style{"running": gr, "waiting": yl, "done": dim, "failed": rd}
-	line := func(sel bool, s, id, br, doing, pane string) string {
-		return " " + mark(sel, st[s].Render(Pad(s, 9))+Pad(id, 15)+Pad(br, 18)+dim.Render(Pad(doing, 32)+pane))
+	row := func(sel bool, s, id, br, doing, where string) string {
+		cursor := "  "
+		if sel {
+			cursor = cy.Render("▸ ")
+		}
+		return " " + cursor + st[s].Render(Pad(s, 9)) + Pad(id, 16) + Pad(br, 18) +
+			dim.Render(Pad(doing, maxInt(6, w-53))+where)
 	}
-	var o []string
-	o = append(o, " "+bo.Render("AGENT WORKERS"))
-	o = append(o, line(false, "running", "admin-3rgp.36", "embed-lua-vm", "writing internal/lua/host.go", "pane 3"))
-	o = append(o, line(true, "waiting", "admin-3rgp.7", "cli-identity", "needs input: root command name", "pane 4"))
-	o = append(o, line(false, "done", "admin-3rgp.34", "fix-parity-skip", "verdict PASS · c31e994", "pane 2"))
-	o = append(o, line(false, "failed", "admin-3rgp.33", "detector-clear", "go test ./internal/detect FAIL", "pane 5"))
-	o = append(o, "", " "+bo.Render("LONG-RUNNING PROCESSES"))
-	o = append(o, line(false, "running", "admin docs", "vitepress dev", "http://localhost:5173", "pane 1"))
-	o = append(o, "", dim.Render(" One registry, both kinds. \"waiting\" is distinguishable from \"running\""))
-	o = append(o, dim.Render(" without attaching to anything."))
-	return o
+	out := section("Agent workers", 4, w)
+	out = append(out,
+		row(false, "running", "admin-3rgp.36", "embed-lua-vm", "writing internal/lua/host.go", "pane 3"),
+		row(true, "waiting", "admin-3rgp.7", "cli-identity", "needs input: root command", "pane 4"),
+		row(false, "done", "admin-3rgp.34", "fix-parity-skip", "verdict PASS · c31e994", "pane 2"),
+		row(false, "failed", "admin-3rgp.33", "detector-clear", "go test ./internal/detect FAIL", "pane 5"),
+	)
+	out = append(out, "")
+	out = append(out, section("Long-running processes", 1, w)...)
+	out = append(out, row(false, "running", "admin docs", "vitepress dev", "http://localhost:5173", "pane 1"))
+	return out
 }
+
+// ---- config ----
 
 func configBody(w int) []string {
 	rows := [][3]string{
@@ -465,23 +501,23 @@ func configBody(w int) []string {
 		{"enter.branch", "checkout", "default"},
 		{"enter.issue", "open", "default"},
 	}
-	o := []string{" " + bo.Render("RESOLVED CONFIGURATION") + dim.Render("                    source"), ""}
+	out := section("Resolved configuration", len(rows), w)
 	for _, r := range rows {
 		src := dim.Render(r[2])
 		if r[2] == "admin.toml" {
 			src = cy.Render(r[2])
 		}
-		o = append(o, "   "+Pad(r[0], 22)+Pad(r[1], 36)+src)
+		out = append(out, "   "+Pad(r[0], 22)+Pad(r[1], maxInt(10, w-40))+src)
 	}
-	o = append(o, "", dim.Render(" Values render resolved. Editing the manifest from here is out of scope."))
-	return o
+	return out
 }
 
+// ---- dispatch sheet ----
+
 func overlaySheet(rows []string, w, h int) []string {
-	box := []string{}
 	bw := 60
+	box := []string{"┌" + strings.Repeat("─", bw) + "┐"}
 	add := func(s string) { box = append(box, "│"+Pad(s, bw)+"│") }
-	box = append(box, "┌"+strings.Repeat("─", bw)+"┐")
 	add("  " + bo.Render("Dispatch admin-3rgp.29"))
 	add("")
 	add("    " + dim.Render("agent     ") + "claude")
@@ -516,22 +552,40 @@ func overlaySheet(rows []string, w, h int) []string {
 	return rows
 }
 
+// ---- routing ----
+
+func bodyOf(sp screenSpec, w, h int) []string {
+	switch {
+	case sp.noMan:
+		return repoBody(w, h, true)
+	case sp.tab == 0:
+		return commandsBody(sp, w)
+	case sp.tab == 1:
+		return repoBody(w, h, false)
+	case sp.tab == 2:
+		return issuesBody(sp, w)
+	case sp.tab == 3:
+		return liveBody(w)
+	}
+	return configBody(w)
+}
+
 func keys(sp screenSpec) string {
 	switch {
 	case sp.sheet:
-		return "⏎ dispatch   e edit   esc cancel"
+		return "⏎ dispatch · e edit · esc cancel"
 	case sp.noMan:
-		return "↑↓ move   ⏎ checkout   ⇥ switch tab   q quit"
+		return "↑↓ move · ↵ checkout · admin new scaffolds a manifest · ←→ tab"
 	case sp.tab == 0:
-		return "↑↓ move   ⏎ run   ⇥ switch tab   / filter   ? help   q quit"
+		return "↑↓ move · ↵ run · / filter · L log · ←→ tab · q quit"
 	case sp.tab == 1:
-		return "↑↓ move   ⏎ checkout   w worktree   f fetch   ⇥ switch tab   q quit"
+		return "↑↓ move · ↵ checkout · ⌥↵/W worktree · p pull · x delete · ←→ tab"
 	case sp.tab == 2:
-		return "↑↓ move   ⏎ dispatch   c claim   b branch   ⇥ switch tab   q quit"
+		return "↑↓ move · ↵ dispatch · c claim · b branch · / filter · ←→ tab"
 	case sp.tab == 3:
-		return "↑↓ move   a attach   k kill   r retry   ⇥ switch tab   q quit"
+		return "↑↓ move · a attach · k kill · r retry · ←→ tab"
 	}
-	return "↑↓ move   ⇥ switch tab   q quit"
+	return "↑↓ move · ←→ tab · q quit"
 }
 
 func at(s []string, i int) string {
@@ -540,21 +594,9 @@ func at(s []string, i int) string {
 	}
 	return ""
 }
-func trunc(s string, n int) string {
-	r := []rune(s)
-	if len(r) > n {
-		return string(r[:n-1]) + "…"
-	}
-	return s
-}
+
 func maxInt(a, b int) int {
 	if a > b {
-		return a
-	}
-	return b
-}
-func minInt(a, b int) int {
-	if a < b {
 		return a
 	}
 	return b

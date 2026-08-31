@@ -1,30 +1,30 @@
- admin · admin-project-tool                                              feat/one-tool-go-merge 
-  Repo   Issues    Live    Config                                                               
+ admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+  Repo    Issues 7    Live 5    Config                                                          
+                                                                                                
+ ┌─ Branches ────────────────────────────────────────1 ┐ ┌─ Recent commits ─────────────────1 ┐ 
+ │◆ main                                       4d      │ │a1b2c3d  Initial commit             │ 
+ │                                                     │ │                                    │ 
+ │                                                     │ │                                    │ 
+ │                                                     │ │                                    │ 
+ │                                                     │ │                                    │ 
+ │                                                     │ │                                    │ 
+ │                                                     │ │                                    │ 
+ │                                                     │ │                                    │ 
+ │                                                     │ │                                    │ 
+ │                                                     │ │                                    │ 
+ │                                                     │ │                                    │ 
+ │                                                     │ │                                    │ 
+ │                                                     │ │                                    │ 
+ │                                                     │ │                                    │ 
+ │                                                     │ │                                    │ 
+ │                                                     │ │                                    │ 
+ │                                                     │ │                                    │ 
+ │                                                     │ └────────────────────────────────────┘ 
+ │                                                     │ ┌─ Stashes ──────────────────────────┐ 
+ │                                                     │ │(none)                              │ 
+ │                                                     │ │                                    │ 
+ │                                                     │ │                                    │ 
+ │                                                     │ │                                    │ 
+ └─────────────────────────────────────────────────────┘ └────────────────────────────────────┘ 
 ────────────────────────────────────────────────────────────────────────────────────────────────
- BRANCHES                                                                                       
- ▸ * main                            ↑0 ↓0        4d   Initial commit                           
-                                                                                                
- WORKTREES                                                                                      
-   (none)                                                                                       
-                                                                                                
- STASHES   (none)                                                                               
-                                                                                                
- No admin.toml here, so there is no Commands tab. A tab the project                             
- cannot support is absent, never present-but-disabled.                                          
-                                                                                                
-   admin new    scaffold a manifest here                                                        
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move   ⏎ checkout   ⇥ switch tab   q quit                                                   
+ ↑↓ move · ↵ checkout · admin new scaffolds a manifest · ←→ tab                                 

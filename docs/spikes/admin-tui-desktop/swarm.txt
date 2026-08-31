@@ -1,17 +1,17 @@
- admin · admin-project-tool                                              feat/one-tool-go-merge 
-   Commands    Repo    Issues   Live   Config                                                   
+ admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+  Commands 7    Repo    Issues 7    Live 5    Config                                            
+                                                                                                
+ Agent workers                                                                                4 
 ────────────────────────────────────────────────────────────────────────────────────────────────
- AGENT WORKERS                                                                                  
-   running  admin-3rgp.36  embed-lua-vm      writing internal/lua/host.go    pane 3             
- ▸ waiting  admin-3rgp.7   cli-identity      needs input: root command name  pane 4             
-   done     admin-3rgp.34  fix-parity-skip   verdict PASS · c31e994          pane 2             
-   failed   admin-3rgp.33  detector-clear    go test ./internal/detect FAIL  pane 5             
+   running  admin-3rgp.36   embed-lua-vm      writing internal/lua/host.go               pane 3 
+ ▸ waiting  admin-3rgp.7    cli-identity      needs input: root command                  pane 4 
+   done     admin-3rgp.34   fix-parity-skip   verdict PASS · c31e994                     pane 2 
+   failed   admin-3rgp.33   detector-clear    go test ./internal/detect FAIL             pane 5 
                                                                                                 
- LONG-RUNNING PROCESSES                                                                         
-   running  admin docs     vitepress dev     http://localhost:5173           pane 1             
+ Long-running processes                                                                       1 
+────────────────────────────────────────────────────────────────────────────────────────────────
+   running  admin docs      vitepress dev     http://localhost:5173                      pane 1 
                                                                                                 
- One registry, both kinds. "waiting" is distinguishable from "running"                          
- without attaching to anything.                                                                 
                                                                                                 
                                                                                                 
                                                                                                 
@@ -27,4 +27,4 @@
                                                                                                 
                                                                                                 
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move   a attach   k kill   r retry   ⇥ switch tab   q quit                                  
+ ↑↓ move · a attach · k kill · r retry · ←→ tab                                                 
