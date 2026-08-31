@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
+	"github.com/McBrideMusings/admin-project-tool/internal/guards"
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
@@ -14,19 +15,30 @@ import (
 // that are never themselves a target name — everything else whose value is
 // a table is an inline target subtable (admin_lib/validate.py's
 // inline_targets: "keys whose value is a dict and not a reserved action
-// key"). "urls"/"footer" joined this set with admin-3rgp.11 (its own
-// footer/urls inheritance) — "keys" (admin-3rgp.18) hasn't landed yet, so
-// it stays usable as an ordinary map value on an action without being
-// misidentified as a target until that ticket claims it too.
+// key"). "urls"/"footer" joined this set with admin-3rgp.11 and "requires"
+// with admin-3rgp.10 — still narrower than Python's full VALID_ACTION_KEYS,
+// because "keys" (admin-3rgp.18) hasn't landed yet and so stays usable as an
+// ordinary map value on an action without being misidentified as a target
+// until that ticket claims it too.
+// "requires" is listed even though its value (a list, per guards.RequiresOf)
+// already keeps it out of the map[string]any inline scan below — belt and
+// suspenders against a malformed manifest that puts a table there instead.
 var multiTargetReserved = map[string]bool{
-	"kind": true, "desc": true, "targets": true, "urls": true, "footer": true,
+	"kind": true, "desc": true, "targets": true, "urls": true, "footer": true, "requires": true,
 }
 
 // multiTargetEntry is one resolved target: either a shell command to run
 // directly, or the name of another declared action to delegate to.
+// requiresSet distinguishes "this target declared its own requires"
+// (including an empty list — the explicit opt-out) from "no override was
+// given, inherit the parent's default" — the same None-vs-[]-vs-list
+// tri-state the pinned-footer urls/footer design (project CLAUDE.md) uses
+// for target_urls/target_footer.
 type multiTargetEntry struct {
-	run    string
-	action string
+	run         string
+	action      string
+	requires    []string
+	requiresSet bool
 }
 
 // targetFrameMeta is one target's own urls/footer declaration, captured at
@@ -62,10 +74,17 @@ func resolveTargetFrame(parentURLs []any, parentHasFooter, parentFooterVal bool,
 }
 
 // makeMultiTarget is kind="multi-target"'s factory — the Go port of
-// admin_lib/interp.py::_make_multi_target, including per-target urls/footer
-// inheritance (parent default, child override, child opt-out with an empty
-// list or an explicit `footer = false`). Per-target `requires` (guards) is
-// still admin-3rgp.10's, not this ticket's.
+// admin_lib/interp.py::_make_multi_target, with BOTH per-target inheritance
+// mechanisms:
+//   - urls/footer (admin-3rgp.11): parent default, child override, child
+//     opt-out with an empty list or an explicit `footer = false`.
+//   - requires (admin-3rgp.10): an inline target subtable may carry its own
+//     `requires`, which replaces (never merges with) the action-level default
+//     — ADR-0005's "multi-target inheritance is replace-not-merge".
+//
+// The two are independent: each has its own tri-state (targetFrameMeta's
+// hasURLs/hasFooter, multiTargetEntry's requiresSet) distinguishing "declared,
+// even as empty" from "absent, inherit the parent".
 //
 // Both target shapes Python supports are ported: inline subtables
 // ([actions.dev.cf] run = "...") and the flat `targets` table (name = "..."
@@ -81,6 +100,11 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest) 
 	}
 	parentURLs := actionURLs(action)
 	parentFooterVal, parentHasFooter := actionBool(action, "footer")
+
+	parentRequires, err := guards.RequiresOf(action)
+	if err != nil {
+		return nil, fmt.Errorf("action %q: %w", name, err)
+	}
 
 	inline := map[string]map[string]any{}
 	for k, v := range action {
@@ -110,7 +134,25 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest) 
 				return nil, fmt.Errorf(
 					"action %q: target %q must have exactly one of 'run' or 'action'", name, k)
 			}
-			targets[k] = multiTargetEntry{run: run, action: act}
+			entry := multiTargetEntry{run: run, action: act}
+			if rv, present := tbl["requires"]; present {
+				list, ok := rv.([]any)
+				if !ok {
+					return nil, fmt.Errorf(
+						"action %q: target %q requires must be a list of strings", name, k)
+				}
+				reqs := make([]string, 0, len(list))
+				for _, item := range list {
+					s, ok := item.(string)
+					if !ok {
+						return nil, fmt.Errorf(
+							"action %q: target %q requires must be a list of strings", name, k)
+					}
+					reqs = append(reqs, s)
+				}
+				entry.requires, entry.requiresSet = reqs, true
+			}
+			targets[k] = entry
 			order = append(order, k)
 
 			var tm targetFrameMeta
@@ -174,6 +216,21 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest) 
 			return fmt.Errorf("action %q: unknown target %q", name, picked)
 		}
 		h.SetLogContext([]string{name, picked}, 0)
+
+		// Guards run BEFORE the frame goes up. A guard is a precondition that
+		// decides whether the target runs at all, so raising a DECSTBM scroll
+		// region and pinning a footer only to tear both down when a guard
+		// refuses is strictly worse than checking first — and a guard's
+		// diagnostic reads cleanly on an unframed terminal. This ordering is
+		// the one real judgment call in merging admin-3rgp.10 with .11; the
+		// two tickets were written independently and neither states it.
+		effectiveRequires := parentRequires
+		if t.requiresSet {
+			effectiveRequires = t.requires
+		}
+		if err := guards.RunRequires(effectiveRequires); err != nil {
+			return fmt.Errorf("action %q: target %q: %w", name, picked, err)
+		}
 
 		// The footer belongs to the target the user picked, whether that
 		// target runs a shell string itself or delegates to another
