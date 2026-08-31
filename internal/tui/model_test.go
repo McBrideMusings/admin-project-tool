@@ -1581,6 +1581,30 @@ func TestKeybarDropsPairsRatherThanTruncating(t *testing.T) {
 	}
 }
 
+// TestKeybarNeverDropsQuitBeforeTabHint is admin-3rgp.27's own regression:
+// growing the Issues/Beads keymap by two pairs (`space`/`w`) at the width the
+// TestHeaderPinnedAndHeightBounded fixture uses (100) used to push `q quit`
+// — the pair directly ahead of `←→ tab` on every tab but the Branches pane's
+// own — out of the footer entirely, since the old trimming loop protected
+// only the single last pair. `quit` has to survive alongside the tab hint,
+// not instead of it.
+func TestKeybarNeverDropsQuitBeforeTabHint(t *testing.T) {
+	m := seededModel()
+	m.active = tabIssues
+	for _, width := range []int{40, 60, 80, 96, 100, 200} {
+		bar := stripANSI(m.keybar(width))
+		if !strings.Contains(bar, "q") || !strings.Contains(bar, "quit") {
+			t.Errorf("width %d: keybar dropped quit: %q", width, bar)
+		}
+		if !strings.Contains(bar, "tab") {
+			t.Errorf("width %d: keybar dropped the tab hint: %q", width, bar)
+		}
+		if w := lipgloss.Width(bar); w > width {
+			t.Errorf("width %d: keybar rendered %d cells", width, w)
+		}
+	}
+}
+
 // TestQuarantineLabelsRankByWhatIsAtStake pins the label order. Every one of these
 // says "don't sweep this", so the word shown has to be the one that costs most to
 // lose: the stuck git state first, then live use, then files that die with the
