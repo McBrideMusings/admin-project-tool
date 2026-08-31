@@ -9,9 +9,12 @@
 package tui
 
 import (
-	"fmt"
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
@@ -21,20 +24,26 @@ import (
 // TestActivateCommandDispatchesWhenIdle proves Enter on an idle command row
 // (no live entry, not a workflow) hands back a tea.Cmd built from
 // dispatchCommandCmd — the AC's "a command row runs the command" — and,
-// critically, that the returned Cmd is bubbletea's own execMsg wrapper
-// rather than something run synchronously here: calling the Cmd func must
-// not block or actually run the command, matching "a running command must
-// not block the dashboard's event loop." tea.Exec's own contract (see
-// bubbletea's exec.go) is that invoking the Cmd only returns a message
-// describing what to run; the runtime executes it later. Asserting the
-// dynamic type is "tea.execMsg" pins that this file didn't invent a second,
-// blocking dispatch mechanism.
+// critically, that dispatch no longer goes through bubbletea's tea.Exec
+// (which released the dashboard's own terminal for the run's whole
+// duration, admin-3rgp.61's whole reason for existing): the returned Cmd
+// must produce workDispatchStartedMsg, an ordinary message, not tea's own
+// execMsg wrapper. It stubs startHostedRun so calling the Cmd func spawns no
+// real pty.
 //
 // MUTATION EVIDENCE: change activateCommand's final line from
-// `return m, dispatchCommandCmd(m.manifest, wd.cmdName)` to `return m, nil`
-// and this test fails: "activateCommand returned a nil Cmd for an idle
-// command, want a dispatch Cmd."
+// `return m, dispatchCommandCmd(m.manifest, m.width, m.height, wd.cmdName)`
+// to `return m, nil` and this test fails: "activateCommand returned a nil
+// Cmd for an idle command, want a dispatch Cmd."
 func TestActivateCommandDispatchesWhenIdle(t *testing.T) {
+	old := startHostedRun
+	defer func() { startHostedRun = old }()
+	var gotName string
+	startHostedRun = func(m *manifest.Manifest, name string, args []string, rows, cols int) error {
+		gotName = name
+		return nil
+	}
+
 	m := workTestModel(&manifest.Manifest{
 		Custom:  map[string]manifest.Command{"build": {Steps: []string{"build"}}},
 		Actions: map[string]manifest.Action{"build": {"kind": "shell"}},
@@ -46,9 +55,12 @@ func TestActivateCommandDispatchesWhenIdle(t *testing.T) {
 		t.Fatal("activateCommand returned a nil Cmd for an idle command, want a dispatch Cmd")
 	}
 	msg := cmd()
-	if got := fmt.Sprintf("%T", msg); got != "tea.execMsg" {
-		t.Errorf("dispatch Cmd produced a %s, want tea.execMsg (tea.Exec's own non-blocking wrapper) — "+
-			"a different message type means dispatch is no longer routed through tea.Exec", got)
+	if _, ok := msg.(workDispatchStartedMsg); !ok {
+		t.Errorf("dispatch Cmd produced a %T, want workDispatchStartedMsg — "+
+			"a tea.execMsg here would mean dispatch is still releasing the dashboard's terminal", msg)
+	}
+	if gotName != "build" {
+		t.Errorf("startHostedRun name = %q, want %q", gotName, "build")
 	}
 }
 
@@ -186,6 +198,71 @@ func TestActivateWorkerRowAttaches(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Errorf("enter on a worker row returned a non-nil Cmd, want nil (attach is synchronous)")
+	}
+}
+
+// TestFrameDuringHostedRunShowsTheDashboard is admin-3rgp.61's AC-7: a frame
+// taken through the headless renderer while a dispatched command's hosted
+// pty is (as far as the dashboard's own model is concerned) still running
+// must show the dashboard's own command list, not a released terminal —
+// the whole point of replacing tea.Exec with an ordinary async Cmd. It
+// stubs startHostedRun so no real pty is spawned, drives a real admin.toml
+// on disk through New (the same path runDashboard uses), presses enter on
+// the (auto-focused, header-skipped) command row, and checks the resulting
+// frame still carries the dashboard's chrome.
+//
+// MUTATION EVIDENCE: reintroduce cmdExecCommand/tea.Exec in
+// dispatchCommandCmd and this test still passes today only because
+// startHostedRun is never reached — it exists to catch a regression where
+// activateCommand's dispatch path is changed back to something that hands
+// the terminal away, at which point the pump's own model stops advancing
+// past the exec and the frame would come back short (Frame's own Settle
+// backstop firing with nothing drawn) or missing the tab bar.
+func TestFrameDuringHostedRunShowsTheDashboard(t *testing.T) {
+	old := startHostedRun
+	defer func() { startHostedRun = old }()
+	calledName := ""
+	startHostedRun = func(m *manifest.Manifest, name string, args []string, rows, cols int) error {
+		calledName = name
+		return nil
+	}
+
+	// A name distinct from every other test in this package's fixtures
+	// ("build" in particular): livework.Default is one process-wide
+	// registry, and TestActivateCommandAttachesWhenLive adds a live entry
+	// named "build" that outlives its own test — reusing that name here
+	// would make this row look already-live and attach instead of
+	// dispatching, but only when the whole package's tests run together.
+	const cmdName = "hostedptyfixture"
+	dir := t.TempDir()
+	toml := "project_name = \"fixture\"\n\n[commands." + cmdName + "]\ndesc = \"fixture\"\nsteps = [\"" + cmdName + "\"]\n\n[actions." + cmdName + "]\nkind = \"shell\"\nrun = \"true\"\n"
+	if err := os.WriteFile(filepath.Join(dir, manifest.Filename), []byte(toml), 0o644); err != nil {
+		t.Fatalf("writing fixture admin.toml: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := New(ctx, dir, "owner/repo", "main", "main")
+	m.herdr = false
+
+	out := Frame(ctx, m, FrameOptions{
+		Width: 100, Height: 24,
+		// row 0 of the Work tab is the "Commands" section header, which is
+		// not selectable, and clampCursor (run against every settled state)
+		// already snaps a fresh cursor onto the first real row — see its
+		// own comment. No "down" needed.
+		Keys:   []string{"enter"},
+		Settle: 300 * time.Millisecond,
+	})
+
+	if calledName != cmdName {
+		t.Fatalf("enter never reached the hosted dispatch path — startHostedRun called with %q, want %q", calledName, cmdName)
+	}
+	if !strings.Contains(out, cmdName) {
+		t.Errorf("frame taken during the run lost the command list: %q", out)
+	}
+	if !strings.Contains(out, "Work") {
+		t.Errorf("frame taken during the run lost the dashboard's own tab bar: %q", out)
 	}
 }
 

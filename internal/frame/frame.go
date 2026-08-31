@@ -350,5 +350,16 @@ func ApplyWinsize(fd uintptr) {
 	if f == nil {
 		return
 	}
-	applyWinsize(fd, f.RegionRows(), f.Cols)
+	SetWinsize(fd, f.RegionRows(), f.Cols)
+}
+
+// SetWinsize is ApplyWinsize's caller-sized twin: it sizes fd directly to
+// rows/cols rather than deriving them from whatever frame (if any) is
+// currently active. This is the seam admin-3rgp.61 sizes a dashboard-owned
+// pty through — the region the dashboard's terminal view will render the
+// child into, known only to that caller, not to any frame the child itself
+// may go on to activate inside the pty. Same best-effort/ioctl-swallowing
+// contract as ApplyWinsize.
+func SetWinsize(fd uintptr, rows, cols int) {
+	applyWinsize(fd, rows, cols)
 }

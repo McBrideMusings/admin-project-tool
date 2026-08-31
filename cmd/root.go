@@ -241,12 +241,46 @@ var runActionCmd = &cobra.Command{
 	},
 }
 
+// runCommandCmd is admin-3rgp.61's hidden re-entry point: what the pty child
+// a dashboard-hosted command dispatches into actually runs. It is the one
+// caller that invokes kinds.RunCommandHosted directly — deliberately: unlike
+// runActionCmd's __run-action (which reaches RunAction, a lifetime-aware
+// entry point that CAN open a further herdr pane for a nested long-running
+// step), RunCommandHosted's whole point is that no step it dispatches can
+// open a pane, whatever that step's own kind declares. Hidden and
+// double-underscore prefixed for the same reason as __run-action: plumbing,
+// not something a person types, and never collidable with a project's own
+// admin.toml commands.
+var runCommandCmd = &cobra.Command{
+	Use:                "__run-command <name> [args...]",
+	Hidden:             true,
+	DisableFlagParsing: true, // flags belong to the command's own steps, not to cobra
+	Args:               cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		wd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		// context.Background(), not cmd.Context(): see runActionCmd's own
+		// comment on the same call.
+		m, ok, err := resolveProjectManifest(context.Background(), wd)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("__run-command: no admin.toml found in %s", wd)
+		}
+		return kinds.RunCommandHosted(m, kinds.Default, args[0], args[1:])
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(branchCmd)
 	rootCmd.AddCommand(worktreeCmd)
 	rootCmd.AddCommand(prsCmd)
 	rootCmd.AddCommand(populateCmd)
 	rootCmd.AddCommand(runActionCmd)
+	rootCmd.AddCommand(runCommandCmd)
 
 	f := rootCmd.Flags()
 	f.BoolVar(&dumpFrame, "dump-frame", false, "render one frame to stdout and exit (no TTY needed)")
