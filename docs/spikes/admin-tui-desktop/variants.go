@@ -89,13 +89,20 @@ var trackerRepos = map[string]repoSrc{
 	"prs": {"/Users/pierce/Projects/nts-desktop", "McBrideMusings/nts-desktop", "main"},
 }
 
-// Digit keys index the drawn tabs (model.go:349); both repos above draw three:
-// 1 Repo, 2 the tracker, 3 Config. Everything past the tab is the same key a
-// person presses — see INVENTORY.md for the full map.
+// Digit keys index the drawn tabs (model.go:349 — a tab renumbered by
+// admin-3rgp.20, which gave every project with an admin.toml a real Work
+// tab ahead of Repo). Every screen below that doesn't override the
+// `tracker` axis renders against trackerRepos["beads"] — this checkout,
+// which carries its own tracked admin.toml (see CLAUDE.md's "admin.toml is
+// NOT committed" exception for this one repo) — so its four real drawn
+// tabs are 1 Work, 2 Repo, 3 the tracker (Beads here), 4 Config. Everything
+// past the tab is the same key a person presses — see INVENTORY.md for the
+// full map (written before admin-3rgp.20 landed and not renumbered here,
+// since admin-3rgp.31 retires this whole prototype next).
 const (
-	keyRepo    = "1"
-	keyTracker = "2"
-	keyConfig  = "3"
+	keyRepo    = "2"
+	keyTracker = "3"
+	keyConfig  = "4"
 )
 
 // embedded maps a screen to the keys that reach it in repo-dash. A screen absent

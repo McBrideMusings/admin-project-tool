@@ -18,13 +18,19 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
+	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/shim"
 )
 
 type tab int
 
+// tabWork is drawn first, and only when the project has an admin.toml
+// (Model.manifestOK) — admin-3rgp.20's "a repo with no manifest has no Work
+// tab at all, absent not disabled." Every other tab is unconditional or
+// derived from remote/beads state exactly as before this ticket.
 const (
-	tabLocal tab = iota
+	tabWork tab = iota
+	tabLocal
 	tabPRs
 	tabIssues
 	tabBeads
@@ -32,7 +38,7 @@ const (
 	numTabs
 )
 
-var tabNames = [numTabs]string{"Local", "PRs", "Issues", "Beads", "Config"}
+var tabNames = [numTabs]string{"Work", "Local", "PRs", "Issues", "Beads", "Config"}
 
 // rowKind drives how a row renders and what enter/o/i do on it.
 type rowKind int
@@ -48,6 +54,8 @@ const (
 	rowPR
 	rowIssue
 	rowBead
+	rowCommand // Work tab: a declared admin.toml command, idle or live
+	rowWorker  // Work tab: a livework.Entry with no command behind it
 )
 
 // rowItem is one line in a view. Selectable rows carry an action payload.
@@ -66,6 +74,12 @@ type rowItem struct {
 	beadID     string
 	beadTitle  string
 	url        string
+
+	// work carries a Work-tab row's payload — set only for rowCommand/
+	// rowWorker, since the two share almost no fields with each other or
+	// with any other tab's row (the epic's own reason the Work tab needs a
+	// polymorphic detail pane rather than a wider rowItem).
+	work *workRowData
 }
 
 func (r rowItem) selectable() bool {
@@ -276,12 +290,35 @@ type Model struct {
 	// expiry tick can tell whether the status line still holds the toast it was
 	// scheduled for, or whether a newer action has already replaced it.
 	toastGen int
+
+	// Work tab (admin-3rgp.20): the project's admin.toml, merged with its
+	// declared archetypes, loaded once at New (a local file read plus a
+	// read-only archetype-directory walk, cheap enough to do synchronously
+	// so the first frame already knows whether a Work tab exists at all).
+	// manifestOK is true only when repoRoot has an admin.toml — mirroring
+	// cmd.resolveProjectManifest's own "no manifest here" vs "one here and
+	// it's broken" distinction (duplicated in this package rather than
+	// imported: cmd/ already imports tui, and importing back would cycle).
+	// manifestErr holds a present-but-broken manifest's parse/resolve error;
+	// either way the Work tab stays absent, per the ticket's "absent, not
+	// disabled."
+	manifest    *manifest.Manifest
+	manifestOK  bool
+	manifestErr string
+	// cmdOrigin/actionOrigin name which archetype (or "(manifest)") last
+	// contributed each command/action name — the detail pane's "archetype"
+	// and each step's "from <archetype>" line. archetype.Resolve's own merge
+	// log only records a COLLISION, not "here is who owns every key", so
+	// these are computed by a second, read-only walk of the same search
+	// path (computeOrigins).
+	cmdOrigin    map[string]string
+	actionOrigin map[string]string
 }
 
 // New builds the dashboard model. The cheap git context (root, nwo, branch) is
 // gathered by the caller and passed in so the first frame can render immediately.
 func New(ctx context.Context, repoRoot, nwo, current, def string) Model {
-	return Model{
+	m := Model{
 		ctx:      ctx,
 		repoRoot: repoRoot,
 		nwo:      nwo,
@@ -291,6 +328,19 @@ func New(ctx context.Context, repoRoot, nwo, current, def string) Model {
 		herdr:    shim.Available(),
 		selected: map[string]bool{},
 	}
+	project, merged, sp, ok, err := loadWorkManifest(repoRoot)
+	switch {
+	case err != nil:
+		m.manifestErr = err.Error()
+	case ok:
+		m.manifest = merged
+		m.manifestOK = true
+		m.cmdOrigin, m.actionOrigin = computeOrigins(project, sp)
+		// AC: "the dashboard opens on the Work tab when the project has a
+		// manifest."
+		m.active = tabWork
+	}
+	return m
 }
 
 // Init kicks off the local git load (instant), the cache read (instant), the file
@@ -298,7 +348,7 @@ func New(ctx context.Context, repoRoot, nwo, current, def string) Model {
 // (see the localDataMsg case), so the first frame paints off git and cache with
 // nothing blocking on the network.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def),
 		loadCacheCmd(m.nwo),
 		detectBeadsCmd(m.ctx, m.repoRoot),
@@ -306,7 +356,16 @@ func (m Model) Init() tea.Cmd {
 		syncTickCmd(),
 		loadConfigTextCmd(m.repoRoot),
 		loadConfigCmd(m.ctx, m.repoRoot),
-	)
+	}
+	if m.manifestOK {
+		// A herdr pane or agent worker changes state (running → waiting →
+		// failed, a new Activity line) from goroutines this process never
+		// hears from otherwise — livework.Default has no notification of
+		// its own. This tick is the Work tab's only wake source for that,
+		// mirroring beadsTickCmd's own reason for existing.
+		cmds = append(cmds, workTickCmd())
+	}
+	return tea.Batch(cmds...)
 }
 
 // syncTickMsg fires on a repeating timer to run the whole-repo sync. Everything
@@ -350,7 +409,11 @@ func (m Model) selectMode() bool {
 // lives in beads shows Beads where Issues would be. The digit keys index this
 // list, so `3` is whatever the third drawn tab happens to be.
 func (m Model) visibleTabs() []tab {
-	tabs := []tab{tabLocal}
+	var tabs []tab
+	if m.manifestOK {
+		tabs = append(tabs, tabWork)
+	}
+	tabs = append(tabs, tabLocal)
 	if m.nwo != "" {
 		if m.usesPRs() {
 			tabs = append(tabs, tabPRs)
@@ -378,6 +441,8 @@ func (m Model) tabIndex(t tab) int {
 
 func (m Model) rows() []rowItem {
 	switch m.active {
+	case tabWork:
+		return m.workRows()
 	case tabPRs:
 		return m.prRows()
 	case tabIssues:
@@ -908,6 +973,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setStatus("saved", cDim)
 		return m, loadConfigTextCmd(m.repoRoot)
 
+	case workDispatchDoneMsg:
+		if msg.err != nil {
+			m.setStatus(msg.name+" failed: "+msg.err.Error(), cRed)
+		} else {
+			m.setStatus(msg.name+" finished", cGreen)
+		}
+		return m, nil
+
+	case workTickMsg:
+		// Re-arm unconditionally, exactly like syncTickMsg — this is the Work
+		// tab's only wake source for a livework.Entry another goroutine mutated
+		// (see Init's own comment).
+		return m, workTickCmd()
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 
@@ -1229,12 +1308,29 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.switchTabAt(n - 1)
 	case "j", "down":
 		m.moveCursor(1)
-	case "k", "up":
+	case "up":
 		m.moveCursor(-1)
+	case "k":
+		// The Work tab reuses k for "kill" (a running row's own action) rather
+		// than "move up" — the prototype's own footer ("↑↓ move · k kill"), and
+		// the reason arrow-only movement is what the Work tab's keymap advertises.
+		if m.active == tabWork {
+			return m.killCurrentWork()
+		}
+		m.moveCursor(-1)
+	case "a":
+		if m.active == tabWork {
+			return m.attachCurrentWork()
+		}
 	case "/":
 		m.filtering = true
 		m.filter = ""
 	case "r":
+		// The Work tab reuses r for "retry" (a failed row's own action) rather
+		// than a refresh — nothing on this tab is fetched from a cache to refresh.
+		if m.active == tabWork {
+			return m.retryCurrentWork()
+		}
 		// The Beads tab has no per-row refresh: re-reading the whole workspace is
 		// one local query, so there is nothing a single bead would save.
 		if m.active == tabBeads {
@@ -1423,6 +1519,10 @@ func (m Model) activate() (tea.Model, tea.Cmd) {
 			return m.startWorktree(worktreeReq{kind: "create", branch: branch})
 		}
 		return m.quitWith(&PendingAction{Kind: "create-cd", Branch: branch, RepoRoot: m.repoRoot})
+	case rowCommand:
+		return m.activateCommand(r.work)
+	case rowWorker:
+		return m.attachEntry(r.work.worker)
 	}
 	return m, nil
 }
