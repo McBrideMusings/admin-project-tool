@@ -65,7 +65,11 @@ func TestActivateCommandAttachesWhenLive(t *testing.T) {
 	attached := false
 	live := &livework.Entry{
 		ID: "build", Name: "build", State: livework.StateRunning,
-		Ops: livework.Ops{Attach: func() error { attached = true; return nil }},
+		PaneID: "pane-build",
+		Ops:    livework.Ops{Attach: func() error { attached = true; return nil }},
+	}
+	if err := livework.Default.Add(live); err != nil {
+		t.Fatalf("Add: %v", err)
 	}
 	m := workTestModel(&manifest.Manifest{
 		Custom:  map[string]manifest.Command{"build": {Steps: []string{"build"}}},
@@ -152,13 +156,15 @@ func TestActivateWorkerRowAttaches(t *testing.T) {
 	attached := false
 	worker := &livework.Entry{
 		ID: "test-enter-worker-attaches", Name: "test-enter-worker-attaches",
-		State: livework.StateRunning,
+		State: livework.StateRunning, PaneID: "pane-enter-worker",
 		Worker: &livework.WorkerInfo{
 			Branch: "test-enter-worker-attaches", Worktree: "/tmp/test-enter-worker-attaches",
 		},
 		Ops: livework.Ops{Attach: func() error { attached = true; return nil }},
 	}
-	livework.Default.Add(worker)
+	if err := livework.Default.Add(worker); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
 
 	m := workTestModel(&manifest.Manifest{})
 	m.active = tabWork

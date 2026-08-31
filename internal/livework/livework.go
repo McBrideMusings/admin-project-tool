@@ -69,6 +69,10 @@ type WorkerInfo struct {
 // actually opened the pane (internal/kinds/pane.go, internal/kinds/
 // workflowdispatch.go) knows how to reach it again — the registry itself
 // has no dependency on Herdr and stays a pure, mechanism-agnostic store.
+// Attach is documented as the pane-only op: a pty-addressed entry's attach
+// target is the dashboard's terminal view instead, resolved by
+// Registry.Attach via the registry's terminalOpener seam rather than a
+// per-entry field — see Registry.SetTerminalOpener.
 type Ops struct {
 	Attach func() error
 	Kill   func() error
@@ -99,7 +103,16 @@ type Entry struct {
 	// PaneID is the herdr pane the entry is CURRENTLY running in. Unlike
 	// ID, this can change over the entry's life — a successful Retry
 	// records the new pane it opened here while ID stays put.
+	//
+	// Exactly one of PaneID/PTYID is set — never both, never neither. Add
+	// rejects an entry that violates this.
 	PaneID string
+
+	// PTYID is the hosted pseudo-terminal this entry runs on — the
+	// dashboard's own PTY rather than a herdr pane. Like PaneID it may
+	// change across a Retry while ID stays put. Exactly one of
+	// PaneID/PTYID is set — never both, never neither.
+	PTYID string
 
 	StartedAt time.Time
 	State     State
@@ -125,9 +138,10 @@ type Entry struct {
 // Registry is a concurrency-safe, in-memory, append-mostly set of Entry
 // records, keyed by ID.
 type Registry struct {
-	mu      sync.Mutex
-	entries map[string]*Entry
-	order   []string // insertion order, for a deterministic List
+	mu             sync.Mutex
+	entries        map[string]*Entry
+	order          []string // insertion order, for a deterministic List
+	terminalOpener func(ptyID string) error
 }
 
 // NewRegistry returns an empty Registry.
@@ -135,14 +149,32 @@ func NewRegistry() *Registry {
 	return &Registry{entries: map[string]*Entry{}}
 }
 
+// SetTerminalOpener installs the dashboard's "open the terminal view over
+// this pty" callback, invoked by Attach for a pty-addressed entry. There is
+// no per-entry equivalent of Ops.Attach for this because the terminal view
+// is one piece of dashboard UI shared by every pty entry, not something
+// each entry's producer wires individually — see admin-3rgp.61.
+func (r *Registry) SetTerminalOpener(open func(ptyID string) error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.terminalOpener = open
+}
+
 // Add records e, defaulting StartedAt to now and State to StateRunning when
 // the caller left them zero. Re-adding an existing ID overwrites that
 // entry's fields but keeps its original position in List's order — this is
 // exactly what a successful Retry relies on: it builds a brand new Entry
-// (new PaneID, new Ops bound to that new pane, StartedAt reset) and Adds it
-// back under the same ID, so the Work tab's cursor stays on the same row
-// instead of a second one appearing beside a stale failed one.
-func (r *Registry) Add(e *Entry) {
+// (new PaneID or PTYID, new Ops bound to that new pane/pty, StartedAt
+// reset) and Adds it back under the same ID, so the Work tab's cursor stays
+// on the same row instead of a second one appearing beside a stale failed
+// one.
+//
+// Add rejects e and stores nothing when e carries zero or two of
+// PaneID/PTYID — an entry must address exactly one thing.
+func (r *Registry) Add(e *Entry) error {
+	if (e.PaneID == "") == (e.PTYID == "") {
+		return fmt.Errorf("live-work: entry %q must carry exactly one of PaneID/PTYID", e.ID)
+	}
 	if e.StartedAt.IsZero() {
 		e.StartedAt = time.Now()
 	}
@@ -155,6 +187,7 @@ func (r *Registry) Add(e *Entry) {
 		r.order = append(r.order, e.ID)
 	}
 	r.entries[e.ID] = e
+	return nil
 }
 
 // Get returns the entry for id, if any.
@@ -216,13 +249,24 @@ func (r *Registry) lookup(id string) (*Entry, error) {
 	return e, nil
 }
 
-// Attach focuses id's pane — herdr brings that pane's workspace and tab to
-// the front. It errors when id doesn't exist or its producer never wired an
-// Attach operation.
+// Attach resolves by whichever address id's entry carries: a pane-addressed
+// entry focuses its pane via Ops.Attach; a pty-addressed entry opens the
+// dashboard's terminal view over its pty via the installed terminal opener
+// (SetTerminalOpener). It errors when id doesn't exist, or when the
+// resolved path has nothing wired for it.
 func (r *Registry) Attach(id string) error {
 	e, err := r.lookup(id)
 	if err != nil {
 		return err
+	}
+	if e.PTYID != "" {
+		r.mu.Lock()
+		open := r.terminalOpener
+		r.mu.Unlock()
+		if open == nil {
+			return fmt.Errorf("live-work: entry %q does not support attach", id)
+		}
+		return open(e.PTYID)
 	}
 	if e.Ops.Attach == nil {
 		return fmt.Errorf("live-work: entry %q does not support attach", id)
