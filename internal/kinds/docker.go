@@ -86,7 +86,7 @@ func makeDockerDev(name string, action manifest.Action, m *manifest.Manifest) (R
 			// "kill" is looked up as a declared command (not action) name,
 			// the same indirection admin_lib's cmd_kill lookup used.
 			if _, ok := resolveCommand(m, "kill"); ok {
-				_ = RunCommand(m, Default, "kill", nil)
+				_ = dispatchNestedCommand("kill", nil)
 			}
 		}
 

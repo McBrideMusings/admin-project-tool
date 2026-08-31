@@ -450,7 +450,7 @@ func makeViteDev(name string, action manifest.Action, m *manifest.Manifest) (Run
 		h := newHost()
 		if preKill {
 			if _, ok := resolveCommand(m, "kill"); ok {
-				if err := RunCommand(m, Default, "kill", args); err != nil {
+				if err := dispatchNestedCommand("kill", args); err != nil {
 					h.Warn("kill: " + err.Error())
 				}
 			} else if _, ok := m.Actions["kill"]; ok {

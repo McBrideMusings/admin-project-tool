@@ -98,23 +98,64 @@ func CommandNames(m *manifest.Manifest) []string {
 	return names
 }
 
-// currentDispatch lets a running action's Runner invoke another declared
-// action by name — the multi-target kind's `action = "other"` delegation
-// (ADR-0003's whole point: "one action can back multiple commands" and
-// multi-target dispatches to other named actions "only possible because
-// actions are first-class addressable units"). A Factory's signature is
-// (name, action manifest.Action) — no Manifest, no Registry — so a target
-// delegation cannot look up and run another action from inside the
-// multi-target closure directly. RunAction sets this for the duration of
-// the Runner it invokes, exactly the shape admin_lib/core.py's own
-// run_command uses (a module-level registry a nested call reaches through),
-// not a design invented for Go.
-var currentDispatch func(name string, args []string) error
+// dispatchSurface lets a running action's Runner invoke another declared
+// action or command by name — the multi-target kind's `action = "other"`
+// delegation (ADR-0003's whole point: "one action can back multiple
+// commands" and multi-target dispatches to other named actions "only
+// possible because actions are first-class addressable units"), the
+// keybinding hooks in interactive-shell and bridge-listen, and the pre-kill
+// hop in docker-dev/vite-dev/clean-dev. A Factory's signature is (name,
+// action manifest.Action, m *manifest.Manifest) — no Registry, no entry
+// point — so a Runner cannot look those up itself. runAction sets this for
+// the duration of the Runner it invokes, exactly the shape
+// admin_lib/core.py's own run_command uses (a module-level registry a
+// nested call reaches through), not a design invented for Go.
+//
+// Both halves are set and restored together because both must name the SAME
+// surface: a hosted run whose step delegates one level down must stay hosted
+// whether it delegates to an action or to a command. Two independent vars
+// would let one be set without the other, which is exactly the drift this
+// struct removes rather than guards.
+type dispatchSurface struct {
+	action  func(name string, args []string) error
+	command func(name string, args []string) error
+}
+
+// currentSurface is nil only when a factory's Runner is invoked directly,
+// outside any dispatch.
+var currentSurface *dispatchSurface
+
+// dispatchNested runs another declared action from inside a running Runner,
+// on the caller's own surface. A CLI run's surface is RunActionRouted, so a
+// nested long-running action still earns its own pane; a hosted run's is
+// runActionInline, so it cannot. A Runner naming RunActionRouted directly
+// would decide that question for its caller and would put dispatchToPane
+// back on the hosted entry point's call graph.
+func dispatchNested(name string, args []string) error {
+	if currentSurface == nil {
+		return fmt.Errorf(
+			"action %q: dispatching a nested action requires running through "+
+				"kinds.RunAction/RunCommand rather than invoking a factory's Runner directly", name)
+	}
+	return currentSurface.action(name, args)
+}
+
+// dispatchNestedCommand is dispatchNested's command-level twin, for a Runner
+// that needs to run a whole declared command — the pre-kill hop, which runs
+// the project's own "kill" command before starting a dev loop.
+func dispatchNestedCommand(name string, args []string) error {
+	if currentSurface == nil {
+		return fmt.Errorf(
+			"command %q: dispatching a nested command requires running through "+
+				"kinds.RunAction/RunCommand rather than invoking a factory's Runner directly", name)
+	}
+	return currentSurface.command(name, args)
+}
 
 // RunAction dispatches one named action: resolves its kind (defaulting to
 // "shell", matching admin_lib/validate.py's own `data.get("kind", "shell")"),
 // looks up that kind's factory in r, builds the Runner, and invokes it with
-// args. While the Runner runs, currentDispatch is set so a multi-target
+// args. While the Runner runs, currentSurface is set so a multi-target
 // target's `action = "other"` can call back into RunAction for another step
 // without needing its own Manifest/Registry reference.
 //
@@ -127,6 +168,25 @@ var currentDispatch func(name string, args []string) error
 // factory resolves and checks per-target requires inside its own closure
 // (internal/kinds/multitarget.go) instead.
 func RunAction(m *manifest.Manifest, r *Registry, name string, args []string) error {
+	return runAction(m, r, name, args, RunActionRouted)
+}
+
+// runActionInline is RunAction's pane-free twin: it runs the named action's
+// Runner in this process exactly as RunAction does, and sets currentSurface
+// to *itself* so a multi-target target's `action = "other"` delegation stays
+// inline too. That nested hop is the one call-graph hole a shared step loop
+// alone would leave open — RunAction hands currentSurface to
+// RunActionRouted, so a hosted run whose step delegates one level down
+// would otherwise reach the pane path after all.
+func runActionInline(m *manifest.Manifest, r *Registry, name string, args []string) error {
+	return runAction(m, r, name, args, runActionInline)
+}
+
+// runAction is the body both inline entry points share. nested is what a
+// Runner's own delegation (currentSurface) resolves to for the duration of
+// this action — the single behavioural difference between RunAction and
+// runActionInline.
+func runAction(m *manifest.Manifest, r *Registry, name string, args []string, nested stepDispatch) error {
 	action, ok := m.Actions[name]
 	if !ok {
 		return fmt.Errorf("action %q: not declared in [actions]", name)
@@ -162,18 +222,26 @@ func RunAction(m *manifest.Manifest, r *Registry, name string, args []string) er
 		return fmt.Errorf("action %q: %w", name, err)
 	}
 
-	prev := currentDispatch
-	currentDispatch = func(n string, a []string) error { return RunActionRouted(m, r, n, a) }
-	defer func() { currentDispatch = prev }()
+	prev := currentSurface
+	currentSurface = &dispatchSurface{
+		action:  func(n string, a []string) error { return nested(m, r, n, a) },
+		command: func(n string, a []string) error { return runSteps(m, r, n, a, nested) },
+	}
+	defer func() { currentSurface = prev }()
 
 	return runner(args)
 }
 
-// RunActionRouted is admin-3rgp.17's lifetime-aware entry point: the one
-// every *new* dispatch should call instead of RunAction directly —
-// RunCommand's step loop below, and RunAction's own currentDispatch (so a
-// multi-target target delegating to another action, `action = "other"`,
-// routes exactly the same way a top-level command step does).
+// RunActionRouted is admin-3rgp.17's lifetime-aware entry point: what the
+// plain-CLI producer dispatches with. RunCommand hands it to the shared step
+// loop, and RunAction hands it to currentSurface, so a multi-target target
+// delegating to another action (`action = "other"`) routes exactly the same
+// way a top-level command step does.
+//
+// It is deliberately NOT what every dispatch should use. Which surface a
+// dispatch lands on is a property of the producer: the dashboard hosts its
+// own commands and dispatches through RunCommandHosted, from which this
+// function is unreachable.
 //
 // When name's declared kind is Lifetime: LongRunning (internal/kinds
 // catalog.go) and a herdr pane is available (internal/shim.Available()), it
@@ -237,20 +305,56 @@ func actionLifetime(action manifest.Action) Lifetime {
 	return k.Lifetime
 }
 
-// RunCommand executes name's steps against m using r, in declared order,
-// stopping at the first step whose Runner returns a non-nil error — the
-// acceptance criteria's "a command with several steps runs them in order
-// and stops at the first failure" and "a non-zero exit from an action
-// produces a non-zero result" (that "non-zero result" surfaces here as a
-// non-nil error; mapping it to a process exit code is CLI wiring, out of
-// this ticket's scope).
+// RunCommand is the plain-CLI entry point: it runs name's steps through the
+// shared loop below with the lifetime-aware router, so a step whose kind is
+// LongRunning opens a herdr pane when one is available. Steps run in
+// declared order and stop at the first one whose Runner returns a non-nil
+// error — the acceptance criteria's "a command with several steps runs them
+// in order and stops at the first failure" and "a non-zero exit from an
+// action produces a non-zero result" (that "non-zero result" surfaces here
+// as a non-nil error; mapping it to a process exit code is CLI wiring).
 //
-// Before dispatching, it runs guards.RunGlobalPreflight(name) — the
-// always-on deps-fresh check ADR-0005 requires before every command,
-// skipped for the exempt diagnostic verbs (logs, kill) and memoized so a
-// command with several steps (each stepping through RunAction) only pays
-// for it once.
+// The dashboard wants the opposite surface and calls RunCommandHosted.
 func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string) error {
+	return runSteps(m, r, name, args, RunActionRouted)
+}
+
+// RunCommandHosted is admin-3rgp.59's second entry point: the same command,
+// the same shared step loop, but every step goes straight to the inline
+// action runner. dispatchToPane is not on its call graph at any depth — not
+// through the step loop (which calls runActionInline, never
+// RunActionRouted) and not through a multi-target target's `action =
+// "other"` delegation (runActionInline hands currentSurface to itself). So
+// no step can open a herdr pane regardless of its kind's Lifetime or
+// whether herdr is available.
+//
+// This exists because which surface a dispatch lands on is a property of
+// the *producer*, not of the action's kind. Three producers dispatch work: a
+// Command run from the dashboard, Start Work on an issue, and a workflow's
+// agent worker. The last two want a pane; the first is hosted by the
+// dashboard itself and must never take one. A flag on RunCommand would
+// leave the pane path reachable from the dashboard, guarded only by a field
+// being set right — a separate entry point removes the condition instead of
+// guarding it.
+//
+// Lifetime consequently narrows to exactly one meaning: whether a plain-CLI
+// dispatch opens a pane. RunCommandHosted never consults it.
+func RunCommandHosted(m *manifest.Manifest, r *Registry, name string, args []string) error {
+	return runSteps(m, r, name, args, runActionInline)
+}
+
+// stepDispatch is how one step (or one nested delegation) is dispatched —
+// the single thing that differs between the two command entry points.
+type stepDispatch func(m *manifest.Manifest, r *Registry, name string, args []string) error
+
+// runSteps is the body RunCommand and RunCommandHosted share: the global
+// preflight — guards.RunGlobalPreflight, the always-on deps-fresh check
+// ADR-0005 requires before every command, skipped for the exempt diagnostic
+// verbs (logs, kill) and memoized so a multi-step command pays for it once
+// per invocation, not once per step — plus the ADR-0003
+// pure-routing check, the empty-steps check, declared-order execution,
+// stop-at-first-failure, and the error wrapping that names the command.
+func runSteps(m *manifest.Manifest, r *Registry, name string, args []string, dispatch stepDispatch) error {
 	if err := guards.RunGlobalPreflight(name); err != nil {
 		return err
 	}
@@ -265,7 +369,7 @@ func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string) e
 		return fmt.Errorf("command %q has no steps", name)
 	}
 	for _, step := range cmd.Steps {
-		if err := RunActionRouted(m, r, step, args); err != nil {
+		if err := dispatch(m, r, step, args); err != nil {
 			return fmt.Errorf("command %q: %w", name, err)
 		}
 	}

@@ -290,13 +290,13 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest) 
 		defer frame.Deactivate(f)
 
 		if t.action != "" {
-			if currentDispatch == nil {
+			if currentSurface == nil {
 				return fmt.Errorf(
 					"action %q: target %q delegates to action %q, which requires dispatching "+
 						"through kinds.RunAction/RunCommand rather than calling this factory's "+
 						"Runner directly", name, picked, t.action)
 			}
-			return currentDispatch(t.action, rest)
+			return currentSurface.action(t.action, rest)
 		}
 
 		expanded, err := manifest.ResolveEnv(t.run)

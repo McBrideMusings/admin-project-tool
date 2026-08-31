@@ -142,7 +142,7 @@ func TestMultiTargetNoTargetsIsError(t *testing.T) {
 
 // TestMultiTargetDelegationRunsThroughDispatch proves a target's `action`
 // key (delegation to another declared action) works when invoked through
-// RunAction, which wires up currentDispatch — the callback multi-target's
+// RunAction, which wires up currentSurface — the callback multi-target's
 // closure needs to run another named action without holding its own
 // Manifest/Registry reference.
 func TestMultiTargetDelegationRunsThroughDispatch(t *testing.T) {
