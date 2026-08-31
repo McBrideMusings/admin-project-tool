@@ -1,6 +1,8 @@
-// Package cmd wires the CLI: the bare `repo` command launches the dashboard;
-// `repo new` creates a worktree. Anything that needs to cd the parent shell is
-// emitted as a sentinel after the TUI tears down (see internal/shim).
+// Package cmd wires the CLI: the bare `admin` command launches the
+// dashboard; `admin new` creates a worktree; `admin <command>` runs a
+// command declared in the project's admin.toml (ADR-0011). Anything that
+// needs to cd the parent shell is emitted as a sentinel after the TUI tears
+// down (see internal/shim).
 package cmd
 
 import (
@@ -33,8 +35,12 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:           "repo",
-	Short:         "Terminal dashboard for the git repo you're in",
+	Use:   "admin",
+	// "repo" is a cobra alias, not a second identity: ADR-0011 §1. It exists
+	// only because `repo completion zsh` is wired into the user's .zshrc, and
+	// may be deleted once nothing invokes it under that name.
+	Aliases:       []string{"repo"},
+	Short:         "Terminal dashboard for the git repo you're in, and the project's admin.toml runner",
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -58,10 +64,18 @@ func Execute() error {
 	return rootCmd.ExecuteContext(context.Background())
 }
 
-// dispatchArgs makes a bare `repo <input>` behave like `repo branch <input>`.
-// If the first arg isn't a flag and isn't a known subcommand (branch, help,
-// completion, …), it's treated as branch input — a URL, issue/PR number, or
-// branch name — so pasting a link or typing a name just makes the worktree.
+// dispatchArgs resolves a bare first argument per ADR-0011 §2's order:
+//
+//  1. A tool verb or an existing cmd/ verb (branch, prs, populate, plus
+//     cobra's help/completion) — handled by the loop below.
+//  2. A command declared in the current project's admin.toml — handled by
+//     manifestCommandArgs.
+//  3. Otherwise, branch shorthand, exactly as before this ticket: `admin
+//     <input>` behaves like `admin branch <input>`.
+//
+// Step 2 is skipped (falling straight to step 3) whenever the project has no
+// admin.toml at all, so a project with no manifest keeps exactly today's
+// behaviour — every unrecognized bare argument is branch input.
 func dispatchArgs(args []string) []string {
 	if len(args) == 0 {
 		return args
@@ -80,9 +94,45 @@ func dispatchArgs(args []string) []string {
 			return args
 		}
 	}
+	if registerManifestCommand(first) {
+		return args
+	}
 	// The bare shorthand is the "just make it" path — skip branch's confirm prompt.
-	// The explicit `repo branch <input>` still confirms unless -y is passed.
+	// The explicit `admin branch <input>` still confirms unless -y is passed.
 	return append([]string{"branch", "--yes"}, args...)
+}
+
+// registerManifestCommand resolves the project manifest at the current
+// working directory and, if it declares a command named name, adds a cobra
+// command for it to rootCmd (so the normal SetArgs/Execute flow below runs
+// it) and returns true. It returns false — never an error — both when there
+// is no admin.toml here and when name isn't one of its commands; either way
+// dispatchArgs falls through to branch shorthand unchanged. A present but
+// invalid admin.toml is treated the same as "no match" here rather than
+// surfacing its parse error: this keeps a broken manifest from turning an
+// otherwise-uninvolved bare argument into a resolve error, at the cost of a
+// silent fall-through the (separate) check verb is what actually catches.
+func registerManifestCommand(name string) bool {
+	wd, err := os.Getwd()
+	if err != nil {
+		return false
+	}
+	m, ok, err := resolveProjectManifest(context.Background(), wd)
+	if !ok || err != nil {
+		return false
+	}
+	if !kinds.HasCommand(m, name) {
+		return false
+	}
+	rootCmd.AddCommand(&cobra.Command{
+		Use:                name,
+		Short:              "admin.toml command: " + name,
+		DisableFlagParsing: true, // flags belong to the underlying steps, not to cobra
+		RunE: func(cmd *cobra.Command, cmdArgs []string) error {
+			return kinds.RunCommand(m, kinds.Default, name, cmdArgs)
+		},
+	})
+	return true
 }
 
 func init() {
