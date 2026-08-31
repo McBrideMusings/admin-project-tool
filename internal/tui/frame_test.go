@@ -9,6 +9,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
 // TestFrameRendersExactRequestedSize pins the property that makes a dumped frame
@@ -48,6 +50,9 @@ func TestFrameKeysDriveTheModel(t *testing.T) {
 	defer cancel()
 	m := New(ctx, t.TempDir(), "owner/repo", "main", "main")
 	m.herdr = false
+	// tracker = "github" declared, uses_pull_requests left undeclared (defaults
+	// false) — the second drawn tab is Issues, with no PRs tab ahead of it.
+	m.manifest = &manifest.Manifest{Tracker: "github", HasTracker: true}
 
 	opts := FrameOptions{Width: 100, Height: 24, Settle: 200 * time.Millisecond}
 	before := Frame(ctx, m, opts)
@@ -58,9 +63,10 @@ func TestFrameKeysDriveTheModel(t *testing.T) {
 	if before == after {
 		t.Fatal("pressing right produced an identical frame; keys never reached Update")
 	}
-	// This fixture has no open and no recently merged PR, so the second drawn tab
-	// is Issues — the tab bar names it, and the Branches pane the Repo tab draws
-	// is gone, which is what proves the key moved the tab rather than repainting.
+	// tracker = "github" with uses_pull_requests undeclared draws no PRs tab, so
+	// the second drawn tab is Issues — the tab bar names it, and the Branches
+	// pane the Repo tab draws is gone, which is what proves the key moved the
+	// tab rather than repainting.
 	if !strings.Contains(strings.Split(after, "\n")[1], "Issues") {
 		t.Errorf("expected the Issues tab after right; tab bar was %q", strings.Split(after, "\n")[1])
 	}

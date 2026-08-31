@@ -17,12 +17,21 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
+	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
 func seededModel() Model {
 	m := New(context.Background(), "/repo", "owner/repo", "feature", "main")
 	m.herdr = false // pin the non-herdr (quit-and-cd) path; New reads ambient HERDR_ENV
 	m.width, m.height = 120, 40
+	// The default fixture is a GitHub-tracked, PR-using repo — the two keys
+	// admin-3rgp.22 reads have to be declared explicitly now that the tab bar
+	// no longer infers them from remote.PRs or a bd probe. Tests exercising a
+	// different declaration (beads, none, PRs off) override this.
+	m.manifest = &manifest.Manifest{
+		Tracker: "github", HasTracker: true,
+		UsesPullRequests: true, HasUsesPullRequests: true,
+	}
 	m.local = localData{
 		status: git.Status{Unstaged: 2},
 		branches: []git.BranchInfo{
@@ -1623,6 +1632,8 @@ func TestLaunchSyncFiresOnceAndDoesNotLoop(t *testing.T) {
 	}}
 
 	m := New(context.Background(), "/repo", "owner/repo", "main", "main")
+	// tracker = "beads" declared: the launch sync must wait for the probe.
+	m.manifest = &manifest.Manifest{Tracker: "beads", HasTracker: true}
 	updated, cmd := m.Update(local)
 	m = updated.(Model)
 	if cmd != nil {
@@ -1921,23 +1932,24 @@ func TestBeadsGroupByWhatBlocksThem(t *testing.T) {
 	}
 }
 
-// TestBeadsRepoDrawsBeadsInsteadOfIssues pins the tab set: a repo with a beads
-// workspace tracks its work there, so the Issues tab is not drawn at all and the
-// digit keys number whatever is on screen — `3` lands on Beads here and on
-// Issues in a GitHub-issues repo.
-func TestBeadsRepoDrawsBeadsInsteadOfIssues(t *testing.T) {
-	github := seededModel()
+// TestTrackerKeyChoosesTheTrackerTab pins admin-3rgp.22: which tracker tab
+// draws — Issues, Beads, or none — follows the manifest's declared `tracker`
+// key alone. Neither a `bd where` probe nor any other disk state gets a vote:
+// a "github" tracker with a beads workspace sitting on disk still draws
+// Issues, and an undeclared or "none" tracker draws no tracker tab even with
+// one on disk.
+func TestTrackerKeyChoosesTheTrackerTab(t *testing.T) {
+	github := seededModel() // seededModel declares tracker = "github"
 	if got := github.visibleTabs(); len(got) != 4 || got[2] != tabIssues {
-		t.Fatalf("a GitHub repo drew %v, want Repo/PRs/Issues/Config", got)
+		t.Fatalf("tracker = \"github\" drew %v, want Repo/PRs/Issues/Config", got)
 	}
 
 	beads := seededModel()
-	beads.hasBeads = true
+	beads.manifest.Tracker = "beads"
 	got := beads.visibleTabs()
 	if len(got) != 4 || got[2] != tabBeads {
-		t.Fatalf("a beads repo drew %v, want Repo/PRs/Beads/Config", got)
+		t.Fatalf("tracker = \"beads\" drew %v, want Repo/PRs/Beads/Config", got)
 	}
-
 	beads.switchTabAt(2)
 	if beads.active != tabBeads {
 		t.Errorf("`3` landed on %v, want the third drawn tab (Beads)", beads.active)
@@ -1947,10 +1959,42 @@ func TestBeadsRepoDrawsBeadsInsteadOfIssues(t *testing.T) {
 		t.Error("switching to a tab that isn't drawn moved the active tab anyway")
 	}
 
-	// A repo with no remote draws no PRs tab, so the beads tab moves up to `2`.
+	// The declared tracker wins over a live probe pointing the other way.
+	githubWithBeadsOnDisk := seededModel()
+	githubWithBeadsOnDisk.hasBeads = true
+	if got := githubWithBeadsOnDisk.visibleTabs(); len(got) != 4 || got[2] != tabIssues {
+		t.Fatalf("tracker = \"github\" with a beads workspace on disk drew %v, want Issues still", got)
+	}
+
+	// tracker = "none" and an undeclared tracker both draw no tracker tab —
+	// even with a beads workspace sitting on disk.
+	for _, tc := range []struct {
+		name    string
+		tracker string
+		declare bool
+	}{
+		{"declared none", "none", true},
+		{"undeclared", "", false},
+	} {
+		none := seededModel()
+		none.manifest.Tracker = tc.tracker
+		none.manifest.HasTracker = tc.declare
+		none.hasBeads = true
+		if got := none.visibleTabs(); len(got) != 3 {
+			t.Fatalf("%s: tracker drew %v, want Repo/PRs/Config with no tracker tab", tc.name, got)
+		}
+		for _, tb := range none.visibleTabs() {
+			if tb == tabIssues || tb == tabBeads {
+				t.Errorf("%s: a tracker tab (%v) drew with no tracker declared", tc.name, tb)
+			}
+		}
+	}
+
+	// A repo with no remote draws no PRs tab either, so the tracker tab moves
+	// up to index 1.
 	local := seededModel()
 	local.nwo = ""
-	local.hasBeads = true
+	local.manifest.Tracker = "beads"
 	if got := local.visibleTabs(); len(got) != 3 || got[1] != tabBeads {
 		t.Fatalf("a remote-less beads repo drew %v, want Repo/Beads/Config", got)
 	}
@@ -1960,39 +2004,34 @@ func TestBeadsRepoDrawsBeadsInsteadOfIssues(t *testing.T) {
 	}
 }
 
-// TestSoloRepoDrawsNoPRsTab pins the PRs tab's own condition: a repo shows it
-// only while a PR is open right now. A repo whose commits go straight onto main
-// has none, and an always-empty tab is worse than no tab. Past merges do not
-// count — a repo that has moved off PRs would carry the tab forever, since a
-// merge never falls back out of GitHub. A PR opening mid-session brings the tab
-// back, and a repo that runs dry while the PRs tab is on screen falls back to
-// Repo rather than stranding a pane with no label.
-func TestSoloRepoDrawsNoPRsTab(t *testing.T) {
-	solo := seededModel()
-	solo.remote.PRs = nil
-	if got := solo.visibleTabs(); len(got) != 3 || got[1] != tabIssues {
-		t.Fatalf("a repo that never opens a PR drew %v, want Repo/Issues/Config", got)
-	}
-	solo.switchTabAt(1)
-	if solo.active != tabIssues {
-		t.Errorf("`2` landed on %v, want the second drawn tab (Issues)", solo.active)
+// TestUsesPullRequestsKeyControlsThePRsTab pins admin-3rgp.22: the PRs tab's
+// presence follows the declared `uses_pull_requests` key alone. Zero open PRs
+// is a legitimate state prRows renders as an empty section, not a reason for
+// the tab itself to disappear — and the key is independent of tracker, so a
+// beads project that also declares PRs shows both tabs at once.
+func TestUsesPullRequestsKeyControlsThePRsTab(t *testing.T) {
+	noPRsOpen := seededModel()
+	noPRsOpen.remote.PRs = nil
+	if got := noPRsOpen.visibleTabs(); len(got) != 4 || got[1] != tabPRs {
+		t.Fatalf("uses_pull_requests = true with zero open PRs drew %v, want the tab to stay (Repo/PRs/Issues/Config)", got)
 	}
 
-	// A repo with merge history but nothing open is not a PR repo either.
-	merged := seededModel()
-	merged.remote.PRs = nil
-	merged.remote.MergedHeads = map[string]string{"landed-branch": "sha-landed"}
-	if got := merged.visibleTabs(); len(got) != 3 || got[1] != tabIssues {
-		t.Fatalf("a repo with only merged PRs drew %v, want Repo/Issues/Config", got)
+	undeclared := seededModel()
+	undeclared.manifest.UsesPullRequests, undeclared.manifest.HasUsesPullRequests = false, false
+	if got := undeclared.visibleTabs(); len(got) != 3 {
+		t.Fatalf("uses_pull_requests undeclared drew %v, want no PRs tab", got)
 	}
 
-	// The last open PR merges while the PRs tab is up.
-	sitting := seededModel()
-	sitting.active = tabPRs
-	sitting.remote.PRs = nil
-	sitting.settleActiveTab()
-	if sitting.active != tabLocal {
-		t.Errorf("the PRs tab stopped being drawn and left the view on %v, want Repo", sitting.active)
+	declaredFalse := seededModel()
+	declaredFalse.manifest.UsesPullRequests = false // HasUsesPullRequests stays true: an explicit false
+	if got := declaredFalse.visibleTabs(); len(got) != 3 {
+		t.Fatalf("uses_pull_requests = false drew %v, want no PRs tab", got)
+	}
+
+	both := seededModel()
+	both.manifest.Tracker = "beads"
+	if got := both.visibleTabs(); len(got) != 4 || got[1] != tabPRs || got[2] != tabBeads {
+		t.Fatalf("a beads repo with uses_pull_requests = true drew %v, want Repo/PRs/Beads/Config", got)
 	}
 }
 

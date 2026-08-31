@@ -14,6 +14,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
+	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m|\x1b\]8;;[^\x1b]*\x1b\\`)
@@ -59,6 +60,10 @@ func protoModel() Model {
 		},
 	}
 	m.identity = config.Identity{Login: "pierce", Emails: []string{"pierce@example.com"}}
+	m.manifest = &manifest.Manifest{
+		Tracker: "github", HasTracker: true,
+		UsesPullRequests: true, HasUsesPullRequests: true,
+	}
 	m.haveLocal = true
 	m.remote = data.Remote{
 		PRs: []gh.OpenPR{
