@@ -981,16 +981,10 @@ def _register_env_vars(resolved, m):
     `env` command can list them. Shares the scanner with the manifest layer.
     """
     from admin_lib.kinds import scan_env_vars
+    from admin_lib.manifest import config_tables
 
     command_list = list(resolved.commands.values()) + list(resolved.actions.values())
-    config_tables = {
-        "deploy": m.deploy, "vite_dev": m.vite_dev, "docker_dev": m.docker_dev,
-        "docker_run": m.docker_run, "docker_build": m.docker_build,
-        "dev_kill": m.dev_kill, "clean_dev": m.clean_dev,
-        "dev_precheck": m.dev_precheck,
-        "install_template": m.install_template, "fixtures": m.fixtures,
-    }
-    seen = scan_env_vars(command_list, resolved.urls, m.logs, config_tables)
+    seen = scan_env_vars(command_list, resolved.urls, m.logs, config_tables(m))
     for vname, entry in seen.items():
         register_env_var(vname, default=entry["default"], used_by=entry["used_by"])
 
