@@ -43,7 +43,7 @@ func TestParseAppleFlagsInstallAndArgs(t *testing.T) {
 }
 
 func TestMakeAppleRequiresRun(t *testing.T) {
-	_, err := makeApple("build-ios", map[string]any{}, nil)
+	_, err := makeApple("build-ios", map[string]any{}, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error when 'run' is absent")
 	}

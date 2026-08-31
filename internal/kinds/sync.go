@@ -26,7 +26,7 @@ import (
 // exposed — none of the 14 archetypes' current sync actions use them
 // (measured the same way ADR-0010 measured Lua's host-call surface), and
 // adding an unused knob is exactly the anti-pattern ADR-0009 warns against.
-func makeSync(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeSync(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	destTmpl, ok := actionString(action, "run")
 	if !ok || destTmpl == "" {
 		return nil, fmt.Errorf(`action %q: kind="sync" requires 'run' (a destination path)`, name)

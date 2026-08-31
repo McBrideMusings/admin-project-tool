@@ -144,7 +144,7 @@ func TargetSummary(action manifest.Action, key string) string {
 // target subtables". Per-target urls/footer overrides only exist on the
 // inline-subtable shape, which is the only one with room for extra keys; a
 // flat-table target always just inherits the parent's urls/footer.
-func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
 	desc, _ := actionString(action, "desc")
 	if desc == "" {
 		desc = name
@@ -290,13 +290,13 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest) 
 		defer frame.Deactivate(f)
 
 		if t.action != "" {
-			if currentSurface == nil {
+			if surf == nil {
 				return fmt.Errorf(
 					"action %q: target %q delegates to action %q, which requires dispatching "+
 						"through kinds.RunAction/RunCommand rather than calling this factory's "+
 						"Runner directly", name, picked, t.action)
 			}
-			return currentSurface.action(t.action, rest)
+			return surf.action(t.action, rest)
 		}
 
 		expanded, err := manifest.ResolveEnv(t.run)

@@ -17,7 +17,7 @@ func TestMakeInstallTemplateMissingSrcErrors(t *testing.T) {
 	t.Chdir(dir)
 	t.Setenv("UNRAID_HOST", "") // deliberately unset, to prove src is checked first
 
-	runner, err := makeInstallTemplate("install-template", manifest.Action{}, nil)
+	runner, err := makeInstallTemplate("install-template", manifest.Action{}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeInstallTemplate: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestMakeInstallTemplateMissingHostErrors(t *testing.T) {
 	t.Setenv("UNRAID_HOST", "")
 	t.Setenv("APP_IMAGE", "ghcr.io/me/my-app:latest")
 
-	runner, err := makeInstallTemplate("install-template", manifest.Action{}, nil)
+	runner, err := makeInstallTemplate("install-template", manifest.Action{}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeInstallTemplate: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestMakeInstallTemplateMissingNameErrors(t *testing.T) {
 	t.Setenv("UNRAID_HOST", "myserver")
 	t.Setenv("APP_IMAGE", "")
 
-	runner, err := makeInstallTemplate("install-template", manifest.Action{}, nil)
+	runner, err := makeInstallTemplate("install-template", manifest.Action{}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeInstallTemplate: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestMakeInstallTemplateUsesConfiguredName(t *testing.T) {
 		"src":  "custom/template.xml",
 		"name": "web-file-manager",
 	}}
-	runner, err := makeInstallTemplate("install-template", manifest.Action{}, m)
+	runner, err := makeInstallTemplate("install-template", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makeInstallTemplate: %v", err)
 	}

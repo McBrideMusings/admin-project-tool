@@ -13,7 +13,7 @@ import (
 // factory — without pre-empting that work. The error surfaces at dispatch
 // time, when the Runner is actually invoked, never at startup.
 func notImplemented(kind string) Factory {
-	return func(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+	return func(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 		return func(args []string) error {
 			return fmt.Errorf("kind %q is not implemented in the Go runtime yet", kind)
 		}, nil

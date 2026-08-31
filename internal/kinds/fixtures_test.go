@@ -88,7 +88,7 @@ func TestMakeFixturesGenerateThenResetRoundTrips(t *testing.T) {
 		},
 	}}
 
-	genRunner, err := makeFixturesGenerate("fixtures-generate", manifest.Action{}, m)
+	genRunner, err := makeFixturesGenerate("fixtures-generate", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makeFixturesGenerate: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestMakeFixturesGenerateThenResetRoundTrips(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	resetRunner, err := makeFixturesReset("fixtures-reset", manifest.Action{}, m)
+	resetRunner, err := makeFixturesReset("fixtures-reset", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makeFixturesReset: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestMakeFixturesGenerateRefusesNonEmptyBaselineWithoutForce(t *testing.T) {
 			map[string]any{"files": []any{map[string]any{"name": "a.bin", "size": "1B"}}},
 		},
 	}}
-	runner, err := makeFixturesGenerate("fixtures-generate", manifest.Action{}, m)
+	runner, err := makeFixturesGenerate("fixtures-generate", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makeFixturesGenerate: %v", err)
 	}

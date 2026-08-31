@@ -11,7 +11,7 @@ import (
 // TestMakeRaylibRejectsAnUnknownMode proves the build-time mode validation
 // admin_lib/interp.py::_make_raylib does on `run`.
 func TestMakeRaylibRejectsAnUnknownMode(t *testing.T) {
-	_, err := makeRaylib("game", manifest.Action{"run": "launch"}, &manifest.Manifest{})
+	_, err := makeRaylib("game", manifest.Action{"run": "launch"}, &manifest.Manifest{}, nil)
 	if err == nil {
 		t.Fatal("makeRaylib accepted an unknown mode, want an error")
 	}
@@ -21,7 +21,7 @@ func TestMakeRaylibRejectsAnUnknownMode(t *testing.T) {
 // proceed with no [raylib].binary configured — the Go port of
 // admin_lib/interp.py::_make_raylib's "nothing to run" guard.
 func TestMakeRaylibRunModeRequiresABinary(t *testing.T) {
-	runner, err := makeRaylib("game-run", manifest.Action{"run": "run"}, &manifest.Manifest{})
+	runner, err := makeRaylib("game-run", manifest.Action{"run": "run"}, &manifest.Manifest{}, nil)
 	if err != nil {
 		t.Fatalf("makeRaylib: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestMakeRaylibCleanRemovesGlobMatchedPaths(t *testing.T) {
 	m := &manifest.Manifest{Raylib: map[string]any{
 		"clean_dirs": []any{"build", "data/zones/*.db"},
 	}}
-	runner, err := makeRaylib("clean", manifest.Action{"run": "clean"}, m)
+	runner, err := makeRaylib("clean", manifest.Action{"run": "clean"}, m, nil)
 	if err != nil {
 		t.Fatalf("makeRaylib: %v", err)
 	}

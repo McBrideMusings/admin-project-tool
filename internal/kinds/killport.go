@@ -32,7 +32,7 @@ func parsePorts(values []string) ([]int, error) {
 // escalates SIGTERM to SIGKILL — the acceptance criteria's "identifies the
 // processes holding a port, kills them in escalating passes, and reports
 // what it killed" made concrete.
-func makeKillPort(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeKillPort(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	raw, _ := actionString(action, "run")
 	raw = strings.TrimSpace(raw)
 	var defaultPorts []int

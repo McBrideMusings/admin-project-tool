@@ -19,7 +19,7 @@ func haveGo(t *testing.T) {
 // factory builds the Runner (a programming error caught early), not merely
 // when the Runner is invoked.
 func TestGoInvalidModeRejectedAtBuildTime(t *testing.T) {
-	_, err := makeGoKind("weird", manifest.Action{"run": "fly"}, nil)
+	_, err := makeGoKind("weird", manifest.Action{"run": "fly"}, nil, nil)
 	if err == nil {
 		t.Fatal("makeGoKind with an invalid mode should error at build time")
 	}
@@ -36,7 +36,7 @@ func TestGoInvalidModeRejectedAtBuildTime(t *testing.T) {
 // default with a hard error on empty mode, and this test fails: makeGoKind
 // returns a non-nil error where it should return nil.
 func TestGoDefaultModeIsBuild(t *testing.T) {
-	_, err := makeGoKind("default", manifest.Action{}, nil)
+	_, err := makeGoKind("default", manifest.Action{}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeGoKind with no run should default to build, got error: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestGoBuildRunsRealGoBuild(t *testing.T) {
 	writeFile(t, dir, "main.go", "package main\n\nfunc main() {}\n")
 
 	m := &manifest.Manifest{Go: map[string]any{"binary": "out/bin"}}
-	runner, err := makeGoKind("build", manifest.Action{"run": "build"}, m)
+	runner, err := makeGoKind("build", manifest.Action{"run": "build"}, m, nil)
 	if err != nil {
 		t.Fatalf("makeGoKind: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestGoInlineBinaryKeyIsIgnored(t *testing.T) {
 	writeFile(t, dir, "go.mod", "module example.com/goinlinetest\n\ngo 1.21\n")
 	writeFile(t, dir, "main.go", "package main\n\nfunc main() {}\n")
 
-	runner, err := makeGoKind("build", manifest.Action{"run": "build", "binary": "out/bin"}, nil)
+	runner, err := makeGoKind("build", manifest.Action{"run": "build", "binary": "out/bin"}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeGoKind: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestGoBuildFailureIsError(t *testing.T) {
 	writeFile(t, dir, "go.mod", "module example.com/gobuildfail\n\ngo 1.21\n")
 	writeFile(t, dir, "main.go", "package main\n\nfunc main() { this is not go }\n")
 
-	runner, err := makeGoKind("build", manifest.Action{"run": "build"}, nil)
+	runner, err := makeGoKind("build", manifest.Action{"run": "build"}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeGoKind: %v", err)
 	}

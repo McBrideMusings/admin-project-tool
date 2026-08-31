@@ -36,7 +36,21 @@ type Runner func(args []string) error
 // building a full Manifest; every factory that reads from m must do so
 // through archetypeConfigTable (or an equivalent nil-safe accessor), never
 // by dereferencing m directly.
-type Factory func(name string, action manifest.Action, m *manifest.Manifest) (Runner, error)
+//
+// surf is the nested-dispatch handle (admin-3rgp.69): the surface the
+// Runner this Factory builds should use if it needs to call back into
+// another declared action (Surface.Action) or command (Surface.Command) —
+// the multi-target `action = "other"` delegation, the interactive-shell/
+// bridge-listen keybinding hooks, and the docker-dev/vite-dev/clean-dev
+// pre-kill hop. It is built fresh by runAction immediately before the
+// factory call, so two concurrent dispatches each close over their own
+// surface rather than reaching through shared process state. surf is nil
+// when a Factory's Runner is invoked directly in a test, outside any
+// dispatch — Surface's methods tolerate a nil receiver and return the
+// existing "requires running through kinds.RunAction/RunCommand" error in
+// that case. A Factory that never delegates (shell, npm, http, sync today)
+// simply ignores it.
+type Factory func(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error)
 
 // Registry maps a declared kind name to the Factory that executes it.
 type Registry struct {

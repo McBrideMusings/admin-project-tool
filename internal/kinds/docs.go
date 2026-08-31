@@ -15,7 +15,7 @@ import (
 // makeNpm's cwd-only check, since a docs site can be a bun workspace nested
 // inside an otherwise-npm project (or vice versa), matching Python's
 // _pkg_runner(dirpath) call.
-func makeDocs(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeDocs(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	cfg := archetypeConfigTable(m, "docs")
 	dirpath, _ := cfg["dir"].(string)
 	if dirpath == "" {

@@ -284,7 +284,7 @@ func TestMakeCleanDevForceFlagTriggersDBDrop(t *testing.T) {
 	m := &manifest.Manifest{CleanDev: map[string]any{
 		"db": map[string]any{"path": dbPath},
 	}}
-	runner, err := makeCleanDev("clean-dev", manifest.Action{}, m)
+	runner, err := makeCleanDev("clean-dev", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makeCleanDev: %v", err)
 	}
