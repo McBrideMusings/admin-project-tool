@@ -93,8 +93,15 @@ func loadWorkManifest(repoRoot string) (project, merged *manifest.Manifest, sp a
 // only a COLLISION ("X from A overridden by B"), not "here is who owns
 // every key" — so this is a second, read-only walk of the same search path,
 // purely for display.
-func computeOrigins(project *manifest.Manifest, sp archetype.SearchPath) (cmds, actions map[string]string) {
-	cmds, actions = map[string]string{}, map[string]string{}
+//
+// keys does the same job for the handful of scalar top-level manifest keys
+// the Config tab renders (admin-3rgp.21: "tracker", "uses_pull_requests") —
+// named by manifest.go's own key string, mapping to the archetype that last
+// declared it or "(manifest)". A key absent from the map was never declared
+// anywhere, which the Config tab renders as defaulted rather than guessing a
+// source for it.
+func computeOrigins(project *manifest.Manifest, sp archetype.SearchPath) (cmds, actions, keys map[string]string) {
+	cmds, actions, keys = map[string]string{}, map[string]string{}, map[string]string{}
 	for _, name := range project.Archetypes {
 		arch, err := archetype.Load(sp, name)
 		if err != nil {
@@ -108,6 +115,12 @@ func computeOrigins(project *manifest.Manifest, sp archetype.SearchPath) (cmds, 
 		}
 		for a := range arch.Partial.Actions {
 			actions[a] = name
+		}
+		if arch.Partial.HasTracker {
+			keys["tracker"] = name
+		}
+		if arch.Partial.HasUsesPullRequests {
+			keys["uses_pull_requests"] = name
 		}
 	}
 	// The project always wins (ADR-0009), including a field-level override
@@ -123,7 +136,13 @@ func computeOrigins(project *manifest.Manifest, sp archetype.SearchPath) (cmds, 
 	for a := range project.Actions {
 		actions[a] = "(manifest)"
 	}
-	return cmds, actions
+	if project.HasTracker {
+		keys["tracker"] = "(manifest)"
+	}
+	if project.HasUsesPullRequests {
+		keys["uses_pull_requests"] = "(manifest)"
+	}
+	return cmds, actions, keys
 }
 
 // actionKind resolves a raw action's declared kind, defaulting to "shell" —

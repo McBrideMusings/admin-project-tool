@@ -123,6 +123,12 @@ func merge(dst, src *manifest.Manifest, srcLabel string, isManifest bool, log *[
 	if src.PythonMin != "" {
 		dst.PythonMin = src.PythonMin
 	}
+	if src.HasTracker {
+		dst.Tracker, dst.HasTracker = src.Tracker, true
+	}
+	if src.HasUsesPullRequests {
+		dst.UsesPullRequests, dst.HasUsesPullRequests = src.UsesPullRequests, true
+	}
 
 	dst.Modules = mergeStringSet(dst.Modules, src.Modules)
 	dst.ExcludeModules = mergeStringSet(dst.ExcludeModules, src.ExcludeModules)

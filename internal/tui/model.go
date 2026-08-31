@@ -261,13 +261,6 @@ type Model struct {
 
 	closedIssues bool // Issues view: show closed too (toggle) — reserved
 
-	// Config tab: view/edit the global and per-repo populate config. cfgLocal
-	// picks which file is on screen; the *Text/*Err pairs are the last read,
-	// refreshed at launch and again once the suspended editor returns.
-	cfgLocal                    bool
-	cfgGlobalText, cfgLocalText string
-	cfgGlobalErr, cfgLocalErr   string
-
 	// identity is who "you" are — the merged [identity] from the global and
 	// per-repo config, seeded on first run. It decides which branches the Branches
 	// pane treats as your work; see ownership.go. Zero until settingsMsg lands,
@@ -313,6 +306,22 @@ type Model struct {
 	// path (computeOrigins).
 	cmdOrigin    map[string]string
 	actionOrigin map[string]string
+	// keyOrigin names which archetype (or "(manifest)") declared each
+	// scalar top-level manifest key the Config tab renders ("tracker",
+	// "uses_pull_requests") — same mechanism as cmdOrigin/actionOrigin, via
+	// computeOrigins. A key missing from the map was never declared, which
+	// the Config tab shows as defaulted rather than guessing a source.
+	keyOrigin map[string]string
+
+	// Config tab (admin-3rgp.21): the merged config.Config plus the global-
+	// only and local-only reads, so each field's origin (global file, local
+	// file, or neither — defaulted) is legible rather than only its final
+	// value. Loaded once at launch by loadConfigCmd; zero until settingsMsg
+	// lands, same as identity above.
+	cfgMerged config.Config
+	cfgGlobal config.Config
+	cfgLocal  config.Config
+	cfgErr    string
 }
 
 // New builds the dashboard model. The cheap git context (root, nwo, branch) is
@@ -335,7 +344,7 @@ func New(ctx context.Context, repoRoot, nwo, current, def string) Model {
 	case ok:
 		m.manifest = merged
 		m.manifestOK = true
-		m.cmdOrigin, m.actionOrigin = computeOrigins(project, sp)
+		m.cmdOrigin, m.actionOrigin, m.keyOrigin = computeOrigins(project, sp)
 		// AC: "the dashboard opens on the Work tab when the project has a
 		// manifest."
 		m.active = tabWork
@@ -354,7 +363,6 @@ func (m Model) Init() tea.Cmd {
 		detectBeadsCmd(m.ctx, m.repoRoot),
 		startWatchCmd(m.ctx),
 		syncTickCmd(),
-		loadConfigTextCmd(m.repoRoot),
 		loadConfigCmd(m.ctx, m.repoRoot),
 	}
 	if m.manifestOK {
@@ -950,28 +958,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// refresh local state after any mutation
 		return m, loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def)
 
-	case configLoadedMsg:
-		m.cfgGlobalText, m.cfgGlobalErr = msg.global, msg.globalErr
-		m.cfgLocalText, m.cfgLocalErr = msg.local, msg.localErr
-		return m, nil
-
 	case settingsMsg:
 		m.identity, m.identitySeeded = msg.id, msg.seeded
 		m.beadCols = msg.beads.Columns
+		m.cfgMerged, m.cfgGlobal, m.cfgLocal, m.cfgErr = msg.merged, msg.global, msg.local, msg.loadErr
 		if msg.seeded {
 			// Said once, on the launch that wrote it. A config file appearing without
 			// anyone asking is worth one line; saying it every launch would be noise.
 			m.setStatus("seeded [identity] in "+config.GlobalPath(), cCyan)
 		}
 		return m, nil
-
-	case editorDoneMsg:
-		if msg.err != nil {
-			m.setStatus("editor failed: "+msg.err.Error(), cRed)
-			return m, nil
-		}
-		m.setStatus("saved", cDim)
-		return m, loadConfigTextCmd(m.repoRoot)
 
 	case workDispatchDoneMsg:
 		if msg.err != nil {
@@ -1286,20 +1282,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filter = ""
 		m.stepTab(-1)
 	case "tab":
-		// Tab cycles the focused pane within the Repo tab, or the global/local
-		// file within the Config tab; it never switches the top-level tab.
-		switch m.active {
-		case tabLocal:
+		// Tab cycles the focused pane within the Repo tab; it never switches
+		// the top-level tab. The Config tab is a plain read-only readout
+		// (admin-3rgp.21) with nothing to cycle.
+		if m.active == tabLocal {
 			m.pane = m.nextVisiblePane(m.pane, 1)
-		case tabConfig:
-			m.cfgLocal = !m.cfgLocal
 		}
 	case "shift+tab":
-		switch m.active {
-		case tabLocal:
+		if m.active == tabLocal {
 			m.pane = m.nextVisiblePane(m.pane, -1)
-		case tabConfig:
-			m.cfgLocal = !m.cfgLocal
 		}
 	case "1", "2", "3", "4":
 		// The digits number the tabs in the order they are drawn, so `3` is the
@@ -1409,9 +1400,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.nameSel = -1
 		}
 	case "enter":
-		if m.active == tabConfig {
-			return m, m.openConfigEditorCmd()
-		}
 		return m.activate()
 	case "alt+enter", "W":
 		// W is a plain-letter fallback for terminals that swallow alt+enter

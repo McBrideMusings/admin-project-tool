@@ -59,6 +59,49 @@ archetypes   = ["a", "b"]
 	}
 }
 
+// TestTrackerAndUsesPullRequestsMerge is admin-3rgp.21's merge rule for the
+// two new scalar manifest keys: an archetype may declare them, but the
+// project's own admin.toml always wins when it declares them too (ADR-0009),
+// and a key neither side declares stays undeclared (Has* false) all the way
+// through — the Config tab's "not declared" case must not turn into a
+// silently-defaulted false/empty from the merge itself.
+func TestTrackerAndUsesPullRequestsMerge(t *testing.T) {
+	root := t.TempDir()
+	writeArchetypeDir(t, root, "beads-tracker", `
+tracker            = "beads"
+uses_pull_requests = false
+`, false)
+	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
+
+	// The project overrides tracker but leaves uses_pull_requests to the
+	// archetype.
+	project := projectManifest(t, `
+project_name = "widget"
+archetypes   = ["beads-tracker"]
+tracker      = "github"
+`)
+	merged, _, err := Resolve(project, sp)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !merged.HasTracker || merged.Tracker != "github" {
+		t.Errorf("Tracker = %q, HasTracker = %v, want %q, true (manifest beats archetype)", merged.Tracker, merged.HasTracker, "github")
+	}
+	if !merged.HasUsesPullRequests || merged.UsesPullRequests {
+		t.Errorf("UsesPullRequests = %v, HasUsesPullRequests = %v, want false, true (from the archetype, untouched by the manifest)", merged.UsesPullRequests, merged.HasUsesPullRequests)
+	}
+
+	// Neither the project nor any archetype declares either key.
+	bare := projectManifest(t, `project_name = "widget"`)
+	mergedBare, _, err := Resolve(bare, sp)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if mergedBare.HasTracker || mergedBare.HasUsesPullRequests {
+		t.Errorf("HasTracker = %v, HasUsesPullRequests = %v, want false, false for a manifest with no archetypes and no declaration", mergedBare.HasTracker, mergedBare.HasUsesPullRequests)
+	}
+}
+
 // TestWorkflowActionMergesFromArchetypesLikeAnyAction is admin-3rgp.24's
 // acceptance criterion "Workflows merge from archetypes the same way
 // commands and actions do": a kind="workflow" action contributed by an
