@@ -303,6 +303,54 @@ func TestNoMatchYieldsFallbackNotError(t *testing.T) {
 	}
 }
 
+// TestLaterDetectorClearingProjectNameWins verifies that a later detector can
+// explicitly clear project_name by returning HasProjectName=true with an empty
+// ProjectName value. This matches admin_lib/detectors.py:80-81, where the
+// presence of the key (not its truthiness) drives the merge.
+func TestLaterDetectorClearingProjectNameWins(t *testing.T) {
+	// Save original Order and Registry so we can restore them.
+	origOrder := Order
+	origRegistry := Registry
+	defer func() {
+		Order = origOrder
+		Registry = origRegistry
+	}()
+
+	// Install two synthetic detectors in a test-only Order.
+	firstDetector := func(root string) *Match {
+		return &Match{
+			Archetypes:     []string{"simple"},
+			ProjectName:    "early",
+			HasProjectName: true,
+		}
+	}
+	secondDetector := func(root string) *Match {
+		return &Match{
+			Archetypes:     []string{"simple"},
+			ProjectName:    "", // explicitly empty
+			HasProjectName: true,
+		}
+	}
+
+	Order = []string{"first", "second"}
+	Registry = map[string]Detector{
+		"first":  firstDetector,
+		"second": secondDetector,
+	}
+
+	// Both Propose and Run should reflect the second detector clearing the name.
+	root := t.TempDir()
+	_, _, projectName, _, _ := Propose(root)
+	if projectName != "" {
+		t.Fatalf("Propose projectName = %q, want empty after clearing", projectName)
+	}
+
+	res := Run(root)
+	if res.ProjectName != "" {
+		t.Fatalf("Run ProjectName = %q, want empty after clearing", res.ProjectName)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // parity with the Python detectors
 // ---------------------------------------------------------------------------
