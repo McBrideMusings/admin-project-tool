@@ -1,0 +1,30 @@
+ admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+  Work 12    Repo    Beads 227    Config                                                        
+                                                                                                
+ ◐ test  ·  waiting  ·  0m38s  ·  Enter a number, or q to cancel:                               
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+                                                                                                
+ waiting for output…                                                                            
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+────────────────────────────────────────────────────────────────────────────────────────────────
+ q/esc detach · ↑↓ scroll · k kill · typing goes to the process                                 

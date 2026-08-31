@@ -1,30 +1,30 @@
  admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
-┌─ Branches ──────────────⇅ next action   ● yours 0   2 ┐ ┌─ Recent commits ────────────────40 ┐
-│◆ feat/one-tool-…                                   21m│ │ 3d6cd1e   docs(spikes): inven…  21m│
-│   ↳ commit docs(spikes): inventory repo-d…            │ │ da92d07   refactor(spikes): r…  32m│
-│◆ main                       unpushed                3d│ │ d3463b2   refactor(spikes): t…  38m│
-│                                                       │ │ ce2f427   feat(spikes): Detai…  51m│
-│                                                       │ │ 37f68a0   feat(spikes): three…  55m│
-│                                                       │ │ 8861f46   feat(spikes): add a…  59m│
-│                                                       │ │ fddd6c0   test(spikes): updat…  66m│
-│                                                       │ │ da683fb   refactor(spikes): m…  66m│
-│                                                       │ │ fdf3b2e   feat(spikes): make …  77m│
-│                                                       │ │ ecac9ea   fix(spikes): dashbo…   2h│
-│                                                       │ │ 03f1092   docs(spikes): rebui…   2h│
-│                                                       │ │ 1758e7b   docs(spikes): rebui…   9h│
-│                                                       │ │ 95c253c   chore(beads): close…   9h│
-│                                                       │ │ d7d90d7   docs(spikes): rebui…   9h│
-│                                                       │ │ 2edcad3   docs(prd): fill the…   2d│
-│                                                       │ │ db2711a   docs(adr): Lua and …   2d│
-│                                                       │ │ f738934   feat(launchd): lift…   2d│
-│                                                       │ │ 1023714   chore(beads): close…   2d│
-│                                                       │ │ ad90bb4   Merge branch 'fix-d…   2d│
-│                                                       │ │ c31e994   fix(detect): fail p…   2d│
-│                                                       │ │ bbbd7bb   chore(beads): split…   2d│
+┌─ Branches ──────────────⇅ next action   ● yours 0   1 ┐ ┌─ Recent commits ────────────────40 ┐
+│◆ main                                              46m│ │ f11c4ae   feat(tui): expand a…  46m│
+│                                                       │ │ a22e838   fix(reload): use cb…  68m│
+│                                                       │ │ 87d6ec9   chore(beads): file …  84m│
+│                                                       │ │ bac4d10   chore(beads): expor…  88m│
+│                                                       │ │ 7aead11   fix(luahost): give …   2h│
+│                                                       │ │ 37db393   fix(cmd): stop turn…   2h│
+│                                                       │ │ 547b28d   fix(go): load .env …   2h│
+│                                                       │ │ 83c0a27   fix(apple): read pr…   2h│
+│                                                       │ │ 0a565b7   chore(beads): file …   2h│
+│                                                       │ │ bbf18ab   fix(core): forward …   2h│
+│                                                       │ │ 1476a4b   feat(install): inst…   3h│
+│                                                       │ │ c498e79   chore(beads): file …   3h│
+│                                                       │ │ a434b23   fix(env): stop admi…   4h│
+│                                                       │ │ f396520   fix(env): treat an …   4h│
+│                                                       │ │ 06439ec   chore(beads): triag…   4h│
+│                                                       │ │ a3baf87   Merge feat/one-tool…   4h│
+│                                                       │ │ 6bda51a   docs: delete the PRD   4h│
+│                                                       │ │ 480e696   chore(beads): delet…   4h│
+│                                                       │ │ dc8dcb2   chore(beads): close…   5h│
+│                                                       │ │ 17aac01   merge: github-query…   5h│
+│                                                       │ │ 5bfd00a   feat(check): fail a…   5h│
 │                                                       │ │ ↓ 18 more                          │
 │                                                       │ └────────────────────────────────────┘
 └───────────────────────────────────────────────────────┘ ── Stashes ────────────────────────0 ─
 ────────────────────────────────────────────────────────────────────────────────────────────────
- /▌   42 matches   esc clear  ·  enter apply                                                    
+ /▌   41 matches   esc clear  ·  enter apply                                                    

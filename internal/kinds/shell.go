@@ -1,7 +1,10 @@
 package kinds
 
 import (
+	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
@@ -54,17 +57,25 @@ func makeShell(name string, action manifest.Action, m *manifest.Manifest) (Runne
 }
 
 // makeShellPassthrough is kind="shell-passthrough"'s factory — the Go port
-// of admin_lib/interp.py::_make_shell_passthrough, minus the `interactive`
-// knob (a raw, unlogged terminal passthrough — genuinely separate from the
-// footer/pump work: interactive mode explicitly skips logging and run_cmd
-// both, so there is nothing here for this ticket's pump to sit on top of;
-// tracked as a follow-up). Runner args are appended to `run`, each
-// shell-quoted, so a caller-supplied argument can never be re-interpreted
-// as shell syntax.
+// of admin_lib/interp.py::_make_shell_passthrough. Runner args are appended
+// to `run`, each shell-quoted, so a caller-supplied argument can never be
+// re-interpreted as shell syntax.
+//
+// `interactive = true` is a raw terminal handover: the child inherits this
+// process's own stdin/stdout/stderr with no pipe anywhere in the path, no
+// log tee, no frame and no output pump. That is the whole point of the knob
+// and it cannot be approximated. A full-screen child — a TUI, an editor, a
+// pager — needs a real terminal on stdout for two things it has no other way
+// to get: the window size (a piped child is never sent SIGWINCH and reads no
+// size, so it falls back to a fixed default and paints an island in the
+// corner of a larger window) and color (every terminal library probes for a
+// TTY and degrades to plain text without one). Routing such a child through
+// RunCmd silently produces a small, monochrome fake of the program.
 func makeShellPassthrough(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
 	run, _ := actionString(action, "run")
 	rawURLs := actionURLs(action)
 	footerVal, hasFooter := actionBool(action, "footer")
+	interactive, _ := actionBool(action, "interactive")
 	return func(args []string) error {
 		cmdline := run
 		if len(args) > 0 {
@@ -84,6 +95,13 @@ func makeShellPassthrough(name string, action manifest.Action, m *manifest.Manif
 			h.Err(emptyCmdErr)
 			return fmt.Errorf("action %q: %s", name, emptyCmdErr)
 		}
+		if interactive {
+			// No frame and no banner: both would paint into a terminal this
+			// process is about to hand over wholesale, and a full-screen child
+			// clears them anyway. Nothing is logged, matching Python's
+			// interactive branch, because there is no pipe to tee from.
+			return runInteractive(name, resolved)
+		}
 		f := enterFrame(h, name, rawURLs, hasFooter, footerVal, m)
 		defer frame.Deactivate(f)
 		h.Info("running: " + resolved)
@@ -98,4 +116,26 @@ func makeShellPassthrough(name string, action manifest.Action, m *manifest.Manif
 		h.Ok(name + " complete")
 		return nil
 	}, nil
+}
+
+// runInteractive hands the real terminal to cmdline and waits. The child
+// inherits this process's own stdin, stdout and stderr file descriptors
+// directly, so it sees a TTY, is sent SIGWINCH on resize, and can size and
+// color itself exactly as if it had been typed at the shell.
+//
+// Nothing here may wrap those three descriptors — not a pipe, not a pty, not
+// an io.Writer that tees to a log. Wrapping any of them reintroduces the bug
+// this function exists to fix, and it fails silently: the child still runs,
+// just small and monochrome.
+func runInteractive(name, cmdline string) error {
+	c := exec.Command("/bin/sh", "-c", cmdline)
+	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := c.Run(); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return fmt.Errorf("action %q failed: exit %d", name, ee.ExitCode())
+		}
+		return fmt.Errorf("action %q: %w", name, err)
+	}
+	return nil
 }

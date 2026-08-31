@@ -1437,11 +1437,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filtering = true
 		m.filter = ""
 	case "r":
-		// The Work tab reuses r for "retry" (a failed row's own action) rather
-		// than a refresh — nothing on this tab is fetched from a cache to refresh.
-		if m.active == tabWork {
-			return m.retryCurrentWork()
-		}
+		// The Work tab has no `r`: retry was removed because restarting a
+		// worker under the same identity is not something every producer can
+		// honour or every kind of work can survive. Kill it and start again.
 		// The Beads tab has no per-row refresh: re-reading the whole workspace is
 		// one local query, so there is nothing a single bead would save.
 		if m.active == tabBeads {

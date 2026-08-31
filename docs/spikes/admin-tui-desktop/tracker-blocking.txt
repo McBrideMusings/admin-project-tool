@@ -4,8 +4,8 @@
                                                                                                 
                                                                                                 
      ┌─[ Bead ]─[ Graph ]─[ Blocking ]──────────────────────────────────────────────[ ✕ ]─┐     
+     │ 3rgp.61  P1  task  Dashboard runs commands on a hosted pty and stays up            │     
      │                                                                                    │     
-     │  nothing waits on this bead                                                        │     
      │                                                                                    │     
      │                                                                                    │     
      │                                                                                    │     

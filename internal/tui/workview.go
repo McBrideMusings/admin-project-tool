@@ -204,11 +204,10 @@ func workerDetail(e *livework.Entry, w int) []string {
 		faintStyle.Render("elapsed"), "  "+elapsedStr(time.Since(e.StartedAt)),
 		"",
 	)
-	actions := []string{"a attach"}
-	if e.State == livework.StateFailed {
-		actions = append(actions, "r retry")
-	}
-	actions = append(actions, "k kill")
+	// No retry: a worker is an agent session in a worktree, and restarting one
+	// under the same identity is not something every producer can honour or
+	// every kind of work can survive. Kill it and start the work again.
+	actions := []string{"a attach", "k kill"}
 	out = append(out, faintStyle.Render(strings.Join(actions, "   ")))
 	return out
 }
