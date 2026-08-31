@@ -69,7 +69,80 @@ var Variants = []Variant{{
 	Name:    "Settled",
 	Caption: "the design settled in docs/PRD.md:82-111",
 	Render:  render,
+	Key:     onKey,
+	Reset:   func() { selDelta = 0 },
 }}
+
+// selDelta is the live cursor offset on top of whatever row the current screen
+// starts on. The dump never sees it — dump renders before any key is pressed —
+// so the committed frames stay deterministic while the prototype still moves.
+var selDelta int
+
+// tabScreens is the screen each tab lands on, in tab-bar order. Tab navigation
+// drives the same `screen` axis the dump enumerates, so what you drive by hand
+// and what gets dumped cannot diverge.
+var tabScreens = []string{"commands", "repo", "issues", "swarm", "config"}
+
+func onKey(key string, s State, set func(axis, value string)) bool {
+	cur := s.Get("screen")
+	if cur == "" {
+		cur = "commands"
+	}
+	sp := screens[cur]
+
+	switch key {
+	case "tab", "right", "l":
+		set("screen", tabScreens[(sp.tab+1)%len(tabScreens)])
+		selDelta = 0
+		return true
+	case "shift+tab", "left", "h":
+		set("screen", tabScreens[(sp.tab-1+len(tabScreens))%len(tabScreens)])
+		selDelta = 0
+		return true
+	case "down", "j":
+		selDelta++
+		return true
+	case "up", "k":
+		selDelta--
+		return true
+	case "enter":
+		// Every control is live, the reject path included: ⏎ opens the sheet on
+		// Issues and toggles the running state on Commands; esc backs out.
+		switch cur {
+		case "issues", "issues-selected":
+			set("screen", "dispatch-sheet")
+		case "dispatch-sheet":
+			set("screen", "issues")
+		case "commands", "commands-workflow-selected":
+			set("screen", "running")
+		case "running":
+			set("screen", "commands")
+		}
+		return true
+	case "esc":
+		if cur == "dispatch-sheet" {
+			set("screen", "issues")
+		}
+		return true
+	case "m":
+		if cur == "no-manifest" {
+			set("screen", "repo")
+		} else {
+			set("screen", "no-manifest")
+		}
+		selDelta = 0
+		return true
+	}
+	return false
+}
+
+// wrap applies the live cursor offset to a screen's starting row.
+func wrap(base, n int) int {
+	if n <= 0 {
+		return 0
+	}
+	return ((base+selDelta)%n + n) % n
+}
 
 // ---- rendering, all of it sized from s.W / s.H ----
 
@@ -206,7 +279,8 @@ func bodyOf(sp screenSpec, w, h int) []string {
 }
 
 func commandsBody(sp screenSpec, w int) []string {
-	c := cmds[sp.cmdSel]
+	sel := wrap(sp.cmdSel, len(cmds))
+	c := cmds[sel]
 	var left, right []string
 	left = append(left, dim.Render("  COMMAND          LAST RUN"), "")
 	for i, cc := range cmds {
@@ -214,7 +288,7 @@ func commandsBody(sp screenSpec, w int) []string {
 		if sp.running && cc.name == "test" {
 			last = yl.Render("running")
 		}
-		left = append(left, mark(i == sp.cmdSel, Pad(cc.name, 16)+" "+last))
+		left = append(left, mark(i == sel, Pad(cc.name, 16)+" "+last))
 	}
 
 	title := bo.Render(c.name)
@@ -328,17 +402,18 @@ var blockedIssues = []issueRow{
 
 func issuesBody(sp screenSpec, w int) []string {
 	all := append(append([]issueRow{}, readyIssues...), blockedIssues...)
-	cur := all[minInt(sp.issueSel, len(all)-1)]
+	isel := wrap(sp.issueSel, len(all))
+	cur := all[isel]
 	rw := 44
 
 	var left, right []string
 	left = append(left, bo.Render("READY")+dim.Render("   tracker: beads"))
 	for i, is := range readyIssues {
-		left = append(left, mark(i == sp.issueSel, dim.Render(is.pri)+" "+trunc(is.title, 34)))
+		left = append(left, mark(i == isel, dim.Render(is.pri)+" "+trunc(is.title, 34)))
 	}
 	left = append(left, "", bo.Render("BLOCKED"))
 	for i, is := range blockedIssues {
-		left = append(left, mark(len(readyIssues)+i == sp.issueSel,
+		left = append(left, mark(len(readyIssues)+i == isel,
 			dim.Render(is.pri)+" "+trunc(is.title, 28)+rd.Render(" ←"+is.blocker)))
 	}
 
