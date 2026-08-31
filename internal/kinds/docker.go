@@ -21,7 +21,7 @@ import (
 // ticket claims it — so output here is unformatted (reload.Options.Formatter
 // left nil) until that lands; tracked as a follow-up rather than silently
 // dropped.
-func makeDockerReloadLoop(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeDockerReloadLoop(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	run, ok := actionString(action, "run")
 	if !ok || run == "" {
 		return nil, fmt.Errorf(`action %q: kind="docker-reload-loop" requires 'run'`, name)
@@ -47,7 +47,7 @@ func makeDockerReloadLoop(name string, action manifest.Action, m *manifest.Manif
 // admin_lib/docker.py's reload_running_targets. args[0], when present, is
 // the target-name substring filter Python's `args[0] if args else None`
 // passes through unchanged.
-func makeServerReload(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeServerReload(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	return func(args []string) error {
 		filter := ""
 		if len(args) > 0 {
@@ -66,7 +66,7 @@ func makeServerReload(name string, action manifest.Action, m *manifest.Manifest)
 // admin_lib/docker.py's docker_dev_from_config. The `[docker_dev]` manifest
 // table (m.DockerDev) is the whole body; the action itself carries no
 // per-invocation keys, matching Kinds["docker-dev"].Configless.
-func makeDockerDev(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeDockerDev(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
 	cfg := archetypeConfigTable(m, "docker_dev")
 
 	return func(args []string) error {
@@ -86,7 +86,7 @@ func makeDockerDev(name string, action manifest.Action, m *manifest.Manifest) (R
 			// "kill" is looked up as a declared command (not action) name,
 			// the same indirection admin_lib's cmd_kill lookup used.
 			if _, ok := resolveCommand(m, "kill"); ok {
-				_ = dispatchNestedCommand("kill", nil)
+				_ = surf.Command("kill", nil)
 			}
 		}
 

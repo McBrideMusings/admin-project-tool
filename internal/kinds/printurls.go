@@ -66,7 +66,7 @@ func formatURLStatus(label, rawURL string, live bool, labelWidth int) string {
 // URL's "/health" path) in parallel and prints one line per entry. A manifest
 // with no [urls] table prints nothing, matching Python's `if not _urls:
 // return`.
-func makePrintURLs(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makePrintURLs(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	return func(args []string) error {
 		if m == nil || len(m.Urls) == 0 {
 			return nil

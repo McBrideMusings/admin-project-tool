@@ -16,7 +16,7 @@ func TestMakeInteractiveShellRunsAndSucceeds(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	runner, err := makeInteractiveShell("dev", manifest.Action{"run": "touch marker.txt"}, nil)
+	runner, err := makeInteractiveShell("dev", manifest.Action{"run": "touch marker.txt"}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeInteractiveShell: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestMakeInteractiveShellRunsAndSucceeds(t *testing.T) {
 // failure.
 func TestMakeInteractiveShellNonZeroExitIsError(t *testing.T) {
 	t.Chdir(t.TempDir())
-	runner, err := makeInteractiveShell("dev", manifest.Action{"run": "exit 7"}, nil)
+	runner, err := makeInteractiveShell("dev", manifest.Action{"run": "exit 7"}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeInteractiveShell: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestMakeInteractiveShellNonZeroExitIsError(t *testing.T) {
 // factory-build time (before a Runner is even returned), matching
 // admin_lib/interp.py::_make_interactive_shell's eager InterpError.
 func TestMakeInteractiveShellRequiresRun(t *testing.T) {
-	if _, err := makeInteractiveShell("dev", manifest.Action{}, nil); err == nil {
+	if _, err := makeInteractiveShell("dev", manifest.Action{}, nil, nil); err == nil {
 		t.Fatal("makeInteractiveShell = nil error, want one for a missing run")
 	}
 }
@@ -59,7 +59,7 @@ func TestMakeInteractiveShellRejectsBadKeys(t *testing.T) {
 		"run":  "true",
 		"keys": map[string]any{"rr": map[string]any{"run": "echo hi"}}, // "rr" is not one char
 	}
-	if _, err := makeInteractiveShell("dev", action, nil); err == nil {
+	if _, err := makeInteractiveShell("dev", action, nil, nil); err == nil {
 		t.Fatal("makeInteractiveShell = nil error, want one for an invalid keys table")
 	}
 }
@@ -172,7 +172,7 @@ func TestScopeLogBridgeHostsPropagatesResolveError(t *testing.T) {
 // TestMakeInteractiveShellRejectsBadKeys for kind="bridge-listen".
 func TestMakeBridgeListenRejectsBadKeys(t *testing.T) {
 	action := manifest.Action{"keys": map[string]any{"rr": map[string]any{"run": "echo hi"}}}
-	if _, err := makeBridgeListen("bridge", action, nil); err == nil {
+	if _, err := makeBridgeListen("bridge", action, nil, nil); err == nil {
 		t.Fatal("makeBridgeListen = nil error, want one for an invalid keys table")
 	}
 }
@@ -184,7 +184,7 @@ func TestMakeBridgeListenRejectsBadKeys(t *testing.T) {
 func TestMakeBridgeListenStopsOnHostResolveError(t *testing.T) {
 	t.Chdir(t.TempDir())
 	os.Unsetenv("ADMIN_KEYBINDINGS_TEST_UNSET_HOST_2")
-	runner, err := makeBridgeListen("bridge", manifest.Action{"hosts": "${ADMIN_KEYBINDINGS_TEST_UNSET_HOST_2}"}, nil)
+	runner, err := makeBridgeListen("bridge", manifest.Action{"hosts": "${ADMIN_KEYBINDINGS_TEST_UNSET_HOST_2}"}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeBridgeListen: %v", err)
 	}

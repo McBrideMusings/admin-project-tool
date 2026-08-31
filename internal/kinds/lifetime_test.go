@@ -133,7 +133,7 @@ func TestRunActionRoutedNoHerdrRunsInline(t *testing.T) {
 	// routing decision is genuine (vite-dev really is LongRunning) while
 	// the actual work stays a trivial, fast side effect a test can assert
 	// on directly, instead of needing a real dev server.
-	r.MustRegister("vite-dev", func(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+	r.MustRegister("vite-dev", func(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
 		return func(args []string) error {
 			return os.WriteFile(filepath.Join(dir, "ran.txt"), []byte("inline\n"), 0o644)
 		}, nil
@@ -264,7 +264,7 @@ func TestRunActionRoutedDispatchesLongRunningToPane(t *testing.T) {
 
 	inlineRan := false
 	r := NewRegistry()
-	r.MustRegister("vite-dev", func(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+	r.MustRegister("vite-dev", func(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
 		return func(args []string) error {
 			inlineRan = true
 			return nil
@@ -359,7 +359,7 @@ func TestRunActionRoutedSplitFailureDegradesToInlineWithWarning(t *testing.T) {
 	before := len(livework.Default.List())
 
 	r := NewRegistry()
-	r.MustRegister("vite-dev", func(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+	r.MustRegister("vite-dev", func(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
 		return func(args []string) error {
 			return os.WriteFile(filepath.Join(dir, "ran.txt"), []byte("inline\n"), 0o644)
 		}, nil

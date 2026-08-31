@@ -74,7 +74,7 @@ func TestFormatURLStatusShowsLiveOrDown(t *testing.T) {
 // table prints nothing and doesn't error — matching
 // admin_lib/core.py::print_url_status's `if not _urls: return`.
 func TestMakePrintURLsNoopWithoutURLsTable(t *testing.T) {
-	runner, err := makePrintURLs("print-urls", manifest.Action{}, &manifest.Manifest{})
+	runner, err := makePrintURLs("print-urls", manifest.Action{}, &manifest.Manifest{}, nil)
 	if err != nil {
 		t.Fatalf("makePrintURLs: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestMakePrintURLsChecksEveryDeclaredURL(t *testing.T) {
 	defer srv.Close()
 
 	m := &manifest.Manifest{Urls: map[string]string{"api": srv.URL}}
-	runner, err := makePrintURLs("print-urls", manifest.Action{}, m)
+	runner, err := makePrintURLs("print-urls", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makePrintURLs: %v", err)
 	}

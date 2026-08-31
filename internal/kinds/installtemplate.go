@@ -38,7 +38,7 @@ func slugFromAppImage() string {
 // `[install_template]` manifest table for `src`/`name` (both optional) and
 // UNRAID_HOST (required)/UNRAID_USER (default "root") from the environment —
 // no host or user literal ever belongs in a tracked manifest.
-func makeInstallTemplate(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeInstallTemplate(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	cfg := archetypeConfigTable(m, "install_template")
 	src, _ := cfg["src"].(string)
 	if src == "" {

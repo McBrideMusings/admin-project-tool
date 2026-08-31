@@ -25,7 +25,7 @@ const emptyCmdErr = "refusing to run an empty command"
 // every command string: a manifest writes ${VAR} precisely so the value can
 // live in .env instead of the file, and handing the placeholder to /bin/sh
 // instead expands an unset name to "" and runs the command anyway.
-func makeShell(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeShell(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	run, _ := actionString(action, "run")
 	rawURLs := actionURLs(action)
 	footerVal, hasFooter := actionBool(action, "footer")
@@ -71,7 +71,7 @@ func makeShell(name string, action manifest.Action, m *manifest.Manifest) (Runne
 // corner of a larger window) and color (every terminal library probes for a
 // TTY and degrades to plain text without one). Routing such a child through
 // RunCmd silently produces a small, monochrome fake of the program.
-func makeShellPassthrough(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeShellPassthrough(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	run, _ := actionString(action, "run")
 	rawURLs := actionURLs(action)
 	footerVal, hasFooter := actionBool(action, "footer")

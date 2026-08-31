@@ -7,7 +7,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-func stubFactory(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func stubFactory(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
 	return func(args []string) error { return nil }, nil
 }
 
@@ -91,7 +91,7 @@ func TestDefaultRegistryIsComplete(t *testing.T) {
 // kind, since there is no longer a stub kind to point it at.
 func TestStubFactoryErrorsAtDispatch(t *testing.T) {
 	f := notImplemented("some-kind")
-	run, err := f("some-kind", manifest.Action{}, nil)
+	run, err := f("some-kind", manifest.Action{}, nil, nil)
 	if err != nil {
 		t.Fatalf("building the runner should not itself error, got %v", err)
 	}
