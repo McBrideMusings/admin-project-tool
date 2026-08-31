@@ -1,0 +1,517 @@
+# NOTE on scope (admin-3rgp.37): the `server`/`bazzite` targets below (in
+# build/dev/deploy) are the [server]/Rust half of this archetype
+# (admin_lib/rust.py's build_multiplatform, deploy_server_docker,
+# deploy_bazzite_server, dev_server's reload loop) — Docker cross-compile,
+# SSH, and systemd provisioning, not "thin orchestration over a host API".
+# admin-3rgp.45 ("Should rust and launchd be kinds at all?") is still OPEN
+# and unresolved; inventing that architecture here would preempt a sibling
+# ticket's own decision. Those targets are honest stubs that say so. The
+# test/clean server targets (test_cmd/swift_test_cmd, `rm -rf target`) carry
+# no such dependency and ARE fully ported below.
+name = "apple"
+modules = ["core", "icons", "apple", "appstoreconnect", "log_format", "log_columns"]
+
+[commands.build]
+desc = "Build: mac | ios | tv | server [--clean]"
+steps = ["build"]
+group = 1
+priority = 10
+
+[commands.dev]
+desc = "Dev build + run (mac|ios|tv|device|server) [--log LVL] [--clean] [--install]"
+steps = ["dev"]
+group = 1
+priority = 20
+
+[commands.deploy]
+desc = "Build + install (mac|ios|tv|server|bazzite) [--clean]"
+steps = ["deploy"]
+group = 1
+priority = 30
+
+[commands.test]
+desc = "Run tests (server|swift|apple)"
+steps = ["test"]
+group = 2
+priority = 10
+
+[commands.clean]
+desc = "Remove build artifacts (xcode|icons|cargo|bundled)"
+steps = ["clean"]
+group = 2
+priority = 20
+
+[commands.icons]
+desc = "Icons: regenerate | swap-dev | restore"
+steps = ["icons"]
+group = 2
+priority = 30
+
+[commands.reload]
+desc = "Signal a running './admin dev' to rebuild and relaunch"
+steps = ["reload"]
+group = 2
+priority = 40
+
+[commands.appid]
+desc = "App IDs: report, register, enable capabilities [--capability icloud]"
+steps = ["appid"]
+group = 2
+priority = 45
+
+[actions.build]
+kind = "multi-target"
+desc = "Build: mac | ios | tv | server [--clean]"
+
+[actions.build.mac]
+action = "build-mac"
+
+[actions.build.ios]
+action = "build-ios"
+
+[actions.build.tv]
+action = "build-tv"
+
+[actions.build.server]
+action = "build-server"
+
+[actions.build-mac]
+kind = "apple"
+desc = "build macOS"
+run = "build_mac"
+
+[actions.build-ios]
+kind = "apple"
+desc = "build iOS"
+run = "build_ios"
+
+[actions.build-tv]
+kind = "apple"
+desc = "build tvOS"
+run = "build_tv"
+
+[actions.build-server]
+kind = "lua"
+desc = "build server (not ported — see admin-3rgp.45)"
+run = '''
+err("server build is not ported to the Go tool yet (depends on admin-3rgp.45: should rust be a kind at all?)")
+error("server build not ported")
+'''
+
+[actions.dev]
+kind = "multi-target"
+desc = "Dev build + run (mac|ios|tv|device|server) [--log LVL] [--clean] [--install]"
+
+[actions.dev.mac]
+action = "dev-mac"
+
+[actions.dev.ios]
+action = "dev-ios"
+
+[actions.dev.tv]
+action = "dev-tv"
+
+[actions.dev.device]
+action = "dev-device"
+
+[actions.dev.server]
+action = "dev-server"
+
+[actions.dev-mac]
+kind = "apple"
+desc = "dev macOS"
+run = "dev_mac"
+
+[actions.dev-ios]
+kind = "apple"
+desc = "dev iOS simulator"
+run = "dev_ios"
+
+[actions.dev-tv]
+kind = "apple"
+desc = "dev tvOS simulator"
+run = "dev_tv"
+
+[actions.dev-device]
+kind = "apple"
+desc = "dev iOS device"
+run = "dev_device"
+
+[actions.dev-server]
+kind = "lua"
+desc = "dev server (not ported — see admin-3rgp.45)"
+run = '''
+err("server dev loop is not ported to the Go tool yet (depends on admin-3rgp.45: should rust be a kind at all?)")
+error("server dev not ported")
+'''
+
+[actions.deploy]
+kind = "multi-target"
+desc = "Build + install (mac|ios|tv|server|bazzite) [--clean]"
+
+[actions.deploy.mac]
+action = "deploy-mac"
+
+[actions.deploy.ios]
+action = "deploy-ios"
+
+[actions.deploy.tv]
+action = "deploy-tv"
+
+[actions.deploy.server]
+action = "deploy-server"
+
+[actions.deploy.bazzite]
+action = "deploy-bazzite"
+
+[actions.deploy-mac]
+kind = "apple"
+desc = "deploy macOS"
+run = "deploy_mac"
+
+[actions.deploy-ios]
+kind = "apple"
+desc = "deploy iOS"
+run = "deploy_ios"
+
+[actions.deploy-tv]
+kind = "apple"
+desc = "deploy tvOS"
+run = "deploy_tv"
+
+[actions.deploy-server]
+kind = "lua"
+desc = "deploy server via Docker (not ported — see admin-3rgp.45)"
+run = '''
+err("server Docker deploy is not ported to the Go tool yet (depends on admin-3rgp.45: should rust be a kind at all?)")
+error("server deploy not ported")
+'''
+
+[actions.deploy-bazzite]
+kind = "lua"
+desc = "cross-compile + deploy to Bazzite (not ported — see admin-3rgp.45)"
+run = '''
+err("Bazzite cross-compile deploy is not ported to the Go tool yet (depends on admin-3rgp.45: should rust be a kind at all?)")
+error("bazzite deploy not ported")
+'''
+
+[actions.clean-ios]
+kind = "apple"
+desc = "clean Xcode DerivedData"
+run = "clean_ios"
+
+[actions.test]
+kind = "lua"
+desc = "Run tests (server|swift|apple)"
+run = '''
+local server = config.server or {}
+local apple = config.apple or {}
+
+local choices = {}
+if server.test_cmd then table.insert(choices, {key = "server", description = "server tests"}) end
+if server.swift_test_cmd then table.insert(choices, {key = "swift", description = "Swift integration tests"}) end
+if apple.test_cmd then table.insert(choices, {key = "apple", description = "apple tests"}) end
+if #choices == 0 then
+  err("no test_cmd configured in [server] or [apple]")
+  error("no test_cmd configured")
+end
+
+local target = args[1]
+if target then
+  local known = false
+  for _, c in ipairs(choices) do
+    if c.key == target then known = true end
+  end
+  if not known then
+    err("unknown test target: " .. target)
+    error("unknown test target: " .. target)
+  end
+else
+  target = only_target(choices, "test")
+  if not target then
+    target = pick_target(choices, "test — select target")
+    if not target then return end
+  end
+end
+
+set_log_context("test", target)
+
+local cmd
+if target == "server" then
+  cmd = server.test_cmd
+elseif target == "swift" then
+  cmd = server.swift_test_cmd
+else
+  cmd = apple.test_cmd
+end
+
+-- NOTE: the Python original ran an apple test_cmd through a per-checkout
+-- xcodebuild file lock (run_locked_xcode) so it never races an in-flight
+-- build/dev/deploy's own xcodebuild invocation. That lock is internal to
+-- apple.xcodebuild's Go implementation and is not exposed for an arbitrary
+-- shell command a body supplies — a body-visible lock is a follow-up, not
+-- implemented here; a test_cmd that itself calls xcodebuild can still race
+-- another xcodebuild in progress.
+info("running: " .. cmd)
+local success = run_cmd(cmd)
+if not success then
+  err("tests failed")
+  error("tests failed")
+end
+ok("tests passed")
+'''
+
+[actions.clean]
+kind = "lua"
+desc = "Remove build artifacts (xcode|icons|cargo|bundled)"
+run = '''
+local apple = config.apple or {}
+local server = config.server or {}
+local icons_cfg = apple.icons or {}
+
+local targets = {"xcode"}
+if next(icons_cfg) ~= nil then table.insert(targets, "icons") end
+local has_server = next(server) ~= nil
+if has_server then
+  table.insert(targets, "cargo")
+  if server.dir and #glob.match(server.dir .. "/bundled-binaries") > 0 then
+    table.insert(targets, "bundled")
+  end
+end
+
+local requested = args[1] or "all"
+
+if requested == "-h" or requested == "--help" then
+  info("usage: admin clean [target|all]")
+  info("targets: " .. table.concat(targets, ", ") .. ", all (default)")
+  return
+end
+
+local to_run = {}
+if requested == "all" then
+  to_run = targets
+else
+  local found = false
+  for _, t in ipairs(targets) do
+    if t == requested then found = true end
+  end
+  if not found then
+    local avail = {}
+    for _, t in ipairs(targets) do table.insert(avail, t) end
+    table.insert(avail, "all")
+    err("unknown clean target: " .. requested .. " (available: " .. table.concat(avail, ", ") .. ")")
+    error("unknown clean target: " .. requested)
+  end
+  to_run = {requested}
+end
+
+set_log_context("clean", requested)
+
+local function derived_data_name()
+  if apple.derived_data_name then return apple.derived_data_name end
+  local project_path = apple.project_path
+  if not project_path then
+    local matches = glob.match("*.xcworkspace")
+    if #matches == 0 then matches = glob.match("*.xcodeproj") end
+    project_path = matches[1]
+  end
+  if not project_path then return nil end
+  local base = project_path:match("([^/]+)$") or project_path
+  base = base:gsub("%.xcworkspace$", ""):gsub("%.xcodeproj$", "")
+  return base
+end
+
+local function clean_xcode()
+  local scheme = apple.mac_scheme or apple.ios_scheme
+  if not scheme then
+    err("apple.mac_scheme or apple.ios_scheme required")
+    error("apple.mac_scheme or apple.ios_scheme required")
+  end
+  local name = derived_data_name() or scheme
+  local home = env("HOME") or ""
+  local pattern = home .. "/Library/Developer/Xcode/DerivedData/" .. name .. "-*"
+  info("rm -rf " .. pattern)
+  local success = run_cmd("rm -rf " .. pattern)
+  if not success then
+    err("clean xcode failed")
+    error("clean xcode failed")
+  end
+  ok("DerivedData cleaned")
+end
+
+local function clean_icons()
+  run_cmd("rm -rf tmp/icon-backup")
+  run_cmd("rm -rf tmp/icon-backup-tv")
+  ok("icon backups cleared — run `admin icons regenerate` to rebuild from [apple.icons]")
+end
+
+local function clean_cargo()
+  if not server.dir then
+    err("server.dir not set")
+    error("server.dir not set")
+  end
+  local success = run_cmd("rm -rf " .. server.dir .. "/target")
+  if success then
+    ok(server.dir .. "/target removed.")
+  end
+end
+
+local function clean_bundled()
+  if not server.dir then
+    err("server.dir not set")
+    error("server.dir not set")
+  end
+  local out_dir = server.dir .. "/bundled-binaries"
+  if #glob.match(out_dir) == 0 then
+    info(out_dir .. " not present — nothing to clean")
+    return
+  end
+  local success = run_cmd("rm -rf " .. out_dir)
+  if success then
+    ok(out_dir .. " removed.")
+  end
+end
+
+local runners = {xcode = clean_xcode, icons = clean_icons, cargo = clean_cargo, bundled = clean_bundled}
+for _, t in ipairs(to_run) do
+  runners[t]()
+end
+'''
+
+[actions.icons]
+kind = "lua"
+desc = "Icons: regenerate | swap-dev | restore"
+run = '''
+-- NOTE (admin-3rgp.37): a simplified port of admin_lib/apple.py's icon
+-- pipeline. [apple.icons].sizes is now required explicitly — the Python
+-- original auto-detected sizes from existing committed PNGs (or a fresh
+-- catalog's Contents.json), which needs an image-dimension-reading
+-- capability this pass does not add. Also not ported: the separate
+-- always-committed *-dev asset catalog (mac_dev_asset_dir/ios_dev_asset_dir),
+-- the Icon Composer .icon bundle path, and self-healing a stranded dev
+-- banner left by an interrupted process (register_cleanup / auto-restore).
+-- Filed as a follow-up rather than silently dropped.
+local icons_cfg = (config.apple or {}).icons or {}
+
+local KEY_MAP = {mac = "mac_asset_dir", ios = "ios_asset_dir", tv = "tv_asset_dir"}
+
+local function icon_dirs(keys)
+  local dirs = {}
+  for _, k in ipairs(keys) do
+    local rel = icons_cfg[KEY_MAP[k]]
+    if rel then dirs[k] = rel end
+  end
+  return dirs
+end
+
+local function generate_kwargs()
+  return {
+    bg_color = icons_cfg.bg_color,
+    glyph_text = icons_cfg.glyph_text,
+    glyph_svg = icons_cfg.glyph_svg,
+    glyph_color = icons_cfg.glyph_color,
+    glyph_scale = icons_cfg.glyph_scale,
+  }
+end
+
+local function do_regenerate()
+  local dirs = icon_dirs({"mac", "ios"})
+  local tv_dir = icon_dirs({"tv"}).tv
+  if next(dirs) == nil and not tv_dir then
+    err("no icon asset dirs configured in [apple.icons]")
+    error("no icon asset dirs configured")
+  end
+  local sizes = icons_cfg.sizes
+  if not sizes or #sizes == 0 then
+    err("[apple.icons].sizes required (e.g. [16, 32, 128, 256, 512, 1024])")
+    error("[apple.icons].sizes required")
+  end
+  local kwargs = generate_kwargs()
+  local any_success = false
+  for label, dir in pairs(dirs) do
+    if apple.generate_icons(sizes, dir, kwargs) then
+      ok(label .. ": regenerated " .. dir)
+      any_success = true
+    else
+      err(label .. ": icon generation failed")
+    end
+  end
+  if tv_dir then
+    if apple.generate_tv_icons(tv_dir, kwargs) then
+      ok("tv: regenerated brandassets in " .. tv_dir)
+      any_success = true
+    else
+      err("tv: icon generation failed")
+    end
+  end
+  if not any_success then
+    error("icon regeneration failed")
+  end
+end
+
+local sub = args[1] or "regenerate"
+if sub == "regenerate" then
+  do_regenerate()
+elseif sub == "swap-dev" then
+  local dirs = icon_dirs({"mac", "ios"})
+  if next(dirs) == nil then
+    err("no icons configured in [apple.icons]")
+    error("no icons configured")
+  end
+  apple.backup_icons(dirs, "tmp/icon-backup")
+  if apple.swap_dev_icons_banner(dirs) then
+    ok("dev icons swapped in — `icons restore` puts the originals back")
+  else
+    error("swapping dev icons failed")
+  end
+elseif sub == "restore" then
+  local dirs = icon_dirs({"mac", "ios"})
+  if next(dirs) == nil then
+    err("no icons configured in [apple.icons]")
+    error("no icons configured")
+  end
+  apple.restore_icons(dirs, "tmp/icon-backup")
+  ok("icons restored from tmp/icon-backup")
+elseif sub == "-h" or sub == "--help" then
+  info("usage: admin icons [regenerate|swap-dev|restore]")
+else
+  err("unknown subcommand: " .. sub)
+  error("unknown subcommand: " .. sub)
+end
+'''
+
+[actions.reload]
+kind = "shell"
+desc = "Signal a running './admin dev' to rebuild and relaunch"
+run = '''
+pid_file="/tmp/admin-run.pid"
+if [ ! -f "$pid_file" ]; then
+  echo "no admin dev process found (no PID file at $pid_file)" >&2
+  exit 1
+fi
+pid=$(cat "$pid_file")
+if ! kill -0 "$pid" 2>/dev/null; then
+  echo "PID $pid is not running (stale PID file)" >&2
+  rm -f "$pid_file"
+  exit 1
+fi
+kill -USR1 "$pid"
+echo "reload signal sent to PID $pid"
+'''
+
+[actions.appid]
+kind = "lua"
+desc = "App IDs: report, register, enable capabilities (not ported — see follow-up)"
+run = '''
+-- NOTE (admin-3rgp.37): admin_lib/apple.py's appid() calls into
+-- admin_lib/appstoreconnect.py (JWT-signed App Store Connect API requests —
+-- create/find a bundle id, list/enable capabilities). No Lua/Go binding for
+-- the App Store Connect API exists yet (apple.app_store_connect_auth_flags
+-- only checks whether credentials are configured, it does not call the
+-- API), so this action cannot be faithfully ported in this pass. Filed as a
+-- follow-up rather than silently dropped or half-implemented against a
+-- fabricated API client.
+err("App IDs management is not ported to the Go tool yet")
+info("admin_lib/appstoreconnect.py has no Go/Lua port — see the tracker for the follow-up")
+error("appid not ported")
+'''

@@ -1,0 +1,244 @@
+name = "forge-engine"
+modules = ["core"]
+
+[commands.build]
+desc = "Build the engine for a target OS (mac | windows | linux)"
+steps = ["build"]
+group = 1
+priority = 10
+
+[commands.dev]
+desc = "Run a sample game (auto-picks if one, picker if many)"
+steps = ["dev"]
+group = 1
+priority = 20
+
+[commands.test]
+desc = "Run unit tests (none wired up yet)"
+steps = ["test"]
+group = 2
+priority = 10
+
+[commands.clean]
+desc = "Remove engine/zig-cache and engine/zig-out"
+steps = ["clean"]
+group = 2
+priority = 20
+
+[actions.build]
+kind = "lua"
+desc = "Build the engine for a target OS (mac | windows | linux)"
+run = '''
+local targets = {
+  {key = "mac", cmd = "cd engine && ./zig build", description = "native (host arch)"},
+  {key = "windows", cmd = "cd engine && ./zig build -Dtarget=x86_64-windows", description = "x86_64-windows / D3D11"},
+  {key = "linux", cmd = "cd engine && ./zig build -Dtarget=x86_64-linux-gnu", description = "x86_64-linux-gnu / GL3.3 (needs Linux host)"},
+}
+local by_key = {}
+for _, t in ipairs(targets) do by_key[t.key] = t end
+local aliases = {win = "windows", macos = "mac", osx = "mac"}
+
+local target
+if args[1] then
+  target = aliases[args[1]] or args[1]
+  if not by_key[target] then
+    err("unknown build target: " .. args[1])
+    info("available: mac, windows, linux")
+    error("unknown build target: " .. args[1])
+  end
+else
+  target = pick_target(targets, "build — select target")
+  if not target then return end
+end
+
+set_log_context("build", target)
+local t = by_key[target]
+info("building for " .. target .. ": " .. t.cmd)
+local success = run_cmd(t.cmd)
+if not success then
+  err("build failed")
+  error("build failed")
+end
+ok("engine built for " .. target)
+'''
+
+[actions.dev]
+kind = "lua"
+desc = "Run a sample game (auto-picks if one, picker if many)"
+run = '''
+-- Discover sample games under sample-games/ purely from glob matches (a Lua
+-- body has no directory-listing capability): a folder with main.lua is a
+-- single game, one with forge.workspace.toml is a multi-project workspace.
+local function display_name(folder)
+  return folder:match("^%d+%-(.+)$") or folder
+end
+
+local function discover()
+  local folders, kinds = {}, {}
+  for _, m in ipairs(glob.match("sample-games/*/main.lua")) do
+    local folder = m:match("([^/]+)/[^/]+$")
+    if folder then
+      table.insert(folders, folder)
+      kinds[folder] = "game"
+    end
+  end
+  for _, m in ipairs(glob.match("sample-games/*/forge.workspace.toml")) do
+    local folder = m:match("([^/]+)/[^/]+$")
+    if folder then
+      table.insert(folders, folder)
+      kinds[folder] = "workspace"
+    end
+  end
+  table.sort(folders)
+  return folders, kinds
+end
+
+local function pick_sample()
+  local folders, kinds = discover()
+  if #folders == 0 then
+    err("no sample games found (sample-games/*/main.lua or forge.workspace.toml)")
+    info("create one, e.g. sample-games/mygame/main.lua")
+    error("no sample games found")
+  end
+
+  if args[1] then
+    for _, folder in ipairs(folders) do
+      if display_name(folder) == args[1] or folder == args[1] then
+        return folder, kinds[folder]
+      end
+    end
+    local displays = {}
+    for _, folder in ipairs(folders) do
+      table.insert(displays, display_name(folder))
+    end
+    err("unknown sample: " .. args[1])
+    info("available: " .. table.concat(displays, ", "))
+    error("unknown sample: " .. args[1])
+  end
+
+  if #folders == 1 then
+    return folders[1], kinds[folders[1]]
+  end
+
+  local entries = {}
+  for _, folder in ipairs(folders) do
+    local label = display_name(folder)
+    if kinds[folder] == "workspace" then
+      label = label .. "  [workspace]"
+    end
+    table.insert(entries, {key = folder, description = label})
+  end
+  local choice = pick_target(entries, "dev — select sample game")
+  if not choice then
+    return nil, nil
+  end
+  return choice, kinds[choice]
+end
+
+-- Reads a forge.workspace.toml's `projects = ["pattern", ...]` array (a
+-- small, hand-written pattern match rather than a full TOML parser — Lua has
+-- no io/toml capability, and this file's own shape is narrow enough that
+-- extracting quoted strings between the array's brackets is sufficient).
+local function workspace_projects(folder)
+  local path = "sample-games/" .. folder .. "/forge.workspace.toml"
+  local text = fs.read(path)
+  if not text then
+    warn("could not read " .. path)
+    return {}
+  end
+  local body = text:match("projects%s*=%s*%[(.-)%]")
+  if not body then
+    warn("forge.workspace.toml has no 'projects' array")
+    return {}
+  end
+  local dirs = {}
+  for pat in body:gmatch('"([^"]*)"') do
+    local matches = glob.match("sample-games/" .. folder .. "/" .. pat)
+    if #matches == 0 then
+      warn("workspace project pattern matched nothing: " .. pat)
+    else
+      local found = 0
+      for _, m in ipairs(matches) do
+        if #glob.match(m .. "/main.lua") > 0 then
+          table.insert(dirs, m)
+          found = found + 1
+        end
+      end
+      if found == 0 then
+        warn("workspace project pattern matched but no main.lua found: " .. pat)
+      end
+    end
+  end
+  return dirs
+end
+
+local game, kind = pick_sample()
+if not game then return end
+
+local binary = "engine/zig-out/bin/forge"
+if #glob.match(binary) == 0 then
+  info("engine binary missing, building first")
+  local success = run_cmd("cd engine && ./zig build")
+  if not success then
+    err("build failed")
+    error("build failed")
+  end
+end
+
+if kind ~= "workspace" then
+  local project_dir = "sample-games/" .. game
+  local cmd = binary .. " " .. project_dir
+  info("running: " .. cmd)
+  local success = run_cmd(cmd)
+  if not success then
+    error("dev run failed for " .. project_dir)
+  end
+  return
+end
+
+local project_dirs = workspace_projects(game)
+if #project_dirs == 0 then
+  err("workspace has no launchable projects (need main.lua in each project dir)")
+  error("workspace has no launchable projects")
+end
+info("launching workspace \"" .. game .. "\" — " .. #project_dirs .. " projects")
+for _, pd in ipairs(project_dirs) do
+  info("  " .. pd)
+end
+local commands = {}
+for _, pd in ipairs(project_dirs) do
+  local tag = pd:match("([^/]+)$") or pd
+  table.insert(commands, {tag = tag, cmd = binary .. " " .. pd})
+end
+local code = run_group(commands)
+if code ~= 0 then
+  error("workspace exited with code " .. code)
+end
+'''
+
+[actions.test]
+kind = "lua"
+desc = "Run unit tests (none wired up yet)"
+run = '''
+info("no tests configured yet")
+info("when tests exist, set [commands.test.run] in admin.toml or extend this archetype")
+'''
+
+[actions.clean]
+kind = "lua"
+desc = "Remove engine/zig-cache and engine/zig-out"
+run = '''
+local removed = 0
+for _, p in ipairs({"engine/zig-cache", "engine/zig-out"}) do
+  if #glob.match(p) > 0 then
+    info("rm -rf " .. p)
+    run_cmd("rm -rf " .. p)
+    removed = removed + 1
+  end
+end
+if removed > 0 then
+  ok("clean done")
+else
+  info("nothing to clean")
+end
+'''

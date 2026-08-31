@@ -1,0 +1,46 @@
+name = "raylib-game"
+modules = ["core"]
+
+[commands.build]
+desc = "Configure + build (CMake)"
+steps = ["cmake-build"]
+group = 1
+priority = 10
+
+[commands.dev]
+desc = "Build + run the game"
+steps = ["cmake-build", "run"]
+group = 1
+priority = 20
+
+[commands.test]
+desc = "Build + smoke-run the game (auto-exits)"
+steps = ["cmake-build", "smoke"]
+group = 2
+priority = 10
+
+[commands.clean]
+desc = "Remove build artifacts"
+steps = ["clean"]
+group = 2
+priority = 20
+
+[actions.cmake-build]
+kind = "raylib"
+run = "build"
+desc = "Configure + build (CMake)"
+
+[actions.run]
+kind = "raylib"
+run = "run"
+desc = "Run the built game"
+
+[actions.smoke]
+kind = "raylib"
+run = "smoke"
+desc = "Smoke-run the game (auto-exits)"
+
+[actions.clean]
+kind = "raylib"
+run = "clean"
+desc = "Remove build artifacts"

@@ -1,0 +1,30 @@
+ admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+  Work 12    Repo    Beads 227    Config                                                        
+                                                                                                
+  Commands                                                     │ deploy                         
+ ◇ build           shell    Compile the binary                 │ sequence  ·  (manifest)        
+ ◇ check           shell    Parse and resolve admin.toml       │                                
+ ◆ deploy          sequence Install to ~/.admin, provision the…│ last run                       
+ ◇ docs            running  vitepress dev · localhost:5… pane 1│   18m ago                      
+ ◇ logs            logs     Tail a log target                  │   exit 0 · 41s                 
+ ◇ retire-merged   workflow Remove worktrees whose branch is m…│                                
+ ◇ test            running  internal/tui · 00:41         pane 6│ log                            
+                                                               │   ~/.admin/logs/deploy.log     
+  Workers                                                      │                                
+ ◇ admin-3rgp.36   running  writing internal/lua/host.go pane 3│ steps                          
+ ◇ admin-3rgp.7    waiting  needs input: root command n… pane 4│   1 shell                      
+ ◇ admin-3rgp.33   failed   go test ./internal/detect F… pane 5│     bash install.sh            
+                                                               │     from simple                
+                                                               │   2 lua                        
+                                                               │     scripts/provision.lua      
+                                                               │     from apple                 
+                                                               │   3 shell                      
+                                                               │     admin check .              
+                                                               │     from (manifest)            
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ move · ↵ run or attach · k kill · r retry · ←→ tab · q quit                                 

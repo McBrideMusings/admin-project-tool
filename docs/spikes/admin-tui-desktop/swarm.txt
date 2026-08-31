@@ -1,0 +1,30 @@
+ admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+  Work 12    Repo    Beads 227    Config                                                        
+                                                                                                
+  Commands                                                     │ admin-3rgp.36                  
+ ◇ build           shell    Compile the binary                 │ running  ·  pane 3             
+ ◇ check           shell    Parse and resolve admin.toml       │                                
+ ◇ deploy          sequence Install to ~/.admin, provision the…│ now                            
+ ◇ docs            running  vitepress dev · localhost:5… pane 1│   writing internal/lua/host.go 
+ ◇ logs            logs     Tail a log target                  │                                
+ ◇ retire-merged   workflow Remove worktrees whose branch is m…│ branch                         
+ ◇ test            running  internal/tui · 00:41         pane 6│   embed-lua-vm                 
+                                                               │ worktree                       
+  Workers                                                      │   ~/.worktrees/…/embed-lua-vm  
+ ◆ admin-3rgp.36   running  writing internal/lua/host.go pane 3│ elapsed                        
+ ◇ admin-3rgp.7    waiting  needs input: root command n… pane 4│   12m                          
+ ◇ admin-3rgp.33   failed   go test ./internal/detect F… pane 5│                                
+                                                               │ a attach   k kill   r retry    
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ move · ↵ run or attach · k kill · r retry · ←→ tab · q quit                                 

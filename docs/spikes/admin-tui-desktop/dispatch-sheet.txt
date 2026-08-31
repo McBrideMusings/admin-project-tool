@@ -1,0 +1,30 @@
+ admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+  Work 12    Repo    Beads 227    Config                                                        
+                                                                                                
+  Commands                                                     │ build                          
+ ◆ build           shell    Compile the binary                 │ shell  ·  go-cli               
+ ◇ check           shell    Parse and resolve admin.toml       │                                
+ ◇ deploy          sequence Install to ~/.admin, provision the…│ last run                       
+ ◇ docs            running  vitepress dev · localhost:5… pane 1│   2h ago                       
+ ◇ logs            logs     Tail a log target                  │                                
+ ◇ retire-merged   workflow Remove worktrees whose branch is m…│ log                            
+ ◇ test          ┌────────────────────────────────────────────────────────────┐s/build.log      
+                 │  Dispatch admin-3rgp.29                                    │                 
+  Workers        │                                                            │                 
+ ◇ admin-3rgp.36 │    agent     claude                                        │                 
+ ◇ admin-3rgp.7  │    model     sonnet                                        │/...             
+ ◇ admin-3rgp.33 │    branch    two-deployment-paths                          │i                
+                 │    lands to  feat/one-tool-go-merge                        │                 
+                 │                                                            │                 
+                 │    ⏎ dispatch     e edit     esc cancel                    │                 
+                 └────────────────────────────────────────────────────────────┘                 
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+────────────────────────────────────────────────────────────────────────────────────────────────
+ ⏎ dispatch · e edit · esc cancel                                                               

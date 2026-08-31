@@ -1,0 +1,1116 @@
+name = "docker"
+modules = ["core", "docker", "remote", "log_format", "log_columns", "unraid"]
+order = ["build", "deploy", "---", "logs", "diff", "open"]
+
+[urls]
+prod = "${PROD_URL:-http://localhost}"
+
+[commands.build]
+desc = "Build the Docker image — locally for linux/amd64, or on the target when [docker_build].on_host"
+steps = ["build"]
+
+[commands.deploy]
+desc = "Deploy to Unraid — `image` (default), `files` ([deploy] mirror dir), or `all`; --dry-run to preview"
+steps = ["deploy"]
+
+[commands.deploy.env]
+ADMIN_LOCAL = "${DEPLOY_LOCAL:-false}"
+
+[commands.diff]
+desc = "Show run-config drift between current container and last deploy; --format json for CI"
+steps = ["diff"]
+
+[commands.diff.env]
+ADMIN_LOCAL = "${DEPLOY_LOCAL:-false}"
+
+[commands.logs]
+desc = "Tail logs — `dev` (newest local log) or `live` (container); --from DD:HH:MM:SS rolls back, --tail N --no-follow prints and exits"
+steps = ["logs"]
+
+[commands.logs.env]
+ADMIN_LOCAL = "${DEPLOY_LOCAL:-false}"
+
+[commands.reload]
+desc = "Build+run with reload loop (press r or SIGUSR1 to rebuild)"
+steps = ["reload"]
+
+[commands.run-args]
+desc = "Print [docker_run] rendered to shlex-quoted `docker run` args (for external native-build scripts)"
+steps = ["run-args"]
+log = false
+
+[commands.open]
+desc = "Open the deployed app URL"
+steps = ["open"]
+
+[actions.build]
+kind = "lua"
+desc = "Build the Docker image — locally for linux/amd64, or on the target when [docker_build].on_host"
+run = '''
+-- Go port (admin-3rgp.37) of admin_lib/docker.py's docker_build/remote_docker_build,
+-- as called from the docker archetype's "build" action.
+local run_cfg = config.docker_run or {}
+local build_cfg = config.docker_build or {}
+local target = run_cfg.target
+local image = env("APP_IMAGE")
+
+local function shq(s)
+  return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
+-- Brace-matched ${VAR} / ${VAR:-default} expansion — the Lua port of
+-- admin_lib/core.py::iter_env_refs + _expand_env_refs, minus COMPUTED_VARS
+-- (e.g. ${LAN_IP}): env() only reads real process env vars, so a computed
+-- name comes back nil and is treated as unresolved, same as any other unset
+-- var with no default. Returns (expanded, all_resolved).
+local function expand_refs(value)
+  if type(value) ~= "string" or not value:find("${", 1, true) then
+    return value, true
+  end
+  local out, pos, all_ok = {}, 1, true
+  while true do
+    local s = value:find("${", pos, true)
+    if not s then
+      table.insert(out, value:sub(pos))
+      break
+    end
+    table.insert(out, value:sub(pos, s - 1))
+    local depth, j, close = 1, s + 2, nil
+    while j <= #value do
+      local c = value:sub(j, j)
+      if c == "{" then depth = depth + 1
+      elseif c == "}" then
+        depth = depth - 1
+        if depth == 0 then close = j break end
+      end
+      j = j + 1
+    end
+    if not close then
+      table.insert(out, value:sub(s))
+      pos = #value + 1
+      break
+    end
+    local inner = value:sub(s + 2, close - 1)
+    local sep_depth, sep = 0, nil
+    for k = 1, #inner do
+      local c = inner:sub(k, k)
+      if c == "{" then sep_depth = sep_depth + 1
+      elseif c == "}" then sep_depth = sep_depth - 1
+      elseif c == ":" and sep_depth == 0 and inner:sub(k + 1, k + 1) == "-" then
+        sep = k
+        break
+      end
+    end
+    local name = sep and inner:sub(1, sep - 1) or inner
+    local default = sep and inner:sub(sep + 2) or nil
+    local v = env(name)
+    if v ~= nil then
+      table.insert(out, v)
+    elseif default ~= nil then
+      local sub, sub_ok = expand_refs(default)
+      table.insert(out, sub)
+      if not sub_ok then all_ok = false end
+    else
+      all_ok = false
+      table.insert(out, value:sub(s, close))
+    end
+    pos = close + 1
+  end
+  return table.concat(out), all_ok
+end
+
+local function is_local_host(host)
+  local al = (env("ADMIN_LOCAL") or ""):lower()
+  if al == "1" or al == "true" or al == "yes" then return true end
+  local addr = host:match("@(.+)$") or host
+  return addr == "localhost" or addr == "127.0.0.1" or addr == "::1"
+end
+
+if build_cfg.on_host then
+  local user = env("UNRAID_USER") or "root"
+  local host = user .. "@" .. (env("UNRAID_HOST") or "")
+  local context, ctx_ok = expand_refs(build_cfg.context or "")
+  if not build_cfg.context or build_cfg.context == "" or not ctx_ok or context == "" then
+    err("[docker_build].on_host is set but 'context' is missing or references an unset env var")
+    error("docker build: missing context")
+  end
+  local build_cmd = "cd " .. shq(context) .. " && docker build "
+  if target then build_cmd = build_cmd .. "--target " .. shq(target) .. " " end
+  build_cmd = build_cmd .. "-t " .. shq(image) .. " ."
+  local local_build = is_local_host(host)
+  info("Building " .. tostring(image) .. " on " .. (local_build and "this host" or host) .. " in " .. context .. "...")
+  local cmd = local_build and build_cmd or ("ssh " .. shq(host) .. " " .. shq(build_cmd))
+  if not run_cmd(cmd) then error("docker build (remote) failed") end
+else
+  local target_note = target and (" (target=" .. target .. ")") or ""
+  info("Building Docker image: " .. tostring(image) .. target_note .. "...")
+  local cmd = "docker build --platform linux/amd64 "
+  if target then cmd = cmd .. "--target " .. shq(target) .. " " end
+  cmd = cmd .. "-t " .. shq(image) .. " ."
+  if not run_cmd(cmd) then error("docker build failed") end
+end
+'''
+
+[actions.deploy]
+kind = "lua"
+desc = "Deploy to Unraid — `image` (default, rebuild + recreate from [docker_run]), `files` ([deploy] mirror dir only), or `all`; --force to override drift, --dry-run to preview"
+run = '''
+-- Go port (admin-3rgp.37) of admin_lib/docker.py::deploy_dispatch +
+-- remote_recreate_container, via the shared dockerrun cfg<->argv/drift/
+-- deploy-sync-plan bindings (also used by run-args and diff).
+--
+-- Fixes admin-9bex along the way: [deploy].chown and post_sync are rendered
+-- and invoked by dockerrun.build_deploy_sync_plan, the ONLY implementation
+-- of a [deploy] sync in this tool — there is no second, generic sync path
+-- (like admin_lib/interp.py's `_make_sync`) that could silently read
+-- neither key.
+local run_cfg = config.docker_run or {}
+local deploy_cfg = config.deploy
+local build_cfg = config.docker_build or {}
+local template_cfg = config.install_template or {}
+-- An empty [docker_run] table (declared or absent) means "no TOML-canonical
+-- config" — the legacy inspect-and-recreate path below, matching
+-- admin_lib's target_cfg=None branch of remote_recreate_container.
+local run_cfg_present = false
+for _ in pairs(run_cfg) do run_cfg_present = true break end
+
+local function shq(s)
+  return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
+-- Brace-matched ${VAR}/${VAR:-default} expansion — mirrors dockerrun's Go
+-- ExpandEnvRefs for the handful of values this body itself expands (a host
+-- string, an on_host build context) rather than handing to a dockerrun
+-- renderer that expands internally.
+local function expand_refs(value)
+  if type(value) ~= "string" or not value:find("${", 1, true) then
+    return value, true
+  end
+  local out, pos, all_ok = {}, 1, true
+  while true do
+    local s = value:find("${", pos, true)
+    if not s then
+      table.insert(out, value:sub(pos))
+      break
+    end
+    table.insert(out, value:sub(pos, s - 1))
+    local depth, j, close = 1, s + 2, nil
+    while j <= #value do
+      local c = value:sub(j, j)
+      if c == "{" then depth = depth + 1
+      elseif c == "}" then
+        depth = depth - 1
+        if depth == 0 then close = j break end
+      end
+      j = j + 1
+    end
+    if not close then
+      table.insert(out, value:sub(s))
+      pos = #value + 1
+      break
+    end
+    local inner = value:sub(s + 2, close - 1)
+    local sep_depth, sep = 0, nil
+    for k = 1, #inner do
+      local c = inner:sub(k, k)
+      if c == "{" then sep_depth = sep_depth + 1
+      elseif c == "}" then sep_depth = sep_depth - 1
+      elseif c == ":" and sep_depth == 0 and inner:sub(k + 1, k + 1) == "-" then
+        sep = k
+        break
+      end
+    end
+    local name = sep and inner:sub(1, sep - 1) or inner
+    local default = sep and inner:sub(sep + 2) or nil
+    local v = env(name)
+    if v ~= nil then
+      table.insert(out, v)
+    elseif default ~= nil then
+      local sub, sub_ok = expand_refs(default)
+      table.insert(out, sub)
+      if not sub_ok then all_ok = false end
+    else
+      all_ok = false
+      table.insert(out, value:sub(s, close))
+    end
+    pos = close + 1
+  end
+  return table.concat(out), all_ok
+end
+
+local function is_local_host(host)
+  local al = (env("ADMIN_LOCAL") or ""):lower()
+  if al == "1" or al == "true" or al == "yes" then return true end
+  local addr = host:match("@(.+)$") or host
+  return addr == "localhost" or addr == "127.0.0.1" or addr == "::1"
+end
+
+-- ---- parse args ----
+for _, a in ipairs(args) do
+  if a == "--help" or a == "-h" then
+    print("Usage: admin deploy [image|files|all] [--dry-run] [--force]\n\n" ..
+          "  image  rebuild the image and recreate the container (default)\n" ..
+          "  files  sync the [deploy] mirror directory only\n" ..
+          "  all    sync the mirror directory, then the image")
+    return
+  end
+end
+
+local target, dry_run, force = nil, false, false
+for _, a in ipairs(args) do
+  if a:sub(1, 1) == "-" then
+    if a ~= "--dry-run" and a ~= "--force" then
+      err("Unknown deploy flag: '" .. a .. "' (expected --dry-run or --force)")
+      error("docker deploy: bad flag")
+    end
+    if a == "--dry-run" then dry_run = true else force = true end
+  elseif a ~= "image" and a ~= "files" and a ~= "all" then
+    err("Unknown deploy target: '" .. a .. "' (expected image, files, or all)")
+    error("docker deploy: bad target")
+  elseif target ~= nil then
+    err("Deploy target given twice: '" .. target .. "' and '" .. a .. "' (expected exactly one of image, files, or all)")
+    error("docker deploy: duplicate target")
+  else
+    target = a
+  end
+end
+
+if target == nil then
+  if deploy_cfg then
+    -- pick_target degrades to nil on a non-TTY exactly like "logs"' own
+    -- picker above — a deliberate, already-shipped simplification of
+    -- admin_lib's isatty-gated default-to-"image": for a safety-critical
+    -- deploy, "do nothing when nothing was confirmed" is the safer
+    -- direction to simplify in, and it keeps every picker in this
+    -- archetype behaving the same way.
+    target = pick_target({
+      {key = "image", description = "image  rebuild the image and recreate the container"},
+      {key = "files", description = "files  sync the mirror directory only"},
+      {key = "all", description = "all    sync the mirror directory, then the image"},
+    }, "what to deploy?")
+    if not target then return end
+  else
+    target = "image"
+  end
+end
+
+-- ---- files sync ([deploy]) ----
+if target == "files" or target == "all" then
+  if not deploy_cfg then
+    err("No [deploy] table in admin.toml — nothing to sync.")
+    print("\n  Declare the local directory that mirrors the host, e.g.\n\n" ..
+          "    [deploy]\n" ..
+          '    src  = "deploy/appdata"\n' ..
+          '    dest = "/mnt/user/appdata/my-app"\n' ..
+          '    host = "${UNRAID_USER:-root}@${UNRAID_HOST}"\n')
+    error("docker deploy: no [deploy] table")
+  end
+
+  local deploy_host_expanded = ""
+  if deploy_cfg.host then
+    deploy_host_expanded = expand_refs(tostring(deploy_cfg.host))
+  end
+  local files_is_local = deploy_host_expanded ~= "" and is_local_host(deploy_host_expanded)
+
+  local plan, plan_errs = dockerrun.build_deploy_sync_plan(deploy_cfg, nil, files_is_local, dry_run)
+  if not plan then
+    for _, e in ipairs(plan_errs) do err(e) end
+    error("docker deploy: [deploy] sync failed")
+  end
+
+  if plan.is_remote then
+    info("Syncing to " .. plan.target .. (dry_run and " (dry run)" or ""))
+    if not run_cmd(plan.rsync_cmd) then
+      err("rsync failed")
+      error("docker deploy: rsync failed")
+    end
+    ok("Synced: " .. plan.target)
+  else
+    if plan.chown ~= "" then
+      warn("chown=" .. plan.chown .. " has no effect on a local copy — files stay owned by whoever runs the sync")
+    end
+    if dry_run then
+      info("Would copy " .. plan.src .. "/ -> " .. plan.dest .. "/ (dry run)")
+    else
+      info("Copying to " .. plan.dest)
+      local delete_flag = (deploy_cfg.delete == true) and " --delete" or ""
+      local copy_cmd = "mkdir -p " .. shq(plan.dest) .. " && rsync -a" .. delete_flag .. " " ..
+                        shq(plan.src) .. "/ " .. shq(plan.dest) .. "/"
+      if not run_cmd(copy_cmd) then
+        err("copy failed")
+        error("docker deploy: local copy failed")
+      end
+      ok("Synced: " .. plan.dest)
+    end
+  end
+
+  -- post_sync ALWAYS runs after a successful sync — admin-9bex's fix: no
+  -- gate here can silently skip it, because there is no second code path
+  -- that could reach this point with rc != 0 (every failure above already
+  -- raised a Lua error and stopped the action).
+  if plan.post_sync_cmd ~= "" then
+    if dry_run then
+      info("Would run post_sync: " .. plan.post_sync_cmd)
+    else
+      info("post_sync: " .. plan.post_sync_cmd)
+      local post_ok
+      if plan.host ~= "" and not files_is_local then
+        post_ok = run_cmd("ssh " .. shq(plan.host) .. " " .. shq(plan.post_sync_cmd))
+      else
+        post_ok = run_cmd(plan.post_sync_cmd)
+      end
+      if not post_ok then
+        -- Loud, but not fatal — the files are already there, and reporting
+        -- success here would hide a half-finished deploy.
+        err("post_sync failed: " .. plan.post_sync_cmd)
+      end
+    end
+  end
+
+  if target == "files" then return end
+end
+
+-- ---- image rebuild ----
+local user = env("UNRAID_USER") or "root"
+local host = user .. "@" .. (env("UNRAID_HOST") or "")
+local image = env("APP_IMAGE")
+local build_target = run_cfg.target
+local local_deploy = is_local_host(host)
+
+local on_host = build_cfg.on_host and true or false
+local context = nil
+if on_host then
+  local ctx, ctx_ok = expand_refs(build_cfg.context or "")
+  if not build_cfg.context or build_cfg.context == "" or not ctx_ok or ctx == "" then
+    err("[docker_build].on_host is set but 'context' is missing or references an unset env var")
+    error("docker deploy: missing on_host context")
+  end
+  context = ctx
+end
+
+if not dry_run then
+  -- ensure_docker_template: sync the Unraid GUI template every deploy,
+  -- non-fatal — admin_lib/unraid.py::ensure_docker_template.
+  local tsrc = template_cfg.src or "deploy/unraid-template.xml"
+  if fs.read(tsrc) then
+    local tname = template_cfg.name
+    if not tname or tname == "" then
+      tname = dockerrun.default_container_name(image or "")
+    end
+    local thost = env("UNRAID_HOST") or ""
+    if tname == "" then
+      warn("ensure-template: cannot determine template name — set APP_IMAGE or [install_template].name")
+    elseif thost ~= "" then
+      local tuser = env("UNRAID_USER") or "root"
+      local tdst = "/boot/config/plugins/dockerMan/templates-user/my-" .. tname .. ".xml"
+      info("Syncing Unraid template → " .. tuser .. "@" .. thost .. ":" .. tdst)
+      if run_cmd("scp " .. shq(tsrc) .. " " .. shq(tuser .. "@" .. thost .. ":" .. tdst)) then
+        ok("Template synced as my-" .. tname .. ".xml in Unraid Docker GUI")
+      else
+        warn("Template sync failed (non-fatal) — run: admin install-template")
+      end
+    end
+  end
+
+  if on_host then
+    local build_cmd = "cd " .. shq(context) .. " && docker build "
+    if build_target then build_cmd = build_cmd .. "--target " .. shq(build_target) .. " " end
+    build_cmd = build_cmd .. "-t " .. shq(image) .. " ."
+    local local_build = is_local_host(host)
+    info("Building " .. tostring(image) .. " on " .. (local_build and "this host" or host) .. " in " .. context .. "...")
+    local cmd = local_build and build_cmd or ("ssh " .. shq(host) .. " " .. shq(build_cmd))
+    if not run_cmd(cmd) then error("docker deploy: remote build failed") end
+  else
+    local target_note = build_target and (" (target=" .. build_target .. ")") or ""
+    info("Building Docker image: " .. tostring(image) .. target_note .. "...")
+    local cmd = "docker build --platform linux/amd64 "
+    if build_target then cmd = cmd .. "--target " .. shq(build_target) .. " " end
+    cmd = cmd .. "-t " .. shq(image) .. " ."
+    if not run_cmd(cmd) then error("docker deploy: build failed") end
+  end
+end
+
+-- ---- remote_recreate_container ----
+local container = dockerrun.default_container_name(image or "")
+local location = local_deploy and "locally" or ("on " .. host)
+
+info("Inspecting existing container '" .. container .. "' " .. location .. "...")
+local inspect_shell = "docker inspect " .. shq(container)
+local inspect_cmd = local_deploy and inspect_shell or ("ssh " .. shq(host) .. " " .. shq(inspect_shell))
+local inspect_ok, inspect_out = run_cmd(inspect_cmd)
+local trimmed = (inspect_out or ""):match("^%s*(.-)%s*$")
+local container_exists = inspect_ok and trimmed ~= "" and trimmed ~= "[]"
+
+local inspect = nil
+if container_exists then
+  local decoded = json.decode(inspect_out)
+  if type(decoded) == "table" and decoded[1] then inspect = decoded[1] end
+  if inspect == nil then
+    err("Could not parse docker inspect output")
+    error("docker deploy: bad inspect json")
+  end
+end
+
+if not container_exists and not run_cfg_present then
+  err("Container '" .. container .. "' does not exist " .. location .. ".")
+  print("\n  Create it from the Unraid Docker GUI using the template," ..
+        " then re-run this command.\n")
+  error("docker deploy: container missing")
+end
+
+local run_env_vars = nil
+local target_argv
+
+if run_cfg_present then
+  local env_file_vars = nil
+  if run_cfg.env_file then
+    local text = fs.read(run_cfg.env_file)
+    if text then env_file_vars = dockerrun.parse_env_text(text) end
+  end
+
+  if not local_deploy then
+    local remote_env_file = run_cfg.remote_env_file
+    if remote_env_file then
+      local cat_ok, cat_out = run_cmd("ssh " .. shq(host) .. " " .. shq("cat " .. shq(remote_env_file)))
+      run_env_vars = cat_ok and dockerrun.parse_env_text(cat_out) or {}
+    else
+      local needed = dockerrun.mount_env_deps(run_cfg)
+      if #needed > 0 then
+        local seen, sorted = {}, {}
+        for _, n in ipairs(needed) do
+          if not seen[n] then seen[n] = true; table.insert(sorted, n) end
+        end
+        table.sort(sorted)
+        err("docker_run references " .. table.concat(sorted, ", ") ..
+            " to resolve an optional_mounts/bind_mounts host path — reading it here would " ..
+            "read this deploy machine's value and mount it on " .. host .. ". Set [docker_run]." ..
+            "remote_env_file to a path on " .. host .. " that admin can read over ssh.")
+        error("docker deploy: unresolved mount env var")
+      end
+      -- run_env_vars stays nil: dockerrun falls back to process env, matching
+      -- admin_lib's env_vars=None -> os.environ default.
+    end
+  end
+
+  target_argv = dockerrun.build_args_from_cfg(run_cfg, run_env_vars, env_file_vars)
+
+  if container_exists then
+    local img_shell = "docker image inspect " .. shq(image)
+    local img_ok, img_out = run_cmd(local_deploy and img_shell or ("ssh " .. shq(host) .. " " .. shq(img_shell)))
+    local img_env, img_labels, img_workdir, img_user = {}, {}, "", ""
+    if img_ok and (img_out or ""):match("%S") then
+      local parsed = json.decode(img_out)
+      if type(parsed) == "table" and parsed[1] and parsed[1].Config then
+        local c = parsed[1].Config
+        img_env = c.Env or {}
+        img_labels = c.Labels or {}
+        img_workdir = c.WorkingDir or ""
+        img_user = c.User or ""
+      end
+    end
+    local live_argv = dockerrun.live_argv_for_drift(inspect, img_env, img_labels, img_workdir, img_user, run_cfg)
+    local target_only, live_only = dockerrun.compute_drift(target_argv, live_argv)
+    if #target_only > 0 or #live_only > 0 then
+      if force then
+        warn("Drift detected — proceeding with --force (live state will be discarded):")
+        print(dockerrun.format_drift_report(target_only, live_only, false))
+      else
+        err(dockerrun.format_drift_report(target_only, live_only, true))
+        error("docker deploy: drift refusal")
+      end
+    else
+      info("No drift between live container and [docker_run] — proceeding")
+    end
+  end
+else
+  target_argv = dockerrun.build_args_from_inspect(inspect)
+end
+
+local restore_image = inspect and dockerrun.restore_image_from_inspect(inspect, image) or image
+
+local run_parts = {"docker", "run", "-d", "--name", container}
+for _, a in ipairs(target_argv) do table.insert(run_parts, a) end
+table.insert(run_parts, image)
+local run_quoted = {}
+for _, p in ipairs(run_parts) do table.insert(run_quoted, shq(p)) end
+local remote_run = table.concat(run_quoted, " ")
+
+local provision = run_cfg_present and dockerrun.provision_commands(run_cfg, run_env_vars) or {}
+local health_shell = run_cfg_present and dockerrun.health_check_shell(run_cfg, run_env_vars) or nil
+
+if dry_run then
+  local masked = dockerrun.mask_argv_for_display(run_parts)
+  local mq = {}
+  for _, p in ipairs(masked) do table.insert(mq, shq(p)) end
+  local display_run = table.concat(mq, " ")
+  if #provision > 0 then
+    info("Dry run — bind-mount dirs that would be provisioned " .. location .. ":")
+    for _, c in ipairs(provision) do print("  " .. c) end
+    print("")
+  end
+  info("Dry run — docker run command that would be executed " .. location .. ":")
+  print("  " .. display_run .. "\n")
+  if health_shell then
+    info("Dry run — post-deploy health check that would run:")
+    print("  " .. health_shell .. "\n")
+  end
+  return
+end
+
+if local_deploy then
+  info("Running locally — skipping image transfer (image already present)")
+elseif on_host then
+  info("Image was built on the target — skipping transfer")
+else
+  info("Transferring image " .. image .. " to " .. host .. "... (may take a few minutes for large images)")
+  if not run_cmd("docker save " .. shq(image) .. " | ssh " .. shq(host) .. " " .. shq("docker load")) then
+    error("docker deploy: image transfer failed")
+  end
+  ok("Transfer complete")
+end
+
+local restore_path = "/tmp/" .. container .. "-restore.sh"
+if container_exists then
+  local restore_parts = {"docker", "run", "-d", "--name", container}
+  for _, a in ipairs(target_argv) do table.insert(restore_parts, a) end
+  table.insert(restore_parts, restore_image)
+  local restore_quoted = {}
+  for _, p in ipairs(restore_parts) do table.insert(restore_quoted, shq(p)) end
+  local restore_script = "#!/bin/sh\n" .. table.concat(restore_quoted, " ") .. "\n"
+
+  local write_shell = "printf '%s' " .. shq(restore_script) .. " > " .. shq(restore_path) ..
+                       " && chmod +x " .. shq(restore_path)
+  local write_ok = run_cmd(local_deploy and write_shell or ("ssh " .. shq(host) .. " " .. shq(write_shell)))
+  if not write_ok then
+    err("Could not write restore script — aborting deploy to preserve recovery path")
+    error("docker deploy: restore script write failed")
+  end
+  local sha_note = (restore_image ~= image) and (" (SHA: " .. restore_image:sub(1, 12) .. ")") or ""
+  info("Restore script saved: " .. restore_path .. sha_note)
+end
+
+if container_exists then
+  info("Stopping + removing '" .. container .. "' " .. location .. "...")
+  local stop_rm_shell = "docker stop -t 10 " .. shq(container) .. " >/dev/null && docker rm " .. shq(container) .. " >/dev/null"
+  local cmd = local_deploy and stop_rm_shell or ("ssh " .. shq(host) .. " " .. shq(stop_rm_shell))
+  if not run_cmd(cmd) then error("docker deploy: stop/remove failed") end
+end
+
+if #provision > 0 then
+  info("Provisioning " .. #provision .. " bind-mount dir(s) " .. location .. "...")
+  for _, c in ipairs(provision) do
+    local cmd = local_deploy and c or ("ssh " .. shq(host) .. " " .. shq(c))
+    if not run_cmd(cmd) then
+      err("Bind-mount provisioning failed: " .. c)
+      error("docker deploy: provisioning failed")
+    end
+  end
+end
+
+local config_source = run_cfg_present and "[docker_run] in admin.toml" or "preserved run config"
+info("Recreating '" .. container .. "' " .. location .. " from " .. config_source .. "...")
+local recreate_cmd = local_deploy and remote_run or ("ssh " .. shq(host) .. " " .. shq(remote_run))
+if not run_cmd(recreate_cmd) then
+  local restore_hint = local_deploy and ("bash " .. restore_path) or ("ssh " .. host .. " bash " .. restore_path)
+  err("Container start failed — to restore: " .. restore_hint)
+  error("docker deploy: recreate failed")
+end
+
+ok("Deployed " .. image .. " as container '" .. container .. "' " .. location)
+
+info("Pruning dangling images " .. location .. "...")
+local prune_shell = "docker image prune -f"
+run_cmd(local_deploy and prune_shell or ("ssh " .. shq(host) .. " " .. shq(prune_shell)))
+
+local snapshot_path = "/tmp/" .. container .. "-lastdeploy.json"
+local snap_shell = "docker inspect " .. shq(container) .. " > " .. shq(snapshot_path)
+run_cmd(local_deploy and snap_shell or ("ssh " .. shq(host) .. " " .. shq(snap_shell)))
+
+if health_shell then
+  info("Waiting for health check " .. location .. "...")
+  local hc_ok = run_cmd(local_deploy and health_shell or ("ssh " .. shq(host) .. " " .. shq(health_shell)))
+  if not hc_ok then
+    err("Container '" .. container .. "' started but never became healthy.")
+    local logs_hint = local_deploy and ("docker logs " .. container) or ("ssh " .. host .. " docker logs " .. container)
+    print("\n  Check: " .. logs_hint .. "\n")
+    error("docker deploy: health check failed")
+  end
+  ok("Health check passed")
+end
+'''
+
+
+[actions.diff]
+kind = "lua"
+desc = "Show run-config drift across declared [docker_run], last-deploy snapshot, and the live container; --format json for CI"
+run = '''
+-- Go port (admin-3rgp.37) of admin_lib/docker.py::remote_container_diff, via
+-- the shared dockerrun cfg<->argv/drift bindings (also used by "run-args"
+-- and "deploy" above).
+--
+-- Extends the original two-way (last-deploy snapshot vs live) diff to three
+-- axes per admin-dbmj: declared ([docker_run]) is also compared against
+-- live, since the two-way diff alone lets the declared table silently fall
+-- out of sync with a container tweaked by hand (or by the Unraid GUI) and
+-- then preserved, deploy after deploy. And every -e entry in every axis is
+-- masked by variable name before it's printed or JSON-encoded, per
+-- admin-wxz0 — this diff has exactly one implementation now, so there is no
+-- second, unmasked code path (remote_container_diff's own unified-diff
+-- lines were never touched by the #436 fix that masked the drift-refusal
+-- report) for a secret to leak through.
+local run_cfg = config.docker_run or {}
+local run_cfg_present = false
+for _ in pairs(run_cfg) do run_cfg_present = true break end
+
+local function shq(s)
+  return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
+local function is_local_host(host)
+  local al = (env("ADMIN_LOCAL") or ""):lower()
+  if al == "1" or al == "true" or al == "yes" then return true end
+  local addr = host:match("@(.+)$") or host
+  return addr == "localhost" or addr == "127.0.0.1" or addr == "::1"
+end
+
+-- ---- args ----
+local output_format = "text"
+local i = 1
+while i <= #args do
+  local a = args[i]
+  if a == "--format" then
+    if i + 1 > #args then err("--format requires a value (text or json)"); error("docker diff: bad --format") end
+    output_format = args[i + 1]
+    i = i + 2
+  elseif a:match("^%-%-format=") then
+    output_format = a:sub(10)
+    i = i + 1
+  else
+    err("Unknown diff argument: '" .. a .. "' (expected --format text|json)")
+    error("docker diff: bad argument")
+  end
+end
+if output_format ~= "text" and output_format ~= "json" then
+  err("--format must be 'text' or 'json', got '" .. output_format .. "'")
+  error("docker diff: bad format value")
+end
+
+local user = env("UNRAID_USER") or "root"
+local host = user .. "@" .. (env("UNRAID_HOST") or "")
+local image = env("APP_IMAGE")
+local local_deploy = is_local_host(host)
+local location = local_deploy and "locally" or ("on " .. host)
+local container = dockerrun.default_container_name(image or "")
+
+info("Fetching current inspect for '" .. container .. "' " .. location .. "...")
+local inspect_shell = "docker inspect " .. shq(container)
+local live_ok, live_out = run_cmd(local_deploy and inspect_shell or ("ssh " .. shq(host) .. " " .. shq(inspect_shell)))
+local live_trimmed = (live_out or ""):match("^%s*(.-)%s*$")
+if not live_ok or live_trimmed == "" or live_trimmed == "[]" then
+  err("Container '" .. container .. "' not found " .. location)
+  error("docker diff: container not found")
+end
+local live_decoded = json.decode(live_out)
+local live_inspect = (type(live_decoded) == "table" and live_decoded[1]) or nil
+if live_inspect == nil then
+  err("Could not parse current docker inspect output")
+  error("docker diff: bad live inspect json")
+end
+
+-- Last-deploy snapshot — written by "deploy" at /tmp/<container>-lastdeploy.json.
+local snapshot_path = "/tmp/" .. container .. "-lastdeploy.json"
+local snap_shell = "cat " .. shq(snapshot_path) .. " 2>/dev/null"
+local snap_ok, snap_out = run_cmd(local_deploy and snap_shell or ("ssh " .. shq(host) .. " " .. shq(snap_shell)))
+local snap_inspect = nil
+if snap_ok and (snap_out or ""):match("%S") then
+  local decoded = json.decode(snap_out)
+  if type(decoded) == "table" and decoded[1] then snap_inspect = decoded[1] end
+end
+
+-- Image-baked metadata, used to strip image defaults out of the declared
+-- axis exactly as "deploy" does — otherwise every field the image itself
+-- sets (env, labels, workdir, user) reads as permanent drift.
+local img_env, img_labels, img_workdir, img_user = {}, {}, "", ""
+if image then
+  local img_shell = "docker image inspect " .. shq(image)
+  local img_ok, img_out = run_cmd(local_deploy and img_shell or ("ssh " .. shq(host) .. " " .. shq(img_shell)))
+  if img_ok and (img_out or ""):match("%S") then
+    local parsed = json.decode(img_out)
+    if type(parsed) == "table" and parsed[1] and parsed[1].Config then
+      local c = parsed[1].Config
+      img_env = c.Env or {}
+      img_labels = c.Labels or {}
+      img_workdir = c.WorkingDir or ""
+      img_user = c.User or ""
+    end
+  end
+end
+
+-- ---- declared ([docker_run]) argv, when declared ----
+local declared_argv = nil
+if run_cfg_present then
+  local env_file_vars = nil
+  if run_cfg.env_file then
+    local text = fs.read(run_cfg.env_file)
+    if text then env_file_vars = dockerrun.parse_env_text(text) end
+  end
+  local run_env_vars = nil
+  if not local_deploy and run_cfg.remote_env_file then
+    local cat_ok, cat_out = run_cmd("ssh " .. shq(host) .. " " .. shq("cat " .. shq(run_cfg.remote_env_file)))
+    run_env_vars = cat_ok and dockerrun.parse_env_text(cat_out) or {}
+  end
+  declared_argv = dockerrun.build_args_from_cfg(run_cfg, run_env_vars, env_file_vars)
+end
+
+local live_argv_for_declared = run_cfg_present
+  and dockerrun.live_argv_for_drift(live_inspect, img_env, img_labels, img_workdir, img_user, run_cfg)
+  or nil
+
+local snap_argv_for_declared = (run_cfg_present and snap_inspect)
+  and dockerrun.live_argv_for_drift(snap_inspect, img_env, img_labels, img_workdir, img_user, run_cfg)
+  or nil
+
+-- Docker-inspect-derived argv for the symmetric last-deploy-vs-live axis,
+-- stripped of noise that is never actionable regardless of [docker_run]
+-- (an autogenerated --hostname/--mac-address differs on every `docker run`
+-- even with byte-identical config, and would otherwise read as permanent
+-- drift on every single redeploy) — live_argv_for_drift with no cfg strips
+-- every DeclaredOnly/ImageField row unconditionally, matching the pre-field-
+-- table default described in its own doc comment.
+local live_argv_raw = dockerrun.live_argv_for_drift(live_inspect, img_env, img_labels, img_workdir, img_user, nil)
+local snap_argv_raw = snap_inspect
+  and dockerrun.live_argv_for_drift(snap_inspect, img_env, img_labels, img_workdir, img_user, nil)
+  or nil
+
+-- ---- report one axis ----
+-- mask_pairs/fmt_block mirror dockerrun.FormatDriftReport's own masking and
+-- column alignment (admin-wxz0), but with neutral, diff-appropriate labels
+-- instead of deploy's "target"/"live"/"refusing to deploy" wording.
+local function fmt_axis(label_a, label_b, only_a, only_b)
+  if #only_a == 0 and #only_b == 0 then
+    return label_a .. " vs " .. label_b .. ": no drift\n"
+  end
+  local lines = {label_a .. " vs " .. label_b .. ": drift detected\n"}
+  local function block(label, entries)
+    if #entries == 0 then return end
+    table.insert(lines, "  " .. label .. " only:\n")
+    for _, e in ipairs(entries) do
+      local tab = e:find("\t")
+      local flag, value = e:sub(1, tab - 1), e:sub(tab + 1)
+      if flag == "-e" then value = dockerrun.mask_env_assignment(value) end
+      table.insert(lines, "    " .. flag .. "  " .. value .. "\n")
+    end
+  end
+  block(label_a, only_a)
+  block(label_b, only_b)
+  return table.concat(lines)
+end
+
+local axes = {}
+local any_drift = false
+
+if declared_argv ~= nil then
+  local only_a, only_b = dockerrun.compute_drift(declared_argv, live_argv_for_declared)
+  if #only_a > 0 or #only_b > 0 then any_drift = true end
+  table.insert(axes, {name = "declared_vs_live", label_a = "declared", label_b = "live", only_a = only_a, only_b = only_b})
+end
+
+if snap_argv_raw ~= nil then
+  local only_a, only_b = dockerrun.compute_drift(snap_argv_raw, live_argv_raw)
+  if #only_a > 0 or #only_b > 0 then any_drift = true end
+  table.insert(axes, {name = "last_deploy_vs_live", label_a = "last-deploy", label_b = "live", only_a = only_a, only_b = only_b})
+else
+  info("No deploy snapshot found at " .. snapshot_path .. " — skipping last-deploy vs live")
+end
+
+if declared_argv ~= nil and snap_argv_for_declared ~= nil then
+  local only_a, only_b = dockerrun.compute_drift(declared_argv, snap_argv_for_declared)
+  if #only_a > 0 or #only_b > 0 then any_drift = true end
+  table.insert(axes, {name = "declared_vs_last_deploy", label_a = "declared", label_b = "last-deploy", only_a = only_a, only_b = only_b})
+end
+
+if #axes == 0 then
+  warn("Nothing to compare: no [docker_run] table and no deploy snapshot at " .. snapshot_path)
+  return
+end
+
+if output_format == "json" then
+  -- KNOWN LIMITATION (internal/luahost's fromLuaValue, not introduced here):
+  -- Lua has no runtime distinction between an empty array and an empty
+  -- map, so a "*_only" list that ends up empty (no drift on that side)
+  -- encodes as JSON `{}` rather than `[]`. A consumer checking emptiness
+  -- (falsy / zero-length) reads it identically either way; a consumer
+  -- requiring the literal `[]` shape does not. Filed rather than worked
+  -- around here — the same ambiguity affects every Lua body's json.encode
+  -- of a table that might be empty, so the real fix belongs in
+  -- internal/luahost, not duplicated per call site.
+  local result = {container = container, drift = any_drift, axes = {}}
+  for _, axis in ipairs(axes) do
+    local masked_a, masked_b = {}, {}
+    for _, e in ipairs(axis.only_a) do
+      local tab = e:find("\t")
+      local flag, value = e:sub(1, tab - 1), e:sub(tab + 1)
+      table.insert(masked_a, flag == "-e" and (flag .. "\t" .. dockerrun.mask_env_assignment(value)) or e)
+    end
+    for _, e in ipairs(axis.only_b) do
+      local tab = e:find("\t")
+      local flag, value = e:sub(1, tab - 1), e:sub(tab + 1)
+      table.insert(masked_b, flag == "-e" and (flag .. "\t" .. dockerrun.mask_env_assignment(value)) or e)
+    end
+    table.insert(result.axes, {
+      name = axis.name,
+      drift = (#axis.only_a > 0 or #axis.only_b > 0),
+      [axis.label_a .. "_only"] = masked_a,
+      [axis.label_b .. "_only"] = masked_b,
+    })
+  end
+  print(json.encode(result))
+else
+  for _, axis in ipairs(axes) do
+    print(fmt_axis(axis.label_a, axis.label_b, axis.only_a, axis.only_b))
+  end
+  if any_drift then
+    warn("Run-config drift detected for '" .. container .. "'")
+  else
+    ok("No run-config drift detected for '" .. container .. "'")
+  end
+end
+
+if any_drift then
+  error("docker diff: drift detected")
+end
+'''
+
+[actions.logs]
+kind = "lua"
+desc = "Tail logs — `dev` (newest local log) or `live` (container); --from DD:HH:MM:SS rolls back, --tail N --no-follow prints and exits"
+run = '''
+-- Go port (admin-3rgp.37) of admin_lib/docker.py::logs_dispatch +
+-- tail_dev_log + remote_logs, as called from the docker archetype's "logs"
+-- action.
+local function shq(s)
+  return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
+local target = nil
+local rest = {}
+if args[1] == "dev" or args[1] == "live" then
+  target = args[1]
+  for i = 2, #args do table.insert(rest, args[i]) end
+else
+  for i = 1, #args do table.insert(rest, args[i]) end
+end
+
+if not target then
+  local menu = {
+    {key = "dev", description = "dev   local dev server logs"},
+    {key = "live", description = "live  deployed container logs"},
+  }
+  target = pick_target(menu, "which logs?")
+  if not target then return end
+end
+
+-- DD:HH:MM:SS (or a shorter right-aligned form) -> total seconds.
+local function parse_since(spec)
+  local nums = {}
+  for part in spec:gmatch("[^:]+") do
+    local n = tonumber(part)
+    if not n then return nil, "bad --from value: " .. spec end
+    table.insert(nums, n)
+  end
+  if #nums == 0 or #nums > 4 then
+    return nil, "--from expects DD:HH:MM:SS (or a shorter right-aligned form), got '" .. spec .. "'"
+  end
+  local mult = {1, 60, 3600, 86400}
+  local total = 0
+  for i = 0, #nums - 1 do
+    local n = nums[#nums - i]
+    if n < 0 then return nil, "--from fields must be non-negative, got " .. spec end
+    total = total + n * mult[i + 1]
+  end
+  return total, nil
+end
+
+local since, tail, follow = nil, nil, true
+local i = 1
+while i <= #rest do
+  local a = rest[i]
+  if a == "--from" then
+    if i + 1 > #rest then err("--from requires a DD:HH:MM:SS value"); error("logs: bad --from") end
+    local secs, e = parse_since(rest[i + 1])
+    if not secs then err(e); error("logs: bad --from") end
+    since = secs
+    i = i + 2
+  elseif a == "--tail" or a == "-n" then
+    if i + 1 > #rest then err("--tail requires a line count"); error("logs: bad --tail") end
+    local n = tonumber(rest[i + 1])
+    if not n then err("--tail needs a number, got '" .. rest[i + 1] .. "'"); error("logs: bad --tail") end
+    tail = n
+    i = i + 2
+  elseif a:match("^%-%-tail=") then
+    local v = a:sub(8)
+    local n = tonumber(v)
+    if not n then err("--tail needs a number, got '" .. v .. "'"); error("logs: bad --tail") end
+    tail = n
+    i = i + 1
+  elseif a == "--no-follow" then
+    follow = false
+    i = i + 1
+  else
+    err("logs: unknown argument '" .. a .. "' (expected --from DD:HH:MM:SS, --tail N, or --no-follow)")
+    error("logs: unknown argument")
+  end
+end
+
+if target == "live" then
+  local image = env("APP_IMAGE") or ""
+  local user = env("UNRAID_USER") or "root"
+  local host = user .. "@" .. (env("UNRAID_HOST") or "")
+  local base = image:match("^[^:]*")
+  local container = base:match("[^/]+$") or base
+  local t = tail
+  if t == nil then t = since and "all" or 200 end
+  local flags = {}
+  if since then table.insert(flags, "--since " .. tostring(math.floor(since)) .. "s") end
+  if follow then table.insert(flags, "-f") end
+  table.insert(flags, "--tail=" .. tostring(t))
+  local logs_cmd = "docker logs " .. table.concat(flags, " ") .. " " .. shq(container)
+  local al = (env("ADMIN_LOCAL") or ""):lower()
+  local is_local = (al == "1" or al == "true" or al == "yes")
+  local cmd = is_local and logs_cmd or ("ssh " .. shq(host) .. " " .. logs_cmd)
+  if not run_cmd(cmd) then error("logs: docker logs failed") end
+  return
+end
+
+-- target == "dev": trail the newest local dev log file. Newest-by-filename
+-- (the timestamp stem sorts lexicographically, oldest to newest) rather than
+-- newest-by-mtime (admin_lib's tail_dev_log) — there is no host binding for
+-- file mtimes in this VM; correct for every dev log set_log_context creates
+-- (always timestamped), an approximation only for a hand-placed bare
+-- "dev.log" with no timestamp suffix.
+local matches = glob.match("tmp/dev.log")
+for _, m in ipairs(glob.match("tmp/dev.*.log")) do table.insert(matches, m) end
+if #matches == 0 then
+  err("no dev logs found in tmp")
+  error("logs: no dev logs found")
+end
+table.sort(matches)
+local path = matches[#matches]
+info("trailing " .. path)
+
+if since == nil then
+  local n = tail or 100
+  local cmd = "tail -n " .. tostring(n) .. " "
+  if follow then cmd = cmd .. "-f " end
+  cmd = cmd .. shq(path)
+  if not run_cmd(cmd) then error("logs: tail failed") end
+  return
+end
+
+-- --from on the dev log: filter locally by each line's leading RFC3339
+-- timestamp. "now" comes from the shell's own clock (`date +%s`), written
+-- to a scratch file rather than read off run_cmd's return value — run_cmd
+-- streams a command's stdout to the terminal live as it runs (that's the
+-- point, for a real build/deploy), so capturing the epoch that way would
+-- also print it to the user's screen. This VM has no wall-clock binding.
+local now_path = "tmp/.admin-logs-now"
+if not run_cmd("date +%s > " .. shq(now_path)) then
+  error("logs: could not read current time")
+end
+local now = tonumber((fs.read(now_path) or ""):match("%d+")) or 0
+run_cmd("rm -f " .. shq(now_path))
+local cutoff = now - since
+
+local text = fs.read(path) or ""
+local lines = {}
+for line in (text .. "\n"):gmatch("([^\n]*)\n") do table.insert(lines, line) end
+if #lines > 0 and lines[#lines] == "" then table.remove(lines) end
+
+-- RFC3339 UTC -> epoch seconds via a Julian-day civil calendar (no calendar
+-- support in this VM's math/string/table/base libraries).
+local function ts_epoch(line)
+  local clean = line:gsub("\027%[[%d;]*m", "")
+  local y, mo, d, h, mi, s = clean:match("^%s*(%d%d%d%d)-(%d%d)-(%d%d)T(%d%d):(%d%d):(%d%d)")
+  if not y then return nil end
+  local yy, mm, dd = tonumber(y), tonumber(mo), tonumber(d)
+  local a = math.floor((14 - mm) / 12)
+  local yv = yy + 4800 - a
+  local mv = mm + 12 * a - 3
+  local jdn = dd + math.floor((153 * mv + 2) / 5) + 365 * yv + math.floor(yv / 4) - math.floor(yv / 100) + math.floor(yv / 400) - 32045
+  local epoch_day = jdn - 2440588
+  return epoch_day * 86400 + tonumber(h) * 3600 + tonumber(mi) * 60 + tonumber(s)
+end
+
+local filtered, started = {}, false
+for _, line in ipairs(lines) do
+  if not started then
+    local ep = ts_epoch(line)
+    if ep and ep >= cutoff then started = true end
+  end
+  if started then table.insert(filtered, line) end
+end
+
+if started and tail then
+  local start_i = math.max(1, #filtered - tail + 1)
+  local trimmed = {}
+  for j = start_i, #filtered do table.insert(trimmed, filtered[j]) end
+  filtered = trimmed
+end
+
+if started then
+  if #filtered > 0 then print(table.concat(filtered, "\n")) end
+else
+  warn("no timestamped lines within the last " .. tostring(since) .. "s in " .. path .. "; trailing new output only")
+end
+
+if not follow then return end
+if not run_cmd("tail -n 0 -f " .. shq(path)) then error("logs: tail -f failed") end
+'''
+
+[actions.reload]
+kind = "docker-reload-loop"
+run = "docker build -t ${APP_IMAGE} . && docker run --rm ${APP_IMAGE}"
+desc = "Build+run with reload loop (press r or SIGUSR1 to rebuild)"
+
+[actions.run-args]
+kind = "lua"
+desc = "Print [docker_run] rendered to shlex-quoted `docker run` args (for external native-build scripts). Expands env_file into -e NAME=VALUE tokens, so any secrets appear in stdout — treat the output as sensitive."
+run = '''
+-- Go port (admin-3rgp.37) of admin_lib/docker.py::render_run_args. Renders
+-- through the shared dockerrun.build_args_from_cfg (also used by "deploy"
+-- and "diff" below) rather than a body-local copy of the [docker_run]
+-- cfg->argv logic — issue #388's own lesson (the cfg->argv and inspect->argv
+-- directions once drifted apart because each was hand-written separately)
+-- applies just as much to two Lua bodies implementing the same direction.
+local docker_run = config.docker_run or {}
+
+local function shq(s)
+  return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
+-- env_file — merged into the emitted -e NAME=VALUE tokens by
+-- build_args_from_cfg (cfg.env wins on conflict, matching docker's --env /
+-- --env-file order). Always a local path here: run-args is meant for an
+-- external native-build script running on this machine, unlike "deploy",
+-- which also has to read a remote_env_file over ssh.
+local env_file_vars = nil
+if docker_run.env_file then
+  local text = fs.read(docker_run.env_file)
+  if text then env_file_vars = dockerrun.parse_env_text(text) end
+end
+
+local args = dockerrun.build_args_from_cfg(docker_run, nil, env_file_vars)
+
+local quoted = {}
+for _, a in ipairs(args) do table.insert(quoted, shq(a)) end
+print(table.concat(quoted, " "))
+'''
+
+[actions.open]
+kind = "shell"
+run = "open ${PROD_URL:-http://localhost}"
+desc = "Open the deployed app URL"
+
+[actions.print-urls]
+kind = "print-urls"
+desc = "Print registered URLs and their health status"
