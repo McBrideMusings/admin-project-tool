@@ -135,11 +135,48 @@ func registerManifestCommand(name string) bool {
 	return true
 }
 
+// runActionCmd is admin-3rgp.17's hidden re-entry point: what a herdr pane
+// a long-running kind dispatched into actually runs. It is the one caller
+// that invokes kinds.RunAction directly rather than kinds.RunActionRouted —
+// deliberately: RunAction executes exactly the one named action's Runner in
+// this process, with no further lifetime routing, so the pane does the
+// real work instead of trying to open a second pane for itself. Hidden
+// because it is plumbing, not something a person types; double-underscore
+// prefixed so a project's own admin.toml commands (which would otherwise
+// need "reserved name" handling like the tool verbs get) can never collide
+// with it in practice.
+var runActionCmd = &cobra.Command{
+	Use:                "__run-action <name> [args...]",
+	Hidden:             true,
+	DisableFlagParsing: true, // flags belong to the action's own steps, not to cobra
+	Args:               cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		wd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		// context.Background(), not cmd.Context(): this verb is reached both
+		// through cobra's normal Execute (a real context) and by a test or
+		// tool calling RunE directly (cmd.Context() is nil then) — the same
+		// reason registerManifestCommand's own resolveProjectManifest call
+		// uses context.Background() rather than depending on cobra's.
+		m, ok, err := resolveProjectManifest(context.Background(), wd)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("__run-action: no admin.toml found in %s", wd)
+		}
+		return kinds.RunAction(m, kinds.Default, args[0], args[1:])
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(branchCmd)
 	rootCmd.AddCommand(worktreeCmd)
 	rootCmd.AddCommand(prsCmd)
 	rootCmd.AddCommand(populateCmd)
+	rootCmd.AddCommand(runActionCmd)
 
 	f := rootCmd.Flags()
 	f.BoolVar(&dumpFrame, "dump-frame", false, "render one frame to stdout and exit (no TTY needed)")

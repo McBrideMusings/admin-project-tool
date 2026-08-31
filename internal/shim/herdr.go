@@ -69,6 +69,48 @@ func OpenWorktreePaths() map[string]bool {
 	return open
 }
 
+// SplitPane opens a new sibling pane in the caller's current herdr tab,
+// rooted at cwd, without stealing focus from the calling pane — the
+// `herdr pane split --current --direction right --cwd <cwd> --no-focus`
+// invocation the herdr skill documents for "run an ordinary command in
+// another pane". It returns the new pane's ID (.result.pane.pane_id).
+//
+// Callers must check Available() first (as RunInPane's caller,
+// internal/kinds's herdr dispatch, does): SplitPane makes no availability
+// check of its own and simply fails if herdr isn't reachable, because
+// "--current" only resolves to something meaningful from inside a pane
+// herdr itself launched.
+func SplitPane(cwd string) (string, error) {
+	out, err := exec.Command("herdr", "pane", "split",
+		"--current", "--direction", "right", "--cwd", cwd, "--no-focus").Output()
+	if err != nil {
+		return "", err
+	}
+	var resp struct {
+		Result struct {
+			Pane struct {
+				PaneID string `json:"pane_id"`
+			} `json:"pane"`
+		} `json:"result"`
+	}
+	if jsonErr := json.Unmarshal(out, &resp); jsonErr != nil {
+		return "", jsonErr
+	}
+	if resp.Result.Pane.PaneID == "" {
+		return "", errors.New("herdr pane split: no pane_id in response")
+	}
+	return resp.Result.Pane.PaneID, nil
+}
+
+// RunInPane types command into paneID followed by Enter — `herdr pane run
+// <paneID> <command>` — and returns as soon as herdr has sent it, exactly
+// like a person typing the command and hitting return. It does not wait for
+// the command to finish or report its exit status; the pane runs
+// independently of this process from this point on.
+func RunInPane(paneID, command string) error {
+	return exec.Command("herdr", "pane", "run", paneID, command).Run()
+}
+
 // Available reports whether repo is running in a herdr pane with the herdr CLI
 // reachable and not disabled via REPO_HERDR=off. When true the dashboard creates
 // worktrees inline (opening a focused herdr workspace) instead of quitting to
