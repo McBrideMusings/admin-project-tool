@@ -77,7 +77,6 @@ _CONFIG_GLOBALS = {
     "_GO_CONFIG": "go",
     "_GO_DIST_CONFIG": "go_dist",
     "_RAYLIB_CONFIG": "raylib",
-    "_LAUNCHD_CONFIG": "launchd",
 }
 
 
