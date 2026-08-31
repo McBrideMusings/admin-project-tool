@@ -2,6 +2,7 @@ package kinds
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -250,8 +251,16 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest) 
 				for _, k := range order {
 					entries = append(entries, luahost.TargetEntry{Key: k, Description: k})
 				}
-				key, ok := h.PickTarget(entries, desc+" — select target")
-				if !ok {
+				key, outcome := h.PickTarget(entries, desc+" — select target")
+				switch outcome {
+				case luahost.PickCancelled:
+					// The user answered the question by dismissing the picker.
+					// Nothing failed, so say so the way `admin prune` does and
+					// exit clean rather than reporting a missing argument.
+					fmt.Fprintln(os.Stderr, "cancelled")
+					return nil
+				case luahost.PickUnavailable:
+					// PickTarget already printed why it could not prompt.
 					return fmt.Errorf(
 						"action %q: no target given and none could be picked "+
 							"(pass one as an argument, or run from a TTY)", name)
