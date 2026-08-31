@@ -16,7 +16,7 @@ func TestShellRunsAndSucceeds(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	runner, err := makeShell("touch-marker", manifest.Action{"run": "touch marker.txt"})
+	runner, err := makeShell("touch-marker", manifest.Action{"run": "touch marker.txt"}, nil)
 	if err != nil {
 		t.Fatalf("makeShell: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestShellRunsAndSucceeds(t *testing.T) {
 // specifically: `exit 7` must come back as a non-nil error.
 func TestShellNonZeroExitIsError(t *testing.T) {
 	t.Chdir(t.TempDir())
-	runner, err := makeShell("fails", manifest.Action{"run": "exit 7"})
+	runner, err := makeShell("fails", manifest.Action{"run": "exit 7"}, nil)
 	if err != nil {
 		t.Fatalf("makeShell: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestShellNonZeroExitIsError(t *testing.T) {
 // silently treated as success (an empty /bin/sh -c "" exits 0).
 func TestShellEmptyRunIsRefused(t *testing.T) {
 	t.Chdir(t.TempDir())
-	runner, err := makeShell("blank", manifest.Action{"run": "   "})
+	runner, err := makeShell("blank", manifest.Action{"run": "   "}, nil)
 	if err != nil {
 		t.Fatalf("makeShell: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestShellResolvesComputedNotEnv(t *testing.T) {
 
 	runner, err := makeShell("passthrough", manifest.Action{
 		"run": `NOT_SET_ANYWHERE=ok; touch "${NOT_SET_ANYWHERE}-marker.txt"`,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("makeShell: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestShellPassthroughAppendsQuotedArgs(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	runner, err := makeShellPassthrough("echo-args", manifest.Action{"run": "touch"})
+	runner, err := makeShellPassthrough("echo-args", manifest.Action{"run": "touch"}, nil)
 	if err != nil {
 		t.Fatalf("makeShellPassthrough: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestShellPassthroughAppendsQuotedArgs(t *testing.T) {
 // the passthrough variant.
 func TestShellPassthroughEmptyIsRefused(t *testing.T) {
 	t.Chdir(t.TempDir())
-	runner, err := makeShellPassthrough("blank", manifest.Action{"run": ""})
+	runner, err := makeShellPassthrough("blank", manifest.Action{"run": ""}, nil)
 	if err != nil {
 		t.Fatalf("makeShellPassthrough: %v", err)
 	}

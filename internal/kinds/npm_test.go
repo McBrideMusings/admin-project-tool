@@ -12,7 +12,7 @@ import (
 // TestNpmMissingRunIsRejected proves kind="npm" requires 'run' at build
 // time, matching admin_lib/validate.py's "npm kind requires 'run'".
 func TestNpmMissingRunIsRejected(t *testing.T) {
-	if _, err := makeNpm("bad", manifest.Action{}); err == nil {
+	if _, err := makeNpm("bad", manifest.Action{}, nil); err == nil {
 		t.Fatal("makeNpm with no 'run' should error")
 	}
 }
@@ -39,7 +39,7 @@ func TestNpmRunsPickedScript(t *testing.T) {
 	binDir := t.TempDir()
 	fakeNpmScript(t, binDir, `echo "$@" > argv.txt`)
 
-	runner, err := makeNpm("build", manifest.Action{"run": "build"})
+	runner, err := makeNpm("build", manifest.Action{"run": "build"}, nil)
 	if err != nil {
 		t.Fatalf("makeNpm: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestNpmPicksBunWhenLockfilePresent(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	runner, err := makeNpm("dev", manifest.Action{"run": "dev"})
+	runner, err := makeNpm("dev", manifest.Action{"run": "dev"}, nil)
 	if err != nil {
 		t.Fatalf("makeNpm: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestNpmNonZeroExitIsError(t *testing.T) {
 	binDir := t.TempDir()
 	fakeNpmScript(t, binDir, "exit 3")
 
-	runner, err := makeNpm("broken", manifest.Action{"run": "broken"})
+	runner, err := makeNpm("broken", manifest.Action{"run": "broken"}, nil)
 	if err != nil {
 		t.Fatalf("makeNpm: %v", err)
 	}

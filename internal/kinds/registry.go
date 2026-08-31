@@ -15,8 +15,28 @@ type Runner func(args []string) error
 // Factory builds a Runner for one [actions.X] entry. name is the kind name
 // (so one Factory value, like the Python apple-dev-loop/multi-target pair,
 // can be registered under more than one kind and still know which it's
-// running as); action is the manifest.Action being dispatched.
-type Factory func(name string, action manifest.Action) (Runner, error)
+// running as); action is the manifest.Action being dispatched; m is the
+// fully resolved project Manifest the action lives in.
+//
+// admin-3rgp.43: m is what the earlier (name, action) shape lacked. The
+// Python interpreter's exec() namespace always carried the *whole* resolved
+// manifest (admin_lib/interp.py::build_namespace injects every
+// [go]/[apple]/[react_native]/... table as a global unconditionally,
+// regardless of which kind is running), so a body picked out whichever
+// table it needed by name. A bare (name, action) Factory signature could
+// only see an action's own inline keys — the gap this ticket closes. m is
+// threaded through rather than a narrower "just the config" struct because
+// the same gap already applies to other manifest-level tables a Factory may
+// need (guards for admin-3rgp.10, urls for admin-3rgp.11): one foundational
+// parameter now avoids a second signature break for each of those. A
+// Factory that doesn't need m (shell, npm, http, sync, multi-target today)
+// simply ignores it — Go's blank identifier costs nothing at the call site.
+//
+// m may be nil in tests that exercise a single factory directly without
+// building a full Manifest; every factory that reads from m must do so
+// through archetypeConfigTable (or an equivalent nil-safe accessor), never
+// by dereferencing m directly.
+type Factory func(name string, action manifest.Action, m *manifest.Manifest) (Runner, error)
 
 // Registry maps a declared kind name to the Factory that executes it.
 type Registry struct {

@@ -19,7 +19,7 @@ func TestMultiTargetInlineSubtableDispatchesNamedTarget(t *testing.T) {
 		"cf":   map[string]any{"run": "touch cf.txt"},
 		"lan":  map[string]any{"run": "touch lan.txt"},
 	}
-	runner, err := makeMultiTarget("dev", action)
+	runner, err := makeMultiTarget("dev", action, nil)
 	if err != nil {
 		t.Fatalf("makeMultiTarget: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestMultiTargetFlatTableStringShape(t *testing.T) {
 		"kind":    "multi-target",
 		"targets": map[string]any{"cf": "touch cf.txt", "lan": "touch lan.txt"},
 	}
-	runner, err := makeMultiTarget("dev", action)
+	runner, err := makeMultiTarget("dev", action, nil)
 	if err != nil {
 		t.Fatalf("makeMultiTarget: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestMultiTargetOnlyTargetAutoPicks(t *testing.T) {
 	t.Chdir(dir)
 
 	action := manifest.Action{"kind": "multi-target", "solo": map[string]any{"run": "touch solo.txt"}}
-	runner, err := makeMultiTarget("dev", action)
+	runner, err := makeMultiTarget("dev", action, nil)
 	if err != nil {
 		t.Fatalf("makeMultiTarget: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestMultiTargetNoTargetNoTTYIsClearError(t *testing.T) {
 		"cf":   map[string]any{"run": "touch cf.txt"},
 		"lan":  map[string]any{"run": "touch lan.txt"},
 	}
-	runner, err := makeMultiTarget("dev", action)
+	runner, err := makeMultiTarget("dev", action, nil)
 	if err != nil {
 		t.Fatalf("makeMultiTarget: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestMultiTargetNoTargetNoTTYIsClearError(t *testing.T) {
 func TestMultiTargetUnknownTargetIsError(t *testing.T) {
 	t.Chdir(t.TempDir())
 	action := manifest.Action{"kind": "multi-target", "cf": map[string]any{"run": "true"}}
-	runner, err := makeMultiTarget("dev", action)
+	runner, err := makeMultiTarget("dev", action, nil)
 	if err != nil {
 		t.Fatalf("makeMultiTarget: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestMultiTargetCannotMixShapes(t *testing.T) {
 		"cf":      map[string]any{"run": "true"},
 		"targets": map[string]any{"lan": "true"},
 	}
-	if _, err := makeMultiTarget("dev", action); err == nil {
+	if _, err := makeMultiTarget("dev", action, nil); err == nil {
 		t.Fatal("mixing inline subtables with a flat targets table should error")
 	}
 }
@@ -135,7 +135,7 @@ func TestMultiTargetCannotMixShapes(t *testing.T) {
 // TestMultiTargetNoTargetsIsError proves an action with kind="multi-target"
 // but zero targets is rejected rather than silently doing nothing.
 func TestMultiTargetNoTargetsIsError(t *testing.T) {
-	if _, err := makeMultiTarget("dev", manifest.Action{"kind": "multi-target"}); err == nil {
+	if _, err := makeMultiTarget("dev", manifest.Action{"kind": "multi-target"}, nil); err == nil {
 		t.Fatal("makeMultiTarget with zero targets should error")
 	}
 }
@@ -173,7 +173,7 @@ func TestMultiTargetDelegationRunsThroughDispatch(t *testing.T) {
 // fails with a clear error rather than a nil-pointer panic.
 func TestMultiTargetDelegationWithoutDispatchIsError(t *testing.T) {
 	action := manifest.Action{"kind": "multi-target", "cf": map[string]any{"action": "build-cf"}}
-	runner, err := makeMultiTarget("dev", action)
+	runner, err := makeMultiTarget("dev", action, nil)
 	if err != nil {
 		t.Fatalf("makeMultiTarget: %v", err)
 	}
