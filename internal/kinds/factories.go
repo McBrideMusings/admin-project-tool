@@ -27,11 +27,12 @@ func notImplemented(kind string) Factory {
 // factory fails at startup") vacuously true and unfalsifiable, since every
 // declared kind would always end up registered by construction.
 //
-// admin-3rgp.35 replaces eight of these stubs with real implementations:
-// shell, shell-passthrough, lua, go, npm, http, sync, multi-target — the set
-// ADR-0010's amendment to that ticket settles on (nine minus the deleted
-// python/python-script, plus lua). Every other kind stays a stub; later
-// tickets (admin-3rgp.12/.13/.14/.15/.18) replace them the same way.
+// Every declared kind now has a real factory — no stub registrations remain.
+// They arrived in stages: the eight transient kinds with admin-3rgp.35 (the
+// set ADR-0010 settles on — nine minus the deleted python/python-script, plus
+// lua), then docker and remote (.13), node and web (.14), ports and process
+// cleanup (.15), interactive-shell and bridge-listen (.18), workflow (.24),
+// and apple (.12).
 func registerBuiltins(r *Registry) {
 	r.MustRegister("shell", makeShell)
 	r.MustRegister("shell-passthrough", makeShellPassthrough)
