@@ -102,12 +102,24 @@ func TestDeployEmptySourceYieldsNoArchetypes(t *testing.T) {
 	src := t.TempDir() // exists, but nothing in it looks like an archetype
 	dest := t.TempDir()
 
+	// A stale file already sits in dest from a previous deploy. An empty
+	// source is still a full resync, not a skipped no-op — an "optimization"
+	// that short-circuits when there's nothing to deploy would silently
+	// leave stale content behind.
+	stale := filepath.Join(dest, "leftover.txt")
+	if err := os.WriteFile(stale, []byte("stale"), 0o644); err != nil {
+		t.Fatalf("write stale file: %v", err)
+	}
+
 	names, err := Deploy(src, dest)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 	if len(names) != 0 {
 		t.Errorf("Deploy names = %v, want empty", names)
+	}
+	if _, err := os.Stat(stale); err == nil {
+		t.Error("stale file survived a redeploy from an empty source, want removed")
 	}
 }
 
