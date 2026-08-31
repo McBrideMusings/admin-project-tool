@@ -35,7 +35,7 @@ func longRunningManifest() *manifest.Manifest {
 // test can tell "ran inline here" from "was handed to a pane".
 func registryRecordingInline(ran *bool) *Registry {
 	r := NewRegistry()
-	r.MustRegister("vite-dev", func(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+	r.MustRegister("vite-dev", func(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
 		return func(args []string) error {
 			*ran = true
 			return nil
@@ -100,8 +100,9 @@ func TestRunCommandHostedNeverOpensAPane(t *testing.T) {
 
 // TestRunCommandHostedNestedDelegationStaysInline closes the one call-graph
 // hole a shared step loop alone would leave open: a multi-target target
-// delegating with `action = "other"` reaches its callee through
-// currentSurface, not through the step loop. Under the hosted entry point
+// delegating with `action = "other"` reaches its callee through the Surface
+// built for its own dispatch, not through the step loop. Under the hosted
+// entry point
 // that nested hop must stay inline too, or the pane path is reachable one
 // level down.
 func TestRunCommandHostedNestedDelegationStaysInline(t *testing.T) {

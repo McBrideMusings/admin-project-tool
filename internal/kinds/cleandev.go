@@ -257,7 +257,7 @@ func cleanDevFromConfig(h *luahost.Host, cfg map[string]any, force bool) int64 {
 // (kind="kill-port" is not yet ported — admin-3rgp.15) simply skips this
 // step rather than erroring, exactly as Python's guard does when "kill"
 // isn't registered at all.
-func makeCleanDev(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeCleanDev(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
 	cfg := archetypeConfigTable(m, "clean_dev")
 	preKill := cfgBool(cfg, "pre_kill", true)
 
@@ -265,7 +265,7 @@ func makeCleanDev(name string, action manifest.Action, m *manifest.Manifest) (Ru
 		h := newHost()
 		if preKill {
 			if _, ok := resolveCommand(m, "kill"); ok {
-				if err := dispatchNestedCommand("kill", args); err != nil {
+				if err := surf.Command("kill", args); err != nil {
 					h.Warn("kill: " + err.Error())
 				}
 			} else if _, ok := m.Actions["kill"]; ok {

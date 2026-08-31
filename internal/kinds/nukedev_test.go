@@ -13,7 +13,7 @@ import (
 func TestMakeNukeDevWithNoConfigIsANoOp(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	runner, err := makeNukeDev("nuke-dev", manifest.Action{}, &manifest.Manifest{})
+	runner, err := makeNukeDev("nuke-dev", manifest.Action{}, &manifest.Manifest{}, nil)
 	if err != nil {
 		t.Fatalf("makeNukeDev: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestMakeNukeDevOnAFreeDeclaredPortIsANoOp(t *testing.T) {
 	m := &manifest.Manifest{DevKill: map[string]any{
 		"ports": []any{int64(port)},
 	}}
-	runner, err := makeNukeDev("nuke-dev", manifest.Action{}, m)
+	runner, err := makeNukeDev("nuke-dev", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makeNukeDev: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestMakeNukeDevRejectsAnUnresolvablePortEnvVar(t *testing.T) {
 	m := &manifest.Manifest{DevKill: map[string]any{
 		"ports": []any{"not-a-port"},
 	}}
-	runner, err := makeNukeDev("nuke-dev", manifest.Action{}, m)
+	runner, err := makeNukeDev("nuke-dev", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makeNukeDev: %v", err)
 	}

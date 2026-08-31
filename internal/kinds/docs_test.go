@@ -13,7 +13,7 @@ import (
 // `if not os.path.isdir(dirpath)` guard.
 func TestDocsMissingDirIsAnError(t *testing.T) {
 	m := &manifest.Manifest{Docs: map[string]any{"dir": "does-not-exist"}}
-	runner, err := makeDocs("docs", manifest.Action{}, m)
+	runner, err := makeDocs("docs", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makeDocs: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestDocsRunsConfiguredScript(t *testing.T) {
 	fakeNpmScript(t, binDir, `echo "$@" > `+filepath.Join(docsDir, "argv.txt"))
 
 	m := &manifest.Manifest{Docs: map[string]any{"dir": "site", "script": "custom-docs"}}
-	runner, err := makeDocs("docs", manifest.Action{}, m)
+	runner, err := makeDocs("docs", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makeDocs: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestDocsDefaultsToDocsDevScript(t *testing.T) {
 	binDir := t.TempDir()
 	fakeNpmScript(t, binDir, `echo "$@" > argv.txt`)
 
-	runner, err := makeDocs("docs", manifest.Action{}, nil)
+	runner, err := makeDocs("docs", manifest.Action{}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeDocs: %v", err)
 	}

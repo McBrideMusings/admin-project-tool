@@ -27,7 +27,7 @@ func TestHTTPPostsMethodAndBody(t *testing.T) {
 	runner, err := makeHTTP("hook", manifest.Action{
 		"run":  srv.URL,
 		"body": `{"hello":"world"}`,
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeHTTP: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestHTTPRespectsExplicitMethod(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	runner, err := makeHTTP("ping", manifest.Action{"run": srv.URL, "method": "GET"}, nil)
+	runner, err := makeHTTP("ping", manifest.Action{"run": srv.URL, "method": "GET"}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeHTTP: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestHTTPNeverFailsOnErrorResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	runner, err := makeHTTP("flaky", manifest.Action{"run": srv.URL}, nil)
+	runner, err := makeHTTP("flaky", manifest.Action{"run": srv.URL}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeHTTP: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestHTTPNeverFailsOnErrorResponse(t *testing.T) {
 // ${VAR} with no default is a hard error, matching resolve_env's fatal
 // behaviour (the one case makeHTTP's Runner does return non-nil).
 func TestHTTPUnresolvedEnvVarIsError(t *testing.T) {
-	runner, err := makeHTTP("hook", manifest.Action{"run": "https://example.invalid/${TOTALLY_UNSET_VAR}"}, nil)
+	runner, err := makeHTTP("hook", manifest.Action{"run": "https://example.invalid/${TOTALLY_UNSET_VAR}"}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeHTTP: %v", err)
 	}

@@ -296,7 +296,7 @@ func resolveFixtureDir(cfg map[string]any, key string) (string, error) {
 // of admin_lib/interp.py's fixtures-generate wiring
 // (fixtures_generate_from_config). `--force` on the command line permits
 // regenerating a non-empty baseline.
-func makeFixturesGenerate(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeFixturesGenerate(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	cfg := archetypeConfigTable(m, "fixtures")
 
 	return func(args []string) error {
@@ -329,7 +329,7 @@ func makeFixturesGenerate(name string, action manifest.Action, m *manifest.Manif
 // Optional `clean`/`db` keys fold a project's cache/DB wipe into the same
 // reset by handing them to cleanDevFromConfig (cleandev.go) with force=true,
 // exactly as Python routes the same two keys into admin_lib.cleanup.
-func makeFixturesReset(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeFixturesReset(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	cfg := archetypeConfigTable(m, "fixtures")
 
 	return func(args []string) error {

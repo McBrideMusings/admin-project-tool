@@ -10,7 +10,7 @@ import (
 // requires 'run' at build time, matching Python's factory reading cmd.run
 // unconditionally (it would crash on an empty command string).
 func TestMakeDockerReloadLoopMissingRunErrors(t *testing.T) {
-	if _, err := makeDockerReloadLoop("bad", manifest.Action{}, nil); err == nil {
+	if _, err := makeDockerReloadLoop("bad", manifest.Action{}, nil, nil); err == nil {
 		t.Fatal("makeDockerReloadLoop with no 'run' should error")
 	}
 }
@@ -21,7 +21,7 @@ func TestMakeDockerReloadLoopMissingRunErrors(t *testing.T) {
 // return 1`, which is a runtime check on the resolved config, not a
 // manifest-shape check the factory constructor could make earlier.
 func TestMakeDockerDevEmptyConfigErrors(t *testing.T) {
-	runner, err := makeDockerDev("dev", manifest.Action{}, nil)
+	runner, err := makeDockerDev("dev", manifest.Action{}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeDockerDev: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestMakeDockerDevEmptyConfigErrors(t *testing.T) {
 // the required image_tag still fails, distinctly from the empty-config case.
 func TestMakeDockerDevMissingImageTagErrors(t *testing.T) {
 	m := &manifest.Manifest{DockerDev: map[string]any{"target": "dev"}}
-	runner, err := makeDockerDev("dev", manifest.Action{}, m)
+	runner, err := makeDockerDev("dev", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makeDockerDev: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestMakeDockerDevMissingImageTagErrors(t *testing.T) {
 // returns reload_running_targets's rc unchanged.
 func TestMakeServerReloadNoTargets(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // irrelevant to PIDPrefix, just isolating env
-	runner, err := makeServerReload("reload", manifest.Action{}, nil)
+	runner, err := makeServerReload("reload", manifest.Action{}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeServerReload: %v", err)
 	}

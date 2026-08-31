@@ -16,7 +16,7 @@ func TestShellRunsAndSucceeds(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	runner, err := makeShell("touch-marker", manifest.Action{"run": "touch marker.txt"}, nil)
+	runner, err := makeShell("touch-marker", manifest.Action{"run": "touch marker.txt"}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeShell: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestShellRunsAndSucceeds(t *testing.T) {
 // specifically: `exit 7` must come back as a non-nil error.
 func TestShellNonZeroExitIsError(t *testing.T) {
 	t.Chdir(t.TempDir())
-	runner, err := makeShell("fails", manifest.Action{"run": "exit 7"}, nil)
+	runner, err := makeShell("fails", manifest.Action{"run": "exit 7"}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeShell: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestShellNonZeroExitIsError(t *testing.T) {
 // silently treated as success (an empty /bin/sh -c "" exits 0).
 func TestShellEmptyRunIsRefused(t *testing.T) {
 	t.Chdir(t.TempDir())
-	runner, err := makeShell("blank", manifest.Action{"run": "   "}, nil)
+	runner, err := makeShell("blank", manifest.Action{"run": "   "}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeShell: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestShellResolvesEnvBeforeTheShellSeesIt(t *testing.T) {
 
 	runner, err := makeShell("marker", manifest.Action{
 		"run": `touch "${MARKER_NAME}-${MISSING_VAR:-default}.txt"`,
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeShell: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestShellResolvesEnvBeforeTheShellSeesIt(t *testing.T) {
 	// Unbraced shell-locals are left alone.
 	local, err := makeShell("local", manifest.Action{
 		"run": `x=ok; touch "$x-local.txt"`,
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeShell: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestShellFailsOnUnresolvableVar(t *testing.T) {
 
 	runner, err := makeShell("deploy", manifest.Action{
 		"run": `touch "${NOT_SET_ANYWHERE}-marker.txt"`,
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeShell: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestShellPassthroughAppendsQuotedArgs(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	runner, err := makeShellPassthrough("echo-args", manifest.Action{"run": "touch"}, nil)
+	runner, err := makeShellPassthrough("echo-args", manifest.Action{"run": "touch"}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeShellPassthrough: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestShellPassthroughAppendsQuotedArgs(t *testing.T) {
 // the passthrough variant.
 func TestShellPassthroughEmptyIsRefused(t *testing.T) {
 	t.Chdir(t.TempDir())
-	runner, err := makeShellPassthrough("blank", manifest.Action{"run": ""}, nil)
+	runner, err := makeShellPassthrough("blank", manifest.Action{"run": ""}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeShellPassthrough: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestShellPassthroughInteractiveInheritsStdout(t *testing.T) {
 	t.Cleanup(func() { os.Stdout = orig })
 
 	runner, err := makeShellPassthrough("proto",
-		manifest.Action{"run": "printf inherited", "interactive": true}, nil)
+		manifest.Action{"run": "printf inherited", "interactive": true}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeShellPassthrough: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestShellPassthroughInteractiveInheritsStdout(t *testing.T) {
 func TestShellPassthroughInteractiveNonZeroExitIsError(t *testing.T) {
 	t.Chdir(t.TempDir())
 	runner, err := makeShellPassthrough("fails",
-		manifest.Action{"run": "exit 3", "interactive": true}, nil)
+		manifest.Action{"run": "exit 3", "interactive": true}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeShellPassthrough: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestShellPassthroughInteractiveNonZeroExitIsError(t *testing.T) {
 // the knob, the existing captured path is unchanged.
 func TestShellPassthroughNonInteractiveStillLogs(t *testing.T) {
 	t.Chdir(t.TempDir())
-	runner, err := makeShellPassthrough("plain", manifest.Action{"run": "true"}, nil)
+	runner, err := makeShellPassthrough("plain", manifest.Action{"run": "true"}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeShellPassthrough: %v", err)
 	}

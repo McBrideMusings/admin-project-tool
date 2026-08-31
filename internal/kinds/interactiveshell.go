@@ -89,7 +89,7 @@ func toInt(v any) (int, bool) {
 // keystrokes to drive live-reload from the terminal they're sitting at, so
 // routing it into a herdr pane would silently disconnect it from the
 // keyboard it exists to read.
-func makeInteractiveShell(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeInteractiveShell(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
 	run, _ := actionString(action, "run")
 	if run == "" {
 		return nil, fmt.Errorf("interactive-shell action %q needs 'run'", name)
@@ -116,7 +116,7 @@ func makeInteractiveShell(name string, action manifest.Action, m *manifest.Manif
 			LogFn:     h.AppendLog,
 			LogPath:   h.MaterializeLogFile(),
 			LogBridge: bridgeCfg,
-			RunAction: func(target string) error { return dispatchNested(target, nil) },
+			RunAction: func(target string) error { return surf.Action(target, nil) },
 			Info:      h.Info,
 			Warn:      h.Warn,
 			Err:       h.Err,
@@ -161,7 +161,7 @@ func scopeLogBridgeHosts(hosts string) (string, error) {
 // what THIS listener advertises (via ADMIN_LOG_BRIDGE_HOSTS, read by
 // internal/logbridge.Start), so `logs live` and `logs dev` can run side by
 // side with the userscript routing each page to the right one.
-func makeBridgeListen(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeBridgeListen(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
 	keys, err := actionKeys(action, name)
 	if err != nil {
 		return nil, err
@@ -187,7 +187,7 @@ func makeBridgeListen(name string, action manifest.Action, m *manifest.Manifest)
 			LogFn:     h.AppendLog,
 			LogPath:   h.MaterializeLogFile(),
 			LogBridge: bridgeCfg,
-			RunAction: func(target string) error { return dispatchNested(target, nil) },
+			RunAction: func(target string) error { return surf.Action(target, nil) },
 			Info:      h.Info,
 			Warn:      h.Warn,
 			Err:       h.Err,

@@ -14,7 +14,7 @@ import (
 // non-numeric token is rejected when the factory is built, not deferred to
 // the first Runner call.
 func TestMakeKillPortRejectsNonNumericDefaultPorts(t *testing.T) {
-	_, err := makeKillPort("kill", manifest.Action{"run": "3000 not-a-port"}, &manifest.Manifest{})
+	_, err := makeKillPort("kill", manifest.Action{"run": "3000 not-a-port"}, &manifest.Manifest{}, nil)
 	if err == nil {
 		t.Fatal("makeKillPort accepted a non-numeric port in `run`, want an error")
 	}
@@ -25,7 +25,7 @@ func TestMakeKillPortRejectsNonNumericDefaultPorts(t *testing.T) {
 // port — matching admin_lib/interp.py::_make_kill_port's "port argument
 // required" branch.
 func TestMakeKillPortRequiresAPortWithNoDefault(t *testing.T) {
-	runner, err := makeKillPort("kill", manifest.Action{}, &manifest.Manifest{})
+	runner, err := makeKillPort("kill", manifest.Action{}, &manifest.Manifest{}, nil)
 	if err != nil {
 		t.Fatalf("makeKillPort: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestMakeKillPortRequiresAPortWithNoDefault(t *testing.T) {
 // with nothing to kill.
 func TestMakeKillPortOnAFreePortIsANoOp(t *testing.T) {
 	port := freeTCPPortForKillPort(t)
-	runner, err := makeKillPort("kill", manifest.Action{"run": itoaKillPort(port)}, &manifest.Manifest{})
+	runner, err := makeKillPort("kill", manifest.Action{"run": itoaKillPort(port)}, &manifest.Manifest{}, nil)
 	if err != nil {
 		t.Fatalf("makeKillPort: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestMakeKillPortClearsARealHolder(t *testing.T) {
 		t.Skip("http.server never bound the port in time")
 	}
 
-	runner, err := makeKillPort("kill", manifest.Action{"run": itoaKillPort(port)}, &manifest.Manifest{})
+	runner, err := makeKillPort("kill", manifest.Action{"run": itoaKillPort(port)}, &manifest.Manifest{}, nil)
 	if err != nil {
 		t.Fatalf("makeKillPort: %v", err)
 	}

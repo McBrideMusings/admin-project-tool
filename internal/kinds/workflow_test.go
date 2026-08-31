@@ -236,7 +236,7 @@ func TestWorkflowKindIsDeclaredConfiglessAndLongRunning(t *testing.T) {
 // package follows.
 func TestMakeWorkflowRejectsMalformedOverAtBuildTime(t *testing.T) {
 	action := manifest.Action{"kind": "workflow"}
-	if _, err := makeWorkflow("no-over", action, nil); err == nil {
+	if _, err := makeWorkflow("no-over", action, nil, nil); err == nil {
 		t.Fatal("makeWorkflow = nil error, want a build-time rejection of the missing 'over'")
 	}
 }
@@ -248,7 +248,7 @@ func TestMakeWorkflowRejectsMalformedOverAtBuildTime(t *testing.T) {
 // source rather than a generic message.
 func TestMakeWorkflowRunnerReportsNotImplemented(t *testing.T) {
 	action := manifest.Action{"kind": "workflow", "over": "selection"}
-	run, err := makeWorkflow("retire-merged", action, nil)
+	run, err := makeWorkflow("retire-merged", action, nil, nil)
 	if err != nil {
 		t.Fatalf("makeWorkflow = %v, want nil", err)
 	}

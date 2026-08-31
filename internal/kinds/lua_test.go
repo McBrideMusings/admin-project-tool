@@ -17,7 +17,7 @@ func TestLuaRunsHostAPI(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	runner, err := makeLua("touch", manifest.Action{"run": `run_cmd("touch marker.txt")`}, nil)
+	runner, err := makeLua("touch", manifest.Action{"run": `run_cmd("touch marker.txt")`}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeLua: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestLuaConfigReachesBody(t *testing.T) {
 	runner, err := makeLua("cfg", manifest.Action{
 		"run":    `if config.value == "hi" then run_cmd("touch seen.txt") else err("missing") end`,
 		"config": map[string]any{"value": "hi"},
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeLua: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestLuaManifestConfigReachesBody(t *testing.T) {
 	runner, err := makeLua("read-go-config", manifest.Action{
 		"run": `if config.go.binary == "bin/admin" then run_cmd("touch marker.txt") ` +
 			`else err("got " .. tostring(config.go.binary)) end`,
-	}, m)
+	}, m, nil)
 	if err != nil {
 		t.Fatalf("makeLua: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestLuaInlineConfigOverridesManifestTable(t *testing.T) {
 	runner, err := makeLua("override", manifest.Action{
 		"run":    `if config.go == "from-inline" then run_cmd("touch marker.txt") else err("wrong") end`,
 		"config": map[string]any{"go": "from-inline"},
-	}, m)
+	}, m, nil)
 	if err != nil {
 		t.Fatalf("makeLua: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestLuaArgsReachBody(t *testing.T) {
 
 	runner, err := makeLua("build", manifest.Action{
 		"run": `if args[1] == "windows" and #args == 1 then run_cmd("touch marker.txt") else err("missing") end`,
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeLua: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestLuaArgsReachBody(t *testing.T) {
 // exactly "build failed".
 func TestLuaErrorMessageDropsStackTrace(t *testing.T) {
 	t.Chdir(t.TempDir())
-	runner, mkErr := makeLua("build", manifest.Action{"run": `error("build failed")`}, nil)
+	runner, mkErr := makeLua("build", manifest.Action{"run": `error("build failed")`}, nil, nil)
 	if mkErr != nil {
 		t.Fatalf("makeLua: %v", mkErr)
 	}
@@ -177,7 +177,7 @@ func TestLuaErrorMessageDropsStackTrace(t *testing.T) {
 // error rather than being swallowed.
 func TestLuaErrorPropagates(t *testing.T) {
 	t.Chdir(t.TempDir())
-	runner, err := makeLua("boom", manifest.Action{"run": `error("kaboom")`}, nil)
+	runner, err := makeLua("boom", manifest.Action{"run": `error("kaboom")`}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeLua: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestLuaErrorPropagates(t *testing.T) {
 // reaching the Lua VM.
 func TestLuaEmptyRunIsRefused(t *testing.T) {
 	t.Chdir(t.TempDir())
-	runner, err := makeLua("blank", manifest.Action{}, nil)
+	runner, err := makeLua("blank", manifest.Action{}, nil, nil)
 	if err != nil {
 		t.Fatalf("makeLua: %v", err)
 	}

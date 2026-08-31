@@ -171,7 +171,7 @@ func ValidateWorkflows(actions map[string]manifest.Action) error {
 // target source so the message is useful rather than generic: dispatch,
 // worktrees and concurrency are admin-3rgp.25/.26/.27's job, not this
 // ticket's.
-func makeWorkflow(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeWorkflow(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	target, err := ParseWorkflowOver(name, action)
 	if err != nil {
 		return nil, err

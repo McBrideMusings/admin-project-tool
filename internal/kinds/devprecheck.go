@@ -32,7 +32,7 @@ func resolveEnvList(cfg map[string]any, key string) ([]string, error) {
 // [dev_precheck] table and running ports.DevPrecheck. A live session or a
 // running declared container aborts (non-nil error); orphaned processes are
 // reaped and reported, never treated as a failure.
-func makeDevPrecheck(name string, action manifest.Action, m *manifest.Manifest) (Runner, error) {
+func makeDevPrecheck(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	cfg := archetypeConfigTable(m, "dev_precheck")
 
 	return func(args []string) error {
