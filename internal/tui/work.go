@@ -680,14 +680,15 @@ func (m Model) activateCommandTarget(wd *workRowData) (tea.Model, tea.Cmd) {
 	return m, dispatchCommandCmd(m.manifest, wd.cmdName, wd.targetKey)
 }
 
-// attachEntry focuses e's pane. A nil e or one with no Attach op (a producer
-// that never wired one) is a silent no-op, matching every other action here
-// that requires a live row to act on.
+// attachEntry resolves e's attach through the registry — pane focus for a
+// pane-addressed entry, the terminal view for a pty-addressed one (see
+// livework.Registry.Attach). A nil e is a silent no-op, matching every
+// other action here that requires a live row to act on.
 func (m Model) attachEntry(e *livework.Entry) (tea.Model, tea.Cmd) {
-	if e == nil || e.Ops.Attach == nil {
+	if e == nil {
 		return m, nil
 	}
-	if err := e.Ops.Attach(); err != nil {
+	if err := livework.Default.Attach(e.ID); err != nil {
 		m.setStatus("attach failed: "+err.Error(), cRed)
 	}
 	return m, nil
