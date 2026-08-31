@@ -379,6 +379,12 @@ func (h *Host) registerApple(L *lua.LState) {
 		return 1
 	})
 
+	set("apply_tv_dev_banner", func(L *lua.LState) int {
+		ok := ApplyTVDevBanner(h, L.CheckString(1))
+		L.Push(lua.LBool(ok))
+		return 1
+	})
+
 	set("swap_dev_icon_composer", func(L *lua.LState) int {
 		ok, err := SwapDevIconComposer(L.CheckString(1), L.CheckString(2))
 		if err != nil {
