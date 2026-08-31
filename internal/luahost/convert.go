@@ -105,6 +105,19 @@ func fromLuaValue(lv lua.LValue) any {
 	}
 }
 
+// stringTableToMap reads a Lua {label = path, ...} table (the icon_dirs
+// shape apple.backup_icons/restore_icons/swap_dev_icons_banner take) into a
+// Go map[string]string, skipping any value that isn't a string.
+func stringTableToMap(tbl *lua.LTable) map[string]string {
+	out := map[string]string{}
+	tbl.ForEach(func(k, v lua.LValue) {
+		if s, ok := v.(lua.LString); ok {
+			out[k.String()] = string(s)
+		}
+	})
+	return out
+}
+
 // tableToStringSlice reads a Lua array-of-strings argument (used by
 // set_log_context's variadic parts and pick_target's key lists) into a Go
 // []string, skipping non-string entries rather than erroring — a stray

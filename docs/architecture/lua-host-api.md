@@ -108,8 +108,11 @@ Bound by [admin-3rgp.38](https://github.com/McBrideMusings/admin-project-tool/is
 from `admin_lib/apple.py`. Registered only on darwin builds (`apple_register_darwin.go`); a
 non-darwin build gets a no-op `registerApple` (`apple_stub.go`) and the global `apple` table is
 simply absent — the same "undefined global" a body gets for typoing any other host function
-name, rather than a table of functions that all error. This is a **partial** port — see "What is
-intentionally not here yet" below for the pieces of `apple.py` this ticket did not bind, and why.
+name, rather than a table of functions that all error. This is still a **partial** port — the
+OS-facing primitives (xcodebuild, simctl, devicectl, codesign, log parsing), pbxproj parsing, and
+icon backup/dev-banner-swap/restore are bound; a from-scratch glyph-based icon generator and the
+continuous dev-loop/console-attach paths are not — see "What is intentionally not here yet" below
+for what remains and why.
 
 All error paths that the Python original reported via `warn()`/`err()` mid-call are relayed the
 same way here (the Lua binding calls `h.Warn`/`h.Err`), so a body sees the identical explanatory
@@ -141,34 +144,48 @@ text, not just a bare `nil`.
 | `apple.install_on_device(device_id, app_path)` | `(string, string) -> bool` | |
 | `apple.launch_on_device(device_id, bundle_id[, env])` | `(string, string, table?) -> bool` | One-shot launch (terminates any existing instance first); `env` is a string→string table of launch environment variables. Does **not** attach console output — see below. |
 | `apple.terminate_device_app(device_id, bundle_id)` / `apple.is_device_app_running(device_id, bundle_id)` | `(string, string) -> ()` / `(string, string) -> bool` | |
+| `apple.find_project_path([explicit])` | `(string?) -> string?` | Returns `explicit` unchanged if given, else the first `*.xcworkspace`/`*.xcodeproj` in the process's cwd, else `nil`. |
+| `apple.read_pbxproj(project_path)` | `(string) -> table` | Parses `project_path`'s `project.pbxproj` (an OpenStep ASCII plist) into a table via `plutil -convert json`, cached per path for the process's lifetime. A `.xcworkspace` resolves to a sibling `.xcodeproj` of the same base name when one exists. Returns `{}` on any failure (missing file, no sibling project, a `plutil` error) — callers fall back to manifest-supplied values. |
+| `apple.xcode_target_settings(project_path, scheme[, configuration])` | `(string, string, string?) -> table` | The `buildSettings` table for the `PBXNativeTarget` named `scheme`, at `configuration` (default `"Debug"`) — falling back to the target's first build configuration when the named one isn't found. `{}` on any resolution failure. Only sees settings written into the pbxproj itself; `.xcconfig` values and `$(VAR)` substitutions come back as literals. |
+| `apple.xcode_setting(project_path, scheme, key)` | `(string, string, string) -> string?` | `xcode_target_settings(project_path, scheme).key` (always at `"Debug"`), or `nil` if missing, non-string, or an unresolved `$(...)` substitution the caller can't act on. |
+| `apple.backup_icons(icon_dirs, backup_dir)` / `apple.restore_icons(icon_dirs, backup_dir)` | `(table, string) -> ()` | Copies every `*.png` between each `icon_dirs[label]` appiconset directory and `backup_dir/label`. `icon_dirs` is `{label = path, ...}` (e.g. `{mac = "...", ios = "..."}`); a missing source directory is skipped, not an error. `restore_icons` removes `backup_dir` when done. |
+| `apple.backup_tv_icons(brandassets_dir, backup_dir)` / `apple.restore_tv_icons(brandassets_dir, backup_dir)` | `(string, string) -> ()` | Same shape as `backup_icons`/`restore_icons`, but for a tvOS `.brandassets` catalog — a directory tree, not a flat set of PNGs, so it's copied whole rather than by filename. |
+| `apple.swap_dev_icons_banner(icon_dirs)` | `(table) -> bool` | Overlays a red diagonal dev banner (stdlib-rendered — see below) onto every `*.png` in each `icon_dirs[label]`, in place, flattening to opaque RGB so macOS renders the icon full-bleed. Binds only `swap_dev_icons`' "overlay the existing icon art" path (`admin_lib/apple.py`'s `has_glyph=False` branch) — see below for what's not bound. Returns `false` if any file failed to process. |
+| `apple.swap_dev_icon_composer(icon_path, backup_dir)` / `apple.restore_icon_composer(icon_path, backup_dir)` | `(string, string) -> bool` / `(string, string) -> ()` | Injects (or removes) an opaque `DEV`-banner group into an Icon Composer `.icon` bundle's `icon.json`, rendering the banner asset sized to `Assets/icon-raw.png` (or 1024 if absent). `swap` backs up the pristine `icon.json` to `backup_dir` first and returns `false` (no error) if `icon.json` is missing — not an Icon-Composer-shaped bundle. `restore` prefers the byte-exact backup, else strips the banner group from whatever's on disk, and removes the generated banner asset and `backup_dir` either way. |
 
 ## What is intentionally not here yet
 
 - **Continuous dev-loop supervision** — `admin_lib/apple.py`'s `dev_mac`/`dev_ios`/`dev_tv`/
   `dev_device`: build once, launch, then rebuild-and-relaunch on a signal from a separate
-  `admin reload` invocation, streaming the running app's logs the whole time. This needs the
-  reload-flag + output-pump machinery the repo's hard rule says lives in one place
-  (`admin_lib/reload.py` + `admin_lib/streams.OutputPump` in Python) — and that machinery has
-  not yet been ported to Go ([admin-3rgp.11](https://github.com/McBrideMusings/admin-project-tool/issues),
-  [admin-3rgp.17](https://github.com/McBrideMusings/admin-project-tool/issues)). Binding a loop
-  now would mean re-hand-rolling the pump in Lua or in this package, which is exactly the mistake
-  the project's OutputPump rule exists to prevent. The primitives those loops are built from
+  `admin reload` invocation, streaming the running app's logs the whole time. The blocker this
+  item used to name — the reload-flag + output-pump machinery not existing in Go yet — is gone:
+  `internal/reload` and `internal/streams.OutputPump` have both landed. This is now unimplemented
+  scope, not a missing capability: composing a rebuild-on-signal loop, launch-and-log-attach, and
+  the dev/prod bundle-suffix decisions (see the pbxproj-introspection item below) into one body is
+  a substantial piece of work in its own right, deferred again by admin-3rgp.38 for the same
+  reason the icon subsystem and pbxproj parsing were the first time: 4,044 lines of
+  `admin_lib/apple.py` do not fit one pass. The primitives those loops are built from
   (`apple.xcodebuild`, `apple.ensure_booted_simulator`, `apple.install_and_launch_sim`,
-  `apple.dev_macos_postprocess`, `apple.launch_on_device`) are bound, so wiring the actual loop
-  once the pump lands in Go is composition, not a second research effort.
+  `apple.dev_macos_postprocess`, `apple.launch_on_device`, `apple.read_pbxproj`,
+  `apple.xcode_target_settings`) are all bound, so wiring the actual loop is composition against
+  an existing `OutputPump`/`reload` API, not a second research effort or a second copy of either.
 - **Attached device console output** (`launch_on_device`'s `--console` mode in the Python
-  original) — blocks on the child's stdout until the app exits, which is output-pump territory
-  for the same reason as the dev loop above.
-- **The icon backup/swap/composer subsystem** (`admin_lib/apple.py`'s `backup_icons`,
-  `swap_dev_icons`, `restore_icons`, and the whole Icon Composer JSON-patching subsystem —
-  roughly 1000 lines). A distinct concern (build-time asset substitution for dev-vs-prod icon
-  differentiation) from the platform verbs this ticket names, not attempted here.
-- **Xcode-project introspection for the dev/prod bundle-suffix scheme** (`_detect_project_path`,
-  `_read_pbxproj`, `_compose_dev_settings`, `_entitlements_paths`) — parses a project's
-  `.pbxproj` directly to derive `ADMIN_DEV_BUNDLE_SUFFIX` and decide whether a target needs a
-  real provisioning profile. This is project-specific convention-following over a file format,
-  not a general host capability; a Lua body can still pass a fully composed `extra_settings`
-  string into `apple.xcodebuild` today, just not have this derivation done for it.
+  original) — blocks on the child's stdout until the app exits, through `OutputPump` for the same
+  reason as the dev loop above; deferred for the same reason.
+- **Glyph-based fresh icon generation** (`admin_lib/apple.py`'s `swap_dev_icons` when a
+  `glyph_text`/`glyph_svg` is configured, and all of `admin_lib/icons.py`'s `generate_icons` /
+  `generate_tv_icons` — composing a background, glyph, and font/SVG art into a brand-new icon set
+  at every declared size). `apple.swap_dev_icons_banner` binds the far more common "overlay the
+  shipped icon art with a dev banner" path; generating icons from scratch needs a font-rendering
+  and/or SVG-rasterizing dependency this pass didn't take on — see `apple_icons_darwin.go`'s file
+  doc comment for the full reasoning and the dependency options it names.
+- **Xcode-project introspection for the dev/prod bundle-suffix scheme** (`_compose_dev_settings`,
+  `_entitlements_paths`, `_target_needs_provisioning_profile`) — derives `ADMIN_DEV_BUNDLE_SUFFIX`
+  and decides whether a target needs a real provisioning profile, built on top of the pbxproj
+  parsing that *is* now bound (`apple.read_pbxproj` / `apple.xcode_target_settings` /
+  `apple.xcode_setting`). This layer is project-specific convention-following over what those
+  primitives return, not a further parsing capability; a Lua body can still pass a fully composed
+  `extra_settings` string into `apple.xcodebuild` today, just not have this derivation done for it.
 - **Log pruning** (`retain`) — accepted, not enforced (see above).
 - **A richer `pick_target` picker** — arrow-key navigation, scrolling for long lists. The
   current numbered-list picker meets the acceptance criterion (in-process, no subprocess) but
