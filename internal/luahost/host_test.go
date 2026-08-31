@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -69,7 +70,12 @@ info("captured:" .. output)
 	if err != nil {
 		t.Fatalf("Exec: %v", err)
 	}
-	if !strings.Contains(out.String(), "hi-from-run-cmd") {
+	// run_cmd also streams the child's raw line straight to Stdout as it
+	// arrives, so a bare Contains("hi-from-run-cmd") check passes even when
+	// the returned `output` value itself is empty — assert on the
+	// "captured:" prefix info() only prints when it concatenates the actual
+	// returned string, so this fails if the accumulation is dropped.
+	if !strings.Contains(out.String(), "captured:hi-from-run-cmd") {
 		t.Fatalf("run_cmd output not captured: %q", out.String())
 	}
 }
@@ -242,6 +248,23 @@ ok("second line")
 	if !strings.Contains(out.String(), "\x1b[") {
 		t.Fatalf("stdout should still be coloured: %q", out.String())
 	}
+	// Every current caller (info/ok/warn/err, run_cmd's line streaming)
+	// passes logWrite already-plain text, so the check above never actually
+	// exercises ansiEscape stripping — it would pass identically even if
+	// logWrite forgot to strip. Call logWrite directly with ANSI-coloured
+	// text to prove the stripping itself works, not just that callers
+	// happen not to trigger it.
+	h.logWrite("\x1b[31mdirect-colour\x1b[0m")
+	data, err = os.ReadFile(h.LogFile())
+	if err != nil {
+		t.Fatalf("reading log file: %v", err)
+	}
+	if strings.Contains(string(data), "\x1b[") {
+		t.Fatalf("logWrite did not strip ANSI escapes: %q", string(data))
+	}
+	if !strings.Contains(string(data), "direct-colour") {
+		t.Fatalf("logWrite dropped the message entirely: %q", string(data))
+	}
 }
 
 func TestExecReturnsLuaError(t *testing.T) {
@@ -280,5 +303,16 @@ info(json.encode(payload))
 	}
 	if decoded["count"].(float64) != 3 {
 		t.Fatalf("unexpected count: %v", decoded["count"])
+	}
+	// items must round-trip as a JSON array, not an object keyed by
+	// stringified indices — this is what actually exercises fromLuaValue's
+	// array-vs-map detection; the "count" check above passes even when that
+	// detection is completely broken.
+	items, ok := decoded["items"].([]any)
+	if !ok {
+		t.Fatalf("expected items to encode as a JSON array, got %T: %v", decoded["items"], decoded["items"])
+	}
+	if want := []any{"a", "b", "c"}; !reflect.DeepEqual(items, want) {
+		t.Fatalf("items = %v, want %v", items, want)
 	}
 }
