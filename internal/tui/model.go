@@ -1402,13 +1402,49 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		m.closeWatcher()
 		return m, tea.Quit
-	case "right", "l":
+	case "right":
+		// On the Work tab, right on a collapsed command-with-targets row opens
+		// its submenu instead of switching tab — l keeps switching tab even
+		// there, since only the arrow gains the submenu meaning.
+		if m.active == tabWork {
+			if r, ok := m.currentRow(); ok && r.kind == rowCommand && r.work != nil &&
+				len(r.work.targets) > 0 && !r.work.expanded {
+				return m.expandCommand(r.work.cmdName)
+			}
+		}
+		m.filter = ""
+		m.stepTab(1)
+	case "l":
 		// Arrows step along the drawn tab order, whatever this repo draws.
 		m.filter = ""
 		m.stepTab(1)
-	case "left", "h":
+	case "left":
+		if m.active == tabWork {
+			if r, ok := m.currentRow(); ok {
+				switch {
+				case r.kind == rowCommand && r.work != nil && r.work.expanded:
+					return m.collapseCommand(r.work.cmdName)
+				case r.kind == rowCommandTarget && r.work != nil:
+					return m.collapseCommand(r.work.cmdName)
+				}
+			}
+		}
 		m.filter = ""
 		m.stepTab(-1)
+	case "h":
+		m.filter = ""
+		m.stepTab(-1)
+	case "esc":
+		if m.active == tabWork {
+			if r, ok := m.currentRow(); ok {
+				switch {
+				case r.kind == rowCommand && r.work != nil && r.work.expanded:
+					return m.collapseCommand(r.work.cmdName)
+				case r.kind == rowCommandTarget && r.work != nil:
+					return m.collapseCommand(r.work.cmdName)
+				}
+			}
+		}
 	case "tab":
 		// Tab cycles the focused pane within the Repo tab; it never switches
 		// the top-level tab. The Config tab is a plain read-only readout

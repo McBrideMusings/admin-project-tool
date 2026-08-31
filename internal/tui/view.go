@@ -647,7 +647,7 @@ func (m Model) keymap() [][2]string {
 	}
 	switch m.active {
 	case tabWork:
-		return [][2]string{{"↑↓", "move"}, {"↵", "open, run or attach"}, {"a", "attach"}, {"k", "kill"}, {"/", "filter"}, {"q", "quit"}, tabKey}
+		return [][2]string{{"↑↓", "move"}, {"↵", "open, run or attach"}, {"→←", "submenu"}, {"a", "attach"}, {"k", "kill"}, {"/", "filter"}, {"q", "quit"}, tabKey}
 	case tabPRs:
 		return [][2]string{{"↑↓", "move"}, {"↵", "checkout"}, {"o", "open"}, {"i", "issue"}, {"/", "filter"}, {"r", "refresh row"}, {"⇧R", "refresh all"}, {"q", "quit"}, tabKey}
 	case tabIssues:
