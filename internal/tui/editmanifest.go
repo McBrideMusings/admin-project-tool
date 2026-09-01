@@ -8,9 +8,11 @@ package tui
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -63,6 +65,32 @@ func openCommand(repoRoot string) *exec.Cmd {
 	return c
 }
 
+// manifestStamp is a cheap fingerprint of admin.toml's on-disk state, used to
+// tell a real edit to the manifest apart from every other reason the
+// fsnotify watcher fires (a source-file save, a build writing into the tree,
+// a branch switch). The zero value means "no manifest" and compares unequal
+// to any real file, so create/delete of admin.toml is itself a change with
+// no separate ok flag needed.
+type manifestStamp struct {
+	mod  time.Time
+	size int64
+}
+
+// statManifest fingerprints repoRoot's admin.toml. It returns the zero
+// manifestStamp when repoRoot is empty or the file can't be stat'd (missing,
+// permission error) — a legitimate state, not an error to propagate, since
+// the caller only ever compares stamps for equality.
+func statManifest(repoRoot string) manifestStamp {
+	if repoRoot == "" {
+		return manifestStamp{}
+	}
+	fi, err := os.Stat(filepath.Join(repoRoot, manifest.Filename))
+	if err != nil {
+		return manifestStamp{}
+	}
+	return manifestStamp{mod: fi.ModTime(), size: fi.Size()}
+}
+
 // loadManifest re-reads and re-resolves repoRoot's admin.toml into the fields
 // every tab renders from. New() calls it for the first read and the fsnotify
 // watcher's fsChangedMsg calls it again on every external save — nothing
@@ -78,6 +106,13 @@ func openCommand(repoRoot string) *exec.Cmd {
 func (m *Model) loadManifest() {
 	m.manifest, m.manifestOK, m.manifestErr = nil, false, ""
 	m.cmdOrigin, m.actionOrigin, m.keyOrigin, m.rowKeys = nil, nil, nil, nil
+
+	// Stat before the read: if the file is rewritten between the stat and
+	// the read below, this stamp is already stale against the file on disk,
+	// so the NEXT fsChangedMsg still sees a difference and reloads again.
+	// Statting after the read would instead record the newer file against
+	// this (older) parse and permanently skip the reload that should follow.
+	m.manifestStamp = statManifest(m.repoRoot)
 
 	project, merged, sp, ok, err := loadWorkManifest(m.repoRoot)
 	switch {
