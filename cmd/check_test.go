@@ -790,3 +790,192 @@ run  = "./tools/dev-run.sh"
 		t.Fatalf("runCheck stderr %q does not report the anti-pattern", out)
 	}
 }
+
+// -- checkRowKeys / [keys.<row-kind>] (admin-l6kb.1, ADR-0018) -------------
+
+// runCheckCapturingStderr runs runCheck against dir and returns its error
+// plus everything it wrote to stderr, mirroring
+// TestRunCheckReportsAntiPatternsAndExitsZero's capture technique.
+func runCheckCapturingStderr(t *testing.T, dir string) (error, string) {
+	t.Helper()
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	old := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	err := runCheck(cmd, []string{dir})
+	w.Close()
+	os.Stderr = old
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	return err, buf.String()
+}
+
+func writeCheckManifest(t *testing.T, toml string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// TestRunCheckRowKeysValidBindingPasses is the ticket's first acceptance
+// criterion: a manifest with [keys.bead] enter = "implement", where
+// [commands.implement] exists, passes admin check.
+func TestRunCheckRowKeysValidBindingPasses(t *testing.T) {
+	dir := writeCheckManifest(t, `project_name = "checktest"
+
+[commands.custom.implement]
+desc  = "implement it"
+steps = ["noop"]
+
+[keys.bead]
+enter = "implement"
+`)
+	err, _ := runCheckCapturingStderr(t, dir)
+	if err != nil {
+		t.Fatalf("runCheck = %v, want nil", err)
+	}
+}
+
+// TestRunCheckRowKeysMissingCommandFails is the ticket's second acceptance
+// criterion: naming a command that does not exist fails check, and the
+// message names both the binding and the missing command.
+func TestRunCheckRowKeysMissingCommandFails(t *testing.T) {
+	dir := writeCheckManifest(t, `project_name = "checktest"
+
+[keys.bead]
+o = "does-not-exist"
+`)
+	err, _ := runCheckCapturingStderr(t, dir)
+	if err == nil {
+		t.Fatal("runCheck = nil, want an error naming the missing command")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "keys.bead.o") || !strings.Contains(msg, "does-not-exist") {
+		t.Fatalf("error %q does not name both the binding and the missing command", msg)
+	}
+}
+
+// TestRunCheckRowKeysReservedKeyFails is the ticket's third acceptance
+// criterion: a reserved key fails check, and the message says the key is
+// reserved.
+func TestRunCheckRowKeysReservedKeyFails(t *testing.T) {
+	dir := writeCheckManifest(t, `project_name = "checktest"
+
+[commands.custom.implement]
+desc  = "implement it"
+steps = ["noop"]
+
+[keys.bead]
+q = "implement"
+`)
+	err, _ := runCheckCapturingStderr(t, dir)
+	if err == nil {
+		t.Fatal("runCheck = nil, want an error naming the reserved key")
+	}
+	if !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("error %q does not say the key is reserved", err.Error())
+	}
+}
+
+// TestRunCheckRowKeysNonBindableRowKindFails is the ticket's fourth
+// acceptance criterion: a row kind that is not bindable — command,
+// commandTarget, worker, or an unknown word — fails check, and the message
+// lists the kinds that are.
+func TestRunCheckRowKeysNonBindableRowKindFails(t *testing.T) {
+	for _, kind := range []string{"command", "commandTarget", "worker", "nonsense"} {
+		dir := writeCheckManifest(t, `project_name = "checktest"
+
+[commands.custom.implement]
+desc  = "implement it"
+steps = ["noop"]
+
+[keys.`+kind+`]
+o = "implement"
+`)
+		err, _ := runCheckCapturingStderr(t, dir)
+		if err == nil {
+			t.Fatalf("[keys.%s]: runCheck = nil, want an error", kind)
+		}
+		msg := err.Error()
+		for _, want := range []string{"bead", "issue", "branch", "pr", "commit", "stash"} {
+			if !strings.Contains(msg, want) {
+				t.Fatalf("[keys.%s]: error %q does not list bindable kind %q", kind, msg, want)
+			}
+		}
+	}
+}
+
+// TestRunCheckRowKeysShadowPassesAndPrints is the ticket's fifth acceptance
+// criterion: a binding whose key already carries a built-in meaning for
+// that row kind passes, and check prints a shadow line naming what it
+// displaces.
+func TestRunCheckRowKeysShadowPassesAndPrints(t *testing.T) {
+	dir := writeCheckManifest(t, `project_name = "checktest"
+
+[commands.custom.implement]
+desc  = "implement it"
+steps = ["noop"]
+
+[keys.bead]
+d = "implement"
+`)
+	err, out := runCheckCapturingStderr(t, dir)
+	if err != nil {
+		t.Fatalf("runCheck = %v, want nil — a shadow passes", err)
+	}
+	if !strings.Contains(out, "keys.bead.d") || !strings.Contains(out, "shadows") || !strings.Contains(out, "detail") {
+		t.Fatalf("stderr %q does not report the shadow naming what it displaces", out)
+	}
+}
+
+// TestRunCheckRowKeysTwoProblemsBothReported is the ticket's sixth
+// acceptance criterion: two distinct problems in one manifest are both
+// reported by a single admin check run.
+func TestRunCheckRowKeysTwoProblemsBothReported(t *testing.T) {
+	dir := writeCheckManifest(t, `project_name = "checktest"
+
+[commands.custom.implement]
+desc  = "implement it"
+steps = ["noop"]
+
+[keys.bead]
+q = "implement"
+
+[keys.issue]
+o = "does-not-exist"
+`)
+	err, _ := runCheckCapturingStderr(t, dir)
+	if err == nil {
+		t.Fatal("runCheck = nil, want an error naming both problems")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "keys.bead.q") {
+		t.Fatalf("error %q missing the reserved-key problem", msg)
+	}
+	if !strings.Contains(msg, "keys.issue.o") || !strings.Contains(msg, "does-not-exist") {
+		t.Fatalf("error %q missing the missing-command problem", msg)
+	}
+}
+
+// TestRunCheckRowKeysNoTableUnaffected is the ticket's seventh acceptance
+// criterion: a manifest with no [keys] table at all is unaffected in every
+// respect.
+func TestRunCheckRowKeysNoTableUnaffected(t *testing.T) {
+	dir := writeCheckManifest(t, `project_name = "checktest"
+
+[commands.custom.deploy]
+desc  = "deploy it"
+steps = ["noop"]
+`)
+	err, out := runCheckCapturingStderr(t, dir)
+	if err != nil {
+		t.Fatalf("runCheck = %v, want nil", err)
+	}
+	if !strings.Contains(out, "admin.toml: valid") {
+		t.Fatalf("stderr %q does not report a clean pass", out)
+	}
+}
