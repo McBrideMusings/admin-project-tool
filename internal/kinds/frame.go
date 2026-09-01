@@ -36,6 +36,6 @@ func enterFrame(h *luahost.Host, label string, rawURLs []any, hasFooter, footerV
 	if !frame.ShouldActivate(len(resolved), hasFooter, footerVal) {
 		return nil
 	}
-	h.SetLogContext([]string{label}, 0)
+	h.SetLogContext([]string{label}, luahost.RetainUnset)
 	return frame.Activate(label, resolved, h.MaterializeLogFile(), h.Stdout)
 }

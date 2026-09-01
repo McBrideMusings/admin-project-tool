@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -235,30 +236,71 @@ func (m Model) commandSteps(c manifest.Command) []workStepInfo {
 	return out
 }
 
-// commandLogPath is the "log" the detail pane shows: a glob over
-// internal/luahost's own log directory convention
-// (<repoRoot>/tmp/<stem>.<timestamp>.log — internal/luahost/host.go's LogDir
-// default) for each of the command's step names, taking the newest match
-// across all of them. This is real filesystem state, not a persistence layer:
-// a step whose body never calls set_log_context(name) under its own action
-// name simply has nothing to find, and degrades to "none yet".
-func commandLogPath(repoRoot string, c manifest.Command) string {
-	logDir := filepath.Join(repoRoot, "tmp")
-	var last time.Time
-	var logPath string
+// commandLogDir is the log directory a command's log file lands under —
+// <repoRoot>/tmp by default, overridden by the manifest's `[logging] dir`,
+// mirroring luahost.LogContext.Configure's own resolution (dispatch.go's
+// nameCommandLog is what actually configures the process context this way
+// at run time; this is the Work tab's read-only mirror of that same rule).
+func commandLogDir(repoRoot string, m *manifest.Manifest) string {
+	dir := "tmp"
+	if d, ok := m.Logging["dir"].(string); ok && d != "" {
+		dir = d
+	}
+	return filepath.Join(repoRoot, dir)
+}
+
+// logStemTimestamp extracts the "<stem>.<TIMESTAMP>.log" suffix's timestamp
+// segment, which sorts correctly as a plain string (the format is
+// YYYY-MM-DD_HHMMSS) — used so the newest-of-several-matches pick doesn't
+// need a filesystem stat call, since a "which file is really newest" tie
+// only needs to compare the name luahost itself chose.
+func logStemTimestamp(path string) string {
+	base := filepath.Base(path)
+	// base is "<stem>.<ts>.log"; the timestamp is always the last
+	// dot-segment before ".log".
+	base = strings.TrimSuffix(base, ".log")
+	i := strings.LastIndex(base, ".")
+	if i < 0 {
+		return ""
+	}
+	return base[i+1:]
+}
+
+// commandLogPath is the "log" the detail pane shows: since admin-rc82 every
+// command names its log deterministically before its first step runs (the
+// command's own name, dispatch.go's nameCommandLog), refined only when a
+// step's own kind (a multi-target target, a framed action) sets a more
+// specific name before first use — so the real stem is one of: the command
+// name itself, one of its step (action) names, or "<step>-<target>" for a
+// multi-target step. Globbing all of those and taking the newest by
+// filename timestamp covers every shape without needing an mtime tiebreak
+// or a per-step ranking loop — naming can no longer collide ACROSS two
+// different commands, only within one command's own set of possible stems.
+// A command that has genuinely never run matches nothing here and degrades
+// to "none yet", same as before.
+func commandLogPath(repoRoot string, m *manifest.Manifest, name string, c manifest.Command) string {
+	logDir := commandLogDir(repoRoot, m)
+	stems := map[string]bool{name: true}
 	for _, step := range c.Steps {
-		matches, _ := filepath.Glob(filepath.Join(logDir, step+".*.log"))
+		stems[step] = true
+	}
+	var best, bestTS string
+	for stem := range stems {
+		var matches []string
+		if ms, err := filepath.Glob(filepath.Join(logDir, stem+".*.log")); err == nil {
+			matches = append(matches, ms...)
+		}
+		if ms, err := filepath.Glob(filepath.Join(logDir, stem+"-*.*.log")); err == nil {
+			matches = append(matches, ms...)
+		}
 		for _, p := range matches {
-			info, err := os.Stat(p)
-			if err != nil {
-				continue
-			}
-			if info.ModTime().After(last) {
-				last, logPath = info.ModTime(), p
+			ts := logStemTimestamp(p)
+			if ts > bestTS {
+				bestTS, best = ts, p
 			}
 		}
 	}
-	return logPath
+	return best
 }
 
 // workCmdRow pairs a declared command's name with its parsed body — what
@@ -488,7 +530,11 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 			}
 		}
 	}
-	wd.logPath = commandLogPath(m.repoRoot, cr.cmd)
+	if wd.live != nil && wd.live.LogPath != "" {
+		wd.logPath = wd.live.LogPath
+	} else {
+		wd.logPath = commandLogPath(m.repoRoot, m.manifest, cr.name, cr.cmd)
+	}
 	return rowItem{kind: rowCommand, label: cr.name + " " + cr.cmd.Desc, work: wd}
 }
 

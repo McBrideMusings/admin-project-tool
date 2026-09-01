@@ -25,8 +25,52 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
+	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
+
+// logAnnounceMaxScan bounds how much of the pty stream logAnnounceSniffer
+// keeps around while it hasn't yet found luahost.LogAnnouncePrefix — enough
+// to hold the announce line plus a healthy margin for whatever else the
+// child prints before it (a multi-line command's earlier steps), without
+// letting the buffer grow unboundedly for a command that runs a long time
+// with `[logging] log = false`.
+const logAnnounceMaxScan = 8192
+
+// logAnnounceSniffer is a Write-only io.Writer teed into a hosted-pty
+// child's output stream (recordHostedPTYWork's io.Copy) alongside the real
+// Ring buffer, whose only job is to notice the child's own
+// "→ wrote: <path>" line and record it on the live-work entry. The child is
+// a separate OS process (StartHostedPTY re-execs this binary), so its
+// materialized log path only exists in ITS OWN output — this handshake, not
+// a parent-side guess, is the only way the announced path and the path the
+// child actually writes to are guaranteed to be the same file.
+//
+// It buffers across Write calls because io.Copy's chunk boundaries can
+// split the announce line (or the ANSI escapes around it) arbitrarily; once
+// found is true, every later Write is a no-op so a second announce (a
+// second step in the same command, appending to the SAME file per
+// admin-rc82's "one file per command invocation") doesn't re-fire.
+type logAnnounceSniffer struct {
+	id    string
+	buf   []byte
+	found bool
+}
+
+func (s *logAnnounceSniffer) Write(p []byte) (int, error) {
+	if s.found {
+		return len(p), nil
+	}
+	s.buf = append(s.buf, p...)
+	if len(s.buf) > logAnnounceMaxScan {
+		s.buf = s.buf[len(s.buf)-logAnnounceMaxScan:]
+	}
+	if path, ok := luahost.ParseLogAnnounce(string(s.buf)); ok {
+		s.found = true
+		livework.Default.SetLogPath(s.id, path)
+	}
+	return len(p), nil
+}
 
 // HostedColorProfileEnv and HostedDarkBackgroundEnv carry the PARENT's
 // already-resolved color profile into the pty child's environment. Without
@@ -229,7 +273,8 @@ func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args
 	// early truncates the child's tail output; never draining at all is the
 	// exact hang that failed Verify.
 	go func() {
-		_, copyErr := io.Copy(e.Output, ptmx)
+		sniffer := &logAnnounceSniffer{id: e.ID}
+		_, copyErr := io.Copy(io.MultiWriter(e.Output, sniffer), ptmx)
 		// On Linux the master read returns EIO (not io.EOF) once the last
 		// slave closes — that is normal end-of-output, not a failure, so it
 		// must not be surfaced as a wait error.

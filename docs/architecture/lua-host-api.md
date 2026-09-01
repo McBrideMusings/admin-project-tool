@@ -37,12 +37,19 @@ surface stays exactly what this page lists rather than whatever Lua's stdlib hap
 
 | Function | Signature | Behaviour |
 |---|---|---|
-| `set_log_context(...parts[, {retain=N}])` | `(string..., table?) -> ()` | Names this run's log file — deferred until first actual write, not created here. Parts join with `-` (e.g. `set_log_context("dev", "cf")` → `tmp/dev-cf.<timestamp>.log`). A no-op once a context is already active: the first call to actually write wins, so an outer step-runner's name never clobbers an inner target's. |
+A command already names a log unconditionally before its first step runs — every dispatch
+through `RunCommand`/`RunCommandHosted` calls `internal/kinds/dispatch.go`'s `nameCommandLog`,
+which is the Go port of `admin_lib/interp.py`'s `_make_step_runner` opening block. Neither Lua
+function below is what makes a log exist; both are how a step (a multi-target target, a framed
+action) *refines* the name the command already set, before anything is actually created.
+
+| `set_log_context(...parts[, {retain=N}])` | `(string..., table?) -> ()` | Names this run's log file — deferred until first actual write, not created here. Parts join with `-` (e.g. `set_log_context("dev", "cf")` → `tmp/dev-cf.<timestamp>.log`). A no-op once a context is already active (materialized): the LAST call before first use wins, so a step's own name overrides the command's still-pending one rather than being blocked by it. |
 | `set_log_context_path(path[, {retain=N}])` | `(string, table?) -> ()` | Same deferral rule, but names an explicit path instead of a timestamped stem. |
 
-`retain` (default 0, meaning "no pruning") is accepted for interface parity with the Python
-original's `retain=` kwarg; pruning older same-stem logs is **not implemented** — see
-`Host.pruneRetain`'s doc comment. This is a tracked gap, not a silent one.
+`retain` omitted (or its table key absent) falls back to the configured default — 5, or an
+explicit `[logging] retain` — matching the Python original's `retain=None`. `retain = 0` means
+"no pruning" for a stem context, or "no rotation" for a `log_file` path context (numbered
+`.1`/`.2`/... suffixes) — both are implemented, not a gap; see `internal/luahost/logcontext.go`.
 
 ## Running a command
 

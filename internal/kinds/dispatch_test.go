@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
@@ -154,6 +155,147 @@ func TestRunActionDefaultsToShellKind(t *testing.T) {
 	}
 	assertFileExists(t, dir, "implicit.txt")
 }
+
+// TestRunCommandNamesLogUnconditionally is admin-rc82's central acceptance
+// criterion: a command whose step bodies never call set_log_context
+// themselves still produces exactly one log file, under
+// <LOG_DIR>/<commandName>.<timestamp>.log, carrying every step's output in
+// chronological order — and the path luahost announces (captured off
+// os.Stderr, since that's the only channel a hosted-pty child could use
+// too) is the exact path that ends up on disk.
+func TestRunCommandNamesLogUnconditionally(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"build": {Steps: []string{"one", "two"}},
+		},
+		Actions: map[string]manifest.Action{
+			// No `urls`, so kind=shell never calls SetLogContext itself —
+			// the command-level name from nameCommandLog must be the one
+			// that survives to materialization.
+			"one": {"kind": "shell", "run": "echo step-one-marker"},
+			"two": {"kind": "shell", "run": "echo step-two-marker"},
+		},
+	}
+
+	announced := captureStderr(t, func() {
+		if err := RunCommand(m, newDispatchTestRegistry(), "build", nil); err != nil {
+			t.Fatalf("RunCommand = %v, want nil", err)
+		}
+	})
+
+	matches, err := filepath.Glob(filepath.Join(dir, "tmp", "build.*.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected exactly 1 log file, got %d: %v", len(matches), matches)
+	}
+
+	data, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatalf("reading log file: %v", err)
+	}
+	content := string(data)
+	firstIdx := strings.Index(content, "step-one-marker")
+	secondIdx := strings.Index(content, "step-two-marker")
+	if firstIdx < 0 || secondIdx < 0 {
+		t.Fatalf("log file missing step markers: %q", content)
+	}
+	if firstIdx > secondIdx {
+		t.Fatalf("log file has steps out of order: %q", content)
+	}
+
+	announcedPath, ok := luahost.ParseLogAnnounce(announced)
+	if !ok {
+		t.Fatalf("expected an announced log path on stderr, got %q", announced)
+	}
+	if announcedPath != matches[0] {
+		t.Fatalf("announced path %q != stat-able path %q", announcedPath, matches[0])
+	}
+}
+
+// TestRunCommandLogFalseWritesNoFile proves `[actions.X]`-level `log =
+// false` on the command disables logging for the run: no file should ever
+// appear under LOG_DIR.
+func TestRunCommandLogFalseWritesNoFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"quiet": {Steps: []string{"one"}, Log: false, HasLog: true},
+		},
+		Actions: map[string]manifest.Action{
+			"one": {"kind": "shell", "run": "echo hi"},
+		},
+	}
+	if err := RunCommand(m, newDispatchTestRegistry(), "quiet", nil); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, "tmp", "*.log"))
+	if len(matches) != 0 {
+		t.Fatalf("expected no log files with log=false, got: %v", matches)
+	}
+}
+
+// TestRunCommandLogFileUsesExplicitPath proves `log_file` routes through
+// SetLogContextPath rather than the timestamped stem naming.
+func TestRunCommandLogFileUsesExplicitPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"build": {Steps: []string{"one"}, LogFile: "custom.log", HasLogFile: true},
+		},
+		Actions: map[string]manifest.Action{
+			"one": {"kind": "shell", "run": "echo hi"},
+		},
+	}
+	if err := RunCommand(m, newDispatchTestRegistry(), "build", nil); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	assertFileExists(t, dir, "custom.log")
+	if got := readFile(t, dir, "custom.log"); !strings.Contains(got, "hi") {
+		t.Fatalf("custom.log missing expected content: %q", got)
+	}
+}
+
+// TestRunCommandHonoursLoggingDirConfig proves `[logging] dir` re-roots
+// where a stem-named log lands.
+func TestRunCommandHonoursLoggingDirConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	m := &manifest.Manifest{
+		Logging: map[string]any{"dir": "customlogs"},
+		Custom: map[string]manifest.Command{
+			"build": {Steps: []string{"one"}},
+		},
+		Actions: map[string]manifest.Action{
+			"one": {"kind": "shell", "run": "echo hi"},
+		},
+	}
+	if err := RunCommand(m, newDispatchTestRegistry(), "build", nil); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, "customlogs", "build.*.log"))
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 log file under customlogs/, got %d", len(matches))
+	}
+	defaultMatches, _ := filepath.Glob(filepath.Join(dir, "tmp", "*.log"))
+	if len(defaultMatches) != 0 {
+		t.Fatalf("expected nothing written to the default tmp/ dir, got: %v", defaultMatches)
+	}
+}
+
+// captureStderr (used above) is defined in lifetime_test.go — this package
+// already has one, and it does exactly what the announce-path assertion
+// needs: redirect os.Stderr's current *os.File for fn's duration and return
+// what landed on it.
 
 func readFile(t *testing.T, dir, relPath string) string {
 	t.Helper()
