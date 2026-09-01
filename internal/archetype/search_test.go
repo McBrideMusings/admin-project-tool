@@ -98,3 +98,31 @@ func TestDefaultSearchPathOrder(t *testing.T) {
 		t.Errorf("List = %v, want empty (embedded slot ships empty, other slots don't exist)", list)
 	}
 }
+
+// TestSearchPathForReadsInstalledDirSeam proves SearchPathFor's installed
+// slot comes from InstalledArchetypesDir (via UseInstalledDir) rather than
+// resolving its own home directory, and that its three-slot order matches
+// DefaultSearchPath's.
+func TestSearchPathForReadsInstalledDirSeam(t *testing.T) {
+	installed := t.TempDir()
+	repo := t.TempDir()
+	defer UseInstalledDir(installed)()
+
+	sp, err := SearchPathFor(repo)
+	if err != nil {
+		t.Fatalf("SearchPathFor: %v", err)
+	}
+
+	want := searchPath(installed, repo)
+	if len(sp) != len(want) {
+		t.Fatalf("SearchPathFor has %d slots, want %d", len(sp), len(want))
+	}
+	for i := range sp {
+		if sp[i].Label != want[i].Label {
+			t.Errorf("slot %d label = %q, want %q", i, sp[i].Label, want[i].Label)
+		}
+	}
+	if sp[1].Label != installed {
+		t.Errorf("installed slot label = %q, want the InstalledArchetypesDir override %q", sp[1].Label, installed)
+	}
+}
