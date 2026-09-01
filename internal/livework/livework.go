@@ -329,8 +329,9 @@ func (r *Registry) Retry(id string) error {
 	if err != nil {
 		return err
 	}
-	if e.State != StateFailed {
-		return fmt.Errorf("live-work: entry %q is %s, not failed — nothing to retry", id, e.State)
+	st, _ := r.State(id)
+	if st != StateFailed {
+		return fmt.Errorf("live-work: entry %q is %s, not failed — nothing to retry", id, st)
 	}
 	if e.Ops.Retry == nil {
 		return fmt.Errorf("live-work: entry %q does not support retry", id)

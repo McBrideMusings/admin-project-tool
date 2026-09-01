@@ -40,7 +40,8 @@ func hostedRunningEntries() []*livework.Entry {
 		if e.PTYID == "" || e.Worker != nil {
 			continue
 		}
-		if e.State == livework.StateRunning || e.State == livework.StateWaiting {
+		st, _ := livework.Default.State(e.ID)
+		if st == livework.StateRunning || st == livework.StateWaiting {
 			out = append(out, e)
 		}
 	}
@@ -131,8 +132,9 @@ func (m Model) renderQuitConfirmBody(width, height int) []string {
 // boxPanel's segment renderer own it.
 func (m Model) quitConfirmContent() (title, badge string, lines [][]seg) {
 	for _, e := range m.quitHosted {
+		st, _ := livework.Default.State(e.ID)
 		stateColor := cDim
-		switch e.State {
+		switch st {
 		case livework.StateRunning:
 			stateColor = cGreen
 		case livework.StateWaiting:
@@ -142,7 +144,7 @@ func (m Model) quitConfirmContent() (title, badge string, lines [][]seg) {
 			{t: " • ", fg: cFaint},
 			{t: e.Name, fg: cGreen},
 			{t: "  "},
-			{t: string(e.State), fg: stateColor},
+			{t: string(st), fg: stateColor},
 		})
 	}
 	badge = fmt.Sprintf("%d hosted", len(m.quitHosted))
