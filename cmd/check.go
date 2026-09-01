@@ -400,27 +400,12 @@ func checkCommandRouting(m *manifest.Manifest) error {
 // counts as a valid binding target. Returns the shadow lines to print
 // (never failing) alongside the validation error, if any.
 func checkRowKeys(m *manifest.Manifest) ([]string, error) {
-	commands := commandNames(m)
+	commands := m.CommandNames()
 	_, shadows, err := validate.RowKeys(m.Keys, commands)
 	if err != nil {
 		return shadows, err
 	}
 	return shadows, nil
-}
-
-// commandNames builds the resolved manifest's full command-name set —
-// Overrides (project + archetype [commands.X]) plus Custom
-// ([commands.custom.X]) — the set a [keys.<kind>].<key> binding's value
-// must name to be valid.
-func commandNames(m *manifest.Manifest) map[string]bool {
-	out := make(map[string]bool, len(m.Overrides)+len(m.Custom))
-	for name := range m.Overrides {
-		out[name] = true
-	}
-	for name := range m.Custom {
-		out[name] = true
-	}
-	return out
 }
 
 func sortedCommandNames(cmds map[string]manifest.Command) []string {

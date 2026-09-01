@@ -39,7 +39,7 @@ func TestActivateCommandDispatchesWhenIdle(t *testing.T) {
 	old := startHostedRun
 	defer func() { startHostedRun = old }()
 	var gotName string
-	startHostedRun = func(m *manifest.Manifest, name string, args []string, rows, cols int) error {
+	startHostedRun = func(m *manifest.Manifest, name string, args []string, rows, cols int, env []string) error {
 		gotName = name
 		return nil
 	}
@@ -222,7 +222,7 @@ func TestFrameDuringHostedRunShowsTheDashboard(t *testing.T) {
 	old := startHostedRun
 	defer func() { startHostedRun = old }()
 	calledName := ""
-	startHostedRun = func(m *manifest.Manifest, name string, args []string, rows, cols int) error {
+	startHostedRun = func(m *manifest.Manifest, name string, args []string, rows, cols int, env []string) error {
 		calledName = name
 		return nil
 	}

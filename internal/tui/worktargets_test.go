@@ -186,7 +186,7 @@ func TestTargetRowDispatchesParentWithTargetArg(t *testing.T) {
 	defer func() { startHostedRun = old }()
 	var gotName string
 	var gotArgs []string
-	startHostedRun = func(mf *manifest.Manifest, name string, args []string, rows, cols int) error {
+	startHostedRun = func(mf *manifest.Manifest, name string, args []string, rows, cols int, env []string) error {
 		gotName, gotArgs = name, args
 		return nil
 	}
