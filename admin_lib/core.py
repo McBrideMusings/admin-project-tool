@@ -960,12 +960,53 @@ def _prune_extraneous(src_dir, dest, ignore=None):
                     pass
 
 
-def sync(src_dir, dest, excludes=None, post_sync=None, delete=True, dry_run=False, chown=None):
+def _owns_filter_args(owns, src_dir=None):
+    """rsync filter rules restricting a sync to `owns` and nothing else.
+
+    An allow-list in rsync is include rules terminated by a catch-all exclude:
+    first matching rule wins, so anything the includes don't name falls through
+    to `--exclude '*'`. That matters twice over, because an excluded path is
+    also protected from `--delete` — so the destination keeps everything
+    outside the list untouched rather than treated as extraneous.
+
+    A directory entry needs both `/x/` (the directory itself) and `/x/**` (its
+    contents), and a nested entry needs its ancestors named too, or the walk
+    never descends far enough to reach it.
+    """
+    rules = []
+    seen = set()
+    for entry in owns:
+        parts = entry.strip("/").split("/")
+        for i in range(1, len(parts)):
+            ancestor = "/" + "/".join(parts[:i]) + "/"
+            if ancestor not in seen:
+                seen.add(ancestor)
+                rules.append(f"--include '{ancestor}'")
+        leaf = "/" + "/".join(parts)
+        if leaf not in seen:
+            seen.add(leaf)
+            rules.append(f"--include '{leaf}'")
+            # A file entry gets no `/**`: it would match nothing, and reading a
+            # rule that describes a file as having contents is worse than the
+            # two characters it saves.
+            if src_dir is None or os.path.isdir(os.path.join(src_dir, entry.strip("/"))):
+                rules.append(f"--include '{leaf}/**'")
+    rules.append("--exclude '*'")
+    return rules
+
+
+def sync(src_dir, dest, excludes=None, post_sync=None, delete=True, dry_run=False, chown=None,
+         owns=None):
     """Copy a directory to a local or remote destination via rsync or shutil.
 
     src_dir: local directory to sync from
     dest: local path, or user@host:/path for remote rsync
     excludes: list of rsync --exclude patterns (applied to both branches)
+    owns: restrict the whole sync to these src-relative paths. Anything at the
+        destination outside them is neither written nor deleted, which is what
+        lets `delete` be on for a mirror whose destination also holds files the
+        running app writes. Excludes still win inside an owned path — they are
+        emitted first, and rsync takes the first matching rule.
     post_sync: callable run after successful sync (receives dest as arg)
     delete: mirror the source exactly, removing anything at `dest` the source
         lacks (rsync --delete). Default True — the historical behaviour, right
@@ -987,9 +1028,10 @@ def sync(src_dir, dest, excludes=None, post_sync=None, delete=True, dry_run=Fals
     is_remote = ":" in dest and "@" in dest.split(":")[0]
 
     if is_remote:
-        exclude_flags = ""
-        if excludes:
-            exclude_flags = " ".join(f"--exclude '{e}'" for e in excludes)
+        filters = [f"--exclude '{e}'" for e in (excludes or [])]
+        if owns:
+            filters += _owns_filter_args(owns, src_dir)
+        exclude_flags = " ".join(filters)
         delete_flag = " --delete" if delete else ""
         chown_flag = f" --chown={chown}" if chown else ""
         dry_flag = " --dry-run" if dry_run else ""
@@ -1015,9 +1057,27 @@ def sync(src_dir, dest, excludes=None, post_sync=None, delete=True, dry_run=Fals
         # always used. Without this the two halves of `sync` mean different
         # things: a renamed or removed source file lingers forever in a local
         # dest, and a plugin dir keeps loading the stale copy.
-        if delete:
-            _prune_extraneous(src_dir, dest, ignore)
-        shutil.copytree(src_dir, dest, dirs_exist_ok=True, ignore=ignore)
+        #
+        # `owns` narrows both halves to the listed paths, so the two branches
+        # mean the same thing here too — a project running its deploy locally
+        # (DEPLOY_LOCAL on the host itself) must not get whole-tree behaviour
+        # from a manifest that asked for an allow-list.
+        if owns:
+            for entry in owns:
+                src_path = os.path.join(src_dir, entry)
+                dest_path = os.path.join(dest, entry)
+                if os.path.isdir(src_path):
+                    if delete:
+                        os.makedirs(dest_path, exist_ok=True)
+                        _prune_extraneous(src_path, dest_path, ignore)
+                    shutil.copytree(src_path, dest_path, dirs_exist_ok=True, ignore=ignore)
+                else:
+                    os.makedirs(os.path.dirname(dest_path) or dest, exist_ok=True)
+                    shutil.copy2(src_path, dest_path)
+        else:
+            if delete:
+                _prune_extraneous(src_dir, dest, ignore)
+            shutil.copytree(src_dir, dest, dirs_exist_ok=True, ignore=ignore)
         ok(f"Synced: {dest}")
         rc = 0
 
