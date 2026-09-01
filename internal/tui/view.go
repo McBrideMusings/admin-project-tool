@@ -159,9 +159,10 @@ func (m Model) footerLines(width int) []string {
 
 // renderBodyHits is renderBody plus the hit map for every line it returns.
 // Every branch feeding it returns hits alongside its lines: the overlays and
-// modals (errDetail, bead, confirm/delete) and the Config tab have nothing
-// clickable, so noneHits is correct and fine for them; the Local tab and the
-// flat row lists (renderLocalPanels, renderList) resolve real targets.
+// modals (errDetail, bead, confirm/delete) have nothing clickable, so
+// noneHits is correct and fine for them; the Local tab and the flat row
+// lists (renderLocalPanels, renderList — which the Config tab now shares)
+// resolve real targets.
 func (m Model) renderBodyHits(width, bodyHeight int) ([]string, []hitTarget) {
 	contentH := bodyHeight - 1
 	if contentH < 1 {
@@ -194,9 +195,6 @@ func (m Model) renderBodyHits(width, bodyHeight int) ([]string, []hitTarget) {
 		content, hits = m.renderWorkBody(width, contentH)
 	case m.active == tabLocal:
 		content, hits = m.renderLocalPanels(width, contentH)
-	case m.active == tabConfig:
-		content = m.renderConfigBody(width, contentH)
-		hits = noneHits(len(content))
 	default:
 		content, hits = m.renderList(width, contentH)
 	}
@@ -739,10 +737,11 @@ func (m Model) viewKeymap() [][2]string {
 	case tabBeads:
 		return m.rowPairs(keymap.Bead)
 	case tabConfig:
-		// Read-only readout of resolved values (admin-3rgp.21) — nothing to
-		// move a cursor over. `o config` (appended by keymap) is the tab's
-		// only write path.
-		return [][2]string{{"q", "quit"}}
+		// A read-only readout of resolved values (admin-3rgp.21), but every
+		// row is a real list row now (admin-equg): ↵ opens a path row with
+		// the platform's default handler. `o config` (appended by keymap)
+		// remains the tab's only write path.
+		return [][2]string{{"↑↓", "move"}, {"↵", "open"}, {"q", "quit"}}
 	}
 	return nil
 }

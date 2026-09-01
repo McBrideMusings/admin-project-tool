@@ -74,6 +74,8 @@ const (
 	rowCommand       // Work tab: a declared admin.toml command, idle or live
 	rowCommandTarget // Work tab: one target of an expanded multi-target command
 	rowWorker        // Work tab: a livework.Entry with no command behind it
+	rowConfigValue   // Config tab: a value-only row (tracker, ceiling) — selectable, nothing to open
+	rowConfigPath    // Config tab: a row naming an absolute path — a key file, the worktree root, a populate pattern
 )
 
 // rowItem is one line in a view. Selectable rows carry an action payload.
@@ -98,6 +100,9 @@ type rowItem struct {
 	// with any other tab's row (the epic's own reason the Work tab needs a
 	// polymorphic detail pane rather than a wider rowItem).
 	work *workRowData
+	// cfg carries a Config-tab row's payload — set only for rowConfigValue/
+	// rowConfigPath, following the same one-field-per-tab precedent as work.
+	cfg *configRowData
 }
 
 func (r rowItem) selectable() bool {
@@ -534,7 +539,7 @@ func (m Model) trackerKind() string {
 
 // wantsPRs reports whether the manifest declares uses_pull_requests = true.
 // Undeclared defaults to false — the same default the Config tab shows
-// (configtab.go's manifestConfigLines). The PRs tab's presence follows this
+// (configtab.go's manifestConfigRows). The PRs tab's presence follows this
 // declaration alone: zero open PRs is a legitimate state prRows renders as an
 // empty section, not a reason for the tab itself to disappear.
 func (m Model) wantsPRs() bool {
@@ -602,6 +607,8 @@ func (m Model) rows() []rowItem {
 		return m.issueRows()
 	case tabBeads:
 		return m.beadRows()
+	case tabConfig:
+		return m.configRows()
 	}
 	// The Repo (local) tab uses the lazygit panes, not the flat row list.
 	return nil
@@ -874,8 +881,7 @@ func (m Model) currentRow() (rowItem, bool) {
 }
 
 // bodyRowCount is the active tab's selectable row count — used to decide
-// whether the tab bar may hand focus into the body at all. tabConfig is a
-// read-only readout with nothing to land a cursor on, so it always reports 0.
+// whether the tab bar may hand focus into the body at all.
 func (m Model) bodyRowCount() int {
 	switch m.active {
 	case tabLocal:
@@ -884,8 +890,6 @@ func (m Model) bodyRowCount() int {
 			n += m.paneCount(p)
 		}
 		return n
-	case tabConfig:
-		return 0
 	default:
 		n := 0
 		for _, r := range m.visibleRows() {
@@ -914,8 +918,8 @@ func (m Model) atBodyTop() bool {
 }
 
 // enterBody moves focus into the body — `j`/`down`/`enter` from the tab bar.
-// A tab with nothing selectable in it (an empty list, or tabConfig) declines
-// rather than stranding focus somewhere no row key can reach.
+// A tab with nothing selectable in it (an empty list) declines rather than
+// stranding focus somewhere no row key can reach.
 func (m *Model) enterBody() {
 	if m.bodyRowCount() == 0 {
 		return
@@ -1196,7 +1200,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Nothing suspended, so there is no return signal to reload on — the
 		// launched app owns its own window, and the fsnotify watcher
 		// (fsChangedMsg) is what notices the save and reloads the manifest.
-		m.setStatus("opened admin.toml in "+msg.name, cDim)
+		m.setStatus("opened "+msg.target+" in "+msg.name, cDim)
 		return m, nil
 
 	case actionMsg:
@@ -1928,6 +1932,18 @@ func (m Model) activate() (tea.Model, tea.Cmd) {
 		return m.activateCommandTarget(r.work)
 	case rowWorker:
 		return m.attachEntry(r.work.worker)
+	case rowConfigValue:
+		m.setStatus("nothing to open on this row", cDim)
+		return m, nil
+	case rowConfigPath:
+		if r.cfg == nil {
+			return m, nil
+		}
+		if r.cfg.absent {
+			m.setStatus(r.cfg.label+" does not exist", cRed)
+			return m, nil
+		}
+		return m, openPathCmd(r.cfg.path, r.cfg.label)
 	}
 	return m, nil
 }
