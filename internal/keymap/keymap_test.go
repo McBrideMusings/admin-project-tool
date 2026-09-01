@@ -41,11 +41,11 @@ func TestBuiltins(t *testing.T) {
 			"w:workflow", "/:filter", "r:refresh", "q:quit",
 		}},
 		{Issue, []string{
-			"↑↓:move", "↵:start work", "o:open", "s:sort", "w:workflow",
+			"↑↓:move", "↵:start work", "s:sort", "w:workflow",
 			"/:filter", "r:refresh row", "⇧R:refresh all", "q:quit",
 		}},
 		{PR, []string{
-			"↑↓:move", "↵:checkout", "o:open", "i:issue", "/:filter",
+			"↑↓:move", "↵:checkout", "i:issue", "/:filter",
 			"r:refresh row", "⇧R:refresh all", "q:quit",
 		}},
 		{Branch, []string{
@@ -53,7 +53,7 @@ func TestBuiltins(t *testing.T) {
 			"p:pull", "⇥:pane", "/:filter", "r:refresh",
 		}},
 		{Commit, []string{
-			"↑↓:move", "↵:copy sha", "o:open ↗", "⇥:pane", "/:filter", "r:refresh",
+			"↑↓:move", "↵:copy sha", "⇥:pane", "/:filter", "r:refresh",
 		}},
 		{Stash, []string{
 			"↑↓:move", "↵:details", "⇥:pane", "/:filter", "r:refresh",

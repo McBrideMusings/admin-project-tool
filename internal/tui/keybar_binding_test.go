@@ -183,7 +183,7 @@ func TestKeybarIdenticalWithoutKeysTable(t *testing.T) {
 	}
 
 	fullGot := m.keymap()
-	fullWant := append(builtinPairs(keymap.Bead), [2]string{"←→", "tab"})
+	fullWant := append(builtinPairs(keymap.Bead), [2]string{"o", "config"}, [2]string{"←→", "tab"})
 	if len(fullGot) != len(fullWant) {
 		t.Fatalf("keymap() len = %d, want %d", len(fullGot), len(fullWant))
 	}

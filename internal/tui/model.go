@@ -437,15 +437,8 @@ func New(ctx context.Context, repoRoot, nwo, current, def string) Model {
 		selected:        map[string]bool{},
 		trackerSelected: map[string]bool{},
 	}
-	project, merged, sp, ok, err := loadWorkManifest(repoRoot)
-	switch {
-	case err != nil:
-		m.manifestErr = err.Error()
-	case ok:
-		m.manifest = merged
-		m.manifestOK = true
-		m.cmdOrigin, m.actionOrigin, m.keyOrigin = computeOrigins(project, sp)
-		m.rowKeys = buildRowKeys(merged)
+	m.loadManifest()
+	if m.manifestOK {
 		// AC: "the dashboard opens on the Work tab when the project has a
 		// manifest."
 		m.active = tabWork
@@ -1087,6 +1080,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.quitWith(&PendingAction{Kind: "create-cd", Branch: msg.plan.Branch, RepoRoot: m.repoRoot})
 
+	case editorDoneMsg:
+		if msg.err != nil {
+			m.setStatus("editor failed: "+msg.err.Error(), cRed)
+			return m, nil
+		}
+		// The editor may have changed anything the manifest declares, so
+		// re-read it rather than trusting the copy loaded at launch. The tab
+		// the cursor is on is left alone — unlike New(), which moves to Work
+		// on a first successful load.
+		m.loadManifest()
+		if m.tabIndex(m.active) < 0 {
+			// The edit removed the tab the cursor was on — a broken manifest
+			// takes the Work tab with it, and changing `tracker` retires
+			// Beads or Issues. Repo is the one tab nothing can remove.
+			m.active = tabLocal
+		}
+		if m.manifestErr != "" {
+			m.setStatus("admin.toml: "+m.manifestErr, cRed)
+		} else {
+			m.setStatus("manifest reloaded", cDim)
+		}
+		return m, nil
+
 	case actionMsg:
 		m.creating = false
 		m.createLabel = ""
@@ -1602,9 +1618,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// clock says.
 		return m, m.refreshAllCmd()
 	case "o":
-		if r, ok := m.currentRow(); ok && r.url != "" {
-			return m, openURLCmd(r.url)
-		}
+		// The one key that means the same thing on every tab: edit the
+		// manifest every tab is rendering. It used to open the row's page in a
+		// browser, which is why no row kind advertises `o open` any more.
+		return m, openManifestCmd(m.repoRoot)
 	case "i":
 		return m.openIssue()
 	case "e":
