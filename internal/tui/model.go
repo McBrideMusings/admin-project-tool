@@ -1072,13 +1072,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case workDispatchDoneMsg:
+	case workDispatchStartedMsg:
+		// A hosted dispatch reports "started" immediately rather than an
+		// exit status — the command keeps running on its own pty long after
+		// this message lands. workTickCmd is what repaints the Work tab so
+		// the live-work entry StartHostedPTY just registered shows up
+		// without waiting on a keypress.
 		if msg.err != nil {
-			m.setStatus(msg.name+" failed: "+msg.err.Error(), cRed)
-		} else {
-			m.setStatus(msg.name+" finished", cGreen)
+			m.setStatus(msg.name+" failed to start: "+msg.err.Error(), cRed)
+			return m, nil
 		}
-		return m, nil
+		m.setStatus(msg.name+" started", cGreen)
+		return m, workTickCmd()
 
 	case workflowResolvedMsg:
 		m.workflowResolved(msg)

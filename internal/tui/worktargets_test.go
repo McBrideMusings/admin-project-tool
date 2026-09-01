@@ -182,9 +182,25 @@ func TestTargetRowDispatchesParentWithTargetArg(t *testing.T) {
 	if target.cmdName != "dev" {
 		t.Fatalf("target row cmdName = %q, want \"dev\"", target.cmdName)
 	}
-	exec := &cmdExecCommand{manifest: m.manifest, name: target.cmdName, args: []string{target.targetKey}}
-	if len(exec.args) != 1 || exec.args[0] != "mac" {
-		t.Fatalf("dispatch args = %v, want [mac]", exec.args)
+	old := startHostedRun
+	defer func() { startHostedRun = old }()
+	var gotName string
+	var gotArgs []string
+	startHostedRun = func(mf *manifest.Manifest, name string, args []string, rows, cols int) error {
+		gotName, gotArgs = name, args
+		return nil
+	}
+
+	_, cmd := m.activateCommandTarget(target)
+	if cmd == nil {
+		t.Fatal("activateCommandTarget returned a nil Cmd")
+	}
+	cmd()
+	if gotName != "dev" {
+		t.Fatalf("dispatch name = %q, want \"dev\"", gotName)
+	}
+	if len(gotArgs) != 1 || gotArgs[0] != "mac" {
+		t.Fatalf("dispatch args = %v, want [mac]", gotArgs)
 	}
 }
 
