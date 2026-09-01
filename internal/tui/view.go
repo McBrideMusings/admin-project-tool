@@ -642,7 +642,7 @@ func (m Model) keymap() [][2]string {
 		case paneStashes:
 			return [][2]string{{"↑↓", "move"}, {"↵", "details"}, {"⇥", "pane"}, {"/", "filter"}, {"r", "refresh"}, tabKey}
 		default:
-			return [][2]string{{"↑↓", "move"}, {"↵", "checkout"}, {"⌥↵/W", "worktree"}, {"w", "new"}, {"space", "select"}, {"x", "delete"}, {"p", "pull"}, {"⇥", "pane"}, {"/", "filter"}, {"r", "refresh"}, tabKey}
+			return [][2]string{{"↑↓", "move"}, {"↵", "checkout"}, {"⌥↵/W", "worktree"}, {"w", "new"}, {"x", "delete"}, {"p", "pull"}, {"⇥", "pane"}, {"/", "filter"}, {"r", "refresh"}, tabKey}
 		}
 	}
 	switch m.active {
@@ -651,10 +651,10 @@ func (m Model) keymap() [][2]string {
 	case tabPRs:
 		return [][2]string{{"↑↓", "move"}, {"↵", "checkout"}, {"o", "open"}, {"i", "issue"}, {"/", "filter"}, {"r", "refresh row"}, {"⇧R", "refresh all"}, {"q", "quit"}, tabKey}
 	case tabIssues:
-		return [][2]string{{"↑↓", "move"}, {"↵", "start work"}, {"o", "open"}, {"space", "select"}, {"s", "sort"}, {"w", "workflow"}, {"/", "filter"}, {"r", "refresh row"}, {"⇧R", "refresh all"}, {"q", "quit"}, tabKey}
+		return [][2]string{{"↑↓", "move"}, {"↵", "start work"}, {"o", "open"}, {"s", "sort"}, {"w", "workflow"}, {"/", "filter"}, {"r", "refresh row"}, {"⇧R", "refresh all"}, {"q", "quit"}, tabKey}
 	case tabBeads:
 		// No `o`: a bead lives in a local database and has no page to open.
-		return [][2]string{{"↑↓", "move"}, {"↵", "start work"}, {"d", "detail"}, {"g", "tree"}, {"space", "select"}, {"s", "sort"}, {"w", "workflow"}, {"/", "filter"}, {"r", "refresh"}, {"q", "quit"}, tabKey}
+		return [][2]string{{"↑↓", "move"}, {"↵", "start work"}, {"d", "detail"}, {"g", "tree"}, {"s", "sort"}, {"w", "workflow"}, {"/", "filter"}, {"r", "refresh"}, {"q", "quit"}, tabKey}
 	case tabConfig:
 		// Read-only readout of resolved values (admin-3rgp.21) — nothing to
 		// move a cursor over or edit.

@@ -105,10 +105,9 @@ func TestRepoTabLayout(t *testing.T) {
 		// alone (invisible to stripANSI), not by a distinct shape.
 		"⇅ next action", "◆", "main", "Continue Working", "Reviewing", "◇ ", "19m",
 		"  Repo ", "PRs 2", "stash@{0}",
-		// At this width the new "space select" hint pushes "⇥ pane" out of the
-		// footer — the keybar drops whole hints from the end rather than chopping
-		// one mid-word, and this is exactly that mechanism doing its job.
-		"↑↓ move", "↵ checkout", "space select", "←→ tab",
+		// The footer no longer advertises `space select` — the key still works,
+		// it just isn't a hint the Branches pane spends footer width on.
+		"↑↓ move", "↵ checkout", "⇥ pane", "←→ tab",
 	)
 	if strings.Contains(out, "1 Local") {
 		t.Errorf("tab bar still shows numbered '1 Local' label\n%s", out)
