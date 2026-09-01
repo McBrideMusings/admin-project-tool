@@ -82,6 +82,36 @@ func TestRowKeyDispatchHitOnBeadRow(t *testing.T) {
 	}
 }
 
+// TestRowKeyDispatchRefusesReservedKey proves rowKeyDispatch refuses a
+// reserved key before consulting m.rowKeys at all — acceptance criterion 3
+// of admin-gz7g. The binding here is hand-installed directly onto
+// m.rowKeys, bypassing buildRowKeys/validate.RowKeys entirely, to stand in
+// for the ticket's "somehow got installed" case: even then, dispatch must
+// still refuse rather than let the binding pre-empt the global "q" behavior
+// in handleKey's built-in switch.
+func TestRowKeyDispatchRefusesReservedKey(t *testing.T) {
+	m := Model{
+		active:     tabBeads,
+		width:      120,
+		height:     40,
+		manifestOK: true,
+		manifest:   &manifest.Manifest{},
+		beads:      []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}},
+		rowKeys: map[keymap.RowKind]map[string]string{
+			keymap.Bead: {"q": "mycmd"},
+		},
+	}
+	trackerCursorTo(t, &m, "proj-1")
+
+	_, cmd, ok := m.rowKeyDispatch("q")
+	if ok {
+		t.Fatal("rowKeyDispatch(\"q\") on a reserved key = hit, want miss even with a binding installed")
+	}
+	if cmd != nil {
+		t.Errorf("rowKeyDispatch returned ok=false but a non-nil Cmd")
+	}
+}
+
 // TestRowKeyDispatchMissOnOtherRowKind proves a binding scoped to Bead does
 // nothing on a row of a different kind — the AC's "the same key pressed on
 // a row of any other kind still does exactly what it did before." A

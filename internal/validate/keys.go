@@ -17,14 +17,6 @@ type RowBinding struct {
 	Command string
 }
 
-// reservedKeys is ADR-0018's Consequence "a reserved set is never
-// bindable" — navigation and escape a config file cannot take away.
-var reservedKeys = map[string]bool{
-	"q": true, "ctrl+c": true, "esc": true, "tab": true, "shift+tab": true,
-	"up": true, "down": true, "left": true, "right": true,
-	"j": true, "k": true, "1": true, "2": true, "3": true, "4": true, "/": true,
-}
-
 // RowKeys parses and validates the raw top-level `[keys]` table — the
 // (row kind, key) -> command lookup ADR-0018 describes. It is a distinct
 // entry point from ParseKeys, which validates an unrelated feature (an
@@ -90,7 +82,7 @@ func RowKeys(raw any, commands map[string]bool) (bindings []RowBinding, shadows 
 				continue
 			}
 
-			if reservedKeys[key] {
+			if keymap.Reserved[key] {
 				problems = append(problems, fmt.Sprintf(
 					"%s: key %q is reserved — navigation and escape (q, ctrl+c, esc, tab, shift+tab, the arrow keys, j, k, 1-4, /) cannot be rebound",
 					lead, key))

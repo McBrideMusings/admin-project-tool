@@ -3,6 +3,8 @@ package validate
 import (
 	"strings"
 	"testing"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/keymap"
 )
 
 func TestRowKeys(t *testing.T) {
@@ -55,6 +57,21 @@ func TestRowKeys(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "reserved") {
 			t.Errorf("message %q doesn't say reserved", err.Error())
+		}
+	})
+
+	t.Run("every keymap.Reserved key is rejected from the shared source", func(t *testing.T) {
+		for key := range keymap.Reserved {
+			raw := map[string]any{
+				"bead": map[string]any{key: "implement"},
+			}
+			_, _, err := RowKeys(raw, commands)
+			if err == nil {
+				t.Fatalf("keymap.Reserved key %q: expected error, got none", key)
+			}
+			if !strings.Contains(err.Error(), "reserved") {
+				t.Errorf("keymap.Reserved key %q: message %q doesn't say reserved", key, err.Error())
+			}
 		}
 	})
 
