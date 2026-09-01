@@ -35,6 +35,12 @@ _KNOWN_KEYS = {
     "dev_kill", "dev_precheck", "clean_dev", "vite_dev", "docker_dev", "docker_run", "docker_build", "deploy", "install_template",
     "fixtures", "log_bridge", "guards", "docs", "go", "go_dist", "raylib", "worktree",
     "launchd", "electron",
+    # The five config.Config tables (Go's internal/config) — identity, where
+    # worktrees are created, populate patterns, the Beads tab's columns, and
+    # the workflow dispatcher's default agent/ceiling. admin.toml is their
+    # only home; the Python interpreter never reads them, it just needs to
+    # not warn about a key it doesn't otherwise use.
+    "identity", "worktrees", "beads", "workflow", "populate",
     # Obsolete under interpreter mode (ADR-0006); tolerated silently on
     # un-migrated manifests, never written back. `admin migrate` strips it.
     "generator_commit",

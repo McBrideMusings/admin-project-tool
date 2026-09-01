@@ -60,43 +60,30 @@ func TestManifestConfigLinesUsesArchetypeOrigin(t *testing.T) {
 	}
 }
 
-func TestEmailOriginNamesTheDeclaringFile(t *testing.T) {
-	global := config.Config{Identity: config.Identity{Emails: []string{"me@Global.com"}}}
-	local := config.Config{Identity: config.Identity{Emails: []string{"me@local.com"}}}
-
-	if got := emailOrigin("me@global.com", global, local); got != "global" {
-		t.Errorf(`emailOrigin(global address) = %q, want "global" (case-insensitive match)`, got)
-	}
-	if got := emailOrigin("me@local.com", global, local); got != "local" {
-		t.Errorf(`emailOrigin(local address) = %q, want "local"`, got)
-	}
-	if got := emailOrigin("nowhere@x.com", global, local); got != "?" {
-		t.Errorf(`emailOrigin(unknown address) = %q, want "?"`, got)
-	}
-}
-
-// TestDotfileConfigLinesReportsFileOrigin exercises the identity/worktree
-// half of the tab: a value declared in one file only names that file, not
-// "defaulted" and not the other file.
-func TestDotfileConfigLinesReportsFileOrigin(t *testing.T) {
+// TestConfigTableLinesReportsOrigin exercises the identity/worktree half of
+// the tab: a value's origin names admin.toml or the declaring archetype —
+// the acceptance criterion "never a dotfile" — never a hardcoded file path.
+func TestConfigTableLinesReportsOrigin(t *testing.T) {
 	m := Model{
-		cfgGlobal: config.Config{Identity: config.Identity{Login: "pierce"}},
-		cfgLocal:  config.Config{Worktrees: config.Worktrees{Root: "/tmp/wt"}},
 		cfgMerged: config.Config{
 			Identity:  config.Identity{Login: "pierce"},
 			Worktrees: config.Worktrees{Root: "/tmp/wt"},
 		},
+		keyOrigin: map[string]string{"identity": "(manifest)", "worktrees": "some-archetype"},
 	}
-	lines := m.dotfileConfigLines(80)
+	lines := m.configTableLines(80)
 	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "pierce") || !strings.Contains(joined, "global config") {
-		t.Errorf("dotfileConfigLines(login) = %q, want \"pierce\" attributed to global config", joined)
+	if !strings.Contains(joined, "pierce") || !strings.Contains(joined, "(manifest)") {
+		t.Errorf("configTableLines(login) = %q, want \"pierce\" attributed to (manifest)", joined)
 	}
-	if !strings.Contains(joined, "/tmp/wt") || !strings.Contains(joined, "local config") {
-		t.Errorf("dotfileConfigLines(worktree root) = %q, want \"/tmp/wt\" attributed to local config", joined)
+	if !strings.Contains(joined, "/tmp/wt") || !strings.Contains(joined, "some-archetype") {
+		t.Errorf("configTableLines(worktree root) = %q, want \"/tmp/wt\" attributed to its archetype", joined)
+	}
+	if strings.Contains(joined, "config.toml") || strings.Contains(joined, "global config") || strings.Contains(joined, "local config") {
+		t.Errorf("configTableLines named a dotfile origin: %q", joined)
 	}
 	// Nothing declared the default agent anywhere.
 	if !strings.Contains(joined, "default agent") {
-		t.Errorf("dotfileConfigLines missing the \"default agent\" row entirely: %q", joined)
+		t.Errorf("configTableLines missing the \"default agent\" row entirely: %q", joined)
 	}
 }

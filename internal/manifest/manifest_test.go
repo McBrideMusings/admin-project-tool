@@ -439,6 +439,111 @@ uses_pull_requests = true
 	}
 }
 
+// TestParseConfigTables covers the five config.Config tables becoming
+// ordinary admin.toml keys: they parse, survive round-trip as raw maps, and
+// [[populate]] decodes as an array of tables.
+func TestParseConfigTables(t *testing.T) {
+	dir := writeManifest(t, `
+project_name = "widget-app"
+
+[identity]
+login  = "pierce"
+emails = ["pierce@example.com"]
+
+[worktrees]
+root = "~/.worktrees"
+
+[beads]
+columns = ["id", "title"]
+
+[workflow]
+agent   = "claude"
+ceiling = 3
+
+[[populate]]
+pattern = ".env"
+mode    = "copy"
+
+[[populate]]
+pattern = ".claude/skills/*"
+`)
+	m, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if m.Identity["login"] != "pierce" {
+		t.Errorf("Identity[login] = %v, want \"pierce\"", m.Identity["login"])
+	}
+	if m.Worktrees["root"] != "~/.worktrees" {
+		t.Errorf("Worktrees[root] = %v", m.Worktrees["root"])
+	}
+	if m.Beads["columns"] == nil {
+		t.Error("Beads[columns] not parsed")
+	}
+	if m.Workflow["agent"] != "claude" {
+		t.Errorf("Workflow[agent] = %v", m.Workflow["agent"])
+	}
+	if len(m.Populate) != 2 {
+		t.Fatalf("Populate = %+v, want 2 entries", m.Populate)
+	}
+	if m.Populate[0]["pattern"] != ".env" || m.Populate[0]["mode"] != "copy" {
+		t.Errorf("Populate[0] = %+v", m.Populate[0])
+	}
+	if m.Populate[1]["pattern"] != ".claude/skills/*" {
+		t.Errorf("Populate[1] = %+v", m.Populate[1])
+	}
+	if len(m.Unknown) != 0 {
+		t.Errorf("Unknown = %v, want none of the five config tables flagged unknown", m.Unknown)
+	}
+}
+
+// TestParseConfigTablesRejectUnknownKeys is the acceptance criterion "admin
+// check ... rejects an unknown one in the same way it rejects any other": an
+// unrecognized key inside [identity]/[worktrees]/[beads]/[workflow] or a
+// [[populate]] entry fails the same way an unknown [deploy] key already does.
+func TestParseConfigTablesRejectUnknownKeys(t *testing.T) {
+	cases := []struct {
+		name       string
+		toml       string
+		wantSubstr string
+	}{
+		{"identity", "project_name = \"x\"\n[identity]\nnickname = \"p\"\n", "'[identity]' has unknown key(s): nickname"},
+		{"worktrees", "project_name = \"x\"\n[worktrees]\npath = \"/tmp\"\n", "'[worktrees]' has unknown key(s): path"},
+		{"beads", "project_name = \"x\"\n[beads]\nrows = 5\n", "'[beads]' has unknown key(s): rows"},
+		{"workflow", "project_name = \"x\"\n[workflow]\nlimit = 5\n", "'[workflow]' has unknown key(s): limit"},
+		{"populate entry", "project_name = \"x\"\n[[populate]]\nglob = \".env\"\n", "'[[populate]]' has unknown key(s): glob"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := writeManifest(t, c.toml)
+			_, err := Load(dir)
+			if err == nil {
+				t.Fatalf("Load(%s) succeeded, want error", c.name)
+			}
+			if !contains(err.Error(), c.wantSubstr) {
+				t.Errorf("Load(%s) error = %q, want substring %q", c.name, err.Error(), c.wantSubstr)
+			}
+		})
+	}
+}
+
+// TestParseNoConfigTablesDeclaredIsEmpty is the "a project declaring none of
+// them gets the existing code defaults, unchanged" acceptance criterion at
+// the parse layer: nothing declared, nothing parsed, and none of the five
+// keys is ever flagged unknown.
+func TestParseNoConfigTablesDeclaredIsEmpty(t *testing.T) {
+	dir := writeManifest(t, `project_name = "widget-app"`)
+	m, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(m.Identity) != 0 || len(m.Worktrees) != 0 || len(m.Beads) != 0 || len(m.Workflow) != 0 || len(m.Populate) != 0 {
+		t.Errorf("a manifest declaring none of the five config tables parsed non-empty: "+
+			"identity=%v worktrees=%v beads=%v workflow=%v populate=%v",
+			m.Identity, m.Worktrees, m.Beads, m.Workflow, m.Populate)
+	}
+}
+
 func equalSlices(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

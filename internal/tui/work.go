@@ -123,54 +123,84 @@ func loadWorkManifest(repoRoot string) (project, merged *manifest.Manifest, sp a
 // purely for display.
 //
 // keys does the same job for the handful of scalar top-level manifest keys
-// the Config tab renders (admin-3rgp.21: "tracker", "uses_pull_requests") —
-// named by manifest.go's own key string, mapping to the archetype that last
-// declared it or "(manifest)". A key absent from the map was never declared
-// anywhere, which the Config tab renders as defaulted rather than guessing a
-// source for it.
+// the Config tab renders (admin-3rgp.21: "tracker", "uses_pull_requests",
+// plus "identity", "worktrees", "beads", "workflow" and "populate" per the
+// retire-the-config-tiers decision) — named by manifest.go's own key string,
+// mapping to the archetype that last declared it or "(manifest)". A key
+// absent from the map was never declared anywhere, which the Config tab
+// renders as defaulted rather than guessing a source for it.
 func computeOrigins(project *manifest.Manifest, sp archetype.SearchPath) (cmds, actions, keys map[string]string) {
 	cmds, actions, keys = map[string]string{}, map[string]string{}, map[string]string{}
+
+	// The implicit base archetype (archetype.Resolve's own first merge step)
+	// attributed the same way as any declared archetype, unless the project
+	// lists "base" explicitly — matching Resolve's own skip so the two never
+	// disagree about who contributed a key. A search path with no base is a
+	// silent no-op, per LoadBase.
+	declaresBase := false
+	for _, name := range project.Archetypes {
+		if name == archetype.BaseName {
+			declaresBase = true
+			break
+		}
+	}
+	if !declaresBase {
+		if base, ok, err := archetype.LoadBase(sp); err == nil && ok {
+			applyOrigin(base.Partial, archetype.BaseName, cmds, actions, keys)
+		}
+	}
+
 	for _, name := range project.Archetypes {
 		arch, err := archetype.Load(sp, name)
 		if err != nil {
 			continue
 		}
-		for c := range arch.Partial.Custom {
-			cmds[c] = name
-		}
-		for c := range arch.Partial.Overrides {
-			cmds[c] = name
-		}
-		for a := range arch.Partial.Actions {
-			actions[a] = name
-		}
-		if arch.Partial.HasTracker {
-			keys["tracker"] = name
-		}
-		if arch.Partial.HasUsesPullRequests {
-			keys["uses_pull_requests"] = name
-		}
+		applyOrigin(arch.Partial, name, cmds, actions, keys)
 	}
 	// The project always wins (ADR-0009), including a field-level override
 	// of a command an archetype already provides — from the display's point
 	// of view the manifest is still the most specific place that named this
 	// command, exactly like every other manifest-level key.
-	for c := range project.Custom {
-		cmds[c] = "(manifest)"
-	}
-	for c := range project.Overrides {
-		cmds[c] = "(manifest)"
-	}
-	for a := range project.Actions {
-		actions[a] = "(manifest)"
-	}
-	if project.HasTracker {
-		keys["tracker"] = "(manifest)"
-	}
-	if project.HasUsesPullRequests {
-		keys["uses_pull_requests"] = "(manifest)"
-	}
+	applyOrigin(project, "(manifest)", cmds, actions, keys)
 	return cmds, actions, keys
+}
+
+// applyOrigin records m's own directly-declared commands/actions/keys as
+// having come from label, into cmds/actions/keys — the one body computeOrigins
+// runs three times (once for the implicit base, once per declared archetype,
+// once for the project manifest itself) so all three attributions can never
+// drift apart.
+func applyOrigin(m *manifest.Manifest, label string, cmds, actions, keys map[string]string) {
+	for c := range m.Custom {
+		cmds[c] = label
+	}
+	for c := range m.Overrides {
+		cmds[c] = label
+	}
+	for a := range m.Actions {
+		actions[a] = label
+	}
+	if m.HasTracker {
+		keys["tracker"] = label
+	}
+	if m.HasUsesPullRequests {
+		keys["uses_pull_requests"] = label
+	}
+	if len(m.Identity) > 0 {
+		keys["identity"] = label
+	}
+	if len(m.Worktrees) > 0 {
+		keys["worktrees"] = label
+	}
+	if len(m.Beads) > 0 {
+		keys["beads"] = label
+	}
+	if len(m.Workflow) > 0 {
+		keys["workflow"] = label
+	}
+	if len(m.Populate) > 0 {
+		keys["populate"] = label
+	}
 }
 
 // actionKind resolves a raw action's declared kind, defaulting to "shell" —
