@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/vt"
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/bd"
@@ -172,8 +173,8 @@ type Model struct {
 	// order already comes from the graph itself, and an arbitrary sort would
 	// scramble the blocker-above-blocked shape that view exists to show.
 	trackSort trackSort
-	haveBeads   bool
-	beadsErr    string
+	haveBeads bool
+	beadsErr  string
 	// beadCols is [beads] columns from the merged config — which columns the pane
 	// draws and in what order. Empty means DefaultBeadColumns.
 	beadCols []string
@@ -390,6 +391,20 @@ type Model struct {
 	swOpen    bool
 	swOptions []workCmdRow
 	swCursor  int
+
+	// Terminal view (admin-3rgp.65): attaching to a pty-addressed live-work
+	// row replaces the whole tab with a live terminal emulator over its
+	// pty rather than the list/detail layout — see terminalview.go.
+	// termAttached is the switch view.go and handleKey both read; the rest
+	// describe the one open view, all zeroed together by detachTerminal.
+	termAttached  bool
+	termEntryID   string
+	termPTYID     string
+	termEmu       *vt.Emulator
+	termOff       int64 // the ring offset last fed to termEmu — see livework.Ring.Since
+	termHasOutput bool  // true once anything has been fed to termEmu — drives "waiting for output…"
+	termRows      int
+	termCols      int
 }
 
 // New builds the dashboard model. The cheap git context (root, nwo, branch) is
@@ -426,6 +441,9 @@ func New(ctx context.Context, repoRoot, nwo, current, def string) Model {
 // (see the localDataMsg case), so the first frame paints off git and cache with
 // nothing blocking on the network.
 func (m Model) Init() tea.Cmd {
+	// No per-model state — see installTerminalOpener's own comment on why
+	// calling it again on a second Init in the same process is harmless.
+	installTerminalOpener()
 	cmds := []tea.Cmd{
 		loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def),
 		loadCacheCmd(m.nwo),
@@ -854,6 +872,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		if m.termAttached {
+			rows, cols := m.termRegion()
+			m.termRows, m.termCols = rows, cols
+			if m.termEmu != nil {
+				m.termEmu.Resize(cols, rows)
+			}
+			if e := m.termEntry(); e != nil && e.Ops.Resize != nil {
+				_ = e.Ops.Resize(rows, cols)
+			}
+		}
 		return m, nil
 
 	case localDataMsg:
@@ -1099,6 +1127,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// (see Init's own comment).
 		return m, workTickCmd()
 
+	case termTickMsg:
+		if !m.termAttached {
+			return m, nil
+		}
+		if e := m.termEntry(); e != nil && e.Output != nil && m.termEmu != nil {
+			b, next := e.Output.Since(m.termOff)
+			if len(b) > 0 {
+				_, _ = m.termEmu.Write(b)
+				m.termHasOutput = true
+			}
+			m.termOff = next
+		}
+		return m, termTickCmd()
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 
@@ -1239,6 +1281,14 @@ func (m Model) clickRow(pane localPane, row int) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// The terminal view (admin-3rgp.65) owns the keyboard completely while
+	// attached: everything not q/esc/k goes to the child, so nothing below
+	// this — including the global "q" quit — ever sees a keystroke meant
+	// for the process being watched.
+	if m.termAttached {
+		return m.terminalKey(msg)
+	}
+
 	// Confirm phase of the delete modal swallows everything but y/n.
 	if m.confirming {
 		switch msg.String() {

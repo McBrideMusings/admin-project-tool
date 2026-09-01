@@ -77,6 +77,17 @@ type Ops struct {
 	Attach func() error
 	Kill   func() error
 	Retry  func() error
+
+	// Write and Resize are the pty-entry counterpart of Attach's pane-only
+	// role: a pane-addressed entry's terminal IS a real terminal (attach
+	// focuses it and the OS handles keystrokes and resize directly), but a
+	// pty-addressed entry's terminal is this process's own master fd, which
+	// only the producer that opened it (internal/kinds/hostedpty.go) can
+	// reach. Write sends bytes to the child (a keystroke, from the terminal
+	// view admin-3rgp.65 renders); Resize sets the child's pty window size.
+	// Both are nil for a pane-addressed entry, which needs neither.
+	Write  func(p []byte) (int, error)
+	Resize func(rows, cols int) error
 }
 
 // Entry is one live-work record: a long-running kind's single-pane

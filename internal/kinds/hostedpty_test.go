@@ -149,6 +149,63 @@ func TestStartHostedPTYEntryReportsExited(t *testing.T) {
 	t.Fatal("entry never reported exited — this is Cause A (no master drain) if it reproduces")
 }
 
+// TestStartHostedPTYWiresWriteAndResize proves the registered entry's
+// Ops.Write reaches the real child (the terminal view's, admin-3rgp.65,
+// only way to answer a prompting process) and Ops.Resize succeeds without
+// error while the child is alive, then both refuse — rather than
+// panicking on a closed *os.File — once the child has exited and its pty
+// master is closed.
+func TestStartHostedPTYWiresWriteAndResize(t *testing.T) {
+	outFile := filepath.Join(t.TempDir(), "typed.out")
+	stubSelfExecutable(t, fixtureAdminScript(t, "cat > "+outFile+"\n"))
+
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"echoer": {Steps: []string{"echoer-step"}},
+		},
+	}
+	if err := StartHostedPTY(m, "echoer", nil, 24, 80); err != nil {
+		t.Fatalf("StartHostedPTY: %v", err)
+	}
+
+	e, ok := livework.Default.Get("echoer-step")
+	if !ok {
+		t.Fatal("no live-work entry registered")
+	}
+	if e.Ops.Write == nil {
+		t.Fatal("entry missing a Write op")
+	}
+	if e.Ops.Resize == nil {
+		t.Fatal("entry missing a Resize op")
+	}
+
+	if err := e.Ops.Resize(30, 100); err != nil {
+		t.Errorf("Resize on a live child: %v", err)
+	}
+	if _, err := e.Ops.Write([]byte("hello from the terminal view\n")); err != nil {
+		t.Fatalf("Write on a live child: %v", err)
+	}
+
+	if err := e.Ops.Kill(); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if got, ok := livework.Default.Get("echoer-step"); ok && got.State == livework.StateExited {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if _, err := e.Ops.Write([]byte("too late")); err == nil {
+		t.Error("Write after Kill closed the pty = nil error, want one")
+	}
+	if err := e.Ops.Resize(24, 80); err == nil {
+		t.Error("Resize after Kill closed the pty = nil error, want one")
+	}
+}
+
 // TestStartHostedPTYUnknownCommandErrors proves an undeclared command
 // produces an error before anything is spawned, rather than a pty allocated
 // for nothing.
