@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/archetype"
 )
 
 // TestIdentityMatching pins the comparisons. Case-insensitive because git records
@@ -108,8 +110,8 @@ pattern = ".claude/skills/*"
 // five tables merge through archetypes exactly like any other manifest key,
 // with the project's own admin.toml winning over the archetype it declares.
 func TestLoadMergesThroughArchetypes(t *testing.T) {
-	home := t.TempDir()
-	archDir := filepath.Join(home, ".admin", "archetypes", "base")
+	installed := t.TempDir()
+	archDir := filepath.Join(installed, "base")
 	if err := os.MkdirAll(archDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +120,7 @@ func TestLoadMergesThroughArchetypes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(archDir, "archetype.toml"), []byte(archBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", home)
+	defer archetype.UseInstalledDir(installed)()
 
 	dir := writeManifest(t, t.TempDir(), `
 archetypes = ["base"]
@@ -146,5 +148,33 @@ mode = "copy"
 	}
 	if !patterns[".env"] || !patterns["admin.toml"] {
 		t.Errorf("populate = %+v, want both the archetype's and the project's patterns", cfg.Populate)
+	}
+}
+
+// TestLoadIgnoresInstalledArchetypesWhenSearchPathIsEmpty proves the seam
+// isolates Load from whatever the installed archetypes directory contains:
+// with InstalledArchetypesDir pointed at a fresh empty directory, a manifest
+// declaring N populate entries and no archetypes returns exactly N — never
+// more, regardless of what ~/.admin/archetypes holds on the machine running
+// the test.
+func TestLoadIgnoresInstalledArchetypesWhenSearchPathIsEmpty(t *testing.T) {
+	defer archetype.UseInstalledDir(t.TempDir())()
+
+	dir := writeManifest(t, t.TempDir(), `
+[[populate]]
+pattern = "a"
+
+[[populate]]
+pattern = "b"
+
+[[populate]]
+pattern = "c"
+`)
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Populate) != 3 {
+		t.Fatalf("populate = %+v, want exactly 3 entries", cfg.Populate)
 	}
 }

@@ -60,12 +60,11 @@ func resolveProjectManifest(ctx context.Context, dir string) (m *manifest.Manife
 	if err != nil {
 		return nil, true, err
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, true, fmt.Errorf("could not resolve the home directory: %w", err)
-	}
 	repoRoot, _ := git.RepoRoot(ctx)
-	sp := archetype.DefaultSearchPath(home, repoRoot)
+	sp, err := archetype.SearchPathFor(repoRoot)
+	if err != nil {
+		return nil, true, fmt.Errorf("could not resolve the installed archetypes directory: %w", err)
+	}
 	resolved, _, err := archetype.Resolve(project, sp)
 	if err != nil {
 		return nil, true, err
