@@ -690,12 +690,24 @@ func (m Model) activateCommandTarget(wd *workRowData) (tea.Model, tea.Cmd) {
 // pane-addressed entry, the terminal view for a pty-addressed one (see
 // livework.Registry.Attach). A nil e is a silent no-op, matching every
 // other action here that requires a live row to act on.
+//
+// A pty-addressed entry's Attach call reaches installTerminalOpener's
+// callback synchronously (terminalview.go), which can only record the
+// requested ptyID — it cannot mutate this value-type Model. Draining that
+// recording right after Attach succeeds is what completes the transition
+// into the terminal view; a pane-addressed entry's Attach never records
+// anything, so takePendingTerminal reports false and this falls through to
+// the same no-op return it always had.
 func (m Model) attachEntry(e *livework.Entry) (tea.Model, tea.Cmd) {
 	if e == nil {
 		return m, nil
 	}
 	if err := livework.Default.Attach(e.ID); err != nil {
 		m.setStatus("attach failed: "+err.Error(), cRed)
+		return m, nil
+	}
+	if _, ok := takePendingTerminal(); ok {
+		return m.openTerminal(e), termTickCmd()
 	}
 	return m, nil
 }
