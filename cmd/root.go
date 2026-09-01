@@ -11,11 +11,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/create"
@@ -241,12 +243,81 @@ var runActionCmd = &cobra.Command{
 	},
 }
 
+// runCommandCmd is admin-3rgp.61's hidden re-entry point: what the pty child
+// a dashboard-hosted command dispatches into actually runs. It is the one
+// caller that invokes kinds.RunCommandHosted directly — deliberately: unlike
+// runActionCmd's __run-action (which reaches RunAction, a lifetime-aware
+// entry point that CAN open a further herdr pane for a nested long-running
+// step), RunCommandHosted's whole point is that no step it dispatches can
+// open a pane, whatever that step's own kind declares. Hidden and
+// double-underscore prefixed for the same reason as __run-action: plumbing,
+// not something a person types, and never collidable with a project's own
+// admin.toml commands.
+var runCommandCmd = &cobra.Command{
+	Use:                "__run-command <name> [args...]",
+	Hidden:             true,
+	DisableFlagParsing: true, // flags belong to the command's own steps, not to cobra
+	Args:               cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// Applied first, before resolveProjectManifest can log anything or
+		// any step can render a style: this child's stdout is a pty for the
+		// first time, and an explicit profile is what stops
+		// lipgloss/termenv from issuing the OSC 11 background-color probe
+		// that otherwise stalls 5s waiting for a reply the dashboard never
+		// sends (admin-3rgp.61's Cause B). See HostedColorProfileEnv's doc
+		// comment in internal/kinds/hostedpty.go.
+		applyHostedColorProfile()
+
+		wd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		// context.Background(), not cmd.Context(): see runActionCmd's own
+		// comment on the same call.
+		m, ok, err := resolveProjectManifest(context.Background(), wd)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("__run-command: no admin.toml found in %s", wd)
+		}
+		return kinds.RunCommandHosted(m, kinds.Default, args[0], args[1:])
+	},
+}
+
+// applyHostedColorProfile reads the color profile the parent dashboard
+// resolved (StartHostedPTY set it in the child's env) and applies it to
+// this process's own termenv/lipgloss renderers before anything can render
+// a style — a no-op when the vars are absent, so a plain `admin
+// __run-command` invocation outside a hosted pty behaves exactly as before.
+func applyHostedColorProfile() {
+	rawProfile, ok := os.LookupEnv(kinds.HostedColorProfileEnv)
+	if !ok {
+		return
+	}
+	n, err := strconv.Atoi(rawProfile)
+	if err != nil {
+		return
+	}
+	profile := termenv.Profile(n)
+
+	termenv.SetDefaultOutput(termenv.NewOutput(os.Stdout, termenv.WithProfile(profile)))
+	lipgloss.SetColorProfile(profile)
+
+	if rawDark, ok := os.LookupEnv(kinds.HostedDarkBackgroundEnv); ok {
+		if dark, err := strconv.ParseBool(rawDark); err == nil {
+			lipgloss.SetHasDarkBackground(dark)
+		}
+	}
+}
+
 func init() {
 	rootCmd.AddCommand(branchCmd)
 	rootCmd.AddCommand(worktreeCmd)
 	rootCmd.AddCommand(prsCmd)
 	rootCmd.AddCommand(populateCmd)
 	rootCmd.AddCommand(runActionCmd)
+	rootCmd.AddCommand(runCommandCmd)
 
 	f := rootCmd.Flags()
 	f.BoolVar(&dumpFrame, "dump-frame", false, "render one frame to stdout and exit (no TTY needed)")

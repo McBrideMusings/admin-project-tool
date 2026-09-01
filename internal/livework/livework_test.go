@@ -1,7 +1,9 @@
 package livework
 
 import (
+	"bytes"
 	"errors"
+	"sync"
 	"testing"
 )
 
@@ -356,5 +358,99 @@ func TestRetryReplacesPTYEntryInPlace(t *testing.T) {
 	}
 	if entries[0].State != StateRunning {
 		t.Errorf("entries[0].State = %q, want running after retry", entries[0].State)
+	}
+}
+
+// TestRingBoundedOverwrite proves a Ring never grows past its limit and
+// keeps only the most recent bytes once it overflows — the property a
+// long-lived hosted pty depends on to not grow the registry unboundedly.
+func TestRingBoundedOverwrite(t *testing.T) {
+	r := NewRing(4)
+
+	if n, err := r.Write([]byte("ab")); n != 2 || err != nil {
+		t.Fatalf("Write(ab) = (%d, %v), want (2, nil)", n, err)
+	}
+	if got := r.Bytes(); !bytes.Equal(got, []byte("ab")) {
+		t.Errorf("Bytes() = %q, want %q", got, "ab")
+	}
+
+	// Overflow: writing "cdef" (4 bytes) onto a ring already holding "ab"
+	// (2 bytes, limit 4) must retain only the last 4 bytes written overall.
+	if _, err := r.Write([]byte("cdef")); err != nil {
+		t.Fatalf("Write(cdef): %v", err)
+	}
+	if got := r.Bytes(); !bytes.Equal(got, []byte("cdef")) {
+		t.Errorf("Bytes() after overflow = %q, want %q", got, "cdef")
+	}
+	if got := r.Len(); got != 4 {
+		t.Errorf("Len() = %d, want 4 (bounded at the ring's limit)", got)
+	}
+
+	// A single write longer than the whole ring leaves only its own tail.
+	if _, err := r.Write([]byte("0123456789")); err != nil {
+		t.Fatalf("Write(0123456789): %v", err)
+	}
+	if got := r.Bytes(); !bytes.Equal(got, []byte("6789")) {
+		t.Errorf("Bytes() after an oversized write = %q, want %q", got, "6789")
+	}
+}
+
+// TestRingBytesSnapshot proves Bytes() returns an oldest-first copy that is
+// independent of the ring — a caller can hold and read it safely even while
+// further Writes land, which matters once a later reader (admin-3rgp.65)
+// polls Bytes() while the drain goroutine keeps writing.
+func TestRingBytesSnapshot(t *testing.T) {
+	r := NewRing(8)
+	if _, err := r.Write([]byte("hello")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	snap := r.Bytes()
+	if !bytes.Equal(snap, []byte("hello")) {
+		t.Fatalf("Bytes() = %q, want %q", snap, "hello")
+	}
+
+	// Mutating the snapshot must not affect the ring's own storage.
+	snap[0] = 'X'
+	if again := r.Bytes(); !bytes.Equal(again, []byte("hello")) {
+		t.Errorf("Bytes() after mutating a prior snapshot = %q, want %q (snapshot must be independent)", again, "hello")
+	}
+
+	// A further write must not retroactively change an already-taken
+	// snapshot.
+	if _, err := r.Write([]byte("!")); err != nil {
+		t.Fatalf("Write(!): %v", err)
+	}
+	if !bytes.Equal(snap, []byte("Xello")) {
+		t.Errorf("prior snapshot changed after a later Write: got %q", snap)
+	}
+}
+
+// TestRingConcurrentWriteAndRead proves a Ring survives concurrent
+// Write/Bytes calls under the race detector — the shape a drain goroutine
+// (constantly writing) and a terminal-view reader (constantly polling
+// Bytes) will actually exercise it in.
+func TestRingConcurrentWriteAndRead(t *testing.T) {
+	r := NewRing(256)
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			_, _ = r.Write([]byte("x"))
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			_ = r.Bytes()
+			_ = r.Len()
+		}
+	}()
+	wg.Wait()
+
+	if got := r.Len(); got > 256 {
+		t.Errorf("Len() = %d, want <= 256 (the ring's limit)", got)
 	}
 }

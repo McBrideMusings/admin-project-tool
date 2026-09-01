@@ -169,8 +169,7 @@ func (m *Model) workflowResolved(msg workflowResolvedMsg) {
 }
 
 // workflowDispatchDone reports a confirmed dispatch's final tally on the
-// status line, the same shape workDispatchDoneMsg already uses for a plain
-// command.
+// status line.
 func (m *Model) workflowDispatchDone(msg workflowDispatchDoneMsg) {
 	ok, failed := 0, 0
 	for _, r := range msg.results {

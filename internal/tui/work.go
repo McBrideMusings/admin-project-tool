@@ -4,7 +4,6 @@
 package tui
 
 import (
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -584,47 +583,37 @@ func (m Model) workRowCount() int {
 	return n
 }
 
-// workDispatchDoneMsg carries a dispatched command's outcome back to Update.
-type workDispatchDoneMsg struct {
+// workDispatchStartedMsg carries a hosted dispatch's START outcome back to
+// Update — admin-3rgp.61 replaced the old tea.Exec dispatch (which released
+// the dashboard's terminal for the run's whole duration and reported its
+// exit status when the run finished) with a hosted pty the dashboard never
+// blocks on, so there is no longer an exit status to report at dispatch
+// time: err here means the pty itself failed to spawn, not that the command
+// finished badly. A nil err means the command is now running on its own
+// pty, tracked by the live-work entry StartHostedPTY registered.
+type workDispatchStartedMsg struct {
 	name string
 	err  error
 }
 
-// cmdExecCommand adapts kinds.RunCommand to bubbletea's tea.Exec. A
-// dispatched Runner writes to the real terminal — its Host defaults Stdout
-// to os.Stdout, and a shell/lua body's frame opens a DECSTBM scroll region
-// directly on it (internal/kinds/shell.go, internal/kinds/frame.go) — which
-// would corrupt the dashboard's own alt-screen rendering if run
-// concurrently with it. tea.Exec is the same mechanism configtab.go already
-// uses to hand the terminal to $EDITOR: it releases the terminal before Run
-// and restores it after, so a Transient command's own output briefly takes
-// over the screen exactly as running it from a plain shell would, and a
-// LongRunning one (which returns almost immediately, having only opened a
-// herdr pane) barely flickers.
-type cmdExecCommand struct {
-	manifest *manifest.Manifest
-	name     string
-	// args are the command's positional arguments — empty for a plain
-	// dispatch, or the one picked target for a multi-target command
-	// expanded in the list. kinds.RunCommand forwards them to every step,
-	// which is how makeMultiTarget skips its own picker.
-	args []string
-}
+// startHostedRun is kinds.StartHostedPTY behind a package-level var so a
+// test can stub it without spawning a real pty — mirrors pane.go's
+// selfExecutable seam.
+var startHostedRun = kinds.StartHostedPTY
 
-func (c *cmdExecCommand) Run() error {
-	return kinds.RunCommand(c.manifest, kinds.Default, c.name, c.args)
-}
-func (c *cmdExecCommand) SetStdin(io.Reader)  {}
-func (c *cmdExecCommand) SetStdout(io.Writer) {}
-func (c *cmdExecCommand) SetStderr(io.Writer) {}
-
-// dispatchCommandCmd runs name via tea.Exec — see cmdExecCommand's doc
-// comment for why dispatch cannot be a plain background tea.Cmd.
-func dispatchCommandCmd(m *manifest.Manifest, name string, args ...string) tea.Cmd {
-	c := &cmdExecCommand{manifest: m, name: name, args: args}
-	return tea.Exec(c, func(err error) tea.Msg {
-		return workDispatchDoneMsg{name: name, err: err}
-	})
+// dispatchCommandCmd starts name on a dashboard-owned pty and returns
+// immediately: unlike the tea.Exec dispatch it replaces, this is an
+// ordinary asynchronous tea.Cmd. The dashboard never releases its terminal
+// for the run — kinds.RunCommandHosted (reached via the hidden
+// "__run-command" re-entry verb StartHostedPTY re-execs into) runs the
+// command's whole step loop on a pty allocated for exactly this dispatch, so
+// the run's own output, and any pinned footer it opens, land there instead
+// of on the dashboard's alt-screen.
+func dispatchCommandCmd(m *manifest.Manifest, width, height int, name string, args ...string) tea.Cmd {
+	return func() tea.Msg {
+		err := startHostedRun(m, name, args, height, width)
+		return workDispatchStartedMsg{name: name, err: err}
+	}
 }
 
 // activateCommand handles enter on a command row: a query-sourced workflow
@@ -655,7 +644,7 @@ func (m Model) activateCommand(wd *workRowData) (tea.Model, tea.Cmd) {
 		// the cursor back on it.
 		return m.focusCommandRow(wd.cmdName), nil
 	}
-	return m, dispatchCommandCmd(m.manifest, wd.cmdName)
+	return m, dispatchCommandCmd(m.manifest, m.width, m.height, wd.cmdName)
 }
 
 // focusCommandRow puts the cursor back on the rowCommand named name, after a
@@ -694,7 +683,7 @@ func (m Model) collapseCommand(name string) (tea.Model, tea.Cmd) {
 // is exactly what `admin <cmd> <target>` does from a shell — makeMultiTarget
 // takes args[0] as the picked target and never raises its own picker.
 func (m Model) activateCommandTarget(wd *workRowData) (tea.Model, tea.Cmd) {
-	return m, dispatchCommandCmd(m.manifest, wd.cmdName, wd.targetKey)
+	return m, dispatchCommandCmd(m.manifest, m.width, m.height, wd.cmdName, wd.targetKey)
 }
 
 // attachEntry resolves e's attach through the registry — pane focus for a
