@@ -184,10 +184,11 @@ func merge(dst, src *manifest.Manifest, srcLabel string, isManifest bool, log *[
 		{dst.Launchd, src.Launchd},
 		{dst.LogBridge, src.LogBridge},
 		{dst.Worktree, src.Worktree},
-		{dst.Keys, src.Keys},
 	} {
 		mergeTable(pair.dst, pair.src)
 	}
+
+	mergeRowKeys(dst.Keys, src.Keys)
 
 	dst.Unknown = mergeStringSet(dst.Unknown, src.Unknown)
 	sort.Strings(dst.Unknown)
@@ -224,6 +225,45 @@ func mergeStringSet(dst, src []string) []string {
 func mergeTable(dst, src map[string]any) {
 	for k, v := range src {
 		dst[k] = v
+	}
+}
+
+// mergeRowKeys merges [keys.<row-kind>] two levels deep — the one raw
+// archetype table that does not take mergeTable's whole-value replacement.
+// Every other raw table ([apple], [deploy], and the ~22 others merged via
+// mergeTable above) is a configuration fragment: replacing it wholesale is
+// fine because the fragment is one coherent unit. A row-kind's binding table
+// is different — it is a namespace of independent bindings ("o" -> a
+// command, "enter" -> another), and a project declaring [keys.bead] to bind
+// one key of its own must not silently delete an archetype's other bindings
+// for that same row kind. See ADR-0018's Consequences for the resolution
+// order this produces (archetypes in list order, then the project, later
+// wins per individual key).
+func mergeRowKeys(dst, src map[string]any) {
+	for k, sv := range src {
+		srcTable, srcOK := sv.(map[string]any)
+		dstTable, dstOK := dst[k].(map[string]any)
+		if !srcOK || !dstOK {
+			// Either side isn't a table (or dst has no entry yet): fall back
+			// to whole-value assignment. If the shape is actually invalid,
+			// validate.RowKeys reports "keys.<kind>: must be a table" as it
+			// does today — this helper never needs to judge that itself.
+			dst[k] = sv
+			continue
+		}
+
+		// Build a fresh map rather than mutating either side's parsed table
+		// in place — an archetype's manifest may be reused across multiple
+		// Resolve calls, and dst's existing table may be that same shared
+		// map from an earlier merge step.
+		merged := make(map[string]any, len(dstTable)+len(srcTable))
+		for bk, bv := range dstTable {
+			merged[bk] = bv
+		}
+		for bk, bv := range srcTable {
+			merged[bk] = bv
+		}
+		dst[k] = merged
 	}
 }
 
