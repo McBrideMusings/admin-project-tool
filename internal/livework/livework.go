@@ -152,6 +152,16 @@ type Entry struct {
 
 	// Err is set when State is StateFailed; nil otherwise.
 	Err error
+
+	// LogPath is the real log file this entry's process is writing to, once
+	// known. It is empty until the producer learns it — for a hosted-pty
+	// entry (internal/kinds/hostedpty.go's recordHostedPTYWork), that means
+	// sniffing the child's own announce line off its pty output, since the
+	// child is a separate OS process and the parent has no other way to
+	// learn the path luahost's deferred naming settled on. The Work tab
+	// (internal/tui/work.go) prefers this over its own best-effort glob
+	// whenever it's set.
+	LogPath string
 }
 
 // Registry is a concurrency-safe, in-memory, append-mostly set of Entry
@@ -244,6 +254,21 @@ func (r *Registry) SetState(id string, state State, err error) {
 	if state == StateFailed {
 		e.Err = err
 	}
+}
+
+// SetLogPath records the real log file id's process is writing to, if the
+// entry is present. A no-op for an unknown id — the same "if present"
+// shape as SetState/SetActivity, since the producer learning the path
+// (hostedpty.go's announce-line sniffer) races the entry's own removal in
+// no case that matters here, but must never panic if it did.
+func (r *Registry) SetLogPath(id, path string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.entries[id]
+	if !ok {
+		return
+	}
+	e.LogPath = path
 }
 
 // SetActivity updates the entry for id's current-activity line, if present.

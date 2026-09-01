@@ -89,7 +89,7 @@ func (h *Host) registerLogContext(L *lua.LState) {
 	L.SetGlobal("set_log_context", L.NewFunction(func(L *lua.LState) int {
 		n := L.GetTop()
 		parts := make([]string, 0, n)
-		retain := 0
+		retain := RetainUnset
 		for i := 1; i <= n; i++ {
 			v := L.Get(i)
 			if tbl, ok := v.(*lua.LTable); ok && i == n {
@@ -107,7 +107,7 @@ func (h *Host) registerLogContext(L *lua.LState) {
 	// set_log_context_path(path[, {retain=N}])
 	L.SetGlobal("set_log_context_path", L.NewFunction(func(L *lua.LState) int {
 		path := L.CheckString(1)
-		retain := 0
+		retain := RetainUnset
 		if tbl, ok := L.Get(2).(*lua.LTable); ok {
 			if r, ok := tbl.RawGetString("retain").(lua.LNumber); ok {
 				retain = int(r)

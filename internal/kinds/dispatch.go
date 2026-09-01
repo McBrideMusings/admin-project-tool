@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/guards"
+	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/shim"
 )
@@ -360,10 +361,58 @@ func runSteps(m *manifest.Manifest, r *Registry, name string, args []string, dis
 	if len(cmd.Steps) == 0 {
 		return fmt.Errorf("command %q has no steps", name)
 	}
+	nameCommandLog(m, name, cmd)
 	for _, step := range cmd.Steps {
 		if err := dispatch(m, r, step, args); err != nil {
 			return fmt.Errorf("command %q: %w", name, err)
 		}
 	}
 	return nil
+}
+
+// nameCommandLog is the Go port of admin_lib/interp.py's _make_step_runner
+// opening block: every command names a log unconditionally, before its
+// first step runs — admin-rc82's fix. Go had no equivalent of this call at
+// all, so a command whose step bodies never called set_log_context
+// themselves (directly, or via a multi-target target or a framed action)
+// wrote no log at all.
+//
+// This only NAMES the log (deferred, on the process-wide luahost.Process()
+// every kind-factory Host shares — see internal/kinds/helpers.go's
+// newHost). Nothing is created here: the first step's first Info/Ok/Warn/
+// Err call, or a call to MaterializeLogFile, is what actually materializes
+// it. A step's own kind factory can still refine the name before that
+// happens — SetLogContext/SetLogContextPath are no-ops only once the
+// context has materialized, so whichever call is still pending at first use
+// (typically the innermost — a multi-target target, a framed action) wins,
+// exactly as in the Python original.
+func nameCommandLog(m *manifest.Manifest, name string, cmd manifest.Command) {
+	root, err := os.Getwd()
+	if err != nil {
+		root = "."
+	}
+	ctx := luahost.Process()
+	ctx.Configure(root, m.Logging)
+
+	retain := luahost.RetainUnset
+	if cmd.HasRetain {
+		retain = cmd.LogRetain
+	}
+
+	switch {
+	case cmd.HasLog && logIsFalse(cmd.Log):
+		ctx.SetEnabled(false)
+	case cmd.HasLogFile:
+		ctx.SetLogContextPath(cmd.LogFile, retain)
+	default:
+		ctx.SetLogContext([]string{name}, retain)
+	}
+}
+
+// logIsFalse reports whether v — manifest.Command.Log's untyped `log` value
+// — is the boolean false, mirroring Python's `log_cfg.get("log") is False`
+// (a string value, e.g. a log-source name, is never "false").
+func logIsFalse(v any) bool {
+	b, ok := v.(bool)
+	return ok && !b
 }
