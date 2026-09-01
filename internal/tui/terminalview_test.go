@@ -148,8 +148,14 @@ func TestTerminalViewAttachedEmptyShowsWaitingCopy(t *testing.T) {
 	if !strings.Contains(out, "waiting for output…") {
 		t.Errorf("attached-empty frame missing the waiting copy: %q", out)
 	}
-	if !strings.Contains(out, "detach") || !strings.Contains(out, "goes to the process") {
-		t.Errorf("attached frame missing its own footer keymap: %q", out)
+	if !strings.Contains(out, "esc") || !strings.Contains(out, "detach") || !strings.Contains(out, "goes to the process") {
+		t.Errorf("attached frame footer must name esc as the detach key: %q", out)
+	}
+	if strings.Contains(out, "q/esc") {
+		t.Errorf("attached frame footer still advertises the superseded q/esc detach: %q", out)
+	}
+	if strings.Contains(out, "k kill") {
+		t.Errorf("attached frame footer still advertises k kill, but k now reaches the child: %q", out)
 	}
 }
 
@@ -280,16 +286,49 @@ func TestTerminalViewWindowResizeResizesChildPty(t *testing.T) {
 	}
 }
 
-// TestTerminalViewQAndEscBothDetach is the AC's "q and esc both detach
-// while attached" — the process stays registered (still running) and the
-// dashboard returns to the list.
-func TestTerminalViewQAndEscBothDetach(t *testing.T) {
-	for _, key := range []string{"q", "esc"} {
-		t.Run(key, func(t *testing.T) {
-			cmdName := "termfixture-detach-" + key
+// TestTerminalViewEscDetachesAndQKReachChild supersedes
+// TestTerminalViewQAndEscBothDetach (admin-3rgp.65's original name and
+// contract: q and esc both detached, k killed). admin-3rgp.71 found that
+// contract unanswerable for any child prompting with q or k — see its own
+// reference frame's "Enter a number, or q to cancel:" — and narrowed detach
+// to esc alone, so q and k now fall through to the child like every other
+// key.
+func TestTerminalViewEscDetachesAndQKReachChild(t *testing.T) {
+	t.Run("esc detaches", func(t *testing.T) {
+		const cmdName = "termfixture-detach-esc"
+		dir := t.TempDir()
+		writeFixtureManifest(t, dir, cmdName)
+		registerFakePTYEntry(t, cmdName, livework.NewRing(0), &termRecorder{})
+
+		p := newAttachablePump(t, dir, 100, 24)
+		p.apply(keyMsg("a"))
+		p.drain(150 * time.Millisecond)
+		if !p.model.termAttached {
+			t.Fatal("attach did not enter the terminal view")
+		}
+
+		p.apply(keyMsg("esc"))
+		p.drain(50 * time.Millisecond)
+
+		if p.model.termAttached {
+			t.Error("esc did not detach")
+		}
+		if _, ok := livework.Default.Get(cmdName); !ok {
+			t.Error("detaching removed the live-work entry — the process must stay registered as still running")
+		}
+		out := p.model.View()
+		if !strings.Contains(out, cmdName) {
+			t.Errorf("detached frame lost the command list: %q", out)
+		}
+	})
+
+	for _, key := range []string{"q", "k"} {
+		t.Run(key+" reaches the child", func(t *testing.T) {
+			cmdName := "termfixture-passthrough-" + key
 			dir := t.TempDir()
 			writeFixtureManifest(t, dir, cmdName)
-			registerFakePTYEntry(t, cmdName, livework.NewRing(0), &termRecorder{})
+			rec := &termRecorder{}
+			registerFakePTYEntry(t, cmdName, livework.NewRing(0), rec)
 
 			p := newAttachablePump(t, dir, 100, 24)
 			p.apply(keyMsg("a"))
@@ -301,15 +340,11 @@ func TestTerminalViewQAndEscBothDetach(t *testing.T) {
 			p.apply(keyMsg(key))
 			p.drain(50 * time.Millisecond)
 
-			if p.model.termAttached {
-				t.Errorf("%q did not detach", key)
+			if !p.model.termAttached {
+				t.Errorf("%q detached, want it to reach the child instead", key)
 			}
-			if _, ok := livework.Default.Get(cmdName); !ok {
-				t.Error("detaching removed the live-work entry — the process must stay registered as still running")
-			}
-			out := p.model.View()
-			if !strings.Contains(out, cmdName) {
-				t.Errorf("detached frame lost the command list: %q", out)
+			if got := string(rec.lastWrite()); got != key {
+				t.Errorf("last write = %q, want %q written through to the child", got, key)
 			}
 		})
 	}
