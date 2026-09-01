@@ -338,13 +338,15 @@ func (m Model) headerLine(width int) string {
 	}
 	var right []seg
 	switch {
-	case m.trackerSelectMode() && (m.active == tabBeads || m.active == tabIssues):
+	case m.trackerSelectMode() && (m.active == tabBeads || m.active == tabIssues || m.active == tabPRs):
 		// The count is the whole visibility contract for admin-3rgp.27's
 		// acceptance criterion "the count is visible": the per-row checkmark
 		// says WHICH rows, this says HOW MANY, and it takes priority over the
 		// header's usual sync/freshness readout because it's the more
-		// actionable fact while a selection is in progress.
-		right = []seg{{t: fmt.Sprintf("%d selected", len(m.trackerSelected)), fg: cGreen}}
+		// actionable fact while a selection is in progress. The Branches pane
+		// is deliberately excluded here — it has its own selection-count
+		// chrome already.
+		right = []seg{{t: fmt.Sprintf("%d selected", len(m.activeSelection())), fg: cGreen}}
 	case m.creating:
 		right = []seg{{t: "⟳ " + m.createLabel, fg: cCyan}}
 	case m.isRefreshing():
@@ -537,14 +539,15 @@ func (m Model) renderRow(r rowItem, selected bool, width int) string {
 	// background only appear when focus is actually in the body.
 	current := selected && m.focus == focusBody
 	left := []seg{leadSeg(current)}
-	// The tracker multi-select checkbox (admin-3rgp.27): a fixed two-column
-	// glyph on every rowBead/rowIssue row once mode is on, so a row's title
-	// starts at the same column whether that row is picked or not — the same
-	// "the checkbox is always drawn, blank when it doesn't apply" contract
-	// gutterSegs already keeps for the Branches pane's own checkbox.
-	if (r.kind == rowBead || r.kind == rowIssue) && m.trackerSelectMode() {
+	// The tracker multi-select checkbox (admin-3rgp.27, admin-4pps): a fixed
+	// two-column glyph on every rowBead/rowIssue/rowPR row once mode is on,
+	// so a row's title starts at the same column whether that row is picked
+	// or not — the same "the checkbox is always drawn, blank when it doesn't
+	// apply" contract gutterSegs already keeps for the Branches pane's own
+	// checkbox (branch rows draw theirs there, not here).
+	if (r.kind == rowBead || r.kind == rowIssue || r.kind == rowPR) && m.trackerSelectMode() {
 		mark := seg{t: "  "}
-		if m.trackerSelected[trackerRowID(r)] {
+		if m.activeSelection()[trackerRowID(r)] {
 			mark = seg{t: "✓ ", fg: cGreen}
 		}
 		left = append(left, mark)

@@ -1,11 +1,16 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/McBrideMusings/admin-project-tool/internal/bd"
+	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
+	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
@@ -359,5 +364,254 @@ func TestRenderWorkflowPickerBodyListsCandidates(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("picker body missing %q:\n%s", want, body)
 		}
+	}
+}
+
+// --- admin-4pps: the Branches pane and the PRs tab as workflow sources ---
+
+// TestTrackerRowIDOnBranchAndPR proves trackerRowID reads the same identity
+// fields rowID already keys keymap.Branch/keymap.PR under, so a selection id
+// and a row's own id can never disagree.
+func TestTrackerRowIDOnBranchAndPR(t *testing.T) {
+	if got := trackerRowID(rowItem{kind: rowBranch, branch: "feature-1"}); got != "feature-1" {
+		t.Errorf("trackerRowID(rowBranch) = %q, want feature-1", got)
+	}
+	if got := trackerRowID(rowItem{kind: rowPR, prNum: 42}); got != "42" {
+		t.Errorf("trackerRowID(rowPR) = %q, want 42", got)
+	}
+}
+
+// TestActiveSelectionPicksByTabAndPane proves activeSelection returns
+// m.selected on the Branches pane and m.trackerSelected everywhere else —
+// the single switch every reader and writer in this file goes through.
+func TestActiveSelectionPicksByTabAndPane(t *testing.T) {
+	m := Model{
+		active: tabLocal, pane: paneBranches,
+		selected: map[string]bool{"feature-1": true}, trackerSelected: map[string]bool{"proj-1": true},
+	}
+	if got := m.activeSelection(); len(got) != 1 || !got["feature-1"] {
+		t.Errorf("activeSelection() on Branches pane = %v, want m.selected", got)
+	}
+	m.active, m.pane = tabPRs, paneBranches // pane is irrelevant off tabLocal
+	if got := m.activeSelection(); len(got) != 1 || !got["proj-1"] {
+		t.Errorf("activeSelection() on PRs tab = %v, want m.trackerSelected", got)
+	}
+	m.active, m.pane = tabLocal, paneCommits
+	if got := m.activeSelection(); len(got) != 1 || !got["proj-1"] {
+		t.Errorf("activeSelection() on Local/Commits = %v, want m.trackerSelected (not the Branches map)", got)
+	}
+}
+
+// TestTrackerTargetsOverBranchesPaneReadsLocalBranches proves the Branches
+// tab's targets come from m.local.branches gated on m.selected — including a
+// selected branch minesOnly currently hides, so scrolling or filtering it
+// out of view cannot silently drop it from a dispatch.
+func TestTrackerTargetsOverBranchesPaneReadsLocalBranches(t *testing.T) {
+	m := Model{
+		active: tabLocal, pane: paneBranches, def: "main", current: "main",
+		local: localData{branches: []git.BranchInfo{
+			{Name: "main", Current: true},
+			{Name: "feature-1"},
+			{Name: "feature-2"},
+		}},
+		selected:  map[string]bool{"feature-1": true},
+		minesOnly: true, // hides feature-1 from branchRows(); trackerTargets must not care
+	}
+	got := m.trackerTargets()
+	if len(got) != 1 || got[0].Name != "feature-1" {
+		t.Fatalf("trackerTargets() = %v, want exactly [feature-1]", got)
+	}
+	if got[0].Prompt != kinds.ImplementPrompt("feature-1") {
+		t.Errorf("target prompt = %q, want the same shape ResolveQuery builds", got[0].Prompt)
+	}
+}
+
+// TestTrackerTargetsOverPRsReadsRemotePRs proves the PRs tab builds targets
+// from m.remote.PRs keyed by number, the same shape Beads/Issues already use.
+func TestTrackerTargetsOverPRsReadsRemotePRs(t *testing.T) {
+	m := Model{
+		active:          tabPRs,
+		remote:          data.Remote{PRs: []gh.OpenPR{{Number: 7}, {Number: 9}}},
+		trackerSelected: map[string]bool{"9": true},
+	}
+	got := m.trackerTargets()
+	if len(got) != 1 || got[0].Name != "9" {
+		t.Fatalf("trackerTargets() = %v, want exactly [9]", got)
+	}
+}
+
+// TestTrackerTargetsStaleBeadsSelectionCannotHijackBranches is the acceptance
+// criterion "a stale Beads selection cannot hijack a `w` pressed on a
+// Branches row": trackerSelected holds a leftover id from the Beads tab, but
+// the active pane is Branches with nothing in m.selected, so trackerTargets
+// (and therefore rowKeyWorkflow's `len(targets) > 0` gate) must see zero.
+func TestTrackerTargetsStaleBeadsSelectionCannotHijackBranches(t *testing.T) {
+	m := Model{
+		active: tabLocal, pane: paneBranches,
+		local:           localData{branches: []git.BranchInfo{{Name: "feature-1"}}},
+		selected:        map[string]bool{},
+		trackerSelected: map[string]bool{"proj-1": true},
+	}
+	if got := m.trackerTargets(); len(got) != 0 {
+		t.Errorf("trackerTargets() = %v with an empty branch selection, want none — a stale Beads pick hijacked it", got)
+	}
+}
+
+// TestClearActiveSelectionOnlyClearsTheActiveMap proves a confirmed
+// dispatch's cleanup (workflowConfirmKey) empties whichever map is active
+// and leaves the other one — Clean Up's own state included — untouched.
+func TestClearActiveSelectionOnlyClearsTheActiveMap(t *testing.T) {
+	m := Model{
+		active: tabLocal, pane: paneBranches,
+		selected:        map[string]bool{"feature-1": true},
+		trackerSelected: map[string]bool{"proj-1": true},
+	}
+	m.clearActiveSelection()
+	if len(m.selected) != 0 {
+		t.Errorf("m.selected = %v after clearActiveSelection on the Branches pane, want empty", m.selected)
+	}
+	if !m.trackerSelected["proj-1"] {
+		t.Errorf("clearActiveSelection on the Branches pane touched trackerSelected: %v", m.trackerSelected)
+	}
+
+	m.active, m.pane = tabPRs, paneBranches
+	m.selected = map[string]bool{"feature-1": true}
+	m.clearActiveSelection()
+	if !m.selected["feature-1"] {
+		t.Errorf("clearActiveSelection on the PRs tab touched m.selected — Clean Up's state, want untouched: %v", m.selected)
+	}
+}
+
+// TestToggleTrackerSelectionOnBranchesPaneRoutesToBranchSelection proves
+// space on the Branches pane goes through toggleBranchSelection (its
+// secMain / checked-out refusals still apply) rather than writing branch
+// names into trackerSelected.
+func TestToggleTrackerSelectionOnBranchesPaneRoutesToBranchSelection(t *testing.T) {
+	m := Model{
+		active: tabLocal, pane: paneBranches, def: "main", current: "main",
+		local:           localData{branches: []git.BranchInfo{{Name: "main", Current: true}, {Name: "feature-1"}}},
+		selected:        map[string]bool{},
+		trackerSelected: map[string]bool{},
+	}
+	m.paneCursor[paneBranches] = len(m.branchRows()) - 1 // the non-main row
+	m.toggleTrackerSelection()
+	if !m.selected["feature-1"] {
+		t.Errorf("space on the Branches pane did not select feature-1 via m.selected: %v", m.selected)
+	}
+	if len(m.trackerSelected) != 0 {
+		t.Errorf("space on the Branches pane wrote into trackerSelected: %v", m.trackerSelected)
+	}
+}
+
+// TestDeleteSelectedBranchesUnaffectedByACancelledWorkflowPick proves Clean
+// Up still reads the exact same m.selected after a `w` that opened the
+// picker and was then cancelled — the acceptance criterion "Clean Up still
+// reads the same Branches selection unchanged."
+func TestDeleteSelectedBranchesUnaffectedByACancelledWorkflowPick(t *testing.T) {
+	mm := workTestModel(selectionWorkflowManifest())
+	mm.active, mm.pane = tabLocal, paneBranches
+	mm.def, mm.current = "main", "main"
+	mm.local = localData{branches: []git.BranchInfo{{Name: "main", Current: true}, {Name: "feature-1"}}}
+	mm.selected = map[string]bool{"feature-1": true}
+	mm.trackerSelected = map[string]bool{}
+
+	got, _ := mm.startWorkflowPicker()
+	m := got.(Model)
+	if !m.swOpen {
+		t.Fatalf("startWorkflowPicker did not open with a nonempty branch selection")
+	}
+	got, _ = m.workflowPickerKey("esc")
+	m = got.(Model)
+	if m.swOpen {
+		t.Fatalf("picker still open after esc")
+	}
+	if !m.selected["feature-1"] {
+		t.Fatalf("m.selected lost feature-1 after a cancelled workflow pick: %v", m.selected)
+	}
+	got, _ = m.deleteSelectedBranches()
+	m = got.(Model)
+	if !m.confirming || len(m.confirmTargets) != 1 || m.confirmTargets[0].branch != "feature-1" {
+		t.Errorf("deleteSelectedBranches after a cancelled pick = confirming=%v targets=%v, want feature-1 staged", m.confirming, m.confirmTargets)
+	}
+}
+
+// newBranchesPaneModel builds a real Model (via New, over a nonexistent repo
+// root so loadManifest simply finds nothing — the same pattern
+// design_parity_test.go's protoModel uses) with one selectable branch and
+// one open PR, ready to drive through the pump directly. Frame(ctx, m, …)
+// is deliberately not used here: it runs Init, whose local/remote loads over
+// a t.TempDir() would overwrite these injected fixtures before a single key
+// lands.
+func newBranchesPaneModel() Model {
+	m := New(context.Background(), "/repo", "owner/repo", "main", "main")
+	m.width, m.height = 100, 30
+	m.focus = focusBody
+	m.local = localData{branches: []git.BranchInfo{
+		{Name: "main", Current: true},
+		{Name: "feature-1"},
+	}}
+	m.haveLocal = true
+	m.remote = data.Remote{PRs: []gh.OpenPR{{Number: 42, Title: "fix the thing", Bucket: gh.BucketMine}}}
+	m.haveData = true
+	m.manifest = &manifest.Manifest{
+		Custom:  map[string]manifest.Command{"review-branch": {Desc: "review a picked branch", Steps: []string{"review"}}},
+		Actions: map[string]manifest.Action{"review": {"kind": "workflow", "over": "selection", "agent": "claude"}},
+	}
+	m.manifestOK = true
+	return m
+}
+
+// TestFrameSpaceThenWOnBranchesPaneOpensPickerAndConfirm is the acceptance
+// criterion "space then w on the Branches pane opens the picker and
+// dispatches over the selected branches", asserted through the headless
+// frame renderer.
+func TestFrameSpaceThenWOnBranchesPaneOpensPickerAndConfirm(t *testing.T) {
+	m := newBranchesPaneModel()
+	m.active, m.pane = tabLocal, paneBranches
+	// branchRows() puts "main" first (secMain, rank -1) and "feature-1"
+	// after it — one down from the default cursor lands on feature-1.
+	p := &pump{msgs: make(chan tea.Msg, 64), model: m}
+	p.apply(keyMsg("down"))
+	p.apply(keyMsg("space"))
+	p.apply(keyMsg("w"))
+
+	out := p.model.View()
+	if !strings.Contains(out, "Run a workflow over 1 selected") {
+		t.Fatalf("picker did not open over the selected branch:\n%s", out)
+	}
+	if !strings.Contains(out, "review a picked branch") {
+		t.Errorf("picker body missing the candidate's desc:\n%s", out)
+	}
+
+	p.apply(keyMsg("enter"))
+	out = p.model.View()
+	if !strings.Contains(out, "feature-1") {
+		t.Errorf("confirm overlay does not name the selected branch feature-1:\n%s", out)
+	}
+	if !p.model.selected["feature-1"] {
+		t.Errorf("m.selected = %v with the confirm overlay still open, want untouched until dispatch is confirmed", p.model.selected)
+	}
+}
+
+// TestFrameSpaceThenWOnPRsTabOpensPickerAndConfirm is the acceptance
+// criterion's "same for the PRs tab", asserted through the headless frame
+// renderer.
+func TestFrameSpaceThenWOnPRsTabOpensPickerAndConfirm(t *testing.T) {
+	m := newBranchesPaneModel()
+	m.active = tabPRs
+	p := &pump{msgs: make(chan tea.Msg, 64), model: m}
+	trackerCursorTo(t, &p.model, "42")
+	p.apply(keyMsg("space"))
+	p.apply(keyMsg("w"))
+
+	out := p.model.View()
+	if !strings.Contains(out, "Run a workflow over 1 selected") {
+		t.Fatalf("picker did not open over the selected PR:\n%s", out)
+	}
+
+	p.apply(keyMsg("enter"))
+	out = p.model.View()
+	if !strings.Contains(out, "42") {
+		t.Errorf("confirm overlay does not name the selected PR #42:\n%s", out)
 	}
 }
