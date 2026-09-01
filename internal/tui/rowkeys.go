@@ -10,12 +10,15 @@
 package tui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/keymap"
+	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
@@ -136,5 +139,76 @@ func (m Model) rowKeyDispatch(key string) (tea.Model, tea.Cmd, bool) {
 	if !ok {
 		return m, nil, false
 	}
+	if c, found := m.commandNamed(name); found && m.isSelectionWorkflow(c) {
+		mm, cmd := m.rowKeyWorkflow(name, c, r, kind)
+		return mm, cmd, true
+	}
 	return m, dispatchCommandCmd(m.manifest, m.width, m.height, name, rowEnv(r, kind)), true
+}
+
+// commandNamed looks up a declared command by name, Custom winning over
+// Overrides — the same rule collectCommands' own unexported `lookup`
+// closure applies (work.go), duplicated here rather than shared because
+// that closure is local to collectCommands and work.go is under
+// concurrent modification by another swarm.
+func (m Model) commandNamed(name string) (manifest.Command, bool) {
+	if c, ok := m.manifest.Custom[name]; ok {
+		return c, true
+	}
+	c, ok := m.manifest.Overrides[name]
+	return c, ok
+}
+
+// rowKeyWorkflow is rowKeyDispatch's branch for a binding that resolves to
+// a single-step kind="workflow" action with over="selection" (ADR-0018):
+// a nonempty tracker selection hands off to the same picker→confirm path
+// space-then-w already uses (pickWorkflow), so the overlay itself never
+// changes; an empty selection dispatches immediately over just the row
+// under the cursor, with no overlay, reporting the outcome on the status
+// line instead.
+//
+// Branching on len(m.trackerTargets()) > 0 rather than
+// m.trackerSelectMode() is deliberate: trackerSelected only ever holds
+// bead/issue ids and trackerTargets only reads m.beads/m.remote.Issues for
+// the *active* tab, so a stale selection left over from the Beads tab
+// cannot hijack an `enter` pressed on a Branches row — that case correctly
+// falls through to the cursor-row path below, matching ADR-0018's
+// selection-wins-with-cursor-fallback rule.
+func (m Model) rowKeyWorkflow(name string, c manifest.Command, r rowItem, kind keymap.RowKind) (tea.Model, tea.Cmd) {
+	if targets := m.trackerTargets(); len(targets) > 0 {
+		return m.pickWorkflow(workCmdRow{name: name, cmd: c})
+	}
+
+	action, ok := m.soleAction(c)
+	if !ok {
+		// Defensive: isSelectionWorkflow already proved c is a single-step
+		// kind="workflow" action, so this can't happen outside a bug
+		// changing that filter without updating this assumption.
+		m.setStatus(name+": not a workflow", cRed)
+		return m, nil
+	}
+	id := rowID(r, kind)
+	if id == "" {
+		m.setStatus(name+": no id on this row to dispatch over", cRed)
+		return m, nil
+	}
+	targets := []kinds.Target{{Name: id, Prompt: kinds.ImplementPrompt(id)}}
+
+	cfg, err := config.Load(m.repoRoot)
+	if err != nil {
+		cfg = config.Config{}
+	}
+	// agent/ceiling are not otherwise needed here — DispatchTargets
+	// re-resolves both itself. ResolveAgent runs purely as the pre-flight
+	// that turns a misconfiguration into a red status line before anything
+	// is dispatched, since there is no overlay on this path to report it as
+	// a field.
+	if _, agentOK := kinds.ResolveAgent(action, cfg); !agentOK {
+		m.setStatus(fmt.Sprintf(
+			"no agent configured — set 'agent' on %q or [workflow].agent in config", name), cRed)
+		return m, nil
+	}
+
+	m.setStatus(fmt.Sprintf("dispatching %s over %s…", name, id), cCyan)
+	return m, dispatchWorkflowCmd(m.repoRoot, name, action, targets)
 }
