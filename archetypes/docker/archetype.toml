@@ -334,7 +334,13 @@ if target == "files" or target == "all" then
     else
       info("Copying to " .. plan.dest)
       local delete_flag = (deploy_cfg.delete == true) and " --delete" or ""
-      local copy_cmd = "mkdir -p " .. shq(plan.dest) .. " && rsync -a" .. delete_flag .. " " ..
+      -- plan.filter_args carries [deploy]'s excludes and its owns allow-list.
+      -- Both branches apply it or they mean different things: a local deploy
+      -- (DEPLOY_LOCAL on the host itself) reading a manifest that scoped
+      -- --delete to `owns` would otherwise mirror the whole tree and take the
+      -- destination's own state with it.
+      local filter_args = (plan.filter_args ~= "" ) and (" " .. plan.filter_args) or ""
+      local copy_cmd = "mkdir -p " .. shq(plan.dest) .. " && rsync -a" .. delete_flag .. filter_args .. " " ..
                         shq(plan.src) .. "/ " .. shq(plan.dest) .. "/"
       if not run_cmd(copy_cmd) then
         err("copy failed")

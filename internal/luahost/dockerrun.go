@@ -141,8 +141,8 @@ func (h *Host) registerDockerRun(L *lua.LState) {
 	}))
 
 	// dockerrun.build_deploy_sync_plan(cfg, env_vars, is_local, dry_run) ->
-	// plan (table with src/dest/target/is_remote/host/rsync_cmd/chown/
-	// post_sync_cmd) or nil, errors (array of strings)
+	// plan (table with src/dest/target/is_remote/host/rsync_cmd/filter_args/
+	// chown/post_sync_cmd) or nil, errors (array of strings)
 	tbl.RawSetString("build_deploy_sync_plan", L.NewFunction(func(L *lua.LState) int {
 		cfg, _ := fromLuaValue(L.CheckTable(1)).(map[string]any)
 		envVars := optionalStringMap(L, 2)
@@ -161,6 +161,7 @@ func (h *Host) registerDockerRun(L *lua.LState) {
 		out.RawSetString("is_remote", lua.LBool(plan.IsRemote))
 		out.RawSetString("host", lua.LString(plan.Host))
 		out.RawSetString("rsync_cmd", lua.LString(plan.RsyncCmd))
+		out.RawSetString("filter_args", lua.LString(plan.FilterArgs))
 		out.RawSetString("chown", lua.LString(plan.Chown))
 		out.RawSetString("post_sync_cmd", lua.LString(plan.PostSyncCmd))
 		L.Push(out)
