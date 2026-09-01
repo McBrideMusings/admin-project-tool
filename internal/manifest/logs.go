@@ -1,6 +1,10 @@
 package manifest
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/dockerrun"
+)
 
 // LogKind is one [logs.<name>] source kind's flat-field shape — a port of
 // admin_lib/kinds.py's LOG_KINDS catalog. "file" is special (per-environment
@@ -43,12 +47,11 @@ var LogFlatFields = func() []string {
 	return out
 }()
 
-// DeployKeys are the keys accepted by the [deploy] table — a port of
-// admin_lib/kinds.py::DEPLOY_KEYS.
-var DeployKeys = map[string]bool{
-	"src": true, "dest": true, "host": true, "exclude": true,
-	"delete": true, "post_sync": true, "chown": true,
-}
+// DeployKeys are the keys accepted by the [deploy] table. It is dockerrun's
+// list, not a copy of it: this package validates the table and dockerrun
+// renders it, and a second hand-maintained copy is how `owns` came to be
+// accepted by the renderer while `admin check` still rejected it.
+var DeployKeys = dockerrun.DeployKeys
 
 // LogEnv is one file-kind log source's environment: where to tail from, and
 // optionally which host/user to SSH as.
