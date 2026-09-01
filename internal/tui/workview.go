@@ -117,7 +117,8 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 	if r.kind == rowWorker {
 		e := wd.worker
 		name := padEnd(truncR(e.ID, nameW), nameW)
-		state := renderLiveState(e.State)
+		st, _ := livework.Default.State(e.ID)
+		state := renderLiveState(st)
 		whereText, whereStyled := whereSeg(e)
 		actW := maxi(rest-stateW-whereWidth(whereText), 4)
 		act := padEnd(truncR(e.Activity, actW), actW)
@@ -138,7 +139,8 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 		name = faintStyle.Render(arrow) + padEnd(truncR(wd.cmdName, inner), inner)
 	}
 	if wd.live != nil {
-		state := renderLiveState(wd.live.State)
+		st, _ := livework.Default.State(wd.live.ID)
+		state := renderLiveState(st)
 		whereText, whereStyled := whereSeg(wd.live)
 		actW := maxi(rest-stateW-whereWidth(whereText), 4)
 		act := padEnd(truncR(wd.live.Activity, actW), actW)
@@ -192,9 +194,10 @@ func workerDetail(e *livework.Entry, w int) []string {
 	} else if e.PaneID != "" {
 		locale = e.PaneID + "  ·  outlives the dashboard"
 	}
+	st, _ := livework.Default.State(e.ID)
 	out := []string{
 		lipgloss.NewStyle().Bold(true).Render(e.ID),
-		renderLiveState(e.State) + faintStyle.Render("  ·  "+truncR(locale, maxi(w-2, 4))),
+		renderLiveState(st) + faintStyle.Render("  ·  "+truncR(locale, maxi(w-2, 4))),
 		"",
 		faintStyle.Render("now"),
 		"  " + truncR(e.Activity, maxi(w-2, 4)),
