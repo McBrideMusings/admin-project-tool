@@ -345,3 +345,135 @@ requires = ["git-clean", "no-tag"]
 		t.Fatalf("Resolve: %v, want nil — both requires names resolve", err)
 	}
 }
+
+// TestRowKeysMergePerKey covers the acceptance criterion directly: an
+// archetype declaring two bindings for [keys.bead] plus a project declaring
+// one different binding for the same row kind must yield all three, not the
+// project's single entry replacing the archetype's whole table.
+func TestRowKeysMergePerKey(t *testing.T) {
+	root := t.TempDir()
+	writeArchetypeDir(t, root, "bead-keys", `
+[keys.bead]
+enter = "implement"
+o     = "open-bead"
+`, false)
+	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
+
+	project := projectManifest(t, `
+project_name = "widget"
+archetypes   = ["bead-keys"]
+
+[keys.bead]
+i = "inspect"
+`)
+
+	merged, _, err := Resolve(project, sp)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	bead, ok := merged.Keys["bead"].(map[string]any)
+	if !ok {
+		t.Fatalf("Keys[bead] = %#v, want map[string]any", merged.Keys["bead"])
+	}
+	want := map[string]any{"enter": "implement", "o": "open-bead", "i": "inspect"}
+	if len(bead) != len(want) {
+		t.Fatalf("Keys[bead] = %#v, want %#v", bead, want)
+	}
+	for k, v := range want {
+		if bead[k] != v {
+			t.Errorf("Keys[bead][%q] = %#v, want %#v", k, bead[k], v)
+		}
+	}
+}
+
+// TestRowKeysProjectWinsOnSharedKey covers the second acceptance criterion: a
+// project binding the same key an archetype already bound must win on that
+// key while leaving the archetype's other bindings for the row kind intact.
+func TestRowKeysProjectWinsOnSharedKey(t *testing.T) {
+	root := t.TempDir()
+	writeArchetypeDir(t, root, "bead-keys", `
+[keys.bead]
+enter = "implement"
+o     = "open-bead"
+`, false)
+	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
+
+	project := projectManifest(t, `
+project_name = "widget"
+archetypes   = ["bead-keys"]
+
+[keys.bead]
+enter = "dispatch"
+`)
+
+	merged, _, err := Resolve(project, sp)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	bead, ok := merged.Keys["bead"].(map[string]any)
+	if !ok {
+		t.Fatalf("Keys[bead] = %#v, want map[string]any", merged.Keys["bead"])
+	}
+	if bead["enter"] != "dispatch" {
+		t.Errorf(`Keys[bead]["enter"] = %#v, want "dispatch" (project wins on a shared key)`, bead["enter"])
+	}
+	if bead["o"] != "open-bead" {
+		t.Errorf(`Keys[bead]["o"] = %#v, want "open-bead" (archetype's other binding must survive)`, bead["o"])
+	}
+}
+
+// TestRowKeysLaterArchetypeWinsOnSharedKey covers the archetype-vs-archetype
+// direction: two archetypes each declaring [keys.bead], the later one
+// winning on a shared key while each side's unique key survives, and a row
+// kind only one side declares passing through untouched.
+func TestRowKeysLaterArchetypeWinsOnSharedKey(t *testing.T) {
+	root := t.TempDir()
+	writeArchetypeDir(t, root, "a", `
+[keys.bead]
+enter = "from-a"
+x     = "only-a"
+
+[keys.pr]
+m = "merge"
+`, false)
+	writeArchetypeDir(t, root, "b", `
+[keys.bead]
+enter = "from-b"
+y     = "only-b"
+`, false)
+	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
+
+	project := projectManifest(t, `
+project_name = "widget"
+archetypes   = ["a", "b"]
+`)
+
+	merged, _, err := Resolve(project, sp)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	bead, ok := merged.Keys["bead"].(map[string]any)
+	if !ok {
+		t.Fatalf("Keys[bead] = %#v, want map[string]any", merged.Keys["bead"])
+	}
+	if bead["enter"] != "from-b" {
+		t.Errorf(`Keys[bead]["enter"] = %#v, want "from-b" (later archetype wins on a shared key)`, bead["enter"])
+	}
+	if bead["x"] != "only-a" {
+		t.Errorf(`Keys[bead]["x"] = %#v, want "only-a" (earlier archetype's unique key must survive)`, bead["x"])
+	}
+	if bead["y"] != "only-b" {
+		t.Errorf(`Keys[bead]["y"] = %#v, want "only-b"`, bead["y"])
+	}
+
+	pr, ok := merged.Keys["pr"].(map[string]any)
+	if !ok {
+		t.Fatalf("Keys[pr] = %#v, want map[string]any", merged.Keys["pr"])
+	}
+	if pr["m"] != "merge" {
+		t.Errorf(`Keys[pr]["m"] = %#v, want "merge" (a row kind only one side declares passes through untouched)`, pr["m"])
+	}
+}
