@@ -168,6 +168,9 @@ func (m Model) renderBodyHits(width, bodyHeight int) ([]string, []hitTarget) {
 	var content []string
 	var hits []hitTarget
 	switch {
+	case m.quitOpen:
+		content = m.renderQuitConfirmBody(width, contentH)
+		hits = noneHits(len(content))
 	case m.errOpen:
 		content = m.renderErrDetailBody(width, contentH)
 		hits = noneHits(len(content))
