@@ -19,6 +19,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
+	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/shim"
 )
@@ -172,8 +173,8 @@ type Model struct {
 	// order already comes from the graph itself, and an arbitrary sort would
 	// scramble the blocker-above-blocked shape that view exists to show.
 	trackSort trackSort
-	haveBeads   bool
-	beadsErr    string
+	haveBeads bool
+	beadsErr  string
 	// beadCols is [beads] columns from the merged config — which columns the pane
 	// draws and in what order. Empty means DefaultBeadColumns.
 	beadCols []string
@@ -390,6 +391,14 @@ type Model struct {
 	swOpen    bool
 	swOptions []workCmdRow
 	swCursor  int
+
+	// Quit confirm overlay (admin-3rgp.63): quitting while the dashboard is
+	// hosting a running process on its own pty must not kill it silently —
+	// see requestQuit in quitconfirm.go. quitHosted is the snapshot taken
+	// when the confirm opened, so accepting kills exactly what was shown
+	// even if the registry changes under it.
+	quitOpen   bool
+	quitHosted []*livework.Entry
 }
 
 // New builds the dashboard model. The cheap git context (root, nwo, branch) is
@@ -1239,6 +1248,14 @@ func (m Model) clickRow(pane localPane, row int) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// The quit-confirm overlay (admin-3rgp.63) owns the keyboard the instant
+	// it is up — ahead of every other overlay — so nothing else can shadow
+	// the one question left to answer: kill the hosted processes and quit,
+	// or cancel and leave them running.
+	if m.quitOpen {
+		return m.quitConfirmKey(msg.String())
+	}
+
 	// Confirm phase of the delete modal swallows everything but y/n.
 	if m.confirming {
 		switch msg.String() {
@@ -1405,8 +1422,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "q", "ctrl+c":
-		m.closeWatcher()
-		return m, tea.Quit
+		return m.requestQuit()
 	case "right":
 		// On the Work tab, right on a collapsed command-with-targets row opens
 		// its submenu instead of switching tab — l keeps switching tab even
