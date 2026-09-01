@@ -12,11 +12,12 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// TestTrackSortLabelsAndCycleWraps pins the five order names and the cycle
-// order the ticket calls out: last modified, oldest first, newest first, most
-// dependencies first, by type — wrapping back to the first after the fifth.
+// TestTrackSortLabelsAndCycleWraps pins the six order names and the cycle
+// order the ticket calls out: last modified, priority, oldest first, newest
+// first, most dependencies first, by type — wrapping back to the first after
+// the sixth.
 func TestTrackSortLabelsAndCycleWraps(t *testing.T) {
-	want := []string{"last modified", "oldest first", "newest first", "most dependencies", "by type"}
+	want := []string{"last modified", "priority", "oldest first", "newest first", "most dependencies", "by type"}
 	s := sortLastModified
 	for i, label := range want {
 		if got := s.label(); got != label {
@@ -25,24 +26,24 @@ func TestTrackSortLabelsAndCycleWraps(t *testing.T) {
 		s = s.next()
 	}
 	if s != sortLastModified {
-		t.Errorf("cycling past the fifth order landed on %v, want it to wrap back to sortLastModified", s)
+		t.Errorf("cycling past the sixth order landed on %v, want it to wrap back to sortLastModified", s)
 	}
 }
 
 // beadSortFixture builds four beads with known dates, a known dependency
-// shape, and known types, in an input order ("d", "b", "c", "a") chosen so
-// every order that ties on its primary key ("b" and "d" both updated at t2;
-// "b", "c", "d" all unblocking nothing) has to fall back to the beads'
-// original relative order to pass — proving the sort is stable, not just
-// correct on the fields that do differ.
+// shape, known types, and known priorities, in an input order ("d", "b", "c",
+// "a") chosen so every order that ties on its primary key ("b" and "d" both
+// updated at t2; "b", "c", "d" all unblocking nothing; "b" and "c" both P0)
+// has to fall back to the beads' original relative order to pass — proving
+// the sort is stable, not just correct on the fields that do differ.
 func beadSortFixture() []bd.Bead {
 	t1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 	t3 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	a := bd.Bead{ID: "a", Type: "bug", Updated: t1}
-	b := bd.Bead{ID: "b", Type: "chore", Updated: t2, Blockers: []string{"a"}}
-	c := bd.Bead{ID: "c", Type: "feature", Updated: t3, Blockers: []string{"a"}}
-	d := bd.Bead{ID: "d", Type: "task", Updated: t2}
+	a := bd.Bead{ID: "a", Type: "bug", Updated: t1, Priority: 2}
+	b := bd.Bead{ID: "b", Type: "chore", Updated: t2, Blockers: []string{"a"}, Priority: 0}
+	c := bd.Bead{ID: "c", Type: "feature", Updated: t3, Blockers: []string{"a"}, Priority: 0}
+	d := bd.Bead{ID: "d", Type: "task", Updated: t2, Priority: 1}
 	return []bd.Bead{d, b, c, a}
 }
 
@@ -82,6 +83,7 @@ func TestSortBeadsByOrders(t *testing.T) {
 		want  []string
 	}{
 		{sortLastModified, []string{"c", "d", "b", "a"}},
+		{sortPriority, []string{"b", "c", "d", "a"}}, // b, c tie at P0 — input order (d,b,c,a) keeps b before c
 		{sortOldestFirst, []string{"a", "d", "b", "c"}},
 		{sortNewestFirst, []string{"c", "d", "b", "a"}},
 		{sortMostDeps, []string{"a", "d", "b", "c"}},
@@ -146,6 +148,7 @@ func TestSortIssuesByOrders(t *testing.T) {
 		want  []int
 	}{
 		{sortLastModified, []int{10, 30, 20}},
+		{sortPriority, []int{30, 10, 20}}, // none labeled — unmatched priority (5) keeps input order
 		{sortOldestFirst, []int{10, 20, 30}},
 		{sortNewestFirst, []int{30, 20, 10}},
 		{sortMostDeps, []int{30, 10, 20}}, // no-op: issues carry no dependency graph
@@ -163,6 +166,55 @@ func TestSortIssuesByOrders(t *testing.T) {
 				t.Errorf("%s: got %v, want %v", tc.order.label(), got, tc.want)
 				break
 			}
+		}
+	}
+}
+
+// TestSortIssuesByPriorityLabels drives sortPriority against real labels —
+// P0-style and priority:-style, mixed case — and proves an issue carrying
+// neither sorts after every labeled one rather than first.
+func TestSortIssuesByPriorityLabels(t *testing.T) {
+	items := []gh.IssueItem{
+		{Number: 1, Labels: []string{"bug", "p2"}},
+		{Number: 2, Labels: []string{"Priority: Critical"}},
+		{Number: 3, Labels: []string{}}, // unlabeled — must sort last
+		{Number: 4, Labels: []string{"priority/high"}},
+	}
+	sortIssuesBy(items, sortPriority)
+	want := []int{2, 4, 1, 3}
+	got := issueNums(items)
+	if len(got) != len(want) {
+		t.Fatalf("sortPriority by label: got %v, want %v", got, want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("sortPriority by label: got %v, want %v", got, want)
+			break
+		}
+	}
+}
+
+// TestIssuePriority pins the label -> priority mapping directly: P0-P4,
+// priority:/priority/ word forms, case-insensitivity, and the no-match
+// fallback to 5 (sorts after every real priority).
+func TestIssuePriority(t *testing.T) {
+	cases := []struct {
+		labels []string
+		want   int
+	}{
+		{[]string{"P0"}, 0},
+		{[]string{"p4"}, 4},
+		{[]string{"priority: critical"}, 0},
+		{[]string{"priority:high"}, 1},
+		{[]string{"Priority/Medium"}, 2},
+		{[]string{"priority/low"}, 3},
+		{[]string{"priority: backlog"}, 4},
+		{[]string{"bug", "enhancement"}, 5},
+		{nil, 5},
+	}
+	for _, tc := range cases {
+		if got := issuePriority(tc.labels); got != tc.want {
+			t.Errorf("issuePriority(%v) = %d, want %d", tc.labels, got, tc.want)
 		}
 	}
 }
@@ -205,7 +257,7 @@ func trackSortHeaderModel() Model {
 // press.
 func TestTrackerHeaderNamesActiveSort(t *testing.T) {
 	m := trackSortHeaderModel()
-	labels := []string{"last modified", "oldest first", "newest first", "most dependencies", "by type", "last modified"}
+	labels := []string{"last modified", "priority", "oldest first", "newest first", "most dependencies", "by type", "last modified"}
 	for i, want := range labels {
 		out := stripANSI(m.View())
 		if !strings.Contains(out, "sort: "+want) {
@@ -232,7 +284,7 @@ func TestTrackerHeaderNamesActiveSortOnIssues(t *testing.T) {
 	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m = next.(Model)
 	out = stripANSI(m.View())
-	if !strings.Contains(out, "sort: oldest first") {
+	if !strings.Contains(out, "sort: priority") {
 		t.Fatalf("Issues tab header did not advance to the next order\n%s", out)
 	}
 }
