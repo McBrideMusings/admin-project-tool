@@ -65,7 +65,7 @@ func TestStartHostedPTYRegistersALiveEntry(t *testing.T) {
 			"build": {Steps: []string{"build-step"}},
 		},
 	}
-	if err := StartHostedPTY(m, "build", nil, 24, 80); err != nil {
+	if err := StartHostedPTY(m, "build", nil, 24, 80, nil); err != nil {
 		t.Fatalf("StartHostedPTY: %v", err)
 	}
 	t.Cleanup(func() {
@@ -120,7 +120,7 @@ func TestStartHostedPTYEntryReportsExited(t *testing.T) {
 			"quick": {Steps: []string{"quick-step"}},
 		},
 	}
-	if err := StartHostedPTY(m, "quick", nil, 24, 80); err != nil {
+	if err := StartHostedPTY(m, "quick", nil, 24, 80, nil); err != nil {
 		t.Fatalf("StartHostedPTY: %v", err)
 	}
 
@@ -160,7 +160,7 @@ func TestStartHostedPTYEntryReportsExited(t *testing.T) {
 // for nothing.
 func TestStartHostedPTYUnknownCommandErrors(t *testing.T) {
 	m := &manifest.Manifest{}
-	if err := StartHostedPTY(m, "missing", nil, 24, 80); err == nil {
+	if err := StartHostedPTY(m, "missing", nil, 24, 80, nil); err == nil {
 		t.Fatal("StartHostedPTY on an undeclared command returned nil error, want one")
 	}
 }
@@ -188,7 +188,7 @@ func TestHostedPTYKillTerminatesTheWholeProcessGroup(t *testing.T) {
 			"host-and-spawn": {Steps: []string{"host-and-spawn-step"}},
 		},
 	}
-	if err := StartHostedPTY(m, "host-and-spawn", nil, 24, 80); err != nil {
+	if err := StartHostedPTY(m, "host-and-spawn", nil, 24, 80, nil); err != nil {
 		t.Fatalf("StartHostedPTY: %v", err)
 	}
 
@@ -247,7 +247,7 @@ func TestHostedPTYKillIsIdempotent(t *testing.T) {
 				"finishes-fast": {Steps: []string{"finishes-fast-step"}},
 			},
 		}
-		if err := StartHostedPTY(m, "finishes-fast", nil, 24, 80); err != nil {
+		if err := StartHostedPTY(m, "finishes-fast", nil, 24, 80, nil); err != nil {
 			t.Fatalf("StartHostedPTY: %v", err)
 		}
 
@@ -282,7 +282,7 @@ func TestHostedPTYKillIsIdempotent(t *testing.T) {
 				"long-running": {Steps: []string{"long-running-step"}},
 			},
 		}
-		if err := StartHostedPTY(m, "long-running", nil, 24, 80); err != nil {
+		if err := StartHostedPTY(m, "long-running", nil, 24, 80, nil); err != nil {
 			t.Fatalf("StartHostedPTY: %v", err)
 		}
 

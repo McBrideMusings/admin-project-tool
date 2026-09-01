@@ -451,6 +451,24 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 	return m, nil
 }
 
+// CommandNames builds the resolved manifest's full command-name set —
+// Overrides (project + archetype [commands.X]) plus Custom
+// ([commands.custom.X]). This is the set a [keys.<kind>].<key> binding's
+// value must name to be valid (validate.RowKeys' commands argument) — both
+// cmd/check.go's admin check and internal/tui's row-key lookup build their
+// command set from this single method rather than each walking Overrides/
+// Custom on their own.
+func (m *Manifest) CommandNames() map[string]bool {
+	out := make(map[string]bool, len(m.Overrides)+len(m.Custom))
+	for name := range m.Overrides {
+		out[name] = true
+	}
+	for name := range m.Custom {
+		out[name] = true
+	}
+	return out
+}
+
 // knownCommandKeys is the ADR-0003 pure-routing key set — the port of
 // admin_lib/validate.py::VALID_COMMAND_KEYS.
 var knownCommandKeys = map[string]bool{

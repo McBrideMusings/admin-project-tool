@@ -18,6 +18,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
+	"github.com/McBrideMusings/admin-project-tool/internal/keymap"
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
@@ -327,6 +328,12 @@ type Model struct {
 	// computeOrigins. A key missing from the map was never declared, which
 	// the Config tab shows as defaulted rather than guessing a source.
 	keyOrigin map[string]string
+	// rowKeys is the resolved [keys.<row-kind>] lookup (ADR-0018,
+	// admin-l6kb.2), built once at New from validate.RowKeys over
+	// m.manifest.Keys — see rowkeys.go. Nil (not just empty) when there is
+	// no manifest at all, which is what makes rowKeyDispatch a clean miss
+	// on every project written before this feature existed.
+	rowKeys map[keymap.RowKind]map[string]string
 	// expandedCmd is the ONE Work-tab command whose targets are currently
 	// listed beneath it, or "" for none. A command with targets is a
 	// collapse toggle: enter on it opens its target list and closes
@@ -423,6 +430,7 @@ func New(ctx context.Context, repoRoot, nwo, current, def string) Model {
 		m.manifest = merged
 		m.manifestOK = true
 		m.cmdOrigin, m.actionOrigin, m.keyOrigin = computeOrigins(project, sp)
+		m.rowKeys = buildRowKeys(merged)
 		// AC: "the dashboard opens on the Work tab when the project has a
 		// manifest."
 		m.active = tabWork
@@ -1418,6 +1426,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.resetCursors()
 		}
 		return m, nil
+	}
+
+	// A row-scoped key binding (ADR-0018, admin-l6kb.2) is consulted after
+	// every overlay/modal/naming/filter early-return above — so a bound key
+	// can never steal a keystroke meant for one of those — but before the
+	// dashboard's own built-in switch below, so a HIT preempts the built-in
+	// entirely and a MISS falls through to it completely unchanged.
+	if mm, cmd, ok := m.rowKeyDispatch(msg.String()); ok {
+		return mm, cmd
 	}
 
 	switch msg.String() {
