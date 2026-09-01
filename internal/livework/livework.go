@@ -206,6 +206,20 @@ func (r *Registry) Get(id string) (*Entry, bool) {
 	return e, ok
 }
 
+// State returns the entry for id's current State, safe for concurrent use
+// with SetState — a caller polling for a transition (tests included) must
+// go through this rather than reading a *Entry's State field directly,
+// since that field is mutated under r.mu by SetState's own goroutine.
+func (r *Registry) State(id string) (State, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.entries[id]
+	if !ok {
+		return "", false
+	}
+	return e.State, true
+}
+
 // SetState transitions the entry for id, if present. err is recorded only
 // when state is StateFailed.
 func (r *Registry) SetState(id string, state State, err error) {
