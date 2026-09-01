@@ -250,8 +250,12 @@ func TestFrameDuringHostedRunShowsTheDashboard(t *testing.T) {
 		// row 0 of the Work tab is the "Commands" section header, which is
 		// not selectable, and clampCursor (run against every settled state)
 		// already snaps a fresh cursor onto the first real row — see its
-		// own comment. No "down" needed.
-		Keys:   []string{"enter"},
+		// own comment. No "down" needed once focus is in the body.
+		//
+		// A fresh session opens with focus on the tab bar (admin-70hb), so
+		// the first enter only moves focus into the body; the second is what
+		// actually dispatches the row.
+		Keys:   []string{"enter", "enter"},
 		Settle: 300 * time.Millisecond,
 	})
 

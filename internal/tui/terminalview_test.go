@@ -127,6 +127,12 @@ func newAttachablePump(t *testing.T, dir string, width, height int) *pump {
 	p.apply(tea.WindowSizeMsg{Width: width, Height: height})
 	p.run(p.model.Init())
 	p.drain(2 * time.Second)
+	// admin-70hb: a fresh session opens with focus on the tab bar, and `a`
+	// (attach) is a row-scoped key that no-ops from there. Every caller of
+	// this helper immediately presses `a` against the first Work-tab row, so
+	// move focus into the body here once rather than at every call site.
+	p.apply(keyMsg("down"))
+	p.drain(150 * time.Millisecond)
 	return p
 }
 
@@ -141,7 +147,10 @@ func TestTerminalViewAttachedEmptyShowsWaitingCopy(t *testing.T) {
 
 	out := Frame(context.Background(), New(context.Background(), dir, "owner/repo", "main", "main"), FrameOptions{
 		Width: 100, Height: 24,
-		Keys:   []string{"a"},
+		// admin-70hb: a fresh session opens with focus on the tab bar, so
+		// "down" moves it into the body before "a" (attach) — a row-scoped
+		// key — can act on the row under the cursor.
+		Keys:   []string{"down", "a"},
 		Settle: 300 * time.Millisecond,
 	})
 

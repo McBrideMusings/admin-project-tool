@@ -471,7 +471,13 @@ func (m Model) tabBarSegs() (segs []seg, ranges []tabHit) {
 				txt += " " + badge
 			}
 			txt += " "
-			s := seg{t: txt, fg: cBg, bg: cBlue}
+			// Solid only while focus is on the tab bar (admin-70hb): focus in
+			// the body swaps this to an outlined blue-on-default treatment so
+			// exactly one element on screen ever reads as solid.
+			s := seg{t: txt, fg: cBlue}
+			if m.focus == focusTabs {
+				s = seg{t: txt, fg: cBg, bg: cBlue}
+			}
 			segs = append(segs, s)
 			x += vlen(s.t)
 			ranges = append(ranges, tabHit{tab: t, x0: start, x1: x})
@@ -526,7 +532,13 @@ func (m Model) renderRow(r rowItem, selected bool, width int) string {
 	case rowText:
 		return renderSegs(fitSegs([]seg{{t: "   "}, {t: r.label, fg: cFaint}}, width), nil)
 	}
-	left := []seg{leadSeg(selected)}
+	// current is "reads as the row under the cursor" — distinct from selected
+	// (which only means "the cursor index points here") once focus can be on
+	// the tab bar instead: admin-70hb's AC1 is that no row reads as current
+	// while focus lives elsewhere, so the lead marker and the solid
+	// background only appear when focus is actually in the body.
+	current := selected && m.focus == focusBody
+	left := []seg{leadSeg(current)}
 	// The tracker multi-select checkbox (admin-3rgp.27): a fixed two-column
 	// glyph on every rowBead/rowIssue row once mode is on, so a row's title
 	// starts at the same column whether that row is picked or not — the same
@@ -542,7 +554,10 @@ func (m Model) renderRow(r rowItem, selected bool, width int) string {
 	left = append(left, r.leftSegs...)
 	line := composeLR(left, r.rightSegs, width)
 	if selected {
-		return renderSegs(fitSegs(line, width), cSel)
+		if current {
+			return renderSegs(fitSegs(line, width), cSel)
+		}
+		return renderSegs(fitSegs(line, width), cSelDim)
 	}
 	return renderSegs(fitSegs(line, width), nil)
 }
@@ -664,6 +679,16 @@ func (m Model) keymap() [][2]string {
 			{"esc", "detach"},
 			{"typing", "goes to the process"},
 		}
+	}
+	if m.focus == focusTabs {
+		// Focus on the tab bar has its own, much smaller keymap (admin-70hb,
+		// AC9): the row-scoped pairs below don't apply to anything, since
+		// there is no current row to apply them to.
+		pairs := [][2]string{{"←→", "tab"}, {"1-4", "jump"}}
+		if m.bodyRowCount() > 0 {
+			pairs = append(pairs, [2]string{"↓", "body"})
+		}
+		return append(pairs, [2]string{"q", "quit"})
 	}
 	pairs := m.viewKeymap()
 	// A row that binds `o` in [keys.<kind>] (ADR-0018) is dispatched by
