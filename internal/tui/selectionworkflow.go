@@ -1,21 +1,33 @@
-// selectionworkflow.go is admin-3rgp.27: letting a selection-sourced
-// kind="workflow" command run over rows the user has picked on the Beads or
-// Issues tab — the row-only half of the "target source" split .24 defined
-// and .26 already built the OTHER half of (a query-sourced workflow running
-// bare, with a resolve/confirm/dispatch overlay). Three phases, two of them
-// new here:
+// selectionworkflow.go is admin-3rgp.27 (extended by admin-4pps): letting a
+// selection-sourced kind="workflow" command run over rows the user has
+// picked on the Beads tab, the Issues tab, the PRs tab, or the Branches
+// pane — the row-only half of the "target source" split .24 defined and
+// .26 already built the OTHER half of (a query-sourced workflow running
+// bare, with a resolve/confirm/dispatch overlay). ADR-0018 states the
+// dashboard has ONE selection semantic; admin-4pps is what makes that true
+// for all four selectable row kinds instead of just rowBead/rowIssue.
 //
-//  1. `space` on a rowBead/rowIssue row toggles it into trackerSelected —
-//     toggleTrackerSelection below. The selection is its own mode exactly
-//     like the Branches pane's `selected` (model.go): its length IS the
-//     mode, so there's nothing to leave "on" with nothing picked.
-//  2. `w` with a nonempty trackerSelected opens the picker overlay
+// The active tab/pane decides which map IS the selection and which
+// already-loaded slice its targets come from (activeSelection below):
+// Beads/Issues/PRs all share m.trackerSelected, keyed by tracker id; the
+// Branches pane keeps its own pre-existing m.selected, keyed by branch
+// name, unchanged (so Clean Up's `x` still reads exactly what it always
+// read). Three phases, two of them new here:
+//
+//  1. `space` on a rowBead/rowIssue/rowPR row toggles it into
+//     trackerSelected — toggleTrackerSelection below. `space` on a
+//     Branches row routes to the pane's own toggleBranchSelection instead.
+//     Either selection is its own mode: its length IS the mode, so there's
+//     nothing to leave "on" with nothing picked.
+//  2. `w` with a nonempty active selection opens the picker overlay
 //     (startWorkflowPicker): every declared selection-sourced workflow
 //     (work.go's selectionWorkflows(), .24's own machinery filtering by
 //     WorkflowSource), listed for the user to choose which one runs over
-//     the selection. `w` with an EMPTY trackerSelected refuses instead of
+//     the selection. `w` with an EMPTY selection refuses instead of
 //     opening an empty picker — the acceptance criterion "the workflow key
-//     says so rather than dispatching nothing silently."
+//     says so rather than dispatching nothing silently" (on the Branches
+//     pane an empty selection instead falls through to the pre-existing
+//     new-named-worktree prompt, since `w` there is overloaded).
 //  3. Enter on a picked candidate (pickWorkflow) builds a []kinds.Target
 //     straight from the current selection — no query, no resolve step,
 //     since the targets are already exactly the rows the user pointed at —
@@ -37,34 +49,74 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 )
 
-// trackerSelectMode reports whether the Beads/Issues tab is mid multi-select
-// — same "map length is the mode" shape as the Branches pane's selectMode.
-func (m Model) trackerSelectMode() bool {
-	return len(m.trackerSelected) > 0
+// activeSelection returns whichever map IS the selection right now — the
+// single place that answers that question, so every reader (trackerTargets,
+// the header count, the per-row checkbox) and every writer
+// (toggleTrackerSelection, clearActiveSelection) agree. The Branches pane
+// keeps its own pre-existing m.selected; every other tab shares
+// m.trackerSelected.
+func (m Model) activeSelection() map[string]bool {
+	if m.active == tabLocal && m.pane == paneBranches {
+		return m.selected
+	}
+	return m.trackerSelected
 }
 
-// trackerRowID is the id a rowBead/rowIssue row selects and dispatches
-// under: a bead's own id, or a GitHub issue's number as a bare string (the
-// same form ResolveQuery already gives a resolved bead's Target.Name — see
-// kinds.ImplementPrompt). Empty for any other row kind, which
-// toggleTrackerSelection treats as nothing to toggle.
+// clearActiveSelection empties whichever map activeSelection names, by
+// assigning it a fresh map rather than deleting through the old one — same
+// effect, and matches the shape workflowConfirmKey already used for
+// trackerSelected alone.
+func (m *Model) clearActiveSelection() {
+	if m.active == tabLocal && m.pane == paneBranches {
+		m.selected = map[string]bool{}
+		return
+	}
+	m.trackerSelected = map[string]bool{}
+}
+
+// trackerSelectMode reports whether the active tab/pane is mid multi-select
+// — same "map length is the mode" shape as the Branches pane's own
+// selectMode, which is in fact what this reduces to on that pane.
+func (m Model) trackerSelectMode() bool {
+	return len(m.activeSelection()) > 0
+}
+
+// trackerRowID is the id a selectable tracker row toggles and dispatches
+// under: a bead's own id, or a GitHub issue or PR number as a bare string
+// (the same form ResolveQuery already gives a resolved bead's Target.Name —
+// see kinds.ImplementPrompt) — the same identity fields rowID already uses
+// for keymap.Bead/keymap.Issue/keymap.PR, so a selection id and an
+// ADMIN_ROW_ID for the same row can never disagree. Empty for any other row
+// kind, which toggleTrackerSelection treats as nothing to toggle. A branch
+// row never reaches here: toggleTrackerSelection routes the Branches pane to
+// toggleBranchSelection before trackerRowID is ever called, and no other tab
+// renders a rowBranch row — its own identity lookup is rowID (rowkeys.go).
 func trackerRowID(r rowItem) string {
 	switch r.kind {
 	case rowBead:
 		return r.beadID
 	case rowIssue:
 		return strconv.Itoa(r.issueNum)
+	case rowPR:
+		return strconv.Itoa(r.prNum)
 	default:
 		return ""
 	}
 }
 
-// toggleTrackerSelection flips the row under the cursor in and out of
-// trackerSelected. A row with no id (anything but rowBead/rowIssue — a
-// section header, a rule) leaves the selection exactly as it found it,
-// mirroring toggleBranchSelection's own refuse-quietly contract for a row
-// that can't be selected.
+// toggleTrackerSelection flips the row under the cursor in and out of the
+// active selection. On the Branches pane it routes straight to
+// toggleBranchSelection so that path keeps its secMain / checked-out
+// refusals and its status messages verbatim — this only adds the routing,
+// it never re-implements them. Elsewhere, a row with no id (anything but
+// rowBead/rowIssue/rowPR — a section header, a rule) leaves the selection
+// exactly as it found it, mirroring toggleBranchSelection's own
+// refuse-quietly contract for a row that can't be selected.
 func (m *Model) toggleTrackerSelection() {
+	if m.active == tabLocal && m.pane == paneBranches {
+		m.toggleBranchSelection()
+		return
+	}
 	r, ok := m.currentRow()
 	if !ok {
 		return
@@ -73,20 +125,23 @@ func (m *Model) toggleTrackerSelection() {
 	if id == "" {
 		return
 	}
-	if m.trackerSelected[id] {
-		delete(m.trackerSelected, id)
+	sel := m.activeSelection()
+	if sel[id] {
+		delete(sel, id)
 	} else {
-		m.trackerSelected[id] = true
+		sel[id] = true
 	}
 }
 
 // trackerTargets builds the []kinds.Target a confirmed dispatch runs over,
-// straight from trackerSelected — reading the tab's own already-loaded data
-// (m.beads or m.remote.Issues) rather than the currently rendered rows, so
-// scrolling the list before pressing `w` can never drop a selected row that
-// scrolled out of view. Order follows that underlying data's own order,
-// which is what keeps this deterministic without a second, selection-order
-// structure to maintain alongside the map.
+// straight from the active selection — reading the active tab/pane's own
+// already-loaded data (m.beads, m.remote.Issues, m.remote.PRs, or
+// m.local.branches) rather than the currently rendered rows, so scrolling
+// the list — or a Branches `/` filter or `g` minesOnly — before pressing
+// `w` can never drop a selected row that's hidden or scrolled out of view.
+// Order follows that underlying data's own order, which is what keeps this
+// deterministic without a second, selection-order structure to maintain
+// alongside the map.
 func (m Model) trackerTargets() []kinds.Target {
 	var targets []kinds.Target
 	switch m.active {
@@ -103,11 +158,27 @@ func (m Model) trackerTargets() []kinds.Target {
 				targets = append(targets, kinds.Target{Name: id, Prompt: kinds.ImplementPrompt(id)})
 			}
 		}
+	case tabPRs:
+		for _, pr := range m.remote.PRs {
+			id := strconv.Itoa(pr.Number)
+			if m.trackerSelected[id] {
+				targets = append(targets, kinds.Target{Name: id, Prompt: kinds.ImplementPrompt(id)})
+			}
+		}
+	case tabLocal:
+		if m.pane != paneBranches {
+			return nil
+		}
+		for _, b := range m.local.branches {
+			if m.selected[b.Name] {
+				targets = append(targets, kinds.Target{Name: b.Name, Prompt: kinds.ImplementPrompt(b.Name)})
+			}
+		}
 	}
 	return targets
 }
 
-// startWorkflowPicker handles `w` on the Beads/Issues tab: refuses outright
+// startWorkflowPicker handles `w` with a nonempty active selection: refuses outright
 // (no overlay, nothing dispatched) with an empty selection or with no
 // selection-sourced workflow declared at all — the acceptance criterion
 // "with no rows selected, the workflow key says so rather than dispatching
@@ -223,7 +294,7 @@ func (m Model) renderWorkflowPickerBody(width, height int) []string {
 	boxH := clampi(3, len(lines)+2, height)
 
 	box := boxPanel{
-		title: fmt.Sprintf("Run a workflow over %d selected", len(m.trackerSelected)),
+		title: fmt.Sprintf("Run a workflow over %d selected", len(m.activeSelection())),
 		width: boxW, height: boxH, focused: true,
 		lines: lines, active: m.swCursor,
 		footer: []seg{{t: "enter pick", fg: cCyan}, {t: "   esc cancel", fg: cFaint}},

@@ -201,11 +201,12 @@ func (m Model) commandNamed(name string) (manifest.Command, bool) {
 // line instead.
 //
 // Branching on len(m.trackerTargets()) > 0 rather than
-// m.trackerSelectMode() is deliberate: trackerSelected only ever holds
-// bead/issue ids and trackerTargets only reads m.beads/m.remote.Issues for
-// the *active* tab, so a stale selection left over from the Beads tab
-// cannot hijack an `enter` pressed on a Branches row — that case correctly
-// falls through to the cursor-row path below, matching ADR-0018's
+// m.trackerSelectMode() is deliberate: trackerTargets reads only the
+// ACTIVE tab/pane's own selection map and data (activeSelection,
+// selectionworkflow.go), so a stale selection left over from a different
+// tab — the Beads tab's trackerSelected while an `enter` lands on a
+// Branches row, say — cannot hijack it: that case correctly falls through
+// to the cursor-row path below, matching ADR-0018's
 // selection-wins-with-cursor-fallback rule.
 func (m Model) rowKeyWorkflow(name string, c manifest.Command, r rowItem, kind keymap.RowKind) (tea.Model, tea.Cmd) {
 	if targets := m.trackerTargets(); len(targets) > 0 {
