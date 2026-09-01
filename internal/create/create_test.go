@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/archetype"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 )
 
@@ -39,8 +40,17 @@ func writeFile(t *testing.T, path, content string) {
 // has an `origin` remote and an origin/main tracking ref, so every attachment
 // path — fork from origin/main, fetch a remote-only branch, check out a local
 // branch — runs against real git state.
+//
+// It also points archetype.InstalledArchetypesDir at a fresh empty temp
+// directory for the duration of the test (restored via t.Cleanup), so
+// Worktree's config.Load call never merges the machine's real installed
+// archetypes (~/.admin/archetypes/, symlinked to a checkout's archetypes/ on
+// some machines). A test that means to exercise archetype merging installs
+// its own fixture through archetype.UseInstalledDir instead, after
+// setupRepo returns.
 func setupRepo(t *testing.T) (clone, origin string) {
 	t.Helper()
+	t.Cleanup(archetype.UseInstalledDir(t.TempDir()))
 	base := t.TempDir()
 	origin = filepath.Join(base, "origin")
 	if err := os.MkdirAll(origin, 0o755); err != nil {
@@ -259,18 +269,18 @@ mode = "copy"
 // TestWorktreePopulatesFromBaseArchetype is admin-mb5q round 2's acceptance
 // 15: a manifest that declares NO [[populate]] entries of its own is still
 // seeded from the implicit base archetype (internal/archetype.BaseName) —
-// the replacement for the old global config tier's populate patterns. HOME
-// is pointed at a scratch dir carrying its own ~/.admin/archetypes/base so
-// this never touches the real ~/.admin deployment on the machine running the
-// test (os.UserHomeDir reads $HOME; config.Load's DefaultSearchPath takes it
-// as a parameter derived from that same call).
+// the replacement for the old global config tier's populate patterns.
+// archetype.InstalledArchetypesDir is pointed at a scratch dir carrying its
+// own base/ fixture so this never touches the real ~/.admin deployment on
+// the machine running the test — config.Load resolves the installed slot
+// through that seam rather than os.UserHomeDir/$HOME.
 func TestWorktreePopulatesFromBaseArchetype(t *testing.T) {
 	clone, _ := setupRepo(t)
 	ctx := context.Background()
 
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	baseDir := filepath.Join(home, ".admin", "archetypes", "base")
+	installed := t.TempDir()
+	t.Cleanup(archetype.UseInstalledDir(installed))
+	baseDir := filepath.Join(installed, "base")
 	if err := os.MkdirAll(baseDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

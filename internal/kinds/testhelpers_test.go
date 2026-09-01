@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/archetype"
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 )
 
@@ -29,9 +30,23 @@ import (
 // gone. A test that asserts on which files exist under a LogDir now calls
 // resetProcessLogContext(t), or luahost.ResetProcessLogContext(dir) when it
 // needs the dir it already chdir'd into.
+//
+// It also points archetype.InstalledArchetypesDir at an empty temp
+// directory, since DispatchTargets calls config.Load and would otherwise
+// merge whatever base archetype is installed on the machine running the
+// test (~/.admin/archetypes/, symlinked to a checkout's archetypes/ on some
+// machines).
 func TestMain(m *testing.M) {
 	luahost.ResetProcessLogContext(os.TempDir())
-	os.Exit(m.Run())
+	archDir, err := os.MkdirTemp("", "admin-project-tool-hermetic-kinds-")
+	if err != nil {
+		panic(err)
+	}
+	restore := archetype.UseInstalledDir(archDir)
+	code := m.Run()
+	restore()
+	os.RemoveAll(archDir)
+	os.Exit(code)
 }
 
 // resetProcessLogContext points the process-wide log context at t's own
