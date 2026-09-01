@@ -592,3 +592,157 @@ mode    = "copy"
 		t.Errorf("Populate[0] = %+v, want .env to stay in the archetype's original position", merged.Populate[0])
 	}
 }
+
+// TestResolveMergesBaseImplicitly is admin-mb5q round 2's central claim: a
+// project that declares NO archetypes at all still resolves every populate
+// entry BaseName contributes, because Resolve merges it in before anything
+// else, unasked.
+func TestResolveMergesBaseImplicitly(t *testing.T) {
+	root := t.TempDir()
+	writeArchetypeDir(t, root, BaseName, `
+[[populate]]
+pattern = ".env"
+mode    = "copy"
+
+[[populate]]
+pattern = "admin.toml"
+mode    = "copy"
+`, false)
+	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
+
+	project := projectManifest(t, `project_name = "widget"`)
+
+	merged, _, err := Resolve(project, sp)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(merged.Populate) != 2 {
+		t.Fatalf("Populate = %+v, want both of base's entries with no archetypes declared", merged.Populate)
+	}
+}
+
+// TestResolveMissingBaseIsNotAnError covers LoadBase's other branch: a search
+// path with no "base" slot at all (the common case before archetypes/ is
+// ever deployed to ~/.admin/archetypes) must resolve cleanly, exactly as it
+// did before base existed.
+func TestResolveMissingBaseIsNotAnError(t *testing.T) {
+	home := t.TempDir()
+	repo := t.TempDir()
+	sp := DefaultSearchPath(home, repo)
+
+	project := projectManifest(t, `project_name = "widget"`)
+
+	merged, _, err := Resolve(project, sp)
+	if err != nil {
+		t.Fatalf("Resolve: %v, want a missing base archetype to be a silent no-op", err)
+	}
+	if len(merged.Populate) != 0 {
+		t.Errorf("Populate = %+v, want none — no base and no project entries", merged.Populate)
+	}
+}
+
+// TestResolveProjectPopulateWinsOverBase covers acceptance 11: a project's
+// own [[populate]] entry repeating a pattern base already declares replaces
+// base's mode rather than producing two rows for the same file.
+func TestResolveProjectPopulateWinsOverBase(t *testing.T) {
+	root := t.TempDir()
+	writeArchetypeDir(t, root, BaseName, `
+[[populate]]
+pattern = ".env"
+mode    = "copy"
+`, false)
+	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
+
+	project := projectManifest(t, `
+project_name = "widget"
+
+[[populate]]
+pattern = ".env"
+mode    = "symlink"
+`)
+
+	merged, _, err := Resolve(project, sp)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(merged.Populate) != 1 {
+		t.Fatalf("Populate = %+v, want exactly one .env entry", merged.Populate)
+	}
+	if merged.Populate[0]["mode"] != "symlink" {
+		t.Errorf("Populate[0].mode = %v, want the project's own entry to win over base's", merged.Populate[0]["mode"])
+	}
+}
+
+// TestResolveDeclaredArchetypeOverridesBase covers acceptance 12: an
+// archetype the project actually declares can still override a value base
+// contributes, since base merges first and everything after it wins on
+// collision.
+func TestResolveDeclaredArchetypeOverridesBase(t *testing.T) {
+	root := t.TempDir()
+	writeArchetypeDir(t, root, BaseName, `
+[[populate]]
+pattern = ".env"
+mode    = "copy"
+`, false)
+	writeArchetypeDir(t, root, "custom", `
+[[populate]]
+pattern = ".env"
+mode    = "symlink"
+`, false)
+	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
+
+	project := projectManifest(t, `
+project_name = "widget"
+archetypes   = ["custom"]
+`)
+
+	merged, _, err := Resolve(project, sp)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(merged.Populate) != 1 || merged.Populate[0]["mode"] != "symlink" {
+		t.Errorf("Populate = %+v, want the declared archetype's entry to win over base's", merged.Populate)
+	}
+}
+
+// TestResolveBaseMergesBeforeDeclaredArchetypes proves the merge order
+// directly on a non-list field: base merges first, so a declared archetype
+// naming the same command wins on collision exactly like any other
+// archetype-vs-archetype collision, and the merge log names base by its
+// label ("archetype 'base'").
+func TestResolveBaseMergesBeforeDeclaredArchetypes(t *testing.T) {
+	root := t.TempDir()
+	writeArchetypeDir(t, root, BaseName, `
+[commands.build]
+desc  = "from base"
+steps = ["step-base"]
+`, false)
+	writeArchetypeDir(t, root, "custom", `
+[commands.build]
+desc  = "from custom"
+steps = ["step-custom"]
+`, false)
+	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
+
+	project := projectManifest(t, `
+project_name = "widget"
+archetypes   = ["custom"]
+`)
+
+	merged, log, err := Resolve(project, sp)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got := merged.Overrides["build"].Desc; got != "from custom" {
+		t.Errorf("Overrides[build].Desc = %q, want %q (declared archetype must win over base)", got, "from custom")
+	}
+	found := false
+	for _, line := range log {
+		if strings.Contains(line, "archetype 'base'") && strings.Contains(line, "archetype 'custom'") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("merge log = %v, want a line naming base overridden by custom", log)
+	}
+}

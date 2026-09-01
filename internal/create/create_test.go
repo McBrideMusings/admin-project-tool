@@ -256,6 +256,51 @@ mode = "copy"
 	}
 }
 
+// TestWorktreePopulatesFromBaseArchetype is admin-mb5q round 2's acceptance
+// 15: a manifest that declares NO [[populate]] entries of its own is still
+// seeded from the implicit base archetype (internal/archetype.BaseName) —
+// the replacement for the old global config tier's populate patterns. HOME
+// is pointed at a scratch dir carrying its own ~/.admin/archetypes/base so
+// this never touches the real ~/.admin deployment on the machine running the
+// test (os.UserHomeDir reads $HOME; config.Load's DefaultSearchPath takes it
+// as a parameter derived from that same call).
+func TestWorktreePopulatesFromBaseArchetype(t *testing.T) {
+	clone, _ := setupRepo(t)
+	ctx := context.Background()
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	baseDir := filepath.Join(home, ".admin", "archetypes", "base")
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(baseDir, "archetype.toml"), `name = "base"
+
+[[populate]]
+pattern = "CLAUDE.local.md"
+mode = "copy"
+`)
+
+	// The project's own manifest declares no [[populate]] of its own — every
+	// pattern that reaches the worktree must have come from base.
+	writeFile(t, filepath.Join(clone, "admin.toml"), `project_name = "t"`)
+	writeFile(t, filepath.Join(clone, "CLAUDE.local.md"), "local notes\n")
+
+	res, err := Worktree(ctx, clone, "feat-populate-base")
+	if err != nil {
+		t.Fatalf("Worktree: %v", err)
+	}
+	assertWorktreeOnBranch(t, res.Path, "feat-populate-base")
+
+	local, err := os.ReadFile(filepath.Join(res.Path, "CLAUDE.local.md"))
+	if err != nil {
+		t.Fatalf("worktree missing CLAUDE.local.md — base's populate entry did not apply: %v", err)
+	}
+	if string(local) != "local notes\n" {
+		t.Errorf("CLAUDE.local.md content = %q, want the primary checkout's content", local)
+	}
+}
+
 // A branch that exists only on origin (tracking ref present, no local branch) is
 // fetched and checked out — not forked into a divergent new branch.
 func TestWorktreeRemoteOnlyBranch(t *testing.T) {

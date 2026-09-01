@@ -1,0 +1,100 @@
+name = "base"
+
+# Merged into every project implicitly (internal/archetype/merge.go's
+# Resolve), before any archetype a project declares and before the project's
+# own admin.toml — retire-the-config-tiers' (admin-mb5q) replacement for the
+# old global ~/.config/repo/config.toml tier. No project needs
+# `archetypes = ["base"]`; that is the point.
+#
+# Only [[populate]] lives here. Identity (login, emails) is personal account
+# data and this file is tracked, so it is deliberately never merged from here
+# — each project declares its own [identity] by hand.
+
+# Gitignored files brought from the primary repo into each new worktree.
+# mode = "symlink" (default) points at the primary repo's file; mode = "copy"
+# gives the worktree its own so it can diverge.
+#
+# A pattern is glob-matched against the PRIMARY repo, and the primary repo is
+# derived from the worktree, so a pattern can never reach into a different
+# project. That property is structural, not a check.
+#
+# A path git tracks is skipped whatever the pattern says, which is what makes
+# the directory globs below safe: they exist for the LOCAL entries beside the
+# committed ones.
+
+# Local-only skills, plugins and settings. Committed ones are skipped as tracked.
+[[populate]]
+pattern = ".claude/skills/*"
+mode = "symlink"
+
+[[populate]]
+pattern = ".claude/herdr-plugins/*"
+mode = "symlink"
+
+[[populate]]
+pattern = ".claude/settings.local.json"
+mode = "symlink"
+
+[[populate]]
+pattern = ".claude/CLAUDE.local.md"
+mode = "symlink"
+
+[[populate]]
+pattern = "CLAUDE.local.md"
+mode = "symlink"
+
+[[populate]]
+pattern = ".mcp.json"
+mode = "symlink"
+
+# The admin task runner's manifest. Gitignored globally (~/.config/git/ignore),
+# so it never rides a branch, and it is the ONLY source of build/test/dev
+# commands in a repo that has one — a worktree without it reaches verification
+# with no way to build.
+#
+# COPY, not symlink, and that is the load-bearing half. A symlinked admin.toml
+# points back at the primary checkout, so a worker that edits it — adding a
+# scheme, a destination, a task — silently mutates shared machine config
+# mid-round. A copy makes that write land somewhere harmless that dies with
+# the worktree.
+[[populate]]
+pattern = "admin.toml"
+mode = "copy"
+
+# Secrets and per-worktree environment. Copies, not links: a worktree runs its
+# own stack and needs to be able to point at a different port or database
+# without editing the primary repo's file.
+[[populate]]
+pattern = ".env"
+mode = "copy"
+
+[[populate]]
+pattern = ".env.local"
+mode = "copy"
+
+[[populate]]
+pattern = ".dev.vars"
+mode = "copy"
+
+[[populate]]
+pattern = ".envrc"
+mode = "copy"
+
+# Xcode signing identity. Gitignored by `*.local.*`, and pulled in by an
+# OPTIONAL include (`#include? "Signing.local.xcconfig"`), so a worktree without
+# it does not fail at the include — it falls through with no DEVELOPMENT_TEAM,
+# signs ad-hoc, and fails much later at the scheme's post-action, pointing at the
+# post-action rather than at the missing file. A symlink, not a copy: the team
+# id is the same everywhere and a worktree has no reason to sign as someone
+# else.
+[[populate]]
+pattern = "Signing.local.xcconfig"
+mode = "symlink"
+
+# apple-notepad names the same file `Signing.xcconfig` and wires it as a
+# REQUIRED `configFiles:` entry in project.yml, not an optional #include, so its
+# absence fails `xcodegen generate` outright — `Invalid config file
+# "Signing.xcconfig" for config "Debug"` — before a single Swift file compiles.
+[[populate]]
+pattern = "Signing.xcconfig"
+mode = "symlink"
