@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -88,8 +90,8 @@ func TestStartHostedPTYRegistersALiveEntry(t *testing.T) {
 	if e.Ops.Retry == nil {
 		t.Error("entry missing a Retry op")
 	}
-	if e.State != livework.StateRunning {
-		t.Errorf("entry state = %q, want %q", e.State, livework.StateRunning)
+	if state, _ := livework.Default.State("build-step"); state != livework.StateRunning {
+		t.Errorf("entry state = %q, want %q", state, livework.StateRunning)
 	}
 }
 
@@ -124,7 +126,11 @@ func TestStartHostedPTYEntryReportsExited(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if e, ok := livework.Default.Get("quick-step"); ok && e.State == livework.StateExited {
+		if e, ok := livework.Default.Get("quick-step"); ok {
+			if state, _ := livework.Default.State("quick-step"); state != livework.StateExited {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
 			if e.Output == nil {
 				t.Fatal("entry has no Output ring — the drain never wired one up")
 			}
@@ -157,4 +163,141 @@ func TestStartHostedPTYUnknownCommandErrors(t *testing.T) {
 	if err := StartHostedPTY(m, "missing", nil, 24, 80); err == nil {
 		t.Fatal("StartHostedPTY on an undeclared command returned nil error, want one")
 	}
+}
+
+// TestHostedPTYKillTerminatesTheWholeProcessGroup is the criterion the slice
+// exists for: a hosted Command routinely spawns children of its own (a
+// bundler, a container, a simulator), so Kill must signal the whole process
+// group, not only the direct child. The fixture backgrounds a grandchild
+// (plain `sleep 300 &` under sh with no job control leaves it in the same
+// process group as the direct child) and writes its pid to a file; Kill is
+// asserted to reach that grandchild too.
+//
+// MUTATION EVIDENCE: revert Ops.Kill to only `c.Process.Kill()` and this test
+// fails — the grandchild is orphaned and keeps running after Kill returns.
+func TestHostedPTYKillTerminatesTheWholeProcessGroup(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "grandchild.pid")
+	stubSelfExecutable(t, fixtureAdminScript(t,
+		"sleep 300 &\n"+
+			"echo $! > "+pidFile+"\n"+
+			"wait",
+	))
+
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"host-and-spawn": {Steps: []string{"host-and-spawn-step"}},
+		},
+	}
+	if err := StartHostedPTY(m, "host-and-spawn", nil, 24, 80); err != nil {
+		t.Fatalf("StartHostedPTY: %v", err)
+	}
+
+	var grandchildPID int
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		raw, err := os.ReadFile(pidFile)
+		if err == nil && len(strings.TrimSpace(string(raw))) > 0 {
+			pid, perr := strconv.Atoi(strings.TrimSpace(string(raw)))
+			if perr == nil {
+				grandchildPID = pid
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if grandchildPID == 0 {
+		t.Fatal("grandchild never wrote its pid — fixture did not start in time")
+	}
+	if err := syscall.Kill(grandchildPID, 0); err != nil {
+		t.Fatalf("grandchild pid %d not alive before Kill: %v", grandchildPID, err)
+	}
+
+	e, ok := livework.Default.Get("host-and-spawn-step")
+	if !ok {
+		t.Fatal("no live-work entry registered")
+	}
+	if err := e.Ops.Kill(); err != nil {
+		t.Fatalf("Ops.Kill() = %v, want nil", err)
+	}
+
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(grandchildPID, 0); err != nil {
+			// ESRCH (or any error) means the process is gone.
+			if state, ok := livework.Default.State("host-and-spawn-step"); ok && state != livework.StateExited {
+				t.Errorf("entry state = %q, want %q", state, livework.StateExited)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("grandchild pid %d still alive after Kill — process group was not signalled", grandchildPID)
+}
+
+// TestHostedPTYKillIsIdempotent covers both no-op cases the AC requires:
+// killing an entry that already exited on its own, and killing an entry
+// twice. Neither may return an error, and neither may clobber the state the
+// wait goroutine already recorded.
+func TestHostedPTYKillIsIdempotent(t *testing.T) {
+	t.Run("already exited naturally", func(t *testing.T) {
+		stubSelfExecutable(t, fixtureAdminScript(t, "exit 0"))
+
+		m := &manifest.Manifest{
+			Custom: map[string]manifest.Command{
+				"finishes-fast": {Steps: []string{"finishes-fast-step"}},
+			},
+		}
+		if err := StartHostedPTY(m, "finishes-fast", nil, 24, 80); err != nil {
+			t.Fatalf("StartHostedPTY: %v", err)
+		}
+
+		deadline := time.Now().Add(5 * time.Second)
+		var e *livework.Entry
+		for time.Now().Before(deadline) {
+			if got, ok := livework.Default.Get("finishes-fast-step"); ok {
+				if state, _ := livework.Default.State("finishes-fast-step"); state == livework.StateExited {
+					e = got
+					break
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if e == nil {
+			t.Fatal("entry never reported exited")
+		}
+
+		if err := e.Ops.Kill(); err != nil {
+			t.Fatalf("Ops.Kill() on an already-exited entry = %v, want nil", err)
+		}
+		if state, ok := livework.Default.State("finishes-fast-step"); !ok || state != livework.StateExited {
+			t.Errorf("state after Kill on exited entry = %v, want %q", state, livework.StateExited)
+		}
+	})
+
+	t.Run("killed twice", func(t *testing.T) {
+		stubSelfExecutable(t, fixtureAdminScript(t, "sleep 300"))
+
+		m := &manifest.Manifest{
+			Custom: map[string]manifest.Command{
+				"long-running": {Steps: []string{"long-running-step"}},
+			},
+		}
+		if err := StartHostedPTY(m, "long-running", nil, 24, 80); err != nil {
+			t.Fatalf("StartHostedPTY: %v", err)
+		}
+
+		e, ok := livework.Default.Get("long-running-step")
+		if !ok {
+			t.Fatal("no live-work entry registered")
+		}
+		if err := e.Ops.Kill(); err != nil {
+			t.Fatalf("first Ops.Kill() = %v, want nil", err)
+		}
+		if err := e.Ops.Kill(); err != nil {
+			t.Fatalf("second Ops.Kill() = %v, want nil", err)
+		}
+		if state, ok := livework.Default.State("long-running-step"); !ok || state != livework.StateExited {
+			t.Errorf("state after double Kill = %v, want %q", state, livework.StateExited)
+		}
+	})
 }
