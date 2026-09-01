@@ -26,14 +26,15 @@ const editTestManifest = "project_name = \"demo\"\narchetypes = []\n\n" +
 	"[actions.build]\nkind = \"shell\"\nrun = \"echo hi\"\n"
 
 // TestOpenCommandUsesPlatformHandlerAndManifestPath pins the argv `o` starts:
-// the platform's default-handler binary followed by the repo's admin.toml —
+// the platform's default-handler binary followed by the target path —
 // `open` on darwin, `xdg-open` everywhere else.
 func TestOpenCommandUsesPlatformHandlerAndManifestPath(t *testing.T) {
 	dir := t.TempDir()
+	wantPath := filepath.Join(dir, manifest.Filename)
 
-	c := openCommand(dir)
+	c := openPathCommand(wantPath)
 	if c == nil {
-		t.Fatal("openCommand returned nil for a real repo root")
+		t.Fatal("openPathCommand returned nil for a real path")
 	}
 	wantName := "xdg-open"
 	if runtime.GOOS == "darwin" {
@@ -42,17 +43,16 @@ func TestOpenCommandUsesPlatformHandlerAndManifestPath(t *testing.T) {
 	if c.Args[0] != wantName {
 		t.Errorf("argv[0] = %q, want %q on %s", c.Args[0], wantName, runtime.GOOS)
 	}
-	wantPath := filepath.Join(dir, manifest.Filename)
 	if len(c.Args) < 2 || c.Args[1] != wantPath {
 		t.Errorf("argv = %v, want handler followed by %q", c.Args, wantPath)
 	}
 }
 
 // TestOpenCommandNilOnEmptyRoot proves the key does nothing destructive when
-// there is no repo root to resolve the manifest against.
+// there is no path to open.
 func TestOpenCommandNilOnEmptyRoot(t *testing.T) {
-	if c := openCommand(""); c != nil {
-		t.Errorf("openCommand(\"\") = %v, want nil", c)
+	if c := openPathCommand(""); c != nil {
+		t.Errorf("openPathCommand(\"\") = %v, want nil", c)
 	}
 }
 

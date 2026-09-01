@@ -19,12 +19,14 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// openManifestMsg reports that the launch of the default handler for
-// admin.toml either started (err is nil) or failed (err names why); name is
-// the handler binary so the status line can say what did or didn't run.
+// openManifestMsg reports that the launch of the default handler for a path
+// either started (err is nil) or failed (err names why); name is the handler
+// binary and target is a human label for what was opened (the manifest, a
+// key file, a directory) so the status line can say what did or didn't run.
 type openManifestMsg struct {
-	name string
-	err  error
+	name   string
+	target string
+	err    error
 }
 
 // openManifestCmd launches the platform's default handler for repoRoot's
@@ -33,35 +35,48 @@ type openManifestMsg struct {
 // app opens it writes a new file on save, and a repo that has no manifest
 // should not gain an empty one just because the key was pressed.
 func openManifestCmd(repoRoot string) tea.Cmd {
-	c := openCommand(repoRoot)
-	if c == nil {
+	if repoRoot == "" {
 		return func() tea.Msg { return openManifestMsg{err: errors.New("no repo root")} }
+	}
+	return openPathCmd(filepath.Join(repoRoot, manifest.Filename), manifest.Filename)
+}
+
+// openPathCmd launches the platform's default handler for an arbitrary path
+// (a file or a directory) and returns immediately — the same fire-and-forget
+// shape as openManifestCmd, generalized so the Config tab's rows (a key file,
+// the worktree root, a populate pattern) can reuse it. label is what the
+// status line names as opened.
+func openPathCmd(path, label string) tea.Cmd {
+	c := openPathCommand(path)
+	if c == nil {
+		return func() tea.Msg { return openManifestMsg{target: label, err: errors.New("no path")} }
 	}
 	name := c.Args[0]
 	return func() tea.Msg {
 		if err := c.Start(); err != nil {
-			return openManifestMsg{name: name, err: err}
+			return openManifestMsg{name: name, target: label, err: err}
 		}
 		go func() { _ = c.Wait() }()
-		return openManifestMsg{name: name}
+		return openManifestMsg{name: name, target: label}
 	}
 }
 
-// openCommand builds the default-handler invocation openManifestCmd starts,
+// openPathCommand builds the default-handler invocation openPathCmd starts,
 // split out so the argv is testable without actually launching anything: nil
-// when there is no repo root to resolve the manifest against. `open` on
-// darwin, `xdg-open` everywhere else — the same runtime.GOOS switch shape as
-// openURLCmd (helpers.go) and copyClipboardCmd (commands.go).
-func openCommand(repoRoot string) *exec.Cmd {
-	if repoRoot == "" {
+// when there is no path to open. `open` on darwin, `xdg-open` everywhere
+// else — the same runtime.GOOS switch shape as openURLCmd (helpers.go) and
+// copyClipboardCmd (commands.go). Works on directories as well as files —
+// `open`/`xdg-open` both hand a directory to the desktop's file manager.
+func openPathCommand(path string) *exec.Cmd {
+	if path == "" {
 		return nil
 	}
 	name := "xdg-open"
 	if runtime.GOOS == "darwin" {
 		name = "open"
 	}
-	c := exec.Command(name, filepath.Join(repoRoot, manifest.Filename))
-	c.Dir = repoRoot
+	c := exec.Command(name, path)
+	c.Dir = filepath.Dir(path)
 	return c
 }
 

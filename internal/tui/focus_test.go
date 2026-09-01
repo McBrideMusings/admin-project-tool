@@ -223,13 +223,13 @@ func TestExactlyOneSolidHighlight(t *testing.T) {
 }
 
 // TestEmptyBodyDoesNotTrapFocus is AC7: a tab with an empty body does not
-// trap focus — j from the tab bar is a no-op on tabConfig, which never has
-// selectable rows.
+// trap focus — j from the tab bar is a no-op on tabIssues before any data
+// has loaded, since the placeholder "loading…" row is not selectable.
 func TestEmptyBodyDoesNotTrapFocus(t *testing.T) {
 	m := workFocusModel()
-	m.active = tabConfig
+	m.active = tabIssues
 	if got := m.bodyRowCount(); got != 0 {
-		t.Fatalf("bodyRowCount() on tabConfig = %d, want 0", got)
+		t.Fatalf("bodyRowCount() on tabIssues = %d, want 0", got)
 	}
 	next, _ := m.handleKey(keyMsg("j"))
 	nm := next.(Model)
