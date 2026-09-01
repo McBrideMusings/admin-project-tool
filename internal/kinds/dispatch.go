@@ -401,7 +401,14 @@ func nameCommandLog(m *manifest.Manifest, name string, cmd manifest.Command) {
 
 	switch {
 	case cmd.HasLog && logIsFalse(cmd.Log):
-		ctx.SetEnabled(false)
+		// Python's _make_step_runner (admin_lib/interp.py:855) is a bare
+		// `pass` here: `log = false` means this command names no context,
+		// not that logging is switched off process-wide. Calling
+		// SetEnabled(false) instead let a nested `log = false` command —
+		// reached through dispatch.go:217's surf.Command hop — silence the
+		// outer command's logging for the rest of the run. Go has no
+		// tmp/run.log fallback, so for a top-level command "name nothing"
+		// and "disable" produce the same empty result anyway.
 	case cmd.HasLogFile:
 		ctx.SetLogContextPath(cmd.LogFile, retain)
 	default:

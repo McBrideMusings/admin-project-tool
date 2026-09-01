@@ -166,13 +166,27 @@ func ResetProcessLogContext(projectRoot string) {
 
 // Configure applies (or re-applies) a manifest's `[logging]` table and
 // re-roots c at projectRoot — the Go port of admin_lib/core.py's _init +
-// _apply_log_config run together. Every call also clears any still-pending
-// or already-materialized context, exactly like a fresh Python process
-// booting: a Go process (the CLI, or a hosted-pty child) still runs exactly
-// one command per Configure call, so "clear on Configure" is what makes
-// "one command run is one file" hold even when a single `go test` binary
-// dispatches many commands through the same shared singleton across many
-// test cases.
+// _apply_log_config.
+//
+// **It does not touch pending, logFile or active**, and that is the whole
+// point of the function. In Python those two calls run once per process from
+// boot(); naming a log is a separate concern that runs per command and is
+// guarded by _log_context_taken(). This port originally cleared the context
+// here, on the theory that "a Go process runs exactly one command per
+// Configure call". That premise is false: internal/kinds/dispatch.go:217
+// routes surf.Command straight back into runSteps, which calls Configure
+// again, and three shipped kinds take that hop before starting
+// (vitedev.go, docker.go, cleandev.go, each `surf.Command("kill", …)`).
+//
+// Clearing here therefore reset `active` before taken() was ever consulted,
+// so `admin dev` materialized tmp/dev.<ts>.log, hit the pre-kill hop, and
+// wrote every line after it to tmp/kill.<ts>.log — one invocation, two
+// files, the second named after a sub-step. That is issue #474 re-entered
+// through a different door (admin-rc82.1).
+//
+// Test isolation, the other job the clearing was doing, belongs to
+// ResetProcessLogContext, which internal/kinds/testhelpers_test.go already
+// calls before every dispatching test.
 func (c *LogContext) Configure(projectRoot string, logging map[string]any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -180,9 +194,6 @@ func (c *LogContext) Configure(projectRoot string, logging map[string]any) {
 	c.LogDir = filepath.Join(projectRoot, "tmp")
 	c.enabled = true
 	c.retainDefault = 5
-	c.pending = nil
-	c.logFile = ""
-	c.active = false
 	if logging == nil {
 		return
 	}

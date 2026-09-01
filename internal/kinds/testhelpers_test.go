@@ -14,15 +14,21 @@ import (
 // Since admin-rc82 made runSteps name a log unconditionally
 // (dispatch.go's nameCommandLog), any test that dispatches a command through
 // RunCommand/RunCommandHosted materializes a file the instant a step writes
-// its first line. Most such tests already t.Chdir into their own
-// t.TempDir() before dispatching, which re-Configures the shared context
-// safely — but a test that reaches a kind factory's newHost() WITHOUT going
-// through runSteps first (calling RunAction directly, as several
-// multi-target/frame tests do) never calls Configure at all, and would
-// otherwise inherit whatever LogDir the process-wide singleton happened to
-// have from process start (this package's own source directory, since
-// luahost.Process() lazily roots itself at os.Getwd() on first use) — this
-// is what keeps that stray write out of the source tree.
+// its first line. Without this, such a test would inherit whatever LogDir
+// the process-wide singleton happened to have from process start (this
+// package's own source directory, since luahost.Process() lazily roots
+// itself at os.Getwd() on first use) — this is what keeps that stray write
+// out of the source tree.
+//
+// **A t.Chdir into a t.TempDir() is not isolation, and must not be relied on
+// as any.** It used to be: Configure re-rooted AND cleared the context, and
+// nameCommandLog called Configure on every dispatch, so each test's first
+// command silently wiped the previous test's materialized state. That
+// clearing was the admin-rc82.1 bug — it also fired on the nested
+// surf.Command hop, splitting one real run across two log files — and it is
+// gone. A test that asserts on which files exist under a LogDir now calls
+// resetProcessLogContext(t), or luahost.ResetProcessLogContext(dir) when it
+// needs the dir it already chdir'd into.
 func TestMain(m *testing.M) {
 	luahost.ResetProcessLogContext(os.TempDir())
 	os.Exit(m.Run())
