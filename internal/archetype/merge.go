@@ -71,6 +71,10 @@ func Resolve(project *manifest.Manifest, sp SearchPath) (*manifest.Manifest, []s
 		LogBridge:       map[string]any{},
 		Worktree:        map[string]any{},
 		Keys:            map[string]any{},
+		Identity:        map[string]any{},
+		Worktrees:       map[string]any{},
+		Beads:           map[string]any{},
+		Workflow:        map[string]any{},
 	}
 
 	var log []string
@@ -184,11 +188,17 @@ func merge(dst, src *manifest.Manifest, srcLabel string, isManifest bool, log *[
 		{dst.Launchd, src.Launchd},
 		{dst.LogBridge, src.LogBridge},
 		{dst.Worktree, src.Worktree},
+		{dst.Identity, src.Identity},
+		{dst.Worktrees, src.Worktrees},
+		{dst.Beads, src.Beads},
+		{dst.Workflow, src.Workflow},
 	} {
 		mergeTable(pair.dst, pair.src)
 	}
 
 	mergeRowKeys(dst.Keys, src.Keys)
+
+	dst.Populate = mergePopulate(dst.Populate, src.Populate)
 
 	dst.Unknown = mergeStringSet(dst.Unknown, src.Unknown)
 	sort.Strings(dst.Unknown)
@@ -226,6 +236,33 @@ func mergeTable(dst, src map[string]any) {
 	for k, v := range src {
 		dst[k] = v
 	}
+}
+
+// mergePopulate appends src's [[populate]] entries after dst's, de-duplicated
+// by pattern with the last occurrence's mode winning — an archetype can
+// contribute a default set of populate patterns and a project can extend it,
+// or override one entry's mode by repeating its pattern, without either
+// silently dropping the other's contribution. This is the one raw table that
+// cannot go through mergeTable: it is a list, not a map.
+func mergePopulate(dst, src []map[string]any) []map[string]any {
+	out := append([]map[string]any(nil), dst...)
+	for _, entry := range src {
+		pattern, _ := entry["pattern"].(string)
+		replaced := false
+		if pattern != "" {
+			for i, existing := range out {
+				if p, _ := existing["pattern"].(string); p == pattern {
+					out[i] = entry
+					replaced = true
+					break
+				}
+			}
+		}
+		if !replaced {
+			out = append(out, entry)
+		}
+	}
+	return out
 }
 
 // mergeRowKeys merges [keys.<row-kind>] two levels deep — the one raw

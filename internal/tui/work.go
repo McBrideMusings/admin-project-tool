@@ -123,11 +123,12 @@ func loadWorkManifest(repoRoot string) (project, merged *manifest.Manifest, sp a
 // purely for display.
 //
 // keys does the same job for the handful of scalar top-level manifest keys
-// the Config tab renders (admin-3rgp.21: "tracker", "uses_pull_requests") —
-// named by manifest.go's own key string, mapping to the archetype that last
-// declared it or "(manifest)". A key absent from the map was never declared
-// anywhere, which the Config tab renders as defaulted rather than guessing a
-// source for it.
+// the Config tab renders (admin-3rgp.21: "tracker", "uses_pull_requests",
+// plus "identity", "worktrees", "beads", "workflow" and "populate" per the
+// retire-the-config-tiers decision) — named by manifest.go's own key string,
+// mapping to the archetype that last declared it or "(manifest)". A key
+// absent from the map was never declared anywhere, which the Config tab
+// renders as defaulted rather than guessing a source for it.
 func computeOrigins(project *manifest.Manifest, sp archetype.SearchPath) (cmds, actions, keys map[string]string) {
 	cmds, actions, keys = map[string]string{}, map[string]string{}, map[string]string{}
 	for _, name := range project.Archetypes {
@@ -150,6 +151,21 @@ func computeOrigins(project *manifest.Manifest, sp archetype.SearchPath) (cmds, 
 		if arch.Partial.HasUsesPullRequests {
 			keys["uses_pull_requests"] = name
 		}
+		if len(arch.Partial.Identity) > 0 {
+			keys["identity"] = name
+		}
+		if len(arch.Partial.Worktrees) > 0 {
+			keys["worktrees"] = name
+		}
+		if len(arch.Partial.Beads) > 0 {
+			keys["beads"] = name
+		}
+		if len(arch.Partial.Workflow) > 0 {
+			keys["workflow"] = name
+		}
+		if len(arch.Partial.Populate) > 0 {
+			keys["populate"] = name
+		}
 	}
 	// The project always wins (ADR-0009), including a field-level override
 	// of a command an archetype already provides — from the display's point
@@ -169,6 +185,21 @@ func computeOrigins(project *manifest.Manifest, sp archetype.SearchPath) (cmds, 
 	}
 	if project.HasUsesPullRequests {
 		keys["uses_pull_requests"] = "(manifest)"
+	}
+	if len(project.Identity) > 0 {
+		keys["identity"] = "(manifest)"
+	}
+	if len(project.Worktrees) > 0 {
+		keys["worktrees"] = "(manifest)"
+	}
+	if len(project.Beads) > 0 {
+		keys["beads"] = "(manifest)"
+	}
+	if len(project.Workflow) > 0 {
+		keys["workflow"] = "(manifest)"
+	}
+	if len(project.Populate) > 0 {
+		keys["populate"] = "(manifest)"
 	}
 	return cmds, actions, keys
 }

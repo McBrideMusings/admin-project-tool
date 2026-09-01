@@ -10,6 +10,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
+	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/populate"
 )
 
@@ -23,9 +24,10 @@ Creating a worktree populates it once, so a worktree made before a pattern was
 added never receives it. This applies the current config to a worktree already
 on disk.
 
-Patterns come from ~/.config/repo/config.toml, then <repo>/.repo/config.toml.
-A symlink entry is always relaid. A copy entry is skipped when a real file is
-already there, so a worktree-local edit is never overwritten.`,
+Patterns come from the PRIMARY checkout's admin.toml [[populate]] table,
+merged with its declared archetypes. A symlink entry is always relaid. A copy
+entry is skipped when a real file is already there, so a worktree-local edit
+is never overwritten.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		all, _ := cmd.Flags().GetBool("all")
@@ -50,8 +52,8 @@ func runPopulate(ctx context.Context, all bool) error {
 		return err
 	}
 	if len(cfg.Populate) == 0 {
-		fmt.Fprintf(os.Stderr, "No populate patterns configured. Add some to %s or %s.\n",
-			config.GlobalPath(), config.RepoPath(repoRoot))
+		fmt.Fprintf(os.Stderr, "No populate patterns configured. Add some to %s.\n",
+			filepath.Join(repoRoot, manifest.Filename))
 		return nil
 	}
 

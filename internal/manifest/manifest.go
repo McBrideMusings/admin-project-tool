@@ -154,6 +154,24 @@ type Manifest struct {
 	LogBridge       map[string]any
 	Worktree        map[string]any
 
+	// Identity, Worktrees, Beads and Workflow are the config.Config tables
+	// (internal/config): who "you" are, where worktrees are created, the
+	// Beads tab's columns, and the workflow dispatcher's default agent and
+	// concurrency ceiling. Kept raw here for the same reason as the
+	// archetype-specific tables above — internal/manifest owns only parsing,
+	// internal/config owns the typed decode — except that these five ARE the
+	// entire configuration surface for the dashboard rather than one kind's
+	// fragment, per the retire-the-config-tiers decision: there is no other
+	// file these can live in.
+	Identity  map[string]any
+	Worktrees map[string]any
+	Beads     map[string]any
+	Workflow  map[string]any
+	// Populate is the [[populate]] array of tables — one entry per
+	// gitignored file/glob to bring into a fresh worktree, decoded by
+	// internal/config into []config.Entry.
+	Populate []map[string]any
+
 	// Raw is the originally-decoded TOML, kept for debugging — mirrors
 	// admin_lib.manifest.Manifest.raw.
 	Raw map[string]any
@@ -176,10 +194,26 @@ var knownTopLevelKeys = map[string]bool{
 	"vite_dev": true, "docker_dev": true, "docker_run": true, "docker_build": true, "deploy": true,
 	"install_template": true, "fixtures": true, "log_bridge": true, "guards": true, "docs": true,
 	"go": true, "go_dist": true, "raylib": true, "worktree": true, "launchd": true, "electron": true,
-	"keys": true,
+	"keys":     true,
+	"identity": true, "worktrees": true, "beads": true, "workflow": true, "populate": true,
 	// Obsolete under interpreter mode (ADR-0006); tolerated silently.
 	"generator_commit": true,
 }
+
+// IdentityKeys are the keys accepted by the [identity] table.
+var IdentityKeys = map[string]bool{"login": true, "emails": true}
+
+// WorktreesKeys are the keys accepted by the [worktrees] table.
+var WorktreesKeys = map[string]bool{"root": true}
+
+// BeadsKeys are the keys accepted by the [beads] table.
+var BeadsKeys = map[string]bool{"columns": true}
+
+// WorkflowKeys are the keys accepted by the [workflow] table.
+var WorkflowKeys = map[string]bool{"agent": true, "ceiling": true}
+
+// PopulateEntryKeys are the keys accepted by each [[populate]] entry.
+var PopulateEntryKeys = map[string]bool{"pattern": true, "mode": true}
 
 var pythonMinRE = regexp.MustCompile(`^\d+\.\d+$`)
 
@@ -382,12 +416,35 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 		{"log_bridge", &m.LogBridge},
 		{"worktree", &m.Worktree},
 		{"keys", &m.Keys},
+		{"identity", &m.Identity},
+		{"worktrees", &m.Worktrees},
+		{"beads", &m.Beads},
+		{"workflow", &m.Workflow},
 	} {
 		v, err := table(data, t.key, source)
 		if err != nil {
 			return nil, err
 		}
 		*t.dst = v
+	}
+
+	for _, t := range []struct {
+		table map[string]any
+		keys  map[string]bool
+		name  string
+	}{
+		{m.Identity, IdentityKeys, "[identity]"},
+		{m.Worktrees, WorktreesKeys, "[worktrees]"},
+		{m.Beads, BeadsKeys, "[beads]"},
+		{m.Workflow, WorkflowKeys, "[workflow]"},
+	} {
+		if err := checkUnknownKeys(t.table, t.keys, t.name, source); err != nil {
+			return nil, err
+		}
+	}
+
+	if m.Populate, err = parsePopulate(data, source); err != nil {
+		return nil, err
 	}
 
 	deploy, err := table(data, "deploy", source)
@@ -617,6 +674,76 @@ func table(data map[string]any, key, source string) (map[string]any, error) {
 		return nil, errf("%s: '[%s]' must be a table", source, key)
 	}
 	return m, nil
+}
+
+// checkUnknownKeys rejects any key in t not present in allowed, matching the
+// "'[deploy]' has unknown key(s): ..." shape the [deploy] table already uses
+// (manifest.go's own parse, above) — the same rejection every other
+// admin.toml table gets, which is what lets `admin check` reject an unknown
+// [identity]/[worktrees]/[beads]/[workflow] key exactly like any other.
+func checkUnknownKeys(t map[string]any, allowed map[string]bool, name, source string) error {
+	if len(t) == 0 {
+		return nil
+	}
+	var unknown []string
+	for k := range t {
+		if !allowed[k] {
+			unknown = append(unknown, k)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	return errf("%s: '%s' has unknown key(s): %s", source, name, joinStrings(unknown, ", "))
+}
+
+// parsePopulate parses the [[populate]] array of tables — one entry per
+// gitignored file/glob to bring into a fresh worktree. TOML decodes an
+// array-of-tables into []map[string]any when the surrounding value is
+// generic (Load's map[string]any target); a hand-built []any of tables
+// (ParsePartial callers building data by hand, tests) is accepted the same
+// way.
+func parsePopulate(data map[string]any, source string) ([]map[string]any, error) {
+	v, present := data["populate"]
+	if !present || v == nil {
+		return nil, nil
+	}
+	var raw []map[string]any
+	switch list := v.(type) {
+	case []map[string]any:
+		raw = list
+	case []any:
+		raw = make([]map[string]any, 0, len(list))
+		for _, item := range list {
+			t, ok := item.(map[string]any)
+			if !ok {
+				return nil, errf("%s: '[[populate]]' entries must be tables", source)
+			}
+			raw = append(raw, t)
+		}
+	default:
+		return nil, errf("%s: 'populate' must be a list of tables", source)
+	}
+
+	out := make([]map[string]any, 0, len(raw))
+	for _, entry := range raw {
+		if err := checkUnknownKeys(entry, PopulateEntryKeys, "[[populate]]", source); err != nil {
+			return nil, err
+		}
+		if p, ok := entry["pattern"]; ok {
+			if _, isStr := p.(string); !isStr {
+				return nil, errf("%s: '[[populate]].pattern' must be a string", source)
+			}
+		}
+		if mv, ok := entry["mode"]; ok {
+			if _, isStr := mv.(string); !isStr {
+				return nil, errf("%s: '[[populate]].mode' must be a string", source)
+			}
+		}
+		out = append(out, entry)
+	}
+	return out, nil
 }
 
 func stringSlice(data map[string]any, key, source string) ([]string, error) {

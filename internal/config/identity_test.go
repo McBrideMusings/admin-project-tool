@@ -3,10 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
-
-	"github.com/BurntSushi/toml"
 )
 
 // TestIdentityMatching pins the comparisons. Case-insensitive because git records
@@ -28,90 +25,126 @@ func TestIdentityMatching(t *testing.T) {
 	}
 }
 
-// TestSeedIdentityIsWriteOnce checks the first run seeds and every later run leaves
-// the file alone — an email added by hand (a work address, an agent's address) must
-// never be re-guessed away on the next launch.
-func TestSeedIdentityIsWriteOnce(t *testing.T) {
+// writeManifest writes a minimal admin.toml (project_name plus whatever body
+// the test wants) into dir and returns dir, for Load to resolve.
+func writeManifest(t *testing.T, dir, body string) string {
+	t.Helper()
+	content := "project_name = \"t\"\n" + body
+	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// TestLoadNoManifestReturnsZeroConfig is the degrade path create.Worktree and
+// the TUI both depend on: a directory with no admin.toml at all is not an
+// error, it is simply nothing declared.
+func TestLoadNoManifestReturnsZeroConfig(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-
-	wrote, err := SeedIdentity("McBrideMusings", "pierce@example.com")
-	if err != nil || !wrote {
-		t.Fatalf("first run did not seed: wrote=%v err=%v", wrote, err)
-	}
-	path := filepath.Join(dir, ".config", "repo", "config.toml")
-	var cfg Config
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
-		t.Fatalf("seeded file does not parse: %v", err)
-	}
-	if cfg.Identity.Login != "McBrideMusings" || !cfg.Identity.Owns("pierce@example.com") {
-		t.Fatalf("seeded identity is wrong: %+v", cfg.Identity)
-	}
-
-	// A hand-added address, then another launch.
-	body, _ := os.ReadFile(path)
-	edited := strings.Replace(string(body),
-		`emails = ["pierce@example.com"]`,
-		`emails = ["pierce@example.com", "pierce@work.example"]`, 1)
-	if err := os.WriteFile(path, []byte(edited), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	wrote, err = SeedIdentity("SomeoneElse", "other@example.com")
+	cfg, err := Load(dir)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Load(no manifest) = %v, want nil error", err)
 	}
-	if wrote {
-		t.Error("a later run re-seeded over an existing identity")
-	}
-	after, _ := os.ReadFile(path)
-	if !strings.Contains(string(after), "pierce@work.example") {
-		t.Error("the hand-added address was lost")
+	if cfg.Identity.Known() || len(cfg.Populate) > 0 {
+		t.Errorf("Load(no manifest) = %+v, want a zero Config", cfg)
 	}
 }
 
-// TestSeedIdentityNeedsSomethingToSay: with neither `gh` nor git able to answer,
-// writing a [identity] with no values would only look like the question was
-// settled.
-func TestSeedIdentityNeedsSomethingToSay(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	if wrote, _ := SeedIdentity("", ""); wrote {
-		t.Error("seeded an empty identity")
+// TestLoadDecodesIdentityWorktreesBeadsWorkflowPopulate is the core
+// admin.toml-is-the-only-configuration-file behavior: every one of the five
+// tables resolves from the manifest with no other file involved.
+func TestLoadDecodesIdentityWorktreesBeadsWorkflowPopulate(t *testing.T) {
+	dir := writeManifest(t, t.TempDir(), `
+[identity]
+login = "pierce"
+emails = ["pierce@example.com", "pierce@work.example"]
+
+[worktrees]
+root = "/tmp/worktrees"
+
+[beads]
+columns = ["id", "title"]
+
+[workflow]
+agent = "claude"
+ceiling = 4
+
+[[populate]]
+pattern = ".env"
+mode = "copy"
+
+[[populate]]
+pattern = ".claude/skills/*"
+`)
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Identity.Login != "pierce" || !cfg.Identity.Owns("pierce@work.example") {
+		t.Errorf("identity = %+v", cfg.Identity)
+	}
+	if cfg.Worktrees.Root != "/tmp/worktrees" {
+		t.Errorf("worktrees.root = %q", cfg.Worktrees.Root)
+	}
+	if len(cfg.Beads.Columns) != 2 || cfg.Beads.Columns[0] != "id" {
+		t.Errorf("beads.columns = %v", cfg.Beads.Columns)
+	}
+	if cfg.Workflow.Agent != "claude" || cfg.Workflow.Ceiling != 4 {
+		t.Errorf("workflow = %+v", cfg.Workflow)
+	}
+	if len(cfg.Populate) != 2 {
+		t.Fatalf("populate = %+v, want 2 entries", cfg.Populate)
+	}
+	if cfg.Populate[0].Pattern != ".env" || cfg.Populate[0].Mode != Copy {
+		t.Errorf("populate[0] = %+v", cfg.Populate[0])
+	}
+	// An entry with no mode defaults to symlink.
+	if cfg.Populate[1].Mode != Symlink {
+		t.Errorf("populate[1].Mode = %q, want the default symlink", cfg.Populate[1].Mode)
 	}
 }
 
-// TestIdentityMergesGlobalThenRepo: there is one of you, so a per-repo login
-// replaces the global one — but a work address is an addition to your identity,
-// not a replacement, so emails append.
-func TestIdentityMergesGlobalThenRepo(t *testing.T) {
+// TestLoadMergesThroughArchetypes proves the ticket's central claim: these
+// five tables merge through archetypes exactly like any other manifest key,
+// with the project's own admin.toml winning over the archetype it declares.
+func TestLoadMergesThroughArchetypes(t *testing.T) {
 	home := t.TempDir()
+	archDir := filepath.Join(home, ".admin", "archetypes", "base")
+	if err := os.MkdirAll(archDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archBody := "[workflow]\nagent = \"archetype-agent\"\nceiling = 2\n\n" +
+		"[[populate]]\npattern = \".env\"\nmode = \"copy\"\n"
+	if err := os.WriteFile(filepath.Join(archDir, "archetype.toml"), []byte(archBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("HOME", home)
-	if err := os.MkdirAll(filepath.Join(home, ".config", "repo"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	global := "[identity]\nlogin = \"personal\"\nemails = [\"me@home.example\"]\n"
-	if err := os.WriteFile(filepath.Join(home, ".config", "repo", "config.toml"), []byte(global), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	repo := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repo, ".repo"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	local := "[identity]\nlogin = \"work\"\nemails = [\"me@work.example\", \"me@home.example\"]\n"
-	if err := os.WriteFile(filepath.Join(repo, ".repo", "config.toml"), []byte(local), 0o644); err != nil {
-		t.Fatal(err)
-	}
 
-	cfg, err := Load(repo)
+	dir := writeManifest(t, t.TempDir(), `
+archetypes = ["base"]
+
+[workflow]
+agent = "project-agent"
+
+[[populate]]
+pattern = "admin.toml"
+mode = "copy"
+`)
+	cfg, err := Load(dir)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Identity.Login != "work" {
-		t.Errorf("login = %q, want the per-repo one to win", cfg.Identity.Login)
+	if cfg.Workflow.Agent != "project-agent" {
+		t.Errorf("workflow.agent = %q, want the project's override to win", cfg.Workflow.Agent)
 	}
-	if !cfg.Identity.Owns("me@home.example") || !cfg.Identity.Owns("me@work.example") {
-		t.Errorf("emails did not accumulate across both files: %v", cfg.Identity.Emails)
+	if cfg.Workflow.Ceiling != 2 {
+		t.Errorf("workflow.ceiling = %d, want the archetype's value carried through", cfg.Workflow.Ceiling)
 	}
-	if len(cfg.Identity.Emails) != 2 {
-		t.Errorf("an address repeated in both files was duplicated: %v", cfg.Identity.Emails)
+	patterns := map[string]bool{}
+	for _, e := range cfg.Populate {
+		patterns[e.Pattern] = true
+	}
+	if !patterns[".env"] || !patterns["admin.toml"] {
+		t.Errorf("populate = %+v, want both the archetype's and the project's patterns", cfg.Populate)
 	}
 }
