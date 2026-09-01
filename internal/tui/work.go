@@ -101,11 +101,10 @@ func loadWorkManifest(repoRoot string) (project, merged *manifest.Manifest, sp a
 	if err != nil {
 		return nil, nil, nil, true, err
 	}
-	home, herr := os.UserHomeDir()
-	if herr != nil {
-		return nil, nil, nil, true, herr
+	sp, spErr := archetype.SearchPathFor(repoRoot)
+	if spErr != nil {
+		return nil, nil, nil, true, spErr
 	}
-	sp = archetype.DefaultSearchPath(home, repoRoot)
 	merged, _, err = archetype.Resolve(project, sp)
 	if err != nil {
 		return nil, nil, nil, true, err
