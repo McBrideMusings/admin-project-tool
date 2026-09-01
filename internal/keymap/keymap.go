@@ -20,6 +20,14 @@
 // The tables here are transcribed verbatim from Model.keymap() and must stay
 // byte-identical to it: internal/tui/model_test.go and
 // internal/tui/design_parity_test.go assert the footer's exact contents.
+//
+// This package also owns Reserved, the always-on global key set a
+// [keys.<row-kind>] table may never bind — read by internal/validate (admin
+// check rejects a binding for one) and internal/tui's rowKeyDispatch
+// (refuses one before consulting the bindings), so an incomplete list can
+// no longer let a binding silently pre-empt a global key (admin-gz7g).
+// Model.handleKey's own case labels remain a deliberately unshared third
+// copy — a switch statement cannot read a set.
 package keymap
 
 // RowKind identifies one of the six row kinds a manifest's [keys.<kind>]
@@ -46,6 +54,21 @@ var Bindable = []RowKind{Bead, Issue, Branch, PR, Commit, Stash}
 // this worker", so a manifest may not rebind them; internal/validate uses
 // this to give those three words a more specific error than "unknown kind".
 var NotBindable = []string{"command", "commandTarget", "worker"}
+
+// Reserved is the always-on global key set — navigation and escape a config
+// file cannot take away. It is the single source of truth for both readers
+// that must agree on it: internal/validate/keys.go's RowKeys rejects a
+// [keys.<row-kind>] entry naming one of these, and internal/tui's
+// rowKeyDispatch refuses one before consulting m.rowKeys, so even a binding
+// that somehow got installed cannot pre-empt the global it collides with.
+// Transcribed verbatim from Model.handleKey's always-on case labels
+// (internal/tui/model.go) — treat as read-only; do not add or remove
+// members without updating handleKey to match.
+var Reserved = map[string]bool{
+	"q": true, "ctrl+c": true, "esc": true, "tab": true, "shift+tab": true,
+	"up": true, "down": true, "left": true, "right": true,
+	"j": true, "k": true, "1": true, "2": true, "3": true, "4": true, "/": true,
+}
 
 // Binding is one built-in key/label pair for a row kind's footer.
 //
