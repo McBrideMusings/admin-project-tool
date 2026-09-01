@@ -219,6 +219,38 @@ func TestComputeOriginsTracksScalarKeyOrigin(t *testing.T) {
 	}
 }
 
+// TestComputeOriginsAttributesBaseAndManifestOverride is acceptance 13: a
+// populate entry contributed only by the implicit base archetype attributes
+// to "base" (never "(manifest)" or silently absent), and a project that
+// declares its own [[populate]] still attributes to "(manifest)", matching
+// every other manifest-level key's precedence display.
+func TestComputeOriginsAttributesBaseAndManifestOverride(t *testing.T) {
+	dir := t.TempDir()
+	archDir := filepath.Join(dir, archetype.BaseName)
+	if err := os.MkdirAll(archDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "[[populate]]\npattern = \".env\"\nmode = \"copy\"\n"
+	if err := os.WriteFile(filepath.Join(archDir, "archetype.toml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sp := archetype.SearchPath{{Label: "test", FS: os.DirFS(dir)}}
+
+	baseOnly := &manifest.Manifest{}
+	_, _, keys := computeOrigins(baseOnly, sp)
+	if keys["populate"] != archetype.BaseName {
+		t.Errorf(`keys["populate"] = %q, want %q (implicit base, no archetypes declared)`, keys["populate"], archetype.BaseName)
+	}
+
+	declaring := &manifest.Manifest{
+		Populate: []map[string]any{{"pattern": "CLAUDE.local.md", "mode": "symlink"}},
+	}
+	_, _, keys = computeOrigins(declaring, sp)
+	if keys["populate"] != "(manifest)" {
+		t.Errorf(`keys["populate"] = %q, want "(manifest)" when the project declares its own [[populate]]`, keys["populate"])
+	}
+}
+
 func TestLiveEntryForMatchesAnyStep(t *testing.T) {
 	c := manifest.Command{Steps: []string{"lint", "build"}}
 	e := &livework.Entry{ID: "build", Name: "build", State: livework.StateRunning}

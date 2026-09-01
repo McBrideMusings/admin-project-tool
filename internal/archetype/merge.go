@@ -34,10 +34,18 @@ func newOrigins() *origins {
 // archetype implements: the project always wins). It returns the merged
 // manifest and a human-readable merge log of every collision.
 //
+// Before any of that, BaseName is merged in implicitly — first, so every
+// declared archetype and the project itself can override it — unless the
+// project already lists "base" in `archetypes`, in which case the explicit
+// pass covers it and the implicit one is skipped to avoid merging it twice
+// and doubling its collision log lines. A project never has to write
+// `archetypes = ["base"]` for this to happen (admin-mb5q's whole point: 53
+// manifests need no edit), and a search path with no base at all (LoadBase,
+// in archetype.go) is a silent no-op, not an error.
+//
 // A project with no archetypes (nil or empty project.Archetypes) resolves
-// cleanly to project's own content with no archetype directories ever
-// consulted — Resolve never fails merely because no archetype directories
-// exist on disk.
+// cleanly to project's own content plus base — Resolve never fails merely
+// because no other archetype directories exist on disk.
 func Resolve(project *manifest.Manifest, sp SearchPath) (*manifest.Manifest, []string, error) {
 	dst := &manifest.Manifest{
 		Urls:      map[string]string{},
@@ -79,6 +87,23 @@ func Resolve(project *manifest.Manifest, sp SearchPath) (*manifest.Manifest, []s
 
 	var log []string
 	o := newOrigins()
+
+	declaresBase := false
+	for _, name := range project.Archetypes {
+		if name == BaseName {
+			declaresBase = true
+			break
+		}
+	}
+	if !declaresBase {
+		if base, ok, err := LoadBase(sp); err != nil {
+			return nil, nil, err
+		} else if ok {
+			if err := merge(dst, base.Partial, fmt.Sprintf("archetype '%s'", BaseName), false, &log, o); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
 
 	for _, name := range project.Archetypes {
 		arch, err := Load(sp, name)

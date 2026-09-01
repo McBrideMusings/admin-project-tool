@@ -19,6 +19,14 @@ const Filename = "archetype.toml"
 // It is only ever located, never executed, by this package.
 const ScriptsDir = "scripts"
 
+// BaseName is the archetype Resolve merges into every project implicitly,
+// before any archetype the project declares and before the project's own
+// manifest — retire-the-config-tiers' (admin-mb5q) answer to "where do the
+// [[populate]] patterns every project needs live now that there is no global
+// config tier". A project never lists "base" in `archetypes`; its presence is
+// what makes it implicit.
+const BaseName = "base"
+
 // Archetype is one loaded archetype directory: its partial manifest plus
 // where it was found.
 type Archetype struct {
@@ -82,4 +90,24 @@ func Load(sp SearchPath, name string) (*Archetype, error) {
 		return nil, fmt.Errorf("unknown archetype: %s (looked in %s)", name, strings.Join(labels, ", "))
 	}
 	return LoadFrom(fsys, name, label)
+}
+
+// LoadBase looks up BaseName on sp and loads it, returning (nil, false, nil)
+// when no slot has it rather than Load's "unknown archetype" error — a
+// machine where archetypes/ was never deployed to ~/.admin/archetypes (or a
+// test's bare search path) has no base, and that is a silent no-op, not a
+// failure: Resolve must still resolve a project with no archetypes declared
+// at all. Shared by Resolve (the implicit merge) and the TUI's
+// computeOrigins (the matching origin attribution) so the two can never
+// disagree about what base is.
+func LoadBase(sp SearchPath) (*Archetype, bool, error) {
+	fsys, label, ok := sp.Find(BaseName)
+	if !ok {
+		return nil, false, nil
+	}
+	arch, err := LoadFrom(fsys, BaseName, label)
+	if err != nil {
+		return nil, false, err
+	}
+	return arch, true, nil
 }
