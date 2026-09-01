@@ -399,11 +399,13 @@ func TestCheckQueryWorkflowTrackerSelectionSourcedPasses(t *testing.T) {
 	}
 }
 
-// TestCheckQueryWorkflowTrackerRejectsGithubQueryWorkflow is the ticket's
-// headline acceptance criterion: a query-sourced workflow declared in a
-// project whose tracker is github fails, and the error names the action,
-// the query, and the tracker so the manifest can be fixed from the message
-// alone.
+// TestCheckQueryWorkflowTrackerRejectsGithubReadyQueryWorkflow is the
+// ticket's headline acceptance criterion: a "ready"-query workflow declared
+// in a project whose tracker is github fails, and the error names the
+// action, the query, and the tracker so the manifest can be fixed from the
+// message alone — "ready" has no GitHub equivalent (no dependency edges to
+// derive it from), unlike "label:<name>", which admin-dgv9 gives github its
+// own resolver for (see the passes test below).
 //
 // MUTATION EVIDENCE: with the `m.Tracker == "beads"` early-return condition
 // inverted (so it fires when tracker is NOT beads instead), this test
@@ -412,12 +414,12 @@ func TestCheckQueryWorkflowTrackerSelectionSourcedPasses(t *testing.T) {
 //	checkQueryWorkflowTracker = <nil>, want an error naming the action, query, and tracker
 //
 // (reverted after confirming the failure).
-func TestCheckQueryWorkflowTrackerRejectsGithubQueryWorkflow(t *testing.T) {
+func TestCheckQueryWorkflowTrackerRejectsGithubReadyQueryWorkflow(t *testing.T) {
 	m := &manifest.Manifest{
 		Tracker:    "github",
 		HasTracker: true,
 		Actions: map[string]manifest.Action{
-			"review-waiting": {"kind": "workflow", "over": map[string]any{"query": "label:review-me"}},
+			"ready-work": {"kind": "workflow", "over": map[string]any{"query": "ready"}},
 		},
 	}
 	err := checkQueryWorkflowTracker(m)
@@ -425,7 +427,7 @@ func TestCheckQueryWorkflowTrackerRejectsGithubQueryWorkflow(t *testing.T) {
 		t.Fatal("checkQueryWorkflowTracker = nil, want an error naming the action, query, and tracker")
 	}
 	got := err.Error()
-	for _, want := range []string{"review-waiting", "label:review-me", "github"} {
+	for _, want := range []string{"ready-work", "ready", "github"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("error %q does not mention %q", got, want)
 		}
@@ -436,17 +438,56 @@ func TestCheckQueryWorkflowTrackerRejectsGithubQueryWorkflow(t *testing.T) {
 	}
 }
 
-// TestCheckQueryWorkflowTrackerReportsEveryOffendingAction proves multiple
-// query-sourced workflows on a non-beads tracker are all reported, not just
-// the first, and a non-workflow action alongside them is left alone.
-func TestCheckQueryWorkflowTrackerReportsEveryOffendingAction(t *testing.T) {
+// TestCheckQueryWorkflowTrackerGithubLabelQueryPasses proves
+// admin-dgv9's acceptance criterion directly: a github-tracked project
+// declaring `over = { query = "label:<name>" }` now passes check, since
+// ResolveQuery can actually resolve it via gh.OpenIssuesByLabel.
+func TestCheckQueryWorkflowTrackerGithubLabelQueryPasses(t *testing.T) {
 	m := &manifest.Manifest{
 		Tracker:    "github",
 		HasTracker: true,
 		Actions: map[string]manifest.Action{
 			"review-waiting": {"kind": "workflow", "over": map[string]any{"query": "label:review-me"}},
-			"ready-work":     {"kind": "workflow", "over": map[string]any{"query": "ready"}},
-			"build":          {"kind": "shell", "run": "echo build"},
+		},
+	}
+	if err := checkQueryWorkflowTracker(m); err != nil {
+		t.Fatalf("checkQueryWorkflowTracker = %v, want nil (github resolves label: queries)", err)
+	}
+}
+
+// TestCheckQueryWorkflowTrackerGithubEmptyLabelFails proves "label:" with no
+// name after the colon still fails on github — it is not a real query
+// gh.OpenIssuesByLabel could ever resolve, unlike a real label name.
+func TestCheckQueryWorkflowTrackerGithubEmptyLabelFails(t *testing.T) {
+	m := &manifest.Manifest{
+		Tracker:    "github",
+		HasTracker: true,
+		Actions: map[string]manifest.Action{
+			"broken": {"kind": "workflow", "over": map[string]any{"query": "label:"}},
+		},
+	}
+	err := checkQueryWorkflowTracker(m)
+	if err == nil {
+		t.Fatal("checkQueryWorkflowTracker = nil, want an error for an empty label")
+	}
+	if !strings.Contains(err.Error(), "broken") {
+		t.Fatalf("error %q does not name the action", err.Error())
+	}
+}
+
+// TestCheckQueryWorkflowTrackerReportsEveryOffendingAction proves multiple
+// query-sourced workflows the tracker cannot resolve are all reported, not
+// just the first, and a resolvable label: query alongside them is left
+// alone, as is a non-workflow action.
+func TestCheckQueryWorkflowTrackerReportsEveryOffendingAction(t *testing.T) {
+	m := &manifest.Manifest{
+		Tracker:    "github",
+		HasTracker: true,
+		Actions: map[string]manifest.Action{
+			"resolvable": {"kind": "workflow", "over": map[string]any{"query": "label:review-me"}},
+			"ready-work": {"kind": "workflow", "over": map[string]any{"query": "ready"}},
+			"unknown-fm": {"kind": "workflow", "over": map[string]any{"query": "everything"}},
+			"build":      {"kind": "shell", "run": "echo build"},
 		},
 	}
 	err := checkQueryWorkflowTracker(m)
@@ -454,13 +495,15 @@ func TestCheckQueryWorkflowTrackerReportsEveryOffendingAction(t *testing.T) {
 		t.Fatal("expected an error")
 	}
 	got := err.Error()
-	for _, want := range []string{"review-waiting", "ready-work"} {
+	for _, want := range []string{"ready-work", "unknown-fm"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("error %q does not name %q", got, want)
 		}
 	}
-	if strings.Contains(got, "build") {
-		t.Fatalf("error %q incorrectly flags the non-workflow action", got)
+	for _, notWant := range []string{"resolvable", "build"} {
+		if strings.Contains(got, notWant) {
+			t.Fatalf("error %q incorrectly flags %q", got, notWant)
+		}
 	}
 }
 

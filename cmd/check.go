@@ -313,16 +313,23 @@ func checkUnknownKinds(m *manifest.Manifest) error {
 	return validate.Errorf("%s", strings.Join(problems, "\n"))
 }
 
-// checkQueryWorkflowTracker is admin-3rgp.53: a query-sourced workflow
-// (`over = { query = "..." }`) resolves its targets against the beads
-// tracker only (internal/kinds/workflowquery.go's ResolveQuery) — there is
-// no GitHub-backed resolver, and the user's 2026-08-31 decision on this
-// ticket was to fail loudly at check time rather than build one. A project
-// that declares tracker = "github" (or any non-beads value) and also
-// declares a query-sourced workflow has an action that provably cannot
-// resolve its targets and therefore cannot run, so — matching
+// checkQueryWorkflowTracker is admin-3rgp.53's original concern, narrowed by
+// admin-dgv9's GitHub query resolver: a query-sourced workflow (`over =
+// { query = "..." }`) resolves its targets through
+// internal/kinds/workflowquery.go's ResolveQuery, which now dispatches on
+// tracker — but not every query form resolves on every tracker. A project
+// that declares a tracker whose resolver provably cannot resolve a
+// particular query has an action that cannot run, so — matching
 // checkUnknownKinds' precedent (admin-3rgp.50: a manifest that cannot run
 // must not pass validation) — this is an ERROR, not a warning.
+//
+// tracker = "github" resolves "label:<name>" (gh.OpenIssuesByLabel) but has
+// no dependency-edge concept to derive "ready" from, so only "ready", an
+// empty "label:", and any other unrecognized form are flagged there — the
+// same three shapes ResolveQuery's own resolveGitHubQuery rejects at
+// dispatch time. Any other declared, non-beads tracker has no resolver at
+// all, so every query-sourced workflow on it is still flagged
+// unconditionally, matching the original blanket rule.
 //
 // A project that declares no tracker at all (m.HasTracker == false) must
 // not start failing check over this: HasTracker false means "not declared",
@@ -349,16 +356,44 @@ func checkQueryWorkflowTracker(m *manifest.Manifest) error {
 		if target.Source != kinds.WorkflowSourceQuery {
 			continue
 		}
-		problems = append(problems, fmt.Sprintf(
-			"action %q: over.query %q can only resolve against the beads tracker, but tracker = %q — "+
-				"there is no GitHub-backed query resolver (admin-3rgp.53); use over = \"selection\" instead or switch tracker to \"beads\"",
-			name, target.Query, m.Tracker,
-		))
+		if reason := queryTrackerProblem(target.Query, m.Tracker); reason != "" {
+			problems = append(problems, fmt.Sprintf(
+				"action %q: over.query %q cannot resolve on tracker %q — %s",
+				name, target.Query, m.Tracker, reason,
+			))
+		}
 	}
 	if len(problems) == 0 {
 		return nil
 	}
 	return validate.Errorf("%s", strings.Join(problems, "\n"))
+}
+
+// queryTrackerProblem reports why query cannot resolve against tracker, or
+// "" when it can. tracker is always non-beads here (checkQueryWorkflowTracker
+// returns early on beads), so a non-github tracker has no resolver at all —
+// every query fails. A github tracker resolves "label:<name>" via
+// gh.OpenIssuesByLabel; the three forms flagged here are exactly the three
+// internal/kinds/workflowquery.go's resolveGitHubQuery rejects at dispatch
+// time, kept in sync by hand since check-time validation and dispatch-time
+// resolution are necessarily two call sites for the same rule.
+func queryTrackerProblem(query, tracker string) string {
+	if tracker != "github" {
+		return fmt.Sprintf(
+			"there is no query resolver for tracker %q; use over = \"selection\" instead or switch tracker to \"beads\"",
+			tracker)
+	}
+	q := strings.TrimSpace(query)
+	switch {
+	case q == "ready":
+		return `"ready" is beads-only — it means "no open blocker", and github has no dependency edges to derive that from; use "label:<name>" or switch tracker to "beads"`
+	case strings.HasPrefix(q, "label:") && strings.TrimPrefix(q, "label:") == "":
+		return `"label:" needs a name`
+	case strings.HasPrefix(q, "label:"):
+		return "" // resolvable
+	default:
+		return `unrecognized — github supports only "label:<name>"`
+	}
 }
 
 // checkCommandRouting is ADR-0003 / design principle 2 (checkReservedCollisions'
