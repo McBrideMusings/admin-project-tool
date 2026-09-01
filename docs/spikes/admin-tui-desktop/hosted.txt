@@ -27,4 +27,4 @@
                                                                                                 
                                                                                                 
 ────────────────────────────────────────────────────────────────────────────────────────────────
- q/esc detach · ↑↓ scroll · k kill · typing goes to the process                                 
+ esc detach · typing goes to the process                                                        
