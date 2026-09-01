@@ -609,9 +609,9 @@ var startHostedRun = kinds.StartHostedPTY
 // command's whole step loop on a pty allocated for exactly this dispatch, so
 // the run's own output, and any pinned footer it opens, land there instead
 // of on the dashboard's alt-screen.
-func dispatchCommandCmd(m *manifest.Manifest, width, height int, name string, args ...string) tea.Cmd {
+func dispatchCommandCmd(m *manifest.Manifest, width, height int, name string, env []string, args ...string) tea.Cmd {
 	return func() tea.Msg {
-		err := startHostedRun(m, name, args, height, width)
+		err := startHostedRun(m, name, args, height, width, env)
 		return workDispatchStartedMsg{name: name, err: err}
 	}
 }
@@ -644,7 +644,7 @@ func (m Model) activateCommand(wd *workRowData) (tea.Model, tea.Cmd) {
 		// the cursor back on it.
 		return m.focusCommandRow(wd.cmdName), nil
 	}
-	return m, dispatchCommandCmd(m.manifest, m.width, m.height, wd.cmdName)
+	return m, dispatchCommandCmd(m.manifest, m.width, m.height, wd.cmdName, nil)
 }
 
 // focusCommandRow puts the cursor back on the rowCommand named name, after a
@@ -683,7 +683,7 @@ func (m Model) collapseCommand(name string) (tea.Model, tea.Cmd) {
 // is exactly what `admin <cmd> <target>` does from a shell — makeMultiTarget
 // takes args[0] as the picked target and never raises its own picker.
 func (m Model) activateCommandTarget(wd *workRowData) (tea.Model, tea.Cmd) {
-	return m, dispatchCommandCmd(m.manifest, m.width, m.height, wd.cmdName, wd.targetKey)
+	return m, dispatchCommandCmd(m.manifest, m.width, m.height, wd.cmdName, nil, wd.targetKey)
 }
 
 // attachEntry resolves e's attach through the registry — pane focus for a

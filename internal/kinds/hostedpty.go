@@ -60,14 +60,17 @@ func hostedReentryArgs(name string, args []string) []string {
 // continues in a background goroutine. rows/cols size the pty to the region
 // the dashboard's terminal view will render it in (internal/frame's own
 // winsize helper, not a second ioctl); either being <= 0 falls back to
-// 80x24, matching frame.newFrame's own terminal-size fallback.
+// 80x24, matching frame.newFrame's own terminal-size fallback. env is extra
+// KEY=VALUE pairs appended on top of the dashboard's own environment — a
+// row-scoped key binding's ADMIN_ROW_KIND/ADMIN_ROW_ID/ADMIN_ROW_URL
+// (admin-l6kb.2); nil for every ordinary Commands-tab dispatch.
 //
 // The registered live-work entry is keyed on the command's first Step's
 // action name, not the command name — internal/tui/work.go's liveEntryFor
 // looks entries up by step name, so keying on the command name would leave
 // the row not showing live and let a second run start on top of the one
 // that already owns the log file.
-func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols int) error {
+func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols int, env []string) error {
 	cmd, ok := resolveCommand(m, name)
 	if !ok {
 		return fmt.Errorf("command %q: not declared", name)
@@ -82,6 +85,7 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 		HostedColorProfileEnv+"="+strconv.Itoa(int(lipgloss.ColorProfile())),
 		HostedDarkBackgroundEnv+"="+strconv.FormatBool(lipgloss.HasDarkBackground()),
 	)
+	c.Env = append(c.Env, env...)
 	ptmx, err := pty.Start(c)
 	if err != nil {
 		return fmt.Errorf("command %q: starting hosted pty: %w", name, err)
@@ -91,7 +95,7 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 	}
 	frame.SetWinsize(ptmx.Fd(), rows, cols)
 
-	recordHostedPTYWork(entryID, m, name, args, rows, cols, c, ptmx)
+	recordHostedPTYWork(entryID, m, name, args, rows, cols, env, c, ptmx)
 	return nil
 }
 
@@ -99,9 +103,9 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 // hosted dispatch, and waits for the child to exit in a goroutine so the
 // entry can flip to exited/failed the same way recordLiveWork's pane-backed
 // entry does — the only visible difference to a caller is which of
-// PaneID/PTYID is set. args and rows/cols are kept so Retry can re-run
+// PaneID/PTYID is set. args, rows/cols, and env are kept so Retry can re-run
 // StartHostedPTY exactly as it ran the first time.
-func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args []string, rows, cols int, c *exec.Cmd, ptmx *os.File) {
+func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args []string, rows, cols int, env []string, c *exec.Cmd, ptmx *os.File) {
 	// killed is set by Ops.Kill before it closes ptmx, so the wait goroutine
 	// below knows the resulting "signal: killed" c.Wait() error is expected
 	// and must not overwrite the StateExited Kill already set.
@@ -129,7 +133,7 @@ func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args
 		// what keeps this the same row rather than a second one appearing
 		// beside the stale failed entry.
 		Retry: func() error {
-			return StartHostedPTY(m, name, args, rows, cols)
+			return StartHostedPTY(m, name, args, rows, cols, env)
 		},
 	}
 	if err := livework.Default.Add(e); err != nil {
