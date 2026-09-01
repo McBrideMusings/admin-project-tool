@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/vt"
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/bd"
@@ -406,6 +407,20 @@ type Model struct {
 	// even if the registry changes under it.
 	quitOpen   bool
 	quitHosted []*livework.Entry
+
+	// Terminal view (admin-3rgp.65): attaching to a pty-addressed live-work
+	// row replaces the whole tab with a live terminal emulator over its
+	// pty rather than the list/detail layout — see terminalview.go.
+	// termAttached is the switch view.go and handleKey both read; the rest
+	// describe the one open view, all zeroed together by detachTerminal.
+	termAttached  bool
+	termEntryID   string
+	termPTYID     string
+	termEmu       *vt.Emulator
+	termOff       int64 // the ring offset last fed to termEmu — see livework.Ring.Since
+	termHasOutput bool  // true once anything has been fed to termEmu — drives "waiting for output…"
+	termRows      int
+	termCols      int
 }
 
 // New builds the dashboard model. The cheap git context (root, nwo, branch) is
@@ -443,6 +458,9 @@ func New(ctx context.Context, repoRoot, nwo, current, def string) Model {
 // (see the localDataMsg case), so the first frame paints off git and cache with
 // nothing blocking on the network.
 func (m Model) Init() tea.Cmd {
+	// No per-model state — see installTerminalOpener's own comment on why
+	// calling it again on a second Init in the same process is harmless.
+	installTerminalOpener()
 	cmds := []tea.Cmd{
 		loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def),
 		loadCacheCmd(m.nwo),
@@ -871,6 +889,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		if m.termAttached {
+			rows, cols := m.termRegion()
+			m.termRows, m.termCols = rows, cols
+			if m.termEmu != nil {
+				m.termEmu.Resize(cols, rows)
+			}
+			if e := m.termEntry(); e != nil && e.Ops.Resize != nil {
+				_ = e.Ops.Resize(rows, cols)
+			}
+		}
 		return m, nil
 
 	case localDataMsg:
@@ -1116,6 +1144,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// (see Init's own comment).
 		return m, workTickCmd()
 
+	case termTickMsg:
+		if !m.termAttached {
+			return m, nil
+		}
+		if e := m.termEntry(); e != nil && e.Output != nil && m.termEmu != nil {
+			b, next := e.Output.Since(m.termOff)
+			if len(b) > 0 {
+				_, _ = m.termEmu.Write(b)
+				m.termHasOutput = true
+			}
+			m.termOff = next
+		}
+		return m, termTickCmd()
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 
@@ -1256,6 +1298,18 @@ func (m Model) clickRow(pane localPane, row int) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// The terminal view (admin-3rgp.65) owns the keyboard completely while
+	// attached: everything not q/esc/k goes to the child, so nothing below
+	// this — including the global "q" quit — ever sees a keystroke meant
+	// for the process being watched. It sits ahead of the quit confirm
+	// because admin-3rgp.65's contract splits the same two keys by where
+	// you are: q/esc detach while attached, and raise the quit confirm from
+	// the list. Detaching first is what makes that reachable — the confirm
+	// can only be opened from the list, which you are not on while attached.
+	if m.termAttached {
+		return m.terminalKey(msg)
+	}
+
 	// The quit-confirm overlay (admin-3rgp.63) owns the keyboard the instant
 	// it is up — ahead of every other overlay — so nothing else can shadow
 	// the one question left to answer: kill the hosted processes and quit,

@@ -151,6 +151,12 @@ func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args
 	// is unsynchronised (the pre-existing race admin-ddc8, not fixed here).
 	var killed atomic.Bool
 	var exited atomic.Bool
+	// closed mirrors whether ptmx itself has been closed — by Kill, or by
+	// the wait goroutine once the child has exited on its own — so Write
+	// and Resize (admin-3rgp.65's terminal view) can refuse a call that
+	// would otherwise hit a closed *os.File, rather than surfacing
+	// whatever the OS happens to return for that.
+	var closed atomic.Bool
 
 	e := &livework.Entry{
 		ID:     entryID,
@@ -179,6 +185,9 @@ func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args
 			}
 			// Close the master after signalling, not before, so the child
 			// gets SIGKILL rather than racing a SIGHUP from the pty close.
+			// closed is set with the close so the terminal view's Write and
+			// Resize refuse rather than hitting a closed *os.File.
+			closed.Store(true)
 			_ = ptmx.Close()
 			livework.Default.SetState(e.ID, livework.StateExited, nil)
 			return nil
@@ -189,6 +198,22 @@ func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args
 		// beside the stale failed entry.
 		Retry: func() error {
 			return StartHostedPTY(m, name, args, rows, cols, env)
+		},
+		// Write and Resize are the terminal view's (admin-3rgp.65) only way
+		// to reach this child: a keystroke typed while attached, and a pty
+		// resize following the dashboard's own window resize.
+		Write: func(p []byte) (int, error) {
+			if closed.Load() {
+				return 0, fmt.Errorf("command %q: pty closed", name)
+			}
+			return ptmx.Write(p)
+		},
+		Resize: func(rows, cols int) error {
+			if closed.Load() {
+				return fmt.Errorf("command %q: pty closed", name)
+			}
+			frame.SetWinsize(ptmx.Fd(), rows, cols)
+			return nil
 		},
 	}
 	if err := livework.Default.Add(e); err != nil {
@@ -211,6 +236,7 @@ func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args
 		_ = copyErr
 
 		waitErr := c.Wait()
+		closed.Store(true)
 		_ = ptmx.Close()
 		exited.Store(true)
 		if killed.Load() {
