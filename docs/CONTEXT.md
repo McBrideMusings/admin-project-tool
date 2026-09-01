@@ -82,6 +82,14 @@ _Avoid_: parser, classify (that names only phase 1)
 A local branch that cleanup can force-delete safely, origin untouched: its remote is gone, its PR merged on GitHub (catches squash/rebase that `git branch --merged` misses, gated on not-ahead), it's merged into the default, or it's fully pushed. Everything else is a *survivor* (needs human judgment). Classified by `admin_lib/gitwt.classify_dead`. Surfaced by `admin branch --prune` / `admin worktree --prune` and the bare-verb TUI.
 _Avoid_: stale (that's only one weaker signal), orphan
 
+**Binding**:
+A key declared in `admin.toml`'s `[keys.<row-kind>]` table, naming a **Command** the dashboard runs when that key is pressed on a row of that kind. `enter` is an ordinary Binding, not a special case: an unbound (key, row kind) pair falls through to the TUI's built-in behavior. Scoped to one **Row kind**, so the same key can differ between a bead row and a branch row.
+_Avoid_: hotkey, keymap, shortcut, override
+
+**Row kind**:
+What a selectable dashboard row *is* — `bead`, `issue`, `branch`, `pr`, `commit`, `stash`. The axis a **Binding** is scoped to, and the value a bound command reads as `ADMIN_ROW_KIND`. The Work tab's own rows (`command`, `commandTarget`, `worker`) are row kinds too but are not bindable: their Enter already means "run this command" / "attach to this worker".
+_Avoid_: row type, item type, entity
+
 ### Architecture
 
 Terms for reasoning about the *shape* of the code (not the domain). Used by architecture reviews; keep them stable.
