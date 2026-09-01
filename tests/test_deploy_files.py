@@ -538,3 +538,113 @@ def test_dispatch_cancelled_picker_does_nothing(dispatch, monkeypatch):
 
     assert deploy_dispatch([], deploy_cfg={"src": "d", "dest": "/x"}) == 0
     assert calls == []
+
+
+# --- owns: the allow-list that lets `delete` be on safely ------------------
+
+def _mirror(tmp_path):
+    """A src/dest pair shaped like a real appdata mirror: two directories the
+    repo owns, and destination-only state the running app wrote."""
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    (src / "channels" / "chan-a").mkdir(parents=True)
+    (src / "channels" / "chan-a" / "channel.yaml").write_text("a\n")
+    (src / "plugins").mkdir()
+    (src / "plugins" / "taste.rhai").write_text("p\n")
+    (src / "station.yaml").write_text("cfg\n")
+    (dst / "channels" / "chan-a").mkdir(parents=True)
+    (dst / "channels" / "chan-a" / "channel.yaml").write_text("a\n")
+    (dst / "channels" / "chan-a" / "overlay.yaml").write_text("stale\n")
+    (dst / "channels" / "chan-orphan").mkdir()
+    (dst / "channels" / "chan-orphan" / "channel.yaml").write_text("x\n")
+    (dst / "data").mkdir()
+    (dst / "data" / "catalog.db").write_text("DB\n")
+    return src, dst
+
+
+def test_owns_filter_args_allow_list_ends_in_catch_all_exclude():
+    args = " ".join(core._owns_filter_args(["channels", "a/b"]))
+
+    assert "--include '/channels'" in args
+    assert "--include '/channels/**'" in args
+    assert "--include '/a/'" in args  # ancestor, or rsync never descends to a/b
+    assert "--include '/a/b'" in args
+    assert args.endswith("--exclude '*'")
+
+
+def test_owns_filter_args_skips_contents_rule_for_a_file(tmp_path):
+    (tmp_path / "station.yaml").write_text("cfg\n")
+
+    args = " ".join(core._owns_filter_args(["station.yaml"], str(tmp_path)))
+
+    assert "--include '/station.yaml'" in args
+    assert "/station.yaml/**" not in args
+
+
+def test_sync_remote_puts_excludes_before_owns_includes(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    (src / "channels").mkdir(parents=True)
+    seen = []
+    monkeypatch.setattr(core, "run_cmd", lambda cmd, **kw: seen.append(cmd) or 0)
+
+    core.sync(str(src), "root@host:/mnt/appdata", excludes=["README.md"],
+              owns=["channels"], delete=True)
+
+    # rsync takes the first matching rule, so a carve-out inside an owned path
+    # only wins if it is emitted ahead of the include that would claim it.
+    assert seen[0].index("--exclude 'README.md'") < seen[0].index("--include '/channels'")
+
+
+def test_sync_local_with_owns_prunes_orphans_and_spares_the_rest(tmp_path):
+    src, dst = _mirror(tmp_path)
+
+    rc = core.sync(str(src), str(dst), owns=["channels", "plugins", "station.yaml"],
+                   delete=True)
+
+    assert rc == 0
+    assert not (dst / "channels" / "chan-orphan").exists()      # orphan directory
+    assert not (dst / "channels" / "chan-a" / "overlay.yaml").exists()  # orphan file
+    assert (dst / "channels" / "chan-a" / "channel.yaml").read_text() == "a\n"
+    assert (dst / "plugins" / "taste.rhai").exists()
+    assert (dst / "station.yaml").exists()
+    assert (dst / "data" / "catalog.db").read_text() == "DB\n"   # outside owns
+
+
+def test_deploy_files_refuses_an_empty_owned_directory(tmp_path, capsys):
+    """The git-worktree case: the mirror is gitignored, so `channels/` exists
+    but is empty, and mirroring it with --delete would wipe the destination."""
+    src, dst = _mirror(tmp_path)
+    for child in (src / "channels").iterdir():
+        __import__("shutil").rmtree(child)
+
+    rc = remote.deploy_files({"src": str(src), "dest": str(dst), "delete": True,
+                              "owns": ["channels"]})
+
+    assert rc == 1
+    assert "empty directory" in capsys.readouterr().err
+    assert (dst / "channels" / "chan-a" / "channel.yaml").exists()
+
+
+def test_deploy_files_refuses_owns_outside_src(tmp_path, capsys):
+    src, dst = _mirror(tmp_path)
+
+    assert remote.deploy_files({"src": str(src), "dest": str(dst),
+                                "owns": ["../../etc"]}) == 1
+    assert remote.deploy_files({"src": str(src), "dest": str(dst),
+                                "owns": ["nope"]}) == 1
+    assert (dst / "channels" / "chan-orphan").exists()  # nothing ran
+
+
+def test_manifest_accepts_owns():
+    data = {
+        "project_name": "X",
+        "deploy": {"src": "d", "dest": "/x", "delete": True, "owns": ["channels"]},
+    }
+
+    assert parse(data).raw["deploy"]["owns"] == ["channels"]
+
+
+def test_manifest_still_rejects_an_unknown_deploy_key():
+    data = {"project_name": "X", "deploy": {"src": "d", "dest": "/x", "ownz": []}}
+
+    with pytest.raises(ManifestError, match="ownz"):
+        parse(data)

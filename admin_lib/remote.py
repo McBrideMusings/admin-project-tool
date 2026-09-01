@@ -165,6 +165,7 @@ def deploy_files(cfg, dry_run=False):
         host    = "${UNRAID_USER:-root}@${UNRAID_HOST}"   # omit for a local copy
         exclude = ["*.log"]                           # rsync --exclude patterns
         delete  = false                               # default false — see below
+        owns    = ["channels", "plugins"]             # allow-list — see below
         chown   = "${APP_UID:-99}:${APP_GID:-100}"    # UID:GID — see below
 
     ``delete`` defaults to **false** here, the opposite of :func:`core.sync`.
@@ -172,6 +173,23 @@ def deploy_files(cfg, dry_run=False):
     into (a history file, a database, logs). Mirroring exactly would delete
     that state on every deploy, so the safe default is additive; set
     ``delete = true`` when the local copy genuinely owns the whole directory.
+
+    ``owns`` is how a mirror gets ``delete = true`` without that being an
+    all-or-nothing bet on the whole tree. It lists the paths under ``src``,
+    relative and one per entry, that the repo owns end to end. Only those are
+    synced, and only inside those does ``delete`` remove anything; every other
+    path at the destination is left exactly as it was — neither written nor
+    deleted. That inverts the risk of carrying the same protection in
+    ``exclude``: a deny-list that is missing an entry deletes a live database,
+    while an allow-list that is missing one merely leaves an orphan behind.
+
+    The guard that makes it safe is here rather than in each manifest: every
+    entry must exist under ``src``, and a directory entry must be non-empty.
+    rsync deleting everything at the destination is not a bug in ``--delete``,
+    it is what ``--delete`` means when the source it is mirroring turns out to
+    be empty — a mirror directory that a `.gitignore` keeps out of a fresh
+    clone or a git worktree is empty exactly that way, so a deploy run from
+    one would otherwise wipe the destination with no error at all.
 
     ``chown`` is the "UID:GID" the target should own the synced files as,
     handed to rsync as ``--chown``; :func:`core.sync` documents what goes wrong
@@ -210,6 +228,25 @@ def deploy_files(cfg, dry_run=False):
 
     excludes = [resolve_env(str(e)) for e in (cfg.get("exclude") or [])]
 
+    owns = [resolve_env(str(o)).strip().strip("/") for o in (cfg.get("owns") or [])]
+    for entry in owns:
+        if not entry or entry.startswith("/") or ".." in entry.split("/"):
+            err(f"[deploy] owns entry must be a relative path inside src: {entry!r}")
+            return 1
+        path = os.path.join(src, entry)
+        if not os.path.exists(path):
+            err(f"[deploy] owns names a path that is not in src: {entry} (looked in {src})")
+            return 1
+        if os.path.isdir(path) and not os.listdir(path):
+            err(
+                f"[deploy] owns names an empty directory: {entry}. Refusing to sync —"
+                " with delete on, mirroring an empty source deletes everything under"
+                f" {dest}/{entry}. A fresh clone or a git worktree gets an empty"
+                " mirror when it is gitignored; run the deploy from the checkout"
+                " that has the real files."
+            )
+            return 1
+
     chown = cfg.get("chown")
     if chown:
         chown = resolve_env(str(chown))
@@ -247,6 +284,7 @@ def deploy_files(cfg, dry_run=False):
     return sync(
         src, target,
         excludes=excludes or None,
+        owns=owns or None,
         delete=bool(cfg.get("delete", False)),
         dry_run=dry_run,
         post_sync=post_sync,
