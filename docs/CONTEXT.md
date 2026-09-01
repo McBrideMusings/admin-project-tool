@@ -123,6 +123,36 @@ _Avoid_: runtime mode, JIT
 The `admin compile` verb. Packages the interpreter + `admin_lib` + the project's resolved `admin.toml` into a single self-contained `.pyz` (stdlib `zipapp`). The compiled artifact is both the portable standalone (no install needed) and the version pin for a project.
 _Avoid_: build (reserved for project-level build commands), freeze, bundle
 
+### Live work and supervision
+
+**Live work**:
+Everything this repo started that is still alive — a long-running kind dispatched into its own pane, and an agent worker dispatched into a git worktree. The two share one registry (`internal/livework`) because that phrase is what they have in common, not because their fields match.
+_Avoid_: jobs, processes (a worker is neither)
+
+**Entry**:
+One live-work record. Addressed by exactly one of a pane or a hosted pseudo-terminal, never both. Its identity survives a **Retry**, which opens a new pane under the same entry.
+_Avoid_: row (that is the Work tab's rendering of an Entry, not the Entry)
+
+**Worker**:
+An agent running in its own git worktree on its own branch — the half of live work that is an agent rather than a process. An Entry is a Worker only when it carries worker info; a dev server never is.
+_Avoid_: agent (herdr's word for the thing inside the pane), job
+
+**Stuck**:
+A Worker that has been in the waiting state — the agent settled on a question or an approval prompt — longer than a threshold. Deliberately narrower than "not making progress": a worker spinning silently is not Stuck under this definition, and is a recorded open question.
+_Avoid_: hung, stalled, blocked (herdr's own status word for the underlying state)
+
+**Nudge**:
+One canned continuation message sent to a Stuck Worker's agent. Never a keystroke, never a restart — restarting a worker that asked a question loses its work.
+_Avoid_: ping, poke, prompt (overloaded with the agent's original prompt)
+
+**Sweep**:
+One pass of the **Orchestrator** over the registry: find the Stuck entries, Nudge each at most once per waiting state. Runs on the Work tab's existing tick.
+_Avoid_: poll, scan
+
+**Orchestrator**:
+The half of the swarm that reads the live-work registry and acts on it without a human. Its responsibility ends when an Entry exits; it never merges, pushes, or opens a pull request ([ADR-0017](adr/0017-the-orchestrator-never-lands-work.md)).
+_Avoid_: supervisor, scheduler, daemon (it is not a separate process)
+
 ## Relationships
 
 - A **Manifest** lists zero or more **Archetypes** and is merged with each in order.
@@ -133,6 +163,8 @@ _Avoid_: build (reserved for project-level build commands), freeze, bundle
 - A **Detector** proposes which **Archetypes** apply to a project; paired with its archetype by filename.
 - **Drift** is the audit signal that something downstream of the **Generator_commit** has changed.
 - An **Action** (or a multi-target child) may carry a `**Requires**` list of **Guard** names; each Guard is checked before the Action runs.
+- A long-running **Action**'s dispatch, and each **Worker** a workflow starts, both register an **Entry** in the live-work registry.
+- The **Orchestrator** runs a **Sweep** over those Entries, finds the **Stuck** ones, and sends each a **Nudge**.
 
 ## Example dialogue
 
