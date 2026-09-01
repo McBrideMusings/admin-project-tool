@@ -369,13 +369,12 @@ func TestRenderWorkflowPickerBodyListsCandidates(t *testing.T) {
 
 // --- admin-4pps: the Branches pane and the PRs tab as workflow sources ---
 
-// TestTrackerRowIDOnBranchAndPR proves trackerRowID reads the same identity
-// fields rowID already keys keymap.Branch/keymap.PR under, so a selection id
-// and a row's own id can never disagree.
-func TestTrackerRowIDOnBranchAndPR(t *testing.T) {
-	if got := trackerRowID(rowItem{kind: rowBranch, branch: "feature-1"}); got != "feature-1" {
-		t.Errorf("trackerRowID(rowBranch) = %q, want feature-1", got)
-	}
+// TestTrackerRowIDOnPR proves trackerRowID reads the same identity field
+// rowID already keys keymap.PR under, so a selection id and a row's own id
+// can never disagree. rowBranch is deliberately not asserted here: it never
+// reaches trackerRowID (toggleTrackerSelection routes the Branches pane to
+// toggleBranchSelection first), so there is no case for it to pin.
+func TestTrackerRowIDOnPR(t *testing.T) {
 	if got := trackerRowID(rowItem{kind: rowPR, prNum: 42}); got != "42" {
 		t.Errorf("trackerRowID(rowPR) = %q, want 42", got)
 	}
@@ -613,5 +612,39 @@ func TestFrameSpaceThenWOnPRsTabOpensPickerAndConfirm(t *testing.T) {
 	out = p.model.View()
 	if !strings.Contains(out, "42") {
 		t.Errorf("confirm overlay does not name the selected PR #42:\n%s", out)
+	}
+}
+
+// TestFrameBranchesKeybarWLabelFollowsSelection is the acceptance criterion
+// "the Branches keybar renders 'workflow' with a non-empty selection and
+// 'new' with an empty one", asserted through the headless frame renderer.
+// Width is set well past keybar()'s drop threshold (100) so the `w` pair is
+// never dropped before the assertion can see it.
+func TestFrameBranchesKeybarWLabelFollowsSelection(t *testing.T) {
+	m := newBranchesPaneModel()
+	m.width = 200
+	m.active, m.pane = tabLocal, paneBranches
+	p := &pump{msgs: make(chan tea.Msg, 64), model: m}
+
+	out := stripANSI(p.model.View())
+	if !strings.Contains(out, "w new") {
+		t.Errorf("empty-selection footer missing \"w new\":\n%s", out)
+	}
+	if strings.Contains(out, "w workflow") {
+		t.Errorf("empty-selection footer already says \"w workflow\":\n%s", out)
+	}
+
+	// branchRows() puts "main" first (secMain, rank -1) and "feature-1" after
+	// it — one down from the default cursor lands on feature-1, which space
+	// can actually select.
+	p.apply(keyMsg("down"))
+	p.apply(keyMsg("space"))
+
+	out = stripANSI(p.model.View())
+	if !strings.Contains(out, "w workflow") {
+		t.Errorf("non-empty-selection footer missing \"w workflow\":\n%s", out)
+	}
+	if strings.Contains(out, "w new") {
+		t.Errorf("non-empty-selection footer still says \"w new\":\n%s", out)
 	}
 }

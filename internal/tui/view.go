@@ -727,7 +727,7 @@ func (m Model) viewKeymap() [][2]string {
 		case paneStashes:
 			return m.rowPairs(keymap.Stash)
 		default:
-			return m.rowPairs(keymap.Branch)
+			return m.branchPairs()
 		}
 	}
 	switch m.active {
@@ -807,6 +807,46 @@ func (m Model) rowPairs(k keymap.RowKind) [][2]string {
 		pairs = append(pairs, [2]string{keyDisplay(key), m.bindingLabel(binds[key])})
 	}
 	return pairs
+}
+
+// branchPairs is rowPairs(keymap.Branch) with the built-in `w new` pair
+// relabelled to `w workflow` whenever the Branches pane's own selection
+// (m.selected) is nonempty — admin-4pps: space-then-w now runs a workflow
+// over the selected branches instead of only opening the new-worktree
+// prompt, so a footer that still says "new" while `w` would open the
+// workflow picker is a lie (ADR-0018: "the footer shows the effective
+// binding"). m.selectMode() is the exact predicate handleKey's own `w` case
+// branches on (model.go), so the label and the behavior can never diverge.
+//
+// A manifest [keys.branch] binding for "w" wins over the relabel — rowPairs
+// already resolved that binding's own label onto the pair, and that is the
+// effective one, not the dynamic "workflow" guess. The gate mirrors
+// rowPairs' own: a bound "w" only counts when the cursor is actually on a
+// branch row (m.rowKeys[keymap.Branch]["w"] plus rowKindOf(r) == Branch).
+//
+// The returned slice is always a copy — never the shared backing array
+// builtinPairs/rowPairs handed back — so relabeling in place here can never
+// mutate a slice another caller still holds.
+func (m Model) branchPairs() [][2]string {
+	pairs := m.rowPairs(keymap.Branch)
+	if !m.selectMode() {
+		return pairs
+	}
+	if r, ok := m.currentRow(); ok {
+		if kind, ok := rowKindOf(r); ok && kind == keymap.Branch {
+			if len(m.rowKeys) > 0 && m.manifestOK && m.manifest != nil && m.rowKeys[keymap.Branch]["w"] != "" {
+				return pairs
+			}
+		}
+	}
+	out := make([][2]string, len(pairs))
+	copy(out, pairs)
+	for i, p := range out {
+		if p[0] == "w" {
+			out[i] = [2]string{"w", "workflow"}
+		}
+	}
+	return out
 }
 
 // bindingLabel resolves a bound command's footer label: its description, or

@@ -81,13 +81,16 @@ func (m Model) trackerSelectMode() bool {
 	return len(m.activeSelection()) > 0
 }
 
-// trackerRowID is the id a selectable row toggles and dispatches under: a
-// bead's own id, a GitHub issue or PR number as a bare string (the same
-// form ResolveQuery already gives a resolved bead's Target.Name — see
-// kinds.ImplementPrompt), or a branch's name — the same identity fields
-// rowID already uses for keymap.PR / keymap.Branch, so a selection id and
-// an ADMIN_ROW_ID for the same row can never disagree. Empty for any other
-// row kind, which toggleTrackerSelection treats as nothing to toggle.
+// trackerRowID is the id a selectable tracker row toggles and dispatches
+// under: a bead's own id, or a GitHub issue or PR number as a bare string
+// (the same form ResolveQuery already gives a resolved bead's Target.Name —
+// see kinds.ImplementPrompt) — the same identity fields rowID already uses
+// for keymap.Bead/keymap.Issue/keymap.PR, so a selection id and an
+// ADMIN_ROW_ID for the same row can never disagree. Empty for any other row
+// kind, which toggleTrackerSelection treats as nothing to toggle. A branch
+// row never reaches here: toggleTrackerSelection routes the Branches pane to
+// toggleBranchSelection before trackerRowID is ever called, and no other tab
+// renders a rowBranch row — its own identity lookup is rowID (rowkeys.go).
 func trackerRowID(r rowItem) string {
 	switch r.kind {
 	case rowBead:
@@ -96,8 +99,6 @@ func trackerRowID(r rowItem) string {
 		return strconv.Itoa(r.issueNum)
 	case rowPR:
 		return strconv.Itoa(r.prNum)
-	case rowBranch:
-		return r.branch
 	default:
 		return ""
 	}
