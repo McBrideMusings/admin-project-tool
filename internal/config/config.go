@@ -1,6 +1,11 @@
-// Package config loads the populate patterns from a global and a per-repo TOML
-// file. Per-repo entries are appended after global ones. There are no built-in
-// defaults — with no config, populate does nothing.
+// Package config is the typed view over the five admin.toml tables that
+// configure the dashboard rather than any one command: [identity],
+// [worktrees], [[populate]], [beads] and [workflow]. It holds no file-reading
+// logic of its own — Load resolves a project's manifest (internal/manifest +
+// internal/archetype, merged through archetypes exactly like every other
+// admin.toml key) and decodes those five tables into the typed shapes below.
+// There are no built-in defaults for populate — with none declared, populate
+// does nothing.
 package config
 
 import (
@@ -8,7 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/BurntSushi/toml"
+	"github.com/McBrideMusings/admin-project-tool/internal/archetype"
+	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
 // Mode is how a populate entry brings a file into a new worktree.
@@ -43,7 +49,7 @@ type Worktrees struct {
 //
 // Login is the GitHub account, matched against a PR's author. Emails are the git
 // author addresses that count as yours, matched against the first commit a branch
-// added. Both are seeded on first run (see Seed) and editable afterwards.
+// added. Both are declared in the project's admin.toml [identity] table.
 type Identity struct {
 	Login  string   `toml:"login"`
 	Emails []string `toml:"emails"`
@@ -69,7 +75,8 @@ type Workflow struct {
 	Ceiling int    `toml:"ceiling"`
 }
 
-// Config is the merged global + per-repo configuration.
+// Config is the decoded [identity]/[worktrees]/[[populate]]/[beads]/[workflow]
+// tables of a resolved (archetype-merged) manifest.
 type Config struct {
 	Populate  []Entry   `toml:"populate"`
 	Worktrees Worktrees `toml:"worktrees"`
@@ -107,109 +114,55 @@ func (id Identity) Known() bool { return id.Login != "" || len(id.Emails) > 0 }
 // DefaultWorktreeRoot is where worktrees land when nothing overrides it.
 const DefaultWorktreeRoot = "~/.worktrees"
 
-// GlobalPath is ~/.config/repo/config.toml.
-func GlobalPath() string {
+// Load resolves repoRoot's admin.toml against its declared archetypes — the
+// same resolution every other manifest-driven feature uses (see
+// internal/tui/work.go's loadWorkManifest, which this mirrors) — and decodes
+// the five config tables from the merged result.
+//
+// A repoRoot with no admin.toml at all returns a zero Config and a nil
+// error: create.Worktree and the TUI both depend on this degrade path, since
+// a fresh worktree with no manifest of its own must fall back to the
+// env-or-default worktree root and skip populate entirely, rather than
+// erroring out of worktree creation altogether.
+func Load(repoRoot string) (Config, error) {
+	if _, err := os.Stat(filepath.Join(repoRoot, manifest.Filename)); err != nil {
+		if os.IsNotExist(err) {
+			return Config{}, nil
+		}
+		return Config{}, err
+	}
+	manifest.LoadDotenv(repoRoot)
+	project, err := manifest.Load(repoRoot)
+	if err != nil {
+		return Config{}, err
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ""
+		return Config{}, err
 	}
-	return filepath.Join(home, ".config", "repo", "config.toml")
+	sp := archetype.DefaultSearchPath(home, repoRoot)
+	merged, _, err := archetype.Resolve(project, sp)
+	if err != nil {
+		return Config{}, err
+	}
+	return FromManifest(merged)
 }
 
-// RepoPath is <repoRoot>/.repo/config.toml.
-func RepoPath(repoRoot string) string {
-	return filepath.Join(repoRoot, ".repo", "config.toml")
-}
-
-// Load reads the global config then the per-repo config, appending per-repo
-// entries after global ones. Missing files are not errors.
-func Load(repoRoot string) (Config, error) {
-	var cfg Config
-	for _, path := range []string{GlobalPath(), RepoPath(repoRoot)} {
-		if path == "" {
-			continue
-		}
-		var part Config
-		if _, err := toml.DecodeFile(path, &part); err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return cfg, err
-		}
-		cfg.Populate = append(cfg.Populate, part.Populate...)
-		// Per-repo root (read second) overrides the global one.
-		if strings.TrimSpace(part.Worktrees.Root) != "" {
-			cfg.Worktrees.Root = part.Worktrees.Root
-		}
-		// Identity merges the way the two files differ in kind: there is one of you,
-		// so a per-repo login replaces the global one, but a work address is an
-		// addition to your identity rather than a replacement for it — appending is
-		// what lets `.repo/config.toml` say "here I also commit as pierce@work" without
-		// disowning every branch authored under the personal address.
-		if l := strings.TrimSpace(part.Identity.Login); l != "" {
-			cfg.Identity.Login = l
-		}
-		cfg.Identity.Emails = appendEmails(cfg.Identity.Emails, part.Identity.Emails)
-		// A column list is an ordering, so a per-repo one replaces the global list
-		// outright: appending would interleave two orderings into a third nobody
-		// wrote.
-		if len(part.Beads.Columns) > 0 {
-			cfg.Beads.Columns = part.Beads.Columns
-		}
-		// Workflow, like Identity.Login, is a single current value rather than
-		// something to accumulate: a per-repo agent/ceiling replaces the global
-		// one outright.
-		if a := strings.TrimSpace(part.Workflow.Agent); a != "" {
-			cfg.Workflow.Agent = a
-		}
-		if part.Workflow.Ceiling > 0 {
-			cfg.Workflow.Ceiling = part.Workflow.Ceiling
-		}
+// FromManifest decodes the five config tables from an already-resolved
+// manifest. Exported so a caller that already holds a resolved manifest (the
+// TUI's Work tab, which loads and merges one at New for its own purposes)
+// can build a Config from it without a second parse+resolve pass.
+func FromManifest(m *manifest.Manifest) (Config, error) {
+	if m == nil {
+		return Config{}, nil
 	}
-	// Default any unset mode to symlink.
-	for i := range cfg.Populate {
-		if cfg.Populate[i].Mode == "" {
-			cfg.Populate[i].Mode = Symlink
-		}
-	}
-	return cfg, nil
-}
-
-// LoadGlobal reads only the global config file — no per-repo overlay — so a
-// caller can tell what the global file alone declares (the Config tab's
-// per-field origin: admin-3rgp.21). Missing file is not an error and
-// returns a zero Config, matching Load's own convention.
-func LoadGlobal() (Config, error) {
-	return loadOne(GlobalPath())
-}
-
-// LoadLocal reads only the per-repo config file — no global overlay. See
-// LoadGlobal.
-func LoadLocal(repoRoot string) (Config, error) {
-	return loadOne(RepoPath(repoRoot))
-}
-
-// loadOne reads a single config file, applying the same populate-mode
-// default Load applies after merging both files. Used by LoadGlobal/
-// LoadLocal, which read one file at a time rather than Load's merge, so each
-// needs the same default applied independently.
-func loadOne(path string) (Config, error) {
-	var cfg Config
-	if path == "" {
-		return cfg, nil
-	}
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
-		if os.IsNotExist(err) {
-			return cfg, nil
-		}
-		return cfg, err
-	}
-	for i := range cfg.Populate {
-		if cfg.Populate[i].Mode == "" {
-			cfg.Populate[i].Mode = Symlink
-		}
-	}
-	return cfg, nil
+	return Config{
+		Populate:  decodePopulate(m.Populate),
+		Worktrees: decodeWorktrees(m.Worktrees),
+		Identity:  decodeIdentity(m.Identity),
+		Beads:     decodeBeads(m.Beads),
+		Workflow:  decodeWorkflow(m.Workflow),
+	}, nil
 }
 
 // WorktreeRoot resolves the parent directory for worktrees from an
@@ -227,96 +180,6 @@ func WorktreeRoot(cfg Config) string {
 	return expandHome(DefaultWorktreeRoot)
 }
 
-// appendEmails adds addresses not already present, case-insensitively. The same
-// address reaching both files is the normal case (the global identity plus a
-// per-repo file that repeats it), and a duplicate would be harmless but would show
-// up doubled in the Config tab.
-func appendEmails(dst, src []string) []string {
-	for _, e := range src {
-		e = strings.TrimSpace(e)
-		if e == "" {
-			continue
-		}
-		dup := false
-		for _, have := range dst {
-			if strings.EqualFold(have, e) {
-				dup = true
-				break
-			}
-		}
-		if !dup {
-			dst = append(dst, e)
-		}
-	}
-	return dst
-}
-
-// SeedIdentity writes a starter [identity] into the GLOBAL config when it has none,
-// so the first launch classifies branches instead of showing everything as
-// unowned. login and email come from the environment (`gh api user` and
-// `git config user.email`); either may be empty, and nothing is written unless at
-// least one of them resolved.
-//
-// It appends rather than rewriting: the file is hand-edited, and a config writer
-// that reformats someone's comments away to add two lines is a worse trade than
-// the duplicate-key risk, which the guard below removes anyway. Returns whether it
-// wrote, so a caller can say so once rather than every launch.
-//
-// Only the global file is seeded. A per-repo identity means "in this repo I am
-// also someone else", which is a deliberate statement no default can make.
-func SeedIdentity(login, email string) (bool, error) {
-	path := GlobalPath()
-	if path == "" {
-		return false, nil
-	}
-	login, email = strings.TrimSpace(login), strings.TrimSpace(email)
-	if login == "" && email == "" {
-		return false, nil
-	}
-	// Never seed over an identity that already exists — including one that names
-	// only emails, since a login added by hand later must not be re-guessed.
-	var have Config
-	if _, err := toml.DecodeFile(path, &have); err != nil && !os.IsNotExist(err) {
-		return false, err
-	}
-	if have.Identity.Known() {
-		return false, nil
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return false, err
-	}
-	var b strings.Builder
-	if existing, err := os.ReadFile(path); err == nil && len(existing) > 0 {
-		b.Write(existing)
-		if !strings.HasSuffix(string(existing), "\n") {
-			b.WriteString("\n")
-		}
-		b.WriteString("\n")
-	}
-	b.WriteString("# Who \"you\" are: which branches the dashboard treats as your work.\n")
-	b.WriteString("# Seeded from `gh api user` and `git config user.email` on first run.\n")
-	b.WriteString("# Add any other address you commit under — a work address, another\n")
-	b.WriteString("# machine, an agent run — to claim those branches too.\n")
-	b.WriteString("[identity]\n")
-	if login != "" {
-		b.WriteString("login = " + quote(login) + "\n")
-	}
-	if email != "" {
-		b.WriteString("emails = [" + quote(email) + "]\n")
-	}
-	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-// quote renders a TOML basic string. Logins and emails cannot contain a quote or a
-// backslash, so escaping them is enough to keep a hand-edited file parseable.
-func quote(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
-	return `"` + r.Replace(s) + `"`
-}
-
 // expandHome replaces a leading ~ or ~/ with the user's home directory.
 func expandHome(p string) string {
 	if p == "~" || strings.HasPrefix(p, "~/") {
@@ -325,4 +188,94 @@ func expandHome(p string) string {
 		}
 	}
 	return p
+}
+
+// decodeIdentity, decodeWorktrees, decodeBeads, decodeWorkflow and
+// decodePopulate pull the typed fields out of a manifest's raw
+// map[string]any tables. internal/manifest keeps these tables untyped (ADR-
+// 0009: the manifest references, the archetype implements) and
+// internal/manifest.parse already rejects any key outside each table's known
+// set, so decoding here only needs to handle the keys that survived parsing.
+
+func decodeIdentity(raw map[string]any) Identity {
+	var id Identity
+	if v, ok := raw["login"].(string); ok {
+		id.Login = v
+	}
+	if v, ok := raw["emails"]; ok {
+		id.Emails = toStringList(v)
+	}
+	return id
+}
+
+func decodeWorktrees(raw map[string]any) Worktrees {
+	var w Worktrees
+	if v, ok := raw["root"].(string); ok {
+		w.Root = v
+	}
+	return w
+}
+
+func decodeBeads(raw map[string]any) Beads {
+	var b Beads
+	if v, ok := raw["columns"]; ok {
+		b.Columns = toStringList(v)
+	}
+	return b
+}
+
+func decodeWorkflow(raw map[string]any) Workflow {
+	var w Workflow
+	if v, ok := raw["agent"].(string); ok {
+		w.Agent = v
+	}
+	if v, ok := raw["ceiling"]; ok {
+		w.Ceiling = toInt(v)
+	}
+	return w
+}
+
+func decodePopulate(raw []map[string]any) []Entry {
+	out := make([]Entry, 0, len(raw))
+	for _, e := range raw {
+		var entry Entry
+		if v, ok := e["pattern"].(string); ok {
+			entry.Pattern = v
+		}
+		if v, ok := e["mode"].(string); ok {
+			entry.Mode = Mode(v)
+		}
+		if entry.Mode == "" {
+			entry.Mode = Symlink
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func toStringList(v any) []string {
+	list, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		if s, ok := item.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func toInt(v any) int {
+	switch n := v.(type) {
+	case int64:
+		return int(n)
+	case int:
+		return n
+	case float64:
+		return int(n)
+	default:
+		return 0
+	}
 }

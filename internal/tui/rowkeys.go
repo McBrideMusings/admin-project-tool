@@ -238,7 +238,7 @@ func (m Model) rowKeyWorkflow(name string, c manifest.Command, r rowItem, kind k
 	// a field.
 	if _, agentOK := kinds.ResolveAgent(action, cfg); !agentOK {
 		m.setStatus(fmt.Sprintf(
-			"no agent configured — set 'agent' on %q or [workflow].agent in config", name), cRed)
+			"no agent configured — set 'agent' on %q or [workflow].agent in admin.toml", name), cRed)
 		return m, nil
 	}
 

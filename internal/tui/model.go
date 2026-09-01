@@ -278,15 +278,12 @@ type Model struct {
 
 	closedIssues bool // Issues view: show closed too (toggle) — reserved
 
-	// identity is who "you" are — the merged [identity] from the global and
-	// per-repo config, seeded on first run. It decides which branches the Branches
+	// identity is who "you" are — the [identity] table of repoRoot's admin.toml,
+	// merged with its declared archetypes. It decides which branches the Branches
 	// pane treats as your work; see ownership.go. Zero until settingsMsg lands,
 	// which only means the first frame files every branch as Unsorted rather than
 	// mis-filing any of them.
 	identity config.Identity
-	// identitySeeded is set when this launch wrote the starter [identity], so the
-	// status line can say so once instead of on every launch.
-	identitySeeded bool
 	// minesOnly (g) narrows the Branches pane to your work. Clean Up is exempt —
 	// see branchRows.
 	minesOnly bool
@@ -348,14 +345,14 @@ type Model struct {
 	// every rowItem from scratch on each frame.
 	expandedCmd string
 
-	// Config tab (admin-3rgp.21): the merged config.Config plus the global-
-	// only and local-only reads, so each field's origin (global file, local
-	// file, or neither — defaulted) is legible rather than only its final
-	// value. Loaded once at launch by loadConfigCmd; zero until settingsMsg
-	// lands, same as identity above.
+	// Config tab (admin-3rgp.21): the resolved config.Config — repoRoot's
+	// admin.toml [identity]/[worktrees]/[[populate]]/[beads]/[workflow]
+	// tables, merged with its declared archetypes. Each field's origin
+	// (admin.toml itself, or the contributing archetype) comes from
+	// keyOrigin, the same mechanism the manifest-declared keys use — see
+	// work.go's computeOrigins. Loaded once at launch by loadConfigCmd; zero
+	// until settingsMsg lands, same as identity above.
 	cfgMerged config.Config
-	cfgGlobal config.Config
-	cfgLocal  config.Config
 	cfgErr    string
 
 	// Workflow confirm overlay (admin-3rgp.26): a query-sourced workflow row
@@ -1135,14 +1132,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def)
 
 	case settingsMsg:
-		m.identity, m.identitySeeded = msg.id, msg.seeded
+		m.identity = msg.id
 		m.beadCols = msg.beads.Columns
-		m.cfgMerged, m.cfgGlobal, m.cfgLocal, m.cfgErr = msg.merged, msg.global, msg.local, msg.loadErr
-		if msg.seeded {
-			// Said once, on the launch that wrote it. A config file appearing without
-			// anyone asking is worth one line; saying it every launch would be noise.
-			m.setStatus("seeded [identity] in "+config.GlobalPath(), cCyan)
-		}
+		m.cfgMerged, m.cfgErr = msg.cfg, msg.loadErr
 		return m, nil
 
 	case workDispatchStartedMsg:

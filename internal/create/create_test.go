@@ -210,6 +210,52 @@ func TestWorktreePathTakenByAnotherRepo(t *testing.T) {
 	}
 }
 
+// TestWorktreePopulatesFromPrimaryManifest is the ticket's central acceptance
+// criterion: `admin populate` (via create.Worktree, which every worktree-
+// creation path calls) seeds a fresh worktree from the PRIMARY checkout's
+// admin.toml — the ONLY place populate patterns can live now that
+// internal/config no longer reads any dotfile. The freshly created worktree
+// itself has no manifest of its own; it must still receive both the
+// admin.toml the pattern names and an unrelated untracked file the manifest
+// declares.
+func TestWorktreePopulatesFromPrimaryManifest(t *testing.T) {
+	clone, _ := setupRepo(t)
+	ctx := context.Background()
+
+	writeFile(t, filepath.Join(clone, "admin.toml"), `project_name = "t"
+
+[[populate]]
+pattern = "admin.toml"
+mode = "copy"
+
+[[populate]]
+pattern = "CLAUDE.local.md"
+mode = "copy"
+`)
+	writeFile(t, filepath.Join(clone, "CLAUDE.local.md"), "local notes\n")
+
+	res, err := Worktree(ctx, clone, "feat-populate")
+	if err != nil {
+		t.Fatalf("Worktree: %v", err)
+	}
+	assertWorktreeOnBranch(t, res.Path, "feat-populate")
+
+	admin, err := os.ReadFile(filepath.Join(res.Path, "admin.toml"))
+	if err != nil {
+		t.Fatalf("worktree missing admin.toml — populate did not read the primary checkout's manifest: %v", err)
+	}
+	if !strings.Contains(string(admin), "project_name") {
+		t.Errorf("worktree admin.toml content = %q, want the primary checkout's own manifest", admin)
+	}
+	local, err := os.ReadFile(filepath.Join(res.Path, "CLAUDE.local.md"))
+	if err != nil {
+		t.Fatalf("worktree missing CLAUDE.local.md: %v", err)
+	}
+	if string(local) != "local notes\n" {
+		t.Errorf("CLAUDE.local.md content = %q, want the primary checkout's content", local)
+	}
+}
+
 // A branch that exists only on origin (tracking ref present, no local branch) is
 // fetched and checked out — not forked into a divergent new branch.
 func TestWorktreeRemoteOnlyBranch(t *testing.T) {

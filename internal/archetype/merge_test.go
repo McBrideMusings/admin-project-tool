@@ -477,3 +477,118 @@ archetypes   = ["a", "b"]
 		t.Errorf(`Keys[pr]["m"] = %#v, want "merge" (a row kind only one side declares passes through untouched)`, pr["m"])
 	}
 }
+
+// TestConfigTablesMergeProjectWinsOverArchetype is the "merged through
+// archetypes like every other manifest key" acceptance criterion for
+// [identity]/[worktrees]/[beads]/[workflow]: an archetype may declare
+// defaults, but the project's own admin.toml wins on any key it also
+// declares, and a key only the archetype declares survives untouched.
+func TestConfigTablesMergeProjectWinsOverArchetype(t *testing.T) {
+	root := t.TempDir()
+	writeArchetypeDir(t, root, "base", `
+[identity]
+login = "archetype-login"
+
+[worktrees]
+root = "/archetype/worktrees"
+
+[beads]
+columns = ["id", "title"]
+
+[workflow]
+agent   = "archetype-agent"
+ceiling = 2
+`, false)
+	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
+
+	project := projectManifest(t, `
+project_name = "widget"
+archetypes   = ["base"]
+
+[identity]
+login = "project-login"
+
+[workflow]
+agent = "project-agent"
+`)
+
+	merged, _, err := Resolve(project, sp)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if merged.Identity["login"] != "project-login" {
+		t.Errorf("Identity[login] = %v, want the project's value to win", merged.Identity["login"])
+	}
+	if merged.Worktrees["root"] != "/archetype/worktrees" {
+		t.Errorf("Worktrees[root] = %v, want the archetype's value to survive untouched", merged.Worktrees["root"])
+	}
+	if merged.Workflow["agent"] != "project-agent" {
+		t.Errorf("Workflow[agent] = %v, want the project's value to win", merged.Workflow["agent"])
+	}
+	if merged.Workflow["ceiling"] != int64(2) {
+		t.Errorf("Workflow[ceiling] = %v (%T), want the archetype's ceiling to survive untouched", merged.Workflow["ceiling"], merged.Workflow["ceiling"])
+	}
+	cols, ok := merged.Beads["columns"].([]any)
+	if !ok || len(cols) != 2 {
+		t.Errorf("Beads[columns] = %#v, want the archetype's two columns", merged.Beads["columns"])
+	}
+}
+
+// TestPopulateMergeAppendsAndDedupesByPattern is the append-in-list-order,
+// de-dup-by-pattern rule this ticket's approach settles for [[populate]]: an
+// archetype's entries come first, a project's own entries are appended after,
+// and a project entry repeating an archetype's pattern replaces its mode
+// rather than producing two rows for the same file.
+func TestPopulateMergeAppendsAndDedupesByPattern(t *testing.T) {
+	root := t.TempDir()
+	writeArchetypeDir(t, root, "base", `
+[[populate]]
+pattern = ".env"
+mode    = "copy"
+
+[[populate]]
+pattern = ".claude/skills/*"
+mode    = "symlink"
+`, false)
+	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
+
+	project := projectManifest(t, `
+project_name = "widget"
+archetypes   = ["base"]
+
+[[populate]]
+pattern = ".env"
+mode    = "symlink"
+
+[[populate]]
+pattern = "admin.toml"
+mode    = "copy"
+`)
+
+	merged, _, err := Resolve(project, sp)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(merged.Populate) != 3 {
+		t.Fatalf("Populate = %+v, want 3 entries (2 archetype + 1 new project, .env de-duped)", merged.Populate)
+	}
+	byPattern := map[string]string{}
+	for _, e := range merged.Populate {
+		byPattern[e["pattern"].(string)] = e["mode"].(string)
+	}
+	if byPattern[".env"] != "symlink" {
+		t.Errorf("Populate[.env].mode = %q, want the project's override (symlink) to win", byPattern[".env"])
+	}
+	if byPattern[".claude/skills/*"] != "symlink" {
+		t.Errorf("Populate[.claude/skills/*].mode = %q, want the archetype's entry to survive untouched", byPattern[".claude/skills/*"])
+	}
+	if byPattern["admin.toml"] != "copy" {
+		t.Errorf("Populate[admin.toml].mode = %q, want the project's new entry", byPattern["admin.toml"])
+	}
+	// .env must appear exactly once in list order — first, since the
+	// archetype declared it and the project's later entry replaces it in
+	// place rather than appending a duplicate.
+	if merged.Populate[0]["pattern"] != ".env" {
+		t.Errorf("Populate[0] = %+v, want .env to stay in the archetype's original position", merged.Populate[0])
+	}
+}

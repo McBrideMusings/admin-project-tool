@@ -67,7 +67,8 @@ var runResolveQuery = kinds.ResolveQuery
 
 // resolveWorkflowCmd resolves query against repoRoot's tracker in the
 // background. Nothing here dispatches anything — runResolveQuery is a read,
-// and the agent/ceiling lookup below is config.Load, also a read.
+// and the agent/ceiling lookup below is config.Load (repoRoot's admin.toml,
+// merged with its archetypes), also a read.
 func resolveWorkflowCmd(repoRoot, name string, action manifest.Action, query string) tea.Cmd {
 	return func() tea.Msg {
 		targets, err := runResolveQuery(context.Background(), repoRoot, query)
@@ -162,7 +163,7 @@ func (m *Model) workflowResolved(msg workflowResolvedMsg) {
 		// only at dispatch time so an unconfigured agent doesn't waste the
 		// user's confirmation on a set that would immediately fail dispatch.
 		m.wfErr = fmt.Sprintf(
-			"no agent configured — set 'agent' on %q or [workflow].agent in config", msg.name)
+			"no agent configured — set 'agent' on %q or [workflow].agent in admin.toml", msg.name)
 	default:
 		m.wfErr = ""
 	}
