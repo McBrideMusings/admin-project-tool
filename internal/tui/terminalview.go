@@ -254,7 +254,7 @@ func (m Model) renderTermHeader(width int) string {
 	started := time.Now()
 	if e != nil {
 		name = e.Name
-		state = e.State
+		state, _ = livework.Default.State(e.ID)
 		activity = e.Activity
 		started = e.StartedAt
 	}

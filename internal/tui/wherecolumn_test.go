@@ -23,13 +23,22 @@ import (
 // running command renders running, its activity, and hosted" AC and its
 // negative half: a hosted row must never render a pane identifier.
 func TestWhereColumnHostedCommandRowShowsHostedNeverPane(t *testing.T) {
-	live := &workRowData{
-		cmdName: "docs",
-		live: &livework.Entry{
-			ID: "docs", Name: "docs", State: livework.StateRunning,
-			Activity: "vitepress dev", PTYID: "pty-1", StartedAt: time.Now(),
-		},
+	entry := &livework.Entry{
+		ID: "docs", Name: "docs", State: livework.StateRunning,
+		Activity: "vitepress dev", PTYID: "pty-1", StartedAt: time.Now(),
 	}
+	// renderWorkRow now reads state through livework.Default.State(e.ID)
+	// (admin-ddc8), so the entry must actually be in the process-wide
+	// registry rather than merely constructed. Reset to StateExited after so
+	// this hosted-and-running row doesn't linger for later tests, e.g.
+	// TestRequestQuitWithNothingHostedQuitsImmediately.
+	if err := livework.Default.Add(entry); err != nil {
+		t.Fatalf("Add(%s): %v", entry.ID, err)
+	}
+	t.Cleanup(func() {
+		livework.Default.SetState(entry.ID, livework.StateExited, nil)
+	})
+	live := &workRowData{cmdName: "docs", live: entry}
 	line := workTestModel(nil).renderWorkRow(rowItem{kind: rowCommand, work: live}, false, 60)
 	plain := stripANSI(line)
 
@@ -84,14 +93,22 @@ func TestWhereColumnStateWordsAreVerbatim(t *testing.T) {
 		{livework.StateWaiting, "waiting"},
 		{livework.StateFailed, "failed"},
 	}
+	entry := &livework.Entry{
+		ID: "wherecol-state-words", Name: "build",
+		Activity: "doing the thing", PTYID: "pty-2", StartedAt: time.Now(),
+	}
+	// See TestWhereColumnHostedCommandRowShowsHostedNeverPane: renderWorkRow
+	// reads state through the registry now, so the entry must be Added, and
+	// each case's state must go through SetState rather than a fresh struct.
+	if err := livework.Default.Add(entry); err != nil {
+		t.Fatalf("Add(%s): %v", entry.ID, err)
+	}
+	t.Cleanup(func() {
+		livework.Default.SetState(entry.ID, livework.StateExited, nil)
+	})
+	live := &workRowData{cmdName: "build", live: entry}
 	for _, c := range cases {
-		live := &workRowData{
-			cmdName: "build",
-			live: &livework.Entry{
-				ID: "build", Name: "build", State: c.state,
-				Activity: "doing the thing", PTYID: "pty-2", StartedAt: time.Now(),
-			},
-		}
+		livework.Default.SetState(entry.ID, c.state, nil)
 		line := stripANSI(workTestModel(nil).renderWorkRow(rowItem{kind: rowCommand, work: live}, false, 60))
 		if !strings.Contains(line, c.word) {
 			t.Errorf("state %v did not render verbatim word %q: %q", c.state, c.word, line)
