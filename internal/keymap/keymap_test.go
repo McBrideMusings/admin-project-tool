@@ -73,3 +73,28 @@ func TestBuiltins(t *testing.T) {
 		}
 	}
 }
+
+// TestReserved pins Reserved's membership — the always-on global key set
+// internal/validate and internal/tui's rowKeyDispatch both read as their
+// single source of truth (admin-gz7g). A future thinning of this set must
+// fail here rather than silently letting a manifest rebind a global.
+func TestReserved(t *testing.T) {
+	want := []string{
+		"q", "ctrl+c", "esc", "tab", "shift+tab",
+		"up", "down", "left", "right",
+		"j", "k", "1", "2", "3", "4", "/",
+	}
+	if len(Reserved) != len(want) {
+		t.Fatalf("len(Reserved) = %d, want %d (%v)", len(Reserved), len(want), want)
+	}
+	for _, k := range want {
+		if !Reserved[k] {
+			t.Errorf("Reserved[%q] = false, want true", k)
+		}
+	}
+	for _, bindable := range []string{"o", "enter", "d", "g", "s", "w"} {
+		if Reserved[bindable] {
+			t.Errorf("Reserved[%q] = true, want false — it's a bindable key", bindable)
+		}
+	}
+}

@@ -133,6 +133,16 @@ func (m Model) rowKeyDispatch(key string) (tea.Model, tea.Cmd, bool) {
 	if len(m.rowKeys) == 0 || !m.manifestOK {
 		return m, nil, false
 	}
+	// keymap.Reserved is refused before any lookup, not just left out of
+	// admin check's accepted bindings: validate.RowKeys is the only thing
+	// that keeps a reserved key out of m.rowKeys today, so a binding that
+	// somehow got installed anyway (a manifest bypassing validation, a bug
+	// in buildRowKeys) would otherwise silently kill a global key with no
+	// error and no shadow line. Refusing here degrades that failure to
+	// "the binding does nothing" instead (admin-gz7g).
+	if keymap.Reserved[key] {
+		return m, nil, false
+	}
 	r, ok := m.currentRow()
 	if !ok {
 		return m, nil, false
