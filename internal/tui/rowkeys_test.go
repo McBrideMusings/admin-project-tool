@@ -13,6 +13,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/keymap"
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
+	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
@@ -348,6 +349,67 @@ func TestRowKeyDispatchNonWorkflowCommandStillRunsPlain(t *testing.T) {
 	}
 	if !containsEnv(*gotEnv, "ADMIN_ROW_ID=proj-1") {
 		t.Errorf("env %v missing ADMIN_ROW_ID=proj-1", *gotEnv)
+	}
+}
+
+// TestRowKeyDispatchAttachesWhenCommandAlreadyLive proves admin-c2zl: a
+// bound key pressed against a command that already has a live entry
+// attaches to it instead of starting a second run — the double-press case.
+// The command name ("rowkeylive") and its live entry's own name are unique
+// to this test so it cannot collide with the "build" fixture other tests in
+// this package register on the same process-global livework.Default
+// registry (see TestActivateCommandAttachesWhenLive's own comment on the
+// same pattern in work_enter_test.go).
+//
+// MUTATION EVIDENCE: delete the liveEntryFor/attachEntry branch this ticket
+// added to rowKeyDispatch (fall through to dispatchCommandCmd
+// unconditionally) and this test fails: "rowKeyDispatch dispatched a second
+// run instead of attaching, attached=false".
+func TestRowKeyDispatchAttachesWhenCommandAlreadyLive(t *testing.T) {
+	gotEnv := stubStartHostedRun(t)
+
+	attached := false
+	live := &livework.Entry{
+		ID: "rowkeylive", Name: "rowkeylive", State: livework.StateRunning,
+		PaneID: "pane-rowkeylive",
+		Ops:    livework.Ops{Attach: func() error { attached = true; return nil }},
+	}
+	if err := livework.Default.Add(live); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	m := Model{
+		active:     tabBeads,
+		width:      120,
+		height:     40,
+		manifestOK: true,
+		manifest: &manifest.Manifest{
+			Custom:  map[string]manifest.Command{"rowkeylive": {Steps: []string{"rowkeylive"}}},
+			Actions: map[string]manifest.Action{"rowkeylive": {"kind": "shell"}},
+		},
+		beads: []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}},
+		rowKeys: map[keymap.RowKind]map[string]string{
+			keymap.Bead: {"b": "rowkeylive"},
+		},
+	}
+	trackerCursorTo(t, &m, "proj-1")
+
+	// Press the bound key twice — the double-press case the ticket names.
+	if _, _, ok := m.rowKeyDispatch("b"); !ok {
+		t.Fatal("rowKeyDispatch(\"b\") first press = miss, want hit")
+	}
+	_, cmd, ok := m.rowKeyDispatch("b")
+	if !ok {
+		t.Fatal("rowKeyDispatch(\"b\") second press = miss, want hit")
+	}
+	if !attached {
+		t.Error("rowKeyDispatch dispatched a second run instead of attaching, attached=false")
+	}
+	if cmd != nil {
+		t.Errorf("rowKeyDispatch returned a non-nil Cmd for an attach, want nil (attach is synchronous)")
+	}
+	if *gotEnv != nil {
+		t.Errorf("startHostedRun was called (env=%v) — a live command must never dispatch a second run", *gotEnv)
 	}
 }
 

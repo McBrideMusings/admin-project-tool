@@ -19,6 +19,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/keymap"
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
+	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
@@ -122,7 +123,12 @@ func rowID(r rowItem, kind keymap.RowKind) string {
 // kind) — leaving the built-in switch in handleKey to run exactly as it
 // does today. A HIT dispatches the named command through
 // dispatchCommandCmd, the same path activateCommand uses for a
-// Commands-tab row, with the row's identity in env.
+// Commands-tab row, with the row's identity in env — unless that command
+// already has a live entry, in which case it attaches instead of racing it
+// (admin-c2zl): a second run over a command whose first run still owns the
+// log file is exactly what recordHostedPTYWork's own comment
+// (internal/kinds/hostedpty.go) keys the live entry on cmd.Steps[0] to
+// prevent, and the Commands-tab path already honors that guard.
 func (m Model) rowKeyDispatch(key string) (tea.Model, tea.Cmd, bool) {
 	if len(m.rowKeys) == 0 || !m.manifestOK {
 		return m, nil, false
@@ -139,9 +145,26 @@ func (m Model) rowKeyDispatch(key string) (tea.Model, tea.Cmd, bool) {
 	if !ok {
 		return m, nil, false
 	}
-	if c, found := m.commandNamed(name); found && m.isSelectionWorkflow(c) {
+	c, found := m.commandNamed(name)
+	if found && m.isSelectionWorkflow(c) {
 		mm, cmd := m.rowKeyWorkflow(name, c, r, kind)
 		return mm, cmd, true
+	}
+	if found {
+		// Same filter as workRows' byName build (work.go): only non-worker
+		// entries are keyed by command/step name. Duplicated rather than
+		// shared because work.go is under concurrent modification by
+		// another swarm — see commandNamed's comment for the same call.
+		byName := map[string]*livework.Entry{}
+		for _, e := range livework.Default.List() {
+			if e.Worker == nil {
+				byName[e.Name] = e
+			}
+		}
+		if e := liveEntryFor(c, byName); e != nil {
+			mm, cmd := m.attachEntry(e)
+			return mm, cmd, true
+		}
 	}
 	return m, dispatchCommandCmd(m.manifest, m.width, m.height, name, rowEnv(r, kind)), true
 }
