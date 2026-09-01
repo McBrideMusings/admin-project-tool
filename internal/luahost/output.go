@@ -58,34 +58,23 @@ func (h *Host) Print(msg string) {
 }
 
 // SetLogContext names this run's log file by joining non-empty parts with
-// "-", deferred until first actual use — see pendingContext's doc comment.
-// retain <= 0 means "no pruning" (Python's retain=None). A no-op once a
-// context is already active (_log_context_taken in the Python original):
-// the innermost caller to arrive here first wins, and a later call from an
-// outer step-runner inherits it rather than re-pointing the log.
+// "-", deferred until first actual use — see logcontext.go's pendingContext
+// doc comment. retain is RetainUnset to fall back to the configured
+// default, or an explicit count (0 means "no pruning"). A no-op once a
+// context is already active: the LAST call to arrive here before first use
+// wins — a command names the log first (dispatch.go's runSteps), and an
+// inner call (a multi-target target, a framed action) refines that
+// still-pending name rather than being blocked by it.
 // Host function: set_log_context(...parts[, {retain=N}]).
 func (h *Host) SetLogContext(parts []string, retain int) {
-	if !h.logEnabled || h.logContextTaken() {
-		return
-	}
-	name := joinNonEmpty(parts, "-")
-	h.pendingContext = &pendingContext{stem: true, value: name, retain: retain}
+	h.logCtx.SetLogContext(parts, retain)
 }
 
 // SetLogContextPath names an explicit log path for this run (a `log_file`
 // override), deferred the same way as SetLogContext.
 // Host function: set_log_context_path(path[, {retain=N}]).
 func (h *Host) SetLogContextPath(path string, retain int) {
-	if !h.logEnabled || h.logContextTaken() {
-		return
-	}
-	h.pendingContext = &pendingContext{stem: false, value: path, retain: retain}
-}
-
-// logContextTaken mirrors admin_lib/core.py's _log_context_taken: a context
-// is already live and owns LogFile.
-func (h *Host) logContextTaken() bool {
-	return h.logContextActive && h.logFile != ""
+	h.logCtx.SetLogContextPath(path, retain)
 }
 
 // AppendLog appends text (ANSI-stripped, newline-terminated) to the active
@@ -97,18 +86,4 @@ func (h *Host) logContextTaken() bool {
 // duplicating the log-context materialization logic here.
 func (h *Host) AppendLog(text string) {
 	h.logWrite(text)
-}
-
-func joinNonEmpty(parts []string, sep string) string {
-	out := ""
-	for _, p := range parts {
-		if p == "" {
-			continue
-		}
-		if out != "" {
-			out += sep
-		}
-		out += p
-	}
-	return out
 }

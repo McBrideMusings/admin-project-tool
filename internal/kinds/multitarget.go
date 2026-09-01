@@ -273,7 +273,7 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 		if !ok {
 			return fmt.Errorf("action %q: unknown target %q", name, picked)
 		}
-		h.SetLogContext([]string{name, picked}, 0)
+		h.SetLogContext([]string{name, picked}, luahost.RetainUnset)
 
 		// Guards run BEFORE the frame goes up. A guard is a precondition that
 		// decides whether the target runs at all, so raising a DECSTBM scroll

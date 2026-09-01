@@ -4,7 +4,40 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 )
+
+// TestMain resets the process-wide log context (internal/luahost.Process())
+// to a package-level temp directory before any test in this package runs.
+//
+// Since admin-rc82 made runSteps name a log unconditionally
+// (dispatch.go's nameCommandLog), any test that dispatches a command through
+// RunCommand/RunCommandHosted materializes a file the instant a step writes
+// its first line. Most such tests already t.Chdir into their own
+// t.TempDir() before dispatching, which re-Configures the shared context
+// safely — but a test that reaches a kind factory's newHost() WITHOUT going
+// through runSteps first (calling RunAction directly, as several
+// multi-target/frame tests do) never calls Configure at all, and would
+// otherwise inherit whatever LogDir the process-wide singleton happened to
+// have from process start (this package's own source directory, since
+// luahost.Process() lazily roots itself at os.Getwd() on first use) — this
+// is what keeps that stray write out of the source tree.
+func TestMain(m *testing.M) {
+	luahost.ResetProcessLogContext(os.TempDir())
+	os.Exit(m.Run())
+}
+
+// resetProcessLogContext points the process-wide log context at t's own
+// temp dir for the duration of t — a per-test seam for any test that wants
+// tighter isolation than TestMain's package-wide default (e.g. asserting
+// exactly what landed under a specific LogDir).
+func resetProcessLogContext(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	luahost.ResetProcessLogContext(dir)
+	return dir
+}
 
 // writeFile writes content to dir/relPath, creating any needed parent
 // directories, and fails the test on error.
