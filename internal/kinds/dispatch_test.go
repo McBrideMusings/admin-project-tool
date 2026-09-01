@@ -166,6 +166,10 @@ func TestRunActionDefaultsToShellKind(t *testing.T) {
 func TestRunCommandNamesLogUnconditionally(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	// The process log context is shared across every test in this
+	// binary and Configure no longer clears it (admin-rc82.1) — reset it
+	// so this test's assertions see only its own run.
+	luahost.ResetProcessLogContext(dir)
 
 	m := &manifest.Manifest{
 		Custom: map[string]manifest.Command{
@@ -246,6 +250,10 @@ func TestRunCommandLogFalseWritesNoFile(t *testing.T) {
 func TestRunCommandLogFileUsesExplicitPath(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	// The process log context is shared across every test in this
+	// binary and Configure no longer clears it (admin-rc82.1) — reset it
+	// so this test's assertions see only its own run.
+	luahost.ResetProcessLogContext(dir)
 
 	m := &manifest.Manifest{
 		Custom: map[string]manifest.Command{
@@ -269,6 +277,10 @@ func TestRunCommandLogFileUsesExplicitPath(t *testing.T) {
 func TestRunCommandHonoursLoggingDirConfig(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	// The process log context is shared across every test in this
+	// binary and Configure no longer clears it (admin-rc82.1) — reset it
+	// so this test's assertions see only its own run.
+	luahost.ResetProcessLogContext(dir)
 
 	m := &manifest.Manifest{
 		Logging: map[string]any{"dir": "customlogs"},
@@ -476,5 +488,133 @@ func TestNilSurfaceReturnsUnchangedDispatchError(t *testing.T) {
 		`kinds.RunAction/RunCommand rather than invoking a factory's Runner directly`
 	if err.Error() != wantCmd {
 		t.Errorf("Command error = %q, want %q", err.Error(), wantCmd)
+	}
+}
+
+// makeHopKind is a test kind that reproduces the pre-kill hop three shipped
+// kinds take before starting — vitedev.go, docker.go and cleandev.go each
+// call surf.Command("kill", …). It writes a marker to the log through the
+// process context on either side of the hop, so a test can see whether both
+// markers landed in the same file.
+func makeHopKind(_ string, action manifest.Action, _ *manifest.Manifest, surf *Surface) (Runner, error) {
+	target, _ := action["hop_to"].(string)
+	return func(args []string) error {
+		luahost.Process().Write("before-hop\n")
+		if err := surf.Command(target, args); err != nil {
+			return err
+		}
+		luahost.Process().Write("after-hop\n")
+		return nil
+	}, nil
+}
+
+// newHopTestRegistry binds the hop double to "multi-target" rather than
+// inventing a kind name. catalog.go is the single source of truth for which
+// kinds exist and Register refuses an undeclared one — that guard is design
+// principle 5 and a test is not a reason to weaken it. "multi-target" is a
+// real declared kind that already receives a Surface, so the double slots in
+// where a factory legitimately lives.
+func newHopTestRegistry() *Registry {
+	r := NewRegistry()
+	r.MustRegister("shell", makeShell)
+	r.MustRegister("multi-target", makeHopKind)
+	return r
+}
+
+// TestNestedCommandWritesOneLogFile is admin-rc82.1: a command whose step
+// hops into a second command through surf.Command must still write exactly
+// one log file, named for the OUTER command, with everything after the hop
+// appended to it.
+//
+// MUTATION EVIDENCE: restore the `c.pending = nil; c.logFile = "";
+// c.active = false` lines to LogContext.Configure and this fails with two
+// files — outer.<ts>.log holding only "before-hop" and inner.<ts>.log
+// holding "after-hop".
+func TestNestedCommandWritesOneLogFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	luahost.ResetProcessLogContext(dir)
+
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"outer": {Steps: []string{"hopper"}},
+			"inner": {Steps: []string{"quiet"}},
+		},
+		Actions: map[string]manifest.Action{
+			"hopper": {"kind": "multi-target", "hop_to": "inner"},
+			"quiet":  {"kind": "shell", "run": "echo inner-ran"},
+		},
+	}
+
+	if err := RunCommand(m, newHopTestRegistry(), "outer", nil); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+
+	all, err := filepath.Glob(filepath.Join(dir, "tmp", "*.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("one invocation wrote %d log files, want exactly 1: %v", len(all), all)
+	}
+	if base := filepath.Base(all[0]); !strings.HasPrefix(base, "outer.") {
+		t.Fatalf("log file is %q, want it named for the outer command", base)
+	}
+
+	body, err := os.ReadFile(all[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(body)
+	for _, marker := range []string{"before-hop", "after-hop"} {
+		if !strings.Contains(got, marker) {
+			t.Fatalf("log is missing %q — output after the hop went elsewhere:\n%s", marker, got)
+		}
+	}
+	if strings.Index(got, "before-hop") > strings.Index(got, "after-hop") {
+		t.Fatalf("log is out of chronological order:\n%s", got)
+	}
+}
+
+// TestNestedLogFalseDoesNotSilenceOuter is the second half of admin-rc82.1:
+// Python's _make_step_runner is a bare `pass` for `log = false`, so a nested
+// command declaring it must not switch logging off for the outer command
+// still running.
+//
+// MUTATION EVIDENCE: restore `ctx.SetEnabled(false)` to nameCommandLog's
+// log-false branch and this fails — "after-hop" never reaches the file.
+func TestNestedLogFalseDoesNotSilenceOuter(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	luahost.ResetProcessLogContext(dir)
+
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"outer": {Steps: []string{"hopper"}},
+			"inner": {Steps: []string{"quiet"}, Log: false, HasLog: true},
+		},
+		Actions: map[string]manifest.Action{
+			"hopper": {"kind": "multi-target", "hop_to": "inner"},
+			"quiet":  {"kind": "shell", "run": "echo inner-ran"},
+		},
+	}
+
+	if err := RunCommand(m, newHopTestRegistry(), "outer", nil); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+
+	matches, err := filepath.Glob(filepath.Join(dir, "tmp", "outer.*.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 outer log, got %d: %v", len(matches), matches)
+	}
+	body, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "after-hop") {
+		t.Fatalf("nested `log = false` silenced the outer command:\n%s", string(body))
 	}
 }
