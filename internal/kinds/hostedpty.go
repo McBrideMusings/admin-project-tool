@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"strconv"
 	"sync/atomic"
+	"syscall"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/creack/pty"
@@ -42,6 +43,33 @@ const (
 	HostedColorProfileEnv   = "ADMIN_HOSTED_COLOR_PROFILE"
 	HostedDarkBackgroundEnv = "ADMIN_HOSTED_DARK_BG"
 )
+
+// killProcessGroup signals SIGKILL to the whole process group led by c's
+// child, not just the direct child — a dispatched Command routinely spawns
+// children of its own (a bundler, a container, a simulator), and signalling
+// only the direct child leaves those orphaned holding ports. StartHostedPTY
+// starts the child with Setsid, which makes it a process-group leader
+// (pgid == pid), so -pgid reaches the whole tree.
+//
+// It refuses to signal unless the resolved pgid is a real positive pid and
+// is not this orchestrator's own process group — getting either wrong here
+// would kill the dashboard itself instead of the hosted child.
+func killProcessGroup(c *exec.Cmd) error {
+	if c.Process == nil {
+		return fmt.Errorf("killProcessGroup: no process")
+	}
+	pgid, err := syscall.Getpgid(c.Process.Pid)
+	if err != nil {
+		return fmt.Errorf("killProcessGroup: resolving pgid: %w", err)
+	}
+	if pgid <= 0 {
+		return fmt.Errorf("killProcessGroup: refusing to signal non-positive pgid %d", pgid)
+	}
+	if pgid == syscall.Getpgrp() {
+		return fmt.Errorf("killProcessGroup: refusing to signal the orchestrator's own process group %d", pgid)
+	}
+	return syscall.Kill(-pgid, syscall.SIGKILL)
+}
 
 // hostedReentryArgs builds the argv for the pty child: the hidden
 // "__run-command" re-entry verb, the command name, and its args. Unlike
@@ -82,6 +110,15 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 		HostedColorProfileEnv+"="+strconv.Itoa(int(lipgloss.ColorProfile())),
 		HostedDarkBackgroundEnv+"="+strconv.FormatBool(lipgloss.HasDarkBackground()),
 	)
+	// Setsid (pty.StartWithSize sets this unconditionally on the SysProcAttr
+	// it allocates when nil, so pinning it here is behaviour-neutral) makes
+	// the child both a session leader and its own process-group leader
+	// (pgid == pid) — which is what lets Ops.Kill signal the whole group a
+	// dispatched Command spawns (a bundler, a container, a simulator) rather
+	// than only this direct child. Do NOT also set Setpgid: true here — Go's
+	// forkAndExecInChild runs setsid() before setpgid(0,0), and setpgid on a
+	// session leader returns EPERM, which would fail every hosted dispatch.
+	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	ptmx, err := pty.Start(c)
 	if err != nil {
 		return fmt.Errorf("command %q: starting hosted pty: %w", name, err)
@@ -104,8 +141,12 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args []string, rows, cols int, c *exec.Cmd, ptmx *os.File) {
 	// killed is set by Ops.Kill before it closes ptmx, so the wait goroutine
 	// below knows the resulting "signal: killed" c.Wait() error is expected
-	// and must not overwrite the StateExited Kill already set.
+	// and must not overwrite the StateExited Kill already set. exited is set
+	// by the wait goroutine the instant c.Wait() returns, so Kill can tell
+	// "this already finished on its own" without reading e.State — that field
+	// is unsynchronised (the pre-existing race admin-ddc8, not fixed here).
 	var killed atomic.Bool
+	var exited atomic.Bool
 
 	e := &livework.Entry{
 		ID:     entryID,
@@ -116,11 +157,25 @@ func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args
 	}
 	e.Ops = livework.Ops{
 		Kill: func() error {
-			killed.Store(true)
-			_ = ptmx.Close()
-			if c.Process != nil {
-				_ = c.Process.Kill()
+			// Idempotent: an entry that already exited (naturally or via a
+			// prior Kill) is a no-op returning nil, never an error, and must
+			// not re-run SetState over whatever the wait goroutine already
+			// recorded.
+			if exited.Load() || killed.Load() {
+				return nil
 			}
+			killed.Store(true)
+			if c.Process != nil {
+				if err := killProcessGroup(c); err != nil {
+					// Fall back to signalling only the direct child rather
+					// than guessing at a group id we couldn't resolve or
+					// verify safe.
+					_ = c.Process.Kill()
+				}
+			}
+			// Close the master after signalling, not before, so the child
+			// gets SIGKILL rather than racing a SIGHUP from the pty close.
+			_ = ptmx.Close()
 			livework.Default.SetState(e.ID, livework.StateExited, nil)
 			return nil
 		},
@@ -153,6 +208,7 @@ func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args
 
 		waitErr := c.Wait()
 		_ = ptmx.Close()
+		exited.Store(true)
 		if killed.Load() {
 			return
 		}
