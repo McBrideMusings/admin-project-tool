@@ -160,39 +160,24 @@ func (m Model) termRegion() (rows, cols int) {
 	return rows, cols
 }
 
-// terminalKey is handleKey's entire behavior while attached: q and esc both
-// detach (the process keeps running), k kills the attached entry, and
-// everything else is encoded to bytes and sent to the child — including the
-// arrow keys, which a prompting child needs and which this view has no
-// scrollback of its own to spend them on instead.
+// terminalKey is handleKey's entire behavior while attached: esc alone
+// detaches (the process keeps running), and everything else — q and k
+// included — is encoded to bytes and sent to the child. admin-3rgp.71
+// narrowed this from admin-3rgp.65's original q/esc/k contract precisely
+// because a child prompting for one of those letters (e.g. "Enter a number,
+// or q to cancel:") could never be answered while attached; the arrow keys
+// stay encoded through for the same reason — a prompting child needs them,
+// and this view has no scrollback of its own to spend them on instead. There
+// is no longer a way to kill the child from this view — esc back to the list
+// and kill it from there.
 func (m Model) terminalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeyEsc || msg.String() == "q" {
+	if msg.Type == tea.KeyEsc {
 		return m.detachTerminal(), nil
-	}
-	if msg.String() == "k" {
-		return m.killAttachedTerminal()
 	}
 	if b := encodeKey(msg); len(b) > 0 {
 		if e := m.termEntry(); e != nil && e.Ops.Write != nil {
 			_, _ = e.Ops.Write(b)
 		}
-	}
-	return m, nil
-}
-
-// killAttachedTerminal is k's binding while attached — the attached entry
-// rather than whatever row the cursor last sat on (killCurrentWork reads the
-// cursor, which the terminal view has no row list to point anywhere).
-func (m Model) killAttachedTerminal() (tea.Model, tea.Cmd) {
-	e := m.termEntry()
-	if e == nil || e.Ops.Kill == nil {
-		return m, nil
-	}
-	id := e.ID
-	if err := e.Ops.Kill(); err != nil {
-		m.setStatus("kill failed: "+err.Error(), cRed)
-	} else {
-		m.setStatus("killed "+id, cDim)
 	}
 	return m, nil
 }

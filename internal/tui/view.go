@@ -661,12 +661,13 @@ func (m Model) keymap() [][2]string {
 	tabKey := [2]string{"←→", "tab"}
 	if m.termAttached {
 		// No tabKey: the terminal view takes the whole tab, and ←→ has no
-		// tab bar underneath it to switch — matching
-		// docs/spikes/admin-tui-desktop/hosted.txt's footer exactly.
+		// tab bar underneath it to switch. admin-3rgp.71 narrowed detach to
+		// esc alone and dropped k — q and k now reach the child like every
+		// other key — so this footer no longer matches
+		// docs/spikes/admin-tui-desktop/hosted.txt's, which still shows the
+		// superseded "q/esc detach · ↑↓ scroll · k kill" contract.
 		return [][2]string{
-			{"q/esc", "detach"},
-			{"↑↓", "scroll"},
-			{"k", "kill"},
+			{"esc", "detach"},
 			{"typing", "goes to the process"},
 		}
 	}
