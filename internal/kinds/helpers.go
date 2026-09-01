@@ -9,26 +9,42 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// newHost returns a luahost.Host rooted at the process's current directory.
-// Every transient-kind factory shares this rather than hand-rolling its own
-// output/logging/shell-running code: the interpreter cd's to the project
-// root at boot (documented in this repo's Guards section — "the cwd is
-// inherited") exactly as the Python interpreter's own module-level
-// _project_root does, so os.Getwd() at Runner-invocation time IS the
-// project root. luahost.Host already carries Info/Ok/Warn/Err (coloured
-// output + log-file appends), RunCmd (stream a shell command, capture
-// output), and PickTarget/OnlyTarget (the target picker) — every one of
-// those was written once for the Lua host API and is exactly what a
-// non-Lua kind factory needs too, so this reuses it rather than
-// duplicating it a second time (the repo's "import it, don't rewrite it"
-// rule from the OutputPump history applies here just as much as it did
+// newHost returns a luahost.Host rooted at the process's current directory,
+// sharing the process-wide luahost.Process() log context rather than a
+// private one of its own. Every transient-kind factory calls this rather
+// than hand-rolling its own output/logging/shell-running code: the
+// interpreter cd's to the project root at boot (documented in this repo's
+// Guards section — "the cwd is inherited") exactly as the Python
+// interpreter's own module-level _project_root does, so os.Getwd() at
+// Runner-invocation time IS the project root. luahost.Host already carries
+// Info/Ok/Warn/Err (coloured output + log-file appends), RunCmd (stream a
+// shell command, capture output), and PickTarget/OnlyTarget (the target
+// picker) — every one of those was written once for the Lua host API and is
+// exactly what a non-Lua kind factory needs too, so this reuses it rather
+// than duplicating it a second time (the repo's "import it, don't rewrite
+// it" rule from the OutputPump history applies here just as much as it did
 // there).
+//
+// Sharing luahost.Process() — instead of each of a command's ~26 possible
+// kind-factory Hosts getting its own private log context — is admin-rc82's
+// whole point: a command's step-runner names the log once (dispatch.go's
+// runSteps) and every step's own Host, whatever kind it dispatches to, must
+// materialize into that same file rather than each opening (and announcing)
+// its own. The shared context's announce line is what the pinned footer and
+// the hosted-pty sniffer both read, so it must land on THIS Host's own
+// Stderr, not wherever the context's Stderr happened to be pointed by
+// whichever Host materialized it — every newHost caller wants the log path
+// announced on its own stream.
 func newHost() *luahost.Host {
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = "."
 	}
-	return luahost.New(cwd)
+	h := luahost.New(cwd)
+	ctx := luahost.Process()
+	ctx.SetStderr(h.Stderr)
+	h.UseLogContext(ctx)
+	return h
 }
 
 // actionString reads a string-valued key off a raw manifest.Action. ok is

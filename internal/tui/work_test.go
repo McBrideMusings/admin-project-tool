@@ -408,3 +408,75 @@ func TestRenderWorkRowShowsDescriptionWhenIdleAndLiveStateWhenRunning(t *testing
 		t.Errorf("running command row did not show its pane: %q", liveLine)
 	}
 }
+
+// TestCommandRowItemPrefersLiveEntryLogPath is admin-rc82's Work-tab
+// acceptance criterion: the detail pane shows the path from the running
+// command (livework.Entry.LogPath, set by hostedpty.go's announce sniffer)
+// rather than the best-effort glob, whenever a live entry carries one.
+func TestCommandRowItemPrefersLiveEntryLogPath(t *testing.T) {
+	dir := t.TempDir()
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"build": {Desc: "build", Steps: []string{"build"}},
+		},
+		Actions: map[string]manifest.Action{"build": {"kind": "shell"}},
+	}
+	mm := workTestModel(m)
+	mm.repoRoot = dir
+
+	// A glob-visible file exists too, so this test actually proves
+	// preference, not just "there's nothing else to find".
+	if err := os.MkdirAll(filepath.Join(dir, "tmp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(dir, "tmp", "build.2020-01-01_000000.log")
+	if err := os.WriteFile(stale, []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	live := &livework.Entry{ID: "build", Name: "build", State: livework.StateRunning, LogPath: "/live/current.log"}
+	byName := map[string]*livework.Entry{"build": live}
+
+	row := mm.commandRowItem(workCmdRow{name: "build", cmd: m.Custom["build"]}, byName)
+	if row.work.logPath != "/live/current.log" {
+		t.Errorf("logPath = %q, want the live entry's LogPath %q", row.work.logPath, "/live/current.log")
+	}
+}
+
+// TestCommandRowItemFallsBackToGlobWhenNoLiveEntry proves the reverse: a
+// command with no live entry falls back to commandLogPath's filesystem
+// glob, and a genuinely never-run command still reads as "none yet" (empty
+// logPath).
+func TestCommandRowItemFallsBackToGlobWhenNoLiveEntry(t *testing.T) {
+	dir := t.TempDir()
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"build":     {Desc: "build", Steps: []string{"build"}},
+			"never-run": {Desc: "never run", Steps: []string{"never-run"}},
+		},
+		Actions: map[string]manifest.Action{
+			"build":     {"kind": "shell"},
+			"never-run": {"kind": "shell"},
+		},
+	}
+	mm := workTestModel(m)
+	mm.repoRoot = dir
+
+	if err := os.MkdirAll(filepath.Join(dir, "tmp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	found := filepath.Join(dir, "tmp", "build.2026-01-01_000000.log")
+	if err := os.WriteFile(found, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	row := mm.commandRowItem(workCmdRow{name: "build", cmd: m.Custom["build"]}, nil)
+	if row.work.logPath != found {
+		t.Errorf("logPath = %q, want the glob match %q", row.work.logPath, found)
+	}
+
+	neverRow := mm.commandRowItem(workCmdRow{name: "never-run", cmd: m.Custom["never-run"]}, nil)
+	if neverRow.work.logPath != "" {
+		t.Errorf("logPath for a never-run command = %q, want empty (\"none yet\")", neverRow.work.logPath)
+	}
+}
