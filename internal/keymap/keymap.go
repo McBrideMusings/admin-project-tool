@@ -117,6 +117,7 @@ var builtins = map[RowKind][]Binding{
 		{Key: "", Display: "↑↓", Label: "move"},
 		{Key: "enter", Display: "↵", Label: "checkout"},
 		{Key: "i", Display: "i", Label: "issue"},
+		{Key: "w", Display: "w", Label: "workflow"},
 		{Key: "/", Display: "/", Label: "filter"},
 		{Key: "r", Display: "r", Label: "refresh row"},
 		{Key: "shift+r", Display: "⇧R", Label: "refresh all"},
