@@ -183,6 +183,8 @@ func (m Model) renderBodyHits(width, bodyHeight int) ([]string, []hitTarget) {
 	case m.wfResolving || m.wfOpen:
 		content = m.renderWorkflowConfirmBody(width, contentH)
 		hits = noneHits(len(content))
+	case m.termAttached:
+		content, hits = m.renderTerminalBody(width, contentH)
 	case m.active == tabWork:
 		content, hits = m.renderWorkBody(width, contentH)
 	case m.active == tabLocal:
@@ -635,6 +637,17 @@ func (m Model) keymap() [][2]string {
 	// `←→ tab` (switch top-level tab) is appended last on every view so it always
 	// sits at the end of the help line, after the view-specific keys.
 	tabKey := [2]string{"←→", "tab"}
+	if m.termAttached {
+		// No tabKey: the terminal view takes the whole tab, and ←→ has no
+		// tab bar underneath it to switch — matching
+		// docs/spikes/admin-tui-desktop/hosted.txt's footer exactly.
+		return [][2]string{
+			{"q/esc", "detach"},
+			{"↑↓", "scroll"},
+			{"k", "kill"},
+			{"typing", "goes to the process"},
+		}
+	}
 	if m.active == tabLocal {
 		switch m.pane {
 		case paneCommits:
