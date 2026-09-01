@@ -191,6 +191,19 @@ func TestCommandArgv(t *testing.T) {
 			},
 		},
 		{
+			name: "OpenIssuesByLabel",
+			out:  []string{"[]"},
+			call: func(ctx context.Context) { OpenIssuesByLabel(ctx, "o/r", "review-me") },
+			want: [][]string{{
+				"issue", "list",
+				"--repo", "o/r",
+				"--state", "open",
+				"--label", "review-me",
+				"--json", "number,title,labels",
+				"--limit", "500",
+			}},
+		},
+		{
 			name: "IssueByNumber",
 			call: func(ctx context.Context) { IssueByNumber(ctx, "o/r", 7) },
 			want: [][]string{{
@@ -236,17 +249,18 @@ func numbersUpTo(n int) []int {
 // command. TestArgvCoverage fails when gh.go grows one that isn't listed, so a
 // new command can't ship without its argv pinned above.
 var coveredCommands = map[string]bool{
-	"ResolveNumber":   true,
-	"PRHeadBranch":    true,
-	"LinkedIssue":     true,
-	"MergedPRs":       true,
-	"ClosedPRHeads":   true,
-	"OpenPRs":         true,
-	"PRMergeStates":   true,
-	"OpenPRByNumber":  true,
-	"AllOpenIssues":   true,
-	"IssuePRStatuses": true,
-	"IssueByNumber":   true,
+	"ResolveNumber":     true,
+	"PRHeadBranch":      true,
+	"LinkedIssue":       true,
+	"MergedPRs":         true,
+	"ClosedPRHeads":     true,
+	"OpenPRs":           true,
+	"PRMergeStates":     true,
+	"OpenPRByNumber":    true,
+	"AllOpenIssues":     true,
+	"IssuePRStatuses":   true,
+	"IssueByNumber":     true,
+	"OpenIssuesByLabel": true,
 }
 
 func TestArgvCoverage(t *testing.T) {
