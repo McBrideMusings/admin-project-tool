@@ -37,11 +37,14 @@ func wfGitT(t *testing.T, dir string, args ...string) {
 // machine's worktree root (WORKTREE_ROOT → a temp dir), and writes the given
 // config tables straight into the repo's own admin.toml so DispatchTargets'
 // config.Load(repoRoot) call sees exactly what the test wants — never the
-// developer's real repo config.
+// developer's real repo config. Isolation from the machine's installed
+// archetypes (~/.admin/archetypes/) comes from this package's TestMain,
+// which points archetype.InstalledArchetypesDir at an empty temp directory
+// for every test — config.Load no longer reads $HOME itself, so setting
+// HOME here would no longer buy that isolation.
 func setupWorkflowRepo(t *testing.T, configTOML string) (repoRoot string) {
 	t.Helper()
 	base := t.TempDir()
-	t.Setenv("HOME", filepath.Join(base, "home"))
 	t.Setenv("WORKTREE_ROOT", filepath.Join(base, "wt"))
 
 	repoRoot = filepath.Join(base, "repo")

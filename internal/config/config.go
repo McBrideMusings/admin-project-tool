@@ -136,11 +136,10 @@ func Load(repoRoot string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	home, err := os.UserHomeDir()
+	sp, err := archetype.SearchPathFor(repoRoot)
 	if err != nil {
 		return Config{}, err
 	}
-	sp := archetype.DefaultSearchPath(home, repoRoot)
 	merged, _, err := archetype.Resolve(project, sp)
 	if err != nil {
 		return Config{}, err
