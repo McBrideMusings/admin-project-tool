@@ -651,10 +651,11 @@ func builtinPairs(k keymap.RowKind) [][2]string {
 }
 
 // keymap pairs for the active tab/pane: the view's own keys, then the two
-// every view shares. `o config` opens admin.toml in $EDITOR and `←→ tab`
-// switches the top-level tab; both work from every tab, so both are appended
-// here rather than repeated in each branch, and both sit at the end of the
-// help line after the view-specific keys.
+// every view shares. `o config` opens admin.toml in the desktop's default
+// handler for its type and `←→ tab` switches the top-level tab; both work
+// from every tab, so both are appended here rather than repeated in each
+// branch, and both sit at the end of the help line after the view-specific
+// keys.
 func (m Model) keymap() [][2]string {
 	if m.termAttached {
 		// No shared keys: the terminal view takes the whole tab. Every

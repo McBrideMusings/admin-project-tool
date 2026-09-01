@@ -1,60 +1,76 @@
 // editmanifest.go implements the `o` hotkey: open the project's admin.toml in
-// $EDITOR from any tab. The Config tab is a read-only readout of resolved
-// values (configtab.go), so the one thing it cannot do is change one — this is
-// the write path, and it is deliberately not scoped to that tab: the manifest
-// is what every tab is rendering, so the key that edits it works wherever the
-// question comes up.
+// the desktop's default handler for its type, from any tab. The Config tab is
+// a read-only readout of resolved values (configtab.go), so the one thing it
+// cannot do is change one — this is the write path, and it is deliberately
+// not scoped to that tab: the manifest is what every tab is rendering, so the
+// key that edits it works wherever the question comes up.
 package tui
 
 import (
-	"os"
+	"errors"
 	"os/exec"
 	"path/filepath"
-	"strings"
+	"runtime"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// editorDoneMsg reports that the suspended $EDITOR process has returned.
-type editorDoneMsg struct{ err error }
-
-// openManifestCmd suspends the TUI and opens $EDITOR (falling back to vi) on
-// repoRoot's admin.toml. The file is not pre-created: every editor writes a
-// new file on save, and a repo that has no manifest should not gain an empty
-// one just because the key was pressed.
-func openManifestCmd(repoRoot string) tea.Cmd {
-	c := editorCommand(repoRoot)
-	if c == nil {
-		return func() tea.Msg { return editorDoneMsg{err: os.ErrNotExist} }
-	}
-	return tea.ExecProcess(c, func(err error) tea.Msg { return editorDoneMsg{err: err} })
+// openManifestMsg reports that the launch of the default handler for
+// admin.toml either started (err is nil) or failed (err names why); name is
+// the handler binary so the status line can say what did or didn't run.
+type openManifestMsg struct {
+	name string
+	err  error
 }
 
-// editorCommand builds the $EDITOR invocation openManifestCmd suspends into,
-// split out so the argv is testable without a running tea program. $EDITOR is
-// split on spaces so a multi-word setting ("code --wait") keeps its flags; nil
-// when there is no repo root to resolve the manifest against.
-func editorCommand(repoRoot string) *exec.Cmd {
+// openManifestCmd launches the platform's default handler for repoRoot's
+// admin.toml and returns immediately — nothing suspends the TUI, since the
+// desktop owns the window that opens. The file is not pre-created: whatever
+// app opens it writes a new file on save, and a repo that has no manifest
+// should not gain an empty one just because the key was pressed.
+func openManifestCmd(repoRoot string) tea.Cmd {
+	c := openCommand(repoRoot)
+	if c == nil {
+		return func() tea.Msg { return openManifestMsg{err: errors.New("no repo root")} }
+	}
+	name := c.Args[0]
+	return func() tea.Msg {
+		if err := c.Start(); err != nil {
+			return openManifestMsg{name: name, err: err}
+		}
+		go func() { _ = c.Wait() }()
+		return openManifestMsg{name: name}
+	}
+}
+
+// openCommand builds the default-handler invocation openManifestCmd starts,
+// split out so the argv is testable without actually launching anything: nil
+// when there is no repo root to resolve the manifest against. `open` on
+// darwin, `xdg-open` everywhere else — the same runtime.GOOS switch shape as
+// openURLCmd (helpers.go) and copyClipboardCmd (commands.go).
+func openCommand(repoRoot string) *exec.Cmd {
 	if repoRoot == "" {
 		return nil
 	}
-	editor := strings.Fields(os.Getenv("EDITOR"))
-	if len(editor) == 0 {
-		editor = []string{"vi"}
+	name := "xdg-open"
+	if runtime.GOOS == "darwin" {
+		name = "open"
 	}
-	c := exec.Command(editor[0], append(editor[1:], filepath.Join(repoRoot, manifest.Filename))...)
+	c := exec.Command(name, filepath.Join(repoRoot, manifest.Filename))
 	c.Dir = repoRoot
 	return c
 }
 
 // loadManifest re-reads and re-resolves repoRoot's admin.toml into the fields
-// every tab renders from. New() calls it for the first read and the editor
-// return calls it again, since only a re-read says whether an edit landed —
-// and an edit can change anything downstream of the manifest (the tracker, the
-// PRs tab's presence, the Work tab's commands, a row's [keys] bindings), so
-// all of it is rebuilt together rather than patched.
+// every tab renders from. New() calls it for the first read and the fsnotify
+// watcher's fsChangedMsg calls it again on every external save — nothing
+// suspends any more, so there is no editor-exit signal to reload on, and a
+// re-read is the only way to tell whether an edit landed. An edit can change
+// anything downstream of the manifest (the tracker, the PRs tab's presence,
+// the Work tab's commands, a row's [keys] bindings), so all of it is rebuilt
+// together rather than patched.
 //
 // Every field is assigned on every call, including the failure paths, so a
 // manifest that was valid and is now broken clears the values it used to
