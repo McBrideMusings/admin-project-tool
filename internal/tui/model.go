@@ -44,6 +44,19 @@ const (
 
 var tabNames = [numTabs]string{"Work", "Local", "PRs", "Issues", "Beads", "Config"}
 
+// focusZone is the one thing on screen that owns the keyboard's left/right and
+// up/down meaning: either the tab bar (nothing selected, arrows step tabs) or
+// the body (today's row/pane cursor). focusBody MUST stay the zero value —
+// every test that builds a `Model{...}` literal directly (rather than through
+// New) relies on the zero value behaving exactly as it did before this field
+// existed.
+type focusZone int
+
+const (
+	focusBody focusZone = iota
+	focusTabs
+)
+
 // rowKind drives how a row renders and what enter/o/i do on it.
 type rowKind int
 
@@ -133,6 +146,11 @@ type Model struct {
 
 	active tab
 	cursor [numTabs]int
+	// focus is which zone on screen owns the keyboard — the tab bar or the
+	// body. New() sets it to focusTabs after settling active, so a fresh
+	// session opens on the tab bar; every other Model literal built directly
+	// by a test gets focusBody for free from the zero value. See focusZone.
+	focus focusZone
 
 	// Repo (local) tab: lazygit-style panes with independent cursors.
 	pane       localPane
@@ -445,6 +463,10 @@ func New(ctx context.Context, repoRoot, nwo, current, def string) Model {
 		// manifest."
 		m.active = tabWork
 	}
+	// admin-70hb: a new session opens with focus on the tab bar, not on a
+	// body row — set after active settles so it doesn't interact with which
+	// tab that is.
+	m.focus = focusTabs
 	return m
 }
 
@@ -832,7 +854,14 @@ func (m *Model) fetchDone() {
 	}
 }
 
+// currentRow returns no row at all while focus is on the tab bar — the single
+// lever admin-70hb uses to make every row-scoped key (the Work tab's
+// left/right submenu interception included) an automatic no-op from there,
+// with no per-call-site focus check needed.
 func (m Model) currentRow() (rowItem, bool) {
+	if m.focus == focusTabs {
+		return rowItem{}, false
+	}
 	if m.active == tabLocal {
 		return m.localCurrent()
 	}
@@ -842,6 +871,64 @@ func (m Model) currentRow() (rowItem, bool) {
 		return rows[i], true
 	}
 	return rowItem{}, false
+}
+
+// bodyRowCount is the active tab's selectable row count — used to decide
+// whether the tab bar may hand focus into the body at all. tabConfig is a
+// read-only readout with nothing to land a cursor on, so it always reports 0.
+func (m Model) bodyRowCount() int {
+	switch m.active {
+	case tabLocal:
+		n := 0
+		for p := localPane(0); p < numPanes; p++ {
+			n += m.paneCount(p)
+		}
+		return n
+	case tabConfig:
+		return 0
+	default:
+		n := 0
+		for _, r := range m.visibleRows() {
+			if r.selectable() {
+				n++
+			}
+		}
+		return n
+	}
+}
+
+// atBodyTop reports whether the body's cursor is already on its first
+// selectable row — the gesture `up`/`k` uses to hand focus back to the tab
+// bar rather than moving (or wrapping) the cursor.
+func (m Model) atBodyTop() bool {
+	if m.active == tabLocal {
+		return m.paneCursor[m.pane] == 0
+	}
+	rows := m.visibleRows()
+	for i, r := range rows {
+		if r.selectable() {
+			return m.cursor[m.active] <= i
+		}
+	}
+	return true
+}
+
+// enterBody moves focus into the body — `j`/`down`/`enter` from the tab bar.
+// A tab with nothing selectable in it (an empty list, or tabConfig) declines
+// rather than stranding focus somewhere no row key can reach.
+func (m *Model) enterBody() {
+	if m.bodyRowCount() == 0 {
+		return
+	}
+	m.focus = focusBody
+	m.clampCursor()
+}
+
+// leaveBody hands focus back to the tab bar. It never touches m.cursor or
+// m.paneCursor — those persist untouched, which is the whole of what makes a
+// trip back into the body land on the same row again.
+func (m *Model) leaveBody() {
+	m.focus = focusTabs
 }
 
 // localCurrent synthesizes a rowItem for the focused pane's selected item so the
@@ -1277,6 +1364,7 @@ func (m Model) click(y, x int) (tea.Model, tea.Cmd) {
 		for _, t := range h.tabs {
 			if x >= t.x0 && x < t.x1 {
 				m.filter = ""
+				m.focus = focusTabs
 				m.switchTab(t.tab)
 				return m, nil
 			}
@@ -1302,15 +1390,20 @@ func (m Model) clickRow(pane localPane, row int) (tea.Model, tea.Cmd) {
 	if row < 0 {
 		return m, nil
 	}
+	// A click arriving while focus was on the tab bar is always a first
+	// click — even onto the row the (stale, tab-bar-owned) cursor already
+	// sat on — since nothing was current there for it to be a repeat of.
+	fromTabs := m.focus == focusTabs
+	m.focus = focusBody
 	if m.active == tabLocal {
-		if m.pane == pane && m.paneCursor[pane] == row {
+		if !fromTabs && m.pane == pane && m.paneCursor[pane] == row {
 			return m.activate()
 		}
 		m.pane = pane
 		m.paneCursor[pane] = row
 		return m, nil
 	}
-	if m.cursor[m.active] == row {
+	if !fromTabs && m.cursor[m.active] == row {
 		return m.activate()
 	}
 	m.cursor[m.active] = row
@@ -1576,15 +1669,36 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		n, _ := strconv.Atoi(msg.String())
 		m.switchTabAt(n - 1)
 	case "j", "down":
+		if m.focus == focusTabs {
+			m.enterBody()
+			return m, nil
+		}
 		m.moveCursor(1)
 	case "up":
+		if m.focus == focusTabs {
+			return m, nil
+		}
+		if m.atBodyTop() {
+			m.leaveBody()
+			return m, nil
+		}
 		m.moveCursor(-1)
 	case "k":
 		// The Work tab reuses k for "kill" (a running row's own action) rather
 		// than "move up" — the prototype's own footer ("↑↓ move · k kill"), and
 		// the reason arrow-only movement is what the Work tab's keymap advertises.
+		// It stays "kill" in every focus state on that tab — only the arrow `up`
+		// returns focus to the tab bar there, and killCurrentWork is already a
+		// no-op with no current row.
 		if m.active == tabWork {
 			return m.killCurrentWork()
+		}
+		if m.focus == focusTabs {
+			return m, nil
+		}
+		if m.atBodyTop() {
+			m.leaveBody()
+			return m, nil
 		}
 		m.moveCursor(-1)
 	case "a":
@@ -1694,6 +1808,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.startWorkflowPicker()
 		}
 	case "enter":
+		if m.focus == focusTabs {
+			m.enterBody()
+			return m, nil
+		}
 		return m.activate()
 	case "alt+enter", "W":
 		// W is a plain-letter fallback for terminals that swallow alt+enter

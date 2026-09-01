@@ -23,6 +23,9 @@ import (
 func seededModel() Model {
 	m := New(context.Background(), "/repo", "owner/repo", "feature", "main")
 	m.herdr = false // pin the non-herdr (quit-and-cd) path; New reads ambient HERDR_ENV
+	// admin-70hb: New() now opens on the tab bar; this fixture's whole point is
+	// asserting the body's own render and key handling, so pin focus there.
+	m.focus = focusBody
 	m.width, m.height = 120, 40
 	// The default fixture is a GitHub-tracked, PR-using repo — the two keys
 	// admin-3rgp.22 reads have to be declared explicitly now that the tab bar
