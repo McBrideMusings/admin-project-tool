@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
+	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
@@ -167,6 +168,10 @@ func TestHostedPTYLogFileMatchesAPlainCLIRun(t *testing.T) {
 
 	dir := t.TempDir()
 	t.Chdir(dir)
+	// The process log context is shared across every test in this
+	// binary and Configure no longer clears it (admin-rc82.1) — reset it
+	// so this test's assertions see only its own run.
+	luahost.ResetProcessLogContext(dir)
 
 	m := hostedParityManifest()
 
