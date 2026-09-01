@@ -118,8 +118,10 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 		e := wd.worker
 		name := padEnd(truncR(e.ID, nameW), nameW)
 		state := renderLiveState(e.State)
-		act := truncR(e.Activity, maxi(rest-stateW-1, 4))
-		return marker + name + state + " " + faintStyle.Render(act)
+		whereText, whereStyled := whereSeg(e)
+		actW := maxi(rest-stateW-whereWidth(whereText), 4)
+		act := padEnd(truncR(e.Activity, actW), actW)
+		return marker + name + state + faintStyle.Render(act) + whereStyled
 	}
 
 	// A command with targets opens a submenu instead of running: it wears a
@@ -137,13 +139,10 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 	}
 	if wd.live != nil {
 		state := renderLiveState(wd.live.State)
-		pane := ""
-		if wd.live.PaneID != "" {
-			pane = " " + wd.live.PaneID
-		}
-		actW := maxi(rest-stateW-1-vlen(pane), 4)
+		whereText, whereStyled := whereSeg(wd.live)
+		actW := maxi(rest-stateW-whereWidth(whereText), 4)
 		act := padEnd(truncR(wd.live.Activity, actW), actW)
-		return marker + name + state + " " + faintStyle.Render(act) + faintStyle.Render(pane)
+		return marker + name + state + faintStyle.Render(act) + whereStyled
 	}
 	kind := padEnd(truncR(wd.cmdKind, stateW), stateW)
 	desc := truncR(wd.cmdDesc, maxi(rest-stateW, 4))
@@ -187,9 +186,15 @@ func (m Model) renderWorkDetail(r rowItem, w int) []string {
 }
 
 func workerDetail(e *livework.Entry, w int) []string {
+	locale := "outlives the dashboard"
+	if e.PTYID != "" {
+		locale = "dies when the dashboard quits"
+	} else if e.PaneID != "" {
+		locale = e.PaneID + "  ·  outlives the dashboard"
+	}
 	out := []string{
 		lipgloss.NewStyle().Bold(true).Render(e.ID),
-		renderLiveState(e.State) + faintStyle.Render("  ·  "+e.PaneID),
+		renderLiveState(e.State) + faintStyle.Render("  ·  "+truncR(locale, maxi(w-2, 4))),
 		"",
 		faintStyle.Render("now"),
 		"  " + truncR(e.Activity, maxi(w-2, 4)),
@@ -265,6 +270,34 @@ func renderLiveState(s livework.State) string {
 		c = cRed
 	}
 	return lipgloss.NewStyle().Foreground(c).Render(padEnd(string(s), 9))
+}
+
+// whereSeg returns the right-hand where-value for a live entry: the literal
+// "hosted" (cyan) for a pty-addressed entry, the pane id (magenta) for a
+// pane-addressed one. Decided from PTYID, never from a possibly-empty
+// PaneID — that inference is the bug this replaces. text is the plain,
+// unstyled form (for width math and tests); styled carries the color and,
+// when non-empty, a leading space to separate it from the activity.
+func whereSeg(e *livework.Entry) (text string, styled string) {
+	switch {
+	case e.PTYID != "":
+		text = "hosted"
+		styled = " " + lipgloss.NewStyle().Foreground(cCyan).Render(text)
+	case e.PaneID != "":
+		text = e.PaneID
+		styled = " " + lipgloss.NewStyle().Foreground(cMag).Render(text)
+	}
+	return text, styled
+}
+
+// whereWidth is the plain-text display width whereSeg's styled form takes
+// up once rendered: the value itself plus a leading separator space, or 0
+// when there is no where-value to show.
+func whereWidth(text string) int {
+	if text == "" {
+		return 0
+	}
+	return vlen(text) + 1
 }
 
 // elapsedStr renders a duration as a compact "<1m / 12m / 1h5m" — the
