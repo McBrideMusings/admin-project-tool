@@ -14,14 +14,17 @@
 // internal/kinds imports internal/manifest, so a validate package that
 // itself imported internal/kinds (for the kind catalog) could not also be
 // imported by internal/manifest without a cycle. This package therefore
-// stays dependency-free: every check here takes plain data (a []string of
-// leftover keys, a raw `any` footer value) rather than a *manifest.Manifest
-// or *manifest.Command, and the packages that already own kind/urls
-// knowledge (internal/frame, internal/guards) wrap their own findings as
-// *Error via Wrap instead of importing this package's checks. What every
-// validation failure shares, whichever package raised it, is the *Error
-// type — so cmd/check.go (or any future caller) can tell a validation
-// failure apart from an unrelated error with errors.As(err, &validationErr).
+// stays dependency-free apart from one ADR-0018-decided exception —
+// internal/keymap, a leaf package that imports nothing internal itself, so
+// no cycle risk exists in importing it here — every check here otherwise
+// takes plain data (a []string of leftover keys, a raw `any` footer value)
+// rather than a *manifest.Manifest or *manifest.Command, and the packages
+// that already own kind/urls knowledge (internal/frame, internal/guards)
+// wrap their own findings as *Error via Wrap instead of importing this
+// package's checks. What every validation failure shares, whichever
+// package raised it, is the *Error type — so cmd/check.go (or any future
+// caller) can tell a validation failure apart from an unrelated error with
+// errors.As(err, &validationErr).
 package validate
 
 import (

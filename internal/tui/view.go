@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
+	"github.com/McBrideMusings/admin-project-tool/internal/keymap"
 )
 
 // hitKind identifies what a rendered line — or, for a split line, one side of
@@ -630,7 +631,24 @@ func (m Model) nameCandLines(width int) []string {
 	return lines
 }
 
-// keymap pairs for the active tab/pane.
+// builtinPairs turns a row kind's internal/keymap.Builtins list into the
+// [][2]string{Display, Label} shape keymap() has always returned — kept
+// separate from keymap() itself so the six row-kind branches below stay a
+// one-line call each.
+func builtinPairs(k keymap.RowKind) [][2]string {
+	bindings := keymap.Builtins(k)
+	pairs := make([][2]string, len(bindings))
+	for i, b := range bindings {
+		pairs[i] = [2]string{b.Display, b.Label}
+	}
+	return pairs
+}
+
+// keymap pairs for the active tab/pane. The six row-kind branches (bead,
+// issue, PR, branch, commit, stash) read their built-in pairs from
+// internal/keymap — the single table admin-l6kb.1's shadow-detection check
+// also reads — rather than carrying their own literals; tabWork and
+// tabConfig are not row kinds (ADR-0018) and keep their pairs here.
 func (m Model) keymap() [][2]string {
 	// `←→ tab` (switch top-level tab) is appended last on every view so it always
 	// sits at the end of the help line, after the view-specific keys.
@@ -638,23 +656,23 @@ func (m Model) keymap() [][2]string {
 	if m.active == tabLocal {
 		switch m.pane {
 		case paneCommits:
-			return [][2]string{{"↑↓", "move"}, {"↵", "copy sha"}, {"o", "open ↗"}, {"⇥", "pane"}, {"/", "filter"}, {"r", "refresh"}, tabKey}
+			return append(builtinPairs(keymap.Commit), tabKey)
 		case paneStashes:
-			return [][2]string{{"↑↓", "move"}, {"↵", "details"}, {"⇥", "pane"}, {"/", "filter"}, {"r", "refresh"}, tabKey}
+			return append(builtinPairs(keymap.Stash), tabKey)
 		default:
-			return [][2]string{{"↑↓", "move"}, {"↵", "checkout"}, {"⌥↵/W", "worktree"}, {"w", "new"}, {"x", "delete"}, {"p", "pull"}, {"⇥", "pane"}, {"/", "filter"}, {"r", "refresh"}, tabKey}
+			return append(builtinPairs(keymap.Branch), tabKey)
 		}
 	}
 	switch m.active {
 	case tabWork:
 		return [][2]string{{"↑↓", "move"}, {"↵", "open, run or attach"}, {"→←", "submenu"}, {"a", "attach"}, {"k", "kill"}, {"/", "filter"}, {"q", "quit"}, tabKey}
 	case tabPRs:
-		return [][2]string{{"↑↓", "move"}, {"↵", "checkout"}, {"o", "open"}, {"i", "issue"}, {"/", "filter"}, {"r", "refresh row"}, {"⇧R", "refresh all"}, {"q", "quit"}, tabKey}
+		return append(builtinPairs(keymap.PR), tabKey)
 	case tabIssues:
-		return [][2]string{{"↑↓", "move"}, {"↵", "start work"}, {"o", "open"}, {"s", "sort"}, {"w", "workflow"}, {"/", "filter"}, {"r", "refresh row"}, {"⇧R", "refresh all"}, {"q", "quit"}, tabKey}
+		return append(builtinPairs(keymap.Issue), tabKey)
 	case tabBeads:
 		// No `o`: a bead lives in a local database and has no page to open.
-		return [][2]string{{"↑↓", "move"}, {"↵", "start work"}, {"d", "detail"}, {"g", "tree"}, {"s", "sort"}, {"w", "workflow"}, {"/", "filter"}, {"r", "refresh"}, {"q", "quit"}, tabKey}
+		return append(builtinPairs(keymap.Bead), tabKey)
 	case tabConfig:
 		// Read-only readout of resolved values (admin-3rgp.21) — nothing to
 		// move a cursor over or edit.

@@ -117,6 +117,13 @@ type Manifest struct {
 	Logs   map[string]LogSource
 	Guards map[string]Guard
 
+	// Keys carries the raw top-level [keys.<row-kind>] table (ADR-0018) —
+	// each row kind maps a key name to a command name. Kept raw (like the
+	// archetype-specific tables above) because internal/manifest owns only
+	// parsing; internal/validate.RowKeys interprets it against
+	// internal/keymap's row-kind vocabulary.
+	Keys map[string]any
+
 	InlineFile string
 
 	// The ~22 archetype-specific config tables. Each stays a raw map exactly
@@ -169,6 +176,7 @@ var knownTopLevelKeys = map[string]bool{
 	"vite_dev": true, "docker_dev": true, "docker_run": true, "docker_build": true, "deploy": true,
 	"install_template": true, "fixtures": true, "log_bridge": true, "guards": true, "docs": true,
 	"go": true, "go_dist": true, "raylib": true, "worktree": true, "launchd": true, "electron": true,
+	"keys": true,
 	// Obsolete under interpreter mode (ADR-0006); tolerated silently.
 	"generator_commit": true,
 }
@@ -373,6 +381,7 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 		{"logging", &m.Logging},
 		{"log_bridge", &m.LogBridge},
 		{"worktree", &m.Worktree},
+		{"keys", &m.Keys},
 	} {
 		v, err := table(data, t.key, source)
 		if err != nil {

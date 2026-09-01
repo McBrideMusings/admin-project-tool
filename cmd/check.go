@@ -78,6 +78,13 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	if err := checkQueryWorkflowTracker(m); err != nil {
 		problems = append(problems, validate.Wrap(err))
 	}
+	shadows, err := checkRowKeys(m)
+	if err != nil {
+		problems = append(problems, validate.Wrap(err))
+	}
+	for _, s := range shadows {
+		fmt.Fprintln(os.Stderr, s)
+	}
 
 	// ADR-0009's own anti-patterns are reported, never failed (admin-3rgp.9):
 	// the project's *own* admin.toml is checked against the un-merged
@@ -384,6 +391,36 @@ func checkCommandRouting(m *manifest.Manifest) error {
 		return nil
 	}
 	return validate.Errorf("%s", strings.Join(problems, "\n"))
+}
+
+// checkRowKeys is admin-l6kb.1: validates the resolved manifest's top-level
+// [keys.<row-kind>] table (ADR-0018) via validate.RowKeys, against the set
+// of command names the resolved manifest actually declares — Overrides plus
+// Custom, so an archetype-provided command a project never overrides still
+// counts as a valid binding target. Returns the shadow lines to print
+// (never failing) alongside the validation error, if any.
+func checkRowKeys(m *manifest.Manifest) ([]string, error) {
+	commands := commandNames(m)
+	_, shadows, err := validate.RowKeys(m.Keys, commands)
+	if err != nil {
+		return shadows, err
+	}
+	return shadows, nil
+}
+
+// commandNames builds the resolved manifest's full command-name set —
+// Overrides (project + archetype [commands.X]) plus Custom
+// ([commands.custom.X]) — the set a [keys.<kind>].<key> binding's value
+// must name to be valid.
+func commandNames(m *manifest.Manifest) map[string]bool {
+	out := make(map[string]bool, len(m.Overrides)+len(m.Custom))
+	for name := range m.Overrides {
+		out[name] = true
+	}
+	for name := range m.Custom {
+		out[name] = true
+	}
+	return out
 }
 
 func sortedCommandNames(cmds map[string]manifest.Command) []string {
