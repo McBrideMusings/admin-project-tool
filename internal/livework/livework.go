@@ -114,6 +114,14 @@ type Entry struct {
 	// PaneID/PTYID is set — never both, never neither.
 	PTYID string
 
+	// Output is the drained bytes read off PTYID's master fd — nil for a
+	// pane-addressed entry, which has no master this process reads.
+	// StartHostedPTY is the sole producer: it creates the Ring, copies the
+	// pty into it for as long as the child runs, and leaves it here for a
+	// later reader (admin-3rgp.65's terminal view) rather than opening a
+	// second reader on the same master.
+	Output *Ring
+
 	StartedAt time.Time
 	State     State
 
