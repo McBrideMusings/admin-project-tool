@@ -234,3 +234,40 @@ func TestKeybarKeepsQuitAndTabWithBindings(t *testing.T) {
 		}
 	}
 }
+
+// TestKeybarKeepsLastTwoOnPanesWithoutQuit is the half of the drop rule that
+// naming `q quit` cannot cover. Branch, Commit and Stash carry no quit pair at
+// all (internal/keymap/keymap.go), so a protected set built only from index 0,
+// the last index and a literal {"q","quit"} match leaves their second-to-last
+// pair — `r refresh`, directly ahead of `←→ tab` — free to be dropped, which
+// the old drop-`pairs[len-3]` loop had always kept. Every bindable row kind has
+// to keep its last two pairs at every width, quit pair or not.
+func TestKeybarKeepsLastTwoOnPanesWithoutQuit(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pane localPane
+	}{
+		{"branches", paneBranches},
+		{"commits", paneCommits},
+		{"stashes", paneStashes},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := seededModel()
+			m.active, m.pane = tabLocal, tc.pane
+			full := m.keymap()
+			if len(full) < 2 {
+				t.Fatalf("%s: keymap has %d pairs, want at least 2", tc.name, len(full))
+			}
+			wantLabel := full[len(full)-2][1]
+			for _, width := range []int{20, 30, 40, 60, 80, 100, 200} {
+				bar := stripANSI(m.keybar(width))
+				if !strings.Contains(bar, wantLabel) {
+					t.Errorf("width %d: keybar dropped the second-to-last pair %q: %q", width, wantLabel, bar)
+				}
+				if !strings.Contains(bar, "tab") {
+					t.Errorf("width %d: keybar dropped the tab hint: %q", width, bar)
+				}
+			}
+		})
+	}
+}
