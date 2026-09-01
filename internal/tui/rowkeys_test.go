@@ -430,3 +430,55 @@ func hasEnvKey(env []string, key string) bool {
 	}
 	return false
 }
+
+// TestRowKeyDispatchPlainCommandIgnoresTheSelection pins the boundary of
+// ADR-0018's "acts on the selection" consequence, which reads as a general
+// rule about "a bound key" and is not one. Only a binding resolving to a
+// single-step kind="workflow" action with over="selection" takes a list of
+// targets; every other shape dispatches once against the cursor row, however
+// many rows are selected, because ADMIN_ROW_KIND/ADMIN_ROW_ID/ADMIN_ROW_URL
+// carry one row and have no plural form.
+//
+// Without this, nothing distinguishes "deliberately cursor-only" from "the
+// selection branch was never wired for plain commands" — the review of the
+// epic diff read the ADR literally and could not tell which it was.
+func TestRowKeyDispatchPlainCommandIgnoresTheSelection(t *testing.T) {
+	gotEnv := stubStartHostedRun(t)
+
+	m := workTestModel(rowKeyWorkflowManifest("claude"))
+	m.active = tabBeads
+	m.beads = []bd.Bead{
+		{ID: "proj-1", Title: "one", Status: "open"},
+		{ID: "proj-2", Title: "two", Status: "open"},
+		{ID: "proj-3", Title: "three", Status: "open"},
+	}
+	m.trackerSelected = map[string]bool{"proj-1": true, "proj-2": true, "proj-3": true}
+	m.rowKeys = map[keymap.RowKind]map[string]string{
+		keymap.Bead: {"b": "build"},
+	}
+	trackerCursorTo(t, &m, "proj-2")
+
+	mm, cmd, ok := m.rowKeyDispatch("b")
+	if !ok {
+		t.Fatal("rowKeyDispatch(\"b\") on a plain-command-bound bead row = miss, want hit")
+	}
+	rm := mm.(Model)
+	if rm.wfOpen {
+		t.Error("wfOpen = true: a plain command must not raise the selection confirm overlay")
+	}
+	if cmd == nil {
+		t.Fatal("rowKeyDispatch returned ok=true with a nil Cmd")
+	}
+	msg := cmd()
+	if _, ok := msg.(workDispatchStartedMsg); !ok {
+		t.Fatalf("dispatch Cmd produced a %T, want workDispatchStartedMsg", msg)
+	}
+	if !containsEnv(*gotEnv, "ADMIN_ROW_ID=proj-2") {
+		t.Errorf("env %v missing ADMIN_ROW_ID=proj-2 — a plain command acts on the CURSOR row, not the selection", *gotEnv)
+	}
+	for _, other := range []string{"proj-1", "proj-3"} {
+		if containsEnv(*gotEnv, "ADMIN_ROW_ID="+other) {
+			t.Errorf("env %v carries ADMIN_ROW_ID=%s — only the cursor row may reach a plain command", *gotEnv, other)
+		}
+	}
+}
