@@ -81,15 +81,10 @@ func HasCommand(m *manifest.Manifest, name string) bool {
 // archetype-provided, de-duplicated and sorted. It exists so the CLI can name
 // what a project actually offers when a typed word matches nothing: an
 // unknown command is a dead end, and the list of live ones is the whole
-// remedy.
+// remedy. The set itself is m.CommandNames()'s — derived, not walked a
+// second time — so the two cannot drift out of agreement.
 func CommandNames(m *manifest.Manifest) []string {
-	seen := map[string]bool{}
-	for name := range m.Custom {
-		seen[name] = true
-	}
-	for name := range m.Overrides {
-		seen[name] = true
-	}
+	seen := m.CommandNames()
 	names := make([]string, 0, len(seen))
 	for name := range seen {
 		names = append(names, name)
