@@ -25,6 +25,11 @@ func stripANSI(s string) string { return ansiRe.ReplaceAllString(s, "") }
 // the rendered output can be checked against the prototype's layout.
 func protoModel() Model {
 	m := New(context.Background(), "/repo", "Forevr-Games/social-poker", "main", "main")
+	// admin-70hb: New() now opens on the tab bar; this fixture asserts the
+	// body's own layout (panels, list rows, the footer's row-scoped keys), so
+	// pin focus there. TestFullPaletteRendered's tab-bar-pill assertion is the
+	// one place that needs the opposite state, and it sets focus back itself.
+	m.focus = focusBody
 	m.width, m.height = 96, 30
 	br := func(name string, a, b int, up, wt bool, age string, cur bool) git.BranchInfo {
 		bi := git.BranchInfo{Name: name, Ahead: a, Behind: b, HasRemote: up, LastCommit: age, Current: cur}
@@ -153,8 +158,11 @@ func TestFullPaletteRendered(t *testing.T) {
 		t.Errorf("expected a multi-color palette (≥6 distinct ANSI colors), got %d: %v", len(seen), seen)
 	}
 	// The active tab pill is the only background-painted element on the tab-bar
-	// line; assert it carries a themed background (40–47 / 100–107).
+	// line; assert it carries a themed background (40–47 / 100–107) — which
+	// only holds while focus is on the tab bar (admin-70hb): in the body, the
+	// pill renders outlined instead so the cursor row is the one solid thing.
 	m.active = tabLocal
+	m.focus = focusTabs
 	tabLine := strings.Split(m.View(), "\n")[1]
 	hasBG := false
 	for _, mt := range sgr.FindAllStringSubmatch(tabLine, -1) {
