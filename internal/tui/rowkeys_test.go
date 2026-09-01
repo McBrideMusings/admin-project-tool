@@ -12,6 +12,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/bd"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/keymap"
+	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
@@ -161,6 +162,192 @@ func TestRowIDStashCutsRefFromTheCombinedLabel(t *testing.T) {
 	got := rowID(rowItem{kind: rowStash, label: "stash@{0}  work in progress"}, keymap.Stash)
 	if got != "stash@{0}" {
 		t.Errorf("rowID(stash) = %q, want \"stash@{0}\"", got)
+	}
+}
+
+// rowKeyWorkflowManifest is the fixture the four rowKeyDispatch/workflow
+// tests share: [keys.bead].enter bound to "review-branch", a single-step
+// kind="workflow" over="selection" command — with agent set explicitly so
+// the immediate-dispatch path never depends on this machine's own
+// ~/.config/repo/config.toml — plus a plain shell command ("build") to
+// prove a non-workflow binding is unaffected.
+func rowKeyWorkflowManifest(agent string) *manifest.Manifest {
+	action := manifest.Action{"kind": "workflow", "over": "selection"}
+	if agent != "" {
+		action["agent"] = agent
+	}
+	return &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"review-branch": {Desc: "review a picked bead", Steps: []string{"review"}},
+			"build":         {Desc: "compile", Steps: []string{"build"}},
+		},
+		Actions: map[string]manifest.Action{
+			"review": action,
+			"build":  {"kind": "shell"},
+		},
+	}
+}
+
+// TestRowKeyDispatchWorkflowImmediateOnCursorRow proves the empty-selection
+// path: enter on a bead bound to a selection-sourced workflow, with nothing
+// selected, dispatches immediately over just the row under the cursor — no
+// overlay, one target, through the same dispatchWorkflowCmd the confirm
+// overlay itself uses — and the status line names the command and the bead
+// id.
+func TestRowKeyDispatchWorkflowImmediateOnCursorRow(t *testing.T) {
+	gotTargets := stubDispatchWorkflow(t, nil)
+
+	m := workTestModel(rowKeyWorkflowManifest("claude"))
+	m.active = tabBeads
+	m.beads = []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}}
+	m.trackerSelected = map[string]bool{}
+	m.rowKeys = map[keymap.RowKind]map[string]string{
+		keymap.Bead: {"enter": "review-branch"},
+	}
+	trackerCursorTo(t, &m, "proj-1")
+
+	mm, cmd, ok := m.rowKeyDispatch("enter")
+	if !ok {
+		t.Fatal("rowKeyDispatch(\"enter\") on a workflow-bound bead row = miss, want hit")
+	}
+	rm := mm.(Model)
+	if rm.wfOpen {
+		t.Errorf("wfOpen = true on the immediate (empty-selection) path, want no overlay")
+	}
+	if !strings.Contains(rm.status, "review-branch") || !strings.Contains(rm.status, "proj-1") {
+		t.Errorf("status = %q, want it to name the command and the bead id", rm.status)
+	}
+	if cmd == nil {
+		t.Fatal("rowKeyDispatch returned ok=true with a nil Cmd")
+	}
+	msg := cmd()
+	done, ok := msg.(workflowDispatchDoneMsg)
+	if !ok {
+		t.Fatalf("dispatch Cmd produced a %T, want workflowDispatchDoneMsg", msg)
+	}
+	if done.name != "review-branch" {
+		t.Errorf("dispatched command = %q, want review-branch", done.name)
+	}
+	if len(*gotTargets) != 1 || (*gotTargets)[0].Name != "proj-1" {
+		t.Fatalf("dispatched targets = %v, want exactly [proj-1]", *gotTargets)
+	}
+}
+
+// TestRowKeyDispatchWorkflowSelectionOpensConfirmOverlay proves the
+// nonempty-selection path: the same binding, with three beads selected,
+// opens the same confirm overlay the space-then-w picker uses — naming all
+// three targets and dispatching nothing until the overlay itself confirms
+// (workflowConfirmKey, unchanged by this ticket).
+func TestRowKeyDispatchWorkflowSelectionOpensConfirmOverlay(t *testing.T) {
+	stubDispatchWorkflow(t, nil)
+
+	m := workTestModel(rowKeyWorkflowManifest("claude"))
+	m.active = tabBeads
+	m.beads = []bd.Bead{
+		{ID: "proj-1", Title: "one", Status: "open"},
+		{ID: "proj-2", Title: "two", Status: "open"},
+		{ID: "proj-3", Title: "three", Status: "open"},
+	}
+	m.trackerSelected = map[string]bool{"proj-1": true, "proj-2": true, "proj-3": true}
+	m.rowKeys = map[keymap.RowKind]map[string]string{
+		keymap.Bead: {"enter": "review-branch"},
+	}
+	trackerCursorTo(t, &m, "proj-1")
+
+	mm, cmd, ok := m.rowKeyDispatch("enter")
+	if !ok {
+		t.Fatal("rowKeyDispatch(\"enter\") on a workflow-bound bead row = miss, want hit")
+	}
+	rm := mm.(Model)
+	if !rm.wfOpen {
+		t.Fatalf("wfOpen = false, want the confirm overlay open for a nonempty selection")
+	}
+	if !rm.wfFromSelection {
+		t.Errorf("wfFromSelection = false, want true for a selection-originated confirm")
+	}
+	if len(rm.wfTargets) != 3 {
+		t.Fatalf("wfTargets = %v, want all 3 selected beads", rm.wfTargets)
+	}
+	if cmd != nil {
+		t.Errorf("rowKeyDispatch returned a non-nil cmd opening the confirm overlay, want nil (nothing dispatched yet)")
+	}
+}
+
+// TestRowKeyDispatchWorkflowNoAgentReportsRedStatus proves the immediate
+// path's misconfiguration handling: with no agent configured on the action
+// (and no [workflow].agent to fall back on), the immediate (cursor-row)
+// path reports a red status line and dispatches nothing — the field the
+// confirm overlay would have shown has nowhere else to go on this path.
+func TestRowKeyDispatchWorkflowNoAgentReportsRedStatus(t *testing.T) {
+	dispatched := false
+	orig := runDispatchWorkflow
+	runDispatchWorkflow = func(repoRoot, name string, action manifest.Action, targets []kinds.Target) []kinds.TargetResult {
+		dispatched = true
+		return nil
+	}
+	t.Cleanup(func() { runDispatchWorkflow = orig })
+
+	m := workTestModel(rowKeyWorkflowManifest(""))
+	m.active = tabBeads
+	m.beads = []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}}
+	m.trackerSelected = map[string]bool{}
+	m.rowKeys = map[keymap.RowKind]map[string]string{
+		keymap.Bead: {"enter": "review-branch"},
+	}
+	trackerCursorTo(t, &m, "proj-1")
+
+	mm, cmd, ok := m.rowKeyDispatch("enter")
+	if !ok {
+		t.Fatal("rowKeyDispatch(\"enter\") on a workflow-bound bead row = miss, want hit")
+	}
+	if cmd != nil {
+		t.Errorf("rowKeyDispatch returned a non-nil cmd with no agent configured, want nil")
+	}
+	rm := mm.(Model)
+	if rm.statusFg != cRed {
+		t.Errorf("statusFg = %v, want cRed", rm.statusFg)
+	}
+	if !strings.Contains(rm.status, "no agent configured") {
+		t.Errorf("status = %q, want it to say no agent is configured", rm.status)
+	}
+	if dispatched {
+		t.Error("runDispatchWorkflow was called with no agent configured, want nothing dispatched")
+	}
+}
+
+// TestRowKeyDispatchNonWorkflowCommandStillRunsPlain proves a binding whose
+// command is declared but is NOT a selection-sourced workflow (a plain
+// shell command here) is unaffected by this ticket's new branch — it still
+// runs through dispatchCommandCmd exactly as admin-l6kb.2 left it.
+func TestRowKeyDispatchNonWorkflowCommandStillRunsPlain(t *testing.T) {
+	gotEnv := stubStartHostedRun(t)
+
+	m := workTestModel(rowKeyWorkflowManifest("claude"))
+	m.active = tabBeads
+	m.beads = []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}}
+	m.rowKeys = map[keymap.RowKind]map[string]string{
+		keymap.Bead: {"b": "build"},
+	}
+	trackerCursorTo(t, &m, "proj-1")
+
+	mm, cmd, ok := m.rowKeyDispatch("b")
+	if !ok {
+		t.Fatal("rowKeyDispatch(\"b\") on a plain-command-bound bead row = miss, want hit")
+	}
+	_ = mm
+	if cmd == nil {
+		t.Fatal("rowKeyDispatch returned ok=true with a nil Cmd")
+	}
+	msg := cmd()
+	started, ok := msg.(workDispatchStartedMsg)
+	if !ok {
+		t.Fatalf("dispatch Cmd produced a %T, want workDispatchStartedMsg", msg)
+	}
+	if started.name != "build" {
+		t.Errorf("dispatched command = %q, want build", started.name)
+	}
+	if !containsEnv(*gotEnv, "ADMIN_ROW_ID=proj-1") {
+		t.Errorf("env %v missing ADMIN_ROW_ID=proj-1", *gotEnv)
 	}
 }
 
