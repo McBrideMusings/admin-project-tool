@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,12 +93,25 @@ func TestStartHostedPTYRegistersALiveEntry(t *testing.T) {
 	}
 }
 
-// TestStartHostedPTYEntryReportsExited proves the background goroutine
-// StartHostedPTY spawns to wait on the child flips the entry to StateExited
-// once the process actually exits — the AC's "reports exited when it
-// finishes."
+// TestStartHostedPTYEntryReportsExited is the regression seam for Cause A
+// (diagnosed 2026-08-31): nothing reading the pty master left the child
+// blocked forever at exit on macOS, so the entry never reached StateExited.
+// Unlike an "exit 0" fixture (which writes nothing and would pass even with
+// no drain at all — that is exactly how the previous round of this test
+// went green while the real dispatch hung), this fixture WRITES a line
+// before exiting, so a build with no drain reproduces the hang and this
+// test times out instead of passing by accident.
+//
+// It also asserts the entry's Ring actually captured those written bytes
+// (proving the drain, not just the exit, happened) and that the child's env
+// carries the parent-resolved color profile (Cause B's fix).
 func TestStartHostedPTYEntryReportsExited(t *testing.T) {
-	stubSelfExecutable(t, fixtureAdminScript(t, "exit 0"))
+	envProbe := filepath.Join(t.TempDir(), "env.out")
+	stubSelfExecutable(t, fixtureAdminScript(t,
+		"echo hi from hosted pty\n"+
+			"env | grep '^ADMIN_HOSTED_' > "+envProbe+"\n"+
+			"exit 0",
+	))
 
 	m := &manifest.Manifest{
 		Custom: map[string]manifest.Command{
@@ -108,14 +122,31 @@ func TestStartHostedPTYEntryReportsExited(t *testing.T) {
 		t.Fatalf("StartHostedPTY: %v", err)
 	}
 
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if e, ok := livework.Default.Get("quick-step"); ok && e.State == livework.StateExited {
+			if e.Output == nil {
+				t.Fatal("entry has no Output ring — the drain never wired one up")
+			}
+			if got := string(e.Output.Bytes()); !strings.Contains(got, "hi from hosted pty") {
+				t.Errorf("entry.Output.Bytes() = %q, want it to contain the child's written output", got)
+			}
+
+			envOut, err := os.ReadFile(envProbe)
+			if err != nil {
+				t.Fatalf("reading env probe: %v", err)
+			}
+			if !strings.Contains(string(envOut), HostedColorProfileEnv+"=") {
+				t.Errorf("child env missing %s: %q", HostedColorProfileEnv, envOut)
+			}
+			if !strings.Contains(string(envOut), HostedDarkBackgroundEnv+"=") {
+				t.Errorf("child env missing %s: %q", HostedDarkBackgroundEnv, envOut)
+			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("entry never reported exited")
+	t.Fatal("entry never reported exited — this is Cause A (no master drain) if it reproduces")
 }
 
 // TestStartHostedPTYUnknownCommandErrors proves an undeclared command

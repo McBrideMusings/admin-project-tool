@@ -1072,14 +1072,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case workDispatchDoneMsg:
-		if msg.err != nil {
-			m.setStatus(msg.name+" failed: "+msg.err.Error(), cRed)
-		} else {
-			m.setStatus(msg.name+" finished", cGreen)
-		}
-		return m, nil
-
 	case workDispatchStartedMsg:
 		// A hosted dispatch reports "started" immediately rather than an
 		// exit status — the command keeps running on its own pty long after

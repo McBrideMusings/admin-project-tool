@@ -11,11 +11,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/create"
@@ -257,6 +259,15 @@ var runCommandCmd = &cobra.Command{
 	DisableFlagParsing: true, // flags belong to the command's own steps, not to cobra
 	Args:               cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Applied first, before resolveProjectManifest can log anything or
+		// any step can render a style: this child's stdout is a pty for the
+		// first time, and an explicit profile is what stops
+		// lipgloss/termenv from issuing the OSC 11 background-color probe
+		// that otherwise stalls 5s waiting for a reply the dashboard never
+		// sends (admin-3rgp.61's Cause B). See HostedColorProfileEnv's doc
+		// comment in internal/kinds/hostedpty.go.
+		applyHostedColorProfile()
+
 		wd, err := os.Getwd()
 		if err != nil {
 			return err
@@ -272,6 +283,32 @@ var runCommandCmd = &cobra.Command{
 		}
 		return kinds.RunCommandHosted(m, kinds.Default, args[0], args[1:])
 	},
+}
+
+// applyHostedColorProfile reads the color profile the parent dashboard
+// resolved (StartHostedPTY set it in the child's env) and applies it to
+// this process's own termenv/lipgloss renderers before anything can render
+// a style — a no-op when the vars are absent, so a plain `admin
+// __run-command` invocation outside a hosted pty behaves exactly as before.
+func applyHostedColorProfile() {
+	rawProfile, ok := os.LookupEnv(kinds.HostedColorProfileEnv)
+	if !ok {
+		return
+	}
+	n, err := strconv.Atoi(rawProfile)
+	if err != nil {
+		return
+	}
+	profile := termenv.Profile(n)
+
+	termenv.SetDefaultOutput(termenv.NewOutput(os.Stdout, termenv.WithProfile(profile)))
+	lipgloss.SetColorProfile(profile)
+
+	if rawDark, ok := os.LookupEnv(kinds.HostedDarkBackgroundEnv); ok {
+		if dark, err := strconv.ParseBool(rawDark); err == nil {
+			lipgloss.SetHasDarkBackground(dark)
+		}
+	}
 }
 
 func init() {

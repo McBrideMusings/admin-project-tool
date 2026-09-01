@@ -12,15 +12,35 @@ package kinds
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
+	"strconv"
+	"sync/atomic"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/creack/pty"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+)
+
+// HostedColorProfileEnv and HostedDarkBackgroundEnv carry the PARENT's
+// already-resolved color profile into the pty child's environment. Without
+// this, the child's stdout is a real TTY for the first time (it usually
+// runs on a herdr pane or a plain pipe) and lipgloss/termenv's default
+// output issues an OSC 11 "what's your background color?" query plus a
+// CSI 6n cursor-position query, then blocks for termenv.OSCTimeout (5s)
+// waiting for a reply the dashboard never sends — a 5s stall on every
+// dispatch (Cause B, diagnosed 2026-08-31). cmd/root.go's runCommandCmd
+// reads these two vars and calls termenv.SetDefaultOutput +
+// lipgloss.SetColorProfile/SetHasDarkBackground before anything can render,
+// so the probe is never issued at all.
+const (
+	HostedColorProfileEnv   = "ADMIN_HOSTED_COLOR_PROFILE"
+	HostedDarkBackgroundEnv = "ADMIN_HOSTED_DARK_BG"
 )
 
 // hostedReentryArgs builds the argv for the pty child: the hidden
@@ -58,6 +78,10 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 	entryID := cmd.Steps[0]
 
 	c := exec.Command(selfExecutable(), hostedReentryArgs(name, args)...)
+	c.Env = append(os.Environ(),
+		HostedColorProfileEnv+"="+strconv.Itoa(int(lipgloss.ColorProfile())),
+		HostedDarkBackgroundEnv+"="+strconv.FormatBool(lipgloss.HasDarkBackground()),
+	)
 	ptmx, err := pty.Start(c)
 	if err != nil {
 		return fmt.Errorf("command %q: starting hosted pty: %w", name, err)
@@ -78,14 +102,21 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 // PaneID/PTYID is set. args and rows/cols are kept so Retry can re-run
 // StartHostedPTY exactly as it ran the first time.
 func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args []string, rows, cols int, c *exec.Cmd, ptmx *os.File) {
+	// killed is set by Ops.Kill before it closes ptmx, so the wait goroutine
+	// below knows the resulting "signal: killed" c.Wait() error is expected
+	// and must not overwrite the StateExited Kill already set.
+	var killed atomic.Bool
+
 	e := &livework.Entry{
-		ID:    entryID,
-		Name:  entryID,
-		Kind:  "hosted-pty",
-		PTYID: ptmx.Name(),
+		ID:     entryID,
+		Name:   entryID,
+		Kind:   "hosted-pty",
+		PTYID:  ptmx.Name(),
+		Output: livework.NewRing(0),
 	}
 	e.Ops = livework.Ops{
 		Kill: func() error {
+			killed.Store(true)
 			_ = ptmx.Close()
 			if c.Process != nil {
 				_ = c.Process.Kill()
@@ -105,9 +136,26 @@ func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args
 		log.Printf("recordHostedPTYWork: %v", err)
 		return
 	}
+
+	// Ordering is load-bearing (admin-3rgp.61's Cause A): the pty's output
+	// queue only drains when something reads the master, and on macOS the
+	// child's tty-close at exit blocks in the kernel until that drain
+	// happens — so the copy must run, and reach EOF/EIO, BEFORE c.Wait() is
+	// called, and ptmx must not be closed until after that. Closing ptmx
+	// early truncates the child's tail output; never draining at all is the
+	// exact hang that failed Verify.
 	go func() {
+		_, copyErr := io.Copy(e.Output, ptmx)
+		// On Linux the master read returns EIO (not io.EOF) once the last
+		// slave closes — that is normal end-of-output, not a failure, so it
+		// must not be surfaced as a wait error.
+		_ = copyErr
+
 		waitErr := c.Wait()
 		_ = ptmx.Close()
+		if killed.Load() {
+			return
+		}
 		if waitErr != nil {
 			livework.Default.SetState(e.ID, livework.StateFailed, waitErr)
 		} else {

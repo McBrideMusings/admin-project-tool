@@ -583,20 +583,14 @@ func (m Model) workRowCount() int {
 	return n
 }
 
-// workDispatchDoneMsg carries a dispatched command's outcome back to Update.
-type workDispatchDoneMsg struct {
-	name string
-	err  error
-}
-
 // workDispatchStartedMsg carries a hosted dispatch's START outcome back to
 // Update — admin-3rgp.61 replaced the old tea.Exec dispatch (which released
 // the dashboard's terminal for the run's whole duration and reported its
-// exit status via workDispatchDoneMsg above) with a hosted pty the dashboard
-// never blocks on, so there is no longer an exit status to report at
-// dispatch time: err here means the pty itself failed to spawn, not that the
-// command finished badly. A nil err means the command is now running on its
-// own pty, tracked by the live-work entry StartHostedPTY registered.
+// exit status when the run finished) with a hosted pty the dashboard never
+// blocks on, so there is no longer an exit status to report at dispatch
+// time: err here means the pty itself failed to spawn, not that the command
+// finished badly. A nil err means the command is now running on its own
+// pty, tracked by the live-work entry StartHostedPTY registered.
 type workDispatchStartedMsg struct {
 	name string
 	err  error
