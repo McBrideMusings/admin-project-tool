@@ -650,51 +650,73 @@ func builtinPairs(k keymap.RowKind) [][2]string {
 	return pairs
 }
 
-// keymap pairs for the active tab/pane. The six row-kind branches (bead,
-// issue, PR, branch, commit, stash) read their built-in pairs from
-// internal/keymap — the single table admin-l6kb.1's shadow-detection check
-// also reads — rather than carrying their own literals; tabWork and
-// tabConfig are not row kinds (ADR-0018) and keep their pairs here.
+// keymap pairs for the active tab/pane: the view's own keys, then the two
+// every view shares. `o config` opens admin.toml in $EDITOR and `←→ tab`
+// switches the top-level tab; both work from every tab, so both are appended
+// here rather than repeated in each branch, and both sit at the end of the
+// help line after the view-specific keys.
 func (m Model) keymap() [][2]string {
-	// `←→ tab` (switch top-level tab) is appended last on every view so it always
-	// sits at the end of the help line, after the view-specific keys.
-	tabKey := [2]string{"←→", "tab"}
 	if m.termAttached {
-		// No tabKey: the terminal view takes the whole tab, and ←→ has no
-		// tab bar underneath it to switch. admin-3rgp.71 narrowed detach to
-		// esc alone and dropped k — q and k now reach the child like every
-		// other key — so this footer no longer matches
-		// docs/spikes/admin-tui-desktop/hosted.txt's, which still shows the
-		// superseded "q/esc detach · ↑↓ scroll · k kill" contract.
+		// No shared keys: the terminal view takes the whole tab. Every
+		// keystroke belongs to the child process, `o` included.
 		return [][2]string{
 			{"esc", "detach"},
 			{"typing", "goes to the process"},
 		}
 	}
+	pairs := m.viewKeymap()
+	// A row that binds `o` in [keys.<kind>] (ADR-0018) is dispatched by
+	// rowKeyDispatch before the built-in switch ever sees the key, so the
+	// manifest's binding is what `o` actually does on that row. Advertising
+	// `o config` next to it would name a second meaning for a key that has
+	// one — the same reason a shadowed built-in is replaced in place rather
+	// than listed twice.
+	if !hasKey(pairs, "o") {
+		pairs = append(pairs, [2]string{"o", "config"})
+	}
+	return append(pairs, [2]string{"←→", "tab"})
+}
+
+// hasKey reports whether any pair already advertises this footer glyph.
+func hasKey(pairs [][2]string, display string) bool {
+	for _, p := range pairs {
+		if p[0] == display {
+			return true
+		}
+	}
+	return false
+}
+
+// viewKeymap is the active tab/pane's own pairs, without the shared trailing
+// two. The six row-kind branches (bead, issue, PR, branch, commit, stash) read
+// their built-in pairs from internal/keymap — the single table admin-l6kb.1's
+// shadow-detection check also reads — rather than carrying their own literals;
+// tabWork and tabConfig are not row kinds (ADR-0018) and keep their pairs here.
+func (m Model) viewKeymap() [][2]string {
 	if m.active == tabLocal {
 		switch m.pane {
 		case paneCommits:
-			return append(m.rowPairs(keymap.Commit), tabKey)
+			return m.rowPairs(keymap.Commit)
 		case paneStashes:
-			return append(m.rowPairs(keymap.Stash), tabKey)
+			return m.rowPairs(keymap.Stash)
 		default:
-			return append(m.rowPairs(keymap.Branch), tabKey)
+			return m.rowPairs(keymap.Branch)
 		}
 	}
 	switch m.active {
 	case tabWork:
-		return [][2]string{{"↑↓", "move"}, {"↵", "open, run or attach"}, {"→←", "submenu"}, {"a", "attach"}, {"k", "kill"}, {"/", "filter"}, {"q", "quit"}, tabKey}
+		return [][2]string{{"\u2191\u2193", "move"}, {"\u21b5", "open, run or attach"}, {"\u2192\u2190", "submenu"}, {"a", "attach"}, {"k", "kill"}, {"/", "filter"}, {"q", "quit"}}
 	case tabPRs:
-		return append(m.rowPairs(keymap.PR), tabKey)
+		return m.rowPairs(keymap.PR)
 	case tabIssues:
-		return append(m.rowPairs(keymap.Issue), tabKey)
+		return m.rowPairs(keymap.Issue)
 	case tabBeads:
-		// No `o`: a bead lives in a local database and has no page to open.
-		return append(m.rowPairs(keymap.Bead), tabKey)
+		return m.rowPairs(keymap.Bead)
 	case tabConfig:
 		// Read-only readout of resolved values (admin-3rgp.21) — nothing to
-		// move a cursor over or edit.
-		return [][2]string{{"q", "quit"}, tabKey}
+		// move a cursor over. `o config` (appended by keymap) is the tab's
+		// only write path.
+		return [][2]string{{"q", "quit"}}
 	}
 	return nil
 }

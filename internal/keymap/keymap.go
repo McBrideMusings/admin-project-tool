@@ -83,7 +83,6 @@ var builtins = map[RowKind][]Binding{
 	Issue: {
 		{Key: "", Display: "↑↓", Label: "move"},
 		{Key: "enter", Display: "↵", Label: "start work"},
-		{Key: "o", Display: "o", Label: "open"},
 		{Key: "s", Display: "s", Label: "sort"},
 		{Key: "w", Display: "w", Label: "workflow"},
 		{Key: "/", Display: "/", Label: "filter"},
@@ -94,7 +93,6 @@ var builtins = map[RowKind][]Binding{
 	PR: {
 		{Key: "", Display: "↑↓", Label: "move"},
 		{Key: "enter", Display: "↵", Label: "checkout"},
-		{Key: "o", Display: "o", Label: "open"},
 		{Key: "i", Display: "i", Label: "issue"},
 		{Key: "/", Display: "/", Label: "filter"},
 		{Key: "r", Display: "r", Label: "refresh row"},
@@ -115,7 +113,6 @@ var builtins = map[RowKind][]Binding{
 	Commit: {
 		{Key: "", Display: "↑↓", Label: "move"},
 		{Key: "enter", Display: "↵", Label: "copy sha"},
-		{Key: "o", Display: "o", Label: "open ↗"},
 		{Key: "tab", Display: "⇥", Label: "pane"},
 		{Key: "/", Display: "/", Label: "filter"},
 		{Key: "r", Display: "r", Label: "refresh"},
