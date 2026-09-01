@@ -199,7 +199,7 @@ func (m Model) pickWorkflow(cr workCmdRow) (tea.Model, tea.Cmd) {
 		// workflowResolved gives an empty query match.
 		m.wfErr = "selection matched nothing"
 	case !agentOK:
-		m.wfErr = fmt.Sprintf("no agent configured — set 'agent' on %q or [workflow].agent in config", cr.name)
+		m.wfErr = fmt.Sprintf("no agent configured — set 'agent' on %q or [workflow].agent in admin.toml", cr.name)
 	default:
 		m.wfErr = ""
 	}

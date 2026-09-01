@@ -34,10 +34,18 @@ func newOrigins() *origins {
 // archetype implements: the project always wins). It returns the merged
 // manifest and a human-readable merge log of every collision.
 //
+// Before any of that, BaseName is merged in implicitly — first, so every
+// declared archetype and the project itself can override it — unless the
+// project already lists "base" in `archetypes`, in which case the explicit
+// pass covers it and the implicit one is skipped to avoid merging it twice
+// and doubling its collision log lines. A project never has to write
+// `archetypes = ["base"]` for this to happen (admin-mb5q's whole point: 53
+// manifests need no edit), and a search path with no base at all (LoadBase,
+// in archetype.go) is a silent no-op, not an error.
+//
 // A project with no archetypes (nil or empty project.Archetypes) resolves
-// cleanly to project's own content with no archetype directories ever
-// consulted — Resolve never fails merely because no archetype directories
-// exist on disk.
+// cleanly to project's own content plus base — Resolve never fails merely
+// because no other archetype directories exist on disk.
 func Resolve(project *manifest.Manifest, sp SearchPath) (*manifest.Manifest, []string, error) {
 	dst := &manifest.Manifest{
 		Urls:      map[string]string{},
@@ -71,10 +79,31 @@ func Resolve(project *manifest.Manifest, sp SearchPath) (*manifest.Manifest, []s
 		LogBridge:       map[string]any{},
 		Worktree:        map[string]any{},
 		Keys:            map[string]any{},
+		Identity:        map[string]any{},
+		Worktrees:       map[string]any{},
+		Beads:           map[string]any{},
+		Workflow:        map[string]any{},
 	}
 
 	var log []string
 	o := newOrigins()
+
+	declaresBase := false
+	for _, name := range project.Archetypes {
+		if name == BaseName {
+			declaresBase = true
+			break
+		}
+	}
+	if !declaresBase {
+		if base, ok, err := LoadBase(sp); err != nil {
+			return nil, nil, err
+		} else if ok {
+			if err := merge(dst, base.Partial, fmt.Sprintf("archetype '%s'", BaseName), false, &log, o); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
 
 	for _, name := range project.Archetypes {
 		arch, err := Load(sp, name)
@@ -184,11 +213,17 @@ func merge(dst, src *manifest.Manifest, srcLabel string, isManifest bool, log *[
 		{dst.Launchd, src.Launchd},
 		{dst.LogBridge, src.LogBridge},
 		{dst.Worktree, src.Worktree},
+		{dst.Identity, src.Identity},
+		{dst.Worktrees, src.Worktrees},
+		{dst.Beads, src.Beads},
+		{dst.Workflow, src.Workflow},
 	} {
 		mergeTable(pair.dst, pair.src)
 	}
 
 	mergeRowKeys(dst.Keys, src.Keys)
+
+	dst.Populate = mergePopulate(dst.Populate, src.Populate)
 
 	dst.Unknown = mergeStringSet(dst.Unknown, src.Unknown)
 	sort.Strings(dst.Unknown)
@@ -226,6 +261,33 @@ func mergeTable(dst, src map[string]any) {
 	for k, v := range src {
 		dst[k] = v
 	}
+}
+
+// mergePopulate appends src's [[populate]] entries after dst's, de-duplicated
+// by pattern with the last occurrence's mode winning — an archetype can
+// contribute a default set of populate patterns and a project can extend it,
+// or override one entry's mode by repeating its pattern, without either
+// silently dropping the other's contribution. This is the one raw table that
+// cannot go through mergeTable: it is a list, not a map.
+func mergePopulate(dst, src []map[string]any) []map[string]any {
+	out := append([]map[string]any(nil), dst...)
+	for _, entry := range src {
+		pattern, _ := entry["pattern"].(string)
+		replaced := false
+		if pattern != "" {
+			for i, existing := range out {
+				if p, _ := existing["pattern"].(string); p == pattern {
+					out[i] = entry
+					replaced = true
+					break
+				}
+			}
+		}
+		if !replaced {
+			out = append(out, entry)
+		}
+	}
+	return out
 }
 
 // mergeRowKeys merges [keys.<row-kind>] two levels deep — the one raw

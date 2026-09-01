@@ -34,12 +34,11 @@ func wfGitT(t *testing.T, dir string, args ...string) {
 }
 
 // setupWorkflowRepo builds a throwaway repo, isolates it from the real
-// machine's global config (HOME → a temp dir) and worktree root
-// (WORKTREE_ROOT → a temp dir), and writes the given repo-local
-// admin.toml-adjacent config (internal/config's own .repo/config.toml) so
-// DispatchTargets' config.Load(repoRoot) call sees exactly what the test
-// wants — never the developer's real ~/.config/repo/config.toml.
-func setupWorkflowRepo(t *testing.T, repoConfigTOML string) (repoRoot string) {
+// machine's worktree root (WORKTREE_ROOT → a temp dir), and writes the given
+// config tables straight into the repo's own admin.toml so DispatchTargets'
+// config.Load(repoRoot) call sees exactly what the test wants — never the
+// developer's real repo config.
+func setupWorkflowRepo(t *testing.T, configTOML string) (repoRoot string) {
 	t.Helper()
 	base := t.TempDir()
 	t.Setenv("HOME", filepath.Join(base, "home"))
@@ -47,6 +46,10 @@ func setupWorkflowRepo(t *testing.T, repoConfigTOML string) (repoRoot string) {
 
 	repoRoot = filepath.Join(base, "repo")
 	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "admin.toml"),
+		[]byte("project_name = \"t\"\n"+configTOML), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// internal/git's helpers run git in the process's current directory,
@@ -63,15 +66,6 @@ func setupWorkflowRepo(t *testing.T, repoConfigTOML string) (repoRoot string) {
 	wfGitT(t, repoRoot, "add", "-A")
 	wfGitT(t, repoRoot, "commit", "-qm", "init")
 
-	if repoConfigTOML != "" {
-		dir := filepath.Join(repoRoot, ".repo")
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(repoConfigTOML), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
 	return repoRoot
 }
 

@@ -40,9 +40,10 @@ func Worktree(ctx context.Context, repoRoot, branch string) (Result, error) {
 	if dir == "" {
 		return Result{}, fmt.Errorf("invalid branch name %q", branch)
 	}
-	// Load config once for both the worktree root and populate. A parse error
-	// yields a zero Config, which forces the env-or-default root and skips
-	// populate — the same fallback both paths used before.
+	// Load resolves repoRoot's admin.toml (merged with its declared
+	// archetypes) once for both the worktree root and populate. A parse
+	// error yields a zero Config, which forces the env-or-default root and
+	// skips populate — the same fallback both paths used before.
 	cfg, cfgErr := config.Load(repoRoot)
 	if cfgErr != nil {
 		cfg = config.Config{}

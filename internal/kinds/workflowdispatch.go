@@ -160,7 +160,7 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 	if !ok {
 		missing := fmt.Errorf(
 			"action %q: kind=\"workflow\" has no agent configured — set 'agent' on the action "+
-				"or [workflow].agent in config", actionName)
+				"or [workflow].agent in admin.toml", actionName)
 		for i, t := range targets {
 			results[i] = TargetResult{Target: t.Name, Err: missing}
 		}
