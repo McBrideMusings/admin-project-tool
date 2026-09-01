@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -659,29 +660,122 @@ func (m Model) keymap() [][2]string {
 	if m.active == tabLocal {
 		switch m.pane {
 		case paneCommits:
-			return append(builtinPairs(keymap.Commit), tabKey)
+			return append(m.rowPairs(keymap.Commit), tabKey)
 		case paneStashes:
-			return append(builtinPairs(keymap.Stash), tabKey)
+			return append(m.rowPairs(keymap.Stash), tabKey)
 		default:
-			return append(builtinPairs(keymap.Branch), tabKey)
+			return append(m.rowPairs(keymap.Branch), tabKey)
 		}
 	}
 	switch m.active {
 	case tabWork:
 		return [][2]string{{"↑↓", "move"}, {"↵", "open, run or attach"}, {"→←", "submenu"}, {"a", "attach"}, {"k", "kill"}, {"/", "filter"}, {"q", "quit"}, tabKey}
 	case tabPRs:
-		return append(builtinPairs(keymap.PR), tabKey)
+		return append(m.rowPairs(keymap.PR), tabKey)
 	case tabIssues:
-		return append(builtinPairs(keymap.Issue), tabKey)
+		return append(m.rowPairs(keymap.Issue), tabKey)
 	case tabBeads:
 		// No `o`: a bead lives in a local database and has no page to open.
-		return append(builtinPairs(keymap.Bead), tabKey)
+		return append(m.rowPairs(keymap.Bead), tabKey)
 	case tabConfig:
 		// Read-only readout of resolved values (admin-3rgp.21) — nothing to
 		// move a cursor over or edit.
 		return [][2]string{{"q", "quit"}, tabKey}
 	}
 	return nil
+}
+
+// rowPairs is builtinPairs(k) with the cursor row's [keys.<kind>] bindings
+// (ADR-0018, admin-l6kb.4) merged over it, so the footer advertises exactly
+// what rowKeyDispatch would do for the key under the cursor right now. A
+// bound key that shadows a built-in pair replaces that pair's label in
+// place — position, and so the keybar() first-pair/last-two invariants,
+// are untouched; a bound key with no built-in pair for this row kind is
+// appended after every built-in, ahead of the trailing `←→ tab` keymap()
+// appends on top. keybar()'s drop loop protects `q quit` by name (not just
+// by position) for exactly this reason: appended row bindings can land
+// between it and the trailing tab pair.
+//
+// The len(m.rowKeys)==0 fast exit is what keeps a project with no [keys]
+// table on today's path with no extra cost per frame: m.currentRow() below
+// rebuilds visibleRows(), so it must never run when there is nothing to
+// merge. Gating on the cursor's actual row kind (rowKindOf), not just the
+// kind k passed in, is what restores builtin labels the moment the cursor
+// leaves a bound row kind — including onto a header/non-selectable row or
+// a Work tab row, which rowKindOf already reports as unbindable.
+func (m Model) rowPairs(k keymap.RowKind) [][2]string {
+	if len(m.rowKeys) == 0 || !m.manifestOK || m.manifest == nil {
+		return builtinPairs(k)
+	}
+	r, ok := m.currentRow()
+	if !ok {
+		return builtinPairs(k)
+	}
+	kind, ok := rowKindOf(r)
+	if !ok || kind != k {
+		return builtinPairs(k)
+	}
+	binds := m.rowKeys[kind]
+	if len(binds) == 0 {
+		return builtinPairs(k)
+	}
+
+	bindings := keymap.Builtins(k)
+	pairs := make([][2]string, len(bindings))
+	consumed := make(map[string]bool, len(binds))
+	for i, b := range bindings {
+		if b.Key != "" && binds[b.Key] != "" {
+			pairs[i] = [2]string{b.Display, m.bindingLabel(binds[b.Key])}
+			consumed[b.Key] = true
+		} else {
+			pairs[i] = [2]string{b.Display, b.Label}
+		}
+	}
+
+	var extra []string
+	for key := range binds {
+		if !consumed[key] {
+			extra = append(extra, key)
+		}
+	}
+	sort.Strings(extra)
+	for _, key := range extra {
+		pairs = append(pairs, [2]string{keyDisplay(key), m.bindingLabel(binds[key])})
+	}
+	return pairs
+}
+
+// bindingLabel resolves a bound command's footer label: its description, or
+// the command's own name when it has none — the same Custom-then-Overrides
+// lookup order work.go's collectCommands uses. Nil-manifest safe, though
+// rowPairs never reaches here with one.
+func (m Model) bindingLabel(name string) string {
+	if m.manifest != nil {
+		if c, ok := m.manifest.Custom[name]; ok && c.Desc != "" {
+			return c.Desc
+		}
+		if c, ok := m.manifest.Overrides[name]; ok && c.Desc != "" {
+			return c.Desc
+		}
+	}
+	return name
+}
+
+// keyDisplay renders the footer glyph for a bound key that has no built-in
+// pair for this row kind, matching the canonical glyphs internal/keymap
+// already uses for the same key names ("enter" -> "↵", "shift+X" -> "⇧X").
+// Every other key name renders as itself ("o", "d", "x").
+func keyDisplay(key string) string {
+	switch key {
+	case "enter":
+		return "↵"
+	case "tab":
+		return "⇥"
+	}
+	if rest, ok := strings.CutPrefix(key, "shift+"); ok && rest != "" {
+		return "⇧" + strings.ToUpper(rest)
+	}
+	return key
 }
 
 // keybar renders the footer keybindings, dropping whole pairs when they don't all
@@ -694,14 +788,39 @@ func (m Model) keymap() [][2]string {
 // delete the tab hint from the footer — and, once a keymap grew past what fit
 // at a real terminal width (admin-3rgp.27 adding `space`/`w` to the Beads and
 // Issues tabs is exactly this), a way to delete `quit` itself, silently,
-// before any other pair. Pairs are dropped from the end of the middle
-// backwards instead, keeping the LAST TWO throughout — the first pair
-// (movement), and the last two together (however this view's list ends;
-// `q quit` immediately before `←→ tab` on every other tab) always survive.
+// before any other pair. Pairs are dropped from the middle backwards instead,
+// protecting four things throughout: the first pair (movement), the last two
+// pairs (`←→ tab`, which every view shares, and whatever sits ahead of it),
+// and `q quit` itself wherever it sits — not merely by position.
+//
+// Both the positional rule and the named one are needed, and neither replaces
+// the other. rowPairs appends a row's own bound keys ([keys.<kind>], ADR-0018)
+// after every built-in, which lands them between `q quit` and the trailing tab
+// pair on Bead/Issue/PR; without naming quit explicitly, protecting only "the
+// last two" would drop it before those appended pairs on any width narrow
+// enough to drop at all. But Branch, Commit and Stash carry no `q quit` pair
+// at all (internal/keymap/keymap.go), so naming quit alone would leave their
+// second-to-last pair (`r refresh`) unprotected — which the old
+// drop-`pairs[len-3]` loop had always kept.
 func (m Model) keybar(width int) string {
 	pairs := m.keymap()
-	for len(pairs) > 3 && keybarWidth(pairs) > width {
-		pairs = append(pairs[:len(pairs)-3:len(pairs)-3], pairs[len(pairs)-2:]...)
+	protected := make([]bool, len(pairs))
+	for i := range protected {
+		if i == 0 || i >= len(protected)-2 {
+			protected[i] = true
+		}
+	}
+	for i, p := range pairs {
+		if p[0] == "q" && p[1] == "quit" {
+			protected[i] = true
+		}
+	}
+	for i := len(pairs) - 2; i >= 1 && keybarWidth(pairs) > width; i-- {
+		if protected[i] {
+			continue
+		}
+		pairs = append(pairs[:i:i], pairs[i+1:]...)
+		protected = append(protected[:i:i], protected[i+1:]...)
 	}
 	segs := []seg{{t: " "}}
 	for i, p := range pairs {
