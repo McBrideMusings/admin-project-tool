@@ -789,19 +789,26 @@ func keyDisplay(key string) string {
 // at a real terminal width (admin-3rgp.27 adding `space`/`w` to the Beads and
 // Issues tabs is exactly this), a way to delete `quit` itself, silently,
 // before any other pair. Pairs are dropped from the middle backwards instead,
-// protecting three things throughout: the first pair (movement), the last
-// pair (`←→ tab`, which every view shares), and `q quit` itself wherever it
-// sits — not merely by position. rowPairs appends a row's own bound keys
-// ([keys.<kind>], ADR-0018) after every built-in, which lands them between
-// `q quit` and the trailing tab pair on Bead/Issue/PR; without naming quit
-// explicitly, protecting only "the last two" would drop it before those
-// appended pairs on any width narrow enough to drop at all.
+// protecting four things throughout: the first pair (movement), the last two
+// pairs (`←→ tab`, which every view shares, and whatever sits ahead of it),
+// and `q quit` itself wherever it sits — not merely by position.
+//
+// Both the positional rule and the named one are needed, and neither replaces
+// the other. rowPairs appends a row's own bound keys ([keys.<kind>], ADR-0018)
+// after every built-in, which lands them between `q quit` and the trailing tab
+// pair on Bead/Issue/PR; without naming quit explicitly, protecting only "the
+// last two" would drop it before those appended pairs on any width narrow
+// enough to drop at all. But Branch, Commit and Stash carry no `q quit` pair
+// at all (internal/keymap/keymap.go), so naming quit alone would leave their
+// second-to-last pair (`r refresh`) unprotected — which the old
+// drop-`pairs[len-3]` loop had always kept.
 func (m Model) keybar(width int) string {
 	pairs := m.keymap()
 	protected := make([]bool, len(pairs))
-	if len(protected) > 0 {
-		protected[0] = true
-		protected[len(protected)-1] = true
+	for i := range protected {
+		if i == 0 || i >= len(protected)-2 {
+			protected[i] = true
+		}
 	}
 	for i, p := range pairs {
 		if p[0] == "q" && p[1] == "quit" {
