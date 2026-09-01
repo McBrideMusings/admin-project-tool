@@ -113,6 +113,54 @@ func TestFSChangeRereadsTheManifest(t *testing.T) {
 	if !mm.manifestOK || mm.manifestErr != "" {
 		t.Errorf("manifestOK = %v, err = %q after a valid external edit", mm.manifestOK, mm.manifestErr)
 	}
+	if mm.status == "" {
+		t.Error("status is empty after a real manifest change, want the reload announced")
+	}
+}
+
+// TestFSChangeWithUnchangedManifestIsInert proves the fsnotify watcher's
+// reload is gated on admin.toml's own stat: a fsChangedMsg that fires for
+// some other reason (a source-file save, a build writing into the tree) must
+// not re-parse the manifest or overwrite whatever the status line was
+// already showing.
+func TestFSChangeWithUnchangedManifestIsInert(t *testing.T) {
+	dir := t.TempDir()
+	writeTestManifest(t, dir, editTestManifest)
+
+	m := New(context.Background(), dir, "owner/repo", "main", "main")
+	m.setStatus("sentinel status", cDim)
+	m.manifestErr = "sentinel err" // only a re-parse would clobber this
+
+	updated, _ := m.Update(fsChangedMsg{})
+	mm := updated.(Model)
+	if mm.status != "sentinel status" {
+		t.Errorf("status = %q after an unrelated fs change, want it untouched", mm.status)
+	}
+	if mm.manifestErr != "sentinel err" {
+		t.Errorf("manifestErr = %q after an unrelated fs change, want it untouched (no re-parse)", mm.manifestErr)
+	}
+}
+
+// TestOpenManifestFailureWithNoRepoRoot proves the no-repo-root failure path
+// (openCommand returns nil before a handler name is ever chosen) renders a
+// clean status line instead of the "open failed: : no repo root" artifact a
+// naive `name + ": " + err` concatenation produces when name is empty.
+func TestOpenManifestFailureWithNoRepoRoot(t *testing.T) {
+	dir := t.TempDir()
+	writeTestManifest(t, dir, editTestManifest)
+	m := New(context.Background(), dir, "owner/repo", "main", "main")
+
+	cmd := openManifestCmd("")
+	msg := cmd()
+	updated, _ := m.Update(msg)
+	mm := updated.(Model)
+
+	if !strings.Contains(mm.status, "no repo root") {
+		t.Errorf("status = %q, want it to mention the failure reason", mm.status)
+	}
+	if strings.Contains(mm.status, "open failed: :") || strings.Contains(mm.status, ": :") {
+		t.Errorf("status = %q, contains an empty-name artifact", mm.status)
+	}
 }
 
 // TestFSChangeSurfacesABrokenManifest proves an external edit that breaks the

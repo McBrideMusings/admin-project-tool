@@ -315,6 +315,11 @@ type Model struct {
 	manifest    *manifest.Manifest
 	manifestOK  bool
 	manifestErr string
+	// manifestStamp is admin.toml's mtime+size as of the last loadManifest
+	// call — the gate fsChangedMsg checks before reloading, so a save
+	// anywhere else in the repo (a source file, a build artifact) doesn't
+	// re-parse the manifest or overwrite the status line.
+	manifestStamp manifestStamp
 	// cmdOrigin/actionOrigin name which archetype (or "(manifest)") last
 	// contributed each command/action name — the detail pane's "archetype"
 	// and each step's "from <archetype>" line. archetype.Resolve's own merge
@@ -966,17 +971,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case fsChangedMsg:
 		// A file changed on disk. Reload local git so the header's dirty state and
-		// the branch list's unsaved-work marking stay live. Nothing suspends the
-		// TUI to edit admin.toml any more (`o` launches the desktop's default
-		// handler and returns immediately), so this debounced watcher is the only
-		// reload signal left for an external save — re-read the manifest here too,
-		// exactly as the old editor-return path did, then resume listening.
-		m.loadManifest()
-		m.settleActiveTab()
-		if m.manifestErr != "" {
-			m.setStatus("admin.toml: "+m.manifestErr, cRed)
-		} else if m.manifestOK {
-			m.setStatus("manifest reloaded", cDim)
+		// the branch list's unsaved-work marking stay live — this fires on every
+		// tracked-dir change, not just admin.toml, which is exactly why the
+		// manifest reload below is gated: re-parsing and overwriting the status
+		// line on a source-file save or a build artifact would clobber whatever
+		// the status line was showing for something the user didn't cause.
+		// Compare admin.toml's own stat against the stamp loadManifest captured
+		// last time; only a real difference (including a manifest edited to be
+		// broken, whose mtime/size changed) reloads and announces.
+		if st := statManifest(m.repoRoot); st != m.manifestStamp {
+			m.loadManifest()
+			m.settleActiveTab()
+			if m.manifestErr != "" {
+				m.setStatus("admin.toml: "+m.manifestErr, cRed)
+			} else if m.manifestOK {
+				m.setStatus("manifest reloaded", cDim)
+			}
 		}
 		return m, tea.Batch(
 			loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def),
@@ -1092,7 +1102,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case openManifestMsg:
 		if msg.err != nil {
-			m.setStatus("open failed: "+msg.name+": "+msg.err.Error(), cRed)
+			if msg.name == "" {
+				m.setStatus("open failed: "+msg.err.Error(), cRed)
+			} else {
+				m.setStatus("open failed: "+msg.name+": "+msg.err.Error(), cRed)
+			}
 			return m, nil
 		}
 		// Nothing suspended, so there is no return signal to reload on — the
