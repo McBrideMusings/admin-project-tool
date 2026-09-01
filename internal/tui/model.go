@@ -1298,14 +1298,16 @@ func (m Model) clickRow(pane localPane, row int) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// The terminal view (admin-3rgp.65) owns the keyboard completely while
-	// attached: everything not q/esc/k goes to the child, so nothing below
-	// this — including the global "q" quit — ever sees a keystroke meant
-	// for the process being watched. It sits ahead of the quit confirm
-	// because admin-3rgp.65's contract splits the same two keys by where
-	// you are: q/esc detach while attached, and raise the quit confirm from
-	// the list. Detaching first is what makes that reachable — the confirm
-	// can only be opened from the list, which you are not on while attached.
+	// The terminal view (admin-3rgp.65, narrowed by admin-3rgp.71) owns the
+	// keyboard completely while attached: only esc detaches, so everything
+	// else — including "q" — goes to the child, and nothing below this
+	// (including the global "q" quit) ever sees a keystroke meant for the
+	// process being watched. It still sits ahead of the quit confirm: "q"
+	// means two different things depending on where you are (write it to
+	// the child while attached, raise the quit confirm from the list), and
+	// detaching first is what makes the list's meaning reachable at all —
+	// the confirm can only be opened from the list, which you are not on
+	// while attached.
 	if m.termAttached {
 		return m.terminalKey(msg)
 	}
