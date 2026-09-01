@@ -95,16 +95,15 @@ func runArchetypesDeploy(ctx context.Context, source, dest string) error {
 }
 
 func runArchetypesList(ctx context.Context) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("could not resolve the home directory: %w", err)
-	}
 	// A repo is optional here — listing archetypes is useful even outside one,
 	// and repoRoot simply contributes nothing when there isn't one (List()
 	// treats a missing search-path directory as empty, never an error).
 	repoRoot, _ := git.RepoRoot(ctx)
 
-	sp := archetype.DefaultSearchPath(home, repoRoot)
+	sp, err := archetype.SearchPathFor(repoRoot)
+	if err != nil {
+		return fmt.Errorf("could not resolve the installed archetypes directory: %w", err)
+	}
 	found, err := sp.List()
 	if err != nil {
 		return err

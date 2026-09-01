@@ -40,13 +40,62 @@ type SearchPath []Source
 // inside this package, so callers (and tests) can point them at real
 // directories without mutating process state.
 func DefaultSearchPath(homeDir, repoDir string) SearchPath {
-	homeArchetypes := HomeArchetypesDir(homeDir)
+	return searchPath(HomeArchetypesDir(homeDir), repoDir)
+}
+
+// searchPath builds the three-slot search path from an already-resolved
+// installed-archetypes directory, shared by DefaultSearchPath (explicit
+// home) and SearchPathFor (the InstalledArchetypesDir seam) so the two
+// construction paths can't drift apart.
+func searchPath(installedDir, repoDir string) SearchPath {
 	repoArchetypes := filepath.Join(repoDir, ".admin", "archetypes")
 	return SearchPath{
 		{Label: "embedded", FS: embedded()},
-		{Label: homeArchetypes, FS: os.DirFS(homeArchetypes)},
+		{Label: installedDir, FS: os.DirFS(installedDir)},
 		{Label: repoArchetypes, FS: os.DirFS(repoArchetypes)},
 	}
+}
+
+// InstalledArchetypesDir resolves the installed archetypes directory used by
+// SearchPathFor. It defaults to ~/.admin/archetypes/ (via os.UserHomeDir),
+// but is a package-level var so tests can point it at a hermetic temp
+// directory instead of inheriting whatever is actually installed on the
+// machine running the test — the same seam pattern as
+// internal/kinds/workflowquery.go's listBeads and workflowdispatch.go's
+// startAgent/runAgent. Production callers (config.Load, the TUI's work-tab
+// loader, cmd's manifest resolver and archetype lister) all read the
+// installed slot through this var via SearchPathFor rather than calling
+// os.UserHomeDir themselves, so there is exactly one place that resolves the
+// installed location.
+var InstalledArchetypesDir = func() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return HomeArchetypesDir(home), nil
+}
+
+// SearchPathFor builds the same three-slot search path as DefaultSearchPath,
+// reading the installed slot from InstalledArchetypesDir instead of taking
+// an explicit home directory. This is what every production caller should
+// use; DefaultSearchPath remains for callers (and tests) that already hold
+// an explicit home directory.
+func SearchPathFor(repoDir string) (SearchPath, error) {
+	installedDir, err := InstalledArchetypesDir()
+	if err != nil {
+		return nil, err
+	}
+	return searchPath(installedDir, repoDir), nil
+}
+
+// UseInstalledDir points InstalledArchetypesDir at a fixed directory —
+// typically an empty or fixture-populated temp directory — for the duration
+// of a test, and returns a restore func that puts the previous resolver
+// back. Callers should always defer the returned restore.
+func UseInstalledDir(dir string) (restore func()) {
+	prev := InstalledArchetypesDir
+	InstalledArchetypesDir = func() (string, error) { return dir, nil }
+	return func() { InstalledArchetypesDir = prev }
 }
 
 // HomeArchetypesDir is where the archetype deployment path (Deploy, in
