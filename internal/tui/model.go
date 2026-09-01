@@ -315,6 +315,11 @@ type Model struct {
 	manifest    *manifest.Manifest
 	manifestOK  bool
 	manifestErr string
+	// manifestStamp is admin.toml's mtime+size as of the last loadManifest
+	// call — the gate fsChangedMsg checks before reloading, so a save
+	// anywhere else in the repo (a source file, a build artifact) doesn't
+	// re-parse the manifest or overwrite the status line.
+	manifestStamp manifestStamp
 	// cmdOrigin/actionOrigin name which archetype (or "(manifest)") last
 	// contributed each command/action name — the detail pane's "archetype"
 	// and each step's "from <archetype>" line. archetype.Resolve's own merge
@@ -966,8 +971,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case fsChangedMsg:
 		// A file changed on disk. Reload local git so the header's dirty state and
-		// the branch list's unsaved-work marking stay live, then resume listening
-		// for the next change.
+		// the branch list's unsaved-work marking stay live — this fires on every
+		// tracked-dir change, not just admin.toml, which is exactly why the
+		// manifest reload below is gated: re-parsing and overwriting the status
+		// line on a source-file save or a build artifact would clobber whatever
+		// the status line was showing for something the user didn't cause.
+		// Compare admin.toml's own stat against the stamp loadManifest captured
+		// last time; only a real difference (including a manifest edited to be
+		// broken, whose mtime/size changed) reloads and announces.
+		if st := statManifest(m.repoRoot); st != m.manifestStamp {
+			m.loadManifest()
+			m.settleActiveTab()
+			if m.manifestErr != "" {
+				m.setStatus("admin.toml: "+m.manifestErr, cRed)
+			} else if m.manifestOK {
+				m.setStatus("manifest reloaded", cDim)
+			}
+		}
 		return m, tea.Batch(
 			loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def),
 			waitForFSCmd(m.fsCh),
@@ -1080,27 +1100,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.quitWith(&PendingAction{Kind: "create-cd", Branch: msg.plan.Branch, RepoRoot: m.repoRoot})
 
-	case editorDoneMsg:
+	case openManifestMsg:
 		if msg.err != nil {
-			m.setStatus("editor failed: "+msg.err.Error(), cRed)
+			if msg.name == "" {
+				m.setStatus("open failed: "+msg.err.Error(), cRed)
+			} else {
+				m.setStatus("open failed: "+msg.name+": "+msg.err.Error(), cRed)
+			}
 			return m, nil
 		}
-		// The editor may have changed anything the manifest declares, so
-		// re-read it rather than trusting the copy loaded at launch. The tab
-		// the cursor is on is left alone — unlike New(), which moves to Work
-		// on a first successful load.
-		m.loadManifest()
-		if m.tabIndex(m.active) < 0 {
-			// The edit removed the tab the cursor was on — a broken manifest
-			// takes the Work tab with it, and changing `tracker` retires
-			// Beads or Issues. Repo is the one tab nothing can remove.
-			m.active = tabLocal
-		}
-		if m.manifestErr != "" {
-			m.setStatus("admin.toml: "+m.manifestErr, cRed)
-		} else {
-			m.setStatus("manifest reloaded", cDim)
-		}
+		// Nothing suspended, so there is no return signal to reload on — the
+		// launched app owns its own window, and the fsnotify watcher
+		// (fsChangedMsg) is what notices the save and reloads the manifest.
+		m.setStatus("opened admin.toml in "+msg.name, cDim)
 		return m, nil
 
 	case actionMsg:
@@ -1618,9 +1630,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// clock says.
 		return m, m.refreshAllCmd()
 	case "o":
-		// The one key that means the same thing on every tab: edit the
-		// manifest every tab is rendering. It used to open the row's page in a
-		// browser, which is why no row kind advertises `o open` any more.
+		// The one key that means the same thing on every tab: open the
+		// manifest every tab is rendering in the desktop's default handler
+		// for its type. It used to open the row's page in a browser, which is
+		// why no row kind advertises `o open` any more.
 		return m, openManifestCmd(m.repoRoot)
 	case "i":
 		return m.openIssue()
