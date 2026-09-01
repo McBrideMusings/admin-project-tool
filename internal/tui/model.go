@@ -966,8 +966,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case fsChangedMsg:
 		// A file changed on disk. Reload local git so the header's dirty state and
-		// the branch list's unsaved-work marking stay live, then resume listening
-		// for the next change.
+		// the branch list's unsaved-work marking stay live. Nothing suspends the
+		// TUI to edit admin.toml any more (`o` launches the desktop's default
+		// handler and returns immediately), so this debounced watcher is the only
+		// reload signal left for an external save — re-read the manifest here too,
+		// exactly as the old editor-return path did, then resume listening.
+		m.loadManifest()
+		m.settleActiveTab()
+		if m.manifestErr != "" {
+			m.setStatus("admin.toml: "+m.manifestErr, cRed)
+		} else if m.manifestOK {
+			m.setStatus("manifest reloaded", cDim)
+		}
 		return m, tea.Batch(
 			loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def),
 			waitForFSCmd(m.fsCh),
@@ -1080,27 +1090,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.quitWith(&PendingAction{Kind: "create-cd", Branch: msg.plan.Branch, RepoRoot: m.repoRoot})
 
-	case editorDoneMsg:
+	case openManifestMsg:
 		if msg.err != nil {
-			m.setStatus("editor failed: "+msg.err.Error(), cRed)
+			m.setStatus("open failed: "+msg.name+": "+msg.err.Error(), cRed)
 			return m, nil
 		}
-		// The editor may have changed anything the manifest declares, so
-		// re-read it rather than trusting the copy loaded at launch. The tab
-		// the cursor is on is left alone — unlike New(), which moves to Work
-		// on a first successful load.
-		m.loadManifest()
-		if m.tabIndex(m.active) < 0 {
-			// The edit removed the tab the cursor was on — a broken manifest
-			// takes the Work tab with it, and changing `tracker` retires
-			// Beads or Issues. Repo is the one tab nothing can remove.
-			m.active = tabLocal
-		}
-		if m.manifestErr != "" {
-			m.setStatus("admin.toml: "+m.manifestErr, cRed)
-		} else {
-			m.setStatus("manifest reloaded", cDim)
-		}
+		// Nothing suspended, so there is no return signal to reload on — the
+		// launched app owns its own window, and the fsnotify watcher
+		// (fsChangedMsg) is what notices the save and reloads the manifest.
+		m.setStatus("opened admin.toml in "+msg.name, cDim)
 		return m, nil
 
 	case actionMsg:
@@ -1618,9 +1616,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// clock says.
 		return m, m.refreshAllCmd()
 	case "o":
-		// The one key that means the same thing on every tab: edit the
-		// manifest every tab is rendering. It used to open the row's page in a
-		// browser, which is why no row kind advertises `o open` any more.
+		// The one key that means the same thing on every tab: open the
+		// manifest every tab is rendering in the desktop's default handler
+		// for its type. It used to open the row's page in a browser, which is
+		// why no row kind advertises `o open` any more.
 		return m, openManifestCmd(m.repoRoot)
 	case "i":
 		return m.openIssue()
