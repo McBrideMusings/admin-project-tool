@@ -529,7 +529,7 @@ func (m Model) renderLocalPanels(width, height int) ([]string, []hitTarget) {
 	}
 	branchBox := boxPanel{
 		title: "Branches", badge: badge,
-		width: leftW, height: height, focused: m.pane == paneBranches,
+		width: leftW, height: height, focused: m.focus == focusBody && m.pane == paneBranches,
 		lines: bLines, active: bActive, scroll: clampScroll(0, len(bLines), height-2, bActive),
 		footer: footer,
 	}
@@ -575,7 +575,7 @@ func (m Model) renderLocalPanels(width, height int) ([]string, []hitTarget) {
 	}
 	commitsBox := boxPanel{
 		title: "Recent commits", badge: strconv.Itoa(len(commits)), width: rightW, height: commitsH,
-		focused: m.pane == paneCommits, lines: cLines, active: cActive,
+		focused: m.focus == focusBody && m.pane == paneCommits, lines: cLines, active: cActive,
 		scroll: clampScroll(0, len(cLines), commitsH-2, cActive),
 	}
 	sLines := make([][]seg, len(stashes))
@@ -589,7 +589,7 @@ func (m Model) renderLocalPanels(width, height int) ([]string, []hitTarget) {
 	}
 	stashesBox := boxPanel{
 		title: "Stashes", badge: strconv.Itoa(len(stashes)), width: rightW, height: stashesH,
-		focused: m.pane == paneStashes, lines: sLines, active: sActive,
+		focused: m.focus == focusBody && m.pane == paneStashes, lines: sLines, active: sActive,
 		scroll: clampScroll(0, len(sLines), stashesH-2, sActive),
 	}
 

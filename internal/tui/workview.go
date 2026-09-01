@@ -100,8 +100,13 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 	if wd == nil {
 		return ""
 	}
+	// current mirrors renderRow's own distinction: the cyan cursor diamond
+	// only means "current" while focus is actually in the body (admin-70hb,
+	// AC1/AC6) — from the tab bar every row falls back to the faint,
+	// unfocused marker so nothing on the Work tab reads as current either.
+	current := selected && m.focus == focusBody
 	marker := faintStyle.Render("◇ ")
-	if selected {
+	if current {
 		marker = lipgloss.NewStyle().Foreground(cCyan).Render("◆ ")
 	}
 	const nameW, stateW = 16, 9
@@ -111,7 +116,7 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 	}
 
 	if r.kind == rowCommandTarget {
-		return marker + renderTargetRow(wd, selected, nameW, rest)
+		return marker + renderTargetRow(wd, current, nameW, rest)
 	}
 
 	if r.kind == rowWorker {
@@ -156,7 +161,7 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 // every other row uses, indented by the connector's two cells so the
 // submenu reads as belonging to the row above it. The cursor marker is
 // already rendered by the caller, so this starts at the connector.
-func renderTargetRow(wd *workRowData, selected bool, nameW, rest int) string {
+func renderTargetRow(wd *workRowData, focused bool, nameW, rest int) string {
 	connector := "├ "
 	if wd.targetLast {
 		connector = "└ "
@@ -164,7 +169,7 @@ func renderTargetRow(wd *workRowData, selected bool, nameW, rest int) string {
 	keyW := maxi(nameW-2, 4)
 	key := padEnd(truncR(wd.targetKey, keyW), keyW)
 	name := key
-	if selected {
+	if focused {
 		name = lipgloss.NewStyle().Foreground(cCyan).Render(key)
 	}
 	hint := truncR(wd.targetRun, maxi(rest-2, 4))
