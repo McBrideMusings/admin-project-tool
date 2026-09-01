@@ -12,6 +12,7 @@ These run codesign for real against throwaway binaries.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,8 @@ sys.path.insert(0, str(REPO))
 from admin_lib.apple import sign  # noqa: E402
 
 pytestmark = pytest.mark.skipif(sys.platform != "darwin", reason="codesign is macOS-only")
+
+_IDENTITY_LINE = re.compile(r'^\s*\d+\)\s+([0-9A-Fa-f]{40})\s+"(.+)"\s*$')
 
 
 def _binary(root: Path, name: str = "demo") -> Path:
@@ -53,12 +56,33 @@ def _designated_requirement(path: Path) -> str:
     return ""
 
 
-def _has_real_identity() -> bool:
+def _resolve_test_identity() -> str | None:
+    """Pick ONE unambiguous codesigning identity for the guarded tests to sign
+    with — resolve_signing_identity (admin_lib/apple.py) refuses to guess
+    when `security find-identity` lists more than one, which is correct
+    behavior, not something these tests should be gated on. Preferring
+    "Apple Development" matches nts-desktop's own auto-pick (see this file's
+    module docstring); falling back to the sole identity keeps this working
+    on a single-identity machine exactly as before.
+    """
     r = subprocess.run(
         ["security", "find-identity", "-v", "-p", "codesigning"],
         capture_output=True, text=True,
     )
-    return "valid identities found" in r.stdout and " 0 valid" not in r.stdout
+    hashes = []
+    for line in r.stdout.splitlines():
+        m = _IDENTITY_LINE.match(line)
+        if m:
+            hashes.append((m.group(1), m.group(2)))
+    for h, desc in hashes:
+        if "Apple Development" in desc:
+            return h
+    if len(hashes) == 1:
+        return hashes[0][0]
+    return None
+
+
+_TEST_IDENTITY = _resolve_test_identity()
 
 
 def _identifier_of(path: Path) -> str:
@@ -85,7 +109,7 @@ def test_identifier_is_applied():
         assert _identifier_of(exe) == "live.nts.desktop"
 
 
-@pytest.mark.skipif(not _has_real_identity(), reason="needs a real codesigning identity")
+@pytest.mark.skipif(_TEST_IDENTITY is None, reason="no unambiguous codesigning identity to resolve")
 def test_identifier_makes_the_designated_requirement_stable_across_rebuilds():
     """The whole reason this helper exists.
 
@@ -105,8 +129,12 @@ def test_identifier_makes_the_designated_requirement_stable_across_rebuilds():
         shutil.copy("/bin/echo", second)  # a different binary == a rebuild
         second.chmod(0o755)
 
-        sign(first, identifier="live.nts.desktop")
-        sign(second, identifier="live.nts.desktop")
+        used_first = sign(first, identity=_TEST_IDENTITY, identifier="live.nts.desktop")
+        used_second = sign(second, identity=_TEST_IDENTITY, identifier="live.nts.desktop")
+        assert used_first != "-" and used_second != "-", (
+            f"sign() fell back to ad-hoc (used_first={used_first!r}, "
+            f"used_second={used_second!r}) instead of using the resolved identity"
+        )
         req_first = _designated_requirement(first)
         assert "cdhash" not in req_first, (
             f"a real identity + identifier should anchor to the identifier, "
@@ -117,7 +145,7 @@ def test_identifier_makes_the_designated_requirement_stable_across_rebuilds():
         )
 
 
-@pytest.mark.skipif(not _has_real_identity(), reason="needs a real codesigning identity")
+@pytest.mark.skipif(_TEST_IDENTITY is None, reason="no unambiguous codesigning identity to resolve")
 def test_without_an_identifier_the_requirement_is_cdhash_bound():
     """The failure mode being fixed: no identifier, requirement follows the build."""
     with tempfile.TemporaryDirectory() as d:
@@ -127,8 +155,12 @@ def test_without_an_identifier_the_requirement_is_cdhash_bound():
         shutil.copy("/bin/echo", second)
         second.chmod(0o755)
 
-        sign(first)
-        sign(second)
+        used_first = sign(first, identity=_TEST_IDENTITY)
+        used_second = sign(second, identity=_TEST_IDENTITY)
+        assert used_first != "-" and used_second != "-", (
+            f"sign() fell back to ad-hoc (used_first={used_first!r}, "
+            f"used_second={used_second!r}) instead of using the resolved identity"
+        )
         assert _designated_requirement(first) != _designated_requirement(second), (
             "no identifier means the requirement follows the binary — "
             "if this ever passes, the helper's reason to exist is gone"
