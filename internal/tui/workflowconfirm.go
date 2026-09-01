@@ -203,13 +203,16 @@ func (m Model) workflowConfirmKey(key string) (tea.Model, tea.Cmd) {
 		name, action, targets := m.wfName, m.wfAction, m.wfTargets
 		m.wfOpen = false
 		if m.wfFromSelection {
-			// admin-3rgp.27: only a selection-sourced dispatch owns
-			// trackerSelected — a query-sourced one (wfFromSelection false)
-			// never touched it and must leave it alone. Cleared only once
-			// dispatch is actually confirmed, not when the picker merely
-			// opened this overlay, so backing out with esc/n leaves the
-			// selection intact for a second try at a different workflow.
-			m.trackerSelected = map[string]bool{}
+			// admin-3rgp.27 (admin-4pps: whichever map is active): only a
+			// selection-sourced dispatch owns the active selection — a
+			// query-sourced one (wfFromSelection false) never touched it and
+			// must leave it alone. Cleared only once dispatch is actually
+			// confirmed, not when the picker merely opened this overlay, so
+			// backing out with esc/n leaves the selection intact for a second
+			// try at a different workflow. The overlay can only be reached
+			// from the tab/pane it was opened on — keys route to it while
+			// it's up — so reading the active tab here is safe.
+			m.clearActiveSelection()
 			m.wfFromSelection = false
 		}
 		m.setStatus(fmt.Sprintf("dispatching %s over %d target(s)…", name, len(targets)), cCyan)

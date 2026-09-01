@@ -256,7 +256,11 @@ type Model struct {
 	// whole batch together instead of just the one row under the cursor. This is
 	// what lets a mixed pick (some proven, some merely eyeballed) go through one
 	// confirm, which neither `x` alone (one row) nor `⇧X` (every proven-ready row,
-	// no exceptions) can express.
+	// no exceptions) can express. `w` with a nonempty selection instead runs a
+	// selection-sourced Workflow over it (selectionworkflow.go's activeSelection),
+	// same as trackerSelected below does for the other three tabs — ADR-0018's one
+	// selection semantic, backed by two maps because Clean Up needs branch names
+	// to survive untouched.
 	// The selection is the whole of select mode's state: there is no separate
 	// latch, so the pane cannot be in select mode with nothing selected.
 	selected map[string]bool
@@ -406,14 +410,16 @@ type Model struct {
 	// real action, it just never had a query to resolve.
 	wfFromSelection bool
 
-	// trackerSelected is the Beads/Issues tabs' multi-select for a
-	// selection-sourced Workflow (admin-3rgp.27, selectionworkflow.go): every
-	// selected row's tracker id (a bead id, or a GitHub issue number as a
-	// string), keyed the same "map length is the mode" way `selected` above
-	// keys branch names — a completely different feature (running a
-	// Workflow over picked rows, not staging branches for deletion), so it
-	// gets its own map rather than overloading branch-name keys with tracker
-	// ids that could theoretically collide with one.
+	// trackerSelected is the Beads/Issues/PRs tabs' shared multi-select for a
+	// selection-sourced Workflow (admin-3rgp.27 and admin-4pps,
+	// selectionworkflow.go): every selected row's tracker id (a bead id, or a
+	// GitHub issue/PR number as a string), keyed the same "map length is the
+	// mode" way `selected` above keys branch names. It stays a separate map
+	// from `selected` rather than overloading branch-name keys with tracker
+	// ids that could theoretically collide with one; activeSelection() is
+	// what makes the two read as one semantic (ADR-0018) — it picks this map
+	// or `selected` by which tab/pane is active, so a stale selection on one
+	// tab can never be read as the selection on another.
 	trackerSelected map[string]bool
 
 	// Workflow picker overlay: `w` with a nonempty trackerSelected opens it,
@@ -1803,12 +1809,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "w":
 		if m.active == tabLocal && m.pane == paneBranches {
+			// Overloaded, same as `x`: a nonempty selection takes priority and
+			// opens the workflow picker; with nothing selected `w` keeps its
+			// original meaning, the new-named-worktree prompt.
+			if m.selectMode() {
+				return m.startWorkflowPicker()
+			}
 			m.naming = true
 			m.nameBuf = ""
 			m.nameCands = nil
 			m.nameSel = -1
 		}
-		if m.active == tabBeads || m.active == tabIssues {
+		if m.active == tabBeads || m.active == tabIssues || m.active == tabPRs {
 			return m.startWorkflowPicker()
 		}
 	case "enter":
@@ -1825,13 +1837,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.worktreeCurrentBranch()
 		}
 	case " ":
-		if m.active == tabLocal && m.pane == paneBranches {
-			// Select mode is the selection, so a refused toggle changes nothing: on
-			// the protected main row or a branch checked out elsewhere, `space` leaves
-			// the pane exactly as it found it.
-			m.toggleBranchSelection()
-		}
-		if m.active == tabBeads || m.active == tabIssues {
+		// toggleTrackerSelection routes to toggleBranchSelection itself on the
+		// Branches pane (ADR-0018: one selection semantic, the active tab/pane
+		// picks which map), so a single call covers every selectable row kind.
+		// Select mode is the selection, so a refused toggle changes nothing: on
+		// the protected main row or a branch checked out elsewhere, `space`
+		// leaves the pane exactly as it found it.
+		if m.active == tabLocal && m.pane == paneBranches ||
+			m.active == tabBeads || m.active == tabIssues || m.active == tabPRs {
 			m.toggleTrackerSelection()
 		}
 	case "x":

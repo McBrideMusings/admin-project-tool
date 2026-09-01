@@ -45,7 +45,7 @@ func TestBuiltins(t *testing.T) {
 			"/:filter", "r:refresh row", "⇧R:refresh all", "q:quit",
 		}},
 		{PR, []string{
-			"↑↓:move", "↵:checkout", "i:issue", "/:filter",
+			"↑↓:move", "↵:checkout", "i:issue", "w:workflow", "/:filter",
 			"r:refresh row", "⇧R:refresh all", "q:quit",
 		}},
 		{Branch, []string{
