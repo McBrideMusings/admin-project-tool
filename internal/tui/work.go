@@ -677,9 +677,13 @@ func (m Model) workRows() []rowItem {
 		rows = append(rows, rowItem{kind: rowText, label: "no workers running — dispatch a command to start one"})
 	} else {
 		for _, e := range workers {
+			label := e.Name
+			if e.Activity != "" {
+				label = e.Name + " " + e.Activity
+			}
 			rows = append(rows, rowItem{
 				kind:  rowWorker,
-				label: e.Name + " " + e.Activity,
+				label: label,
 				work:  &workRowData{worker: e},
 			})
 		}

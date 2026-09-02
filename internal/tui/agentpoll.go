@@ -1,17 +1,19 @@
 // agentpoll.go is the Work tab's per-tick herdr agent status poller
-// (admin-spjp.3): shim.AgentStatus is called exactly once today, after
-// PromptAndWait already returned, purely to tell "blocked on a prompt" apart
-// from "finished". Nothing polls while an agent is mid-run, so the Work tab
-// shows `running` for the whole stretch between dispatch and settle, even
-// once the agent has been sitting on an approval prompt for minutes.
+// (admin-spjp.3): shim.AgentInfoContext is called once per live agent per
+// tick, purely to tell "blocked on a prompt" apart from "finished" and to
+// carry the agent's own activity title into livework.Entry.Activity
+// (admin-spjp.4). Nothing polls while an agent is mid-run beyond that one
+// query, so the Work tab shows `running` for the whole stretch between
+// dispatch and settle, even once the agent has been sitting on an approval
+// prompt for minutes.
 //
 // This mirrors urlprobe.go's shape — package-level, off the render path, a
 // query per stale/live item per tick — but is message-driven rather than a
 // mutex-guarded cache: the tick fires pollAgentStatusCmd, herdr replies with
 // agentStatusMsg, and Update's handler is the only thing that calls
-// livework.Default.SetState. Keeping the write on the Update goroutine (like
-// every other livework mutation model.go makes) means no new locking is
-// needed here at all.
+// livework.Default.SetState / SetActivity. Keeping the write on the Update
+// goroutine (like every other livework mutation model.go makes) means no new
+// locking is needed here at all.
 package tui
 
 import (
@@ -33,9 +35,9 @@ import (
 const agentPollTimeout = 2 * time.Second
 
 // agentStatusFn is the test seam for pollAgentStatusCmd's herdr query, bound
-// to shim.AgentStatusContext by default. Swapped like loadRemoteFn/fetchAllFn
+// to shim.AgentInfoContext by default. Swapped like loadRemoteFn/fetchAllFn
 // (remoteseam.go) and urlProber.probe.
-var agentStatusFn = shim.AgentStatusContext
+var agentStatusFn = shim.AgentInfoContext
 
 // agentPollInflight makes an overlapping tick a no-op: if the previous poll
 // hasn't returned by the time the next tick fires (herdr slower than the 1s
@@ -47,9 +49,10 @@ var agentPollInflight atomic.Bool
 
 // agentStatusResult is one entry's poll outcome.
 type agentStatusResult struct {
-	id     string
-	status string
-	err    error
+	id       string
+	status   string
+	activity string
+	err      error
 }
 
 // agentStatusMsg carries a completed poll round back into Update.
@@ -112,8 +115,8 @@ func pollAgentStatusCmd() tea.Cmd {
 				defer wg.Done()
 				ctx, cancel := context.WithTimeout(context.Background(), agentPollTimeout)
 				defer cancel()
-				status, err := agentStatusFn(ctx, name)
-				results[i] = agentStatusResult{id: id, status: status, err: err}
+				info, err := agentStatusFn(ctx, name)
+				results[i] = agentStatusResult{id: id, status: info.Status, activity: info.Activity, err: err}
 			}(i, e.ID, agentNameFor(e))
 		}
 		wg.Wait()
@@ -123,19 +126,27 @@ func pollAgentStatusCmd() tea.Cmd {
 }
 
 // applyAgentStatuses writes msg's results into the live registry. A failed
-// or empty-status query leaves the entry's last known state untouched — no
-// SetState call, so nothing spams the status line either. A result is also
-// dropped if the entry has since moved off Running/Waiting (dispatchOne
-// already gave it a terminal state) so a slow poll reply can never
-// resurrect an entry the real dispatch already settled.
+// query leaves the entry's last known state and activity untouched. A result
+// is also dropped if the entry has since moved off Running/Waiting
+// (dispatchOne already gave it a terminal state) so a slow poll reply can
+// never resurrect an entry the real dispatch already settled.
+//
+// Activity and status are written independently: an empty title (a herdr
+// build that omits terminal_title_stripped, or a momentary blank one) leaves
+// whatever Activity was last set rather than blanking a good line on a flaky
+// reply, and an empty status word is likewise just skipped for the
+// state-transition switch below.
 func applyAgentStatuses(msg agentStatusMsg) {
 	for _, r := range msg.results {
-		if r.err != nil || r.status == "" {
+		if r.err != nil {
 			continue
 		}
 		st, ok := livework.Default.State(r.id)
 		if !ok || (st != livework.StateRunning && st != livework.StateWaiting) {
 			continue
+		}
+		if r.activity != "" {
+			livework.Default.SetActivity(r.id, r.activity)
 		}
 		switch r.status {
 		case "blocked":

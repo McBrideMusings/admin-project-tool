@@ -647,3 +647,62 @@ func TestWorkRowsNoCommandsStillLegible(t *testing.T) {
 		t.Errorf("no Workers header for a manifest with no commands")
 	}
 }
+
+// TestWorkRowsWorkerLabelHasNoTrailingSpaceWhenActivityEmpty is admin-spjp.4's
+// acceptance criterion for work.go's row label: a worker whose Activity has
+// not been written yet (AgentInfo has not resolved, or the agent reports no
+// current activity) must not carry a trailing space, since the same label
+// doubles as the row's identity string (rowKey, model.go:120).
+func TestWorkRowsWorkerLabelHasNoTrailingSpaceWhenActivityEmpty(t *testing.T) {
+	m := &manifest.Manifest{Custom: map[string]manifest.Command{}, Actions: map[string]manifest.Action{}}
+	mm := workTestModel(m)
+
+	worker := &livework.Entry{
+		ID: "test-work-rows-no-activity", Name: "test-work-rows-no-activity",
+		State: livework.StateRunning, Activity: "", PaneID: "pane-no-activity",
+		Worker: &livework.WorkerInfo{Branch: "no-activity", Worktree: "/tmp/no-activity"},
+	}
+	if err := livework.Default.Add(worker); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	t.Cleanup(func() { livework.Default.SetState(worker.ID, livework.StateExited, nil) })
+
+	rows := mm.workRows()
+	found := false
+	for _, r := range rows {
+		if r.kind == rowWorker && r.work.worker.ID == worker.ID {
+			found = true
+			if strings.HasSuffix(r.label, " ") {
+				t.Errorf("label = %q, want no trailing space when Activity is empty", r.label)
+			}
+			if r.label != worker.Name {
+				t.Errorf("label = %q, want exactly the worker name %q when Activity is empty", r.label, worker.Name)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no worker row found for %s", worker.ID)
+	}
+}
+
+// TestWorkerDetailOmitsNowLabelWhenActivityEmpty is admin-spjp.4's other
+// acceptance criterion: no worker detail pane renders a labelled field with
+// no value.
+func TestWorkerDetailOmitsNowLabelWhenActivityEmpty(t *testing.T) {
+	e := &livework.Entry{
+		ID: "test-worker-detail-no-activity", Name: "test-worker-detail-no-activity",
+		State: livework.StateRunning, Activity: "", PTYID: "pty-detail-no-activity",
+		StartedAt: time.Now(),
+	}
+	if err := livework.Default.Add(e); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	t.Cleanup(func() { livework.Default.SetState(e.ID, livework.StateExited, nil) })
+
+	out := workerDetail(e, 60)
+	for _, line := range out {
+		if strings.Contains(line, "now") {
+			t.Errorf("workerDetail rendered a %q line with empty Activity, want the now label suppressed entirely: %v", line, out)
+		}
+	}
+}
