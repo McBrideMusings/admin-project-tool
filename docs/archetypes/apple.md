@@ -26,6 +26,43 @@ All keys are **optional** unless noted — a wrapper that needs a missing key er
 | `ios_deploy_config` | `Release` | Configuration for iOS `deploy`. |
 | `tv_deploy_config` | `Release` | Configuration for tvOS `deploy`. |
 | `dev_build_settings` | — | Extra `KEY=value` `xcodebuild` build settings appended in **dev** builds only. |
+| `dev_chip_dirs` | — | Source directories that receive the DEV-build chip. See below. |
+
+## The DEV-build chip (`dev_chip_dirs`)
+
+A dev build paints a small red `DEV` marker into the bottom-leading corner of
+every window it opens. `DEV·<worker>` when the bundle ID carries a per-worker
+suffix (`com.example.app.dev.lxhd31`), because per-worker builds are dev builds
+too and the bare word cannot tell three simultaneously-running apps apart.
+
+```toml
+[apple]
+dev_chip_dirs = ["Scratchpad", "ScratchpadIOS"]   # one per app target
+```
+
+Every apple verb — `build`, `dev`, `deploy`, `clean` — writes
+`AdminDevChip.swift` and `AdminDevChipBootstrap.m` into each named directory,
+rewriting them whenever they drift from the tool's copy. **The tool supplies
+every byte; the manifest supplies only the destinations**, which is the
+mechanism/structure split [ADR-0019](../adr/0019-the-tool-defines-mechanism-admin-toml-defines-structure.md)
+draws — the tool cannot guess a project's target layout. Name one directory per
+app target; skip extensions and widgets, which have no windows.
+
+Nothing else is required of the project. There is no call site: the Objective-C
+file runs the chip from `+load`, before `main`, so no line of app code
+references it. Both halves of the failure this replaces are removals rather than
+guards — see the header of `internal/kinds/appledevchip.go` and
+[ADR-0020](../adr/0020-the-archetype-ships-the-dev-build-chip.md).
+
+A directory that is not already inside an app target's sources needs adding to
+that target once. xcodegen and Xcode's file-system-synchronized groups pick up a
+whole folder, so with either there is nothing to do.
+
+The gate is the runtime bundle identifier — a trailing `.dev` or an infix
+`.dev.`, matching the convention `ADMIN_DEV_BUNDLE_SUFFIX` already establishes.
+A production build compiles both files and draws nothing. Naming a directory
+that does not exist is a hard error, not a skip: a typo there would leave the
+chip silently absent, which is exactly the failure it exists to prevent.
 
 **The archetype assumes no platform.** A project gets exactly the targets its scheme keys declare. An iOS-only manifest is never shown `mac`, and `admin deploy mac` there stops immediately, naming the targets the project does have, instead of getting as far as `deploy_mac` and reporting a missing `mac_scheme`. One source decides this for all three commands: `APPLE_PLATFORMS` / `apple_platforms()` / `resolve_apple_platform()` in `admin_lib/apple.py`. Adding a platform is one entry there plus a dispatch branch in the bodies. Cover: `tests/test_apple_platform_gating.py`.
 
