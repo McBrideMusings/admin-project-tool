@@ -372,7 +372,7 @@ func TestCheckQueryWorkflowTrackerNoTrackerDeclaredPasses(t *testing.T) {
 // beads tracker also passes — ResolveQuery's own resolver.
 func TestCheckQueryWorkflowTrackerBeadsPasses(t *testing.T) {
 	m := &manifest.Manifest{
-		Tracker:    "beads",
+		Trackers:   []string{"beads"},
 		HasTracker: true,
 		Actions: map[string]manifest.Action{
 			"review-waiting": {"kind": "workflow", "over": map[string]any{"query": "label:review-me"}},
@@ -388,7 +388,7 @@ func TestCheckQueryWorkflowTrackerBeadsPasses(t *testing.T) {
 // never resolves a query at all.
 func TestCheckQueryWorkflowTrackerSelectionSourcedPasses(t *testing.T) {
 	m := &manifest.Manifest{
-		Tracker:    "github",
+		Trackers:   []string{"github"},
 		HasTracker: true,
 		Actions: map[string]manifest.Action{
 			"retire-merged": {"kind": "workflow", "over": "selection"},
@@ -406,17 +406,9 @@ func TestCheckQueryWorkflowTrackerSelectionSourcedPasses(t *testing.T) {
 // message alone — "ready" has no GitHub equivalent (no dependency edges to
 // derive it from), unlike "label:<name>", which admin-dgv9 gives github its
 // own resolver for (see the passes test below).
-//
-// MUTATION EVIDENCE: with the `m.Tracker == "beads"` early-return condition
-// inverted (so it fires when tracker is NOT beads instead), this test
-// failed with:
-//
-//	checkQueryWorkflowTracker = <nil>, want an error naming the action, query, and tracker
-//
-// (reverted after confirming the failure).
 func TestCheckQueryWorkflowTrackerRejectsGithubReadyQueryWorkflow(t *testing.T) {
 	m := &manifest.Manifest{
-		Tracker:    "github",
+		Trackers:   []string{"github"},
 		HasTracker: true,
 		Actions: map[string]manifest.Action{
 			"ready-work": {"kind": "workflow", "over": map[string]any{"query": "ready"}},
@@ -444,7 +436,7 @@ func TestCheckQueryWorkflowTrackerRejectsGithubReadyQueryWorkflow(t *testing.T) 
 // ResolveQuery can actually resolve it via gh.OpenIssuesByLabel.
 func TestCheckQueryWorkflowTrackerGithubLabelQueryPasses(t *testing.T) {
 	m := &manifest.Manifest{
-		Tracker:    "github",
+		Trackers:   []string{"github"},
 		HasTracker: true,
 		Actions: map[string]manifest.Action{
 			"review-waiting": {"kind": "workflow", "over": map[string]any{"query": "label:review-me"}},
@@ -460,7 +452,7 @@ func TestCheckQueryWorkflowTrackerGithubLabelQueryPasses(t *testing.T) {
 // gh.OpenIssuesByLabel could ever resolve, unlike a real label name.
 func TestCheckQueryWorkflowTrackerGithubEmptyLabelFails(t *testing.T) {
 	m := &manifest.Manifest{
-		Tracker:    "github",
+		Trackers:   []string{"github"},
 		HasTracker: true,
 		Actions: map[string]manifest.Action{
 			"broken": {"kind": "workflow", "over": map[string]any{"query": "label:"}},
@@ -540,7 +532,7 @@ func TestGithubQueryClassificationAgreesAcrossCallSites(t *testing.T) {
 // alone, as is a non-workflow action.
 func TestCheckQueryWorkflowTrackerReportsEveryOffendingAction(t *testing.T) {
 	m := &manifest.Manifest{
-		Tracker:    "github",
+		Trackers:   []string{"github"},
 		HasTracker: true,
 		Actions: map[string]manifest.Action{
 			"resolvable": {"kind": "workflow", "over": map[string]any{"query": "label:review-me"}},
@@ -562,6 +554,53 @@ func TestCheckQueryWorkflowTrackerReportsEveryOffendingAction(t *testing.T) {
 	for _, notWant := range []string{"resolvable", "build"} {
 		if strings.Contains(got, notWant) {
 			t.Fatalf("error %q incorrectly flags %q", got, notWant)
+		}
+	}
+}
+
+// TestCheckQueryWorkflowTrackerRejectsUndeclaredOverTracker proves an
+// over.tracker naming a tracker the manifest doesn't declare is a check
+// error naming the offending value (admin-j00d).
+func TestCheckQueryWorkflowTrackerRejectsUndeclaredOverTracker(t *testing.T) {
+	m := &manifest.Manifest{
+		Trackers:   []string{"beads"},
+		HasTracker: true,
+		Actions: map[string]manifest.Action{
+			"review-waiting": {"kind": "workflow", "over": map[string]any{"query": "label:review-me", "tracker": "github"}},
+		},
+	}
+	err := checkQueryWorkflowTracker(m)
+	if err == nil {
+		t.Fatal("checkQueryWorkflowTracker = nil, want an error for an undeclared over.tracker")
+	}
+	got := err.Error()
+	for _, want := range []string{"review-waiting", "github", "beads"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("error %q does not mention %q", got, want)
+		}
+	}
+}
+
+// TestCheckQueryWorkflowTrackerRejectsAmbiguousTwoDeclared proves that with
+// two trackers declared and over.tracker omitted, check errors and names
+// both declared trackers rather than guessing (admin-j00d) — there is no
+// union-both option.
+func TestCheckQueryWorkflowTrackerRejectsAmbiguousTwoDeclared(t *testing.T) {
+	m := &manifest.Manifest{
+		Trackers:   []string{"beads", "github"},
+		HasTracker: true,
+		Actions: map[string]manifest.Action{
+			"review-waiting": {"kind": "workflow", "over": map[string]any{"query": "label:review-me"}},
+		},
+	}
+	err := checkQueryWorkflowTracker(m)
+	if err == nil {
+		t.Fatal("checkQueryWorkflowTracker = nil, want an error for an omitted over.tracker with two trackers declared")
+	}
+	got := err.Error()
+	for _, want := range []string{"review-waiting", "beads", "github"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("error %q does not mention %q", got, want)
 		}
 	}
 }

@@ -69,9 +69,9 @@ run  = "true"
 // attributes a bare key = value line to whichever table header precedes it,
 // so appending "tracker = ..." after the last [actions.test] table would
 // silently set an unknown field on that action instead of the top-level
-// manifest.Tracker/UsesPullRequests fields model.go's trackerKind() and
+// manifest.Trackers/UsesPullRequests fields model.go's trackers() and
 // wantsPRs() read. %s is "" for the PRs axis (no tracker declared at all —
-// trackerKind() returns "" and visibleTabs() draws no tracker tab of its
+// trackers() returns empty and visibleTabs() draws no tracker tab of its
 // own, leaving PRs as the only one).
 func axisManifest(name, trackerLine string, usesPRs bool) string {
 	head := fmt.Sprintf(commonManifestHead, name, trackerLine+fmt.Sprintf("uses_pull_requests = %v\n", usesPRs))
@@ -134,8 +134,8 @@ func buildFixtures() {
 	githubRoot := filepath.Join(dir, "github-repo")
 	prsRoot := filepath.Join(dir, "prs-repo")
 
-	writeFixtureManifest(beadsRoot, axisManifest("fixture-beads", "tracker = \"beads\"\n", false), true)
-	writeFixtureManifest(githubRoot, axisManifest("fixture-github", "tracker = \"github\"\n", false), false)
+	writeFixtureManifest(beadsRoot, axisManifest("fixture-beads", "tracker = [\"beads\"]\n", false), true)
+	writeFixtureManifest(githubRoot, axisManifest("fixture-github", "tracker = [\"github\"]\n", false), false)
 	writeFixtureManifest(prsRoot, axisManifest("fixture-prs", "", true), false)
 
 	fixtures = map[string]repoSrc{

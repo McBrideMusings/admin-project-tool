@@ -154,7 +154,7 @@ func merge(dst, src *manifest.Manifest, srcLabel string, isManifest bool, log *[
 		dst.PythonMin = src.PythonMin
 	}
 	if src.HasTracker {
-		dst.Tracker, dst.HasTracker = src.Tracker, true
+		dst.Trackers, dst.HasTracker = src.Trackers, true
 	}
 	if src.HasUsesPullRequests {
 		dst.UsesPullRequests, dst.HasUsesPullRequests = src.UsesPullRequests, true

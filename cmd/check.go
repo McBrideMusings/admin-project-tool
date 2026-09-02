@@ -335,11 +335,12 @@ func checkUnknownKinds(m *manifest.Manifest) error {
 // not start failing check over this: HasTracker false means "not declared",
 // and the tool's own default resolution path is beads regardless, so only a
 // project that explicitly opts into a non-beads tracker is reported.
-// Reports every offending action, not just the first.
+// Reports every offending action, not just the first — this now also
+// includes an `over.tracker` naming a tracker the manifest doesn't declare,
+// and (with more than one tracker declared) a query-sourced workflow that
+// omits `over.tracker` entirely (admin-j00d: there is no union-both option,
+// so the ambiguity is a check error naming every declared tracker).
 func checkQueryWorkflowTracker(m *manifest.Manifest) error {
-	if !m.HasTracker || m.Tracker == "beads" {
-		return nil
-	}
 	var problems []string
 	for _, name := range sortedActionNames(m.Actions) {
 		action := m.Actions[name]
@@ -356,10 +357,18 @@ func checkQueryWorkflowTracker(m *manifest.Manifest) error {
 		if target.Source != kinds.WorkflowSourceQuery {
 			continue
 		}
-		if reason := queryTrackerProblem(target.Query, m.Tracker); reason != "" {
+		tracker, err := target.ResolveTracker(name, m.Trackers)
+		if err != nil {
+			problems = append(problems, err.Error())
+			continue
+		}
+		if tracker == "beads" {
+			continue
+		}
+		if reason := queryTrackerProblem(target.Query, tracker); reason != "" {
 			problems = append(problems, fmt.Sprintf(
 				"action %q: over.query %q cannot resolve on tracker %q — %s",
-				name, target.Query, m.Tracker, reason,
+				name, target.Query, tracker, reason,
 			))
 		}
 	}

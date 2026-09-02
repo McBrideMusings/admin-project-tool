@@ -194,7 +194,7 @@ func TestComputeOriginsTracksScalarKeyOrigin(t *testing.T) {
 	if err := os.MkdirAll(archDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body := "tracker = \"beads\"\nuses_pull_requests = false\n"
+	body := "tracker = [\"beads\"]\nuses_pull_requests = false\n"
 	if err := os.WriteFile(filepath.Join(archDir, "archetype.toml"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestComputeOriginsTracksScalarKeyOrigin(t *testing.T) {
 	// archetype that's the only one to declare it.
 	project := &manifest.Manifest{
 		Archetypes: []string{"beads-tracker"},
-		Tracker:    "github", HasTracker: true,
+		Trackers:   []string{"github"}, HasTracker: true,
 	}
 	_, _, keys := computeOrigins(project, sp)
 	if keys["tracker"] != "(manifest)" {

@@ -50,9 +50,10 @@ func TestFrameKeysDriveTheModel(t *testing.T) {
 	defer cancel()
 	m := New(ctx, t.TempDir(), "owner/repo", "main", "main")
 	m.herdr = false
-	// tracker = "github" declared, uses_pull_requests left undeclared (defaults
-	// false) — the second drawn tab is Issues, with no PRs tab ahead of it.
-	m.manifest = &manifest.Manifest{Tracker: "github", HasTracker: true}
+	// tracker = ["github"] declared, uses_pull_requests left undeclared
+	// (defaults false) — the second drawn tab is Issues, with no PRs tab
+	// ahead of it.
+	m.manifest = &manifest.Manifest{Trackers: []string{"github"}, HasTracker: true}
 
 	opts := FrameOptions{Width: 100, Height: 24, Settle: 200 * time.Millisecond}
 	before := Frame(ctx, m, opts)
@@ -72,6 +73,27 @@ func TestFrameKeysDriveTheModel(t *testing.T) {
 	}
 	if strings.Contains(after, "─ Branches ") {
 		t.Error("right left the Repo tab's Branches pane on screen; the tab never changed")
+	}
+}
+
+// TestFrameRendersBothTrackerTabsTogether is admin-j00d's headless proof
+// that tracker = ["beads", "github"] draws both the Beads and Issues tabs at
+// once — the acceptance criterion the query classifier and check-time tests
+// can't reach on their own, since drawing the tab bar is internal/tui's job.
+func TestFrameRendersBothTrackerTabsTogether(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := New(ctx, t.TempDir(), "owner/repo", "main", "main")
+	m.herdr = false
+	m.manifest = &manifest.Manifest{Trackers: []string{"beads", "github"}, HasTracker: true}
+
+	out := Frame(ctx, m, FrameOptions{Width: 100, Height: 24, Settle: 200 * time.Millisecond})
+	tabBar := strings.Split(out, "\n")[1]
+	if !strings.Contains(tabBar, "Beads") {
+		t.Errorf("expected the Beads tab in the tab bar, got %q", tabBar)
+	}
+	if !strings.Contains(tabBar, "Issues") {
+		t.Errorf("expected the Issues tab in the tab bar, got %q", tabBar)
 	}
 }
 
