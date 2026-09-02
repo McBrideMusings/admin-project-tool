@@ -252,10 +252,14 @@ func (m Model) renderTermHeader(width int) string {
 	case livework.StateFailed:
 		glyph, glyphColor = "✗", cRed
 	}
+	meta := "  ·  " + string(state) + "  ·  " + elapsedMS(time.Since(started))
+	if activity != "" {
+		meta += "  ·  "
+	}
 	line := " " +
 		lipgloss.NewStyle().Foreground(glyphColor).Render(glyph) + " " +
 		lipgloss.NewStyle().Bold(true).Render(name) +
-		faintStyle.Render("  ·  "+string(state)+"  ·  "+elapsedMS(time.Since(started))+"  ·  ") +
+		faintStyle.Render(meta) +
 		activity
 	return truncateLine(line, width)
 }
