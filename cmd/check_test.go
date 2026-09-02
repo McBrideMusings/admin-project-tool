@@ -475,6 +475,65 @@ func TestCheckQueryWorkflowTrackerGithubEmptyLabelFails(t *testing.T) {
 	}
 }
 
+// TestGithubQueryClassificationAgreesAcrossCallSites is ROUND 2's structural
+// guard: queryTrackerProblem (check time) and kinds.ResolveQuery (dispatch
+// time) must never classify the same query string into different cases —
+// that is exactly how 708afbe's dispatch-time "unrecognized" message came to
+// advertise "ready" as supported when the case above it rejected it. Package
+// cmd is the only package that can call both call sites, since
+// resolveGitHubQuery's gh-backed seam is unexported inside package kinds.
+//
+// Every row here errors before any gh call (ready, empty-label,
+// unrecognized), so this test runs offline; the one row that would reach
+// listGitHubIssues (a real label) is asserted via kinds.ClassifyQuery plus
+// queryTrackerProblem's "resolvable" verdict — the actual gh-backed
+// resolution stays proven by workflowquery_test.go's stubbed test inside
+// package kinds.
+func TestGithubQueryClassificationAgreesAcrossCallSites(t *testing.T) {
+	cases := []struct {
+		query string
+	}{
+		{"ready"},
+		{" ready "},
+		{"label:"},
+		{"label:review-me"},
+		{"everything"},
+		{""},
+	}
+	for _, c := range cases {
+		checkProblem := queryTrackerProblem(c.query, "github")
+		form, _ := kinds.ClassifyQuery(c.query)
+
+		switch form {
+		case kinds.QueryFormReady:
+			if checkProblem == "" {
+				t.Errorf("query %q: check time says resolvable, dispatch time classifies it QueryFormReady (beads-only)", c.query)
+			}
+			if !strings.Contains(checkProblem, "beads-only") {
+				t.Errorf("query %q: check-time message %q does not say beads-only", c.query, checkProblem)
+			}
+		case kinds.QueryFormEmptyLabel:
+			if checkProblem == "" {
+				t.Errorf("query %q: check time says resolvable, dispatch time classifies it QueryFormEmptyLabel", c.query)
+			}
+		case kinds.QueryFormLabel:
+			if checkProblem != "" {
+				t.Errorf("query %q: check time says %q, dispatch time classifies it QueryFormLabel (resolvable)", c.query, checkProblem)
+			}
+		case kinds.QueryFormUnrecognized:
+			if checkProblem == "" {
+				t.Errorf("query %q: check time says resolvable, dispatch time classifies it QueryFormUnrecognized", c.query)
+			}
+			if !strings.Contains(checkProblem, "label:<name>") {
+				t.Errorf("query %q: check-time message %q does not name label:<name>", c.query, checkProblem)
+			}
+			if strings.Contains(checkProblem, `"ready"`) {
+				t.Errorf("query %q: check-time message %q must not advertise \"ready\" as supported", c.query, checkProblem)
+			}
+		}
+	}
+}
+
 // TestCheckQueryWorkflowTrackerReportsEveryOffendingAction proves multiple
 // query-sourced workflows the tracker cannot resolve are all reported, not
 // just the first, and a resolvable label: query alongside them is left

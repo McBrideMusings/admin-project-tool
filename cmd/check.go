@@ -373,26 +373,27 @@ func checkQueryWorkflowTracker(m *manifest.Manifest) error {
 // "" when it can. tracker is always non-beads here (checkQueryWorkflowTracker
 // returns early on beads), so a non-github tracker has no resolver at all —
 // every query fails. A github tracker resolves "label:<name>" via
-// gh.OpenIssuesByLabel; the three forms flagged here are exactly the three
-// internal/kinds/workflowquery.go's resolveGitHubQuery rejects at dispatch
-// time, kept in sync by hand since check-time validation and dispatch-time
-// resolution are necessarily two call sites for the same rule.
+// gh.OpenIssuesByLabel; which of the other forms is rejected, and why, comes
+// from kinds.ClassifyQuery — the same classifier
+// internal/kinds/workflowquery.go's resolveGitHubQuery calls at dispatch
+// time, so the two call sites cannot classify a query differently even
+// though each still wraps the outcome in its own check-time-vs-dispatch-time
+// wording.
 func queryTrackerProblem(query, tracker string) string {
 	if tracker != "github" {
 		return fmt.Sprintf(
 			"there is no query resolver for tracker %q; use over = \"selection\" instead or switch tracker to \"beads\"",
 			tracker)
 	}
-	q := strings.TrimSpace(query)
-	switch {
-	case q == "ready":
+	switch form, _ := kinds.ClassifyQuery(query); form {
+	case kinds.QueryFormReady:
 		return `"ready" is beads-only — it means "no open blocker", and github has no dependency edges to derive that from; use "label:<name>" or switch tracker to "beads"`
-	case strings.HasPrefix(q, "label:") && strings.TrimPrefix(q, "label:") == "":
+	case kinds.QueryFormEmptyLabel:
 		return `"label:" needs a name`
-	case strings.HasPrefix(q, "label:"):
+	case kinds.QueryFormLabel:
 		return "" // resolvable
 	default:
-		return `unrecognized — github supports only "label:<name>"`
+		return fmt.Sprintf(`unrecognized — github supports only %s`, kinds.GitHubQueryForms)
 	}
 }
 
