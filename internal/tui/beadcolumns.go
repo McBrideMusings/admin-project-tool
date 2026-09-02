@@ -4,6 +4,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/McBrideMusings/admin-project-tool/internal/bd"
 )
 
@@ -89,7 +91,7 @@ var beadColumnByName = map[string]beadColumn{
 			return 0
 		},
 		cell: func(b bd.Bead, w int, _ beadCtx) []seg {
-			return []seg{{t: padEnd(beadStatusGlyph(b), w), fg: cCyan}}
+			return []seg{{t: padEnd(beadStatusGlyph(b), w), fg: beadGlyphColor(b)}}
 		},
 	},
 	"title": {name: "title", side: beadLeft},
@@ -128,6 +130,17 @@ var beadColumnByName = map[string]beadColumn{
 			return padStart(seg{t: compactSince(b.Updated), fg: cDim}, w)
 		},
 	},
+}
+
+// beadGlyphColor tints the glyph column's one cell: a human bead gets the
+// same yellow the rest of the pane reserves for something wanting attention,
+// so the cell that marks "blocked on you" doesn't recede into the ordinary
+// cyan every other glyph value uses.
+func beadGlyphColor(b bd.Bead) lipgloss.TerminalColor {
+	if beadNeedsHuman(b) {
+		return cYellow
+	}
+	return cCyan
 }
 
 // beadColumnsFor resolves configured names to columns, dropping unknown ones and
