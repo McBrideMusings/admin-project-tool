@@ -8,18 +8,14 @@
 //	over = "selection" is row-only; over = { query = ... } appears in the
 //	Commands tab and runs bare after confirming the resolved set.
 //
-// Actually RUNNING a workflow — resolving a query, confirming the set with
-// the user, fanning targets out into worktrees under a concurrency ceiling —
-// is explicitly out of scope here and belongs to the follow-on tickets this
-// one blocks: admin-3rgp.27 (selection-sourced dispatch from a dashboard
-// row), admin-3rgp.26 (query-sourced dispatch, bare-run, from the Commands
-// tab) and admin-3rgp.25 (the worktree/concurrency machinery both share).
-// makeWorkflow below validates `over` at factory-build time (so a malformed
-// workflow fails the same way any other malformed action does, before a
-// Runner is ever invoked) and returns a Runner that reports NOT IMPLEMENTED
-// — the same notImplemented() stub pattern factories.go already uses for
-// apple, apple-dev-loop, interactive-shell and bridge-listen ahead of their
-// own port tickets.
+// Actually RUNNING a workflow from the bare CLI is workflowcli.go
+// (admin-spjp.2) — makeWorkflow below validates `over` at factory-build time
+// (so a malformed workflow fails the same way any other malformed action
+// does, before a Runner is ever invoked) and hands off to
+// runWorkflowCLI, which resolves a query, confirms it with the user, and
+// dispatches through the same kinds.DispatchTargets machinery
+// internal/tui/workflowconfirm.go's dashboard overlay uses — no second
+// dispatch path exists.
 package kinds
 
 import (
@@ -230,18 +226,16 @@ func ValidateWorkflows(actions map[string]manifest.Action) error {
 // makeWorkflow is kind="workflow"'s factory. It validates `over` up front —
 // the same "malformed config fails at build time, not at Runner-invocation
 // time" contract every other kind factory in this package follows — and
-// then returns a Runner that reports NOT IMPLEMENTED, naming the resolved
-// target source so the message is useful rather than generic: dispatch,
-// worktrees and concurrency are admin-3rgp.25/.26/.27's job, not this
-// ticket's.
+// then returns a Runner that delegates to runWorkflowCLI (workflowcli.go),
+// the bare-CLI invocation path: a selection-sourced workflow fails loudly
+// naming the row gesture that does have targets to act on, a query-sourced
+// one resolves, confirms, and dispatches through kinds.DispatchTargets.
 func makeWorkflow(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	target, err := ParseWorkflowOver(name, action)
 	if err != nil {
 		return nil, err
 	}
 	return func(args []string) error {
-		return fmt.Errorf(
-			"action %q: kind=\"workflow\" (over: %s) is not implemented in the Go runtime yet — "+
-				"dispatch lands in admin-3rgp.25/.26/.27", name, target.Source)
+		return runWorkflowCLI(name, action, m, target, args)
 	}, nil
 }
