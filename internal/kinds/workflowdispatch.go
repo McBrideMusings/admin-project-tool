@@ -245,13 +245,14 @@ func dispatchOne(actionName, agentKind string, t Target, wt create.Result) Targe
 		ID:     agentName,
 		Name:   actionName,
 		Kind:   "workflow",
-		PaneID: paneID,
+		Handle: paneID,
+		Via:    "herdr",
 		Worker: &livework.WorkerInfo{Branch: wt.Branch, Worktree: wt.Path},
 	}
 	e.Ops = livework.Ops{
-		Attach: func() error { return shim.FocusPane(e.PaneID) },
+		Attach: func() error { return shim.FocusPane(e.Handle) },
 		Kill: func() error {
-			if err := shim.ClosePane(e.PaneID); err != nil {
+			if err := shim.ClosePane(e.Handle); err != nil {
 				return err
 			}
 			livework.Default.SetState(e.ID, livework.StateExited, nil)

@@ -13,11 +13,11 @@ import (
 )
 
 // admin-3rgp.64: the where-column replaces a column that used to print
-// wd.live.PaneID unconditionally — false for every hosted (pty-addressed)
+// wd.live.Handle unconditionally — false for every hosted (Via-empty)
 // entry, which is most of them since admin-3rgp.61. These tests pin the
-// two values it may now show ("hosted" for a pty-addressed entry, the pane
-// id for a pane-addressed one) and that a hosted row and a detached row
-// can never show each other's value.
+// two values it may now show ("hosted" for a hosted-pty entry, the launcher
+// handle for a launcher-dispatched one) and that a hosted row and a
+// detached row can never show each other's value.
 
 // TestWhereColumnHostedCommandRowShowsHostedNeverPane covers the "hosted
 // running command renders running, its activity, and hosted" AC and its
@@ -25,7 +25,7 @@ import (
 func TestWhereColumnHostedCommandRowShowsHostedNeverPane(t *testing.T) {
 	entry := &livework.Entry{
 		ID: "docs", Name: "docs", State: livework.StateRunning,
-		Activity: "vitepress dev", PTYID: "pty-1", StartedAt: time.Now(),
+		Activity: "vitepress dev", Handle: "pty-1", StartedAt: time.Now(),
 	}
 	// renderWorkRow now reads state through livework.Default.State(e.ID)
 	// (admin-ddc8), so the entry must actually be in the process-wide
@@ -62,7 +62,7 @@ func TestWhereColumnHostedCommandRowShowsHostedNeverPane(t *testing.T) {
 func TestWhereColumnDetachedWorkerRowShowsPaneNeverHosted(t *testing.T) {
 	worker := &livework.Entry{
 		ID: "test-wherecol-detached-worker", Name: "test-wherecol-detached-worker",
-		State: livework.StateWaiting, Activity: "awaiting approval", PaneID: "pane 3",
+		State: livework.StateWaiting, Activity: "awaiting approval", Handle: "pane 3", Via: "terminal",
 		Worker: &livework.WorkerInfo{Branch: "some-branch", Worktree: "/tmp/some-branch"},
 	}
 	line := workTestModel(nil).renderWorkRow(rowItem{kind: rowWorker, work: &workRowData{worker: worker}}, false, 60)
@@ -95,7 +95,7 @@ func TestWhereColumnStateWordsAreVerbatim(t *testing.T) {
 	}
 	entry := &livework.Entry{
 		ID: "wherecol-state-words", Name: "build",
-		Activity: "doing the thing", PTYID: "pty-2", StartedAt: time.Now(),
+		Activity: "doing the thing", Handle: "pty-2", StartedAt: time.Now(),
 	}
 	// See TestWhereColumnHostedCommandRowShowsHostedNeverPane: renderWorkRow
 	// reads state through the registry now, so the entry must be Added, and
@@ -125,7 +125,7 @@ func TestWhereColumnTruncatesActivityKeepsWherewholeAt(t *testing.T) {
 		cmdName: "build",
 		live: &livework.Entry{
 			ID: "build", Name: "build", State: livework.StateRunning,
-			Activity: longActivity, PaneID: "pane 12345", StartedAt: time.Now(),
+			Activity: longActivity, Handle: "pane 12345", Via: "terminal", StartedAt: time.Now(),
 		},
 	}
 	line := stripANSI(workTestModel(nil).renderWorkRow(rowItem{kind: rowCommand, work: live}, false, 40))
@@ -157,8 +157,8 @@ func TestWhereColumnIdleRowUnchanged(t *testing.T) {
 
 // TestWhereColumnFrameAtMultipleWidths is the "asserted through the
 // dashboard's headless frame renderer at more than one width" AC: seeds one
-// PTYID-only (hosted) entry and one PaneID-only (detached) worker entry
-// into the process-wide registry and asserts each row's where-value at two
+// hosted-pty (Via empty) entry and one launcher-dispatched (Via set) worker
+// entry into the process-wide registry and asserts each row's where-value at two
 // different widths. livework.Default is a process-wide singleton shared
 // with every other test in this package, so IDs/names here are unique and
 // the assertions only ever look at these two rows, never at the absence of
@@ -173,7 +173,7 @@ func TestWhereColumnFrameAtMultipleWidths(t *testing.T) {
 
 	hosted := &livework.Entry{
 		ID: cmdName, Name: cmdName, State: livework.StateRunning,
-		Activity: "running the fixture", PTYID: "pty-wherecol-fixture", StartedAt: time.Now(),
+		Activity: "running the fixture", Handle: "pty-wherecol-fixture", StartedAt: time.Now(),
 	}
 	if err := livework.Default.Add(hosted); err != nil {
 		t.Fatalf("Add hosted: %v", err)
@@ -181,7 +181,7 @@ func TestWhereColumnFrameAtMultipleWidths(t *testing.T) {
 
 	detached := &livework.Entry{
 		ID: "wherecolfixturedetachedworker", Name: "wherecolfixturedetachedworker",
-		State: livework.StateWaiting, Activity: "needs input", PaneID: "pane 7",
+		State: livework.StateWaiting, Activity: "needs input", Handle: "pane 7", Via: "terminal",
 		Worker: &livework.WorkerInfo{Branch: "wherecol-branch", Worktree: "/tmp/wherecol-branch"},
 	}
 	if err := livework.Default.Add(detached); err != nil {

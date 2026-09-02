@@ -343,8 +343,8 @@ func TestDispatchTargetsRecordsLiveWorkWithPaneHandle(t *testing.T) {
 	if !ok {
 		t.Fatal("live-work entry not present while the target's agent is still running")
 	}
-	if entry.PaneID != "pane-live-1" {
-		t.Errorf("entry.PaneID = %q, want pane-live-1", entry.PaneID)
+	if entry.Handle != "pane-live-1" {
+		t.Errorf("entry.Handle = %q, want pane-live-1", entry.Handle)
 	}
 	if entry.State != livework.StateRunning {
 		t.Errorf("entry.State = %q, want running while the target is in flight", entry.State)
@@ -494,8 +494,8 @@ func TestDispatchOneRetryRestartsFailedTarget(t *testing.T) {
 	if entry.State != livework.StateFailed {
 		t.Fatalf("entry.State = %q, want %q before retry", entry.State, livework.StateFailed)
 	}
-	if entry.PaneID != "pane-retry-1" {
-		t.Fatalf("entry.PaneID = %q, want pane-retry-1 before retry", entry.PaneID)
+	if entry.Handle != "pane-retry-1" {
+		t.Fatalf("entry.Handle = %q, want pane-retry-1 before retry", entry.Handle)
 	}
 
 	if err := livework.Default.Retry(id); err != nil {
@@ -507,7 +507,7 @@ func TestDispatchOneRetryRestartsFailedTarget(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		entry, _ = livework.Default.Get(id)
-		if entry.PaneID == "pane-retry-2" {
+		if entry.Handle == "pane-retry-2" {
 			break
 		}
 		if time.Now().After(deadline) {

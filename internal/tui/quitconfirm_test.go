@@ -1,6 +1,6 @@
 // quitconfirm_test.go pins admin-3rgp.63's acceptance criteria: quitting
-// with nothing hosted exits immediately, quitting with a hosted pty-addressed
-// process open a confirm listing it (and only it — not a pane-addressed
+// with nothing hosted exits immediately, quitting with a hosted (Via-empty)
+// process open a confirm listing it (and only it — not a launcher-dispatched
 // entry, not an agent worker), accepting kills every listed entry then
 // quits, and any other key cancels leaving every entry untouched.
 package tui
@@ -17,31 +17,31 @@ import (
 )
 
 // TestHostedRunningEntriesFiltersByAddressAndState proves the "hosted" set
-// is exactly PTYID-addressed, non-worker entries in Running/Waiting — a
-// PaneID entry (herdr pane) and a Worker entry are pane-addressed and must
-// never be listed even though both could otherwise pass a naive "is
-// something running" check, and an exited PTYID entry has nothing left to
-// warn about.
+// is exactly Via-empty, non-worker entries in Running/Waiting — a Via-set
+// entry (a launcher-dispatched pane) and a Worker entry must never be
+// listed even though both could otherwise pass a naive "is something
+// running" check, and an exited hosted entry has nothing left to warn
+// about.
 func TestHostedRunningEntriesFiltersByAddressAndState(t *testing.T) {
 	hosted := &livework.Entry{
 		ID: "quitconfirm-hosted-running", Name: "hosted-running",
-		PTYID: "pty-1", State: livework.StateRunning,
+		Handle: "pty-1", State: livework.StateRunning,
 	}
 	waiting := &livework.Entry{
 		ID: "quitconfirm-hosted-waiting", Name: "hosted-waiting",
-		PTYID: "pty-2", State: livework.StateWaiting,
+		Handle: "pty-2", State: livework.StateWaiting,
 	}
 	exited := &livework.Entry{
 		ID: "quitconfirm-hosted-exited", Name: "hosted-exited",
-		PTYID: "pty-3", State: livework.StateExited,
+		Handle: "pty-3", State: livework.StateExited,
 	}
 	paned := &livework.Entry{
 		ID: "quitconfirm-paned", Name: "paned",
-		PaneID: "pane-1", State: livework.StateRunning,
+		Handle: "pane-1", Via: "terminal", State: livework.StateRunning,
 	}
 	worker := &livework.Entry{
 		ID: "quitconfirm-worker", Name: "worker",
-		PaneID: "pane-2", State: livework.StateRunning,
+		Handle: "pane-2", Via: "terminal", State: livework.StateRunning,
 		Worker: &livework.WorkerInfo{Branch: "b", Worktree: "/tmp/b"},
 	}
 	for _, e := range []*livework.Entry{hosted, waiting, exited, paned, worker} {
@@ -64,16 +64,16 @@ func TestHostedRunningEntriesFiltersByAddressAndState(t *testing.T) {
 		names[e.Name] = true
 	}
 	if !names["hosted-running"] {
-		t.Error("hosted-running (PTYID, StateRunning) missing from hostedRunningEntries")
+		t.Error("hosted-running (Via empty, StateRunning) missing from hostedRunningEntries")
 	}
 	if !names["hosted-waiting"] {
-		t.Error("hosted-waiting (PTYID, StateWaiting) missing from hostedRunningEntries")
+		t.Error("hosted-waiting (Via empty, StateWaiting) missing from hostedRunningEntries")
 	}
 	if names["hosted-exited"] {
-		t.Error("hosted-exited (PTYID, StateExited) present, want excluded — nothing to warn about")
+		t.Error("hosted-exited (Via empty, StateExited) present, want excluded — nothing to warn about")
 	}
 	if names["paned"] {
-		t.Error("paned (PaneID) present, want excluded — pane-backed entries outlive the dashboard on purpose")
+		t.Error("paned (Via set) present, want excluded — launcher-dispatched entries outlive the dashboard on purpose")
 	}
 	if names["worker"] {
 		t.Error("worker (Worker != nil) present, want excluded — agent workers outlive the dashboard on purpose")
@@ -104,7 +104,7 @@ func TestRequestQuitWithNothingHostedQuitsImmediately(t *testing.T) {
 func TestRequestQuitWithHostedProcessOpensConfirm(t *testing.T) {
 	e := &livework.Entry{
 		ID: "quitconfirm-opens-confirm", Name: "opens-confirm",
-		PTYID: "pty-opens-confirm", State: livework.StateRunning,
+		Handle: "pty-opens-confirm", State: livework.StateRunning,
 	}
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add: %v", err)
@@ -138,7 +138,7 @@ func TestQuitConfirmKeyEnterKillsAndQuits(t *testing.T) {
 	killed := false
 	e := &livework.Entry{
 		ID: "quitconfirm-enter-kills", Name: "enter-kills",
-		PTYID: "pty-enter-kills", State: livework.StateRunning,
+		Handle: "pty-enter-kills", State: livework.StateRunning,
 		Ops: livework.Ops{Kill: func() error { killed = true; return nil }},
 	}
 	if err := livework.Default.Add(e); err != nil {
@@ -177,7 +177,7 @@ func TestQuitConfirmKeyOtherCancelsWithoutKilling(t *testing.T) {
 	killed := false
 	e := &livework.Entry{
 		ID: "quitconfirm-esc-cancels", Name: "esc-cancels",
-		PTYID: "pty-esc-cancels", State: livework.StateRunning,
+		Handle: "pty-esc-cancels", State: livework.StateRunning,
 		Ops: livework.Ops{Kill: func() error { killed = true; return nil }},
 	}
 	if err := livework.Default.Add(e); err != nil {
@@ -211,7 +211,7 @@ func TestQuitConfirmKeyOtherCancelsWithoutKilling(t *testing.T) {
 func TestFrameShowsQuitConfirmOverHostedProcess(t *testing.T) {
 	e := &livework.Entry{
 		ID: "quitconfirm-frame-entry", Name: "frame-hosted-fixture",
-		PTYID: "pty-frame-entry", State: livework.StateRunning,
+		Handle: "pty-frame-entry", State: livework.StateRunning,
 		Ops: livework.Ops{Kill: func() error { return nil }},
 	}
 	if err := livework.Default.Add(e); err != nil {

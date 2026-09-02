@@ -5,6 +5,8 @@
 package kinds
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -58,7 +60,7 @@ func TestRunActionRoutedDetachDispatchesThroughLauncher(t *testing.T) {
 	entries := livework.Default.List()
 	found := false
 	for _, e := range entries {
-		if e.Name == "dev-server" && e.PaneID == "fake-handle-1" && e.Kind == "shell" {
+		if e.Name == "dev-server" && e.Handle == "fake-handle-1" && e.Kind == "shell" {
 			found = true
 		}
 	}
@@ -250,7 +252,7 @@ func TestMultiTargetPerTargetDetachDispatchesThroughLauncher(t *testing.T) {
 	entries := livework.Default.List()
 	found := false
 	for _, e := range entries {
-		if e.Name == "dev:cf" && e.PaneID == "fake-handle-2" {
+		if e.Name == "dev:cf" && e.Handle == "fake-handle-2" {
 			found = true
 		}
 	}
@@ -266,5 +268,74 @@ func TestMultiTargetPerTargetDetachDispatchesThroughLauncher(t *testing.T) {
 	if got := len(livework.Default.List()); got != before+1 {
 		t.Errorf("live-work registry has %d entries, want exactly %d (only the detached target registers)",
 			got, before+1)
+	}
+}
+
+// TestDetachedEntryAttachRunsLauncherAttachWithHandle is admin-ysxr.3's
+// acceptance criterion: pressing attach on a launcher-dispatched row runs
+// that launcher's attach command with ADMIN_HANDLE set to the handle spawn
+// printed. The fake launcher's attach writes ADMIN_HANDLE to a file rather
+// than actually attaching to anything, so the observable proof is that
+// file's content.
+func TestDetachedEntryAttachRunsLauncherAttachWithHandle(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	r := NewRegistry()
+	r.MustRegister("shell", makeShell)
+
+	m := detachManifest(map[string]any{
+		"spawn":  "echo fake-handle-1",
+		"attach": `echo "$ADMIN_HANDLE" > attached.txt`,
+		"kill":   `echo "$ADMIN_HANDLE" > killed.txt`,
+	})
+
+	if err := RunActionRouted(m, r, "dev-server", nil); err != nil {
+		t.Fatalf("RunActionRouted = %v, want nil", err)
+	}
+
+	if err := livework.Default.Attach("dev-server"); err != nil {
+		t.Fatalf("Attach(dev-server) = %v, want nil", err)
+	}
+	assertFileExists(t, dir, "attached.txt")
+	body, err := os.ReadFile(filepath.Join(dir, "attached.txt"))
+	if err != nil {
+		t.Fatalf("reading attached.txt: %v", err)
+	}
+	if got := strings.TrimSpace(string(body)); got != "fake-handle-1" {
+		t.Errorf("attached.txt = %q, want the spawned handle %q", got, "fake-handle-1")
+	}
+}
+
+// TestDetachedEntryKillRunsLauncherKillWithHandle proves killing a
+// launcher-dispatched row runs the launcher's kill command, also with
+// ADMIN_HANDLE set to the spawned handle.
+func TestDetachedEntryKillRunsLauncherKillWithHandle(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	r := NewRegistry()
+	r.MustRegister("shell", makeShell)
+
+	m := detachManifest(map[string]any{
+		"spawn":  "echo fake-handle-1",
+		"attach": `echo "$ADMIN_HANDLE" > attached.txt`,
+		"kill":   `echo "$ADMIN_HANDLE" > killed.txt`,
+	})
+
+	if err := RunActionRouted(m, r, "dev-server", nil); err != nil {
+		t.Fatalf("RunActionRouted = %v, want nil", err)
+	}
+
+	if err := livework.Default.Kill("dev-server"); err != nil {
+		t.Fatalf("Kill(dev-server) = %v, want nil", err)
+	}
+	assertFileExists(t, dir, "killed.txt")
+	body, err := os.ReadFile(filepath.Join(dir, "killed.txt"))
+	if err != nil {
+		t.Fatalf("reading killed.txt: %v", err)
+	}
+	if got := strings.TrimSpace(string(body)); got != "fake-handle-1" {
+		t.Errorf("killed.txt = %q, want the spawned handle %q", got, "fake-handle-1")
 	}
 }

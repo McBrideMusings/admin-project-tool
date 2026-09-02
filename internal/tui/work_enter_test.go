@@ -77,8 +77,8 @@ func TestActivateCommandAttachesWhenLive(t *testing.T) {
 	attached := false
 	live := &livework.Entry{
 		ID: "build", Name: "build", State: livework.StateRunning,
-		PaneID: "pane-build",
-		Ops:    livework.Ops{Attach: func() error { attached = true; return nil }},
+		Handle: "pane-build", Via: "terminal",
+		Ops: livework.Ops{Attach: func() error { attached = true; return nil }},
 	}
 	if err := livework.Default.Add(live); err != nil {
 		t.Fatalf("Add: %v", err)
@@ -168,7 +168,7 @@ func TestActivateWorkerRowAttaches(t *testing.T) {
 	attached := false
 	worker := &livework.Entry{
 		ID: "test-enter-worker-attaches", Name: "test-enter-worker-attaches",
-		State: livework.StateRunning, PaneID: "pane-enter-worker",
+		State: livework.StateRunning, Handle: "pane-enter-worker", Via: "herdr",
 		Worker: &livework.WorkerInfo{
 			Branch: "test-enter-worker-attaches", Worktree: "/tmp/test-enter-worker-attaches",
 		},
@@ -267,6 +267,52 @@ func TestFrameDuringHostedRunShowsTheDashboard(t *testing.T) {
 	}
 	if !strings.Contains(out, "Work") {
 		t.Errorf("frame taken during the run lost the dashboard's own tab bar: %q", out)
+	}
+}
+
+// TestAttachKeyRunsOpsAttachForLauncherRow proves the `a` key path on a
+// launcher-dispatched row (Via set) reaches Ops.Attach — the registry's own
+// launcher-vs-hosted branch (Via != "" → Ops.Attach) — rather than the
+// hosted-pty terminal opener, which a launcher-dispatched entry never wires
+// or needs.
+//
+// MUTATION EVIDENCE: flip livework.Registry.Attach's branch to test Handle
+// instead of Via and this test still passes today only because Handle is
+// also non-empty here; it exists to pin the Via-set path specifically as
+// admin-ysxr.3 defines it, distinct from admin-ysxr.4's hosted-pty case.
+func TestAttachKeyRunsOpsAttachForLauncherRow(t *testing.T) {
+	attached := false
+	live := &livework.Entry{
+		ID: "attach-key-launcher", Name: "attach-key-launcher", Kind: "shell",
+		State: livework.StateRunning, Handle: "fake-handle-attach-key", Via: "terminal",
+		Ops: livework.Ops{Attach: func() error { attached = true; return nil }},
+	}
+	if err := livework.Default.Add(live); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	m := workTestModel(&manifest.Manifest{
+		Custom:  map[string]manifest.Command{"attach-key-launcher": {Steps: []string{"attach-key-launcher"}}},
+		Actions: map[string]manifest.Action{"attach-key-launcher": {"kind": "shell"}},
+	})
+	m.active = tabWork
+	rows := m.workRows()
+	idx := -1
+	for i, r := range rows {
+		if r.work != nil && r.work.live != nil && r.work.live.ID == live.ID {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		t.Fatalf("no row found for the fixture entry %q in %v", live.ID, rows)
+	}
+	m.cursor[tabWork] = idx
+
+	if _, cmd := m.attachCurrentWork(); cmd != nil {
+		t.Errorf("attachCurrentWork returned a non-nil Cmd for a launcher row, want nil (attach is synchronous)")
+	}
+	if !attached {
+		t.Error("`a` on a Via-set row did not invoke Ops.Attach, attached=false")
 	}
 }
 

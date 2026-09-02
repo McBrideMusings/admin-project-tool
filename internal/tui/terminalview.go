@@ -1,14 +1,15 @@
 // terminalview.go is admin-3rgp.65's whole terminal view: attaching to a
-// pty-addressed live-work row opens a full-tab terminal over that child's
-// pty, rendered through a real terminal emulator (charmbracelet/x/vt) so
-// color, cursor positioning and the child's own pinned footer all just
-// work — the child's point of view never changes, its pty IS its terminal.
+// hosted-pty live-work row (Via empty) opens a full-tab terminal over that
+// child's pty, rendered through a real terminal emulator
+// (charmbracelet/x/vt) so color, cursor positioning and the child's own
+// pinned footer all just work — the child's point of view never changes,
+// its pty IS its terminal.
 //
 // Three things this file owns:
-//   - the terminalOpener seam: livework.Registry.Attach for a pty-addressed
+//   - the terminalOpener seam: livework.Registry.Attach for a hosted-pty
 //     entry calls back into this package (installTerminalOpener, wired from
 //     Model.Init) rather than mutating a value-type Model directly. The
-//     callback can only record which pty was requested; work.go's
+//     callback can only record which handle was requested; work.go's
 //     attachEntry reads that back and does the actual transition.
 //   - the emulator lifecycle: creating it sized to the body region on
 //     attach, feeding it only bytes written since attach (never a replay —
@@ -38,8 +39,8 @@ import (
 // from work.go's attachEntry, on the Bubble Tea loop's own goroutine) and
 // the terminal-opener callback the registry invokes synchronously inside
 // that same call. The callback cannot mutate a value-type Model itself, so
-// it records the requested ptyID here and attachEntry drains it right after
-// Attach returns — see installTerminalOpener and takePendingTerminal.
+// it records the requested handle here and attachEntry drains it right
+// after Attach returns — see installTerminalOpener and takePendingTerminal.
 var (
 	pendingTerminalMu sync.Mutex
 	pendingTerminal   string
@@ -51,18 +52,18 @@ var (
 // Init (a second dashboard instance in the same process, as a headless test
 // might construct) just re-installs the same closure harmlessly.
 func installTerminalOpener() {
-	livework.Default.SetTerminalOpener(func(ptyID string) error {
+	livework.Default.SetTerminalOpener(func(handle string) error {
 		pendingTerminalMu.Lock()
-		pendingTerminal = ptyID
+		pendingTerminal = handle
 		pendingTerminalMu.Unlock()
 		return nil
 	})
 }
 
-// takePendingTerminal returns and clears whatever ptyID the opener last
+// takePendingTerminal returns and clears whatever handle the opener last
 // recorded. It is drained unconditionally after every attach attempt (see
-// work.go's attachEntry) — a pane-addressed Attach never writes here, so
-// there is nothing to leak into a later, unrelated pty attach.
+// work.go's attachEntry) — a launcher-dispatched Attach never writes here,
+// so there is nothing to leak into a later, unrelated pty attach.
 func takePendingTerminal() (string, bool) {
 	pendingTerminalMu.Lock()
 	defer pendingTerminalMu.Unlock()
@@ -91,7 +92,7 @@ func termTickCmd() tea.Cmd {
 func (m Model) openTerminal(e *livework.Entry) Model {
 	m.termAttached = true
 	m.termEntryID = e.ID
-	m.termPTYID = e.PTYID
+	m.termPTYID = e.Handle
 	m.termHasOutput = false
 	if e.Output != nil {
 		m.termOff = e.Output.Total()
