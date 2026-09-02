@@ -25,6 +25,7 @@ package kinds
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
@@ -140,11 +141,7 @@ func joinOrNone(list []string) string {
 	if len(list) == 0 {
 		return "none"
 	}
-	out := list[0]
-	for _, s := range list[1:] {
-		out += ", " + s
-	}
-	return out
+	return strings.Join(list, ", ")
 }
 
 // ParseWorkflowOver reads and validates action's `over` key — the Go home
