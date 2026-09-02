@@ -145,5 +145,7 @@ serialize something the tool never deserializes.
   `Handle string` (the opaque address) plus `Via string` (empty for the built-in hosted pty,
   non-empty naming the launcher that minted the handle) — matching this ADR's decision log
   above. `internal/kinds`' `Lifetime` entry remains as it is until `admin-ysxr.4` lands.
-- `internal/tui/agentpoll.go`'s hard-coded `herdr agent get` call is unaffected until a later
-  ticket wires `status` through it.
+- `internal/tui/agentpoll.go`'s hard-coded `herdr agent get` call is resolved by
+  [ADR-0021](./0021-agent-interaction-is-code-terminals-are-config.md), not by wiring the
+  optional `status` key: talking to whatever is inside a launched pane is a compiled-in
+  `internal/agent.Driver`, not a project-supplied shell command.
