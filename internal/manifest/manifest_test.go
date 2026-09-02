@@ -458,7 +458,7 @@ tracker      = ["beads", "github"]
 	}
 }
 
-// TestParseConfigTables covers the five config.Config tables becoming
+// TestParseConfigTables covers the six config.Config tables becoming
 // ordinary admin.toml keys: they parse, survive round-trip as raw maps, and
 // [[populate]] decodes as an array of tables.
 func TestParseConfigTables(t *testing.T) {
@@ -478,6 +478,11 @@ columns = ["id", "title"]
 [workflow]
 agent   = "claude"
 ceiling = 3
+
+[terminal]
+spawn  = "spawn cmd"
+attach = "attach cmd"
+kill   = "kill cmd"
 
 [[populate]]
 pattern = ".env"
@@ -502,6 +507,9 @@ pattern = ".claude/skills/*"
 	if m.Workflow["agent"] != "claude" {
 		t.Errorf("Workflow[agent] = %v", m.Workflow["agent"])
 	}
+	if m.Terminal["spawn"] != "spawn cmd" {
+		t.Errorf("Terminal[spawn] = %v, want \"spawn cmd\"", m.Terminal["spawn"])
+	}
 	if len(m.Populate) != 2 {
 		t.Fatalf("Populate = %+v, want 2 entries", m.Populate)
 	}
@@ -512,7 +520,7 @@ pattern = ".claude/skills/*"
 		t.Errorf("Populate[1] = %+v", m.Populate[1])
 	}
 	if len(m.Unknown) != 0 {
-		t.Errorf("Unknown = %v, want none of the five config tables flagged unknown", m.Unknown)
+		t.Errorf("Unknown = %v, want none of the six config tables flagged unknown", m.Unknown)
 	}
 }
 
@@ -548,7 +556,7 @@ func TestParseConfigTablesRejectUnknownKeys(t *testing.T) {
 
 // TestParseNoConfigTablesDeclaredIsEmpty is the "a project declaring none of
 // them gets the existing code defaults, unchanged" acceptance criterion at
-// the parse layer: nothing declared, nothing parsed, and none of the five
+// the parse layer: nothing declared, nothing parsed, and none of the six
 // keys is ever flagged unknown.
 func TestParseNoConfigTablesDeclaredIsEmpty(t *testing.T) {
 	dir := writeManifest(t, `project_name = "widget-app"`)
@@ -556,10 +564,10 @@ func TestParseNoConfigTablesDeclaredIsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(m.Identity) != 0 || len(m.Worktrees) != 0 || len(m.Beads) != 0 || len(m.Workflow) != 0 || len(m.Populate) != 0 {
-		t.Errorf("a manifest declaring none of the five config tables parsed non-empty: "+
-			"identity=%v worktrees=%v beads=%v workflow=%v populate=%v",
-			m.Identity, m.Worktrees, m.Beads, m.Workflow, m.Populate)
+	if len(m.Identity) != 0 || len(m.Worktrees) != 0 || len(m.Beads) != 0 || len(m.Workflow) != 0 || len(m.Terminal) != 0 || len(m.Populate) != 0 {
+		t.Errorf("a manifest declaring none of the six config tables parsed non-empty: "+
+			"identity=%v worktrees=%v beads=%v workflow=%v terminal=%v populate=%v",
+			m.Identity, m.Worktrees, m.Beads, m.Workflow, m.Terminal, m.Populate)
 	}
 }
 
