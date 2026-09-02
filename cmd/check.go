@@ -85,6 +85,9 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	for _, s := range shadows {
 		fmt.Fprintln(os.Stderr, s)
 	}
+	if err := validate.Terminal(m.Terminal); err != nil {
+		problems = append(problems, err)
+	}
 
 	// ADR-0009's own anti-patterns are reported, never failed (admin-3rgp.9):
 	// the project's *own* admin.toml is checked against the un-merged

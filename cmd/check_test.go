@@ -1121,6 +1121,43 @@ steps = ["noop"]
 	}
 }
 
+// TestRunCheckAcceptsAWellFormedTerminalTable is admin-ysxr.1's first
+// acceptance criterion: a manifest declaring a well-formed [terminal] table
+// (ADR-0020) passes `admin check`.
+func TestRunCheckAcceptsAWellFormedTerminalTable(t *testing.T) {
+	dir := writeCheckManifest(t, `project_name = "checktest"
+
+[terminal]
+spawn  = 'id=$(herdr pane split --current --cwd "$ADMIN_CWD" --no-focus) && herdr pane run "$id" "$ADMIN_CMD" && echo "$id"'
+attach = 'herdr focus "$ADMIN_HANDLE"'
+kill   = 'herdr pane close "$ADMIN_HANDLE"'
+status = 'herdr agent get "$ADMIN_HANDLE"'
+`)
+	err, _ := runCheckCapturingStderr(t, dir)
+	if err != nil {
+		t.Fatalf("runCheck = %v, want nil", err)
+	}
+}
+
+// TestRunCheckRejectsATerminalTableMissingAttach is admin-ysxr.1's second
+// acceptance criterion: a [terminal] table missing `attach` fails `admin
+// check`, and the message names the missing key.
+func TestRunCheckRejectsATerminalTableMissingAttach(t *testing.T) {
+	dir := writeCheckManifest(t, `project_name = "checktest"
+
+[terminal]
+spawn = 'id=$(herdr pane split --current --cwd "$ADMIN_CWD" --no-focus) && herdr pane run "$id" "$ADMIN_CMD" && echo "$id"'
+kill  = 'herdr pane close "$ADMIN_HANDLE"'
+`)
+	err, _ := runCheckCapturingStderr(t, dir)
+	if err == nil {
+		t.Fatal("runCheck = nil, want an error naming the missing 'attach' key")
+	}
+	if !strings.Contains(err.Error(), "attach") {
+		t.Fatalf("error %q does not name the missing key 'attach'", err.Error())
+	}
+}
+
 // TestRunCheckAcceptsTheDogfoodDeclaration is admin-7wy5's acceptance
 // criterion 1, carried here because the real declaration lives only in this
 // repo's own untracked admin.toml (see CLAUDE.md's "admin.toml is NOT

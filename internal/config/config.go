@@ -1,11 +1,11 @@
-// Package config is the typed view over the five admin.toml tables that
+// Package config is the typed view over the six admin.toml tables that
 // configure the dashboard rather than any one command: [identity],
-// [worktrees], [[populate]], [beads] and [workflow]. It holds no file-reading
-// logic of its own — Load resolves a project's manifest (internal/manifest +
-// internal/archetype, merged through archetypes exactly like every other
-// admin.toml key) and decodes those five tables into the typed shapes below.
-// There are no built-in defaults for populate — with none declared, populate
-// does nothing.
+// [worktrees], [[populate]], [beads], [workflow] and [terminal]. It holds no
+// file-reading logic of its own — Load resolves a project's manifest
+// (internal/manifest + internal/archetype, merged through archetypes exactly
+// like every other admin.toml key) and decodes those six tables into the
+// typed shapes below. There are no built-in defaults for populate — with
+// none declared, populate does nothing.
 package config
 
 import (
@@ -75,14 +75,28 @@ type Workflow struct {
 	Ceiling int    `toml:"ceiling"`
 }
 
-// Config is the decoded [identity]/[worktrees]/[[populate]]/[beads]/[workflow]
-// tables of a resolved (archetype-merged) manifest.
+// Terminal configures the ADR-0020 launcher contract: how a dispatched
+// action gets its own terminal instead of the dashboard's hosted pty. Spawn,
+// Attach and Kill are required together (validated by internal/validate.
+// Terminal); Status is optional. Empty means no launcher is declared, and
+// nothing dispatches through this table yet (admin-ysxr.1 is parse+validate
+// only).
+type Terminal struct {
+	Spawn  string `toml:"spawn"`
+	Attach string `toml:"attach"`
+	Kill   string `toml:"kill"`
+	Status string `toml:"status"`
+}
+
+// Config is the decoded [identity]/[worktrees]/[[populate]]/[beads]/
+// [workflow]/[terminal] tables of a resolved (archetype-merged) manifest.
 type Config struct {
 	Populate  []Entry   `toml:"populate"`
 	Worktrees Worktrees `toml:"worktrees"`
 	Identity  Identity  `toml:"identity"`
 	Beads     Beads     `toml:"beads"`
 	Workflow  Workflow  `toml:"workflow"`
+	Terminal  Terminal  `toml:"terminal"`
 }
 
 // Owns reports whether a git author email is one of yours. Comparison is
@@ -117,7 +131,7 @@ const DefaultWorktreeRoot = "~/.worktrees"
 // Load resolves repoRoot's admin.toml against its declared archetypes — the
 // same resolution every other manifest-driven feature uses (see
 // internal/tui/work.go's loadWorkManifest, which this mirrors) — and decodes
-// the five config tables from the merged result.
+// the six config tables from the merged result.
 //
 // A repoRoot with no admin.toml at all returns a zero Config and a nil
 // error: create.Worktree and the TUI both depend on this degrade path, since
@@ -147,7 +161,7 @@ func Load(repoRoot string) (Config, error) {
 	return FromManifest(merged)
 }
 
-// FromManifest decodes the five config tables from an already-resolved
+// FromManifest decodes the six config tables from an already-resolved
 // manifest. Exported so a caller that already holds a resolved manifest (the
 // TUI's Work tab, which loads and merges one at New for its own purposes)
 // can build a Config from it without a second parse+resolve pass.
@@ -161,6 +175,7 @@ func FromManifest(m *manifest.Manifest) (Config, error) {
 		Identity:  decodeIdentity(m.Identity),
 		Beads:     decodeBeads(m.Beads),
 		Workflow:  decodeWorkflow(m.Workflow),
+		Terminal:  decodeTerminal(m.Terminal),
 	}, nil
 }
 
@@ -232,6 +247,23 @@ func decodeWorkflow(raw map[string]any) Workflow {
 		w.Ceiling = toInt(v)
 	}
 	return w
+}
+
+func decodeTerminal(raw map[string]any) Terminal {
+	var t Terminal
+	if v, ok := raw["spawn"].(string); ok {
+		t.Spawn = v
+	}
+	if v, ok := raw["attach"].(string); ok {
+		t.Attach = v
+	}
+	if v, ok := raw["kill"].(string); ok {
+		t.Kill = v
+	}
+	if v, ok := raw["status"].(string); ok {
+		t.Status = v
+	}
+	return t
 }
 
 func decodePopulate(raw []map[string]any) []Entry {
