@@ -316,20 +316,19 @@ func TestValidateWorkflowsReportsEveryOffender(t *testing.T) {
 
 // -- catalog / factory wiring ---------------------------------------------
 
-// TestWorkflowKindIsDeclaredConfiglessAndTransient proves the catalog
-// entry's shape: Configless (its body is `over`, not `run`) and Lifetime:
-// Transient (admin-spjp.2's reclassification — see catalog.go's comment on
-// the "workflow" entry for why LongRunning was the bug).
-func TestWorkflowKindIsDeclaredConfiglessAndTransient(t *testing.T) {
+// TestWorkflowKindIsDeclaredConfigless proves the catalog entry's shape:
+// Configless (its body is `over`, not `run`) and not ConsumesTargets. A
+// workflow action must never carry `detach = true` (admin-spjp.2's fix,
+// still true under ADR-0020 — see catalog.go's comment on the "workflow"
+// entry), but that is a manifest-authoring rule, not a catalog property, so
+// there is nothing left on Kind itself to assert here.
+func TestWorkflowKindIsDeclaredConfigless(t *testing.T) {
 	k, ok := Declared("workflow")
 	if !ok {
 		t.Fatal(`Declared("workflow") ok=false, want true`)
 	}
 	if !k.Configless {
 		t.Fatal("workflow kind should be Configless (driven by 'over', not 'run')")
-	}
-	if k.Lifetime != Transient {
-		t.Fatalf("workflow kind Lifetime = %v, want Transient", k.Lifetime)
 	}
 	if k.ConsumesTargets {
 		t.Fatal("workflow kind should not be ConsumesTargets — its targets come from 'over', not a 'targets' table")

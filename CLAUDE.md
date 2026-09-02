@@ -166,6 +166,26 @@ requires = []
 
 **Runtime.** `run_requires` walks the list fail-fast: invokes each named guard, prints its diagnostic via `err()` on first failure, returns 1. Built-in guards produce dynamic diagnostics ("branch 'X' has unpushed commits — push first: git push origin X"); user-defined shell guards run `/bin/sh -c <run>`, capture stdout+stderr, print the captured output then the static `fail` on non-zero exit. The cwd is inherited (the interpreter cd's to project root at boot). Guards do not compose — a guard cannot reference another `requires`. Adding a new built-in means writing a Python function in `admin_lib/guards.py` and adding its name to `GUARDS_BUILTIN` there (the single source of truth). `run_global_preflight` runs the always-on checks (currently just `deps-fresh`) once per invocation before dispatch — `boot()` calls it before the CLI command runs and the TUI calls it before executing a selection; it's memoized so nested dispatch (sequence steps, `@`-refs) only checks once.
 
+## Detached dispatch
+
+A project can declare a `[terminal]` table (ADR-0020) naming the launcher it wants a detached action dispatched into — whatever multiplexer or terminal app the project actually runs, never one the tool assumes:
+
+```toml
+[terminal]
+spawn  = 'id=$(herdr pane split --current --cwd "$ADMIN_CWD" --no-focus) && herdr pane run "$id" "$ADMIN_CMD" && echo "$id"'
+attach = 'herdr focus "$ADMIN_HANDLE"'
+kill   = 'herdr pane close "$ADMIN_HANDLE"'
+status = 'herdr agent get "$ADMIN_HANDLE"'   # optional
+
+[actions.dev]
+kind   = "vite-dev"
+detach = true
+```
+
+`detach = true` on an action (or per multi-target target, inheriting the parent's default the way `requires`/`urls` already do) is what opts it into the launcher — a plain-CLI `admin dev` shells `spawn` with `ADMIN_CMD`/`ADMIN_LABEL`/`ADMIN_CWD` set to the re-entry command line, this project's root, and the action's label, plus `ADMIN_ROW_KIND`/`ADMIN_ROW_ID`/`ADMIN_ROW_URL` when the dispatch is row-bound (ADR-0018); `spawn`'s trimmed stdout is the opaque handle recorded in the live-work registry, and `attach`/`kill` are later shelled with `ADMIN_HANDLE` set to it. No `kind` is reserved for this — a kind is just what runs; whether its dispatch goes through the launcher is a per-action declaration, never assumed from the kind (ADR-0019/ADR-0020).
+
+**No `[terminal]` declared, or `detach` absent/false, → run inline** — nothing changes for a project that never opts in. A `[terminal]` declared but a detached action's `spawn` failing degrades to inline with one warning line, the same "the tool must never be why a dev loop doesn't start" rule the guards' preflight follows. A dashboard-hosted command (`RunCommandHosted`) never reaches the launcher regardless of `detach` — that surface is a property of the producer, not the action.
+
 ## Row-scoped key bindings
 
 A project can bind keys to commands at the row level by declaring `[keys.<row-kind>]` tables mapping keys to command names — one table per bindable row kind (`bead`, `issue`, `branch`, `pr`, `commit`, `stash`). A bound key invokes the named command with the row's data passed as environment variables (`ADMIN_ROW_KIND`, `ADMIN_ROW_ID`, `ADMIN_ROW_URL`); the command's `desc` becomes the key's label in the row footer, replacing the built-in binding. This repo dogfoods the feature for implementing work:

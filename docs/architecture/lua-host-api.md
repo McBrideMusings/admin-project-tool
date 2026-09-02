@@ -233,8 +233,9 @@ console output — the two items this section used to list as deferred — are p
 as `apple.*` Lua bindings. They live in `internal/kinds` (`apple_darwin.go`,
 `appledevloop_darwin.go`) as the Go implementation of `kind = "apple"` (one verb per `run` value —
 `build_mac`, `dev_ios`, `deploy_tv`, `clean_ios`, ...) and `kind = "apple-dev-loop"` (the same
-target-picker shape as `kind = "multi-target"`, registered to the same factory, classified
-`LongRunning` so it dispatches into its own herdr pane). A Lua archetype body never calls these
+target-picker shape as `kind = "multi-target"`, registered to the same factory; an archetype
+opts one of its targets into its own terminal by declaring `detach = true` on it, per ADR-0020
+— the kind itself carries no dispatch opinion). A Lua archetype body never calls these
 directly — they're a manifest-driven action kind, the same shape `docker-dev`/`vite-dev` already
 are — composing:
 
