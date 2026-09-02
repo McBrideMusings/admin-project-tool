@@ -34,7 +34,7 @@ func TestRunCommandRunsStepsInOrder(t *testing.T) {
 			"three": {"kind": "shell", "run": "echo three >> order.txt"},
 		},
 	}
-	if err := RunCommand(m, newDispatchTestRegistry(), "build", nil); err != nil {
+	if err := RunCommand(m, newDispatchTestRegistry(), "build", nil, nil); err != nil {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 	assertFileExists(t, dir, "order.txt")
@@ -66,7 +66,7 @@ func TestRunCommandStopsAtFirstFailure(t *testing.T) {
 			"after":  {"kind": "shell", "run": "touch after.txt"},
 		},
 	}
-	if err := RunCommand(m, newDispatchTestRegistry(), "build", nil); err == nil {
+	if err := RunCommand(m, newDispatchTestRegistry(), "build", nil, nil); err == nil {
 		t.Fatal("RunCommand = nil, want an error from the failing middle step")
 	}
 	assertFileExists(t, dir, "before.txt")
@@ -83,7 +83,7 @@ func TestRunCommandRejectsKindOnCommand(t *testing.T) {
 		},
 		Actions: map[string]manifest.Action{"noop": {"kind": "shell", "run": "true"}},
 	}
-	err := RunCommand(m, newDispatchTestRegistry(), "bad", nil)
+	err := RunCommand(m, newDispatchTestRegistry(), "bad", nil, nil)
 	if err == nil {
 		t.Fatal("RunCommand should reject a command carrying 'kind'")
 	}
@@ -100,7 +100,7 @@ func TestRunCommandRejectsRunOnCommand(t *testing.T) {
 		},
 		Actions: map[string]manifest.Action{"noop": {"kind": "shell", "run": "true"}},
 	}
-	if err := RunCommand(m, newDispatchTestRegistry(), "bad", nil); err == nil {
+	if err := RunCommand(m, newDispatchTestRegistry(), "bad", nil, nil); err == nil {
 		t.Fatal("RunCommand should reject a command carrying 'run'")
 	}
 }
@@ -109,7 +109,7 @@ func TestRunCommandRejectsRunOnCommand(t *testing.T) {
 // clearly rather than panicking.
 func TestRunCommandUnknownCommandIsError(t *testing.T) {
 	m := &manifest.Manifest{Custom: map[string]manifest.Command{}}
-	if err := RunCommand(m, newDispatchTestRegistry(), "nope", nil); err == nil {
+	if err := RunCommand(m, newDispatchTestRegistry(), "nope", nil, nil); err == nil {
 		t.Fatal("RunCommand for an unknown command should error")
 	}
 }
@@ -133,7 +133,7 @@ func TestRunCommandCustomShadowsOverride(t *testing.T) {
 			"from-custom":    {"kind": "shell", "run": "touch custom.txt"},
 		},
 	}
-	if err := RunCommand(m, newDispatchTestRegistry(), "build", nil); err != nil {
+	if err := RunCommand(m, newDispatchTestRegistry(), "build", nil, nil); err != nil {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 	assertFileExists(t, dir, "custom.txt")
@@ -185,7 +185,7 @@ func TestRunCommandNamesLogUnconditionally(t *testing.T) {
 	}
 
 	announced := captureStderr(t, func() {
-		if err := RunCommand(m, newDispatchTestRegistry(), "build", nil); err != nil {
+		if err := RunCommand(m, newDispatchTestRegistry(), "build", nil, nil); err != nil {
 			t.Fatalf("RunCommand = %v, want nil", err)
 		}
 	})
@@ -236,7 +236,7 @@ func TestRunCommandLogFalseWritesNoFile(t *testing.T) {
 			"one": {"kind": "shell", "run": "echo hi"},
 		},
 	}
-	if err := RunCommand(m, newDispatchTestRegistry(), "quiet", nil); err != nil {
+	if err := RunCommand(m, newDispatchTestRegistry(), "quiet", nil, nil); err != nil {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 	matches, _ := filepath.Glob(filepath.Join(dir, "tmp", "*.log"))
@@ -263,7 +263,7 @@ func TestRunCommandLogFileUsesExplicitPath(t *testing.T) {
 			"one": {"kind": "shell", "run": "echo hi"},
 		},
 	}
-	if err := RunCommand(m, newDispatchTestRegistry(), "build", nil); err != nil {
+	if err := RunCommand(m, newDispatchTestRegistry(), "build", nil, nil); err != nil {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 	assertFileExists(t, dir, "custom.log")
@@ -291,7 +291,7 @@ func TestRunCommandHonoursLoggingDirConfig(t *testing.T) {
 			"one": {"kind": "shell", "run": "echo hi"},
 		},
 	}
-	if err := RunCommand(m, newDispatchTestRegistry(), "build", nil); err != nil {
+	if err := RunCommand(m, newDispatchTestRegistry(), "build", nil, nil); err != nil {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 	matches, _ := filepath.Glob(filepath.Join(dir, "customlogs", "build.*.log"))
@@ -546,7 +546,7 @@ func TestNestedCommandWritesOneLogFile(t *testing.T) {
 		},
 	}
 
-	if err := RunCommand(m, newHopTestRegistry(), "outer", nil); err != nil {
+	if err := RunCommand(m, newHopTestRegistry(), "outer", nil, nil); err != nil {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 
@@ -599,7 +599,7 @@ func TestNestedLogFalseDoesNotSilenceOuter(t *testing.T) {
 		},
 	}
 
-	if err := RunCommand(m, newHopTestRegistry(), "outer", nil); err != nil {
+	if err := RunCommand(m, newHopTestRegistry(), "outer", nil, nil); err != nil {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 

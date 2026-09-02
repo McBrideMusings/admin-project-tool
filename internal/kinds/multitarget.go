@@ -13,18 +13,6 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// reentryDetachedMarker is prepended to the args a detached target's
-// dispatch hands the launcher's re-entry command line, and stripped back
-// off by this same Runner on the other end — see its use below for why:
-// without it, the __run-action re-entry that finally executes the picked
-// target would resolve the identical effective `detach = true` a second
-// time and try to spawn a second launcher dispatch from inside the first,
-// forever. Unexported and deliberately not a flag-shaped string
-// (__run-action disables cobra flag parsing, so this never collides with
-// one), and distinctive enough that no real target name would collide
-// with it.
-const reentryDetachedMarker = "__admin-detached-reentry"
-
 // multiTargetReserved are the top-level keys on a kind="multi-target" action
 // that are never themselves a target name — everything else whose value is
 // a table is an inline target subtable (admin_lib/validate.py's
@@ -276,24 +264,7 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 	return func(args []string) error {
 		h := newHost(m)
 
-		// Strip off, if present, the reentryDetachedMarker the block below
-		// prepends to the args it hands the launcher — this Runner is what
-		// runs on BOTH sides of a detached target's
-		// dispatch (the picking process that decides to detach, and the
-		// __run-action re-entry that actually executes the picked target),
-		// and the marker is what tells the two apart so the re-entered
-		// side never tries to detach a second time into a third pane.
-		alreadyDispatched := false
-		if len(args) > 0 && args[0] == reentryDetachedMarker {
-			alreadyDispatched = true
-			args = args[1:]
-		}
-
-		var picked string
-		rest := args
-		if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-			picked, rest = args[0], args[1:]
-		}
+		picked, rest := splitTargetArg(args)
 
 		if picked == "" {
 			if len(order) == 1 {
@@ -347,16 +318,21 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 		// launcher and returns immediately — before enterFrame, since a
 		// detached target must not raise a frame it will never write to
 		// (the frame belongs to whichever process the launcher's spawn
-		// command actually runs the re-entry command in).
+		// command actually runs the re-entry command in). !inReentry()
+		// guards against re-dispatching a second time from inside a run
+		// this same launcher (or another one) already started — replacing
+		// the old reentryDetachedMarker argv sentinel with the process-wide
+		// re-entry signal every launcher-reached dispatch now shares
+		// (admin-ysxr.4/.7).
 		effectiveDetach := resolveTargetDetach(parentDetach, parentDetachPresent, t.detach, t.detachSet)
-		if effectiveDetach && !alreadyDispatched {
+		if effectiveDetach && !inReentry() {
 			cfg, _ := config.FromManifest(m)
 			ctx := launchCtxFromEnv(fmt.Sprintf("%s:%s", name, picked))
-			targetArgs := append([]string{reentryDetachedMarker, picked}, rest...)
-			handle, err := dispatchToLauncher(name, targetArgs, ctx, cfg.Terminal)
+			targetArgs := append([]string{picked}, rest...)
+			handle, err := dispatchToLauncher("__run-action", name, targetArgs, ctx, cfg.Terminal)
 			switch {
 			case err == nil:
-				recordLiveWork(name+":"+picked, "multi-target", handle, targetArgs, ctx, cfg.Terminal)
+				recordLiveWork(name+":"+picked, "multi-target", handle, "__run-action", name, targetArgs, ctx, cfg.Terminal)
 				return nil
 			case err == errNoLauncher:
 				// No [terminal] declared — fall through to running this
@@ -405,6 +381,22 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 		h.Ok(name + " complete")
 		return nil
 	}, nil
+}
+
+// splitTargetArg parses a multi-target dispatch's argv the one way this
+// package recognizes: args[0] names the target unless it looks like a flag
+// (starts with '-'), in which case no target was named at all and every arg
+// is passed through as rest. This is the canonical definition — the Runner
+// above and dispatch.go's dispatchDetach (which must know which target a
+// launcher decision resolves against before the Runner ever runs) both call
+// it, so "which arg names the target" cannot drift into two answers the way
+// the detach resolution itself once did (admin-ysxr.4).
+func splitTargetArg(args []string) (picked string, rest []string) {
+	rest = args
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		picked, rest = args[0], args[1:]
+	}
+	return picked, rest
 }
 
 // sortInlineKeys returns m's keys sorted, for deterministic target-picker

@@ -2,12 +2,17 @@
 // a Command onto a pseudo-terminal it owns, without ever releasing its own
 // alt-screen. It mirrors pane.go's herdr-dispatch pattern (ADR-0015) —
 // re-exec this same binary against a hidden re-entry verb — but with
-// pty.Start in place of shim.SplitPane, and __run-command (which calls
-// RunCommandHosted) in place of __run-action (which calls the pane-capable
-// RunAction). Running the whole step loop in a child process is what keeps
-// Host.Stdout, the frame footer, and every one of the ~30 newHost() call
-// sites in this package off the dashboard's own terminal: from the child's
-// point of view the pty IS its terminal, so nothing here has to know that.
+// pty.Start in place of shim.SplitPane, and __run-command in place of
+// __run-action. Both re-entry verbs call kinds.RunCommand/RunAction with
+// kinds.MarkReentry() set first (cmd/root.go), so __run-command's whole step
+// loop runs inline (runActionInline) in the pty child regardless of what any
+// step's own `detach` declares — StartHostedPTY IS the built-in launcher a
+// dashboard dispatch reaches when the manifest names none, so nothing it
+// starts can itself reach a second one. Running the whole step loop in a
+// child process is what keeps Host.Stdout, the frame footer, and every one
+// of the ~30 newHost() call sites in this package off the dashboard's own
+// terminal: from the child's point of view the pty IS its terminal, so
+// nothing here has to know that.
 package kinds
 
 import (

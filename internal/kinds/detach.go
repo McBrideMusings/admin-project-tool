@@ -50,6 +50,70 @@ func resolveTargetDetach(parentVal, parentPresent bool, targetVal, targetPresent
 	return parentPresent && parentVal
 }
 
+// dispatchDetach resolves the effective `detach` decision for one dispatch
+// of action, given the raw args a producer's launchCommand (dispatch.go) or
+// RunActionRouted would hand it. This is the single place that resolution
+// happens for BOTH callers, so a multi-target action's picked-target
+// override can no longer be read correctly in one code path and skipped in
+// another (admin-ysxr.4's regression: launchCommand read only
+// actionDetach(action), which for kind="multi-target" is just the parent
+// default a target can override).
+//
+// For any kind other than "multi-target" this is exactly actionDetach —
+// there is no target to resolve, so the flat-action callers keep today's
+// behaviour byte-for-byte.
+//
+// For kind="multi-target", the picked target is args[0] (via
+// splitTargetArg, multitarget.go's own canonical parse — the same rule the
+// Runner uses once it actually runs). Resolvable reports whether the
+// picked target could be determined.
+//
+// A multi-target dispatch with NO target argument is resolvable exactly
+// when the Runner's own auto-pick (multitarget.go's makeMultiTarget, near
+// its `if picked == ""` branch) would resolve it deterministically too:
+// the action declares exactly one target, per TargetKeys — the same
+// enumeration the Runner builds its `order` from, so this can't drift into
+// a second rule. Zero or more than one target means the Runner will raise
+// a picker, so resolvable is false and the caller must fall through to
+// running the command on its own default surface, exactly as if `detach`
+// were absent.
+//
+// TargetKeys enumerates a flat `targets` table too (when there are no
+// inline subtables), so a flat table with exactly one entry auto-picks the
+// same key the Runner will and is resolvable here as well — its
+// targetDetachOf present=false correctly means "inherit the parent",
+// because a flat entry never carries its own detach override (only an
+// inline subtable can). A flat table with zero or more than one entry
+// stays unresolvable, same as the inline case. (Inline and flat can't both
+// be declared on one action — makeMultiTarget rejects that combination at
+// factory build time — so there is no ambiguity between the two shapes.)
+//
+// A picked name that doesn't match any declared target (a typo) resolves
+// via targetDetachOf's present=false — "inherit the parent default" — same
+// as an unknown inline key. That's not a second silent failure: the Runner
+// performs its own `targets[picked]` lookup and returns "unknown target"
+// when it actually runs, whichever surface it lands on.
+func dispatchDetach(action manifest.Action, args []string) (detach, resolvable bool) {
+	kind, _ := actionString(action, "kind")
+	if kind != "multi-target" {
+		val, present := actionDetach(action)
+		return val, present
+	}
+
+	picked, _ := splitTargetArg(args)
+	if picked == "" {
+		order := TargetKeys(action)
+		if len(order) != 1 {
+			return false, false
+		}
+		picked = order[0]
+	}
+
+	parentVal, parentPresent := actionDetach(action)
+	targetVal, targetPresent := targetDetachOf(action, picked)
+	return resolveTargetDetach(parentVal, parentPresent, targetVal, targetPresent), true
+}
+
 // ValidateDetach rejects a non-bool `detach` on an action's own top level or
 // on any of its inline target subtables — TOML has no truthy strings, so
 // `detach = "true"` is a typo worth reporting rather than silently treating

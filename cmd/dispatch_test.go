@@ -292,9 +292,10 @@ func TestRootCmdIdentity(t *testing.T) {
 // merely that dispatchArgs recognizes the name.
 //
 // MUTATION EVIDENCE: changing the registered RunE to call
-// kinds.RunCommand(m, kinds.Default, name, cmdArgs) with `name` replaced by
-// a literal "" makes RunCommand report `unknown command ""` instead of
-// running "noop", and this test's marker-file assertion fails with:
+// kinds.RunCommand(m, kinds.Default, name, cmdArgs, nil) with `name`
+// replaced by a literal "" makes RunCommand report `unknown command ""`
+// instead of running "noop", and this test's marker-file assertion fails
+// with:
 //
 //	stat marker.txt: no such file or directory
 func TestRegisterManifestCommandRunsThroughKindsRunCommand(t *testing.T) {

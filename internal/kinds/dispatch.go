@@ -231,18 +231,14 @@ func runAction(m *manifest.Manifest, r *Registry, name string, args []string, ne
 // multi-target target delegating to another action (`action = "other"`)
 // routes exactly the same way a top-level command step does.
 //
-// It is deliberately NOT what every dispatch should use. Which surface a
-// dispatch lands on is a property of the producer: the dashboard hosts its
-// own commands and dispatches through RunCommandHosted, from which this
-// function is unreachable.
-//
-// When name's action carries `detach = true` (ADR-0020) and the resolved
-// manifest declares a [terminal] launcher, it dispatches through that
-// launcher and returns immediately — the action's own Runner never
-// executes in this process at all; it executes wherever the launcher's
-// spawn command put it, reached via the hidden "__run-action" re-entry
-// command. The launcher's printed handle is recorded in internal/livework's
-// process-wide registry.
+// When name's action carries `detach = true` (ADR-0020), the resolved
+// manifest declares a [terminal] launcher, AND this process is not already
+// running inside a launched dispatch (inReentry, admin-ysxr.4), it
+// dispatches through that launcher and returns immediately — the action's
+// own Runner never executes in this process at all; it executes wherever
+// the launcher's spawn command put it, reached via the hidden "__run-action"
+// re-entry command. The launcher's printed handle is recorded in
+// internal/livework's process-wide registry.
 //
 // In every other case it falls through to RunAction and runs inline, in
 // the current frame:
@@ -250,6 +246,11 @@ func runAction(m *manifest.Manifest, r *Registry, name string, args []string, ne
 //   - `detach` absent or false, or an undeclared action (RunAction below
 //     produces the right "not declared" error for that) — never reached
 //     the launcher path at all.
+//   - This process is already inside a launched dispatch (inReentry) —
+//     the __run-action/__run-command re-entry verb that started this run
+//     already marked it; a step or a nested delegation reached from here
+//     must run inline rather than reaching a second launcher from inside
+//     the first.
 //   - `detach = true` with no [terminal] declared — the multiplexer being
 //     absent must never be why a dev loop doesn't start. This is the
 //     default path in practice and stays completely silent: no warning,
@@ -260,84 +261,170 @@ func runAction(m *manifest.Manifest, r *Registry, name string, args []string, ne
 //     exactly one warning line naming the failure, then runs inline
 //     exactly like the silent-fallback case.
 func RunActionRouted(m *manifest.Manifest, r *Registry, name string, args []string) error {
-	if action, ok := m.Actions[name]; ok {
-		kind, _ := actionString(action, "kind")
-		// A kind="multi-target" action is deliberately excluded here, the
-		// same way runAction excludes it from the generic `requires`
-		// check: its own top-level `detach` is only the *default* the
-		// picked target inherits (resolveTargetDetach), and which target
-		// gets picked isn't known until the Runner itself runs — so the
-		// multi-target factory resolves and dispatches per-target detach
-		// inside its own closure (internal/kinds/multitarget.go) instead.
-		// Consulting it here too would both raise a launcher dispatch
-		// before a target is even chosen AND leave the per-target
-		// dispatch below to raise a second, redundant one.
-		if detach, present := actionDetach(action); present && detach && kind != "multi-target" {
-			cfg, _ := config.FromManifest(m)
-			ctx := launchCtxFromEnv(name)
-			handle, err := dispatchToLauncher(name, args, ctx, cfg.Terminal)
-			switch {
-			case err == nil:
-				recordLiveWork(name, kind, handle, args, ctx, cfg.Terminal)
-				return nil
-			case err == errNoLauncher:
-				// No [terminal] declared — fall through to the inline
-				// path silently; this is the default path in practice.
-			default:
-				// A launcher IS configured but spawning through it failed
-				// — degrade to inline with one warning line rather than
-				// aborting the action outright.
-				fmt.Fprintf(os.Stderr, "warning: action %q: launcher spawn failed, running inline: %v\n", name, err)
+	if !inReentry() {
+		if action, ok := m.Actions[name]; ok {
+			kind, _ := actionString(action, "kind")
+			// A kind="multi-target" action is deliberately excluded here, the
+			// same way runAction excludes it from the generic `requires`
+			// check: its own top-level `detach` is only the *default* the
+			// picked target inherits (resolveTargetDetach), and which target
+			// gets picked isn't known until the Runner itself runs — so the
+			// multi-target factory resolves and dispatches per-target detach
+			// inside its own closure (internal/kinds/multitarget.go) instead.
+			// Consulting it here too would both raise a launcher dispatch
+			// before a target is even chosen AND leave the per-target
+			// dispatch below to raise a second, redundant one.
+			if detach, present := actionDetach(action); present && detach && kind != "multi-target" {
+				cfg, _ := config.FromManifest(m)
+				ctx := launchCtxFromEnv(name)
+				handle, err := dispatchToLauncher("__run-action", name, args, ctx, cfg.Terminal)
+				switch {
+				case err == nil:
+					recordLiveWork(name, kind, handle, "__run-action", name, args, ctx, cfg.Terminal)
+					return nil
+				case err == errNoLauncher:
+					// No [terminal] declared — fall through to the inline
+					// path silently; this is the default path in practice.
+				default:
+					// A launcher IS configured but spawning through it failed
+					// — degrade to inline with one warning line rather than
+					// aborting the action outright.
+					fmt.Fprintf(os.Stderr, "warning: action %q: launcher spawn failed, running inline: %v\n", name, err)
+				}
 			}
 		}
 	}
 	return RunAction(m, r, name, args)
 }
 
-// RunCommand is the plain-CLI entry point: it runs name's steps through the
-// shared loop below with the detach-aware router, so a step carrying
-// `detach = true` dispatches through the project's [terminal] launcher when
-// one is declared. Steps run in declared order and stop at the first one
-// whose Runner returns a non-nil
+// CommandProducer distinguishes a command dispatch whose producer cannot
+// host the run itself from one that can. A nil *CommandProducer passed to
+// RunCommand means "this process hosts the run" — the plain CLI, which runs
+// every step inline through RunActionRouted exactly as it always has (that
+// entry point reaches the launcher itself, per step, when one is declared).
+//
+// A non-nil producer is the dashboard: it cannot run a Command's step loop
+// on its own terminal (that would block its alt-screen for the run's whole
+// duration), so RunCommand resolves the command's own launcher/detach
+// declaration once, up front, in launchCommand — either dispatching through
+// the project's [terminal] launcher, or falling back to Launch, the
+// producer's own default surface (the dashboard's hosted pty).
+type CommandProducer struct {
+	// Launch runs name (with args) on the producer's own default surface —
+	// StartHostedPTY for the dashboard — when the command's first step
+	// declares no `detach`, or the manifest declares no [terminal] launcher.
+	Launch func(m *manifest.Manifest, name string, args []string) error
+	// Env carries extra KEY=VALUE pairs the producer would have handed its
+	// own launcher — a row-scoped key binding's ADMIN_ROW_KIND/ADMIN_ROW_ID/
+	// ADMIN_ROW_URL (internal/tui/rowkeys.go's rowEnv) — since the dashboard
+	// process holds these as an explicit env slice, not in its own
+	// os.Environ(). launchCtxFrom reads it; nil behaves like the plain-CLI
+	// case (fall back to the process environment).
+	Env []string
+}
+
+// RunCommand is the single command-dispatch entry point. Steps run in
+// declared order and stop at the first one whose Runner returns a non-nil
 // error — the acceptance criteria's "a command with several steps runs them
 // in order and stops at the first failure" and "a non-zero exit from an
 // action produces a non-zero result" (that "non-zero result" surfaces here
 // as a non-nil error; mapping it to a process exit code is CLI wiring).
 //
-// The dashboard wants the opposite surface and calls RunCommandHosted.
-func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string) error {
-	return runSteps(m, r, name, args, RunActionRouted)
+// Three cases, checked in this order:
+//
+//  1. This process is already running inside a launched dispatch
+//     (inReentry) — every step runs inline through runActionInline,
+//     whatever p is. This is what makes __run-command's own RunCommand call
+//     (cmd/root.go) behave as the hosted surface StartHostedPTY's pty child
+//     needs: it always passes p = nil, and inReentry is what actually keeps
+//     it off the launcher, not the nil producer.
+//  2. p == nil — the plain-CLI producer, which CAN host the run itself:
+//     every step goes through RunActionRouted, so a step carrying
+//     `detach = true` reaches the project's [terminal] launcher when one is
+//     declared, exactly as running one action directly would.
+//  3. p != nil — a producer that cannot host the run in this process (the
+//     dashboard): launchCommand resolves the command's own launcher/detach
+//     declaration once, up front, and either dispatches to the launcher or
+//     falls back to p.Launch.
+func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string, p *CommandProducer) error {
+	if inReentry() {
+		return runSteps(m, r, name, args, runActionInline)
+	}
+	if p == nil {
+		return runSteps(m, r, name, args, RunActionRouted)
+	}
+	return launchCommand(m, name, args, p)
 }
 
-// RunCommandHosted is admin-3rgp.59's second entry point: the same command,
-// the same shared step loop, but every step goes straight to the inline
-// action runner. dispatchToLauncher is not on its call graph at any depth —
-// not through the step loop (which calls runActionInline, never
-// RunActionRouted) and not through a multi-target target's `action =
-// "other"` delegation (runActionInline builds its Surface from itself). So
-// no step can reach the launcher regardless of its `detach` value or
-// whether one is declared.
+// launchCommand is RunCommand's non-hosting branch: reached only when p is
+// non-nil and this process is not already inside a launched dispatch. It
+// resolves name once, up front — unlike the plain-CLI branch, which lets
+// runSteps discover an unknown command or an ADR-0003 pure-routing violation
+// mid-dispatch — because a producer that cannot host the run has no runSteps
+// call on this path to catch that: p.Launch is a distinct spawn (an exec, a
+// pty), not this process running the command's own step loop. A typo'd or
+// malformed command must still be reported here rather than silently
+// spawning nothing.
 //
-// This exists because which surface a dispatch lands on is a property of
-// the *producer*, not of the action's own declaration. Three producers
-// dispatch work: a Command run from the dashboard, Start Work on an issue,
-// and a workflow's agent worker. The last two want a launcher; the first is
-// hosted by the dashboard itself and must never take one. A flag on
-// RunCommand would leave the launcher path reachable from the dashboard,
-// guarded only by a field being set right — a separate entry point removes
-// the condition instead of guarding it.
+// The launcher decision looks only at the command's FIRST step's action,
+// keyed by cmd.Steps[0] — the same key StartHostedPTY uses — so
+// internal/tui/work.go's liveEntryFor resolves the same row whichever
+// surface the command actually landed on, and `a` (attach) finds it either
+// way.
 //
-// `detach` consequently narrows to exactly one meaning: whether a plain-CLI
-// dispatch reaches the launcher. RunCommandHosted never consults it.
-func RunCommandHosted(m *manifest.Manifest, r *Registry, name string, args []string) error {
-	return runSteps(m, r, name, args, runActionInline)
+// When that first step is itself kind="multi-target", its own top-level
+// `detach` is only the default a picked target inherits — the effective
+// value belongs to the picked target, and dispatchDetach (detach.go)
+// resolves parent-default-plus-target-override the same way
+// multitarget.go's own Runner does, from args[0] (splitTargetArg). A
+// multi-target command dispatched with no target argument can't have its
+// effective detach known up front in general — the Runner itself raises
+// the target picker once it runs — unless the action declares exactly one
+// target, which the Runner auto-picks deterministically; dispatchDetach
+// resolves that case the same way. Otherwise dispatchDetach reports the
+// dispatch as unresolvable and this function falls through to p.Launch,
+// same as `detach` being absent.
+func launchCommand(m *manifest.Manifest, name string, args []string, p *CommandProducer) error {
+	cmd, ok := resolveCommand(m, name)
+	if !ok {
+		return fmt.Errorf("unknown command %q", name)
+	}
+	if err := checkPureRouting(name, cmd); err != nil {
+		return err
+	}
+	if len(cmd.Steps) == 0 {
+		return fmt.Errorf("command %q has no steps", name)
+	}
+
+	entryID := cmd.Steps[0]
+	if action, ok := m.Actions[entryID]; ok {
+		if detach, ok := dispatchDetach(action, args); ok && detach {
+			cfg, _ := config.FromManifest(m)
+			if cfg.Terminal.Spawn != "" {
+				ctx := launchCtxFrom(name, p.Env)
+				handle, err := dispatchToLauncher("__run-command", name, args, ctx, cfg.Terminal)
+				if err == nil {
+					kind, _ := actionString(action, "kind")
+					recordLiveWork(entryID, kind, handle, "__run-command", name, args, ctx, cfg.Terminal)
+					return nil
+				}
+				// A launcher IS configured but spawning through it failed —
+				// degrade to the producer's own default surface with one
+				// warning line, rather than aborting the command outright.
+				fmt.Fprintf(os.Stderr, "warning: command %q: launcher spawn failed, running on the default surface: %v\n", name, err)
+			}
+		}
+	}
+	return p.Launch(m, name, args)
 }
 
 // stepDispatch is how one step (or one nested delegation) is dispatched —
 // the single thing that differs between the two command entry points.
 type stepDispatch func(m *manifest.Manifest, r *Registry, name string, args []string) error
 
-// runSteps is the body RunCommand and RunCommandHosted share: the global
+// runSteps is the body RunCommand's two dispatching branches (the plain-CLI
+// call through RunActionRouted, and the inline call reached whenever
+// inReentry() is true) share: the global
 // preflight — guards.RunGlobalPreflight, the always-on deps-fresh check
 // ADR-0005 requires before every command, skipped for the exempt diagnostic
 // verbs (logs, kill) and memoized so a multi-step command pays for it once

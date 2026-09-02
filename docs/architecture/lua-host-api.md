@@ -38,7 +38,7 @@ surface stays exactly what this page lists rather than whatever Lua's stdlib hap
 | Function | Signature | Behaviour |
 |---|---|---|
 A command already names a log unconditionally before its first step runs — every dispatch
-through `RunCommand`/`RunCommandHosted` calls `internal/kinds/dispatch.go`'s `nameCommandLog`,
+through `RunCommand` calls `internal/kinds/dispatch.go`'s `nameCommandLog`,
 which is the Go port of `admin_lib/interp.py`'s `_make_step_runner` opening block. Neither Lua
 function below is what makes a log exist; both are how a step (a multi-target target, a framed
 action) *refines* the name the command already set, before anything is actually created.
