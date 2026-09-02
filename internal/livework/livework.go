@@ -113,10 +113,10 @@ type Entry struct {
 	Kind string
 
 	// Handle is the opaque address this entry is CURRENTLY reachable at —
-	// a hosted pty's device name, a herdr pane id, or whatever a launcher
-	// minted for it. Unlike ID, this can change over the entry's life — a
-	// successful Retry records the new handle it opened here while ID
-	// stays put.
+	// a hosted pty's device name, or whatever a project's [terminal]
+	// launcher minted for it (ADR-0020). Unlike ID, this can change over
+	// the entry's life — a successful Retry records the new handle it
+	// opened here while ID stays put.
 	//
 	// Handle must be non-empty — Add rejects an entry that leaves it
 	// blank.
@@ -124,10 +124,12 @@ type Entry struct {
 
 	// Via says what kind of address Handle is: empty means the built-in
 	// hosted pty (internal/kinds/hostedpty.go), non-empty names the
-	// launcher that minted the handle (e.g. "terminal" for a [terminal]
-	// launcher dispatch, "herdr" for a workflow's herdr pane). Like Handle
-	// it is set by the producer and may be re-set across a Retry while ID
-	// stays put.
+	// launcher that minted the handle — "terminal" for every [terminal]
+	// launcher dispatch, including a workflow target's pane (ADR-0020);
+	// what runs inside that pane is a separate concern, resolved through a
+	// compiled-in internal/agent.Driver rather than named here (ADR-0021).
+	// Like Handle, Via is set by the producer and may be re-set across a
+	// Retry while ID stays put.
 	Via string
 
 	// Output is the drained bytes read off Handle's master fd — nil

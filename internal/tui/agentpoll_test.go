@@ -11,20 +11,20 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/agent"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
-	"github.com/McBrideMusings/admin-project-tool/internal/shim"
 )
 
 // stubAgentStatus swaps agentStatusFn for a fixed response (or a caller-
 // supplied func) and returns a restore func for t.Cleanup, matching
 // remoteseam_test.go's save/restore convention.
-func stubAgentStatus(t *testing.T, fn func(context.Context, string) (shim.AgentInfo, error)) *int32Counter {
+func stubAgentStatus(t *testing.T, fn func(context.Context, string) (agent.Info, error)) *int32Counter {
 	t.Helper()
 	prev := agentStatusFn
 	counter := &int32Counter{}
-	agentStatusFn = func(ctx context.Context, name string) (shim.AgentInfo, error) {
+	agentStatusFn = func(ctx context.Context, handle string) (agent.Info, error) {
 		counter.inc()
-		return fn(ctx, name)
+		return fn(ctx, handle)
 	}
 	t.Cleanup(func() { agentStatusFn = prev })
 	return counter
@@ -47,11 +47,12 @@ func (c *int32Counter) value() int {
 	return c.n
 }
 
-// addWorkflowEntry registers a herdr-addressed (Via set) workflow entry (the
-// only shape agentNameFor recognizes) and arranges for it to be torn down to
-// StateExited on cleanup — livework.Default is a process-wide singleton with
-// no Remove, so a running entry left behind pollutes later tests in this
-// package (livestate_race_test.go's own comment explains why).
+// addWorkflowEntry registers a launcher-addressed (Via set) workflow entry
+// (the only shape agentHandleFor recognizes) and arranges for it to be torn
+// down to StateExited on cleanup — livework.Default is a process-wide
+// singleton with no Remove, so a running entry left behind pollutes later
+// tests in this package (livestate_race_test.go's own comment explains
+// why).
 func addWorkflowEntry(t *testing.T, id string, state livework.State) *livework.Entry {
 	t.Helper()
 	e := &livework.Entry{
@@ -59,7 +60,7 @@ func addWorkflowEntry(t *testing.T, id string, state livework.State) *livework.E
 		Name:   id,
 		Kind:   "workflow",
 		Handle: "pane-" + id,
-		Via:    "herdr",
+		Via:    "terminal",
 		Worker: &livework.WorkerInfo{Branch: id, Worktree: "/tmp/" + id},
 		State:  state,
 	}
@@ -85,8 +86,8 @@ func runPollRoundTrip(t *testing.T) {
 
 func TestAgentPollMarksBlockedEntryWaiting(t *testing.T) {
 	e := addWorkflowEntry(t, "agentpoll-blocked", livework.StateRunning)
-	stubAgentStatus(t, func(context.Context, string) (shim.AgentInfo, error) {
-		return shim.AgentInfo{Status: "blocked"}, nil
+	stubAgentStatus(t, func(context.Context, string) (agent.Info, error) {
+		return agent.Info{Status: agent.StatusBlocked}, nil
 	})
 
 	runPollRoundTrip(t)
@@ -99,8 +100,8 @@ func TestAgentPollMarksBlockedEntryWaiting(t *testing.T) {
 
 func TestAgentPollReturnsResumedEntryToRunning(t *testing.T) {
 	e := addWorkflowEntry(t, "agentpoll-resumed", livework.StateWaiting)
-	stubAgentStatus(t, func(context.Context, string) (shim.AgentInfo, error) {
-		return shim.AgentInfo{Status: "working"}, nil
+	stubAgentStatus(t, func(context.Context, string) (agent.Info, error) {
+		return agent.Info{Status: agent.StatusWorking}, nil
 	})
 
 	runPollRoundTrip(t)
@@ -113,8 +114,8 @@ func TestAgentPollReturnsResumedEntryToRunning(t *testing.T) {
 
 func TestAgentPollFailureLeavesStateUnchanged(t *testing.T) {
 	e := addWorkflowEntry(t, "agentpoll-timeout", livework.StateRunning)
-	stubAgentStatus(t, func(context.Context, string) (shim.AgentInfo, error) {
-		return shim.AgentInfo{}, errors.New("herdr: timed out")
+	stubAgentStatus(t, func(context.Context, string) (agent.Info, error) {
+		return agent.Info{}, errors.New("herdr: timed out")
 	})
 
 	runPollRoundTrip(t)
@@ -138,8 +139,8 @@ func TestAgentPollSkipsPTYEntry(t *testing.T) {
 		livework.Default.SetState(id, livework.StateExited, nil)
 	})
 
-	counter := stubAgentStatus(t, func(context.Context, string) (shim.AgentInfo, error) {
-		return shim.AgentInfo{Status: "blocked"}, nil
+	counter := stubAgentStatus(t, func(context.Context, string) (agent.Info, error) {
+		return agent.Info{Status: agent.StatusBlocked}, nil
 	})
 
 	msg := pollAgentStatusCmd()()
@@ -166,7 +167,7 @@ func TestAgentPollDoesNotResurrectExitedEntry(t *testing.T) {
 	livework.Default.SetState(id, livework.StateExited, nil)
 
 	applyAgentStatuses(agentStatusMsg{results: []agentStatusResult{
-		{id: e.ID, status: "blocked", err: nil},
+		{id: e.ID, status: agent.StatusBlocked, err: nil},
 	}})
 
 	st, _ := livework.Default.State(id)
@@ -177,8 +178,8 @@ func TestAgentPollDoesNotResurrectExitedEntry(t *testing.T) {
 
 func TestAgentPollWritesActivity(t *testing.T) {
 	e := addWorkflowEntry(t, "agentpoll-activity", livework.StateRunning)
-	stubAgentStatus(t, func(context.Context, string) (shim.AgentInfo, error) {
-		return shim.AgentInfo{Status: "working", Activity: "Chess puzzles feature design"}, nil
+	stubAgentStatus(t, func(context.Context, string) (agent.Info, error) {
+		return agent.Info{Status: agent.StatusWorking, Activity: "Chess puzzles feature design"}, nil
 	})
 
 	runPollRoundTrip(t)
@@ -192,8 +193,8 @@ func TestAgentPollEmptyActivityDoesNotClobber(t *testing.T) {
 	e := addWorkflowEntry(t, "agentpoll-activity-keep", livework.StateRunning)
 	livework.Default.SetActivity(e.ID, "Bidirectional sync configuration")
 
-	stubAgentStatus(t, func(context.Context, string) (shim.AgentInfo, error) {
-		return shim.AgentInfo{Status: "working", Activity: ""}, nil
+	stubAgentStatus(t, func(context.Context, string) (agent.Info, error) {
+		return agent.Info{Status: agent.StatusWorking, Activity: ""}, nil
 	})
 
 	runPollRoundTrip(t)

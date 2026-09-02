@@ -174,14 +174,32 @@ func RowEnv(kind, id, url string) []string {
 // about this specific call failed", which is a real error worth surfacing
 // rather than silently swallowing.
 func dispatchToLauncher(verb, name string, args []string, ctx launchCtx, t config.Terminal) (string, error) {
-	if t.Spawn == "" {
-		return "", errNoLauncher
-	}
 	wd, err := os.Getwd()
 	if err != nil {
 		return "", err
 	}
 	cmdLine := reentryCommandLine(verb, name, args)
+	return spawnLauncher(cmdLine, wd, ctx, t)
+}
+
+// spawnLauncher is the exec half of dispatchToLauncher, factored out so a
+// caller that isn't re-entering this same binary — a workflow target
+// (internal/kinds/workflowdispatch.go), which spawns a pane with an EMPTY
+// ADMIN_CMD so it sits at an interactive shell prompt (exactly what `herdr
+// agent start` requires) and ADMIN_CWD set to the worktree, not the
+// process's own os.Getwd() — can reach the project's declared [terminal]
+// launcher without going through the re-entry command-line construction
+// dispatchToLauncher's callers need.
+//
+// It returns errNoLauncher — never wrapped — whenever t declares no spawn
+// command at all, so a caller can tell "fall back to inline, this is the
+// expected default path" apart from "a launcher IS configured but something
+// about this specific call failed", which is a real error worth surfacing
+// rather than silently swallowing.
+func spawnLauncher(cmdLine, wd string, ctx launchCtx, t config.Terminal) (string, error) {
+	if t.Spawn == "" {
+		return "", errNoLauncher
+	}
 	cmd := exec.Command("/bin/sh", "-c", t.Spawn)
 	cmd.Env = append(os.Environ(), ctx.env(cmdLine, wd)...)
 	cmd.Stderr = os.Stderr
