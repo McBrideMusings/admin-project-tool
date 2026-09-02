@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -84,13 +85,14 @@ type Manifest struct {
 	ProjectName string
 	PythonMin   string
 
-	// Tracker names which issue tracker the project uses ("beads", "github",
-	// or any other value the tracker tab wants to recognize) — a declared
-	// key rather than something sniffed from repo layout (admin-3rgp.22).
-	// HasTracker distinguishes "declared empty" (never — an empty string is
-	// rejected at parse) from "not declared at all", which the Config tab
-	// renders as "no tracker declared" rather than guessing one.
-	Tracker    string
+	// Trackers names which issue tracker(s) the project uses — a declared
+	// list rather than something sniffed from repo layout (admin-3rgp.22).
+	// Both tabs draw when both members are declared, in array order
+	// (admin-j00d). HasTracker distinguishes "declared" from "not declared
+	// at all" (an empty list is rejected at parse, same as any unknown
+	// member), which the Config tab renders as "no tracker declared" rather
+	// than guessing one.
+	Trackers   []string
 	HasTracker bool
 	// UsesPullRequests declares whether the project's workflow goes through
 	// pull requests, independent of Tracker — a repo can use beads for
@@ -179,6 +181,22 @@ type Manifest struct {
 	// prints a warning to stderr for these; the Go parser leaves printing to
 	// the caller.
 	Unknown []string
+}
+
+// KnownTrackers is the single source of truth for the accepted `tracker`
+// list members (admin-j00d). An unknown value is a check error naming it
+// against this set.
+var KnownTrackers = []string{"beads", "github"}
+
+// DeclaresTracker reports whether name is one of the manifest's declared
+// trackers.
+func (m *Manifest) DeclaresTracker(name string) bool {
+	for _, t := range m.Trackers {
+		if t == name {
+			return true
+		}
+	}
+	return false
 }
 
 // knownTopLevelKeys mirrors admin_lib/manifest.py::_KNOWN_KEYS.
@@ -283,11 +301,34 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 	m.PythonMin = pythonMin
 
 	if v, present := data["tracker"]; present {
-		s, ok := v.(string)
-		if !ok || s == "" {
-			return nil, errf("%s: 'tracker' must be a non-empty string", source)
+		if _, ok := v.(string); ok {
+			return nil, errf("%s: 'tracker' must be a list, e.g. tracker = [\"beads\"] (got the string %q)", source, v)
 		}
-		m.Tracker, m.HasTracker = s, true
+		list, ok := asStringList(v)
+		if !ok {
+			return nil, errf("%s: 'tracker' must be a list of strings", source)
+		}
+		if len(list) == 0 {
+			return nil, errf("%s: 'tracker' must not be an empty list", source)
+		}
+		seen := make(map[string]bool, len(list))
+		for _, t := range list {
+			known := false
+			for _, k := range KnownTrackers {
+				if t == k {
+					known = true
+					break
+				}
+			}
+			if !known {
+				return nil, errf("%s: 'tracker' has an unknown value %q — accepted values are %s", source, t, strings.Join(KnownTrackers, ", "))
+			}
+			if seen[t] {
+				return nil, errf("%s: 'tracker' lists %q more than once", source, t)
+			}
+			seen[t] = true
+		}
+		m.Trackers, m.HasTracker = list, true
 	}
 	if v, present := data["uses_pull_requests"]; present {
 		b, ok := v.(bool)

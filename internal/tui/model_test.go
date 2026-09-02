@@ -32,7 +32,7 @@ func seededModel() Model {
 	// no longer infers them from remote.PRs or a bd probe. Tests exercising a
 	// different declaration (beads, none, PRs off) override this.
 	m.manifest = &manifest.Manifest{
-		Tracker: "github", HasTracker: true,
+		Trackers: []string{"github"}, HasTracker: true,
 		UsesPullRequests: true, HasUsesPullRequests: true,
 	}
 	m.local = localData{
@@ -1659,8 +1659,8 @@ func TestLaunchSyncFiresOnceAndDoesNotLoop(t *testing.T) {
 	}}
 
 	m := New(context.Background(), "/repo", "owner/repo", "main", "main")
-	// tracker = "beads" declared: the launch sync must wait for the probe.
-	m.manifest = &manifest.Manifest{Tracker: "beads", HasTracker: true}
+	// tracker = ["beads"] declared: the launch sync must wait for the probe.
+	m.manifest = &manifest.Manifest{Trackers: []string{"beads"}, HasTracker: true}
 	updated, cmd := m.Update(local)
 	m = updated.(Model)
 	if cmd != nil {
@@ -1959,23 +1959,24 @@ func TestBeadsGroupByWhatBlocksThem(t *testing.T) {
 	}
 }
 
-// TestTrackerKeyChoosesTheTrackerTab pins admin-3rgp.22: which tracker tab
-// draws — Issues, Beads, or none — follows the manifest's declared `tracker`
-// key alone. Neither a `bd where` probe nor any other disk state gets a vote:
-// a "github" tracker with a beads workspace sitting on disk still draws
-// Issues, and an undeclared or "none" tracker draws no tracker tab even with
-// one on disk.
+// TestTrackerKeyChoosesTheTrackerTab pins admin-3rgp.22 (and its
+// admin-j00d extension to a list): which tracker tab(s) draw — Issues,
+// Beads, both (in declared order), or none — follow the manifest's declared
+// `tracker` list alone. Neither a `bd where` probe nor any other disk state
+// gets a vote: a "github" tracker with a beads workspace sitting on disk
+// still draws only Issues, and an undeclared tracker draws no tracker tab
+// even with one on disk.
 func TestTrackerKeyChoosesTheTrackerTab(t *testing.T) {
-	github := seededModel() // seededModel declares tracker = "github"
+	github := seededModel() // seededModel declares tracker = ["github"]
 	if got := github.visibleTabs(); len(got) != 4 || got[2] != tabIssues {
-		t.Fatalf("tracker = \"github\" drew %v, want Repo/PRs/Issues/Config", got)
+		t.Fatalf("tracker = [\"github\"] drew %v, want Repo/PRs/Issues/Config", got)
 	}
 
 	beads := seededModel()
-	beads.manifest.Tracker = "beads"
+	beads.manifest.Trackers = []string{"beads"}
 	got := beads.visibleTabs()
 	if len(got) != 4 || got[2] != tabBeads {
-		t.Fatalf("tracker = \"beads\" drew %v, want Repo/PRs/Beads/Config", got)
+		t.Fatalf("tracker = [\"beads\"] drew %v, want Repo/PRs/Beads/Config", got)
 	}
 	beads.switchTabAt(2)
 	if beads.active != tabBeads {
@@ -1990,30 +1991,35 @@ func TestTrackerKeyChoosesTheTrackerTab(t *testing.T) {
 	githubWithBeadsOnDisk := seededModel()
 	githubWithBeadsOnDisk.hasBeads = true
 	if got := githubWithBeadsOnDisk.visibleTabs(); len(got) != 4 || got[2] != tabIssues {
-		t.Fatalf("tracker = \"github\" with a beads workspace on disk drew %v, want Issues still", got)
+		t.Fatalf("tracker = [\"github\"] with a beads workspace on disk drew %v, want Issues still", got)
 	}
 
-	// tracker = "none" and an undeclared tracker both draw no tracker tab —
-	// even with a beads workspace sitting on disk.
-	for _, tc := range []struct {
-		name    string
-		tracker string
-		declare bool
-	}{
-		{"declared none", "none", true},
-		{"undeclared", "", false},
-	} {
-		none := seededModel()
-		none.manifest.Tracker = tc.tracker
-		none.manifest.HasTracker = tc.declare
-		none.hasBeads = true
-		if got := none.visibleTabs(); len(got) != 3 {
-			t.Fatalf("%s: tracker drew %v, want Repo/PRs/Config with no tracker tab", tc.name, got)
-		}
-		for _, tb := range none.visibleTabs() {
-			if tb == tabIssues || tb == tabBeads {
-				t.Errorf("%s: a tracker tab (%v) drew with no tracker declared", tc.name, tb)
-			}
+	// Both declared draws both, in array order.
+	both := seededModel()
+	both.manifest.Trackers = []string{"beads", "github"}
+	if got := both.visibleTabs(); len(got) != 5 || got[2] != tabBeads || got[3] != tabIssues {
+		t.Fatalf("tracker = [\"beads\", \"github\"] drew %v, want Repo/PRs/Beads/Issues/Config", got)
+	}
+
+	// Reversed declared order draws reversed.
+	reversed := seededModel()
+	reversed.manifest.Trackers = []string{"github", "beads"}
+	if got := reversed.visibleTabs(); len(got) != 5 || got[2] != tabIssues || got[3] != tabBeads {
+		t.Fatalf("tracker = [\"github\", \"beads\"] drew %v, want Repo/PRs/Issues/Beads/Config", got)
+	}
+
+	// An undeclared tracker draws no tracker tab at all — even with a beads
+	// workspace sitting on disk.
+	none := seededModel()
+	none.manifest.Trackers = nil
+	none.manifest.HasTracker = false
+	none.hasBeads = true
+	if got := none.visibleTabs(); len(got) != 3 {
+		t.Fatalf("undeclared tracker drew %v, want Repo/PRs/Config with no tracker tab", got)
+	}
+	for _, tb := range none.visibleTabs() {
+		if tb == tabIssues || tb == tabBeads {
+			t.Errorf("a tracker tab (%v) drew with no tracker declared", tb)
 		}
 	}
 
@@ -2021,7 +2027,7 @@ func TestTrackerKeyChoosesTheTrackerTab(t *testing.T) {
 	// up to index 1.
 	local := seededModel()
 	local.nwo = ""
-	local.manifest.Tracker = "beads"
+	local.manifest.Trackers = []string{"beads"}
 	if got := local.visibleTabs(); len(got) != 3 || got[1] != tabBeads {
 		t.Fatalf("a remote-less beads repo drew %v, want Repo/Beads/Config", got)
 	}
@@ -2056,7 +2062,7 @@ func TestUsesPullRequestsKeyControlsThePRsTab(t *testing.T) {
 	}
 
 	both := seededModel()
-	both.manifest.Tracker = "beads"
+	both.manifest.Trackers = []string{"beads"}
 	if got := both.visibleTabs(); len(got) != 4 || got[1] != tabPRs || got[2] != tabBeads {
 		t.Fatalf("a beads repo with uses_pull_requests = true drew %v, want Repo/PRs/Beads/Config", got)
 	}

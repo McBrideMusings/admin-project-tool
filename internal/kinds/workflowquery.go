@@ -4,14 +4,16 @@
 // already validated that the query string is present and non-empty; this
 // file is where its contents are actually read.
 //
-// ResolveQuery dispatches on the project's configured tracker, resolving the
-// same query string against two entirely different backends:
+// ResolveQuery dispatches on the calling action's own resolved tracker
+// (WorkflowTarget.ResolveTracker — a manifest can now declare more than one,
+// admin-j00d), resolving the same query string against two entirely
+// different backends:
 //
-//   - "" or "beads" (undeclared defaults to beads, matching cmd/check.go's
-//     !m.HasTracker precedent) resolves against internal/bd — the same
-//     local, version-controlled beads workspace the dashboard's own Beads
-//     tab reads (internal/bd/bd.go), so a query never leaves the machine
-//     and never mutates anything.
+//   - "" or "beads" (undeclared defaults to beads, matching
+//     ResolveTracker's own "no tracker declared" default) resolves against
+//     internal/bd — the same local, version-controlled beads workspace the
+//     dashboard's own Beads tab reads (internal/bd/bd.go), so a query never
+//     leaves the machine and never mutates anything.
 //   - "github" resolves against the GitHub API via internal/gh, but only
 //     for the "label:<name>" form. "ready" means "no open blocker", which
 //     is a beads concept — bd models dependency edges as first-class data.
@@ -100,8 +102,8 @@ func ClassifyQuery(query string) (QueryForm, string) {
 // been seen").
 //
 // tracker and nwo come from the caller, which already has both (internal/tui
-// reads m.trackerKind() and m.nwo) — ResolveQuery has no manifest of its own
-// to read them from.
+// resolves the action's tracker via WorkflowTarget.ResolveTracker and reads
+// m.nwo) — ResolveQuery has no manifest of its own to read them from.
 func ResolveQuery(ctx context.Context, repoRoot, tracker, nwo, query string) ([]Target, error) {
 	switch tracker {
 	case "", "beads":
