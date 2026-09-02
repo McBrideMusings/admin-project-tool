@@ -68,24 +68,26 @@ archetypes   = ["a", "b"]
 func TestTrackerAndUsesPullRequestsMerge(t *testing.T) {
 	root := t.TempDir()
 	writeArchetypeDir(t, root, "beads-tracker", `
-tracker            = "beads"
+tracker            = ["beads", "github"]
 uses_pull_requests = false
 `, false)
 	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
 
 	// The project overrides tracker but leaves uses_pull_requests to the
-	// archetype.
+	// archetype. A declared list REPLACES the archetype's wholesale — it
+	// does not append — so the merged Trackers is exactly ["github"], not
+	// ["beads", "github", "github"] or any union of the two.
 	project := projectManifest(t, `
 project_name = "widget"
 archetypes   = ["beads-tracker"]
-tracker      = "github"
+tracker      = ["github"]
 `)
 	merged, _, err := Resolve(project, sp)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if !merged.HasTracker || merged.Tracker != "github" {
-		t.Errorf("Tracker = %q, HasTracker = %v, want %q, true (manifest beats archetype)", merged.Tracker, merged.HasTracker, "github")
+	if !merged.HasTracker || len(merged.Trackers) != 1 || merged.Trackers[0] != "github" {
+		t.Errorf("Trackers = %v, HasTracker = %v, want [\"github\"], true (manifest replaces archetype)", merged.Trackers, merged.HasTracker)
 	}
 	if !merged.HasUsesPullRequests || merged.UsesPullRequests {
 		t.Errorf("UsesPullRequests = %v, HasUsesPullRequests = %v, want false, true (from the archetype, untouched by the manifest)", merged.UsesPullRequests, merged.HasUsesPullRequests)

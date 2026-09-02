@@ -120,6 +120,112 @@ func TestParseWorkflowOverRejectsWrongType(t *testing.T) {
 	}
 }
 
+// TestParseWorkflowOverTracker proves `over.tracker` parses into
+// WorkflowTarget.Tracker when present and non-empty, and stays "" when
+// omitted (admin-j00d).
+func TestParseWorkflowOverTracker(t *testing.T) {
+	action := manifest.Action{"kind": "workflow", "over": map[string]any{"query": "label:review-me", "tracker": "github"}}
+	target, err := ParseWorkflowOver("review", action)
+	if err != nil {
+		t.Fatalf("ParseWorkflowOver = %v, want nil", err)
+	}
+	if target.Tracker != "github" {
+		t.Fatalf("Tracker = %q, want %q", target.Tracker, "github")
+	}
+
+	noTracker := manifest.Action{"kind": "workflow", "over": map[string]any{"query": "label:review-me"}}
+	target2, err := ParseWorkflowOver("review", noTracker)
+	if err != nil {
+		t.Fatalf("ParseWorkflowOver = %v, want nil", err)
+	}
+	if target2.Tracker != "" {
+		t.Fatalf("Tracker = %q, want \"\" when over.tracker is omitted", target2.Tracker)
+	}
+}
+
+// TestParseWorkflowOverTrackerRejectsEmptyString proves `over.tracker = ""`
+// is rejected rather than silently treated as omitted.
+func TestParseWorkflowOverTrackerRejectsEmptyString(t *testing.T) {
+	action := manifest.Action{"kind": "workflow", "over": map[string]any{"query": "label:x", "tracker": ""}}
+	_, err := ParseWorkflowOver("review", action)
+	if err == nil {
+		t.Fatal("expected an error for over.tracker = \"\"")
+	}
+	if !strings.Contains(err.Error(), "over.tracker") {
+		t.Fatalf("error %q does not name 'over.tracker'", err.Error())
+	}
+}
+
+// -- WorkflowTarget.ResolveTracker ----------------------------------------
+
+// TestResolveTrackerUndeclaredNameErrors proves an over.tracker naming a
+// tracker the manifest doesn't declare is a check error naming both the
+// offending value and the declared list.
+func TestResolveTrackerUndeclaredNameErrors(t *testing.T) {
+	target := WorkflowTarget{Tracker: "github"}
+	_, err := target.ResolveTracker("review", []string{"beads"})
+	if err == nil {
+		t.Fatal("expected an error for an undeclared over.tracker")
+	}
+	if !strings.Contains(err.Error(), "github") || !strings.Contains(err.Error(), "beads") {
+		t.Fatalf("error %q does not name both the offending value and the declared list", err.Error())
+	}
+}
+
+// TestResolveTrackerDeclaredNameResolves proves an over.tracker naming a
+// declared tracker resolves to it.
+func TestResolveTrackerDeclaredNameResolves(t *testing.T) {
+	target := WorkflowTarget{Tracker: "github"}
+	got, err := target.ResolveTracker("review", []string{"beads", "github"})
+	if err != nil {
+		t.Fatalf("ResolveTracker = %v, want nil", err)
+	}
+	if got != "github" {
+		t.Fatalf("ResolveTracker = %q, want %q", got, "github")
+	}
+}
+
+// TestResolveTrackerOmittedNoneDeclaredDefaultsBeads proves that with no
+// over.tracker and no manifest-declared tracker at all, resolution still
+// defaults to "beads" — preserving the tool's pre-list default.
+func TestResolveTrackerOmittedNoneDeclaredDefaultsBeads(t *testing.T) {
+	target := WorkflowTarget{}
+	got, err := target.ResolveTracker("review", nil)
+	if err != nil {
+		t.Fatalf("ResolveTracker = %v, want nil", err)
+	}
+	if got != "beads" {
+		t.Fatalf("ResolveTracker = %q, want %q", got, "beads")
+	}
+}
+
+// TestResolveTrackerOmittedOneDeclaredResolves proves that with exactly one
+// declared tracker and no over.tracker, resolution uses that tracker.
+func TestResolveTrackerOmittedOneDeclaredResolves(t *testing.T) {
+	target := WorkflowTarget{}
+	got, err := target.ResolveTracker("review", []string{"github"})
+	if err != nil {
+		t.Fatalf("ResolveTracker = %v, want nil", err)
+	}
+	if got != "github" {
+		t.Fatalf("ResolveTracker = %q, want %q", got, "github")
+	}
+}
+
+// TestResolveTrackerOmittedTwoDeclaredErrorsNamingBoth proves that with two
+// declared trackers and no over.tracker, resolution refuses to guess and
+// errors naming every declared tracker — there is no union-both option.
+func TestResolveTrackerOmittedTwoDeclaredErrorsNamingBoth(t *testing.T) {
+	target := WorkflowTarget{}
+	_, err := target.ResolveTracker("review", []string{"beads", "github"})
+	if err == nil {
+		t.Fatal("expected an error when over.tracker is omitted and two trackers are declared")
+	}
+	if !strings.Contains(err.Error(), "beads") || !strings.Contains(err.Error(), "github") {
+		t.Fatalf("error %q does not name both declared trackers", err.Error())
+	}
+}
+
 // -- ValidateWorkflows ----------------------------------------------------
 
 // TestValidateWorkflowsIgnoresOtherKinds proves an action of a non-workflow

@@ -78,6 +78,12 @@ type WorkflowTarget struct {
 	// which resolves it against the tracker/repo state — this ticket only
 	// carries it through unexamined beyond "present and non-empty".
 	Query string
+	// Tracker is the raw `over.tracker` value (admin-j00d) — which of the
+	// manifest's declared trackers a query-sourced workflow resolves
+	// against. "" when the key was omitted; ResolveTracker turns that into
+	// a real tracker name (or an error) against the manifest's declared
+	// list.
+	Tracker string
 }
 
 // AppearsInCommandList reports whether a workflow with this target source
@@ -88,6 +94,57 @@ type WorkflowTarget struct {
 // than re-deriving the rule from WorkflowSource itself.
 func (t WorkflowTarget) AppearsInCommandList() bool {
 	return t.Source == WorkflowSourceQuery
+}
+
+// ResolveTracker resolves this target's tracker against the manifest's
+// declared list (admin-j00d) — the one place that turns an `over.tracker`
+// key (or its absence) into a real tracker name:
+//
+//   - t.Tracker is set and NOT in declared: error naming the value and the
+//     declared list (an undeclared tracker is a check error, never a
+//     silent guess).
+//   - t.Tracker is set and IS in declared: that name.
+//   - t.Tracker is "" and declared is empty: "beads" — preserves the
+//     pre-list default for a manifest with no tracker declared at all.
+//   - t.Tracker is "" and declared has exactly one member: that member.
+//   - t.Tracker is "" and declared has more than one member: error naming
+//     every declared tracker and telling the author to set over.tracker —
+//     there is no union-both option; a query resolves into one concrete
+//     target set.
+//
+// name is the action's own name, for an error message that can point at it.
+func (t WorkflowTarget) ResolveTracker(name string, declared []string) (string, error) {
+	if t.Tracker != "" {
+		for _, d := range declared {
+			if d == t.Tracker {
+				return t.Tracker, nil
+			}
+		}
+		return "", fmt.Errorf(
+			`action %q: 'over.tracker' names %q, which the manifest does not declare (declared: %s)`,
+			name, t.Tracker, joinOrNone(declared))
+	}
+	switch len(declared) {
+	case 0:
+		return "beads", nil
+	case 1:
+		return declared[0], nil
+	default:
+		return "", fmt.Errorf(
+			`action %q: this manifest declares more than one tracker (%s) — set 'over.tracker' to say which one this query resolves against`,
+			name, joinOrNone(declared))
+	}
+}
+
+func joinOrNone(list []string) string {
+	if len(list) == 0 {
+		return "none"
+	}
+	out := list[0]
+	for _, s := range list[1:] {
+		out += ", " + s
+	}
+	return out
 }
 
 // ParseWorkflowOver reads and validates action's `over` key — the Go home
@@ -124,7 +181,16 @@ func ParseWorkflowOver(name string, action manifest.Action) (WorkflowTarget, err
 			return WorkflowTarget{}, fmt.Errorf(
 				`action %q: 'over' table needs a non-empty 'query' string`, name)
 		}
-		return WorkflowTarget{Source: WorkflowSourceQuery, Query: q}, nil
+		var tracker string
+		if raw, present := v["tracker"]; present {
+			t, ok := raw.(string)
+			if !ok || t == "" {
+				return WorkflowTarget{}, fmt.Errorf(
+					`action %q: 'over.tracker' must be a non-empty string`, name)
+			}
+			tracker = t
+		}
+		return WorkflowTarget{Source: WorkflowSourceQuery, Query: q, Tracker: tracker}, nil
 	default:
 		return WorkflowTarget{}, fmt.Errorf(
 			`action %q: 'over' must be "selection" or a table with 'query' (got %#v)`, name, raw)

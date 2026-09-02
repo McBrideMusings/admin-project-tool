@@ -175,9 +175,9 @@ type Model struct {
 	inflight  int // in-flight background work (the sync, row refreshes); header spins while > 0
 
 	// Beads: whether the Beads tab is drawn at all comes from the declared
-	// tracker key alone (trackerKind), never from these fields. The probe
-	// they hold only runs for a repo that already declared tracker = "beads"
-	// (Init), and decides what's inside that tab: hasBeads is whether the `bd
+	// tracker list alone (trackers/hasTracker), never from these fields. The
+	// probe they hold only runs for a repo that already declared "beads"
+	// among its trackers (Init), and decides what's inside that tab: hasBeads is whether the `bd
 	// where` probe actually found a workspace, beadsProbed records that the
 	// probe has answered — the launch sync waits for it, so a beads repo
 	// never spends the `gh` issues call before knowing whether it needs one.
@@ -496,12 +496,12 @@ func (m Model) Init() tea.Cmd {
 		syncTickCmd(),
 		loadConfigCmd(m.ctx, m.repoRoot),
 	}
-	if m.trackerKind() == "beads" {
-		// The `bd where` probe only runs for a repo that declared tracker =
-		// "beads" — its answer feeds the tab's content (which bead workspace,
-		// or an error if none is found), never whether the tab is drawn at
-		// all. A repo that declared "github" or "none" has no reason to pay
-		// for this subprocess.
+	if m.hasTracker("beads") {
+		// The `bd where` probe only runs for a repo that declared "beads"
+		// among its trackers — its answer feeds the tab's content (which
+		// bead workspace, or an error if none is found), never whether the
+		// tab is drawn at all. A repo that didn't declare beads has no
+		// reason to pay for this subprocess.
 		cmds = append(cmds, detectBeadsCmd(m.ctx, m.repoRoot))
 	}
 	if m.manifestOK {
@@ -529,18 +529,30 @@ func syncTickCmd() tea.Cmd {
 	return tea.Tick(data.PollInterval, func(time.Time) tea.Msg { return syncTickMsg{} })
 }
 
-// trackerKind returns the manifest's declared tracker ("beads", "github",
-// "none", or any other value a future tracker tab wants to recognize), or ""
-// when the manifest declares none (including when there is no manifest at
-// all — m.manifest is nil exactly when m.manifestOK is false, since New()
-// only ever sets the two together). Nothing here falls back to a `bd where`
-// probe or any other guess — admin-3rgp.22 replaces exactly that inference
-// with the declared key admin-3rgp.21 added to admin.toml.
-func (m Model) trackerKind() string {
+// trackers returns the manifest's declared tracker list ("beads", "github",
+// or both, in declared order), or nil when the manifest declares none
+// (including when there is no manifest at all — m.manifest is nil exactly
+// when m.manifestOK is false, since New() only ever sets the two together).
+// Nothing here falls back to a `bd where` probe or any other guess —
+// admin-3rgp.22 replaces exactly that inference with the declared key
+// admin-3rgp.21 added to admin.toml, and admin-j00d lets that key name more
+// than one tracker at once.
+func (m Model) trackers() []string {
 	if m.manifest == nil || !m.manifest.HasTracker {
-		return ""
+		return nil
 	}
-	return m.manifest.Tracker
+	return m.manifest.Trackers
+}
+
+// hasTracker reports whether name is one of the manifest's declared
+// trackers.
+func (m Model) hasTracker(name string) bool {
+	for _, t := range m.trackers() {
+		if t == name {
+			return true
+		}
+	}
+	return false
 }
 
 // wantsPRs reports whether the manifest declares uses_pull_requests = true.
@@ -564,14 +576,15 @@ func (m Model) selectMode() bool {
 
 // visibleTabs is the tab bar, in the order it is drawn. Only the Repo tab is
 // unconditional: Work needs a manifest, PRs needs uses_pull_requests declared
-// true, and the tracker tab is Issues or Beads depending on the declared
-// tracker (or absent when none is declared). Both PRs and Issues still need a
-// GitHub remote to mean anything; Beads does not, since beads is a local
-// database. None of the three infers itself from live repo state — not from
-// how many PRs happen to be open, and not from a `bd where` probe of the repo
-// — that inference is exactly what admin-3rgp.22 replaced with the declared
-// keys admin-3rgp.21 added. The digit keys index this list, so `3` is
-// whatever the third drawn tab happens to be.
+// true, and the tracker tabs are Issues and/or Beads depending on the
+// declared list — both draw, in declared order, when both are declared
+// (admin-j00d). Both PRs and Issues still need a GitHub remote to mean
+// anything; Beads does not, since beads is a local database. None of these
+// infers itself from live repo state — not from how many PRs happen to be
+// open, and not from a `bd where` probe of the repo — that inference is
+// exactly what admin-3rgp.22 replaced with the declared keys admin-3rgp.21
+// added. The digit keys index this list, so `3` is whatever the third drawn
+// tab happens to be.
 func (m Model) visibleTabs() []tab {
 	var tabs []tab
 	if m.manifestOK {
@@ -581,13 +594,15 @@ func (m Model) visibleTabs() []tab {
 	if m.nwo != "" && m.wantsPRs() {
 		tabs = append(tabs, tabPRs)
 	}
-	switch m.trackerKind() {
-	case "github":
-		if m.nwo != "" {
-			tabs = append(tabs, tabIssues)
+	for _, t := range m.trackers() {
+		switch t {
+		case "github":
+			if m.nwo != "" {
+				tabs = append(tabs, tabIssues)
+			}
+		case "beads":
+			tabs = append(tabs, tabBeads)
 		}
-	case "beads":
-		tabs = append(tabs, tabBeads)
 	}
 	tabs = append(tabs, tabConfig)
 	return tabs
@@ -814,7 +829,7 @@ func (m *Model) switchTabAt(n int) {
 // and always syncs; the staleness check is what stops a relaunch in a fresh
 // terminal from re-fetching data the disk cache already holds.
 func (m *Model) startSyncCmd(force bool) tea.Cmd {
-	withIssues := m.trackerKind() == "github"
+	withIssues := m.hasTracker("github")
 	if m.syncing || !(force || m.remote.Stale(withIssues)) {
 		return nil
 	}
@@ -825,16 +840,16 @@ func (m *Model) startSyncCmd(force bool) tea.Cmd {
 
 // launchSyncCmd fires the one-time launch sync, but only once local git has
 // landed (so a PR row paints with its worktree overlay the first time it is
-// drawn) — and, for a repo that declared tracker = "beads", only once the
-// probe that workspace's data comes from has also answered. Whether the sync
-// itself asks GitHub for issues is decided by the declared tracker alone
-// (startSyncCmd), so a "github" or "none" tracker never waits on the probe at
-// all.
+// drawn) — and, for a repo that declares "beads" among its trackers, only
+// once the probe that workspace's data comes from has also answered. Whether
+// the sync itself asks GitHub for issues is decided by the declared tracker
+// list alone (startSyncCmd), so a repo with no "beads" tracker never waits on
+// the probe at all.
 func (m *Model) launchSyncCmd() tea.Cmd {
 	if m.synced || !m.haveLocal {
 		return nil
 	}
-	if m.trackerKind() == "beads" && !m.beadsProbed {
+	if m.hasTracker("beads") && !m.beadsProbed {
 		return nil
 	}
 	m.synced = true

@@ -37,7 +37,7 @@ func TestManifestConfigLinesNoManifest(t *testing.T) {
 func TestManifestConfigLinesTrackerDeclaredAndDefaulted(t *testing.T) {
 	m := Model{
 		manifestOK: true,
-		manifest:   &manifest.Manifest{Tracker: "beads", HasTracker: true},
+		manifest:   &manifest.Manifest{Trackers: []string{"beads"}, HasTracker: true},
 		keyOrigin:  map[string]string{"tracker": "(manifest)"},
 	}
 	joined := rowsText(m.manifestConfigRows())
@@ -61,7 +61,7 @@ func TestManifestConfigLinesTrackerDeclaredAndDefaulted(t *testing.T) {
 func TestManifestConfigLinesUsesArchetypeOrigin(t *testing.T) {
 	m := Model{
 		manifestOK: true,
-		manifest:   &manifest.Manifest{Tracker: "github", HasTracker: true},
+		manifest:   &manifest.Manifest{Trackers: []string{"github"}, HasTracker: true},
 		keyOrigin:  map[string]string{"tracker": "beads-tracker"},
 	}
 	joined := rowsText(m.manifestConfigRows())
@@ -215,7 +215,7 @@ func TestConfigTabEnterOnAbsentFileRefuses(t *testing.T) {
 // than opening something arbitrary.
 func TestConfigTabEnterOnValueRowSaysNothingToOpen(t *testing.T) {
 	dir := t.TempDir()
-	writeTestManifest(t, dir, "tracker = \"beads\"\n"+editTestManifest)
+	writeTestManifest(t, dir, "tracker = [\"beads\"]\n"+editTestManifest)
 	m := configTestModel(t, dir)
 	m.focus = focusBody
 
