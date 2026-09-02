@@ -207,6 +207,32 @@ func TestStartWorkflowPickerOpensWithCandidates(t *testing.T) {
 	}
 }
 
+// TestStartWorkflowPickerOffersTheDogfoodImplementDeclaration is
+// admin-7wy5's acceptance criterion 3: with a bead selected and this
+// repo's own dogfood declaration in the manifest ([commands.implement]
+// routing to a kind="workflow" action with over="selection" and
+// agent="claude" on the action), pressing `w` opens the picker with
+// "implement" among its candidates — replacing "no selection-sourced
+// workflow is declared in admin.toml", the status the ticket's body quotes
+// as today's behavior with nothing declared.
+func TestStartWorkflowPickerOffersTheDogfoodImplementDeclaration(t *testing.T) {
+	mm := workTestModel(dogfoodImplementManifest())
+	mm.active = tabBeads
+	mm.trackerSelected = map[string]bool{"proj-1": true}
+
+	got, _ := mm.startWorkflowPicker()
+	m := got.(Model)
+	if !m.swOpen {
+		t.Fatalf("swOpen = false, want the picker open")
+	}
+	if len(m.swOptions) != 1 || m.swOptions[0].name != "implement" {
+		t.Errorf("swOptions = %v, want exactly [implement]", m.swOptions)
+	}
+	if strings.Contains(m.status, "no selection-sourced workflow is declared") {
+		t.Errorf("status = %q, want the picker to open instead of refusing", m.status)
+	}
+}
+
 // TestWorkflowPickerKeyMovesCursor proves up/down (and j/k) move swCursor
 // without touching anything else.
 func TestWorkflowPickerKeyMovesCursor(t *testing.T) {

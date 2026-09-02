@@ -519,3 +519,45 @@ func TestDispatchOneRetryRestartsFailedTarget(t *testing.T) {
 		t.Errorf("entry.State = %q, want %q after a successful retry", entry.State, livework.StateExited)
 	}
 }
+
+// TestDispatchTargetsDogfoodActionAgentWithNoWorkflowDefault is admin-7wy5's
+// acceptance criterion 4: dispatch the exact action shape this repo's own
+// admin.toml declares — kind="workflow", over="selection", agent="claude"
+// set on the action, with NO [workflow].agent configured anywhere in the
+// project — through DispatchTargets under stubAgent, and prove the
+// resolved agent kind is "claude" with no real herdr pane touched (stubbed
+// startAgent/runAgent never call shim.SplitPane/shim.StartAgent, so this
+// exercises dispatch against the stub only, matching the ticket's fourth
+// acceptance criterion in words: "Dispatch is exercised against a stubbed
+// agent, not a real herdr pane, in tests").
+func TestDispatchTargetsDogfoodActionAgentWithNoWorkflowDefault(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, "") // no [workflow] table at all
+
+	var gotKind string
+	var mu sync.Mutex
+	stubAgent(t,
+		func(dir, name, kind string) (string, error) {
+			mu.Lock()
+			gotKind = kind
+			mu.Unlock()
+			return "pane-dogfood-1", nil
+		},
+		func(name, prompt string) error { return nil },
+	)
+
+	action := manifest.Action{"kind": "workflow", "over": "selection", "agent": "claude"}
+	results := DispatchTargets(repoRoot, "implement", action, []Target{{Name: "proj-1"}})
+
+	if results[0].Err != nil {
+		t.Fatalf("unexpected error: %v", results[0].Err)
+	}
+	mu.Lock()
+	got := gotKind
+	mu.Unlock()
+	if got != "claude" {
+		t.Errorf("agent kind = %q, want claude", got)
+	}
+	if results[0].PaneID != "pane-dogfood-1" {
+		t.Errorf("PaneID = %q, want the pane the stub returned (proof only the stub ran)", results[0].PaneID)
+	}
+}
