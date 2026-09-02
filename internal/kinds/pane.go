@@ -168,18 +168,20 @@ func RowEnv(kind, id, url string) []string {
 // action verb for a whole command would silently drop steps 2..n, since
 // __run-action only ever runs the one action it names.
 //
+// root is the project root ADMIN_CWD carries — always projectRoot(m), never
+// os.Getwd(): a project found by walking up from a subdirectory (FindRoot)
+// leaves the process cwd below the root, and the ADR-0020/CLAUDE.md contract
+// documents ADMIN_CWD as "this project's root", not wherever `admin` was
+// typed.
+//
 // It returns errNoLauncher — never wrapped — whenever t declares no spawn
 // command at all, so a caller can tell "fall back to inline, this is the
 // expected default path" apart from "a launcher IS configured but something
 // about this specific call failed", which is a real error worth surfacing
 // rather than silently swallowing.
-func dispatchToLauncher(verb, name string, args []string, ctx launchCtx, t config.Terminal) (string, error) {
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
+func dispatchToLauncher(verb, name string, args []string, ctx launchCtx, t config.Terminal, root string) (string, error) {
 	cmdLine := reentryCommandLine(verb, name, args)
-	return spawnLauncher(cmdLine, wd, ctx, t)
+	return spawnLauncher(cmdLine, root, ctx, t)
 }
 
 // spawnLauncher is the exec half of dispatchToLauncher, factored out so a
@@ -246,9 +248,9 @@ func runLauncherShell(run, handle string) error {
 // command name for an "__run-command" one, which is not always the same
 // string as id (launchCommand keys id on the command's first step, per
 // StartHostedPTY's own convention, while reentryName is the command itself).
-// args and ctx are kept only so Retry can re-run dispatchToLauncher exactly
-// as it ran the first time.
-func recordLiveWork(id, kind, handle, verb, reentryName string, args []string, ctx launchCtx, t config.Terminal) {
+// args, ctx and root are kept only so Retry can re-run dispatchToLauncher
+// exactly as it ran the first time.
+func recordLiveWork(id, kind, handle, verb, reentryName string, args []string, ctx launchCtx, t config.Terminal, root string) {
 	e := &livework.Entry{
 		ID:     id,
 		Name:   id,
@@ -270,11 +272,11 @@ func recordLiveWork(id, kind, handle, verb, reentryName string, args []string, c
 		// behavior is what keeps this the same row rather than a second
 		// one appearing beside the stale failed entry.
 		Retry: func() error {
-			newHandle, err := dispatchToLauncher(verb, reentryName, args, ctx, t)
+			newHandle, err := dispatchToLauncher(verb, reentryName, args, ctx, t, root)
 			if err != nil {
 				return err
 			}
-			recordLiveWork(id, kind, newHandle, verb, reentryName, args, ctx, t)
+			recordLiveWork(id, kind, newHandle, verb, reentryName, args, ctx, t, root)
 			return nil
 		},
 	}
