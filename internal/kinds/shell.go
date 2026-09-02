@@ -44,12 +44,15 @@ func makeShell(name string, action manifest.Action, m *manifest.Manifest, _ *Sur
 		f := enterFrame(h, name, rawURLs, hasFooter, footerVal, m)
 		defer frame.Deactivate(f)
 		h.Info("running: " + cmd)
-		var res luahost.RunCmdResult
+		// pty = true gives the child a real pseudo-terminal instead of a pipe,
+		// which is the only way a child that prompts on stdin reads a whole
+		// typed line at once. Everything else — frame, log tee, result
+		// handling — is identical either way.
+		runCmd := h.RunCmd
 		if ptyVal {
-			res, err = h.RunCmdPTY(cmd, luahost.RunCmdOptions{CaptureLog: true})
-		} else {
-			res, err = h.RunCmd(cmd, luahost.RunCmdOptions{CaptureLog: true})
+			runCmd = h.RunCmdPTY
 		}
+		res, err := runCmd(cmd, luahost.RunCmdOptions{CaptureLog: true})
 		if err != nil {
 			return fmt.Errorf("action %q: %w", name, err)
 		}
