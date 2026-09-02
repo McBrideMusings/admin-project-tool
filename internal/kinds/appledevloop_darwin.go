@@ -331,34 +331,44 @@ func appleDevSimulator(cfg map[string]any, h *luahost.Host, platform string, f a
 	}
 }
 
-// appleDevDevice is dev_device: build for a physical iOS device, install via
-// devicectl, launch with --console attached (non-redacted os_log — the only
-// way to get device log output at all, per LaunchOnDevice's own doc
-// comment), rebuild on signal. Unlike the simulator loop, a rebuild has to
-// tear the launched app down and relaunch it — there is no "attach to an
-// already-running device process" primitive.
-func appleDevDevice(cfg map[string]any, h *luahost.Host, f appleFlags) error {
-	scheme := cfgString(cfg, "ios_scheme", "")
+// appleDevDevice is dev_device (iOS) and dev_device_tv (tvOS): build a Debug
+// configuration for a physical device, install via devicectl, launch with
+// --console attached (non-redacted os_log — the only way to get device log
+// output at all, per LaunchOnDevice's own doc comment), rebuild on signal.
+// Unlike the simulator loop, a rebuild has to tear the launched app down and
+// relaunch it — there is no "attach to an already-running device process"
+// primitive.
+//
+// The tvOS half exists because `deploy tv` builds Release, and a project may
+// gate its debug surface on `#if DEBUG` — leaving a physical Apple TV with no
+// way to be driven or inspected at all. Everything that differs between the
+// two platforms is already keyed by platform (appleDeviceSDK,
+// luahost.devicePlatforms), so this loop only had to stop naming iOS.
+func appleDevDevice(cfg map[string]any, h *luahost.Host, platform string, f appleFlags) error {
+	sdk, ok := appleDeviceSDK[platform]
+	if !ok {
+		return fmt.Errorf("dev device: unknown platform %q", platform)
+	}
+	scheme := cfgString(cfg, platform+"_scheme", "")
 	if scheme == "" {
-		return fmt.Errorf("apple.ios_scheme required")
+		return fmt.Errorf("apple.%s_scheme required", platform)
 	}
 	project := appleProject(cfg)
-	config := cfgString(cfg, "ios_build_config", "Debug")
-	process := appleProcess(project, cfg, "ios", scheme)
-	bundleID := appleBundle(project, cfg, "ios", true)
+	config := cfgString(cfg, platform+"_build_config", "Debug")
+	process := appleProcess(project, cfg, platform, scheme)
+	bundleID := appleBundle(project, cfg, platform, true)
 	derivedName := appleDerivedDataName(cfg, project)
-	sdk := appleDeviceSDK["ios"]
 	appPattern := appleDerivedGlob(derivedName, config, sdk.sdkSuffix, process)
 
-	deviceType := cfgString(cfg, "ios_device_type", "")
-	deviceID, deviceName, _, warnLines, err := h.FindConnectedDevice("ios", deviceType)
+	deviceType := cfgString(cfg, platform+"_device_type", "")
+	deviceID, deviceName, _, warnLines, err := h.FindConnectedDevice(platform, deviceType)
 	for _, w := range warnLines {
 		h.Warn(w)
 	}
 	if err != nil {
 		return err
 	}
-	extraSettings, err := appleComposeDevSettings(cfg, h, project, "ios")
+	extraSettings, err := appleComposeDevSettings(cfg, h, project, platform)
 	if err != nil {
 		return err
 	}
@@ -378,7 +388,7 @@ func appleDevDevice(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 		h.Info(fmt.Sprintf("Building for device (%s)...", deviceName))
 		res, err := h.XcodebuildFiltered(luahost.XcodebuildOptions{
 			Project: project, Scheme: scheme, Config: config,
-			Destination: "generic/platform=iOS", Action: appleBuildAction(f.clean),
+			Destination: sdk.destination, Action: appleBuildAction(f.clean),
 			ExtraSettings: extraSettings,
 		})
 		if err != nil {

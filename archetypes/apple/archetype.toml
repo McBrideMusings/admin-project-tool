@@ -18,7 +18,7 @@ group = 1
 priority = 10
 
 [commands.dev]
-desc = "Dev build + run (mac|ios|tv|device|server) [--log LVL] [--clean] [--install]"
+desc = "Dev build + run (mac|ios|tv|device|tv-device|server) [--log LVL] [--clean] [--install]"
 steps = ["dev"]
 group = 1
 priority = 20
@@ -100,7 +100,7 @@ error("server build not ported")
 
 [actions.dev]
 kind = "multi-target"
-desc = "Dev build + run (mac|ios|tv|device|server) [--log LVL] [--clean] [--install]"
+desc = "Dev build + run (mac|ios|tv|device|tv-device|server) [--log LVL] [--clean] [--install]"
 
 [actions.dev.mac]
 action = "dev-mac"
@@ -113,6 +113,9 @@ action = "dev-tv"
 
 [actions.dev.device]
 action = "dev-device"
+
+[actions.dev.tv-device]
+action = "dev-device-tv"
 
 [actions.dev.server]
 action = "dev-server"
@@ -136,6 +139,14 @@ run = "dev_tv"
 kind = "apple"
 desc = "dev iOS device"
 run = "dev_device"
+
+# `deploy tv` builds Release. A project that gates its debug surface on
+# `#if DEBUG` therefore installs an Apple TV build that answers nothing, and a
+# box across the room becomes uninspectable. This is the Debug half.
+[actions.dev-device-tv]
+kind = "apple"
+desc = "dev tvOS device"
+run = "dev_device_tv"
 
 [actions.dev-server]
 kind = "lua"
