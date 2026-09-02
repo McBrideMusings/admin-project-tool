@@ -1,6 +1,7 @@
 package shim
 
 import (
+	"context"
 	"encoding/json"
 	"os/exec"
 )
@@ -38,7 +39,16 @@ func PromptAndWait(name, prompt string) error {
 // finished (idle/done): PromptAndWait itself blocks until any of those three
 // settle states is reached, so its return alone can't distinguish them.
 func AgentStatus(name string) (string, error) {
-	out, err := exec.Command("herdr", "agent", "get", name).Output()
+	return AgentStatusContext(context.Background(), name)
+}
+
+// AgentStatusContext is AgentStatus bound to ctx, so a caller that polls
+// repeatedly (the Work tab's per-tick poller — admin-spjp.3) can bound each
+// query with a timeout instead of risking a wedged herdr hanging forever.
+// dispatchOne's one-shot post-settle call goes through AgentStatus above and
+// stays unbounded/unchanged.
+func AgentStatusContext(ctx context.Context, name string) (string, error) {
+	out, err := exec.CommandContext(ctx, "herdr", "agent", "get", name).Output()
 	if err != nil {
 		return "", err
 	}
