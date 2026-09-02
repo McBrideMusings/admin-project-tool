@@ -1,11 +1,14 @@
-// hosted_test.go covers admin-3rgp.59: RunCommandHosted, the second
-// command-dispatch entry point from which launcher dispatch is structurally
-// unreachable. The paired tests below are the whole point — the same
+// hosted_test.go covers admin-ysxr.4's collapsed command-dispatch entry
+// point: RunCommand takes a *CommandProducer now, and a nil producer (the
+// plain CLI, which can host a run itself) versus a non-nil one (the
+// dashboard, which cannot) must land the identical detached step on
+// opposite surfaces. The paired tests below are the whole point — the same
 // manifest, the same fake [terminal] launcher, the same detached step,
-// dispatched through each entry point, must land on opposite surfaces.
+// dispatched through each producer, must land on opposite surfaces.
 package kinds
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,13 +26,25 @@ import (
 // carries — built by withFakeTerminal in each test, since the log path it
 // writes to differs per test.
 func longRunningManifest(terminal map[string]any) *manifest.Manifest {
+	return longRunningManifestNamed(terminal, "hosted-dev-server")
+}
+
+// longRunningManifestNamed is longRunningManifest with the step (and
+// therefore the live-work registry ID a real launcher dispatch registers
+// under) parameterized — every test that actually completes a launcher
+// dispatch shares the process-wide livework.Default registry, so two tests
+// reusing the same step name collide: the second Add overwrites the first
+// entry in place instead of growing the registry (Add keeps the original
+// insertion position for an existing ID). Each such test must use its own
+// step name.
+func longRunningManifestNamed(terminal map[string]any, step string) *manifest.Manifest {
 	return &manifest.Manifest{
 		Terminal: terminal,
 		Custom: map[string]manifest.Command{
-			"dev": {Steps: []string{"dev-server"}},
+			"dev": {Steps: []string{step}},
 		},
 		Actions: map[string]manifest.Action{
-			"dev-server": {"kind": "vite-dev", "detach": true},
+			step: {"kind": "vite-dev", "detach": true},
 		},
 	}
 }
@@ -50,10 +65,22 @@ func registryRecordingInline(ran *bool) *Registry {
 	return r
 }
 
+// dashboardProducer builds a *CommandProducer whose Launch flips *launched
+// rather than spawning a real hosted pty — the fixture every dashboard-leg
+// test below shares.
+func dashboardProducer(launched *bool) *CommandProducer {
+	return &CommandProducer{
+		Launch: func(m *manifest.Manifest, name string, args []string) error {
+			*launched = true
+			return nil
+		},
+	}
+}
+
 // TestRunCommandOpensPaneForLongRunningStep is the control half of the
-// pair: the existing CLI entry point keeps its current behavior — a
-// declared [terminal] plus a detached step means a launcher dispatch, not
-// an inline run.
+// pair: a plain-CLI dispatch (producer nil, which CAN host the run itself)
+// keeps its existing behavior — a declared [terminal] plus a detached step
+// means a launcher dispatch, not an inline run.
 func TestRunCommandOpensPaneForLongRunningStep(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -61,7 +88,7 @@ func TestRunCommandOpensPaneForLongRunningStep(t *testing.T) {
 	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
 
 	inlineRan := false
-	if err := RunCommand(longRunningManifest(terminal), registryRecordingInline(&inlineRan), "dev", nil); err != nil {
+	if err := RunCommand(longRunningManifest(terminal), registryRecordingInline(&inlineRan), "dev", nil, nil); err != nil {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 	if inlineRan {
@@ -76,11 +103,436 @@ func TestRunCommandOpensPaneForLongRunningStep(t *testing.T) {
 	}
 }
 
-// TestRunCommandHostedNeverOpensAPane is the acceptance criterion: the
-// same manifest, the same fake [terminal] launcher, the same detached
-// step — the hosted entry point must run the step in this process and must
-// not call the launcher at all.
-func TestRunCommandHostedNeverOpensAPane(t *testing.T) {
+// TestRunCommandDashboardProducerUsesLauncherNotDefaultSurface is the
+// acceptance criterion for a [terminal]-declaring project: a dashboard
+// producer (which cannot host the run itself) must dispatch a detached
+// first step through the launcher and must never call its own Launch
+// fallback.
+func TestRunCommandDashboardProducerUsesLauncherNotDefaultSurface(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
+
+	before := len(livework.Default.List())
+	launched := false
+
+	m := longRunningManifestNamed(terminal, "dashboard-dev-server")
+	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if launched {
+		t.Error("a dashboard producer must not fall back to its own default surface when a launcher is declared")
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("reading terminal log: %v", err)
+	}
+	if !strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want a `spawn` call", string(logged))
+	}
+	entries := livework.Default.List()
+	found := false
+	for _, e := range entries {
+		// launchCommand keys the entry on the command's first step, per
+		// StartHostedPTY's own convention, so `a` (attach) resolves the
+		// same row regardless of which surface the command landed on.
+		if e.ID == "dashboard-dev-server" && e.Handle == "fake-handle-1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("live-work registry = %+v, want an entry keyed on the first step (dashboard-dev-server) with handle fake-handle-1", entries)
+	}
+	if got := len(entries); got != before+1 {
+		t.Errorf("live-work registry grew from %d to %d, want exactly one new entry", before, got)
+	}
+}
+
+// TestRunCommandDashboardProducerNoTerminalFallsBackToLaunch is the
+// acceptance criterion for a project declaring no [terminal] at all: the
+// dashboard producer's own Launch fallback runs, and the launcher's
+// registry never grows — byte-for-byte today's no-launcher behaviour.
+func TestRunCommandDashboardProducerNoTerminalFallsBackToLaunch(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	before := len(livework.Default.List())
+	launched := false
+
+	m := longRunningManifest(nil)
+	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if !launched {
+		t.Error("a dashboard producer with no [terminal] declared must fall back to its own default surface")
+	}
+	if got := len(livework.Default.List()); got != before {
+		t.Errorf("live-work registry grew from %d to %d — no launcher dispatch happened, so nothing should register", before, got)
+	}
+}
+
+// multiTargetDashboardManifestNamed builds a manifest whose single command
+// step is a kind="multi-target" action with one inline target "playtest" —
+// the admin-ysxr.4 regression fixture: launchCommand must resolve the
+// picked target's own `detach` override, not just the parent action's
+// default, before deciding whether to reach the launcher or fall back to
+// the producer's own default surface. parentPresent/parentVal control the
+// action's own top-level `detach`; targetPresent/targetVal control the
+// "playtest" target's own inline `detach`. step is parameterized for the
+// same reason longRunningManifestNamed's is — livework.Default is a shared
+// registry a completed launcher dispatch grows, so two tests reusing the
+// same step name would collide.
+func multiTargetDashboardManifestNamed(terminal map[string]any, step string, parentPresent, parentVal, targetPresent, targetVal bool) *manifest.Manifest {
+	action := manifest.Action{"kind": "multi-target"}
+	if parentPresent {
+		action["detach"] = parentVal
+	}
+	target := map[string]any{"run": "true"}
+	if targetPresent {
+		target["detach"] = targetVal
+	}
+	action["playtest"] = target
+	return &manifest.Manifest{
+		Terminal: terminal,
+		Custom: map[string]manifest.Command{
+			"dev": {Steps: []string{step}},
+		},
+		Actions: map[string]manifest.Action{
+			step: action,
+		},
+	}
+}
+
+// TestRunCommandDashboardProducerMultiTargetOverridesParentDetachFalse is
+// the first of the two admin-ysxr.4 regression failures: a multi-target
+// parent declares `detach = true` as its default, but the dispatched target
+// ("playtest") explicitly opts out with `detach = false`. Before the fix,
+// launchCommand read only the parent's own actionDetach and reached the
+// launcher regardless — silently ignoring the target's explicit opt-out.
+func TestRunCommandDashboardProducerMultiTargetOverridesParentDetachFalse(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
+
+	launched := false
+	m := multiTargetDashboardManifestNamed(terminal, "dev-target-opts-out", true, true, true, false)
+	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", []string{"playtest"}, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if !launched {
+		t.Error("target detach=false must override the parent's detach=true default and run on the producer's own default surface")
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("reading terminal log: %v", err)
+	}
+	if strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want no `spawn` call — the target opted out of detach", string(logged))
+	}
+}
+
+// TestRunCommandDashboardProducerMultiTargetOverridesParentDetachTrue is the
+// inverse regression: no parent-level `detach` (falls back to false), but
+// the dispatched target sets `detach = true`. Before the fix, launchCommand
+// saw the parent's absent/false detach and fell through to p.Launch, never
+// reaching the launcher the target asked for.
+func TestRunCommandDashboardProducerMultiTargetOverridesParentDetachTrue(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
+
+	before := len(livework.Default.List())
+	launched := false
+	m := multiTargetDashboardManifestNamed(terminal, "dev-target-opts-in", false, false, true, true)
+	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", []string{"playtest"}, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if launched {
+		t.Error("target detach=true must override the parent's absent/false default and reach the launcher, not the producer's own default surface")
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("reading terminal log: %v", err)
+	}
+	if !strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want a `spawn` call — the target opted into detach", string(logged))
+	}
+	entries := livework.Default.List()
+	found := false
+	for _, e := range entries {
+		if e.ID == "dev-target-opts-in" && e.Handle == "fake-handle-1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("live-work registry = %+v, want an entry keyed on the first step (dev-target-opts-in) with handle fake-handle-1", entries)
+	}
+	if got := len(entries); got != before+1 {
+		t.Errorf("live-work registry grew from %d to %d, want exactly one new entry", before, got)
+	}
+}
+
+// inlineTargetSpec describes one inline target subtable for
+// multiTargetManifestInline: name is the target key, present/val control
+// whether that target declares its own `detach` override.
+type inlineTargetSpec struct {
+	name           string
+	present, value bool
+}
+
+// multiTargetManifestInline builds a kind="multi-target" action with N
+// inline target subtables (admin-ysxr.4 round 3: dispatchDetach's
+// sole-target auto-pick, mirroring TargetKeys/makeMultiTarget's own
+// `order`, needs fixtures with exactly one AND with more than one inline
+// target — multiTargetDashboardManifestNamed above is pinned to exactly
+// one target named "playtest" and stays untouched for round 2's tests, so
+// this is a sibling rather than a rewrite). Each target's run command is
+// always "true"; parentPresent/parentVal set the parent action's own
+// top-level `detach`. step is parameterized for the same livework.Default
+// collision reason every fixture here documents.
+func multiTargetManifestInline(terminal map[string]any, step string, parentPresent, parentVal bool, targets ...inlineTargetSpec) *manifest.Manifest {
+	action := manifest.Action{"kind": "multi-target"}
+	if parentPresent {
+		action["detach"] = parentVal
+	}
+	for _, ts := range targets {
+		tbl := map[string]any{"run": "true"}
+		if ts.present {
+			tbl["detach"] = ts.value
+		}
+		action[ts.name] = tbl
+	}
+	return &manifest.Manifest{
+		Terminal: terminal,
+		Custom: map[string]manifest.Command{
+			"dev": {Steps: []string{step}},
+		},
+		Actions: map[string]manifest.Action{
+			step: action,
+		},
+	}
+}
+
+// multiTargetManifestFlat builds a kind="multi-target" action whose targets
+// live in a flat `targets` table (t1..tN, each "true" as a shell command)
+// rather than inline subtables — the other shape dispatchDetach's
+// sole-target auto-pick must resolve (admin-ysxr.4 round 3): TargetKeys
+// enumerates a flat table exactly like an inline one when there are no
+// inline subtables to prefer, so a single-entry flat table auto-picks the
+// same way. A flat entry can never carry its own `detach` override (only
+// an inline subtable can, per targetDetachOf), so there is no per-target
+// override to parameterize here — only the count and the parent default.
+func multiTargetManifestFlat(terminal map[string]any, step string, parentPresent, parentVal bool, n int) *manifest.Manifest {
+	action := manifest.Action{"kind": "multi-target"}
+	if parentPresent {
+		action["detach"] = parentVal
+	}
+	flat := map[string]any{}
+	for i := 1; i <= n; i++ {
+		flat[fmt.Sprintf("t%d", i)] = "true"
+	}
+	action["targets"] = flat
+	return &manifest.Manifest{
+		Terminal: terminal,
+		Custom: map[string]manifest.Command{
+			"dev": {Steps: []string{step}},
+		},
+		Actions: map[string]manifest.Action{
+			step: action,
+		},
+	}
+}
+
+// TestRunCommandDashboardProducerMultiTargetNoTargetArgFallsBackToLaunch is
+// the case dispatchDetach still cannot resolve: a multi-target command with
+// MORE THAN ONE target, dispatched with no target argument. The picked
+// target isn't known until the Runner itself runs and raises a picker, so
+// launchCommand must not guess — it falls back to the producer's own
+// default surface exactly as an absent `detach` would, however the
+// parent's own default is set. (Round 3: this fixture used to build only
+// ONE inline target, which is the shape the Runner's own auto-pick DOES
+// resolve deterministically — see
+// TestRunCommandDashboardProducerMultiTargetSoleInlineTargetAutoPicksLauncher
+// below. Re-pointed at two targets so this test pins the genuinely
+// unresolvable shape it was written to test; assertions and intent are
+// unchanged.)
+func TestRunCommandDashboardProducerMultiTargetNoTargetArgFallsBackToLaunch(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
+
+	launched := false
+	m := multiTargetManifestInline(terminal, "dev-no-target-arg", true, true,
+		inlineTargetSpec{name: "playtest"}, inlineTargetSpec{name: "record"})
+	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if !launched {
+		t.Error("a multi-target command with more than one target, dispatched with no target argument, must fall back to the producer's own default surface — the picked target isn't known up front")
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("reading terminal log: %v", err)
+	}
+	if strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want no `spawn` call — no target argument means the launcher decision can't be resolved up front", string(logged))
+	}
+}
+
+// TestRunCommandDashboardProducerMultiTargetSoleInlineTargetAutoPicksLauncher
+// is admin-ysxr.4 round 3's actual defect: a multi-target action declaring
+// exactly ONE inline target is auto-picked by the Runner itself
+// (multitarget.go's `if len(order) == 1` branch) even with no target
+// argument, so its effective detach IS knowable up front. Before the fix,
+// dispatchDetach treated every empty-picked dispatch as unresolvable and
+// fell through to p.Launch regardless.
+func TestRunCommandDashboardProducerMultiTargetSoleInlineTargetAutoPicksLauncher(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
+
+	before := len(livework.Default.List())
+	launched := false
+	m := multiTargetManifestInline(terminal, "dev-sole-inline-target", true, true,
+		inlineTargetSpec{name: "only"})
+	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if launched {
+		t.Error("a sole inline target is auto-picked by the Runner and must reach the launcher, not the producer's own default surface")
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("reading terminal log: %v", err)
+	}
+	if !strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want a `spawn` call — the sole target's detach is knowable up front", string(logged))
+	}
+	entries := livework.Default.List()
+	found := false
+	for _, e := range entries {
+		if e.ID == "dev-sole-inline-target" && e.Handle == "fake-handle-1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("live-work registry = %+v, want an entry keyed on the first step (dev-sole-inline-target) with handle fake-handle-1", entries)
+	}
+	if got := len(entries); got != before+1 {
+		t.Errorf("live-work registry grew from %d to %d, want exactly one new entry", before, got)
+	}
+}
+
+// TestRunCommandDashboardProducerMultiTargetSoleInlineTargetOverrideFalseFallsBackToLaunch
+// is the auto-pick's target-override half: the sole target explicitly opts
+// out with `detach = false`, overriding the parent's `detach = true`
+// default — the auto-pick must still honour that override, not blanket-
+// detach because there is only one target to choose from.
+func TestRunCommandDashboardProducerMultiTargetSoleInlineTargetOverrideFalseFallsBackToLaunch(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
+
+	launched := false
+	m := multiTargetManifestInline(terminal, "dev-sole-inline-target-opts-out", true, true,
+		inlineTargetSpec{name: "only", present: true, value: false})
+	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if !launched {
+		t.Error("the sole target's own detach=false must override the parent's detach=true default even under auto-pick")
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("reading terminal log: %v", err)
+	}
+	if strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want no `spawn` call — the sole target opted out of detach", string(logged))
+	}
+}
+
+// TestRunCommandDashboardProducerMultiTargetFlatSingleTargetAutoPicksLauncher
+// is the flat-`targets`-table twin of the inline auto-pick test: TargetKeys
+// enumerates a flat table's keys exactly like an inline table's when there
+// are no inline subtables, so a single-entry flat table is resolvable the
+// same way and inherits the parent's `detach` (a flat entry can never
+// declare its own override).
+func TestRunCommandDashboardProducerMultiTargetFlatSingleTargetAutoPicksLauncher(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
+
+	before := len(livework.Default.List())
+	launched := false
+	m := multiTargetManifestFlat(terminal, "dev-flat-sole-target", true, true, 1)
+	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if launched {
+		t.Error("a flat `targets` table with exactly one entry is auto-picked by the Runner and must reach the launcher, not the producer's own default surface")
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("reading terminal log: %v", err)
+	}
+	if !strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want a `spawn` call — the sole flat target's detach is knowable up front", string(logged))
+	}
+	entries := livework.Default.List()
+	found := false
+	for _, e := range entries {
+		if e.ID == "dev-flat-sole-target" && e.Handle == "fake-handle-1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("live-work registry = %+v, want an entry keyed on the first step (dev-flat-sole-target) with handle fake-handle-1", entries)
+	}
+	if got := len(entries); got != before+1 {
+		t.Errorf("live-work registry grew from %d to %d, want exactly one new entry", before, got)
+	}
+}
+
+// TestRunCommandDashboardProducerMultiTargetFlatTwoTargetsFallsBackToLaunch
+// is the flat-table twin of the two-target unresolvable case: with more
+// than one entry the Runner itself must raise the picker, so dispatchDetach
+// stays unresolvable and launchCommand falls back to p.Launch.
+func TestRunCommandDashboardProducerMultiTargetFlatTwoTargetsFallsBackToLaunch(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
+
+	launched := false
+	m := multiTargetManifestFlat(terminal, "dev-flat-two-targets", true, true, 2)
+	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if !launched {
+		t.Error("a flat `targets` table with more than one entry, dispatched with no target argument, must fall back to the producer's own default surface")
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("reading terminal log: %v", err)
+	}
+	if strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want no `spawn` call — no target argument means the launcher decision can't be resolved up front", string(logged))
+	}
+}
+
+// TestRunCommandInReentryRunsInlineRegardlessOfProducer is the ordering
+// hazard the ticket asks for: a process already running inside a launched
+// dispatch (ADMIN_REENTRY set, as cmd/root.go's two re-entry verbs do
+// before dispatching) must run every step inline and must never reach a
+// launcher — whatever producer is passed, nil or not.
+func TestRunCommandInReentryRunsInlineRegardlessOfProducer(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	logPath := filepath.Join(dir, "terminal-calls.log")
@@ -88,29 +540,35 @@ func TestRunCommandHostedNeverOpensAPane(t *testing.T) {
 
 	before := len(livework.Default.List())
 
+	MarkReentry()
+	t.Cleanup(func() { os.Unsetenv(ReentryEnv) })
+
 	inlineRan := false
-	if err := RunCommandHosted(longRunningManifest(terminal), registryRecordingInline(&inlineRan), "dev", nil); err != nil {
-		t.Fatalf("RunCommandHosted = %v, want nil", err)
+	launched := false
+	if err := RunCommand(longRunningManifest(terminal), registryRecordingInline(&inlineRan), "dev", nil, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 	if !inlineRan {
-		t.Error("RunCommandHosted must run a detached step inline, in this process")
+		t.Error("a re-entered dispatch must run its step inline, in this process")
+	}
+	if launched {
+		t.Error("a re-entered dispatch must never fall back to the producer's own default surface either — it runs inline")
 	}
 	if logged, err := os.ReadFile(logPath); err == nil && len(logged) > 0 {
-		t.Errorf("terminal log = %q, want empty — the hosted entry point must never reach the launcher", string(logged))
+		t.Errorf("terminal log = %q, want empty — a re-entered dispatch must never reach the launcher", string(logged))
 	}
 	if got := len(livework.Default.List()); got != before {
-		t.Errorf("live-work registry grew from %d to %d — a hosted run registers no launcher handle", before, got)
+		t.Errorf("live-work registry grew from %d to %d — a re-entered run registers no launcher handle", before, got)
 	}
 }
 
-// TestRunCommandHostedNestedDelegationStaysInline closes the one call-graph
-// hole a shared step loop alone would leave open: a multi-target target
-// delegating with `action = "other"` reaches its callee through the Surface
-// built for its own dispatch, not through the step loop. Under the hosted
-// entry point
-// that nested hop must stay inline too, or the pane path is reachable one
-// level down.
-func TestRunCommandHostedNestedDelegationStaysInline(t *testing.T) {
+// TestRunCommandInReentryNestedDelegationStaysInline closes the one
+// call-graph hole a shared step loop alone would leave open: a multi-target
+// target delegating with `action = "other"` reaches its callee through the
+// Surface built for its own dispatch, not through the step loop. Under a
+// re-entered dispatch that nested hop must stay inline too, or the launcher
+// path is reachable one level down.
+func TestRunCommandInReentryNestedDelegationStaysInline(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	logPath := filepath.Join(dir, "terminal-calls.log")
@@ -130,22 +588,67 @@ func TestRunCommandHostedNestedDelegationStaysInline(t *testing.T) {
 		},
 	}
 
+	MarkReentry()
+	t.Cleanup(func() { os.Unsetenv(ReentryEnv) })
+
 	inlineRan := false
-	if err := RunCommandHosted(m, registryRecordingInline(&inlineRan), "dev", []string{"server"}); err != nil {
-		t.Fatalf("RunCommandHosted = %v, want nil", err)
+	if err := RunCommand(m, registryRecordingInline(&inlineRan), "dev", []string{"server"}, nil); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 	if !inlineRan {
-		t.Error("a delegated target under the hosted entry point must run inline")
+		t.Error("a delegated target under a re-entered dispatch must run inline")
 	}
 	if logged, err := os.ReadFile(logPath); err == nil && len(logged) > 0 {
 		t.Errorf("terminal log = %q, want empty — nested delegation must not reach the launcher either", string(logged))
 	}
 }
 
-// TestRunCommandHostedRunsStepsInOrderAndStops proves the hosted entry
-// point shares the existing step loop's semantics: declared order,
-// stop-at-first-failure, and an error naming the command.
-func TestRunCommandHostedRunsStepsInOrderAndStops(t *testing.T) {
+// TestRunCommandInReentryMultiTargetDetachStaysInline is the multi-target
+// twin of the ordering-hazard test above: a multi-target TARGET itself
+// (not a delegated action) carrying `detach = true`, reached from inside an
+// already-launched run, must run inline rather than dispatching a second
+// launcher call — this is the hole admin-ysxr.7 folds in fixing: before this
+// ticket, a detached multi-target target reached from inside the
+// dashboard's hosted pty child DID reach dispatchToLauncher, because
+// runActionInline's Surface never gated makeMultiTarget's own detach branch.
+func TestRunCommandInReentryMultiTargetDetachStaysInline(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
+
+	m := &manifest.Manifest{
+		Terminal: terminal,
+		Custom: map[string]manifest.Command{
+			"dev": {Steps: []string{"pick"}},
+		},
+		Actions: map[string]manifest.Action{
+			"pick": {
+				"kind":   "multi-target",
+				"server": map[string]any{"run": "touch ran.txt", "detach": true},
+			},
+		},
+	}
+	r := NewRegistry()
+	r.MustRegister("shell", makeShell)
+	r.MustRegister("multi-target", makeMultiTarget)
+
+	MarkReentry()
+	t.Cleanup(func() { os.Unsetenv(ReentryEnv) })
+
+	if err := RunCommand(m, r, "dev", []string{"server"}, nil); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	assertFileExists(t, dir, "ran.txt")
+	if logged, err := os.ReadFile(logPath); err == nil && len(logged) > 0 {
+		t.Errorf("terminal log = %q, want empty — a detached target reached from inside an already-launched run must stay inline", string(logged))
+	}
+}
+
+// TestRunCommandRunsStepsInOrderAndStops proves the collapsed entry point
+// shares the existing step loop's semantics regardless of producer:
+// declared order, stop-at-first-failure, and an error naming the command.
+func TestRunCommandRunsStepsInOrderAndStops(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -159,9 +662,9 @@ func TestRunCommandHostedRunsStepsInOrderAndStops(t *testing.T) {
 			"three": {"kind": "shell", "run": "echo three >> order.txt"},
 		},
 	}
-	err := RunCommandHosted(m, newDispatchTestRegistry(), "build", nil)
+	err := RunCommand(m, newDispatchTestRegistry(), "build", nil, nil)
 	if err == nil {
-		t.Fatal("RunCommandHosted = nil, want the failing middle step's error")
+		t.Fatal("RunCommand = nil, want the failing middle step's error")
 	}
 	if !strings.Contains(err.Error(), `command "build"`) {
 		t.Errorf("error = %v, want it to name the command", err)
@@ -175,10 +678,12 @@ func TestRunCommandHostedRunsStepsInOrderAndStops(t *testing.T) {
 	}
 }
 
-// TestRunCommandHostedRejectsActionKeysOnCommand proves the hosted entry
-// point carries the same ADR-0003 pure-routing check, and the same
-// unknown-command and empty-steps errors, as the existing one.
-func TestRunCommandHostedRejectsActionKeysOnCommand(t *testing.T) {
+// TestRunCommandDashboardProducerRejectsActionKeysOnCommand proves the
+// dashboard-producer branch (launchCommand) carries the same ADR-0003
+// pure-routing check, and the same unknown-command and empty-steps errors,
+// as the plain-CLI branch — it resolves the command itself, up front, since
+// it has no runSteps call on its own path to discover these otherwise.
+func TestRunCommandDashboardProducerRejectsActionKeysOnCommand(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	m := &manifest.Manifest{
@@ -188,14 +693,20 @@ func TestRunCommandHostedRejectsActionKeysOnCommand(t *testing.T) {
 		},
 		Actions: map[string]manifest.Action{"one": {"kind": "shell", "run": "true"}},
 	}
-	err := RunCommandHosted(m, newDispatchTestRegistry(), "bad", nil)
+	launched := false
+	p := dashboardProducer(&launched)
+
+	err := RunCommand(m, newDispatchTestRegistry(), "bad", nil, p)
 	if err == nil || !strings.Contains(err.Error(), "ADR-0003") {
-		t.Errorf("RunCommandHosted(bad) = %v, want the ADR-0003 pure-routing error", err)
+		t.Errorf("RunCommand(bad) = %v, want the ADR-0003 pure-routing error", err)
 	}
-	if err := RunCommandHosted(m, newDispatchTestRegistry(), "empty", nil); err == nil {
-		t.Error("RunCommandHosted(empty) = nil, want a no-steps error")
+	if err := RunCommand(m, newDispatchTestRegistry(), "empty", nil, p); err == nil {
+		t.Error("RunCommand(empty) = nil, want a no-steps error")
 	}
-	if err := RunCommandHosted(m, newDispatchTestRegistry(), "nope", nil); err == nil {
-		t.Error("RunCommandHosted(nope) = nil, want an unknown-command error")
+	if err := RunCommand(m, newDispatchTestRegistry(), "nope", nil, p); err == nil {
+		t.Error("RunCommand(nope) = nil, want an unknown-command error")
+	}
+	if launched {
+		t.Error("none of these should ever reach Launch — every one is rejected before dispatch")
 	}
 }

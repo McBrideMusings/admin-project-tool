@@ -39,7 +39,7 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "admin",
+	Use: "admin",
 	// "repo" is a cobra alias, not a second identity: ADR-0011 §1. It exists
 	// only because `repo completion zsh` is wired into the user's .zshrc, and
 	// may be deleted once nothing invokes it under that name.
@@ -201,7 +201,7 @@ func registerManifestCommand(name string) bool {
 		Short:              "admin.toml command: " + name,
 		DisableFlagParsing: true, // flags belong to the underlying steps, not to cobra
 		RunE: func(cmd *cobra.Command, cmdArgs []string) error {
-			return kinds.RunCommand(m, kinds.Default, name, cmdArgs)
+			return kinds.RunCommand(m, kinds.Default, name, cmdArgs, nil)
 		},
 	})
 	return true
@@ -217,12 +217,21 @@ func registerManifestCommand(name string) bool {
 // prefixed so a project's own admin.toml commands (which would otherwise
 // need "reserved name" handling like the tool verbs get) can never collide
 // with it in practice.
+//
+// kinds.MarkReentry() runs before anything else: this verb IS by definition
+// a re-entry into an already-launched dispatch, so the fact is asserted
+// here rather than depending on the launched process having inherited an
+// out-of-band signal from its parent. It is what keeps a nested delegation
+// reached from inside this action (a multi-target target's `action =
+// "other"` hop) from trying to reach a second launcher from inside the
+// first (admin-ysxr.4/.7).
 var runActionCmd = &cobra.Command{
 	Use:                "__run-action <name> [args...]",
 	Hidden:             true,
 	DisableFlagParsing: true, // flags belong to the action's own steps, not to cobra
 	Args:               cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		kinds.MarkReentry()
 		wd, err := os.Getwd()
 		if err != nil {
 			return err
@@ -244,15 +253,15 @@ var runActionCmd = &cobra.Command{
 }
 
 // runCommandCmd is admin-3rgp.61's hidden re-entry point: what the pty child
-// a dashboard-hosted command dispatches into actually runs. It is the one
-// caller that invokes kinds.RunCommandHosted directly — deliberately: unlike
-// runActionCmd's __run-action (which reaches RunAction, a lifetime-aware
-// entry point that CAN open a further herdr pane for a nested long-running
-// step), RunCommandHosted's whole point is that no step it dispatches can
-// open a pane, whatever that step's own kind declares. Hidden and
-// double-underscore prefixed for the same reason as __run-action: plumbing,
-// not something a person types, and never collidable with a project's own
-// admin.toml commands.
+// a dashboard-hosted command dispatches into actually runs, and (as of
+// admin-ysxr.4) what a detached Command's launcher dispatch re-enters into
+// as well. It calls kinds.RunCommand with a nil producer — the plain-CLI
+// shape — but kinds.MarkReentry() below is what actually keeps this run off
+// the launcher a second time and onto the inline step loop
+// (runActionInline): RunCommand consults inReentry() before it ever looks at
+// the producer argument. Hidden and double-underscore prefixed for the same
+// reason as __run-action: plumbing, not something a person types, and never
+// collidable with a project's own admin.toml commands.
 var runCommandCmd = &cobra.Command{
 	Use:                "__run-command <name> [args...]",
 	Hidden:             true,
@@ -267,6 +276,7 @@ var runCommandCmd = &cobra.Command{
 		// sends (admin-3rgp.61's Cause B). See HostedColorProfileEnv's doc
 		// comment in internal/kinds/hostedpty.go.
 		applyHostedColorProfile()
+		kinds.MarkReentry()
 
 		wd, err := os.Getwd()
 		if err != nil {
@@ -281,7 +291,7 @@ var runCommandCmd = &cobra.Command{
 		if !ok {
 			return fmt.Errorf("__run-command: no admin.toml in %s or any directory above it", wd)
 		}
-		return kinds.RunCommandHosted(m, kinds.Default, args[0], args[1:])
+		return kinds.RunCommand(m, kinds.Default, args[0], args[1:], nil)
 	},
 }
 

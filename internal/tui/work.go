@@ -722,17 +722,29 @@ type workDispatchStartedMsg struct {
 // selfExecutable seam.
 var startHostedRun = kinds.StartHostedPTY
 
-// dispatchCommandCmd starts name on a dashboard-owned pty and returns
-// immediately: unlike the tea.Exec dispatch it replaces, this is an
-// ordinary asynchronous tea.Cmd. The dashboard never releases its terminal
-// for the run — kinds.RunCommandHosted (reached via the hidden
-// "__run-command" re-entry verb StartHostedPTY re-execs into) runs the
-// command's whole step loop on a pty allocated for exactly this dispatch, so
-// the run's own output, and any pinned footer it opens, land there instead
-// of on the dashboard's alt-screen.
+// dispatchCommandCmd starts name and returns immediately: unlike the
+// tea.Exec dispatch it replaces, this is an ordinary asynchronous tea.Cmd.
+// It routes through kinds.RunCommand with a dashboard CommandProducer —
+// admin-ysxr.4's collapsed entry point — rather than calling StartHostedPTY
+// directly, so a command whose first step declares `detach = true` against
+// a declared [terminal] dispatches through that launcher instead: the
+// dashboard is never the right process to host a run the project itself
+// asked to detach. Producer.Launch is exactly the old unconditional call:
+// starts name on a dashboard-owned pty — kinds.RunCommand, reached via the
+// hidden "__run-command" re-entry verb StartHostedPTY re-execs into and
+// running inline there because that verb marks reentry, runs the command's
+// whole step loop on it — so the run's own output, and any pinned footer it
+// opens, land there instead of on the dashboard's alt-screen — the
+// no-[terminal] default, unchanged from before this ticket.
 func dispatchCommandCmd(m *manifest.Manifest, width, height int, name string, env []string, args ...string) tea.Cmd {
 	return func() tea.Msg {
-		err := startHostedRun(m, name, args, height, width, env)
+		producer := &kinds.CommandProducer{
+			Env: env,
+			Launch: func(mf *manifest.Manifest, n string, a []string) error {
+				return startHostedRun(mf, n, a, height, width, env)
+			},
+		}
+		err := kinds.RunCommand(m, kinds.Default, name, args, producer)
 		return workDispatchStartedMsg{name: name, err: err}
 	}
 }

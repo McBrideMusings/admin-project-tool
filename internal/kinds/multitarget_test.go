@@ -1,6 +1,9 @@
 package kinds
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
@@ -114,6 +117,61 @@ func TestMultiTargetUnknownTargetIsError(t *testing.T) {
 	}
 	if err := runner([]string{"nope"}); err == nil {
 		t.Fatal("runner([nope]) should error for an unknown target")
+	}
+}
+
+// TestMultiTargetDetachedReentrySentinelIsNowAnUnknownTarget proves
+// admin-ysxr.7's sentinel removal: __admin-detached-reentry used to be
+// stripped off args[0] as a marker meaning "this dispatch already went
+// through the launcher once" — makeMultiTarget no longer knows that string
+// at all, so a target literally named that reports the ordinary
+// unknown-target error instead of being silently swallowed.
+func TestMultiTargetDetachedReentrySentinelIsNowAnUnknownTarget(t *testing.T) {
+	t.Chdir(t.TempDir())
+	action := manifest.Action{"kind": "multi-target", "cf": map[string]any{"run": "true"}}
+	runner, err := makeMultiTarget("dev", action, nil, nil)
+	if err != nil {
+		t.Fatalf("makeMultiTarget: %v", err)
+	}
+	err = runner([]string{"__admin-detached-reentry", "cf"})
+	if err == nil {
+		t.Fatal("runner([__admin-detached-reentry, cf]) should error — the sentinel is no longer special-cased")
+	}
+	if !strings.Contains(err.Error(), `unknown target "__admin-detached-reentry"`) {
+		t.Errorf("error = %v, want it to name __admin-detached-reentry as an unknown target", err)
+	}
+}
+
+// TestMultiTargetDetachedTargetUnderReentryRunsInline proves the
+// replacement signal: a target carrying `detach = true`, dispatched while
+// this process is already inside a launched run (ADMIN_REENTRY set), runs
+// inline and never reaches the launcher — the process-wide inReentry() gate
+// that replaces the old per-dispatch argv sentinel.
+func TestMultiTargetDetachedTargetUnderReentryRunsInline(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
+
+	action := manifest.Action{
+		"kind": "multi-target",
+		"cf":   map[string]any{"run": "touch cf.txt", "detach": true},
+	}
+	m := &manifest.Manifest{Terminal: terminal}
+	runner, err := makeMultiTarget("dev", action, m, nil)
+	if err != nil {
+		t.Fatalf("makeMultiTarget: %v", err)
+	}
+
+	MarkReentry()
+	t.Cleanup(func() { os.Unsetenv(ReentryEnv) })
+
+	if err := runner([]string{"cf"}); err != nil {
+		t.Fatalf("runner([cf]) = %v, want nil", err)
+	}
+	assertFileExists(t, dir, "cf.txt")
+	if logged, err := os.ReadFile(logPath); err == nil && len(logged) > 0 {
+		t.Errorf("terminal log = %q, want empty — a re-entered dispatch must run the detached target inline", string(logged))
 	}
 }
 

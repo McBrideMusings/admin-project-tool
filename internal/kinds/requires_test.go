@@ -183,7 +183,7 @@ func TestRunCommandGlobalPreflightBlocksBeforeAnyStepRuns(t *testing.T) {
 	r := NewRegistry()
 	r.MustRegister("shell", makeShell)
 
-	if err := RunCommand(m, r, "build", nil); err == nil {
+	if err := RunCommand(m, r, "build", nil, nil); err == nil {
 		t.Fatal("RunCommand(build) = nil, want the deps-fresh preflight failure")
 	}
 	assertFileMissing(t, dir, "ran.txt")
@@ -211,7 +211,7 @@ func TestRunCommandPreflightExemptForDiagnosticVerbs(t *testing.T) {
 	r := NewRegistry()
 	r.MustRegister("shell", makeShell)
 
-	if err := RunCommand(m, r, "logs", nil); err != nil {
+	if err := RunCommand(m, r, "logs", nil, nil); err != nil {
 		t.Fatalf("RunCommand(logs) = %v, want nil — logs is an exempt diagnostic verb", err)
 	}
 	assertFileExists(t, dir, "ran.txt")
