@@ -1935,7 +1935,7 @@ func TestBeadsGroupByWhatBlocksThem(t *testing.T) {
 		{ID: "p-5", Title: "on ice", Status: "deferred"},
 		{ID: "p-6", Title: "waits on the deferred one", Status: "open", Blockers: []string{"p-5"}},
 	}
-	ready, inProgress, blocked := groupBeads(beads)
+	human, ready, inProgress, blocked := groupBeads(beads)
 
 	ids := func(bs []bd.Bead) []string {
 		out := make([]string, 0, len(bs))
@@ -1949,6 +1949,7 @@ func TestBeadsGroupByWhatBlocksThem(t *testing.T) {
 		got     []string
 		want    []string
 	}{
+		{"Needs you", ids(human), nil},
 		{"Ready", ids(ready), []string{"p-1", "p-4"}},
 		{"In progress", ids(inProgress), []string{"p-2"}},
 		{"Blocked", ids(blocked), []string{"p-3", "p-6"}},
