@@ -66,7 +66,7 @@ Tests that exercise full dispatch write a temp `admin.toml` and run it through `
 |---|---|
 | Validate this repo's `admin.toml` (parse + resolve) | `go run . check .`, or the PATH `admin check .` |
 | Install / reinstall to `~/.admin/` | `bash install.sh`, or `admin deploy` to also provision the userscript |
-| Run full test suite | `./admin-run test` |
+| Run full test suite | `go run . test`, or the PATH `admin test` |
 | Build a standalone `./admin` for a project | `admin compile [DIR]` |
 
 Pre-install (or while developing the Python-only half of the tool — `new`, `compile`, and the six action kinds `admin-py` still owns), invoke the interpreter directly with `./admin-run <verb-or-command>` instead of the PATH `admin`. This repo's own `admin.toml` declares `kind = "workflow"` (admin-7wy5), which `admin-py`'s catalog does not know — so `./admin-run <anything>` in *this* repo now fails at manifest parse; validate it with the Go checker or the PATH `admin` instead.
@@ -164,6 +164,36 @@ requires = []
 **Pipeline.** Guard handling is concentrated in `admin_lib/guards.py`, which exposes one hook per phase that the pipeline delegates to: `parse_guard_tables` (manifest parse — validate `[guards.<name>]` run/fail, reject built-in collisions), `validate_requires` (resolve — every name in any `requires` list maps to a known guard, built-in or user-defined), `register` (interpreter setup — wire up the shell guards), and `run_requires` (dispatch). The parse/validate hooks take a caller-injected `exc` (the phase's error class — `ManifestError` / `ArchetypeError`, both subclasses of `admin_lib/validate.ValidationError`) and raise it directly — the same exc-injection pattern `admin_lib/validate.py` uses. `admin_lib/validate.py` checks the `requires`/`target_requires` **shape** (list of strings); `admin_lib/archetypes.py` builds `meta["requires"]`/`meta["target_requires"]` (where `None` means inherit the parent default) (storing per-target overrides as `meta["target_requires"]`, where `None` means inherit the parent default); `admin_lib/interp.py` wraps each flat action with a `run_requires([...])` check and resolves per-target requires inside the multi-target closure (`_target_requires[picked]`).
 
 **Runtime.** `run_requires` walks the list fail-fast: invokes each named guard, prints its diagnostic via `err()` on first failure, returns 1. Built-in guards produce dynamic diagnostics ("branch 'X' has unpushed commits — push first: git push origin X"); user-defined shell guards run `/bin/sh -c <run>`, capture stdout+stderr, print the captured output then the static `fail` on non-zero exit. The cwd is inherited (the interpreter cd's to project root at boot). Guards do not compose — a guard cannot reference another `requires`. Adding a new built-in means writing a Python function in `admin_lib/guards.py` and adding its name to `GUARDS_BUILTIN` there (the single source of truth). `run_global_preflight` runs the always-on checks (currently just `deps-fresh`) once per invocation before dispatch — `boot()` calls it before the CLI command runs and the TUI calls it before executing a selection; it's memoized so nested dispatch (sequence steps, `@`-refs) only checks once.
+
+## Row-scoped key bindings
+
+A project can bind keys to commands at the row level by declaring `[keys.<row-kind>]` tables mapping keys to command names — one table per bindable row kind (`bead`, `issue`, `branch`, `pr`, `commit`, `stash`). A bound key invokes the named command with the row's data passed as environment variables (`ADMIN_ROW_KIND`, `ADMIN_ROW_ID`, `ADMIN_ROW_URL`); the command's `desc` becomes the key's label in the row footer, replacing the built-in binding. This repo dogfoods the feature for implementing work:
+
+```toml
+[commands.implement]
+desc  = "Dispatch an agent over the selected bead(s) (ADR-0018 dogfood)"
+steps = ["implement"]
+
+[actions.implement]
+kind  = "workflow"
+over  = "selection"
+agent = "claude"
+
+[keys.bead]
+enter = "implement"
+```
+
+The resulting Beads footer shows `↵ Dispatch an agent over the selected bead(s) (ADR-0018 dogfood)` — the command's description auto-fills the key label so the footer advertises what the binding does.
+
+Three validation rules govern bindings (`internal/validate/keys.go`, `RowKeys`): reserved keys are rejected (`keymap.Reserved` — q, ctrl+c, esc, tab, shift+tab, the arrows, j, k, 1-4, /); the Work tab's own row kinds (`command`, `commandTarget`, `worker` — `keymap.NotBindable`) are not bindable and get a dedicated error naming them; shadowing a built-in is allowed and reported — `admin check` prints e.g. `keys.bead.d shadows the bead detail overlay` and still exits 0 (shadows come back on a separate return value, never in the error).
+
+Dispatch (`internal/tui/rowkeys.go`, `rowKeyDispatch`) is consulted before the built-in switch in `Model.handleKey`; a miss (no table, no row, unbindable kind, unbound key) returns ok=false and the built-in switch runs exactly as today; a hit dispatches the named command through `dispatchCommandCmd` — the same path a Commands-tab row uses — with the row's environment variables; if that command already has a live non-worker entry the dashboard attaches to it rather than re-running it (admin-c2zl).
+
+A binding resolving to a single-step `kind="workflow"` action with `over = "selection"` dispatches over the tracker selection through the same picker/confirm overlay `space`-then-`w` uses when the ACTIVE pane's selection is nonempty, and immediately over the cursor row alone (no overlay, outcome on the status line, missing agent reported as a red status line) when it is empty. Every other command shape acts on the cursor row alone however many rows are selected — the environment variables carry one row and have no plural form.
+
+**Pipeline.** `manifest.Keys` (raw top-level `[keys]` table, `internal/manifest/manifest.go:122`, unvalidated at parse) → `validate.RowKeys` against the manifest's declared command names (called by `cmd/check.go`'s `checkRowKeys` and by the TUI's `buildRowKeys`) → `internal/keymap` holding the built-in labels keyed by row kind, the leaf package both `validate` and `tui` import → `internal/tui/rowkeys.go` for the lookup and dispatch, with `Model.keymap()`/`rowPairs` (`internal/tui/view.go:675`) merging bindings into the footer: a bound key that shadows a built-in replaces that pair's label in place, an unshadowing one is appended after the built-ins. `[keys]` is the one raw archetype table merged per key rather than whole-value (`internal/archetype/merge.go`'s `mergeRowKeys`).
+
+See [ADR-0018](docs/adr/0018-row-scoped-key-bindings.md) for the rejected alternatives.
 
 ## Tampermonkey provisioning
 
