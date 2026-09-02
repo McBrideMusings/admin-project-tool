@@ -29,7 +29,7 @@ func makeNpm(name string, action manifest.Action, m *manifest.Manifest, _ *Surfa
 	}
 	return func(args []string) error {
 		run := pkgRunner(".") + " run " + script
-		h := newHost()
+		h := newHost(m)
 		res, err := h.RunCmd(run, luahost.RunCmdOptions{CaptureLog: true})
 		if err != nil {
 			return fmt.Errorf("action %q: %w", name, err)

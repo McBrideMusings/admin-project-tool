@@ -27,9 +27,10 @@ func makeDockerReloadLoop(name string, action manifest.Action, m *manifest.Manif
 		return nil, fmt.Errorf(`action %q: kind="docker-reload-loop" requires 'run'`, name)
 	}
 	return func(args []string) error {
-		h := newHost()
+		h := newHost(m)
 		h.Info("reload loop: " + run)
 		rc := reload.RunWithReload(run, name, reload.Options{
+			Dir:    h.ProjectRoot,
 			Stdout: h.Stdout,
 			LogFn:  h.AppendLog,
 			Info:   h.Info,
@@ -53,7 +54,7 @@ func makeServerReload(name string, action manifest.Action, m *manifest.Manifest,
 		if len(args) > 0 {
 			filter = args[0]
 		}
-		h := newHost()
+		h := newHost(m)
 		if _, err := reload.SignalAll(reload.PIDPrefix, filter, h); err != nil {
 			return fmt.Errorf("action %q: %w", name, err)
 		}
@@ -70,7 +71,7 @@ func makeDockerDev(name string, action manifest.Action, m *manifest.Manifest, su
 	cfg := archetypeConfigTable(m, "docker_dev")
 
 	return func(args []string) error {
-		h := newHost()
+		h := newHost(m)
 		if len(cfg) == 0 {
 			h.Err("docker_dev: empty config")
 			return fmt.Errorf("action %q: docker_dev: empty config", name)
@@ -102,6 +103,7 @@ func makeDockerDev(name string, action manifest.Action, m *manifest.Manifest, su
 		}
 
 		rc := reload.RunWithReload(cmd, target, reload.Options{
+			Dir:    h.ProjectRoot,
 			Stdout: h.Stdout,
 			LogFn:  h.AppendLog,
 			Info:   h.Info,

@@ -48,6 +48,11 @@ func newOrigins() *origins {
 // because no other archetype directories exist on disk.
 func Resolve(project *manifest.Manifest, sp SearchPath) (*manifest.Manifest, []string, error) {
 	dst := &manifest.Manifest{
+		// Root is the project's, not an archetype's: an archetype fragment
+		// has no directory of its own, and the resolved manifest is what
+		// every action's working directory is taken from.
+		Root: project.Root,
+
 		Urls:      map[string]string{},
 		Overrides: map[string]manifest.Command{},
 		Custom:    map[string]manifest.Command{},

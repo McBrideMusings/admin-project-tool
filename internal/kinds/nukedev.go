@@ -152,7 +152,7 @@ func makeNukeDev(name string, action manifest.Action, m *manifest.Manifest, _ *S
 	}
 
 	return func(args []string) error {
-		h := newHost()
+		h := newHost(m)
 		if len(cfg) == 0 {
 			h.Info("nothing was running")
 			return nil

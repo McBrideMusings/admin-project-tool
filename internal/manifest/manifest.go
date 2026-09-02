@@ -20,6 +20,35 @@ import (
 // Filename is the manifest's on-disk name, always at a project's root.
 const Filename = "admin.toml"
 
+// FindRoot walks up from start looking for the nearest directory holding an
+// admin.toml, and returns that directory (absolute) — the project root.
+//
+// The walk is what makes `admin <command>` mean the same thing from anywhere
+// inside a project rather than only at its top directory, and it is what
+// gives every action a project root that is not simply "wherever the binary
+// was invoked from". Without it the two are the same value by accident, so
+// every `run` string in a manifest has to carry its own absolute `cd` to be
+// invocation-independent — and an absolute path is exactly what survives the
+// straight file copy that seeds admin.toml into a new git worktree
+// (archetypes/base/archetype.toml's [[populate]] copy mode), which is how
+// `admin dev` inside a worktree ends up building the primary checkout.
+func FindRoot(start string) (string, bool) {
+	dir, err := filepath.Abs(start)
+	if err != nil {
+		return "", false
+	}
+	for {
+		if st, err := os.Stat(filepath.Join(dir, Filename)); err == nil && !st.IsDir() {
+			return dir, true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		dir = parent
+	}
+}
+
 // Spacer is the sentinel stored inside Manifest.Order for a display spacer —
 // an empty "" or "---" entry in the raw `order` list normalizes to this.
 const Spacer = ""
@@ -82,6 +111,14 @@ type Guard struct {
 // Manifest is a project's admin.toml, parsed and normalized but not yet
 // merged with any archetype.
 type Manifest struct {
+	// Root is the absolute directory admin.toml was read from — the project
+	// root. Load sets it; Parse/ParsePartial leave it empty because an
+	// already-decoded table (an archetype fragment, a test) has no directory
+	// of its own. Every action's subprocess runs with this as its working
+	// directory, so a `run` string is relative to the project, never to
+	// whatever directory `admin` happened to be typed in.
+	Root string
+
 	ProjectName string
 	PythonMin   string
 
@@ -249,7 +286,16 @@ func Load(projectDir string) (*Manifest, error) {
 	if _, err := toml.Decode(string(raw), &data); err != nil {
 		return nil, errf("%s: invalid TOML: %s", path, err.Error())
 	}
-	return Parse(data, path)
+	m, err := Parse(data, path)
+	if err != nil {
+		return nil, err
+	}
+	if abs, absErr := filepath.Abs(projectDir); absErr == nil {
+		m.Root = abs
+	} else {
+		m.Root = projectDir
+	}
+	return m, nil
 }
 
 // Parse turns an already-decoded TOML table into a Manifest. source is used

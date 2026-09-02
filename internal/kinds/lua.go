@@ -73,7 +73,7 @@ func makeLua(name string, action manifest.Action, m *manifest.Manifest, surf *Su
 		if strings.TrimSpace(source) == "" {
 			return fmt.Errorf("action %q: kind=\"lua\" needs 'run' (a Lua body)", name)
 		}
-		h := newHost()
+		h := newHost(m)
 		if surf != nil {
 			h.RunAction = surf.action
 		}

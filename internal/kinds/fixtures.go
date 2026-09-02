@@ -300,7 +300,7 @@ func makeFixturesGenerate(name string, action manifest.Action, m *manifest.Manif
 	cfg := archetypeConfigTable(m, "fixtures")
 
 	return func(args []string) error {
-		h := newHost()
+		h := newHost(m)
 		if len(cfg) == 0 {
 			msg := "fixtures: no [fixtures] table configured"
 			h.Warn(msg)
@@ -333,7 +333,7 @@ func makeFixturesReset(name string, action manifest.Action, m *manifest.Manifest
 	cfg := archetypeConfigTable(m, "fixtures")
 
 	return func(args []string) error {
-		h := newHost()
+		h := newHost(m)
 		if len(cfg) == 0 {
 			msg := "fixtures: no [fixtures] table configured"
 			h.Warn(msg)

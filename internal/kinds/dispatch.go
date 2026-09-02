@@ -384,12 +384,13 @@ func runSteps(m *manifest.Manifest, r *Registry, name string, args []string, dis
 // (typically the innermost — a multi-target target, a framed action) wins,
 // exactly as in the Python original.
 func nameCommandLog(m *manifest.Manifest, name string, cmd manifest.Command) {
-	root, err := os.Getwd()
-	if err != nil {
-		root = "."
-	}
+	// The project root, not the cwd: LogDir is "<root>/tmp" (or the
+	// [logging].dir under it), and rooting it at the invocation directory put
+	// a run's log under whatever subdirectory the command was typed in — a
+	// different file per directory for the same command, and none of them
+	// where `admin logs` looks.
 	ctx := luahost.Process()
-	ctx.Configure(root, m.Logging)
+	ctx.Configure(projectRoot(m), m.Logging)
 
 	retain := luahost.RetainUnset
 	if cmd.HasRetain {

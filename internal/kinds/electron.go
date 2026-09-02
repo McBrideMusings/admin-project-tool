@@ -42,7 +42,7 @@ func makeElectron(name string, action manifest.Action, m *manifest.Manifest, _ *
 		if len(raw) == 0 {
 			return fmt.Errorf("action %q: [electron] table missing from admin.toml", name)
 		}
-		h := newHost()
+		h := newHost(m)
 		cfg, err := electronConfig(raw)
 		if err != nil {
 			return fmt.Errorf("action %q: [electron]: %w", name, err)
@@ -84,6 +84,7 @@ func makeElectron(name string, action manifest.Action, m *manifest.Manifest, _ *
 				electron.DevOptions{Info: h.Info},
 				func(cmd, target string) int {
 					return reload.RunWithReload(cmd, target, reload.Options{
+						Dir:    h.ProjectRoot,
 						Stdout: h.Stdout,
 						LogFn:  h.AppendLog,
 						Info:   h.Info,
