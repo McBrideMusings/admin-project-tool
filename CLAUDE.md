@@ -172,7 +172,7 @@ A project can declare a `[terminal]` table (ADR-0020) naming the launcher it wan
 
 ```toml
 [terminal]
-spawn  = 'id=$(herdr pane split --current --cwd "$ADMIN_CWD" --no-focus) && herdr pane run "$id" "$ADMIN_CMD" && echo "$id"'
+spawn  = 'id=$(herdr pane split --current --direction right --cwd "$ADMIN_CWD" --no-focus | jq -r .result.pane.pane_id) && herdr pane run "$id" "$ADMIN_CMD" >/dev/null && echo "$id"'
 attach = 'herdr focus "$ADMIN_HANDLE"'
 kill   = 'herdr pane close "$ADMIN_HANDLE"'
 status = 'herdr agent get "$ADMIN_HANDLE"'   # optional
