@@ -20,11 +20,19 @@ declare a `[terminal]` table:
 
 ```toml
 [terminal]
-spawn  = 'id=$(herdr pane split --current --cwd "$ADMIN_CWD" --no-focus) && herdr pane run "$id" "$ADMIN_CMD" && echo "$id"'
+spawn  = 'id=$(herdr pane split --current --direction right --cwd "$ADMIN_CWD" --no-focus | jq -r .result.pane.pane_id) && herdr pane run "$id" "$ADMIN_CMD" >/dev/null && echo "$id"'
 attach = 'herdr focus "$ADMIN_HANDLE"'
 kill   = 'herdr pane close "$ADMIN_HANDLE"'
 status = 'herdr agent get "$ADMIN_HANDLE"'   # optional
 ```
+
+**Extracting the handle is the launcher line's job, not the tool's.** Real multiplexers
+rarely print a bare id: `herdr pane split` emits a JSON envelope, which is why the spawn
+line above pipes it through `jq -r .result.pane.pane_id`. The tool takes trimmed stdout
+verbatim, so a spawn line that forgets the extraction stores a whole JSON blob as the
+handle and every later `attach`/`kill` fails with a not-found error naming it. That is the
+price of an opaque handle and it is the right trade — the alternative is the tool knowing
+one launcher's response schema, which is the coupling this ADR exists to remove.
 
 The contract:
 
