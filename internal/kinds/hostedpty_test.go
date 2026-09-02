@@ -50,7 +50,8 @@ func stubSelfExecutable(t *testing.T, path string) {
 }
 
 // TestStartHostedPTYRegistersALiveEntry proves a successful dispatch
-// registers a PTYID live-work entry keyed on the command's first STEP name
+// registers a hosted-pty (Via empty) live-work entry keyed on the command's
+// first STEP name
 // (matching internal/tui/work.go:liveEntryFor, which looks entries up by
 // step name, not command name) with Kill and Retry both wired.
 //
@@ -78,11 +79,11 @@ func TestStartHostedPTYRegistersALiveEntry(t *testing.T) {
 	if !ok {
 		t.Fatal("no live-work entry registered under the command's first step name")
 	}
-	if e.PTYID == "" {
-		t.Error("entry has no PTYID set")
+	if e.Handle == "" {
+		t.Error("entry has no Handle set")
 	}
-	if e.PaneID != "" {
-		t.Errorf("entry has PaneID %q set, want empty — a hosted dispatch addresses a pty, not a pane", e.PaneID)
+	if e.Via != "" {
+		t.Errorf("entry has Via %q set, want empty — a hosted dispatch addresses a pty, not a launcher", e.Via)
 	}
 	if e.Ops.Kill == nil {
 		t.Error("entry missing a Kill op")

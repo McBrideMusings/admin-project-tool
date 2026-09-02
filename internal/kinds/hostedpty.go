@@ -180,12 +180,13 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 	return nil
 }
 
-// recordHostedPTYWork adds a running PTYID entry for a successfully-spawned
-// hosted dispatch, and waits for the child to exit in a goroutine so the
-// entry can flip to exited/failed the same way recordLiveWork's pane-backed
-// entry does — the only visible difference to a caller is which of
-// PaneID/PTYID is set. args, rows/cols, and env are kept so Retry can re-run
-// StartHostedPTY exactly as it ran the first time.
+// recordHostedPTYWork adds a running hosted-pty entry (Via left empty) for
+// a successfully-spawned hosted dispatch, and waits for the child to exit
+// in a goroutine so the entry can flip to exited/failed the same way
+// recordLiveWork's launcher-backed entry does — the only visible
+// difference to a caller is whether Via is empty. args, rows/cols, and env
+// are kept so Retry can re-run StartHostedPTY exactly as it ran the first
+// time.
 func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args []string, rows, cols int, env []string, c *exec.Cmd, ptmx *os.File) {
 	// killed is set by Ops.Kill before it closes ptmx, so the wait goroutine
 	// below knows the resulting "signal: killed" c.Wait() error is expected
@@ -206,7 +207,7 @@ func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args
 		ID:     entryID,
 		Name:   entryID,
 		Kind:   "hosted-pty",
-		PTYID:  ptmx.Name(),
+		Handle: ptmx.Name(),
 		Output: livework.NewRing(0),
 	}
 	e.Ops = livework.Ops{

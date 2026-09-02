@@ -282,7 +282,7 @@ func TestWorkRowsOneListOneCursor(t *testing.T) {
 	// test-scoped ID that no other test in this package can collide with.
 	worker := &livework.Entry{
 		ID: "test-work-rows-worker", Name: "test-work-rows-worker",
-		State: livework.StateWaiting, Activity: "needs input", PaneID: "pane-worker",
+		State: livework.StateWaiting, Activity: "needs input", Handle: "pane-worker", Via: "terminal",
 		Worker: &livework.WorkerInfo{Branch: "some-branch", Worktree: "/tmp/some-branch"},
 	}
 	if err := livework.Default.Add(worker); err != nil {
@@ -342,7 +342,7 @@ func TestWorkRowsFoldsAProcessEntryIntoItsCommandRow(t *testing.T) {
 
 	e := &livework.Entry{
 		ID: "test-fold-process-entry", Name: "dev-server",
-		State: livework.StateRunning, Activity: "localhost:5173", PaneID: "pane 9",
+		State: livework.StateRunning, Activity: "localhost:5173", Handle: "pane 9", Via: "terminal",
 	}
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add: %v", err)
@@ -426,7 +426,7 @@ func TestRenderWorkRowShowsDescriptionWhenIdleAndLiveStateWhenRunning(t *testing
 		cmdName: "build",
 		live: &livework.Entry{
 			ID: "build", Name: "build", State: livework.StateRunning,
-			Activity: "compiling", PaneID: "pane 3", StartedAt: time.Now(),
+			Activity: "compiling", Handle: "pane 3", Via: "terminal", StartedAt: time.Now(),
 		},
 	}
 	liveLine := workTestModel(nil).renderWorkRow(rowItem{kind: rowCommand, work: live}, false, 60)
@@ -584,7 +584,7 @@ func TestWorkRowsWorkersHeaderStaysPutAcrossDispatch(t *testing.T) {
 
 	worker := &livework.Entry{
 		ID: "test-header-stays-put-worker", Name: "test-header-stays-put-worker",
-		State: livework.StateWaiting, Activity: "needs input", PaneID: "pane-stays-put",
+		State: livework.StateWaiting, Activity: "needs input", Handle: "pane-stays-put", Via: "terminal",
 		Worker: &livework.WorkerInfo{Branch: "some-branch", Worktree: "/tmp/some-branch"},
 	}
 	if err := livework.Default.Add(worker); err != nil {
@@ -659,7 +659,7 @@ func TestWorkRowsWorkerLabelHasNoTrailingSpaceWhenActivityEmpty(t *testing.T) {
 
 	worker := &livework.Entry{
 		ID: "test-work-rows-no-activity", Name: "test-work-rows-no-activity",
-		State: livework.StateRunning, Activity: "", PaneID: "pane-no-activity",
+		State: livework.StateRunning, Activity: "", Handle: "pane-no-activity", Via: "terminal",
 		Worker: &livework.WorkerInfo{Branch: "no-activity", Worktree: "/tmp/no-activity"},
 	}
 	if err := livework.Default.Add(worker); err != nil {
@@ -691,7 +691,7 @@ func TestWorkRowsWorkerLabelHasNoTrailingSpaceWhenActivityEmpty(t *testing.T) {
 func TestWorkerDetailOmitsNowLabelWhenActivityEmpty(t *testing.T) {
 	e := &livework.Entry{
 		ID: "test-worker-detail-no-activity", Name: "test-worker-detail-no-activity",
-		State: livework.StateRunning, Activity: "", PTYID: "pty-detail-no-activity",
+		State: livework.StateRunning, Activity: "", Handle: "pty-detail-no-activity",
 		StartedAt: time.Now(),
 	}
 	if err := livework.Default.Add(e); err != nil {
