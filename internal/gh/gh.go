@@ -1271,6 +1271,55 @@ func AllOpenIssues(ctx context.Context, nwo string) ([]IssueItem, string, error)
 	return items, viewerLogin, nil
 }
 
+// issueLabelListLimit caps how many open issues OpenIssuesByLabel asks gh
+// for in one call. Unlike AllOpenIssues' paginated GraphQL search, this is a
+// single `gh issue list --label` call, so the cap is passed straight through
+// as --limit rather than looped — a runaway guard (matching maxIssuePages'
+// role), not a coverage limit any label on the repos this dashboard targets
+// would realistically reach.
+const issueLabelListLimit = 500
+
+// OpenIssuesByLabel returns the open issues in nwo carrying label, via a
+// plain `gh issue list --label` call — the resolver
+// internal/kinds/workflowquery.go's ResolveQuery calls through for a
+// github-tracked project's `over = { query = "label:<name>" }` workflow.
+// Only identity fields are populated (Number/Title/Labels); Assignees and PR
+// are left zero, since the query resolver only needs to know which issues
+// matched. Returns a non-nil empty slice, not an error, when nothing does.
+func OpenIssuesByLabel(ctx context.Context, nwo, label string) ([]IssueItem, error) {
+	if nwo == "" {
+		return nil, fmt.Errorf("no repo for issues")
+	}
+	out, err := runner(ctx, "issue", "list",
+		"--repo", nwo,
+		"--state", "open",
+		"--label", label,
+		"--json", "number,title,labels",
+		"--limit", strconv.Itoa(issueLabelListLimit))
+	if err != nil {
+		return nil, err
+	}
+	var raw []struct {
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		Labels []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
+	}
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		return nil, err
+	}
+	items := make([]IssueItem, 0, len(raw))
+	for _, r := range raw {
+		var labels []string
+		for _, l := range r.Labels {
+			labels = append(labels, l.Name)
+		}
+		items = append(items, IssueItem{Number: r.Number, Title: r.Title, Labels: labels})
+	}
+	return items, nil
+}
+
 // issuePRStatusBatchSize caps how many pullRequest aliases go into one
 // IssuePRStatuses query — well under GitHub's query-complexity limit, so a
 // fetch with many simultaneously-linked PRs can't fail the whole batch.

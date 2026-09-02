@@ -69,9 +69,9 @@ var runResolveQuery = kinds.ResolveQuery
 // background. Nothing here dispatches anything — runResolveQuery is a read,
 // and the agent/ceiling lookup below is config.Load (repoRoot's admin.toml,
 // merged with its archetypes), also a read.
-func resolveWorkflowCmd(repoRoot, name string, action manifest.Action, query string) tea.Cmd {
+func resolveWorkflowCmd(repoRoot, tracker, nwo, name string, action manifest.Action, query string) tea.Cmd {
 	return func() tea.Msg {
-		targets, err := runResolveQuery(context.Background(), repoRoot, query)
+		targets, err := runResolveQuery(context.Background(), repoRoot, tracker, nwo, query)
 		msg := workflowResolvedMsg{name: name, action: action, query: query, targets: targets, err: err}
 		if err == nil {
 			cfg, cfgErr := config.Load(repoRoot)
@@ -137,7 +137,7 @@ func (m Model) startWorkflowConfirm(wd *workRowData) (tea.Model, tea.Cmd) {
 	m.wfAgent = ""
 	m.wfCeiling = 0
 	m.setStatus("resolving "+wd.workflow.Query+"…", cDim)
-	return m, resolveWorkflowCmd(m.repoRoot, wd.cmdName, wd.workflowAction, wd.workflow.Query)
+	return m, resolveWorkflowCmd(m.repoRoot, m.trackerKind(), m.nwo, wd.cmdName, wd.workflowAction, wd.workflow.Query)
 }
 
 // workflowResolved applies a resolution result to the model. A msg for a

@@ -15,7 +15,7 @@ import (
 func stubResolveQuery(t *testing.T, targets []kinds.Target, err error) {
 	t.Helper()
 	orig := runResolveQuery
-	runResolveQuery = func(context.Context, string, string) ([]kinds.Target, error) { return targets, err }
+	runResolveQuery = func(context.Context, string, string, string, string) ([]kinds.Target, error) { return targets, err }
 	t.Cleanup(func() { runResolveQuery = orig })
 }
 
