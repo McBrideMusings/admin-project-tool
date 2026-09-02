@@ -46,8 +46,10 @@ func TestRowKeyDispatchHitOnBeadRow(t *testing.T) {
 		width:      120,
 		height:     40,
 		manifestOK: true,
-		manifest:   &manifest.Manifest{},
-		beads:      []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}},
+		manifest: &manifest.Manifest{
+			Custom: map[string]manifest.Command{"mycmd": {Steps: []string{"mycmd"}}},
+		},
+		beads: []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}},
 		rowKeys: map[keymap.RowKind]map[string]string{
 			keymap.Bead: {"o": "mycmd"},
 		},

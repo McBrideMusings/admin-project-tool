@@ -12,9 +12,9 @@
 // fixture, which can never write a log file or draw a footer. So these two
 // tests stub selfExecutable with a wrapper that re-execs THIS TEST BINARY
 // into a guarded helper test (TestHostedPTYChildProcess), the standard
-// os/exec "helper process" pattern — that helper calls
-// kinds.RunCommandHosted directly, exactly what cmd/root.go's __run-command
-// verb does (cmd/root.go:284), so it never needs a real admin.toml on disk.
+// os/exec "helper process" pattern -- that helper marks reentry and calls
+// kinds.RunCommand directly, exactly what cmd/root.go's __run-command
+// verb does, so it never needs a real admin.toml on disk.
 package kinds
 
 import (
@@ -62,7 +62,10 @@ func hostedParityManifest() *manifest.Manifest {
 // half of the os/exec re-exec pattern the two tests below drive through a
 // fixtureAdminScript wrapper. It skips unless ADMIN_TEST_HOSTED_CHILD=1 is
 // set (which only the wrapper's exec'd environment sets), so a normal `go
-// test ./...` run never executes RunCommandHosted here.
+// test ./...` run never executes this path. MarkReentry, then RunCommand
+// with a nil producer, is exactly what cmd/root.go's __run-command verb
+// does — inReentry() is what keeps this run on the inline step loop
+// (runActionInline) rather than reaching for a launcher.
 func TestHostedPTYChildProcess(t *testing.T) {
 	if os.Getenv("ADMIN_TEST_HOSTED_CHILD") != "1" {
 		t.Skip("helper process for the hosted-pty parity tests — not a real test")
@@ -71,8 +74,9 @@ func TestHostedPTYChildProcess(t *testing.T) {
 	if cmdName == "" {
 		t.Fatal("ADMIN_TEST_HOSTED_CMD not set")
 	}
-	if err := RunCommandHosted(hostedParityManifest(), Default, cmdName, nil); err != nil {
-		t.Fatalf("RunCommandHosted(%q): %v", cmdName, err)
+	MarkReentry()
+	if err := RunCommand(hostedParityManifest(), Default, cmdName, nil, nil); err != nil {
+		t.Fatalf("RunCommand(%q): %v", cmdName, err)
 	}
 }
 
@@ -175,7 +179,7 @@ func TestHostedPTYLogFileMatchesAPlainCLIRun(t *testing.T) {
 
 	m := hostedParityManifest()
 
-	if err := RunCommand(m, Default, "hosted-frame-cmd", nil); err != nil {
+	if err := RunCommand(m, Default, "hosted-frame-cmd", nil, nil); err != nil {
 		t.Fatalf("RunCommand (plain-CLI leg): %v", err)
 	}
 	plainLogs, err := filepath.Glob(filepath.Join(dir, "tmp", "hosted-frame.*.log"))

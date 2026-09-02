@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 )
 
 // TestRunActionCmdRunsNamedActionDirectly is the basic case: the hidden
@@ -24,6 +26,12 @@ run  = "touch marker.txt"
 		t.Fatalf("write admin.toml: %v", err)
 	}
 
+	// runActionCmd's RunE calls kinds.MarkReentry() before dispatching —
+	// production behaviour, since a real __run-action process exits right
+	// after. Calling RunE in-process instead leaves ADMIN_REENTRY set on
+	// this test binary's own environment unless cleaned up here.
+	t.Cleanup(func() { os.Unsetenv(kinds.ReentryEnv) })
+
 	if err := runActionCmd.RunE(runActionCmd, []string{"write-marker"}); err != nil {
 		t.Fatalf("RunE = %v, want nil", err)
 	}
@@ -39,7 +47,7 @@ run  = "touch marker.txt"
 // resolution entirely — produces the marker file.
 //
 // MUTATION EVIDENCE: change the registered RunE to call
-// kinds.RunCommand(m, kinds.Default, args[0], args[1:]) instead of
+// kinds.RunCommand(m, kinds.Default, args[0], args[1:], nil) instead of
 // kinds.RunAction, and this test fails with `unknown command
 // "write-marker"` — no [commands.write-marker] exists, only
 // [actions.write-marker].
@@ -63,6 +71,10 @@ run  = "touch marker.txt"
 	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write admin.toml: %v", err)
 	}
+
+	// See TestRunActionCmdRunsNamedActionDirectly's comment: RunE marks
+	// reentry as a side effect, which must not leak into later tests.
+	t.Cleanup(func() { os.Unsetenv(kinds.ReentryEnv) })
 
 	if err := runActionCmd.RunE(runActionCmd, []string{"write-marker"}); err != nil {
 		t.Fatalf("RunE = %v, want nil (write-marker is an action, not a command)", err)

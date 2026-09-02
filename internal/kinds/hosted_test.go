@@ -1,8 +1,10 @@
-// hosted_test.go covers admin-3rgp.59: RunCommandHosted, the second
-// command-dispatch entry point from which launcher dispatch is structurally
-// unreachable. The paired tests below are the whole point — the same
+// hosted_test.go covers admin-ysxr.4's collapsed command-dispatch entry
+// point: RunCommand takes a *CommandProducer now, and a nil producer (the
+// plain CLI, which can host a run itself) versus a non-nil one (the
+// dashboard, which cannot) must land the identical detached step on
+// opposite surfaces. The paired tests below are the whole point — the same
 // manifest, the same fake [terminal] launcher, the same detached step,
-// dispatched through each entry point, must land on opposite surfaces.
+// dispatched through each producer, must land on opposite surfaces.
 package kinds
 
 import (
@@ -23,13 +25,25 @@ import (
 // carries — built by withFakeTerminal in each test, since the log path it
 // writes to differs per test.
 func longRunningManifest(terminal map[string]any) *manifest.Manifest {
+	return longRunningManifestNamed(terminal, "hosted-dev-server")
+}
+
+// longRunningManifestNamed is longRunningManifest with the step (and
+// therefore the live-work registry ID a real launcher dispatch registers
+// under) parameterized — every test that actually completes a launcher
+// dispatch shares the process-wide livework.Default registry, so two tests
+// reusing the same step name collide: the second Add overwrites the first
+// entry in place instead of growing the registry (Add keeps the original
+// insertion position for an existing ID). Each such test must use its own
+// step name.
+func longRunningManifestNamed(terminal map[string]any, step string) *manifest.Manifest {
 	return &manifest.Manifest{
 		Terminal: terminal,
 		Custom: map[string]manifest.Command{
-			"dev": {Steps: []string{"dev-server"}},
+			"dev": {Steps: []string{step}},
 		},
 		Actions: map[string]manifest.Action{
-			"dev-server": {"kind": "vite-dev", "detach": true},
+			step: {"kind": "vite-dev", "detach": true},
 		},
 	}
 }
@@ -50,10 +64,22 @@ func registryRecordingInline(ran *bool) *Registry {
 	return r
 }
 
+// dashboardProducer builds a *CommandProducer whose Launch flips *launched
+// rather than spawning a real hosted pty — the fixture every dashboard-leg
+// test below shares.
+func dashboardProducer(launched *bool) *CommandProducer {
+	return &CommandProducer{
+		Launch: func(m *manifest.Manifest, name string, args []string) error {
+			*launched = true
+			return nil
+		},
+	}
+}
+
 // TestRunCommandOpensPaneForLongRunningStep is the control half of the
-// pair: the existing CLI entry point keeps its current behavior — a
-// declared [terminal] plus a detached step means a launcher dispatch, not
-// an inline run.
+// pair: a plain-CLI dispatch (producer nil, which CAN host the run itself)
+// keeps its existing behavior — a declared [terminal] plus a detached step
+// means a launcher dispatch, not an inline run.
 func TestRunCommandOpensPaneForLongRunningStep(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -61,7 +87,7 @@ func TestRunCommandOpensPaneForLongRunningStep(t *testing.T) {
 	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
 
 	inlineRan := false
-	if err := RunCommand(longRunningManifest(terminal), registryRecordingInline(&inlineRan), "dev", nil); err != nil {
+	if err := RunCommand(longRunningManifest(terminal), registryRecordingInline(&inlineRan), "dev", nil, nil); err != nil {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 	if inlineRan {
@@ -76,11 +102,81 @@ func TestRunCommandOpensPaneForLongRunningStep(t *testing.T) {
 	}
 }
 
-// TestRunCommandHostedNeverOpensAPane is the acceptance criterion: the
-// same manifest, the same fake [terminal] launcher, the same detached
-// step — the hosted entry point must run the step in this process and must
-// not call the launcher at all.
-func TestRunCommandHostedNeverOpensAPane(t *testing.T) {
+// TestRunCommandDashboardProducerUsesLauncherNotDefaultSurface is the
+// acceptance criterion for a [terminal]-declaring project: a dashboard
+// producer (which cannot host the run itself) must dispatch a detached
+// first step through the launcher and must never call its own Launch
+// fallback.
+func TestRunCommandDashboardProducerUsesLauncherNotDefaultSurface(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
+
+	before := len(livework.Default.List())
+	launched := false
+
+	m := longRunningManifestNamed(terminal, "dashboard-dev-server")
+	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if launched {
+		t.Error("a dashboard producer must not fall back to its own default surface when a launcher is declared")
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("reading terminal log: %v", err)
+	}
+	if !strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want a `spawn` call", string(logged))
+	}
+	entries := livework.Default.List()
+	found := false
+	for _, e := range entries {
+		// launchCommand keys the entry on the command's first step, per
+		// StartHostedPTY's own convention, so `a` (attach) resolves the
+		// same row regardless of which surface the command landed on.
+		if e.ID == "dashboard-dev-server" && e.Handle == "fake-handle-1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("live-work registry = %+v, want an entry keyed on the first step (dashboard-dev-server) with handle fake-handle-1", entries)
+	}
+	if got := len(entries); got != before+1 {
+		t.Errorf("live-work registry grew from %d to %d, want exactly one new entry", before, got)
+	}
+}
+
+// TestRunCommandDashboardProducerNoTerminalFallsBackToLaunch is the
+// acceptance criterion for a project declaring no [terminal] at all: the
+// dashboard producer's own Launch fallback runs, and the launcher's
+// registry never grows — byte-for-byte today's no-launcher behaviour.
+func TestRunCommandDashboardProducerNoTerminalFallsBackToLaunch(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	before := len(livework.Default.List())
+	launched := false
+
+	m := longRunningManifest(nil)
+	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if !launched {
+		t.Error("a dashboard producer with no [terminal] declared must fall back to its own default surface")
+	}
+	if got := len(livework.Default.List()); got != before {
+		t.Errorf("live-work registry grew from %d to %d — no launcher dispatch happened, so nothing should register", before, got)
+	}
+}
+
+// TestRunCommandInReentryRunsInlineRegardlessOfProducer is the ordering
+// hazard the ticket asks for: a process already running inside a launched
+// dispatch (ADMIN_REENTRY set, as cmd/root.go's two re-entry verbs do
+// before dispatching) must run every step inline and must never reach a
+// launcher — whatever producer is passed, nil or not.
+func TestRunCommandInReentryRunsInlineRegardlessOfProducer(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	logPath := filepath.Join(dir, "terminal-calls.log")
@@ -88,29 +184,35 @@ func TestRunCommandHostedNeverOpensAPane(t *testing.T) {
 
 	before := len(livework.Default.List())
 
+	MarkReentry()
+	t.Cleanup(func() { os.Unsetenv(ReentryEnv) })
+
 	inlineRan := false
-	if err := RunCommandHosted(longRunningManifest(terminal), registryRecordingInline(&inlineRan), "dev", nil); err != nil {
-		t.Fatalf("RunCommandHosted = %v, want nil", err)
+	launched := false
+	if err := RunCommand(longRunningManifest(terminal), registryRecordingInline(&inlineRan), "dev", nil, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 	if !inlineRan {
-		t.Error("RunCommandHosted must run a detached step inline, in this process")
+		t.Error("a re-entered dispatch must run its step inline, in this process")
+	}
+	if launched {
+		t.Error("a re-entered dispatch must never fall back to the producer's own default surface either — it runs inline")
 	}
 	if logged, err := os.ReadFile(logPath); err == nil && len(logged) > 0 {
-		t.Errorf("terminal log = %q, want empty — the hosted entry point must never reach the launcher", string(logged))
+		t.Errorf("terminal log = %q, want empty — a re-entered dispatch must never reach the launcher", string(logged))
 	}
 	if got := len(livework.Default.List()); got != before {
-		t.Errorf("live-work registry grew from %d to %d — a hosted run registers no launcher handle", before, got)
+		t.Errorf("live-work registry grew from %d to %d — a re-entered run registers no launcher handle", before, got)
 	}
 }
 
-// TestRunCommandHostedNestedDelegationStaysInline closes the one call-graph
-// hole a shared step loop alone would leave open: a multi-target target
-// delegating with `action = "other"` reaches its callee through the Surface
-// built for its own dispatch, not through the step loop. Under the hosted
-// entry point
-// that nested hop must stay inline too, or the pane path is reachable one
-// level down.
-func TestRunCommandHostedNestedDelegationStaysInline(t *testing.T) {
+// TestRunCommandInReentryNestedDelegationStaysInline closes the one
+// call-graph hole a shared step loop alone would leave open: a multi-target
+// target delegating with `action = "other"` reaches its callee through the
+// Surface built for its own dispatch, not through the step loop. Under a
+// re-entered dispatch that nested hop must stay inline too, or the launcher
+// path is reachable one level down.
+func TestRunCommandInReentryNestedDelegationStaysInline(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	logPath := filepath.Join(dir, "terminal-calls.log")
@@ -130,22 +232,67 @@ func TestRunCommandHostedNestedDelegationStaysInline(t *testing.T) {
 		},
 	}
 
+	MarkReentry()
+	t.Cleanup(func() { os.Unsetenv(ReentryEnv) })
+
 	inlineRan := false
-	if err := RunCommandHosted(m, registryRecordingInline(&inlineRan), "dev", []string{"server"}); err != nil {
-		t.Fatalf("RunCommandHosted = %v, want nil", err)
+	if err := RunCommand(m, registryRecordingInline(&inlineRan), "dev", []string{"server"}, nil); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 	if !inlineRan {
-		t.Error("a delegated target under the hosted entry point must run inline")
+		t.Error("a delegated target under a re-entered dispatch must run inline")
 	}
 	if logged, err := os.ReadFile(logPath); err == nil && len(logged) > 0 {
 		t.Errorf("terminal log = %q, want empty — nested delegation must not reach the launcher either", string(logged))
 	}
 }
 
-// TestRunCommandHostedRunsStepsInOrderAndStops proves the hosted entry
-// point shares the existing step loop's semantics: declared order,
-// stop-at-first-failure, and an error naming the command.
-func TestRunCommandHostedRunsStepsInOrderAndStops(t *testing.T) {
+// TestRunCommandInReentryMultiTargetDetachStaysInline is the multi-target
+// twin of the ordering-hazard test above: a multi-target TARGET itself
+// (not a delegated action) carrying `detach = true`, reached from inside an
+// already-launched run, must run inline rather than dispatching a second
+// launcher call — this is the hole admin-ysxr.7 folds in fixing: before this
+// ticket, a detached multi-target target reached from inside the
+// dashboard's hosted pty child DID reach dispatchToLauncher, because
+// runActionInline's Surface never gated makeMultiTarget's own detach branch.
+func TestRunCommandInReentryMultiTargetDetachStaysInline(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
+
+	m := &manifest.Manifest{
+		Terminal: terminal,
+		Custom: map[string]manifest.Command{
+			"dev": {Steps: []string{"pick"}},
+		},
+		Actions: map[string]manifest.Action{
+			"pick": {
+				"kind":   "multi-target",
+				"server": map[string]any{"run": "touch ran.txt", "detach": true},
+			},
+		},
+	}
+	r := NewRegistry()
+	r.MustRegister("shell", makeShell)
+	r.MustRegister("multi-target", makeMultiTarget)
+
+	MarkReentry()
+	t.Cleanup(func() { os.Unsetenv(ReentryEnv) })
+
+	if err := RunCommand(m, r, "dev", []string{"server"}, nil); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	assertFileExists(t, dir, "ran.txt")
+	if logged, err := os.ReadFile(logPath); err == nil && len(logged) > 0 {
+		t.Errorf("terminal log = %q, want empty — a detached target reached from inside an already-launched run must stay inline", string(logged))
+	}
+}
+
+// TestRunCommandRunsStepsInOrderAndStops proves the collapsed entry point
+// shares the existing step loop's semantics regardless of producer:
+// declared order, stop-at-first-failure, and an error naming the command.
+func TestRunCommandRunsStepsInOrderAndStops(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -159,9 +306,9 @@ func TestRunCommandHostedRunsStepsInOrderAndStops(t *testing.T) {
 			"three": {"kind": "shell", "run": "echo three >> order.txt"},
 		},
 	}
-	err := RunCommandHosted(m, newDispatchTestRegistry(), "build", nil)
+	err := RunCommand(m, newDispatchTestRegistry(), "build", nil, nil)
 	if err == nil {
-		t.Fatal("RunCommandHosted = nil, want the failing middle step's error")
+		t.Fatal("RunCommand = nil, want the failing middle step's error")
 	}
 	if !strings.Contains(err.Error(), `command "build"`) {
 		t.Errorf("error = %v, want it to name the command", err)
@@ -175,10 +322,12 @@ func TestRunCommandHostedRunsStepsInOrderAndStops(t *testing.T) {
 	}
 }
 
-// TestRunCommandHostedRejectsActionKeysOnCommand proves the hosted entry
-// point carries the same ADR-0003 pure-routing check, and the same
-// unknown-command and empty-steps errors, as the existing one.
-func TestRunCommandHostedRejectsActionKeysOnCommand(t *testing.T) {
+// TestRunCommandDashboardProducerRejectsActionKeysOnCommand proves the
+// dashboard-producer branch (launchCommand) carries the same ADR-0003
+// pure-routing check, and the same unknown-command and empty-steps errors,
+// as the plain-CLI branch — it resolves the command itself, up front, since
+// it has no runSteps call on its own path to discover these otherwise.
+func TestRunCommandDashboardProducerRejectsActionKeysOnCommand(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	m := &manifest.Manifest{
@@ -188,14 +337,20 @@ func TestRunCommandHostedRejectsActionKeysOnCommand(t *testing.T) {
 		},
 		Actions: map[string]manifest.Action{"one": {"kind": "shell", "run": "true"}},
 	}
-	err := RunCommandHosted(m, newDispatchTestRegistry(), "bad", nil)
+	launched := false
+	p := dashboardProducer(&launched)
+
+	err := RunCommand(m, newDispatchTestRegistry(), "bad", nil, p)
 	if err == nil || !strings.Contains(err.Error(), "ADR-0003") {
-		t.Errorf("RunCommandHosted(bad) = %v, want the ADR-0003 pure-routing error", err)
+		t.Errorf("RunCommand(bad) = %v, want the ADR-0003 pure-routing error", err)
 	}
-	if err := RunCommandHosted(m, newDispatchTestRegistry(), "empty", nil); err == nil {
-		t.Error("RunCommandHosted(empty) = nil, want a no-steps error")
+	if err := RunCommand(m, newDispatchTestRegistry(), "empty", nil, p); err == nil {
+		t.Error("RunCommand(empty) = nil, want a no-steps error")
 	}
-	if err := RunCommandHosted(m, newDispatchTestRegistry(), "nope", nil); err == nil {
-		t.Error("RunCommandHosted(nope) = nil, want an unknown-command error")
+	if err := RunCommand(m, newDispatchTestRegistry(), "nope", nil, p); err == nil {
+		t.Error("RunCommand(nope) = nil, want an unknown-command error")
+	}
+	if launched {
+		t.Error("none of these should ever reach Launch — every one is rejected before dispatch")
 	}
 }
