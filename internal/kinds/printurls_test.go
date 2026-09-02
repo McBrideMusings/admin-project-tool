@@ -10,7 +10,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// TestCheckURLTreats2xxAnd3xxAsLive proves checkURL matches
+// TestCheckURLTreats2xxAnd3xxAsLive proves CheckURL matches
 // admin_lib/core.py::check_url's "200 <= status < 400" window.
 //
 // MUTATION EVIDENCE: change the upper bound from 400 to 300 and this test
@@ -24,8 +24,8 @@ func TestCheckURLTreats2xxAnd3xxAsLive(t *testing.T) {
 			}
 			w.WriteHeader(status)
 		}))
-		if !checkURL(srv.URL) {
-			t.Errorf("checkURL: status %d should read as live", status)
+		if !CheckURL(srv.URL) {
+			t.Errorf("CheckURL: status %d should read as live", status)
 		}
 		srv.Close()
 	}
@@ -38,8 +38,8 @@ func TestCheckURLTreats4xxAnd5xxAsDown(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(status)
 		}))
-		if checkURL(srv.URL) {
-			t.Errorf("checkURL: status %d should read as down", status)
+		if CheckURL(srv.URL) {
+			t.Errorf("CheckURL: status %d should read as down", status)
 		}
 		srv.Close()
 	}
@@ -48,8 +48,8 @@ func TestCheckURLTreats4xxAnd5xxAsDown(t *testing.T) {
 // TestCheckURLUnreachableIsDown proves a connection failure reads as down,
 // matching Python's broad `except Exception: return False`.
 func TestCheckURLUnreachableIsDown(t *testing.T) {
-	if checkURL("http://127.0.0.1:1") {
-		t.Error("checkURL against an unreachable port should be down")
+	if CheckURL("http://127.0.0.1:1") {
+		t.Error("CheckURL against an unreachable port should be down")
 	}
 }
 

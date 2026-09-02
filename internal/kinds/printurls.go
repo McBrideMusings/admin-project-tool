@@ -22,10 +22,12 @@ const (
 	ansiReset = "\033[0m"
 )
 
-// checkURL reports whether url answers with a 2xx/3xx status — the Go port
+// CheckURL reports whether url answers with a 2xx/3xx status — the Go port
 // of admin_lib/core.py::check_url. Any error (connection refused, timeout,
 // TLS failure) reads as down, matching Python's broad `except Exception`.
-func checkURL(rawURL string) bool {
+// Exported so the Work tab's detail-pane reachability prober (internal/tui's
+// urlprobe.go) reuses this exact HTTP check instead of writing a second one.
+func CheckURL(rawURL string) bool {
 	client := &http.Client{
 		Timeout: checkURLTimeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -92,7 +94,7 @@ func makePrintURLs(name string, action manifest.Action, m *manifest.Manifest, _ 
 			go func(i int, rawURL string) {
 				defer wg.Done()
 				healthURL := strings.TrimRight(rawURL, "/") + "/health"
-				live[i] = checkURL(healthURL)
+				live[i] = CheckURL(healthURL)
 			}(i, m.Urls[label])
 		}
 		wg.Wait()
