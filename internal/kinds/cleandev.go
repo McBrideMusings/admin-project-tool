@@ -262,7 +262,7 @@ func makeCleanDev(name string, action manifest.Action, m *manifest.Manifest, sur
 	preKill := cfgBool(cfg, "pre_kill", true)
 
 	return func(args []string) error {
-		h := newHost()
+		h := newHost(m)
 		if preKill {
 			if _, ok := resolveCommand(m, "kill"); ok {
 				if err := surf.Command("kill", args); err != nil {

@@ -99,7 +99,7 @@ func makePrintURLs(name string, action manifest.Action, m *manifest.Manifest, _ 
 		}
 		wg.Wait()
 
-		h := newHost()
+		h := newHost(m)
 		for i, label := range labels {
 			fmt.Fprintln(h.Stdout, formatURLStatus(label, m.Urls[label], live[i], labelWidth))
 		}

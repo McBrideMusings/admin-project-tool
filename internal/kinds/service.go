@@ -42,7 +42,7 @@ func makeLaunchd(name string, action manifest.Action, m *manifest.Manifest, _ *S
 		if len(raw) == 0 {
 			return fmt.Errorf("action %q: [launchd] table missing from admin.toml", name)
 		}
-		h := newHost()
+		h := newHost(m)
 
 		verb, host := splitServiceArgs(args)
 

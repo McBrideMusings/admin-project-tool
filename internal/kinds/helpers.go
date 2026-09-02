@@ -2,6 +2,7 @@ package kinds
 
 import (
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -9,14 +10,21 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// newHost returns a luahost.Host rooted at the process's current directory,
-// sharing the process-wide luahost.Process() log context rather than a
-// private one of its own. Every transient-kind factory calls this rather
-// than hand-rolling its own output/logging/shell-running code: the
-// interpreter cd's to the project root at boot (documented in this repo's
-// Guards section — "the cwd is inherited") exactly as the Python
-// interpreter's own module-level _project_root does, so os.Getwd() at
-// Runner-invocation time IS the project root. luahost.Host already carries
+// newHost returns a luahost.Host rooted at m's project root — the directory
+// admin.toml was read from — sharing the process-wide luahost.Process() log
+// context rather than a private one of its own. Every transient-kind factory
+// calls this rather than hand-rolling its own output/logging/shell-running
+// code.
+//
+// The root comes from the manifest, never from os.Getwd(): Host.ProjectRoot
+// is what luahost.RunCmd hands every child process as its working directory,
+// and taking it from the process's own cwd made every action run wherever
+// `admin` was typed. That is invisible while a manifest is only ever found
+// in the cwd, and wrong the moment it is found by walking up
+// (manifest.FindRoot) — a `run` string would then execute one directory
+// below the project it belongs to. os.Getwd() remains the fallback for a nil
+// or root-less manifest (Parse/ParsePartial set no Root), which is the shape
+// a test constructs. luahost.Host already carries
 // Info/Ok/Warn/Err (coloured output + log-file appends), RunCmd (stream a
 // shell command, capture output), and PickTarget/OnlyTarget (the target
 // picker) — every one of those was written once for the Lua host API and is
@@ -35,16 +43,47 @@ import (
 // Stderr, not wherever the context's Stderr happened to be pointed by
 // whichever Host materialized it — every newHost caller wants the log path
 // announced on its own stream.
-func newHost() *luahost.Host {
-	cwd, err := os.Getwd()
-	if err != nil {
-		cwd = "."
-	}
-	h := luahost.New(cwd)
+func newHost(m *manifest.Manifest) *luahost.Host {
+	h := luahost.New(projectRoot(m))
 	ctx := luahost.Process()
 	ctx.SetStderr(h.Stderr)
 	h.UseLogContext(ctx)
 	return h
+}
+
+// projectRoot is the directory every action's subprocess runs in: the
+// directory m's admin.toml was read from. It is the single answer to "where
+// does this action run", so a `run` string never needs its own `cd` to be
+// independent of where `admin` was typed — which matters because admin.toml
+// is seeded into a git worktree by a straight file copy, and an absolute
+// `cd` baked into a run string survives that copy pointing at the checkout
+// it was written in.
+//
+// The cwd fallback covers a manifest built by Parse/ParsePartial rather than
+// Load (an archetype fragment, a test), which has no directory of its own.
+func projectRoot(m *manifest.Manifest) string {
+	if m != nil && m.Root != "" {
+		return m.Root
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	return cwd
+}
+
+// resolveUnder turns a manifest-declared directory into an absolute path,
+// interpreting a relative one against root (the project root) rather than
+// against the process's cwd. An already-absolute value is returned as-is, so
+// a manifest that names a path outside the project still reaches it.
+func resolveUnder(root, dir string) string {
+	if dir == "" {
+		return root
+	}
+	if filepath.IsAbs(dir) {
+		return dir
+	}
+	return filepath.Join(root, dir)
 }
 
 // actionString reads a string-valued key off a raw manifest.Action. ok is

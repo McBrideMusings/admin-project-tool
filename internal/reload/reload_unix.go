@@ -132,6 +132,12 @@ func PollForReload(isRunning func() bool, timeout time.Duration) bool {
 // Options configures RunWithReload's output wiring. Every field is optional;
 // a nil Info/Warn is simply not called.
 type Options struct {
+	// Dir is the working directory each spawned child runs in — the calling
+	// kind's project root. Left empty, the child inherits this process's own
+	// cwd, which is wherever `admin` was typed rather than where the project
+	// is; a reload loop restarts the child many times, so an inherited cwd is
+	// wrong for every one of those restarts too.
+	Dir string
 	// Stdout is where the child's output (and Info/Warn banners, via the
 	// caller) is written. Left nil, RunWithReload writes nowhere.
 	Stdout io.Writer
@@ -181,6 +187,7 @@ func RunWithReload(cmd, target string, opts Options) int {
 		}
 
 		c := exec.Command("/bin/sh", "-c", cmd)
+		c.Dir = opts.Dir
 		c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		pr, pw := io.Pipe()
 		c.Stdout = pw

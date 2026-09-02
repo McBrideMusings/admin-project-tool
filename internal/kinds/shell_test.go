@@ -234,3 +234,113 @@ func TestShellPassthroughNonInteractiveStillLogs(t *testing.T) {
 		t.Fatalf("runner() = %v, want nil", err)
 	}
 }
+
+// TestShellRunsInTheProjectRootNotTheInvocationCwd is this fix's core
+// assertion: a kind="shell" action runs where admin.toml is, not where
+// `admin` was typed. The Chdir to an unrelated directory is the whole test —
+// before the fix the marker landed there, because luahost.Host's ProjectRoot
+// came from os.Getwd().
+//
+// This is what makes an absolute `cd /some/checkout && ...` prefix
+// unnecessary in a `run` string, and that prefix is the live footgun:
+// admin.toml is seeded into a git worktree by a straight file copy
+// (archetypes/base/archetype.toml's [[populate]] copy mode), so the copy
+// keeps pointing at the checkout the path was written in and `admin dev`
+// inside the worktree builds the primary checkout instead.
+//
+// MUTATION EVIDENCE: drop the Root field from projectRoot's lookup (return
+// os.Getwd() unconditionally) and this test fails — the marker is created in
+// the cwd rather than in root.
+func TestShellRunsInTheProjectRootNotTheInvocationCwd(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(t.TempDir())
+
+	m := &manifest.Manifest{Root: root}
+	runner, err := makeShell("touch-marker", manifest.Action{"run": "touch marker.txt"}, m, nil)
+	if err != nil {
+		t.Fatalf("makeShell: %v", err)
+	}
+	if err := runner(nil); err != nil {
+		t.Fatalf("runner() = %v, want nil", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "marker.txt")); err != nil {
+		t.Fatalf("marker.txt was not created in the project root: %v", err)
+	}
+}
+
+// TestShellPassthroughRunsInTheProjectRoot is the same assertion for
+// kind="shell-passthrough"'s captured path, which reaches the shell through
+// the same luahost.RunCmd.
+func TestShellPassthroughRunsInTheProjectRoot(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(t.TempDir())
+
+	m := &manifest.Manifest{Root: root}
+	runner, err := makeShellPassthrough("touch-marker", manifest.Action{"run": "touch"}, m, nil)
+	if err != nil {
+		t.Fatalf("makeShellPassthrough: %v", err)
+	}
+	if err := runner([]string{"marker.txt"}); err != nil {
+		t.Fatalf("runner() = %v, want nil", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "marker.txt")); err != nil {
+		t.Fatalf("marker.txt was not created in the project root: %v", err)
+	}
+}
+
+// TestRunInteractiveRunsInTheGivenDir covers the one path that bypasses
+// luahost.RunCmd entirely — `interactive = true` hands the real terminal to
+// the child via a bare exec.Command, which inherits the process's cwd unless
+// Dir is set. An interactive action is still an action and must run in the
+// same place a captured one does.
+//
+// MUTATION EVIDENCE: delete `c.Dir = dir` from runInteractive and this test
+// fails — the marker lands in the cwd.
+func TestRunInteractiveRunsInTheGivenDir(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(t.TempDir())
+
+	if err := runInteractive("marker", "touch marker.txt", root); err != nil {
+		t.Fatalf("runInteractive() = %v, want nil", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "marker.txt")); err != nil {
+		t.Fatalf("marker.txt was not created in dir: %v", err)
+	}
+}
+
+// TestProjectRootFallsBackToCwd proves the fallback a manifest built by
+// Parse/ParsePartial (an archetype fragment, a test) relies on: no Root, so
+// the process's own directory is the only answer available.
+func TestProjectRootFallsBackToCwd(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	for _, m := range []*manifest.Manifest{nil, {}} {
+		got, err := filepath.EvalSymlinks(projectRoot(m))
+		if err != nil {
+			t.Fatalf("EvalSymlinks: %v", err)
+		}
+		want, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			t.Fatalf("EvalSymlinks: %v", err)
+		}
+		if got != want {
+			t.Errorf("projectRoot(%v) = %q, want the cwd %q", m, got, want)
+		}
+	}
+}
+
+// TestResolveUnderKeepsAnAbsoluteDir proves a manifest naming a directory
+// outside the project still reaches it — only a relative path is anchored to
+// the root.
+func TestResolveUnderKeepsAnAbsoluteDir(t *testing.T) {
+	if got := resolveUnder("/project", "/elsewhere/web"); got != "/elsewhere/web" {
+		t.Errorf("resolveUnder = %q, want /elsewhere/web", got)
+	}
+	if got := resolveUnder("/project", "web"); got != "/project/web" {
+		t.Errorf("resolveUnder = %q, want /project/web", got)
+	}
+	if got := resolveUnder("/project", ""); got != "/project" {
+		t.Errorf("resolveUnder = %q, want /project", got)
+	}
+}
