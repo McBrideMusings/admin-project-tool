@@ -316,11 +316,11 @@ func TestValidateWorkflowsReportsEveryOffender(t *testing.T) {
 
 // -- catalog / factory wiring ---------------------------------------------
 
-// TestWorkflowKindIsDeclaredConfiglessAndLongRunning proves the catalog
-// entry's shape: Configless (its body is `over`, not `run`) and
-// Lifetime: LongRunning (deliberately classified — see catalog.go's
-// comment).
-func TestWorkflowKindIsDeclaredConfiglessAndLongRunning(t *testing.T) {
+// TestWorkflowKindIsDeclaredConfiglessAndTransient proves the catalog
+// entry's shape: Configless (its body is `over`, not `run`) and Lifetime:
+// Transient (admin-spjp.2's reclassification — see catalog.go's comment on
+// the "workflow" entry for why LongRunning was the bug).
+func TestWorkflowKindIsDeclaredConfiglessAndTransient(t *testing.T) {
 	k, ok := Declared("workflow")
 	if !ok {
 		t.Fatal(`Declared("workflow") ok=false, want true`)
@@ -328,8 +328,8 @@ func TestWorkflowKindIsDeclaredConfiglessAndLongRunning(t *testing.T) {
 	if !k.Configless {
 		t.Fatal("workflow kind should be Configless (driven by 'over', not 'run')")
 	}
-	if k.Lifetime != LongRunning {
-		t.Fatalf("workflow kind Lifetime = %v, want LongRunning", k.Lifetime)
+	if k.Lifetime != Transient {
+		t.Fatalf("workflow kind Lifetime = %v, want Transient", k.Lifetime)
 	}
 	if k.ConsumesTargets {
 		t.Fatal("workflow kind should not be ConsumesTargets — its targets come from 'over', not a 'targets' table")
@@ -347,12 +347,12 @@ func TestMakeWorkflowRejectsMalformedOverAtBuildTime(t *testing.T) {
 	}
 }
 
-// TestMakeWorkflowRunnerReportsNotImplemented proves a validly-shaped
-// workflow builds a Runner (dispatch is out of this ticket's scope, but
-// invariant 2 — every declared kind has a bound factory that returns a
-// Runner — must still hold), and that Runner's error names the resolved
-// source rather than a generic message.
-func TestMakeWorkflowRunnerReportsNotImplemented(t *testing.T) {
+// TestMakeWorkflowSelectionRunnerNamesRowGesture proves a selection-sourced
+// workflow's real Runner (not a stub — admin-spjp.2 wired makeWorkflow to
+// runWorkflowCLI) fails loudly naming both the action and the row gesture
+// that does have targets to act on, since there is no selection outside the
+// dashboard.
+func TestMakeWorkflowSelectionRunnerNamesRowGesture(t *testing.T) {
 	action := manifest.Action{"kind": "workflow", "over": "selection"}
 	run, err := makeWorkflow("retire-merged", action, nil, nil)
 	if err != nil {
@@ -360,10 +360,13 @@ func TestMakeWorkflowRunnerReportsNotImplemented(t *testing.T) {
 	}
 	err = run(nil)
 	if err == nil {
-		t.Fatal("expected the stub Runner to report not-implemented")
+		t.Fatal("expected the selection-sourced Runner to error")
 	}
-	if !strings.Contains(err.Error(), "selection") {
-		t.Fatalf("error %q does not name the resolved target source", err.Error())
+	if !strings.Contains(err.Error(), "retire-merged") {
+		t.Fatalf("error %q does not name the action", err.Error())
+	}
+	if !strings.Contains(err.Error(), "space") || !strings.Contains(err.Error(), "w") {
+		t.Fatalf("error %q does not name the row gesture (space to select, w to pick)", err.Error())
 	}
 }
 

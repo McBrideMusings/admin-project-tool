@@ -29,7 +29,6 @@ func TestClassifyEveryKindHasALifetime(t *testing.T) {
 		"server-reload":      true,
 		"apple-dev-loop":     true,
 		"bridge-listen":      true,
-		"workflow":           true,
 	}
 	for name, k := range Kinds {
 		got := k.Lifetime == LongRunning
@@ -51,6 +50,24 @@ func TestInteractiveShellStaysTransient(t *testing.T) {
 	}
 	if k.Lifetime != Transient {
 		t.Error("interactive-shell must stay Transient — it reads the user's keystrokes directly")
+	}
+}
+
+// TestWorkflowStaysTransient pins down admin-spjp.2's reclassification:
+// kind="workflow" must stay Transient, not LongRunning. Its Runner has to
+// run in the caller's own terminal — it prints the resolved target set and
+// reads a confirmation from that terminal's stdin before dispatching
+// anything — so RunActionRouted must never pane-split it away before the
+// Runner is built. The fan-out into panes happens one level down, inside
+// DispatchTargets, which opens its own pane per target once the set is
+// confirmed.
+func TestWorkflowStaysTransient(t *testing.T) {
+	k, ok := Declared("workflow")
+	if !ok {
+		t.Fatal("workflow should be declared")
+	}
+	if k.Lifetime != Transient {
+		t.Error("workflow must stay Transient — its Runner reads a confirmation from the caller's own stdin")
 	}
 }
 

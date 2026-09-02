@@ -159,17 +159,23 @@ var Kinds = map[string]Kind{
 
 	// workflow (admin-3rgp.24): "run this same thing over many targets",
 	// declared via `over` rather than a `run` string, so Configless: true —
-	// the same reason clean-dev/vite-dev/docs/etc. above are. Lifetime:
-	// LongRunning is the deliberate call: once admin-3rgp.25 lands, a
-	// workflow's whole point is fanning its targets out into their own git
-	// worktrees under a concurrency ceiling and keeping them running while
-	// the caller's terminal is free for other work — exactly docker-dev/
-	// vite-dev's shape, not a one-shot that returns when its own work is
-	// done. ConsumesTargets stays false: that field means "reads the
-	// action's `targets` table" (multi-target's shape), and a workflow's
-	// targets come from `over` (a row selection or a resolved query), never
-	// a declared `targets` table.
-	"workflow": {Name: "workflow", Configless: true, Lifetime: LongRunning},
+	// the same reason clean-dev/vite-dev/docs/etc. above are. Lifetime is
+	// Transient (admin-spjp.2), NOT LongRunning as originally classified: a
+	// workflow's Runner (internal/kinds/workflowcli.go) has to run in the
+	// terminal the user typed into, because it prints the resolved target
+	// set and reads a yes/no confirmation from that terminal's stdin before
+	// it dispatches anything — RunActionRouted's LongRunning branch would
+	// pane-split the action itself and return nil before the Runner is ever
+	// built, which is exactly the silent no-op admin-spjp.2 fixed (the
+	// Runner never even ran). The fan-out into panes still happens, just one
+	// level down: DispatchTargets (workflowdispatch.go) opens its own
+	// shim.SplitPane per target once the set is confirmed, which is a
+	// per-target pane, not one pane for the workflow action as a whole.
+	// ConsumesTargets stays false: that field means "reads the action's
+	// `targets` table" (multi-target's shape), and a workflow's targets come
+	// from `over` (a row selection or a resolved query), never a declared
+	// `targets` table.
+	"workflow": {Name: "workflow", Configless: true},
 }
 
 // KnownKinds is every valid kind name, sorted — derived from Kinds so a new
