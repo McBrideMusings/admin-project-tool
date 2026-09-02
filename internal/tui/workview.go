@@ -23,9 +23,6 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 	rows := m.visibleRows()
 	cursor := m.cursor[m.active]
 
-	if len(rows) == 1 && rows[0].kind == rowCenter {
-		return centerMessage(rows[0].label, width, height), noneHits(height)
-	}
 	if len(rows) == 0 {
 		return pad([]string{"  " + mutedStyle.Render("(nothing here)")}, height),
 			padHits([]hitTarget{{kind: hitNone}}, height)
@@ -51,7 +48,11 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 			left[i] = " " + mutedStyle.Render(r.label)
 			hits[i] = hitTarget{kind: hitNone}
 		case rowText:
-			left[i] = ""
+			if r.label != "" {
+				left[i] = "   " + faintStyle.Render(r.label)
+			} else {
+				left[i] = ""
+			}
 			hits[i] = hitTarget{kind: hitNone}
 		default:
 			left[i] = m.renderWorkRow(r, i == cursor, lw)

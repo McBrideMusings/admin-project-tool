@@ -512,3 +512,138 @@ func TestCommandRowItemFallsBackToGlobWhenNoLiveEntry(t *testing.T) {
 		t.Errorf("logPath for a never-run command = %q, want empty (\"none yet\")", neverRow.work.logPath)
 	}
 }
+
+// TestWorkRowsWorkersHeaderAlwaysPresent covers admin-spjp.1's core claim:
+// the Workers header renders whether or not any worker is live, and the row
+// directly under it matches whatever liveWorkers() actually returns right
+// now — either the non-selectable empty-state line (zero workers) or a real
+// rowWorker (at least one). livework.Default is a process-wide singleton
+// shared by every test in this package (internal/livework's own doc
+// comment) with no Remove/reset, so other tests may have already left
+// worker entries in it; this asserts the row shape is correct for whichever
+// count is actually live, never that the count itself is zero.
+func TestWorkRowsWorkersHeaderAlwaysPresent(t *testing.T) {
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"build": {Desc: "build the binary", Steps: []string{"build"}},
+		},
+		Actions: map[string]manifest.Action{"build": {"kind": "shell"}},
+	}
+	mm := workTestModel(m)
+
+	rows := mm.workRows()
+	headerIdx := -1
+	for i, r := range rows {
+		if r.kind == rowHeader && r.label == "Workers" {
+			headerIdx = i
+		}
+	}
+	if headerIdx < 0 {
+		t.Fatalf("no Workers header in workRows: %+v", rows)
+	}
+	if headerIdx+1 >= len(rows) {
+		t.Fatalf("Workers header has no row after it")
+	}
+	next := rows[headerIdx+1]
+	if len(liveWorkers()) == 0 {
+		if next.kind != rowText || next.label == "" {
+			t.Errorf("row after Workers header = %+v, want a non-blank rowText empty state", next)
+		}
+		if next.selectable() {
+			t.Errorf("Workers empty-state row is selectable, want it non-selectable so the cursor can't land on it")
+		}
+	} else if next.kind != rowWorker {
+		t.Errorf("row after Workers header = %+v, want a rowWorker (liveWorkers() is non-empty)", next)
+	}
+}
+
+// TestWorkRowsWorkersHeaderStaysPutAcrossDispatch is AC 3: the Workers
+// header sits at a fixed offset from the Commands section (built before the
+// workers branch in workRows), so dispatching a new worker cannot move it —
+// the empty-state line and the worker rows are alternatives at the same
+// slot, never a reason for the header itself to shift.
+func TestWorkRowsWorkersHeaderStaysPutAcrossDispatch(t *testing.T) {
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"build": {Desc: "build the binary", Steps: []string{"build"}},
+		},
+		Actions: map[string]manifest.Action{"build": {"kind": "shell"}},
+	}
+	mm := workTestModel(m)
+
+	before := mm.workRows()
+	headerBefore := -1
+	for i, r := range before {
+		if r.kind == rowHeader && r.label == "Workers" {
+			headerBefore = i
+		}
+	}
+	if headerBefore < 0 {
+		t.Fatalf("no Workers header before dispatch")
+	}
+
+	worker := &livework.Entry{
+		ID: "test-header-stays-put-worker", Name: "test-header-stays-put-worker",
+		State: livework.StateWaiting, Activity: "needs input", PaneID: "pane-stays-put",
+		Worker: &livework.WorkerInfo{Branch: "some-branch", Worktree: "/tmp/some-branch"},
+	}
+	if err := livework.Default.Add(worker); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	after := mm.workRows()
+	headerAfter, workerIdx := -1, -1
+	for i, r := range after {
+		if r.kind == rowHeader && r.label == "Workers" {
+			headerAfter = i
+		}
+		if r.kind == rowWorker && r.work.worker.ID == worker.ID {
+			workerIdx = i
+		}
+	}
+	if headerAfter != headerBefore {
+		t.Errorf("Workers header moved from %d to %d when a worker was added", headerBefore, headerAfter)
+	}
+	if workerIdx < 0 {
+		t.Fatalf("dispatched worker's row not found in workRows")
+	}
+	if after[headerAfter+1].kind != rowWorker {
+		t.Errorf("row directly after the Workers header = %+v, want a rowWorker now that one is live", after[headerAfter+1])
+	}
+}
+
+// TestWorkRowsNoCommandsStillLegible is AC 5: a manifest declaring no
+// commands still gets a Commands header plus its own empty-state line, and
+// the whole-view rowCenter fallback that used to stand in for this is gone.
+func TestWorkRowsNoCommandsStillLegible(t *testing.T) {
+	m := &manifest.Manifest{
+		Custom:  map[string]manifest.Command{},
+		Actions: map[string]manifest.Action{},
+	}
+	mm := workTestModel(m)
+
+	rows := mm.workRows()
+	if len(rows) == 0 {
+		t.Fatalf("workRows returned nothing for a manifest with no commands")
+	}
+	if rows[0].kind != rowHeader || rows[0].label != "Commands" {
+		t.Fatalf("rows[0] = %+v, want the Commands header", rows[0])
+	}
+	if len(rows) < 2 || rows[1].kind != rowText || rows[1].label == "" {
+		t.Fatalf("row after Commands header = %+v, want a non-blank empty-state rowText", rows[1])
+	}
+	for _, r := range rows {
+		if r.kind == rowCenter {
+			t.Errorf("found a rowCenter row, want the whole-view fallback deleted: %+v", r)
+		}
+	}
+	foundWorkersHeader := false
+	for _, r := range rows {
+		if r.kind == rowHeader && r.label == "Workers" {
+			foundWorkersHeader = true
+		}
+	}
+	if !foundWorkersHeader {
+		t.Errorf("no Workers header for a manifest with no commands")
+	}
+}
