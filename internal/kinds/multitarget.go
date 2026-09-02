@@ -329,10 +329,11 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 			cfg, _ := config.FromManifest(m)
 			ctx := launchCtxFromEnv(fmt.Sprintf("%s:%s", name, picked))
 			targetArgs := append([]string{picked}, rest...)
-			handle, err := dispatchToLauncher("__run-action", name, targetArgs, ctx, cfg.Terminal)
+			root := projectRoot(m)
+			handle, err := dispatchToLauncher("__run-action", name, targetArgs, ctx, cfg.Terminal, root)
 			switch {
 			case err == nil:
-				recordLiveWork(name+":"+picked, "multi-target", handle, "__run-action", name, targetArgs, ctx, cfg.Terminal)
+				recordLiveWork(name+":"+picked, "multi-target", handle, "__run-action", name, targetArgs, ctx, cfg.Terminal, root)
 				return nil
 			case err == errNoLauncher:
 				// No [terminal] declared — fall through to running this

@@ -277,10 +277,11 @@ func RunActionRouted(m *manifest.Manifest, r *Registry, name string, args []stri
 			if detach, present := actionDetach(action); present && detach && kind != "multi-target" {
 				cfg, _ := config.FromManifest(m)
 				ctx := launchCtxFromEnv(name)
-				handle, err := dispatchToLauncher("__run-action", name, args, ctx, cfg.Terminal)
+				root := projectRoot(m)
+				handle, err := dispatchToLauncher("__run-action", name, args, ctx, cfg.Terminal, root)
 				switch {
 				case err == nil:
-					recordLiveWork(name, kind, handle, "__run-action", name, args, ctx, cfg.Terminal)
+					recordLiveWork(name, kind, handle, "__run-action", name, args, ctx, cfg.Terminal, root)
 					return nil
 				case err == errNoLauncher:
 					// No [terminal] declared — fall through to the inline
@@ -402,10 +403,11 @@ func launchCommand(m *manifest.Manifest, name string, args []string, p *CommandP
 			cfg, _ := config.FromManifest(m)
 			if cfg.Terminal.Spawn != "" {
 				ctx := launchCtxFrom(name, p.Env)
-				handle, err := dispatchToLauncher("__run-command", name, args, ctx, cfg.Terminal)
+				root := projectRoot(m)
+				handle, err := dispatchToLauncher("__run-command", name, args, ctx, cfg.Terminal, root)
 				if err == nil {
 					kind, _ := actionString(action, "kind")
-					recordLiveWork(entryID, kind, handle, "__run-command", name, args, ctx, cfg.Terminal)
+					recordLiveWork(entryID, kind, handle, "__run-command", name, args, ctx, cfg.Terminal, root)
 					return nil
 				}
 				// A launcher IS configured but spawning through it failed —
