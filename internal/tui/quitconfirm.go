@@ -26,18 +26,18 @@ import (
 
 // hostedRunningEntries returns every live-work entry this process itself is
 // hosting on a pty and that is still doing something — the set quit must
-// warn about and, on confirm, kill. PTYID != "" is the explicit "do not
-// infer hosted-ness from an empty pane field" rule from admin-3rgp.61: a
-// pane-addressed entry has PaneID set and PTYID empty, so testing PTYID
-// directly (rather than !PaneID) is what keeps this correct if a third
-// address kind is ever added. Worker == nil drops agent workers, which are
-// pane-addressed anyway (belt-and-braces). Registry.List returns entries in
-// insertion order, so the result — and the confirm listing built from it —
-// is deterministic.
+// warn about and, on confirm, kill. Via == "" is the explicit "do not infer
+// hosted-ness from an empty address field" rule from admin-3rgp.61: a
+// launcher-dispatched entry has Via set to the launcher's name, so testing
+// Via directly (rather than some other field) is what keeps this correct
+// however many launcher kinds are ever added. Worker == nil drops agent
+// workers, which are launcher-dispatched anyway (belt-and-braces).
+// Registry.List returns entries in insertion order, so the result — and
+// the confirm listing built from it — is deterministic.
 func hostedRunningEntries() []*livework.Entry {
 	var out []*livework.Entry
 	for _, e := range livework.Default.List() {
-		if e.PTYID == "" || e.Worker != nil {
+		if e.Via != "" || e.Worker != nil {
 			continue
 		}
 		st, _ := livework.Default.State(e.ID)

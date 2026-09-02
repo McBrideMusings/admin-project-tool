@@ -133,8 +133,9 @@ serialize something the tool never deserializes.
   `admin worktree`) to open in a real terminal pane, rather than the dashboard's hosted
   pty, declares `[terminal]` once and every dispatch site picks it up — no per-feature
   opt-in.
-- `internal/kinds`' `Lifetime` entry, and `livework.Entry`'s `PaneID`/`PTYID` split, remain
-  as they are until `admin-ysxr.3`/`.4` land — this ticket changes only parsing and
-  validation.
+- `admin-ysxr.3` has landed: `livework.Entry`'s `PaneID`/`PTYID` split is gone, replaced by
+  `Handle string` (the opaque address) plus `Via string` (empty for the built-in hosted pty,
+  non-empty naming the launcher that minted the handle) — matching this ADR's decision log
+  above. `internal/kinds`' `Lifetime` entry remains as it is until `admin-ysxr.4` lands.
 - `internal/tui/agentpoll.go`'s hard-coded `herdr agent get` call is unaffected until a later
   ticket wires `status` through it.

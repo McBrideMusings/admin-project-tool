@@ -47,8 +47,8 @@ func (c *int32Counter) value() int {
 	return c.n
 }
 
-// addWorkflowEntry registers a pane-addressed workflow entry (the only shape
-// agentNameFor recognizes) and arranges for it to be torn down to
+// addWorkflowEntry registers a herdr-addressed (Via set) workflow entry (the
+// only shape agentNameFor recognizes) and arranges for it to be torn down to
 // StateExited on cleanup — livework.Default is a process-wide singleton with
 // no Remove, so a running entry left behind pollutes later tests in this
 // package (livestate_race_test.go's own comment explains why).
@@ -58,7 +58,8 @@ func addWorkflowEntry(t *testing.T, id string, state livework.State) *livework.E
 		ID:     id,
 		Name:   id,
 		Kind:   "workflow",
-		PaneID: "pane-" + id,
+		Handle: "pane-" + id,
+		Via:    "herdr",
 		Worker: &livework.WorkerInfo{Branch: id, Worktree: "/tmp/" + id},
 		State:  state,
 	}
@@ -127,7 +128,7 @@ func TestAgentPollFailureLeavesStateUnchanged(t *testing.T) {
 func TestAgentPollSkipsPTYEntry(t *testing.T) {
 	id := "agentpoll-pty"
 	e := &livework.Entry{
-		ID: id, Name: id, Kind: "hosted-pty", PTYID: "pty-" + id,
+		ID: id, Name: id, Kind: "hosted-pty", Handle: "pty-" + id,
 		State: livework.StateRunning,
 	}
 	if err := livework.Default.Add(e); err != nil {

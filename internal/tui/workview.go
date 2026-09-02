@@ -196,10 +196,10 @@ func (m Model) renderWorkDetail(r rowItem, w int) []string {
 
 func workerDetail(e *livework.Entry, w int) []string {
 	locale := "outlives the dashboard"
-	if e.PTYID != "" {
+	if e.Via == "" {
 		locale = "dies when the dashboard quits"
-	} else if e.PaneID != "" {
-		locale = e.PaneID + "  ·  outlives the dashboard"
+	} else if e.Handle != "" {
+		locale = e.Handle + "  ·  outlives the dashboard"
 	}
 	st, _ := livework.Default.State(e.ID)
 	out := []string{
@@ -330,18 +330,18 @@ func renderLiveState(s livework.State) string {
 }
 
 // whereSeg returns the right-hand where-value for a live entry: the literal
-// "hosted" (cyan) for a pty-addressed entry, the pane id (magenta) for a
-// pane-addressed one. Decided from PTYID, never from a possibly-empty
-// PaneID — that inference is the bug this replaces. text is the plain,
+// "hosted" (cyan) for a hosted-pty entry, the launcher handle (magenta) for
+// a launcher-dispatched one. Decided from Via, never from a possibly-empty
+// Handle — that inference is the bug this replaces. text is the plain,
 // unstyled form (for width math and tests); styled carries the color and,
 // when non-empty, a leading space to separate it from the activity.
 func whereSeg(e *livework.Entry) (text string, styled string) {
 	switch {
-	case e.PTYID != "":
+	case e.Via == "":
 		text = "hosted"
 		styled = " " + lipgloss.NewStyle().Foreground(cCyan).Render(text)
-	case e.PaneID != "":
-		text = e.PaneID
+	case e.Handle != "":
+		text = e.Handle
 		styled = " " + lipgloss.NewStyle().Foreground(cMag).Render(text)
 	}
 	return text, styled

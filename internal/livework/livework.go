@@ -66,13 +66,14 @@ type WorkerInfo struct {
 // is holding before invoking one.
 //
 // Ops lives on the entry, not the Registry, because only the producer that
-// actually opened the pane (internal/kinds/pane.go, internal/kinds/
-// workflowdispatch.go) knows how to reach it again — the registry itself
-// has no dependency on Herdr and stays a pure, mechanism-agnostic store.
-// Attach is documented as the pane-only op: a pty-addressed entry's attach
-// target is the dashboard's terminal view instead, resolved by
-// Registry.Attach via the registry's terminalOpener seam rather than a
-// per-entry field — see Registry.SetTerminalOpener.
+// actually opened the pane or launcher handle (internal/kinds/pane.go,
+// internal/kinds/workflowdispatch.go) knows how to reach it again — the
+// registry itself has no dependency on Herdr or any launcher and stays a
+// pure, mechanism-agnostic store. Attach is documented as the launcher-only
+// op (Entry.Via non-empty): a hosted-pty entry's (Via empty) attach target
+// is the dashboard's terminal view instead, resolved by Registry.Attach via
+// the registry's terminalOpener seam rather than a per-entry field — see
+// Registry.SetTerminalOpener.
 type Ops struct {
 	Attach func() error
 	Kill   func() error
@@ -111,26 +112,31 @@ type Entry struct {
 	// Kind is the action's declared kind (e.g. "vite-dev", "workflow").
 	Kind string
 
-	// PaneID is the herdr pane the entry is CURRENTLY running in. Unlike
-	// ID, this can change over the entry's life — a successful Retry
-	// records the new pane it opened here while ID stays put.
+	// Handle is the opaque address this entry is CURRENTLY reachable at —
+	// a hosted pty's device name, a herdr pane id, or whatever a launcher
+	// minted for it. Unlike ID, this can change over the entry's life — a
+	// successful Retry records the new handle it opened here while ID
+	// stays put.
 	//
-	// Exactly one of PaneID/PTYID is set — never both, never neither. Add
-	// rejects an entry that violates this.
-	PaneID string
+	// Handle must be non-empty — Add rejects an entry that leaves it
+	// blank.
+	Handle string
 
-	// PTYID is the hosted pseudo-terminal this entry runs on — the
-	// dashboard's own PTY rather than a herdr pane. Like PaneID it may
-	// change across a Retry while ID stays put. Exactly one of
-	// PaneID/PTYID is set — never both, never neither.
-	PTYID string
+	// Via says what kind of address Handle is: empty means the built-in
+	// hosted pty (internal/kinds/hostedpty.go), non-empty names the
+	// launcher that minted the handle (e.g. "terminal" for a [terminal]
+	// launcher dispatch, "herdr" for a workflow's herdr pane). Like Handle
+	// it is set by the producer and may be re-set across a Retry while ID
+	// stays put.
+	Via string
 
-	// Output is the drained bytes read off PTYID's master fd — nil for a
-	// pane-addressed entry, which has no master this process reads.
-	// StartHostedPTY is the sole producer: it creates the Ring, copies the
-	// pty into it for as long as the child runs, and leaves it here for a
-	// later reader (admin-3rgp.65's terminal view) rather than opening a
-	// second reader on the same master.
+	// Output is the drained bytes read off Handle's master fd — nil
+	// unless Via is empty (a hosted-pty entry), since only that case has
+	// a master this process reads. StartHostedPTY is the sole producer:
+	// it creates the Ring, copies the pty into it for as long as the
+	// child runs, and leaves it here for a later reader (admin-3rgp.65's
+	// terminal view) rather than opening a second reader on the same
+	// master.
 	Output *Ring
 
 	StartedAt time.Time
@@ -170,7 +176,7 @@ type Registry struct {
 	mu             sync.Mutex
 	entries        map[string]*Entry
 	order          []string // insertion order, for a deterministic List
-	terminalOpener func(ptyID string) error
+	terminalOpener func(handle string) error
 }
 
 // NewRegistry returns an empty Registry.
@@ -179,11 +185,12 @@ func NewRegistry() *Registry {
 }
 
 // SetTerminalOpener installs the dashboard's "open the terminal view over
-// this pty" callback, invoked by Attach for a pty-addressed entry. There is
-// no per-entry equivalent of Ops.Attach for this because the terminal view
-// is one piece of dashboard UI shared by every pty entry, not something
-// each entry's producer wires individually — see admin-3rgp.61.
-func (r *Registry) SetTerminalOpener(open func(ptyID string) error) {
+// this pty" callback, invoked by Attach for a hosted-pty entry (Via empty).
+// There is no per-entry equivalent of Ops.Attach for this because the
+// terminal view is one piece of dashboard UI shared by every hosted-pty
+// entry, not something each entry's producer wires individually — see
+// admin-3rgp.61.
+func (r *Registry) SetTerminalOpener(open func(handle string) error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.terminalOpener = open
@@ -193,16 +200,15 @@ func (r *Registry) SetTerminalOpener(open func(ptyID string) error) {
 // the caller left them zero. Re-adding an existing ID overwrites that
 // entry's fields but keeps its original position in List's order — this is
 // exactly what a successful Retry relies on: it builds a brand new Entry
-// (new PaneID or PTYID, new Ops bound to that new pane/pty, StartedAt
-// reset) and Adds it back under the same ID, so the Work tab's cursor stays
-// on the same row instead of a second one appearing beside a stale failed
-// one.
+// (new Handle/Via, new Ops bound to that new handle, StartedAt reset) and
+// Adds it back under the same ID, so the Work tab's cursor stays on the
+// same row instead of a second one appearing beside a stale failed one.
 //
-// Add rejects e and stores nothing when e carries zero or two of
-// PaneID/PTYID — an entry must address exactly one thing.
+// Add rejects e and stores nothing when e carries an empty Handle — an
+// entry must address something.
 func (r *Registry) Add(e *Entry) error {
-	if (e.PaneID == "") == (e.PTYID == "") {
-		return fmt.Errorf("live-work: entry %q must carry exactly one of PaneID/PTYID", e.ID)
+	if e.Handle == "" {
+		return fmt.Errorf("live-work: entry %q must carry a Handle", e.ID)
 	}
 	if e.StartedAt.IsZero() {
 		e.StartedAt = time.Now()
@@ -307,24 +313,25 @@ func (r *Registry) lookup(id string) (*Entry, error) {
 	return e, nil
 }
 
-// Attach resolves by whichever address id's entry carries: a pane-addressed
-// entry focuses its pane via Ops.Attach; a pty-addressed entry opens the
-// dashboard's terminal view over its pty via the installed terminal opener
-// (SetTerminalOpener). It errors when id doesn't exist, or when the
-// resolved path has nothing wired for it.
+// Attach resolves by whichever address id's entry carries: a hosted-pty
+// entry (Via empty) opens the dashboard's terminal view over its pty via
+// the installed terminal opener (SetTerminalOpener); a launcher-dispatched
+// entry (Via non-empty) attaches via Ops.Attach — the producer's own
+// implementation of that launcher's attach command. It errors when id
+// doesn't exist, or when the resolved path has nothing wired for it.
 func (r *Registry) Attach(id string) error {
 	e, err := r.lookup(id)
 	if err != nil {
 		return err
 	}
-	if e.PTYID != "" {
+	if e.Via == "" {
 		r.mu.Lock()
 		open := r.terminalOpener
 		r.mu.Unlock()
 		if open == nil {
 			return fmt.Errorf("live-work: entry %q does not support attach", id)
 		}
-		return open(e.PTYID)
+		return open(e.Handle)
 	}
 	if e.Ops.Attach == nil {
 		return fmt.Errorf("live-work: entry %q does not support attach", id)

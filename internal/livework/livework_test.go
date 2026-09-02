@@ -13,7 +13,7 @@ import (
 // doesn't require the caller to fill in bookkeeping it can compute itself.
 func TestAddDefaultsStateAndTimestamp(t *testing.T) {
 	r := NewRegistry()
-	r.Add(&Entry{ID: "w1:p1", Name: "dev-server", Kind: "vite-dev", PaneID: "w1:p1"})
+	r.Add(&Entry{ID: "w1:p1", Name: "dev-server", Kind: "vite-dev", Handle: "w1:p1", Via: "terminal"})
 
 	e, ok := r.Get("w1:p1")
 	if !ok {
@@ -38,8 +38,8 @@ func TestAddDefaultsStateAndTimestamp(t *testing.T) {
 // so a.State stays "exited" instead of "failed".
 func TestListSurvivesForLifeOfRegistry(t *testing.T) {
 	r := NewRegistry()
-	r.Add(&Entry{ID: "a", Name: "one", Kind: "vite-dev", PaneID: "pane-a"})
-	r.Add(&Entry{ID: "b", Name: "two", Kind: "docker-dev", PaneID: "pane-b"})
+	r.Add(&Entry{ID: "a", Name: "one", Kind: "vite-dev", Handle: "pane-a", Via: "terminal"})
+	r.Add(&Entry{ID: "b", Name: "two", Kind: "docker-dev", Handle: "pane-b", Via: "terminal"})
 
 	if got := len(r.List()); got != 2 {
 		t.Fatalf("List() has %d entries, want 2", got)
@@ -71,7 +71,7 @@ func TestListSurvivesForLifeOfRegistry(t *testing.T) {
 // carries an Err.
 func TestSetStateOnlyRecordsErrForFailed(t *testing.T) {
 	r := NewRegistry()
-	r.Add(&Entry{ID: "a", Name: "one", PaneID: "pane-a"})
+	r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-a", Via: "terminal"})
 	r.SetState("a", StateExited, errors.New("ignored"))
 	a, _ := r.Get("a")
 	if a.Err != nil {
@@ -84,8 +84,8 @@ func TestSetStateOnlyRecordsErrForFailed(t *testing.T) {
 // depends on.
 func TestListOrderIsInsertionOrder(t *testing.T) {
 	r := NewRegistry()
-	r.Add(&Entry{ID: "z", Name: "first", PaneID: "pane-z"})
-	r.Add(&Entry{ID: "a", Name: "second", PaneID: "pane-a"})
+	r.Add(&Entry{ID: "z", Name: "first", Handle: "pane-z", Via: "terminal"})
+	r.Add(&Entry{ID: "a", Name: "second", Handle: "pane-a", Via: "terminal"})
 	entries := r.List()
 	if len(entries) != 2 || entries[0].Name != "first" || entries[1].Name != "second" {
 		t.Errorf("List() = %+v, want [first, second] in insertion order", entries)
@@ -98,8 +98,8 @@ func TestListOrderIsInsertionOrder(t *testing.T) {
 // "not applicable".
 func TestWorkerVsProcessEntry(t *testing.T) {
 	r := NewRegistry()
-	r.Add(&Entry{ID: "proc", Name: "dev-server", Kind: "vite-dev", PaneID: "pane-proc"})
-	r.Add(&Entry{ID: "worker", Name: "review", Kind: "workflow", PaneID: "pane-worker",
+	r.Add(&Entry{ID: "proc", Name: "dev-server", Kind: "vite-dev", Handle: "pane-proc", Via: "terminal"})
+	r.Add(&Entry{ID: "worker", Name: "review", Kind: "workflow", Handle: "pane-worker", Via: "terminal",
 		Worker: &WorkerInfo{Branch: "review-42", Worktree: "/tmp/wt/review-42"}})
 
 	proc, _ := r.Get("proc")
@@ -119,7 +119,7 @@ func TestWorkerVsProcessEntry(t *testing.T) {
 // reportable, matching SetState's existing pattern.
 func TestSetActivity(t *testing.T) {
 	r := NewRegistry()
-	r.Add(&Entry{ID: "a", Name: "one", PaneID: "pane-a"})
+	r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-a", Via: "terminal"})
 	r.SetActivity("a", "writing internal/lua/host.go")
 	e, _ := r.Get("a")
 	if e.Activity != "writing internal/lua/host.go" {
@@ -134,7 +134,7 @@ func TestSetActivity(t *testing.T) {
 // anything — the acceptance criterion's exact wording.
 func TestStateWaitingIsDistinctFromRunning(t *testing.T) {
 	r := NewRegistry()
-	r.Add(&Entry{ID: "a", Name: "one", PaneID: "pane-a"})
+	r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-a", Via: "terminal"})
 	r.SetState("a", StateWaiting, nil)
 	e, _ := r.Get("a")
 	if e.State != StateWaiting {
@@ -155,7 +155,7 @@ func TestStateWaitingIsDistinctFromRunning(t *testing.T) {
 func TestAttachInvokesOps(t *testing.T) {
 	r := NewRegistry()
 	called := false
-	r.Add(&Entry{ID: "a", Name: "one", PaneID: "pane-a", Ops: Ops{
+	r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-a", Via: "terminal", Ops: Ops{
 		Attach: func() error { called = true; return errors.New("focus failed") },
 	}})
 	err := r.Attach("a")
@@ -172,7 +172,7 @@ func TestAttachInvokesOps(t *testing.T) {
 // entry — e.g. a kind with no pane at all.
 func TestAttachUnsupportedErrors(t *testing.T) {
 	r := NewRegistry()
-	r.Add(&Entry{ID: "a", Name: "one", PaneID: "pane-a"})
+	r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-a", Via: "terminal"})
 	if err := r.Attach("a"); err == nil {
 		t.Error("Attach() = nil, want an error for an entry with no Attach op")
 	}
@@ -197,7 +197,7 @@ func TestAttachUnknownIDErrors(t *testing.T) {
 func TestKillInvokesOps(t *testing.T) {
 	r := NewRegistry()
 	called := false
-	r.Add(&Entry{ID: "a", Name: "one", PaneID: "pane-a", Ops: Ops{
+	r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-a", Via: "terminal", Ops: Ops{
 		Kill: func() error { called = true; return nil },
 	}})
 	if err := r.Kill("a"); err != nil {
@@ -219,7 +219,7 @@ func TestKillInvokesOps(t *testing.T) {
 func TestRetryRequiresFailedState(t *testing.T) {
 	r := NewRegistry()
 	called := false
-	r.Add(&Entry{ID: "a", Name: "one", PaneID: "pane-a", State: StateRunning, Ops: Ops{
+	r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-a", Via: "terminal", State: StateRunning, Ops: Ops{
 		Retry: func() error { called = true; return nil },
 	}})
 	if err := r.Retry("a"); err == nil {
@@ -235,7 +235,7 @@ func TestRetryRequiresFailedState(t *testing.T) {
 func TestRetrySucceedsOnFailedEntry(t *testing.T) {
 	r := NewRegistry()
 	called := false
-	r.Add(&Entry{ID: "a", Name: "one", PaneID: "pane-a", Ops: Ops{
+	r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-a", Via: "terminal", Ops: Ops{
 		Retry: func() error { called = true; return nil },
 	}})
 	r.SetState("a", StateFailed, errors.New("boom"))
@@ -253,18 +253,18 @@ func TestRetrySucceedsOnFailedEntry(t *testing.T) {
 // worker stays the same row, it doesn't grow the list a second row.
 func TestAddOverwritesInPlaceForRetry(t *testing.T) {
 	r := NewRegistry()
-	r.Add(&Entry{ID: "a", Name: "one", PaneID: "pane-1"})
-	r.Add(&Entry{ID: "b", Name: "two", PaneID: "pane-2"})
+	r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-1", Via: "terminal"})
+	r.Add(&Entry{ID: "b", Name: "two", Handle: "pane-2", Via: "terminal"})
 	r.SetState("a", StateFailed, errors.New("boom"))
 
 	// Simulate a successful Retry: a brand new Entry, same ID, new pane.
-	r.Add(&Entry{ID: "a", Name: "one", PaneID: "pane-3", State: StateRunning})
+	r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-3", Via: "terminal", State: StateRunning})
 
 	entries := r.List()
 	if len(entries) != 2 {
 		t.Fatalf("List() has %d entries, want 2 (retry replaces, doesn't append)", len(entries))
 	}
-	if entries[0].Name != "one" || entries[0].PaneID != "pane-3" {
+	if entries[0].Name != "one" || entries[0].Handle != "pane-3" {
 		t.Errorf("entries[0] = %+v, want the retried entry (pane-3) still in slot 0", entries[0])
 	}
 	if entries[0].State != StateRunning {
@@ -272,48 +272,34 @@ func TestAddOverwritesInPlaceForRetry(t *testing.T) {
 	}
 }
 
-// TestAddRejectsBothAddresses proves Add refuses (and stores nothing for)
-// an entry carrying both a PaneID and a PTYID — an entry addresses exactly
-// one thing.
-func TestAddRejectsBothAddresses(t *testing.T) {
-	r := NewRegistry()
-	err := r.Add(&Entry{ID: "a", Name: "one", PaneID: "pane-a", PTYID: "pty-a"})
-	if err == nil {
-		t.Fatal("Add() = nil, want an error for an entry with both PaneID and PTYID")
-	}
-	if _, ok := r.Get("a"); ok {
-		t.Error("Get(a) found an entry, want the rejected Add to have stored nothing")
-	}
-}
-
-// TestAddRejectsNeitherAddress proves Add refuses (and stores nothing for)
-// an entry carrying neither a PaneID nor a PTYID.
-func TestAddRejectsNeitherAddress(t *testing.T) {
+// TestAddRejectsEmptyHandle proves Add refuses (and stores nothing for) an
+// entry carrying an empty Handle — an entry must address something.
+func TestAddRejectsEmptyHandle(t *testing.T) {
 	r := NewRegistry()
 	err := r.Add(&Entry{ID: "a", Name: "one"})
 	if err == nil {
-		t.Fatal("Add() = nil, want an error for an entry with neither PaneID nor PTYID")
+		t.Fatal("Add() = nil, want an error for an entry with an empty Handle")
 	}
 	if _, ok := r.Get("a"); ok {
 		t.Error("Get(a) found an entry, want the rejected Add to have stored nothing")
 	}
 }
 
-// TestAttachOpensTerminalForPTYEntry proves a pty-addressed entry's Attach
-// resolves to the installed terminal opener, called with its PTYID, rather
-// than Ops.Attach.
+// TestAttachOpensTerminalForPTYEntry proves a hosted-pty entry's (Via
+// empty) Attach resolves to the installed terminal opener, called with its
+// Handle, rather than Ops.Attach.
 //
 // MUTATION EVIDENCE: change Attach to always call e.Ops.Attach regardless of
-// PTYID — this test fails because the opener is never invoked and Attach
-// returns the pane-only "does not support attach" error instead of nil.
+// Via — this test fails because the opener is never invoked and Attach
+// returns the launcher-only "does not support attach" error instead of nil.
 func TestAttachOpensTerminalForPTYEntry(t *testing.T) {
 	r := NewRegistry()
 	var openedID string
-	r.SetTerminalOpener(func(ptyID string) error {
-		openedID = ptyID
+	r.SetTerminalOpener(func(handle string) error {
+		openedID = handle
 		return nil
 	})
-	r.Add(&Entry{ID: "a", Name: "one", PTYID: "pty-7"})
+	r.Add(&Entry{ID: "a", Name: "one", Handle: "pty-7"})
 
 	if err := r.Attach("a"); err != nil {
 		t.Errorf("Attach() = %v, want nil", err)
@@ -323,29 +309,29 @@ func TestAttachOpensTerminalForPTYEntry(t *testing.T) {
 	}
 }
 
-// TestAttachPTYEntryWithNoOpenerErrors proves a pty-addressed entry with no
+// TestAttachPTYEntryWithNoOpenerErrors proves a hosted-pty entry with no
 // terminal opener installed errors clearly rather than panicking.
 func TestAttachPTYEntryWithNoOpenerErrors(t *testing.T) {
 	r := NewRegistry()
-	r.Add(&Entry{ID: "a", Name: "one", PTYID: "pty-7"})
+	r.Add(&Entry{ID: "a", Name: "one", Handle: "pty-7"})
 	if err := r.Attach("a"); err == nil {
 		t.Error("Attach() = nil, want an error when no terminal opener is installed")
 	}
 }
 
 // TestRetryReplacesPTYEntryInPlace proves the pty analogue of
-// TestAddOverwritesInPlaceForRetry: re-Adding a pty-addressed entry under an
+// TestAddOverwritesInPlaceForRetry: re-Adding a hosted-pty entry under an
 // ID already in the registry (a successful Retry building a brand new Entry
-// with a new PTYID) replaces it in place — one row, not two — exactly like
-// a pane-addressed retry.
+// with a new Handle) replaces it in place — one row, not two — exactly like
+// a launcher-dispatched retry.
 func TestRetryReplacesPTYEntryInPlace(t *testing.T) {
 	r := NewRegistry()
-	r.Add(&Entry{ID: "a", Name: "one", PTYID: "pty-1"})
-	r.Add(&Entry{ID: "b", Name: "two", PaneID: "pane-b"})
+	r.Add(&Entry{ID: "a", Name: "one", Handle: "pty-1"})
+	r.Add(&Entry{ID: "b", Name: "two", Handle: "pane-b", Via: "terminal"})
 	r.SetState("a", StateFailed, errors.New("boom"))
 
 	// Simulate a successful Retry: a brand new Entry, same ID, new pty.
-	if err := r.Add(&Entry{ID: "a", Name: "one", PTYID: "pty-2", State: StateRunning}); err != nil {
+	if err := r.Add(&Entry{ID: "a", Name: "one", Handle: "pty-2", State: StateRunning}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
@@ -353,7 +339,7 @@ func TestRetryReplacesPTYEntryInPlace(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("List() has %d entries, want 2 (retry replaces, doesn't append)", len(entries))
 	}
-	if entries[0].Name != "one" || entries[0].PTYID != "pty-2" {
+	if entries[0].Name != "one" || entries[0].Handle != "pty-2" {
 		t.Errorf("entries[0] = %+v, want the retried entry (pty-2) still in slot 0", entries[0])
 	}
 	if entries[0].State != StateRunning {

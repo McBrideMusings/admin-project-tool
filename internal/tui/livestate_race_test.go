@@ -18,7 +18,7 @@ import (
 func TestConcurrentStateReadsDoNotRace(t *testing.T) {
 	e := &livework.Entry{
 		ID: "livestate-race-entry", Name: "livestate-race",
-		PTYID: "pty-livestate-race", State: livework.StateRunning,
+		Handle: "pty-livestate-race", State: livework.StateRunning,
 	}
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add(%s): %v", e.ID, err)
