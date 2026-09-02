@@ -1271,10 +1271,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Re-arm unconditionally, exactly like syncTickMsg — this is the Work
 		// tab's only wake source for a livework.Entry another goroutine mutated
 		// (see Init's own comment). Also the steady heartbeat for the detail
-		// pane's reachability probe: kicked from here, never from View, so
-		// starting a probe stays a side effect and rendering stays pure.
+		// pane's reachability probe and the per-agent status poll: kicked from
+		// here, never from View, so starting either stays a side effect and
+		// rendering stays pure.
 		m.refreshDetailProbes()
-		return m, workTickCmd()
+		return m, tea.Batch(workTickCmd(), pollAgentStatusCmd())
+
+	case agentStatusMsg:
+		// applyAgentStatuses is the only writer of the herdr-derived state
+		// transition; the next workTickMsg's repaint picks it up through the
+		// existing livework.Default.State(e.ID) reads workview.go already makes.
+		applyAgentStatuses(msg)
+		return m, nil
 
 	case termTickMsg:
 		if !m.termAttached {
