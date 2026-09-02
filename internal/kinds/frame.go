@@ -6,6 +6,25 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
+// FrameURLs resolves the urls a framed action WOULD pin, without activating
+// a frame — the render-side sibling of enterFrame, reused by the Work tab's
+// detail pane so it can show the same rows the footer would without a
+// second resolver. It runs the identical two-step pipeline enterFrame's
+// caller feeds it (frame.ResolveURLs: the [urls] table, then
+// ResolveComputed then ResolveEnv) and, for a non-empty target, the exact
+// per-target inheritance resolveTargetFrame applies at dispatch time (an
+// absent override inherits the action's own list, an explicit list
+// replaces it, an empty list opts out). target == "" resolves the action's
+// own urls with no per-target override applied at all.
+func FrameURLs(action manifest.Action, target string, m *manifest.Manifest) ([]frame.URLEntry, error) {
+	raw := actionURLs(action)
+	if target != "" {
+		tm := targetFrameMetaOf(action, target)
+		raw, _, _ = resolveTargetFrame(raw, false, false, tm)
+	}
+	return frame.ResolveURLs(raw, m)
+}
+
 // enterFrame is the Go port of admin_lib/interp.py's _enter_frame, called by
 // each kind factory that can declare `urls`/`footer` on itself — mirroring
 // the reference architecture exactly: Python's _make_shell and

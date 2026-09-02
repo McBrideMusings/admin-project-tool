@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/archetype"
+	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
@@ -54,10 +55,21 @@ type workRowData struct {
 	// or "@action" when it delegates — so the expanded submenu says what
 	// each row will run rather than restating its own name.
 	targetRuns map[string]string
+	// targetURLs maps each target key to its own resolved urls (the same
+	// per-target inheritance the pinned footer applies — kinds.FrameURLs),
+	// so targetRows can hand each child row its own list without a second
+	// Model-aware resolver.
+	targetURLs map[string][]frame.URLEntry
 	// expanded mirrors Model.expandedCmd for this row, resolved once when
 	// the row is built so both the child-row builder and the renderer read
 	// one value instead of each re-consulting the Model.
 	expanded bool
+	// urls is this row's own resolved urls (admin-1azz): a plain command's
+	// action-level list, or — for a single-target multi-target action,
+	// which the CLI auto-picks with no prompt — that one target's list.
+	// Empty for a >1-target menu row, whose targets carry their own
+	// (targetURLs) instead.
+	urls []frame.URLEntry
 
 	// Target rows (rowCommandTarget): one target of an expanded command.
 	// cmdName holds the PARENT command's name on these rows too, so
@@ -538,7 +550,12 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 		live:         liveEntryFor(cr.cmd, byName),
 	}
 	if a, ok := m.soleAction(cr.cmd); ok {
-		switch actionKind(a) {
+		kind := actionKind(a)
+		var keys []string
+		if kind == "multi-target" {
+			keys = kinds.TargetKeys(a)
+		}
+		switch kind {
 		case "workflow":
 			if target, err := kinds.ParseWorkflowOver(cr.cmd.Steps[0], a); err == nil {
 				wd.workflow = &target
@@ -549,13 +566,31 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 			// target without prompting (makeMultiTarget's "is this
 			// project's only target"), so the row stays a plain dispatch
 			// rather than an expander that opens onto one child.
-			if keys := kinds.TargetKeys(a); len(keys) > 1 {
+			if len(keys) > 1 {
 				wd.targets = keys
 				wd.targetRuns = map[string]string{}
+				wd.targetURLs = map[string][]frame.URLEntry{}
 				for _, k := range keys {
 					wd.targetRuns[k] = kinds.TargetSummary(a, k)
+					if u, err := kinds.FrameURLs(a, k, m.manifest); err == nil {
+						wd.targetURLs[k] = u
+					}
 				}
 				wd.expanded = m.expandedCmd == cr.name
+			}
+		}
+		// A row that runs directly — not a query-resolved workflow, not a
+		// >1-target menu — resolves its own urls the same path the footer
+		// would use once it runs: the action's own list, or, for a
+		// single-target multi-target (auto-picked, never a menu), that one
+		// target's inherited list.
+		if kind != "workflow" && len(wd.targets) == 0 {
+			target := ""
+			if kind == "multi-target" && len(keys) == 1 {
+				target = keys[0]
+			}
+			if u, err := kinds.FrameURLs(a, target, m.manifest); err == nil {
+				wd.urls = u
 			}
 		}
 	}
@@ -592,6 +627,14 @@ func targetRows(parent rowItem) []rowItem {
 				targetKey:    key,
 				targetRun:    wd.targetRuns[key],
 				targetLast:   i == len(wd.targets)-1,
+				urls:         wd.targetURLs[key],
+				// A running multi-target command is recorded under the
+				// action's own name (liveEntryFor), not per target, so the
+				// live entry the parent row found is the same one every
+				// target shares — copied here so an expanded target of a
+				// running command shows the same elapsed/probe state as
+				// its parent rather than reading as idle.
+				live: wd.live,
 			},
 		})
 	}
@@ -830,4 +873,22 @@ type workTickMsg struct{}
 
 func workTickCmd() tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg { return workTickMsg{} })
+}
+
+// refreshDetailProbes kicks off (non-blocking) reachability probes for the
+// urls the row under the cursor is currently showing — and only while that
+// row is live: an idle command's urls are never probed, so the pane renders
+// them with no reachability indicator at all rather than a stale one. Called
+// from Update (workTickMsg and workDispatchStartedMsg), never from View —
+// starting a probe is a side effect, and rendering must stay pure.
+func (m Model) refreshDetailProbes() {
+	r, ok := m.currentRow()
+	if !ok || r.work == nil || r.work.live == nil || len(r.work.urls) == 0 {
+		return
+	}
+	urls := make([]string, 0, len(r.work.urls))
+	for _, u := range r.work.urls {
+		urls = append(urls, u.URL)
+	}
+	urlProbes.Refresh(urls)
 }
