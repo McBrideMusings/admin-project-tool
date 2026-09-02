@@ -96,6 +96,38 @@ func TestResolveQueryGitHubUnknownFormIsAnError(t *testing.T) {
 	if !strings.Contains(err.Error(), "everything") {
 		t.Fatalf("error should name the bad query, got: %v", err)
 	}
+	if strings.Contains(err.Error(), `"ready"`) {
+		t.Fatalf("error must not advertise \"ready\" as a supported github form, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "label:<name>") {
+		t.Fatalf("error should name \"label:<name>\" as the supported form, got: %v", err)
+	}
+}
+
+// TestClassifyQuery proves ClassifyQuery is the single source of truth for
+// which of the four syntactic forms a query string is — the classification
+// cmd/check.go's queryTrackerProblem and this file's resolveGitHubQuery/
+// resolveBeadsQuery all defer to instead of each re-deriving it.
+func TestClassifyQuery(t *testing.T) {
+	cases := []struct {
+		query     string
+		wantForm  QueryForm
+		wantLabel string
+	}{
+		{"ready", QueryFormReady, ""},
+		{" ready ", QueryFormReady, ""},
+		{"label:", QueryFormEmptyLabel, ""},
+		{"label:review-me", QueryFormLabel, "review-me"},
+		{"everything", QueryFormUnrecognized, ""},
+		{"", QueryFormUnrecognized, ""},
+	}
+	for _, c := range cases {
+		form, label := ClassifyQuery(c.query)
+		if form != c.wantForm || label != c.wantLabel {
+			t.Errorf("ClassifyQuery(%q) = (%v, %q), want (%v, %q)",
+				c.query, form, label, c.wantForm, c.wantLabel)
+		}
+	}
 }
 
 // TestResolveQueryGitHubNoMatchIsNotAnError proves a github label query
