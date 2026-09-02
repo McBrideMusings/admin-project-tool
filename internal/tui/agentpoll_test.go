@@ -12,16 +12,17 @@ import (
 	"testing"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
+	"github.com/McBrideMusings/admin-project-tool/internal/shim"
 )
 
 // stubAgentStatus swaps agentStatusFn for a fixed response (or a caller-
 // supplied func) and returns a restore func for t.Cleanup, matching
 // remoteseam_test.go's save/restore convention.
-func stubAgentStatus(t *testing.T, fn func(context.Context, string) (string, error)) *int32Counter {
+func stubAgentStatus(t *testing.T, fn func(context.Context, string) (shim.AgentInfo, error)) *int32Counter {
 	t.Helper()
 	prev := agentStatusFn
 	counter := &int32Counter{}
-	agentStatusFn = func(ctx context.Context, name string) (string, error) {
+	agentStatusFn = func(ctx context.Context, name string) (shim.AgentInfo, error) {
 		counter.inc()
 		return fn(ctx, name)
 	}
@@ -83,7 +84,9 @@ func runPollRoundTrip(t *testing.T) {
 
 func TestAgentPollMarksBlockedEntryWaiting(t *testing.T) {
 	e := addWorkflowEntry(t, "agentpoll-blocked", livework.StateRunning)
-	stubAgentStatus(t, func(context.Context, string) (string, error) { return "blocked", nil })
+	stubAgentStatus(t, func(context.Context, string) (shim.AgentInfo, error) {
+		return shim.AgentInfo{Status: "blocked"}, nil
+	})
 
 	runPollRoundTrip(t)
 
@@ -95,7 +98,9 @@ func TestAgentPollMarksBlockedEntryWaiting(t *testing.T) {
 
 func TestAgentPollReturnsResumedEntryToRunning(t *testing.T) {
 	e := addWorkflowEntry(t, "agentpoll-resumed", livework.StateWaiting)
-	stubAgentStatus(t, func(context.Context, string) (string, error) { return "working", nil })
+	stubAgentStatus(t, func(context.Context, string) (shim.AgentInfo, error) {
+		return shim.AgentInfo{Status: "working"}, nil
+	})
 
 	runPollRoundTrip(t)
 
@@ -107,8 +112,8 @@ func TestAgentPollReturnsResumedEntryToRunning(t *testing.T) {
 
 func TestAgentPollFailureLeavesStateUnchanged(t *testing.T) {
 	e := addWorkflowEntry(t, "agentpoll-timeout", livework.StateRunning)
-	stubAgentStatus(t, func(context.Context, string) (string, error) {
-		return "", errors.New("herdr: timed out")
+	stubAgentStatus(t, func(context.Context, string) (shim.AgentInfo, error) {
+		return shim.AgentInfo{}, errors.New("herdr: timed out")
 	})
 
 	runPollRoundTrip(t)
@@ -132,8 +137,8 @@ func TestAgentPollSkipsPTYEntry(t *testing.T) {
 		livework.Default.SetState(id, livework.StateExited, nil)
 	})
 
-	counter := stubAgentStatus(t, func(context.Context, string) (string, error) {
-		return "blocked", nil
+	counter := stubAgentStatus(t, func(context.Context, string) (shim.AgentInfo, error) {
+		return shim.AgentInfo{Status: "blocked"}, nil
 	})
 
 	msg := pollAgentStatusCmd()()
@@ -166,5 +171,33 @@ func TestAgentPollDoesNotResurrectExitedEntry(t *testing.T) {
 	st, _ := livework.Default.State(id)
 	if st != livework.StateExited {
 		t.Errorf("State = %q, want %q (a stale poll reply must not resurrect a settled entry)", st, livework.StateExited)
+	}
+}
+
+func TestAgentPollWritesActivity(t *testing.T) {
+	e := addWorkflowEntry(t, "agentpoll-activity", livework.StateRunning)
+	stubAgentStatus(t, func(context.Context, string) (shim.AgentInfo, error) {
+		return shim.AgentInfo{Status: "working", Activity: "Chess puzzles feature design"}, nil
+	})
+
+	runPollRoundTrip(t)
+
+	if got := e.Activity; got != "Chess puzzles feature design" {
+		t.Errorf("Activity = %q, want %q", got, "Chess puzzles feature design")
+	}
+}
+
+func TestAgentPollEmptyActivityDoesNotClobber(t *testing.T) {
+	e := addWorkflowEntry(t, "agentpoll-activity-keep", livework.StateRunning)
+	livework.Default.SetActivity(e.ID, "Bidirectional sync configuration")
+
+	stubAgentStatus(t, func(context.Context, string) (shim.AgentInfo, error) {
+		return shim.AgentInfo{Status: "working", Activity: ""}, nil
+	})
+
+	runPollRoundTrip(t)
+
+	if got := e.Activity; got != "Bidirectional sync configuration" {
+		t.Errorf("Activity = %q, want previous value preserved (an empty title must not blank a good line)", got)
 	}
 }

@@ -205,9 +205,12 @@ func workerDetail(e *livework.Entry, w int) []string {
 	out := []string{
 		lipgloss.NewStyle().Bold(true).Render(e.ID),
 		renderLiveState(st) + faintStyle.Render("  ·  "+truncR(locale, maxi(w-2, 4))),
-		"",
-		faintStyle.Render("now"),
-		"  " + truncR(e.Activity, maxi(w-2, 4)),
+	}
+	if e.Activity != "" {
+		out = append(out, "",
+			faintStyle.Render("now"),
+			"  "+truncR(e.Activity, maxi(w-2, 4)),
+		)
 	}
 	if e.Worker != nil {
 		out = append(out, "",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os/exec"
+	"strings"
 )
 
 // StartAgent starts a herdr-recognized coding agent of kind in the existing
@@ -39,28 +40,49 @@ func PromptAndWait(name, prompt string) error {
 // finished (idle/done): PromptAndWait itself blocks until any of those three
 // settle states is reached, so its return alone can't distinguish them.
 func AgentStatus(name string) (string, error) {
-	return AgentStatusContext(context.Background(), name)
+	info, err := AgentInfoContext(context.Background(), name)
+	return info.Status, err
 }
 
-// AgentStatusContext is AgentStatus bound to ctx, so a caller that polls
-// repeatedly (the Work tab's per-tick poller — admin-spjp.3) can bound each
-// query with a timeout instead of risking a wedged herdr hanging forever.
-// dispatchOne's one-shot post-settle call goes through AgentStatus above and
-// stays unbounded/unchanged.
-func AgentStatusContext(ctx context.Context, name string) (string, error) {
+// AgentInfo is one `herdr agent get` reply's status word plus the agent's own
+// one-line summary of what it is doing right now. Status is `agent_status`
+// (idle, done, blocked, working, or unknown). Activity is
+// `terminal_title_stripped` — verified live against a running herdr on
+// 2026-09-02 (`herdr agent get madrid` returned
+// `"terminal_title_stripped":"Madrid relay app implementation"` on the same
+// JSON object as `agent_status`) — and is not schema-guaranteed by herdr: an
+// older or unusual herdr build can omit it, in which case Activity is simply
+// "".
+type AgentInfo struct {
+	Status   string
+	Activity string
+}
+
+// AgentInfoContext is AgentStatus bound to ctx and widened to also return the
+// agent's activity title, so a caller that polls repeatedly (the Work tab's
+// per-tick poller — admin-spjp.3) can bound each query with a timeout instead
+// of risking a wedged herdr hanging forever, and can read both fields off the
+// single reply without a second subprocess. dispatchOne's one-shot
+// post-settle call goes through the narrow AgentStatus above and stays
+// unbounded/unchanged.
+func AgentInfoContext(ctx context.Context, name string) (AgentInfo, error) {
 	out, err := exec.CommandContext(ctx, "herdr", "agent", "get", name).Output()
 	if err != nil {
-		return "", err
+		return AgentInfo{}, err
 	}
 	var resp struct {
 		Result struct {
 			Agent struct {
 				Status string `json:"agent_status"`
+				Title  string `json:"terminal_title_stripped"`
 			} `json:"agent"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
-		return "", err
+		return AgentInfo{}, err
 	}
-	return resp.Result.Agent.Status, nil
+	return AgentInfo{
+		Status:   resp.Result.Agent.Status,
+		Activity: strings.TrimSpace(resp.Result.Agent.Title),
+	}, nil
 }
