@@ -8,6 +8,7 @@
 package kinds
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -274,13 +275,90 @@ func TestRunCommandDashboardProducerMultiTargetOverridesParentDetachTrue(t *test
 	}
 }
 
+// inlineTargetSpec describes one inline target subtable for
+// multiTargetManifestInline: name is the target key, present/val control
+// whether that target declares its own `detach` override.
+type inlineTargetSpec struct {
+	name           string
+	present, value bool
+}
+
+// multiTargetManifestInline builds a kind="multi-target" action with N
+// inline target subtables (admin-ysxr.4 round 3: dispatchDetach's
+// sole-target auto-pick, mirroring TargetKeys/makeMultiTarget's own
+// `order`, needs fixtures with exactly one AND with more than one inline
+// target — multiTargetDashboardManifestNamed above is pinned to exactly
+// one target named "playtest" and stays untouched for round 2's tests, so
+// this is a sibling rather than a rewrite). Each target's run command is
+// always "true"; parentPresent/parentVal set the parent action's own
+// top-level `detach`. step is parameterized for the same livework.Default
+// collision reason every fixture here documents.
+func multiTargetManifestInline(terminal map[string]any, step string, parentPresent, parentVal bool, targets ...inlineTargetSpec) *manifest.Manifest {
+	action := manifest.Action{"kind": "multi-target"}
+	if parentPresent {
+		action["detach"] = parentVal
+	}
+	for _, ts := range targets {
+		tbl := map[string]any{"run": "true"}
+		if ts.present {
+			tbl["detach"] = ts.value
+		}
+		action[ts.name] = tbl
+	}
+	return &manifest.Manifest{
+		Terminal: terminal,
+		Custom: map[string]manifest.Command{
+			"dev": {Steps: []string{step}},
+		},
+		Actions: map[string]manifest.Action{
+			step: action,
+		},
+	}
+}
+
+// multiTargetManifestFlat builds a kind="multi-target" action whose targets
+// live in a flat `targets` table (t1..tN, each "true" as a shell command)
+// rather than inline subtables — the other shape dispatchDetach's
+// sole-target auto-pick must resolve (admin-ysxr.4 round 3): TargetKeys
+// enumerates a flat table exactly like an inline one when there are no
+// inline subtables to prefer, so a single-entry flat table auto-picks the
+// same way. A flat entry can never carry its own `detach` override (only
+// an inline subtable can, per targetDetachOf), so there is no per-target
+// override to parameterize here — only the count and the parent default.
+func multiTargetManifestFlat(terminal map[string]any, step string, parentPresent, parentVal bool, n int) *manifest.Manifest {
+	action := manifest.Action{"kind": "multi-target"}
+	if parentPresent {
+		action["detach"] = parentVal
+	}
+	flat := map[string]any{}
+	for i := 1; i <= n; i++ {
+		flat[fmt.Sprintf("t%d", i)] = "true"
+	}
+	action["targets"] = flat
+	return &manifest.Manifest{
+		Terminal: terminal,
+		Custom: map[string]manifest.Command{
+			"dev": {Steps: []string{step}},
+		},
+		Actions: map[string]manifest.Action{
+			step: action,
+		},
+	}
+}
+
 // TestRunCommandDashboardProducerMultiTargetNoTargetArgFallsBackToLaunch is
-// the case dispatchDetach cannot resolve at all: a multi-target command
-// dispatched with no target argument. The picked target isn't known until
-// the Runner itself runs (and raises a picker, or auto-picks a sole
-// target), so launchCommand must not guess — it falls back to the
-// producer's own default surface exactly as an absent `detach` would,
-// however the parent's own default is set.
+// the case dispatchDetach still cannot resolve: a multi-target command with
+// MORE THAN ONE target, dispatched with no target argument. The picked
+// target isn't known until the Runner itself runs and raises a picker, so
+// launchCommand must not guess — it falls back to the producer's own
+// default surface exactly as an absent `detach` would, however the
+// parent's own default is set. (Round 3: this fixture used to build only
+// ONE inline target, which is the shape the Runner's own auto-pick DOES
+// resolve deterministically — see
+// TestRunCommandDashboardProducerMultiTargetSoleInlineTargetAutoPicksLauncher
+// below. Re-pointed at two targets so this test pins the genuinely
+// unresolvable shape it was written to test; assertions and intent are
+// unchanged.)
 func TestRunCommandDashboardProducerMultiTargetNoTargetArgFallsBackToLaunch(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -288,12 +366,157 @@ func TestRunCommandDashboardProducerMultiTargetNoTargetArgFallsBackToLaunch(t *t
 	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
 
 	launched := false
-	m := multiTargetDashboardManifestNamed(terminal, "dev-no-target-arg", true, true, false, false)
+	m := multiTargetManifestInline(terminal, "dev-no-target-arg", true, true,
+		inlineTargetSpec{name: "playtest"}, inlineTargetSpec{name: "record"})
 	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(&launched)); err != nil {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 	if !launched {
-		t.Error("a multi-target command dispatched with no target argument must fall back to the producer's own default surface — the picked target isn't known up front")
+		t.Error("a multi-target command with more than one target, dispatched with no target argument, must fall back to the producer's own default surface — the picked target isn't known up front")
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("reading terminal log: %v", err)
+	}
+	if strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want no `spawn` call — no target argument means the launcher decision can't be resolved up front", string(logged))
+	}
+}
+
+// TestRunCommandDashboardProducerMultiTargetSoleInlineTargetAutoPicksLauncher
+// is admin-ysxr.4 round 3's actual defect: a multi-target action declaring
+// exactly ONE inline target is auto-picked by the Runner itself
+// (multitarget.go's `if len(order) == 1` branch) even with no target
+// argument, so its effective detach IS knowable up front. Before the fix,
+// dispatchDetach treated every empty-picked dispatch as unresolvable and
+// fell through to p.Launch regardless.
+func TestRunCommandDashboardProducerMultiTargetSoleInlineTargetAutoPicksLauncher(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
+
+	before := len(livework.Default.List())
+	launched := false
+	m := multiTargetManifestInline(terminal, "dev-sole-inline-target", true, true,
+		inlineTargetSpec{name: "only"})
+	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if launched {
+		t.Error("a sole inline target is auto-picked by the Runner and must reach the launcher, not the producer's own default surface")
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("reading terminal log: %v", err)
+	}
+	if !strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want a `spawn` call — the sole target's detach is knowable up front", string(logged))
+	}
+	entries := livework.Default.List()
+	found := false
+	for _, e := range entries {
+		if e.ID == "dev-sole-inline-target" && e.Handle == "fake-handle-1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("live-work registry = %+v, want an entry keyed on the first step (dev-sole-inline-target) with handle fake-handle-1", entries)
+	}
+	if got := len(entries); got != before+1 {
+		t.Errorf("live-work registry grew from %d to %d, want exactly one new entry", before, got)
+	}
+}
+
+// TestRunCommandDashboardProducerMultiTargetSoleInlineTargetOverrideFalseFallsBackToLaunch
+// is the auto-pick's target-override half: the sole target explicitly opts
+// out with `detach = false`, overriding the parent's `detach = true`
+// default — the auto-pick must still honour that override, not blanket-
+// detach because there is only one target to choose from.
+func TestRunCommandDashboardProducerMultiTargetSoleInlineTargetOverrideFalseFallsBackToLaunch(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
+
+	launched := false
+	m := multiTargetManifestInline(terminal, "dev-sole-inline-target-opts-out", true, true,
+		inlineTargetSpec{name: "only", present: true, value: false})
+	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if !launched {
+		t.Error("the sole target's own detach=false must override the parent's detach=true default even under auto-pick")
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("reading terminal log: %v", err)
+	}
+	if strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want no `spawn` call — the sole target opted out of detach", string(logged))
+	}
+}
+
+// TestRunCommandDashboardProducerMultiTargetFlatSingleTargetAutoPicksLauncher
+// is the flat-`targets`-table twin of the inline auto-pick test: TargetKeys
+// enumerates a flat table's keys exactly like an inline table's when there
+// are no inline subtables, so a single-entry flat table is resolvable the
+// same way and inherits the parent's `detach` (a flat entry can never
+// declare its own override).
+func TestRunCommandDashboardProducerMultiTargetFlatSingleTargetAutoPicksLauncher(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
+
+	before := len(livework.Default.List())
+	launched := false
+	m := multiTargetManifestFlat(terminal, "dev-flat-sole-target", true, true, 1)
+	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if launched {
+		t.Error("a flat `targets` table with exactly one entry is auto-picked by the Runner and must reach the launcher, not the producer's own default surface")
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("reading terminal log: %v", err)
+	}
+	if !strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want a `spawn` call — the sole flat target's detach is knowable up front", string(logged))
+	}
+	entries := livework.Default.List()
+	found := false
+	for _, e := range entries {
+		if e.ID == "dev-flat-sole-target" && e.Handle == "fake-handle-1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("live-work registry = %+v, want an entry keyed on the first step (dev-flat-sole-target) with handle fake-handle-1", entries)
+	}
+	if got := len(entries); got != before+1 {
+		t.Errorf("live-work registry grew from %d to %d, want exactly one new entry", before, got)
+	}
+}
+
+// TestRunCommandDashboardProducerMultiTargetFlatTwoTargetsFallsBackToLaunch
+// is the flat-table twin of the two-target unresolvable case: with more
+// than one entry the Runner itself must raise the picker, so dispatchDetach
+// stays unresolvable and launchCommand falls back to p.Launch.
+func TestRunCommandDashboardProducerMultiTargetFlatTwoTargetsFallsBackToLaunch(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
+
+	launched := false
+	m := multiTargetManifestFlat(terminal, "dev-flat-two-targets", true, true, 2)
+	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if !launched {
+		t.Error("a flat `targets` table with more than one entry, dispatched with no target argument, must fall back to the producer's own default surface")
 	}
 	logged, err := os.ReadFile(logPath)
 	if err != nil && !os.IsNotExist(err) {
