@@ -1256,6 +1256,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.setStatus(msg.name+" started", cGreen)
+		m.refreshDetailProbes()
 		return m, workTickCmd()
 
 	case workflowResolvedMsg:
@@ -1269,7 +1270,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case workTickMsg:
 		// Re-arm unconditionally, exactly like syncTickMsg — this is the Work
 		// tab's only wake source for a livework.Entry another goroutine mutated
-		// (see Init's own comment).
+		// (see Init's own comment). Also the steady heartbeat for the detail
+		// pane's reachability probe: kicked from here, never from View, so
+		// starting a probe stays a side effect and rendering stays pure.
+		m.refreshDetailProbes()
 		return m, workTickCmd()
 
 	case termTickMsg:

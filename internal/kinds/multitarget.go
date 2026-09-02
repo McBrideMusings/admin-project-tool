@@ -56,6 +56,29 @@ type targetFrameMeta struct {
 	hasFooter bool
 }
 
+// targetFrameMetaOf reads one inline target subtable's own urls/footer
+// declaration off action — the single place that tri-state extraction
+// happens, so makeMultiTarget's own build loop and FrameURLs (frame.go),
+// which needs the identical read for a render-time, no-dispatch lookup,
+// can never drift apart. Returns the zero value (inherit everything) for a
+// key that isn't an inline subtable at all — a flat `targets` table entry,
+// or an unknown key — matching makeMultiTarget's own "a flat-table target
+// always just inherits the parent's urls/footer."
+func targetFrameMetaOf(action manifest.Action, key string) targetFrameMeta {
+	tbl, ok := action[key].(map[string]any)
+	if !ok {
+		return targetFrameMeta{}
+	}
+	var tm targetFrameMeta
+	if u, ok := tbl["urls"].([]any); ok {
+		tm.urls, tm.hasURLs = u, true
+	}
+	if f, ok := tbl["footer"].(bool); ok {
+		tm.footer, tm.hasFooter = f, true
+	}
+	return tm
+}
+
 // resolveTargetFrame applies the inherit rule a picked target's urls/footer
 // follow: parent default, unless the target's own inline subtable declared
 // the key at all (tm.hasURLs / tm.hasFooter) — declaring it as an empty
@@ -205,15 +228,7 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 				entry.requires, entry.requiresSet = reqs, true
 			}
 			targets[k] = entry
-
-			var tm targetFrameMeta
-			if u, ok := tbl["urls"].([]any); ok {
-				tm.urls, tm.hasURLs = u, true
-			}
-			if f, ok := tbl["footer"].(bool); ok {
-				tm.footer, tm.hasFooter = f, true
-			}
-			frameMeta[k] = tm
+			frameMeta[k] = targetFrameMetaOf(action, k)
 		}
 	} else if hasFlat {
 		for _, k := range order {

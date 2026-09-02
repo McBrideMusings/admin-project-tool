@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 )
 
@@ -250,6 +251,21 @@ func commandDetail(wd *workRowData, w int) []string {
 	}
 	out = append(out, "")
 
+	// elapsed and reachability are both properties of a command actually
+	// running right now — an idle command shows neither, per the ticket's
+	// own "does not show a stale elapsed or a reachability state for a url
+	// nothing is serving."
+	if wd.live != nil {
+		out = append(out, faintStyle.Render("elapsed"), "  "+elapsedStr(time.Since(wd.live.StartedAt)), "")
+	}
+	if len(wd.urls) > 0 {
+		out = append(out, faintStyle.Render("urls"))
+		for _, u := range wd.urls {
+			out = append(out, "  "+urlRow(u, wd.live != nil, maxi(w-2, 4)))
+		}
+		out = append(out, "")
+	}
+
 	if wd.workflow != nil {
 		out = append(out, faintStyle.Render("targets  query"))
 		out = append(out, "  "+faintStyle.Render(truncR(wd.workflow.Query, maxi(w-2, 4))))
@@ -263,6 +279,35 @@ func commandDetail(wd *workRowData, w int) []string {
 		out = append(out, "    "+faintStyle.Render("from ")+lipgloss.NewStyle().Foreground(cMag).Render(s.archetype))
 	}
 	return out
+}
+
+// urlRow renders one configured url as "<dot> label  url", truncated to fit
+// w. A bare-string entry resolves to Label == URL (frame.ResolveURLs's own
+// rule), which this matches by dropping the label column entirely rather
+// than printing the same string twice — the same one-column-vs-two rule the
+// pinned footer's own ContentRows applies. The reachability dot is shown
+// only while live is true (a running command): probeUp green, probeDown
+// red/dim, probeUnknown faint. An idle command carries no dot at all —
+// nothing is being checked, so there is nothing to report.
+func urlRow(u frame.URLEntry, live bool, w int) string {
+	var dot string
+	if live {
+		switch urlProbes.Status(u.URL) {
+		case probeUp:
+			dot = lipgloss.NewStyle().Foreground(cGreen).Render("●") + " "
+		case probeDown:
+			dot = lipgloss.NewStyle().Foreground(cRed).Render("○") + " "
+		default:
+			dot = faintStyle.Render("·") + " "
+		}
+	}
+	rest := maxi(w-vlen(dot), 4)
+	if u.Label == u.URL {
+		return dot + faintStyle.Render(truncR(u.URL, rest))
+	}
+	label := truncR(u.Label, maxi(rest/3, 4))
+	url := truncR(u.URL, maxi(rest-vlen(label)-2, 4))
+	return dot + lipgloss.NewStyle().Bold(true).Render(label) + "  " + faintStyle.Render(url)
 }
 
 // renderLiveState renders a livework.State as a fixed-width, color-coded
