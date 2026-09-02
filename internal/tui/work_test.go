@@ -545,7 +545,7 @@ func TestWorkRowsWorkersHeaderAlwaysPresent(t *testing.T) {
 		t.Fatalf("Workers header has no row after it")
 	}
 	next := rows[headerIdx+1]
-	if len(mm.liveWorkers()) == 0 {
+	if len(liveWorkers()) == 0 {
 		if next.kind != rowText || next.label == "" {
 			t.Errorf("row after Workers header = %+v, want a non-blank rowText empty state", next)
 		}
@@ -649,17 +649,18 @@ func TestWorkRowsNoCommandsStillLegible(t *testing.T) {
 }
 
 // TestWorkRowsWorkerLabelHasNoTrailingSpaceWhenActivityEmpty is admin-spjp.4's
-// acceptance criterion for work.go's row label: an entry with no Activity
-// (every pty-hosted worker — agentNameFor never resolves one, so its
-// Activity is never written) must not carry a trailing space, since the same
-// label doubles as the row's identity string (rowKey, model.go:120).
+// acceptance criterion for work.go's row label: a worker whose Activity has
+// not been written yet (AgentInfo has not resolved, or the agent reports no
+// current activity) must not carry a trailing space, since the same label
+// doubles as the row's identity string (rowKey, model.go:120).
 func TestWorkRowsWorkerLabelHasNoTrailingSpaceWhenActivityEmpty(t *testing.T) {
 	m := &manifest.Manifest{Custom: map[string]manifest.Command{}, Actions: map[string]manifest.Action{}}
 	mm := workTestModel(m)
 
 	worker := &livework.Entry{
 		ID: "test-work-rows-no-activity", Name: "test-work-rows-no-activity",
-		State: livework.StateRunning, Activity: "", PTYID: "pty-no-activity",
+		State: livework.StateRunning, Activity: "", PaneID: "pane-no-activity",
+		Worker: &livework.WorkerInfo{Branch: "no-activity", Worktree: "/tmp/no-activity"},
 	}
 	if err := livework.Default.Add(worker); err != nil {
 		t.Fatalf("Add: %v", err)
