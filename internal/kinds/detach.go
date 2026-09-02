@@ -50,6 +50,52 @@ func resolveTargetDetach(parentVal, parentPresent bool, targetVal, targetPresent
 	return parentPresent && parentVal
 }
 
+// dispatchDetach resolves the effective `detach` decision for one dispatch
+// of action, given the raw args a producer's launchCommand (dispatch.go) or
+// RunActionRouted would hand it. This is the single place that resolution
+// happens for BOTH callers, so a multi-target action's picked-target
+// override can no longer be read correctly in one code path and skipped in
+// another (admin-ysxr.4's regression: launchCommand read only
+// actionDetach(action), which for kind="multi-target" is just the parent
+// default a target can override).
+//
+// For any kind other than "multi-target" this is exactly actionDetach —
+// there is no target to resolve, so the flat-action callers keep today's
+// behaviour byte-for-byte.
+//
+// For kind="multi-target", the picked target is args[0] (via
+// splitTargetArg, multitarget.go's own canonical parse — the same rule the
+// Runner uses once it actually runs). Resolvable reports whether the
+// picked target could be determined: a multi-target dispatch with NO target
+// argument cannot know the effective value up front — the Runner itself
+// will raise a picker (or auto-pick a sole target) — so resolvable is false
+// and the caller must fall through to running the command on its own
+// default surface, exactly as if `detach` were absent.
+//
+// A picked name that doesn't match any declared target (a typo, or one from
+// a flat `targets` table this helper can't see without building the whole
+// factory) resolves via targetDetachOf's present=false — "inherit the
+// parent default" — same as an unknown inline key. That's not a second
+// silent failure: the Runner performs its own `targets[picked]` lookup and
+// returns "unknown target" when it actually runs, whichever surface it
+// lands on.
+func dispatchDetach(action manifest.Action, args []string) (detach, resolvable bool) {
+	kind, _ := actionString(action, "kind")
+	if kind != "multi-target" {
+		val, present := actionDetach(action)
+		return val, present
+	}
+
+	picked, _ := splitTargetArg(args)
+	if picked == "" {
+		return false, false
+	}
+
+	parentVal, parentPresent := actionDetach(action)
+	targetVal, targetPresent := targetDetachOf(action, picked)
+	return resolveTargetDetach(parentVal, parentPresent, targetVal, targetPresent), true
+}
+
 // ValidateDetach rejects a non-bool `detach` on an action's own top level or
 // on any of its inline target subtables — TOML has no truthy strings, so
 // `detach = "true"` is a typo worth reporting rather than silently treating

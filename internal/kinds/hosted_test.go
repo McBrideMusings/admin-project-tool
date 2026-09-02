@@ -171,6 +171,139 @@ func TestRunCommandDashboardProducerNoTerminalFallsBackToLaunch(t *testing.T) {
 	}
 }
 
+// multiTargetDashboardManifestNamed builds a manifest whose single command
+// step is a kind="multi-target" action with one inline target "playtest" —
+// the admin-ysxr.4 regression fixture: launchCommand must resolve the
+// picked target's own `detach` override, not just the parent action's
+// default, before deciding whether to reach the launcher or fall back to
+// the producer's own default surface. parentPresent/parentVal control the
+// action's own top-level `detach`; targetPresent/targetVal control the
+// "playtest" target's own inline `detach`. step is parameterized for the
+// same reason longRunningManifestNamed's is — livework.Default is a shared
+// registry a completed launcher dispatch grows, so two tests reusing the
+// same step name would collide.
+func multiTargetDashboardManifestNamed(terminal map[string]any, step string, parentPresent, parentVal, targetPresent, targetVal bool) *manifest.Manifest {
+	action := manifest.Action{"kind": "multi-target"}
+	if parentPresent {
+		action["detach"] = parentVal
+	}
+	target := map[string]any{"run": "true"}
+	if targetPresent {
+		target["detach"] = targetVal
+	}
+	action["playtest"] = target
+	return &manifest.Manifest{
+		Terminal: terminal,
+		Custom: map[string]manifest.Command{
+			"dev": {Steps: []string{step}},
+		},
+		Actions: map[string]manifest.Action{
+			step: action,
+		},
+	}
+}
+
+// TestRunCommandDashboardProducerMultiTargetOverridesParentDetachFalse is
+// the first of the two admin-ysxr.4 regression failures: a multi-target
+// parent declares `detach = true` as its default, but the dispatched target
+// ("playtest") explicitly opts out with `detach = false`. Before the fix,
+// launchCommand read only the parent's own actionDetach and reached the
+// launcher regardless — silently ignoring the target's explicit opt-out.
+func TestRunCommandDashboardProducerMultiTargetOverridesParentDetachFalse(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
+
+	launched := false
+	m := multiTargetDashboardManifestNamed(terminal, "dev-target-opts-out", true, true, true, false)
+	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", []string{"playtest"}, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if !launched {
+		t.Error("target detach=false must override the parent's detach=true default and run on the producer's own default surface")
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("reading terminal log: %v", err)
+	}
+	if strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want no `spawn` call — the target opted out of detach", string(logged))
+	}
+}
+
+// TestRunCommandDashboardProducerMultiTargetOverridesParentDetachTrue is the
+// inverse regression: no parent-level `detach` (falls back to false), but
+// the dispatched target sets `detach = true`. Before the fix, launchCommand
+// saw the parent's absent/false detach and fell through to p.Launch, never
+// reaching the launcher the target asked for.
+func TestRunCommandDashboardProducerMultiTargetOverridesParentDetachTrue(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
+
+	before := len(livework.Default.List())
+	launched := false
+	m := multiTargetDashboardManifestNamed(terminal, "dev-target-opts-in", false, false, true, true)
+	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", []string{"playtest"}, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if launched {
+		t.Error("target detach=true must override the parent's absent/false default and reach the launcher, not the producer's own default surface")
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("reading terminal log: %v", err)
+	}
+	if !strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want a `spawn` call — the target opted into detach", string(logged))
+	}
+	entries := livework.Default.List()
+	found := false
+	for _, e := range entries {
+		if e.ID == "dev-target-opts-in" && e.Handle == "fake-handle-1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("live-work registry = %+v, want an entry keyed on the first step (dev-target-opts-in) with handle fake-handle-1", entries)
+	}
+	if got := len(entries); got != before+1 {
+		t.Errorf("live-work registry grew from %d to %d, want exactly one new entry", before, got)
+	}
+}
+
+// TestRunCommandDashboardProducerMultiTargetNoTargetArgFallsBackToLaunch is
+// the case dispatchDetach cannot resolve at all: a multi-target command
+// dispatched with no target argument. The picked target isn't known until
+// the Runner itself runs (and raises a picker, or auto-picks a sole
+// target), so launchCommand must not guess — it falls back to the
+// producer's own default surface exactly as an absent `detach` would,
+// however the parent's own default is set.
+func TestRunCommandDashboardProducerMultiTargetNoTargetArgFallsBackToLaunch(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
+
+	launched := false
+	m := multiTargetDashboardManifestNamed(terminal, "dev-no-target-arg", true, true, false, false)
+	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if !launched {
+		t.Error("a multi-target command dispatched with no target argument must fall back to the producer's own default surface — the picked target isn't known up front")
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("reading terminal log: %v", err)
+	}
+	if strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want no `spawn` call — no target argument means the launcher decision can't be resolved up front", string(logged))
+	}
+}
+
 // TestRunCommandInReentryRunsInlineRegardlessOfProducer is the ordering
 // hazard the ticket asks for: a process already running inside a launched
 // dispatch (ADMIN_REENTRY set, as cmd/root.go's two re-entry verbs do

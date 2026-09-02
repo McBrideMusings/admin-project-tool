@@ -371,6 +371,17 @@ func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string, p
 // internal/tui/work.go's liveEntryFor resolves the same row whichever
 // surface the command actually landed on, and `a` (attach) finds it either
 // way.
+//
+// When that first step is itself kind="multi-target", its own top-level
+// `detach` is only the default a picked target inherits — the effective
+// value belongs to the picked target, and dispatchDetach (detach.go)
+// resolves parent-default-plus-target-override the same way
+// multitarget.go's own Runner does, from args[0] (splitTargetArg). A
+// multi-target command dispatched with no target argument can't have its
+// effective detach known up front at all — the Runner itself raises the
+// target picker once it runs — so dispatchDetach reports that as
+// unresolvable and this function falls through to p.Launch, same as
+// `detach` being absent.
 func launchCommand(m *manifest.Manifest, name string, args []string, p *CommandProducer) error {
 	cmd, ok := resolveCommand(m, name)
 	if !ok {
@@ -385,7 +396,7 @@ func launchCommand(m *manifest.Manifest, name string, args []string, p *CommandP
 
 	entryID := cmd.Steps[0]
 	if action, ok := m.Actions[entryID]; ok {
-		if detach, present := actionDetach(action); present && detach {
+		if detach, ok := dispatchDetach(action, args); ok && detach {
 			cfg, _ := config.FromManifest(m)
 			if cfg.Terminal.Spawn != "" {
 				ctx := launchCtxFrom(name, p.Env)

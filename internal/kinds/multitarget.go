@@ -264,11 +264,7 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 	return func(args []string) error {
 		h := newHost()
 
-		var picked string
-		rest := args
-		if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-			picked, rest = args[0], args[1:]
-		}
+		picked, rest := splitTargetArg(args)
 
 		if picked == "" {
 			if len(order) == 1 {
@@ -385,6 +381,22 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 		h.Ok(name + " complete")
 		return nil
 	}, nil
+}
+
+// splitTargetArg parses a multi-target dispatch's argv the one way this
+// package recognizes: args[0] names the target unless it looks like a flag
+// (starts with '-'), in which case no target was named at all and every arg
+// is passed through as rest. This is the canonical definition — the Runner
+// above and dispatch.go's dispatchDetach (which must know which target a
+// launcher decision resolves against before the Runner ever runs) both call
+// it, so "which arg names the target" cannot drift into two answers the way
+// the detach resolution itself once did (admin-ysxr.4).
+func splitTargetArg(args []string) (picked string, rest []string) {
+	rest = args
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		picked, rest = args[0], args[1:]
+	}
+	return picked, rest
 }
 
 // sortInlineKeys returns m's keys sorted, for deterministic target-picker
