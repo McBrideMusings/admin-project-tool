@@ -378,10 +378,12 @@ func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string, p
 // resolves parent-default-plus-target-override the same way
 // multitarget.go's own Runner does, from args[0] (splitTargetArg). A
 // multi-target command dispatched with no target argument can't have its
-// effective detach known up front at all — the Runner itself raises the
-// target picker once it runs — so dispatchDetach reports that as
-// unresolvable and this function falls through to p.Launch, same as
-// `detach` being absent.
+// effective detach known up front in general — the Runner itself raises
+// the target picker once it runs — unless the action declares exactly one
+// target, which the Runner auto-picks deterministically; dispatchDetach
+// resolves that case the same way. Otherwise dispatchDetach reports the
+// dispatch as unresolvable and this function falls through to p.Launch,
+// same as `detach` being absent.
 func launchCommand(m *manifest.Manifest, name string, args []string, p *CommandProducer) error {
 	cmd, ok := resolveCommand(m, name)
 	if !ok {
