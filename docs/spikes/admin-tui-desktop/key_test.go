@@ -1,12 +1,26 @@
 package main
 
 import (
+	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/tui"
 )
+
+// TestMain builds the three tracker fixtures (fixtures.go) once for every
+// test in this package and tears them down on the way out — the same shape
+// internal/tui/hermetic_test.go uses for the archetype seam alone; here it
+// also owns the temp-dir repos and the canned remote (admin-p55x).
+func TestMain(m *testing.M) {
+	code := m.Run()
+	cleanupFixtures()
+	os.Exit(code)
+}
 
 func send(m model, k string) model {
 	var msg tea.Msg
@@ -91,7 +105,8 @@ func TestEnterOpensTheDispatchSheet(t *testing.T) {
 }
 
 // The tracker tweak swaps which repo the embedded frame renders, because which
-// tracker tabs exist is a property of the repo (hasBeads/usesPRs), not a setting.
+// tracker tabs exist is a property of the repo (its declared tracker key and
+// uses_pull_requests), not a setting.
 func TestTrackerTweakSwapsTheEmbeddedRepo(t *testing.T) {
 	beads := Strip(render(State{
 		Values: map[string]string{"screen": "issues", "tracker": "beads"}, W: 96, H: 30}))
@@ -104,18 +119,21 @@ func TestTrackerTweakSwapsTheEmbeddedRepo(t *testing.T) {
 	if !strings.Contains(github, "Issues") {
 		t.Errorf("github side did not draw an Issues tab")
 	}
-	if !strings.Contains(beads, "admin-project-tool") {
-		t.Errorf("beads side is not this repo")
+	if !strings.Contains(beads, "beads-repo") {
+		t.Errorf("beads side is not the beads fixture")
 	}
-	if !strings.Contains(github, "etv-station") {
-		t.Errorf("github side is not etv-station")
+	if !strings.Contains(github, "github-repo") {
+		t.Errorf("github side is not the github fixture")
 	}
 	if beads == github {
 		t.Errorf("the tweak changed nothing")
 	}
 
-	// usesPRs() is len(remote.PRs) > 0, so the PRs tab only exists on a repo
-	// with open PRs — a third repo is the only way to see it at all.
+	// wantsPRs() is the manifest's declared uses_pull_requests key, so the PRs
+	// tab exists whenever a repo declares it true — a real repo with an open
+	// PR is not required, but a third fixture is still the only way to see
+	// this tab drawn without also drawing Beads or Issues (a repo declares at
+	// most one tracker plus PRs, and the axes here each declare a single shape).
 	prs := Strip(render(State{
 		Values: map[string]string{"screen": "issues", "tracker": "prs"}, W: 96, H: 30}))
 	if !strings.Contains(prs, "PRs") {
@@ -142,4 +160,53 @@ func TestTabPressNeverBlocks(t *testing.T) {
 			t.Errorf("%s blocked for %v — a tab press must not wait on a load", screen, d)
 		}
 	}
+}
+
+// TestFixtureTabSetsAreWhatTheDigitKeysAssume pins the exact tab bar each
+// fixture draws. keyRepo/keyTracker/keyConfig (variants.go) hardcode "2"/"3"/
+// "4" on the assumption that every fixture draws Work · Repo · <one tracker
+// tab> · Config in that order — if a fixture manifest ever grew a second
+// tracker signal (both a tracker key and uses_pull_requests = true, say), the
+// digit keys would silently index the wrong tab. This renders repo-dash's own
+// Model directly (not the prototype's fake tabBar()) so it asserts on the
+// real, declaration-driven tab bar the digit keys actually navigate.
+func TestFixtureTabSetsAreWhatTheDigitKeysAssume(t *testing.T) {
+	cases := []struct {
+		axis    string
+		want    string
+		exclude []string
+	}{
+		{"beads", "Beads", []string{"Issues", "PRs"}},
+		{"github", "Issues", []string{"Beads", "PRs"}},
+		{"prs", "PRs", []string{"Beads", "Issues"}},
+	}
+	for _, c := range cases {
+		src := trackerRepo(c.axis)
+		ctx, cancel := context.WithCancel(context.Background())
+		m := tui.New(ctx, src.root, src.nwo, src.branch, "main")
+		out := Strip(tui.Frame(ctx, m, tui.FrameOptions{Width: 96, Height: 30, Settle: 8 * time.Second}))
+		cancel()
+
+		tabRow := tabBarLine(out)
+		for _, want := range []string{"Work", "Repo", c.want, "Config"} {
+			if !strings.Contains(tabRow, want) {
+				t.Errorf("%s: tab bar %q missing %q", c.axis, tabRow, want)
+			}
+		}
+		for _, excl := range c.exclude {
+			if strings.Contains(tabRow, excl) {
+				t.Errorf("%s: tab bar %q unexpectedly drew %q — digit keys would mis-index", c.axis, tabRow, excl)
+			}
+		}
+	}
+}
+
+// tabBarLine returns line index 1 of a rendered frame — Model.frameRaw always
+// lays out header, tab bar, blank separator in that fixed order.
+func tabBarLine(out string) string {
+	lines := strings.Split(out, "\n")
+	if len(lines) < 2 {
+		return ""
+	}
+	return lines[1]
 }
