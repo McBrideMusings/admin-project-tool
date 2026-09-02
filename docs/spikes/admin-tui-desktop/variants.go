@@ -13,10 +13,14 @@
 // drifts. That headless seam is the one everything visual renders through.
 //
 // Which tracker tabs exist is a property of the repo, not a setting: repo-dash
-// derives it from hasBeads and usesPRs (internal/tui/model.go:352). A repo with
-// .beads/ gets a Beads tab and no Issues tab, and one without gets Issues and
-// PRs. So the tracker tweak swaps which repo the embedded frame is rendered
-// against, because that is the only honest way to see both.
+// derives it from the manifest's declared `tracker` key and `uses_pull_requests`
+// (internal/tui/model.go's trackerKind/wantsPRs, read by visibleTabs). A repo
+// declaring tracker = "beads" gets a Beads tab; one declaring "github" gets
+// Issues instead; a repo declaring uses_pull_requests = true gets PRs
+// regardless of tracker. So the tracker tweak swaps which repo the embedded
+// frame is rendered against — each of the three built by fixtures.go to
+// declare exactly one of those shapes, because that is the only honest way to
+// see all three.
 package main
 
 import (
@@ -90,27 +94,20 @@ var Variants = []Variant{{
 
 type repoSrc struct{ root, nwo, branch string }
 
-var trackerRepos = map[string]repoSrc{
-	// This repo: has .beads/, so repo-dash draws Repo · Beads · Config.
-	"beads": {"/Users/pierce/Projects/admin-project-tool",
-		"McBrideMusings/admin-project-tool", "feat/one-tool-go-merge"},
-	// No .beads/, so the same code draws Repo · Issues · Config instead.
-	"github": {"/Users/pierce/Projects/etv-station", "McBrideMusings/etv-station", "main"},
-	// usesPRs() is len(remote.PRs) > 0 (model.go:333) — the PRs tab exists only
-	// while the repo actually has open PRs, so seeing it needs a repo that does.
-	"prs": {"/Users/pierce/Projects/nts-desktop", "McBrideMusings/nts-desktop", "main"},
-}
-
 // Digit keys index the drawn tabs (model.go:349 — a tab renumbered by
 // admin-3rgp.20, which gave every project with an admin.toml a real Work
 // tab ahead of Repo). Every screen below that doesn't override the
-// `tracker` axis renders against trackerRepos["beads"] — this checkout,
-// which carries its own tracked admin.toml (see CLAUDE.md's "admin.toml is
-// NOT committed" exception for this one repo) — so its four real drawn
-// tabs are 1 Work, 2 Repo, 3 the tracker (Beads here), 4 Config. Everything
-// past the tab is the same key a person presses — see INVENTORY.md for the
-// full map (written before admin-3rgp.20 landed and not renumbered here,
-// since admin-3rgp.31 retires this whole prototype next).
+// `tracker` axis renders against trackerRepo("beads") (fixtures.go), a
+// temp-dir repo this prototype builds itself rather than one of three live
+// checkouts on the developer's machine (admin-p55x) — so its four real drawn
+// tabs are 1 Work, 2 Repo, 3 the tracker (Beads here), 4 Config. Each of the
+// three fixtures is built to draw exactly that four-tab shape (fixtures.go's
+// axisManifest), which is what keeps these constants safe to hardcode: they
+// index a tab SET the fixture guarantees, not one inferred from a repo that
+// could change shape under the prototype. Everything past the tab is the
+// same key a person presses — see INVENTORY.md for the full map (written
+// before admin-3rgp.20 landed and not renumbered here, since admin-3rgp.31
+// retires this whole prototype next).
 const (
 	keyRepo    = "2"
 	keyTracker = "3"
@@ -665,7 +662,7 @@ var hostedOut = []string{
 	"14:22:07|INFO|test|.venv/bin/pytest -q",
 	"14:22:09|INFO|test|======================= test session starts =======================",
 	"14:22:09|INFO|test|platform darwin -- Python 3.13.1, pytest-8.3.4",
-	"14:22:09|INFO|test|rootdir: /Users/pierce/Projects/admin-project-tool",
+	"14:22:09|INFO|test|rootdir: .",
 	"14:22:09|INFO|test|collected 221 items",
 	"14:22:11|INFO|test|tests/test_archetypes.py ....................       [ 12%]",
 	"14:22:14|INFO|test|tests/test_apple.py .............                   [ 28%]",
@@ -809,10 +806,11 @@ func render(s State) string {
 	}
 	sp := screens[name]
 	empty := s.Is("data", "empty")
-	src := trackerRepos[s.Get("tracker")]
-	if src.root == "" {
-		src = trackerRepos["beads"]
+	tracker := s.Get("tracker")
+	if tracker == "" {
+		tracker = "beads"
 	}
+	src := trackerRepo(tracker)
 
 	rows := []string{header(w, src), tabBar(sp, w, s.Get("tracker")), ""}
 	if _, ok := embedded[name]; ok {

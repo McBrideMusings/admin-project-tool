@@ -303,10 +303,22 @@ func behindDefault(ctx context.Context, br git.BranchInfo, def string) int {
 	return 0
 }
 
+// loadRemoteFn, fetchAllFn and fetchPruneFn are the seams a headless caller
+// (docs/spikes/admin-tui-desktop's fixtures, via the exported UseStaticRemote
+// in remoteseam.go) overrides to render the dashboard with no `gh` round
+// trip, no `git fetch`, and no on-disk cache read keyed by nwo. Nothing in
+// this package or its own tests overrides them, so the real program's
+// behaviour is unchanged.
+var (
+	loadRemoteFn = data.Load
+	fetchAllFn   = data.FetchAll
+	fetchPruneFn = git.FetchPrune
+)
+
 // loadCacheCmd reads the on-disk cache so the views render instantly.
 func loadCacheCmd(nwo string) tea.Cmd {
 	return func() tea.Msg {
-		r, ok := data.Load(nwo)
+		r, ok := loadRemoteFn(nwo)
 		return cacheDataMsg{r: r, ok: ok}
 	}
 }
@@ -326,8 +338,8 @@ func syncCmd(ctx context.Context, nwo string, withIssues bool) tea.Cmd {
 		var r data.Remote
 		var wg sync.WaitGroup
 		wg.Add(2)
-		go func() { defer wg.Done(); r = data.FetchAll(ctx, nwo, mergedPRLimit, withIssues) }()
-		go func() { defer wg.Done(); git.FetchPrune(ctx) }()
+		go func() { defer wg.Done(); r = fetchAllFn(ctx, nwo, mergedPRLimit, withIssues) }()
+		go func() { defer wg.Done(); fetchPruneFn(ctx) }()
 		wg.Wait()
 		return syncDoneMsg{r: r}
 	}

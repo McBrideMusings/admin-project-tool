@@ -107,15 +107,17 @@ close: **tree mode, the bead detail overlay, its Graph and Blocking tabs, the fi
 new-worktree prompt were all unreachable**, because the prototype only ever pressed the tab
 digit and then threw away the footer those modes are drawn in.
 
-**PRs needed a third repo.** `usesPRs()` is `len(remote.PRs) > 0` (`model.go:333`) — the tab
-exists only while the repo actually has open PRs, so it cannot be configured into view. The
-tracker tweak therefore cycles three repos, one per tracker shape:
+**PRs needed a third repo.** `wantsPRs()` is the manifest's declared `uses_pull_requests` key
+(`model.go:551`) — the tab's presence follows that declaration alone, not whether the repo
+happens to have any open PRs, but seeing it drawn still needs a repo whose manifest declares it
+true, distinct from the ones declaring `tracker`. The tracker tweak therefore cycles three
+fixture repos (`fixtures.go`, built in a temp dir — admin-p55x), one per tracker shape:
 
 | `⌥r` | Repo | Draws |
 |---|---|---|
-| `beads` | admin-project-tool | Repo · **Beads 227** · Config |
-| `github` | etv-station | Repo · **Issues** · Config |
-| `prs` | nts-desktop | Repo · **PRs** · Config |
+| `beads` | fixture: `tracker = "beads"` | Repo · **Beads** · Config |
+| `github` | fixture: `tracker = "github"` | Repo · **Issues** · Config |
+| `prs` | fixture: `uses_pull_requests = true`, no `tracker` | Repo · **PRs** · Config |
 
 That the tab bar changes shape per repo is the finding, not a workaround: three of the five
 declared tabs are conditional, so "the tracker tab" is not one surface.
