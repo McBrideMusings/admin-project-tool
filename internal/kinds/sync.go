@@ -41,7 +41,7 @@ func makeSync(name string, action manifest.Action, m *manifest.Manifest, _ *Surf
 	}
 
 	return func(args []string) error {
-		h := newHost()
+		h := newHost(m)
 		dest, err := manifest.ResolveEnv(destTmpl)
 		if err != nil {
 			return fmt.Errorf("action %q: %w", name, err)

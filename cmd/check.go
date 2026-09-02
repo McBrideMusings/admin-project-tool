@@ -52,7 +52,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if !ok {
-		fmt.Fprintln(os.Stderr, "no admin.toml here — nothing to check")
+		fmt.Fprintln(os.Stderr, "no admin.toml here or in any directory above — nothing to check")
 		return nil
 	}
 
@@ -99,11 +99,14 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	// multi-line body or a script reference is not a project's anti-pattern
 	// at all and must never be flagged. reportAntiPatterns prints to
 	// stderr/stdout directly and never contributes to problems/exit code.
-	project, err := manifest.Load(dir)
+	// m.Root, not dir: resolveProjectManifest walks up from dir, so the
+	// manifest it resolved may live above dir and re-loading dir itself
+	// would fail with "no admin.toml".
+	project, err := manifest.Load(m.Root)
 	if err != nil {
 		// Unreachable in practice: resolveProjectManifest above already
-		// called manifest.Load(dir) and would have returned this same error
-		// before we got here. Guarded rather than ignored so a future
+		// called manifest.Load(m.Root) and would have returned this same
+		// error before we got here. Guarded rather than ignored so a future
 		// refactor of resolveProjectManifest can't silently turn this into a
 		// nil-pointer panic on project.Actions below.
 		return errors.Join(append(problems, validate.Wrap(err))...)

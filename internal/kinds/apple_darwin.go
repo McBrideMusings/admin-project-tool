@@ -44,6 +44,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
+	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/streams"
 )
 
@@ -72,8 +73,8 @@ var appleDeviceSDK = map[string]struct {
 // runAppleVerb dispatches a kind="apple" action's `run` verb to its
 // implementation, mirroring admin_lib/interp.py::_make_apple's
 // `getattr(apple_mod, func_name)(cfg)`.
-func runAppleVerb(verb, action string, cfg map[string]any, args []string) error {
-	h := newHost()
+func runAppleVerb(verb, action string, cfg map[string]any, args []string, m *manifest.Manifest) error {
+	h := newHost(m)
 	f := parseAppleFlags(args)
 	switch verb {
 	case "build_mac":

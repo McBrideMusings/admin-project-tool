@@ -36,7 +36,7 @@ func makeHTTP(name string, action manifest.Action, m *manifest.Manifest, _ *Surf
 	bodyTmpl, _ := actionString(action, "body")
 
 	return func(args []string) error {
-		h := newHost()
+		h := newHost(m)
 		url, err := manifest.ResolveEnv(urlTmpl)
 		if err != nil {
 			return fmt.Errorf("action %q: %w", name, err)

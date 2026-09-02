@@ -26,7 +26,7 @@ func makeApple(name string, action manifest.Action, m *manifest.Manifest, _ *Sur
 		if len(cfg) == 0 {
 			return fmt.Errorf("action %q: [apple] table missing from admin.toml", name)
 		}
-		return runAppleVerb(verb, name, cfg, args)
+		return runAppleVerb(verb, name, cfg, args, m)
 	}, nil
 }
 

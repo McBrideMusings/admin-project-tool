@@ -29,7 +29,7 @@ func makeGoDist(name string, action manifest.Action, m *manifest.Manifest, _ *Su
 		if len(raw) == 0 {
 			return fmt.Errorf("action %q: [go_dist] table missing from admin.toml", name)
 		}
-		h := newHost()
+		h := newHost(m)
 		cfg, err := goDistConfig(raw)
 		if err != nil {
 			return fmt.Errorf("action %q: [go_dist]: %w", name, err)

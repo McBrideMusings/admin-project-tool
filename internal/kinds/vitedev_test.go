@@ -148,7 +148,6 @@ func TestSetupDevMountsRefusesToClobberARealFile(t *testing.T) {
 // admin_lib/web_dev.py::vite_dev_from_config's straight passthrough fields.
 func TestBuildViteDevOptionsMapsCoreFields(t *testing.T) {
 	root := t.TempDir()
-	t.Chdir(root)
 	cfg := map[string]any{
 		"vite_port":    int64(5173),
 		"backend_port": int64(3000),
@@ -156,7 +155,7 @@ func TestBuildViteDevOptionsMapsCoreFields(t *testing.T) {
 		"backend_dir":  "server",
 		"backend_cmd":  "cargo run",
 	}
-	opts, err := buildViteDevOptions(cfg)
+	opts, err := buildViteDevOptions(root, cfg)
 	if err != nil {
 		t.Fatalf("buildViteDevOptions: %v", err)
 	}
@@ -176,30 +175,32 @@ func TestBuildViteDevOptionsMapsCoreFields(t *testing.T) {
 // conflicting data roots.
 func TestBuildViteDevOptionsRejectsMultipleDataRoots(t *testing.T) {
 	root := t.TempDir()
-	t.Chdir(root)
 	cfg := map[string]any{
 		"data_subdirs": []any{
 			map[string]any{"name": "a", "is_data_root": true},
 			map[string]any{"name": "b", "is_data_root": true},
 		},
 	}
-	if _, err := buildViteDevOptions(cfg); err == nil {
+	if _, err := buildViteDevOptions(root, cfg); err == nil {
 		t.Fatal("buildViteDevOptions err = nil, want an error for two is_data_root subdirs")
 	}
 }
 
 // TestBuildViteDevOptionsExportsSubdirEnv proves a data_subdirs entry with
-// `env`/`export_as` exposes its resolved path on BackendEnv.
+// `env`/`export_as` exposes its resolved path on BackendEnv, resolved
+// against the project root rather than the process's cwd — hence the Chdir
+// to an unrelated directory: a relative data_dir used to reach
+// filepath.Abs, which anchored it to wherever `admin` was typed.
 func TestBuildViteDevOptionsExportsSubdirEnv(t *testing.T) {
 	root := t.TempDir()
-	t.Chdir(root)
+	t.Chdir(t.TempDir())
 	cfg := map[string]any{
 		"data_dir": "data",
 		"data_subdirs": []any{
 			map[string]any{"name": "photos", "export_as": "PHOTOS_DIR"},
 		},
 	}
-	opts, err := buildViteDevOptions(cfg)
+	opts, err := buildViteDevOptions(root, cfg)
 	if err != nil {
 		t.Fatalf("buildViteDevOptions: %v", err)
 	}
@@ -215,7 +216,7 @@ func TestBuildViteDevOptionsExportsSubdirEnv(t *testing.T) {
 // TestBuildViteDevOptionsEmptyConfigIsAnError proves an empty [vite_dev]
 // table is refused, matching Python's `if not cfg: err(...); return 1`.
 func TestBuildViteDevOptionsEmptyConfigIsAnError(t *testing.T) {
-	if _, err := buildViteDevOptions(nil); err == nil {
+	if _, err := buildViteDevOptions(t.TempDir(), nil); err == nil {
 		t.Fatal("buildViteDevOptions(nil) err = nil, want an error")
 	}
 }
