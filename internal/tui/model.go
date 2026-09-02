@@ -6,6 +6,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -547,12 +548,7 @@ func (m Model) trackers() []string {
 // hasTracker reports whether name is one of the manifest's declared
 // trackers.
 func (m Model) hasTracker(name string) bool {
-	for _, t := range m.trackers() {
-		if t == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(m.trackers(), name)
 }
 
 // wantsPRs reports whether the manifest declares uses_pull_requests = true.

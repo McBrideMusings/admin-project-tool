@@ -14,9 +14,9 @@
 //
 // Which tracker tabs exist is a property of the repo, not a setting: repo-dash
 // derives it from the manifest's declared `tracker` key and `uses_pull_requests`
-// (internal/tui/model.go's trackerKind/wantsPRs, read by visibleTabs). A repo
-// declaring tracker = "beads" gets a Beads tab; one declaring "github" gets
-// Issues instead; a repo declaring uses_pull_requests = true gets PRs
+// (internal/tui/model.go's trackers/hasTracker/wantsPRs, read by visibleTabs). A
+// repo declaring tracker = ["beads"] gets a Beads tab; one declaring ["github"]
+// gets Issues instead; a repo declaring uses_pull_requests = true gets PRs
 // regardless of tracker. So the tracker tweak swaps which repo the embedded
 // frame is rendered against — each of the three built by fixtures.go to
 // declare exactly one of those shapes, because that is the only honest way to

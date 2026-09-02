@@ -188,17 +188,6 @@ type Manifest struct {
 // against this set.
 var KnownTrackers = []string{"beads", "github"}
 
-// DeclaresTracker reports whether name is one of the manifest's declared
-// trackers.
-func (m *Manifest) DeclaresTracker(name string) bool {
-	for _, t := range m.Trackers {
-		if t == name {
-			return true
-		}
-	}
-	return false
-}
-
 // knownTopLevelKeys mirrors admin_lib/manifest.py::_KNOWN_KEYS.
 var knownTopLevelKeys = map[string]bool{
 	"project_name": true, "python_min": true, "tracker": true, "uses_pull_requests": true,

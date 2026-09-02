@@ -115,8 +115,8 @@ fixture repos (`fixtures.go`, built in a temp dir — admin-p55x), one per track
 
 | `⌥r` | Repo | Draws |
 |---|---|---|
-| `beads` | fixture: `tracker = "beads"` | Repo · **Beads** · Config |
-| `github` | fixture: `tracker = "github"` | Repo · **Issues** · Config |
+| `beads` | fixture: `tracker = ["beads"]` | Repo · **Beads** · Config |
+| `github` | fixture: `tracker = ["github"]` | Repo · **Issues** · Config |
 | `prs` | fixture: `uses_pull_requests = true`, no `tracker` | Repo · **PRs** · Config |
 
 That the tab bar changes shape per repo is the finding, not a workaround: three of the five
