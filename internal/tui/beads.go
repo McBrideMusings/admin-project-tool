@@ -55,27 +55,31 @@ func (m Model) beadRows() []rowItem {
 	if m.beadTree {
 		return m.beadTreeRows(cols)
 	}
-	ready, inProgress, blocked := groupBeads(m.beads)
+	human, ready, inProgress, blocked := groupBeads(m.beads)
 	ctx := m.beadCtx(false)
-	for _, s := range [][]bd.Bead{ready, inProgress, blocked} {
+	for _, s := range [][]bd.Bead{human, ready, inProgress, blocked} {
 		sortBeadsBy(s, m.trackSort, ctx.unblocks)
 	}
-	l := beadLayoutFor(m.beadCols, cols, ctx, ready, inProgress, blocked)
+	l := beadLayoutFor(m.beadCols, cols, ctx, human, ready, inProgress, blocked)
 
 	secs := []struct {
 		title string
 		beads []bd.Bead
 	}{
+		{"Needs you", human},
 		{"Ready", ready},
 		{"In progress", inProgress},
 		{"Blocked", blocked},
 	}
 
 	// While loading, every section stays up so the "loading…" placeholder shows;
-	// once beads have landed, an empty group drops out entirely.
+	// once beads have landed, an empty group drops out entirely. The human
+	// section is the exception: it drops on an empty group even mid-load, so a
+	// workspace with no human-labelled bead never shows a "Needs you / loading…"
+	// placeholder above sections that do have one.
 	var rows []rowItem
 	for _, s := range secs {
-		if m.haveBeads && len(s.beads) == 0 {
+		if len(s.beads) == 0 && (s.title == "Needs you" || m.haveBeads) {
 			continue
 		}
 		if len(rows) > 0 {
@@ -126,15 +130,39 @@ func (m Model) beadCtx(tree bool) beadCtx {
 	return beadCtx{prefix: m.beadPrefix, tree: tree, unblocks: bd.Unblocks(m.beads)}
 }
 
-// groupBeads splits the fetched beads into the three sections. A bead already in
-// progress stays in that section even when something blocks it: it is work
-// someone has their hands on, and burying it under "Blocked" would hide that.
-func groupBeads(beads []bd.Bead) (ready, inProgress, blocked []bd.Bead) {
+// beadHumanLabel is bd's own HITL (human-in-the-loop) marker — the one bare
+// label the schema permits (`bd human list`, `bd human respond`) — and the
+// only label groupBeads treats specially.
+const beadHumanLabel = "human"
+
+// beadNeedsHuman reports whether a bead carries bd's human label: it is
+// blocked on a person, not on the dependency graph. This is the single source
+// of truth both render modes check — tree mode's glyph and flat mode's
+// section — so the two can't drift on what counts as a human bead.
+func beadNeedsHuman(b bd.Bead) bool {
+	for _, l := range b.Labels {
+		if strings.EqualFold(strings.TrimSpace(l), beadHumanLabel) {
+			return true
+		}
+	}
+	return false
+}
+
+// groupBeads splits the fetched beads into the four sections. A human bead is
+// peeled off before status is even considered: it is waiting on a person, not
+// the dependency graph, so it floats to its own section regardless of whether
+// it also happens to be in progress or blocked — one row, one section, never
+// duplicated. A bead already in progress stays in that section even when
+// something blocks it: it is work someone has their hands on, and burying it
+// under "Blocked" would hide that.
+func groupBeads(beads []bd.Bead) (human, ready, inProgress, blocked []bd.Bead) {
 	open := bd.OpenSet(beads)
 	for _, b := range beads {
 		switch {
 		case b.Status == "deferred":
 			continue
+		case beadNeedsHuman(b):
+			human = append(human, b)
 		case b.Status == "in_progress":
 			inProgress = append(inProgress, b)
 		case b.Status == "blocked" || bd.IsBlocked(b, open):
@@ -143,7 +171,7 @@ func groupBeads(beads []bd.Bead) (ready, inProgress, blocked []bd.Bead) {
 			ready = append(ready, b)
 		}
 	}
-	return ready, inProgress, blocked
+	return human, ready, inProgress, blocked
 }
 
 func (m Model) beadSection(beads []bd.Bead, cols int, l beadLayout) []rowItem {
@@ -163,12 +191,18 @@ func (m Model) beadSection(beads []bd.Bead, cols int, l beadLayout) []rowItem {
 
 // beadStatusGlyph is the one cell tree mode spends on status. Without the
 // section headers a bead someone has their hands on looks like any other row;
-// the marker is the whole of what "In progress" used to say.
+// the marker is the whole of what "In progress" used to say. A human bead
+// outranks in_progress: a bead blocked on you is the more urgent fact, and
+// tree mode has only one cell to spend on either.
 func beadStatusGlyph(b bd.Bead) string {
-	if b.Status == "in_progress" {
+	switch {
+	case beadNeedsHuman(b):
+		return "?"
+	case b.Status == "in_progress":
 		return "\u25b6"
+	default:
+		return " "
 	}
-	return " "
 }
 
 // unblocksText is how much open work finishing this bead would free, or "" when

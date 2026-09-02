@@ -438,8 +438,8 @@ func (m Model) tabCount(t tab) int {
 	case tabIssues:
 		return len(m.remote.Issues)
 	case tabBeads:
-		ready, inProgress, blocked := groupBeads(m.beads)
-		return len(ready) + len(inProgress) + len(blocked)
+		human, ready, inProgress, blocked := groupBeads(m.beads)
+		return len(human) + len(ready) + len(inProgress) + len(blocked)
 	}
 	return 0
 }

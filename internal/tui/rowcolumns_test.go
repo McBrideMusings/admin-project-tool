@@ -497,8 +497,8 @@ func TestBeadRowsFormFixedColumns(t *testing.T) {
 	// "owner" is not in the default set — a solo workspace spends nine cells on
 	// one name — so the fixture asks for it, which is what the column exists for.
 	m.beadCols = []string{"id", "priority", "type", "glyph", "title", "unblocks", "labels", "owner", "age"}
-	ready, inProgress, blocked := groupBeads(m.beads)
-	l := beadLayoutFor(m.beadCols, cols, m.beadCtx(false), ready, inProgress, blocked)
+	human, ready, inProgress, blocked := groupBeads(m.beads)
+	l := beadLayoutFor(m.beadCols, cols, m.beadCtx(false), human, ready, inProgress, blocked)
 	wID, wType := l.widths[l.indexOf("id")], l.widths[l.indexOf("type")]
 	wLabel, wOwner := l.widths[l.indexOf("labels")], l.widths[l.indexOf("owner")]
 	wUnblocks := l.widths[l.indexOf("unblocks")]
