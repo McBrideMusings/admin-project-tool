@@ -274,7 +274,7 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 	}
 
 	return func(args []string) error {
-		h := newHost()
+		h := newHost(m)
 
 		// Strip off, if present, the reentryDetachedMarker the block below
 		// prepends to the args it hands the launcher — this Runner is what

@@ -29,8 +29,9 @@ func makeReloadLoop(name string, action manifest.Action, m *manifest.Manifest, _
 	target := orDefault(func() string { s, _ := actionString(action, "target"); return s }(), name)
 
 	return func(args []string) error {
-		h := newHost()
+		h := newHost(m)
 		rc := reload.RunWithReload(manifest.ResolveComputed(run), target, reload.Options{
+			Dir:    h.ProjectRoot,
 			Stdout: h.Stdout,
 			LogFn:  h.AppendLog,
 			Info:   h.Info,

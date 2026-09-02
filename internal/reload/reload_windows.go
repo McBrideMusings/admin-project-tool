@@ -35,6 +35,7 @@ func PollForReload(isRunning func() bool, timeout time.Duration) bool { return f
 // Options mirrors the Unix Options shape so callers compile unchanged;
 // RunWithReload ignores every field and fails immediately.
 type Options struct {
+	Dir       string
 	Stdout    io.Writer
 	Formatter func(lineWithNewline string) string
 	LogFn     func(text string)

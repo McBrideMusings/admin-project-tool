@@ -47,7 +47,7 @@ func makeInstallTemplate(name string, action manifest.Action, m *manifest.Manife
 	cfgName, _ := cfg["name"].(string)
 
 	return func(args []string) error {
-		h := newHost()
+		h := newHost(m)
 
 		if _, err := os.Stat(src); err != nil {
 			msg := "install-template: source XML not found: " + src

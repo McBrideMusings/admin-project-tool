@@ -146,7 +146,7 @@ func unknownCommandError(name string) error {
 				b.WriteString(" — admin.toml declares no commands")
 			}
 		} else if !ok {
-			fmt.Fprintf(&b, " — no admin.toml in %s, so this project has no admin commands", wd)
+			fmt.Fprintf(&b, " — no admin.toml in %s or any directory above it, so this project has no admin commands", wd)
 		}
 	}
 
@@ -161,7 +161,7 @@ func unknownCommandError(name string) error {
 //
 // It returns false — meaning "this name is not a project command" — in two
 // cases, both of which leave the caller to report an unknown command: there
-// is no admin.toml here at all, or the manifest resolves fine and simply
+// is no admin.toml at or above the cwd at all, or the manifest resolves fine and simply
 // doesn't declare that name.
 //
 // The third case returns true without the name being a command: the manifest
@@ -237,7 +237,7 @@ var runActionCmd = &cobra.Command{
 			return err
 		}
 		if !ok {
-			return fmt.Errorf("__run-action: no admin.toml found in %s", wd)
+			return fmt.Errorf("__run-action: no admin.toml in %s or any directory above it", wd)
 		}
 		return kinds.RunAction(m, kinds.Default, args[0], args[1:])
 	},
@@ -279,7 +279,7 @@ var runCommandCmd = &cobra.Command{
 			return err
 		}
 		if !ok {
-			return fmt.Errorf("__run-command: no admin.toml found in %s", wd)
+			return fmt.Errorf("__run-command: no admin.toml in %s or any directory above it", wd)
 		}
 		return kinds.RunCommandHosted(m, kinds.Default, args[0], args[1:])
 	},

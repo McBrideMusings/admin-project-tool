@@ -104,7 +104,7 @@ func makeInteractiveShell(name string, action manifest.Action, m *manifest.Manif
 
 	return func(args []string) error {
 		resolved := manifest.ResolveComputed(run)
-		h := newHost()
+		h := newHost(m)
 		f := enterFrame(h, name, rawURLs, hasFooter, footerVal, m)
 		defer frame.Deactivate(f)
 		h.Info("running: " + resolved)
@@ -170,7 +170,7 @@ func makeBridgeListen(name string, action manifest.Action, m *manifest.Manifest,
 	bridgeCfg := buildLogBridgeConfig(m)
 
 	return func(args []string) error {
-		h := newHost()
+		h := newHost(m)
 		if hosts != "" {
 			resolved, rerr := scopeLogBridgeHosts(hosts)
 			if rerr != nil {

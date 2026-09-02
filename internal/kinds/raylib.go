@@ -35,7 +35,7 @@ func makeRaylib(name string, action manifest.Action, m *manifest.Manifest, _ *Su
 	cfg := archetypeConfigTable(m, "raylib")
 
 	return func(args []string) error {
-		h := newHost()
+		h := newHost(m)
 		buildDir := cfgString(cfg, "build_dir", "build")
 		if buildDir == "" {
 			buildDir = "build"

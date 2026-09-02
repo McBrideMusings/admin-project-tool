@@ -36,7 +36,7 @@ func makeDevPrecheck(name string, action manifest.Action, m *manifest.Manifest, 
 	cfg := archetypeConfigTable(m, "dev_precheck")
 
 	return func(args []string) error {
-		h := newHost()
+		h := newHost(m)
 
 		containers, err := resolveEnvList(cfg, "containers")
 		if err != nil {

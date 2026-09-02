@@ -35,7 +35,7 @@ func makeShell(name string, action manifest.Action, m *manifest.Manifest, _ *Sur
 			return fmt.Errorf("action %q: %w", name, err)
 		}
 		cmd := strings.TrimSpace(expanded)
-		h := newHost()
+		h := newHost(m)
 		if cmd == "" {
 			h.Err(emptyCmdErr)
 			return fmt.Errorf("action %q: %s", name, emptyCmdErr)
@@ -90,7 +90,7 @@ func makeShellPassthrough(name string, action manifest.Action, m *manifest.Manif
 			return fmt.Errorf("action %q: %w", name, err)
 		}
 		resolved := strings.TrimSpace(expanded)
-		h := newHost()
+		h := newHost(m)
 		if resolved == "" {
 			h.Err(emptyCmdErr)
 			return fmt.Errorf("action %q: %s", name, emptyCmdErr)
@@ -100,7 +100,7 @@ func makeShellPassthrough(name string, action manifest.Action, m *manifest.Manif
 			// process is about to hand over wholesale, and a full-screen child
 			// clears them anyway. Nothing is logged, matching Python's
 			// interactive branch, because there is no pipe to tee from.
-			return runInteractive(name, resolved)
+			return runInteractive(name, resolved, projectRoot(m))
 		}
 		f := enterFrame(h, name, rawURLs, hasFooter, footerVal, m)
 		defer frame.Deactivate(f)
@@ -118,17 +118,23 @@ func makeShellPassthrough(name string, action manifest.Action, m *manifest.Manif
 	}, nil
 }
 
-// runInteractive hands the real terminal to cmdline and waits. The child
-// inherits this process's own stdin, stdout and stderr file descriptors
-// directly, so it sees a TTY, is sent SIGWINCH on resize, and can size and
-// color itself exactly as if it had been typed at the shell.
+// runInteractive hands the real terminal to cmdline and waits, running it in
+// dir. The child inherits this process's own stdin, stdout and stderr file
+// descriptors directly, so it sees a TTY, is sent SIGWINCH on resize, and can
+// size and color itself exactly as if it had been typed at the shell.
+//
+// dir is the project root, the same working directory luahost.RunCmd gives
+// the non-interactive path — an interactive action is still an action, and
+// running it wherever `admin` was typed instead would make `run` mean two
+// different things depending on one knob in the manifest.
 //
 // Nothing here may wrap those three descriptors — not a pipe, not a pty, not
 // an io.Writer that tees to a log. Wrapping any of them reintroduces the bug
 // this function exists to fix, and it fails silently: the child still runs,
 // just small and monochrome.
-func runInteractive(name, cmdline string) error {
+func runInteractive(name, cmdline, dir string) error {
 	c := exec.Command("/bin/sh", "-c", cmdline)
+	c.Dir = dir
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := c.Run(); err != nil {
 		var ee *exec.ExitError

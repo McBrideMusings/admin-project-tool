@@ -55,7 +55,7 @@ func makeGoKind(name string, action manifest.Action, m *manifest.Manifest, _ *Su
 				run += " && rm -f " + shellQuote(binary)
 			}
 		}
-		h := newHost()
+		h := newHost(m)
 		res, err := h.RunCmd(run, luahost.RunCmdOptions{CaptureLog: true})
 		if err != nil {
 			return fmt.Errorf("action %q: %w", name, err)

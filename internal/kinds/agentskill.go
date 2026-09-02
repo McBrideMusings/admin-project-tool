@@ -29,7 +29,7 @@ func makeAgentSkill(name string, action manifest.Action, m *manifest.Manifest, _
 	explicit, _ := actionStringList(action, "targets")
 
 	return func(args []string) error {
-		h := newHost()
+		h := newHost(m)
 		src := manifest.ResolveComputed(srcDir)
 
 		n := skillName

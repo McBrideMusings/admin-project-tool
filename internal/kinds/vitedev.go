@@ -137,13 +137,15 @@ func setupDevMounts(h *luahost.Host, dataDir string, mounts []devMount, mountsOK
 }
 
 // ensureDeps is the Go port of admin_lib/docker.py::ensure_deps: install
-// only when checkPath is missing.
-func ensureDeps(h *luahost.Host, checkPath, installCmd string) error {
-	if _, err := os.Stat(checkPath); err == nil {
+// only when checkPath is missing. dir is where installCmd runs, and
+// checkPath is resolved against it — both are project-relative, so neither
+// may be left to the process's own cwd.
+func ensureDeps(h *luahost.Host, dir, checkPath, installCmd string) error {
+	if _, err := os.Stat(resolveUnder(dir, checkPath)); err == nil {
 		return nil
 	}
 	h.Info("Installing dependencies...")
-	res, err := h.RunCmd(installCmd, luahost.RunCmdOptions{CaptureLog: true})
+	res, err := h.RunCmd(installCmd, luahost.RunCmdOptions{Dir: dir, CaptureLog: true})
 	if err != nil {
 		return err
 	}
@@ -184,8 +186,9 @@ type viteDevOptions struct {
 // which is the failure this sweep exists to prevent for a process that
 // changed ports or exited between kills.
 func runViteDev(h *luahost.Host, o viteDevOptions) int {
-	pkg := pkgRunner(o.FrontendDir)
-	if err := ensureDeps(h, filepath.Join(o.FrontendDir, "node_modules"), "cd "+shellQuote(o.FrontendDir)+" && "+pkg+" install"); err != nil {
+	frontend := resolveUnder(h.ProjectRoot, o.FrontendDir)
+	pkg := pkgRunner(frontend)
+	if err := ensureDeps(h, frontend, "node_modules", pkg+" install"); err != nil {
 		h.Err(pkg + " install failed: " + err.Error())
 		return 1
 	}
@@ -239,9 +242,12 @@ func runViteDev(h *luahost.Host, o viteDevOptions) int {
 		// before the chain leaks the var only to `cd`, which ignores it.
 		inner = strings.Join(envParts, " ") + " " + inner
 	}
-	viteCmd := "cd " + shellQuote(o.FrontendDir) + " && " + inner
-
-	viteProc := exec.Command("/bin/sh", "-c", viteCmd)
+	// Dir rather than a `cd` prefix: FrontendDir is relative to the project
+	// (it defaults to "web"), so a `cd` only lands in the right place when
+	// the shell already starts there — which is a fact about where `admin`
+	// was typed, not about the project.
+	viteProc := exec.Command("/bin/sh", "-c", inner)
+	viteProc.Dir = frontend
 	viteProc.Stdin = nil
 	viteProc.Stdout = viteFh
 	viteProc.Stderr = viteFh
@@ -297,8 +303,12 @@ func runViteDev(h *luahost.Host, o viteDevOptions) int {
 	// admin_lib/web_dev.py::run_vite_dev's own comment on this for why:
 	// admin's pdeathsig-equivalent (Setpgid + explicit killpg here) only
 	// reaches the shell otherwise.
-	backendCmd := "cd " + shellQuote(o.BackendDir) + " && exec env " + envStr + " " + o.BackendCmd
+	backendCmd := "exec env " + envStr + " " + o.BackendCmd
 	return reload.RunWithReload(backendCmd, "dev", reload.Options{
+		// Same reason as vite's own Dir above: BackendDir is relative to the
+		// project (it defaults to "."), and the reload loop respawns the
+		// child repeatedly, so an inherited cwd is wrong every restart.
+		Dir:    resolveUnder(h.ProjectRoot, o.BackendDir),
 		Stdout: h.Stdout,
 		LogFn:  h.AppendLog,
 		Info:   h.Info,
@@ -319,7 +329,7 @@ func sortedStringMapKeys(m map[string]string) []string {
 // admin_lib/web_dev.py::vite_dev_from_config: read the manifest's
 // [vite_dev] table and call runViteDev.
 func viteDevFromConfig(h *luahost.Host, cfg map[string]any) int {
-	opts, err := buildViteDevOptions(cfg)
+	opts, err := buildViteDevOptions(h.ProjectRoot, cfg)
 	if err != nil {
 		h.Err(err.Error())
 		return 1
@@ -335,16 +345,16 @@ func viteDevFromConfig(h *luahost.Host, cfg map[string]any) int {
 // configured as the root) — that part of the adapter has nothing to do with
 // launching a process, so a test can assert on the filesystem exactly as
 // production does.
-func buildViteDevOptions(cfg map[string]any) (viteDevOptions, error) {
+func buildViteDevOptions(root string, cfg map[string]any) (viteDevOptions, error) {
 	if len(cfg) == 0 {
 		return viteDevOptions{}, fmt.Errorf("vite_dev_from_config: empty config")
 	}
 
 	dataDirRaw := cfgString(cfg, "data_dir", "data")
-	projectData, err := filepath.Abs(dataDirRaw)
-	if err != nil {
-		projectData = dataDirRaw
-	}
+	// Against the project root, not the process cwd: data_dir defaults to
+	// the relative "data", and filepath.Abs would anchor it to wherever
+	// `admin` was typed.
+	projectData := resolveUnder(root, dataDirRaw)
 	subdirs := cfgList(cfg, "data_subdirs")
 	backendEnv := cfgStringMap(cfgMap(cfg, "backend_extra_env"))
 
@@ -447,7 +457,7 @@ func makeViteDev(name string, action manifest.Action, m *manifest.Manifest, surf
 	preKill := cfgBool(cfg, "pre_kill", false)
 
 	return func(args []string) error {
-		h := newHost()
+		h := newHost(m)
 		if preKill {
 			if _, ok := resolveCommand(m, "kill"); ok {
 				if err := surf.Command("kill", args); err != nil {

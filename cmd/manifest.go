@@ -3,8 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -42,15 +40,21 @@ var reservedCmdVerbs = []string{"branch", "prs", "populate", "help", "completion
 // against its declared archetypes, using the same search path
 // (archetypesListCmd) uses: home archetypes, then this checkout's own.
 //
-// ok is false only when dir has no admin.toml at all — never paired with a
+// ok is false only when neither dir nor any of its ancestors has an
+// admin.toml at all — never paired with a
 // non-nil err — so a caller can tell "no manifest here" (no project commands
 // exist; an unrecognized word is simply unknown) apart from "a manifest is
 // here and it's broken" (a real error the caller should not swallow the same
 // way).
 func resolveProjectManifest(ctx context.Context, dir string) (m *manifest.Manifest, ok bool, err error) {
-	if _, statErr := os.Stat(filepath.Join(dir, manifest.Filename)); statErr != nil {
+	// The nearest admin.toml at or above dir, not dir's own: a project's
+	// commands mean the same thing from any directory inside it, and the
+	// root the walk lands on is what every action's subprocess runs in.
+	root, found := manifest.FindRoot(dir)
+	if !found {
 		return nil, false, nil
 	}
+	dir = root
 	// Before Load, not after: archetype.Resolve eagerly resolves env-bearing
 	// config (validate_url_refs, [log_bridge].hosts), so .env has to be in the
 	// environment already or those ${VAR:-default} refs fall back to their

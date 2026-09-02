@@ -27,7 +27,7 @@ func makeDocs(name string, action manifest.Action, m *manifest.Manifest, _ *Surf
 	}
 
 	return func(args []string) error {
-		h := newHost()
+		h := newHost(m)
 		if info, err := os.Stat(dirpath); err != nil || !info.IsDir() {
 			msg := "docs: no such directory: " + dirpath + " (set [docs].dir)"
 			h.Err(msg)
