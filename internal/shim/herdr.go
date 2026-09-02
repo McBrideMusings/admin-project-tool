@@ -3,7 +3,6 @@ package shim
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 )
@@ -68,90 +67,6 @@ func OpenWorktreePaths() map[string]bool {
 		}
 	}
 	return open
-}
-
-// SplitPane opens a new sibling pane in the caller's current herdr tab,
-// rooted at cwd, without stealing focus from the calling pane — the
-// `herdr pane split --current --direction right --cwd <cwd> --no-focus`
-// invocation the herdr skill documents for "run an ordinary command in
-// another pane". It returns the new pane's ID (.result.pane.pane_id).
-//
-// Callers must check Available() first (as RunInPane's caller,
-// internal/kinds's herdr dispatch, does): SplitPane makes no availability
-// check of its own and simply fails if herdr isn't reachable, because
-// "--current" only resolves to something meaningful from inside a pane
-// herdr itself launched.
-func SplitPane(cwd string) (string, error) {
-	out, err := exec.Command("herdr", "pane", "split",
-		"--current", "--direction", "right", "--cwd", cwd, "--no-focus").Output()
-	if err != nil {
-		return "", err
-	}
-	var resp struct {
-		Result struct {
-			Pane struct {
-				PaneID string `json:"pane_id"`
-			} `json:"pane"`
-		} `json:"result"`
-	}
-	if jsonErr := json.Unmarshal(out, &resp); jsonErr != nil {
-		return "", jsonErr
-	}
-	if resp.Result.Pane.PaneID == "" {
-		return "", errors.New("herdr pane split: no pane_id in response")
-	}
-	return resp.Result.Pane.PaneID, nil
-}
-
-// RunInPane types command into paneID followed by Enter — `herdr pane run
-// <paneID> <command>` — and returns as soon as herdr has sent it, exactly
-// like a person typing the command and hitting return. It does not wait for
-// the command to finish or report its exit status; the pane runs
-// independently of this process from this point on.
-func RunInPane(paneID, command string) error {
-	return exec.Command("herdr", "pane", "run", paneID, command).Run()
-}
-
-// ClosePane closes paneID — `herdr pane close <paneID>` — the mechanism
-// behind the live-work registry's "kill" operation
-// (internal/livework.Ops.Kill): closing the pane is a clean, definitive
-// stop for both a bare long-running process and an agent worker, since
-// both are, at bottom, a herdr pane.
-func ClosePane(paneID string) error {
-	return exec.Command("herdr", "pane", "close", paneID).Run()
-}
-
-// FocusPane brings paneID's workspace and tab to the front — the mechanism
-// behind the live-work registry's "attach" operation
-// (internal/livework.Ops.Attach). herdr has no single verb to focus an
-// arbitrary pane by ID: `herdr pane focus` only moves focus in a direction
-// relative to a pane that already has it. A pane's workspace and tab ARE
-// each focusable directly by ID, and a pane is always visible within its
-// own tab once that tab is frontmost, so focusing both is the real
-// mechanism "attaching" needs.
-func FocusPane(paneID string) error {
-	out, err := exec.Command("herdr", "pane", "get", paneID).Output()
-	if err != nil {
-		return err
-	}
-	var resp struct {
-		Result struct {
-			Pane struct {
-				WorkspaceID string `json:"workspace_id"`
-				TabID       string `json:"tab_id"`
-			} `json:"pane"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(out, &resp); err != nil {
-		return err
-	}
-	if resp.Result.Pane.WorkspaceID == "" || resp.Result.Pane.TabID == "" {
-		return fmt.Errorf("herdr pane get %s: missing workspace_id/tab_id", paneID)
-	}
-	if err := exec.Command("herdr", "workspace", "focus", resp.Result.Pane.WorkspaceID).Run(); err != nil {
-		return err
-	}
-	return exec.Command("herdr", "tab", "focus", resp.Result.Pane.TabID).Run()
 }
 
 // Available reports whether repo is running in a herdr pane with the herdr CLI
