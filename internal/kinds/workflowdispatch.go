@@ -16,10 +16,12 @@
 //     under this dispatch by something outside it (a cleanup sweeper, a
 //     person), and the fix is to fail that target loudly, never to
 //     silently recreate one at a base nobody chose;
-//   - running the configured herdr agent in each, no more than the
+//   - opening each target's pane through the project's declared [terminal]
+//     launcher (ADR-0020) and running the configured agent in it through a
+//     compiled-in internal/agent.Driver (ADR-0021), no more than the
 //     ceiling at once, the rest queued and started as slots free;
-//   - recording every running target in internal/livework with its pane
-//     handle before DispatchTargets returns for it.
+//   - recording every running target in internal/livework with its
+//     launcher handle before DispatchTargets returns for it.
 //
 // It never deletes a worktree, before, during, or after dispatch. Per this
 // ticket's scope (and the project CLAUDE.md's "a worker cannot remove its
@@ -32,11 +34,12 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/agent"
+	_ "github.com/McBrideMusings/admin-project-tool/internal/agent/herdr" // registers the herdr Driver
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/create"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
-	"github.com/McBrideMusings/admin-project-tool/internal/shim"
 )
 
 // DefaultCeiling applies when neither the workflow action nor the project
@@ -61,52 +64,28 @@ type Target struct {
 type TargetResult struct {
 	Target       string
 	WorktreePath string
-	// PaneID is the herdr pane the target's agent ran in — the acceptance
-	// criterion's "appears in the live registry with its pane handle" —
-	// set whenever a pane was actually opened, even if the agent itself
-	// then failed to start or the prompt stalled.
-	PaneID string
+	// Handle is the launcher handle the target's agent ran in — the
+	// acceptance criterion's "appears in the live registry with its pane
+	// handle" — set whenever a pane was actually opened, even if the agent
+	// itself then failed to start or the prompt stalled.
+	Handle string
 	Err    error
 }
 
-// startAgent is DispatchTargets's launch step: open a pane in dir and
-// start kind running in it as name, returning the pane's ID as soon as the
-// agent is up. Swapped out in tests so DispatchTargets is exercised
-// without a real herdr binary.
-var startAgent = func(dir, name, kind string) (paneID string, err error) {
-	if !shim.Available() {
-		return "", shim.ErrHerdrUnavailable
-	}
-	paneID, err = shim.SplitPane(dir)
-	if err != nil {
-		return "", fmt.Errorf("opening pane: %w", err)
-	}
-	if err := shim.StartAgent(name, kind, paneID); err != nil {
-		return paneID, fmt.Errorf("starting agent %q: %w", kind, err)
-	}
-	return paneID, nil
+// spawnPane is DispatchTargets's pane-opening step: reach the project's
+// declared [terminal] launcher with an EMPTY ADMIN_CMD (the pane lands at
+// an interactive shell prompt, exactly what `herdr agent start` requires)
+// and ADMIN_CWD set to the target's own worktree, returning the opaque
+// launcher handle. Swapped out in tests so DispatchTargets is exercised
+// without a real launcher.
+var spawnPane = func(cwd string, ctx launchCtx, t config.Terminal) (string, error) {
+	return spawnLauncher("", cwd, ctx, t)
 }
 
-// runAgent is DispatchTargets's wait step: hand prompt to the already-
-// running agent name and block until herdr reports it has settled
-// (idle/done/blocked). Returning is what frees the target's concurrency-
-// ceiling slot, so this blocking on the real `agent prompt --wait`
-// lifecycle transition is not incidental — it is the entire mechanism the
-// ceiling relies on to know a slot is free. Swapped out in tests, like
-// startAgent, so the ceiling's queueing is verified deterministically
-// instead of against a real long-running agent.
-var runAgent = func(name, prompt string) error {
-	if strings.TrimSpace(prompt) == "" {
-		return nil
-	}
-	return shim.PromptAndWait(name, prompt)
-}
-
-// agentStatus is dispatchOne's post-wait status check, swapped out in tests
-// like startAgent/runAgent. See shim.AgentStatus's doc comment for why this
-// is needed at all: PromptAndWait's return alone can't tell "the agent hit
-// an approval/question prompt" apart from "the agent actually finished".
-var agentStatus = shim.AgentStatus
+// selectDriver resolves the compiled-in internal/agent.Driver that talks to
+// whatever a target's pane holds — ADR-0021's "protocol is code" half.
+// Swapped out in tests like spawnPane.
+var selectDriver = agent.Select
 
 // ResolveAgent returns the herdr agent kind a workflow target runs: the
 // action's own `agent` key when it is a non-empty string, else the
@@ -166,6 +145,25 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 		}
 		return results
 	}
+	if cfg.Terminal.Spawn == "" {
+		missing := fmt.Errorf(
+			"action %q: kind=\"workflow\" dispatch requires a [terminal] launcher — "+
+				"declare spawn/attach/kill in admin.toml (ADR-0020)", actionName)
+		for i, t := range targets {
+			results[i] = TargetResult{Target: t.Name, Err: missing}
+		}
+		return results
+	}
+	drv, ok := selectDriver()
+	if !ok {
+		missing := fmt.Errorf(
+			"action %q: no agent driver available — is the configured launcher's underlying "+
+				"tool (e.g. herdr) reachable?", actionName)
+		for i, t := range targets {
+			results[i] = TargetResult{Target: t.Name, Err: missing}
+		}
+		return results
+	}
 	ceiling := Ceiling(cfg)
 
 	// Phase 1: create every target's worktree up front, seeded with the
@@ -187,7 +185,7 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 	// size IS the ceiling: sending to it blocks once `ceiling` goroutines
 	// already hold a slot, which is exactly "targets beyond it queue and
 	// start as slots free" — a slot frees when dispatchOne's blocking
-	// runAgent call returns, not when the pane merely opens.
+	// drv.Prompt call returns, not when the pane merely opens.
 	sem := make(chan struct{}, ceiling)
 	var wg sync.WaitGroup
 	for i, t := range targets {
@@ -199,7 +197,7 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 		go func(i int, t Target, wt create.Result) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			results[i] = dispatchOne(actionName, agentKind, t, wt)
+			results[i] = dispatchOne(actionName, agentKind, cfg.Terminal, drv, t, wt)
 		}(i, t, worktrees[i])
 	}
 	wg.Wait()
@@ -208,27 +206,35 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 
 // dispatchOne runs one target's agent once its ceiling slot is held: it
 // re-verifies wt is still a real worktree (never recreating one that
-// isn't), starts the agent session, and records the running target in the
-// live-work registry with its pane handle before returning — mirroring
-// internal/kinds/pane.go's recordLiveWork for the single-pane LongRunning
-// case, but keyed on the pane this dispatch itself opened rather than one
-// RunActionRouted opened for it.
-func dispatchOne(actionName, agentKind string, t Target, wt create.Result) TargetResult {
+// isn't), opens a pane through the project's [terminal] launcher, starts
+// the agent session in it through drv, and records the running target in
+// the live-work registry with its launcher handle before returning —
+// mirroring internal/kinds/pane.go's recordLiveWork for the single-pane
+// LongRunning case, but keyed on the pane this dispatch itself opened
+// rather than one RunActionRouted opened for it.
+func dispatchOne(actionName, agentKind string, t config.Terminal, drv agent.Driver, tgt Target, wt create.Result) TargetResult {
 	if !create.IsRegisteredWorktree(context.Background(), wt.Path) {
 		return TargetResult{
-			Target:       t.Name,
+			Target:       tgt.Name,
 			WorktreePath: wt.Path,
 			Err: fmt.Errorf(
 				"worktree %s for target %q no longer exists — not recreating it at a base "+
 					"nobody chose; something removed it after it was created and before its "+
-					"turn to dispatch", wt.Path, t.Name),
+					"turn to dispatch", wt.Path, tgt.Name),
 		}
 	}
 
-	agentName := agentSessionName(actionName, t.Name)
-	paneID, err := startAgent(wt.Path, agentName, agentKind)
+	agentName := agentSessionName(actionName, tgt.Name)
+
+	// spawnPane opens the pane with an EMPTY ADMIN_CMD, ADMIN_CWD set to
+	// this target's own worktree — the pane lands at an interactive shell
+	// prompt, exactly what drv.Start requires.
+	handle, err := spawnPane(wt.Path, launchCtxFromEnv(actionName), t)
 	if err != nil {
-		return TargetResult{Target: t.Name, WorktreePath: wt.Path, PaneID: paneID, Err: err}
+		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Err: fmt.Errorf("opening pane: %w", err)}
+	}
+	if err := drv.Start(handle, agentKind, nil); err != nil {
+		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Handle: handle, Err: fmt.Errorf("starting agent %q: %w", agentKind, err)}
 	}
 
 	// Registered as soon as a real pane exists to key it on and BEFORE the
@@ -237,22 +243,23 @@ func dispatchOne(actionName, agentKind string, t Target, wt create.Result) Targe
 	// means a reader of the registry mid-dispatch, not only after every
 	// target has finished.
 	//
-	// Keyed on agentName, not paneID: agentName is stable across a Retry
-	// (which starts a new agent under the same name in a new pane), so the
-	// entry Retry re-adds under this same ID replaces this one in place
-	// rather than appearing as a second row beside a stale failed entry.
+	// Keyed on agentName, not the handle: agentName is stable across a
+	// Retry (which starts a new agent under the same name in a new pane),
+	// so the entry Retry re-adds under this same ID replaces this one in
+	// place rather than appearing as a second row beside a stale failed
+	// entry.
 	e := &livework.Entry{
 		ID:     agentName,
 		Name:   actionName,
 		Kind:   "workflow",
-		Handle: paneID,
-		Via:    "herdr",
+		Handle: handle,
+		Via:    "terminal",
 		Worker: &livework.WorkerInfo{Branch: wt.Branch, Worktree: wt.Path},
 	}
 	e.Ops = livework.Ops{
-		Attach: func() error { return shim.FocusPane(e.Handle) },
+		Attach: func() error { return runLauncherShell(t.Attach, e.Handle) },
 		Kill: func() error {
-			if err := shim.ClosePane(e.Handle); err != nil {
+			if err := runLauncherShell(t.Kill, e.Handle); err != nil {
 				return err
 			}
 			livework.Default.SetState(e.ID, livework.StateExited, nil)
@@ -263,30 +270,32 @@ func dispatchOne(actionName, agentKind string, t Target, wt create.Result) Targe
 		// there's nothing to recreate) in the background and returns
 		// immediately, matching how DispatchTargets originally launched it.
 		Retry: func() error {
-			go dispatchOne(actionName, agentKind, t, wt)
+			go dispatchOne(actionName, agentKind, t, drv, tgt, wt)
 			return nil
 		},
 	}
 	if err := livework.Default.Add(e); err != nil {
-		return TargetResult{Target: t.Name, WorktreePath: wt.Path, PaneID: paneID, Err: err}
+		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Handle: handle, Err: err}
 	}
 
-	runErr := runAgent(agentName, t.Prompt)
-	if runErr != nil {
-		livework.Default.SetState(agentName, livework.StateFailed, runErr)
-		return TargetResult{Target: t.Name, WorktreePath: wt.Path, PaneID: paneID, Err: runErr}
+	if strings.TrimSpace(tgt.Prompt) != "" {
+		if err := drv.Prompt(handle, tgt.Prompt, []agent.Status{agent.StatusIdle, agent.StatusDone, agent.StatusBlocked}); err != nil {
+			livework.Default.SetState(agentName, livework.StateFailed, err)
+			return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Handle: handle, Err: err}
+		}
 	}
 
-	// PromptAndWait settles on idle, done, OR blocked — an agent waiting on
-	// an approval or question prompt returns exactly like one that actually
-	// finished, so the settled status has to be re-checked to tell "waiting
-	// on input" apart from "still working"/"done" without attaching.
-	if status, statusErr := agentStatus(agentName); statusErr == nil && status == "blocked" {
+	// Prompt settles on idle, done, OR blocked — an agent waiting on an
+	// approval or question prompt returns exactly like one that actually
+	// finished, so the settled status has to be re-checked to tell
+	// "waiting on input" apart from "still working"/"done" without
+	// attaching.
+	if info, infoErr := drv.Info(handle); infoErr == nil && info.Status == agent.StatusBlocked {
 		livework.Default.SetState(agentName, livework.StateWaiting, nil)
 	} else {
 		livework.Default.SetState(agentName, livework.StateExited, nil)
 	}
-	return TargetResult{Target: t.Name, WorktreePath: wt.Path, PaneID: paneID}
+	return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Handle: handle}
 }
 
 // agentSessionName derives a herdr agent name from the workflow action and
