@@ -124,6 +124,86 @@ func TestShellFailsOnUnresolvableVar(t *testing.T) {
 	}
 }
 
+// TestShellPTYAnswersAPromptWithAWholeLine is admin-cnxk's regression test:
+// kind="shell" with pty=true must give the child a real pseudo-terminal, so
+// a script that reads one line from stdin (grafana.ts's
+// process.stdin.once('data') on `Type "deploy" to continue:`) gets the
+// whole typed line in one read rather than the first stray byte to arrive.
+// h.Stdin is swapped for an os.Pipe (not a real terminal, so the raw-mode
+// handling is skipped) with the answer already written and closed — proving
+// the forwarding itself, independent of any host-terminal raw-mode dance.
+func TestShellPTYAnswersAPromptWithAWholeLine(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	if _, err := w.Write([]byte("deploy\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	w.Close()
+
+	orig := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = orig })
+
+	runner, err := makeShell("deploy", manifest.Action{
+		"run": `read -r line; if [ "$line" = "deploy" ]; then touch deployed.txt; else exit 1; fi`,
+		"pty": true,
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("makeShell: %v", err)
+	}
+	runErr := runner(nil)
+	os.Stdin = orig
+	if runErr != nil {
+		t.Fatalf("runner() = %v, want nil", runErr)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "deployed.txt")); err != nil {
+		t.Fatalf("deployed.txt was not created — the answer did not reach the child whole: %v", err)
+	}
+}
+
+// TestShellPTYWrongAnswerIsAnError is the failure-path twin of
+// TestShellPTYAnswersAPromptWithAWholeLine: an answer the child rejects must
+// still produce a non-nil error through the pty path, exactly as the
+// non-pty path already does for a non-zero exit.
+func TestShellPTYWrongAnswerIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	if _, err := w.Write([]byte("nope\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	w.Close()
+
+	orig := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = orig })
+
+	runner, err := makeShell("deploy", manifest.Action{
+		"run": `read -r line; if [ "$line" = "deploy" ]; then touch deployed.txt; else exit 1; fi`,
+		"pty": true,
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("makeShell: %v", err)
+	}
+	runErr := runner(nil)
+	os.Stdin = orig
+	if runErr == nil {
+		t.Fatal("runner() = nil, want an error for a rejected answer")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "deployed.txt")); err == nil {
+		t.Error("deployed.txt was created for a wrong answer")
+	}
+}
+
 // TestShellPassthroughAppendsQuotedArgs proves kind="shell-passthrough"
 // appends Runner args to `run`, each shell-quoted so an argument containing
 // shell metacharacters cannot be reinterpreted.

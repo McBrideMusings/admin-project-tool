@@ -29,6 +29,7 @@ func makeShell(name string, action manifest.Action, m *manifest.Manifest, _ *Sur
 	run, _ := actionString(action, "run")
 	rawURLs := actionURLs(action)
 	footerVal, hasFooter := actionBool(action, "footer")
+	ptyVal, _ := actionBool(action, "pty")
 	return func(args []string) error {
 		expanded, err := manifest.ResolveEnv(run)
 		if err != nil {
@@ -43,7 +44,12 @@ func makeShell(name string, action manifest.Action, m *manifest.Manifest, _ *Sur
 		f := enterFrame(h, name, rawURLs, hasFooter, footerVal, m)
 		defer frame.Deactivate(f)
 		h.Info("running: " + cmd)
-		res, err := h.RunCmd(cmd, luahost.RunCmdOptions{CaptureLog: true})
+		var res luahost.RunCmdResult
+		if ptyVal {
+			res, err = h.RunCmdPTY(cmd, luahost.RunCmdOptions{CaptureLog: true})
+		} else {
+			res, err = h.RunCmd(cmd, luahost.RunCmdOptions{CaptureLog: true})
+		}
 		if err != nil {
 			return fmt.Errorf("action %q: %w", name, err)
 		}
