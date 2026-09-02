@@ -443,6 +443,92 @@ func TestRowKeyDispatchAttachesWhenCommandAlreadyLive(t *testing.T) {
 	}
 }
 
+// dogfoodImplementManifest is admin-7wy5's exact declaration — the one this
+// repo's own (untracked) admin.toml carries: [commands.implement] routing
+// to a kind="workflow" action with over="selection" and agent="claude" set
+// on the action itself, bound to enter on bead rows. Named separately from
+// rowKeyWorkflowManifest (whose command is "review-branch") so a failure in
+// either test names the dogfood shape unambiguously.
+func dogfoodImplementManifest() *manifest.Manifest {
+	return &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"implement": {Desc: "Dispatch an agent over the selected bead(s) (ADR-0018 dogfood)", Steps: []string{"implement"}},
+		},
+		Actions: map[string]manifest.Action{
+			"implement": {"kind": "workflow", "over": "selection", "agent": "claude"},
+		},
+	}
+}
+
+// TestRowPairsDogfoodEnterAdvertisesImplementDesc is admin-7wy5's acceptance
+// criterion 2: with [keys.bead] enter = "implement" bound (the dogfood
+// declaration), the Beads-tab footer's ↵ pair carries the implement
+// command's own desc instead of the built-in "start work" label — the
+// ADR-0018 claim ("the footer shows the effective binding") exercised
+// against this ticket's specific declaration rather than a synthetic one.
+func TestRowPairsDogfoodEnterAdvertisesImplementDesc(t *testing.T) {
+	m := workTestModel(dogfoodImplementManifest())
+	m.active = tabBeads
+	m.beads = []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}}
+	m.rowKeys = map[keymap.RowKind]map[string]string{
+		keymap.Bead: {"enter": "implement"},
+	}
+	trackerCursorTo(t, &m, "proj-1")
+
+	got := m.rowPairs(keymap.Bead)
+	if got[1][0] != "↵" {
+		t.Fatalf("enter pair Display = %q, want \"↵\" (position preserved)", got[1][0])
+	}
+	if got[1][1] != "Dispatch an agent over the selected bead(s) (ADR-0018 dogfood)" {
+		t.Errorf("enter pair Label = %q, want the implement command's own desc, not the built-in \"start work\"", got[1][1])
+	}
+}
+
+// TestRowKeyDispatchDogfoodEnterRoutesToWorkflowNotBuiltinWorktree is
+// admin-7wy5's acceptance criterion 2's other half: with the dogfood
+// declaration bound and nothing selected, pressing enter on a bead row is a
+// rowKeyDispatch HIT that routes into rowKeyWorkflow (proven by the
+// resulting Cmd producing a workflowDispatchDoneMsg, the type only
+// rowKeyWorkflow's immediate-dispatch path ever produces) — never falling
+// through to dispatchCommandCmd's workDispatchStartedMsg, which is what the
+// pre-existing built-in "start work" open-a-worktree path would have run
+// before this binding existed.
+func TestRowKeyDispatchDogfoodEnterRoutesToWorkflowNotBuiltinWorktree(t *testing.T) {
+	gotTargets := stubDispatchWorkflow(t, nil)
+
+	m := workTestModel(dogfoodImplementManifest())
+	m.active = tabBeads
+	m.beads = []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}}
+	m.trackerSelected = map[string]bool{}
+	m.rowKeys = map[keymap.RowKind]map[string]string{
+		keymap.Bead: {"enter": "implement"},
+	}
+	trackerCursorTo(t, &m, "proj-1")
+
+	mm, cmd, ok := m.rowKeyDispatch("enter")
+	if !ok {
+		t.Fatal("rowKeyDispatch(\"enter\") on the dogfood binding = miss, want hit")
+	}
+	rm := mm.(Model)
+	if rm.wfOpen {
+		t.Errorf("wfOpen = true on the immediate (empty-selection) path, want no overlay")
+	}
+	if cmd == nil {
+		t.Fatal("rowKeyDispatch returned ok=true with a nil Cmd")
+	}
+	msg := cmd()
+	done, ok := msg.(workflowDispatchDoneMsg)
+	if !ok {
+		t.Fatalf("dispatch Cmd produced a %T, want workflowDispatchDoneMsg (rowKeyWorkflow) — a %T would mean the built-in worktree path ran instead", msg, msg)
+	}
+	if done.name != "implement" {
+		t.Errorf("dispatched command = %q, want implement", done.name)
+	}
+	if len(*gotTargets) != 1 || (*gotTargets)[0].Name != "proj-1" {
+		t.Fatalf("dispatched targets = %v, want exactly [proj-1]", *gotTargets)
+	}
+}
+
 func containsEnv(env []string, kv string) bool {
 	for _, e := range env {
 		if e == kv {

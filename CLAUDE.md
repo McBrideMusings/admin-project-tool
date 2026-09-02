@@ -8,7 +8,7 @@ Runs per-project tasks from a short `admin.toml` manifest plus a library of comp
 
 `README.md` says a project commits only `admin.toml`. That describes how this tool will work **once it is public**, and it is deliberately left accurate for that future. It is not how things work today.
 
-Today the tool is private. An `admin.toml` sitting in a public repository advertises the tool, its verbs, and its manifest format, and the tool is not ready to be advertised. So `admin.toml` is caught by a **global** ignore rule on the developer's machine (`~/.config/git/ignore`), which applies to every repository at once rather than per-project. This repo is the single exception and tracks its own.
+Today the tool is private. An `admin.toml` sitting in a public repository advertises the tool, its verbs, and its manifest format, and the tool is not ready to be advertised. So `admin.toml` is caught by a **global** ignore rule on the developer's machine (`~/.config/git/ignore`), which applies to every repository at once rather than per-project. This repo used to be the single exception and track its own, but a pre-commit guard (added in 214ee57) now blocks every commit here while `admin.toml` sits in the index — so this repo's own manifest is untracked like every other project's, and nothing about it travels through git.
 
 Consequences that look like bugs and are not:
 
@@ -64,14 +64,14 @@ Tests that exercise full dispatch write a temp `admin.toml` and run it through `
 
 | Goal | Command |
 |---|---|
-| Validate this repo's `admin.toml` (parse + resolve) | `./admin-run build` (runs `admin-run check .`) |
+| Validate this repo's `admin.toml` (parse + resolve) | `go run . check .`, or the PATH `admin check .` |
 | Install / reinstall to `~/.admin/` | `bash install.sh`, or `admin deploy` to also provision the userscript |
 | Run full test suite | `./admin-run test` |
 | Build a standalone `./admin` for a project | `admin compile [DIR]` |
 
-Pre-install (or while developing the tool), invoke the interpreter directly with `./admin-run <verb-or-command>` instead of the PATH `admin`.
+Pre-install (or while developing the Python-only half of the tool — `new`, `compile`, and the six action kinds `admin-py` still owns), invoke the interpreter directly with `./admin-run <verb-or-command>` instead of the PATH `admin`. This repo's own `admin.toml` declares `kind = "workflow"` (admin-7wy5), which `admin-py`'s catalog does not know — so `./admin-run <anything>` in *this* repo now fails at manifest parse; validate it with the Go checker or the PATH `admin` instead.
 
-**Never `./admin <cmd>` in this repo.** That name belongs to an `admin compile` zipapp, which embeds a *frozen copy* of the manifest — so it runs whatever every command meant on the day it was built, with no warning that it is doing so. Nothing regenerates it: `admin-run check` validates and `admin compile` is the only writer. Use `./admin-run` here, or the PATH `admin`.
+**Never `./admin <cmd>` in this repo.** That name belongs to an `admin compile` zipapp, which embeds a *frozen copy* of the manifest — so it runs whatever every command meant on the day it was built, with no warning that it is doing so. Nothing regenerates it: `admin check` validates and `admin compile` is the only writer. Use the PATH `admin`, or `go run .`, here.
 
 ## Log bridge
 

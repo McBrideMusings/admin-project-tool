@@ -1120,3 +1120,77 @@ steps = ["noop"]
 		t.Fatalf("stderr %q does not report a clean pass", out)
 	}
 }
+
+// TestRunCheckAcceptsTheDogfoodDeclaration is admin-7wy5's acceptance
+// criterion 1, carried here because the real declaration lives only in this
+// repo's own untracked admin.toml (see CLAUDE.md's "admin.toml is NOT
+// committed" section) — nothing else makes it travel with the commit. This
+// writes the exact shape admin-7wy5 adds to that file: [commands.implement]
+// routing to a kind="workflow" action with over="selection" and agent=
+// "claude" set on the action itself (not [workflow].agent), plus
+// [keys.bead] enter = "implement" — and asserts the whole thing passes
+// `admin check`, with the expected enter-shadow line reported on stderr but
+// never contributing to the exit code (validate/keys.go's shadow contract,
+// exercised end-to-end here rather than only at the validate.RowKeys unit
+// level).
+func TestRunCheckAcceptsTheDogfoodDeclaration(t *testing.T) {
+	dir := writeCheckManifest(t, `project_name = "checktest"
+
+[commands.implement]
+desc     = "Dispatch an agent over the selected bead(s) (ADR-0018 dogfood)"
+steps    = ["implement"]
+group    = 2
+priority = 60
+
+[actions.implement]
+kind  = "workflow"
+desc  = "Dispatch a claude agent over the selected bead(s)"
+over  = "selection"
+agent = "claude"
+
+[keys.bead]
+enter = "implement"
+`)
+	err, out := runCheckCapturingStderr(t, dir)
+	if err != nil {
+		t.Fatalf("runCheck = %v, want nil (the dogfood declaration is valid)", err)
+	}
+	if !strings.Contains(out, "keys.bead.enter") || !strings.Contains(out, "shadows") {
+		t.Fatalf("stderr %q does not report the enter shadow", out)
+	}
+
+	// checkRowKeys itself: the shadow is reported, never an error.
+	m, ok, err := resolveProjectManifest(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("resolveProjectManifest = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("resolveProjectManifest ok=false, want true")
+	}
+	shadows, rkErr := checkRowKeys(m)
+	if rkErr != nil {
+		t.Fatalf("checkRowKeys = %v, want nil", rkErr)
+	}
+	found := false
+	for _, s := range shadows {
+		if strings.Contains(s, "keys.bead.enter") && strings.Contains(s, "shadows") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("checkRowKeys shadows = %v, want one naming keys.bead.enter", shadows)
+	}
+
+	// The action itself resolves to a selection-sourced workflow with its
+	// own agent, matching kinds.ResolveAgent's precedence rule.
+	target, err := kinds.ParseWorkflowOver("implement", m.Actions["implement"])
+	if err != nil {
+		t.Fatalf("ParseWorkflowOver(implement) = %v, want nil", err)
+	}
+	if target.Source != kinds.WorkflowSourceSelection {
+		t.Fatalf("implement: Source = %v, want WorkflowSourceSelection", target.Source)
+	}
+	if agent, _ := m.Actions["implement"]["agent"].(string); agent != "claude" {
+		t.Fatalf("implement action's agent = %q, want \"claude\"", agent)
+	}
+}
