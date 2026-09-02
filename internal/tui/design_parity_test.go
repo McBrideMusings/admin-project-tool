@@ -66,7 +66,7 @@ func protoModel() Model {
 	}
 	m.identity = config.Identity{Login: "pierce", Emails: []string{"pierce@example.com"}}
 	m.manifest = &manifest.Manifest{
-		Tracker: "github", HasTracker: true,
+		Trackers: []string{"github"}, HasTracker: true,
 		UsesPullRequests: true, HasUsesPullRequests: true,
 	}
 	m.haveLocal = true

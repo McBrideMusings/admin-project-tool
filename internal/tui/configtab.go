@@ -103,7 +103,7 @@ func (m Model) manifestConfigRows() []rowItem {
 
 	tracker := declared{origin: m.keyOrigin["tracker"]}
 	if m.manifest.HasTracker {
-		tracker.value = m.manifest.Tracker
+		tracker.value = strings.Join(m.manifest.Trackers, ", ")
 	}
 	pr := declared{origin: m.keyOrigin["uses_pull_requests"]}
 	if m.manifest.HasUsesPullRequests {

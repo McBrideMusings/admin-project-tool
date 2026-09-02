@@ -387,21 +387,37 @@ func TestLoadRepoOwnManifest(t *testing.T) {
 // TestParseTrackerAndUsesPullRequests covers admin-3rgp.21's two new
 // top-level manifest keys: declared, undeclared (Has* stays false so the
 // Config tab can tell "false" from "never set"), and rejected wrong types.
+// admin-j00d turned `tracker` from a bare string into a list — this test
+// exercises the single-member and multi-member list forms, plus every
+// rejected shape: a bare string, an empty list, an unknown member, and a
+// duplicate member.
 func TestParseTrackerAndUsesPullRequests(t *testing.T) {
 	dir := writeManifest(t, `
 project_name       = "widget-app"
-tracker            = "beads"
+tracker            = ["beads"]
 uses_pull_requests = true
 `)
 	m, err := Load(dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !m.HasTracker || m.Tracker != "beads" {
-		t.Errorf("Tracker = %q, HasTracker = %v, want \"beads\", true", m.Tracker, m.HasTracker)
+	if !m.HasTracker || len(m.Trackers) != 1 || m.Trackers[0] != "beads" {
+		t.Errorf("Trackers = %v, HasTracker = %v, want [\"beads\"], true", m.Trackers, m.HasTracker)
 	}
 	if !m.HasUsesPullRequests || !m.UsesPullRequests {
 		t.Errorf("UsesPullRequests = %v, HasUsesPullRequests = %v, want true, true", m.UsesPullRequests, m.HasUsesPullRequests)
+	}
+
+	dir3 := writeManifest(t, `
+project_name = "widget-app"
+tracker      = ["beads", "github"]
+`)
+	m3, err := Load(dir3)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !m3.HasTracker || len(m3.Trackers) != 2 || m3.Trackers[0] != "beads" || m3.Trackers[1] != "github" {
+		t.Errorf("Trackers = %v, want [\"beads\", \"github\"] in that order", m3.Trackers)
 	}
 
 	dir2 := writeManifest(t, `project_name = "widget-app"`)
@@ -421,8 +437,11 @@ uses_pull_requests = true
 		toml       string
 		wantSubstr string
 	}{
-		{"tracker not a string", "project_name = \"x\"\ntracker = 3\n", "'tracker' must be a non-empty string"},
-		{"tracker empty string", "project_name = \"x\"\ntracker = \"\"\n", "'tracker' must be a non-empty string"},
+		{"tracker bare string", "project_name = \"x\"\ntracker = \"beads\"\n", "'tracker' must be a list"},
+		{"tracker not a string or list", "project_name = \"x\"\ntracker = 3\n", "'tracker' must be a list of strings"},
+		{"tracker empty list", "project_name = \"x\"\ntracker = []\n", "'tracker' must not be an empty list"},
+		{"tracker unknown member", "project_name = \"x\"\ntracker = [\"jira\"]\n", `unknown value "jira"`},
+		{"tracker duplicate member", "project_name = \"x\"\ntracker = [\"beads\", \"beads\"]\n", `lists "beads" more than once`},
 		{"uses_pull_requests not a bool", "project_name = \"x\"\nuses_pull_requests = \"yes\"\n", "'uses_pull_requests' must be true or false"},
 	}
 	for _, c := range cases {

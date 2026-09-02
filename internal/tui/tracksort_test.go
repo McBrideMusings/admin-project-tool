@@ -243,7 +243,7 @@ func TestSortIssuesByEmptyAndSingle(t *testing.T) {
 func trackSortHeaderModel() Model {
 	m := seededModel()
 	m.width, m.height = 110, 30
-	m.manifest = &manifest.Manifest{Tracker: "beads", HasTracker: true}
+	m.manifest = &manifest.Manifest{Trackers: []string{"beads"}, HasTracker: true}
 	m.active = tabBeads
 	m.hasBeads, m.beadsProbed, m.haveBeads = true, true, true
 	m.beads = beadSortFixture()
@@ -302,7 +302,7 @@ func TestSortHintInFooter(t *testing.T) {
 	}
 
 	m.active = tabIssues
-	m.manifest = &manifest.Manifest{Tracker: "github", HasTracker: true, UsesPullRequests: true, HasUsesPullRequests: true}
+	m.manifest = &manifest.Manifest{Trackers: []string{"github"}, HasTracker: true, UsesPullRequests: true, HasUsesPullRequests: true}
 	bar = stripANSI(m.keybar(m.width))
 	if !strings.Contains(bar, "s sort") {
 		t.Errorf("Issues footer missing the s/sort hint: %q", bar)

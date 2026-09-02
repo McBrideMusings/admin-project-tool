@@ -126,6 +126,11 @@ func (m Model) startWorkflowConfirm(wd *workRowData) (tea.Model, tea.Cmd) {
 		m.setStatus(wd.cmdName+" is selection-sourced — it cannot run bare", cYellow)
 		return m, nil
 	}
+	tracker, err := wd.workflow.ResolveTracker(wd.cmdName, m.trackers())
+	if err != nil {
+		m.setStatus(err.Error(), cYellow)
+		return m, nil
+	}
 	m.wfResolving = true
 	m.wfOpen = false
 	m.wfFromSelection = false
@@ -137,7 +142,7 @@ func (m Model) startWorkflowConfirm(wd *workRowData) (tea.Model, tea.Cmd) {
 	m.wfAgent = ""
 	m.wfCeiling = 0
 	m.setStatus("resolving "+wd.workflow.Query+"…", cDim)
-	return m, resolveWorkflowCmd(m.repoRoot, m.trackerKind(), m.nwo, wd.cmdName, wd.workflowAction, wd.workflow.Query)
+	return m, resolveWorkflowCmd(m.repoRoot, tracker, m.nwo, wd.cmdName, wd.workflowAction, wd.workflow.Query)
 }
 
 // workflowResolved applies a resolution result to the model. A msg for a

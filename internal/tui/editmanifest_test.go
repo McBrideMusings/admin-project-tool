@@ -100,15 +100,15 @@ func TestFSChangeRereadsTheManifest(t *testing.T) {
 	writeTestManifest(t, dir, editTestManifest)
 
 	m := New(context.Background(), dir, "owner/repo", "main", "main")
-	if m.trackerKind() != "" {
-		t.Fatalf("tracker = %q before the edit, want undeclared", m.trackerKind())
+	if len(m.trackers()) != 0 {
+		t.Fatalf("trackers = %v before the edit, want undeclared", m.trackers())
 	}
 
-	writeTestManifest(t, dir, "tracker = \"beads\"\n"+editTestManifest)
+	writeTestManifest(t, dir, "tracker = [\"beads\"]\n"+editTestManifest)
 	updated, _ := m.Update(fsChangedMsg{})
 	mm := updated.(Model)
-	if mm.trackerKind() != "beads" {
-		t.Errorf("tracker = %q after the fs change, want %q", mm.trackerKind(), "beads")
+	if !mm.hasTracker("beads") {
+		t.Errorf("trackers = %v after the fs change, want [\"beads\"]", mm.trackers())
 	}
 	if !mm.manifestOK || mm.manifestErr != "" {
 		t.Errorf("manifestOK = %v, err = %q after a valid external edit", mm.manifestOK, mm.manifestErr)
