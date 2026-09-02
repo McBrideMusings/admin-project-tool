@@ -90,7 +90,9 @@ func runAppleVerb(verb, action string, cfg map[string]any, args []string, m *man
 	case "dev_tv":
 		return appleDevSimulator(cfg, h, "tv", f)
 	case "dev_device":
-		return appleDevDevice(cfg, h, f)
+		return appleDevDevice(cfg, h, "ios", f)
+	case "dev_device_tv":
+		return appleDevDevice(cfg, h, "tv", f)
 	case "deploy_mac":
 		return appleDeployMac(cfg, h, f)
 	case "deploy_ios":
