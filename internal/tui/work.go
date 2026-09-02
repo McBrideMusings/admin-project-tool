@@ -660,20 +660,22 @@ func (m Model) workRows() []rowItem {
 	}
 
 	var rows []rowItem
-	if len(cmdRows) > 0 {
-		rows = append(rows, headerRow("Commands"))
+	rows = append(rows, headerRow("Commands"))
+	if len(cmdRows) == 0 {
+		rows = append(rows, rowItem{kind: rowText, label: "admin.toml declares no commands"})
+	} else {
 		for _, cr := range cmdRows {
 			item := m.commandRowItem(cr, byName)
 			rows = append(rows, item)
 			rows = append(rows, targetRows(item)...)
 		}
 	}
+
+	rows = append(rows, blankRow(), headerRow("Workers"))
 	workers := liveWorkers()
-	if len(workers) > 0 {
-		if len(rows) > 0 {
-			rows = append(rows, blankRow())
-		}
-		rows = append(rows, headerRow("Workers"))
+	if len(workers) == 0 {
+		rows = append(rows, rowItem{kind: rowText, label: "no workers running — dispatch a command to start one"})
+	} else {
 		for _, e := range workers {
 			rows = append(rows, rowItem{
 				kind:  rowWorker,
@@ -681,9 +683,6 @@ func (m Model) workRows() []rowItem {
 				work:  &workRowData{worker: e},
 			})
 		}
-	}
-	if len(rows) == 0 {
-		return []rowItem{{kind: rowCenter, label: "nothing here yet — admin.toml declares no commands"}}
 	}
 	return rows
 }
