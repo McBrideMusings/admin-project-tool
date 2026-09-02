@@ -169,12 +169,13 @@ func recordLiveWork(name, kind, handle string, args []string, ctx launchCtx, t c
 		ID:     name,
 		Name:   name,
 		Kind:   kind,
-		PaneID: handle,
+		Handle: handle,
+		Via:    "terminal",
 	}
 	e.Ops = livework.Ops{
-		Attach: func() error { return runLauncherShell(t.Attach, e.PaneID) },
+		Attach: func() error { return runLauncherShell(t.Attach, e.Handle) },
 		Kill: func() error {
-			if err := runLauncherShell(t.Kill, e.PaneID); err != nil {
+			if err := runLauncherShell(t.Kill, e.Handle); err != nil {
 				return err
 			}
 			livework.Default.SetState(e.ID, livework.StateExited, nil)

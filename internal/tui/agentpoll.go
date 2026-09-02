@@ -64,11 +64,11 @@ type agentStatusMsg struct {
 // dispatchOne (internal/kinds/workflowdispatch.go) is the only producer of a
 // herdr-addressed entry today: it keys the entry's ID on agentSessionName,
 // sets Kind to "workflow", and always carries a non-nil Worker alongside a
-// non-empty PaneID. A hosted-pty entry (kinds/hostedpty.go) sets PTYID and
-// leaves Worker nil, so it never matches and is skipped without a query or
-// an error.
+// non-empty Via ("herdr"). A hosted-pty entry (kinds/hostedpty.go) leaves
+// Via empty and Worker nil, so it never matches and is skipped without a
+// query or an error.
 func agentNameFor(e *livework.Entry) string {
-	if e.Kind == "workflow" && e.PaneID != "" && e.Worker != nil {
+	if e.Kind == "workflow" && e.Via != "" && e.Worker != nil {
 		return e.ID
 	}
 	return ""
@@ -90,7 +90,7 @@ func pollAgentStatusCmd() tea.Cmd {
 		// List returns live *Entry pointers, not copies, so State is read back
 		// through the State() accessor rather than e.State directly — the same
 		// race livestate_race_test.go guards against for every other reader.
-		// Kind/PaneID/Worker are never mutated after Add, so agentNameFor reads
+		// Kind/Via/Worker are never mutated after Add, so agentNameFor reads
 		// them off the pointer safely.
 		var targets []*livework.Entry
 		for _, e := range livework.Default.List() {

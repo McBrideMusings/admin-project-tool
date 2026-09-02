@@ -401,8 +401,8 @@ func TestRowKeyDispatchAttachesWhenCommandAlreadyLive(t *testing.T) {
 	attached := false
 	live := &livework.Entry{
 		ID: "rowkeylive", Name: "rowkeylive", State: livework.StateRunning,
-		PaneID: "pane-rowkeylive",
-		Ops:    livework.Ops{Attach: func() error { attached = true; return nil }},
+		Handle: "pane-rowkeylive", Via: "terminal",
+		Ops: livework.Ops{Attach: func() error { attached = true; return nil }},
 	}
 	if err := livework.Default.Add(live); err != nil {
 		t.Fatalf("Add: %v", err)

@@ -807,18 +807,19 @@ func (m Model) activateCommandTarget(wd *workRowData) (tea.Model, tea.Cmd) {
 	return m, dispatchCommandCmd(m.manifest, m.width, m.height, wd.cmdName, nil, wd.targetKey)
 }
 
-// attachEntry resolves e's attach through the registry — pane focus for a
-// pane-addressed entry, the terminal view for a pty-addressed one (see
-// livework.Registry.Attach). A nil e is a silent no-op, matching every
-// other action here that requires a live row to act on.
+// attachEntry resolves e's attach through the registry — the terminal view
+// for an entry on the dashboard's own hosted pty (Via empty), the project's
+// declared [terminal] attach command for one dispatched through a launcher
+// (Via set) — see livework.Registry.Attach. A nil e is a silent no-op,
+// matching every other action here that requires a live row to act on.
 //
-// A pty-addressed entry's Attach call reaches installTerminalOpener's
+// A hosted-pty entry's Attach call reaches installTerminalOpener's
 // callback synchronously (terminalview.go), which can only record the
-// requested ptyID — it cannot mutate this value-type Model. Draining that
+// requested handle — it cannot mutate this value-type Model. Draining that
 // recording right after Attach succeeds is what completes the transition
-// into the terminal view; a pane-addressed entry's Attach never records
-// anything, so takePendingTerminal reports false and this falls through to
-// the same no-op return it always had.
+// into the terminal view; a launcher-dispatched entry's Attach shells out
+// instead and records nothing, so takePendingTerminal reports false and
+// this falls through to the same no-op return it always had.
 func (m Model) attachEntry(e *livework.Entry) (tea.Model, tea.Cmd) {
 	if e == nil {
 		return m, nil

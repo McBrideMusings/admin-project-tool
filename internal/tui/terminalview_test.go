@@ -98,7 +98,7 @@ func registerFakePTYEntry(t *testing.T, cmdName string, ring *livework.Ring, rec
 		ID:     cmdName,
 		Name:   cmdName,
 		Kind:   "hosted-pty",
-		PTYID:  cmdName + "-pty",
+		Handle: cmdName + "-pty",
 		State:  livework.StateRunning,
 		Output: ring,
 		Ops: livework.Ops{
