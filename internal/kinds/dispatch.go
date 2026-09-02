@@ -12,10 +12,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/guards"
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
-	"github.com/McBrideMusings/admin-project-tool/internal/shim"
 )
 
 // pureRoutingKeys are the action-only fields ADR-0003
@@ -119,10 +119,10 @@ type Surface struct {
 
 // Action runs another declared action from inside a running Runner, on s's
 // own surface. A CLI run's surface routes through RunActionRouted, so a
-// nested long-running action still earns its own pane; a hosted run's routes
+// nested detached action still reaches the launcher; a hosted run's routes
 // through runActionInline, so it cannot. A Runner naming RunActionRouted
 // directly would decide that question for its caller and would put
-// dispatchToPane back on the hosted entry point's call graph.
+// dispatchToLauncher back on the hosted entry point's call graph.
 //
 // A nil receiver is legal in Go and is exactly the case where a factory's
 // Runner is invoked directly, outside any dispatch — s.Action still returns
@@ -225,7 +225,7 @@ func runAction(m *manifest.Manifest, r *Registry, name string, args []string, ne
 	return runner(args)
 }
 
-// RunActionRouted is admin-3rgp.17's lifetime-aware entry point: what the
+// RunActionRouted is admin-ysxr.2's detach-aware entry point: what the
 // plain-CLI producer dispatches with. RunCommand hands it to the shared step
 // loop, and RunAction builds the Surface it hands the factory from it, so a
 // multi-target target delegating to another action (`action = "other"`)
@@ -236,72 +236,69 @@ func runAction(m *manifest.Manifest, r *Registry, name string, args []string, ne
 // own commands and dispatches through RunCommandHosted, from which this
 // function is unreachable.
 //
-// When name's declared kind is Lifetime: LongRunning (internal/kinds
-// catalog.go) and a herdr pane is available (internal/shim.Available()), it
-// dispatches into a new pane and returns immediately — the action's own
-// Runner never executes in this process at all; it executes in the pane,
-// reached via the hidden "__run-action" re-entry command. That pane's ID is
-// recorded in internal/livework's process-wide registry.
+// When name's action carries `detach = true` (ADR-0020) and the resolved
+// manifest declares a [terminal] launcher, it dispatches through that
+// launcher and returns immediately — the action's own Runner never
+// executes in this process at all; it executes wherever the launcher's
+// spawn command put it, reached via the hidden "__run-action" re-entry
+// command. The launcher's printed handle is recorded in internal/livework's
+// process-wide registry.
 //
 // In every other case it falls through to RunAction and runs inline, in
 // the current frame:
 //
-//   - A Transient kind, or an undeclared action (RunAction below produces
-//     the right "not declared" error for that) — never reached the pane
-//     path at all.
-//   - A LongRunning kind with shim.ErrHerdrUnavailable — herdr simply
-//     isn't usable here (HERDR_ENV unset, or no herdr on PATH). This is
-//     the default path in practice and stays completely silent: no
-//     warning, nothing printed, nothing logged. Every manifest without
-//     HERDR_ENV=1 must see zero behaviour change from before this ticket.
-//   - A LongRunning kind where herdr IS available but the split itself
-//     failed — daemon not running, workspace gone, split refused
-//     (admin-3rgp.46). This is a genuine failure worth knowing about, but
-//     "the multiplexer hiccuped" must never be the reason a dev loop dies:
-//     it prints exactly one warning line naming the failure, then runs
-//     inline exactly like the silent-fallback case.
+//   - `detach` absent or false, or an undeclared action (RunAction below
+//     produces the right "not declared" error for that) — never reached
+//     the launcher path at all.
+//   - `detach = true` with no [terminal] declared — the multiplexer being
+//     absent must never be why a dev loop doesn't start. This is the
+//     default path in practice and stays completely silent: no warning,
+//     nothing printed, nothing logged.
+//   - `detach = true` with a [terminal] declared whose spawn command
+//     failed — a genuine failure worth knowing about, but "the launcher
+//     hiccuped" must never be the reason a dev loop dies: it prints
+//     exactly one warning line naming the failure, then runs inline
+//     exactly like the silent-fallback case.
 func RunActionRouted(m *manifest.Manifest, r *Registry, name string, args []string) error {
-	if action, ok := m.Actions[name]; ok && actionLifetime(action) == LongRunning {
+	if action, ok := m.Actions[name]; ok {
 		kind, _ := actionString(action, "kind")
-		paneID, err := dispatchToPane(name, args)
-		switch {
-		case err == nil:
-			recordLiveWork(name, kind, paneID, args)
-			return nil
-		case err == shim.ErrHerdrUnavailable:
-			// Herdr isn't usable here at all — fall through to the inline
-			// path silently; this is the default path in practice.
-		default:
-			// Herdr is available but the split itself failed — degrade to
-			// inline with one warning line rather than aborting the
-			// action outright (admin-3rgp.46).
-			fmt.Fprintf(os.Stderr, "warning: action %q: herdr split failed, running inline: %v\n", name, err)
+		// A kind="multi-target" action is deliberately excluded here, the
+		// same way runAction excludes it from the generic `requires`
+		// check: its own top-level `detach` is only the *default* the
+		// picked target inherits (resolveTargetDetach), and which target
+		// gets picked isn't known until the Runner itself runs — so the
+		// multi-target factory resolves and dispatches per-target detach
+		// inside its own closure (internal/kinds/multitarget.go) instead.
+		// Consulting it here too would both raise a launcher dispatch
+		// before a target is even chosen AND leave the per-target
+		// dispatch below to raise a second, redundant one.
+		if detach, present := actionDetach(action); present && detach && kind != "multi-target" {
+			cfg, _ := config.FromManifest(m)
+			ctx := launchCtxFromEnv(name)
+			handle, err := dispatchToLauncher(name, args, ctx, cfg.Terminal)
+			switch {
+			case err == nil:
+				recordLiveWork(name, kind, handle, args, ctx, cfg.Terminal)
+				return nil
+			case err == errNoLauncher:
+				// No [terminal] declared — fall through to the inline
+				// path silently; this is the default path in practice.
+			default:
+				// A launcher IS configured but spawning through it failed
+				// — degrade to inline with one warning line rather than
+				// aborting the action outright.
+				fmt.Fprintf(os.Stderr, "warning: action %q: launcher spawn failed, running inline: %v\n", name, err)
+			}
 		}
 	}
 	return RunAction(m, r, name, args)
 }
 
-// actionLifetime resolves name's declared kind (defaulting to "shell",
-// matching RunAction's own default) and returns its catalog Lifetime,
-// Transient for an undeclared kind — RunAction is what reports "unknown
-// kind" as a real error; this helper only decides routing and must never be
-// the place that surfaces that error.
-func actionLifetime(action manifest.Action) Lifetime {
-	kind, _ := actionString(action, "kind")
-	if kind == "" {
-		kind = "shell"
-	}
-	k, ok := Declared(kind)
-	if !ok {
-		return Transient
-	}
-	return k.Lifetime
-}
-
 // RunCommand is the plain-CLI entry point: it runs name's steps through the
-// shared loop below with the lifetime-aware router, so a step whose kind is
-// LongRunning opens a herdr pane when one is available. Steps run in
-// declared order and stop at the first one whose Runner returns a non-nil
+// shared loop below with the detach-aware router, so a step carrying
+// `detach = true` dispatches through the project's [terminal] launcher when
+// one is declared. Steps run in declared order and stop at the first one
+// whose Runner returns a non-nil
 // error — the acceptance criteria's "a command with several steps runs them
 // in order and stops at the first failure" and "a non-zero exit from an
 // action produces a non-zero result" (that "non-zero result" surfaces here
@@ -314,24 +311,24 @@ func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string) e
 
 // RunCommandHosted is admin-3rgp.59's second entry point: the same command,
 // the same shared step loop, but every step goes straight to the inline
-// action runner. dispatchToPane is not on its call graph at any depth — not
-// through the step loop (which calls runActionInline, never
+// action runner. dispatchToLauncher is not on its call graph at any depth —
+// not through the step loop (which calls runActionInline, never
 // RunActionRouted) and not through a multi-target target's `action =
 // "other"` delegation (runActionInline builds its Surface from itself). So
-// no step can open a herdr pane regardless of its kind's Lifetime or
-// whether herdr is available.
+// no step can reach the launcher regardless of its `detach` value or
+// whether one is declared.
 //
 // This exists because which surface a dispatch lands on is a property of
-// the *producer*, not of the action's kind. Three producers dispatch work: a
-// Command run from the dashboard, Start Work on an issue, and a workflow's
-// agent worker. The last two want a pane; the first is hosted by the
-// dashboard itself and must never take one. A flag on RunCommand would
-// leave the pane path reachable from the dashboard, guarded only by a field
-// being set right — a separate entry point removes the condition instead of
-// guarding it.
+// the *producer*, not of the action's own declaration. Three producers
+// dispatch work: a Command run from the dashboard, Start Work on an issue,
+// and a workflow's agent worker. The last two want a launcher; the first is
+// hosted by the dashboard itself and must never take one. A flag on
+// RunCommand would leave the launcher path reachable from the dashboard,
+// guarded only by a field being set right — a separate entry point removes
+// the condition instead of guarding it.
 //
-// Lifetime consequently narrows to exactly one meaning: whether a plain-CLI
-// dispatch opens a pane. RunCommandHosted never consults it.
+// `detach` consequently narrows to exactly one meaning: whether a plain-CLI
+// dispatch reaches the launcher. RunCommandHosted never consults it.
 func RunCommandHosted(m *manifest.Manifest, r *Registry, name string, args []string) error {
 	return runSteps(m, r, name, args, runActionInline)
 }

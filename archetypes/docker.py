@@ -92,6 +92,7 @@ ARCHETYPE = {
             "kind": "docker-reload-loop",
             "run": "docker build -t ${APP_IMAGE} . && docker run --rm ${APP_IMAGE}",
             "desc": "Build+run with reload loop (press r or SIGUSR1 to rebuild)",
+            "detach": True,
         },
         "run-args": {
             "kind": "python",
