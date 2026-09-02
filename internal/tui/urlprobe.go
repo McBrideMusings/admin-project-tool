@@ -1,8 +1,10 @@
 // urlprobe.go is the Work-tab detail pane's reachability check (admin-1azz):
-// a package-level, non-blocking cache over kinds.CheckURL so a hung host
-// never stalls a repaint. Status is a pure map read; Refresh is the only
-// thing that starts real work, one goroutine per stale url, and it always
-// returns immediately.
+// a package-level, non-blocking cache over kinds.CheckURL (mutex-guarded on
+// urlProber.probe rather than a package var, so a leaked goroutine's probe
+// function can never race a test's swap) so a hung host never stalls a
+// repaint. Status is a pure map read; Refresh is the only thing that starts
+// real work, one goroutine per stale url, and it always returns
+// immediately.
 package tui
 
 import (
@@ -22,12 +24,6 @@ const (
 	probeDown
 )
 
-// probeURL is urlProber's test seam, bound to kinds.CheckURL by default so
-// the dashboard reuses the exact same HTTP check print-urls already makes
-// rather than a second one. A test overrides it to force a fixed result, or
-// to block forever and prove Refresh never holds up a repaint waiting on it.
-var probeURL = kinds.CheckURL
-
 // probeTTL bounds how often the same url is re-checked: long enough that
 // the Work tab's 1s tick doesn't fire a fresh HTTP request every repaint,
 // short enough that a url coming up (or going down) shows within a few
@@ -38,11 +34,20 @@ const probeTTL = 5 * time.Second
 // singleton shape internal/livework.Default uses for the same reason: one
 // process, one shared source of truth, read from render and written from
 // background goroutines.
+// probe is urlProber's test seam, bound to kinds.CheckURL by default so the
+// dashboard reuses the exact same HTTP check print-urls already makes rather
+// than a second one. A test swaps it via setProbe to force a fixed result,
+// or to block forever and prove Refresh never holds up a repaint waiting on
+// it. It is read and written only under mu — Refresh captures it into a
+// local while still holding the lock, and the goroutine it starts calls that
+// captured local rather than re-reading the field, so a leaked goroutine can
+// never race a later swap.
 type urlProber struct {
 	mu       sync.Mutex
 	state    map[string]probeState
 	inflight map[string]bool
 	at       map[string]time.Time
+	probe    func(string) bool
 }
 
 var urlProbes = newURLProber()
@@ -52,6 +57,7 @@ func newURLProber() *urlProber {
 		state:    map[string]probeState{},
 		inflight: map[string]bool{},
 		at:       map[string]time.Time{},
+		probe:    kinds.CheckURL,
 	}
 }
 
@@ -82,10 +88,11 @@ func (p *urlProber) Refresh(urls []string) {
 			continue
 		}
 		p.inflight[u] = true
+		probe := p.probe
 		p.mu.Unlock()
 
 		go func(u string) {
-			up := probeURL(u)
+			up := probe(u)
 			p.mu.Lock()
 			if up {
 				p.state[u] = probeUp
@@ -100,9 +107,9 @@ func (p *urlProber) Refresh(urls []string) {
 }
 
 // reset clears every recorded probe. Test-only: urlProbes is a process-wide
-// singleton, so a test that stubs probeURL and asserts on a specific url
-// must reset first or use a url no other test in this package touches —
-// the same caveat livework.Default's own tests carry (see
+// singleton, so a test that stubs the probe function and asserts on a
+// specific url must reset first or use a url no other test in this package
+// touches — the same caveat livework.Default's own tests carry (see
 // livestate_race_test.go).
 func (p *urlProber) reset() {
 	p.mu.Lock()
@@ -110,4 +117,17 @@ func (p *urlProber) reset() {
 	p.state = map[string]probeState{}
 	p.inflight = map[string]bool{}
 	p.at = map[string]time.Time{}
+}
+
+// setProbe swaps the probe function under the lock and returns the previous
+// value, so a test can restore it exactly on cleanup. Kept separate from
+// reset (which only touches the result maps) so callers control both
+// independently — stubProbe in workurls_test.go pairs them the way this
+// file's Refresh/reset split already assumes.
+func (p *urlProber) setProbe(fn func(string) bool) func(string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	prev := p.probe
+	p.probe = fn
+	return prev
 }

@@ -16,16 +16,17 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// stubProbe swaps probeURL for a fixed-result function for the life of the
-// test, resets urlProbes so no earlier test's cached state leaks in, and
-// restores both on cleanup.
+// stubProbe swaps urlProbes' probe function for a fixed-result function for
+// the life of the test, resets urlProbes so no earlier test's cached state
+// leaks in, and restores both on cleanup. The swap goes through setProbe
+// (mutex-guarded) rather than a package var, so it is race-free against any
+// goroutine a prior test leaked.
 func stubProbe(t *testing.T, fn func(string) bool) {
 	t.Helper()
-	orig := probeURL
-	probeURL = fn
+	orig := urlProbes.setProbe(fn)
 	urlProbes.reset()
 	t.Cleanup(func() {
-		probeURL = orig
+		urlProbes.setProbe(orig)
 		urlProbes.reset()
 	})
 }
@@ -211,9 +212,9 @@ func TestURLProbeDistinguishesUpFromDown(t *testing.T) {
 }
 
 // TestURLProbeNeverBlocksOnAHungHost is the acceptance criterion in its own
-// right: Refresh against a probeURL that never returns must itself return
-// immediately, and the url's status stays probeUnknown until (if ever) the
-// probe lands.
+// right: Refresh against a stubbed probe that never returns must itself
+// return immediately, and the url's status stays probeUnknown until (if
+// ever) the probe lands.
 func TestURLProbeNeverBlocksOnAHungHost(t *testing.T) {
 	block := make(chan struct{})
 	stubProbe(t, func(string) bool {
@@ -222,7 +223,10 @@ func TestURLProbeNeverBlocksOnAHungHost(t *testing.T) {
 	})
 	// Registered after stubProbe, so it runs first (Cleanup is LIFO):
 	// unblock the leaked probe goroutine before stubProbe's own cleanup
-	// resets probeURL and the prober's maps out from under it.
+	// swaps the probe function and resets the prober's maps out from under
+	// it. Refresh already captured today's probe into a local before
+	// starting the goroutine, so this leaked goroutine can never race that
+	// swap — it just needs to be woken so it doesn't run forever.
 	t.Cleanup(func() { close(block) })
 
 	done := make(chan struct{})
