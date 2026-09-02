@@ -536,6 +536,46 @@ agent = "project-agent"
 	}
 }
 
+// TestTerminalMergesLikeEveryOtherArchetypeTable is the ADR-0020 acceptance
+// criterion for archetype merge: an archetype-supplied [terminal] reaches
+// the merged manifest via mergeTable ([keys] is the one exception to this
+// pattern), and a project's own key wins on conflict while a key only the
+// archetype declares survives untouched — the same shape
+// TestConfigTablesMergeProjectWinsOverArchetype proves for [beads]/
+// [workflow] above.
+func TestTerminalMergesLikeEveryOtherArchetypeTable(t *testing.T) {
+	root := t.TempDir()
+	writeArchetypeDir(t, root, "base", `
+[terminal]
+spawn  = "archetype-spawn"
+attach = "archetype-attach"
+kill   = "archetype-kill"
+`, false)
+	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
+
+	project := projectManifest(t, `
+project_name = "widget"
+archetypes   = ["base"]
+
+[terminal]
+spawn = "project-spawn"
+`)
+
+	merged, _, err := Resolve(project, sp)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if merged.Terminal["spawn"] != "project-spawn" {
+		t.Errorf("Terminal[spawn] = %v, want the project's value to win", merged.Terminal["spawn"])
+	}
+	if merged.Terminal["attach"] != "archetype-attach" {
+		t.Errorf("Terminal[attach] = %v, want the archetype's value to survive untouched", merged.Terminal["attach"])
+	}
+	if merged.Terminal["kill"] != "archetype-kill" {
+		t.Errorf("Terminal[kill] = %v, want the archetype's value to survive untouched", merged.Terminal["kill"])
+	}
+}
+
 // TestPopulateMergeAppendsAndDedupesByPattern is the append-in-list-order,
 // de-dup-by-pattern rule this ticket's approach settles for [[populate]]: an
 // archetype's entries come first, a project's own entries are appended after,

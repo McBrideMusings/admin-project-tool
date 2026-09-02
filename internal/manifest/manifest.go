@@ -156,19 +156,26 @@ type Manifest struct {
 	LogBridge       map[string]any
 	Worktree        map[string]any
 
-	// Identity, Worktrees, Beads and Workflow are the config.Config tables
-	// (internal/config): who "you" are, where worktrees are created, the
-	// Beads tab's columns, and the workflow dispatcher's default agent and
-	// concurrency ceiling. Kept raw here for the same reason as the
-	// archetype-specific tables above — internal/manifest owns only parsing,
-	// internal/config owns the typed decode — except that these five ARE the
-	// entire configuration surface for the dashboard rather than one kind's
-	// fragment, per the retire-the-config-tiers decision: there is no other
-	// file these can live in.
+	// Identity, Worktrees, Beads, Workflow and Terminal are the config.Config
+	// tables (internal/config): who "you" are, where worktrees are created,
+	// the Beads tab's columns, the workflow dispatcher's default agent and
+	// concurrency ceiling, and the ADR-0020 terminal launcher contract. Kept
+	// raw here for the same reason as the archetype-specific tables above —
+	// internal/manifest owns only parsing, internal/config owns the typed
+	// decode — except that these six ARE the entire configuration surface
+	// for the dashboard rather than one kind's fragment, per the
+	// retire-the-config-tiers decision: there is no other file these can
+	// live in.
 	Identity  map[string]any
 	Worktrees map[string]any
 	Beads     map[string]any
 	Workflow  map[string]any
+	// Terminal carries the raw top-level [terminal] table (ADR-0020) — the
+	// spawn/attach/kill/status launcher contract. Kept raw for the same
+	// reason as Keys above: internal/manifest owns only parsing,
+	// internal/validate.Terminal owns the schema, and internal/config owns
+	// the typed decode.
+	Terminal map[string]any
 	// Populate is the [[populate]] array of tables — one entry per
 	// gitignored file/glob to bring into a fresh worktree, decoded by
 	// internal/config into []config.Entry.
@@ -203,6 +210,7 @@ var knownTopLevelKeys = map[string]bool{
 	"go": true, "go_dist": true, "raylib": true, "worktree": true, "launchd": true, "electron": true,
 	"keys":     true,
 	"identity": true, "worktrees": true, "beads": true, "workflow": true, "populate": true,
+	"terminal": true,
 	// Obsolete under interpreter mode (ADR-0006); tolerated silently.
 	"generator_commit": true,
 }
@@ -450,6 +458,7 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 		{"worktrees", &m.Worktrees},
 		{"beads", &m.Beads},
 		{"workflow", &m.Workflow},
+		{"terminal", &m.Terminal},
 	} {
 		v, err := table(data, t.key, source)
 		if err != nil {

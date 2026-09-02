@@ -83,6 +83,7 @@ func Resolve(project *manifest.Manifest, sp SearchPath) (*manifest.Manifest, []s
 		Worktrees:       map[string]any{},
 		Beads:           map[string]any{},
 		Workflow:        map[string]any{},
+		Terminal:        map[string]any{},
 	}
 
 	var log []string
@@ -217,6 +218,7 @@ func merge(dst, src *manifest.Manifest, srcLabel string, isManifest bool, log *[
 		{dst.Worktrees, src.Worktrees},
 		{dst.Beads, src.Beads},
 		{dst.Workflow, src.Workflow},
+		{dst.Terminal, src.Terminal},
 	} {
 		mergeTable(pair.dst, pair.src)
 	}
