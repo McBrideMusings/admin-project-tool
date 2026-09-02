@@ -6,11 +6,24 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/guards"
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
+
+// reentryDetachedMarker is prepended to the args a detached target's
+// dispatch hands the launcher's re-entry command line, and stripped back
+// off by this same Runner on the other end — see its use below for why:
+// without it, the __run-action re-entry that finally executes the picked
+// target would resolve the identical effective `detach = true` a second
+// time and try to spawn a second launcher dispatch from inside the first,
+// forever. Unexported and deliberately not a flag-shaped string
+// (__run-action disables cobra flag parsing, so this never collides with
+// one), and distinctive enough that no real target name would collide
+// with it.
+const reentryDetachedMarker = "__admin-detached-reentry"
 
 // multiTargetReserved are the top-level keys on a kind="multi-target" action
 // that are never themselves a target name — everything else whose value is
@@ -25,7 +38,7 @@ import (
 // already keeps it out of the map[string]any inline scan below — belt and
 // suspenders against a malformed manifest that puts a table there instead.
 var multiTargetReserved = map[string]bool{
-	"kind": true, "desc": true, "targets": true, "urls": true, "footer": true, "requires": true,
+	"kind": true, "desc": true, "targets": true, "urls": true, "footer": true, "requires": true, "detach": true,
 }
 
 // multiTargetEntry is one resolved target: either a shell command to run
@@ -34,12 +47,15 @@ var multiTargetReserved = map[string]bool{
 // (including an empty list — the explicit opt-out) from "no override was
 // given, inherit the parent's default" — the same None-vs-[]-vs-list
 // tri-state the pinned-footer urls/footer design (project CLAUDE.md) uses
-// for target_urls/target_footer.
+// for target_urls/target_footer. detach/detachSet is the identical
+// tri-state for ADR-0020's per-target `detach` override.
 type multiTargetEntry struct {
 	run         string
 	action      string
 	requires    []string
 	requiresSet bool
+	detach      bool
+	detachSet   bool
 }
 
 // targetFrameMeta is one target's own urls/footer declaration, captured at
@@ -180,6 +196,7 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 	if err != nil {
 		return nil, fmt.Errorf("action %q: %w", name, err)
 	}
+	parentDetach, parentDetachPresent := actionDetach(action)
 
 	inline := map[string]map[string]any{}
 	for k, v := range action {
@@ -227,6 +244,14 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 				}
 				entry.requires, entry.requiresSet = reqs, true
 			}
+			if dv, present := tbl["detach"]; present {
+				b, ok := dv.(bool)
+				if !ok {
+					return nil, fmt.Errorf(
+						"action %q: target %q: detach must be a boolean", name, k)
+				}
+				entry.detach, entry.detachSet = b, true
+			}
 			targets[k] = entry
 			frameMeta[k] = targetFrameMetaOf(action, k)
 		}
@@ -250,6 +275,19 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 
 	return func(args []string) error {
 		h := newHost()
+
+		// Strip off, if present, the reentryDetachedMarker the block below
+		// prepends to the args it hands the launcher — this Runner is what
+		// runs on BOTH sides of a detached target's
+		// dispatch (the picking process that decides to detach, and the
+		// __run-action re-entry that actually executes the picked target),
+		// and the marker is what tells the two apart so the re-entered
+		// side never tries to detach a second time into a third pane.
+		alreadyDispatched := false
+		if len(args) > 0 && args[0] == reentryDetachedMarker {
+			alreadyDispatched = true
+			args = args[1:]
+		}
 
 		var picked string
 		rest := args
@@ -303,6 +341,29 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 		}
 		if err := guards.RunRequires(effectiveRequires); err != nil {
 			return fmt.Errorf("action %q: target %q: %w", name, picked, err)
+		}
+
+		// A detached target dispatches through the project's [terminal]
+		// launcher and returns immediately — before enterFrame, since a
+		// detached target must not raise a frame it will never write to
+		// (the frame belongs to whichever process the launcher's spawn
+		// command actually runs the re-entry command in).
+		effectiveDetach := resolveTargetDetach(parentDetach, parentDetachPresent, t.detach, t.detachSet)
+		if effectiveDetach && !alreadyDispatched {
+			cfg, _ := config.FromManifest(m)
+			ctx := launchCtxFromEnv(fmt.Sprintf("%s:%s", name, picked))
+			targetArgs := append([]string{reentryDetachedMarker, picked}, rest...)
+			handle, err := dispatchToLauncher(name, targetArgs, ctx, cfg.Terminal)
+			switch {
+			case err == nil:
+				recordLiveWork(name+":"+picked, "multi-target", handle, targetArgs, ctx, cfg.Terminal)
+				return nil
+			case err == errNoLauncher:
+				// No [terminal] declared — fall through to running this
+				// target inline, silently; this is the default path.
+			default:
+				fmt.Fprintf(os.Stderr, "warning: action %q: target %q: launcher spawn failed, running inline: %v\n", name, picked, err)
+			}
 		}
 
 		// The footer belongs to the target the user picked, whether that

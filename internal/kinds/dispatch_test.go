@@ -304,10 +304,10 @@ func TestRunCommandHonoursLoggingDirConfig(t *testing.T) {
 	}
 }
 
-// captureStderr (used above) is defined in lifetime_test.go — this package
-// already has one, and it does exactly what the announce-path assertion
-// needs: redirect os.Stderr's current *os.File for fn's duration and return
-// what landed on it.
+// captureStderr (used above) is defined in testhelpers_test.go — this
+// package already has one, and it does exactly what the announce-path
+// assertion needs: redirect os.Stderr's current *os.File for fn's duration
+// and return what landed on it.
 
 func readFile(t *testing.T, dir, relPath string) string {
 	t.Helper()

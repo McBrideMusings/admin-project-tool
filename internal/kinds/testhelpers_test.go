@@ -1,8 +1,10 @@
 package kinds
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/archetype"
@@ -98,5 +100,44 @@ func assertFileMissing(t *testing.T, dir, relPath string) {
 	full := filepath.Join(dir, relPath)
 	if _, err := os.Stat(full); err == nil {
 		t.Fatalf("expected %s to NOT exist", full)
+	}
+}
+
+// captureStderr redirects os.Stderr for the duration of fn and returns
+// everything written to it, restoring the original os.Stderr afterward.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 64*1024)
+	n, _ := r.Read(buf)
+	return string(buf[:n])
+}
+
+// withFakeTerminal builds the raw [terminal] table a manifest.Manifest.
+// Terminal field carries (ADR-0020) — the launcher-dispatch sibling of
+// withFakeHerdr, for the [terminal] contract rather than herdr. spawn
+// prints handle and appends "spawn <ADMIN_CMD>" to logPath; attach/kill
+// append "attach <ADMIN_HANDLE>"/"kill <ADMIN_HANDLE>".
+func withFakeTerminal(t *testing.T, handle, logPath string) map[string]any {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake terminal scripts are POSIX shell")
+	}
+	return map[string]any{
+		"spawn":  fmt.Sprintf(`echo "spawn $ADMIN_CMD" >> %s; echo %s`, shellQuote(logPath), shellQuote(handle)),
+		"attach": fmt.Sprintf(`echo "attach $ADMIN_HANDLE" >> %s`, shellQuote(logPath)),
+		"kill":   fmt.Sprintf(`echo "kill $ADMIN_HANDLE" >> %s`, shellQuote(logPath)),
 	}
 }

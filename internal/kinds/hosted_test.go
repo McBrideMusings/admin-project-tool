@@ -1,8 +1,8 @@
 // hosted_test.go covers admin-3rgp.59: RunCommandHosted, the second
-// command-dispatch entry point from which pane dispatch is structurally
+// command-dispatch entry point from which launcher dispatch is structurally
 // unreachable. The paired tests below are the whole point — the same
-// manifest, the same fake herdr, the same LongRunning kind, dispatched
-// through each entry point, must land on opposite surfaces.
+// manifest, the same fake [terminal] launcher, the same detached step,
+// dispatched through each entry point, must land on opposite surfaces.
 package kinds
 
 import (
@@ -16,23 +16,27 @@ import (
 )
 
 // longRunningManifest is the shared fixture for the paired entry-point
-// tests: one command whose single step is an action declaring a real
-// LongRunning catalog kind (vite-dev), so the routing decision under test
-// is genuine rather than a stub kind invented for the test.
-func longRunningManifest() *manifest.Manifest {
+// tests: one command whose single step is an action carrying `detach =
+// true` (ADR-0020) plus a declared [terminal] table, so the routing
+// decision under test is genuine rather than a stub kind invented for the
+// test. terminal is the raw table this fixture's manifest.Manifest.Terminal
+// carries — built by withFakeTerminal in each test, since the log path it
+// writes to differs per test.
+func longRunningManifest(terminal map[string]any) *manifest.Manifest {
 	return &manifest.Manifest{
+		Terminal: terminal,
 		Custom: map[string]manifest.Command{
 			"dev": {Steps: []string{"dev-server"}},
 		},
 		Actions: map[string]manifest.Action{
-			"dev-server": {"kind": "vite-dev"},
+			"dev-server": {"kind": "vite-dev", "detach": true},
 		},
 	}
 }
 
-// registryRecordingInline registers a stub factory for a LongRunning kind
+// registryRecordingInline registers a stub factory for the detached kind
 // that flips *ran when its Runner actually executes in this process, so a
-// test can tell "ran inline here" from "was handed to a pane".
+// test can tell "ran inline here" from "was handed to the launcher".
 func registryRecordingInline(ran *bool) *Registry {
 	r := NewRegistry()
 	r.MustRegister("vite-dev", func(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
@@ -47,54 +51,55 @@ func registryRecordingInline(ran *bool) *Registry {
 }
 
 // TestRunCommandOpensPaneForLongRunningStep is the control half of the
-// pair: the existing CLI entry point keeps its current behavior — herdr
-// available plus a LongRunning kind means a pane, not an inline run.
+// pair: the existing CLI entry point keeps its current behavior — a
+// declared [terminal] plus a detached step means a launcher dispatch, not
+// an inline run.
 func TestRunCommandOpensPaneForLongRunningStep(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	logPath := filepath.Join(dir, "herdr-calls.log")
-	withFakeHerdr(t, "w1:p9", logPath)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
 
 	inlineRan := false
-	if err := RunCommand(longRunningManifest(), registryRecordingInline(&inlineRan), "dev", nil); err != nil {
+	if err := RunCommand(longRunningManifest(terminal), registryRecordingInline(&inlineRan), "dev", nil); err != nil {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 	if inlineRan {
-		t.Error("RunCommand must hand a LongRunning step to a pane, not run it inline")
+		t.Error("RunCommand must hand a detached step to the launcher, not run it inline")
 	}
 	logged, err := os.ReadFile(logPath)
 	if err != nil {
-		t.Fatalf("reading herdr log: %v", err)
+		t.Fatalf("reading terminal log: %v", err)
 	}
-	if !strings.Contains(string(logged), "pane split") {
-		t.Errorf("herdr log = %q, want a `pane split` call", string(logged))
+	if !strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want a `spawn` call", string(logged))
 	}
 }
 
 // TestRunCommandHostedNeverOpensAPane is the acceptance criterion: the
-// same manifest, the same fake herdr, the same LongRunning kind — the
-// hosted entry point must run the step in this process and must not call
-// herdr at all.
+// same manifest, the same fake [terminal] launcher, the same detached
+// step — the hosted entry point must run the step in this process and must
+// not call the launcher at all.
 func TestRunCommandHostedNeverOpensAPane(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	logPath := filepath.Join(dir, "herdr-calls.log")
-	withFakeHerdr(t, "w1:p9", logPath)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
 
 	before := len(livework.Default.List())
 
 	inlineRan := false
-	if err := RunCommandHosted(longRunningManifest(), registryRecordingInline(&inlineRan), "dev", nil); err != nil {
+	if err := RunCommandHosted(longRunningManifest(terminal), registryRecordingInline(&inlineRan), "dev", nil); err != nil {
 		t.Fatalf("RunCommandHosted = %v, want nil", err)
 	}
 	if !inlineRan {
-		t.Error("RunCommandHosted must run a LongRunning step inline, in this process")
+		t.Error("RunCommandHosted must run a detached step inline, in this process")
 	}
 	if logged, err := os.ReadFile(logPath); err == nil && len(logged) > 0 {
-		t.Errorf("herdr log = %q, want empty — the hosted entry point must never reach herdr", string(logged))
+		t.Errorf("terminal log = %q, want empty — the hosted entry point must never reach the launcher", string(logged))
 	}
 	if got := len(livework.Default.List()); got != before {
-		t.Errorf("live-work registry grew from %d to %d — a hosted run registers no pane", before, got)
+		t.Errorf("live-work registry grew from %d to %d — a hosted run registers no launcher handle", before, got)
 	}
 }
 
@@ -108,10 +113,11 @@ func TestRunCommandHostedNeverOpensAPane(t *testing.T) {
 func TestRunCommandHostedNestedDelegationStaysInline(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	logPath := filepath.Join(dir, "herdr-calls.log")
-	withFakeHerdr(t, "w1:p9", logPath)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
 
 	m := &manifest.Manifest{
+		Terminal: terminal,
 		Custom: map[string]manifest.Command{
 			"dev": {Steps: []string{"pick"}},
 		},
@@ -132,7 +138,7 @@ func TestRunCommandHostedNestedDelegationStaysInline(t *testing.T) {
 		t.Error("a delegated target under the hosted entry point must run inline")
 	}
 	if logged, err := os.ReadFile(logPath); err == nil && len(logged) > 0 {
-		t.Errorf("herdr log = %q, want empty — nested delegation must not reach herdr either", string(logged))
+		t.Errorf("terminal log = %q, want empty — nested delegation must not reach the launcher either", string(logged))
 	}
 }
 
