@@ -512,42 +512,14 @@ func liveEntryFor(c manifest.Command, byName map[string]*livework.Entry) *livewo
 	return nil
 }
 
-// liveWorkers is every registry entry that renders as a Work-tab worker
-// row — the ticket's "commands first, then any worker with no command
-// behind it": a genuine agent worker (Worker != nil, e.g. a workflow
-// dispatched into its own git worktree) always qualifies. A hosted-pty run
-// (PTYID set, Worker nil — agentNameFor's own doc comment notes this shape)
-// qualifies too, but only when liveEntryFor never folded it into a declared
-// command's row because none of that command's steps name it; a
-// PaneID-addressed process entry never qualifies on its own, since those
-// are the LongRunning command rows workRows already folds by name, and a
-// stray unnamed one is not a worker. Order follows the registry's own
-// insertion order (livework.Registry.List already guarantees that), which
-// is what keeps the section from reordering itself as entries change
-// state.
-func (m Model) liveWorkers() []*livework.Entry {
-	byName := map[string]*livework.Entry{}
-	for _, e := range livework.Default.List() {
-		if e.Worker == nil {
-			byName[e.Name] = e
-		}
-	}
-	consumed := map[string]bool{}
-	for _, cr := range m.declaredCommands() {
-		if e := liveEntryFor(cr.cmd, byName); e != nil {
-			consumed[e.ID] = true
-		}
-	}
+// liveWorkers is every registry entry that IS a genuine agent worker
+// (Worker != nil) — the Work tab's "Workers" section, in the registry's own
+// insertion order (livework.Registry.List already guarantees that), which is
+// what keeps the section from reordering itself as entries change state.
+func liveWorkers() []*livework.Entry {
 	var out []*livework.Entry
 	for _, e := range livework.Default.List() {
 		if e.Worker != nil {
-			out = append(out, e)
-			continue
-		}
-		if e.PTYID == "" || consumed[e.ID] {
-			continue
-		}
-		if st, ok := livework.Default.State(e.ID); ok && (st == livework.StateRunning || st == livework.StateWaiting) {
 			out = append(out, e)
 		}
 	}
@@ -700,7 +672,7 @@ func (m Model) workRows() []rowItem {
 	}
 
 	rows = append(rows, blankRow(), headerRow("Workers"))
-	workers := m.liveWorkers()
+	workers := liveWorkers()
 	if len(workers) == 0 {
 		rows = append(rows, rowItem{kind: rowText, label: "no workers running — dispatch a command to start one"})
 	} else {
