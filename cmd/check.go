@@ -75,6 +75,9 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	if err := kinds.ValidateWorkflows(m.Actions); err != nil {
 		problems = append(problems, validate.Wrap(err))
 	}
+	if err := kinds.ValidateDetach(m.Actions); err != nil {
+		problems = append(problems, validate.Wrap(err))
+	}
 	if err := checkQueryWorkflowTracker(m); err != nil {
 		problems = append(problems, validate.Wrap(err))
 	}

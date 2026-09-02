@@ -73,20 +73,12 @@ func rowKindOf(r rowItem) (keymap.RowKind, bool) {
 }
 
 // rowEnv builds the three ADMIN_ROW_* vars a bound command's dispatch gets,
-// per row kind. ADMIN_ROW_URL is appended only when the row genuinely
-// carries a URL — never as an empty value, since the dispatched process
-// inherits the dashboard's own os.Environ() as its base and an empty
-// ADMIN_ROW_URL="" would still read as "set" to anything that only checks
-// presence.
+// per row kind — a thin delegation to kinds.RowEnv, the single construction
+// this package's key-binding dispatch and internal/kinds' launcher dispatch
+// (ADR-0020's ADMIN_ROW_* spawn context) both use, so the two cannot drift
+// apart.
 func rowEnv(r rowItem, kind keymap.RowKind) []string {
-	env := []string{
-		"ADMIN_ROW_KIND=" + string(kind),
-		"ADMIN_ROW_ID=" + rowID(r, kind),
-	}
-	if r.url != "" {
-		env = append(env, "ADMIN_ROW_URL="+r.url)
-	}
-	return env
+	return kinds.RowEnv(string(kind), rowID(r, kind), r.url)
 }
 
 // rowID picks the row's own identity field for ADMIN_ROW_ID, per kind.
