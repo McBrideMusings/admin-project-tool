@@ -15,10 +15,10 @@ import (
 )
 
 // TestHostedReentryArgsUsesTheHostedVerb pins the child's argv: it must name
-// "__run-command" (which reaches kinds.RunCommandHosted, never RunAction/
-// RunActionRouted) rather than pane.go's "__run-action" — the whole reason a
-// long-running Kind dispatched through the hosted pty can't open a further
-// herdr pane of its own.
+// "__run-command" (which reaches kinds.RunCommand with a nil producer)
+// rather than pane.go's "__run-action" — the whole reason a long-running
+// Kind dispatched through the hosted pty can't open a further herdr pane of
+// its own.
 func TestHostedReentryArgsUsesTheHostedVerb(t *testing.T) {
 	got := hostedReentryArgs("build", []string{"cf"})
 	want := []string{"__run-command", "build", "cf"}

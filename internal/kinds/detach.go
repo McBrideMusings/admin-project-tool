@@ -51,13 +51,13 @@ func resolveTargetDetach(parentVal, parentPresent bool, targetVal, targetPresent
 }
 
 // dispatchDetach resolves the effective `detach` decision for one dispatch
-// of action, given the raw args a producer's launchCommand (dispatch.go) or
-// RunActionRouted would hand it. This is the single place that resolution
-// happens for BOTH callers, so a multi-target action's picked-target
-// override can no longer be read correctly in one code path and skipped in
-// another (admin-ysxr.4's regression: launchCommand read only
-// actionDetach(action), which for kind="multi-target" is just the parent
-// default a target can override).
+// of action, given the raw args launchCommand (dispatch.go) would hand it —
+// the only caller now that `detach` is honoured on the producer path alone
+// (admin-ysxr.9). This is the single place that resolution happens, so a
+// multi-target action's picked-target override can no longer be read
+// correctly in one code path and skipped in another (admin-ysxr.4's
+// regression: launchCommand read only actionDetach(action), which for
+// kind="multi-target" is just the parent default a target can override).
 //
 // For any kind other than "multi-target" this is exactly actionDetach —
 // there is no target to resolve, so the flat-action callers keep today's

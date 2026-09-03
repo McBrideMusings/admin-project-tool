@@ -65,7 +65,7 @@ func hostedParityManifest() *manifest.Manifest {
 // test ./...` run never executes this path. MarkReentry, then RunCommand
 // with a nil producer, is exactly what cmd/root.go's __run-command verb
 // does — inReentry() is what keeps this run on the inline step loop
-// (runActionInline) rather than reaching for a launcher.
+// (runSteps) rather than reaching for a launcher.
 func TestHostedPTYChildProcess(t *testing.T) {
 	if os.Getenv("ADMIN_TEST_HOSTED_CHILD") != "1" {
 		t.Skip("helper process for the hosted-pty parity tests — not a real test")

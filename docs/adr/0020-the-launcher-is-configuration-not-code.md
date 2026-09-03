@@ -50,6 +50,14 @@ This ticket (`admin-ysxr.1`) implements only the table's parse and validation �
 check` accepts or rejects a `[terminal]` declaration. Nothing dispatches through it yet;
 that is `admin-ysxr.2` onward.
 
+> **Amendment (2026-09-02, `admin-ysxr.9`):** the contract above describes `detach` as
+> producer-independent — a plain-CLI `admin dev` and a dashboard row-enter both consulting
+> it. That half was withdrawn: `detach` is honoured on the dashboard/producer path only. A
+> shell invocation already owns a terminal and has nowhere more useful to put a detached
+> run's output than right there, so it always runs inline regardless of `detach`; only the
+> dashboard, which has nowhere but its own hosted pty to put a long-running process's
+> output, still dispatches through the launcher. See the entry-2 amendment below for detail.
+
 ## Why
 
 A four-key `spawn`/`attach`/`kill`/`status` contract, expressed as shell strings a project
@@ -94,6 +102,21 @@ per-action opt-out, while keeping `Lifetime` as a separate kind.** Two mechanism
 same decision (a kind-catalog entry *and* a table) is exactly the kind of duplication
 ADR-0019's failure shapes warn about — pick one, and `detach` is the one that composes
 with the rest of the manifest's per-action/per-target override vocabulary.
+
+> **Amendment (2026-09-02, `admin-ysxr.9`):** decision 2A above describes `detach` as
+> honoured by both producers — a plain-CLI dispatch and a dashboard dispatch alike. That
+> was overridden: **the producer decides.** `admin test` typed at a shell always runs
+> inline, whatever `detach` says — you are already standing in a terminal, and that
+> terminal is where you asked for the output. Only a dashboard dispatch (enter on a row)
+> still honours `detach` and reaches the launcher, because the dashboard has nowhere but
+> its own hosted pty to put a long-running process's output. Mechanically:
+> `internal/kinds.RunAction` (every plain-CLI dispatch, and every dispatch reached from
+> inside an already-launched run) never consults `detach` or reaches
+> `dispatchToLauncher` at all; only `internal/kinds.launchCommand` — reached from
+> `RunCommand` when its `*CommandProducer` is non-nil — resolves `detach` and dispatches
+> through the launcher. `makeMultiTarget`'s Runner lost its own launcher branch entirely,
+> for the same reason: a picked target's `detach` override is resolved by `launchCommand`
+> (via `dispatchDetach`), never inside the Runner itself.
 
 ### 3. Built-in default when nothing is configured: the dashboard's hosted pty
 
