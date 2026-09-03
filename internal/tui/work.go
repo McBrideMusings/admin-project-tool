@@ -45,6 +45,15 @@ type workRowData struct {
 	// worker never folds into a command row, it gets its own row below.
 	live    *livework.Entry
 	logPath string
+	// pending is true while this command's dispatch tea.Cmd is in flight but
+	// has not yet returned a workDispatchStartedMsg — the window between the
+	// keypress and the point a livework.Entry (or a dispatch error) exists.
+	// Mirrors Model.pendingDispatch[cmdName]; kept as its own field (rather
+	// than read live from the Model during render) for the same reason live
+	// is: workRows() rebuilds every rowItem from scratch each frame, so the
+	// value is resolved once at build time and read by both the child-row
+	// builder (targetRows) and the renderer.
+	pending bool
 	// targets is a kind="multi-target" sole step's target list, in the
 	// order kinds.TargetKeys gives (the same order the CLI picker offers).
 	// Non-empty is exactly the condition that makes this row a collapse
@@ -548,6 +557,7 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 		cmdArchetype: m.cmdOriginOf(cr.name),
 		steps:        m.commandSteps(cr.cmd),
 		live:         liveEntryFor(cr.cmd, byName),
+		pending:      m.pendingDispatch[cr.name],
 	}
 	if a, ok := m.soleAction(cr.cmd); ok {
 		kind := actionKind(a)
@@ -635,6 +645,12 @@ func targetRows(parent rowItem) []rowItem {
 				// running command shows the same elapsed/probe state as
 				// its parent rather than reading as idle.
 				live: wd.live,
+				// Same reasoning as live just above: a multi-target
+				// dispatch is pending under the parent action's own name,
+				// not per target, so an expanded target of a starting
+				// command reads as starting too rather than idle
+				// (admin-qk77).
+				pending: wd.pending,
 			},
 		})
 	}
@@ -753,13 +769,26 @@ func dispatchCommandCmd(m *manifest.Manifest, width, height int, name string, en
 // resolves its query and opens the confirm overlay rather than dispatching
 // directly (admin-3rgp.26 — see workflowconfirm.go); an already-live command
 // attaches to its pane instead of dispatching a second run on top of the one
-// that owns its log file and registry entry; anything else dispatches.
+// that owns its log file and registry entry; a command whose previous enter
+// is still dispatching (wd.pending) queues the attach instead of starting a
+// second run on top of the one that hasn't registered yet (admin-qk77);
+// anything else dispatches.
 func (m Model) activateCommand(wd *workRowData) (tea.Model, tea.Cmd) {
 	if wd.workflow != nil {
 		return m.startWorkflowConfirm(wd)
 	}
 	if wd.live != nil {
 		return m.attachEntry(wd.live)
+	}
+	if wd.pending {
+		// The dispatch this row's own previous enter started hasn't
+		// registered a livework.Entry yet (or already failed and the
+		// pendingDispatch flag just hasn't been cleared by this frame) — do
+		// NOT dispatch again. Record the intent to attach once it lands;
+		// workDispatchStartedMsg's handler resolves and attaches it.
+		m.pendingAttach[wd.cmdName] = true
+		m.setStatus(wd.cmdName+" starting…", cCyan)
+		return m, nil
 	}
 	// A command with targets is a menu, not a run: enter opens its target
 	// list and closes whichever one was open, so exactly one submenu is
@@ -777,7 +806,32 @@ func (m Model) activateCommand(wd *workRowData) (tea.Model, tea.Cmd) {
 		// the cursor back on it.
 		return m.focusCommandRow(wd.cmdName), nil
 	}
-	return m, dispatchCommandCmd(m.manifest, m.width, m.height, wd.cmdName, nil)
+	return m.startDispatch(wd.cmdName)
+}
+
+// startDispatch marks name pending (so its row renders "starting" and a
+// second enter during the window queues an attach instead of dispatching
+// again — activateCommand/activateCommandTarget above) and returns the same
+// tea.Cmd dispatchCommandCmd always returned. The single entry point both
+// dispatch sites route through, so pendingDispatch can never go stale by one
+// of them forgetting to set it.
+func (m Model) startDispatch(name string, args ...string) (tea.Model, tea.Cmd) {
+	m.pendingDispatch[name] = true
+	return m, dispatchCommandCmd(m.manifest, m.width, m.height, name, nil, args...)
+}
+
+// liveEntryForCommand resolves the livework.Entry now backing name, once its
+// dispatch has registered one — the workDispatchStartedMsg handler's queued-
+// attach path uses this rather than re-deriving the registry ID (cmd.Steps[0]
+// per hostedpty.go) itself, reusing commandRowItem's own lookup (liveEntryFor)
+// via the same workRows() scan every other row-driven action already does.
+func (m Model) liveEntryForCommand(name string) *livework.Entry {
+	for _, r := range m.workRows() {
+		if r.kind == rowCommand && r.work != nil && r.work.cmdName == name {
+			return r.work.live
+		}
+	}
+	return nil
 }
 
 // focusCommandRow puts the cursor back on the rowCommand named name, after a
@@ -814,9 +868,19 @@ func (m Model) collapseCommand(name string) (tea.Model, tea.Cmd) {
 // activateCommandTarget handles enter on one target of an expanded command:
 // it dispatches the parent command with that target as its argument, which
 // is exactly what `admin <cmd> <target>` does from a shell — makeMultiTarget
-// takes args[0] as the picked target and never raises its own picker.
+// takes args[0] as the picked target and never raises its own picker. A
+// multi-target run is recorded under the PARENT action's own name
+// (liveEntryFor), not per target, so pending — like live — is keyed on
+// wd.cmdName here too, matching how the parent row itself already reads it,
+// and the same "don't dispatch a second run into the one still starting"
+// guard applies (admin-qk77).
 func (m Model) activateCommandTarget(wd *workRowData) (tea.Model, tea.Cmd) {
-	return m, dispatchCommandCmd(m.manifest, m.width, m.height, wd.cmdName, nil, wd.targetKey)
+	if wd.pending {
+		m.pendingAttach[wd.cmdName] = true
+		m.setStatus(wd.cmdName+" starting…", cCyan)
+		return m, nil
+	}
+	return m.startDispatch(wd.cmdName, wd.targetKey)
 }
 
 // attachEntry resolves e's attach through the registry — the terminal view

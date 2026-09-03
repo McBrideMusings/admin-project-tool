@@ -153,6 +153,11 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 		act := padEnd(truncR(wd.live.Activity, actW), actW)
 		return marker + name + state + faintStyle.Render(act) + whereStyled
 	}
+	if wd.pending {
+		state := renderLiveState(livework.StateStarting)
+		desc := truncR(wd.cmdDesc, maxi(rest-stateW, 4))
+		return marker + name + state + faintStyle.Render(desc)
+	}
 	kind := padEnd(truncR(wd.cmdKind, stateW), stateW)
 	desc := truncR(wd.cmdDesc, maxi(rest-stateW, 4))
 	return marker + name + faintStyle.Render(kind+desc)
@@ -325,6 +330,8 @@ func renderLiveState(s livework.State) string {
 		c = cYellow
 	case livework.StateFailed:
 		c = cRed
+	case livework.StateStarting:
+		c = cCyan
 	}
 	return lipgloss.NewStyle().Foreground(c).Render(padEnd(string(s), 9))
 }
