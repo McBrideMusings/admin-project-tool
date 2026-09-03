@@ -698,6 +698,24 @@ func (m Model) keymap() [][2]string {
 		if m.bodyRowCount() > 0 && !hasKey(pairs, "↓") {
 			pairs = append(pairs, [2]string{"↓", "body"})
 		}
+		// While focus is on the tab bar, enter calls enterBody() — the same
+		// action "↓ body" already advertises — not whatever the active
+		// tab's row kind labels it (e.g. "start work", "checkout"). That
+		// row-kind label is only true once focus moves into the body, so
+		// overwrite the pre-existing "↵" pair in place rather than let it
+		// advertise an action enter doesn't perform in this focus state
+		// (admin-wuz9.1). enterBody() itself declines with no rows, so
+		// leave the row-kind's label alone in that case — same as the
+		// other row-scoped keys (d, g, s, w, /), which are genuine no-ops
+		// while tab-bar-focused.
+		if m.bodyRowCount() > 0 {
+			for i := range pairs {
+				if pairs[i][0] == "↵" {
+					pairs[i][1] = "body"
+					break
+				}
+			}
+		}
 	}
 	// A row that binds `o` in [keys.<kind>] (ADR-0018) is dispatched by
 	// rowKeyDispatch before the built-in switch ever sees the key, so the
