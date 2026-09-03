@@ -54,6 +54,39 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# ------------------------------------------------------------------
+# Refuse to run inside a linked worktree.
+# ------------------------------------------------------------------
+# install.sh installs from whatever checkout it's run in, and --link points
+# ~/.admin/admin_lib at that checkout's admin_lib. A worktree's --git-dir is
+# <primary>/.git/worktrees/<name>, distinct from its --git-common-dir
+# <primary>/.git — the primary checkout has the two equal. Run from a
+# worktree and this script would silently replace the GLOBAL admin on every
+# project on the machine with an in-progress branch, and --link would leave
+# ~/.admin/admin_lib dangling the moment that worktree is deleted.
+GIT_DIR="$(git -C "$SRC_DIR" rev-parse --git-dir 2>/dev/null || true)"
+GIT_COMMON_DIR="$(git -C "$SRC_DIR" rev-parse --git-common-dir 2>/dev/null || true)"
+if [[ -n "$GIT_DIR" && -n "$GIT_COMMON_DIR" ]]; then
+    # rev-parse returns absolute paths under -C; resolve relative ones
+    # (older git, or run without -C) against SRC_DIR instead of joining blindly.
+    [[ "$GIT_DIR" == /* ]] || GIT_DIR="$SRC_DIR/$GIT_DIR"
+    [[ "$GIT_COMMON_DIR" == /* ]] || GIT_COMMON_DIR="$SRC_DIR/$GIT_COMMON_DIR"
+    GIT_DIR="$(cd "$GIT_DIR" && pwd)"
+    GIT_COMMON_DIR="$(cd "$GIT_COMMON_DIR" && pwd)"
+    if [[ "$GIT_DIR" != "$GIT_COMMON_DIR" ]]; then
+        PRIMARY_CHECKOUT="$(dirname "$GIT_COMMON_DIR")"
+        echo "error: install.sh was run from a linked worktree ($SRC_DIR)" >&2
+        echo "  Installing from a worktree would replace the global admin on PATH" >&2
+        echo "  with this in-progress branch, for every project on the machine —" >&2
+        echo "  and leave it dangling once the worktree is deleted." >&2
+        echo "  Run it from the primary checkout instead:" >&2
+        echo "    bash $PRIMARY_CHECKOUT/install.sh$([[ "$LINK" == 1 ]] && echo ' --link')" >&2
+        exit 1
+    fi
+fi
+
+echo "admin-project-tool: installing from $SRC_DIR"
+
 # Go is required: it builds `admin` itself.
 if ! command -v go >/dev/null 2>&1; then
     echo "error: admin-project-tool requires the Go toolchain to build admin" >&2
