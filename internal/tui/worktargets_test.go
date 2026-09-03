@@ -59,23 +59,10 @@ func rowNames(rows []rowItem) []string {
 	return out
 }
 
-func TestCollapsedCommandListsNoTargets(t *testing.T) {
+// TestEveryCommandsTargetsRenderUnconditionally: a multi-target command's
+// targets are always listed beneath it — there is no collapsed state.
+func TestEveryCommandsTargetsRenderUnconditionally(t *testing.T) {
 	m := multiTargetModel(t)
-	got := rowNames(m.workRows())
-	want := []string{"cmd:dev", "cmd:solo", "cmd:test"}
-	if len(got) != len(want) {
-		t.Fatalf("collapsed rows = %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("collapsed rows = %v, want %v", got, want)
-		}
-	}
-}
-
-func TestExpandedCommandListsItsTargetsInPickerOrder(t *testing.T) {
-	m := multiTargetModel(t)
-	m.expandedCmd = "dev"
 	got := rowNames(m.workRows())
 	want := []string{
 		"cmd:dev",
@@ -83,23 +70,23 @@ func TestExpandedCommandListsItsTargetsInPickerOrder(t *testing.T) {
 		"cmd:solo", "cmd:test",
 	}
 	if len(got) != len(want) {
-		t.Fatalf("expanded rows = %v, want %v", got, want)
+		t.Fatalf("rows = %v, want %v", got, want)
 	}
 	for i := range want {
 		if got[i] != want[i] {
-			t.Fatalf("expanded rows = %v, want %v", got, want)
+			t.Fatalf("rows = %v, want %v", got, want)
 		}
 	}
 }
 
 // TestSingleTargetCommandIsNotAnExpander: the CLI runs a lone target without
 // prompting, so a row that would open onto exactly one child is a plain
-// dispatch instead.
+// dispatch instead — "solo" carries no target group even though "dev"'s
+// still renders unconditionally.
 func TestSingleTargetCommandIsNotAnExpander(t *testing.T) {
 	m := multiTargetModel(t)
-	m.expandedCmd = "solo"
 	for _, r := range m.workRows() {
-		if r.kind == rowCommandTarget {
+		if r.kind == rowCommandTarget && r.work != nil && r.work.cmdName == "solo" {
 			t.Fatalf("single-target command expanded into %q", r.work.targetKey)
 		}
 		if r.kind == rowCommand && r.work != nil && r.work.cmdName == "solo" && len(r.work.targets) > 0 {
@@ -122,30 +109,22 @@ func cmdRow(t *testing.T, m Model, name string) *workRowData {
 	return nil
 }
 
-// TestEnterOnCommandWithTargetsTogglesInsteadOfRunning is the whole point:
-// enter opens the submenu and dispatches nothing.
-func TestEnterOnCommandWithTargetsTogglesInsteadOfRunning(t *testing.T) {
+// TestEnterOnCommandWithTargetsDoesNotDispatch is the whole point: a
+// multi-target command's parent row has no single run to dispatch — its
+// targets are already listed beneath it — so enter there dispatches nothing.
+func TestEnterOnCommandWithTargetsDoesNotDispatch(t *testing.T) {
 	m := multiTargetModel(t)
 	wd := cmdRow(t, m, "dev")
 
-	next, cmd := m.activateCommand(wd)
+	_, cmd := m.activateCommand(wd)
 	if cmd != nil {
-		t.Fatal("enter on a command with targets dispatched something")
-	}
-	if got := next.(Model).expandedCmd; got != "dev" {
-		t.Fatalf("expandedCmd = %q, want \"dev\"", got)
-	}
-
-	// Enter again on the same row closes it.
-	m2 := next.(Model)
-	again, _ := m2.activateCommand(cmdRow(t, m2, "dev"))
-	if got := again.(Model).expandedCmd; got != "" {
-		t.Fatalf("second enter left expandedCmd = %q, want empty", got)
+		t.Fatal("enter on a multi-target command's parent row dispatched something")
 	}
 }
 
-// TestOnlyOneSubmenuOpenAtATime: opening a second expander closes the first.
-func TestOnlyOneSubmenuOpenAtATime(t *testing.T) {
+// TestEveryCommandsTargetsRenderAtOnce: two multi-target commands both list
+// their targets simultaneously — there is no "only one open" rule anymore.
+func TestEveryCommandsTargetsRenderAtOnce(t *testing.T) {
 	m := multiTargetModel(t)
 	m.manifest.Actions["deploy"] = manifest.Action{
 		"kind":    "multi-target",
@@ -153,16 +132,22 @@ func TestOnlyOneSubmenuOpenAtATime(t *testing.T) {
 	}
 	m.manifest.Custom["deploy"] = manifest.Command{Desc: "ship it", Steps: []string{"deploy"}, Group: 1, Priority: 4}
 
-	m.expandedCmd = "dev"
-	deploy := cmdRow(t, m, "deploy")
-	next, _ := m.activateCommand(deploy)
-	if got := next.(Model).expandedCmd; got != "deploy" {
-		t.Fatalf("expandedCmd = %q, want \"deploy\"", got)
-	}
-	for _, r := range next.(Model).workRows() {
-		if r.kind == rowCommandTarget && r.work != nil && r.work.cmdName == "dev" {
-			t.Fatal("dev stayed expanded while deploy opened")
+	var sawDevTarget, sawDeployTarget bool
+	for _, r := range m.workRows() {
+		if r.kind == rowCommandTarget && r.work != nil {
+			switch r.work.cmdName {
+			case "dev":
+				sawDevTarget = true
+			case "deploy":
+				sawDeployTarget = true
+			}
 		}
+	}
+	if !sawDevTarget {
+		t.Error("dev's targets are missing")
+	}
+	if !sawDeployTarget {
+		t.Error("deploy's targets are missing")
 	}
 }
 
@@ -171,7 +156,6 @@ func TestOnlyOneSubmenuOpenAtATime(t *testing.T) {
 // otherwise have to ask for.
 func TestTargetRowDispatchesParentWithTargetArg(t *testing.T) {
 	m := multiTargetModel(t)
-	m.expandedCmd = "dev"
 	var target *workRowData
 	for _, r := range m.workRows() {
 		if r.kind == rowCommandTarget && r.work != nil && r.work.targetKey == "mac" {
@@ -206,16 +190,16 @@ func TestTargetRowDispatchesParentWithTargetArg(t *testing.T) {
 	}
 }
 
-// TestToggleKeepsCursorOnTheRowThatWasPressed: collapsing a submenu above
-// the cursor would otherwise slide a different command underneath it.
-func TestToggleKeepsCursorOnTheRowThatWasPressed(t *testing.T) {
+// TestEnterOnMultiTargetParentLeavesCursorPut: row count is now stable per
+// session — nothing inserts or removes rows on enter — so the cursor stays
+// exactly where it was pressed.
+func TestEnterOnMultiTargetParentLeavesCursorPut(t *testing.T) {
 	m := multiTargetModel(t)
 	m.manifest.Actions["deploy"] = manifest.Action{
 		"kind":    "multi-target",
 		"targets": map[string]any{"mac": "ship mac", "ios": "ship ios"},
 	}
 	m.manifest.Custom["deploy"] = manifest.Command{Desc: "ship it", Steps: []string{"deploy"}, Group: 1, Priority: 4}
-	m.expandedCmd = "dev"
 
 	rows := m.workRows()
 	var deployIdx int
@@ -229,8 +213,11 @@ func TestToggleKeepsCursorOnTheRowThatWasPressed(t *testing.T) {
 
 	next, _ := m.activateCommand(deploy)
 	nm := next.(Model)
+	if nm.cursor[nm.active] != deployIdx {
+		t.Fatalf("cursor moved to %d, want it to stay at %d", nm.cursor[nm.active], deployIdx)
+	}
 	cur := nm.workRows()[nm.cursor[nm.active]]
 	if cur.kind != rowCommand || cur.work.cmdName != "deploy" {
-		t.Fatalf("cursor landed on %v/%v, want the deploy command row", cur.kind, cur.work)
+		t.Fatalf("cursor sits on %v/%v, want the deploy command row", cur.kind, cur.work)
 	}
 }

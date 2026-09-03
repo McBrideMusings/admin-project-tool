@@ -757,7 +757,7 @@ func (m Model) viewKeymap() [][2]string {
 	}
 	switch m.active {
 	case tabWork:
-		return [][2]string{{"\u2191\u2193", "move"}, {"\u21b5", "open, run or attach"}, {"\u2192\u2190", "submenu"}, {"a", "attach"}, {"k", "kill"}, {"/", "filter"}, {"q", "quit"}}
+		return [][2]string{{"\u2191\u2193", "move"}, {"\u21b5", "open, run or attach"}, {"a", "attach"}, {"k", "kill"}, {"/", "filter"}, {"q", "quit"}}
 	case tabPRs:
 		return m.rowPairs(keymap.PR)
 	case tabIssues:

@@ -56,23 +56,19 @@ type workRowData struct {
 	pending bool
 	// targets is a kind="multi-target" sole step's target list, in the
 	// order kinds.TargetKeys gives (the same order the CLI picker offers).
-	// Non-empty is exactly the condition that makes this row a collapse
-	// toggle instead of something enter dispatches: enter opens the target
-	// list beneath it and closes whatever was open before.
+	// Non-empty is exactly the condition that makes this row a group header
+	// rather than something enter dispatches directly: its targets always
+	// render beneath it, and enter on one of those dispatches it.
 	targets []string
 	// targetRuns maps each target key to what it does — its shell command,
-	// or "@action" when it delegates — so the expanded submenu says what
-	// each row will run rather than restating its own name.
+	// or "@action" when it delegates — so the target group says what each
+	// row will run rather than restating its own name.
 	targetRuns map[string]string
 	// targetURLs maps each target key to its own resolved urls (the same
 	// per-target inheritance the pinned footer applies — kinds.FrameURLs),
 	// so targetRows can hand each child row its own list without a second
 	// Model-aware resolver.
 	targetURLs map[string][]frame.URLEntry
-	// expanded mirrors Model.expandedCmd for this row, resolved once when
-	// the row is built so both the child-row builder and the renderer read
-	// one value instead of each re-consulting the Model.
-	expanded bool
 	// urls is this row's own resolved urls (admin-1azz): a plain command's
 	// action-level list, or — for a single-target multi-target action,
 	// which the CLI auto-picks with no prompt — that one target's list.
@@ -575,7 +571,7 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 			// A single-target action isn't a menu — the CLI picks that
 			// target without prompting (makeMultiTarget's "is this
 			// project's only target"), so the row stays a plain dispatch
-			// rather than an expander that opens onto one child.
+			// rather than a group with a target list under it.
 			if len(keys) > 1 {
 				wd.targets = keys
 				wd.targetRuns = map[string]string{}
@@ -586,7 +582,6 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 						wd.targetURLs[k] = u
 					}
 				}
-				wd.expanded = m.expandedCmd == cr.name
 			}
 		}
 		// A row that runs directly — not a query-resolved workflow, not a
@@ -612,14 +607,14 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 	return rowItem{kind: rowCommand, label: cr.name + " " + cr.cmd.Desc, work: wd}
 }
 
-// targetRows is the expanded submenu: one rowCommandTarget per target of
-// parent, or nothing at all when parent is collapsed or has no targets. The
-// children sit directly under their parent in the same flat row list, so
-// every cursor, filter, window and hit-test rule already written for the
-// Work tab applies to them with no special case.
+// targetRows is a command's target group: one rowCommandTarget per target of
+// parent, or nothing at all when parent has no targets. They always render —
+// there is no collapsed state — and sit directly under their parent in the
+// same flat row list, so every cursor, filter, window and hit-test rule
+// already written for the Work tab applies to them with no special case.
 func targetRows(parent rowItem) []rowItem {
 	wd := parent.work
-	if wd == nil || !wd.expanded {
+	if wd == nil {
 		return nil
 	}
 	out := make([]rowItem, 0, len(wd.targets))
@@ -686,7 +681,10 @@ func (m Model) workRows() []rowItem {
 		for _, cr := range cmdRows {
 			item := m.commandRowItem(cr, byName)
 			rows = append(rows, item)
-			rows = append(rows, targetRows(item)...)
+			if targets := targetRows(item); len(targets) > 0 {
+				rows = append(rows, targets...)
+				rows = append(rows, ruleRow())
+			}
 		}
 	}
 
@@ -774,8 +772,10 @@ func dispatchCommandCmd(m *manifest.Manifest, width, height int, name string, en
 // attaches to its pane instead of dispatching a second run on top of the one
 // that owns its log file and registry entry; a command whose previous enter
 // is still dispatching (wd.pending) queues the attach instead of starting a
-// second run on top of the one that hasn't registered yet (admin-qk77);
-// anything else dispatches.
+// second run on top of the one that hasn't registered yet (admin-qk77); a
+// multi-target command has no single run to dispatch — its targets already
+// render below it (admin-0kxh), so enter on the parent row is a status-only
+// no-op pointing at them; anything else dispatches.
 func (m Model) activateCommand(wd *workRowData) (tea.Model, tea.Cmd) {
 	if wd.workflow != nil {
 		return m.startWorkflowConfirm(wd)
@@ -793,21 +793,12 @@ func (m Model) activateCommand(wd *workRowData) (tea.Model, tea.Cmd) {
 		m.setStatus(wd.cmdName+" starting…", cCyan)
 		return m, nil
 	}
-	// A command with targets is a menu, not a run: enter opens its target
-	// list and closes whichever one was open, so exactly one submenu is
-	// ever on screen. Nothing dispatches until enter lands on a target.
 	if len(wd.targets) > 0 {
-		if m.expandedCmd == wd.cmdName {
-			m.expandedCmd = ""
-		} else {
-			m.expandedCmd = wd.cmdName
-		}
-		// Toggling inserts or removes rows above and below, so the cursor's
-		// index no longer means the row it meant a moment ago — closing a
-		// submenu that sat above this one would slide a different command
-		// under the cursor. Re-find the row that was just pressed and put
-		// the cursor back on it.
-		return m.focusCommandRow(wd.cmdName), nil
+		// A command with more than one target can't dispatch from this row —
+		// there's no target argument to run with. Its targets are already
+		// listed beneath it; enter on one of those dispatches it.
+		m.setStatus(wd.cmdName+": pick a target below", cCyan)
+		return m, nil
 	}
 	return m.startDispatch(wd.cmdName)
 }
@@ -837,40 +828,9 @@ func (m Model) liveEntryForCommand(name string) *livework.Entry {
 	return nil
 }
 
-// focusCommandRow puts the cursor back on the rowCommand named name, after a
-// toggle has changed how many rows sit above it. A name that no longer has a
-// row (impossible in practice — the toggle came from that very row) leaves
-// the cursor alone rather than jumping it somewhere arbitrary.
-func (m Model) focusCommandRow(name string) Model {
-	for i, r := range m.visibleRows() {
-		if r.kind == rowCommand && r.work != nil && r.work.cmdName == name {
-			m.cursor[m.active] = i
-			break
-		}
-	}
-	return m
-}
-
-// expandCommand opens name's submenu — the arrow-key counterpart of enter's
-// toggle in activateCommand, used only when the row is known collapsed
-// (right on a parent row that has one).
-func (m Model) expandCommand(name string) (tea.Model, tea.Cmd) {
-	m.expandedCmd = name
-	return m.focusCommandRow(name), nil
-}
-
-// collapseCommand closes whichever submenu is open and puts the cursor back
-// on its parent row — the shared body for left and esc from either the
-// parent row itself or one of its target rows, so the cursor never lands on
-// a target row that the collapse just removed.
-func (m Model) collapseCommand(name string) (tea.Model, tea.Cmd) {
-	m.expandedCmd = ""
-	return m.focusCommandRow(name), nil
-}
-
-// activateCommandTarget handles enter on one target of an expanded command:
-// it dispatches the parent command with that target as its argument, which
-// is exactly what `admin <cmd> <target>` does from a shell — makeMultiTarget
+// activateCommandTarget handles enter on one target of a command's target
+// group: it dispatches the parent command with that target as its argument,
+// which is exactly what `admin <cmd> <target>` does from a shell — makeMultiTarget
 // takes args[0] as the picked target and never raises its own picker. A
 // multi-target run is recorded under the PARENT action's own name
 // (liveEntryFor), not per target, so pending — like live — is keyed on

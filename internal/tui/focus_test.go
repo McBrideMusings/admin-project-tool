@@ -51,10 +51,6 @@ func TestNewSessionFocusesTabBar(t *testing.T) {
 	if _, ok := m.currentRow(); ok {
 		t.Error("currentRow() returned a row while focus is on the tab bar, want none")
 	}
-	// The Work tab's own disclosure arrow ("▸ deploy") reuses the same glyph
-	// as the list-row cursor marker, so checking for its absence there would
-	// prove nothing; a list tab (Issues) has no such row of its own and is a
-	// clean surface to check the cursor marker against.
 	m.active = tabIssues
 	m.remote = data.Remote{Issues: []gh.IssueItem{{Number: 1, Title: "one"}, {Number: 2, Title: "two"}}}
 	m.haveData = true
@@ -65,7 +61,7 @@ func TestNewSessionFocusesTabBar(t *testing.T) {
 }
 
 // TestTabBarFocusStepsTabsOnWorkTab is AC2: left/right/h/l step the tab from
-// the tab bar on every tab including Work, with no submenu expanding.
+// the tab bar on every tab including Work.
 func TestTabBarFocusStepsTabsOnWorkTab(t *testing.T) {
 	for _, key := range []string{"right", "left", "h", "l"} {
 		m := workFocusModel()
@@ -78,11 +74,6 @@ func TestTabBarFocusStepsTabsOnWorkTab(t *testing.T) {
 			// the tab must have changed.
 			t.Errorf("%q from the tab bar did not change the active tab (still %v)", key, nm.active)
 		}
-		if nm.active == tabWork {
-			if nm.expandedCmd != "" {
-				t.Errorf("%q from the tab bar expanded a Work-tab submenu (%q), want none", key, nm.expandedCmd)
-			}
-		}
 	}
 	// A dedicated case landing back on Work: right then left should return.
 	m := workFocusModel()
@@ -92,9 +83,6 @@ func TestTabBarFocusStepsTabsOnWorkTab(t *testing.T) {
 	nm2 := next2.(Model)
 	if nm2.active != tabWork {
 		t.Errorf("right then left from the tab bar landed on %v, want back on Work", nm2.active)
-	}
-	if nm2.expandedCmd != "" {
-		t.Errorf("left from the tab bar expanded/collapsed a submenu (%q), want no-op", nm2.expandedCmd)
 	}
 }
 
@@ -145,10 +133,13 @@ func TestUpAtTopRowReturnsToTabBar(t *testing.T) {
 	}
 }
 
-// TestExpandCollapseStillWorkInBody is the ticket's AC5: on the Work tab with
-// focus in the body, left/right still expand and collapse a command's
-// targets.
-func TestExpandCollapseStillWorkInBody(t *testing.T) {
+// TestTargetsAlreadyVisibleRightLeftJustSwitchTabInBody supersedes the
+// ticket's own admin-70hb AC5 ("left/right still expand and collapse a
+// command's targets") — admin-0kxh removes that toggle. A multi-target
+// command's targets render unconditionally, so with focus in the body,
+// right/left on its parent row do exactly what they do on any other Work-tab
+// row: switch the active tab.
+func TestTargetsAlreadyVisibleRightLeftJustSwitchTabInBody(t *testing.T) {
 	m := workFocusModel()
 	m.focus = focusBody
 	rows := m.visibleRows()
@@ -163,15 +154,20 @@ func TestExpandCollapseStillWorkInBody(t *testing.T) {
 	}
 	m.cursor[tabWork] = idx
 
+	sawTarget := false
+	for _, r := range rows {
+		if r.kind == rowCommandTarget && r.work != nil && r.work.cmdName == "deploy" {
+			sawTarget = true
+		}
+	}
+	if !sawTarget {
+		t.Fatal("deploy's targets are not already rendered")
+	}
+
 	next, _ := m.handleKey(keyMsg("right"))
 	nm := next.(Model)
-	if nm.expandedCmd != "deploy" {
-		t.Fatalf("right on a collapsed multi-target row in the body: expandedCmd = %q, want %q", nm.expandedCmd, "deploy")
-	}
-	next2, _ := nm.handleKey(keyMsg("left"))
-	nm2 := next2.(Model)
-	if nm2.expandedCmd != "" {
-		t.Errorf("left on the same row: expandedCmd = %q, want collapsed (\"\")", nm2.expandedCmd)
+	if nm.active == tabWork {
+		t.Errorf("right on a multi-target row in the body stayed on Work, want it to switch tab")
 	}
 }
 
