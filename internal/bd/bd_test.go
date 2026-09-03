@@ -70,6 +70,9 @@ func TestOnlyBlocksDependenciesHoldWorkUp(t *testing.T) {
 	if isd.Assignee != "pierce" || isd.Type != "task" {
 		t.Errorf("fields dropped in parsing: assignee=%q type=%q", isd.Assignee, isd.Type)
 	}
+	if isd.Parent != "bdtest-epc" {
+		t.Errorf("bdtest-isd parent-child edge dropped: got Parent=%q, want bdtest-epc", isd.Parent)
+	}
 	// The overlay renders both of these, and it renders them from the list
 	// response — a second `bd show` for a bead already in memory buys nothing.
 	if !strings.Contains(isd.Description, "Send the reset email") {

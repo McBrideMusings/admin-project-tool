@@ -48,7 +48,12 @@ type Bead struct {
 	Assignee string
 	Labels   []string
 	Blockers []string
-	Updated  time.Time
+	// Parent is the id of the bead this one nests under, from a parent-child
+	// dependency edge naming this bead as the child. Empty when this bead has
+	// none. A bead has at most one parent, so this holds a single id rather
+	// than a slice the way Blockers does.
+	Parent  string
+	Updated time.Time
 
 	// Description and AcceptanceCriteria are the bead's prose, carried for the
 	// overlay. No column renders either one.
@@ -234,11 +239,19 @@ func (r rawBead) bead() Bead {
 	if i := strings.IndexByte(b.Assignee, '@'); i > 0 {
 		b.Assignee = b.Assignee[:i]
 	}
-	// Only "blocks" holds work up. parent-child, discovered-from and related are
-	// structure, not order — a bead whose only link is a parent is ready to start.
+	// Only "blocks" holds work up. discovered-from and related are structure,
+	// not order — a bead whose only link is one of those is ready to start.
+	// parent-child is structure too, but unlike those it names a specific
+	// relationship (this bead's parent) worth keeping as Parent for the
+	// family-tree view rather than discarding.
 	for _, d := range r.Dependencies {
-		if d.Type == "blocks" {
+		switch d.Type {
+		case "blocks":
 			b.Blockers = append(b.Blockers, d.DependsOnID)
+		case "parent-child":
+			if b.Parent == "" {
+				b.Parent = d.DependsOnID
+			}
 		}
 	}
 	return b

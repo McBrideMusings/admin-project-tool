@@ -194,8 +194,12 @@ type Model struct {
 	// goroutine returns) would launch a redundant `bd where` subprocess.
 	beadsProbing bool
 	beadPrefix   string // bd workspace prefix, stripped off every displayed id
-	beadTree    bool   // "g": dependency tree instead of the flat, grouped list
-	beads       []bd.Bead
+	beadTree     bool   // "g": dependency tree instead of the flat, grouped list
+	// beadFamilyTree is "G": parent-child forest instead of the flat, grouped
+	// list. Mutually exclusive with beadTree — only one tree mode is active at
+	// a time, enforced where each is toggled on in handleKey.
+	beadFamilyTree bool
+	beads          []bd.Bead
 	// trackSort is the active order for the tracker list — the Beads tab's flat
 	// list and the Issues tab — cycled by `s` (see tracksort.go). It is shared
 	// across both tabs rather than kept per-tab: one key, one order, named in
@@ -1943,9 +1947,26 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "g":
 		if m.active == tabBeads {
 			m.beadTree = !m.beadTree
+			if m.beadTree {
+				m.beadFamilyTree = false
+			}
 			m.cursor[tabBeads] = 0
 			if m.beadTree {
 				m.setStatus("dependency tree — blockers sit above what they block", cDim)
+			} else {
+				m.setStatus("flat list, grouped by what's ready", cDim)
+			}
+			break
+		}
+	case "G":
+		if m.active == tabBeads {
+			m.beadFamilyTree = !m.beadFamilyTree
+			if m.beadFamilyTree {
+				m.beadTree = false
+			}
+			m.cursor[tabBeads] = 0
+			if m.beadFamilyTree {
+				m.setStatus("family tree — parents sit above their children", cDim)
 			} else {
 				m.setStatus("flat list, grouped by what's ready", cDim)
 			}

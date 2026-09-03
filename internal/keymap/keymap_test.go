@@ -37,7 +37,7 @@ func TestBuiltins(t *testing.T) {
 		labels []string // Display+Label pairs flattened for a readable diff
 	}{
 		{Bead, []string{
-			"↑↓:move", "↵:start work", "d:detail", "g:tree", "s:sort",
+			"↑↓:move", "↵:start work", "d:detail", "g:tree", "⇧G:family", "s:sort",
 			"w:workflow", "/:filter", "r:refresh", "q:quit",
 		}},
 		{Issue, []string{
