@@ -23,6 +23,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/create"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
+	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/shim"
 	"github.com/McBrideMusings/admin-project-tool/internal/timing"
 	"github.com/McBrideMusings/admin-project-tool/internal/tui"
@@ -233,6 +234,13 @@ func registerManifestCommand(name string) bool {
 		Short:              "admin.toml command: " + name,
 		DisableFlagParsing: true, // flags belong to the underlying steps, not to cobra
 		RunE: func(cmd *cobra.Command, cmdArgs []string) error {
+			// Go's equivalent of Python's single explicit
+			// _announce_log_end() call right after the CLI dispatch's
+			// func() returns (admin_lib/core.py:1701-1702) plus its
+			// atexit safety net (core.py:449): a defer here fires on
+			// both a normal return and an error return, without
+			// needing a second registration mechanism Go doesn't have.
+			defer luahost.Process().AnnounceEnd()
 			return kinds.RunCommand(m, kinds.Default, name, cmdArgs, nil)
 		},
 	})
@@ -264,6 +272,10 @@ var runActionCmd = &cobra.Command{
 	DisableFlagParsing: true, // flags belong to the action's own steps, not to cobra
 	Args:               cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// See registerManifestCommand's RunE comment: same Go port of
+		// Python's explicit _announce_log_end() call plus its atexit
+		// safety net, at this verb's own outermost dispatch boundary.
+		defer luahost.Process().AnnounceEnd()
 		kinds.MarkReentry()
 		wd, err := os.Getwd()
 		if err != nil {
@@ -309,6 +321,10 @@ var runCommandCmd = &cobra.Command{
 		// sends (admin-3rgp.61's Cause B). See HostedColorProfileEnv's doc
 		// comment in internal/kinds/hostedpty.go.
 		applyHostedColorProfile()
+		// See registerManifestCommand's RunE comment: same Go port of
+		// Python's explicit _announce_log_end() call plus its atexit
+		// safety net, at this verb's own outermost dispatch boundary.
+		defer luahost.Process().AnnounceEnd()
 		kinds.MarkReentry()
 
 		wd, err := os.Getwd()

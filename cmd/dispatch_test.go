@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -8,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 )
 
 // writeManifest writes a minimal admin.toml declaring one command/action
@@ -333,5 +336,96 @@ run  = "touch marker.txt"
 	}
 	if _, err := os.Stat(filepath.Join(dir, "marker.txt")); err != nil {
 		t.Fatalf("stat marker.txt: %v (the registered command's RunE never actually ran the step)", err)
+	}
+}
+
+// TestRegisterManifestCommandAnnouncesLogPathAtStartAndEnd is admin-krvc.1's
+// acceptance criterion: a framed action prints its log file path near the
+// start (materialize, on the first step's first write) AND the end
+// (the deferred AnnounceEnd this ticket adds) of the run, on both a
+// succeeding and a failing action.
+func TestRegisterManifestCommandAnnouncesLogPathAtStartAndEnd(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		run    string
+		wantOK bool
+	}{
+		{name: "succeeds", run: "true", wantOK: true},
+		{name: "fails", run: "false", wantOK: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Chdir(dir)
+			luahost.ResetProcessLogContext(dir)
+
+			// luahost.New (internal/kinds/helpers.go's newHost) captures
+			// os.Stderr into the Host at construction time, inside RunE —
+			// so the swap must happen before RunE runs, not via
+			// luahost.Process().SetStderr, which newHost immediately
+			// overwrites with h.Stderr on every kind dispatch.
+			origStderr := os.Stderr
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("os.Pipe: %v", err)
+			}
+			os.Stderr = w
+			outCh := make(chan string, 1)
+			go func() {
+				var buf bytes.Buffer
+				_, _ = buf.ReadFrom(r)
+				outCh <- buf.String()
+			}()
+
+			body := `project_name = "fixture"
+
+[commands.go]
+desc  = "runs one action"
+steps = ["run-it"]
+
+[actions.run-it]
+kind = "shell"
+run  = "` + tc.run + `"
+`
+			if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(body), 0o644); err != nil {
+				t.Fatalf("write admin.toml: %v", err)
+			}
+			t.Cleanup(func() { removeRootCommand(t, "go") })
+
+			if ok := registerManifestCommand("go"); !ok {
+				t.Fatal("registerManifestCommand(go) = false, want true")
+			}
+			var found *cobra.Command
+			for _, c := range rootCmd.Commands() {
+				if c.Name() == "go" {
+					found = c
+				}
+			}
+			if found == nil {
+				t.Fatal("registered command not found on rootCmd")
+			}
+
+			runErr := found.RunE(found, nil)
+			w.Close()
+			os.Stderr = origStderr
+			out := <-outCh
+
+			if tc.wantOK && runErr != nil {
+				t.Fatalf("RunE = %v, want nil", runErr)
+			}
+			if !tc.wantOK && runErr == nil {
+				t.Fatal("RunE = nil, want an error (run = \"false\")")
+			}
+
+			if got := strings.Count(out, luahost.LogAnnouncePrefix); got != 2 {
+				t.Fatalf("announce count = %d, want 2 (start + end); output:\n%s", got, out)
+			}
+			path := luahost.Process().LogFile()
+			if path == "" {
+				t.Fatal("no log file was ever materialized")
+			}
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("stat %s: %v", path, err)
+			}
+		})
 	}
 }
