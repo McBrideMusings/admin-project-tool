@@ -72,8 +72,10 @@ import json
 import os
 import shutil
 import signal
+import re
 import subprocess
 import sys
+import tempfile
 import time
 
 from .core import (
@@ -3205,6 +3207,15 @@ def _compose_sign_settings(cfg, platform=None):
     profile at all) — see :func:`_target_needs_provisioning_profile`.
     """
     from .core import resolve_env
+
+    # A per-platform identity overrides the shared one, so a project can ship
+    # its Mac app Developer ID-signed (no get-task-allow, notarizable) while its
+    # iOS app stays development-signed — an Apple Distribution iOS build cannot
+    # be installed by devicectl onto a development device at all, so forcing one
+    # identity across both platforms makes the wrong tradeoff on one of them.
+    if cfg.get(f"{platform}_sign_identity") is not None:
+        cfg = {**cfg, "sign_identity": cfg[f"{platform}_sign_identity"]}
+
     parts = []
     for manifest_key, xcode_key in (
         ("code_sign_identity", "CODE_SIGN_IDENTITY"),
@@ -3577,6 +3588,88 @@ def dev_tv(cfg, *, log_level="app", clean=False, output_config=None, launch_args
                   output_config=output_config, launch_args=launch_args)
 
 
+def notarize_and_staple(app_path):
+    """Submit a Developer ID-signed .app to Apple's notary service, wait for the
+    verdict, and staple the ticket to the bundle.
+
+    Returns 0 on success, non-zero otherwise.
+
+    Stapling is what makes the result work OFFLINE. Without it Gatekeeper has to
+    reach Apple to learn the app is notarized, so the first launch on a machine
+    with no network — or behind a captive portal — still shows the unidentified
+    developer dialog. The ticket travels with the bundle once stapled.
+
+    Authenticates with the App Store Connect API key from the environment
+    (APP_STORE_CONNECT_KEY_PATH / _KEY_ID / _ISSUER_ID) rather than a
+    `notarytool store-credentials` keychain profile: those three are already
+    exported for xcodebuild's own authentication, so a keychain profile would be
+    a second copy of the same secret that has to be created by hand on every
+    machine before a deploy could work.
+    """
+    key_path = os.environ.get("APP_STORE_CONNECT_KEY_PATH")
+    key_id = os.environ.get("APP_STORE_CONNECT_KEY_ID")
+    issuer = os.environ.get("APP_STORE_CONNECT_ISSUER_ID")
+    missing = [name for name, value in (
+        ("APP_STORE_CONNECT_KEY_PATH", key_path),
+        ("APP_STORE_CONNECT_KEY_ID", key_id),
+        ("APP_STORE_CONNECT_ISSUER_ID", issuer),
+    ) if not value]
+    if missing:
+        err("cannot notarize: " + ", ".join(missing) + " not set")
+        err("These are the same App Store Connect credentials xcodebuild signs with.")
+        return 1
+
+    # notarytool takes an archive, never a bundle directory. `ditto -c -k
+    # --keepParent` is Apple's own prescription: plain `zip` does not preserve
+    # the symlinks and extended attributes inside a .app, and a bundle that
+    # arrives mangled is rejected for reasons that describe the archive rather
+    # than the app.
+    with tempfile.TemporaryDirectory() as tmp:
+        archive = os.path.join(tmp, os.path.basename(app_path) + ".zip")
+        rc = subprocess.run(
+            ["ditto", "-c", "-k", "--keepParent", app_path, archive]
+        ).returncode
+        if rc != 0:
+            err("failed to archive the app for notarization")
+            return rc
+
+        info("Submitting to Apple's notary service (this waits for the verdict)...")
+        result = subprocess.run(
+            ["xcrun", "notarytool", "submit", archive,
+             "--key", key_path, "--key-id", key_id, "--issuer", issuer,
+             "--wait", "--timeout", "30m"],
+            capture_output=True, text=True,
+        )
+        sys.stdout.write(result.stdout)
+        if result.returncode != 0 or "status: Accepted" not in result.stdout:
+            err("notarization did not succeed")
+            if result.stderr:
+                err(result.stderr.strip())
+            # The submission log names the offending binary and reason, and is
+            # the only place that detail exists — the summary above never has it.
+            submission = _notary_submission_id(result.stdout)
+            if submission:
+                err(f"Full reason: xcrun notarytool log {submission} "
+                    f"--key \"$APP_STORE_CONNECT_KEY_PATH\" "
+                    f"--key-id \"$APP_STORE_CONNECT_KEY_ID\" "
+                    f"--issuer \"$APP_STORE_CONNECT_ISSUER_ID\"")
+            return result.returncode or 1
+
+    info("Stapling the notarization ticket...")
+    rc = subprocess.run(["xcrun", "stapler", "staple", app_path]).returncode
+    if rc != 0:
+        err("stapling failed — the app is notarized but the ticket is not attached, "
+            "so a first launch with no network still warns")
+        return rc
+    return 0
+
+
+def _notary_submission_id(stdout):
+    """Pull the submission id out of notarytool's output, or None."""
+    match = re.search(r"id: ([0-9a-fA-F-]{36})", stdout or "")
+    return match.group(1) if match else None
+
+
 def deploy_mac(cfg, *, clean=False):
     """Build and install a production macOS app to /Applications. No icon swap."""
     if not cfg:
@@ -3607,6 +3700,16 @@ def deploy_mac(cfg, *, clean=False):
     app_path = find_app(_derived_glob(derived_name, config, "", process))
     if not app_path:
         err("Could not find built app"); sys.exit(1)
+
+    # Notarize BEFORE copying into place, so what lands in /Applications is the
+    # stapled bundle. Stapling the installed copy instead would leave a window
+    # where the deployed app is the un-stapled one, and a failed staple would
+    # leave it there permanently.
+    if cfg.get("notarize", False):
+        rc = notarize_and_staple(app_path)
+        if rc != 0:
+            err("Refusing to install an app that did not notarize.")
+            sys.exit(rc)
 
     info(f"Installing to {install_path}")
     if os.path.exists(install_path):

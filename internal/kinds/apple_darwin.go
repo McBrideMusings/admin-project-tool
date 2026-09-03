@@ -39,6 +39,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -294,6 +295,16 @@ func appleDeployMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 		return fmt.Errorf("could not find built app")
 	}
 
+	// Notarize BEFORE copying into place, so what lands in installPath is the
+	// stapled bundle. Stapling the installed copy instead leaves a window where
+	// the deployed app is the un-stapled one, and a failed staple leaves it
+	// there permanently.
+	if b, _ := cfg["notarize"].(bool); b {
+		if err := appleNotarizeAndStaple(h, appPath); err != nil {
+			return fmt.Errorf("refusing to install an app that did not notarize: %w", err)
+		}
+	}
+
 	h.Info("Installing to " + installPath)
 	_ = os.RemoveAll(installPath)
 	if err := appleCopyTree(appPath, installPath); err != nil {
@@ -354,16 +365,42 @@ func appleDeployDevice(cfg map[string]any, h *luahost.Host, platform string, f a
 	}
 
 	h.Info("Installing to device " + deviceName + "...")
-	if err := luahost.InstallOnDevice(deviceID, appPath); err != nil {
-		h.Warn("Install failed — retrying once...")
-		if err := luahost.InstallOnDevice(deviceID, appPath); err != nil {
-			if platform == "tv" {
-				h.Err("Keep the Apple TV awake and on the same network as this Mac.")
-			} else {
-				h.Err("Try plugging in via USB cable for a more reliable connection.")
-			}
-			return fmt.Errorf("install failed after retry: %w", err)
+	// Three attempts, backing off and RE-RESOLVING the device between them.
+	//
+	// A wireless CoreDevice link drops mid-install often enough to matter
+	// (NWError 54, "Connection was invalidated"), and the device then vanishes
+	// from CoreDevice's table for a second or two. The previous retry fired
+	// immediately and reused the device id that had just gone stale, so it
+	// failed *differently* — "unable to locate a device matching the requested
+	// device identifier" — rather than succeeding, and the advice it printed
+	// ("plug in via USB") named a cause that was not the real one: the same
+	// device installed fine by hand seconds later, untouched.
+	installErr := luahost.InstallOnDevice(deviceID, appPath)
+	for attempt := 0; attempt < 2 && installErr != nil; attempt++ {
+		delay := time.Duration(3*(attempt+1)) * time.Second
+		h.Warn(fmt.Sprintf("Install failed — waiting %s and re-resolving the device (attempt %d of 3)...", delay, attempt+2))
+		time.Sleep(delay)
+
+		// A lookup failure here is the device still being absent from the
+		// table, which is the condition we are waiting out — not a reason to
+		// stop.
+		newID, newName, _, _, findErr := h.FindConnectedDevice(platform, deviceType)
+		if findErr != nil || newID == "" {
+			h.Warn("Device not back in CoreDevice's table yet.")
+			continue
 		}
+		deviceID, deviceName = newID, newName
+		installErr = luahost.InstallOnDevice(deviceID, appPath)
+	}
+	if installErr != nil {
+		if platform == "tv" {
+			h.Err("Keep the Apple TV awake and on the same network as this Mac.")
+		} else {
+			h.Err("The device stayed unreachable across all three attempts, so this is " +
+				"not the transient control-channel drop the retries cover — check that " +
+				"it is awake, unlocked and on this network, or connect USB.")
+		}
+		return fmt.Errorf("install failed after 3 attempts: %w", installErr)
 	}
 
 	if bundleID != "" {
@@ -472,3 +509,84 @@ func appleCopyTree(src, dst string) error {
 		return err
 	})
 }
+
+
+// appleNotarizeAndStaple submits a Developer ID-signed .app to Apple's notary
+// service, waits for the verdict, and staples the ticket to the bundle.
+//
+// Stapling is what makes the result work OFFLINE. Without it Gatekeeper has to
+// reach Apple to learn the app is notarized, so a first launch on a machine
+// with no network — or behind a captive portal — still shows the unidentified
+// developer dialog. The ticket travels with the bundle once stapled.
+//
+// Authenticates with the App Store Connect API key already in the environment
+// (APP_STORE_CONNECT_KEY_PATH / _KEY_ID / _ISSUER_ID), the same three values
+// xcodebuild signs with, rather than a `notarytool store-credentials` keychain
+// profile: a profile would be a second copy of the same secret that has to be
+// created by hand on every machine before a deploy could work at all.
+func appleNotarizeAndStaple(h *luahost.Host, appPath string) error {
+	keyPath := os.Getenv("APP_STORE_CONNECT_KEY_PATH")
+	keyID := os.Getenv("APP_STORE_CONNECT_KEY_ID")
+	issuer := os.Getenv("APP_STORE_CONNECT_ISSUER_ID")
+	var missing []string
+	for _, pair := range []struct{ name, value string }{
+		{"APP_STORE_CONNECT_KEY_PATH", keyPath},
+		{"APP_STORE_CONNECT_KEY_ID", keyID},
+		{"APP_STORE_CONNECT_ISSUER_ID", issuer},
+	} {
+		if pair.value == "" {
+			missing = append(missing, pair.name)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("cannot notarize: %s not set (the same App Store Connect credentials xcodebuild signs with)", strings.Join(missing, ", "))
+	}
+
+	tmp, err := os.MkdirTemp("", "admin-notarize-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+
+	// notarytool takes an archive, never a bundle directory. `ditto -c -k
+	// --keepParent` is Apple's own prescription: plain zip does not preserve the
+	// symlinks and extended attributes inside a .app, and a bundle that arrives
+	// mangled is rejected for reasons that describe the archive rather than the
+	// app.
+	archive := filepath.Join(tmp, filepath.Base(appPath)+".zip")
+	if out, err := exec.Command("ditto", "-c", "-k", "--keepParent", appPath, archive).CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to archive the app for notarization: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+
+	h.Info("Submitting to Apple's notary service (this waits for the verdict)...")
+	cmd := exec.Command("xcrun", "notarytool", "submit", archive,
+		"--key", keyPath, "--key-id", keyID, "--issuer", issuer,
+		"--wait", "--timeout", "30m")
+	out, err := cmd.CombinedOutput()
+	text := string(out)
+	h.Info(strings.TrimSpace(text))
+	if err != nil || !strings.Contains(text, "status: Accepted") {
+		// The submission log names the offending binary and the reason, and is
+		// the only place that detail exists — the summary above never has it.
+		if id := appleNotarySubmissionID(text); id != "" {
+			h.Err("Full reason: xcrun notarytool log " + id +
+				" --key \"$APP_STORE_CONNECT_KEY_PATH\"" +
+				" --key-id \"$APP_STORE_CONNECT_KEY_ID\"" +
+				" --issuer \"$APP_STORE_CONNECT_ISSUER_ID\"")
+		}
+		return fmt.Errorf("notarization did not succeed")
+	}
+
+	h.Info("Stapling the notarization ticket...")
+	if out, err := exec.Command("xcrun", "stapler", "staple", appPath).CombinedOutput(); err != nil {
+		return fmt.Errorf("stapling failed (the app is notarized but the ticket is not attached, so a first launch with no network still warns): %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// appleNotarySubmissionID pulls the submission UUID out of notarytool's output.
+func appleNotarySubmissionID(out string) string {
+	return appleNotaryIDRe.FindString(out)
+}
+
+var appleNotaryIDRe = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
