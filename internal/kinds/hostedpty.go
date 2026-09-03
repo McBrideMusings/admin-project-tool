@@ -1,9 +1,9 @@
 // hostedpty.go is admin-3rgp.61's dispatch mechanism: how the dashboard runs
 // a Command onto a pseudo-terminal it owns, without ever releasing its own
-// alt-screen. It mirrors pane.go's herdr-dispatch pattern (ADR-0015) —
+// alt-screen. It mirrors pane.go's launcher-dispatch pattern (ADR-0015) —
 // re-exec this same binary against a hidden re-entry verb — but with
-// pty.Start in place of shim.SplitPane, and __run-command in place of
-// __run-action. Both re-entry verbs call kinds.RunCommand/RunAction with
+// pty.Start in place of the project's own [terminal] spawn command
+// (ADR-0020), and __run-command in place of __run-action. Both re-entry verbs call kinds.RunCommand/RunAction with
 // kinds.MarkReentry() set first (cmd/root.go), so __run-command's whole step
 // loop runs inline (runActionInline) in the pty child regardless of what any
 // step's own `detach` declares — StartHostedPTY IS the built-in launcher a
