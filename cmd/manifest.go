@@ -9,6 +9,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/archetype"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/timing"
 )
 
 // reservedToolVerbs are the five verbs the project's design principle 5
@@ -50,7 +51,9 @@ func resolveProjectManifest(ctx context.Context, dir string) (m *manifest.Manife
 	// The nearest admin.toml at or above dir, not dir's own: a project's
 	// commands mean the same thing from any directory inside it, and the
 	// root the walk lands on is what every action's subprocess runs in.
+	start := timing.Start()
 	root, found := manifest.FindRoot(dir)
+	timing.Phase("find admin.toml", start)
 	if !found {
 		return nil, false, nil
 	}
@@ -59,17 +62,21 @@ func resolveProjectManifest(ctx context.Context, dir string) (m *manifest.Manife
 	// config (validate_url_refs, [log_bridge].hosts), so .env has to be in the
 	// environment already or those ${VAR:-default} refs fall back to their
 	// defaults. Same ordering as admin_lib/interp.py::interpret.
+	start = timing.Start()
 	manifest.LoadDotenv(dir)
 	project, err := manifest.Load(dir)
+	timing.Phase("parse manifest", start)
 	if err != nil {
 		return nil, true, err
 	}
+	start = timing.Start()
 	repoRoot, _ := git.RepoRoot(ctx)
 	sp, err := archetype.SearchPathFor(repoRoot)
 	if err != nil {
 		return nil, true, fmt.Errorf("could not resolve the installed archetypes directory: %w", err)
 	}
 	resolved, _, err := archetype.Resolve(project, sp)
+	timing.Phase("resolve archetypes", start)
 	if err != nil {
 		return nil, true, err
 	}

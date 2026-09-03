@@ -24,6 +24,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/shim"
+	"github.com/McBrideMusings/admin-project-tool/internal/timing"
 	"github.com/McBrideMusings/admin-project-tool/internal/tui"
 )
 
@@ -60,12 +61,43 @@ var rootCmd = &cobra.Command{
 // incomplete catalog a clean startup error in addition to the init-time
 // panic factories.go raises, and gives that check a path reachable without
 // killing the process.
+//
+// Timing is enabled here, before dispatchArgs, because dispatchArgs is
+// where manifest find/parse/resolve actually run (registerManifestCommand
+// -> resolveProjectManifest) — enabling it any later would miss those
+// phases entirely. --timing is stripped out of the argv handed to
+// rootCmd.SetArgs for the same reason dispatchArgs' own early return
+// matters: a manifest command uses DisableFlagParsing, so an un-stripped
+// --timing would be passed straight through to the step as one of its own
+// arguments instead of being consumed here.
 func Execute() error {
 	if err := kinds.Validate(); err != nil {
 		return err
 	}
-	rootCmd.SetArgs(dispatchArgs(os.Args[1:]))
+	args, timingRequested := stripTimingFlag(os.Args[1:])
+	if timingRequested || timing.EnvRequests() {
+		timing.Enable()
+	}
+	defer timing.Total()
+	rootCmd.SetArgs(dispatchArgs(args))
 	return rootCmd.ExecuteContext(context.Background())
+}
+
+// stripTimingFlag removes a literal "--timing" argument from args (it is
+// never a value cobra's flag parser needs to see — DisableFlagParsing on
+// every manifest command means cobra never gets a chance to consume it
+// itself) and reports whether it was present.
+func stripTimingFlag(args []string) ([]string, bool) {
+	out := make([]string, 0, len(args))
+	found := false
+	for _, a := range args {
+		if a == "--timing" {
+			found = true
+			continue
+		}
+		out = append(out, a)
+	}
+	return out, found
 }
 
 // dispatchArgs resolves a bare first argument in two steps:
@@ -330,6 +362,14 @@ func init() {
 	rootCmd.AddCommand(runActionCmd)
 	rootCmd.AddCommand(runCommandCmd)
 
+	// Registered purely so `admin --help` lists it — Execute strips a literal
+	// --timing out of argv by hand (see stripTimingFlag) before cobra ever
+	// parses flags, since every manifest command runs with
+	// DisableFlagParsing and would otherwise receive it as one of the
+	// step's own arguments. A manifest command still only responds to
+	// ADMIN_TIMING=1 for that reason — the help string says so.
+	rootCmd.PersistentFlags().Bool("timing", false, "print elapsed time per dispatch phase to stderr (also: ADMIN_TIMING=1 — required for a manifest command, since its flags are its own)")
+
 	f := rootCmd.Flags()
 	f.BoolVar(&dumpFrame, "dump-frame", false, "render one frame to stdout and exit (no TTY needed)")
 	f.IntVar(&dumpWidth, "width", 120, "terminal width for --dump-frame")
@@ -385,13 +425,25 @@ func runDumpFrame(ctx context.Context) error {
 }
 
 func runDashboard(ctx context.Context) error {
+	// The TUI draws its own alt screen on stderr — the same stream timing
+	// lines go to — so a phase line written while the program is running
+	// would be wiped by Bubble Tea's next repaint. Buffer until prog.Run
+	// returns, then Flush once the alt screen has torn down.
+	timing.BufferUntilFlush()
+	defer timing.Flush()
+
+	start := timing.Start()
 	repoRoot, err := git.RepoRoot(ctx)
 	if err != nil {
 		return err
 	}
+	timing.Phase("git repo root", start)
+
+	start = timing.Start()
 	nwo, _ := git.OriginNWO(ctx)
 	current := git.CurrentBranch(ctx)
 	def := git.DefaultBranch(ctx)
+	timing.Phase("git branch context", start)
 
 	// lipgloss decides how many colors to use by probing its renderer's writer.
 	// The TUI draws to stderr, but stdout is captured by the repo() shell function
@@ -401,7 +453,10 @@ func runDashboard(ctx context.Context) error {
 	// terminal theme colors) renders instead of being stripped.
 	lipgloss.SetDefaultRenderer(lipgloss.NewRenderer(os.Stderr))
 
+	start = timing.Start()
 	model := tui.New(ctx, repoRoot, nwo, current, def, tui.WithManifestRoot(dashboardManifestRoot()))
+	timing.Phase("tui.New", start)
+
 	// Render to stderr so stdout carries only the cd sentinel — the repo() shell
 	// function captures stdout via $(...) while the TUI draws on the TTY (stderr).
 	// Cell motion reports a click and a drag but not idle movement, which is all
