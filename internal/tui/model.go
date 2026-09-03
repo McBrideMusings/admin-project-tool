@@ -334,9 +334,10 @@ type Model struct {
 	// after the cursor has left the window generates no SGR sequence at all,
 	// so finishMouse's tea.MouseActionRelease case never runs. selGen/the
 	// selWatchdogMsg cycle below is the self-heal for exactly that: a gesture
-	// with no fresh mouse event in selIdleTimeout is abandoned, so a lost
-	// release can't leave the highlight stuck (or a lost motion frozen)
-	// indefinitely.
+	// with no fresh mouse event in selIdleTimeout is finished the way a real
+	// release would have — see finishStaleSelection — so a lost release
+	// can't leave the highlight stuck, and a lost motion frozen mid-drag
+	// still resolves to a real copy instead of nothing.
 	sel selection
 	// selGen counts drag-to-copy presses/motions; a scheduled selWatchdogMsg
 	// only cancels the gesture if its gen still matches, so an older
@@ -1459,10 +1460,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMouse(msg)
 
 	case selWatchdogMsg:
-		if msg.gen == m.selGen && m.sel.inProgress() {
-			m.sel = selection{}
+		if msg.gen != m.selGen || !m.sel.inProgress() {
+			return m, nil
 		}
-		return m, nil
+		return m.finishStaleSelection()
 
 	case copyToastExpiredMsg:
 		if msg.gen == m.toastGen {
@@ -1483,7 +1484,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // stops emitting events entirely once the cursor leaves the terminal's grid,
 // so a drag that walks off-window neither advances nor sees the release that
 // would normally end it. Without this, that gesture's highlight would freeze
-// in place and then outlive the mouse-up forever.
+// in place and then outlive the mouse-up forever; see finishStaleSelection
+// for how the watchdog resolves it instead.
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	switch msg.Action {
 	case tea.MouseActionPress:
@@ -1535,6 +1537,28 @@ func (m Model) finishMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m.copySelection(sel)
 	}
 	return m.click(msg.Y, msg.X)
+}
+
+// finishStaleSelection ends a drag-to-copy gesture the watchdog caught mid-
+// flight — no fresh mouse event in selIdleTimeout, almost always because the
+// cursor walked off the terminal window and cell-motion reporting has
+// nothing left to send. A bare press that never became a drag is just
+// dropped, the same as a real mouse-up would drop it. A real drag is pushed
+// out to the frame edge in the direction its last motion sample was heading
+// (extendToEdge) — the best available stand-in for wherever the release that
+// will now never arrive actually happened — then copied exactly like a real
+// release.
+func (m Model) finishStaleSelection() (tea.Model, tea.Cmd) {
+	sel := m.sel
+	m.sel = selection{}
+	if !sel.active() {
+		return m, nil
+	}
+	lines, _ := m.frameRaw()
+	if maxRow := len(lines) - 1; maxRow >= 0 {
+		sel.extendToEdge(maxRow)
+	}
+	return m.copySelection(sel)
 }
 
 // copyToastExpiredMsg clears the "copied to clipboard" toast once it has had
