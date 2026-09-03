@@ -42,6 +42,8 @@ func (h *Host) runArrowPicker(items []TargetEntry, prompt string) (string, PickO
 	cursor := 0
 	linesDrawn := 0
 
+	keyWidth := maxKeyWidth(items)
+
 	redraw := func() {
 		if linesDrawn > 0 {
 			fmt.Fprintf(h.Stdout, "\x1b[%dA", linesDrawn)
@@ -50,12 +52,12 @@ func (h *Host) runArrowPicker(items []TargetEntry, prompt string) (string, PickO
 		fmt.Fprintf(&b, "\x1b[2K%s%s%s\n", ansiBold, prompt, ansiReset)
 		for i, e := range items {
 			marker := "    "
-			style := ansiDim
+			style := ansiReset
 			if i == cursor {
 				marker = "  > "
 				style = ansiCyan + ansiBold
 			}
-			fmt.Fprintf(&b, "\x1b[2K%s%s%s%s  %s%s%s\n", marker, style, e.Key, ansiReset, ansiDim, e.Description, ansiReset)
+			fmt.Fprintf(&b, "\x1b[2K%s%s%-*s%s  %s%s%s\n", marker, style, keyWidth, e.Key, ansiReset, ansiDim, e.Description, ansiReset)
 		}
 		fmt.Fprintf(&b, "\x1b[2K%s[up/down/j/k] move  [enter] select  [esc/q] cancel%s\n", ansiDim, ansiReset)
 		fmt.Fprint(h.Stdout, b.String())

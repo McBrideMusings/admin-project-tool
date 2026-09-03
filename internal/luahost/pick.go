@@ -173,6 +173,20 @@ func readPickerKey(ch <-chan byte, escTimeout time.Duration) pickerKey {
 	}
 }
 
+// maxKeyWidth returns the length of the longest Key across items, so both
+// picker renderers (pick_unix.go's arrow picker, pick_windows.go's numbered
+// fallback) can pad every key to one shared column width instead of each
+// re-walking items with its own copy of this loop.
+func maxKeyWidth(items []TargetEntry) int {
+	width := 0
+	for _, e := range items {
+		if n := len(e.Key); n > width {
+			width = n
+		}
+	}
+	return width
+}
+
 // wrapCursor moves cur by delta (+1 down, -1 up) within a list of n items,
 // wrapping past either end — the pure arithmetic behind the picker's
 // Up/Down handling, split out so it's testable without a render loop.

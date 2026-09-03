@@ -19,9 +19,11 @@ import (
 func (h *Host) runArrowPicker(items []TargetEntry, prompt string) (string, PickOutcome) {
 	stdinFile, _ := h.Stdin.(*os.File)
 
+	keyWidth := maxKeyWidth(items)
+
 	fmt.Fprintf(h.Stdout, "%s%s%s\n", ansiBold, prompt, ansiReset)
 	for i, e := range items {
-		fmt.Fprintf(h.Stdout, "  %d) %s  %s%s%s\n", i+1, e.Key, ansiDim, e.Description, ansiReset)
+		fmt.Fprintf(h.Stdout, "  %d) %-*s  %s%s%s\n", i+1, keyWidth, e.Key, ansiDim, e.Description, ansiReset)
 	}
 	fmt.Fprintf(h.Stdout, "%sEnter a number, or q to cancel:%s ", ansiDim, ansiReset)
 
