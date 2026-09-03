@@ -112,9 +112,10 @@ type LogContext struct {
 	enabled       bool
 	retainDefault int
 
-	pending *pendingContext
-	logFile string
-	active  bool
+	pending      *pendingContext
+	logFile      string
+	active       bool
+	announcedEnd bool
 }
 
 // NewLogContext returns a LogContext rooted at projectRoot, logging
@@ -292,6 +293,34 @@ func (c *LogContext) MaterializeLogFile() string {
 	defer c.mu.Unlock()
 	c.materializeLocked()
 	return c.logFile
+}
+
+// AnnounceEnd prints the materialized log path to Stderr once, the Go port
+// of admin_lib/core.py's _announce_log_end — the "→ wrote: <path>" line
+// Python printed both explicitly right after a command's func() returned
+// (core.py:1701-1702, core.py:1412 for the interactive menu) and, as a
+// safety net for any other exit path, from an atexit.register hook
+// (core.py:449). Go has no atexit; callers get the same coverage by
+// deferring AnnounceEnd at the outermost per-process dispatch boundary
+// (cmd/root.go's three RunE closures) so it fires whether the run
+// succeeds or fails, without needing a second registration.
+//
+// A no-op when nothing ever materialized this run (active is false — e.g.
+// a `branch`/`worktree` verb dispatch that never touched logging) and a
+// no-op on any call after the first: unlike Python, which reuses the
+// consumed _log_context_active flag both to gate this print AND to answer
+// "is a context live" elsewhere (_log_context_taken), Go's taken() must
+// keep answering that question correctly for the rest of this
+// LogContext's life — so AnnounceEnd tracks its own one-shot
+// announcedEnd flag instead of clearing active.
+func (c *LogContext) AnnounceEnd() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.active || c.logFile == "" || c.announcedEnd {
+		return
+	}
+	c.announcedEnd = true
+	fmt.Fprintf(c.Stderr, "\033[2m%s%s\033[0m\n", LogAnnouncePrefix, c.logFile)
 }
 
 // Write appends text (ANSI-stripped, newline-terminated) to the active log

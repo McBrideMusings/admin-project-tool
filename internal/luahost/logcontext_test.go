@@ -82,7 +82,7 @@ func TestSecondSetLogContextIsNoop(t *testing.T) {
 // caller, since it runs closer to the actual write.
 func TestNestedNamingInnermostWins(t *testing.T) {
 	c, _ := newTestLogContext(t)
-	c.SetLogContext([]string{"dev"}, RetainUnset) // outer: the command
+	c.SetLogContext([]string{"dev"}, RetainUnset)       // outer: the command
 	c.SetLogContext([]string{"dev", "cf"}, RetainUnset) // inner: the picked target
 	path := c.MaterializeLogFile()
 	if !strings.HasPrefix(filepath.Base(path), "dev-cf.") {
@@ -306,5 +306,50 @@ func TestParseLogAnnounceTolerant(t *testing.T) {
 func TestParseLogAnnounceAbsent(t *testing.T) {
 	if _, ok := ParseLogAnnounce("just some regular output\n"); ok {
 		t.Fatal("expected ok=false for a line with no announce prefix")
+	}
+}
+
+// TestAnnounceEndPrintsOnceAfterMaterialize proves AnnounceEnd (the "→
+// wrote:" line at the end of a run, admin-krvc.1) prints the materialized
+// path once a context has actually been used — the Go port of
+// admin_lib/core.py's _announce_log_end.
+func TestAnnounceEndPrintsOnceAfterMaterialize(t *testing.T) {
+	c, errOut := newTestLogContext(t)
+	c.SetLogContext([]string{"dev"}, RetainUnset)
+	path := c.MaterializeLogFile()
+	errOut.Reset() // drop the start-of-run announce materialize already wrote
+	c.AnnounceEnd()
+	if !strings.Contains(errOut.String(), LogAnnouncePrefix) {
+		t.Fatalf("expected the announce prefix on Stderr, got %q", errOut.String())
+	}
+	if got, ok := ParseLogAnnounce(errOut.String()); !ok || got != path {
+		t.Fatalf("ParseLogAnnounce(%q) = %q, %v; want %q, true", errOut.String(), got, ok, path)
+	}
+}
+
+// TestAnnounceEndNoopWithoutMaterialize proves a context that never
+// materialized a file (e.g. a `branch`/`worktree` verb dispatch, which
+// never touches logging) prints nothing.
+func TestAnnounceEndNoopWithoutMaterialize(t *testing.T) {
+	c, errOut := newTestLogContext(t)
+	c.AnnounceEnd()
+	if errOut.Len() != 0 {
+		t.Fatalf("expected no output, got %q", errOut.String())
+	}
+}
+
+// TestAnnounceEndIsIdempotent proves a second AnnounceEnd call — the
+// explicit call plus a hypothetical safety-net call racing it, mirroring
+// Python's flag-consuming _announce_log_end — does not print twice.
+func TestAnnounceEndIsIdempotent(t *testing.T) {
+	c, errOut := newTestLogContext(t)
+	c.SetLogContext([]string{"dev"}, RetainUnset)
+	c.MaterializeLogFile()
+	errOut.Reset()
+	c.AnnounceEnd()
+	first := errOut.String()
+	c.AnnounceEnd()
+	if errOut.String() != first {
+		t.Fatalf("expected no additional output on second call, got %q after %q", errOut.String(), first)
 	}
 }
