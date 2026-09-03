@@ -119,6 +119,69 @@ run  = "true"
 	}
 }
 
+// TestCommandEntriesOrdersByGroupPriority pins the fix for the picker
+// falling back to kinds.CommandNames' plain alphabetical order: three
+// group-2 commands declared out of priority order, plus one group-1
+// command that alphabetically sorts last, must come out group-1-then-
+// group-2 and priority-ascending within each group — with a blank spacer
+// row (a Key-less luahost.TargetEntry, per PickTarget's own contract)
+// between the two groups.
+func TestCommandEntriesOrdersByGroupPriority(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	body := `project_name = "fixture"
+
+[commands.zdev]
+desc     = "run dev"
+steps    = ["noop"]
+group    = 1
+priority = 20
+
+[commands.fmt]
+desc     = "format"
+steps    = ["noop"]
+group    = 2
+priority = 30
+
+[commands.test]
+desc     = "run tests"
+steps    = ["noop"]
+group    = 2
+priority = 10
+
+[commands.lint]
+desc     = "lint"
+steps    = ["noop"]
+group    = 2
+priority = 20
+
+[actions.noop]
+kind = "shell"
+run  = "true"
+`
+	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write admin.toml: %v", err)
+	}
+
+	m, ok, err := resolveProjectManifest(context.Background(), dir)
+	if !ok || err != nil {
+		t.Fatalf("resolveProjectManifest: ok=%v err=%v", ok, err)
+	}
+	names := kinds.CommandNames(m)
+	entries := commandEntries(m, names)
+
+	want := []luahost.TargetEntry{
+		{Key: "zdev", Description: "run dev"},   // group 1 alone — "z" name, alphabetically last, must still lead
+		{},                                      // spacer: group 1 -> group 2
+		{Key: "test", Description: "run tests"}, // group 2, priority 10
+		{Key: "lint", Description: "lint"},      // group 2, priority 20
+		{Key: "fmt", Description: "format"},     // group 2, priority 30
+	}
+	if !reflect.DeepEqual(entries, want) {
+		t.Fatalf("commandEntries = %#v, want %#v", entries, want)
+	}
+}
+
 // TestHandlePickOutcomeChosenRunsTheCommand covers handlePickOutcome's
 // default (PickChosen) branch: the returned key runs through
 // kinds.RunCommand exactly as registerManifestCommand's RunE does for
