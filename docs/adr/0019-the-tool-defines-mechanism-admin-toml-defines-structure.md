@@ -99,8 +99,10 @@ instances of it.
 - Any new tool verb, guard exemption, or literal-string command match gets checked the
   same way: if a project's own choice of command names could make it wrong, it is
   structure and cannot be compiled into Go or into `admin_lib`.
-- `archetypeConfigNames` (failure shape 4) staying closed continues to block a project
-  from inventing its own settings table until that shape is fixed by a later item.
+- **Resolved by `admin-tlhw.4` (commit `d9b31ec`):** `archetypeConfigNames` is gone.
+  `Manifest.Settings` now holds every top-level table the parser doesn't already handle
+  structurally, keyed by its own name, so a project can invent `[my_thing]` and read it
+  back without a tool change.
 - `reservedToolVerbs` (failure shape 2) continues to reserve `new` and `compile` in the Go
   binary's namespace even though only `admin-py` implements them, until that shape is
   fixed by a later item.
