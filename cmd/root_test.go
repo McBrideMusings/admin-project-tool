@@ -18,6 +18,9 @@ func TestColorfgbgDarkBackground(t *testing.T) {
 		{"light background, index 15", "const;15", false},
 		{"three-field form, dark", "15;default;0", true},
 		{"three-field form, light", "0;default;15", false},
+		{"dark background, index 6 (cyan, boundary)", "const;6", true},
+		{"light background, index 7 (white, boundary)", "const;7", false},
+		{"light background, index 8 (bright black, boundary)", "const;8", false},
 	}
 
 	for _, tc := range cases {

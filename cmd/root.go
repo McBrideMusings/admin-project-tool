@@ -373,13 +373,18 @@ func applyHostedColorProfile() {
 // colorfgbgDarkBackground classifies a terminal's background as dark or
 // light from the COLORFGBG env var, without ever issuing a live OSC 11
 // query. COLORFGBG holds "<fg>;<bg>" (or "<fg>;<default>;<bg>" for some
-// terminals), so the background is always the last ';'-separated field; an
-// ANSI index below 8 is one of the low (dark-ish) colors, 8 and up is one
-// of the high (light-ish) ones, matching termenv's own ANSIColor split.
-// When the var is unset, has no ';', or the last field doesn't parse as an
-// int, this defaults to dark=true — the same value termenv falls back to
-// (ANSIColor(0), black) when an OSC 11 query goes unanswered — so skipping
-// the query changes latency, never the resulting color decision.
+// terminals), so the background is always the last ';'-separated field.
+// termenv's own HasDarkBackground converts the resolved ANSIColor to RGB
+// (via its ansiHex table) and tests HSL lightness < 0.5 — indices 0-6 (the
+// non-bright colors other than white) land below that line, but index 7
+// ("#c0c0c0", light gray) and every index from 8 up (bright black at
+// "#808080" has lightness exactly 0.5, and every other bright color is
+// lighter still) land at or above it. So the dark set is strictly idx < 7,
+// not idx < 8. When the var is unset, has no ';', or the last field
+// doesn't parse as an int, this defaults to dark=true — the same value
+// termenv falls back to (ANSIColor(0), black) when an OSC 11 query goes
+// unanswered — so skipping the query changes latency, never the resulting
+// color decision.
 func colorfgbgDarkBackground(raw string) bool {
 	if raw == "" || !strings.Contains(raw, ";") {
 		return true
@@ -390,7 +395,7 @@ func colorfgbgDarkBackground(raw string) bool {
 	if err != nil {
 		return true
 	}
-	return idx < 8
+	return idx < 7
 }
 
 func init() {
