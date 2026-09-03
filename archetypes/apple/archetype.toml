@@ -415,18 +415,6 @@ echo "reload signal sent to PID $pid"
 '''
 
 [actions.appid]
-kind = "lua"
-desc = "App IDs: report, register, enable capabilities (not ported — see follow-up)"
-run = '''
--- NOTE (admin-3rgp.37): admin_lib/apple.py's appid() calls into
--- admin_lib/appstoreconnect.py (JWT-signed App Store Connect API requests —
--- create/find a bundle id, list/enable capabilities). No Lua/Go binding for
--- the App Store Connect API exists yet (apple.app_store_connect_auth_flags
--- only checks whether credentials are configured, it does not call the
--- API), so this action cannot be faithfully ported in this pass. Filed as a
--- follow-up rather than silently dropped or half-implemented against a
--- fabricated API client.
-err("App IDs management is not ported to the Go tool yet")
-info("admin_lib/appstoreconnect.py has no Go/Lua port — see the tracker for the follow-up")
-error("appid not ported")
-'''
+kind = "apple"
+desc = "App IDs: report, register, enable capabilities"
+run = "appid"
