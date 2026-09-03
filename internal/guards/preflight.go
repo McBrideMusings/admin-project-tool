@@ -3,6 +3,8 @@ package guards
 import (
 	"errors"
 	"sync"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/timing"
 )
 
 // preflightCheck is a global preflight's implementation — same shape as
@@ -68,12 +70,14 @@ func RunGlobalPreflight(command string) error {
 	// from whatever preflightResult held before this call must not survive
 	// into a fresh computation that actually passes.
 	preflightResult = nil
+	start := timing.Start()
 	for _, check := range preflightChecks {
 		if passed, message := check(); !passed {
 			preflightResult = errors.New(message)
 			break
 		}
 	}
+	timing.Phase("global preflight", start)
 	preflightRan = true
 	return preflightResult
 }
