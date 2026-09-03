@@ -229,7 +229,12 @@ func (h *Host) registerApple(L *lua.LState) {
 		if t, ok := L.Get(4).(*lua.LTable); ok {
 			launchArgs = tableToStringSlice(t)
 		}
-		InstallAndLaunchSim(deviceID, appPath, bundleID, launchArgs)
+		var env map[string]string
+		if t, ok := L.Get(5).(*lua.LTable); ok {
+			env = map[string]string{}
+			t.ForEach(func(k, v lua.LValue) { env[k.String()] = lua.LVAsString(v) })
+		}
+		InstallAndLaunchSim(deviceID, appPath, bundleID, launchArgs, env)
 		return 0
 	})
 

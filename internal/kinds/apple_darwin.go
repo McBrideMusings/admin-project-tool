@@ -112,9 +112,45 @@ func runAppleVerb(verb, action string, cfg map[string]any, args []string, m *man
 // _resolve_* helpers: the Xcode project is the source of truth for anything
 // not overridden in [apple], via apple.xcode_setting.
 
-func appleProject(cfg map[string]any) string {
+// applePrebuildRan memoizes [apple] prebuild_cmd per process — a single
+// `admin` invocation resolves the project path many times (build, dev loop
+// iterations, deploy), and re-running the prereq each time would be wasted
+// work. Mirrors admin_lib/apple.py::_run_prebuild_cmd's _PREBUILD_RAN set.
+var applePrebuildRan = map[string]bool{}
+
+// runApplePrebuild runs [apple] prebuild_cmd once per process, at the moment
+// the project path is resolved. Every apple verb funnels through
+// appleProject, so a generated .xcodeproj (XcodeGen, Tuist) kept out of
+// version control — absent on a fresh clone, stale after a project.yml edit —
+// gets regenerated before anything reads it. Ports
+// admin_lib/apple.py::_run_prebuild_cmd.
+func runApplePrebuild(cfg map[string]any, h *luahost.Host) error {
+	rv := &envResolver{}
+	cmd := strings.TrimSpace(rv.s(cfgString(cfg, "prebuild_cmd", "")))
+	if rv.firstErr != nil {
+		return rv.firstErr
+	}
+	if cmd == "" || applePrebuildRan[cmd] {
+		return nil
+	}
+	applePrebuildRan[cmd] = true
+	h.Info("prereqs: " + cmd)
+	res, err := h.RunCmd(cmd, luahost.RunCmdOptions{CaptureLog: true})
+	if err != nil {
+		return err
+	}
+	if !res.Ok {
+		return fmt.Errorf("prereq command failed: %s", cmd)
+	}
+	return nil
+}
+
+func appleProject(cfg map[string]any, h *luahost.Host) (string, error) {
+	if err := runApplePrebuild(cfg, h); err != nil {
+		return "", err
+	}
 	p, _ := luahost.DetectProjectPath(cfgString(cfg, "project_path", ""))
-	return p
+	return p, nil
 }
 
 func appleProcess(project string, cfg map[string]any, platform, scheme string) string {
@@ -171,6 +207,30 @@ func appleDerivedGlob(derivedName, config, sdkSuffix, productName string) string
 		derivedName, config, sdkSuffix, productName)
 }
 
+// appleDevEnv reads [apple] dev_env — environment variables delivered to the
+// dev-launched process (simulator or device), resolved through ${VAR}. This
+// is the debug-session-seeding hook a project reaches for when its app reads
+// a launch-time env var (a cookie jar path, a feature flag, a fixture) that
+// launch_args can't express, since launch_args are UIApplication arguments,
+// not environment. See InstallAndLaunchSim (SIMCTL_CHILD_ prefix) and
+// StartDeviceConsole (devicectl -e) for how each platform actually delivers
+// it.
+func appleDevEnv(cfg map[string]any) (map[string]string, error) {
+	raw := cfgMap(cfg, "dev_env")
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	rv := &envResolver{}
+	out := map[string]string{}
+	for k, v := range cfgStringMap(raw) {
+		out[k] = rv.s(v)
+	}
+	if rv.firstErr != nil {
+		return nil, rv.firstErr
+	}
+	return out, nil
+}
+
 func appleBuildAction(clean bool) string {
 	if clean {
 		return "clean build"
@@ -185,7 +245,10 @@ func appleBuildFlat(cfg map[string]any, h *luahost.Host, platform, destination s
 	if scheme == "" {
 		return fmt.Errorf("apple.%s_scheme required", platform)
 	}
-	project := appleProject(cfg)
+	project, err := appleProject(cfg, h)
+	if err != nil {
+		return err
+	}
 	config := cfgString(cfg, platform+"_build_config", "Debug")
 	h.Info(fmt.Sprintf("Building %s (%s) for %s...", scheme, config, platform))
 	res, err := h.XcodebuildFiltered(luahost.XcodebuildOptions{
@@ -245,7 +308,10 @@ func appleClean(cfg map[string]any, h *luahost.Host) error {
 	if scheme == "" {
 		return fmt.Errorf("apple.ios_scheme, apple.mac_scheme or apple.tv_scheme required for clean")
 	}
-	project := appleProject(cfg)
+	project, err := appleProject(cfg, h)
+	if err != nil {
+		return err
+	}
 	name := appleDerivedDataName(cfg, project)
 	if name == "" {
 		name = scheme
@@ -265,7 +331,10 @@ func appleDeployMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 	if scheme == "" {
 		return fmt.Errorf("apple.mac_scheme required")
 	}
-	project := appleProject(cfg)
+	project, err := appleProject(cfg, h)
+	if err != nil {
+		return err
+	}
 	config := cfgString(cfg, "mac_deploy_config", "Release")
 	process := appleProcess(project, cfg, "mac", scheme)
 	installPath := cfgString(cfg, "mac_install_path_prod", "")
@@ -343,7 +412,10 @@ func appleDeployDevice(cfg map[string]any, h *luahost.Host, platform string, f a
 	if scheme == "" {
 		return fmt.Errorf("apple.%s_scheme required", platform)
 	}
-	project := appleProject(cfg)
+	project, err := appleProject(cfg, h)
+	if err != nil {
+		return err
+	}
 	config := cfgString(cfg, platform+"_deploy_config", "Release")
 	process := appleProcess(project, cfg, platform, scheme)
 	bundleID := appleBundle(project, cfg, platform, false)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -122,11 +123,24 @@ func EnsureBootedSimulator(platform string) (deviceID, deviceName, infoLine stri
 }
 
 // InstallAndLaunchSim installs appPath on deviceID and launches bundleID,
-// passing launchArgs as UIApplication launch arguments.
-func InstallAndLaunchSim(deviceID, appPath, bundleID string, launchArgs []string) {
+// passing launchArgs as UIApplication launch arguments and env as environment
+// variables delivered to the launched process. `simctl launch` reads any
+// SIMCTL_CHILD_<NAME> var off its own environment and hands <NAME> to the
+// child — there is no direct `-e` flag the way `devicectl` has, so that's the
+// prefix this applies.
+func InstallAndLaunchSim(deviceID, appPath, bundleID string, launchArgs []string, env map[string]string) {
 	_ = execRun("xcrun", "simctl", "install", deviceID, appPath)
 	args := append([]string{"simctl", "launch", deviceID, bundleID}, launchArgs...)
-	_ = execRun("xcrun", args...)
+	if len(env) == 0 {
+		_ = execRun("xcrun", args...)
+		return
+	}
+	cmd := exec.Command("xcrun", args...)
+	cmd.Env = os.Environ()
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, "SIMCTL_CHILD_"+k+"="+v)
+	}
+	_ = cmd.Run()
 }
 
 func TerminateSimApp(deviceID, bundleID string) {

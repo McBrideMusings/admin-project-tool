@@ -50,7 +50,10 @@ func appleDevMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 	if scheme == "" {
 		return fmt.Errorf("apple.mac_scheme required")
 	}
-	project := appleProject(cfg)
+	project, err := appleProject(cfg, h)
+	if err != nil {
+		return err
+	}
 	config := cfgString(cfg, "mac_build_config", "Debug")
 	process := appleProcess(project, cfg, "mac", scheme)
 	subsystem := appleSubsystem(project, cfg, "mac", true)
@@ -182,7 +185,10 @@ func appleDevSimulator(cfg map[string]any, h *luahost.Host, platform string, f a
 	if scheme == "" {
 		return fmt.Errorf("apple.%s_scheme required", platform)
 	}
-	project := appleProject(cfg)
+	project, err := appleProject(cfg, h)
+	if err != nil {
+		return err
+	}
 	config := cfgString(cfg, platform+"_build_config", "Debug")
 	process := appleProcess(project, cfg, platform, scheme)
 	bundleID := appleBundle(project, cfg, platform, true)
@@ -197,6 +203,10 @@ func appleDevSimulator(cfg map[string]any, h *luahost.Host, platform string, f a
 	launchArgs := f.launchArgs
 	if len(launchArgs) == 0 {
 		launchArgs = cfgStrings(cfg, "launch_args")
+	}
+	devEnv, err := appleDevEnv(cfg)
+	if err != nil {
+		return err
 	}
 	extraSettings, err := appleComposeDevSettings(cfg, h, project, platform)
 	if err != nil {
@@ -298,7 +308,7 @@ func appleDevSimulator(cfg map[string]any, h *luahost.Host, platform string, f a
 		}
 
 		h.Info("Installing on simulator...")
-		luahost.InstallAndLaunchSim(simID, appPath, launchBundle, launchArgs)
+		luahost.InstallAndLaunchSim(simID, appPath, launchBundle, launchArgs, devEnv)
 
 		isRunning := func() bool { return luahost.IsSimAppRunning(simID, launchBundle) }
 		waitForTrue(10, reloadPollInterval, isRunning)
@@ -353,7 +363,10 @@ func appleDevDevice(cfg map[string]any, h *luahost.Host, platform string, f appl
 	if scheme == "" {
 		return fmt.Errorf("apple.%s_scheme required", platform)
 	}
-	project := appleProject(cfg)
+	project, err := appleProject(cfg, h)
+	if err != nil {
+		return err
+	}
 	config := cfgString(cfg, platform+"_build_config", "Debug")
 	process := appleProcess(project, cfg, platform, scheme)
 	bundleID := appleBundle(project, cfg, platform, true)
@@ -367,6 +380,14 @@ func appleDevDevice(cfg map[string]any, h *luahost.Host, platform string, f appl
 	}
 	if err != nil {
 		return err
+	}
+	devEnv, err := appleDevEnv(cfg)
+	if err != nil {
+		return err
+	}
+	launchEnv := map[string]string{"OS_ACTIVITY_DT_MODE": "YES"}
+	for k, v := range devEnv {
+		launchEnv[k] = v
 	}
 	extraSettings, err := appleComposeDevSettings(cfg, h, project, platform)
 	if err != nil {
@@ -421,8 +442,7 @@ func appleDevDevice(cfg map[string]any, h *luahost.Host, platform string, f appl
 		}
 
 		h.Info("Launching on " + deviceName + "...")
-		consoleCmd, consoleOut, consoleDone, cerr := luahost.StartDeviceConsole(deviceID, launchBundle,
-			map[string]string{"OS_ACTIVITY_DT_MODE": "YES"})
+		consoleCmd, consoleOut, consoleDone, cerr := luahost.StartDeviceConsole(deviceID, launchBundle, launchEnv)
 		if cerr != nil {
 			return cerr
 		}
