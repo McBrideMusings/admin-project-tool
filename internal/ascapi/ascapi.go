@@ -250,75 +250,105 @@ func NewClient(creds *Credentials) *Client {
 
 // Request makes one API call. path is relative to /v1 unless it already
 // looks like a full URL. Returns the parsed body, or {} for a 204.
+// authRetries is how many times Request retries a fresh 401 before giving
+// up. Apple's API occasionally rejects a token signed and sent within
+// milliseconds of the previous request on the same connection — the same
+// key, the same claims shape, the very next call — then accepts an
+// identically-built token a second later. Reproduced by hand: a bare `admin
+// appid <id>` (one request) succeeds every time; `--capability` (two or
+// three requests back to back) intermittently 401s on the second one, and
+// retrying that single call alone then succeeds. This is server-side
+// auth-propagation lag, not a signing bug — sleepBetweenAuthRetries below
+// is enough for it to clear, and a fresh JWT (a new `iat`) is generated on
+// every attempt rather than resending the one that just failed.
+const authRetries = 3
+
+// sleepBetweenAuthRetries is overridden by tests to skip the real delay.
+var sleepBetweenAuthRetries = func(attempt int) { time.Sleep(time.Duration(attempt) * time.Second) }
+
 func (c *Client) Request(method, path string, body any) (map[string]any, error) {
 	url := path
 	if !strings.HasPrefix(path, "http") {
 		url = APIRoot + path
 	}
-	var reader io.Reader
+	var encoded []byte
 	if body != nil {
-		encoded, err := json.Marshal(body)
+		var err error
+		encoded, err = json.Marshal(body)
 		if err != nil {
 			return nil, err
 		}
-		reader = bytes.NewReader(encoded)
-	}
-	req, err := http.NewRequest(method, url, reader)
-	if err != nil {
-		return nil, err
-	}
-	now := time.Now()
-	if c.Now != nil {
-		now = c.Now()
-	}
-	tok, err := Token(c.Creds, now)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+tok)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
 	}
 
-	client := c.HTTPClient
-	if client == nil {
-		client = http.DefaultClient
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("%s %s → %s", method, path, err)
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("%s %s → %s", method, path, err)
-	}
-
-	if resp.StatusCode >= 400 {
-		detail := string(raw)
-		var parsed struct {
-			Errors []struct {
-				Title  string `json:"title"`
-				Detail string `json:"detail"`
-			} `json:"errors"`
+	var lastErr error
+	for attempt := 1; attempt <= authRetries; attempt++ {
+		var reader io.Reader
+		if encoded != nil {
+			reader = bytes.NewReader(encoded)
 		}
-		if json.Unmarshal(raw, &parsed) == nil && len(parsed.Errors) > 0 {
-			parts := make([]string, 0, len(parsed.Errors))
-			for _, e := range parsed.Errors {
-				parts = append(parts, strings.Trim(e.Title+": "+e.Detail, ": "))
+		req, err := http.NewRequest(method, url, reader)
+		if err != nil {
+			return nil, err
+		}
+		now := time.Now()
+		if c.Now != nil {
+			now = c.Now()
+		}
+		tok, err := Token(c.Creds, now)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		client := c.HTTPClient
+		if client == nil {
+			client = http.DefaultClient
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("%s %s → %s", method, path, err)
+		}
+		raw, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("%s %s → %s", method, path, err)
+		}
+
+		if resp.StatusCode >= 400 {
+			detail := string(raw)
+			var parsed struct {
+				Errors []struct {
+					Title  string `json:"title"`
+					Detail string `json:"detail"`
+				} `json:"errors"`
 			}
-			detail = strings.Join(parts, "; ")
+			if json.Unmarshal(raw, &parsed) == nil && len(parsed.Errors) > 0 {
+				parts := make([]string, 0, len(parsed.Errors))
+				for _, e := range parsed.Errors {
+					parts = append(parts, strings.Trim(e.Title+": "+e.Detail, ": "))
+				}
+				detail = strings.Join(parts, "; ")
+			}
+			lastErr = fmt.Errorf("%s %s → %d: %s", method, path, resp.StatusCode, detail)
+			if resp.StatusCode == 401 && attempt < authRetries {
+				sleepBetweenAuthRetries(attempt)
+				continue
+			}
+			return nil, lastErr
 		}
-		return nil, fmt.Errorf("%s %s → %d: %s", method, path, resp.StatusCode, detail)
+		if len(raw) == 0 {
+			return map[string]any{}, nil
+		}
+		var out map[string]any
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return nil, err
+		}
+		return out, nil
 	}
-	if len(raw) == 0 {
-		return map[string]any{}, nil
-	}
-	var out map[string]any
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return nil, lastErr
 }
 
 func dataList(result map[string]any) []map[string]any {

@@ -227,6 +227,80 @@ func TestEnableCapabilityOmitsSettingsWhenNoDefault(t *testing.T) {
 	}
 }
 
+func TestRequestRetriesA401ThenSucceeds(t *testing.T) {
+	orig := sleepBetweenAuthRetries
+	sleepBetweenAuthRetries = func(int) {}
+	defer func() { sleepBetweenAuthRetries = orig }()
+
+	calls := 0
+	c := &Client{
+		Creds: &Credentials{KeyPath: testKeyPath(t), KeyID: "K1", IssuerID: "ISSUER"},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			if calls == 1 {
+				return jsonResponse(401, map[string]any{
+					"errors": []any{map[string]any{"title": "Unauthenticated", "detail": "Authentication credentials are missing or invalid."}},
+				}), nil
+			}
+			return jsonResponse(200, map[string]any{"data": []any{}}), nil
+		})},
+		Now: time.Now,
+	}
+	_, err := c.Request("GET", "/bundleIds", nil)
+	if err != nil {
+		t.Fatalf("Request = %v, want the retry to recover from a transient 401", err)
+	}
+	if calls != 2 {
+		t.Errorf("Request made %d calls, want 2 (fail once, succeed on retry)", calls)
+	}
+}
+
+func TestRequestGivesUpAfterRepeated401s(t *testing.T) {
+	orig := sleepBetweenAuthRetries
+	sleepBetweenAuthRetries = func(int) {}
+	defer func() { sleepBetweenAuthRetries = orig }()
+
+	calls := 0
+	c := &Client{
+		Creds: &Credentials{KeyPath: testKeyPath(t), KeyID: "K1", IssuerID: "ISSUER"},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			return jsonResponse(401, map[string]any{
+				"errors": []any{map[string]any{"title": "Unauthenticated", "detail": "Authentication credentials are missing or invalid."}},
+			}), nil
+		})},
+		Now: time.Now,
+	}
+	_, err := c.Request("GET", "/bundleIds", nil)
+	if err == nil || !strings.Contains(err.Error(), "401") {
+		t.Errorf("Request error = %v, want a surfaced 401 after exhausting retries", err)
+	}
+	if calls != authRetries {
+		t.Errorf("Request made %d calls, want exactly authRetries (%d)", calls, authRetries)
+	}
+}
+
+func TestRequestDoesNotRetryANon401Error(t *testing.T) {
+	calls := 0
+	c := &Client{
+		Creds: &Credentials{KeyPath: testKeyPath(t), KeyID: "K1", IssuerID: "ISSUER"},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			return jsonResponse(409, map[string]any{
+				"errors": []any{map[string]any{"title": "Conflict", "detail": "already exists"}},
+			}), nil
+		})},
+		Now: time.Now,
+	}
+	_, err := c.Request("POST", "/bundleIds", map[string]any{"data": map[string]any{}})
+	if err == nil {
+		t.Fatal("Request = nil error, want the 409 surfaced")
+	}
+	if calls != 1 {
+		t.Errorf("Request made %d calls for a 409, want 1 (only 401 is retried)", calls)
+	}
+}
+
 func TestRequestSurfacesAPIErrorDetail(t *testing.T) {
 	c := &Client{
 		Creds: &Credentials{KeyPath: testKeyPath(t), KeyID: "K1", IssuerID: "ISSUER"},
