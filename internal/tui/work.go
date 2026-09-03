@@ -597,7 +597,7 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 	if wd.live != nil && wd.live.LogPath != "" {
 		wd.logPath = wd.live.LogPath
 	} else {
-		wd.logPath = commandLogPath(m.repoRoot, m.manifest, cr.name, cr.cmd)
+		wd.logPath = commandLogPath(m.manifestDir(), m.manifest, cr.name, cr.cmd)
 	}
 	return rowItem{kind: rowCommand, label: cr.name + " " + cr.cmd.Desc, work: wd}
 }

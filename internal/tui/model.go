@@ -340,6 +340,17 @@ type Model struct {
 	manifest    *manifest.Manifest
 	manifestOK  bool
 	manifestErr string
+	// manifestRoot is the directory whose admin.toml this dashboard reads, and
+	// it is not always repoRoot. git.RepoRoot deliberately returns the MAIN
+	// worktree from inside a linked one (internal/git/git.go), which is right
+	// for branches, worktrees and PRs — they are repo-wide — but wrong for the
+	// manifest: admin.toml is per-checkout and never committed, so a worktree
+	// that declares one had its Work tab silently dropped while `admin <cmd>`
+	// in that same directory ran the commands fine. cmd.resolveProjectManifest
+	// walks up from the working directory (manifest.FindRoot); this mirrors it,
+	// so the Work tab lists exactly the commands `admin <name>` would run here.
+	// Empty means "fall back to repoRoot" — see manifestDir.
+	manifestRoot string
 	// manifestStamp is admin.toml's mtime+size as of the last loadManifest
 	// call — the gate fsChangedMsg checks before reloading, so a save
 	// anywhere else in the repo (a source file, a build artifact) doesn't
@@ -455,9 +466,44 @@ type Model struct {
 	termCols      int
 }
 
+// manifestDir is the directory to read admin.toml, and anything co-located with
+// it, out of. Zero-value Models (every table-driven test that sets only
+// repoRoot) keep their old behaviour.
+func (m Model) manifestDir() string {
+	if m.manifestRoot != "" {
+		return m.manifestRoot
+	}
+	return m.repoRoot
+}
+
+// Option adjusts a Model at construction. Options are applied before the
+// manifest is loaded, so one may change where that load reads from.
+type Option func(*Model)
+
+// WithManifestRoot points the manifest load at dir instead of repoRoot. The
+// caller resolves it, because only the process that owns the real working
+// directory can: see the manifestRoot field. An empty dir is ignored.
+func WithManifestRoot(dir string) Option {
+	return func(m *Model) {
+		if dir != "" {
+			m.manifestRoot = dir
+		}
+	}
+}
+
+// FindManifestRoot walks up from cwd for the nearest admin.toml, exactly as
+// cmd.resolveProjectManifest does, and returns "" when there is none — the
+// caller then leaves the dashboard on repoRoot.
+func FindManifestRoot(cwd string) string {
+	if root, found := manifest.FindRoot(cwd); found {
+		return root
+	}
+	return ""
+}
+
 // New builds the dashboard model. The cheap git context (root, nwo, branch) is
 // gathered by the caller and passed in so the first frame can render immediately.
-func New(ctx context.Context, repoRoot, nwo, current, def string) Model {
+func New(ctx context.Context, repoRoot, nwo, current, def string, opts ...Option) Model {
 	m := Model{
 		ctx:             ctx,
 		repoRoot:        repoRoot,
@@ -468,6 +514,9 @@ func New(ctx context.Context, repoRoot, nwo, current, def string) Model {
 		herdr:           shim.Available(),
 		selected:        map[string]bool{},
 		trackerSelected: map[string]bool{},
+	}
+	for _, opt := range opts {
+		opt(&m)
 	}
 	m.loadManifest()
 	if m.manifestOK {
@@ -495,7 +544,7 @@ func (m Model) Init() tea.Cmd {
 		loadCacheCmd(m.nwo),
 		startWatchCmd(m.ctx),
 		syncTickCmd(),
-		loadConfigCmd(m.ctx, m.repoRoot),
+		loadConfigCmd(m.ctx, m.manifestDir()),
 	}
 	if m.hasTracker("beads") {
 		// The `bd where` probe only runs for a repo that declared "beads"
@@ -1773,7 +1822,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// manifest every tab is rendering in the desktop's default handler
 		// for its type. It used to open the row's page in a browser, which is
 		// why no row kind advertises `o open` any more.
-		return m, openManifestCmd(m.repoRoot)
+		return m, openManifestCmd(m.manifestDir())
 	case "i":
 		return m.openIssue()
 	case "e":
