@@ -33,7 +33,7 @@ func TestMakeDockerDevEmptyConfigErrors(t *testing.T) {
 // TestMakeDockerDevMissingImageTagErrors proves a non-empty config missing
 // the required image_tag still fails, distinctly from the empty-config case.
 func TestMakeDockerDevMissingImageTagErrors(t *testing.T) {
-	m := &manifest.Manifest{DockerDev: map[string]any{"target": "dev"}}
+	m := &manifest.Manifest{Settings: map[string]map[string]any{"docker_dev": {"target": "dev"}}}
 	runner, err := makeDockerDev("dev", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makeDockerDev: %v", err)

@@ -29,9 +29,9 @@ func TestMakeNukeDevOnAFreeDeclaredPortIsANoOp(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
 	port := freeTCPPortForKillPort(t)
-	m := &manifest.Manifest{DevKill: map[string]any{
+	m := &manifest.Manifest{Settings: map[string]map[string]any{"dev_kill": {
 		"ports": []any{int64(port)},
-	}}
+	}}}
 	runner, err := makeNukeDev("nuke-dev", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makeNukeDev: %v", err)
@@ -53,9 +53,9 @@ func TestMakeNukeDevOnAFreeDeclaredPortIsANoOp(t *testing.T) {
 func TestMakeNukeDevRejectsAnUnresolvablePortEnvVar(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	m := &manifest.Manifest{DevKill: map[string]any{
+	m := &manifest.Manifest{Settings: map[string]map[string]any{"dev_kill": {
 		"ports": []any{"not-a-port"},
-	}}
+	}}}
 	runner, err := makeNukeDev("nuke-dev", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makeNukeDev: %v", err)

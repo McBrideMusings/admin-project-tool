@@ -101,10 +101,10 @@ func TestMakeInstallTemplateUsesConfiguredName(t *testing.T) {
 	t.Setenv("UNRAID_HOST", "")
 	t.Setenv("APP_IMAGE", "")
 
-	m := &manifest.Manifest{InstallTemplate: map[string]any{
+	m := &manifest.Manifest{Settings: map[string]map[string]any{"install_template": {
 		"src":  "custom/template.xml",
 		"name": "web-file-manager",
-	}}
+	}}}
 	runner, err := makeInstallTemplate("install-template", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makeInstallTemplate: %v", err)

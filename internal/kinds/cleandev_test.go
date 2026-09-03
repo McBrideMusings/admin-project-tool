@@ -281,9 +281,9 @@ func TestMakeCleanDevForceFlagTriggersDBDrop(t *testing.T) {
 		t.Skip("sqlite3 did not report the seeded DB healthy")
 	}
 
-	m := &manifest.Manifest{CleanDev: map[string]any{
+	m := &manifest.Manifest{Settings: map[string]map[string]any{"clean_dev": {
 		"db": map[string]any{"path": dbPath},
-	}}
+	}}}
 	runner, err := makeCleanDev("clean-dev", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makeCleanDev: %v", err)

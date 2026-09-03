@@ -170,11 +170,11 @@ dest = "/srv/app"
 		t.Errorf("Logs[web].Highlight = %v", web.Highlight)
 	}
 
-	if m.Apple["scheme"] != "MyApp" {
-		t.Errorf("Apple[scheme] = %v", m.Apple["scheme"])
+	if m.Settings["apple"]["scheme"] != "MyApp" {
+		t.Errorf("Settings[apple][scheme] = %v", m.Settings["apple"]["scheme"])
 	}
-	if m.Deploy["src"] != "./dist" || m.Deploy["dest"] != "/srv/app" {
-		t.Errorf("Deploy = %v", m.Deploy)
+	if m.Settings["deploy"]["src"] != "./dist" || m.Settings["deploy"]["dest"] != "/srv/app" {
+		t.Errorf("Settings[deploy] = %v", m.Settings["deploy"])
 	}
 	if !equalSlices(m.ExcludeModules, []string{"extra"}) {
 		t.Errorf("ExcludeModules = %v", m.ExcludeModules)
