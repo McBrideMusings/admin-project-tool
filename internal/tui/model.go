@@ -194,17 +194,15 @@ type Model struct {
 	// goroutine returns) would launch a redundant `bd where` subprocess.
 	beadsProbing bool
 	beadPrefix   string // bd workspace prefix, stripped off every displayed id
-	beadTree     bool   // "g": dependency tree instead of the flat, grouped list
-	// beadFamilyTree is "G": parent-child forest instead of the flat, grouped
-	// list. Mutually exclusive with beadTree — only one tree mode is active at
-	// a time, enforced where each is toggled on in handleKey.
-	beadFamilyTree bool
-	beads          []bd.Bead
+	// beadTreeMode is which of the three list shapes `g` has cycled to — flat,
+	// dependency tree, or family tree. See beadTreeMode in beadtree.go.
+	beadTreeMode beadTreeMode
+	beads        []bd.Bead
 	// trackSort is the active order for the tracker list — the Beads tab's flat
 	// list and the Issues tab — cycled by `s` (see tracksort.go). It is shared
 	// across both tabs rather than kept per-tab: one key, one order, named in
 	// the header. Session-scoped only: it lives on Model and resets on restart,
-	// same as beadTree. It does not reach beadTreeRows — the dependency tree's
+	// same as beadTreeMode. It does not reach beadTreeRows — the dependency tree's
 	// order already comes from the graph itself, and an arbitrary sort would
 	// scramble the blocker-above-blocked shape that view exists to show.
 	trackSort trackSort
@@ -1946,32 +1944,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "g":
 		if m.active == tabBeads {
-			m.beadTree = !m.beadTree
-			if m.beadTree {
-				m.beadFamilyTree = false
-			}
+			m.beadTreeMode = m.beadTreeMode.next()
 			m.cursor[tabBeads] = 0
-			if m.beadTree {
+			switch m.beadTreeMode {
+			case beadListBlocksTree:
 				m.setStatus("dependency tree — blockers sit above what they block", cDim)
-			} else {
+			case beadListFamilyTree:
+				m.setStatus("family tree — parents sit above their children", cDim)
+			default:
 				m.setStatus("flat list, grouped by what's ready", cDim)
 			}
 			break
 		}
 	case "G":
-		if m.active == tabBeads {
-			m.beadFamilyTree = !m.beadFamilyTree
-			if m.beadFamilyTree {
-				m.beadTree = false
-			}
-			m.cursor[tabBeads] = 0
-			if m.beadFamilyTree {
-				m.setStatus("family tree — parents sit above their children", cDim)
-			} else {
-				m.setStatus("flat list, grouped by what's ready", cDim)
-			}
-			break
-		}
 		if m.active == tabLocal && m.pane == paneBranches {
 			m.minesOnly = !m.minesOnly
 			m.paneCursor[paneBranches] = 0

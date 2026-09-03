@@ -97,7 +97,6 @@ var builtins = map[RowKind][]Binding{
 		{Key: "enter", Display: "↵", Label: "start work"},
 		{Key: "d", Display: "d", Label: "detail"},
 		{Key: "g", Display: "g", Label: "tree"},
-		{Key: "shift+g", Display: "⇧G", Label: "family"},
 		{Key: "s", Display: "s", Label: "sort"},
 		{Key: "w", Display: "w", Label: "workflow"},
 		{Key: "/", Display: "/", Label: "filter"},

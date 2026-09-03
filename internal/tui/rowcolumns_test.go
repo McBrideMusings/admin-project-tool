@@ -989,7 +989,7 @@ func TestBeadTreeKeepsFixedColumns(t *testing.T) {
 	m.width = cols
 	m.haveBeads = true
 	m.hasBeads = true
-	m.beadTree = true
+	m.beadTreeMode = beadListBlocksTree
 	m.beadPrefix = "bdtest"
 	m.beads = []bd.Bead{
 		{ID: "bdtest-38t", Title: "Auth token expiry off by one", Status: "open", Type: "bug", Priority: 0, Labels: []string{"backend", "security"}, Assignee: "pierce"},

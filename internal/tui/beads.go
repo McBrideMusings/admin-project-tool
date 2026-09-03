@@ -52,10 +52,10 @@ func (m Model) beadRows() []rowItem {
 		return []rowItem{{kind: rowText, label: m.beadsErr}}
 	}
 	cols := m.cols()
-	if m.beadTree {
+	switch m.beadTreeMode {
+	case beadListBlocksTree:
 		return m.beadTreeRows(cols)
-	}
-	if m.beadFamilyTree {
+	case beadListFamilyTree:
 		return m.beadFamilyTreeRows(cols)
 	}
 	human, ready, inProgress, blocked := groupBeads(m.beads)

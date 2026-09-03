@@ -11,6 +11,24 @@ import (
 // chain eats no more of the title column than the deepest real one does.
 const beadTreeMaxDepth = 4
 
+// beadTreeMode is the active shape of the Beads-tab list — the flat, grouped
+// list, or one of two forests — cycled by `g`. The zero value, beadListFlat,
+// is what the pane always rendered before this existed, so a fresh launch
+// looks exactly as it always has.
+type beadTreeMode int
+
+const (
+	beadListFlat beadTreeMode = iota
+	beadListBlocksTree
+	beadListFamilyTree
+	numBeadTreeModes
+)
+
+// next steps to the following mode, wrapping past the last back to the first.
+func (t beadTreeMode) next() beadTreeMode {
+	return (t + 1) % numBeadTreeModes
+}
+
 // beadNode is one bead in the dependency forest: depth is how far down a chain
 // of blockers it sits, extra counts the open blockers beyond the one that placed
 // it here (an edge position cannot carry, shown as "+N" after the title).
