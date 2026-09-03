@@ -147,7 +147,13 @@ func hostedReentryArgs(name string, args []string) []string {
 // action name, not the command name — internal/tui/work.go's liveEntryFor
 // looks entries up by step name, so keying on the command name would leave
 // the row not showing live and let a second run start on top of the one
-// that already owns the log file.
+// that already owns the log file. When that first step is itself a genuine
+// multi-target menu (more than one declared target) and args names a
+// resolvable target, the entry is instead keyed on
+// multiTargetLiveID(entryID, action, args) — "<action>:<target>" — so
+// internal/tui/work.go's targetRows can resolve a target row's own live
+// entry instead of only ever finding the shared parent one; every other
+// dispatch keeps today's plain action-name key.
 func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols int, env []string) error {
 	cmd, ok := resolveCommand(m, name)
 	if !ok {
@@ -157,6 +163,10 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 		return fmt.Errorf("command %q has no steps", name)
 	}
 	entryID := cmd.Steps[0]
+	liveID := entryID
+	if action, ok := m.Actions[entryID]; ok {
+		liveID = multiTargetLiveID(entryID, action, args)
+	}
 
 	c := exec.Command(selfExecutable(), hostedReentryArgs(name, args)...)
 	c.Env = append(os.Environ(),
@@ -182,7 +192,7 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 	}
 	frame.SetWinsize(ptmx.Fd(), rows, cols)
 
-	recordHostedPTYWork(entryID, m, name, args, rows, cols, env, c, ptmx)
+	recordHostedPTYWork(liveID, m, name, args, rows, cols, env, c, ptmx)
 	return nil
 }
 

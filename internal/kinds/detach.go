@@ -115,6 +115,44 @@ func dispatchDetach(action manifest.Action, args []string) (detach, resolvable b
 	return resolveTargetDetach(parentVal, parentPresent, targetVal, targetPresent), true
 }
 
+// multiTargetLiveID resolves the live-work registry id for one dispatch of
+// action (already known by name), given the raw args launchCommand
+// (dispatch.go) or StartHostedPTY (hostedpty.go) would hand it — the id both
+// producers use to key their recordLiveWork/recordHostedPTYWork entry.
+//
+// For any action that isn't a genuine multi-target MENU — a flat action, or
+// a multi-target action with at most one declared target (TargetKeys(action)
+// <= 1) — this is exactly name: there is only ever one thing such an action
+// could be running, so the parent action name already identifies it
+// uniquely, and every non-menu caller keeps today's plain-name id
+// byte-for-byte.
+//
+// For a genuine menu (TargetKeys(action) > 1) with a target resolvable from
+// args (via splitTargetArg — multitarget.go's own canonical parse, the same
+// rule dispatchDetach and the Runner itself use), the id becomes
+// "<name>:<target>" — the identical "action:target" convention
+// multitarget.go's Runner already uses for frame identity (enterFrame) and
+// SetLogContext, reused here rather than inventing a second naming scheme.
+//
+// When no target is resolvable from args (several targets declared, none
+// named — the Runner will raise its own picker once it actually runs), this
+// returns name unchanged: there is nothing more specific to key on yet, and
+// the entry stays attributed to the parent until a target is known.
+func multiTargetLiveID(name string, action manifest.Action, args []string) string {
+	kind, _ := actionString(action, "kind")
+	if kind != "multi-target" {
+		return name
+	}
+	if len(TargetKeys(action)) <= 1 {
+		return name
+	}
+	picked, _ := splitTargetArg(args)
+	if picked == "" {
+		return name
+	}
+	return name + ":" + picked
+}
+
 // ValidateDetach rejects a non-bool `detach` on an action's own top level or
 // on any of its inline target subtables — TOML has no truthy strings, so
 // `detach = "true"` is a typo worth reporting rather than silently treating
