@@ -65,7 +65,7 @@ func makeServerReload(name string, action manifest.Action, m *manifest.Manifest,
 // makeDockerDev is kind="docker-dev"'s factory — the Go port of
 // admin_lib/interp.py::_make_docker_dev, which calls
 // admin_lib/docker.py's docker_dev_from_config. The `[docker_dev]` manifest
-// table (m.DockerDev) is the whole body; the action itself carries no
+// table (m.Settings["docker_dev"]) is the whole body; the action itself carries no
 // per-invocation keys, matching Kinds["docker-dev"].Configless.
 func makeDockerDev(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
 	cfg := archetypeConfigTable(m, "docker_dev")

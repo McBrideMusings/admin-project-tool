@@ -581,16 +581,25 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 		}
 	}
 
+	// A scalar under one of these names (a typo meant for a nested table, a
+	// stray `docs = "x"` at the top level) is tolerated exactly like any
+	// other unrecognized key — it falls through to the Unknown pass below
+	// rather than hard-failing here. Before admin-tlhw.4, "docs"/"go"/etc.
+	// were the only names the parser validated as tables (via the table()
+	// helper), so a scalar there raised '[docs]' must be a table'; now that
+	// no name is specially known to the parser, treating a settings-shaped
+	// key differently from any other unknown key by type would just be the
+	// closed registry again, one field at a time. This also keeps parity
+	// with admin_lib/manifest.py, which has always warned rather than
+	// failed on an unrecognized key regardless of its shape.
 	m.Settings = map[string]map[string]any{"deploy": deploy}
 	for k, v := range data {
-		if nonSettingsTopLevelKeys[k] || v == nil {
+		if nonSettingsTopLevelKeys[k] {
 			continue
 		}
-		tbl, ok := v.(map[string]any)
-		if !ok {
-			return nil, errf("%s: '[%s]' must be a table", source, k)
+		if tbl, ok := v.(map[string]any); ok {
+			m.Settings[k] = tbl
 		}
-		m.Settings[k] = tbl
 	}
 
 	guards, err := parseGuardTables(data, source)

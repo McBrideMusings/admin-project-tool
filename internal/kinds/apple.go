@@ -9,7 +9,7 @@ import (
 // makeApple is kind="apple"'s factory — the Go port of
 // admin_lib/interp.py::_make_apple. `run` names one of the Apple verb
 // functions runAppleVerb dispatches on (build_mac, dev_ios, deploy_tv,
-// clean_ios, ...); the top-level `[apple]` manifest table (m.Apple) is the
+// clean_ios, ...); the top-level `[apple]` manifest table (m.Settings["apple"]) is the
 // config every verb reads, mirroring the Python original's
 // `ns.get("_APPLE_CONFIG")` lookup. The actual verb bodies live in
 // apple_darwin.go (real implementation, darwin-only — xcodebuild/simctl/
