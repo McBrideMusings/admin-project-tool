@@ -17,6 +17,7 @@ import (
 	xterm "github.com/charmbracelet/x/term"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
+	"github.com/McBrideMusings/admin-project-tool/internal/logformat"
 	"github.com/McBrideMusings/admin-project-tool/internal/streams"
 )
 
@@ -204,8 +205,9 @@ func RunWithReload(cmd, target string, opts Options) int {
 				}
 				frame.Write(opts.Stdout, s)
 			},
-			LogFn:     opts.LogFn,
-			Formatter: opts.Formatter,
+			LogFn:            opts.LogFn,
+			Formatter:        opts.Formatter,
+			DisplayTransform: logformat.StampLine,
 		}
 
 		lineDone := make(chan struct{})

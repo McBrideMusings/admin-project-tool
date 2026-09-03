@@ -20,11 +20,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/logformat"
 )
 
 // RetainUnset marks "no explicit retain value was given" — the caller falls
@@ -54,7 +55,7 @@ const LogAnnouncePrefix = "→ wrote: "
 // occurrence so a re-scanned, growing buffer always reports the most recent
 // announce line.
 func ParseLogAnnounce(line string) (path string, ok bool) {
-	plain := ansiEscape.ReplaceAllString(line, "")
+	plain := logformat.AnsiEscapeRe.ReplaceAllString(line, "")
 	idx := strings.LastIndex(plain, LogAnnouncePrefix)
 	if idx < 0 {
 		return "", false
@@ -336,7 +337,7 @@ func (c *LogContext) Write(text string) {
 	if c.logFile == "" {
 		return
 	}
-	plain := ansiEscape.ReplaceAllString(text, "")
+	plain := logformat.AnsiEscapeRe.ReplaceAllString(text, "")
 	if len(plain) == 0 || plain[len(plain)-1] != '\n' {
 		plain += "\n"
 	}
@@ -428,11 +429,6 @@ func (c *LogContext) rotateLogLocked(path string, retain int) {
 	}
 	_ = os.Rename(path, path+".1")
 }
-
-// ansiEscape strips every ANSI escape sequence, not just SGR colour codes —
-// a log file should carry no escape sequences at all, matching
-// admin_lib/core.py's _ANSI_ESCAPE_RE.
-var ansiEscape = regexp.MustCompile("\x1b(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])")
 
 // escapedGlob escapes glob metacharacters in a stem name — the Go analogue
 // of Python's glob.escape(), used so a stem containing *, ?, or [ is

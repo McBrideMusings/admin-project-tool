@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
+	"github.com/McBrideMusings/admin-project-tool/internal/logformat"
 	"github.com/McBrideMusings/admin-project-tool/internal/streams"
 	"github.com/McBrideMusings/admin-project-tool/internal/timing"
 )
@@ -202,12 +203,23 @@ func drainPendingInput(f *os.File) {
 // when opts.CaptureLog is set. It is the only place either path constructs
 // one, which is what keeps internal/streams.OutputPump the single owner of
 // the read-a-chunk/format/write loop (the repo's OutputPump rule).
+//
+// DisplayTransform and LogTransform each get their OWN logformat.LineStamper
+// instance rather than sharing one: RunCmdPTY feeds this pump raw
+// fixed-size ptmx.Read chunks that can split a logical line anywhere, so a
+// stateless per-chunk logformat.StampLine would splice a timestamp into the
+// middle of a line — LineStamper tracks line-start state across chunks
+// instead. Two instances (not one) keep the terminal-display path and the
+// persisted-log path from cross-contaminating that state should they ever
+// see different chunk boundaries.
 func (h *Host) newOutputPump(opts RunCmdOptions) *streams.OutputPump {
 	pump := &streams.OutputPump{
-		Out: func(s string) { frame.Write(h.Stdout, s) },
+		Out:              func(s string) { frame.Write(h.Stdout, s) },
+		DisplayTransform: logformat.NewLineStamper().Write,
 	}
 	if opts.CaptureLog {
 		pump.LogFn = h.logWrite
+		pump.LogTransform = logformat.NewLineStamper().Write
 	}
 	return pump
 }
