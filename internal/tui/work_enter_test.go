@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -353,16 +355,21 @@ func TestPendingCommandRendersStarting(t *testing.T) {
 // activateCommand (or in activateCommandTarget for the target case) and this
 // test fails: startHostedRun is invoked a second time, calls != 1.
 func TestEnterOnPendingRowDoesNotDispatchAgain(t *testing.T) {
+	var wg sync.WaitGroup
 	old := startHostedRun
-	defer func() { startHostedRun = old }()
-	calls := 0
+	defer func() { startHostedRun = old }() // runs LAST: restore only after the goroutine below has fully returned
+	defer wg.Wait()                         // runs SECOND: join the background dispatch goroutine
 	release := make(chan struct{})
+	defer close(release) // runs FIRST: unblocks the stub so the goroutine can return
+
+	var calls atomic.Int32
+	entered := make(chan struct{})
 	startHostedRun = func(m *manifest.Manifest, name string, args []string, rows, cols int, env []string) error {
-		calls++
+		calls.Add(1)
+		close(entered)
 		<-release
 		return nil
 	}
-	defer close(release)
 
 	m := workTestModel(&manifest.Manifest{
 		Custom:  map[string]manifest.Command{"build": {Steps: []string{"build"}}},
@@ -372,20 +379,28 @@ func TestEnterOnPendingRowDoesNotDispatchAgain(t *testing.T) {
 
 	// First enter: idle -> dispatch. Fire the Cmd's func on its own
 	// goroutine (as bubbletea would) so it blocks inside startHostedRun
-	// rather than blocking this test.
+	// rather than blocking this test. The goroutine is joined via wg before
+	// the deferred restore of startHostedRun runs, so there is no race
+	// between this goroutine reading the package var and the defer above
+	// rewriting it.
 	m1, cmd1 := m.activateCommand(wd)
 	if cmd1 == nil {
 		t.Fatal("first enter on an idle command returned a nil Cmd")
 	}
-	go cmd1()
-	// Give the goroutine a moment to actually enter startHostedRun and
-	// increment calls before the second enter races it.
-	deadline := time.Now().Add(time.Second)
-	for calls == 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		cmd1()
+	}()
+	// Wait for the goroutine to actually enter startHostedRun and increment
+	// calls before the second enter races it.
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("first dispatch never reached startHostedRun — the window this test needs never opened")
 	}
-	if calls != 1 {
-		t.Fatalf("first dispatch never reached startHostedRun (calls=%d) — the window this test needs never opened", calls)
+	if calls.Load() != 1 {
+		t.Fatalf("first dispatch never reached startHostedRun (calls=%d) — the window this test needs never opened", calls.Load())
 	}
 
 	// Second enter, on the SAME row data reflecting the now-pending state —
@@ -403,8 +418,8 @@ func TestEnterOnPendingRowDoesNotDispatchAgain(t *testing.T) {
 		t.Error("enter on a pending row did not record a queued attach in pendingAttach")
 	}
 
-	if calls != 1 {
-		t.Errorf("startHostedRun called %d times, want 1 — the second enter started a second run", calls)
+	if calls.Load() != 1 {
+		t.Errorf("startHostedRun called %d times, want 1 — the second enter started a second run", calls.Load())
 	}
 }
 

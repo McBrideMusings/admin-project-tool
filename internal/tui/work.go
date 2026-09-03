@@ -641,15 +641,18 @@ func targetRows(parent rowItem) []rowItem {
 				// A running multi-target command is recorded under the
 				// action's own name (liveEntryFor), not per target, so the
 				// live entry the parent row found is the same one every
-				// target shares — copied here so an expanded target of a
-				// running command shows the same elapsed/probe state as
-				// its parent rather than reading as idle.
+				// target shares — copied here so a focused target row's own
+				// detail pane (commandDetail) can show elapsed time and mark
+				// its URLs live. renderTargetRow itself reads none of this;
+				// the row line shows no state indicator.
 				live: wd.live,
 				// Same reasoning as live just above: a multi-target
 				// dispatch is pending under the parent action's own name,
-				// not per target, so an expanded target of a starting
-				// command reads as starting too rather than idle
-				// (admin-qk77).
+				// not per target, so this is what activateCommandTarget's
+				// second-enter guard reads to turn a second enter on a
+				// starting command's target into a queued attach instead of
+				// a second run (admin-qk77). Not a rendering concern —
+				// renderTargetRow doesn't read it either.
 				pending: wd.pending,
 			},
 		})
