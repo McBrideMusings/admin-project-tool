@@ -2366,3 +2366,111 @@ def test_two_devices_and_no_pin_says_so():
     apple["find_connected_device"]("ios")
     assert any("2 iOS devices connected" in w for w in warnings), warnings
     print("OK: an ambiguous pick is announced, not made silently")
+
+
+# --- deploy_device install retry (open-assistant oa-jsy.4) -------------------
+#
+# A wireless CoreDevice link drops mid-install (NWError 54), and the device then
+# vanishes from CoreDevice's table for a second or two. The old code retried
+# immediately with the device id that had just gone stale, so the retry failed
+# differently ("unable to locate a device matching the requested device
+# identifier") instead of succeeding, and blamed USB. Observed three times on
+# 2026-08-23/24; a manual devicectl install seconds later worked every time.
+
+
+def _deploy_harness(install_results, find_results):
+    """Load apple.py with deploy_device's collaborators stubbed.
+
+    install_results / find_results are consumed one call at a time, so a test
+    states the exact sequence the device produced. Returns (ns, calls).
+    """
+    ns = _load_apple()
+    calls = {"install": [], "find": [], "sleeps": []}
+
+    def fake_install(device_id, app_path):
+        calls["install"].append(device_id)
+        return install_results.pop(0)
+
+    def fake_find(platform="ios", cfg=None, required=True):
+        calls["find"].append(required)
+        result = find_results.pop(0)
+        if result is None and required:
+            raise SystemExit(1)
+        return result
+
+    ns["install_on_device"] = fake_install
+    ns["find_connected_device"] = fake_find
+    ns["launch_on_device"] = lambda *a, **k: 0
+    ns["ensure_device_registered"] = lambda *a, **k: None
+    ns["restore_stranded_dev_icons"] = lambda *a, **k: None
+    ns["xcodebuild_filtered"] = lambda *a, **k: 0
+    ns["find_app"] = lambda *a, **k: "/tmp/Fake.app"
+    ns["_detect_project_path"] = lambda cfg: "/tmp/Fake.xcodeproj"
+    ns["_resolve_sim_process"] = lambda cfg, platform: "Fake"
+    ns["_resolve_bundle"] = lambda cfg, platform: "com.example.fake"
+    ns["_resolve_derived_data_name"] = lambda cfg: "Fake"
+    ns["_compose_sign_settings"] = lambda cfg, platform: []
+    ns["_derived_glob"] = lambda *a, **k: "/tmp/*.app"
+    ns["time"] = type("_T", (), {"sleep": staticmethod(lambda s: calls["sleeps"].append(s))})
+    return ns, calls
+
+
+_DEVICE = ("DEVICE-1", "Pierce's iPhone", "udid-1")
+_DEVICE_AFTER_RESET = ("DEVICE-2", "Pierce's iPhone", "udid-1")
+_CFG = {"ios_scheme": "Fake", "ios_deploy_config": "Release"}
+
+
+def test_install_retry_backs_off_and_reresolves_the_device():
+    """The failure that actually happened: install drops, the device comes back
+    under a new CoreDevice id, and the second attempt uses THAT id."""
+    ns, calls = _deploy_harness(
+        install_results=[1, 0],
+        find_results=[_DEVICE, _DEVICE_AFTER_RESET],
+    )
+    ns["deploy_device"](_CFG, "ios")
+
+    assert calls["install"] == ["DEVICE-1", "DEVICE-2"], (
+        "the retry reused the stale device id instead of re-resolving"
+    )
+    assert calls["sleeps"] == [3], "the retry fired with no backoff"
+    assert calls["find"][-1] is False, (
+        "the retry's lookup must be non-fatal — the device is briefly absent"
+    )
+
+
+def test_install_retries_again_when_the_device_is_still_missing():
+    """The window can outlast one backoff. A lookup that finds nothing must not
+    exit; it waits longer and tries once more."""
+    ns, calls = _deploy_harness(
+        install_results=[1, 0],
+        find_results=[_DEVICE, None, _DEVICE_AFTER_RESET],
+    )
+    ns["deploy_device"](_CFG, "ios")
+
+    assert calls["sleeps"] == [3, 6], "the second backoff must be longer than the first"
+    assert calls["install"] == ["DEVICE-1", "DEVICE-2"]
+
+
+def test_install_gives_up_after_three_attempts():
+    ns, calls = _deploy_harness(
+        install_results=[1, 1, 1],
+        find_results=[_DEVICE, _DEVICE, _DEVICE],
+    )
+    try:
+        ns["deploy_device"](_CFG, "ios")
+    except SystemExit as exit_code:
+        assert exit_code.code == 1
+    else:
+        raise AssertionError("a device that never installs must exit non-zero")
+
+    assert len(calls["install"]) == 3, "expected exactly three attempts"
+
+
+def test_a_first_time_success_neither_sleeps_nor_relooks():
+    """The common path must be untouched — no added latency on a good link."""
+    ns, calls = _deploy_harness(install_results=[0], find_results=[_DEVICE])
+    ns["deploy_device"](_CFG, "ios")
+
+    assert calls["install"] == ["DEVICE-1"]
+    assert calls["sleeps"] == []
+    assert calls["find"] == [True], "a successful install must not re-resolve"
