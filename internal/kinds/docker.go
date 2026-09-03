@@ -69,6 +69,10 @@ func makeServerReload(name string, action manifest.Action, m *manifest.Manifest,
 // per-invocation keys, matching Kinds["docker-dev"].Configless.
 func makeDockerDev(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
 	cfg := archetypeConfigTable(m, "docker_dev")
+	// pre_kill (admin-tlhw.3) names whatever command or action the project
+	// wants run before this dev loop starts — no default, no "kill" fallback
+	// when it's absent.
+	preRun := cfgString(cfg, "pre_kill", "")
 
 	return func(args []string) error {
 		h := newHost(m)
@@ -81,15 +85,7 @@ func makeDockerDev(name string, action manifest.Action, m *manifest.Manifest, su
 			h.Warn("docker_dev: could not create bind-mount dir: " + err.Error())
 		}
 
-		if truthyCfg(cfg["pre_kill"]) {
-			// Mirrors Python's `if callable(kill): kill([])` — best-effort,
-			// return value ignored, exactly as docker_dev_from_config does.
-			// "kill" is looked up as a declared command (not action) name,
-			// the same indirection admin_lib's cmd_kill lookup used.
-			if _, ok := resolveCommand(m, "kill"); ok {
-				_ = surf.Command("kill", nil)
-			}
-		}
+		runPreHook(m, surf, preRun, nil, h.Warn)
 
 		cmd, err := buildDockerDevCmd(cfg)
 		if err != nil {
@@ -114,23 +110,6 @@ func makeDockerDev(name string, action manifest.Action, m *manifest.Manifest, su
 		}
 		return nil
 	}, nil
-}
-
-// truthyCfg mirrors Python's bare `if cfg.get(key):` truthiness for the
-// handful of config values this file reads that way.
-func truthyCfg(v any) bool {
-	switch val := v.(type) {
-	case nil:
-		return false
-	case bool:
-		return val
-	case string:
-		return val != ""
-	case int64:
-		return val != 0
-	default:
-		return true
-	}
 }
 
 // asMapSlice reads a []any-of-map[string]any config value (TOML's shape for

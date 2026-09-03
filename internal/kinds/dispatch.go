@@ -66,6 +66,34 @@ func resolveCommand(m *manifest.Manifest, name string) (manifest.Command, bool) 
 	return manifest.Command{}, false
 }
 
+// runPreHook dispatches a project-declared pre-run reference — the string
+// behind [docker_dev]/[clean_dev]/[vite_dev]'s `pre_kill` key
+// (admin-tlhw.3) — before that dev loop's own body runs. The project names
+// what to run; this function only resolves the name, exactly the way
+// dispatching a command or action by name works everywhere else. An empty
+// name means the project declared no hook at all, which is a no-op: "a
+// project that declares neither behaves correctly: no pre-run hook fires."
+// A non-empty name that resolves to neither a command nor an action is also
+// a no-op here — admin check's checkPreRunRefs (cmd/check.go) is what
+// reports that as a validation error at check time, not the dispatch path,
+// which must never guess or fall back to a name of its own.
+func runPreHook(m *manifest.Manifest, surf *Surface, name string, args []string, warn func(string)) {
+	if name == "" {
+		return
+	}
+	if _, ok := resolveCommand(m, name); ok {
+		if err := surf.Command(name, args); err != nil {
+			warn(name + ": " + err.Error())
+		}
+		return
+	}
+	if _, ok := m.Actions[name]; ok {
+		if err := RunAction(m, Default, name, args); err != nil {
+			warn(name + ": " + err.Error())
+		}
+	}
+}
+
 // HasCommand reports whether m declares a command named name (custom or
 // archetype-provided) — the read-only half of resolveCommand exposed for
 // callers outside this package that only need to know whether a name would
@@ -136,8 +164,9 @@ func (s *Surface) Action(name string, args []string) error {
 }
 
 // Command is Action's command-level twin, for a Runner that needs to run a
-// whole declared command — the pre-kill hop, which runs the project's own
-// "kill" command before starting a dev loop.
+// whole declared command — the pre-run hop (runPreHook), which runs
+// whatever command the project named in `pre_kill` before starting a dev
+// loop.
 func (s *Surface) Command(name string, args []string) error {
 	if s == nil {
 		return fmt.Errorf(
@@ -342,19 +371,21 @@ func launchCommand(m *manifest.Manifest, name string, args []string, env []strin
 // launchCommand's fallback when the CLI dispatches a command that carries no
 // `detach` (or has nowhere to send it): the global preflight —
 // guards.RunGlobalPreflight, the always-on deps-fresh check ADR-0005
-// requires before every command, skipped for the exempt diagnostic verbs
-// (logs, kill) and memoized so a multi-step command pays for it once per
-// invocation, not once per step — plus the ADR-0003 pure-routing check, the
-// empty-steps check, declared-order execution, stop-at-first-failure, and
-// the error wrapping that names the command. Every step dispatches through
-// RunAction, which never reaches the launcher.
+// requires before every command, skipped when the command itself declares
+// `preflight = false` (admin-tlhw.3 — no name is hardcoded here) and
+// memoized so a multi-step command pays for it once per invocation, not
+// once per step — plus the ADR-0003 pure-routing check, the empty-steps
+// check, declared-order execution, stop-at-first-failure, and the error
+// wrapping that names the command. Every step dispatches through RunAction,
+// which never reaches the launcher.
 func runSteps(m *manifest.Manifest, r *Registry, name string, args []string) error {
-	if err := guards.RunGlobalPreflight(name); err != nil {
-		return err
-	}
 	cmd, ok := resolveCommand(m, name)
 	if !ok {
 		return fmt.Errorf("unknown command %q", name)
+	}
+	exempt := cmd.HasPreflight && !cmd.Preflight
+	if err := guards.RunGlobalPreflight(exempt); err != nil {
+		return err
 	}
 	if err := checkPureRouting(name, cmd); err != nil {
 		return err

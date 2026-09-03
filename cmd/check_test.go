@@ -1231,3 +1231,105 @@ enter = "implement"
 		t.Fatalf("implement action's agent = %q, want \"claude\"", agent)
 	}
 }
+
+// TestRunCheckPreKillRefUnknownFails is admin-tlhw.3's acceptance criterion
+// "admin check reports a declared reference that names nothing": a
+// [clean_dev].pre_kill naming a command/action the manifest never declares
+// must fail check, naming both the table and the missing reference.
+func TestRunCheckPreKillRefUnknownFails(t *testing.T) {
+	dir := writeCheckManifest(t, `project_name = "checktest"
+
+[clean_dev]
+pre_kill = "does-not-exist"
+`)
+	err, _ := runCheckCapturingStderr(t, dir)
+	if err == nil {
+		t.Fatal("runCheck = nil, want an error: pre_kill references an undeclared command/action")
+	}
+	got := err.Error()
+	for _, want := range []string{"clean_dev", "pre_kill", `"does-not-exist"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("runCheck error %q does not mention %q", got, want)
+		}
+	}
+}
+
+// TestRunCheckPreKillRefResolvingCommandPasses is the sibling acceptance
+// criterion: a project can still declare something to run before a dev loop
+// starts, by naming a real command in `pre_kill`.
+func TestRunCheckPreKillRefResolvingCommandPasses(t *testing.T) {
+	dir := writeCheckManifest(t, `project_name = "checktest"
+
+[clean_dev]
+pre_kill = "kill"
+
+[commands.custom.kill]
+desc = "kill stray dev processes"
+steps = ["kill-step"]
+
+[actions.kill-step]
+kind = "shell"
+run = "true"
+`)
+	err, _ := runCheckCapturingStderr(t, dir)
+	if err != nil {
+		t.Fatalf("runCheck = %v, want nil — pre_kill names a declared command", err)
+	}
+}
+
+// TestRunCheckPreKillRefResolvingActionPasses covers the other declared-name
+// shape: pre_kill naming a bare [actions.X] rather than a [commands.X].
+func TestRunCheckPreKillRefResolvingActionPasses(t *testing.T) {
+	dir := writeCheckManifest(t, `project_name = "checktest"
+
+[vite_dev]
+pre_kill = "stop-stale"
+
+[actions.stop-stale]
+kind = "shell"
+run = "true"
+`)
+	err, _ := runCheckCapturingStderr(t, dir)
+	if err != nil {
+		t.Fatalf("runCheck = %v, want nil — pre_kill names a declared action", err)
+	}
+}
+
+// TestRunCheckPreKillRefNonStringFails: pre_kill must be a string naming a
+// reference now that a bare bool no longer means "look for a command called
+// kill" (admin-tlhw.3).
+func TestRunCheckPreKillRefNonStringFails(t *testing.T) {
+	dir := writeCheckManifest(t, `project_name = "checktest"
+
+[docker_dev]
+pre_kill = true
+`)
+	err, _ := runCheckCapturingStderr(t, dir)
+	if err == nil {
+		t.Fatal("runCheck = nil, want an error: pre_kill = true is no longer a valid declaration")
+	}
+	if !strings.Contains(err.Error(), "docker_dev") || !strings.Contains(err.Error(), "must be a string") {
+		t.Fatalf("runCheck error %q does not report docker_dev.pre_kill's type", err.Error())
+	}
+}
+
+// TestRunCheckCommandPreflightFalsePasses proves a command can declare
+// itself exempt from the global preflight without the tool matching its
+// name against a hardcoded list (admin-tlhw.3).
+func TestRunCheckCommandPreflightFalsePasses(t *testing.T) {
+	dir := writeCheckManifest(t, `project_name = "checktest"
+
+[commands.custom.logs]
+desc      = "tail logs"
+steps     = ["noop"]
+preflight = false
+
+[actions.noop]
+kind = "shell"
+run = "true"
+`)
+	err, _ := runCheckCapturingStderr(t, dir)
+	if err != nil {
+		t.Fatalf("runCheck = %v, want nil — preflight = false is a valid declaration", err)
+	}
+}
