@@ -26,6 +26,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
+	"github.com/McBrideMusings/admin-project-tool/internal/timing"
 )
 
 // selfExecutable resolves the path to the currently running admin binary,
@@ -203,14 +204,17 @@ func spawnLauncher(cmdLine, wd string, ctx launchCtx, t config.Terminal) (string
 	if t.Spawn == "" {
 		return "", errNoLauncher
 	}
+	start := timing.Start()
 	cmd := exec.Command("/bin/sh", "-c", t.Spawn)
 	cmd.Env = append(os.Environ(), ctx.env(cmdLine, wd)...)
 	cmd.Stderr = os.Stderr
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
+		timing.Phase("launcher spawn", start)
 		return "", fmt.Errorf("terminal.spawn: %w", err)
 	}
+	timing.Phase("launcher spawn", start)
 	handle := strings.TrimSpace(out.String())
 	if handle == "" {
 		return "", fmt.Errorf("terminal.spawn printed no handle")
