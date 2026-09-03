@@ -74,6 +74,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 
 from .core import (
     C,
@@ -1156,10 +1157,16 @@ def _extract_device_info(device):
     return device_id, device_name, udid, transport
 
 
-def find_connected_device(platform="ios", cfg=None):
+def find_connected_device(platform="ios", cfg=None, *, required=True):
     """Find a connected device of the given platform via xcrun devicectl.
 
-    Returns (device_id, device_name, udid) or calls sys.exit(1).
+    Returns (device_id, device_name, udid); calls sys.exit(1) when nothing
+    matches, or returns None instead when ``required`` is False.
+
+    ``required=False`` exists for the install retry loop: a wireless device
+    that just reset its control channel briefly disappears from CoreDevice's
+    table, and exiting during that window is the difference between a retry
+    that works and one that reports "device not found".
     device_id is the CoreDevice identifier (for devicectl commands).
     udid is the hardware UDID.
     Accepts any connection type (USB or network).
@@ -1191,6 +1198,8 @@ def find_connected_device(platform="ios", cfg=None):
             warn(f"no connected {wanted} — falling back to any {plat['label']} device")
 
     if not devices:
+        if not required:
+            return None
         err(f"No connected {plat['label']} device found.")
         for line in plat["connect_hint"]:
             err(line)
@@ -3695,16 +3704,40 @@ def deploy_device(cfg, platform="ios", *, clean=False):
 
     info(f"Installing to device {device_name}...")
     rc = install_on_device(device_id, app_path)
-    if rc != 0:
-        warn("Install failed — retrying once...")
+
+    # Three attempts, backing off and RE-RESOLVING the device between them.
+    #
+    # A wireless CoreDevice link drops mid-install often enough to matter
+    # (NWError 54, "Connection was invalidated"), and the device then vanishes
+    # from CoreDevice's table for a second or two. The previous retry fired
+    # immediately and reused the device id that had just gone stale, so it
+    # failed *differently* — "unable to locate a device matching the requested
+    # device identifier" — rather than succeeding, and the advice it printed
+    # ("plug in via USB") named a cause that was not the real one: the same
+    # device installed fine by hand seconds later, untouched.
+    for attempt in range(2):
+        if rc == 0:
+            break
+        delay = 3 * (attempt + 1)
+        warn(f"Install failed — waiting {delay}s and re-resolving the device "
+             f"(attempt {attempt + 2} of 3)...")
+        time.sleep(delay)
+        found = find_connected_device(platform, cfg, required=False)
+        if not found:
+            warn("Device not back in CoreDevice's table yet.")
+            continue
+        device_id, device_name, _ = found
         rc = install_on_device(device_id, app_path)
-        if rc != 0:
-            err("Install failed after retry.")
-            if platform == "tv":
-                err("Keep the Apple TV awake and on the same network as this Mac.")
-            else:
-                err("Try plugging in via USB cable for a more reliable connection.")
-            sys.exit(rc)
+
+    if rc != 0:
+        err("Install failed after 3 attempts over ~9s.")
+        if platform == "tv":
+            err("Keep the Apple TV awake and on the same network as this Mac.")
+        else:
+            err("The device stayed unreachable across all three, so this is not "
+                "the transient control-channel drop the retries cover — check "
+                "that it is awake, unlocked and on this network, or connect USB.")
+        sys.exit(rc)
 
     if bundle_id:
         info(f"Launching {bundle_id}")

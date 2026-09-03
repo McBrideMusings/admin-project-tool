@@ -1,9 +1,10 @@
-// detach_test.go covers admin-ysxr.9: `detach = true` is a producer-scoped
-// concern now. A plain-CLI dispatch (p == nil) always runs inline and never
-// reaches the project's [terminal] launcher (ADR-0020); only a non-nil
-// CommandProducer (the dashboard) resolves `detach` at all, through
-// launchCommand. It replaces lifetime_test.go — the Lifetime kind-catalog
-// attribute admin-ysxr.2 deleted.
+// detach_test.go covers `detach = true`'s producer-independent contract:
+// RunAction (every step, plain CLI or already-launched) never consults
+// `detach` and never reaches the project's [terminal] launcher (ADR-0020);
+// RunCommand's top-level dispatch does, through launchCommand, identically
+// whether its CommandProducer is nil (the CLI) or non-nil (the dashboard).
+// It replaces lifetime_test.go — the Lifetime kind-catalog attribute
+// admin-ysxr.2 deleted.
 package kinds
 
 import (
@@ -40,10 +41,11 @@ func detachManifest(terminal map[string]any) *manifest.Manifest {
 	}
 }
 
-// TestRunActionCLIDetachRunsInlineNeverReachesLauncher is admin-ysxr.9's
-// headline acceptance criterion: a plain-CLI dispatch (RunAction, p == nil
-// in RunCommand terms) runs a detached action inline and never reaches the
-// launcher, even with a spawnable [terminal] declared.
+// TestRunActionCLIDetachRunsInlineNeverReachesLauncher proves RunAction
+// itself — every step's own dispatch, whichever surface the enclosing
+// command landed on — runs a detached action inline and never reaches the
+// launcher, even with a spawnable [terminal] declared. The launcher decision
+// is made once, in launchCommand, before any step runs.
 func TestRunActionCLIDetachRunsInlineNeverReachesLauncher(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -325,9 +327,8 @@ func TestMultiTargetPerTargetDetachDashboardProducerDispatchesThroughLauncher(t 
 // that launcher's attach command with ADMIN_HANDLE set to the handle spawn
 // printed. The fake launcher's attach writes ADMIN_HANDLE to a file rather
 // than actually attaching to anything, so the observable proof is that
-// file's content. Only the producer path (dashboardProducer over RunCommand)
-// can produce a launcher-dispatched entry at all now, so the fixture goes
-// through that rather than the CLI path admin-ysxr.9 closed off.
+// file's content. Dispatched through a dashboard CommandProducer here, but a
+// nil (CLI) producer reaches the identical launcher entry.
 func TestDetachedEntryAttachRunsLauncherAttachWithHandle(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

@@ -17,6 +17,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/timing"
 )
 
 // openManifestMsg reports that the launch of the default handler for a path
@@ -119,6 +120,9 @@ func statManifest(repoRoot string) manifestStamp {
 // manifest that was valid and is now broken clears the values it used to
 // declare instead of leaving the last good ones on screen under a new error.
 func (m *Model) loadManifest() {
+	start := timing.Start()
+	defer timing.Phase("tui manifest load", start)
+
 	m.manifest, m.manifestOK, m.manifestErr = nil, false, ""
 	m.cmdOrigin, m.actionOrigin, m.keyOrigin, m.rowKeys = nil, nil, nil, nil
 

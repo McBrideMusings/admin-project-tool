@@ -11,6 +11,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/streams"
+	"github.com/McBrideMusings/admin-project-tool/internal/timing"
 )
 
 // RunCmdPTY is RunCmd's pty=true sibling: cmd runs on a real pseudo-terminal
@@ -80,9 +81,14 @@ func (h *Host) RunCmdPTY(cmd string, opts RunCmdOptions) (RunCmdResult, error) {
 	pump := h.newOutputPump(opts)
 	var collected []byte
 	buf := make([]byte, 32*1024)
+	firstByte := true
 	for {
 		n, readErr := ptmx.Read(buf)
 		if n > 0 {
+			if firstByte {
+				timing.MarkEach("first byte from child")
+				firstByte = false
+			}
 			collected = append(collected, buf[:n]...)
 			pump.Write(string(buf[:n]))
 		}

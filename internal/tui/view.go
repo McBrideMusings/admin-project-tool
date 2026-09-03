@@ -12,6 +12,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/keymap"
+	"github.com/McBrideMusings/admin-project-tool/internal/timing"
 )
 
 // hitKind identifies what a rendered line — or, for a split line, one side of
@@ -87,6 +88,7 @@ func padHits(hits []hitTarget, n int) []hitTarget {
 // region between them. The total output is exactly m.height lines so the
 // alt-screen never scrolls and the header can never fall off the top.
 func (m Model) View() string {
+	timing.Mark("tui first frame")
 	lines, _ := m.frame()
 	return strings.Join(lines, "\n")
 }
