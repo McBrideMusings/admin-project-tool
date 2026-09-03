@@ -1154,7 +1154,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Compare admin.toml's own stat against the stamp loadManifest captured
 		// last time; only a real difference (including a manifest edited to be
 		// broken, whose mtime/size changed) reloads and announces.
+		var reloadCmds []tea.Cmd
 		if st := statManifest(m.repoRoot); st != m.manifestStamp {
+			wasManifestOK := m.manifestOK
 			m.loadManifest()
 			m.settleActiveTab()
 			if m.manifestErr != "" {
@@ -1162,11 +1164,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.manifestOK {
 				m.setStatus("manifest reloaded", cDim)
 			}
+			// Init only fires workTickCmd's first link (line ~584) and
+			// detectBeadsCmd (line ~576) when manifestOK/tracker="beads" are
+			// already true at startup — an admin.toml that doesn't exist yet,
+			// or that gains tracker="beads", when this dashboard launches never
+			// gets that one-shot kickoff, so the Work tab and Beads tab painted
+			// (fsChangedMsg above already reloads and repaints the manifest
+			// itself) but stayed on their zero state forever: nothing ever
+			// re-armed workTickCmd's self-perpetuating loop, and
+			// detectBeadsCmd/loadBeadsCmd/beadsTickCmd never ran, since both
+			// chains only start from Init or from these same guarded spots.
+			// Restarting the dashboard re-ran Init and picked it up, which is
+			// what made "close and reopen" look like the only fix. Kick each
+			// chain here, gated so a manifest that was already OK at Init (and
+			// so already ticking) or a beads probe already in flight/answered
+			// isn't started a second time.
+			if !wasManifestOK && m.manifestOK {
+				reloadCmds = append(reloadCmds, workTickCmd())
+			}
+			if m.hasTracker("beads") && !m.beadsProbed {
+				reloadCmds = append(reloadCmds, detectBeadsCmd(m.ctx, m.repoRoot))
+			}
 		}
-		return m, tea.Batch(
+		reloadCmds = append(reloadCmds,
 			loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def),
 			waitForFSCmd(m.fsCh),
 		)
+		return m, tea.Batch(reloadCmds...)
 
 	case syncDoneMsg:
 		m.syncing = false
