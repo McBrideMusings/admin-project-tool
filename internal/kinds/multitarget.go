@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/guards"
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
@@ -184,7 +183,6 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 	if err != nil {
 		return nil, fmt.Errorf("action %q: %w", name, err)
 	}
-	parentDetach, parentDetachPresent := actionDetach(action)
 
 	inline := map[string]map[string]any{}
 	for k, v := range action {
@@ -312,35 +310,6 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 		}
 		if err := guards.RunRequires(effectiveRequires); err != nil {
 			return fmt.Errorf("action %q: target %q: %w", name, picked, err)
-		}
-
-		// A detached target dispatches through the project's [terminal]
-		// launcher and returns immediately — before enterFrame, since a
-		// detached target must not raise a frame it will never write to
-		// (the frame belongs to whichever process the launcher's spawn
-		// command actually runs the re-entry command in). !inReentry()
-		// guards against re-dispatching a second time from inside a run
-		// this same launcher (or another one) already started — replacing
-		// the old reentryDetachedMarker argv sentinel with the process-wide
-		// re-entry signal every launcher-reached dispatch now shares
-		// (admin-ysxr.4/.7).
-		effectiveDetach := resolveTargetDetach(parentDetach, parentDetachPresent, t.detach, t.detachSet)
-		if effectiveDetach && !inReentry() {
-			cfg, _ := config.FromManifest(m)
-			ctx := launchCtxFromEnv(fmt.Sprintf("%s:%s", name, picked))
-			targetArgs := append([]string{picked}, rest...)
-			root := projectRoot(m)
-			handle, err := dispatchToLauncher("__run-action", name, targetArgs, ctx, cfg.Terminal, root)
-			switch {
-			case err == nil:
-				recordLiveWork(name+":"+picked, "multi-target", handle, "__run-action", name, targetArgs, ctx, cfg.Terminal, root)
-				return nil
-			case err == errNoLauncher:
-				// No [terminal] declared — fall through to running this
-				// target inline, silently; this is the default path.
-			default:
-				fmt.Fprintf(os.Stderr, "warning: action %q: target %q: launcher spawn failed, running inline: %v\n", name, picked, err)
-			}
 		}
 
 		// The footer belongs to the target the user picked, whether that
