@@ -192,6 +192,19 @@ func renderTargetRow(wd *workRowData, focused bool, nameW, rest int) string {
 		act := padEnd(truncR(wd.live.Activity, actW), actW)
 		return faintStyle.Render(connector) + name + state + faintStyle.Render(act) + whereStyled
 	}
+	if wd.pending {
+		// Mirrors renderWorkRow's own wd.pending branch: the window between
+		// enter and a livework.Entry registering must show SOMETHING or a
+		// target row looks unresponsive for however long StartHostedPTY
+		// takes to spawn and register (admin-2y6p — a user report of "no
+		// visible change" after enter on a target row with nothing else
+		// running to compare against). Without this, wd.live == nil and
+		// the row fell straight through to the idle hint below, so a
+		// slow-to-register dispatch was indistinguishable from no dispatch
+		// at all.
+		state := renderLiveState(livework.StateStarting)
+		return faintStyle.Render(connector) + name + state
+	}
 	hint := truncR(wd.targetRun, maxi(rest-2, 4))
 	return faintStyle.Render(connector) + name + faintStyle.Render(hint)
 }

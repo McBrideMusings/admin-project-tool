@@ -345,6 +345,32 @@ func TestPendingCommandRendersStarting(t *testing.T) {
 	}
 }
 
+// TestPendingTargetRowRendersStarting is TestPendingCommandRendersStarting's
+// sibling for a multi-target command's OWN target rows (rowCommandTarget) —
+// renderWorkRow's wd.pending branch only ever covered the flat rowCommand
+// path (len(wd.targets)==0); renderTargetRow had no such branch at all, so a
+// dispatched target (enter on "counter" under a "command-test" multi-target
+// menu) rendered byte-identical to idle until its livework.Entry registered
+// — no visible change at all in the window between enter and registration
+// (the report that prompted this: pressing enter on a target row and seeing
+// nothing happen).
+//
+// MUTATION EVIDENCE: delete the `if wd.pending { ... }` branch this test
+// added to renderTargetRow (fall through to the idle hint branch) and this
+// test fails: the rendered row contains the idle targetRun hint instead of
+// "starting".
+func TestPendingTargetRowRendersStarting(t *testing.T) {
+	wd := &workRowData{cmdName: "command-test", targetKey: "counter", targetRun: "interactive-shell", pending: true}
+
+	out := stripANSI(renderTargetRow(wd, false, 20, 60))
+	if !strings.Contains(out, "starting") {
+		t.Errorf("rendered target row = %q, want it to contain %q", out, "starting")
+	}
+	if strings.Contains(out, "interactive-shell") {
+		t.Errorf("rendered target row = %q, a pending row must not also show the idle run hint", out)
+	}
+}
+
 // TestEnterOnPendingRowDoesNotDispatchAgain proves the second-enter bug the
 // ticket names directly: enter on a row whose previous dispatch is still in
 // flight must not start a second run — it queues an attach intent instead.
