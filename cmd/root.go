@@ -412,6 +412,7 @@ func runDashboard(ctx context.Context) error {
 	// would be wiped by Bubble Tea's next repaint. Buffer until prog.Run
 	// returns, then Flush once the alt screen has torn down.
 	timing.BufferUntilFlush()
+	defer timing.Flush()
 
 	start := timing.Start()
 	repoRoot, err := git.RepoRoot(ctx)
@@ -444,7 +445,6 @@ func runDashboard(ctx context.Context) error {
 	// the dashboard's own mouse support (click to act, drag to copy) needs.
 	prog := tea.NewProgram(model, tea.WithContext(ctx), tea.WithAltScreen(), tea.WithOutput(os.Stderr), tea.WithMouseCellMotion())
 	final, err := prog.Run()
-	timing.Flush()
 	if err != nil {
 		return err
 	}

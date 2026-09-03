@@ -1,6 +1,7 @@
 package timing
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -106,6 +107,63 @@ func TestNothingWrittenToStdout(t *testing.T) {
 	}
 	if len(out) != 0 {
 		t.Fatalf("expected no stdout output, got %q", string(out))
+	}
+}
+
+// TestBufferedRunFlushesOnEarlyReturn models runDashboard's shape: buffer,
+// defer Flush, emit a phase, then return early on an error before any
+// explicit Flush call. It asserts against the writer (stderr), not a live
+// dashboard, that the deferred Flush still empties the buffer — including
+// the "total" line a deferred Total() would print after it — rather than
+// dropping every buffered phase line on the one path that most needs them.
+func TestBufferedRunFlushesOnEarlyReturn(t *testing.T) {
+	reset()
+	defer reset()
+
+	Enable()
+
+	run := func() error {
+		BufferUntilFlush()
+		defer Flush()
+
+		start := Start()
+		Phase("git repo root", start)
+		return errFakeEarlyReturn
+	}
+
+	out := captureStderr(t, func() {
+		_ = run()
+		Total()
+	})
+
+	if !strings.Contains(out, "git repo root") {
+		t.Fatalf("expected buffered phase line to survive an early return, got %q", out)
+	}
+	if !strings.Contains(out, "total") {
+		t.Fatalf("expected total line after the early return, got %q", out)
+	}
+	if strings.Index(out, "git repo root") > strings.Index(out, "total") {
+		t.Fatalf("expected phase line before total, got %q", out)
+	}
+}
+
+var errFakeEarlyReturn = fmt.Errorf("fake early return")
+
+// TestMarkEachEmitsPerChild stands in for two children dispatched in one
+// long-lived TUI session: each should get its own "first byte from child"
+// line rather than the second being swallowed by Mark's process-wide dedup.
+func TestMarkEachEmitsPerChild(t *testing.T) {
+	reset()
+	defer reset()
+
+	Enable()
+	out := captureStderr(t, func() {
+		MarkEach("first byte from child")
+		MarkEach("first byte from child")
+	})
+
+	if n := strings.Count(out, "first byte from child"); n != 2 {
+		t.Fatalf("expected MarkEach to fire for each child, got %d occurrences in %q", n, out)
 	}
 }
 

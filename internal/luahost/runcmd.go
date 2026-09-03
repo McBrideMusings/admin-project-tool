@@ -118,7 +118,7 @@ func (h *Host) RunCmd(cmd string, opts RunCmdOptions) (RunCmdResult, error) {
 			n, err := pr.Read(buf)
 			if n > 0 {
 				if firstByte {
-					timing.Mark("first byte from child")
+					timing.MarkEach("first byte from child")
 					firstByte = false
 				}
 				b := make([]byte, n)

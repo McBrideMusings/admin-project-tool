@@ -86,7 +86,7 @@ func (h *Host) RunCmdPTY(cmd string, opts RunCmdOptions) (RunCmdResult, error) {
 		n, readErr := ptmx.Read(buf)
 		if n > 0 {
 			if firstByte {
-				timing.Mark("first byte from child")
+				timing.MarkEach("first byte from child")
 				firstByte = false
 			}
 			collected = append(collected, buf[:n]...)
