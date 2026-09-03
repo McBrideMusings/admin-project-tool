@@ -4,24 +4,24 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
+	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
 // cmdCmd is the reserved `admin cmd` verb (admin-u7qi.1): with no args it
-// lists every command the current project's admin.toml declares in a
-// minimal arrow-key-navigable picker (admin-u7qi.4) and runs the highlighted
-// one through the exact same kinds.RunCommand path `admin <name>` already
-// uses — so a picked command gets identical launcher/detach/reentry behavior
-// to a typed name. It is registered on rootCmd in cmd/root.go's init(),
-// which is what makes dispatchArgs' loop over rootCmd.Commands() match
-// `admin cmd` before ever consulting the manifest for a command literally
-// named "cmd" (see reservedCmdVerbs in cmd/manifest.go, which admin check's
+// lists every command the current project's admin.toml declares in the same
+// arrow-key picker internal/kinds/multitarget.go already uses for target
+// selection (admin-u7qi.4), and runs the highlighted one through the exact
+// same kinds.RunCommand path `admin <name>` already uses — so a picked
+// command gets identical launcher/detach/reentry behavior to a typed name.
+// It is registered on rootCmd in cmd/root.go's init(), which is what makes
+// dispatchArgs' loop over rootCmd.Commands() match `admin cmd` before ever
+// consulting the manifest for a command literally named "cmd" (see
+// reservedCmdVerbs in cmd/manifest.go, which admin check's
 // checkReservedCollisions enforces against a manifest declaring the name).
 var cmdCmd = &cobra.Command{
 	Use:   "cmd",
@@ -46,88 +46,21 @@ func commandDesc(m *manifest.Manifest, name string) string {
 	return ""
 }
 
-// cmdPickerModel is a minimal bubbletea model for the `admin cmd` picker: a
-// cursor over a fixed list of command names/descs. It holds no I/O of its
-// own — Update takes plain tea.Msg values and is exercised directly by
-// tests without a live tea.Program — so the picker's key/cursor logic stays
-// hermetic under `go test` while runCmdPicker wires the same model into a
-// real tea.NewProgram for terminal use.
-type cmdPickerModel struct {
-	names     []string
-	descs     []string
-	cursor    int
-	chosen    string
-	confirmed bool
-	cancelled bool
-}
-
-func newCmdPickerModel(m *manifest.Manifest, names []string) cmdPickerModel {
-	descs := make([]string, len(names))
+// commandEntries builds the picker rows for names, one luahost.TargetEntry
+// per command in the order kinds.CommandNames returns, using commandDesc for
+// each row's description.
+func commandEntries(m *manifest.Manifest, names []string) []luahost.TargetEntry {
+	entries := make([]luahost.TargetEntry, len(names))
 	for i, name := range names {
-		descs[i] = commandDesc(m, name)
+		entries[i] = luahost.TargetEntry{Key: name, Description: commandDesc(m, name)}
 	}
-	return cmdPickerModel{names: names, descs: descs}
+	return entries
 }
 
-func (p cmdPickerModel) Init() tea.Cmd {
-	return nil
-}
-
-// Update handles the picker's whole interaction surface: up/k and down/j
-// move the cursor (clamped, no wraparound), enter confirms the highlighted
-// command, and q/esc/ctrl+c cancels — both terminal cases return tea.Quit.
-func (p cmdPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	keyMsg, ok := msg.(tea.KeyMsg)
-	if !ok {
-		return p, nil
-	}
-	switch keyMsg.String() {
-	case "up", "k":
-		if p.cursor > 0 {
-			p.cursor--
-		}
-	case "down", "j":
-		if p.cursor < len(p.names)-1 {
-			p.cursor++
-		}
-	case "enter":
-		p.confirmed = true
-		p.chosen = p.names[p.cursor]
-		return p, tea.Quit
-	case "q", "esc", "ctrl+c":
-		p.cancelled = true
-		return p, tea.Quit
-	}
-	return p, nil
-}
-
-// View renders one line per command, marking the highlighted line with
-// "> " — no altscreen, no lipgloss styling: the point is a visible cursor
-// moving over the list, not a scaled-down copy of the Work tab's rendering.
-func (p cmdPickerModel) View() string {
-	var b strings.Builder
-	for i, name := range p.names {
-		marker := "  "
-		if i == p.cursor {
-			marker = "> "
-		}
-		if desc := p.descs[i]; desc != "" {
-			fmt.Fprintf(&b, "%s%s — %s\n", marker, name, desc)
-		} else {
-			fmt.Fprintf(&b, "%s%s\n", marker, name)
-		}
-	}
-	b.WriteString("(up/down or j/k to move, enter to run, q/esc to cancel)\n")
-	return b.String()
-}
-
-// runCmdPicker resolves the project manifest, then drives a cmdPickerModel
-// in a live tea.Program over stderr (cmd/'s own output already goes there
-// so stdout stays clean for the cd sentinel) letting the operator move a
-// cursor with up/down/j/k and pick a command with enter. q/esc/ctrl+c
-// cancels without running anything. A confirmed pick runs via
-// kinds.RunCommand(m, kinds.Default, name, nil, nil) — the same call
-// registerManifestCommand's RunE makes for `admin <name>`.
+// runCmdPicker resolves the project manifest, builds a luahost.Host rooted
+// at it (the same construction pattern internal/kinds/helpers.go's newHost
+// uses, exported as luahost.New for exactly this cross-package case), and
+// hands off to pickAndRunCommand.
 //
 // The ok/err handling mirrors registerManifestCommand: ok is false only
 // when there is no admin.toml at all (never paired with a non-nil err, per
@@ -152,17 +85,41 @@ func runCmdPicker(ctx context.Context) error {
 		return fmt.Errorf("admin.toml declares no commands")
 	}
 
-	model := newCmdPickerModel(m, names)
-	prog := tea.NewProgram(model, tea.WithContext(ctx), tea.WithOutput(os.Stderr))
-	final, err := prog.Run()
-	if err != nil {
-		return fmt.Errorf("running command picker: %w", err)
-	}
+	h := luahost.New(m.Root)
+	return pickAndRunCommand(h, m, names)
+}
 
-	picked, ok := final.(cmdPickerModel)
-	if !ok || picked.cancelled || !picked.confirmed {
+// pickAndRunCommand prompts over h.PickTarget for one of names and runs the
+// chosen command via kinds.RunCommand — the same call registerManifestCommand's
+// RunE makes for `admin <name>`. Split out from runCmdPicker so tests can
+// drive it against a Host they construct themselves (its own Stdin/
+// Stdout/Stderr) rather than the real terminal.
+//
+// The outcome switch mirrors internal/kinds/multitarget.go:277-289 exactly:
+// PickCancelled means the user answered the question by dismissing the
+// picker — nothing failed, so it prints "cancelled" and returns cleanly;
+// PickUnavailable means PickTarget could not prompt at all (no TTY) and has
+// already printed why via h.Err, so this only needs to fail the command
+// rather than silently doing nothing.
+func pickAndRunCommand(h *luahost.Host, m *manifest.Manifest, names []string) error {
+	entries := commandEntries(m, names)
+	key, outcome := h.PickTarget(entries, "select a command")
+	return handlePickOutcome(h, m, key, outcome)
+}
+
+// handlePickOutcome is pickAndRunCommand's outcome switch, split out so a
+// test can drive each luahost.PickOutcome directly — reaching PickChosen and
+// PickCancelled through a real h.PickTarget call needs an actual terminal,
+// which no test in this repo can synthesize (internal/luahost/pick_test.go
+// only reaches PickUnavailable for the same reason).
+func handlePickOutcome(h *luahost.Host, m *manifest.Manifest, key string, outcome luahost.PickOutcome) error {
+	switch outcome {
+	case luahost.PickCancelled:
+		fmt.Fprintln(h.Stderr, "cancelled")
 		return nil
+	case luahost.PickUnavailable:
+		return fmt.Errorf("admin cmd: no command could be picked (pass one as `admin <name>`, or run from a TTY)")
+	default:
+		return kinds.RunCommand(m, kinds.Default, key, nil, nil)
 	}
-
-	return kinds.RunCommand(m, kinds.Default, picked.chosen, nil, nil)
 }

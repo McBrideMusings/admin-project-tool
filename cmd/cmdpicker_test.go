@@ -1,15 +1,17 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
+	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
+	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
 // TestCmdVerbIsRegisteredReservedVerb pins the reserved-verb precedence
@@ -47,9 +49,39 @@ func TestReservedCmdVerbsIncludesCmd(t *testing.T) {
 	t.Fatalf("reservedCmdVerbs = %v, want it to include \"cmd\"", reservedCmdVerbs)
 }
 
+// writeMarkerManifest writes a one-command admin.toml (a "build" command
+// whose only step touches marker.txt) into dir, returning its resolved
+// manifest.
+func writeMarkerManifest(t *testing.T, dir string) *manifest.Manifest {
+	t.Helper()
+	body := `project_name = "fixture"
+
+[commands.build]
+desc  = "writes a marker"
+steps = ["write-marker"]
+
+[commands.touch]
+desc  = "also writes a marker"
+steps = ["write-marker"]
+
+[actions.write-marker]
+kind = "shell"
+run  = "touch marker.txt"
+`
+	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write admin.toml: %v", err)
+	}
+	m, ok, err := resolveProjectManifest(context.Background(), dir)
+	if !ok || err != nil {
+		t.Fatalf("resolveProjectManifest: ok=%v err=%v", ok, err)
+	}
+	return m
+}
+
 // TestRunCmdPickerListsCommandsWithDesc writes a manifest declaring two
-// commands and asserts the picker model's rendered View names both, along
-// with their desc text.
+// commands and asserts commandEntries — the picker rows runCmdPicker hands
+// to h.PickTarget — names both, each paired with its own desc text, in
+// kinds.CommandNames' order.
 func TestRunCmdPickerListsCommandsWithDesc(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -76,61 +108,101 @@ run  = "true"
 		t.Fatalf("resolveProjectManifest: ok=%v err=%v", ok, err)
 	}
 	names := kinds.CommandNames(m)
-	view := newCmdPickerModel(m, names).View()
+	entries := commandEntries(m, names)
 
-	for _, want := range []string{"deploy", "ships the build", "build", "compiles the project"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("picker View = %q, want it to contain %q", view, want)
-		}
+	want := []luahost.TargetEntry{
+		{Key: "build", Description: "compiles the project"},
+		{Key: "deploy", Description: "ships the build"},
+	}
+	if !reflect.DeepEqual(entries, want) {
+		t.Fatalf("commandEntries = %#v, want %#v", entries, want)
 	}
 }
 
-// TestRunCmdPickerRunsSelectionThroughKindsRunCommand drives the picker
-// model's Update with a synthesized enter key and proves the resulting
-// chosen command actually runs its steps via kinds.RunCommand — the
-// marker-file assertion TestRegisterManifestCommandRunsThroughKindsRunCommand
-// uses for the same claim about `admin <name>`.
-func TestRunCmdPickerRunsSelectionThroughKindsRunCommand(t *testing.T) {
+// TestHandlePickOutcomeChosenRunsTheCommand covers handlePickOutcome's
+// default (PickChosen) branch: the returned key runs through
+// kinds.RunCommand exactly as registerManifestCommand's RunE does for
+// `admin <name>` — proven with the same marker-file assertion
+// TestRegisterManifestCommandRunsThroughKindsRunCommand uses for that claim.
+func TestHandlePickOutcomeChosenRunsTheCommand(t *testing.T) {
 	dir := t.TempDir()
-	t.Chdir(dir)
-	body := `project_name = "fixture"
+	m := writeMarkerManifest(t, dir)
+	h := luahost.New(dir)
+	var out, errOut bytes.Buffer
+	h.Stdout, h.Stderr = &out, &errOut
 
-[commands.build]
-desc  = "writes a marker"
-steps = ["write-marker"]
-
-[commands.touch]
-desc  = "also writes a marker"
-steps = ["write-marker"]
-
-[actions.write-marker]
-kind = "shell"
-run  = "touch marker.txt"
-`
-	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(body), 0o644); err != nil {
-		t.Fatalf("write admin.toml: %v", err)
+	if err := handlePickOutcome(h, m, "touch", luahost.PickChosen); err != nil {
+		t.Fatalf("handlePickOutcome(PickChosen) = %v, want nil", err)
 	}
-
-	m, ok, err := resolveProjectManifest(context.Background(), dir)
-	if !ok || err != nil {
-		t.Fatalf("resolveProjectManifest: ok=%v err=%v", ok, err)
-	}
-	names := kinds.CommandNames(m)
-
-	var model tea.Model = newCmdPickerModel(m, names)
-	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-
-	picked, ok := model.(cmdPickerModel)
-	if !ok || !picked.confirmed || picked.cancelled {
-		t.Fatalf("picker model after enter = %#v, want a confirmed pick", model)
-	}
-
-	if err := kinds.RunCommand(m, kinds.Default, picked.chosen, nil, nil); err != nil {
-		t.Fatalf("kinds.RunCommand(%q) = %v, want nil", picked.chosen, err)
-	}
-
 	if _, err := os.Stat(filepath.Join(dir, "marker.txt")); err != nil {
-		t.Fatalf("stat marker.txt: %v (the picked selection never actually ran through kinds.RunCommand)", err)
+		t.Fatalf("stat marker.txt: %v (PickChosen never ran the picked command through kinds.RunCommand)", err)
+	}
+}
+
+// TestHandlePickOutcomeCancelledReturnsNilAndRunsNothing covers
+// handlePickOutcome's PickCancelled branch: the user answered the question
+// by dismissing the picker, so this must return cleanly and print
+// "cancelled" — matching internal/kinds/multitarget.go:278-283's identical
+// handling — without running any command.
+func TestHandlePickOutcomeCancelledReturnsNilAndRunsNothing(t *testing.T) {
+	dir := t.TempDir()
+	m := writeMarkerManifest(t, dir)
+	h := luahost.New(dir)
+	var out, errOut bytes.Buffer
+	h.Stdout, h.Stderr = &out, &errOut
+
+	if err := handlePickOutcome(h, m, "", luahost.PickCancelled); err != nil {
+		t.Fatalf("handlePickOutcome(PickCancelled) = %v, want nil", err)
+	}
+	if !strings.Contains(errOut.String(), "cancelled") {
+		t.Fatalf("stderr = %q, want it to say cancelled", errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "marker.txt")); err == nil {
+		t.Fatal("marker.txt exists — a command ran despite the picker being cancelled")
+	}
+}
+
+// TestHandlePickOutcomeUnavailableReturnsError covers handlePickOutcome's
+// PickUnavailable branch: PickTarget has already printed why it could not
+// prompt, so this only needs to fail the command rather than silently doing
+// nothing.
+func TestHandlePickOutcomeUnavailableReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	m := writeMarkerManifest(t, dir)
+	h := luahost.New(dir)
+	var out, errOut bytes.Buffer
+	h.Stdout, h.Stderr = &out, &errOut
+
+	if err := handlePickOutcome(h, m, "", luahost.PickUnavailable); err == nil {
+		t.Fatal("handlePickOutcome(PickUnavailable) = nil, want an error")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "marker.txt")); err == nil {
+		t.Fatal("marker.txt exists — a command ran despite the picker being unavailable")
+	}
+}
+
+// TestPickAndRunCommandNonTTYIsUnavailable exercises pickAndRunCommand end
+// to end against a Host whose Stdin is not a *os.File TTY — the shape every
+// test process runs under — proving the real h.PickTarget call reaches
+// PickUnavailable and that handlePickOutcome's error branch fires, without
+// running any command.
+func TestPickAndRunCommandNonTTYIsUnavailable(t *testing.T) {
+	dir := t.TempDir()
+	m := writeMarkerManifest(t, dir)
+	h := luahost.New(dir)
+	var out, errOut bytes.Buffer
+	h.Stdout, h.Stderr = &out, &errOut
+	h.Stdin = strings.NewReader("")
+
+	names := kinds.CommandNames(m)
+	if err := pickAndRunCommand(h, m, names); err == nil {
+		t.Fatal("pickAndRunCommand = nil, want an error when the picker can't prompt")
+	}
+	if !strings.Contains(errOut.String(), "not a TTY") {
+		t.Fatalf("stderr = %q, want PickTarget's non-TTY diagnostic", errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "marker.txt")); err == nil {
+		t.Fatal("marker.txt exists — a command ran despite the picker being unavailable")
 	}
 }
 
@@ -147,76 +219,5 @@ func TestRunCmdPickerNoManifestReportsPlainly(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no admin.toml") {
 		t.Fatalf("runCmdPicker error = %q, want it to say no admin.toml exists here", err.Error())
-	}
-}
-
-// TestCmdPickerModelCursorMovement drives the picker model's Update through
-// down/j and up/k key messages and asserts the cursor moves accordingly,
-// clamped at both ends — the arrow-key navigation admin-u7qi.4's acceptance
-// criteria requires in place of the old numbered-stdin selection.
-func TestCmdPickerModelCursorMovement(t *testing.T) {
-	names := []string{"build", "deploy", "test"}
-	model := cmdPickerModel{names: names, descs: make([]string, len(names))}
-
-	if model.cursor != 0 {
-		t.Fatalf("initial cursor = %d, want 0", model.cursor)
-	}
-
-	next, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
-	model = next.(cmdPickerModel)
-	if model.cursor != 1 {
-		t.Fatalf("cursor after j = %d, want 1", model.cursor)
-	}
-
-	next, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
-	model = next.(cmdPickerModel)
-	if model.cursor != 2 {
-		t.Fatalf("cursor after down = %d, want 2", model.cursor)
-	}
-
-	// Clamped at the bottom — one past the end does nothing.
-	next, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
-	model = next.(cmdPickerModel)
-	if model.cursor != 2 {
-		t.Fatalf("cursor after down past end = %d, want 2 (clamped)", model.cursor)
-	}
-
-	next, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
-	model = next.(cmdPickerModel)
-	if model.cursor != 1 {
-		t.Fatalf("cursor after k = %d, want 1", model.cursor)
-	}
-
-	next, _ = model.Update(tea.KeyMsg{Type: tea.KeyUp})
-	model = next.(cmdPickerModel)
-	if model.cursor != 0 {
-		t.Fatalf("cursor after up = %d, want 0", model.cursor)
-	}
-
-	// Clamped at the top — one before the start does nothing.
-	next, _ = model.Update(tea.KeyMsg{Type: tea.KeyUp})
-	model = next.(cmdPickerModel)
-	if model.cursor != 0 {
-		t.Fatalf("cursor after up past start = %d, want 0 (clamped)", model.cursor)
-	}
-}
-
-// TestCmdPickerModelCancelKeys covers q/esc/ctrl+c: each quits the program
-// without confirming a pick, matching "cancels without running anything".
-func TestCmdPickerModelCancelKeys(t *testing.T) {
-	for _, key := range []tea.KeyMsg{
-		{Type: tea.KeyRunes, Runes: []rune("q")},
-		{Type: tea.KeyEsc},
-		{Type: tea.KeyCtrlC},
-	} {
-		model := cmdPickerModel{names: []string{"build", "deploy"}, descs: []string{"", ""}}
-		next, cmd := model.Update(key)
-		picked := next.(cmdPickerModel)
-		if !picked.cancelled || picked.confirmed {
-			t.Fatalf("Update(%v) model = %#v, want cancelled and not confirmed", key, picked)
-		}
-		if cmd == nil {
-			t.Fatalf("Update(%v) cmd = nil, want tea.Quit", key)
-		}
 	}
 }
