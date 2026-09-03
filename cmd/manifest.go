@@ -35,7 +35,11 @@ var reservedToolVerbs = []string{"new", "check", "compile", "branch", "worktree"
 // against this literal list. Widening this list to every current cmd/ verb
 // is a legitimate follow-up; it is out of this ticket's scope, which is to
 // implement what the ADR says, not to extend it.
-var reservedCmdVerbs = []string{"prs", "populate", "help", "completion"}
+//
+// "cmd" (admin-u7qi.1) was added alongside the ADR's original enumeration
+// rather than left to fall into the "caught but not reported" gap the
+// comment above describes, since it's a verb this ticket introduces itself.
+var reservedCmdVerbs = []string{"prs", "populate", "cmd", "help", "completion"}
 
 // resolveProjectManifest loads dir's admin.toml (if any) and resolves it
 // against its declared archetypes, using the same search path

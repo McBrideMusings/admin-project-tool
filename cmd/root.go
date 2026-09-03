@@ -359,6 +359,7 @@ func init() {
 	rootCmd.AddCommand(worktreeCmd)
 	rootCmd.AddCommand(prsCmd)
 	rootCmd.AddCommand(populateCmd)
+	rootCmd.AddCommand(cmdCmd)
 	rootCmd.AddCommand(runActionCmd)
 	rootCmd.AddCommand(runCommandCmd)
 
