@@ -1361,13 +1361,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// here, never from View, so starting either stays a side effect and
 		// rendering stays pure.
 		m.refreshDetailProbes()
-		return m, tea.Batch(workTickCmd(), pollAgentStatusCmd())
+		return m, tea.Batch(workTickCmd(), pollAgentStatusCmd(), pollPaneStatusCmd(m.cfgMerged.Terminal.Status))
 
 	case agentStatusMsg:
 		// applyAgentStatuses is the only writer of the herdr-derived state
 		// transition; the next workTickMsg's repaint picks it up through the
 		// existing livework.Default.State(e.ID) reads workview.go already makes.
 		applyAgentStatuses(msg)
+		return m, nil
+
+	case paneStatusMsg:
+		// applyPaneStatuses is the only writer of the "pane closed out from
+		// under us" transition; same repaint path as agentStatusMsg above.
+		applyPaneStatuses(msg)
 		return m, nil
 
 	case termTickMsg:

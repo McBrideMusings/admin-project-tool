@@ -194,3 +194,10 @@ serialize something the tool never deserializes.
   [ADR-0021](./0021-agent-interaction-is-code-terminals-are-config.md), not by wiring the
   optional `status` key: talking to whatever is inside a launched pane is a compiled-in
   `internal/agent.Driver`, not a project-supplied shell command.
+- The optional `status` key does get a consumer, just not that one: `admin-qk77` adds
+  `internal/tui/panepoll.go`, which shells a terminal-dispatched entry's `[terminal].status`
+  once per Work tab tick — not to ask what's *inside* the pane (that stays ADR-0021's
+  `Driver` seam), but to detect that the pane itself is gone, closed by hand or reaped by
+  the OS rather than through the Work tab's own kill key. A nonzero exit marks the entry
+  `StateExited`, the same terminal state a deliberate kill already records; a project with
+  no `status` declared gets the documented no-op.
