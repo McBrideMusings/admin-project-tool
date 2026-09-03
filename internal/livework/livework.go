@@ -42,6 +42,15 @@ const (
 	StateWaiting State = "waiting"
 	StateExited  State = "exited"
 	StateFailed  State = "failed"
+	// StateStarting is the pre-registration, pre-handle phase between a
+	// dispatch keypress and the entry that eventually records it — Add
+	// rejects an entry with an empty Handle, and a pending dispatch has no
+	// handle yet (the pty device name or launcher pane id only exists once
+	// the spawn returns). No Entry is ever stored in this state today; the
+	// constant exists purely so a consumer (internal/tui) can render one
+	// uniform vocabulary of states for a row it tracks by other means during
+	// that window, without inventing a second, TUI-local enum.
+	StateStarting State = "starting"
 )
 
 // WorkerInfo is present only on an entry for an agent worker — a workflow

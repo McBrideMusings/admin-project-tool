@@ -36,8 +36,10 @@ func multiTargetModel(t *testing.T) Model {
 				"test": {"kind": "shell", "run": "go test ./..."},
 			},
 		},
-		cmdOrigin:    map[string]string{},
-		actionOrigin: map[string]string{},
+		cmdOrigin:       map[string]string{},
+		actionOrigin:    map[string]string{},
+		pendingDispatch: map[string]bool{},
+		pendingAttach:   map[string]bool{},
 	}
 	return m
 }

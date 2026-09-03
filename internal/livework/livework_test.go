@@ -145,6 +145,17 @@ func TestStateWaitingIsDistinctFromRunning(t *testing.T) {
 	}
 }
 
+// TestStateStartingIsDistinctFromEveryOtherState proves the pre-registration
+// state (internal/tui's pending-dispatch window) does not alias any of the
+// states an actual Entry can carry.
+func TestStateStartingIsDistinctFromEveryOtherState(t *testing.T) {
+	for _, other := range []State{StateRunning, StateWaiting, StateExited, StateFailed} {
+		if StateStarting == other {
+			t.Errorf("StateStarting must not equal %q", other)
+		}
+	}
+}
+
 // TestAttachInvokesOps proves Attach calls the entry's own Ops.Attach and
 // surfaces its error.
 //
