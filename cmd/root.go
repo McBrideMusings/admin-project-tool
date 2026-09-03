@@ -338,6 +338,23 @@ func init() {
 	f.DurationVar(&dumpSettle, "settle", 2*time.Second, "how long --dump-frame waits for background loads")
 }
 
+// dashboardManifestRoot is where the dashboard should read admin.toml from.
+//
+// git.RepoRoot returns the MAIN worktree from inside a linked one, which is what
+// branches, worktrees and PRs want — they are repo-wide. The manifest is not:
+// admin.toml is per-checkout and never committed, so a worktree that declares
+// one would otherwise lose its Work tab while `admin <cmd>` in that same
+// directory ran its commands fine. Resolve it from the working directory, the
+// way resolveProjectManifest already does for the CLI, so the dashboard lists
+// exactly the commands a bare `admin <name>` would run here.
+func dashboardManifestRoot() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return tui.FindManifestRoot(cwd)
+}
+
 // runDumpFrame prints one frame of the dashboard to stdout and exits. Unlike the
 // dashboard path this writes the UI to stdout on purpose: the frame *is* the
 // output, there is no cd sentinel to keep it clear of, and the repo() shell
@@ -355,7 +372,8 @@ func runDumpFrame(ctx context.Context) error {
 	defer cancel() // winds down the watcher and the merged tick the frame abandoned
 
 	nwo, _ := git.OriginNWO(ctx)
-	model := tui.New(ctx, repoRoot, nwo, git.CurrentBranch(ctx), git.DefaultBranch(ctx))
+	model := tui.New(ctx, repoRoot, nwo, git.CurrentBranch(ctx), git.DefaultBranch(ctx),
+		tui.WithManifestRoot(dashboardManifestRoot()))
 	frame := tui.Frame(ctx, model, tui.FrameOptions{
 		Width:  dumpWidth,
 		Height: dumpHeight,
@@ -383,7 +401,7 @@ func runDashboard(ctx context.Context) error {
 	// terminal theme colors) renders instead of being stripped.
 	lipgloss.SetDefaultRenderer(lipgloss.NewRenderer(os.Stderr))
 
-	model := tui.New(ctx, repoRoot, nwo, current, def)
+	model := tui.New(ctx, repoRoot, nwo, current, def, tui.WithManifestRoot(dashboardManifestRoot()))
 	// Render to stderr so stdout carries only the cd sentinel — the repo() shell
 	// function captures stdout via $(...) while the TUI draws on the TTY (stderr).
 	// Cell motion reports a click and a drag but not idle movement, which is all

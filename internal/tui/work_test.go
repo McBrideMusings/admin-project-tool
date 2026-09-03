@@ -706,3 +706,67 @@ func TestWorkerDetailOmitsNowLabelWhenActivityEmpty(t *testing.T) {
 		}
 	}
 }
+
+// A linked worktree's admin.toml is the one the dashboard reads. git.RepoRoot
+// hands back the MAIN worktree from inside a linked one, so before
+// WithManifestRoot the Work tab was dropped for every worktree that declared a
+// manifest, while `admin <cmd>` in that same directory ran its commands fine.
+func TestWorkTabUsesTheWorktreeManifestNotTheMainCheckout(t *testing.T) {
+	mainCheckout := t.TempDir() // stands in for repoRoot: no admin.toml here
+	worktree := t.TempDir()
+	body := "project_name = \"demo\"\narchetypes = []\n\n" +
+		"[commands.build]\ndesc = \"build it\"\nsteps = [\"build\"]\n\n" +
+		"[actions.build]\nkind = \"shell\"\nrun = \"echo hi\"\n"
+	if err := os.WriteFile(filepath.Join(worktree, manifest.Filename), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without the option the dashboard looks at the main checkout and finds nothing.
+	bare := New(context.Background(), mainCheckout, "", "main", "main")
+	if bare.manifestOK {
+		t.Fatal("manifestOK = true for a checkout with no admin.toml")
+	}
+	for _, tb := range bare.visibleTabs() {
+		if tb == tabWork {
+			t.Fatal("tabWork drawn for a checkout with no admin.toml")
+		}
+	}
+
+	m := New(context.Background(), mainCheckout, "", "main", "main", WithManifestRoot(worktree))
+	if !m.manifestOK {
+		t.Fatalf("manifestOK = false for the worktree's admin.toml (err: %s)", m.manifestErr)
+	}
+	if got := m.manifestDir(); got != worktree {
+		t.Errorf("manifestDir() = %q, want the worktree %q", got, worktree)
+	}
+	found := false
+	for _, tb := range m.visibleTabs() {
+		if tb == tabWork {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("tabWork is absent even though the worktree declares a manifest")
+	}
+	if _, ok := m.manifest.Overrides["build"]; !ok {
+		t.Error("the worktree manifest's build command did not survive the load")
+	}
+	// Every action's subprocess runs in Manifest.Root, so this is also what
+	// makes a Work-tab run happen in the worktree rather than the main checkout.
+	if m.manifest.Root != worktree {
+		t.Errorf("manifest.Root = %q, want the worktree %q", m.manifest.Root, worktree)
+	}
+}
+
+// An empty manifest root leaves the old behaviour alone, which is what every
+// Model built without the option relies on.
+func TestManifestDirFallsBackToRepoRoot(t *testing.T) {
+	m := Model{repoRoot: "/repo"}
+	if got := m.manifestDir(); got != "/repo" {
+		t.Errorf("manifestDir() = %q, want the repoRoot fallback %q", got, "/repo")
+	}
+	m.manifestRoot = "/repo/worktrees/feature"
+	if got := m.manifestDir(); got != "/repo/worktrees/feature" {
+		t.Errorf("manifestDir() = %q, want the explicit manifest root", got)
+	}
+}
