@@ -260,8 +260,9 @@ func TestClickSetsFocus(t *testing.T) {
 	}
 }
 
-// TestKeybarFollowsFocus is AC9: the footer keybar advertises the keys
-// available in the current focus state.
+// TestKeybarFollowsFocus is admin-wuz9.1: the footer keybar shows the tab's
+// full hotkey set (not just a 3-key nav set) while focus is on the tab bar,
+// with the tab-bar-only nav pairs merged in and no key advertised twice.
 func TestKeybarFollowsFocus(t *testing.T) {
 	m := workFocusModel()
 	tabsPairs := m.keymap()
@@ -274,10 +275,45 @@ func TestKeybarFollowsFocus(t *testing.T) {
 	if !foundTab {
 		t.Errorf("tab-bar keymap = %v, want a ←→/tab pair", tabsPairs)
 	}
+	foundJump := false
+	foundKill, foundAttach := false, false
+	seen := map[string]bool{}
 	for _, p := range tabsPairs {
-		if p[1] == "kill" || p[1] == "attach" {
-			t.Errorf("tab-bar keymap advertises a row-scoped key %v, want none", p)
+		if p[0] == "1-4" && p[1] == "jump" {
+			foundJump = true
 		}
+		if p[1] == "kill" {
+			foundKill = true
+		}
+		if p[1] == "attach" {
+			foundAttach = true
+		}
+		if seen[p[0]] {
+			t.Errorf("tab-bar keymap advertises %q more than once: %v", p[0], tabsPairs)
+		}
+		seen[p[0]] = true
+	}
+	if !foundJump {
+		t.Errorf("tab-bar keymap = %v, want a 1-4/jump pair", tabsPairs)
+	}
+	if !foundKill || !foundAttach {
+		t.Errorf("tab-bar keymap on the Work tab = %v, want the row-scoped %q and %q pairs alongside the nav keys", tabsPairs, "kill", "attach")
+	}
+	// enter calls enterBody() while focus is on the tab bar — the same
+	// action "↓ body" already advertises — not tabWork's own row-kind
+	// label ("open, run or attach"), which only applies once focus is in
+	// the body (admin-wuz9.1).
+	foundEnterBody := false
+	for _, p := range tabsPairs {
+		if p[0] == "↵" {
+			if p[1] != "body" {
+				t.Errorf("tab-bar keymap ↵ pair = %q, want %q (enter moves focus into the body while tab-bar-focused, it doesn't run the row kind's own action)", p[1], "body")
+			}
+			foundEnterBody = true
+		}
+	}
+	if !foundEnterBody {
+		t.Errorf("tab-bar keymap = %v, want a ↵ pair", tabsPairs)
 	}
 
 	m.focus = focusBody
@@ -293,13 +329,27 @@ func TestKeybarFollowsFocus(t *testing.T) {
 			t.Errorf("keymap() did not change between focus states")
 		}
 	}
-	foundKill := false
+	bodyFoundKill := false
 	for _, p := range bodyPairs {
 		if p[1] == "kill" {
-			foundKill = true
+			bodyFoundKill = true
 		}
 	}
-	if !foundKill {
+	if !bodyFoundKill {
 		t.Errorf("body keymap on the Work tab = %v, want the row-scoped %q pair", bodyPairs, "kill")
+	}
+	// Once focus moves into the body, ↵ reverts to the row kind's own
+	// label — the tab-bar override is scoped to focusTabs only.
+	foundEnterRowKind := false
+	for _, p := range bodyPairs {
+		if p[0] == "↵" {
+			if p[1] != "open, run or attach" {
+				t.Errorf("body keymap ↵ pair = %q, want the row kind's own %q", p[1], "open, run or attach")
+			}
+			foundEnterRowKind = true
+		}
+	}
+	if !foundEnterRowKind {
+		t.Errorf("body keymap = %v, want a ↵ pair", bodyPairs)
 	}
 }
