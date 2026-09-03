@@ -129,6 +129,20 @@ func appleTargetNeedsProvisioningProfile(cfg map[string]any, h *luahost.Host, pr
 // signing, capable of iCloud/push/etc.) or by hash with manual signing and
 // no profile at all (mac only, and only when nothing needs one).
 func appleComposeSignSettings(cfg map[string]any, h *luahost.Host, project, platform string) string {
+	// A per-platform identity overrides the shared one, so a project can ship
+	// its Mac app Developer ID-signed (no get-task-allow, notarizable) while
+	// its iOS app stays development-signed. Forcing one identity across both
+	// makes the wrong tradeoff on one of them: an Apple Distribution iOS build
+	// cannot be installed by devicectl onto a development device at all.
+	if v, ok := cfg[platform+"_sign_identity"]; ok && v != nil {
+		merged := make(map[string]any, len(cfg)+1)
+		for k, val := range cfg {
+			merged[k] = val
+		}
+		merged["sign_identity"] = v
+		cfg = merged
+	}
+
 	var parts []string
 	for _, pair := range [][2]string{
 		{"code_sign_identity", "CODE_SIGN_IDENTITY"},
