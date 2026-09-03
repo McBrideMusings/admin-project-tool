@@ -6,6 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 )
 
 // TestCmdVerbIsRegisteredReservedVerb pins the reserved-verb precedence
@@ -44,8 +48,8 @@ func TestReservedCmdVerbsIncludesCmd(t *testing.T) {
 }
 
 // TestRunCmdPickerListsCommandsWithDesc writes a manifest declaring two
-// commands and asserts the picker's listing (captured off stderr) names
-// both, along with their desc text.
+// commands and asserts the picker model's rendered View names both, along
+// with their desc text.
 func TestRunCmdPickerListsCommandsWithDesc(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -67,24 +71,24 @@ run  = "true"
 		t.Fatalf("write admin.toml: %v", err)
 	}
 
-	stderr := withCapturedStderr(t, func() {
-		withStdinLine(t, "1", func() {
-			if err := runCmdPicker(context.Background()); err != nil {
-				t.Fatalf("runCmdPicker = %v, want nil", err)
-			}
-		})
-	})
+	m, ok, err := resolveProjectManifest(context.Background(), dir)
+	if !ok || err != nil {
+		t.Fatalf("resolveProjectManifest: ok=%v err=%v", ok, err)
+	}
+	names := kinds.CommandNames(m)
+	view := newCmdPickerModel(m, names).View()
 
 	for _, want := range []string{"deploy", "ships the build", "build", "compiles the project"} {
-		if !strings.Contains(stderr, want) {
-			t.Fatalf("picker listing = %q, want it to contain %q", stderr, want)
+		if !strings.Contains(view, want) {
+			t.Fatalf("picker View = %q, want it to contain %q", view, want)
 		}
 	}
 }
 
-// TestRunCmdPickerRunsSelectionThroughKindsRunCommand proves a fed numbered
-// selection actually runs the chosen command's steps via kinds.RunCommand —
-// the marker-file assertion TestRegisterManifestCommandRunsThroughKindsRunCommand
+// TestRunCmdPickerRunsSelectionThroughKindsRunCommand drives the picker
+// model's Update with a synthesized enter key and proves the resulting
+// chosen command actually runs its steps via kinds.RunCommand — the
+// marker-file assertion TestRegisterManifestCommandRunsThroughKindsRunCommand
 // uses for the same claim about `admin <name>`.
 func TestRunCmdPickerRunsSelectionThroughKindsRunCommand(t *testing.T) {
 	dir := t.TempDir()
@@ -107,14 +111,23 @@ run  = "touch marker.txt"
 		t.Fatalf("write admin.toml: %v", err)
 	}
 
-	// kinds.CommandNames sorts, so "build" is entry 1.
-	withCapturedStderr(t, func() {
-		withStdinLine(t, "1", func() {
-			if err := runCmdPicker(context.Background()); err != nil {
-				t.Fatalf("runCmdPicker = %v, want nil", err)
-			}
-		})
-	})
+	m, ok, err := resolveProjectManifest(context.Background(), dir)
+	if !ok || err != nil {
+		t.Fatalf("resolveProjectManifest: ok=%v err=%v", ok, err)
+	}
+	names := kinds.CommandNames(m)
+
+	var model tea.Model = newCmdPickerModel(m, names)
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	picked, ok := model.(cmdPickerModel)
+	if !ok || !picked.confirmed || picked.cancelled {
+		t.Fatalf("picker model after enter = %#v, want a confirmed pick", model)
+	}
+
+	if err := kinds.RunCommand(m, kinds.Default, picked.chosen, nil, nil); err != nil {
+		t.Fatalf("kinds.RunCommand(%q) = %v, want nil", picked.chosen, err)
+	}
 
 	if _, err := os.Stat(filepath.Join(dir, "marker.txt")); err != nil {
 		t.Fatalf("stat marker.txt: %v (the picked selection never actually ran through kinds.RunCommand)", err)
@@ -137,82 +150,73 @@ func TestRunCmdPickerNoManifestReportsPlainly(t *testing.T) {
 	}
 }
 
-// TestRunCmdPickerInvalidSelectionErrors covers the out-of-range/non-numeric
-// case the item's acceptance criteria leaves open: rather than guessing, an
-// invalid selection is a plain error naming the valid range.
-func TestRunCmdPickerInvalidSelectionErrors(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	writeManifest(t, dir, "deploy")
+// TestCmdPickerModelCursorMovement drives the picker model's Update through
+// down/j and up/k key messages and asserts the cursor moves accordingly,
+// clamped at both ends — the arrow-key navigation admin-u7qi.4's acceptance
+// criteria requires in place of the old numbered-stdin selection.
+func TestCmdPickerModelCursorMovement(t *testing.T) {
+	names := []string{"build", "deploy", "test"}
+	model := cmdPickerModel{names: names, descs: make([]string, len(names))}
 
-	withCapturedStderr(t, func() {
-		withStdinLine(t, "not-a-number", func() {
-			err := runCmdPicker(context.Background())
-			if err == nil {
-				t.Fatal("runCmdPicker = nil, want an error for a non-numeric selection")
-			}
-			if !strings.Contains(err.Error(), "not a valid selection") {
-				t.Fatalf("runCmdPicker error = %q, want it to say the selection is invalid", err.Error())
-			}
-		})
-	})
+	if model.cursor != 0 {
+		t.Fatalf("initial cursor = %d, want 0", model.cursor)
+	}
+
+	next, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	model = next.(cmdPickerModel)
+	if model.cursor != 1 {
+		t.Fatalf("cursor after j = %d, want 1", model.cursor)
+	}
+
+	next, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = next.(cmdPickerModel)
+	if model.cursor != 2 {
+		t.Fatalf("cursor after down = %d, want 2", model.cursor)
+	}
+
+	// Clamped at the bottom — one past the end does nothing.
+	next, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = next.(cmdPickerModel)
+	if model.cursor != 2 {
+		t.Fatalf("cursor after down past end = %d, want 2 (clamped)", model.cursor)
+	}
+
+	next, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	model = next.(cmdPickerModel)
+	if model.cursor != 1 {
+		t.Fatalf("cursor after k = %d, want 1", model.cursor)
+	}
+
+	next, _ = model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	model = next.(cmdPickerModel)
+	if model.cursor != 0 {
+		t.Fatalf("cursor after up = %d, want 0", model.cursor)
+	}
+
+	// Clamped at the top — one before the start does nothing.
+	next, _ = model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	model = next.(cmdPickerModel)
+	if model.cursor != 0 {
+		t.Fatalf("cursor after up past start = %d, want 0 (clamped)", model.cursor)
+	}
 }
 
-// withStdinLine swaps os.Stdin for a pipe carrying line (plus its
-// terminator) for the duration of fn, matching
-// internal/prompt/confirm_test.go's own os.Stdin swap-and-restore pattern —
-// the shape runCmdPicker's bufio.Reader read needs to be substitutable in a
-// test.
-func withStdinLine(t *testing.T, line string, fn func()) {
-	t.Helper()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	old := os.Stdin
-	os.Stdin = r
-	defer func() { os.Stdin = old }()
-
-	go func() {
-		w.WriteString(line + "\n")
-		w.Close()
-	}()
-
-	fn()
-}
-
-// withCapturedStderr swaps os.Stderr for a pipe for the duration of fn and
-// returns everything written to it — the picker's listing and prompt both
-// go to stderr so stdout stays clean for the cd sentinel (see
-// runCmdPicker's doc comment).
-func withCapturedStderr(t *testing.T, fn func()) string {
-	t.Helper()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	old := os.Stderr
-	os.Stderr = w
-	defer func() { os.Stderr = old }()
-
-	done := make(chan string, 1)
-	go func() {
-		buf := make([]byte, 0, 4096)
-		tmp := make([]byte, 4096)
-		for {
-			n, readErr := r.Read(tmp)
-			if n > 0 {
-				buf = append(buf, tmp[:n]...)
-			}
-			if readErr != nil {
-				break
-			}
+// TestCmdPickerModelCancelKeys covers q/esc/ctrl+c: each quits the program
+// without confirming a pick, matching "cancels without running anything".
+func TestCmdPickerModelCancelKeys(t *testing.T) {
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyRunes, Runes: []rune("q")},
+		{Type: tea.KeyEsc},
+		{Type: tea.KeyCtrlC},
+	} {
+		model := cmdPickerModel{names: []string{"build", "deploy"}, descs: []string{"", ""}}
+		next, cmd := model.Update(key)
+		picked := next.(cmdPickerModel)
+		if !picked.cancelled || picked.confirmed {
+			t.Fatalf("Update(%v) model = %#v, want cancelled and not confirmed", key, picked)
 		}
-		done <- string(buf)
-	}()
-
-	fn()
-	w.Close()
-	os.Stderr = old
-	return <-done
+		if cmd == nil {
+			t.Fatalf("Update(%v) cmd = nil, want tea.Quit", key)
+		}
+	}
 }
