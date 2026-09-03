@@ -277,20 +277,37 @@ func appleDeployMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 	h.Info("Killing any running " + process + "...")
 	_ = exec.Command("pkill", "-x", process).Run()
 
-	h.Info(fmt.Sprintf("Building %s (%s)...", scheme, config))
-	res, err := h.XcodebuildFiltered(luahost.XcodebuildOptions{
-		Project: project, Scheme: scheme, Config: config,
-		Destination: "platform=macOS", Action: appleBuildAction(f.clean),
-		ExtraSettings: appleComposeSignSettings(cfg, h, project, "mac"),
-	})
-	if err != nil {
-		return err
+	// Developer ID cannot be reached by passing CODE_SIGN_IDENTITY to a plain
+	// build: an automatically-signed target refuses it outright with
+	// "conflicting provisioning settings". Distribution signing is an EXPORT
+	// step — archive the app under its normal development signing, then
+	// -exportArchive re-signs it with the Developer ID identity, applies the
+	// hardened runtime (which notarization requires) and drops get-task-allow.
+	var appPath string
+	if appleWantsDeveloperID(cfg) {
+		exported, cleanup, err := appleArchiveAndExportDeveloperID(cfg, h, project, scheme, config, f.clean)
+		if cleanup != nil {
+			defer cleanup()
+		}
+		if err != nil {
+			return err
+		}
+		appPath = exported
+	} else {
+		h.Info(fmt.Sprintf("Building %s (%s)...", scheme, config))
+		res, err := h.XcodebuildFiltered(luahost.XcodebuildOptions{
+			Project: project, Scheme: scheme, Config: config,
+			Destination: "platform=macOS", Action: appleBuildAction(f.clean),
+			ExtraSettings: appleComposeSignSettings(cfg, h, project, "mac"),
+		})
+		if err != nil {
+			return err
+		}
+		if !res.Ok {
+			return fmt.Errorf("build failed")
+		}
+		appPath, _ = luahost.FindApp(appleDerivedGlob(derivedName, config, "", process))
 	}
-	if !res.Ok {
-		return fmt.Errorf("build failed")
-	}
-
-	appPath, _ := luahost.FindApp(appleDerivedGlob(derivedName, config, "", process))
 	if appPath == "" {
 		return fmt.Errorf("could not find built app")
 	}
@@ -590,3 +607,147 @@ func appleNotarySubmissionID(out string) string {
 }
 
 var appleNotaryIDRe = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
+
+
+// appleWantsDeveloperID reports whether this mac deploy should go through the
+// archive/export path. Either key alone implies it: notarization is only
+// accepted for Developer ID-signed apps, and a Developer ID identity is only
+// reachable by exporting.
+func appleWantsDeveloperID(cfg map[string]any) bool {
+	if b, _ := cfg["notarize"].(bool); b {
+		return true
+	}
+	return strings.Contains(strings.ToLower(cfgString(cfg, "mac_sign_identity", "")), "developer id")
+}
+
+// appleArchiveAndExportDeveloperID archives the scheme and exports it with
+// method=developer-id, returning the exported .app and a cleanup for the temp
+// tree it lives in.
+//
+// The archive itself is built under the project's ordinary signing — export is
+// where the identity changes, which is why nothing here passes
+// CODE_SIGN_IDENTITY. -allowProvisioningUpdates plus the App Store Connect key
+// lets the export create the Developer ID profile it needs rather than
+// requiring one to be made in the portal first.
+func appleArchiveAndExportDeveloperID(cfg map[string]any, h *luahost.Host, project, scheme, config string, clean bool) (string, func(), error) {
+	tmp, err := os.MkdirTemp("", "admin-devid-")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { os.RemoveAll(tmp) }
+
+	team := ""
+	if raw, ok := cfg["development_team"]; ok && raw != nil {
+		if v, err := manifest.ResolveEnv(fmt.Sprintf("%v", raw)); err == nil {
+			team = v
+		}
+	}
+	if team == "" {
+		team = os.Getenv("IOS_DEVELOPMENT_TEAM")
+	}
+
+	archivePath := filepath.Join(tmp, scheme+".xcarchive")
+	// The action leads, and a macOS archive takes generic/platform=macOS — a
+	// bare `platform=macOS` with the action in the middle makes xcodebuild dump
+	// its usage instead of building anything.
+	args := []string{"archive",
+		"-project", project, "-scheme", scheme, "-configuration", config,
+		"-destination", "generic/platform=macOS", "-archivePath", archivePath,
+		"-allowProvisioningUpdates"}
+	args = append(args, appleAuthArgv()...)
+
+	// The archive is built under the project's ORDINARY signing, team included:
+	// without DEVELOPMENT_TEAM, a target whose entitlements need a profile fails
+	// with "has entitlements that require signing with a development
+	// certificate". The Developer ID identity is deliberately not passed here —
+	// applying it at archive time is the "conflicting provisioning settings"
+	// failure this whole path exists to route around. Export re-signs.
+	if team != "" {
+		args = append(args, "DEVELOPMENT_TEAM="+team)
+	}
+
+	h.Info(fmt.Sprintf("Archiving %s (%s)...", scheme, config))
+	if out, err := exec.Command("xcodebuild", args...).CombinedOutput(); err != nil {
+		return "", cleanup, fmt.Errorf("archive failed: %v\n%s", err, appleTailLines(string(out), 40))
+	}
+
+	// signingStyle automatic, so the export creates or reuses the Developer ID
+	// profile through the API key above instead of needing one named here.
+	options := filepath.Join(tmp, "ExportOptions.plist")
+	plist := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>method</key><string>developer-id</string>
+<key>signingStyle</key><string>automatic</string>
+<key>destination</key><string>export</string>
+<key>teamID</key><string>` + team + `</string>
+</dict></plist>
+`
+	if err := os.WriteFile(options, []byte(plist), 0o644); err != nil {
+		return "", cleanup, err
+	}
+
+	exportDir := filepath.Join(tmp, "export")
+	exportArgs := []string{"-exportArchive", "-archivePath", archivePath,
+		"-exportOptionsPlist", options, "-exportPath", exportDir,
+		"-allowProvisioningUpdates"}
+	exportArgs = append(exportArgs, appleAuthArgv()...)
+
+	h.Info("Exporting Developer ID-signed app...")
+	if out, err := exec.Command("xcodebuild", exportArgs...).CombinedOutput(); err != nil {
+		return "", cleanup, fmt.Errorf("developer-id export failed: %v\n%s", err, appleTailLines(string(out), 40))
+	}
+
+	entries, err := os.ReadDir(exportDir)
+	if err != nil {
+		return "", cleanup, err
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".app") {
+			return filepath.Join(exportDir, e.Name()), cleanup, nil
+		}
+	}
+	return "", cleanup, fmt.Errorf("export produced no .app in %s", exportDir)
+}
+
+// appleTailLines keeps the last n lines, so a failure reports the part of
+// xcodebuild's output that names the reason rather than thousands of lines that
+// do not.
+func appleTailLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+
+// appleAuthArgv returns the App Store Connect authentication flags as separate
+// argv elements.
+//
+// luahost.AppStoreConnectAuthFlags returns them SHELL-QUOTED and joined —
+// `-authenticationKeyPath "/path"` as a single string — which is right for
+// building a command line to hand to a shell and wrong for exec.Command, where
+// it arrives as one unrecognised argument and xcodebuild answers by dumping its
+// entire usage. Nothing in that dump says which argument was bad.
+func appleAuthArgv() []string {
+	path := strings.TrimSpace(os.Getenv("APP_STORE_CONNECT_KEY_PATH"))
+	keyID := strings.TrimSpace(os.Getenv("APP_STORE_CONNECT_KEY_ID"))
+	issuer := strings.TrimSpace(os.Getenv("APP_STORE_CONNECT_ISSUER_ID"))
+	if path == "" || keyID == "" || issuer == "" {
+		return nil
+	}
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, path[2:])
+		}
+	}
+	if info, err := os.Stat(path); err != nil || info.IsDir() {
+		return nil
+	}
+	return []string{
+		"-authenticationKeyPath", path,
+		"-authenticationKeyID", keyID,
+		"-authenticationKeyIssuerID", issuer,
+	}
+}
