@@ -51,12 +51,14 @@ func StripLogTimestamp(line string) (string, string) {
 	return "", line
 }
 
-// ansiEscape strips every ANSI escape sequence, not just SGR colour codes —
-// mirrors internal/luahost/logcontext.go's private ansiEscape and
-// admin_lib/core.py's _ANSI_ESCAPE_RE. Used only to see through color codes
-// when StampLine checks whether a chunk already opens with its own
+// AnsiEscapeRe strips every ANSI escape sequence, not just SGR colour codes —
+// admin_lib/core.py's _ANSI_ESCAPE_RE. The single definition every ANSI-aware
+// stripper in this repo imports rather than redeclaring — internal/luahost's
+// LogContext (ParseLogAnnounce, Write) uses this same regexp instead of
+// keeping its own byte-for-byte copy. Used here only to see through color
+// codes when StampLine checks whether a chunk already opens with its own
 // timestamp; the returned/stamped text itself keeps its original escapes.
-var ansiEscape = regexp.MustCompile("\x1b(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])")
+var AnsiEscapeRe = regexp.MustCompile("\x1b(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])")
 
 // StampLine prefixes an arbitrary chunk of subprocess output with an
 // absolute wall-clock timestamp (HH:MM:SS.mmm) — the Go port of
@@ -81,11 +83,55 @@ func StampLine(text string) string {
 	if strings.TrimSpace(text) == "" {
 		return text
 	}
-	if ts, _ := StripLogTimestamp(ansiEscape.ReplaceAllString(text, "")); ts != "" {
+	if ts, _ := StripLogTimestamp(AnsiEscapeRe.ReplaceAllString(text, "")); ts != "" {
 		return text
 	}
 	ts := time.Now().Format("15:04:05.000")
 	return ts + " " + text
+}
+
+// LineStamper wraps StampLine with state tracking across successive Write
+// calls fed by the SAME chunked reader (a pty ptmx.Read loop, RunCmd's
+// idle-timer chunking), so a raw fixed-size read that lands mid-line is
+// never mistaken for a fresh line start and stamped in the middle of a
+// line — the concrete bug a stateless per-chunk StampLine has: a logical
+// line spanning two reads got a timestamp spliced into its middle.
+//
+// It performs no buffering — every byte handed to Write is returned
+// immediately, exactly like StampLine itself, so an interactive prompt
+// with no trailing newline (the reason RunCmdPTY exists at all) still
+// displays live. It only remembers whether the PREVIOUS chunk it saw ended
+// in '\n' (or whether this is the very first chunk) to decide whether
+// StampLine is allowed to fire on the current one.
+//
+// Deliberately not shared: two independent LineStampers are wired as
+// DisplayTransform and LogTransform (internal/luahost's newOutputPump), so
+// a future divergence between what reaches the terminal and what reaches
+// the log file can't cross-contaminate state between the two.
+type LineStamper struct {
+	atLineStart bool
+}
+
+// NewLineStamper returns a LineStamper primed to stamp its very first
+// chunk — the true start of the stream.
+func NewLineStamper() *LineStamper {
+	return &LineStamper{atLineStart: true}
+}
+
+// Write returns text unchanged, or with a timestamp prefixed via StampLine
+// when text opens at a genuine line start (right after a previous chunk's
+// trailing '\n', or as the first chunk ever seen). Bound to
+// internal/streams.OutputPump's DisplayTransform/LogTransform shape
+// (func(string) string) via a method value, e.g. logformat.NewLineStamper().Write.
+func (s *LineStamper) Write(text string) string {
+	out := text
+	if s.atLineStart {
+		out = StampLine(text)
+	}
+	if text != "" {
+		s.atLineStart = strings.HasSuffix(text, "\n")
+	}
+	return out
 }
 
 var isoTimestampRe = regexp.MustCompile(

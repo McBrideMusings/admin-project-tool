@@ -138,6 +138,87 @@ func TestFormatLineIsNotDoubleStamped(t *testing.T) {
 	}
 }
 
+// -- StampLine -------------------------------------------------------------
+
+func TestStampLineBlankTextUnchanged(t *testing.T) {
+	for _, in := range []string{"", "   ", "\t", "\n", "  \t\n"} {
+		if got := StampLine(in); got != in {
+			t.Errorf("StampLine(%q) = %q, want unchanged", in, got)
+		}
+	}
+}
+
+func TestStampLineAlreadyStampedPassesThroughUnchanged(t *testing.T) {
+	in := "17:36:32.366 [DEBUG] starting up\n"
+	if got := StampLine(in); got != in {
+		t.Fatalf("got %q, want unchanged %q", got, in)
+	}
+}
+
+func TestStampLineAlreadyStampedAfterANSIPassesThroughUnchanged(t *testing.T) {
+	in := "\x1b[36m17:36:32.366 [INFO] hi\x1b[0m\n"
+	if got := StampLine(in); got != in {
+		t.Fatalf("got %q, want unchanged %q", got, in)
+	}
+}
+
+func TestStampLineNormalCasePrependsWellFormedStamp(t *testing.T) {
+	in := "starting up\n"
+	out := StampLine(in)
+	want := regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\.\d{3} starting up\n$`)
+	if !want.MatchString(out) {
+		t.Fatalf("got %q", out)
+	}
+}
+
+// -- LineStamper -------------------------------------------------------------
+
+func TestLineStamperStampsFirstChunkOnly(t *testing.T) {
+	s := NewLineStamper()
+	first := s.Write("starting up\n")
+	if !regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\.\d{3} starting up\n$`).MatchString(first) {
+		t.Fatalf("got %q", first)
+	}
+	second := s.Write("second line\n")
+	if !regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\.\d{3} second line\n$`).MatchString(second) {
+		t.Fatalf("got %q", second)
+	}
+}
+
+// The concrete regression finding 1 describes: a logical line split across
+// two Write-sized chunks (a pty ptmx.Read boundary landing mid-line) must
+// get exactly one stamp, at the true start, and the continuation chunk must
+// pass through untouched rather than getting a splice mid-line.
+func TestLineStamperDoesNotStampMidLineContinuation(t *testing.T) {
+	s := NewLineStamper()
+	first := s.Write("hello wor")
+	if !regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\.\d{3} hello wor$`).MatchString(first) {
+		t.Fatalf("first chunk: got %q", first)
+	}
+	second := s.Write("ld\n")
+	if second != "ld\n" {
+		t.Fatalf("continuation chunk got stamped: %q", second)
+	}
+	third := s.Write("next line\n")
+	if !regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\.\d{3} next line\n$`).MatchString(third) {
+		t.Fatalf("third chunk (fresh line start): got %q", third)
+	}
+}
+
+func TestLineStamperEmptyChunkDoesNotResetLineStartState(t *testing.T) {
+	s := NewLineStamper()
+	_ = s.Write("mid-line, no newline")
+	if got := s.Write(""); got != "" {
+		t.Fatalf("empty chunk: got %q", got)
+	}
+	// Still mid-line: the empty Write above must not have flipped state back
+	// to "at line start".
+	cont := s.Write(" continues\n")
+	if cont != " continues\n" {
+		t.Fatalf("continuation after empty chunk got stamped: %q", cont)
+	}
+}
+
 // -- StripLogTimestamp ---------------------------------------------------------
 
 func TestStripLogTimestampISOWithMillis(t *testing.T) {
