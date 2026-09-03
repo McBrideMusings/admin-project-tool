@@ -260,8 +260,9 @@ func TestClickSetsFocus(t *testing.T) {
 	}
 }
 
-// TestKeybarFollowsFocus is AC9: the footer keybar advertises the keys
-// available in the current focus state.
+// TestKeybarFollowsFocus is admin-wuz9.1: the footer keybar shows the tab's
+// full hotkey set (not just a 3-key nav set) while focus is on the tab bar,
+// with the tab-bar-only nav pairs merged in and no key advertised twice.
 func TestKeybarFollowsFocus(t *testing.T) {
 	m := workFocusModel()
 	tabsPairs := m.keymap()
@@ -274,10 +275,29 @@ func TestKeybarFollowsFocus(t *testing.T) {
 	if !foundTab {
 		t.Errorf("tab-bar keymap = %v, want a ←→/tab pair", tabsPairs)
 	}
+	foundJump := false
+	foundKill, foundAttach := false, false
+	seen := map[string]bool{}
 	for _, p := range tabsPairs {
-		if p[1] == "kill" || p[1] == "attach" {
-			t.Errorf("tab-bar keymap advertises a row-scoped key %v, want none", p)
+		if p[0] == "1-4" && p[1] == "jump" {
+			foundJump = true
 		}
+		if p[1] == "kill" {
+			foundKill = true
+		}
+		if p[1] == "attach" {
+			foundAttach = true
+		}
+		if seen[p[0]] {
+			t.Errorf("tab-bar keymap advertises %q more than once: %v", p[0], tabsPairs)
+		}
+		seen[p[0]] = true
+	}
+	if !foundJump {
+		t.Errorf("tab-bar keymap = %v, want a 1-4/jump pair", tabsPairs)
+	}
+	if !foundKill || !foundAttach {
+		t.Errorf("tab-bar keymap on the Work tab = %v, want the row-scoped %q and %q pairs alongside the nav keys", tabsPairs, "kill", "attach")
 	}
 
 	m.focus = focusBody
@@ -293,13 +313,13 @@ func TestKeybarFollowsFocus(t *testing.T) {
 			t.Errorf("keymap() did not change between focus states")
 		}
 	}
-	foundKill := false
+	bodyFoundKill := false
 	for _, p := range bodyPairs {
 		if p[1] == "kill" {
-			foundKill = true
+			bodyFoundKill = true
 		}
 	}
-	if !foundKill {
+	if !bodyFoundKill {
 		t.Errorf("body keymap on the Work tab = %v, want the row-scoped %q pair", bodyPairs, "kill")
 	}
 }

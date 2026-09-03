@@ -683,17 +683,22 @@ func (m Model) keymap() [][2]string {
 			{"typing", "goes to the process"},
 		}
 	}
+	pairs := m.viewKeymap()
 	if m.focus == focusTabs {
-		// Focus on the tab bar has its own, much smaller keymap (admin-70hb,
-		// AC9): the row-scoped pairs below don't apply to anything, since
-		// there is no current row to apply them to.
-		pairs := [][2]string{{"←→", "tab"}, {"1-4", "jump"}}
-		if m.bodyRowCount() > 0 {
+		// Focus on the tab bar still shows the tab's full hotkey set
+		// (viewKeymap() falls back to builtinPairs(k) via rowPairs() since
+		// there's no current row to apply a manifest [keys.<kind>] override
+		// to) — plus the tab-bar-only nav pairs, merged in rather than
+		// replacing the row-scoped keys outright (admin-wuz9.1). Previously
+		// (admin-70hb, AC9) this branch returned a hardcoded 3-key nav slice
+		// instead, hiding the tab's real hotkeys until focus left the bar.
+		if !hasKey(pairs, "1-4") {
+			pairs = append(pairs, [2]string{"1-4", "jump"})
+		}
+		if m.bodyRowCount() > 0 && !hasKey(pairs, "↓") {
 			pairs = append(pairs, [2]string{"↓", "body"})
 		}
-		return append(pairs, [2]string{"q", "quit"})
 	}
-	pairs := m.viewKeymap()
 	// A row that binds `o` in [keys.<kind>] (ADR-0018) is dispatched by
 	// rowKeyDispatch before the built-in switch ever sees the key, so the
 	// manifest's binding is what `o` actually does on that row. Advertising
