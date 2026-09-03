@@ -35,7 +35,7 @@ var reservedToolVerbs = []string{"new", "check", "compile", "branch", "worktree"
 // against this literal list. Widening this list to every current cmd/ verb
 // is a legitimate follow-up; it is out of this ticket's scope, which is to
 // implement what the ADR says, not to extend it.
-var reservedCmdVerbs = []string{"branch", "prs", "populate", "help", "completion"}
+var reservedCmdVerbs = []string{"prs", "populate", "help", "completion"}
 
 // resolveProjectManifest loads dir's admin.toml (if any) and resolves it
 // against its declared archetypes, using the same search path
