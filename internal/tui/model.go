@@ -188,7 +188,12 @@ type Model struct {
 	// backlog.
 	hasBeads    bool
 	beadsProbed bool
-	beadPrefix  string // bd workspace prefix, stripped off every displayed id
+	// beadsProbing is true from the moment detectBeadsCmd is dispatched until
+	// beadsDetectedMsg lands and sets beadsProbed — closing the window where a
+	// second dispatch (Init, then a fsChangedMsg firing before the first probe's
+	// goroutine returns) would launch a redundant `bd where` subprocess.
+	beadsProbing bool
+	beadPrefix   string // bd workspace prefix, stripped off every displayed id
 	beadTree    bool   // "g": dependency tree instead of the flat, grouped list
 	beads       []bd.Bead
 	// trackSort is the active order for the tracker list — the Beads tab's flat
@@ -340,6 +345,12 @@ type Model struct {
 	manifest    *manifest.Manifest
 	manifestOK  bool
 	manifestErr string
+	// workTicking is true once workTickCmd's self-perpetuating loop (Init, or a
+	// later manifestOK false→true transition in fsChangedMsg) has been started —
+	// checked instead of manifestOK itself so a manifest that flaps invalid and
+	// back valid across several edits starts exactly one loop for the life of
+	// the process, not one per transition.
+	workTicking bool
 	// manifestRoot is the directory whose admin.toml this dashboard reads, and
 	// it is not always repoRoot. git.RepoRoot deliberately returns the MAIN
 	// worktree from inside a linked one (internal/git/git.go), which is right
@@ -545,6 +556,11 @@ func New(ctx context.Context, repoRoot, nwo, current, def string, opts ...Option
 		// manifest."
 		m.active = tabWork
 	}
+	// Init dispatches workTickCmd/detectBeadsCmd exactly when these are true at
+	// boot — seed the guard flags to match so fsChangedMsg's later gates don't
+	// double-start either chain.
+	m.workTicking = m.manifestOK
+	m.beadsProbing = m.hasTracker("beads")
 	// admin-70hb: a new session opens with focus on the tab bar, not on a
 	// body row — set after active settles so it doesn't interact with which
 	// tab that is.
@@ -1092,6 +1108,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// drawn on the declaration alone. This decides what's inside it: real
 		// rows, or the "declared but not found" state below.
 		m.beadsProbed = true
+		m.beadsProbing = false
 		m.hasBeads = msg.present
 		m.beadPrefix = msg.ws.Prefix
 		m.beadsErr = ""
@@ -1156,7 +1173,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// broken, whose mtime/size changed) reloads and announces.
 		var reloadCmds []tea.Cmd
 		if st := statManifest(m.repoRoot); st != m.manifestStamp {
-			wasManifestOK := m.manifestOK
 			m.loadManifest()
 			m.settleActiveTab()
 			if m.manifestErr != "" {
@@ -1176,13 +1192,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// chains only start from Init or from these same guarded spots.
 			// Restarting the dashboard re-ran Init and picked it up, which is
 			// what made "close and reopen" look like the only fix. Kick each
-			// chain here, gated so a manifest that was already OK at Init (and
-			// so already ticking) or a beads probe already in flight/answered
-			// isn't started a second time.
-			if !wasManifestOK && m.manifestOK {
+			// chain here, gated on the dedicated workTicking/beadsProbing flags
+			// rather than manifestOK/beadsProbed themselves — a manifest that
+			// flaps invalid and back valid across several edits (or two
+			// fsChangedMsg events arriving before the first beads probe's
+			// goroutine returns) would otherwise start a new concurrent
+			// workTickCmd chain, or launch a redundant `bd where`, on every
+			// occurrence.
+			if !m.workTicking && m.manifestOK {
+				m.workTicking = true
 				reloadCmds = append(reloadCmds, workTickCmd())
 			}
-			if m.hasTracker("beads") && !m.beadsProbed {
+			if m.hasTracker("beads") && !m.beadsProbed && !m.beadsProbing {
+				m.beadsProbing = true
 				reloadCmds = append(reloadCmds, detectBeadsCmd(m.ctx, m.repoRoot))
 			}
 		}

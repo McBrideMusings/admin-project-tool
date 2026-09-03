@@ -141,6 +141,103 @@ func TestFSChangeWithUnchangedManifestIsInert(t *testing.T) {
 	}
 }
 
+// cmdBatchMsgs runs cmd and reports the messages a resulting tea.BatchMsg
+// carries — or the single message itself, wrapped in a one-element slice, when
+// tea.Batch collapsed to just one non-nil command (see bubbletea's
+// compactCmds). A nil cmd reports nil. In these tests waitForFSCmd always
+// returns nil (m.fsCh is never set — Init/startWatchCmd never ran), so the
+// remaining commands are exactly what fsChangedMsg's own gates decided to add.
+func cmdBatchMsgs(t *testing.T, cmd tea.Cmd) []tea.Msg {
+	t.Helper()
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if b, ok := msg.(tea.BatchMsg); ok {
+		out := make([]tea.Msg, len(b))
+		for i, c := range b {
+			out[i] = c() // compactCmds never invokes these itself — safe to run here (loadLocalCmd/workTickCmd/detectBeadsCmd, all fast and side-effect-free against a temp dir).
+		}
+		return out
+	}
+	return []tea.Msg{msg}
+}
+
+func containsMsgType[T any](msgs []tea.Msg) bool {
+	for _, m := range msgs {
+		if _, ok := m.(T); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// TestFSChangeStartsWorkTickOnceManifestFirstAppears proves that a dashboard
+// launched before admin.toml existed (workTicking false, manifestOK false at
+// New) starts the Work tab's repaint loop the moment a live fs-watcher event
+// reports a manifest that now resolves — the false→true transition this fix
+// exists for (see fsChangedMsg).
+func TestFSChangeStartsWorkTickOnceManifestFirstAppears(t *testing.T) {
+	dir := t.TempDir()
+
+	m := New(context.Background(), dir, "owner/repo", "main", "main")
+	if m.manifestOK || m.workTicking {
+		t.Fatalf("manifestOK = %v, workTicking = %v before any manifest exists, want both false", m.manifestOK, m.workTicking)
+	}
+
+	writeTestManifest(t, dir, editTestManifest)
+	updated, cmd := m.Update(fsChangedMsg{})
+	mm := updated.(Model)
+
+	if !mm.manifestOK {
+		t.Fatalf("manifestOK = false after admin.toml first appeared, err = %q", mm.manifestErr)
+	}
+	if !mm.workTicking {
+		t.Error("workTicking = false after the manifestOK false→true transition, want the Work-tab loop started")
+	}
+	if !containsMsgType[workTickMsg](cmdBatchMsgs(t, cmd)) {
+		t.Error("no workTickMsg among the dispatched commands, want workTickCmd fired")
+	}
+}
+
+// TestFSChangeDoesNotRestartAnAlreadyTickingWorkLoop proves the guard is the
+// workTicking flag itself, not the transition: a manifest that goes
+// valid→invalid→valid again across several edits must start workTickCmd's
+// self-perpetuating loop exactly once for the process's life, never once per
+// rising edge — the second start is what would leave duplicate tickers
+// running forever (each polling agent/pane status on its own clock).
+func TestFSChangeDoesNotRestartAnAlreadyTickingWorkLoop(t *testing.T) {
+	dir := t.TempDir()
+
+	m := New(context.Background(), dir, "owner/repo", "main", "main")
+	writeTestManifest(t, dir, editTestManifest)
+	updated, _ := m.Update(fsChangedMsg{})
+	m = updated.(Model)
+	if !m.workTicking {
+		t.Fatal("workTicking = false after the first valid manifest, want true")
+	}
+
+	writeTestManifest(t, dir, "project_name = \"demo\"\n[commands.build]\nkind = \"shell\"\n")
+	updated, _ = m.Update(fsChangedMsg{})
+	m = updated.(Model)
+	if m.manifestOK {
+		t.Fatal("manifestOK = true after the manifest was broken, want false")
+	}
+	if !m.workTicking {
+		t.Error("workTicking flipped to false when the manifest broke, want it to stay true (the loop is still running)")
+	}
+
+	writeTestManifest(t, dir, editTestManifest+"\n# re-fixed\n")
+	updated, cmd := m.Update(fsChangedMsg{})
+	m = updated.(Model)
+	if !m.manifestOK {
+		t.Fatalf("manifestOK = false after re-fixing admin.toml, err = %q", m.manifestErr)
+	}
+	if containsMsgType[workTickMsg](cmdBatchMsgs(t, cmd)) {
+		t.Error("workTickMsg dispatched a second time — a re-fixed manifest must not restart an already-ticking loop")
+	}
+}
+
 // TestOpenManifestFailureWithNoRepoRoot proves the no-repo-root failure path
 // (openCommand returns nil before a handler name is ever chosen) renders a
 // clean status line instead of the "open failed: : no repo root" artifact a
@@ -160,6 +257,48 @@ func TestOpenManifestFailureWithNoRepoRoot(t *testing.T) {
 	}
 	if strings.Contains(mm.status, "open failed: :") || strings.Contains(mm.status, ": :") {
 		t.Errorf("status = %q, contains an empty-name artifact", mm.status)
+	}
+}
+
+// TestFSChangeDoesNotDuplicateAnInFlightBeadsProbe proves detectBeadsCmd (the
+// `bd where` subprocess) is dispatched once and only once while its answer is
+// still outstanding: a manifest that declares tracker=["beads"] and is then
+// edited again before beadsDetectedMsg ever lands (two fsChangedMsg events
+// racing the probe's own goroutine) must not launch a second `bd where`.
+func TestFSChangeDoesNotDuplicateAnInFlightBeadsProbe(t *testing.T) {
+	dir := t.TempDir()
+
+	m := New(context.Background(), dir, "owner/repo", "main", "main")
+	writeTestManifest(t, dir, editTestManifest)
+	updated, _ := m.Update(fsChangedMsg{})
+	m = updated.(Model)
+	if m.hasTracker("beads") || m.beadsProbing {
+		t.Fatalf("hasTracker(beads) = %v, beadsProbing = %v before beads is declared, want both false", m.hasTracker("beads"), m.beadsProbing)
+	}
+
+	writeTestManifest(t, dir, "tracker = [\"beads\"]\n"+editTestManifest)
+	updated, cmd := m.Update(fsChangedMsg{})
+	m = updated.(Model)
+	if !m.beadsProbing {
+		t.Fatal("beadsProbing = false right after tracker=\"beads\" first appeared, want the probe dispatched")
+	}
+	if !containsMsgType[beadsDetectedMsg](cmdBatchMsgs(t, cmd)) {
+		t.Error("no beadsDetectedMsg among the dispatched commands, want detectBeadsCmd fired")
+	}
+
+	// beadsDetectedMsg never lands here — simulate a second fs event racing
+	// the still-outstanding probe.
+	writeTestManifest(t, dir, "tracker = [\"beads\"]\n"+editTestManifest+"\n# touched again\n")
+	updated, cmd = m.Update(fsChangedMsg{})
+	m = updated.(Model)
+	if m.beadsProbed {
+		t.Fatal("beadsProbed = true without beadsDetectedMsg ever landing")
+	}
+	if !m.beadsProbing {
+		t.Error("beadsProbing flipped to false with the probe still outstanding, want it to stay true")
+	}
+	if containsMsgType[beadsDetectedMsg](cmdBatchMsgs(t, cmd)) {
+		t.Error("beadsDetectedMsg dispatched a second time — a probe already in flight must not be launched again")
 	}
 }
 
