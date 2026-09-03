@@ -2,6 +2,7 @@ package logformat
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -266,5 +267,80 @@ func TestScopeColorsAppliedWhenEnabled(t *testing.T) {
 	out := f.FormatLine("[api] hello\n")
 	if !regexp.MustCompile(`38;5;`).MatchString(out) {
 		t.Fatalf("expected a scope color escape, got %q", out)
+	}
+}
+
+// -- structlog ConsoleRenderer -------------------------------------------------
+
+const structlogLine1 = `2026-09-03T01:42:10.606618Z [info     ] Starting dev persistence flush loop [langgraph_runtime_inmem._persistence] api_variant=local_dev langgraph_api_version=0.13.3 thread_name=MainThread` + "\n"
+const structlogLine2 = `2026-09-03T01:42:12.914773Z [info     ] Worker stats                   [langgraph_runtime_inmem.queue] active=0 api_variant=local_dev available=1 max=1` + "\n"
+
+func TestFormatLineConsoleRendererLine1(t *testing.T) {
+	f := plainFormatter()
+	out := f.FormatLine(structlogLine1)
+
+	if n := len(regexp.MustCompile(`\d{2}:\d{2}:\d{2}`).FindAllString(out, -1)); n != 1 {
+		t.Fatalf("expected exactly one timestamp-shaped run, got %d in %q", n, out)
+	}
+
+	// The formatter's own "ts + two spaces" gutter is legitimate padding —
+	// only check for a run of 2+ spaces in what follows it.
+	afterTS := regexp.MustCompile(`^\d{2}:\d{2}:\d{2}  `).ReplaceAllString(out, "")
+	if regexp.MustCompile(`  +`).MatchString(afterTS) {
+		t.Fatalf("expected no run of 2+ spaces after the timestamp gutter, got %q", out)
+	}
+
+	want := "[info] Starting dev persistence flush loop [langgraph_runtime_inmem._persistence] api_variant=local_dev langgraph_api_version=0.13.3 thread_name=MainThread\n"
+	if afterTS != want {
+		t.Fatalf("got remainder %q, want %q", afterTS, want)
+	}
+}
+
+func TestFormatLineConsoleRendererLine2(t *testing.T) {
+	f := plainFormatter()
+	out := f.FormatLine(structlogLine2)
+
+	if n := len(regexp.MustCompile(`\d{2}:\d{2}:\d{2}`).FindAllString(out, -1)); n != 1 {
+		t.Fatalf("expected exactly one timestamp-shaped run, got %d in %q", n, out)
+	}
+
+	afterTS := regexp.MustCompile(`^\d{2}:\d{2}:\d{2}  `).ReplaceAllString(out, "")
+	if regexp.MustCompile(`  +`).MatchString(afterTS) {
+		t.Fatalf("expected no run of 2+ spaces after the timestamp gutter, got %q", out)
+	}
+
+	want := "[info] Worker stats [langgraph_runtime_inmem.queue] active=0 api_variant=local_dev available=1 max=1\n"
+	if afterTS != want {
+		t.Fatalf("got remainder %q, want %q", afterTS, want)
+	}
+}
+
+func TestFormatLineConsoleRendererColorizesLevelNotScope(t *testing.T) {
+	f := NewLogFormatter(Options{UseColor: true, ScopeColors: true})
+	out := f.FormatLine(structlogLine1)
+
+	wantLevel := "[" + ansiCyan + "info" + ansiReset + "]"
+	if !strings.Contains(out, wantLevel) {
+		t.Fatalf("expected level colored as %q, got %q", wantLevel, out)
+	}
+
+	wantScope := "[" + ScopeColor("langgraph_runtime_inmem._persistence") + "langgraph_runtime_inmem._persistence" + ansiReset + "]"
+	if !strings.Contains(out, wantScope) {
+		t.Fatalf("expected logger tag scope-colored as %q, got %q", wantScope, out)
+	}
+}
+
+func TestUnpadConsoleRendererNegativeCases(t *testing.T) {
+	cases := []string{
+		`scripts ["https://a.js","https://b.js"]`,
+		"count=0 userIds=[]",
+		"[\x1b[31mERROR\x1b[0m] boom",
+		"[INFO] [client] hi", // already unpadded — must not match
+		"[widget   ] hi",     // padded but not a recognized level word
+	}
+	for _, line := range cases {
+		if got, ok := UnpadConsoleRenderer(line); ok || got != line {
+			t.Errorf("UnpadConsoleRenderer(%q) = (%q, %v), want (%q, false)", line, got, ok, line)
+		}
 	}
 }

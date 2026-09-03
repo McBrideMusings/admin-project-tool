@@ -155,6 +155,51 @@ var scopePalette = [...]int{
 // the line.
 var scopeRe = regexp.MustCompile(`\[([A-Za-z][\w.:@/+-]*)\]`)
 
+// paddedLevelRe matches structlog's ConsoleRenderer level tag: a lowercase
+// word right-padded with spaces before the closing bracket, e.g.
+// "[info     ]". It is anchored at the START of the string on purpose — that
+// anchor is what keeps it from ever matching a JSON array printed into a
+// message, an empty `userIds=[]`, or a `[31m` escape mid-line, so scopeRe
+// itself never needs to tolerate internal or trailing whitespace to handle
+// this case.
+var paddedLevelRe = regexp.MustCompile(`^\[(\w+)(\s+)\]`)
+
+// messagePadRe collapses the run of 2+ spaces ConsoleRenderer inserts
+// between a message and the tag that follows it (its fixed-column padding)
+// down to one space. The bracket class is deliberately identical to
+// scopeRe's — letter-led, space-free — so this can never collapse the space
+// before a JSON array or an empty `[]` sitting in the message text.
+var messagePadRe = regexp.MustCompile(`  +(\[[A-Za-z][\w.:@/+-]*\])`)
+
+// UnpadConsoleRenderer recognizes structlog's ConsoleRenderer shape — a
+// timestamp (already stripped by the caller) followed by a right-padded
+// level tag and a fixed-column-padded message — and re-renders it in
+// admin's own vocabulary: an unpadded "[level]" plus single-spaced tags.
+//
+// This is the same family as logbridge.UnwrapInnerPrefix (see CLAUDE.md §
+// Log line rendering), extended rather than reusing that helper's pattern:
+// UnwrapInnerPrefix handles an app that prints "HH:MM:SS[.mmm] [LEVEL]" into
+// its own message, while ConsoleRenderer prints an ISO-8601 stamp (already
+// stripped upstream) followed by a padded lowercase level — a different
+// shape needing its own anchored matcher.
+//
+// Returns (rest, false) unchanged when rest does not start with a padded
+// bracketed token, or when that token is not a recognized level word (e.g.
+// "[widget   ]" is left alone rather than promoted to a level).
+func UnpadConsoleRenderer(rest string) (string, bool) {
+	m := paddedLevelRe.FindStringSubmatchIndex(rest)
+	if m == nil {
+		return rest, false
+	}
+	label := rest[m[2]:m[3]]
+	if !levelWords[strings.ToUpper(label)] {
+		return rest, false
+	}
+	tail := rest[m[1]:]
+	tail = messagePadRe.ReplaceAllString(tail, " $1")
+	return "[" + label + "]" + tail, true
+}
+
 // ScopeColor returns the stable escape sequence for a scope label
 // (case-insensitive). CRC32 — not Go's map iteration or any per-process
 // salted hash — makes the color a pure function of the label: the same tag
@@ -291,6 +336,9 @@ func (f *LogFormatter) FormatLine(raw string) string {
 		line = f.renderJSON(level, logger, message)
 	} else {
 		stamp, rest := StripLogTimestamp(line)
+		if unpadded, ok := UnpadConsoleRenderer(rest); ok {
+			rest = unpadded
+		}
 		line = rest
 		if f.opts.ReuseTimestamp && stamp != "" {
 			if norm, ok := NormalizeTimestamp(stamp, f.opts.TimestampFormat); ok {
