@@ -370,6 +370,34 @@ func applyHostedColorProfile() {
 	}
 }
 
+// colorfgbgDarkBackground classifies a terminal's background as dark or
+// light from the COLORFGBG env var, without ever issuing a live OSC 11
+// query. COLORFGBG holds "<fg>;<bg>" (or "<fg>;<default>;<bg>" for some
+// terminals), so the background is always the last ';'-separated field.
+// termenv's own HasDarkBackground converts the resolved ANSIColor to RGB
+// (via its ansiHex table) and tests HSL lightness < 0.5 — indices 0-6 (the
+// non-bright colors other than white) land below that line, but index 7
+// ("#c0c0c0", light gray) and every index from 8 up (bright black at
+// "#808080" has lightness exactly 0.5, and every other bright color is
+// lighter still) land at or above it. So the dark set is strictly idx < 7,
+// not idx < 8. When the var is unset, has no ';', or the last field
+// doesn't parse as an int, this defaults to dark=true — the same value
+// termenv falls back to (ANSIColor(0), black) when an OSC 11 query goes
+// unanswered — so skipping the query changes latency, never the resulting
+// color decision.
+func colorfgbgDarkBackground(raw string) bool {
+	if raw == "" || !strings.Contains(raw, ";") {
+		return true
+	}
+	fields := strings.Split(raw, ";")
+	last := fields[len(fields)-1]
+	idx, err := strconv.Atoi(strings.TrimSpace(last))
+	if err != nil {
+		return true
+	}
+	return idx < 7
+}
+
 func init() {
 	rootCmd.AddCommand(branchCmd)
 	rootCmd.AddCommand(worktreeCmd)
@@ -468,7 +496,19 @@ func runDashboard(ctx context.Context) error {
 	// "no color", and flattens the whole UI to one color. Bind the default renderer
 	// to stderr — the actual TTY — so the ANSI palette (16-color indices that the
 	// terminal theme colors) renders instead of being stripped.
-	lipgloss.SetDefaultRenderer(lipgloss.NewRenderer(os.Stderr))
+	renderer := lipgloss.NewRenderer(os.Stderr)
+	lipgloss.SetDefaultRenderer(renderer)
+
+	// termenv's Output.backgroundColor() always tries a live OSC 11 status
+	// report first (up to a 5s timeout) and only falls back to COLORFGBG if
+	// that query errors — so an unread OSC reply (e.g. inside a pty layer
+	// that never answers one) stalls dashboard startup for the length of the
+	// timeout. lipgloss only runs that query when a renderer's
+	// explicitBackgroundColor is unset; calling SetHasDarkBackground on the
+	// stderr-bound renderer here sets it explicitly, so the query never
+	// fires. This mirrors applyHostedColorProfile's use of the same
+	// mechanism for the hosted-pty child, and is otherwise unrelated to it.
+	renderer.SetHasDarkBackground(colorfgbgDarkBackground(os.Getenv("COLORFGBG")))
 
 	start = timing.Start()
 	model := tui.New(ctx, repoRoot, nwo, current, def, tui.WithManifestRoot(dashboardManifestRoot()))

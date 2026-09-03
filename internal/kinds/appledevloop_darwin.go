@@ -374,13 +374,14 @@ func appleDevDevice(cfg map[string]any, h *luahost.Host, platform string, f appl
 	appPattern := appleDerivedGlob(derivedName, config, sdk.sdkSuffix, process)
 
 	deviceType := cfgString(cfg, platform+"_device_type", "")
-	deviceID, deviceName, _, warnLines, err := h.FindConnectedDevice(platform, deviceType)
+	deviceID, deviceName, udid, warnLines, err := h.FindConnectedDevice(platform, deviceType)
 	for _, w := range warnLines {
 		h.Warn(w)
 	}
 	if err != nil {
 		return err
 	}
+	appleEnsureDeviceRegistered(h, udid, deviceName)
 	devEnv, err := appleDevEnv(cfg)
 	if err != nil {
 		return err

@@ -23,10 +23,6 @@
 //     around each build). apple.backup_icons/apple.swap_dev_icons_banner/
 //     apple.restore_icons are bound and callable from a future pass; wiring
 //     them into pre_build/post_build here is left undone this round.
-//   - App Store Connect device registration (ensure_device_registered) —
-//     lives in admin_lib/appstoreconnect.py, a separate module this ticket
-//     does not port. A device deploy that hits Apple's "team has no devices"
-//     error still reports that error; it just isn't pre-empted.
 //   - is_running_fn/kill_fn overrides (_make_mac_dev_running_check/
 //     _make_mac_dev_kill) — the mac dev loop always uses the default
 //     pgrep/pkill -x process check.
@@ -102,6 +98,8 @@ func runAppleVerb(verb, action string, cfg map[string]any, args []string, m *man
 		return appleDeployDevice(cfg, h, "tv", f)
 	case "clean_ios":
 		return appleClean(cfg, h)
+	case "appid":
+		return appleAppID(cfg, h, args)
 	default:
 		return fmt.Errorf("action %q: kind=\"apple\" has no verb %q", action, verb)
 	}
@@ -423,7 +421,7 @@ func appleDeployDevice(cfg map[string]any, h *luahost.Host, platform string, f a
 	sdk := appleDeviceSDK[platform]
 
 	deviceType := cfgString(cfg, platform+"_device_type", "")
-	deviceID, deviceName, _, warnLines, err := h.FindConnectedDevice(platform, deviceType)
+	deviceID, deviceName, udid, warnLines, err := h.FindConnectedDevice(platform, deviceType)
 	for _, w := range warnLines {
 		h.Warn(w)
 	}
@@ -431,6 +429,7 @@ func appleDeployDevice(cfg map[string]any, h *luahost.Host, platform string, f a
 		return err
 	}
 	h.Info("Deploying to " + deviceName)
+	appleEnsureDeviceRegistered(h, udid, deviceName)
 
 	h.Info(fmt.Sprintf("Building %s for device (%s)...", scheme, config))
 	res, err := h.XcodebuildFiltered(luahost.XcodebuildOptions{
