@@ -1,33 +1,10 @@
-# NOTE on scope (admin-3rgp.37): the `server`/`bazzite` targets below (in
-# build/dev/deploy) are the [server]/Rust half of this archetype
-# (admin_lib/rust.py's build_multiplatform, deploy_server_docker,
-# deploy_bazzite_server, dev_server's reload loop) — Docker cross-compile,
-# SSH, and systemd provisioning, not "thin orchestration over a host API".
-# admin-3rgp.45 ("Should rust and launchd be kinds at all?") is still OPEN
-# and unresolved; inventing that architecture here would preempt a sibling
-# ticket's own decision. Those targets are honest stubs that say so. The
-# test/clean server targets (test_cmd/swift_test_cmd, `rm -rf target`) carry
-# no such dependency and ARE fully ported below.
+# admin-tlhw.2: the build/dev/deploy leaf actions below are a LIBRARY. This
+# archetype declares no build/dev/deploy command and no multi-target router
+# over them — a project names only the surfaces it actually has, in its own
+# admin.toml. See
+# docs/adr/0019-the-tool-defines-mechanism-admin-toml-defines-structure.md.
 name = "apple"
 modules = ["core", "icons", "apple", "appstoreconnect", "log_format", "log_columns"]
-
-[commands.build]
-desc = "Build: mac | ios | tv | server [--clean]"
-steps = ["build"]
-group = 1
-priority = 10
-
-[commands.dev]
-desc = "Dev build + run (mac|ios|tv|device|tv-device|server) [--log LVL] [--clean] [--install]"
-steps = ["dev"]
-group = 1
-priority = 20
-
-[commands.deploy]
-desc = "Build + install (mac|ios|tv|server|bazzite) [--clean]"
-steps = ["deploy"]
-group = 1
-priority = 30
 
 [commands.test]
 desc = "Run tests (server|swift|apple)"
@@ -48,7 +25,7 @@ group = 2
 priority = 30
 
 [commands.reload]
-desc = "Signal a running './admin dev' to rebuild and relaunch"
+desc = "Signal a running dev action to rebuild and relaunch"
 steps = ["reload"]
 group = 2
 priority = 40
@@ -58,22 +35,6 @@ desc = "App IDs: report, register, enable capabilities [--capability icloud]"
 steps = ["appid"]
 group = 2
 priority = 45
-
-[actions.build]
-kind = "multi-target"
-desc = "Build: mac | ios | tv | server [--clean]"
-
-[actions.build.mac]
-action = "build-mac"
-
-[actions.build.ios]
-action = "build-ios"
-
-[actions.build.tv]
-action = "build-tv"
-
-[actions.build.server]
-action = "build-server"
 
 [actions.build-mac]
 kind = "apple"
@@ -89,36 +50,6 @@ run = "build_ios"
 kind = "apple"
 desc = "build tvOS"
 run = "build_tv"
-
-[actions.build-server]
-kind = "lua"
-desc = "build server (not ported — see admin-3rgp.45)"
-run = '''
-err("server build is not ported to the Go tool yet (depends on admin-3rgp.45: should rust be a kind at all?)")
-error("server build not ported")
-'''
-
-[actions.dev]
-kind = "multi-target"
-desc = "Dev build + run (mac|ios|tv|device|tv-device|server) [--log LVL] [--clean] [--install]"
-
-[actions.dev.mac]
-action = "dev-mac"
-
-[actions.dev.ios]
-action = "dev-ios"
-
-[actions.dev.tv]
-action = "dev-tv"
-
-[actions.dev.device]
-action = "dev-device"
-
-[actions.dev.tv-device]
-action = "dev-device-tv"
-
-[actions.dev.server]
-action = "dev-server"
 
 [actions.dev-mac]
 kind = "apple"
@@ -140,40 +71,13 @@ kind = "apple"
 desc = "dev iOS device"
 run = "dev_device"
 
-# `deploy tv` builds Release. A project that gates its debug surface on
+# `deploy-tv` builds Release. A project that gates its debug surface on
 # `#if DEBUG` therefore installs an Apple TV build that answers nothing, and a
 # box across the room becomes uninspectable. This is the Debug half.
 [actions.dev-device-tv]
 kind = "apple"
 desc = "dev tvOS device"
 run = "dev_device_tv"
-
-[actions.dev-server]
-kind = "lua"
-desc = "dev server (not ported — see admin-3rgp.45)"
-run = '''
-err("server dev loop is not ported to the Go tool yet (depends on admin-3rgp.45: should rust be a kind at all?)")
-error("server dev not ported")
-'''
-
-[actions.deploy]
-kind = "multi-target"
-desc = "Build + install (mac|ios|tv|server|bazzite) [--clean]"
-
-[actions.deploy.mac]
-action = "deploy-mac"
-
-[actions.deploy.ios]
-action = "deploy-ios"
-
-[actions.deploy.tv]
-action = "deploy-tv"
-
-[actions.deploy.server]
-action = "deploy-server"
-
-[actions.deploy.bazzite]
-action = "deploy-bazzite"
 
 [actions.deploy-mac]
 kind = "apple"
@@ -189,22 +93,6 @@ run = "deploy_ios"
 kind = "apple"
 desc = "deploy tvOS"
 run = "deploy_tv"
-
-[actions.deploy-server]
-kind = "lua"
-desc = "deploy server via Docker (not ported — see admin-3rgp.45)"
-run = '''
-err("server Docker deploy is not ported to the Go tool yet (depends on admin-3rgp.45: should rust be a kind at all?)")
-error("server deploy not ported")
-'''
-
-[actions.deploy-bazzite]
-kind = "lua"
-desc = "cross-compile + deploy to Bazzite (not ported — see admin-3rgp.45)"
-run = '''
-err("Bazzite cross-compile deploy is not ported to the Go tool yet (depends on admin-3rgp.45: should rust be a kind at all?)")
-error("bazzite deploy not ported")
-'''
 
 [actions.clean-ios]
 kind = "apple"
@@ -493,7 +381,7 @@ end
 
 [actions.reload]
 kind = "shell"
-desc = "Signal a running './admin dev' to rebuild and relaunch"
+desc = "Signal a running dev action to rebuild and relaunch"
 run = '''
 pid_file="/tmp/admin-run.pid"
 if [ ! -f "$pid_file" ]; then

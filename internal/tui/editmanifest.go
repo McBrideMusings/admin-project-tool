@@ -131,9 +131,9 @@ func (m *Model) loadManifest() {
 	// so the NEXT fsChangedMsg still sees a difference and reloads again.
 	// Statting after the read would instead record the newer file against
 	// this (older) parse and permanently skip the reload that should follow.
-	m.manifestStamp = statManifest(m.repoRoot)
+	m.manifestStamp = statManifest(m.manifestDir())
 
-	project, merged, sp, ok, err := loadWorkManifest(m.repoRoot)
+	project, merged, sp, ok, err := loadWorkManifest(m.manifestDir())
 	switch {
 	case err != nil:
 		m.manifestErr = err.Error()
