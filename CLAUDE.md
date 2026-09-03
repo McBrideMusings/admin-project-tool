@@ -95,6 +95,8 @@ Two colorizers, deliberately different in kind:
 
 The scope regex is narrow on purpose: letter-led, space-free, bracketed. It must not match a JSON array printed into a message (`["https://a.js"]`), an empty `userIds=[]`, or the `[31m` inside an escape sequence the level colorizer already inserted.
 
+**structlog's `ConsoleRenderer` is a second member of the `unwrap_inner_prefix` family** (Go: `internal/logformat.UnpadConsoleRenderer`), handling a different shape of the same double-render problem: an ISO-8601 stamp (already stripped by `StripLogTimestamp`) followed by a level right-padded with spaces (`[info     ]`) and a message padded to a fixed column before the next tag. The padded-level matcher is anchored at position 0 on purpose — that anchor, not a loosened `scopeRe`, is what keeps it from matching a JSON array, an empty `[]`, or a mid-line escape sequence; the scope regex above stays exactly as narrow as this section already describes.
+
 ## Pinned footer
 
 A framed action runs inside a DECSTBM scroll region: its output scrolls in the top rows while `admin_lib/frame.py` pins a footer to the bottom — a status row (action label + elapsed time), the absolute log path, then one row per URL. Every row is an OSC 8 hyperlink, so the log path (as `file://`) and the URLs are clickable. This exists because a dev server prints its URLs once and then buries them under thousands of lines; the port you need is the one thing guaranteed to have scrolled away. The log path is pinned for the same reason and is worth having on its own, which is why `footer = true` exists for an action with no URL at all.
