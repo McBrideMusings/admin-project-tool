@@ -1,13 +1,8 @@
-# admin-tlhw.2: this archetype ships build-mac/ios/tv, dev-mac/ios/tv/device/
-# tv-device, and deploy-mac/ios/tv as a LIBRARY of leaf actions only. It
-# declares no [commands.build|dev|deploy] and no multi-target
-# [actions.build|dev|deploy] router; a project names only the surfaces it
-# actually has, in its own admin.toml. See
+# admin-tlhw.2: the build/dev/deploy leaf actions below are a LIBRARY. This
+# archetype declares no build/dev/deploy command and no multi-target router
+# over them — a project names only the surfaces it actually has, in its own
+# admin.toml. See
 # docs/adr/0019-the-tool-defines-mechanism-admin-toml-defines-structure.md.
-# The [server]/Rust build/dev/deploy targets that used to live here
-# (build-server, dev-server, deploy-server, deploy-bazzite) are not an apple
-# concern at all and were removed outright, not-ported stubs tracked
-# separately by admin-3rgp.45.
 name = "apple"
 modules = ["core", "icons", "apple", "appstoreconnect", "log_format", "log_columns"]
 
@@ -30,7 +25,7 @@ group = 2
 priority = 30
 
 [commands.reload]
-desc = "Signal a running './admin dev' to rebuild and relaunch"
+desc = "Signal a running dev action to rebuild and relaunch"
 steps = ["reload"]
 group = 2
 priority = 40
@@ -76,7 +71,7 @@ kind = "apple"
 desc = "dev iOS device"
 run = "dev_device"
 
-# `deploy tv` builds Release. A project that gates its debug surface on
+# `deploy-tv` builds Release. A project that gates its debug surface on
 # `#if DEBUG` therefore installs an Apple TV build that answers nothing, and a
 # box across the room becomes uninspectable. This is the Debug half.
 [actions.dev-device-tv]
@@ -386,7 +381,7 @@ end
 
 [actions.reload]
 kind = "shell"
-desc = "Signal a running './admin dev' to rebuild and relaunch"
+desc = "Signal a running dev action to rebuild and relaunch"
 run = '''
 pid_file="/tmp/admin-run.pid"
 if [ ! -f "$pid_file" ]; then
