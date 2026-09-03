@@ -1,33 +1,15 @@
-# NOTE on scope (admin-3rgp.37): the `server`/`bazzite` targets below (in
-# build/dev/deploy) are the [server]/Rust half of this archetype
-# (admin_lib/rust.py's build_multiplatform, deploy_server_docker,
-# deploy_bazzite_server, dev_server's reload loop) — Docker cross-compile,
-# SSH, and systemd provisioning, not "thin orchestration over a host API".
-# admin-3rgp.45 ("Should rust and launchd be kinds at all?") is still OPEN
-# and unresolved; inventing that architecture here would preempt a sibling
-# ticket's own decision. Those targets are honest stubs that say so. The
-# test/clean server targets (test_cmd/swift_test_cmd, `rm -rf target`) carry
-# no such dependency and ARE fully ported below.
+# admin-tlhw.2: this archetype ships build-mac/ios/tv, dev-mac/ios/tv/device/
+# tv-device, and deploy-mac/ios/tv as a LIBRARY of leaf actions only. It
+# declares no [commands.build|dev|deploy] and no multi-target
+# [actions.build|dev|deploy] router; a project names only the surfaces it
+# actually has, in its own admin.toml. See
+# docs/adr/0019-the-tool-defines-mechanism-admin-toml-defines-structure.md.
+# The [server]/Rust build/dev/deploy targets that used to live here
+# (build-server, dev-server, deploy-server, deploy-bazzite) are not an apple
+# concern at all and were removed outright, not-ported stubs tracked
+# separately by admin-3rgp.45.
 name = "apple"
 modules = ["core", "icons", "apple", "appstoreconnect", "log_format", "log_columns"]
-
-[commands.build]
-desc = "Build: mac | ios | tv | server [--clean]"
-steps = ["build"]
-group = 1
-priority = 10
-
-[commands.dev]
-desc = "Dev build + run (mac|ios|tv|device|tv-device|server) [--log LVL] [--clean] [--install]"
-steps = ["dev"]
-group = 1
-priority = 20
-
-[commands.deploy]
-desc = "Build + install (mac|ios|tv|server|bazzite) [--clean]"
-steps = ["deploy"]
-group = 1
-priority = 30
 
 [commands.test]
 desc = "Run tests (server|swift|apple)"
@@ -59,22 +41,6 @@ steps = ["appid"]
 group = 2
 priority = 45
 
-[actions.build]
-kind = "multi-target"
-desc = "Build: mac | ios | tv | server [--clean]"
-
-[actions.build.mac]
-action = "build-mac"
-
-[actions.build.ios]
-action = "build-ios"
-
-[actions.build.tv]
-action = "build-tv"
-
-[actions.build.server]
-action = "build-server"
-
 [actions.build-mac]
 kind = "apple"
 desc = "build macOS"
@@ -89,36 +55,6 @@ run = "build_ios"
 kind = "apple"
 desc = "build tvOS"
 run = "build_tv"
-
-[actions.build-server]
-kind = "lua"
-desc = "build server (not ported — see admin-3rgp.45)"
-run = '''
-err("server build is not ported to the Go tool yet (depends on admin-3rgp.45: should rust be a kind at all?)")
-error("server build not ported")
-'''
-
-[actions.dev]
-kind = "multi-target"
-desc = "Dev build + run (mac|ios|tv|device|tv-device|server) [--log LVL] [--clean] [--install]"
-
-[actions.dev.mac]
-action = "dev-mac"
-
-[actions.dev.ios]
-action = "dev-ios"
-
-[actions.dev.tv]
-action = "dev-tv"
-
-[actions.dev.device]
-action = "dev-device"
-
-[actions.dev.tv-device]
-action = "dev-device-tv"
-
-[actions.dev.server]
-action = "dev-server"
 
 [actions.dev-mac]
 kind = "apple"
@@ -148,33 +84,6 @@ kind = "apple"
 desc = "dev tvOS device"
 run = "dev_device_tv"
 
-[actions.dev-server]
-kind = "lua"
-desc = "dev server (not ported — see admin-3rgp.45)"
-run = '''
-err("server dev loop is not ported to the Go tool yet (depends on admin-3rgp.45: should rust be a kind at all?)")
-error("server dev not ported")
-'''
-
-[actions.deploy]
-kind = "multi-target"
-desc = "Build + install (mac|ios|tv|server|bazzite) [--clean]"
-
-[actions.deploy.mac]
-action = "deploy-mac"
-
-[actions.deploy.ios]
-action = "deploy-ios"
-
-[actions.deploy.tv]
-action = "deploy-tv"
-
-[actions.deploy.server]
-action = "deploy-server"
-
-[actions.deploy.bazzite]
-action = "deploy-bazzite"
-
 [actions.deploy-mac]
 kind = "apple"
 desc = "deploy macOS"
@@ -189,22 +98,6 @@ run = "deploy_ios"
 kind = "apple"
 desc = "deploy tvOS"
 run = "deploy_tv"
-
-[actions.deploy-server]
-kind = "lua"
-desc = "deploy server via Docker (not ported — see admin-3rgp.45)"
-run = '''
-err("server Docker deploy is not ported to the Go tool yet (depends on admin-3rgp.45: should rust be a kind at all?)")
-error("server deploy not ported")
-'''
-
-[actions.deploy-bazzite]
-kind = "lua"
-desc = "cross-compile + deploy to Bazzite (not ported — see admin-3rgp.45)"
-run = '''
-err("Bazzite cross-compile deploy is not ported to the Go tool yet (depends on admin-3rgp.45: should rust be a kind at all?)")
-error("bazzite deploy not ported")
-'''
 
 [actions.clean-ios]
 kind = "apple"
