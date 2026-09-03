@@ -491,11 +491,114 @@ func TestNilSurfaceReturnsUnchangedDispatchError(t *testing.T) {
 	}
 }
 
-// makeHopKind is a test kind that reproduces the pre-kill hop three shipped
+// makePreHookTestKind is a test kind wrapping runPreHook directly — the
+// function docker.go/cleandev.go/vitedev.go each call with their config
+// table's `pre_kill` string (admin-tlhw.3). action["hook_name"] is what
+// gets passed as the declared reference, so a test can exercise every shape:
+// empty (no hook declared), a name resolving to a command, one resolving
+// only to an action, and one resolving to neither.
+func makePreHookTestKind(_ string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
+	name, _ := action["hook_name"].(string)
+	return func(args []string) error {
+		runPreHook(m, surf, name, args, func(msg string) {
+			luahost.Process().Write("warn: " + msg + "\n")
+		})
+		luahost.Process().Write("ran\n")
+		return nil
+	}, nil
+}
+
+func newPreHookTestRegistry() *Registry {
+	r := NewRegistry()
+	r.MustRegister("shell", makeShell)
+	r.MustRegister("multi-target", makePreHookTestKind)
+	return r
+}
+
+// TestRunPreHookEmptyNameIsNoop proves "a project that declares neither
+// behaves correctly: no pre-run hook fires" — an empty `pre_kill` (the
+// unset case) never touches the Surface at all, so it works even with a nil
+// Surface, exactly as makeCleanDev's own tests already rely on.
+func TestRunPreHookEmptyNameIsNoop(t *testing.T) {
+	m := &manifest.Manifest{
+		Actions: map[string]manifest.Action{
+			"probe": {"kind": "multi-target", "hook_name": ""},
+		},
+	}
+	if err := RunAction(m, newPreHookTestRegistry(), "probe", nil); err != nil {
+		t.Fatalf("RunAction = %v, want nil", err)
+	}
+}
+
+// TestRunPreHookDispatchesADeclaredCommand proves a `pre_kill` naming a
+// project command dispatches it via surf.Command — the same hop the three
+// shipped dev kinds take, now driven by a project-chosen name instead of
+// the literal "kill".
+func TestRunPreHookDispatchesADeclaredCommand(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"stop-stale": {Steps: []string{"stop-step"}},
+			"probe-run":  {Steps: []string{"probe"}},
+		},
+		Actions: map[string]manifest.Action{
+			"probe":     {"kind": "multi-target", "hook_name": "stop-stale"},
+			"stop-step": {"kind": "shell", "run": "touch hooked.txt"},
+		},
+	}
+	if err := RunCommand(m, newPreHookTestRegistry(), "probe-run", nil, nil); err != nil {
+		t.Fatalf("RunCommand(probe-run) = %v, want nil", err)
+	}
+	assertFileExists(t, dir, "hooked.txt")
+}
+
+// TestRunPreHookDispatchesADeclaredAction proves the second declared shape:
+// `pre_kill` naming a bare [actions.X] with no wrapping command still runs,
+// via RunAction rather than surf.Command.
+func TestRunPreHookDispatchesADeclaredAction(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"probe-run": {Steps: []string{"probe"}},
+		},
+		Actions: map[string]manifest.Action{
+			"probe":             {"kind": "multi-target", "hook_name": "stop-stale-action"},
+			"stop-stale-action": {"kind": "shell", "run": "touch hooked.txt"},
+		},
+	}
+	if err := RunCommand(m, newPreHookTestRegistry(), "probe-run", nil, nil); err != nil {
+		t.Fatalf("RunCommand(probe-run) = %v, want nil", err)
+	}
+	assertFileExists(t, dir, "hooked.txt")
+}
+
+// TestRunPreHookUnresolvedNameIsNoop proves a `pre_kill` naming neither a
+// command nor an action does not error at dispatch time — admin check's
+// checkPreRunRefs (cmd/check.go) is what reports that, not this path, which
+// must degrade to a no-op rather than guess or fail the whole dev loop.
+func TestRunPreHookUnresolvedNameIsNoop(t *testing.T) {
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"probe-run": {Steps: []string{"probe"}},
+		},
+		Actions: map[string]manifest.Action{
+			"probe": {"kind": "multi-target", "hook_name": "no-such-thing"},
+		},
+	}
+	if err := RunCommand(m, newPreHookTestRegistry(), "probe-run", nil, nil); err != nil {
+		t.Fatalf("RunCommand(probe-run) = %v, want nil — an unresolved pre_kill degrades to a no-op", err)
+	}
+}
+
+// makeHopKind is a test kind that reproduces the pre-run hop three shipped
 // kinds take before starting — vitedev.go, docker.go and cleandev.go each
-// call surf.Command("kill", …). It writes a marker to the log through the
-// process context on either side of the hop, so a test can see whether both
-// markers landed in the same file.
+// call surf.Command(<project-declared name>, …) via runPreHook. It writes a
+// marker to the log through the process context on either side of the hop,
+// so a test can see whether both markers landed in the same file.
 func makeHopKind(_ string, action manifest.Action, _ *manifest.Manifest, surf *Surface) (Runner, error) {
 	target, _ := action["hop_to"].(string)
 	return func(args []string) error {

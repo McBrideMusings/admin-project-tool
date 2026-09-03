@@ -22,8 +22,8 @@ func TestRunGlobalPreflightFailsOnStaleInstall(t *testing.T) {
 	t.Chdir(dir)
 	ResetPreflight()
 
-	if err := RunGlobalPreflight("build"); err == nil {
-		t.Fatal("RunGlobalPreflight(build) = nil, want an error: workspace dep is unlinked")
+	if err := RunGlobalPreflight(false); err == nil {
+		t.Fatal("RunGlobalPreflight(false) = nil, want an error: workspace dep is unlinked")
 	}
 }
 
@@ -48,37 +48,39 @@ func TestRunGlobalPreflightMemoizesTheVerdict(t *testing.T) {
 	t.Chdir(dir)
 	ResetPreflight()
 
-	if err := RunGlobalPreflight("build"); err == nil {
-		t.Fatal("RunGlobalPreflight(build) [1st call] = nil, want the workspace failure")
+	if err := RunGlobalPreflight(false); err == nil {
+		t.Fatal("RunGlobalPreflight(false) [1st call] = nil, want the workspace failure")
 	}
 
 	// Fix the workspace without resetting the memoized verdict.
 	mustWrite(t, filepath.Join(dir, "packages", "app", "node_modules", "shared", "package.json"),
 		`{"name": "shared"}`)
 
-	if err := RunGlobalPreflight("build"); err == nil {
-		t.Fatal("RunGlobalPreflight(build) [2nd call] = <nil>, want the same cached failure as the 1st call (memoized)")
+	if err := RunGlobalPreflight(false); err == nil {
+		t.Fatal("RunGlobalPreflight(false) [2nd call] = <nil>, want the same cached failure as the 1st call (memoized)")
 	}
 
 	ResetPreflight()
-	if err := RunGlobalPreflight("build"); err != nil {
-		t.Fatalf("RunGlobalPreflight(build) after ResetPreflight = %v, want nil (workspace is now fixed)", err)
+	if err := RunGlobalPreflight(false); err != nil {
+		t.Fatalf("RunGlobalPreflight(false) after ResetPreflight = %v, want nil (workspace is now fixed)", err)
 	}
 }
 
-// TestRunGlobalPreflightExemptVerbsSkip is the acceptance criterion "the
-// preflight ... is skipped for the diagnostic verbs": logs/kill must pass
-// even against a broken workspace, and even without a prior ResetPreflight,
-// since exemption is checked before the memoized verdict.
-func TestRunGlobalPreflightExemptVerbsSkip(t *testing.T) {
+// TestRunGlobalPreflightExemptSkips is the acceptance criterion "a command
+// can declare itself exempt from preflight": exempt=true must pass even
+// against a broken workspace, and even without a prior ResetPreflight, since
+// exemption is checked before the memoized verdict. Which command names are
+// exempt is admin-tlhw.3's whole point — that decision is the caller's
+// (internal/kinds.runSteps, reading manifest.Command.Preflight), not this
+// package's, so this test exercises only the bool this package actually
+// owns.
+func TestRunGlobalPreflightExemptSkips(t *testing.T) {
 	t.Cleanup(ResetPreflight)
 	dir := brokenWorkspaceDir(t)
 	t.Chdir(dir)
 	ResetPreflight()
 
-	for _, verb := range []string{"logs", "kill"} {
-		if err := RunGlobalPreflight(verb); err != nil {
-			t.Errorf("RunGlobalPreflight(%s) = %v, want nil — %s is an exempt diagnostic verb", verb, err, verb)
-		}
+	if err := RunGlobalPreflight(true); err != nil {
+		t.Errorf("RunGlobalPreflight(true) = %v, want nil — exempt=true must skip the pass", err)
 	}
 }
