@@ -1,12 +1,11 @@
-// work_submenu_test.go pins admin-n5vg: on the Work tab, right opens a
-// collapsed parent's submenu, left/esc close it from the parent or any of
-// its target rows (cursor landing back on the parent), and h/l stay pure
-// tab-switching everywhere — including on a target row, where left/esc
-// diverge from it. Every other row kind, and every other tab, keeps the
-// left/right-switches-tab behavior unchanged.
+// work_submenu_test.go pins admin-0kxh: on the Work tab, a command's targets
+// always render beneath it — there is no collapse/expand toggle — and
+// left/right/h/l stay pure tab-switching everywhere, including on a target
+// row. esc is a no-op on the Work tab, matching every other tab.
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -39,101 +38,67 @@ func isTargetRow(cmdName, key string) func(rowItem) bool {
 	}
 }
 
-// TestRightExpandsCollapsedParentRow: right on a collapsed command-with-targets
-// row opens its submenu and does not change tab.
-func TestRightExpandsCollapsedParentRow(t *testing.T) {
+// TestRightOnRowWithTargetsSwitchesTab: right on a multi-target command's
+// parent row switches tab like right on any other row — its targets are
+// already visible, so there is nothing left for right to open.
+func TestRightOnRowWithTargetsSwitchesTab(t *testing.T) {
 	m := multiTargetModel(t)
 	m.active = tabWork
 	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("dev"))
 
-	next, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRight})
-	if cmd != nil {
-		t.Errorf("expanding a submenu returned a non-nil Cmd, want nil")
-	}
+	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRight})
 	nm := next.(Model)
-	if nm.expandedCmd != "dev" {
-		t.Errorf("expandedCmd = %q, want \"dev\"", nm.expandedCmd)
-	}
-	if nm.active != tabWork {
-		t.Errorf("active tab changed to %v, want it to stay on Work", nm.active)
+	if nm.active == tabWork {
+		t.Errorf("active tab stayed on Work, want right on a multi-target row to switch tab")
 	}
 }
 
-// TestLeftCollapsesExpandedParentRow: left on an expanded parent row closes
-// it and does not change tab.
-func TestLeftCollapsesExpandedParentRow(t *testing.T) {
+// TestLeftOnRowWithTargetsSwitchesTab mirrors the above for left.
+func TestLeftOnRowWithTargetsSwitchesTab(t *testing.T) {
 	m := multiTargetModel(t)
 	m.active = tabWork
-	m.expandedCmd = "dev"
 	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("dev"))
 
 	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyLeft})
 	nm := next.(Model)
-	if nm.expandedCmd != "" {
-		t.Errorf("expandedCmd = %q, want empty after collapsing", nm.expandedCmd)
-	}
-	if nm.active != tabWork {
-		t.Errorf("active tab changed to %v, want it to stay on Work", nm.active)
+	if nm.active == tabWork {
+		t.Errorf("active tab stayed on Work, want left on a multi-target row to switch tab")
 	}
 }
 
-// TestLeftOnTargetRowCollapsesAndFocusesParent: left on a target row closes
-// the submenu and leaves the cursor on the parent row, since the target row
-// the cursor was on no longer exists.
-func TestLeftOnTargetRowCollapsesAndFocusesParent(t *testing.T) {
+// TestEscOnTargetRowIsANoOp: esc has no binding on the Work tab now that
+// there's no submenu to close — it must not switch tab.
+func TestEscOnTargetRowIsANoOp(t *testing.T) {
 	m := multiTargetModel(t)
 	m.active = tabWork
-	m.expandedCmd = "dev"
 	m.cursor[tabWork] = rowIndex(t, m, isTargetRow("dev", "mac"))
 
-	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyLeft})
-	nm := next.(Model)
-	if nm.expandedCmd != "" {
-		t.Errorf("expandedCmd = %q, want empty after collapsing from a target row", nm.expandedCmd)
+	next, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil {
+		t.Errorf("esc on the Work tab returned a non-nil Cmd, want nil")
 	}
-	cur := nm.visibleRows()[nm.cursor[tabWork]]
-	if cur.kind != rowCommand || cur.work.cmdName != "dev" {
-		t.Fatalf("cursor landed on %v/%v, want the dev command row", cur.kind, cur.work)
+	nm := next.(Model)
+	if nm.active != tabWork {
+		t.Errorf("active tab changed to %v, want esc to be a no-op", nm.active)
 	}
 }
 
-// TestEscOnTargetRowCollapsesAndFocusesParent proves esc does exactly what
-// left does from a target row.
-func TestEscOnTargetRowCollapsesAndFocusesParent(t *testing.T) {
+// TestEscOnParentRowIsANoOp mirrors the above from the parent row.
+func TestEscOnParentRowIsANoOp(t *testing.T) {
 	m := multiTargetModel(t)
 	m.active = tabWork
-	m.expandedCmd = "dev"
-	m.cursor[tabWork] = rowIndex(t, m, isTargetRow("dev", "tv"))
-
-	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
-	nm := next.(Model)
-	if nm.expandedCmd != "" {
-		t.Errorf("expandedCmd = %q, want empty after esc from a target row", nm.expandedCmd)
-	}
-	cur := nm.visibleRows()[nm.cursor[tabWork]]
-	if cur.kind != rowCommand || cur.work.cmdName != "dev" {
-		t.Fatalf("cursor landed on %v/%v, want the dev command row", cur.kind, cur.work)
-	}
-}
-
-// TestEscOnParentRowCollapses proves esc from the parent row itself also
-// collapses, matching left.
-func TestEscOnParentRowCollapses(t *testing.T) {
-	m := multiTargetModel(t)
-	m.active = tabWork
-	m.expandedCmd = "dev"
 	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("dev"))
 
 	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	nm := next.(Model)
-	if nm.expandedCmd != "" {
-		t.Errorf("expandedCmd = %q, want empty after esc on the parent row", nm.expandedCmd)
+	if nm.active != tabWork {
+		t.Errorf("active tab changed to %v, want esc to be a no-op", nm.active)
 	}
 }
 
-// TestRightOnRowWithNoSubmenuSwitchesTab: a plain command (no targets) has
-// no submenu, so right falls through to ordinary tab-switching.
-func TestRightOnRowWithNoSubmenuSwitchesTab(t *testing.T) {
+// TestRightOnRowWithNoTargetsSwitchesTab: a plain command (no targets) has
+// nothing to expand and never did — right switches tab.
+func TestRightOnRowWithNoTargetsSwitchesTab(t *testing.T) {
 	m := multiTargetModel(t)
 	m.active = tabWork
 	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("test"))
@@ -145,8 +110,8 @@ func TestRightOnRowWithNoSubmenuSwitchesTab(t *testing.T) {
 	}
 }
 
-// TestLeftOnRowWithNoSubmenuSwitchesTab mirrors the above for left.
-func TestLeftOnRowWithNoSubmenuSwitchesTab(t *testing.T) {
+// TestLeftOnRowWithNoTargetsSwitchesTab mirrors the above for left.
+func TestLeftOnRowWithNoTargetsSwitchesTab(t *testing.T) {
 	m := multiTargetModel(t)
 	m.active = tabWork
 	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("test"))
@@ -158,29 +123,28 @@ func TestLeftOnRowWithNoSubmenuSwitchesTab(t *testing.T) {
 	}
 }
 
-// TestEscOnRowWithNoSubmenuIsANoOp: esc has no binding outside a submenu, so
-// it must neither switch tab nor touch expandedCmd.
-func TestEscOnRowWithNoSubmenuIsANoOp(t *testing.T) {
+// TestEscOnRowWithNoTargetsIsANoOp: esc has no binding anywhere on the Work
+// tab, plain command row included.
+func TestEscOnRowWithNoTargetsIsANoOp(t *testing.T) {
 	m := multiTargetModel(t)
 	m.active = tabWork
 	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("test"))
 
 	next, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	if cmd != nil {
-		t.Errorf("esc with no submenu returned a non-nil Cmd, want nil")
+		t.Errorf("esc with no targets returned a non-nil Cmd, want nil")
 	}
 	nm := next.(Model)
 	if nm.active != tabWork {
-		t.Errorf("active tab changed to %v, want esc to be a no-op off a submenu", nm.active)
+		t.Errorf("active tab changed to %v, want esc to be a no-op", nm.active)
 	}
 }
 
 // TestHAndLStaySwitchingTabOnTargetRow: h/l are pure tab-switching on every
-// row, including a target row where the arrow keys instead collapse.
+// row, target rows included.
 func TestHAndLStaySwitchingTabOnTargetRow(t *testing.T) {
 	m := multiTargetModel(t)
 	m.active = tabWork
-	m.expandedCmd = "dev"
 	m.cursor[tabWork] = rowIndex(t, m, isTargetRow("dev", "mac"))
 
 	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
@@ -188,27 +152,19 @@ func TestHAndLStaySwitchingTabOnTargetRow(t *testing.T) {
 	if nm.active == tabWork {
 		t.Errorf("active tab stayed on Work, want h on a target row to switch tab")
 	}
-	if nm.expandedCmd != "dev" {
-		t.Errorf("expandedCmd = %q, want it left untouched by h", nm.expandedCmd)
-	}
 
 	m2 := multiTargetModel(t)
 	m2.active = tabWork
-	m2.expandedCmd = "dev"
 	m2.cursor[tabWork] = rowIndex(t, m2, isTargetRow("dev", "mac"))
 	next2, _ := m2.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	nm2 := next2.(Model)
 	if nm2.active == tabWork {
 		t.Errorf("active tab stayed on Work, want l on a target row to switch tab")
 	}
-	if nm2.expandedCmd != "dev" {
-		t.Errorf("expandedCmd = %q, want it left untouched by l", nm2.expandedCmd)
-	}
 }
 
-// TestLeftRightStillSwitchTabOnEveryOtherTab proves the Work-tab-only carve
-// out does not touch left/right anywhere else — the Beads tab stands in for
-// every other tab.
+// TestLeftRightStillSwitchTabOnEveryOtherTab proves left/right switch tab
+// everywhere — the Beads tab stands in for every other tab.
 func TestLeftRightStillSwitchTabOnEveryOtherTab(t *testing.T) {
 	m := workTestModel(&manifest.Manifest{})
 	m.active = tabBeads
@@ -226,14 +182,16 @@ func TestLeftRightStillSwitchTabOnEveryOtherTab(t *testing.T) {
 	}
 }
 
-// TestWorkKeybarShowsSubmenuHint asserts the Work tab's rendered keybar
-// carries the submenu hint the prototype adds, through the real headless
-// frame renderer (View()).
-func TestWorkKeybarShowsSubmenuHint(t *testing.T) {
+// TestWorkKeybarHasNoSubmenuHint asserts the Work tab's rendered keybar no
+// longer advertises a submenu binding, through the real headless frame
+// renderer (View()) — right/left have no submenu meaning on the Work tab.
+func TestWorkKeybarHasNoSubmenuHint(t *testing.T) {
 	m := multiTargetModel(t)
 	m.active = tabWork
 	m.width, m.height = 120, 40
 
 	out := stripANSI(m.View())
-	mustContainAll(t, "Work tab keybar", out, "submenu")
+	if strings.Contains(out, "submenu") {
+		t.Errorf("Work tab keybar still advertises a submenu binding:\n%s", out)
+	}
 }

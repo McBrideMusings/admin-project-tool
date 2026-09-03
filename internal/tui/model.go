@@ -389,14 +389,6 @@ type Model struct {
 	// no manifest at all, which is what makes rowKeyDispatch a clean miss
 	// on every project written before this feature existed.
 	rowKeys map[keymap.RowKind]map[string]string
-	// expandedCmd is the ONE Work-tab command whose targets are currently
-	// listed beneath it, or "" for none. A command with targets is a
-	// collapse toggle: enter on it opens its target list and closes
-	// whatever was open before, so exactly one submenu is ever on screen.
-	// Held on the Model rather than on the row because workRows() rebuilds
-	// every rowItem from scratch on each frame.
-	expandedCmd string
-
 	// pendingDispatch holds the command names whose dispatchCommandCmd is in
 	// flight — the window between the enter keypress and the
 	// workDispatchStartedMsg that reports either a livework.Entry now exists
@@ -407,7 +399,7 @@ type Model struct {
 	// than one command's dispatch can be in flight at once. Shared state
 	// across every copy of this value-type Model (map identity, not the map
 	// itself, is what's copied) — mutate it only from Update, never from
-	// View, matching expandedCmd's own rule above.
+	// View.
 	pendingDispatch map[string]bool
 	// pendingAttach holds the command names whose enter arrived WHILE their
 	// dispatch was still pending — activateCommand records the intent to
@@ -1783,48 +1775,22 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return m.requestQuit()
 	case "right":
-		// On the Work tab, right on a collapsed command-with-targets row opens
-		// its submenu instead of switching tab — l keeps switching tab even
-		// there, since only the arrow gains the submenu meaning.
-		if m.active == tabWork {
-			if r, ok := m.currentRow(); ok && r.kind == rowCommand && r.work != nil &&
-				len(r.work.targets) > 0 && !r.work.expanded {
-				return m.expandCommand(r.work.cmdName)
-			}
-		}
+		// Arrows step along the drawn tab order, whatever this repo draws.
+		// The Work tab's targets always render now, so right has no submenu
+		// left to open — it's pure tab-switching everywhere, same as l.
 		m.filter = ""
 		m.stepTab(1)
 	case "l":
-		// Arrows step along the drawn tab order, whatever this repo draws.
 		m.filter = ""
 		m.stepTab(1)
 	case "left":
-		if m.active == tabWork {
-			if r, ok := m.currentRow(); ok {
-				switch {
-				case r.kind == rowCommand && r.work != nil && r.work.expanded:
-					return m.collapseCommand(r.work.cmdName)
-				case r.kind == rowCommandTarget && r.work != nil:
-					return m.collapseCommand(r.work.cmdName)
-				}
-			}
-		}
 		m.filter = ""
 		m.stepTab(-1)
 	case "h":
 		m.filter = ""
 		m.stepTab(-1)
 	case "esc":
-		if m.active == tabWork {
-			if r, ok := m.currentRow(); ok {
-				switch {
-				case r.kind == rowCommand && r.work != nil && r.work.expanded:
-					return m.collapseCommand(r.work.cmdName)
-				case r.kind == rowCommandTarget && r.work != nil:
-					return m.collapseCommand(r.work.cmdName)
-				}
-			}
-		}
+		// No-op on the Work tab: there is no submenu left to close.
 	case "tab":
 		// Tab cycles the focused pane within the Repo tab; it never switches
 		// the top-level tab. The Config tab is a plain read-only readout

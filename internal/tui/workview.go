@@ -132,19 +132,7 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 		return marker + name + state + faintStyle.Render(act) + whereStyled
 	}
 
-	// A command with targets opens a submenu instead of running: it wears a
-	// disclosure arrow — ▸ closed, ▾ open — in the name column. The arrow
-	// goes here rather than replacing the cursor diamond so the row still
-	// shows, by shape alone, whether the cursor is on it.
 	name := padEnd(truncR(wd.cmdName, nameW), nameW)
-	if len(wd.targets) > 0 {
-		arrow := "▸ "
-		if wd.expanded {
-			arrow = "▾ "
-		}
-		inner := maxi(nameW-2, 4)
-		name = faintStyle.Render(arrow) + padEnd(truncR(wd.cmdName, inner), inner)
-	}
 	if wd.live != nil {
 		st, _ := livework.Default.State(wd.live.ID)
 		state := renderLiveState(st)
