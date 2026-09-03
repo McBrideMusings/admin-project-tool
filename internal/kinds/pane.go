@@ -67,8 +67,8 @@ func MarkReentry() {
 }
 
 // inReentry reports whether this process is already running inside a
-// launched dispatch. RunCommand consults it before deciding whether p (a
-// non-nil producer) gets to reach launchCommand at all: nothing inside an
+// launched dispatch. RunCommand consults it before deciding whether this
+// dispatch gets to reach launchCommand at all: nothing inside an
 // already-launched run reaches a second launcher, however many levels of
 // delegation separate it from the dispatch that opened that run.
 func inReentry() bool {
@@ -160,8 +160,8 @@ func RowEnv(kind, id, url string) []string {
 	return env
 }
 
-// dispatchToLauncher is the detach half launchCommand — its only caller now
-// that `detach` is honoured on the producer path alone (admin-ysxr.9) —
+// dispatchToLauncher is the detach half launchCommand — its only caller,
+// reached identically for a plain-CLI dispatch and a dashboard dispatch —
 // reaches: it shells out to the project's declared t.Spawn command with the
 // ADR-0020 ADMIN_* context in its environment, and returns the trimmed
 // stdout as the opaque handle. verb selects which hidden re-entry command

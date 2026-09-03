@@ -1,10 +1,12 @@
-// hosted_test.go covers admin-ysxr.4's collapsed command-dispatch entry
-// point: RunCommand takes a *CommandProducer now, and a nil producer (the
-// plain CLI, which can host a run itself) versus a non-nil one (the
-// dashboard, which cannot) must land the identical detached step on
-// opposite surfaces. The paired tests below are the whole point — the same
-// manifest, the same fake [terminal] launcher, the same detached step,
-// dispatched through each producer, must land on opposite surfaces.
+// hosted_test.go covers the command-dispatch entry point: RunCommand takes a
+// *CommandProducer, but a nil producer (the plain CLI, which could host a
+// run itself) and a non-nil one (the dashboard, which cannot) resolve
+// `detach` identically — both reach the project's declared [terminal]
+// launcher for a detached first step, and both fall back to their own
+// default surface (inline for the CLI, Launch for the dashboard) when no
+// launcher dispatch happens. The tests below exercise that shared
+// resolution: the same manifest, the same fake [terminal] launcher, the same
+// detached step, dispatched through each producer.
 package kinds
 
 import (
@@ -77,26 +79,45 @@ func dashboardProducer(launched *bool) *CommandProducer {
 	}
 }
 
-// TestRunCommandPlainCLIRunsDetachedStepInline is the control half of the
-// pair: a plain-CLI dispatch (producer nil, which already owns a terminal)
-// always runs a detached step inline — `detach` is a dashboard concern only
-// (admin-ysxr.9), so a declared [terminal] plus a detached step must never
-// reach the launcher from this producer.
-func TestRunCommandPlainCLIRunsDetachedStepInline(t *testing.T) {
+// TestRunCommandPlainCLIDetachDispatchesThroughLauncher is the CLI half of
+// the pair: a plain-CLI dispatch (producer nil) with a declared [terminal]
+// and a detached first step must dispatch through the launcher exactly like
+// a dashboard producer would — a shell is where most of a project's
+// long-running commands are actually typed, so the launcher decision is
+// producer-independent again.
+func TestRunCommandPlainCLIDetachDispatchesThroughLauncher(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	logPath := filepath.Join(dir, "terminal-calls.log")
 	terminal := withFakeTerminal(t, "fake-handle-1", logPath)
 
+	before := len(livework.Default.List())
 	inlineRan := false
 	if err := RunCommand(longRunningManifest(terminal), registryRecordingInline(&inlineRan), "dev", nil, nil); err != nil {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
-	if !inlineRan {
-		t.Error("a plain-CLI dispatch must run a detached step inline, never hand it to the launcher")
+	if inlineRan {
+		t.Error("a plain-CLI dispatch with a declared [terminal] and detach=true must reach the launcher, not run inline")
 	}
-	if logged, err := os.ReadFile(logPath); err == nil && strings.Contains(string(logged), "spawn") {
-		t.Errorf("terminal log = %q, want no `spawn` call — the CLI already owns a terminal", string(logged))
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("reading terminal log: %v", err)
+	}
+	if !strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want a `spawn` call", string(logged))
+	}
+	entries := livework.Default.List()
+	found := false
+	for _, e := range entries {
+		if e.ID == "hosted-dev-server" && e.Handle == "fake-handle-1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("live-work registry = %+v, want an entry keyed on the first step (hosted-dev-server) with handle fake-handle-1", entries)
+	}
+	if got := len(entries); got != before+1 {
+		t.Errorf("live-work registry grew from %d to %d, want exactly one new entry", before, got)
 	}
 }
 
@@ -602,10 +623,10 @@ func TestRunCommandInReentryNestedDelegationStaysInline(t *testing.T) {
 
 // TestRunCommandInReentryMultiTargetDetachStaysInline is the multi-target
 // twin of the ordering-hazard test above: a multi-target TARGET itself
-// (not a delegated action) carrying `detach = true` must run inline
-// regardless of inReentry — as of admin-ysxr.9, makeMultiTarget's Runner no
-// longer has a launcher branch of its own at all, so a target's `detach`
-// is never consulted outside the producer path (launchCommand).
+// (not a delegated action) carrying `detach = true` must run inline once
+// already inReentry — makeMultiTarget's Runner has no launcher branch of its
+// own at all, so a target's `detach` is only ever consulted once, up front,
+// by launchCommand, and inReentry short-circuits RunCommand before that.
 func TestRunCommandInReentryMultiTargetDetachStaysInline(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

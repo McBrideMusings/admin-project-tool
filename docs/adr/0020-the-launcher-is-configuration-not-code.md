@@ -57,6 +57,17 @@ that is `admin-ysxr.2` onward.
 > run's output than right there, so it always runs inline regardless of `detach`; only the
 > dashboard, which has nowhere but its own hosted pty to put a long-running process's
 > output, still dispatches through the launcher. See the entry-2 amendment below for detail.
+>
+> **Amendment (2026-09-02, `admin-m6m8`): the `admin-ysxr.9` amendment above is withdrawn.**
+> `detach` is producer-independent again, restoring the original contract this ADR first
+> described. A project that declares a `[terminal]` launcher wants its long-running
+> commands in a pane whichever surface asked for them, and the shell is where most of them
+> are actually typed — `etv-station` declared a launcher and `detach = true` on all 22 of
+> its own actions and got nothing from any of them, because `admin dev`/`admin test`/
+> `admin watch` typed at a shell still blocked the pane they were typed into. See the
+> entry-2 amendment below for the mechanical detail: `internal/kinds.launchCommand` now
+> resolves `detach` identically whether `internal/kinds.RunCommand`'s `*CommandProducer` is
+> nil (the CLI) or non-nil (the dashboard).
 
 ## Why
 
@@ -117,6 +128,17 @@ with the rest of the manifest's per-action/per-target override vocabulary.
 > through the launcher. `makeMultiTarget`'s Runner lost its own launcher branch entirely,
 > for the same reason: a picked target's `detach` override is resolved by `launchCommand`
 > (via `dispatchDetach`), never inside the Runner itself.
+>
+> **Amendment (2026-09-02, `admin-m6m8`): withdrawn — `launchCommand` is reached whichever
+> producer dispatched.** `RunCommand` still checks `inReentry()` first (nothing inside an
+> already-launched run reaches a second launcher), but no longer treats a nil
+> `*CommandProducer` as "run inline unconditionally": both the CLI (`p == nil`) and the
+> dashboard (`p` non-nil) fall through to `launchCommand`, which resolves `detach` and
+> dispatches through the launcher identically for either. `launchCommand`'s fallback — what
+> runs when no launcher dispatch happens — is the one thing that still differs by producer:
+> `runSteps` (inline) for the CLI, `p.Launch` (the hosted pty) for the dashboard. Every
+> per-step `RunAction` dispatch, and everything reached from inside an already-launched run,
+> is unaffected — it never consulted `detach` before and still doesn't.
 
 ### 3. Built-in default when nothing is configured: the dashboard's hosted pty
 
