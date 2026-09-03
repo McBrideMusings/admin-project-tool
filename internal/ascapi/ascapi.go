@@ -32,6 +32,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -239,6 +240,10 @@ type Client struct {
 	Creds      *Credentials
 	HTTPClient *http.Client
 	Now        func() time.Time
+
+	mu          sync.Mutex
+	cachedToken string
+	cachedExp   time.Time
 }
 
 // NewClient builds a Client with sane defaults (http.DefaultClient,
@@ -248,19 +253,58 @@ func NewClient(creds *Credentials) *Client {
 	return &Client{Creds: creds, HTTPClient: http.DefaultClient, Now: time.Now}
 }
 
+// tokenTTL is how long a minted token is reused before Client mints a new
+// one. Apple issues these good for 20 minutes; this stays well inside that
+// so a token is never sent past its `exp`.
+const tokenTTL = 15 * time.Minute
+
+// token returns a cached bearer token, minting a fresh one only when there
+// is none yet, force is set, or the cached one is past tokenTTL.
+//
+// This exists because of a real, reproduced bug: `iat` is second-resolution
+// (`now.Unix()`), and Request used to mint a brand-new token — a brand-new
+// `iat` — on every single call. Two calls issued within the same wall-clock
+// second (FindBundleID immediately followed by Capabilities, the normal
+// shape of a bare `admin appid <id>`) produced two different, individually
+// valid tokens sharing the identical (kid, iat) pair. Apple's auth layer
+// appears to treat the second token in such a pair as a replay and rejects
+// it with 401 — reproduced by hand, 100% repeatable, against a real key:
+// the *first* ASC request in a process always succeeded, every request
+// after it in the same process failed, and an isolated one-shot script
+// making a single request to the exact same endpoint always succeeded. A
+// short retry-with-backoff (this file used to have one) papers over that
+// symptom by hoping the clock ticks over before the retry's `iat` collides
+// again; it does not fix the actual cause, which is minting more tokens
+// than the API wants to see per second. One token, reused for the life of
+// the Client, both fixes it and cuts request volume against a key ADR-0013
+// already flagged as easy to rate-limit.
+func (c *Client) token(force bool) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	if c.Now != nil {
+		now = c.Now()
+	}
+	if !force && c.cachedToken != "" && now.Before(c.cachedExp) {
+		return c.cachedToken, nil
+	}
+	tok, err := Token(c.Creds, now)
+	if err != nil {
+		return "", err
+	}
+	c.cachedToken = tok
+	c.cachedExp = now.Add(tokenTTL)
+	return tok, nil
+}
+
 // Request makes one API call. path is relative to /v1 unless it already
 // looks like a full URL. Returns the parsed body, or {} for a 204.
-// authRetries is how many times Request retries a fresh 401 before giving
-// up. Apple's API occasionally rejects a token signed and sent within
-// milliseconds of the previous request on the same connection — the same
-// key, the same claims shape, the very next call — then accepts an
-// identically-built token a second later. Reproduced by hand: a bare `admin
-// appid <id>` (one request) succeeds every time; `--capability` (two or
-// three requests back to back) intermittently 401s on the second one, and
-// retrying that single call alone then succeeds. This is server-side
-// auth-propagation lag, not a signing bug — sleepBetweenAuthRetries below
-// is enough for it to clear, and a fresh JWT (a new `iat`) is generated on
-// every attempt rather than resending the one that just failed.
+//
+// authRetries is how many times Request retries a 401 before giving up —
+// a backstop for the rare case a cached token really has gone bad
+// (revoked, clock skew) rather than the token-per-second collision `token`
+// above exists to prevent. force=true on every retry so a bad cached token
+// is never resent.
 const authRetries = 3
 
 // sleepBetweenAuthRetries is overridden by tests to skip the real delay.
@@ -290,11 +334,7 @@ func (c *Client) Request(method, path string, body any) (map[string]any, error) 
 		if err != nil {
 			return nil, err
 		}
-		now := time.Now()
-		if c.Now != nil {
-			now = c.Now()
-		}
-		tok, err := Token(c.Creds, now)
+		tok, err := c.token(attempt > 1)
 		if err != nil {
 			return nil, err
 		}

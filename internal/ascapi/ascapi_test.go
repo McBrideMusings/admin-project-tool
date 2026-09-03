@@ -227,6 +227,66 @@ func TestEnableCapabilityOmitsSettingsWhenNoDefault(t *testing.T) {
 	}
 }
 
+func TestRequestReusesOneTokenAcrossCalls(t *testing.T) {
+	// The bug this guards: iat is second-resolution, and Request used to
+	// mint a brand-new token on every call. Two calls issued in the same
+	// wall-clock second produced two individually-valid tokens sharing the
+	// identical (kid, iat) pair, which App Store Connect's auth layer
+	// treats as a replay and rejects with 401 on the second one — see the
+	// doc comment on Client.token. A cached, reused token can't collide
+	// with itself.
+	var authHeaders []string
+	c := &Client{
+		Creds: &Credentials{KeyPath: testKeyPath(t), KeyID: "K1", IssuerID: "ISSUER"},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			authHeaders = append(authHeaders, req.Header.Get("Authorization"))
+			return jsonResponse(200, map[string]any{"data": []any{}}), nil
+		})},
+		Now: time.Now,
+	}
+	if _, err := c.Request("GET", "/bundleIds", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Request("GET", "/bundleIds/BID1/bundleIdCapabilities", nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(authHeaders) != 2 {
+		t.Fatalf("got %d requests, want 2", len(authHeaders))
+	}
+	if authHeaders[0] != authHeaders[1] {
+		t.Errorf("second call minted a different token than the first — the whole point of caching is that back-to-back calls reuse one:\n  1st: %s\n  2nd: %s", authHeaders[0], authHeaders[1])
+	}
+}
+
+func TestRequestMintsAFreshTokenOnRetry(t *testing.T) {
+	orig := sleepBetweenAuthRetries
+	sleepBetweenAuthRetries = func(int) {}
+	defer func() { sleepBetweenAuthRetries = orig }()
+
+	var authHeaders []string
+	calls := 0
+	c := &Client{
+		Creds: &Credentials{KeyPath: testKeyPath(t), KeyID: "K1", IssuerID: "ISSUER"},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			calls++
+			authHeaders = append(authHeaders, req.Header.Get("Authorization"))
+			if calls == 1 {
+				return jsonResponse(401, map[string]any{
+					"errors": []any{map[string]any{"title": "Unauthenticated", "detail": "expired"}},
+				}), nil
+			}
+			return jsonResponse(200, map[string]any{"data": []any{}}), nil
+		})},
+		Now: time.Now,
+	}
+	if _, err := c.Request("GET", "/bundleIds", nil); err != nil {
+		t.Fatal(err)
+	}
+	if authHeaders[0] == authHeaders[1] {
+		t.Error("retry after a 401 reused the same (possibly bad) cached token instead of minting a fresh one")
+	}
+}
+
 func TestRequestRetriesA401ThenSucceeds(t *testing.T) {
 	orig := sleepBetweenAuthRetries
 	sleepBetweenAuthRetries = func(int) {}
