@@ -1,11 +1,17 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
+	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
+	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
 // TestCmdVerbIsRegisteredReservedVerb pins the reserved-verb precedence
@@ -43,9 +49,39 @@ func TestReservedCmdVerbsIncludesCmd(t *testing.T) {
 	t.Fatalf("reservedCmdVerbs = %v, want it to include \"cmd\"", reservedCmdVerbs)
 }
 
+// writeMarkerManifest writes a one-command admin.toml (a "build" command
+// whose only step touches marker.txt) into dir, returning its resolved
+// manifest.
+func writeMarkerManifest(t *testing.T, dir string) *manifest.Manifest {
+	t.Helper()
+	body := `project_name = "fixture"
+
+[commands.build]
+desc  = "writes a marker"
+steps = ["write-marker"]
+
+[commands.touch]
+desc  = "also writes a marker"
+steps = ["write-marker"]
+
+[actions.write-marker]
+kind = "shell"
+run  = "touch marker.txt"
+`
+	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write admin.toml: %v", err)
+	}
+	m, ok, err := resolveProjectManifest(context.Background(), dir)
+	if !ok || err != nil {
+		t.Fatalf("resolveProjectManifest: ok=%v err=%v", ok, err)
+	}
+	return m
+}
+
 // TestRunCmdPickerListsCommandsWithDesc writes a manifest declaring two
-// commands and asserts the picker's listing (captured off stderr) names
-// both, along with their desc text.
+// commands and asserts commandEntries — the picker rows runCmdPicker hands
+// to h.PickTarget — names both, each paired with its own desc text, in
+// kinds.CommandNames' order.
 func TestRunCmdPickerListsCommandsWithDesc(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -67,57 +103,106 @@ run  = "true"
 		t.Fatalf("write admin.toml: %v", err)
 	}
 
-	stderr := withCapturedStderr(t, func() {
-		withStdinLine(t, "1", func() {
-			if err := runCmdPicker(context.Background()); err != nil {
-				t.Fatalf("runCmdPicker = %v, want nil", err)
-			}
-		})
-	})
+	m, ok, err := resolveProjectManifest(context.Background(), dir)
+	if !ok || err != nil {
+		t.Fatalf("resolveProjectManifest: ok=%v err=%v", ok, err)
+	}
+	names := kinds.CommandNames(m)
+	entries := commandEntries(m, names)
 
-	for _, want := range []string{"deploy", "ships the build", "build", "compiles the project"} {
-		if !strings.Contains(stderr, want) {
-			t.Fatalf("picker listing = %q, want it to contain %q", stderr, want)
-		}
+	want := []luahost.TargetEntry{
+		{Key: "build", Description: "compiles the project"},
+		{Key: "deploy", Description: "ships the build"},
+	}
+	if !reflect.DeepEqual(entries, want) {
+		t.Fatalf("commandEntries = %#v, want %#v", entries, want)
 	}
 }
 
-// TestRunCmdPickerRunsSelectionThroughKindsRunCommand proves a fed numbered
-// selection actually runs the chosen command's steps via kinds.RunCommand —
-// the marker-file assertion TestRegisterManifestCommandRunsThroughKindsRunCommand
-// uses for the same claim about `admin <name>`.
-func TestRunCmdPickerRunsSelectionThroughKindsRunCommand(t *testing.T) {
+// TestHandlePickOutcomeChosenRunsTheCommand covers handlePickOutcome's
+// default (PickChosen) branch: the returned key runs through
+// kinds.RunCommand exactly as registerManifestCommand's RunE does for
+// `admin <name>` — proven with the same marker-file assertion
+// TestRegisterManifestCommandRunsThroughKindsRunCommand uses for that claim.
+func TestHandlePickOutcomeChosenRunsTheCommand(t *testing.T) {
 	dir := t.TempDir()
-	t.Chdir(dir)
-	body := `project_name = "fixture"
+	m := writeMarkerManifest(t, dir)
+	h := luahost.New(dir)
+	var out, errOut bytes.Buffer
+	h.Stdout, h.Stderr = &out, &errOut
 
-[commands.build]
-desc  = "writes a marker"
-steps = ["write-marker"]
-
-[commands.touch]
-desc  = "also writes a marker"
-steps = ["write-marker"]
-
-[actions.write-marker]
-kind = "shell"
-run  = "touch marker.txt"
-`
-	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(body), 0o644); err != nil {
-		t.Fatalf("write admin.toml: %v", err)
+	if err := handlePickOutcome(h, m, "touch", luahost.PickChosen); err != nil {
+		t.Fatalf("handlePickOutcome(PickChosen) = %v, want nil", err)
 	}
-
-	// kinds.CommandNames sorts, so "build" is entry 1.
-	withCapturedStderr(t, func() {
-		withStdinLine(t, "1", func() {
-			if err := runCmdPicker(context.Background()); err != nil {
-				t.Fatalf("runCmdPicker = %v, want nil", err)
-			}
-		})
-	})
-
 	if _, err := os.Stat(filepath.Join(dir, "marker.txt")); err != nil {
-		t.Fatalf("stat marker.txt: %v (the picked selection never actually ran through kinds.RunCommand)", err)
+		t.Fatalf("stat marker.txt: %v (PickChosen never ran the picked command through kinds.RunCommand)", err)
+	}
+}
+
+// TestHandlePickOutcomeCancelledReturnsNilAndRunsNothing covers
+// handlePickOutcome's PickCancelled branch: the user answered the question
+// by dismissing the picker, so this must return cleanly and print
+// "cancelled" — matching internal/kinds/multitarget.go:278-283's identical
+// handling — without running any command.
+func TestHandlePickOutcomeCancelledReturnsNilAndRunsNothing(t *testing.T) {
+	dir := t.TempDir()
+	m := writeMarkerManifest(t, dir)
+	h := luahost.New(dir)
+	var out, errOut bytes.Buffer
+	h.Stdout, h.Stderr = &out, &errOut
+
+	if err := handlePickOutcome(h, m, "", luahost.PickCancelled); err != nil {
+		t.Fatalf("handlePickOutcome(PickCancelled) = %v, want nil", err)
+	}
+	if !strings.Contains(errOut.String(), "cancelled") {
+		t.Fatalf("stderr = %q, want it to say cancelled", errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "marker.txt")); err == nil {
+		t.Fatal("marker.txt exists — a command ran despite the picker being cancelled")
+	}
+}
+
+// TestHandlePickOutcomeUnavailableReturnsError covers handlePickOutcome's
+// PickUnavailable branch: PickTarget has already printed why it could not
+// prompt, so this only needs to fail the command rather than silently doing
+// nothing.
+func TestHandlePickOutcomeUnavailableReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	m := writeMarkerManifest(t, dir)
+	h := luahost.New(dir)
+	var out, errOut bytes.Buffer
+	h.Stdout, h.Stderr = &out, &errOut
+
+	if err := handlePickOutcome(h, m, "", luahost.PickUnavailable); err == nil {
+		t.Fatal("handlePickOutcome(PickUnavailable) = nil, want an error")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "marker.txt")); err == nil {
+		t.Fatal("marker.txt exists — a command ran despite the picker being unavailable")
+	}
+}
+
+// TestPickAndRunCommandNonTTYIsUnavailable exercises pickAndRunCommand end
+// to end against a Host whose Stdin is not a *os.File TTY — the shape every
+// test process runs under — proving the real h.PickTarget call reaches
+// PickUnavailable and that handlePickOutcome's error branch fires, without
+// running any command.
+func TestPickAndRunCommandNonTTYIsUnavailable(t *testing.T) {
+	dir := t.TempDir()
+	m := writeMarkerManifest(t, dir)
+	h := luahost.New(dir)
+	var out, errOut bytes.Buffer
+	h.Stdout, h.Stderr = &out, &errOut
+	h.Stdin = strings.NewReader("")
+
+	names := kinds.CommandNames(m)
+	if err := pickAndRunCommand(h, m, names); err == nil {
+		t.Fatal("pickAndRunCommand = nil, want an error when the picker can't prompt")
+	}
+	if !strings.Contains(errOut.String(), "not a TTY") {
+		t.Fatalf("stderr = %q, want PickTarget's non-TTY diagnostic", errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "marker.txt")); err == nil {
+		t.Fatal("marker.txt exists — a command ran despite the picker being unavailable")
 	}
 }
 
@@ -135,84 +220,4 @@ func TestRunCmdPickerNoManifestReportsPlainly(t *testing.T) {
 	if !strings.Contains(err.Error(), "no admin.toml") {
 		t.Fatalf("runCmdPicker error = %q, want it to say no admin.toml exists here", err.Error())
 	}
-}
-
-// TestRunCmdPickerInvalidSelectionErrors covers the out-of-range/non-numeric
-// case the item's acceptance criteria leaves open: rather than guessing, an
-// invalid selection is a plain error naming the valid range.
-func TestRunCmdPickerInvalidSelectionErrors(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	writeManifest(t, dir, "deploy")
-
-	withCapturedStderr(t, func() {
-		withStdinLine(t, "not-a-number", func() {
-			err := runCmdPicker(context.Background())
-			if err == nil {
-				t.Fatal("runCmdPicker = nil, want an error for a non-numeric selection")
-			}
-			if !strings.Contains(err.Error(), "not a valid selection") {
-				t.Fatalf("runCmdPicker error = %q, want it to say the selection is invalid", err.Error())
-			}
-		})
-	})
-}
-
-// withStdinLine swaps os.Stdin for a pipe carrying line (plus its
-// terminator) for the duration of fn, matching
-// internal/prompt/confirm_test.go's own os.Stdin swap-and-restore pattern —
-// the shape runCmdPicker's bufio.Reader read needs to be substitutable in a
-// test.
-func withStdinLine(t *testing.T, line string, fn func()) {
-	t.Helper()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	old := os.Stdin
-	os.Stdin = r
-	defer func() { os.Stdin = old }()
-
-	go func() {
-		w.WriteString(line + "\n")
-		w.Close()
-	}()
-
-	fn()
-}
-
-// withCapturedStderr swaps os.Stderr for a pipe for the duration of fn and
-// returns everything written to it — the picker's listing and prompt both
-// go to stderr so stdout stays clean for the cd sentinel (see
-// runCmdPicker's doc comment).
-func withCapturedStderr(t *testing.T, fn func()) string {
-	t.Helper()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	old := os.Stderr
-	os.Stderr = w
-	defer func() { os.Stderr = old }()
-
-	done := make(chan string, 1)
-	go func() {
-		buf := make([]byte, 0, 4096)
-		tmp := make([]byte, 4096)
-		for {
-			n, readErr := r.Read(tmp)
-			if n > 0 {
-				buf = append(buf, tmp[:n]...)
-			}
-			if readErr != nil {
-				break
-			}
-		}
-		done <- string(buf)
-	}()
-
-	fn()
-	w.Close()
-	os.Stderr = old
-	return <-done
 }
