@@ -211,7 +211,7 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 // the live-work registry with its launcher handle before returning —
 // mirroring internal/kinds/pane.go's recordLiveWork for the single-pane
 // LongRunning case, but keyed on the pane this dispatch itself opened
-// rather than one RunActionRouted opened for it.
+// rather than one launchCommand opened for it.
 func dispatchOne(actionName, agentKind string, t config.Terminal, drv agent.Driver, tgt Target, wt create.Result) TargetResult {
 	if !create.IsRegisteredWorktree(context.Background(), wt.Path) {
 		return TargetResult{

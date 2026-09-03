@@ -1,7 +1,9 @@
-// detach_test.go covers admin-ysxr.2: `detach = true` on an action
-// dispatches through the project's [terminal] launcher (ADR-0020) instead
-// of running inline. It replaces lifetime_test.go — the Lifetime
-// kind-catalog attribute this ticket deletes.
+// detach_test.go covers admin-ysxr.9: `detach = true` is a producer-scoped
+// concern now. A plain-CLI dispatch (p == nil) always runs inline and never
+// reaches the project's [terminal] launcher (ADR-0020); only a non-nil
+// CommandProducer (the dashboard) resolves `detach` at all, through
+// launchCommand. It replaces lifetime_test.go — the Lifetime kind-catalog
+// attribute admin-ysxr.2 deleted.
 package kinds
 
 import (
@@ -16,11 +18,18 @@ import (
 
 // detachManifest is the shared fixture for the acceptance tests: one
 // detached action whose `run` would leave a real, checkable side effect
-// (ran.txt) if it executed inline — so "did the launcher intercept it"
-// and "did it run inline" are both directly observable.
+// (ran.txt) if it executed inline — so "did the launcher intercept it" and
+// "did it run inline" are both directly observable. The "dev" command lets a
+// producer-path test dispatch through RunCommand; launchCommand keys the
+// live entry on the command's first step ("dev-server"), the same name the
+// action-level RunAction tests use, so existing livework lookups by that
+// name work either way.
 func detachManifest(terminal map[string]any) *manifest.Manifest {
 	return &manifest.Manifest{
 		Terminal: terminal,
+		Custom: map[string]manifest.Command{
+			"dev": {Steps: []string{"dev-server"}},
+		},
 		Actions: map[string]manifest.Action{
 			"dev-server": {
 				"kind":   "shell",
@@ -31,12 +40,11 @@ func detachManifest(terminal map[string]any) *manifest.Manifest {
 	}
 }
 
-// TestRunActionRoutedDetachDispatchesThroughLauncher is the ticket's first
-// acceptance criterion: with a [terminal] declaring `spawn = 'echo
-// fake-handle-1'`, dispatching a detached action prints nothing from the
-// action itself (its Runner never executes in this process) and records a
-// live entry whose handle is fake-handle-1.
-func TestRunActionRoutedDetachDispatchesThroughLauncher(t *testing.T) {
+// TestRunActionCLIDetachRunsInlineNeverReachesLauncher is admin-ysxr.9's
+// headline acceptance criterion: a plain-CLI dispatch (RunAction, p == nil
+// in RunCommand terms) runs a detached action inline and never reaches the
+// launcher, even with a spawnable [terminal] declared.
+func TestRunActionCLIDetachRunsInlineNeverReachesLauncher(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -45,22 +53,55 @@ func TestRunActionRoutedDetachDispatchesThroughLauncher(t *testing.T) {
 	r := NewRegistry()
 	r.MustRegister("shell", makeShell)
 
-	m := detachManifest(map[string]any{"spawn": "echo fake-handle-1"})
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	m := detachManifest(withFakeTerminal(t, "fake-handle-1", logPath))
 
 	stderr := captureStderr(t, func() {
-		if err := RunActionRouted(m, r, "dev-server", nil); err != nil {
-			t.Fatalf("RunActionRouted = %v, want nil", err)
+		if err := RunAction(m, r, "dev-server", nil); err != nil {
+			t.Fatalf("RunAction = %v, want nil", err)
 		}
 	})
 	if stderr != "" {
-		t.Errorf("stderr = %q, want empty — a successful spawn must print no warning", stderr)
+		t.Errorf("stderr = %q, want empty", stderr)
+	}
+	assertFileExists(t, dir, "ran.txt")
+
+	if logged, err := os.ReadFile(logPath); err == nil && len(logged) > 0 {
+		t.Errorf("terminal log = %q, want empty — a CLI dispatch must never reach the launcher", string(logged))
+	}
+	if got := len(livework.Default.List()); got != before {
+		t.Errorf("live-work registry grew from %d to %d — a CLI dispatch must never register a launcher entry", before, got)
+	}
+}
+
+// TestRunCommandDashboardProducerDetachDispatchesThroughLauncher is the
+// producer-path twin: the identical detached action, dispatched through
+// RunCommand with a non-nil CommandProducer, still reaches the launcher and
+// never falls back to the producer's own default surface.
+func TestRunCommandDashboardProducerDetachDispatchesThroughLauncher(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	before := len(livework.Default.List())
+	launched := false
+
+	r := NewRegistry()
+	r.MustRegister("shell", makeShell)
+
+	m := detachManifest(map[string]any{"spawn": "echo fake-handle-1"})
+
+	if err := RunCommand(m, r, "dev", nil, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if launched {
+		t.Error("a dashboard producer must not fall back to its own default surface when a launcher is declared")
 	}
 	assertFileMissing(t, dir, "ran.txt")
 
 	entries := livework.Default.List()
 	found := false
 	for _, e := range entries {
-		if e.Name == "dev-server" && e.Handle == "fake-handle-1" && e.Kind == "shell" {
+		if e.Name == "dev-server" && e.Handle == "fake-handle-1" {
 			found = true
 		}
 	}
@@ -72,10 +113,10 @@ func TestRunActionRoutedDetachDispatchesThroughLauncher(t *testing.T) {
 	}
 }
 
-// TestRunActionRoutedNoTerminalRunsInline is the ticket's second acceptance
-// criterion: the same manifest, minus [terminal], runs the detached action
-// inline exactly as before.
-func TestRunActionRoutedNoTerminalRunsInline(t *testing.T) {
+// TestRunActionNoTerminalRunsInline proves the same action with no
+// [terminal] declared runs inline — the unaffected case, since a CLI
+// dispatch never consulted the launcher in the first place.
+func TestRunActionNoTerminalRunsInline(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -86,22 +127,22 @@ func TestRunActionRoutedNoTerminalRunsInline(t *testing.T) {
 
 	m := detachManifest(nil)
 
-	if err := RunActionRouted(m, r, "dev-server", nil); err != nil {
-		t.Fatalf("RunActionRouted = %v, want nil (inline fallback)", err)
+	if err := RunAction(m, r, "dev-server", nil); err != nil {
+		t.Fatalf("RunAction = %v, want nil", err)
 	}
 	assertFileExists(t, dir, "ran.txt")
 
 	after := livework.Default.List()
 	if len(after) != before {
-		t.Errorf("live-work registry grew from %d to %d entries — a detached action with no "+
-			"[terminal] must fall back to inline and never register itself", before, len(after))
+		t.Errorf("live-work registry grew from %d to %d entries — a plain-CLI dispatch must never "+
+			"register a launcher entry", before, len(after))
 	}
 }
 
-// TestRunActionRoutedDetachAbsentRunsInline proves an action with no
-// `detach` key at all is unaffected by a declared [terminal] — the launcher
-// is opt-in per action, not activated by mere presence of the table.
-func TestRunActionRoutedDetachAbsentRunsInline(t *testing.T) {
+// TestRunActionDetachAbsentRunsInline proves an action with no `detach` key
+// at all is unaffected by a declared [terminal] — irrelevant to a CLI
+// dispatch either way, since `detach` is never consulted on this path.
+func TestRunActionDetachAbsentRunsInline(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -114,42 +155,10 @@ func TestRunActionRoutedDetachAbsentRunsInline(t *testing.T) {
 			"build": {"kind": "shell", "run": "touch ran.txt"},
 		},
 	}
-	if err := RunActionRouted(m, r, "build", nil); err != nil {
-		t.Fatalf("RunActionRouted = %v, want nil", err)
+	if err := RunAction(m, r, "build", nil); err != nil {
+		t.Fatalf("RunAction = %v, want nil", err)
 	}
 	assertFileExists(t, dir, "ran.txt")
-}
-
-// TestRunActionRoutedDetachSpawnFailureDegradesToInlineWithWarning mirrors
-// the herdr-split-failure case this ticket's dispatchToPane replaced:
-// [terminal] IS declared but spawn fails — the action must still run
-// inline and print exactly one warning naming the action and the failure.
-func TestRunActionRoutedDetachSpawnFailureDegradesToInlineWithWarning(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-
-	before := len(livework.Default.List())
-
-	r := NewRegistry()
-	r.MustRegister("shell", makeShell)
-
-	m := detachManifest(map[string]any{"spawn": "exit 1"})
-
-	stderr := captureStderr(t, func() {
-		if err := RunActionRouted(m, r, "dev-server", nil); err != nil {
-			t.Fatalf("RunActionRouted = %v, want nil (degrade to inline)", err)
-		}
-	})
-	assertFileExists(t, dir, "ran.txt")
-
-	after := livework.Default.List()
-	if len(after) != before {
-		t.Errorf("live-work registry grew from %d to %d entries — a failed spawn must fall back "+
-			"to inline and never register itself", before, len(after))
-	}
-	if !strings.Contains(stderr, "dev-server") {
-		t.Errorf("warning line = %q, want it to name the action", stderr)
-	}
 }
 
 // -- ValidateDetach ---------------------------------------------------------
@@ -218,12 +227,11 @@ func TestResolveTargetDetachInheritance(t *testing.T) {
 	}
 }
 
-// TestMultiTargetPerTargetDetachDispatchesThroughLauncher proves the
-// per-target override end to end: an action with a parent default of
-// detach=false and one target overriding detach=true dispatches only that
-// target through the launcher, recording a live entry named "<action>:
-// <target>".
-func TestMultiTargetPerTargetDetachDispatchesThroughLauncher(t *testing.T) {
+// TestMultiTargetPerTargetDetachRunsInlineFromCLI proves the multi-target
+// factory's Runner no longer has a launcher branch of its own at all: a
+// picked target's own `detach = true` override is never consulted from a
+// plain-CLI dispatch (RunAction), whatever the parent action's default is.
+func TestMultiTargetPerTargetDetachRunsInlineFromCLI(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -231,9 +239,11 @@ func TestMultiTargetPerTargetDetachDispatchesThroughLauncher(t *testing.T) {
 
 	r := NewRegistry()
 	r.MustRegister("multi-target", makeMultiTarget)
+	r.MustRegister("shell", makeShell)
 
+	logPath := filepath.Join(dir, "terminal-calls.log")
 	m := &manifest.Manifest{
-		Terminal: map[string]any{"spawn": "echo fake-handle-2"},
+		Terminal: withFakeTerminal(t, "fake-handle-2", logPath),
 		Actions: map[string]manifest.Action{
 			"dev": {
 				"kind":   "multi-target",
@@ -244,30 +254,69 @@ func TestMultiTargetPerTargetDetachDispatchesThroughLauncher(t *testing.T) {
 		},
 	}
 
-	if err := RunActionRouted(m, r, "dev", []string{"cf"}); err != nil {
-		t.Fatalf("RunActionRouted(cf) = %v, want nil", err)
+	if err := RunAction(m, r, "dev", []string{"cf"}); err != nil {
+		t.Fatalf("RunAction(cf) = %v, want nil", err)
+	}
+	assertFileExists(t, dir, "cf-ran.txt")
+
+	if logged, err := os.ReadFile(logPath); err == nil && len(logged) > 0 {
+		t.Errorf("terminal log = %q, want empty — a CLI dispatch must never reach the launcher", string(logged))
+	}
+	if got := len(livework.Default.List()); got != before {
+		t.Errorf("live-work registry grew from %d to %d — a CLI dispatch must never register a launcher entry", before, got)
+	}
+}
+
+// TestMultiTargetPerTargetDetachDashboardProducerDispatchesThroughLauncher is
+// the producer-path twin: the identical per-target override, dispatched
+// through RunCommand with a non-nil CommandProducer, still reaches the
+// launcher via launchCommand's own dispatchDetach resolution.
+func TestMultiTargetPerTargetDetachDashboardProducerDispatchesThroughLauncher(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	before := len(livework.Default.List())
+	launched := false
+
+	r := NewRegistry()
+	r.MustRegister("multi-target", makeMultiTarget)
+	r.MustRegister("shell", makeShell)
+
+	m := &manifest.Manifest{
+		Terminal: map[string]any{"spawn": "echo fake-handle-2"},
+		Custom: map[string]manifest.Command{
+			"dev": {Steps: []string{"pick"}},
+		},
+		Actions: map[string]manifest.Action{
+			"pick": {
+				"kind":   "multi-target",
+				"detach": false,
+				"cf":     map[string]any{"run": "touch cf-ran.txt", "detach": true},
+				"local":  map[string]any{"run": "touch local-ran.txt"},
+			},
+		},
+	}
+
+	if err := RunCommand(m, r, "dev", []string{"cf"}, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand(cf) = %v, want nil", err)
+	}
+	if launched {
+		t.Error("a dashboard producer must not fall back to its own default surface when a launcher is declared")
 	}
 	assertFileMissing(t, dir, "cf-ran.txt")
 
 	entries := livework.Default.List()
 	found := false
 	for _, e := range entries {
-		if e.Name == "dev:cf" && e.Handle == "fake-handle-2" {
+		if e.Name == "pick" && e.Handle == "fake-handle-2" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("live-work registry = %+v, want an entry named dev:cf with handle fake-handle-2", entries)
+		t.Errorf("live-work registry = %+v, want an entry named pick with handle fake-handle-2", entries)
 	}
-
-	if err := RunActionRouted(m, r, "dev", []string{"local"}); err != nil {
-		t.Fatalf("RunActionRouted(local) = %v, want nil", err)
-	}
-	assertFileExists(t, dir, "local-ran.txt")
-
-	if got := len(livework.Default.List()); got != before+1 {
-		t.Errorf("live-work registry has %d entries, want exactly %d (only the detached target registers)",
-			got, before+1)
+	if got := len(entries); got != before+1 {
+		t.Errorf("live-work registry has %d entries, want exactly %d", got, before+1)
 	}
 }
 
@@ -276,7 +325,9 @@ func TestMultiTargetPerTargetDetachDispatchesThroughLauncher(t *testing.T) {
 // that launcher's attach command with ADMIN_HANDLE set to the handle spawn
 // printed. The fake launcher's attach writes ADMIN_HANDLE to a file rather
 // than actually attaching to anything, so the observable proof is that
-// file's content.
+// file's content. Only the producer path (dashboardProducer over RunCommand)
+// can produce a launcher-dispatched entry at all now, so the fixture goes
+// through that rather than the CLI path admin-ysxr.9 closed off.
 func TestDetachedEntryAttachRunsLauncherAttachWithHandle(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -290,8 +341,8 @@ func TestDetachedEntryAttachRunsLauncherAttachWithHandle(t *testing.T) {
 		"kill":   `echo "$ADMIN_HANDLE" > killed.txt`,
 	})
 
-	if err := RunActionRouted(m, r, "dev-server", nil); err != nil {
-		t.Fatalf("RunActionRouted = %v, want nil", err)
+	if err := RunCommand(m, r, "dev", nil, dashboardProducer(new(bool))); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 
 	if err := livework.Default.Attach("dev-server"); err != nil {
@@ -309,7 +360,8 @@ func TestDetachedEntryAttachRunsLauncherAttachWithHandle(t *testing.T) {
 
 // TestDetachedEntryKillRunsLauncherKillWithHandle proves killing a
 // launcher-dispatched row runs the launcher's kill command, also with
-// ADMIN_HANDLE set to the spawned handle.
+// ADMIN_HANDLE set to the spawned handle. Reached through the producer path,
+// for the same reason TestDetachedEntryAttachRunsLauncherAttachWithHandle is.
 func TestDetachedEntryKillRunsLauncherKillWithHandle(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -323,8 +375,8 @@ func TestDetachedEntryKillRunsLauncherKillWithHandle(t *testing.T) {
 		"kill":   `echo "$ADMIN_HANDLE" > killed.txt`,
 	})
 
-	if err := RunActionRouted(m, r, "dev-server", nil); err != nil {
-		t.Fatalf("RunActionRouted = %v, want nil", err)
+	if err := RunCommand(m, r, "dev", nil, dashboardProducer(new(bool))); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 
 	if err := livework.Default.Kill("dev-server"); err != nil {
