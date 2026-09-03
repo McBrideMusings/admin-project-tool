@@ -2,7 +2,14 @@
 
 package kinds
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
+)
 
 func TestAppleProcessFallsBackToScheme(t *testing.T) {
 	// No project (empty string skips the pbxproj lookup) and no
@@ -79,5 +86,70 @@ func TestAppleBuildActionCleanFlag(t *testing.T) {
 	}
 	if got := appleBuildAction(true); got != "clean build" {
 		t.Errorf("appleBuildAction(true) = %q, want %q", got, "clean build")
+	}
+}
+
+func TestAppleDevEnvResolvesVars(t *testing.T) {
+	t.Setenv("APPLE_DEV_ENV_TEST_VAR", "resolved-value")
+	cfg := map[string]any{
+		"dev_env": map[string]any{
+			"PLAIN": "literal",
+			"VAR":   "${APPLE_DEV_ENV_TEST_VAR}",
+		},
+	}
+	got, err := appleDevEnv(cfg)
+	if err != nil {
+		t.Fatalf("appleDevEnv: %v", err)
+	}
+	if got["PLAIN"] != "literal" {
+		t.Errorf("PLAIN = %q, want %q", got["PLAIN"], "literal")
+	}
+	if got["VAR"] != "resolved-value" {
+		t.Errorf("VAR = %q, want %q", got["VAR"], "resolved-value")
+	}
+}
+
+func TestAppleDevEnvPropagatesResolveError(t *testing.T) {
+	cfg := map[string]any{
+		"dev_env": map[string]any{"BROKEN": "${APPLE_DEV_ENV_UNSET_VAR}"},
+	}
+	if _, err := appleDevEnv(cfg); err == nil {
+		t.Fatal("appleDevEnv: want error for an unresolvable ${VAR}, got nil")
+	}
+}
+
+func TestAppleDevEnvNilWhenAbsent(t *testing.T) {
+	got, err := appleDevEnv(map[string]any{})
+	if err != nil {
+		t.Fatalf("appleDevEnv: %v", err)
+	}
+	if got != nil {
+		t.Errorf("appleDevEnv with no dev_env = %v, want nil", got)
+	}
+}
+
+func TestRunApplePrebuildRunsOnceAndErrorsOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "ran")
+	h := luahost.New(dir)
+
+	cfg := map[string]any{"prebuild_cmd": "echo ran >> " + marker}
+	if err := runApplePrebuild(cfg, h); err != nil {
+		t.Fatalf("first runApplePrebuild: %v", err)
+	}
+	if err := runApplePrebuild(cfg, h); err != nil {
+		t.Fatalf("second runApplePrebuild: %v", err)
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("reading marker: %v", err)
+	}
+	if got := len(strings.Fields(string(data))); got != 1 {
+		t.Errorf("prebuild_cmd ran %d times, want 1 (memoized per cfg value)", got)
+	}
+
+	failing := map[string]any{"prebuild_cmd": "exit 1"}
+	if err := runApplePrebuild(failing, h); err == nil {
+		t.Fatal("runApplePrebuild: want error when prebuild_cmd exits non-zero, got nil")
 	}
 }
