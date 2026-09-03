@@ -81,3 +81,68 @@ func beadForest(beads []bd.Bead) []beadNode {
 	}
 	return out
 }
+
+// beadFamilyForest orders beads so a parent always sits directly above its
+// children — structure, not order, the same parent-child edges beadForest
+// discards when it builds Blockers. Roots are beads with no Parent, or whose
+// Parent isn't among the fetched beads (an epic closed or filtered out is "no
+// known parent" here, exactly as an absent id is "no known blocker" for
+// beadForest).
+//
+// A bead has at most one Parent, so unlike beadForest's blockers map this walk
+// can't split across multiple parents and extra is always 0 — beadNode keeps
+// the field only for row-layout compatibility with the blocks-tree view.
+func beadFamilyForest(beads []bd.Bead) []beadNode {
+	kept := make([]bd.Bead, 0, len(beads))
+	for _, b := range beads {
+		if b.Status == "deferred" {
+			continue
+		}
+		kept = append(kept, b)
+	}
+	byID := make(map[string]bool, len(kept))
+	for _, b := range kept {
+		byID[b.ID] = true
+	}
+
+	children := make(map[string][]bd.Bead, len(kept))
+	for _, b := range kept {
+		if b.Parent != "" && byID[b.Parent] {
+			children[b.Parent] = append(children[b.Parent], b)
+		}
+	}
+
+	emitted := make(map[string]bool, len(kept))
+	out := make([]beadNode, 0, len(kept))
+
+	var walk func(b bd.Bead, depth int)
+	walk = func(b bd.Bead, depth int) {
+		if emitted[b.ID] {
+			// A self-referential or cyclical Parent chain — guarded the same way
+			// beadForest guards its emitted map, even though a single-parent walk
+			// can't otherwise revisit a node.
+			return
+		}
+		emitted[b.ID] = true
+		out = append(out, beadNode{b: b, depth: depth})
+		for _, c := range children[b.ID] {
+			walk(c, depth+1)
+		}
+	}
+
+	// Incoming order is bd.List's order — P0 first, then recency, then id. Roots
+	// are taken in that order and never re-sorted.
+	for _, b := range kept {
+		if (b.Parent == "" || !byID[b.Parent]) && !emitted[b.ID] {
+			walk(b, 0)
+		}
+	}
+	// Anything left is part of a parent-child cycle bd itself should never
+	// produce; append at the top level rather than dropping it from the pane.
+	for _, b := range kept {
+		if !emitted[b.ID] {
+			walk(b, 0)
+		}
+	}
+	return out
+}

@@ -55,6 +55,9 @@ func (m Model) beadRows() []rowItem {
 	if m.beadTree {
 		return m.beadTreeRows(cols)
 	}
+	if m.beadFamilyTree {
+		return m.beadFamilyTreeRows(cols)
+	}
 	human, ready, inProgress, blocked := groupBeads(m.beads)
 	ctx := m.beadCtx(false)
 	for _, s := range [][]bd.Bead{human, ready, inProgress, blocked} {
@@ -103,6 +106,33 @@ func (m Model) beadRows() []rowItem {
 // "+N" after the title counts the blockers this row's position left out.
 func (m Model) beadTreeRows(cols int) []rowItem {
 	nodes := beadForest(m.beads)
+	if len(nodes) == 0 {
+		return []rowItem{{kind: rowText, label: emptyOrLoading(m.haveBeads, "none")}}
+	}
+	beads := make([]bd.Bead, 0, len(nodes))
+	for _, n := range nodes {
+		beads = append(beads, n.b)
+	}
+	l := beadLayoutFor(m.beadCols, cols, m.beadCtx(true), beads)
+
+	rows := make([]rowItem, 0, len(nodes))
+	for _, n := range nodes {
+		left, right := l.row(n, cols)
+		rows = append(rows, rowItem{
+			kind: rowBead, leftSegs: left, rightSegs: right,
+			beadID: n.b.ID, beadTitle: n.b.Title,
+		})
+	}
+	return rows
+}
+
+// beadFamilyTreeRows renders the parent-child forest: one flat sequence where a
+// bead sits directly above its children. It is beadTreeRows with beadForest
+// swapped for beadFamilyForest — same layout call, same row rendering, because
+// beadcolumns.go's row() gates indent and the hidden blocker column on
+// c.tree, not on which tree produced the node.
+func (m Model) beadFamilyTreeRows(cols int) []rowItem {
+	nodes := beadFamilyForest(m.beads)
 	if len(nodes) == 0 {
 		return []rowItem{{kind: rowText, label: emptyOrLoading(m.haveBeads, "none")}}
 	}

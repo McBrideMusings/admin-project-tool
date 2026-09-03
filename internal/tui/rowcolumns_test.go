@@ -704,6 +704,54 @@ func TestBeadTreeSurvivesACycle(t *testing.T) {
 	}
 }
 
+// TestBeadFamilyTreePutsParentsAboveChildren mirrors
+// TestBeadTreePutsBlockersAboveBlocked for the parent-child forest: a child
+// sits directly under its parent, and a bead with no known parent is a root.
+func TestBeadFamilyTreePutsParentsAboveChildren(t *testing.T) {
+	beads := []bd.Bead{
+		{ID: "bdtest-epc", Title: "Family tree epic", Status: "open"},
+		{ID: "bdtest-isd", Title: "Wire reset email", Status: "open", Parent: "bdtest-epc"},
+		{ID: "bdtest-63h", Title: "Docs for reset", Status: "open", Parent: "bdtest-isd"},
+		{ID: "bdtest-qt0", Title: "Unrelated ready work", Status: "open"},
+		{ID: "bdtest-zzz", Title: "On ice", Status: "deferred", Parent: "bdtest-epc"},
+	}
+	got := beadFamilyForest(beads)
+	want := []struct {
+		id    string
+		depth int
+	}{
+		{"bdtest-epc", 0},
+		{"bdtest-isd", 1},
+		{"bdtest-63h", 2},
+		{"bdtest-qt0", 0},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("family forest has %d nodes, want %d — a deferred bead is rendering, or one dropped out", len(got), len(want))
+	}
+	for i, w := range want {
+		n := got[i]
+		if n.b.ID != w.id || n.depth != w.depth {
+			t.Errorf("node %d is %s depth=%d, want %s depth=%d", i, n.b.ID, n.depth, w.id, w.depth)
+		}
+	}
+}
+
+// TestBeadFamilyTreeOrphanIsARoot: a Parent id that isn't among the fetched
+// beads (an epic closed or filtered out) must not make its child vanish — it
+// becomes a root exactly like a parentless bead.
+func TestBeadFamilyTreeOrphanIsARoot(t *testing.T) {
+	beads := []bd.Bead{
+		{ID: "bdtest-isd", Title: "Wire reset email", Status: "open", Parent: "bdtest-gone"},
+	}
+	got := beadFamilyForest(beads)
+	if len(got) != 1 {
+		t.Fatalf("orphan rendered %d rows, want 1", len(got))
+	}
+	if got[0].b.ID != "bdtest-isd" || got[0].depth != 0 {
+		t.Errorf("orphan is %s depth=%d, want bdtest-isd depth=0", got[0].b.ID, got[0].depth)
+	}
+}
+
 // TestCleanUpRowsDropTheirPurposeSubline pins the Clean Up gate at the real
 // renderer: a Clean Up row is about to be deleted, so its purpose subline
 // ("↳ ...") — what the branch is FOR — is dead weight and must never appear,
