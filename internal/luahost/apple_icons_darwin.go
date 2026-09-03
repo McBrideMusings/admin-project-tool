@@ -54,6 +54,7 @@ import (
 	"image/draw"
 	"image/png"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -101,20 +102,34 @@ func RestoreIcons(iconDirs map[string]string, backupDir string) error {
 	return nil
 }
 
+// copyPNGs copies every *.png under srcDir into destDir, preserving the
+// relative path of each one.
+//
+// Recursive, not flat, because a tvOS icon is not a flat directory: a
+// .brandassets bundle nests its PNGs three levels down
+// (App Icon.imagestack/Front.imagestacklayer/Content.imageset/Front@2x.png),
+// so a flat copy backed up nothing at all for tv and `icons restore` had
+// nothing to put back. mac/ios appiconsets keep exactly the behaviour they
+// had — their PNGs sit directly in the directory, so there are no
+// subdirectories to walk.
 func copyPNGs(srcDir, destDir string) error {
-	entries, err := os.ReadDir(srcDir)
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".png") {
-			continue
-		}
-		if err := copyFile(filepath.Join(srcDir, e.Name()), filepath.Join(destDir, e.Name())); err != nil {
+	return filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
 			return err
 		}
-	}
-	return nil
+		if d.IsDir() || !strings.HasSuffix(strings.ToLower(d.Name()), ".png") {
+			return nil
+		}
+		rel, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
+		dst := filepath.Join(destDir, rel)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		return copyFile(path, dst)
+	})
 }
 
 func copyFile(src, dst string) error {

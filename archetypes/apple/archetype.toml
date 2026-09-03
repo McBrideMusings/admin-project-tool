@@ -352,24 +352,40 @@ local sub = args[1] or "regenerate"
 if sub == "regenerate" then
   do_regenerate()
 elseif sub == "swap-dev" then
+  -- tv is banded here as well as mac/ios: without it a dev build installs on
+  -- an Apple TV wearing the SHIPPING icon, and the whole point of the banner
+  -- is telling the two apart on a home screen you are looking at from a sofa.
+  -- It takes a different call because a .brandassets bundle is not a flat
+  -- appiconset — apply_tv_dev_banner marks only each imagestack's topmost
+  -- Front layer plus the Top Shelf images, leaving Back and Middle alone so
+  -- ADR-0007's opaque-Back rule is never at stake.
   local dirs = icon_dirs({"mac", "ios"})
-  if next(dirs) == nil then
+  local tv_dir = icon_dirs({"tv"}).tv
+  if next(dirs) == nil and not tv_dir then
     err("no icons configured in [apple.icons]")
     error("no icons configured")
   end
-  apple.backup_icons(dirs, "tmp/icon-backup")
-  if apple.swap_dev_icons_banner(dirs) then
+  local all = icon_dirs({"mac", "ios", "tv"})
+  apple.backup_icons(all, "tmp/icon-backup")
+  local swapped = true
+  if next(dirs) ~= nil and not apple.swap_dev_icons_banner(dirs) then
+    swapped = false
+  end
+  if tv_dir and not apple.apply_tv_dev_banner(tv_dir) then
+    swapped = false
+  end
+  if swapped then
     ok("dev icons swapped in — `icons restore` puts the originals back")
   else
     error("swapping dev icons failed")
   end
 elseif sub == "restore" then
-  local dirs = icon_dirs({"mac", "ios"})
-  if next(dirs) == nil then
+  local all = icon_dirs({"mac", "ios", "tv"})
+  if next(all) == nil then
     err("no icons configured in [apple.icons]")
     error("no icons configured")
   end
-  apple.restore_icons(dirs, "tmp/icon-backup")
+  apple.restore_icons(all, "tmp/icon-backup")
   ok("icons restored from tmp/icon-backup")
 elseif sub == "-h" or sub == "--help" then
   info("usage: admin icons [regenerate|swap-dev|restore]")
