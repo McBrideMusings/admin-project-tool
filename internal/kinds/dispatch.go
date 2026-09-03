@@ -118,10 +118,10 @@ type Surface struct {
 }
 
 // Action runs another declared action from inside a running Runner, on s's
-// own surface. Every inline dispatch — plain CLI, hosted pty child, a nested
+// own surface. Every inline dispatch — the hosted pty child, a nested
 // delegation — routes through RunAction, which never reaches the launcher;
-// only the producer path (launchCommand, reached from RunCommand when p !=
-// nil) does that, once, before any Runner is invoked.
+// only launchCommand, reached from RunCommand's top-level dispatch before any
+// Runner is invoked, does that, once, whichever producer asked for it.
 //
 // A nil receiver is legal in Go and is exactly the case where a factory's
 // Runner is invoked directly, outside any dispatch — s.Action still returns
@@ -208,17 +208,16 @@ func RunAction(m *manifest.Manifest, r *Registry, name string, args []string) er
 
 // CommandProducer distinguishes a command dispatch whose producer cannot
 // host the run itself from one that can. A nil *CommandProducer passed to
-// RunCommand means "this process hosts the run" — the plain CLI, which
-// already owns a terminal and runs every step inline through RunAction,
-// unconditionally: `detach` is a dashboard concern only (admin-ysxr.9) and is
-// never consulted on this path.
+// RunCommand means "this process would otherwise host the run inline" — the
+// plain CLI, which already owns a terminal — but that no longer exempts it
+// from `detach`: both producers resolve the command's own launcher/detach
+// declaration once, up front, in launchCommand, and either dispatch through
+// the project's declared [terminal] launcher or fall back to running inline
+// (the CLI) / Launch (the dashboard's hosted pty).
 //
 // A non-nil producer is the dashboard: it cannot run a Command's step loop
-// on its own terminal (that would block its alt-screen for the run's whole
-// duration), so RunCommand resolves the command's own launcher/detach
-// declaration once, up front, in launchCommand — either dispatching through
-// the project's [terminal] launcher, or falling back to Launch, the
-// producer's own default surface (the dashboard's hosted pty).
+// on its own terminal at all (that would block its alt-screen for the run's
+// whole duration), so its fallback is Launch rather than an inline run.
 type CommandProducer struct {
 	// Launch runs name (with args) on the producer's own default surface —
 	// StartHostedPTY for the dashboard — when the command's first step
@@ -242,35 +241,48 @@ type CommandProducer struct {
 //
 // Two cases, checked in this order:
 //
-//  1. inReentry() || p == nil — every step runs inline through runSteps/
-//     RunAction, and `detach` is never consulted. inReentry covers
-//     __run-command's own RunCommand call (cmd/root.go), which is what makes
-//     StartHostedPTY's pty child run its steps inline whatever p is; p == nil
-//     covers the plain CLI, which already owns a terminal and has nowhere
-//     more useful to put a detached run's output than right here
-//     (admin-ysxr.9) — `admin dev` always runs inline, never spawns through
-//     [terminal].
-//  2. p != nil and this process is not already inside a launched dispatch —
-//     the dashboard, which cannot host the run on its own terminal:
-//     launchCommand resolves the command's own launcher/detach declaration
-//     once, up front, and either dispatches to the launcher or falls back to
-//     p.Launch.
+//  1. inReentry() — every step runs inline through runSteps/RunAction, and
+//     `detach` is never consulted. This is __run-command's own RunCommand
+//     call (cmd/root.go): a process already inside a launched dispatch must
+//     never reach a second launcher, however many levels of delegation
+//     separate it from the dispatch that opened that run.
+//  2. Otherwise — a plain-CLI dispatch (p == nil) or a dashboard dispatch (p
+//     non-nil) alike — launchCommand resolves the command's own
+//     launcher/detach declaration once, up front, and either dispatches to
+//     the project's declared [terminal] launcher or falls back to running
+//     the command on this process's own surface: inline (runSteps) for the
+//     CLI, p.Launch (the hosted pty) for the dashboard.
 func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string, p *CommandProducer) error {
-	if inReentry() || p == nil {
+	if inReentry() {
 		return runSteps(m, r, name, args)
 	}
-	return launchCommand(m, name, args, p)
+	var env []string
+	fallback := func() error { return runSteps(m, r, name, args) }
+	if p != nil {
+		env = p.Env
+		fallback = func() error { return p.Launch(m, name, args) }
+	}
+	return launchCommand(m, name, args, env, fallback)
 }
 
-// launchCommand is RunCommand's non-hosting branch: reached only when p is
-// non-nil and this process is not already inside a launched dispatch. It
-// resolves name once, up front — unlike the plain-CLI branch, which lets
-// runSteps discover an unknown command or an ADR-0003 pure-routing violation
-// mid-dispatch — because a producer that cannot host the run has no runSteps
-// call on this path to catch that: p.Launch is a distinct spawn (an exec, a
-// pty), not this process running the command's own step loop. A typo'd or
-// malformed command must still be reported here rather than silently
-// spawning nothing.
+// launchCommand is RunCommand's launcher-resolving half: reached whenever
+// this process is not already inside a launched dispatch, for both the
+// plain CLI and the dashboard. It resolves name once, up front — unlike the
+// old CLI-only shape, which let runSteps discover an unknown command or an
+// ADR-0003 pure-routing violation mid-dispatch — because a dispatch that
+// ends up spawning through the launcher has no runSteps call on this path to
+// catch that: dispatchToLauncher is a distinct spawn (an exec, a pty), not
+// this process running the command's own step loop. A typo'd or malformed
+// command must still be reported here rather than silently spawning
+// nothing, or (for the CLI) silently falling back to fallback with no error
+// at all.
+//
+// env carries the extra ADMIN_ROW_* pairs a row-bound dashboard dispatch
+// would have handed its own launcher (CommandProducer.Env) — nil for the
+// CLI, which has no such row context and falls back to the process
+// environment (launchCtxFrom). fallback runs the command on the caller's own
+// default surface when no launcher dispatch happens: runSteps for the CLI,
+// p.Launch for the dashboard.
 //
 // The launcher decision looks only at the command's FIRST step's action,
 // keyed by cmd.Steps[0] — the same key StartHostedPTY uses — so
@@ -288,9 +300,9 @@ func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string, p
 // the target picker once it runs — unless the action declares exactly one
 // target, which the Runner auto-picks deterministically; dispatchDetach
 // resolves that case the same way. Otherwise dispatchDetach reports the
-// dispatch as unresolvable and this function falls through to p.Launch,
+// dispatch as unresolvable and this function falls through to fallback,
 // same as `detach` being absent.
-func launchCommand(m *manifest.Manifest, name string, args []string, p *CommandProducer) error {
+func launchCommand(m *manifest.Manifest, name string, args []string, env []string, fallback func() error) error {
 	cmd, ok := resolveCommand(m, name)
 	if !ok {
 		return fmt.Errorf("unknown command %q", name)
@@ -307,7 +319,7 @@ func launchCommand(m *manifest.Manifest, name string, args []string, p *CommandP
 		if detach, ok := dispatchDetach(action, args); ok && detach {
 			cfg, _ := config.FromManifest(m)
 			if cfg.Terminal.Spawn != "" {
-				ctx := launchCtxFrom(name, p.Env)
+				ctx := launchCtxFrom(name, env)
 				root := projectRoot(m)
 				handle, err := dispatchToLauncher("__run-command", name, args, ctx, cfg.Terminal, root)
 				if err == nil {
@@ -316,17 +328,19 @@ func launchCommand(m *manifest.Manifest, name string, args []string, p *CommandP
 					return nil
 				}
 				// A launcher IS configured but spawning through it failed —
-				// degrade to the producer's own default surface with one
+				// degrade to the caller's own default surface with one
 				// warning line, rather than aborting the command outright.
 				fmt.Fprintf(os.Stderr, "warning: command %q: launcher spawn failed, running on the default surface: %v\n", name, err)
 			}
 		}
 	}
-	return p.Launch(m, name, args)
+	return fallback()
 }
 
-// runSteps is the body RunCommand's inline branch (p == nil, or already
-// inReentry) shares with itself for every step: the global preflight —
+// runSteps is the body an inline run shares with itself for every step —
+// reached from RunCommand directly when already inReentry, and from
+// launchCommand's fallback when the CLI dispatches a command that carries no
+// `detach` (or has nowhere to send it): the global preflight —
 // guards.RunGlobalPreflight, the always-on deps-fresh check ADR-0005
 // requires before every command, skipped for the exempt diagnostic verbs
 // (logs, kill) and memoized so a multi-step command pays for it once per
