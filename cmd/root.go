@@ -386,12 +386,11 @@ func applyHostedColorProfile() {
 // unanswered — so skipping the query changes latency, never the resulting
 // color decision.
 func colorfgbgDarkBackground(raw string) bool {
-	if raw == "" || !strings.Contains(raw, ";") {
+	sep := strings.LastIndex(raw, ";")
+	if sep < 0 {
 		return true
 	}
-	fields := strings.Split(raw, ";")
-	last := fields[len(fields)-1]
-	idx, err := strconv.Atoi(strings.TrimSpace(last))
+	idx, err := strconv.Atoi(strings.TrimSpace(raw[sep+1:]))
 	if err != nil {
 		return true
 	}
