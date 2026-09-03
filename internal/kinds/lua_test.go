@@ -71,7 +71,7 @@ func TestLuaManifestConfigReachesBody(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	m := &manifest.Manifest{Go: map[string]any{"binary": "bin/admin"}}
+	m := &manifest.Manifest{Settings: map[string]map[string]any{"go": {"binary": "bin/admin"}}}
 	runner, err := makeLua("read-go-config", manifest.Action{
 		"run": `if config.go.binary == "bin/admin" then run_cmd("touch marker.txt") ` +
 			`else err("got " .. tostring(config.go.binary)) end`,
@@ -94,7 +94,7 @@ func TestLuaInlineConfigOverridesManifestTable(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	m := &manifest.Manifest{Go: map[string]any{"binary": "from-manifest"}}
+	m := &manifest.Manifest{Settings: map[string]map[string]any{"go": {"binary": "from-manifest"}}}
 	runner, err := makeLua("override", manifest.Action{
 		"run":    `if config.go == "from-inline" then run_cmd("touch marker.txt") else err("wrong") end`,
 		"config": map[string]any{"go": "from-inline"},

@@ -12,7 +12,7 @@ import (
 // [docs].dir doesn't exist — the Go port of admin_lib/interp.py::_make_docs'
 // `if not os.path.isdir(dirpath)` guard.
 func TestDocsMissingDirIsAnError(t *testing.T) {
-	m := &manifest.Manifest{Docs: map[string]any{"dir": "does-not-exist"}}
+	m := &manifest.Manifest{Settings: map[string]map[string]any{"docs": {"dir": "does-not-exist"}}}
 	runner, err := makeDocs("docs", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makeDocs: %v", err)
@@ -40,7 +40,7 @@ func TestDocsRunsConfiguredScript(t *testing.T) {
 	binDir := t.TempDir()
 	fakeNpmScript(t, binDir, `echo "$@" > `+filepath.Join(docsDir, "argv.txt"))
 
-	m := &manifest.Manifest{Docs: map[string]any{"dir": "site", "script": "custom-docs"}}
+	m := &manifest.Manifest{Settings: map[string]map[string]any{"docs": {"dir": "site", "script": "custom-docs"}}}
 	runner, err := makeDocs("docs", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makeDocs: %v", err)

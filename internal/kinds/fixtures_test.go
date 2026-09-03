@@ -75,7 +75,7 @@ func TestMakeFixturesGenerateThenResetRoundTrips(t *testing.T) {
 	baseline := filepath.Join(root, "data", "baseline")
 	working := filepath.Join(root, "data", "working")
 
-	m := &manifest.Manifest{Fixtures: map[string]any{
+	m := &manifest.Manifest{Settings: map[string]map[string]any{"fixtures": {
 		"baseline": baseline,
 		"working":  working,
 		"tree": []any{
@@ -86,7 +86,7 @@ func TestMakeFixturesGenerateThenResetRoundTrips(t *testing.T) {
 				},
 			},
 		},
-	}}
+	}}}
 
 	genRunner, err := makeFixturesGenerate("fixtures-generate", manifest.Action{}, m, nil)
 	if err != nil {
@@ -139,12 +139,12 @@ func TestMakeFixturesGenerateThenResetRoundTrips(t *testing.T) {
 func TestMakeFixturesGenerateRefusesNonEmptyBaselineWithoutForce(t *testing.T) {
 	root := t.TempDir()
 	baseline := filepath.Join(root, "baseline")
-	m := &manifest.Manifest{Fixtures: map[string]any{
+	m := &manifest.Manifest{Settings: map[string]map[string]any{"fixtures": {
 		"baseline": baseline,
 		"tree": []any{
 			map[string]any{"files": []any{map[string]any{"name": "a.bin", "size": "1B"}}},
 		},
-	}}
+	}}}
 	runner, err := makeFixturesGenerate("fixtures-generate", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makeFixturesGenerate: %v", err)

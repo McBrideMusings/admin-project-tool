@@ -65,7 +65,7 @@ func TestGoBuildRunsRealGoBuild(t *testing.T) {
 	writeFile(t, dir, "go.mod", "module example.com/gobuildtest\n\ngo 1.21\n")
 	writeFile(t, dir, "main.go", "package main\n\nfunc main() {}\n")
 
-	m := &manifest.Manifest{Go: map[string]any{"binary": "out/bin"}}
+	m := &manifest.Manifest{Settings: map[string]map[string]any{"go": {"binary": "out/bin"}}}
 	runner, err := makeGoKind("build", manifest.Action{"run": "build"}, m, nil)
 	if err != nil {
 		t.Fatalf("makeGoKind: %v", err)

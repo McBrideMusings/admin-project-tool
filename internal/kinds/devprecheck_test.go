@@ -26,9 +26,9 @@ func TestMakeDevPrecheckWithNoLiveSessionSucceeds(t *testing.T) {
 func TestMakeDevPrecheckAbortsOnADeclaredRunningContainer(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	m := &manifest.Manifest{DevPrecheck: map[string]any{
+	m := &manifest.Manifest{Settings: map[string]map[string]any{"dev_precheck": {
 		"containers": []any{"admin-3rgp-15-definitely-not-running"},
-	}}
+	}}}
 	runner, err := makeDevPrecheck("dev-precheck", manifest.Action{}, m, nil)
 	if err != nil {
 		t.Fatalf("makeDevPrecheck: %v", err)

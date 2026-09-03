@@ -55,9 +55,9 @@ func TestMakeRaylibCleanRemovesGlobMatchedPaths(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	m := &manifest.Manifest{Raylib: map[string]any{
+	m := &manifest.Manifest{Settings: map[string]map[string]any{"raylib": {
 		"clean_dirs": []any{"build", "data/zones/*.db"},
-	}}
+	}}}
 	runner, err := makeRaylib("clean", manifest.Action{"run": "clean"}, m, nil)
 	if err != nil {
 		t.Fatalf("makeRaylib: %v", err)

@@ -60,35 +60,16 @@ func Resolve(project *manifest.Manifest, sp SearchPath) (*manifest.Manifest, []s
 		Logs:      map[string]manifest.LogSource{},
 		Guards:    map[string]manifest.Guard{},
 
-		Apple:           map[string]any{},
-		ReactNative:     map[string]any{},
-		Electron:        map[string]any{},
-		Server:          map[string]any{},
-		Output:          map[string]any{},
-		Logging:         map[string]any{},
-		DevKill:         map[string]any{},
-		DevPrecheck:     map[string]any{},
-		CleanDev:        map[string]any{},
-		ViteDev:         map[string]any{},
-		DockerDev:       map[string]any{},
-		Deploy:          map[string]any{},
-		DockerRun:       map[string]any{},
-		DockerBuild:     map[string]any{},
-		InstallTemplate: map[string]any{},
-		Fixtures:        map[string]any{},
-		Docs:            map[string]any{},
-		Go:              map[string]any{},
-		GoDist:          map[string]any{},
-		Raylib:          map[string]any{},
-		Launchd:         map[string]any{},
-		LogBridge:       map[string]any{},
-		Worktree:        map[string]any{},
-		Keys:            map[string]any{},
-		Identity:        map[string]any{},
-		Worktrees:       map[string]any{},
-		Beads:           map[string]any{},
-		Workflow:        map[string]any{},
-		Terminal:        map[string]any{},
+		Settings:  map[string]map[string]any{},
+		Logging:   map[string]any{},
+		LogBridge: map[string]any{},
+		Worktree:  map[string]any{},
+		Keys:      map[string]any{},
+		Identity:  map[string]any{},
+		Worktrees: map[string]any{},
+		Beads:     map[string]any{},
+		Workflow:  map[string]any{},
+		Terminal:  map[string]any{},
 	}
 
 	var log []string
@@ -196,27 +177,7 @@ func merge(dst, src *manifest.Manifest, srcLabel string, isManifest bool, log *[
 	}
 
 	for _, pair := range []struct{ dst, src map[string]any }{
-		{dst.Apple, src.Apple},
-		{dst.ReactNative, src.ReactNative},
-		{dst.Electron, src.Electron},
-		{dst.Server, src.Server},
-		{dst.Output, src.Output},
 		{dst.Logging, src.Logging},
-		{dst.DevKill, src.DevKill},
-		{dst.DevPrecheck, src.DevPrecheck},
-		{dst.CleanDev, src.CleanDev},
-		{dst.ViteDev, src.ViteDev},
-		{dst.DockerDev, src.DockerDev},
-		{dst.Deploy, src.Deploy},
-		{dst.DockerRun, src.DockerRun},
-		{dst.DockerBuild, src.DockerBuild},
-		{dst.InstallTemplate, src.InstallTemplate},
-		{dst.Fixtures, src.Fixtures},
-		{dst.Docs, src.Docs},
-		{dst.Go, src.Go},
-		{dst.GoDist, src.GoDist},
-		{dst.Raylib, src.Raylib},
-		{dst.Launchd, src.Launchd},
 		{dst.LogBridge, src.LogBridge},
 		{dst.Worktree, src.Worktree},
 		{dst.Identity, src.Identity},
@@ -227,6 +188,8 @@ func merge(dst, src *manifest.Manifest, srcLabel string, isManifest bool, log *[
 	} {
 		mergeTable(pair.dst, pair.src)
 	}
+
+	mergeSettings(dst.Settings, src.Settings)
 
 	mergeRowKeys(dst.Keys, src.Keys)
 
@@ -267,6 +230,24 @@ func mergeStringSet(dst, src []string) []string {
 func mergeTable(dst, src map[string]any) {
 	for k, v := range src {
 		dst[k] = v
+	}
+}
+
+// mergeSettings folds every settings table src declares into dst, one
+// mergeTable per name. Unlike the fixed pair list mergeTable's callers used
+// to enumerate for the ~20 built-in archetype config tables, this walks
+// whatever names src.Settings actually holds — apple, go, or a name only one
+// project's own admin.toml invents — so an archetype can contribute default
+// values for a project-invented table exactly as it already can for a
+// built-in one, with no registry naming it in advance (admin-tlhw.4).
+func mergeSettings(dst, src map[string]map[string]any) {
+	for key, srcTbl := range src {
+		dstTbl, ok := dst[key]
+		if !ok {
+			dstTbl = map[string]any{}
+			dst[key] = dstTbl
+		}
+		mergeTable(dstTbl, srcTbl)
 	}
 }
 

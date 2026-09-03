@@ -175,33 +175,24 @@ type Manifest struct {
 
 	InlineFile string
 
-	// The ~22 archetype-specific config tables. Each stays a raw map exactly
-	// as the Python parser keeps it (ADR-0009: the manifest references, the
+	// Settings holds every top-level admin.toml table that isn't one of the
+	// structural or dedicated-decode keys parsed elsewhere in this function
+	// (commands, actions, urls, guards, keys, identity, worktrees, beads,
+	// workflow, terminal, ...), keyed by its admin.toml name — apple, go,
+	// docker_dev, and any name a project invents for itself alike. A kind
+	// reads its own table by name (kinds.ArchetypeConfigTable(m, "apple")) or
+	// a project's own kind="lua" body reads an arbitrary one as
+	// config.<name>. There is deliberately no closed list of permitted
+	// names: a project adds [my_thing] to admin.toml and it is readable with
+	// no change to the tool (admin-tlhw.4). Each stays a raw map exactly as
+	// the Python parser kept it (ADR-0009: the manifest references, the
 	// archetype implements) — typing them here would pull archetype
 	// knowledge into the parser.
-	Apple           map[string]any
-	ReactNative     map[string]any
-	Electron        map[string]any
-	Server          map[string]any
-	Output          map[string]any
-	Logging         map[string]any
-	DevKill         map[string]any
-	DevPrecheck     map[string]any
-	CleanDev        map[string]any
-	ViteDev         map[string]any
-	DockerDev       map[string]any
-	Deploy          map[string]any
-	DockerRun       map[string]any
-	DockerBuild     map[string]any
-	InstallTemplate map[string]any
-	Fixtures        map[string]any
-	Docs            map[string]any
-	Go              map[string]any
-	GoDist          map[string]any
-	Raylib          map[string]any
-	Launchd         map[string]any
-	LogBridge       map[string]any
-	Worktree        map[string]any
+	Settings map[string]map[string]any
+
+	Logging   map[string]any
+	LogBridge map[string]any
+	Worktree  map[string]any
 
 	// Identity, Worktrees, Beads, Workflow and Terminal are the config.Config
 	// tables (internal/config): who "you" are, where worktrees are created,
@@ -260,6 +251,41 @@ var knownTopLevelKeys = map[string]bool{
 	"terminal": true,
 	// Obsolete under interpreter mode (ADR-0006); tolerated silently.
 	"generator_commit": true,
+}
+
+// nonSettingsTopLevelKeys lists every top-level admin.toml key that parse
+// handles structurally or through one of the dedicated-decode fields
+// (Logging, LogBridge, Worktree, Keys, Identity, Worktrees, Beads, Workflow,
+// Terminal — each has a consumer outside this package that reads the typed
+// field directly) or the specially-validated [deploy] table above. Anything
+// NOT in this set is, by construction, a settings table: parse's final pass
+// copies it into Manifest.Settings under its own name with no further
+// involvement from the tool (admin-tlhw.4). This is deliberately the inverse
+// of a permitted-names allowlist — it names the small fixed set of keys that
+// are NOT generic settings, so a project can invent any other top-level
+// table and have it be readable without editing this list.
+var nonSettingsTopLevelKeys = map[string]bool{
+	"project_name": true, "python_min": true, "tracker": true, "uses_pull_requests": true,
+	"archetypes": true, "modules": true, "urls": true,
+	"commands": true, "actions": true, "order": true, "logs": true,
+	"name":             true,
+	"exclude_modules":  true,
+	"hide_commands":    true,
+	"hide_urls":        true,
+	"inline":           true,
+	"guards":           true,
+	"populate":         true,
+	"generator_commit": true,
+	"deploy":           true,
+	"logging":          true,
+	"log_bridge":       true,
+	"worktree":         true,
+	"keys":             true,
+	"identity":         true,
+	"worktrees":        true,
+	"beads":            true,
+	"workflow":         true,
+	"terminal":         true,
 }
 
 // IdentityKeys are the keys accepted by the [identity] table.
@@ -487,25 +513,6 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 		key string
 		dst *map[string]any
 	}{
-		{"apple", &m.Apple},
-		{"react_native", &m.ReactNative},
-		{"electron", &m.Electron},
-		{"server", &m.Server},
-		{"output", &m.Output},
-		{"dev_kill", &m.DevKill},
-		{"dev_precheck", &m.DevPrecheck},
-		{"clean_dev", &m.CleanDev},
-		{"vite_dev", &m.ViteDev},
-		{"docker_dev", &m.DockerDev},
-		{"docker_run", &m.DockerRun},
-		{"docker_build", &m.DockerBuild},
-		{"install_template", &m.InstallTemplate},
-		{"fixtures", &m.Fixtures},
-		{"docs", &m.Docs},
-		{"go", &m.Go},
-		{"go_dist", &m.GoDist},
-		{"raylib", &m.Raylib},
-		{"launchd", &m.Launchd},
 		{"logging", &m.Logging},
 		{"log_bridge", &m.LogBridge},
 		{"worktree", &m.Worktree},
@@ -573,7 +580,18 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 			}
 		}
 	}
-	m.Deploy = deploy
+
+	m.Settings = map[string]map[string]any{"deploy": deploy}
+	for k, v := range data {
+		if nonSettingsTopLevelKeys[k] || v == nil {
+			continue
+		}
+		tbl, ok := v.(map[string]any)
+		if !ok {
+			return nil, errf("%s: '[%s]' must be a table", source, k)
+		}
+		m.Settings[k] = tbl
+	}
 
 	guards, err := parseGuardTables(data, source)
 	if err != nil {
