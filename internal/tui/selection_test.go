@@ -332,6 +332,65 @@ func TestSwitchTabClearsInProgressSelection(t *testing.T) {
 	}
 }
 
+// TestSelWatchdogClearsAGestureThatNeverGotAReleaseEvent pins the fix for the
+// drag-to-copy freeze/stuck-highlight bug: cell-motion mouse reporting stops
+// emitting events entirely once the cursor leaves the terminal's grid, so a
+// drag that walks off-window gets no more motion and no eventual release —
+// nothing in the input stream ever tells the app the gesture ended. The
+// watchdog is the only thing that can end it.
+func TestSelWatchdogClearsAGestureThatNeverGotAReleaseEvent(t *testing.T) {
+	m := seededModel()
+	m.active = tabLocal
+
+	next, _ := m.Update(tea.MouseMsg{Y: 5, X: 5, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = next.(Model)
+	next, _ = m.Update(tea.MouseMsg{Y: 8, X: 20, Action: tea.MouseActionMotion})
+	m = next.(Model)
+	if !m.sel.active() {
+		t.Fatal("fixture drag never became active")
+	}
+	gen := m.selGen
+
+	// No further mouse event ever arrives — the cursor left the window. The
+	// watchdog scheduled by the last motion is the only cmd left in flight;
+	// simulate it firing.
+	next, _ = m.Update(selWatchdogMsg{gen: gen})
+	m = next.(Model)
+
+	if m.sel.inProgress() {
+		t.Errorf("selection still in progress after its watchdog fired: %+v", m.sel)
+	}
+}
+
+// TestSelWatchdogIgnoresAStaleGenAndLeavesALiveSelectionAlone makes sure the
+// self-heal doesn't cut off a selection that's still genuinely being
+// dragged: an earlier motion's watchdog firing after a newer motion has
+// already rearmed it must be a no-op.
+func TestSelWatchdogIgnoresAStaleGenAndLeavesALiveSelectionAlone(t *testing.T) {
+	m := seededModel()
+	m.active = tabLocal
+
+	next, _ := m.Update(tea.MouseMsg{Y: 5, X: 5, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = next.(Model)
+	staleGen := m.selGen
+
+	next, _ = m.Update(tea.MouseMsg{Y: 6, X: 6, Action: tea.MouseActionMotion})
+	m = next.(Model)
+	next, _ = m.Update(tea.MouseMsg{Y: 8, X: 20, Action: tea.MouseActionMotion})
+	m = next.(Model)
+	if !m.sel.active() {
+		t.Fatal("fixture drag never became active")
+	}
+
+	// The watchdog from the very first (now superseded) motion fires late.
+	next, _ = m.Update(selWatchdogMsg{gen: staleGen})
+	m = next.(Model)
+
+	if !m.sel.active() {
+		t.Error("a stale watchdog cleared a selection that is still being actively dragged")
+	}
+}
+
 // --- highlight and extraction ---
 
 // TestHighlightSplicePreservesWidth pins the cell-width guarantee: painting a

@@ -327,7 +327,21 @@ type Model struct {
 	// mouse-down, drag on motion. It is reset to its zero value (selection{},
 	// phase selNone) in the same Update that finishes a real drag, so the
 	// highlight is gone on the very next frame; selection never persists.
+	//
+	// That invariant depends on a release event actually arriving. Cell-motion
+	// mouse reporting (the mode this program enables) only emits escape
+	// sequences for positions inside the terminal's grid — a button released
+	// after the cursor has left the window generates no SGR sequence at all,
+	// so finishMouse's tea.MouseActionRelease case never runs. selGen/the
+	// selWatchdogMsg cycle below is the self-heal for exactly that: a gesture
+	// with no fresh mouse event in selIdleTimeout is abandoned, so a lost
+	// release can't leave the highlight stuck (or a lost motion frozen)
+	// indefinitely.
 	sel selection
+	// selGen counts drag-to-copy presses/motions; a scheduled selWatchdogMsg
+	// only cancels the gesture if its gen still matches, so an older
+	// watchdog from before the most recent motion is a no-op.
+	selGen int
 	// toastGen counts the "copied to clipboard" toasts shown, so a delayed
 	// expiry tick can tell whether the status line still holds the toast it was
 	// scheduled for, or whether a newer action has already replaced it.
@@ -1436,6 +1450,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 
+	case selWatchdogMsg:
+		if msg.gen == m.selGen && m.sel.inProgress() {
+			m.sel = selection{}
+		}
+		return m, nil
+
 	case copyToastExpiredMsg:
 		if msg.gen == m.toastGen {
 			m.status = ""
@@ -1450,6 +1470,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // selection, motion extends it (highlighted live via applyHighlight), and
 // release either activates the row under the pointer (a bare click) or copies
 // the dragged range (a real drag) — see selection.finish.
+//
+// Press and motion both (re)arm the watchdog: cell-motion mouse reporting
+// stops emitting events entirely once the cursor leaves the terminal's grid,
+// so a drag that walks off-window neither advances nor sees the release that
+// would normally end it. Without this, that gesture's highlight would freeze
+// in place and then outlive the mouse-up forever.
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	switch msg.Action {
 	case tea.MouseActionPress:
@@ -1457,13 +1483,15 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.sel = anchorAt(msg.Y, msg.X)
-		return m, nil
+		m.selGen++
+		return m, selWatchdogCmd(m.selGen)
 	case tea.MouseActionMotion:
 		if !m.sel.inProgress() {
 			return m, nil
 		}
 		m.sel.drag(msg.Y, msg.X)
-		return m, nil
+		m.selGen++
+		return m, selWatchdogCmd(m.selGen)
 	case tea.MouseActionRelease:
 		if !m.sel.inProgress() {
 			return m, nil
@@ -1471,6 +1499,21 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m.finishMouse(msg)
 	}
 	return m, nil
+}
+
+// selWatchdogMsg fires selIdleTimeout after the mouse event that scheduled it
+// (a press or a drag motion). gen ties it to that exact event: if a newer
+// press or motion has arrived since, m.selGen has moved on and this msg is a
+// no-op instead of cutting off a selection that is still live.
+type selWatchdogMsg struct{ gen int }
+
+// selIdleTimeout is how long a drag-to-copy gesture may go without a fresh
+// mouse event before it's assumed abandoned — the cursor left the terminal
+// window and no further motion or release will ever arrive for it.
+const selIdleTimeout = 500 * time.Millisecond
+
+func selWatchdogCmd(gen int) tea.Cmd {
+	return tea.Tick(selIdleTimeout, func(time.Time) tea.Msg { return selWatchdogMsg{gen: gen} })
 }
 
 // finishMouse ends the gesture on mouse-up: a real drag copies, a bare click
