@@ -314,11 +314,6 @@ func TestParseMalformedNamesOffendingKey(t *testing.T) {
 			wantSubstr: "'[deploy].delete' must be true or false",
 		},
 		{
-			name:       "docs is not a validation site — [docs] must at least be a table",
-			toml:       "project_name = \"x\"\ndocs = \"not-a-table\"\n",
-			wantSubstr: "'[docs]' must be a table",
-		},
-		{
 			name:       "invalid python_min",
 			toml:       "project_name = \"x\"\npython_min = \"3\"\n",
 			wantSubstr: "'python_min' must be MAJOR.MINOR",
@@ -341,6 +336,33 @@ func TestParseMalformedNamesOffendingKey(t *testing.T) {
 				t.Errorf("Load(%s) error = %q, want substring %q", c.name, err.Error(), c.wantSubstr)
 			}
 		})
+	}
+}
+
+// TestParseScalarSettingsKeyIsTolerated proves a scalar value under a
+// settings-shaped name — a typo like `docs = "oops"` meant to be a table, or
+// any other top-level key the parser doesn't otherwise recognize — is
+// tolerated exactly like any other unrecognized key (admin-tlhw.4), matching
+// admin_lib/manifest.py's own warn-only behavior. Before admin-tlhw.4, "docs"
+// was one of ~20 names the parser specially validated as a table, so this
+// same manifest raised "'[docs]' must be a table"; treating settings-shaped
+// keys differently from other unknown keys by type would reintroduce a
+// closed list one field at a time.
+//
+// MUTATION EVIDENCE: change the generic Settings loop in parse() back to
+// erroring on a non-map value, and this test fails with a "must be a table"
+// error instead of a nil one.
+func TestParseScalarSettingsKeyIsTolerated(t *testing.T) {
+	dir := writeManifest(t, "project_name = \"x\"\ndocs = \"oops\"\ntypo_key = \"oops\"\n")
+	m, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v, want a scalar settings-shaped key to be tolerated, not hard-fail", err)
+	}
+	if _, ok := m.Settings["docs"]; ok {
+		t.Errorf("Settings[docs] = %v, want absent for a scalar value", m.Settings["docs"])
+	}
+	if !equalSlices(m.Unknown, []string{"typo_key"}) {
+		t.Errorf("Unknown = %v, want [typo_key] ('docs' stays a known name even though this manifest gave it a scalar)", m.Unknown)
 	}
 }
 

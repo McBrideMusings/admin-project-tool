@@ -14,7 +14,7 @@ var goModes = map[string]bool{"build": true, "install": true, "clean": true}
 // admin_lib/interp.py::_make_go. `run` names the mode (build|install|clean,
 // default "build"), not a shell command.
 //
-// binary/main come from the manifest-level [go] table (m.Go), exactly as
+// binary/main come from the manifest-level [go] table (m.Settings["go"]), exactly as
 // Python's _make_go reads ns.get("_GO_CONFIG") — admin-3rgp.43 is what makes
 // that table reachable here: a Factory now receives the resolved Manifest,
 // not just the one action being dispatched. There is deliberately no

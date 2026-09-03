@@ -9,7 +9,7 @@ import (
 
 // makeGoDist is kind="go-dist"'s factory: cross-compile a Go binary for the
 // os/arch matrix in `[go_dist]`. Like [launchd], that table was parsed into
-// manifest.GoDist and exposed to config bodies but read by no factory, so a
+// Manifest.Settings["go_dist"] and exposed to config bodies but read by no factory, so a
 // project declaring it got nothing.
 //
 // `run` picks the operation: "build" (default) writes
