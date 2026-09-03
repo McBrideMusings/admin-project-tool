@@ -1088,17 +1088,24 @@ def app_bundle_identifier(app_path):
     return bundle_id or None
 
 
-def install_and_launch_sim(device_id, app_path, bundle_id, launch_args=None):
+def install_and_launch_sim(device_id, app_path, bundle_id, launch_args=None, env=None):
     """Install and launch an app on a simulator.
 
     launch_args: optional list of strings appended to `xcrun simctl launch`,
     delivered to the app as UIApplication launch arguments.
+    env: optional dict of environment variables delivered to the launched
+    process. `simctl launch` reads any `SIMCTL_CHILD_<NAME>` var off its own
+    environment and hands `<NAME>` to the child — there is no direct `-e`
+    flag the way `devicectl` has, so that's the prefix this applies.
     """
     subprocess.run(["xcrun", "simctl", "install", device_id, app_path])
     cmd = ["xcrun", "simctl", "launch", device_id, bundle_id]
     if launch_args:
         cmd.extend(launch_args)
-    subprocess.run(cmd)
+    run_env = None
+    if env:
+        run_env = {**os.environ, **{f"SIMCTL_CHILD_{k}": v for k, v in env.items()}}
+    subprocess.run(cmd, env=run_env)
 
 
 def terminate_sim_app(device_id, bundle_id):
@@ -2163,7 +2170,7 @@ def dev_loop_simulator(project, scheme, config, subsystem, process, predicate,
                        extra_settings="", build_action="build",
                        bundle_id=None, sim_id=None,
                        pre_build=None, post_build=None, display_name=None,
-                       output_config=None, launch_args=None, platform="ios"):
+                       output_config=None, launch_args=None, env=None, platform="ios"):
     """Full simulator dev loop: build, install, stream logs, reload on 'r'/SIGUSR1.
 
     Drives an iOS or a tvOS simulator — everything below is identical between
@@ -2174,6 +2181,8 @@ def dev_loop_simulator(project, scheme, config, subsystem, process, predicate,
     pre_build:   callable() run before each build (e.g. swap dev icons)
     post_build:  callable() run after each build completes (e.g. restore icons)
     launch_args: optional list of strings passed to the app on each launch
+    env:         optional dict of environment variables delivered to the
+    launched process (see install_and_launch_sim)
     platform:    a SIM_PLATFORMS key — "ios" or "tv"
     """
     import time
@@ -2242,7 +2251,7 @@ def dev_loop_simulator(project, scheme, config, subsystem, process, predicate,
             patch_ios_display_name(app_path, display_name)
 
         info("Installing on simulator...")
-        install_and_launch_sim(sim_id, app_path, launch_bundle, launch_args=launch_args)
+        install_and_launch_sim(sim_id, app_path, launch_bundle, launch_args=launch_args, env=env)
 
         def _is_running():
             return is_sim_app_running(sim_id, launch_bundle)
@@ -2280,12 +2289,13 @@ def dev_loop_device(project, scheme, config, subsystem, process,
                     extra_settings="", build_action="build",
                     bundle_id=None,
                     pre_build=None, post_build=None, display_name=None,
-                    skip_build=False, output_config=None):
+                    skip_build=False, output_config=None, env=None):
     """Build, install, and run on a physical iOS device with log streaming.
 
     Launches via `devicectl --console` with OS_ACTIVITY_DT_MODE=YES (non-redacted
     os_log). bundle_id defaults to subsystem. pre_build/post_build wrap each
-    build cycle.
+    build cycle. env: optional dict of additional environment variables
+    delivered to the launched process, merged over _DEVICE_LOG_ENV.
 
     The device is always resolved here. It used to be passable as `device_id`,
     with a branch that took the *identifier* as the display name and skipped
@@ -2365,7 +2375,7 @@ def dev_loop_device(project, scheme, config, subsystem, process,
         info(f"Launching on {device_name}...")
         console_proc = launch_on_device(
             device_id, launch_bundle, console=True,
-            env=_DEVICE_LOG_ENV)
+            env={**_DEVICE_LOG_ENV, **(env or {})})
 
         # "generic", not "apple_os_log" as the simulator loop uses: that
         # formatter waits for `log stream`'s native "Timestamp..." header and
@@ -3519,7 +3529,7 @@ def dev_mac(cfg, *, log_level="app", clean=False, install=False, output_config=N
 
 
 def dev_simulator(cfg, platform="ios", *, log_level="app", clean=False,
-                  output_config=None, launch_args=None):
+                  output_config=None, launch_args=None, env=None):
     """Simulator dev loop driven by [apple] config, for iOS or tvOS.
 
     Every config key is read through the platform prefix — ``ios_scheme`` or
@@ -3528,6 +3538,10 @@ def dev_simulator(cfg, platform="ios", *, log_level="app", clean=False,
 
     launch_args: optional list of strings forwarded to xcrun simctl launch
     so the running app receives them as launch arguments.
+    env: optional dict of environment variables delivered to the launched
+    process. Falls back to ``[apple] dev_env`` when not given explicitly —
+    the debug-session-seeding hook (e.g. pointing the app at a cookie jar)
+    that a project can't express through launch_args alone.
     """
     plat = _sim_platform(platform)
     if output_config is None:
@@ -3538,6 +3552,11 @@ def dev_simulator(cfg, platform="ios", *, log_level="app", clean=False,
     scheme = cfg.get(f"{platform}_scheme")
     if not scheme:
         err(f"apple.{platform}_scheme required"); sys.exit(1)
+    if env is None:
+        dev_env = cfg.get("dev_env")
+        if dev_env:
+            from .core import resolve_env
+            env = {k: resolve_env(str(v)) for k, v in dev_env.items()}
     project = _detect_project_path(cfg)
     config = cfg.get(f"{platform}_build_config", "Debug")
     process = _resolve_sim_process(cfg, platform)
@@ -3572,20 +3591,21 @@ def dev_simulator(cfg, platform="ios", *, log_level="app", clean=False,
         display_name=_resolve_sim_dev_display_name(cfg, platform),
         output_config=output_config,
         launch_args=launch_args,
+        env=env,
         platform=platform,
     )
 
 
-def dev_ios(cfg, *, log_level="app", clean=False, output_config=None, launch_args=None):
+def dev_ios(cfg, *, log_level="app", clean=False, output_config=None, launch_args=None, env=None):
     """iOS simulator dev loop driven by [apple] config."""
     dev_simulator(cfg, "ios", log_level=log_level, clean=clean,
-                  output_config=output_config, launch_args=launch_args)
+                  output_config=output_config, launch_args=launch_args, env=env)
 
 
-def dev_tv(cfg, *, log_level="app", clean=False, output_config=None, launch_args=None):
+def dev_tv(cfg, *, log_level="app", clean=False, output_config=None, launch_args=None, env=None):
     """tvOS simulator dev loop driven by [apple] config."""
     dev_simulator(cfg, "tv", log_level=log_level, clean=clean,
-                  output_config=output_config, launch_args=launch_args)
+                  output_config=output_config, launch_args=launch_args, env=env)
 
 
 def notarize_and_staple(app_path):
@@ -3858,17 +3878,26 @@ def deploy_tv(cfg, *, clean=False):
     deploy_device(cfg, "tv", clean=clean)
 
 
-def dev_device(cfg, *, log_level="app", clean=False, output_config=None):
+def dev_device(cfg, *, log_level="app", clean=False, output_config=None, env=None):
     """iOS physical-device dev loop driven by [apple] config.
 
     Builds for iphoneos, installs via devicectl, launches with --console so
     os_log output is non-redacted. Blocks until the app exits or Ctrl+C.
+
+    env: optional dict of environment variables delivered to the launched
+    process, merged over OS_ACTIVITY_DT_MODE. Falls back to ``[apple]
+    dev_env`` when not given explicitly (see dev_simulator).
     """
     if output_config is None:
         output_config = globals().get("_OUTPUT_CONFIG")
     if not cfg:
         err("[apple] table missing from admin.toml"); sys.exit(1)
     cfg = _with_global_defaults(cfg, "apple")
+    if env is None:
+        dev_env = cfg.get("dev_env")
+        if dev_env:
+            from .core import resolve_env
+            env = {k: resolve_env(str(v)) for k, v in dev_env.items()}
     scheme = cfg.get("ios_scheme")
     if not scheme:
         err("apple.ios_scheme required"); sys.exit(1)
@@ -3891,6 +3920,7 @@ def dev_device(cfg, *, log_level="app", clean=False, output_config=None):
         pre_build=pre_build, post_build=post_build,
         display_name=_resolve_ios_dev_display_name(cfg),
         output_config=output_config,
+        env=env,
     )
 
 
