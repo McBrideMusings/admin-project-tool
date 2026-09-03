@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/timing"
 )
 
 // RunCmdOptions mirrors the handful of admin_lib/core.py run_cmd knobs a Lua
@@ -112,9 +113,14 @@ func (h *Host) RunCmd(cmd string, opts RunCmdOptions) (RunCmdResult, error) {
 	readErr := make(chan error, 1)
 	go func() {
 		buf := make([]byte, 32*1024)
+		firstByte := true
 		for {
 			n, err := pr.Read(buf)
 			if n > 0 {
+				if firstByte {
+					timing.MarkEach("first byte from child")
+					firstByte = false
+				}
 				b := make([]byte, n)
 				copy(b, buf[:n])
 				chunks <- b

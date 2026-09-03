@@ -15,6 +15,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/archetype"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/timing"
 )
 
 // Mode is how a populate entry brings a file into a new worktree.
@@ -169,14 +170,17 @@ func FromManifest(m *manifest.Manifest) (Config, error) {
 	if m == nil {
 		return Config{}, nil
 	}
-	return Config{
+	start := timing.Start()
+	cfg := Config{
 		Populate:  decodePopulate(m.Populate),
 		Worktrees: decodeWorktrees(m.Worktrees),
 		Identity:  decodeIdentity(m.Identity),
 		Beads:     decodeBeads(m.Beads),
 		Workflow:  decodeWorkflow(m.Workflow),
 		Terminal:  decodeTerminal(m.Terminal),
-	}, nil
+	}
+	timing.Phase("decode config tables", start)
+	return cfg, nil
 }
 
 // WorktreeRoot resolves the parent directory for worktrees from an

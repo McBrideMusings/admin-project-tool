@@ -46,6 +46,7 @@ import (
 	"sync"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/timing"
 )
 
 // Func is a registered guard's implementation: no arguments, returns
@@ -147,7 +148,9 @@ func RunRequires(names []string) error {
 		if !ok {
 			return fmt.Errorf("requires: unknown guard %q", name)
 		}
+		start := timing.Start()
 		passed, message := fn()
+		timing.Phase("requires: "+name, start)
 		if !passed {
 			if message != "" {
 				return fmt.Errorf("%s", message)
