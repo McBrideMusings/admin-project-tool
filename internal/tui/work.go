@@ -26,7 +26,14 @@ import (
 // detail pane has to be polymorphic rather than one wide field set.
 type workRowData struct {
 	// Command rows (rowCommand):
-	cmdName      string
+	cmdName string
+	// actionName is cmd.Steps[0] — the same base name
+	// internal/kinds.multiTargetLiveID (via kinds.TargetLiveKey) keys a
+	// multi-target live entry on. A command's name and its sole action's
+	// name are not guaranteed to match (a command's steps can reference a
+	// differently-named action), so targetRows builds its registry lookup
+	// key from this field, not cmdName.
+	actionName   string
 	cmdDesc      string
 	cmdKind      string // the sole step's declared kind, or "sequence"
 	cmdArchetype string
@@ -551,8 +558,13 @@ func (m Model) cmdOriginOf(name string) string {
 // its live status (if any), its workflow target (if it is one), and its
 // best-effort last-run/log.
 func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) rowItem {
+	actionName := cr.name
+	if len(cr.cmd.Steps) > 0 {
+		actionName = cr.cmd.Steps[0]
+	}
 	wd := &workRowData{
 		cmdName:      cr.name,
+		actionName:   actionName,
 		cmdDesc:      cr.cmd.Desc,
 		cmdKind:      m.commandKind(cr.cmd),
 		cmdArchetype: m.cmdOriginOf(cr.name),
@@ -620,11 +632,13 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 //
 // byName is the same registry-name -> entry map workRows() built for the
 // parent rows: once a target is actually dispatched, its entry is keyed on
-// "<cmdName>:<targetKey>" (internal/kinds.multiTargetLiveID), so each target
-// row resolves its OWN live entry here rather than inheriting whatever the
-// parent happened to find — the fix for a parent holder row showing running
-// for every target sharing it, and for a running target showing no
-// indicator at all.
+// "<actionName>:<targetKey>" (internal/kinds.TargetLiveKey, as written by
+// internal/kinds.multiTargetLiveID), so each target row resolves its OWN
+// live entry here rather than inheriting whatever the parent happened to
+// find — the fix for a parent holder row showing running for every target
+// sharing it, and for a running target showing no indicator at all. The key
+// is built from wd.actionName (cmd.Steps[0]), not wd.cmdName — a command's
+// name and its sole action's name are not guaranteed to match.
 func targetRows(parent rowItem, byName map[string]*livework.Entry) []rowItem {
 	wd := parent.work
 	if wd == nil {
@@ -637,6 +651,7 @@ func targetRows(parent rowItem, byName map[string]*livework.Entry) []rowItem {
 			label: wd.cmdName + " " + key,
 			work: &workRowData{
 				cmdName:      wd.cmdName,
+				actionName:   wd.actionName,
 				cmdDesc:      wd.cmdDesc,
 				cmdKind:      wd.cmdKind,
 				cmdArchetype: wd.cmdArchetype,
@@ -650,7 +665,7 @@ func targetRows(parent rowItem, byName map[string]*livework.Entry) []rowItem {
 				// see the byName doc comment above. renderTargetRow now
 				// renders state/activity/where from this exactly as
 				// renderWorkRow does for a plain command row.
-				live: byName[wd.cmdName+":"+key],
+				live: byName[kinds.TargetLiveKey(wd.actionName, key)],
 				// Same reasoning as live just above: a multi-target
 				// dispatch is pending under the parent action's own name
 				// until a livework.Entry registers (there is no target

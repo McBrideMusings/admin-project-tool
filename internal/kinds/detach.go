@@ -150,7 +150,18 @@ func multiTargetLiveID(name string, action manifest.Action, args []string) strin
 	if picked == "" {
 		return name
 	}
-	return name + ":" + picked
+	return TargetLiveKey(name, picked)
+}
+
+// TargetLiveKey builds the live-work registry id for one resolved target of
+// a multi-target action: "<actionName>:<target>". multiTargetLiveID above is
+// the only writer of this key shape; internal/tui/work.go's targetRows is
+// the reader, and it must call this same function rather than reconstruct
+// the "action:target" convention with its own string concatenation, which is
+// exactly the mismatch (command name vs. action name) that let a per-target
+// live entry silently fail to match its row.
+func TargetLiveKey(actionName, target string) string {
+	return actionName + ":" + target
 }
 
 // ValidateDetach rejects a non-bool `detach` on an action's own top level or
