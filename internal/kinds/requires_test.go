@@ -189,9 +189,11 @@ func TestRunCommandGlobalPreflightBlocksBeforeAnyStepRuns(t *testing.T) {
 	assertFileMissing(t, dir, "ran.txt")
 }
 
-// TestRunCommandPreflightExemptForDiagnosticVerbs is the other half of that
-// criterion: logs/kill must run their steps even with a stale workspace.
-func TestRunCommandPreflightExemptForDiagnosticVerbs(t *testing.T) {
+// TestRunCommandPreflightExemptForDeclaredCommand is the other half of that
+// criterion: a command declaring `preflight = false` in admin.toml (rather
+// than the tool matching a hardcoded name like "logs" or "kill" —
+// admin-tlhw.3) must run its steps even with a stale workspace.
+func TestRunCommandPreflightExemptForDeclaredCommand(t *testing.T) {
 	t.Cleanup(guards.ResetPreflight)
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -202,7 +204,7 @@ func TestRunCommandPreflightExemptForDiagnosticVerbs(t *testing.T) {
 
 	m := &manifest.Manifest{
 		Custom: map[string]manifest.Command{
-			"logs": {Steps: []string{"step"}},
+			"logs": {Steps: []string{"step"}, Preflight: false, HasPreflight: true},
 		},
 		Actions: map[string]manifest.Action{
 			"step": {"kind": "shell", "run": "touch ran.txt"},
@@ -212,7 +214,7 @@ func TestRunCommandPreflightExemptForDiagnosticVerbs(t *testing.T) {
 	r.MustRegister("shell", makeShell)
 
 	if err := RunCommand(m, r, "logs", nil, nil); err != nil {
-		t.Fatalf("RunCommand(logs) = %v, want nil — logs is an exempt diagnostic verb", err)
+		t.Fatalf("RunCommand(logs) = %v, want nil — logs declares preflight = false", err)
 	}
 	assertFileExists(t, dir, "ran.txt")
 }

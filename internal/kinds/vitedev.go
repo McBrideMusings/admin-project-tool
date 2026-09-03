@@ -449,26 +449,16 @@ func buildViteDevOptions(root string, cfg map[string]any) (viteDevOptions, error
 }
 
 // makeViteDev is kind="vite-dev"'s factory — the Go port of
-// admin_lib/interp.py::_make_vite_dev. `pre_kill` (default false, matching
-// Python's `cfg.get("pre_kill")` with no default) dispatches the manifest's
-// "kill" command/action first, when one is declared.
+// admin_lib/interp.py::_make_vite_dev. `pre_kill` (admin-tlhw.3) names
+// whatever command or action the project wants run before this dev loop
+// starts — absent means no hook fires.
 func makeViteDev(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
 	cfg := archetypeConfigTable(m, "vite_dev")
-	preKill := cfgBool(cfg, "pre_kill", false)
+	preRun := cfgString(cfg, "pre_kill", "")
 
 	return func(args []string) error {
 		h := newHost(m)
-		if preKill {
-			if _, ok := resolveCommand(m, "kill"); ok {
-				if err := surf.Command("kill", args); err != nil {
-					h.Warn("kill: " + err.Error())
-				}
-			} else if _, ok := m.Actions["kill"]; ok {
-				if err := RunAction(m, Default, "kill", args); err != nil {
-					h.Warn("kill: " + err.Error())
-				}
-			}
-		}
+		runPreHook(m, surf, preRun, args, h.Warn)
 		rc := viteDevFromConfig(h, cfg)
 		if rc != 0 && rc != 130 {
 			return fmt.Errorf("action %q: vite-dev exited %d", name, rc)

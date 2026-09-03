@@ -66,6 +66,9 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	if err := checkUnknownKinds(m); err != nil {
 		problems = append(problems, validate.Wrap(err))
 	}
+	if err := checkPreRunRefs(m); err != nil {
+		problems = append(problems, validate.Wrap(err))
+	}
 	if err := frame.ValidateURLRefs(m.Actions, m.Urls); err != nil {
 		problems = append(problems, validate.Wrap(err))
 	}
@@ -315,6 +318,45 @@ func checkUnknownKinds(m *manifest.Manifest) error {
 		if !declared {
 			problems = append(problems, fmt.Sprintf("action %q: unknown kind %q", name, kindStr))
 		}
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return validate.Errorf("%s", strings.Join(problems, "\n"))
+}
+
+// preRunConfigTables names each archetype config table whose `pre_kill` key
+// (admin-tlhw.3) is a declared reference to a command or action. Each name
+// is both the lookup key into kinds.ArchetypeConfigTable and the dotted
+// label the error messages use.
+var preRunConfigTables = []string{"docker_dev", "clean_dev", "vite_dev"}
+
+// checkPreRunRefs validates every declared `pre_kill` reference
+// (admin-tlhw.3): the tool used to look for a command literally named
+// "kill" itself; now the project names what to run, and admin check is what
+// catches a reference naming nothing rather than the dispatch path silently
+// skipping it.
+func checkPreRunRefs(m *manifest.Manifest) error {
+	var problems []string
+	for _, label := range preRunConfigTables {
+		v, present := kinds.ArchetypeConfigTable(m, label)["pre_kill"]
+		if !present {
+			continue
+		}
+		name, ok := v.(string)
+		if !ok {
+			problems = append(problems, fmt.Sprintf(
+				"[%s].pre_kill must be a string naming a command or action", label))
+			continue
+		}
+		if name == "" || kinds.HasCommand(m, name) {
+			continue
+		}
+		if _, ok := m.Actions[name]; ok {
+			continue
+		}
+		problems = append(problems, fmt.Sprintf(
+			"[%s].pre_kill references %q, which is not a declared command or action", label, name))
 	}
 	if len(problems) == 0 {
 		return nil
