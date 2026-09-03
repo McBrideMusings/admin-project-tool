@@ -46,13 +46,29 @@ func commandDesc(m *manifest.Manifest, name string) string {
 	return ""
 }
 
-// commandEntries builds the picker rows for names, one luahost.TargetEntry
-// per command in the order kinds.CommandNames returns, using commandDesc for
-// each row's description.
+// commandEntries builds the picker rows for names — sorted by each
+// command's declared Group then Priority (manifest.SortCommandNames, the
+// same ordering internal/tui's Work tab uses), with a blank spacer row
+// (luahost.TargetEntry{} — PickTarget renders a Key-less entry as a
+// non-selectable blank line) inserted wherever Group changes, so the
+// picker's group-1/group-2 layout matches the admin skill's Phase 2c
+// "spacers between groups are automatic" promise instead of the plain
+// alphabetical order kinds.CommandNames returns on its own.
 func commandEntries(m *manifest.Manifest, names []string) []luahost.TargetEntry {
-	entries := make([]luahost.TargetEntry, len(names))
-	for i, name := range names {
-		entries[i] = luahost.TargetEntry{Key: name, Description: commandDesc(m, name)}
+	sorted := append([]string(nil), names...)
+	m.SortCommandNames(sorted)
+
+	entries := make([]luahost.TargetEntry, 0, len(sorted)+1)
+	lastGroup := 0
+	haveLast := false
+	for _, name := range sorted {
+		c, _ := m.Command(name)
+		if haveLast && c.Group != lastGroup {
+			entries = append(entries, luahost.TargetEntry{})
+		}
+		lastGroup = c.Group
+		haveLast = true
+		entries = append(entries, luahost.TargetEntry{Key: name, Description: commandDesc(m, name)})
 	}
 	return entries
 }

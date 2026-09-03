@@ -716,7 +716,20 @@ func (m Model) workRows() []rowItem {
 	if len(cmdRows) == 0 {
 		rows = append(rows, rowItem{kind: rowText, label: "admin.toml declares no commands"})
 	} else {
+		lastGroup := 0
+		haveLast := false
 		for _, cr := range cmdRows {
+			// Blank row on every Group change — collectCommands already
+			// sorted cmdRows by Group then Priority; this is just the
+			// visual half of the admin skill's Phase 2c layout (group 1
+			// build/dev/deploy, an automatic spacer, then group 2) that
+			// this tab was missing even though the order itself was
+			// already correct.
+			if haveLast && cr.cmd.Group != lastGroup {
+				rows = append(rows, blankRow())
+			}
+			lastGroup = cr.cmd.Group
+			haveLast = true
 			item := m.commandRowItem(cr, byName)
 			rows = append(rows, item)
 			if targets := targetRows(item, byName, m.pendingTarget[cr.name]); len(targets) > 0 {

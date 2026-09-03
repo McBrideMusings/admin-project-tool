@@ -648,6 +648,41 @@ func (m *Manifest) CommandNames() map[string]bool {
 	return out
 }
 
+// Command looks up name in Custom (project-declared, [commands.custom.X])
+// then Overrides ([commands.X], project or archetype) — the same
+// custom-shadows-archetype precedence resolveCommand applies at dispatch
+// time — and reports whether it was found at all.
+func (m *Manifest) Command(name string) (Command, bool) {
+	if c, ok := m.Custom[name]; ok {
+		return c, true
+	}
+	c, ok := m.Overrides[name]
+	return c, ok
+}
+
+// SortCommandNames orders names by each command's declared Group, then
+// Priority, then name — the fleet-standard build/dev/deploy layout (admin
+// skill Phase 2c: group 1 = build/dev/deploy in that order, an automatic
+// spacer, then group 2 sorted by priority). A name with no Group/Priority
+// set (HasGroup/HasPriority false) carries the zero value, which sorts
+// first — matching internal/tui's declaredCommands ordering exactly, so
+// `admin cmd`'s picker and the full TUI's Work tab never disagree about
+// command order. Stable: ties beyond the three keys keep their input order,
+// though the third key (name) leaves no real ties to break.
+func (m *Manifest) SortCommandNames(names []string) {
+	sort.SliceStable(names, func(i, j int) bool {
+		ci, _ := m.Command(names[i])
+		cj, _ := m.Command(names[j])
+		if ci.Group != cj.Group {
+			return ci.Group < cj.Group
+		}
+		if ci.Priority != cj.Priority {
+			return ci.Priority < cj.Priority
+		}
+		return names[i] < names[j]
+	})
+}
+
 // knownCommandKeys is the ADR-0003 pure-routing key set — the port of
 // admin_lib/validate.py::VALID_COMMAND_KEYS.
 var knownCommandKeys = map[string]bool{
