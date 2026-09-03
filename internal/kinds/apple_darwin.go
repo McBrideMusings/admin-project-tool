@@ -635,9 +635,10 @@ func appleArchiveAndExportDeveloperID(cfg map[string]any, h *luahost.Host, proje
 	profileName := cfgString(cfg, "mac_provisioning_profile", "")
 	if profileName == "" {
 		return "", nil, fmt.Errorf(
-			"apple.mac_provisioning_profile is required for a Developer ID export: " +
-				"name the MAC_APP_DIRECT profile for " + bundleID +
-				" (manual signing cannot guess it, and automatic signing needs a cloud-signing permission the API key may not have)")
+			"apple.mac_provisioning_profile is required for a Developer ID export: "+
+				"name the MAC_APP_DIRECT profile for %s (manual signing cannot guess "+
+				"it, and automatic signing needs a cloud-signing permission the API "+
+				"key may not have)", bundleID)
 	}
 
 	tmp, err := os.MkdirTemp("", "admin-devid-")
