@@ -77,11 +77,12 @@ func dashboardProducer(launched *bool) *CommandProducer {
 	}
 }
 
-// TestRunCommandOpensPaneForLongRunningStep is the control half of the
-// pair: a plain-CLI dispatch (producer nil, which CAN host the run itself)
-// keeps its existing behavior — a declared [terminal] plus a detached step
-// means a launcher dispatch, not an inline run.
-func TestRunCommandOpensPaneForLongRunningStep(t *testing.T) {
+// TestRunCommandPlainCLIRunsDetachedStepInline is the control half of the
+// pair: a plain-CLI dispatch (producer nil, which already owns a terminal)
+// always runs a detached step inline — `detach` is a dashboard concern only
+// (admin-ysxr.9), so a declared [terminal] plus a detached step must never
+// reach the launcher from this producer.
+func TestRunCommandPlainCLIRunsDetachedStepInline(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	logPath := filepath.Join(dir, "terminal-calls.log")
@@ -91,15 +92,11 @@ func TestRunCommandOpensPaneForLongRunningStep(t *testing.T) {
 	if err := RunCommand(longRunningManifest(terminal), registryRecordingInline(&inlineRan), "dev", nil, nil); err != nil {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
-	if inlineRan {
-		t.Error("RunCommand must hand a detached step to the launcher, not run it inline")
+	if !inlineRan {
+		t.Error("a plain-CLI dispatch must run a detached step inline, never hand it to the launcher")
 	}
-	logged, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("reading terminal log: %v", err)
-	}
-	if !strings.Contains(string(logged), "spawn") {
-		t.Errorf("terminal log = %q, want a `spawn` call", string(logged))
+	if logged, err := os.ReadFile(logPath); err == nil && strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want no `spawn` call — the CLI already owns a terminal", string(logged))
 	}
 }
 
@@ -605,12 +602,10 @@ func TestRunCommandInReentryNestedDelegationStaysInline(t *testing.T) {
 
 // TestRunCommandInReentryMultiTargetDetachStaysInline is the multi-target
 // twin of the ordering-hazard test above: a multi-target TARGET itself
-// (not a delegated action) carrying `detach = true`, reached from inside an
-// already-launched run, must run inline rather than dispatching a second
-// launcher call — this is the hole admin-ysxr.7 folds in fixing: before this
-// ticket, a detached multi-target target reached from inside the
-// dashboard's hosted pty child DID reach dispatchToLauncher, because
-// runActionInline's Surface never gated makeMultiTarget's own detach branch.
+// (not a delegated action) carrying `detach = true` must run inline
+// regardless of inReentry — as of admin-ysxr.9, makeMultiTarget's Runner no
+// longer has a launcher branch of its own at all, so a target's `detach`
+// is never consulted outside the producer path (launchCommand).
 func TestRunCommandInReentryMultiTargetDetachStaysInline(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

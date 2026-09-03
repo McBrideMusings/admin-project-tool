@@ -41,7 +41,8 @@ var selfExecutable = func() string {
 }
 
 // errNoLauncher reports that the project declared no [terminal] table —
-// RunActionRouted's "run inline, silently" default. Never wrapped, so a
+// launchCommand's "fall back to the producer's default surface, silently"
+// path. Never wrapped, so a
 // caller can distinguish "no launcher declared, the expected default path"
 // from "a launcher IS declared but spawning through it failed", which is a
 // real error worth surfacing rather than silently swallowing.
@@ -65,9 +66,9 @@ func MarkReentry() {
 }
 
 // inReentry reports whether this process is already running inside a
-// launched dispatch. It is the single gate RunCommand, RunActionRouted, and
-// makeMultiTarget's per-target detach branch all consult: nothing inside an
-// already-launched run reaches a launcher, however many levels of
+// launched dispatch. RunCommand consults it before deciding whether p (a
+// non-nil producer) gets to reach launchCommand at all: nothing inside an
+// already-launched run reaches a second launcher, however many levels of
 // delegation separate it from the dispatch that opened that run.
 func inReentry() bool {
 	return os.Getenv(ReentryEnv) == "1"
@@ -158,15 +159,15 @@ func RowEnv(kind, id, url string) []string {
 	return env
 }
 
-// dispatchToLauncher is the detach half both RunActionRouted and
-// launchCommand share: it shells out to the project's declared t.Spawn
-// command with the ADR-0020 ADMIN_* context in its environment, and returns
-// the trimmed stdout as the opaque handle. verb selects which hidden
-// re-entry command the launcher's spawned process runs — "__run-action" for
-// one named action (RunActionRouted, makeMultiTarget's per-target branch),
-// "__run-command" for a whole multi-step command (launchCommand): using the
-// action verb for a whole command would silently drop steps 2..n, since
-// __run-action only ever runs the one action it names.
+// dispatchToLauncher is the detach half launchCommand — its only caller now
+// that `detach` is honoured on the producer path alone (admin-ysxr.9) —
+// reaches: it shells out to the project's declared t.Spawn command with the
+// ADR-0020 ADMIN_* context in its environment, and returns the trimmed
+// stdout as the opaque handle. verb selects which hidden re-entry command
+// the launcher's spawned process runs — "__run-action" for one named
+// action, "__run-command" for a whole multi-step command (launchCommand's
+// own case): using the action verb for a whole command would silently drop
+// steps 2..n, since __run-action only ever runs the one action it names.
 //
 // root is the project root ADMIN_CWD carries — always projectRoot(m), never
 // os.Getwd(): a project found by walking up from a subdirectory (FindRoot)

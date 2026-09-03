@@ -208,11 +208,12 @@ func registerManifestCommand(name string) bool {
 }
 
 // runActionCmd is admin-3rgp.17's hidden re-entry point: what a herdr pane
-// a long-running kind dispatched into actually runs. It is the one caller
-// that invokes kinds.RunAction directly rather than kinds.RunActionRouted —
-// deliberately: RunAction executes exactly the one named action's Runner in
-// this process, with no further lifetime routing, so the pane does the
-// real work instead of trying to open a second pane for itself. Hidden
+// a long-running kind dispatched into actually runs. It invokes
+// kinds.RunAction, which — like every dispatch reached from the plain CLI or
+// from inside an already-launched run — executes exactly the one named
+// action's Runner in this process, with no further lifetime routing, so the
+// pane does the real work instead of trying to open a second pane for
+// itself. Hidden
 // because it is plumbing, not something a person types; double-underscore
 // prefixed so a project's own admin.toml commands (which would otherwise
 // need "reserved name" handling like the tool verbs get) can never collide
@@ -257,9 +258,9 @@ var runActionCmd = &cobra.Command{
 // admin-ysxr.4) what a detached Command's launcher dispatch re-enters into
 // as well. It calls kinds.RunCommand with a nil producer — the plain-CLI
 // shape — but kinds.MarkReentry() below is what actually keeps this run off
-// the launcher a second time and onto the inline step loop
-// (runActionInline): RunCommand consults inReentry() before it ever looks at
-// the producer argument. Hidden and double-underscore prefixed for the same
+// the launcher a second time and onto the inline step loop (runSteps, via
+// RunAction): RunCommand consults inReentry() before it ever looks at the
+// producer argument. Hidden and double-underscore prefixed for the same
 // reason as __run-action: plumbing, not something a person types, and never
 // collidable with a project's own admin.toml commands.
 var runCommandCmd = &cobra.Command{
