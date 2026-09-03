@@ -181,7 +181,19 @@ func (h *Host) XcodebuildFiltered(opts XcodebuildOptions) (XcodebuildResult, err
 			return XcodebuildResult{}, err
 		}
 		buildCmd := compose()
-		piped := fmt.Sprintf(`%s | tee -a %q | grep -E "BUILD|error:|warning:" ; exit ${PIPESTATUS[0]}`, buildCmd, logPath)
+		// `^\*\*` and not a bare `BUILD`: xcodebuild dumps every build
+		// setting as `    export NAME=value`, and dozens of those names
+		// contain the substring BUILD — BUILD_DIR, BUILD_ROOT, BUILD_STYLE,
+		// CONFIGURATION_BUILD_DIR, FUSE_BUILD_PHASES, even
+		// VERSION_INFO_BUILDER. A bare `BUILD` matched all of them, so one
+		// tvOS Release deploy printed 74 lines of which 3 were real and the
+		// rest were environment noise, burying `** BUILD SUCCEEDED **` and
+		// making a working deploy read as a hung one. Every xcodebuild status
+		// marker (`** BUILD/CLEAN/TEST SUCCEEDED|FAILED|INTERRUPTED **`)
+		// starts at column 0, and no `export` line does, so anchoring is what
+		// separates them — measured against a real 121 KB log: 74 lines
+		// before, 3 after, no non-export line lost.
+		piped := fmt.Sprintf(`%s | tee -a %q | grep -E '^\*\*|error:|warning:' ; exit ${PIPESTATUS[0]}`, buildCmd, logPath)
 		res, err := h.RunCmd(piped, RunCmdOptions{CaptureLog: true})
 		if err != nil {
 			return XcodebuildResult{}, err
