@@ -95,12 +95,13 @@ func Phase(name string, start time.Time) {
 }
 
 // Mark emits a one-shot line naming the elapsed time since Enable() was
-// called — for an event with no matching Start (first byte from a child,
-// the TUI's first frame) rather than a bounded phase. Firing name a second
-// time is silently ignored: a reader's pty and pipe paths both call the
-// child-side "first byte" mark, but only one of them runs for a given
-// child, and the TUI's own View is invoked on every repaint, not just the
-// first.
+// called — for an event with no matching Start rather than a bounded phase.
+// Firing name a second time is silently ignored, which is what the TUI's
+// own "first frame" mark wants: View is invoked on every repaint, not just
+// the first, and the dedup is what turns that into a single line. An event
+// that legitimately recurs per logical unit of work (a child process's
+// first byte, once per child, across a long-lived TUI session) wants
+// MarkEach instead — Mark would swallow every occurrence after the first.
 func Mark(name string) {
 	mu.Lock()
 	on := enabled
@@ -113,6 +114,27 @@ func Mark(name string) {
 		return
 	}
 	marked[name] = true
+	elapsed := time.Since(t0).Milliseconds()
+	mu.Unlock()
+	write(fmt.Sprintf("%s  %dms", name, elapsed))
+}
+
+// MarkEach emits a line naming the elapsed time since Enable() was called,
+// like Mark, but with no dedup — every call writes a line. Use it for an
+// event that is inherently per-instance rather than once-per-process, such
+// as "first byte from child": a long-lived TUI dispatches many children
+// over one session, and each one's first byte is its own event. The
+// one-shot-per-child guarantee is the caller's job (both call sites already
+// hold a local firstByte bool scoped to one child's reader), not this
+// package's — Mark's process-wide dedup would otherwise swallow every
+// child after the first.
+func MarkEach(name string) {
+	mu.Lock()
+	on := enabled
+	if !on {
+		mu.Unlock()
+		return
+	}
 	elapsed := time.Since(t0).Milliseconds()
 	mu.Unlock()
 	write(fmt.Sprintf("%s  %dms", name, elapsed))
