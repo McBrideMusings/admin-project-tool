@@ -630,6 +630,16 @@ func appleWantsDeveloperID(cfg map[string]any) bool {
 // lets the export create the Developer ID profile it needs rather than
 // requiring one to be made in the portal first.
 func appleArchiveAndExportDeveloperID(cfg map[string]any, h *luahost.Host, project, scheme, config string, clean bool) (string, func(), error) {
+	signingCert := cfgString(cfg, "mac_sign_identity", "Developer ID Application")
+	bundleID := appleBundle(project, cfg, "mac", false)
+	profileName := cfgString(cfg, "mac_provisioning_profile", "")
+	if profileName == "" {
+		return "", nil, fmt.Errorf(
+			"apple.mac_provisioning_profile is required for a Developer ID export: " +
+				"name the MAC_APP_DIRECT profile for " + bundleID +
+				" (manual signing cannot guess it, and automatic signing needs a cloud-signing permission the API key may not have)")
+	}
+
 	tmp, err := os.MkdirTemp("", "admin-devid-")
 	if err != nil {
 		return "", nil, err
@@ -671,16 +681,29 @@ func appleArchiveAndExportDeveloperID(cfg map[string]any, h *luahost.Host, proje
 		return "", cleanup, fmt.Errorf("archive failed: %v\n%s", err, appleTailLines(string(out), 40))
 	}
 
-	// signingStyle automatic, so the export creates or reuses the Developer ID
-	// profile through the API key above instead of needing one named here.
+	// signingStyle MANUAL, naming the profile and the identity outright.
+	//
+	// `automatic` routes the export through Apple's CLOUD SIGNING, which asks
+	// the App Store Connect key to mint a Developer ID profile on the fly. When
+	// the key lacks that permission the export reports "Cloud signing permission
+	// error" AND "No profiles for '<bundle id>' were found" together — and the
+	// second line is misleading, because an ACTIVE profile can exist in the
+	// account and cloud signing still never looks at it. Manual signing uses the
+	// profile installed under ~/Library/MobileDevice/Provisioning Profiles and
+	// the Developer ID certificate already in the keychain, so no permission to
+	// create anything is needed.
 	options := filepath.Join(tmp, "ExportOptions.plist")
 	plist := `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>method</key><string>developer-id</string>
-<key>signingStyle</key><string>automatic</string>
+<key>signingStyle</key><string>manual</string>
 <key>destination</key><string>export</string>
 <key>teamID</key><string>` + team + `</string>
+<key>signingCertificate</key><string>` + signingCert + `</string>
+<key>provisioningProfiles</key><dict>
+<key>` + bundleID + `</key><string>` + profileName + `</string>
+</dict>
 </dict></plist>
 `
 	if err := os.WriteFile(options, []byte(plist), 0o644); err != nil {
