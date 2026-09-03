@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
+	"github.com/McBrideMusings/admin-project-tool/internal/logformat"
 	"github.com/McBrideMusings/admin-project-tool/internal/streams"
 	"github.com/McBrideMusings/admin-project-tool/internal/timing"
 )
@@ -204,7 +205,8 @@ func drainPendingInput(f *os.File) {
 // the read-a-chunk/format/write loop (the repo's OutputPump rule).
 func (h *Host) newOutputPump(opts RunCmdOptions) *streams.OutputPump {
 	pump := &streams.OutputPump{
-		Out: func(s string) { frame.Write(h.Stdout, s) },
+		Out:              func(s string) { frame.Write(h.Stdout, s) },
+		DisplayTransform: logformat.StampLine,
 	}
 	if opts.CaptureLog {
 		pump.LogFn = h.logWrite

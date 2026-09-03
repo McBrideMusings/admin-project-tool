@@ -51,6 +51,43 @@ func StripLogTimestamp(line string) (string, string) {
 	return "", line
 }
 
+// ansiEscape strips every ANSI escape sequence, not just SGR colour codes —
+// mirrors internal/luahost/logcontext.go's private ansiEscape and
+// admin_lib/core.py's _ANSI_ESCAPE_RE. Used only to see through color codes
+// when StampLine checks whether a chunk already opens with its own
+// timestamp; the returned/stamped text itself keeps its original escapes.
+var ansiEscape = regexp.MustCompile("\x1b(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])")
+
+// StampLine prefixes an arbitrary chunk of subprocess output with an
+// absolute wall-clock timestamp (HH:MM:SS.mmm) — the Go port of
+// admin_lib/core.py's _stamp_log, meant to be wired in as
+// internal/streams.OutputPump.DisplayTransform for a pump that has no
+// Formatter (one already stamps its own lines via FormatLine, so a pump
+// running one is left alone to avoid a double stamp).
+//
+// Unlike FormatLine, this never buffers: it stamps whatever chunk Write
+// receives, complete line or newline-less fragment alike, so it is safe on a
+// pump that must let a prompt with no trailing newline (e.g. `Type
+// "deploy": `) reach the terminal live — buffering until "\n" would hold
+// that prompt forever.
+//
+// A blank chunk passes through unstamped, and a chunk that already opens
+// with its own timestamp (seen through any ANSI color codes) passes through
+// untouched — stamping it would prepend the time admin read the chunk in
+// front of the time the event happened, which is wrong exactly when it
+// matters: a source that arrives pre-stamped (docker logs -t, a re-tailed
+// admin log) keeps its own, often higher-precision, event time.
+func StampLine(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return text
+	}
+	if ts, _ := StripLogTimestamp(ansiEscape.ReplaceAllString(text, "")); ts != "" {
+		return text
+	}
+	ts := time.Now().Format("15:04:05.000")
+	return ts + " " + text
+}
+
 var isoTimestampRe = regexp.MustCompile(
 	`^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:[.,](\d+))?(?:(Z)|([+-])(\d{2}):?(\d{2}))?$`)
 var bareTimeRe = regexp.MustCompile(`^(\d{2}):(\d{2}):(\d{2})`)
