@@ -48,7 +48,13 @@ var CapabilityAliases = map[string]string{
 	"push":               "PUSH_NOTIFICATIONS",
 	"app-groups":         "APP_GROUPS",
 	"associated-domains": "ASSOCIATED_DOMAINS",
-	"keychain-sharing":   "KEYCHAIN_SHARING",
+	// No "keychain-sharing" alias: confirmed via a live 409 that Apple's real
+	// capabilityType enum has no keychain value at all, and a project's own
+	// keychain-access-groups entitlement (the default self-owned group,
+	// $(AppIdentifierPrefix)<bundle-id>) needs no App ID capability toggle —
+	// a caller passing --capability keychain-sharing should get an honest
+	// "not a real ASC capability" attempt and 409, not a maintained-looking
+	// alias that always fails.
 	"background-modes":   "BACKGROUND_MODES",
 	"sign-in-with-apple": "APPLE_ID_AUTH",
 }

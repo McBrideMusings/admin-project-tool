@@ -170,9 +170,11 @@ func TestFindBundleIDMatchesOnIdentifier(t *testing.T) {
 
 func TestFindBundleIDReturnsNilWhenUnregistered(t *testing.T) {
 	c := &Client{
-		Creds:      &Credentials{KeyPath: testKeyPath(t), KeyID: "K1", IssuerID: "ISSUER"},
-		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return jsonResponse(200, map[string]any{"data": []any{}}), nil })},
-		Now:        time.Now,
+		Creds: &Credentials{KeyPath: testKeyPath(t), KeyID: "K1", IssuerID: "ISSUER"},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return jsonResponse(200, map[string]any{"data": []any{}}), nil
+		})},
+		Now: time.Now,
 	}
 	resource, err := c.FindBundleID("com.example.missing")
 	if err != nil {
@@ -218,12 +220,12 @@ func TestEnableCapabilityOmitsSettingsWhenNoDefault(t *testing.T) {
 		})},
 		Now: time.Now,
 	}
-	if _, err := c.EnableCapability("BID1", "KEYCHAIN_SHARING", nil); err != nil {
+	if _, err := c.EnableCapability("BID1", "APP_GROUPS", nil); err != nil {
 		t.Fatal(err)
 	}
 	attrs := body["data"].(map[string]any)["attributes"].(map[string]any)
 	if _, ok := attrs["settings"]; ok {
-		t.Errorf("EnableCapability(KEYCHAIN_SHARING) sent settings %v, want none", attrs["settings"])
+		t.Errorf("EnableCapability(APP_GROUPS) sent settings %v, want none", attrs["settings"])
 	}
 }
 

@@ -8,9 +8,9 @@ import (
 )
 
 func TestParseAppIDArgsCapabilityAlias(t *testing.T) {
-	wanted, name, ids := parseAppIDArgs([]string{"--capability", "keychain-sharing"})
-	if !reflect.DeepEqual(wanted, []string{"KEYCHAIN_SHARING"}) {
-		t.Errorf("wanted = %v, want [KEYCHAIN_SHARING]", wanted)
+	wanted, name, ids := parseAppIDArgs([]string{"--capability", "app-groups"})
+	if !reflect.DeepEqual(wanted, []string{"APP_GROUPS"}) {
+		t.Errorf("wanted = %v, want [APP_GROUPS]", wanted)
 	}
 	if name != "" {
 		t.Errorf("displayName = %q, want empty", name)
