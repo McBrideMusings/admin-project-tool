@@ -421,6 +421,18 @@ type Model struct {
 	// workDispatchStartedMsg handler drains it once the entry the attach
 	// needs actually exists.
 	pendingAttach map[string]bool
+	// pendingTarget holds, for a command name currently in pendingDispatch,
+	// WHICH target key that in-flight dispatch was for — admin-2y6p follow-
+	// up (a user report that dispatching one target of a multi-target
+	// command, e.g. "counter" under "command-test", showed every sibling
+	// target as "starting" too). pendingDispatch/pendingAttach stay keyed by
+	// command name alone (at most one dispatch in flight per command — the
+	// existing pending guard), but a multi-target command's OWN target rows
+	// (targetRows) must only mark the ONE row actually being dispatched, not
+	// every target sharing that command name. Absent or "" means either no
+	// dispatch is pending for that command, or it was a flat (non-target)
+	// dispatch — targetRows treats both the same way: nothing lights up.
+	pendingTarget map[string]string
 
 	// Config tab (admin-3rgp.21): the resolved config.Config — repoRoot's
 	// admin.toml [identity]/[worktrees]/[[populate]]/[beads]/[workflow]
@@ -554,6 +566,7 @@ func New(ctx context.Context, repoRoot, nwo, current, def string, opts ...Option
 		trackerSelected: map[string]bool{},
 		pendingDispatch: map[string]bool{},
 		pendingAttach:   map[string]bool{},
+		pendingTarget:   map[string]string{},
 	}
 	for _, opt := range opts {
 		opt(&m)
@@ -1383,6 +1396,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// and a successful one either shows running (once the entry exists)
 		// or idle again if the command already exited before this landed.
 		delete(m.pendingDispatch, msg.name)
+		delete(m.pendingTarget, msg.name)
 		if msg.err != nil {
 			delete(m.pendingAttach, msg.name)
 			m.setStatus(msg.name+" failed to start: "+msg.err.Error(), cRed)

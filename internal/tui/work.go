@@ -61,6 +61,17 @@ type workRowData struct {
 	// value is resolved once at build time and read by both the child-row
 	// builder (targetRows) and the renderer.
 	pending bool
+	// pendingHere narrows pending to "the in-flight dispatch is THIS row",
+	// not just this row's command — set only by targetRows (admin-2y6p), a
+	// target row's own renderer reads this instead of pending. pending alone
+	// stays command-wide on purpose (activateCommand/activateCommandTarget's
+	// second-enter guard is deliberately whole-command: at most one dispatch
+	// in flight per command name, whichever target it was for), so
+	// commandRowItem's plain rowCommand row — which has no sibling targets
+	// to distinguish from — never needs this field and leaves it false; only
+	// targetRows sets it, from Model.pendingTarget[cmdName] matching this
+	// row's own targetKey.
+	pendingHere bool
 	// targets is a kind="multi-target" sole step's target list, in the
 	// order kinds.TargetKeys gives (the same order the CLI picker offers).
 	// Non-empty is exactly the condition that makes this row a group header
@@ -639,7 +650,7 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 // sharing it, and for a running target showing no indicator at all. The key
 // is built from wd.actionName (cmd.Steps[0]), not wd.cmdName — a command's
 // name and its sole action's name are not guaranteed to match.
-func targetRows(parent rowItem, byName map[string]*livework.Entry) []rowItem {
+func targetRows(parent rowItem, byName map[string]*livework.Entry, pendingTargetKey string) []rowItem {
 	wd := parent.work
 	if wd == nil {
 		return nil
@@ -674,7 +685,8 @@ func targetRows(parent rowItem, byName map[string]*livework.Entry) []rowItem {
 				// what activateCommandTarget's second-enter guard reads to
 				// turn a second enter on a starting command's target into a
 				// queued attach instead of a second run (admin-qk77).
-				pending: wd.pending,
+				pending:     wd.pending,
+				pendingHere: wd.pending && pendingTargetKey == key,
 			},
 		})
 	}
@@ -707,7 +719,7 @@ func (m Model) workRows() []rowItem {
 		for _, cr := range cmdRows {
 			item := m.commandRowItem(cr, byName)
 			rows = append(rows, item)
-			if targets := targetRows(item, byName); len(targets) > 0 {
+			if targets := targetRows(item, byName, m.pendingTarget[cr.name]); len(targets) > 0 {
 				rows = append(rows, targets...)
 				rows = append(rows, ruleRow())
 			}
@@ -837,6 +849,17 @@ func (m Model) activateCommand(wd *workRowData) (tea.Model, tea.Cmd) {
 // of them forgetting to set it.
 func (m Model) startDispatch(name string, args ...string) (tea.Model, tea.Cmd) {
 	m.pendingDispatch[name] = true
+	// args[0], when present, is the target key a multi-target dispatch was
+	// made with (activateCommandTarget) — recorded so targetRows can light up
+	// only the ONE target row actually being dispatched (admin-2y6p) rather
+	// than every sibling sharing the same pendingDispatch[name] flag. Cleared
+	// (not left stale) on a flat dispatch so a later target dispatch of the
+	// same command name never inherits a leftover key from a previous run.
+	if len(args) > 0 {
+		m.pendingTarget[name] = args[0]
+	} else {
+		delete(m.pendingTarget, name)
+	}
 	return m, dispatchCommandCmd(m.manifest, m.width, m.height, name, nil, args...)
 }
 
@@ -916,9 +939,18 @@ func (m Model) attachEntry(e *livework.Entry) (tea.Model, tea.Cmd) {
 }
 
 // currentLiveEntry resolves the row under the cursor to the livework.Entry
-// its a/k actions operate on: a worker row's own entry, or a command
-// row's currently-running entry (nil for an idle command, or any other row
+// its a/k actions operate on: a worker row's own entry, a command row's
+// currently-running entry, or one target of a multi-target command's own
+// currently-running entry (nil for an idle command/target, or any other row
 // — a and k are then no-ops).
+//
+// rowCommandTarget was missing here entirely (admin-ptf1: a and k silently
+// did nothing with the cursor on a running target row, e.g. Command Test's
+// "counter" — the row visibly showed "running" but neither attach nor kill
+// had anything to act on) until this case was added; targetRows already
+// resolves each target's OWN entry into wd.live (keyed by
+// kinds.TargetLiveKey, not the shared parent lookup), so this reads exactly
+// the same field rowCommand does.
 func (m Model) currentLiveEntry() *livework.Entry {
 	r, ok := m.currentRow()
 	if !ok || r.work == nil {
@@ -927,7 +959,7 @@ func (m Model) currentLiveEntry() *livework.Entry {
 	switch r.kind {
 	case rowWorker:
 		return r.work.worker
-	case rowCommand:
+	case rowCommand, rowCommandTarget:
 		return r.work.live
 	}
 	return nil

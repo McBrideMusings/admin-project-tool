@@ -355,12 +355,12 @@ func TestPendingCommandRendersStarting(t *testing.T) {
 // (the report that prompted this: pressing enter on a target row and seeing
 // nothing happen).
 //
-// MUTATION EVIDENCE: delete the `if wd.pending { ... }` branch this test
+// MUTATION EVIDENCE: delete the `if wd.pendingHere { ... }` branch this test
 // added to renderTargetRow (fall through to the idle hint branch) and this
 // test fails: the rendered row contains the idle targetRun hint instead of
 // "starting".
 func TestPendingTargetRowRendersStarting(t *testing.T) {
-	wd := &workRowData{cmdName: "command-test", targetKey: "counter", targetRun: "interactive-shell", pending: true}
+	wd := &workRowData{cmdName: "command-test", targetKey: "counter", targetRun: "interactive-shell", pending: true, pendingHere: true}
 
 	out := stripANSI(renderTargetRow(wd, false, 20, 60))
 	if !strings.Contains(out, "starting") {
@@ -368,6 +368,50 @@ func TestPendingTargetRowRendersStarting(t *testing.T) {
 	}
 	if strings.Contains(out, "interactive-shell") {
 		t.Errorf("rendered target row = %q, a pending row must not also show the idle run hint", out)
+	}
+}
+
+// TestPendingTargetDoesNotLightUpSiblings is the second-order bug the first
+// fix's own report caught: workRowData.pending stays command-wide (shared by
+// every target under the same multi-target command, since
+// Model.pendingDispatch is keyed on cmdName alone — activateCommand's
+// second-enter guard deliberately wants that), so using pending directly in
+// renderTargetRow (this test's first version) made EVERY sibling target
+// render "starting" the instant only ONE of them was dispatched. targetRows
+// must only set pendingHere on the row matching Model.pendingTarget[cmdName]
+// — proved here by two rows sharing pending=true (both under the same
+// in-flight command) where only "counter" is the actual pendingTargetKey.
+//
+// MUTATION EVIDENCE: change targetRows' `pendingHere: wd.pending &&
+// pendingTargetKey == key` back to `pendingHere: wd.pending` (i.e. drop the
+// key comparison) and this test fails: "crash" renders "starting" too.
+func TestPendingTargetDoesNotLightUpSiblings(t *testing.T) {
+	parent := rowItem{work: &workRowData{
+		cmdName: "command-test",
+		pending: true,
+		targets: []string{"counter", "crash"},
+		targetRuns: map[string]string{
+			"counter": "interactive-shell",
+			"crash":   "interactive-shell",
+		},
+	}}
+
+	rows := targetRows(parent, nil, "counter")
+	var counterOut, crashOut string
+	for _, r := range rows {
+		out := stripANSI(renderTargetRow(r.work, false, 20, 60))
+		switch r.work.targetKey {
+		case "counter":
+			counterOut = out
+		case "crash":
+			crashOut = out
+		}
+	}
+	if !strings.Contains(counterOut, "starting") {
+		t.Errorf("counter row = %q, want it to contain %q (it's the pending target)", counterOut, "starting")
+	}
+	if strings.Contains(crashOut, "starting") {
+		t.Errorf("crash row = %q, must NOT show starting — only counter is actually pending", crashOut)
 	}
 }
 

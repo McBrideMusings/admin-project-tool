@@ -3,6 +3,8 @@ package tui
 import (
 	"testing"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
+	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
@@ -40,6 +42,7 @@ func multiTargetModel(t *testing.T) Model {
 		actionOrigin:    map[string]string{},
 		pendingDispatch: map[string]bool{},
 		pendingAttach:   map[string]bool{},
+		pendingTarget:   map[string]string{},
 	}
 	return m
 }
@@ -219,5 +222,52 @@ func TestEnterOnMultiTargetParentLeavesCursorPut(t *testing.T) {
 	cur := nm.workRows()[nm.cursor[nm.active]]
 	if cur.kind != rowCommand || cur.work.cmdName != "deploy" {
 		t.Fatalf("cursor sits on %v/%v, want the deploy command row", cur.kind, cur.work)
+	}
+}
+
+// TestKillOnRunningTargetRowKillsIt is admin-2y6p's second bug: pressing k
+// with the cursor on a RUNNING multi-target sub-target row (e.g. Command
+// Test's "counter", or "dev mac" here) did nothing at all — a user report of
+// "I can't kill anything, k does nothing" against a row the dashboard itself
+// showed as "running". currentLiveEntry's switch covered rowWorker and
+// rowCommand but never rowCommandTarget, so it returned nil for a target row
+// regardless of whether wd.live was set, and killCurrentWork silently no-ops
+// on a nil entry.
+//
+// MUTATION EVIDENCE: remove rowCommandTarget from currentLiveEntry's case
+// list (back to `case rowCommand:` alone) and this test fails: killed stays
+// false.
+func TestKillOnRunningTargetRowKillsIt(t *testing.T) {
+	killed := false
+	live := &livework.Entry{
+		ID: kinds.TargetLiveKey("dev", "mac"), Name: "dev:mac", State: livework.StateRunning,
+		Handle: "pty-dev-mac",
+		Ops:    livework.Ops{Kill: func() error { killed = true; return nil }},
+	}
+	if err := livework.Default.Add(live); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	m := multiTargetModel(t)
+	rows := m.workRows()
+	idx := -1
+	for i, r := range rows {
+		if r.kind == rowCommandTarget && r.work != nil && r.work.targetKey == "mac" && r.work.cmdName == "dev" {
+			idx = i
+		}
+	}
+	if idx == -1 {
+		t.Fatal("no target row found for dev/mac")
+	}
+	if rows[idx].work.live != live {
+		t.Fatalf("dev/mac target row's live entry = %v, want the registry entry this test added", rows[idx].work.live)
+	}
+	m.cursor[m.active] = idx
+
+	if _, cmd := m.killCurrentWork(); cmd != nil {
+		t.Errorf("killCurrentWork returned a non-nil Cmd, want nil (it acts synchronously via Ops.Kill)")
+	}
+	if !killed {
+		t.Error("killCurrentWork on a running target row did nothing — Ops.Kill was never invoked")
 	}
 }

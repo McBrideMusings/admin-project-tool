@@ -24,6 +24,7 @@ func workTestModel(m *manifest.Manifest) Model {
 		height:          40,
 		pendingDispatch: map[string]bool{},
 		pendingAttach:   map[string]bool{},
+		pendingTarget:   map[string]string{},
 	}
 }
 
@@ -549,7 +550,7 @@ func TestTargetRowsResolvesLiveEntryByActionNameNotCommandName(t *testing.T) {
 		t.Fatalf("parent actionName = %q, want %q (cmd.Steps[0])", parent.work.actionName, "pick")
 	}
 
-	rows := targetRows(parent, byName)
+	rows := targetRows(parent, byName, "")
 	var cfRow *workRowData
 	for _, r := range rows {
 		if r.work.targetKey == "cf" {

@@ -192,7 +192,7 @@ func renderTargetRow(wd *workRowData, focused bool, nameW, rest int) string {
 		act := padEnd(truncR(wd.live.Activity, actW), actW)
 		return faintStyle.Render(connector) + name + state + faintStyle.Render(act) + whereStyled
 	}
-	if wd.pending {
+	if wd.pendingHere {
 		// Mirrors renderWorkRow's own wd.pending branch: the window between
 		// enter and a livework.Entry registering must show SOMETHING or a
 		// target row looks unresponsive for however long StartHostedPTY
@@ -202,6 +202,14 @@ func renderTargetRow(wd *workRowData, focused bool, nameW, rest int) string {
 		// the row fell straight through to the idle hint below, so a
 		// slow-to-register dispatch was indistinguishable from no dispatch
 		// at all.
+		//
+		// pendingHere, not pending: pending is command-wide (every sibling
+		// target under the same multi-target command shares
+		// Model.pendingDispatch[cmdName]), so using it here made EVERY
+		// target under "command-test" render "starting" the instant any ONE
+		// of them (e.g. "counter") was dispatched — a second, distinct bug
+		// this same report caught. pendingHere is targetRows' per-row answer
+		// to "is THIS target the one Model.pendingTarget[cmdName] names".
 		state := renderLiveState(livework.StateStarting)
 		return faintStyle.Render(connector) + name + state
 	}
