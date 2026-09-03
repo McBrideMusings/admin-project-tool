@@ -124,6 +124,128 @@ func TestShellFailsOnUnresolvableVar(t *testing.T) {
 	}
 }
 
+// ptyPromptRun is the `run` string both pty tests answer: it reads one line
+// from stdin and only touches deployed.txt when that line is exactly the word
+// the prompt asked for.
+const ptyPromptRun = `read -r line; if [ "$line" = "deploy" ]; then touch deployed.txt; else exit 1; fi`
+
+// runPTYPromptAction runs a pty=true kind="shell" action in a fresh temp
+// directory with answer already queued on stdin, and returns the directory
+// and the Runner's error. stdin is an os.Pipe rather than a real terminal, so
+// the raw-mode handling is skipped — what is under test is the forwarding
+// itself, independent of any host-terminal raw-mode dance.
+func runPTYPromptAction(t *testing.T, answer string) (string, error) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	if _, err := w.Write([]byte(answer)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	w.Close()
+
+	orig := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = orig })
+
+	runner, err := makeShell("deploy", manifest.Action{
+		"run": ptyPromptRun,
+		"pty": true,
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("makeShell: %v", err)
+	}
+	return dir, runner(nil)
+}
+
+// TestShellPTYAnswersAPromptWithAWholeLine is admin-cnxk's regression test:
+// kind="shell" with pty=true must give the child a real pseudo-terminal, so
+// a script that reads one line from stdin (grafana.ts's
+// process.stdin.once('data') on `Type "deploy" to continue:`) gets the whole
+// typed line in one read rather than the first stray byte to arrive.
+func TestShellPTYAnswersAPromptWithAWholeLine(t *testing.T) {
+	dir, runErr := runPTYPromptAction(t, "deploy\n")
+	if runErr != nil {
+		t.Fatalf("runner() = %v, want nil", runErr)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "deployed.txt")); err != nil {
+		t.Fatalf("deployed.txt was not created — the answer did not reach the child whole: %v", err)
+	}
+}
+
+// TestShellPTYWrongAnswerIsAnError is the failure-path twin of
+// TestShellPTYAnswersAPromptWithAWholeLine: an answer the child rejects must
+// still produce a non-nil error through the pty path, exactly as the
+// non-pty path already does for a non-zero exit.
+func TestShellPTYWrongAnswerIsAnError(t *testing.T) {
+	dir, runErr := runPTYPromptAction(t, "nope\n")
+	if runErr == nil {
+		t.Fatal("runner() = nil, want an error for a rejected answer")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "deployed.txt")); err == nil {
+		t.Error("deployed.txt was created for a wrong answer")
+	}
+}
+
+// TestShellPTYSequentialStepsDoNotStealEachOthersInput is the regression
+// test for a race the pty=true forwarding goroutine used to have: a plain
+// `go io.Copy(ptmx, h.Stdin)` stays blocked in Read until the next byte
+// arrives, and h.Stdin is the process's real os.Stdin — shared by every
+// action a command runs. A leaked forwarder from one pty=true step would
+// then compete with the NEXT pty=true step's own forwarder for the first
+// bytes written to stdin, silently stealing part of the second prompt's
+// answer. RunCmdPTY must fully stop its forwarding goroutine before
+// returning, so a second step started immediately after gets sole ownership
+// of the fd.
+func TestShellPTYSequentialStepsDoNotStealEachOthersInput(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	orig := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = orig })
+
+	if _, err := w.Write([]byte("first\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	first, err := makeShell("first", manifest.Action{
+		"run": `read -r line; if [ "$line" = "first" ]; then touch first.txt; else exit 1; fi`,
+		"pty": true,
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("makeShell: %v", err)
+	}
+	if err := first(nil); err != nil {
+		t.Fatalf("first step runner() = %v, want nil", err)
+	}
+
+	if _, err := w.Write([]byte("second\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	w.Close()
+	second, err := makeShell("second", manifest.Action{
+		"run": `read -r line; if [ "$line" = "second" ]; then touch second.txt; else exit 1; fi`,
+		"pty": true,
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("makeShell: %v", err)
+	}
+	if err := second(nil); err != nil {
+		t.Fatalf("second step runner() = %v, want nil — a leaked forwarder from the first step must not have stolen this answer", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "second.txt")); err != nil {
+		t.Fatalf("second.txt was not created — the second step's answer was stolen or lost: %v", err)
+	}
+}
+
 // TestShellPassthroughAppendsQuotedArgs proves kind="shell-passthrough"
 // appends Runner args to `run`, each shell-quoted so an argument containing
 // shell metacharacters cannot be reinterpreted.

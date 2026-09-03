@@ -7,9 +7,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
-	"github.com/McBrideMusings/admin-project-tool/internal/streams"
 )
 
 // RunCmdOptions mirrors the handful of admin_lib/core.py run_cmd knobs a Lua
@@ -36,6 +34,33 @@ type RunCmdResult struct {
 	Output string
 }
 
+// shellCommand builds the /bin/sh -c child both RunCmd and RunCmdPTY run, so
+// the working directory and environment a command sees never depend on which
+// of the two it went through. Stdin, stdout and stderr are left unset — how
+// the child is wired to the terminal is exactly what differs between them.
+//
+// Every string reaching a shell is expanded here and nowhere else, matching
+// admin_lib/core.py::run_cmd ("Strings are passed through resolve_env()
+// first"). A caller that resolves first is unaffected — a resolved string
+// has no "${" left to expand — but a caller that forgets no longer ships a
+// literal ${VAR} to /bin/sh, which expands an unset name to the empty
+// string and runs anyway: that is how `ssh ${UNRAID_USER:-root}@${UNRAID_HOST}`
+// became `ssh root@` and reported "Could not resolve hostname" instead of a
+// missing-variable error.
+func (h *Host) shellCommand(cmd string, opts RunCmdOptions) (*exec.Cmd, error) {
+	expanded, err := manifest.ResolveEnv(cmd)
+	if err != nil {
+		return nil, err
+	}
+	c := exec.Command("/bin/sh", "-c", expanded)
+	c.Dir = opts.Dir
+	if c.Dir == "" {
+		c.Dir = h.ProjectRoot
+	}
+	c.Env = os.Environ()
+	return c, nil
+}
+
 // RunCmd runs cmd through /bin/sh -c, streaming each line to Host.Stdout (and,
 // unless opts.CaptureLog is false, to the active log file) as it arrives —
 // not buffered until exit — while also collecting the combined output to
@@ -52,24 +77,10 @@ type RunCmdResult struct {
 // exactly the bytes this used to write directly.
 // Host function: run_cmd(cmd[, {dir=path, capture_log=bool}]).
 func (h *Host) RunCmd(cmd string, opts RunCmdOptions) (RunCmdResult, error) {
-	// Every string reaching a shell is expanded here and nowhere else, matching
-	// admin_lib/core.py::run_cmd ("Strings are passed through resolve_env()
-	// first"). A caller that resolves first is unaffected — a resolved string
-	// has no "${" left to expand — but a caller that forgets no longer ships a
-	// literal ${VAR} to /bin/sh, which expands an unset name to the empty
-	// string and runs anyway: that is how `ssh ${UNRAID_USER:-root}@${UNRAID_HOST}`
-	// became `ssh root@` and reported "Could not resolve hostname" instead of a
-	// missing-variable error.
-	cmd, err := manifest.ResolveEnv(cmd)
+	c, err := h.shellCommand(cmd, opts)
 	if err != nil {
 		return RunCmdResult{}, err
 	}
-	c := exec.Command("/bin/sh", "-c", cmd)
-	c.Dir = opts.Dir
-	if c.Dir == "" {
-		c.Dir = h.ProjectRoot
-	}
-	c.Env = os.Environ()
 
 	// os/exec gives a nil Stdin the NULL DEVICE, not the parent's stdin, so
 	// leaving it unset made every action's child read instant EOF. Anything that
@@ -89,12 +100,7 @@ func (h *Host) RunCmd(cmd string, opts RunCmdOptions) (RunCmdResult, error) {
 	c.Stderr = pw
 
 	var collected []byte
-	pump := &streams.OutputPump{
-		Out: func(s string) { frame.Write(h.Stdout, s) },
-	}
-	if opts.CaptureLog {
-		pump.LogFn = h.logWrite
-	}
+	pump := h.newOutputPump(opts)
 
 	// Read raw chunks rather than scanning whole lines. A prompt has no trailing
 	// newline, so a line scanner holds it until the child writes one — which it
