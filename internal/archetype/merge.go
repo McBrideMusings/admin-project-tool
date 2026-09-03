@@ -429,6 +429,12 @@ func mergeCommandOverrides(dst, src map[string]manifest.Command, srcLabel string
 			merged.Env = base.Env
 		}
 
+		if override.HasPreflight {
+			merged.Preflight, merged.HasPreflight = override.Preflight, true
+		} else {
+			merged.Preflight, merged.HasPreflight = base.Preflight, base.HasPreflight
+		}
+
 		dst[k] = merged
 		origin[k] = srcLabel
 	}

@@ -55,6 +55,15 @@ func archetypeConfigTable(m *manifest.Manifest, key string) map[string]any {
 	return map[string]any{}
 }
 
+// ArchetypeConfigTable is archetypeConfigTable exported for callers outside
+// this package (cmd/check.go's checkPreRunRefs) that read one manifest-level
+// archetype config table by its admin.toml name, so the name-to-field
+// mapping stays owned by archetypeConfigNames alone rather than being
+// re-listed per caller.
+func ArchetypeConfigTable(m *manifest.Manifest, key string) map[string]any {
+	return archetypeConfigTable(m, key)
+}
+
 // archetypeConfigTables returns every non-empty manifest-level archetype
 // config table on m, keyed by its admin.toml name. This is the table makeLua
 // exposes to a Lua body as sub-tables of the `config` global — see that

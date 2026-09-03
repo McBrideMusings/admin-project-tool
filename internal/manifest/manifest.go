@@ -90,9 +90,19 @@ type Command struct {
 	HasLog    bool
 	LogRetain int
 	HasRetain bool
+	// Preflight declares whether guards.RunGlobalPreflight applies to this
+	// command — admin-tlhw.3: the tool no longer decides this by matching
+	// the literal names "logs"/"kill"; a command that recovers from a stale
+	// install (or is otherwise safe to run regardless) declares
+	// `preflight = false` itself. HasPreflight distinguishes "declared
+	// false" from "not declared" (which means preflight applies, the same
+	// default every command had before this key existed).
+	Preflight    bool
+	HasPreflight bool
 	// Raw holds every key not in the known Command key set (desc, steps,
-	// log_file, log_retain, log, group, priority, env) — including kind/run/
-	// targets when a manifest mistakenly puts them on a command.
+	// log_file, log_retain, log, group, priority, env, preflight) —
+	// including kind/run/targets when a manifest mistakenly puts them on a
+	// command.
 	Raw map[string]any
 }
 
@@ -616,6 +626,7 @@ func (m *Manifest) CommandNames() map[string]bool {
 var knownCommandKeys = map[string]bool{
 	"desc": true, "steps": true, "log_file": true, "log_retain": true,
 	"log": true, "group": true, "priority": true, "env": true,
+	"preflight": true,
 }
 
 // toCommand extracts the typed Command fields from one [commands.X] table,
@@ -683,6 +694,12 @@ func toCommand(val map[string]any) (Command, error) {
 				return cmd, errf("'log_retain' must be an integer")
 			}
 			cmd.LogRetain, cmd.HasRetain = n, true
+		case "preflight":
+			b, ok := v.(bool)
+			if !ok {
+				return cmd, errf("'preflight' must be a boolean")
+			}
+			cmd.Preflight, cmd.HasPreflight = b, true
 		default:
 			cmd.Raw[k] = v
 		}

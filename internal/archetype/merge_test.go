@@ -235,6 +235,72 @@ desc = "project build"
 	}
 }
 
+// TestManifestOverridePreservesArchetypePreflight is admin-tlhw.3's
+// regression: mergeCommandOverrides field-merges a project override onto an
+// archetype-provided command, and Preflight/HasPreflight was left out of
+// that field list — so an archetype declaring `preflight = false` on a
+// command (docker's own [commands.logs], the shape this ticket's own fix
+// is about) lost that declaration the moment a project overrode any other
+// field on the same command, silently reverting to "preflight applies."
+func TestManifestOverridePreservesArchetypePreflight(t *testing.T) {
+	root := t.TempDir()
+	writeArchetypeDir(t, root, "docker", `
+[commands.logs]
+desc      = "archetype logs"
+steps     = ["docker-logs"]
+preflight = false
+`, false)
+	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
+
+	project := projectManifest(t, `
+project_name = "widget"
+archetypes   = ["docker"]
+
+[commands.logs]
+desc = "project logs"
+`)
+
+	merged, _, err := Resolve(project, sp)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	got := merged.Overrides["logs"]
+	if !got.HasPreflight || got.Preflight {
+		t.Errorf("Overrides[logs].Preflight = %v (has=%v), want false (has=true) — "+
+			"the archetype's preflight=false must survive a desc-only override", got.Preflight, got.HasPreflight)
+	}
+}
+
+// TestManifestOverridePreflightWinsOverArchetype is the other direction: a
+// project explicitly declaring `preflight = false` on a command the
+// archetype also provides must win, exactly like every other field.
+func TestManifestOverridePreflightWinsOverArchetype(t *testing.T) {
+	root := t.TempDir()
+	writeArchetypeDir(t, root, "docker", `
+[commands.build]
+desc  = "archetype build"
+steps = ["docker-build"]
+`, false)
+	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
+
+	project := projectManifest(t, `
+project_name = "widget"
+archetypes   = ["docker"]
+
+[commands.build]
+preflight = false
+`)
+
+	merged, _, err := Resolve(project, sp)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	got := merged.Overrides["build"]
+	if !got.HasPreflight || got.Preflight {
+		t.Errorf("Overrides[build].Preflight = %v (has=%v), want false (has=true) — project override must win", got.Preflight, got.HasPreflight)
+	}
+}
+
 func TestManifestOverrideWithoutStepsAndNoArchetypeIsError(t *testing.T) {
 	root := t.TempDir()
 	writeArchetypeDir(t, root, "docker", `

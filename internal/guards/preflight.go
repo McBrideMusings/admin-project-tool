@@ -24,12 +24,6 @@ var preflightChecks = []preflightCheck{
 	func() (bool, string) { return depsFreshCheck("") },
 }
 
-// preflightExempt names the control/diagnostic verbs that skip the whole
-// preflight pass — the ones you need in order to recover from (or look
-// into) the very state a check might block on. Blocking `logs`/`kill` on a
-// stale install would lock a user out of fixing it.
-var preflightExempt = map[string]bool{"logs": true, "kill": true}
-
 var (
 	preflightMu     sync.Mutex
 	preflightResult error
@@ -51,13 +45,18 @@ func ResetPreflight() {
 // admin_lib/guards.py::run_global_preflight. Returns nil on pass, or the
 // first failing check's error.
 //
-// command is the name of the command about to run; a name in
-// preflightExempt skips the pass entirely, every other call — including a
-// nested one during the same process, matching the ADR's "once per
-// invocation regardless of nested dispatch" — returns the memoized verdict
-// (not merely the fact that it ran) rather than silently re-passing.
-func RunGlobalPreflight(command string) error {
-	if preflightExempt[command] {
+// exempt is the caller's own answer to "does preflight apply to the command
+// about to run" — admin-tlhw.3: the tool no longer decides this by matching
+// literal command names ("logs", "kill"). A project opts a command out by
+// declaring `preflight = false` on it in admin.toml (manifest.Command.
+// Preflight/HasPreflight); the caller (internal/kinds.runSteps) resolves
+// that declaration and passes the answer in here. exempt=true skips the
+// pass entirely; every other call — including a nested one during the same
+// process, matching the ADR's "once per invocation regardless of nested
+// dispatch" — returns the memoized verdict (not merely the fact that it
+// ran) rather than silently re-passing.
+func RunGlobalPreflight(exempt bool) error {
+	if exempt {
 		return nil
 	}
 	preflightMu.Lock()

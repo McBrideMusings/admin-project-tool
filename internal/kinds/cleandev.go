@@ -251,29 +251,17 @@ func cleanDevFromConfig(h *luahost.Host, cfg map[string]any, force bool) int64 {
 // makeCleanDev is kind="clean-dev"'s factory — the Go port of
 // admin_lib/interp.py::_make_clean_dev. `--force`/`--db` on the command line
 // force-drops the DB regardless of its health, matching Python's args
-// check. `pre_kill` (default true) dispatches the manifest's "kill" action
-// first, when one is declared — mirroring `_kill_command_exists()` +
-// `run_command("kill", args)`; a manifest with no "kill" command/action
-// (kind="kill-port" is not yet ported — admin-3rgp.15) simply skips this
-// step rather than erroring, exactly as Python's guard does when "kill"
-// isn't registered at all.
+// check. `pre_kill` (admin-tlhw.3) names whatever command or action the
+// project wants run before cleaning — absent means no hook fires; the
+// project is what decides a hook called "kill" exists at all, never this
+// factory.
 func makeCleanDev(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
 	cfg := archetypeConfigTable(m, "clean_dev")
-	preKill := cfgBool(cfg, "pre_kill", true)
+	preRun := cfgString(cfg, "pre_kill", "")
 
 	return func(args []string) error {
 		h := newHost(m)
-		if preKill {
-			if _, ok := resolveCommand(m, "kill"); ok {
-				if err := surf.Command("kill", args); err != nil {
-					h.Warn("kill: " + err.Error())
-				}
-			} else if _, ok := m.Actions["kill"]; ok {
-				if err := RunAction(m, Default, "kill", args); err != nil {
-					h.Warn("kill: " + err.Error())
-				}
-			}
-		}
+		runPreHook(m, surf, preRun, args, h.Warn)
 		force := false
 		for _, a := range args {
 			if a == "--force" || a == "--db" {

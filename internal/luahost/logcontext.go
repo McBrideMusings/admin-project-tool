@@ -176,7 +176,8 @@ func ResetProcessLogContext(projectRoot string) {
 // Configure call". That premise is false: internal/kinds/dispatch.go:217
 // routes surf.Command straight back into runSteps, which calls Configure
 // again, and three shipped kinds take that hop before starting
-// (vitedev.go, docker.go, cleandev.go, each `surf.Command("kill", …)`).
+// (vitedev.go, docker.go, cleandev.go, each via runPreHook's
+// `surf.Command(<project-declared name>, …)`).
 //
 // Clearing here therefore reset `active` before taken() was ever consulted,
 // so `admin dev` materialized tmp/dev.<ts>.log, hit the pre-kill hop, and
