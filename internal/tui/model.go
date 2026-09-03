@@ -384,6 +384,25 @@ type Model struct {
 	// every rowItem from scratch on each frame.
 	expandedCmd string
 
+	// pendingDispatch holds the command names whose dispatchCommandCmd is in
+	// flight — the window between the enter keypress and the
+	// workDispatchStartedMsg that reports either a livework.Entry now exists
+	// or the spawn failed. commandRowItem reads it to set workRowData.pending
+	// so the row renders "starting" instead of idle, and activateCommand
+	// consults it to refuse a second dispatch of the same command during
+	// that window (admin-qk77). A map, not a single string, because more
+	// than one command's dispatch can be in flight at once. Shared state
+	// across every copy of this value-type Model (map identity, not the map
+	// itself, is what's copied) — mutate it only from Update, never from
+	// View, matching expandedCmd's own rule above.
+	pendingDispatch map[string]bool
+	// pendingAttach holds the command names whose enter arrived WHILE their
+	// dispatch was still pending — activateCommand records the intent to
+	// attach here instead of dispatching a second run, and the
+	// workDispatchStartedMsg handler drains it once the entry the attach
+	// needs actually exists.
+	pendingAttach map[string]bool
+
 	// Config tab (admin-3rgp.21): the resolved config.Config — repoRoot's
 	// admin.toml [identity]/[worktrees]/[[populate]]/[beads]/[workflow]
 	// tables, merged with its declared archetypes. Each field's origin
@@ -514,6 +533,8 @@ func New(ctx context.Context, repoRoot, nwo, current, def string, opts ...Option
 		herdr:           shim.Available(),
 		selected:        map[string]bool{},
 		trackerSelected: map[string]bool{},
+		pendingDispatch: map[string]bool{},
+		pendingAttach:   map[string]bool{},
 	}
 	for _, opt := range opts {
 		opt(&m)
@@ -1300,12 +1321,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// this message lands. workTickCmd is what repaints the Work tab so
 		// the live-work entry StartHostedPTY just registered shows up
 		// without waiting on a keypress.
+		//
+		// Clearing pendingDispatch here — on both the error and success
+		// paths — is what ends the "starting" window a row shows from the
+		// moment enter was pressed (admin-qk77): a failed spawn falls back
+		// to idle (the red status line below is the only trace it left),
+		// and a successful one either shows running (once the entry exists)
+		// or idle again if the command already exited before this landed.
+		delete(m.pendingDispatch, msg.name)
 		if msg.err != nil {
+			delete(m.pendingAttach, msg.name)
 			m.setStatus(msg.name+" failed to start: "+msg.err.Error(), cRed)
 			return m, nil
 		}
 		m.setStatus(msg.name+" started", cGreen)
 		m.refreshDetailProbes()
+		if m.pendingAttach[msg.name] {
+			delete(m.pendingAttach, msg.name)
+			if e := m.liveEntryForCommand(msg.name); e != nil {
+				am, acmd := m.attachEntry(e)
+				return am, tea.Batch(acmd, workTickCmd())
+			}
+		}
 		return m, workTickCmd()
 
 	case workflowResolvedMsg:

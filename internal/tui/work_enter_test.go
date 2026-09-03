@@ -10,6 +10,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -313,6 +314,128 @@ func TestAttachKeyRunsOpsAttachForLauncherRow(t *testing.T) {
 	}
 	if !attached {
 		t.Error("`a` on a Via-set row did not invoke Ops.Attach, attached=false")
+	}
+}
+
+// TestPendingCommandRendersStarting proves a row whose dispatch is in flight
+// (Model.pendingDispatch holds its name) renders the "starting" state word
+// instead of idle's kind/desc pair — admin-qk77's core AC: visible feedback
+// from the instant enter is pressed, before any livework.Entry exists.
+//
+// MUTATION EVIDENCE: delete the `if wd.pending { ... }` branch in
+// renderWorkRow (fall through to the idle kind/desc branch) and this test
+// fails: the rendered row contains "shell" (the fixture's cmdKind) instead
+// of "starting".
+func TestPendingCommandRendersStarting(t *testing.T) {
+	m := workTestModel(&manifest.Manifest{
+		Custom:  map[string]manifest.Command{"build": {Desc: "build it", Steps: []string{"build"}}},
+		Actions: map[string]manifest.Action{"build": {"kind": "shell"}},
+	})
+	wd := &workRowData{cmdName: "build", cmdKind: "shell", cmdDesc: "build it", pending: true}
+	row := rowItem{kind: rowCommand, work: wd}
+
+	out := stripANSI(m.renderWorkRow(row, false, 60))
+	if !strings.Contains(out, "starting") {
+		t.Errorf("rendered row = %q, want it to contain %q", out, "starting")
+	}
+	if strings.Contains(out, "shell") {
+		t.Errorf("rendered row = %q, a pending row must not also show the idle kind column", out)
+	}
+}
+
+// TestEnterOnPendingRowDoesNotDispatchAgain proves the second-enter bug the
+// ticket names directly: enter on a row whose previous dispatch is still in
+// flight must not start a second run — it queues an attach intent instead.
+// startHostedRun is blocked on a channel for the whole test so the "still in
+// flight" window stays open, matching the real race the ticket describes.
+//
+// MUTATION EVIDENCE: delete the `if wd.pending { ... }` guard in
+// activateCommand (or in activateCommandTarget for the target case) and this
+// test fails: startHostedRun is invoked a second time, calls != 1.
+func TestEnterOnPendingRowDoesNotDispatchAgain(t *testing.T) {
+	old := startHostedRun
+	defer func() { startHostedRun = old }()
+	calls := 0
+	release := make(chan struct{})
+	startHostedRun = func(m *manifest.Manifest, name string, args []string, rows, cols int, env []string) error {
+		calls++
+		<-release
+		return nil
+	}
+	defer close(release)
+
+	m := workTestModel(&manifest.Manifest{
+		Custom:  map[string]manifest.Command{"build": {Steps: []string{"build"}}},
+		Actions: map[string]manifest.Action{"build": {"kind": "shell"}},
+	})
+	wd := &workRowData{cmdName: "build"}
+
+	// First enter: idle -> dispatch. Fire the Cmd's func on its own
+	// goroutine (as bubbletea would) so it blocks inside startHostedRun
+	// rather than blocking this test.
+	m1, cmd1 := m.activateCommand(wd)
+	if cmd1 == nil {
+		t.Fatal("first enter on an idle command returned a nil Cmd")
+	}
+	go cmd1()
+	// Give the goroutine a moment to actually enter startHostedRun and
+	// increment calls before the second enter races it.
+	deadline := time.Now().Add(time.Second)
+	for calls == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if calls != 1 {
+		t.Fatalf("first dispatch never reached startHostedRun (calls=%d) — the window this test needs never opened", calls)
+	}
+
+	// Second enter, on the SAME row data reflecting the now-pending state —
+	// this is what commandRowItem would hand back on the next frame.
+	mm := m1.(Model)
+	wd2 := &workRowData{cmdName: "build", pending: mm.pendingDispatch["build"]}
+	if !wd2.pending {
+		t.Fatal("pendingDispatch[\"build\"] is false after the first enter — startDispatch never marked it")
+	}
+	_, cmd2 := mm.activateCommand(wd2)
+	if cmd2 != nil {
+		t.Error("enter on a pending row returned a non-nil dispatch Cmd, want nil — it must queue an attach, not dispatch again")
+	}
+	if !mm.pendingAttach["build"] {
+		t.Error("enter on a pending row did not record a queued attach in pendingAttach")
+	}
+
+	if calls != 1 {
+		t.Errorf("startHostedRun called %d times, want 1 — the second enter started a second run", calls)
+	}
+}
+
+// TestFailedDispatchClearsPendingState proves criterion 6: a spawn that
+// fails must not leave its row stuck showing "starting" forever — the
+// workDispatchStartedMsg{err: non-nil} handler clears pendingDispatch (and
+// any queued pendingAttach) and surfaces the failure on the status line.
+//
+// MUTATION EVIDENCE: delete the `delete(m.pendingDispatch, msg.name)` call on
+// the error branch in model.go's workDispatchStartedMsg case and this test
+// fails: pendingDispatch["build"] stays true after a failed dispatch, so the
+// row would render "starting" forever.
+func TestFailedDispatchClearsPendingState(t *testing.T) {
+	m := workTestModel(&manifest.Manifest{})
+	m.pendingDispatch["build"] = true
+	m.pendingAttach["build"] = true
+
+	updated, cmd := m.Update(workDispatchStartedMsg{name: "build", err: errors.New("spawn failed")})
+	um := updated.(Model)
+
+	if um.pendingDispatch["build"] {
+		t.Error("pendingDispatch[\"build\"] still true after a failed dispatch — the row would render \"starting\" forever")
+	}
+	if um.pendingAttach["build"] {
+		t.Error("pendingAttach[\"build\"] still true after a failed dispatch — a queued attach against an entry that will never exist")
+	}
+	if !strings.Contains(um.status, "build") || !strings.Contains(um.status, "spawn failed") {
+		t.Errorf("status = %q, want it to name the command and the error", um.status)
+	}
+	if cmd != nil {
+		t.Errorf("Update returned a non-nil Cmd for a failed dispatch, want nil")
 	}
 }
 
