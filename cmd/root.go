@@ -378,13 +378,22 @@ func applyHostedColorProfile() {
 // (via its ansiHex table) and tests HSL lightness < 0.5 — indices 0-6 (the
 // non-bright colors other than white) land below that line, but index 7
 // ("#c0c0c0", light gray) and every index from 8 up (bright black at
-// "#808080" has lightness exactly 0.5, and every other bright color is
-// lighter still) land at or above it. So the dark set is strictly idx < 7,
-// not idx < 8. When the var is unset, has no ';', or the last field
-// doesn't parse as an int, this defaults to dark=true — the same value
-// termenv falls back to (ANSIColor(0), black) when an OSC 11 query goes
-// unanswered — so skipping the query changes latency, never the resulting
-// color decision.
+// "#808080" has lightness ~0.502, and every other bright color is lighter
+// still) land at or above it. So the dark set is strictly idx < 7, not
+// idx < 8. When the var is unset, has no ';', or the last field doesn't
+// parse as an int, this defaults to dark=true — the same value termenv
+// falls back to (ANSIColor(0), black) when an OSC 11 query goes unanswered.
+//
+// This is not a lossless stand-in for the live query: a terminal that
+// supports OSC 11 but doesn't export COLORFGBG (iTerm2, Kitty, Alacritty,
+// WezTerm and Ghostty don't by default) would have its real background
+// correctly detected by the query and instead gets the dark=true default
+// here. Skipping the query trades that case's correctness for never
+// blocking on an unanswered probe. As of this writing nothing in this repo
+// consumes lipgloss.AdaptiveColor or otherwise branches on HasDarkBackground,
+// so the trade has no visible effect yet — but the first caller that adds
+// one should know this function is a heuristic, not termenv's query in
+// disguise.
 func colorfgbgDarkBackground(raw string) bool {
 	sep := strings.LastIndex(raw, ";")
 	if sep < 0 {
