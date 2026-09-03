@@ -37,9 +37,9 @@ func FrameURLs(action manifest.Action, target string, m *manifest.Manifest) ([]f
 //
 // hasFooter/footerVal carry the tri-state Python gets from
 // cmd.meta.get("footer") returning None/True/False: hasFooter=false means
-// "the key was absent" (decide from the resolved URL count) — TOML has no
-// undecided-boolean literal, so that's threaded as a second return from
-// actionBool rather than a pointer.
+// "the key was absent", which now defaults the footer ON regardless of the
+// resolved URL count — TOML has no undecided-boolean literal, so that's
+// threaded as a second return from actionBool rather than a pointer.
 //
 // h is reused (not a fresh Host) for both the log context this sets and the
 // h.RunCmd the caller goes on to make, so the log path the footer names is
@@ -53,6 +53,26 @@ func enterFrame(h *luahost.Host, label string, rawURLs []any, hasFooter, footerV
 		resolved = nil
 	}
 	if !frame.ShouldActivate(len(resolved), hasFooter, footerVal) {
+		return nil
+	}
+	// Materializing the log context here (SetLogContext + MaterializeLogFile)
+	// is a real side effect — it names and writes a log file, and announces
+	// it on Stderr — that historically happened whenever the caller *asked*
+	// for a footer: an explicit footer=true, or a non-empty urls list (the
+	// pre-flip ShouldActivate formula, still exactly this). Both stay
+	// unconditional, terminal or not: an explicit ask for the log path is
+	// honoured even piped/CI, matching the tool's behaviour before the
+	// footer-default flip.
+	//
+	// The flip's new case — hasFooter absent AND no urls — is different: it
+	// is the tool's own default, not something the manifest asked for, so it
+	// must not force a materialization Activate is about to decline anyway.
+	// frame.CanActivate runs the same checks Activate itself will (a frame
+	// already active, ADMIN_NO_FRAME, h.Stdout not a terminal); skipping it
+	// only for this case is what keeps a plain CLI/piped dispatch — which
+	// declares no urls and no footer — silent, exactly as before the flip.
+	explicitlyAsked := (hasFooter && footerVal) || (!hasFooter && len(resolved) > 0)
+	if !explicitlyAsked && !frame.CanActivate(h.Stdout) {
 		return nil
 	}
 	h.SetLogContext([]string{label}, luahost.RetainUnset)

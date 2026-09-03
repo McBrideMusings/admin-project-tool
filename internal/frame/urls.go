@@ -14,13 +14,17 @@ import (
 // overrides the URL list in both directions (true pins a footer for an
 // action with nothing to link — the elapsed-time rule and the log path are
 // worth having on their own; false suppresses one the URLs would have
-// raised). hasFooter=false (the key was absent from the manifest) means
-// "decide from resolvedURLCount" — the original, pre-footer-key behaviour.
+// raised). hasFooter=false (the key was absent from the manifest) means the
+// footer defaults ON — the log path is worth having on any long-running
+// process, so an action with no urls and no explicit footer still raises
+// one; only an explicit footer=false suppresses it. resolvedURLCount no
+// longer decides anything on its own; it is accepted for symmetry with
+// callers that already compute it.
 func ShouldActivate(resolvedURLCount int, hasFooter, footerVal bool) bool {
 	if hasFooter {
 		return footerVal
 	}
-	return resolvedURLCount > 0
+	return true
 }
 
 // ResolveURLs turns a raw `urls` array (as decoded from TOML — each element

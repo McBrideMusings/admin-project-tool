@@ -278,6 +278,26 @@ var (
 	active *Frame
 )
 
+// CanActivate reports whether Activate(..., w) would go on to raise a frame
+// — the same three environment checks Activate itself runs (a frame already
+// up, ADMIN_NO_FRAME, w not a terminal), exposed so a caller can skip
+// frame-only side effects (materializing a log file, calling SetLogContext)
+// when it already knows Activate is about to decline. It does not reserve
+// anything: Activate re-checks the same conditions under its own lock, so a
+// caller between CanActivate and Activate racing another Activate still
+// gets a correct (if possibly stale) decline from Activate itself.
+func CanActivate(w io.Writer) bool {
+	mu.Lock()
+	defer mu.Unlock()
+	if active != nil {
+		return false
+	}
+	if os.Getenv("ADMIN_NO_FRAME") != "" {
+		return false
+	}
+	return isTerminalWriter(w)
+}
+
 // Activate starts a frame writing to w, or returns nil when framing can't
 // or shouldn't apply: w isn't a terminal (piped output, CI), ADMIN_NO_FRAME
 // is set, or a frame is already up.
