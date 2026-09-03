@@ -133,18 +133,28 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 	}
 
 	name := padEnd(truncR(wd.cmdName, nameW), nameW)
-	if wd.live != nil {
-		st, _ := livework.Default.State(wd.live.ID)
-		state := renderLiveState(st)
-		whereText, whereStyled := whereSeg(wd.live)
-		actW := maxi(rest-stateW-whereWidth(whereText), 4)
-		act := padEnd(truncR(wd.live.Activity, actW), actW)
-		return marker + name + state + faintStyle.Render(act) + whereStyled
-	}
-	if wd.pending {
-		state := renderLiveState(livework.StateStarting)
-		desc := truncR(wd.cmdDesc, maxi(rest-stateW, 4))
-		return marker + name + state + faintStyle.Render(desc)
+	// A holder row (it has targets) never runs itself — it is a menu, not a
+	// dispatch — so it must never take the live/pending rendering path even
+	// when wd.live/wd.pending happen to be set (they no longer are, since a
+	// genuine multi-target menu's entry is now keyed per target rather than
+	// on the shared parent name, but this stays the belt-and-suspenders
+	// guard the acceptance criteria name explicitly: the parent holder row
+	// never shows a running indicator). It always falls straight to the
+	// idle kind+desc form below.
+	if len(wd.targets) == 0 {
+		if wd.live != nil {
+			st, _ := livework.Default.State(wd.live.ID)
+			state := renderLiveState(st)
+			whereText, whereStyled := whereSeg(wd.live)
+			actW := maxi(rest-stateW-whereWidth(whereText), 4)
+			act := padEnd(truncR(wd.live.Activity, actW), actW)
+			return marker + name + state + faintStyle.Render(act) + whereStyled
+		}
+		if wd.pending {
+			state := renderLiveState(livework.StateStarting)
+			desc := truncR(wd.cmdDesc, maxi(rest-stateW, 4))
+			return marker + name + state + faintStyle.Render(desc)
+		}
 	}
 	kind := padEnd(truncR(wd.cmdKind, stateW), stateW)
 	desc := truncR(wd.cmdDesc, maxi(rest-stateW, 4))
@@ -156,6 +166,12 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 // every other row uses, indented by the connector's two cells so the
 // submenu reads as belonging to the row above it. The cursor marker is
 // already rendered by the caller, so this starts at the connector.
+//
+// wd.live is this target's OWN entry (targetRows looks it up by
+// "<cmdName>:<targetKey>", not copied from the parent — admin-0cyu.1), so
+// when it is running this mirrors renderWorkRow's rowWorker/live branch:
+// state, activity and where-segment take the place of the idle
+// connector+key+hint form.
 func renderTargetRow(wd *workRowData, focused bool, nameW, rest int) string {
 	connector := "├ "
 	if wd.targetLast {
@@ -166,6 +182,15 @@ func renderTargetRow(wd *workRowData, focused bool, nameW, rest int) string {
 	name := key
 	if focused {
 		name = lipgloss.NewStyle().Foreground(cCyan).Render(key)
+	}
+	if wd.live != nil {
+		const stateW = 9
+		st, _ := livework.Default.State(wd.live.ID)
+		state := renderLiveState(st)
+		whereText, whereStyled := whereSeg(wd.live)
+		actW := maxi(rest-stateW-whereWidth(whereText), 4)
+		act := padEnd(truncR(wd.live.Activity, actW), actW)
+		return faintStyle.Render(connector) + name + state + faintStyle.Render(act) + whereStyled
 	}
 	hint := truncR(wd.targetRun, maxi(rest-2, 4))
 	return faintStyle.Render(connector) + name + faintStyle.Render(hint)

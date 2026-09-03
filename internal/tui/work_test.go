@@ -515,6 +515,55 @@ func TestCommandRowItemFallsBackToGlobWhenNoLiveEntry(t *testing.T) {
 	}
 }
 
+// TestTargetRowsResolvesLiveEntryByActionNameNotCommandName is admin-0cyu.1's
+// regression case: the live-work registry keys a multi-target dispatch's
+// entry on the ACTION name (internal/kinds.multiTargetLiveID, via
+// kinds.TargetLiveKey), not the manifest COMMAND name that steps to it —
+// nothing guarantees the two match. Command "dev" steps to action "pick",
+// so a registry entry named "pick:cf" (exactly the shape
+// internal/kinds/detach_test.go's
+// TestMultiTargetPerTargetDetachDashboardProducerDispatchesThroughLauncher
+// proves the real registry writes) must resolve on the "cf" target row even
+// though byName["dev:cf"] — the command-name-keyed lookup round 1 shipped —
+// would miss it entirely.
+func TestTargetRowsResolvesLiveEntryByActionNameNotCommandName(t *testing.T) {
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"dev": {Desc: "dev", Steps: []string{"pick"}},
+		},
+		Actions: map[string]manifest.Action{
+			"pick": {
+				"kind": "multi-target",
+				"cf":   map[string]any{"run": "wrangler dev"},
+				"prod": map[string]any{"run": "prod dev"},
+			},
+		},
+	}
+	mm := workTestModel(m)
+
+	live := &livework.Entry{ID: "pick:cf", Name: "pick:cf", State: livework.StateRunning}
+	byName := map[string]*livework.Entry{"pick:cf": live}
+
+	parent := mm.commandRowItem(workCmdRow{name: "dev", cmd: m.Custom["dev"]}, byName)
+	if parent.work.actionName != "pick" {
+		t.Fatalf("parent actionName = %q, want %q (cmd.Steps[0])", parent.work.actionName, "pick")
+	}
+
+	rows := targetRows(parent, byName)
+	var cfRow *workRowData
+	for _, r := range rows {
+		if r.work.targetKey == "cf" {
+			cfRow = r.work
+		}
+	}
+	if cfRow == nil {
+		t.Fatalf("no target row for %q among %+v", "cf", rows)
+	}
+	if cfRow.live != live {
+		t.Errorf("cf target row's live entry = %v, want the registry entry keyed \"pick:cf\" (byName[\"dev:cf\"] must NOT be what resolves it)", cfRow.live)
+	}
+}
+
 // TestWorkRowsWorkersHeaderAlwaysPresent covers admin-spjp.1's core claim:
 // the Workers header renders whether or not any worker is live, and the row
 // directly under it matches whatever liveWorkers() actually returns right

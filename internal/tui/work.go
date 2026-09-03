@@ -26,7 +26,14 @@ import (
 // detail pane has to be polymorphic rather than one wide field set.
 type workRowData struct {
 	// Command rows (rowCommand):
-	cmdName      string
+	cmdName string
+	// actionName is cmd.Steps[0] — the same base name
+	// internal/kinds.multiTargetLiveID (via kinds.TargetLiveKey) keys a
+	// multi-target live entry on. A command's name and its sole action's
+	// name are not guaranteed to match (a command's steps can reference a
+	// differently-named action), so targetRows builds its registry lookup
+	// key from this field, not cmdName.
+	actionName   string
 	cmdDesc      string
 	cmdKind      string // the sole step's declared kind, or "sequence"
 	cmdArchetype string
@@ -507,7 +514,12 @@ func unseenCommandNames(m *manifest.Manifest, seen map[string]bool) []string {
 // (internal/kinds/pane.go's recordLiveWork), so a command counts as live
 // whenever one of its steps names an entry in byName (which the caller has
 // already filtered to Worker == nil — a genuine agent worker never folds
-// into a command row).
+// into a command row). For a genuine multi-target menu (more than one
+// declared target) the registry keys the entry on "<action>:<target>"
+// instead (internal/kinds.multiTargetLiveID) once a target is actually
+// picked, so this lookup by the bare step name naturally returns nil for
+// the parent row while targetRows resolves each target's own qualified
+// entry below — a parent holder row is never "live" on its own account.
 func liveEntryFor(c manifest.Command, byName map[string]*livework.Entry) *livework.Entry {
 	for _, s := range c.Steps {
 		if e, ok := byName[s]; ok {
@@ -546,8 +558,13 @@ func (m Model) cmdOriginOf(name string) string {
 // its live status (if any), its workflow target (if it is one), and its
 // best-effort last-run/log.
 func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) rowItem {
+	actionName := cr.name
+	if len(cr.cmd.Steps) > 0 {
+		actionName = cr.cmd.Steps[0]
+	}
 	wd := &workRowData{
 		cmdName:      cr.name,
+		actionName:   actionName,
 		cmdDesc:      cr.cmd.Desc,
 		cmdKind:      m.commandKind(cr.cmd),
 		cmdArchetype: m.cmdOriginOf(cr.name),
@@ -612,7 +629,17 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 // there is no collapsed state — and sit directly under their parent in the
 // same flat row list, so every cursor, filter, window and hit-test rule
 // already written for the Work tab applies to them with no special case.
-func targetRows(parent rowItem) []rowItem {
+//
+// byName is the same registry-name -> entry map workRows() built for the
+// parent rows: once a target is actually dispatched, its entry is keyed on
+// "<actionName>:<targetKey>" (internal/kinds.TargetLiveKey, as written by
+// internal/kinds.multiTargetLiveID), so each target row resolves its OWN
+// live entry here rather than inheriting whatever the parent happened to
+// find — the fix for a parent holder row showing running for every target
+// sharing it, and for a running target showing no indicator at all. The key
+// is built from wd.actionName (cmd.Steps[0]), not wd.cmdName — a command's
+// name and its sole action's name are not guaranteed to match.
+func targetRows(parent rowItem, byName map[string]*livework.Entry) []rowItem {
 	wd := parent.work
 	if wd == nil {
 		return nil
@@ -624,6 +651,7 @@ func targetRows(parent rowItem) []rowItem {
 			label: wd.cmdName + " " + key,
 			work: &workRowData{
 				cmdName:      wd.cmdName,
+				actionName:   wd.actionName,
 				cmdDesc:      wd.cmdDesc,
 				cmdKind:      wd.cmdKind,
 				cmdArchetype: wd.cmdArchetype,
@@ -633,21 +661,19 @@ func targetRows(parent rowItem) []rowItem {
 				targetRun:    wd.targetRuns[key],
 				targetLast:   i == len(wd.targets)-1,
 				urls:         wd.targetURLs[key],
-				// A running multi-target command is recorded under the
-				// action's own name (liveEntryFor), not per target, so the
-				// live entry the parent row found is the same one every
-				// target shares — copied here so a focused target row's own
-				// detail pane (commandDetail) can show elapsed time and mark
-				// its URLs live. renderTargetRow itself reads none of this;
-				// the row line shows no state indicator.
-				live: wd.live,
+				// This target's own qualified entry, if one is running —
+				// see the byName doc comment above. renderTargetRow now
+				// renders state/activity/where from this exactly as
+				// renderWorkRow does for a plain command row.
+				live: byName[kinds.TargetLiveKey(wd.actionName, key)],
 				// Same reasoning as live just above: a multi-target
-				// dispatch is pending under the parent action's own name,
-				// not per target, so this is what activateCommandTarget's
-				// second-enter guard reads to turn a second enter on a
-				// starting command's target into a queued attach instead of
-				// a second run (admin-qk77). Not a rendering concern —
-				// renderTargetRow doesn't read it either.
+				// dispatch is pending under the parent action's own name
+				// until a livework.Entry registers (there is no target
+				// identity to key on during that transient window — see
+				// dispatchCommandCmd/activateCommandTarget), so this is
+				// what activateCommandTarget's second-enter guard reads to
+				// turn a second enter on a starting command's target into a
+				// queued attach instead of a second run (admin-qk77).
 				pending: wd.pending,
 			},
 		})
@@ -681,7 +707,7 @@ func (m Model) workRows() []rowItem {
 		for _, cr := range cmdRows {
 			item := m.commandRowItem(cr, byName)
 			rows = append(rows, item)
-			if targets := targetRows(item); len(targets) > 0 {
+			if targets := targetRows(item, byName); len(targets) > 0 {
 				rows = append(rows, targets...)
 				rows = append(rows, ruleRow())
 			}
@@ -816,12 +842,26 @@ func (m Model) startDispatch(name string, args ...string) (tea.Model, tea.Cmd) {
 
 // liveEntryForCommand resolves the livework.Entry now backing name, once its
 // dispatch has registered one — the workDispatchStartedMsg handler's queued-
-// attach path uses this rather than re-deriving the registry ID (cmd.Steps[0]
-// per hostedpty.go) itself, reusing commandRowItem's own lookup (liveEntryFor)
-// via the same workRows() scan every other row-driven action already does.
+// attach path uses this rather than re-deriving the registry ID
+// (multiTargetLiveID per detach.go/hostedpty.go) itself, reusing
+// commandRowItem's/targetRows' own lookups via the same workRows() scan
+// every other row-driven action already does.
+//
+// pendingDispatch/pendingAttach stay keyed by command name only, not target
+// — there is at most one in-flight dispatch per command name (the existing
+// pending guard), so name alone remains unambiguous — but the entry itself
+// may now be recorded under a target row's qualified name rather than the
+// parent's bare one, so both rowCommand and rowCommandTarget rows are
+// scanned for a match.
 func (m Model) liveEntryForCommand(name string) *livework.Entry {
 	for _, r := range m.workRows() {
-		if r.kind == rowCommand && r.work != nil && r.work.cmdName == name {
+		if r.kind != rowCommand && r.kind != rowCommandTarget {
+			continue
+		}
+		if r.work == nil || r.work.cmdName != name {
+			continue
+		}
+		if r.work.live != nil {
 			return r.work.live
 		}
 	}
@@ -831,12 +871,14 @@ func (m Model) liveEntryForCommand(name string) *livework.Entry {
 // activateCommandTarget handles enter on one target of a command's target
 // group: it dispatches the parent command with that target as its argument,
 // which is exactly what `admin <cmd> <target>` does from a shell — makeMultiTarget
-// takes args[0] as the picked target and never raises its own picker. A
-// multi-target run is recorded under the PARENT action's own name
-// (liveEntryFor), not per target, so pending — like live — is keyed on
+// takes args[0] as the picked target and never raises its own picker. Until
+// the dispatch registers a livework.Entry there is no target-qualified name
+// to key on yet (the entry doesn't exist), so pending stays keyed on
 // wd.cmdName here too, matching how the parent row itself already reads it,
 // and the same "don't dispatch a second run into the one still starting"
-// guard applies (admin-qk77).
+// guard applies (admin-qk77). Once the entry lands it's keyed on
+// "<cmdName>:<targetKey>" (multiTargetLiveID) and targetRows resolves it
+// per target from then on.
 func (m Model) activateCommandTarget(wd *workRowData) (tea.Model, tea.Cmd) {
 	if wd.pending {
 		m.pendingAttach[wd.cmdName] = true

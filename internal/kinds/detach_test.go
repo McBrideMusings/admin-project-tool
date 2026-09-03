@@ -310,12 +310,12 @@ func TestMultiTargetPerTargetDetachDashboardProducerDispatchesThroughLauncher(t 
 	entries := livework.Default.List()
 	found := false
 	for _, e := range entries {
-		if e.Name == "pick" && e.Handle == "fake-handle-2" {
+		if e.Name == "pick:cf" && e.Handle == "fake-handle-2" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("live-work registry = %+v, want an entry named pick with handle fake-handle-2", entries)
+		t.Errorf("live-work registry = %+v, want an entry named pick:cf with handle fake-handle-2 (admin-0cyu.1: a genuine multi-target menu's entry is keyed on the picked target, not the shared parent action name)", entries)
 	}
 	if got := len(entries); got != before+1 {
 		t.Errorf("live-work registry has %d entries, want exactly %d", got, before+1)

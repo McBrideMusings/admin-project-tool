@@ -314,10 +314,15 @@ func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string, p
 // p.Launch for the dashboard.
 //
 // The launcher decision looks only at the command's FIRST step's action,
-// keyed by cmd.Steps[0] — the same key StartHostedPTY uses — so
-// internal/tui/work.go's liveEntryFor resolves the same row whichever
-// surface the command actually landed on, and `a` (attach) finds it either
-// way.
+// looked up by cmd.Steps[0] — the same key StartHostedPTY uses to find the
+// action. The recorded live-work entry, though, is keyed by
+// multiTargetLiveID(entryID, action, args) (detach.go): plain cmd.Steps[0]
+// for a flat action or a multi-target action with at most one target, or
+// "<entryID>:<picked target>" for a genuine multi-target menu dispatched
+// with a resolvable target — so internal/tui/work.go's targetRows can
+// resolve a target row's OWN live entry instead of only ever finding the
+// shared parent one, while a plain command's row still resolves under its
+// bare name exactly as before. `a` (attach) looks entries up the same way.
 //
 // When that first step is itself kind="multi-target", its own top-level
 // `detach` is only the default a picked target inherits — the effective
@@ -353,7 +358,8 @@ func launchCommand(m *manifest.Manifest, name string, args []string, env []strin
 				handle, err := dispatchToLauncher("__run-command", name, args, ctx, cfg.Terminal, root)
 				if err == nil {
 					kind, _ := actionString(action, "kind")
-					recordLiveWork(entryID, kind, handle, "__run-command", name, args, ctx, cfg.Terminal, root)
+					liveID := multiTargetLiveID(entryID, action, args)
+					recordLiveWork(liveID, kind, handle, "__run-command", name, args, ctx, cfg.Terminal, root)
 					return nil
 				}
 				// A launcher IS configured but spawning through it failed —
