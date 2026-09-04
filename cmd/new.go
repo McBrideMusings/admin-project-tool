@@ -70,7 +70,6 @@ func runNew(cmd *cobra.Command, args []string) error {
 		ProjectName: projectName,
 		PythonMin:   "3.11",
 		Archetypes:  result.Archetypes,
-		Modules:     nil,
 		Urls:        result.URLs,
 	}
 	if err := os.WriteFile(manifestPath, []byte(manifest.Dump(starter)), 0o644); err != nil {
@@ -93,13 +92,11 @@ func runNew(cmd *cobra.Command, args []string) error {
 // matching admin-run:208's
 // `project_dir.resolve().name.replace("-", " ").title()`.
 func starterProjectName(dir string) string {
-	base := strings.ReplaceAll(filepath.Base(dir), "-", " ")
-	words := strings.Fields(base)
+	words := strings.Fields(strings.ReplaceAll(filepath.Base(dir), "-", " "))
 	for i, w := range words {
+		// strings.Fields never yields an empty word, so w always has a first rune.
 		r := []rune(w)
-		if len(r) > 0 {
-			r[0] = unicode.ToUpper(r[0])
-		}
+		r[0] = unicode.ToUpper(r[0])
 		words[i] = string(r)
 	}
 	return strings.Join(words, " ")
@@ -114,9 +111,11 @@ func ensureTmpGitignore(dir string) error {
 		return err
 	}
 	gi := filepath.Join(tmp, ".gitignore")
-	if _, err := os.Stat(gi); err == nil {
+	_, err := os.Stat(gi)
+	if err == nil {
 		return nil
-	} else if !os.IsNotExist(err) {
+	}
+	if !os.IsNotExist(err) {
 		return err
 	}
 	return os.WriteFile(gi, []byte("*\n!.gitignore\n"), 0o644)

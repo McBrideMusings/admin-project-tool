@@ -608,3 +608,41 @@ func equalSlices(a, b []string) bool {
 func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
+
+// TestDumpRoundTripsThroughParse guards against a Dump that writes an
+// admin.toml its own package can't Load back — the exact shape of the bug
+// found on review: fmt's "%q" verb escapes control bytes as \a, \v and \xHH,
+// none of which are legal TOML string escapes, so a ProjectName or URL value
+// containing one made `admin new` write a file that failed at the very
+// self-check (cmd/new.go's runCheck) meant to catch a bad write.
+func TestDumpRoundTripsThroughParse(t *testing.T) {
+	s := Starter{
+		ProjectName: "widget\tapp \"quoted\" \\backslash\\ \a\v",
+		PythonMin:   "3.11",
+		Archetypes:  []string{"react-native", "hugo"},
+		Modules:     []string{"web"},
+		Urls: map[string]string{
+			"local": "http://localhost:8080",
+			"weird": "value\nwith\nnewlines",
+		},
+	}
+
+	dir := writeManifest(t, Dump(s))
+
+	m, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load(Dump(s)) failed to parse back: %v\n--- dumped toml ---\n%s", err, Dump(s))
+	}
+
+	if m.ProjectName != s.ProjectName {
+		t.Errorf("ProjectName = %q, want %q", m.ProjectName, s.ProjectName)
+	}
+	if !equalSlices(m.Archetypes, s.Archetypes) {
+		t.Errorf("Archetypes = %v, want %v", m.Archetypes, s.Archetypes)
+	}
+	for label, want := range s.Urls {
+		if got := m.Urls[label]; got != want {
+			t.Errorf("Urls[%q] = %q, want %q", label, got, want)
+		}
+	}
+}

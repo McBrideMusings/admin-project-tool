@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // maxEntries caps the stored list. The palette wants the top 5 (Top's n
@@ -32,20 +33,14 @@ func cachePath(nwo string) string {
 	return filepath.Join(base, name)
 }
 
-// filepathSafe duplicates internal/data.filepathSafe rune-for-rune (that
-// helper is unexported there, and four lines isn't worth a cross-package
-// dependency — rowkeys.go already duplicates commandNamed for the same
-// reason). Keep the two in sync by hand if data.go's convention ever changes.
+// filepathSafe matches internal/data.filepathSafe's convention (that helper is
+// unexported there, and one line isn't worth a cross-package dependency —
+// rowkeys.go already duplicates commandNamed for the same reason). Keep the
+// two in sync by hand if data.go's convention ever changes.
+var filepathSafeReplacer = strings.NewReplacer("/", "-", "\\", "-")
+
 func filepathSafe(nwo string) string {
-	out := make([]rune, 0, len(nwo))
-	for _, r := range nwo {
-		if r == '/' || r == '\\' {
-			out = append(out, '-')
-		} else {
-			out = append(out, r)
-		}
-	}
-	return string(out)
+	return filepathSafeReplacer.Replace(nwo)
 }
 
 // load reads the stored list for nwo. Any absence or error — no file yet, a
@@ -120,14 +115,12 @@ func Record(nwo, invocation string) {
 // A fresh repo (no cache file yet) or any read error returns an empty slice,
 // never nil-vs-error ambiguity and never a guessed or seeded entry.
 func Top(nwo string, n int) []string {
-	if n <= 0 {
+	list := load(nwo)
+	if n <= 0 || len(list) == 0 {
 		return []string{}
 	}
-	list := load(nwo)
 	if len(list) > n {
 		list = list[:n]
 	}
-	out := make([]string, len(list))
-	copy(out, list)
-	return out
+	return list
 }

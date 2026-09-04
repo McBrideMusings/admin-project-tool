@@ -653,26 +653,18 @@ type Starter struct {
 // general-purpose serializer.
 func Dump(s Starter) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "project_name = %q\n", s.ProjectName)
-	fmt.Fprintf(&b, "python_min   = %q\n", s.PythonMin)
-	archList := make([]string, len(s.Archetypes))
-	for i, a := range s.Archetypes {
-		archList[i] = fmt.Sprintf("%q", a)
-	}
-	fmt.Fprintf(&b, "archetypes = [%s]\n", strings.Join(archList, ", "))
+	fmt.Fprintf(&b, "project_name = %s\n", tomlQuote(s.ProjectName))
+	fmt.Fprintf(&b, "python_min   = %s\n", tomlQuote(s.PythonMin))
+	fmt.Fprintf(&b, "archetypes = %s\n", tomlStringList(s.Archetypes))
 	if len(s.Modules) > 0 {
-		modList := make([]string, len(s.Modules))
-		for i, m := range s.Modules {
-			modList[i] = fmt.Sprintf("%q", m)
-		}
-		fmt.Fprintf(&b, "modules = [%s]\n", strings.Join(modList, ", "))
+		fmt.Fprintf(&b, "modules = %s\n", tomlStringList(s.Modules))
 	}
 	b.WriteString("\n")
 
 	if len(s.Urls) > 0 {
 		b.WriteString("[urls]\n")
-		for _, label := range sortedStringKeys(s.Urls) {
-			fmt.Fprintf(&b, "%s = %q\n", label, s.Urls[label])
+		for _, label := range sortedKeys(s.Urls) {
+			fmt.Fprintf(&b, "%s = %s\n", label, tomlQuote(s.Urls[label]))
 		}
 		b.WriteString("\n")
 	}
@@ -680,13 +672,51 @@ func Dump(s Starter) string {
 	return b.String()
 }
 
-func sortedStringKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
+// tomlStringList renders values as a TOML inline array of quoted strings.
+func tomlStringList(values []string) string {
+	quoted := make([]string, len(values))
+	for i, v := range values {
+		quoted[i] = tomlQuote(v)
 	}
-	sort.Strings(keys)
-	return keys
+	return "[" + strings.Join(quoted, ", ") + "]"
+}
+
+// tomlQuote renders s as a TOML basic string. Go's fmt "%q" was tried here
+// first and rejected: it escapes control bytes as \a, \v and \xHH, none of
+// which are legal TOML string escapes (TOML's basic-string grammar only
+// allows \b \t \n \f \r \" \\ \uXXXX \UXXXXXXXX) — a ProjectName or URL
+// containing such a byte round-tripped through %q would write an admin.toml
+// that this same package's own Parse (via github.com/BurntSushi/toml)
+// rejects with "invalid escape in string".
+func tomlQuote(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\b':
+			b.WriteString(`\b`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\f':
+			b.WriteString(`\f`)
+		case '\r':
+			b.WriteString(`\r`)
+		default:
+			if r < 0x20 || r == 0x7f {
+				fmt.Fprintf(&b, `\u%04x`, r)
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 // CommandNames builds the resolved manifest's full command-name set —
@@ -1066,7 +1096,7 @@ func cloneMap(m map[string]any) map[string]any {
 	return out
 }
 
-func sortedKeys(m map[string]any) []string {
+func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)

@@ -1,0 +1,21 @@
+{
+  "item": "admin-3rgp.72.1",
+  "verdict": "PASS",
+  "verified_parent": "11bfc8e37b72b95e18f6d429a6484d2e3bb4ee28",
+  "branch": "task/admin-3rgp.72.1-usage-store",
+  "tree_clean": false,
+  "evidence": "The worktree already carries /Users/pierce/.worktrees/admin-project-tool/admin-3rgp.72.1-usage-store/.claude/skills/verify-project/SKILL.md — `git ls-files .claude/skills/verify-project` returns it and `git log -1 -- .claude/skills/verify-project/SKILL.md` shows it committed at 571a699 (it is tracked, not the usual git-excluded state this project's docs describe, so I read and followed it rather than writing a new one or touching .git/info/exclude). Its Go section (internal/tui, internal/bd) names `go build ./...`, `go vet ./...`, `go test ./internal/...`, and a mutation-check method matching what this item's files (internal/workusage, internal/tui) need. `go build ./...` and `go vet ./...` are clean (no output). `go test ./internal/workusage/... -v` shows all 6 tests passing: TestFreshRepoEmpty (Top on a fresh repo/no cache file returns a non-nil empty slice, never an error/seeded entry), TestRecordDedupMovesToFront (recording 'deploy grafana' twice with 'deploy prometheus' in between leaves Top == [deploy grafana, deploy prometheus] — one entry, moved to front), TestRecordCapsEntryCount, TestTopRespectsN, TestStoredJSONIsStableAndReadable (reads the actual cache file on disk at $HOME/Library/Caches/work-usage/<repo>.json, asserts indented JSON with '\\n  \"' and that it round-trips to the exact list Record wrote), TestRecordIgnoresEmptyInputs. `go test ./internal/tui/...` (which exercises model.go/work.go, including the new workusage.Record call wired into workDispatchStartedMsg handling and the new resolvedInvocation helper) passes in 40.97s with no failures. `git status --short` before and after the mutation matched exactly (only internal/tui/model.go, internal/tui/work.go modified and internal/workusage/ untracked, as at session start), confirming the revert-then-restore left the tree in its original state.",
+  "mutation": {
+    "method": "workusage.go is a new, fully-untracked file (git diff shows nothing for it), so there is no prior commit to `git apply -R`. Instead: copied the file to a scratch backup, edited Record() in place to remove the dedup loop's `if v == invocation { continue }` skip (so a re-recorded invocation would be appended twice instead of moved to front, defeating the dedup/move-to-front requirement), ran the targeted test, then restored the original file byte-for-byte from the backup and diffed to confirm zero difference.",
+    "command": "go test ./internal/workusage/... -run TestRecordDedupMovesToFront -v",
+    "output": "=== RUN   TestRecordDedupMovesToFront\n    workusage_test.go:45: Top = [deploy grafana deploy prometheus deploy grafana], want [deploy grafana deploy prometheus]\n--- FAIL: TestRecordDedupMovesToFront (0.00s)\nFAIL\tgithub.com/McBrideMusings/admin-project-tool/internal/workusage\t0.185s\nFAIL",
+    "discriminates": true,
+    "tests": ["TestRecordDedupMovesToFront"]
+  },
+  "recheck": [
+    {"cmd": "go build ./... (run from /Users/pierce/.worktrees/admin-project-tool/admin-3rgp.72.1-usage-store)", "expect": "no output, exit 0"},
+    {"cmd": "go test ./internal/workusage/... -v (run from the worktree)", "expect": "all 6 tests PASS: TestFreshRepoEmpty, TestRecordDedupMovesToFront, TestRecordCapsEntryCount, TestTopRespectsN, TestStoredJSONIsStableAndReadable, TestRecordIgnoresEmptyInputs"},
+    {"cmd": "go test ./internal/tui/... (run from the worktree)", "expect": "ok, no failures (covers the workusage.Record wiring in model.go/work.go)"},
+    {"cmd": "go vet ./... (run from the worktree)", "expect": "no output, exit 0"}
+  ]
+}
