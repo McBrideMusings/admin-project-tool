@@ -20,10 +20,14 @@ package kinds
 //     starters in apple_console_darwin.go.
 //
 // See apple_darwin.go's package doc comment for what is deliberately not
-// ported (mac dev-rename/re-sign postprocessing, icon-swap hooks, App Store
-// Connect device registration, is_running/kill overrides). The dev/prod
-// bundle-suffix convention layer (applesign_darwin.go's
-// appleComposeDevSettings) IS wired into every build call below.
+// ported (mac dev-rename/re-sign postprocessing, App Store Connect device
+// registration, is_running/kill overrides). The dev/prod bundle-suffix
+// convention layer (applesign_darwin.go's appleComposeDevSettings) IS wired
+// into every build call below — and so, now, are the dev-icon-swap hooks
+// and the iOS/tvOS display-name patch (appleiconhooks_darwin.go's
+// appleBuildIconHooks/applePatchDisplayName), around appleDevSimulator's
+// and appleDevDevice's build/install steps. appleDevMac gets neither: the
+// mac dev-rename gap below covers its icon/display story too.
 
 import (
 	"fmt"
@@ -212,6 +216,8 @@ func appleDevSimulator(cfg map[string]any, h *luahost.Host, platform string, f a
 	if err != nil {
 		return err
 	}
+	iconPre, iconPost := appleBuildIconHooks(cfg, h)
+	devDisplayName := appleResolveDevDisplayName(cfg, platform, process)
 
 	cleanup, err := reload.SetupReload(appleDevPIDFile)
 	if err != nil {
@@ -266,12 +272,18 @@ func appleDevSimulator(cfg map[string]any, h *luahost.Host, platform string, f a
 		}
 		luahost.TerminateSimApp(simID, launchBundle)
 
+		if err := iconPre(); err != nil {
+			return err
+		}
 		h.Info("Building for simulator...")
 		res, err := h.XcodebuildFiltered(luahost.XcodebuildOptions{
 			Project: project, Scheme: scheme, Config: config,
 			Destination: destination, Action: appleBuildAction(f.clean),
 			ExtraSettings: extraSettings,
 		})
+		if perr := iconPost(); perr != nil {
+			h.Warn("could not restore icons: " + perr.Error())
+		}
 		if err != nil {
 			return err
 		}
@@ -305,6 +317,11 @@ func appleDevSimulator(cfg map[string]any, h *luahost.Host, platform string, f a
 			h.Warn(fmt.Sprintf("Built app has bundle ID %q, expected %q", launchBundle, expected))
 			h.Warn("Path: " + appPath)
 			h.Warn("Stale DerivedData from another project may be interfering.")
+		}
+
+		if err := applePatchDisplayName(appPath, devDisplayName); err != nil {
+			h.Err(err.Error())
+			return err
 		}
 
 		h.Info("Installing on simulator...")
@@ -394,6 +411,8 @@ func appleDevDevice(cfg map[string]any, h *luahost.Host, platform string, f appl
 	if err != nil {
 		return err
 	}
+	iconPre, iconPost := appleBuildIconHooks(cfg, h)
+	devDisplayName := appleResolveDevDisplayName(cfg, platform, process)
 
 	cleanup, err := reload.SetupReload(appleDevPIDFile)
 	if err != nil {
@@ -407,12 +426,18 @@ func appleDevDevice(cfg map[string]any, h *luahost.Host, platform string, f appl
 		reload.ClearRebuildRequest()
 		h.TerminateDeviceApp(deviceID, launchBundle)
 
+		if err := iconPre(); err != nil {
+			return err
+		}
 		h.Info(fmt.Sprintf("Building for device (%s)...", deviceName))
 		res, err := h.XcodebuildFiltered(luahost.XcodebuildOptions{
 			Project: project, Scheme: scheme, Config: config,
 			Destination: sdk.destination, Action: appleBuildAction(f.clean),
 			ExtraSettings: extraSettings,
 		})
+		if perr := iconPost(); perr != nil {
+			h.Warn("could not restore icons: " + perr.Error())
+		}
 		if err != nil {
 			return err
 		}
@@ -434,6 +459,11 @@ func appleDevDevice(cfg map[string]any, h *luahost.Host, platform string, f appl
 			launchBundle = b
 		} else if launchBundle == "" {
 			launchBundle = bundleID
+		}
+
+		if err := applePatchDisplayName(appPath, devDisplayName); err != nil {
+			h.Err(err.Error())
+			return err
 		}
 
 		h.Info("Installing on " + deviceName + "...")
