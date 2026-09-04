@@ -15,12 +15,15 @@ import (
 // cmdCmd is the reserved `admin cmd` verb (admin-u7qi.1): with no args it
 // lists every command the current project's admin.toml declares in the same
 // arrow-key picker internal/kinds/multitarget.go already uses for target
-// selection (admin-u7qi.4), and runs the highlighted one through the exact
-// same kinds.RunCommand path `admin <name>` already uses — so a picked
-// command gets identical launcher/detach/reentry behavior to a typed name.
-// It is registered on rootCmd in cmd/root.go's init(), which is what makes
-// dispatchArgs' loop over rootCmd.Commands() match `admin cmd` before ever
-// consulting the manifest for a command literally named "cmd" (see
+// selection (admin-u7qi.4), and runs the highlighted one through
+// kinds.RunCommandInline — never kinds.RunCommand, which `admin <name>`
+// uses. A human sitting at this picker is already watching the terminal it
+// runs in, so a picked command always runs right there, ignoring its own
+// `detach` declaration entirely; `admin <name>` typed directly keeps
+// dispatching through the project's declared [terminal] launcher exactly as
+// before. It is registered on rootCmd in cmd/root.go's init(), which is what
+// makes dispatchArgs' loop over rootCmd.Commands() match `admin cmd` before
+// ever consulting the manifest for a command literally named "cmd" (see
 // reservedCmdVerbs in cmd/manifest.go, which admin check's
 // checkReservedCollisions enforces against a manifest declaring the name).
 var cmdCmd = &cobra.Command{
@@ -106,10 +109,11 @@ func runCmdPicker(ctx context.Context) error {
 }
 
 // pickAndRunCommand prompts over h.PickTarget for one of names and runs the
-// chosen command via kinds.RunCommand — the same call registerManifestCommand's
-// RunE makes for `admin <name>`. Split out from runCmdPicker so tests can
-// drive it against a Host they construct themselves (its own Stdin/
-// Stdout/Stderr) rather than the real terminal.
+// chosen command via kinds.RunCommandInline — always on this process's own
+// terminal, never through registerManifestCommand's RunE path for
+// `admin <name>`. Split out from runCmdPicker so tests can drive it against
+// a Host they construct themselves (its own Stdin/Stdout/Stderr) rather than
+// the real terminal.
 //
 // The outcome switch mirrors internal/kinds/multitarget.go:277-289 exactly:
 // PickCancelled means the user answered the question by dismissing the
@@ -136,6 +140,6 @@ func handlePickOutcome(h *luahost.Host, m *manifest.Manifest, key string, outcom
 	case luahost.PickUnavailable:
 		return fmt.Errorf("admin cmd: no command could be picked (pass one as `admin <name>`, or run from a TTY)")
 	default:
-		return kinds.RunCommand(m, kinds.Default, key, nil, nil)
+		return kinds.RunCommandInline(m, kinds.Default, key, nil)
 	}
 }

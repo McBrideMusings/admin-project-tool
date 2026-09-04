@@ -184,9 +184,9 @@ run  = "true"
 
 // TestHandlePickOutcomeChosenRunsTheCommand covers handlePickOutcome's
 // default (PickChosen) branch: the returned key runs through
-// kinds.RunCommand exactly as registerManifestCommand's RunE does for
-// `admin <name>` — proven with the same marker-file assertion
-// TestRegisterManifestCommandRunsThroughKindsRunCommand uses for that claim.
+// kinds.RunCommandInline — proven with the same marker-file assertion
+// TestRegisterManifestCommandRunsThroughKindsRunCommand uses for `admin
+// <name>`'s own kinds.RunCommand claim.
 func TestHandlePickOutcomeChosenRunsTheCommand(t *testing.T) {
 	dir := t.TempDir()
 	m := writeMarkerManifest(t, dir)
@@ -199,6 +199,53 @@ func TestHandlePickOutcomeChosenRunsTheCommand(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "marker.txt")); err != nil {
 		t.Fatalf("stat marker.txt: %v (PickChosen never ran the picked command through kinds.RunCommand)", err)
+	}
+}
+
+// TestHandlePickOutcomeChosenDetachCommandRunsInlineNeverDispatches is
+// admin-cmd-never-dispatch's picker-level proof (acceptance criterion 3): a
+// picked command whose action declares detach=true, with a spawnable
+// [terminal] configured, still runs on this process's own terminal — the
+// marker file is written — and never invokes the fake launcher, unlike
+// `admin <name>` typed directly (kinds.RunCommand), which would dispatch
+// through it.
+func TestHandlePickOutcomeChosenDetachCommandRunsInlineNeverDispatches(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	body := `project_name = "fixture"
+
+[terminal]
+spawn = "echo \"spawn $ADMIN_CMD\" >> ` + logPath + `; echo fake-handle-1"
+
+[commands.touch]
+desc  = "writes a marker"
+steps = ["write-marker"]
+
+[actions.write-marker]
+kind   = "shell"
+run    = "touch marker.txt"
+detach = true
+`
+	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write admin.toml: %v", err)
+	}
+	m, ok, err := resolveProjectManifest(context.Background(), dir)
+	if !ok || err != nil {
+		t.Fatalf("resolveProjectManifest: ok=%v err=%v", ok, err)
+	}
+
+	h := luahost.New(dir)
+	var out, errOut bytes.Buffer
+	h.Stdout, h.Stderr = &out, &errOut
+
+	if err := handlePickOutcome(h, m, "touch", luahost.PickChosen); err != nil {
+		t.Fatalf("handlePickOutcome(PickChosen) = %v, want nil", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "marker.txt")); err != nil {
+		t.Fatalf("stat marker.txt: %v (a detach=true picked command must still run inline)", err)
+	}
+	if logged, err := os.ReadFile(logPath); err == nil && len(logged) > 0 {
+		t.Errorf("terminal log = %q, want empty — admin cmd must never dispatch a picked command through the launcher", string(logged))
 	}
 }
 

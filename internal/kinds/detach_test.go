@@ -115,6 +115,37 @@ func TestRunCommandDashboardProducerDetachDispatchesThroughLauncher(t *testing.T
 	}
 }
 
+// TestRunCommandInlineNeverReachesLauncher proves RunCommandInline — the
+// `admin cmd` picker's own entry point — never reaches the launcher for a
+// detach=true command, even with a spawnable [terminal] declared, the same
+// guarantee TestRunActionCLIDetachRunsInlineNeverReachesLauncher proves for
+// RunAction. Unlike RunCommand, this must hold with no dependence on
+// inReentry() or a CommandProducer at all.
+func TestRunCommandInlineNeverReachesLauncher(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	before := len(livework.Default.List())
+
+	r := NewRegistry()
+	r.MustRegister("shell", makeShell)
+
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	m := detachManifest(withFakeTerminal(t, "fake-handle-1", logPath))
+
+	if err := RunCommandInline(m, r, "dev", nil); err != nil {
+		t.Fatalf("RunCommandInline = %v, want nil", err)
+	}
+	assertFileExists(t, dir, "ran.txt")
+
+	if logged, err := os.ReadFile(logPath); err == nil && len(logged) > 0 {
+		t.Errorf("terminal log = %q, want empty — RunCommandInline must never reach the launcher", string(logged))
+	}
+	if got := len(livework.Default.List()); got != before {
+		t.Errorf("live-work registry grew from %d to %d — RunCommandInline must never register a launcher entry", before, got)
+	}
+}
+
 // TestRunActionNoTerminalRunsInline proves the same action with no
 // [terminal] declared runs inline — the unaffected case, since a CLI
 // dispatch never consulted the launcher in the first place.
