@@ -630,6 +630,65 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 	return m, nil
 }
 
+// Starter is the narrow shape `admin new` (cmd/new.go) writes: a starter
+// admin.toml built from detect.Run's proposal, before anything has ever run
+// against it. It is deliberately not the full Manifest struct above — a
+// starter manifest never has commands, guards, or any of the other tables a
+// hand-edited admin.toml grows over time — so Dump only needs to serialize
+// the five fields cmd_new (admin-run:196-223) ever populated.
+type Starter struct {
+	ProjectName string
+	PythonMin   string
+	Archetypes  []string
+	Modules     []string
+	Urls        map[string]string
+}
+
+// Dump serializes a Starter to admin.toml text — the Go counterpart of
+// admin_lib/manifest.py::dump, scoped to only the fields a starter manifest
+// carries (project_name, python_min, archetypes, modules, urls) rather than
+// the full multi-table dump the Python version grows into for `admin
+// compile`. Stdlib has no TOML writer, so — like its Python counterpart —
+// this is a hand-rolled minimal emitter for exactly this shape, not a
+// general-purpose serializer.
+func Dump(s Starter) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "project_name = %q\n", s.ProjectName)
+	fmt.Fprintf(&b, "python_min   = %q\n", s.PythonMin)
+	archList := make([]string, len(s.Archetypes))
+	for i, a := range s.Archetypes {
+		archList[i] = fmt.Sprintf("%q", a)
+	}
+	fmt.Fprintf(&b, "archetypes = [%s]\n", strings.Join(archList, ", "))
+	if len(s.Modules) > 0 {
+		modList := make([]string, len(s.Modules))
+		for i, m := range s.Modules {
+			modList[i] = fmt.Sprintf("%q", m)
+		}
+		fmt.Fprintf(&b, "modules = [%s]\n", strings.Join(modList, ", "))
+	}
+	b.WriteString("\n")
+
+	if len(s.Urls) > 0 {
+		b.WriteString("[urls]\n")
+		for _, label := range sortedStringKeys(s.Urls) {
+			fmt.Fprintf(&b, "%s = %q\n", label, s.Urls[label])
+		}
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+func sortedStringKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // CommandNames builds the resolved manifest's full command-name set —
 // Overrides (project + archetype [commands.X]) plus Custom
 // ([commands.custom.X]). This is the set a [keys.<kind>].<key> binding's
