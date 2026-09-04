@@ -196,11 +196,11 @@ func TestPortHolderCleanupRunsDespiteSubtestFailure(t *testing.T) {
 		"ADMIN_PORT_CLEANUP_HELPER_PORT="+itoaLocal(port),
 	)
 	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("helper process unexpectedly exited zero; want the deliberate t.Fatal to fail it:\n%s", out)
-	}
 	if strings.Contains(string(out), "--- SKIP") {
 		t.Skipf("helper process skipped instead of exercising the failure path:\n%s", out)
+	}
+	if err == nil {
+		t.Fatalf("helper process unexpectedly exited zero; want the deliberate t.Fatal to fail it:\n%s", out)
 	}
 
 	// The helper process's t.Cleanup already ran by the time it exited
