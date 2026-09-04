@@ -1,23 +1,23 @@
- admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+ beads-repo   main  ✔ clean                     w=96 h=25 w/2.3=42→right (hover off, so unused) 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
   Commands                                                     │ test                           
- ◇ ▸ build         multi-tarBuild: mac | ios | tv | server [--…│ sequence  ·  (manifest)        
- ◇ check           shell    Parse and resolve admin.toml       │                                
- ◇ deploy          sequence Install to ~/.admin, provision the…│ log                            
- ◇ docs            running  vitepress dev · localhost:5… hosted│   ~/.admin/logs/test.log       
- ◇ logs            logs     Tail a log target                  │                                
- ◇ retire-merged   workflow Remove worktrees whose branch is m…│ steps                          
- ◆ test            waiting  Enter a number, or q to can… hosted│   1 go                         
-                                                               │     go test ./...              
-  Workers                                                      │     from go-cli                
- ◇ admin-3rgp.36   running  writing internal/lua/host.go pane 3│   2 shell                      
- ◇ admin-3rgp.7    waiting  needs input: root command n… pane 4│     bash tests/test_install.sh 
- ◇ admin-3rgp.33   failed   go test ./internal/detect F… pane 5│     from (manifest)            
-                                                               │                                
-                                                               │                                
-                                                               │                                
-                                                               │                                
+ ◇ build           multi-tarBuild: mac | ios | tv | server [--…│ sequence  ·  (manifest)        
+ ◇ ├ mac           @build-mac                                  │                                
+ ◇ ├ ios           @build-ios                                  │ log                            
+ ◇ ├ tv            @build-tv                                   │   ~/.admin/logs/test.log       
+ ◇ └ server        cargo build --release --manifest-path…      │                                
+ ◇ check           shell    Parse and resolve admin.toml       │ steps                          
+ ◇ deploy          sequence Install to ~/.admin, provision the…│   1 go                         
+ ◇ docs            running  vitepress dev · localhost:5… hosted│     go test ./...              
+ ◇ logs            logs     Tail a log target                  │     from go-cli                
+ ◇ retire-merged   workflow Remove worktrees whose branch is m…│   2 shell                      
+ ◆ test            waiting  Enter a number, or q to can… hosted│     bash tests/test_install.sh 
+                                                               │     from (manifest)            
+  Workers                                                      │                                
+ ◇ admin-3rgp.36   running  writing internal/lua/host.go pane 3│                                
+ ◇ admin-3rgp.7    waiting  needs input: root command n… pane 4│                                
+ ◇ admin-3rgp.33   failed   go test ./internal/detect F… pane 5│                                
                                                                │                                
                                                                │                                
                                                                │                                
@@ -27,4 +27,4 @@
                                                                │                                
                                                                │                                
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ run or open · →← submenu · k kill · q/esc quit                                     
+ ↑↓ move · ↵ run or open · k kill · p palette · q/esc quit                                      

@@ -1,23 +1,23 @@
- admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+ beads-repo   main  ✔ clean                     w=96 h=25 w/2.3=42→right (hover off, so unused) 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
   Commands                                                     │ build                          
- ◆ ▸ build         multi-tarBuild: mac | ios | tv | server [--…│ multi-target  ·  apple         
- ◇ check           shell    Parse and resolve admin.toml       │                                
- ◇ deploy          sequence Install to ~/.admin, provision the…│ log                            
- ◇ docs            running  vitepress dev · localhost:5… hosted│   ~/.admin/logs/build.log      
- ◇ logs            logs     Tail a log target                  │                                
- ◇ retire-merged   workflow Remove worktrees whose branch is m…│ steps                          
- ◇ test          ┌────────────────────────────────────────────────────────────┐et               
-                 │  Dispatch admin-3rgp.29                                    │                 
-  Workers        │                                                            │                 
- ◇ admin-3rgp.36 │    agent     claude                                        │                 
- ◇ admin-3rgp.7  │    model     sonnet                                        │                 
- ◇ admin-3rgp.33 │    branch    two-deployment-paths                          │                 
-                 │    lands to  feat/one-tool-go-merge                        │                 
-                 │                                                            │                 
-                 │    ⏎ dispatch     e edit     esc cancel                    │                 
-                 └────────────────────────────────────────────────────────────┘                 
+ ◆ build           multi-tarBuild: mac | ios | tv | server [--…│ multi-target  ·  apple         
+ ◇ ├ mac           @build-mac                                  │                                
+ ◇ ├ ios           @build-ios                                  │ log                            
+ ◇ ├ tv            @build-tv                                   │   ~/.admin/logs/build.log      
+ ◇ └ server        cargo build --release --manifest-path…      │                                
+ ◇ check           shell    Parse and resolve admin.toml       │ steps                          
+ ◇ deploy        ┌────────────────────────────────────────────────────────────┐et               
+ ◇ docs          │  Dispatch admin-3rgp.29                                    │                 
+ ◇ logs          │                                                            │                 
+ ◇ retire-merged │    agent     claude                                        │                 
+ ◇ test          │    model     sonnet                                        │                 
+                 │    branch    two-deployment-paths                          │                 
+  Workers        │    lands to  feat/one-tool-go-merge                        │                 
+ ◇ admin-3rgp.36 │                                                            │                 
+ ◇ admin-3rgp.7  │    ⏎ dispatch     e edit     esc cancel                    │                 
+ ◇ admin-3rgp.33 └────────────────────────────────────────────────────────────┘                 
                                                                │                                
                                                                │                                
                                                                │                                

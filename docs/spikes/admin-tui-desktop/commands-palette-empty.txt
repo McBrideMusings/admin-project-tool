@@ -1,0 +1,30 @@
+ beads-repo   main  ✔ clean                     w=96 h=25 w/2.3=42→right (hover off, so unused) 
+  Work 12    Repo    Beads 227    Config                                                        
+                                                                                                
+ ┌─ Command Palette ──────────────────────────────────────────┐│ admin-3rgp.36                  
+ │ Press / to search · b to browse all                        ││ running  ·  pane 3 · detached, 
+ │                                                            ││                                
+ │ no commands run yet                                        ││ now                            
+ └────────────────────────────────────────────────────────────┘│   writing internal/lua/host.go 
+                                                               │                                
+  Workers                                                      │ last                           
+ ◆ admin-3rgp.36   running  writing internal/lua/host.go pane 3│   review admin-3rgp.36 (workf… 
+ ◇ admin-3rgp.7    waiting  needs input: root command n… pane 4│                                
+ ◇ admin-3rgp.33   failed   go test ./internal/detect F… pane 5│ a attach   k kill              
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ move · ↵ dispatch · / search · b browse · q/esc quit                                        

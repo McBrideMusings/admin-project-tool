@@ -1,17 +1,21 @@
- admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+ beads-repo   main  ✔ clean                     w=96 h=25 w/2.3=42→right (hover off, so unused) 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
   Commands                                                     │ retire-merged                  
- ◇ ▸ build         multi-tarBuild: mac | ios | tv | server [--…│ workflow  ·  (manifest)        
- ◇ check           shell    Parse and resolve admin.toml       │                                
- ◇ deploy          sequence Install to ~/.admin, provision the…│ log                            
- ◇ docs            running  vitepress dev · localhost:5… hosted│   ~/.admin/logs/retire-merged.l
- ◇ logs            logs     Tail a log target                  │                                
- ◆ retire-merged   workflow Remove worktrees whose branch is m…│ targets  query · 4             
- ◇ test            waiting  Enter a number, or q to can… hosted│   fix-detector-parity-skip     
-                                                               │   go-transient-kind-factories  
-  Workers                                                      │   docs-adr-lua                 
- ◇ admin-3rgp.36   running  writing internal/lua/host.go pane 3│   launchd-env-file             
+ ◇ build           multi-tarBuild: mac | ios | tv | server [--…│ workflow  ·  (manifest)        
+ ◇ ├ mac           @build-mac                                  │                                
+ ◇ ├ ios           @build-ios                                  │ log                            
+ ◇ ├ tv            @build-tv                                   │   ~/.admin/logs/retire-merged.l
+ ◇ └ server        cargo build --release --manifest-path…      │                                
+ ◇ check           shell    Parse and resolve admin.toml       │ targets  query · 4             
+ ◇ deploy          sequence Install to ~/.admin, provision the…│   fix-detector-parity-skip     
+ ◇ docs            running  vitepress dev · localhost:5… hosted│   go-transient-kind-factories  
+ ◇ logs            logs     Tail a log target                  │   docs-adr-lua                 
+ ◆ retire-merged   workflow Remove worktrees whose branch is m…│   launchd-env-file             
+ ◇ test            waiting  Enter a number, or q to can… hosted│                                
+                                                               │                                
+  Workers                                                      │                                
+ ◇ admin-3rgp.36   running  writing internal/lua/host.go pane 3│                                
  ◇ admin-3rgp.7    waiting  needs input: root command n… pane 4│                                
  ◇ admin-3rgp.33   failed   go test ./internal/detect F… pane 5│                                
                                                                │                                
@@ -22,9 +26,5 @@
                                                                │                                
                                                                │                                
                                                                │                                
-                                                               │                                
-                                                               │                                
-                                                               │                                
-                                                               │                                
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ run or open · →← submenu · k kill · q/esc quit                                     
+ ↑↓ move · ↵ run or open · k kill · p palette · q/esc quit                                      

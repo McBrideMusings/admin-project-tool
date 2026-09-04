@@ -1,30 +1,30 @@
- admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+ beads-repo   main  ✔ clean                     w=96 h=25 w/2.3=42→right (hover off, so unused) 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
-┌─ Branches ──────────────⇅ next action   ● yours 0   1 ┐ ┌─ Recent commits ────────────────40 ┐
-│◆ main                                              46m│ │ f11c4ae   feat(tui): expand a…  46m│
-│                                                       │ │ a22e838   fix(reload): use cb…  68m│
-│                                                       │ │ 87d6ec9   chore(beads): file …  84m│
-│                                                       │ │ bac4d10   chore(beads): expor…  88m│
-│                                                       │ │ 7aead11   fix(luahost): give …   2h│
-│                                                       │ │ 37db393   fix(cmd): stop turn…   2h│
-│                                                       │ │ 547b28d   fix(go): load .env …   2h│
-│                                                       │ │ 83c0a27   fix(apple): read pr…   2h│
-│                                                       │ │ 0a565b7   chore(beads): file …   2h│
-│                                                       │ │ bbf18ab   fix(core): forward …   2h│
-│                                                       │ │ 1476a4b   feat(install): inst…   3h│
-│                                                       │ │ c498e79   chore(beads): file …   3h│
-│                                                       │ │ a434b23   fix(env): stop admi…   4h│
-│                                                       │ │ f396520   fix(env): treat an …   4h│
-│                                                       │ │ 06439ec   chore(beads): triag…   4h│
-│                                                       │ │ a3baf87   Merge feat/one-tool…   4h│
-│                                                       │ │ 6bda51a   docs: delete the PRD   4h│
-│                                                       │ │ 480e696   chore(beads): delet…   4h│
-│                                                       │ │ dc8dcb2   chore(beads): close…   5h│
-│                                                       │ │ 17aac01   merge: github-query…   5h│
-│                                                       │ │ 5bfd00a   feat(check): fail a…   5h│
-│                                                       │ │ ↓ 18 more                          │
+┌─ Branches ─────────────⇅ next action   ● yours 0   13 ┐ ┌─ Recent commits ────────────────40 ┐
+│◆ main                                              24m│ │ ba813b7   feat(tui): family-t…  12h│
+│                                                       │ │ 622aff3   feat(tui): add pare…  12h│
+│ Continue Working  ─────────────────────────────────  1│ │ 51c0c44   chore(beads): export  13h│
+│◇ spike/work-tab…                             held  12h│ │ 2511431   fix(tui): gate the …  13h│
+│                                                       │ │ f4cbdcf   chore(beads): export  13h│
+│ Reviewing  ── piercermcbride ──────────────────────  3│ │ d0477cd   fix(tui): re-arm Wo…  13h│
+│◇ task/adm… local only     1 unpushed · ac…   held   5h│ │ 38040f2   Merge pull request …  13h│
+│   ↳ commit feat(frame): …                             │ │ 1460faa   docs(adr-0019): mar…  13h│
+│◇ diagnose… local only     1 unpushed · ac…   held   9h│ │ 0e2b0a1   Merge pull request …  13h│
+│   ↳ commit fix(tui): ext…                             │ │ d41e36a   fix(cmd): drop dupl…  14h│
+│· feat/dev…                                   keep  33h│ │ 4d7c4b3   chore(beads): export  14h│
+│   ↳ commit feat(apple): …                             │ │ 100b049   chore(beads): export  14h│
+│                                                       │ │ fff28fa   fix(manifest): tole…  14h│
+│ Clean Up  ── ready ────────────────────────────────  8│ │ adb6238   chore(beads): export  14h│
+│◇ admin/ascapi-token-cache          merged           7h│ │ 14ebea9   fix(install): refus…  14h│
+│◇ feat/admin-j5ep-timing            merged          24h│ │ 25caf48   chore(beads): export  14h│
+│? fix/admin-m6m8-cli-detach         merged          24h│ │ e79b542   feat(tui): detect a…  14h│
+│? fix-shell-cwd                     merged          31h│ │ d9b31ec   fix(kinds): delete …  14h│
+│◇ admin-fy79-dashboard-beads-poll-…                  3d│ │ 244a6c7   fix(apple): use a c…  22h│
+│? tui-sort-priority                 merged           3d│ │ 9d784b7   fix(apple): export …  22h│
+│? n5vg-submenu-collapse             merged           3d│ │ cc99b1a   feat(apple): archiv…  23h│
+│? wihc-tracker-sort-cycle           merged           3d│ │ ↓ 18 more                          │
 │                                                       │ └────────────────────────────────────┘
-└───────────────────────────────────────────────────────┘ ── Stashes ────────────────────────0 ─
+└─────────────────────────────────────── 8 clean up ⇧X ─┘ ── Stashes ────────────────────────0 ─
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ copy sha · o open ↗ · ⇥ pane · / filter · r refresh · ←→ tab                       
+ ←→ tab · 1-4 jump · ↓ body · q quit                                                            

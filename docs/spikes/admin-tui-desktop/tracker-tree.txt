@@ -1,30 +1,30 @@
- admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+ beads-repo   main  ✔ clean                     w=96 h=25 w/2.3=42→right (hover off, so unused) 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
-▸ 3rgp.60  P1  task        Live-work registry addresses a pty as well a…  3  afk              1h
-  3rgp.61  P1  task          └╴ Dashboard runs commands on a hosted…  +1  2  afk              1h
-  3rgp.63  P2  task            └╴ Quitting the dashboard confirms befor…     afk              1h
-  3rgp.62  P2  task            └╴ Kill and retry a hosted process from …     afk              1h
-  3rgp.59  P1  task        Hosted dispatch entry point that cannot open…  3  afk              1h
-  7nh3     P1  bug         Two dolt sql-servers for one beads workspace…  1                   2h
-  3rgp.56  P1  bug           └╴ internal/bd has no timeout: a hung bd l…                      2h
-  3rgp.54  P1  task        Port the six action kinds the Go binary is m…  1                   2h
-  3rgp.30  P1  task          └╴ Delete the Python, drop compile, su…  +2     afk              2h
-  y5o6     P1  task        Detectors are ported but unreachable: nothin…                      3h
-  a5km     P1  task        Port the log reader: there is no admin logs …                      3h
-  3rgp     P1  epic        One tool: merge repo-dash into admin as a si…                     14h
-  fy95     P2  bug         admin check does not reserve every cmd/ verb…                      1h
-  3rgp.58  P2  task        Terminal ladder for workspace dispatch            afk              1h
-  3rgp.57  P2  feature     Multi-target picker runs as a stdin prompt o…                      2h
-  3rgp.55  P2  task        Register the `new` verb in the Go binary       1                   2h
-  26ge     P2  task        Userscript provisioning has no Go port — the…                      3h
-  auqf     P2  bug         test_sign.py designated-requirement test fai…                      3h
-  eptp     P2  feature     Move _log_bridge_allocate_port into ports.py…     enhancement      3h
-  7us9     P2  task        Wire VitePress docs preview into the admin r…                      3h
-  98v9     P2  task        Ghost 'admin-tool' skill entry in Claude Cod…                      3h
-  hocp     P2  task        Code review subagents can't access other rep…                      3h
-  bsx6     P2  task        Migrate apple-coding-tool to dispatch_target                       3h
-  ↓ 63 more                                                                                     
+   tracker = "beads" is declared, but no beads workspace was found here                         
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
 ────────────────────────────────────────────────────────────────────────────────────────────────
  dependency tree — blockers sit above what they block                                           
- ↑↓ move · ↵ start work · d detail · g tree · space select · w workflow · q quit · ←→ tab       
+ ←→ tab · 1-4 jump · q quit                                                                     
