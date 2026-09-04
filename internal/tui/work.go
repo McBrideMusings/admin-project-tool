@@ -785,7 +785,19 @@ func (m Model) workRowCount() int {
 // pty, tracked by the live-work entry StartHostedPTY registered.
 type workDispatchStartedMsg struct {
 	name string
+	args []string
 	err  error
+}
+
+// resolvedInvocation joins name and args into the fully-resolved dispatch
+// string workusage.Record wants — "deploy grafana", never the bare "deploy"
+// a multi-target command is a no-op without its target. Args is empty for a
+// flat command, so this returns bare name in that case.
+func resolvedInvocation(name string, args []string) string {
+	if len(args) == 0 {
+		return name
+	}
+	return name + " " + strings.Join(args, " ")
 }
 
 // startHostedRun is kinds.StartHostedPTY behind a package-level var so a
@@ -816,7 +828,7 @@ func dispatchCommandCmd(m *manifest.Manifest, width, height int, name string, en
 			},
 		}
 		err := kinds.RunCommand(m, kinds.Default, name, args, producer)
-		return workDispatchStartedMsg{name: name, err: err}
+		return workDispatchStartedMsg{name: name, args: args, err: err}
 	}
 }
 

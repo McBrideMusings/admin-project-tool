@@ -25,6 +25,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/shim"
+	"github.com/McBrideMusings/admin-project-tool/internal/workusage"
 )
 
 type tab int
@@ -1440,6 +1441,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.setStatus(msg.name+" started", cGreen)
+		workusage.Record(m.nwo, resolvedInvocation(msg.name, msg.args))
 		m.refreshDetailProbes()
 		if m.pendingAttach[msg.name] {
 			delete(m.pendingAttach, msg.name)
