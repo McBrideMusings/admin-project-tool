@@ -389,7 +389,13 @@ func (m Model) freshnessSeg() seg {
 	case tabBeads:
 		// Beads are read straight out of the local database on a short clock, so
 		// there is no cache age to report — what is on screen is what the workspace
-		// said seconds ago.
+		// said seconds ago. Unless the last poll was abandoned at beadsPollTimeout
+		// (a contended embedded Dolt): then what's on screen is whatever the poll
+		// before that one last returned, so this reads as stale rather than live,
+		// same yellow tint the TTL check below uses for an aged cache.
+		if m.beadsStale {
+			return seg{t: "stale", fg: cYellow}
+		}
 		return seg{t: "live", fg: cFaint}
 	case tabPRs:
 		at = m.remote.PRsFetchedAt

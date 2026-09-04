@@ -77,6 +77,39 @@ installed tool to be reinstalled afterwards.
 - The pytest run writes its log under a temp dir, not this repo's `tmp/` — the
   `→ wrote: .../T/tmp…/tmp/run.log` line at the end is normal, not a stray path bug.
 
+## Go dashboard / TUI (`internal/tui`, `internal/bd`, `main.go`, `cmd/`)
+
+The interpreter above is the outgoing Python half. The Go binary — `internal/tui` (the
+dashboard), `internal/bd` (the beads reader), `cmd/`, `internal/kinds`, etc. — is a
+separate build with its own tests and no shared entry point with `admin-run`.
+
+```bash
+go build ./...                          # compiles the whole Go tree
+go vet ./...                            # static checks
+go test ./internal/tui/...              # the dashboard's own package, ~40s
+go test ./...                           # everything, ~3-4 min
+```
+
+`go test ./...` also runs `docs/spikes/admin-tui-desktop` — a spike package with its own
+`key_test.go` that fails independently of `internal/tui` (its fixture opens on
+`commands-palette` instead of the tab it expects). That failure is pre-existing and
+unrelated to any change confined to `internal/tui`/`internal/bd`; confirm with
+`git diff --stat HEAD -- docs/spikes/` before assuming a change broke it.
+
+There is no interactive driver for the dashboard's live TUI reachable without a real
+terminal and a screenshot, so a behavioral change to `internal/tui` is proven by:
+
+1. A focused `go test` exercising the exact `Model.Update` transition through its message
+   types and package-level test seams (e.g. `internal/bd`'s `runner` var), not by re-deriving
+   the behavior from reading the diff.
+2. A mutation check: temporarily revert the fix in a scratch copy, confirm the new test
+   fails, restore, confirm it passes again. `go test ./internal/tui/...` after restoring
+   must match its diff stat against `HEAD` exactly — a test-only change leaves every
+   production file's diff untouched.
+
+`seededModel()` in `internal/tui/model_test.go` is the standard fixture for a `Model` with
+sane defaults; most `internal/tui` tests build one and mutate the fields they need.
+
 ## Log-bridge rendering
 
 Bridged browser lines must be indistinguishable from the wrapped process's own output.

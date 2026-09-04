@@ -370,6 +370,16 @@ func fetchOpenPRRowCmd(ctx context.Context, nwo string, number, gen int) tea.Cmd
 // mid-session appears while the pane is still on screen.
 const beadsInterval = 15 * time.Second
 
+// beadsPollTimeout bounds a single beads poll, mirroring agentPollTimeout's own
+// per-query timeout in agentpoll.go. `bd list` is a local Dolt read, so 5s is
+// generous headroom for a slow-but-healthy query while still keeping the
+// worst-case in-flight time well under one beadsInterval tick — the fix for a
+// wedged embedded Dolt (one writer at a time) piling up an unkillable `bd list`
+// process every 15s: exec.CommandContext kills the child the moment this
+// timeout's ctx is done, instead of letting the poll block forever on a busy
+// database.
+const beadsPollTimeout = 5 * time.Second
+
 // beadsDetectedMsg answers "does this repo keep its work in beads": present says
 // a workspace was found, err says one was found but this build can't read it.
 type beadsDetectedMsg struct {
@@ -404,8 +414,16 @@ func detectBeadsCmd(ctx context.Context, repoRoot string) tea.Cmd {
 // loadBeadsCmd reads every open bead. Nothing is cached to disk: unlike the
 // GitHub sections this is a local read with no rate limit behind it, so the
 // freshest answer is always one query away.
+//
+// The query is bounded by beadsPollTimeout rather than run on the model's own
+// (effectively unbounded) lifetime ctx — a busy embedded Dolt (one writer at a
+// time) can wedge `bd list` indefinitely, and exec.CommandContext only kills
+// the child when ITS ctx expires. Without this, a wedged poll never returns
+// and never lets the in-flight guard (Model.beadsPolling) clear.
 func loadBeadsCmd(ctx context.Context, repoRoot string) tea.Cmd {
 	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(ctx, beadsPollTimeout)
+		defer cancel()
 		beads, err := bd.List(ctx, repoRoot)
 		return beadsMsg{beads: beads, err: err}
 	}

@@ -193,7 +193,22 @@ type Model struct {
 	// second dispatch (Init, then a fsChangedMsg firing before the first probe's
 	// goroutine returns) would launch a redundant `bd where` subprocess.
 	beadsProbing bool
-	beadPrefix   string // bd workspace prefix, stripped off every displayed id
+	// beadsPolling is true from the moment loadBeadsCmd is dispatched until its
+	// beadsMsg lands — the in-flight guard that keeps the 15s tick, the launch
+	// load, and the manual `r` refresh from ever stacking a second `bd list`
+	// process on top of one still running. A busy embedded Dolt (one writer at
+	// a time) can otherwise wedge every poll indefinitely, piling up one
+	// process per tick and making the tracker unwritable for every other
+	// session on the machine (admin-fy79).
+	beadsPolling bool
+	// beadsStale is set when a poll is abandoned at beadsPollTimeout rather
+	// than answering — the child was killed, not merely slow, so there is no
+	// real data to apply. The last-known m.beads/m.beadsErr are left
+	// untouched in that case; this only flips the header's freshness readout
+	// to a tinted "stale" so a wedged poll is visible without a working
+	// dashboard ever wiping rows it can no longer refresh.
+	beadsStale bool
+	beadPrefix string // bd workspace prefix, stripped off every displayed id
 	// beadTreeMode is which of the three list shapes `g` has cycled to — flat,
 	// dependency tree, or family tree. See beadTreeMode in beadtree.go.
 	beadTreeMode beadTreeMode
@@ -973,6 +988,19 @@ func (m *Model) refreshAllCmd() tea.Cmd {
 	)
 }
 
+// pollBeadsCmd dispatches loadBeadsCmd, but only when no poll is already in
+// flight — the single gate every beads read goes through (the launch load in
+// beadsDetectedMsg, the repeating beadsTickMsg, and the manual `r` refresh),
+// so a slow or contended `bd` can never accumulate more than one outstanding
+// `bd list` process no matter which of the three triggers it.
+func (m *Model) pollBeadsCmd() tea.Cmd {
+	if m.beadsPolling {
+		return nil
+	}
+	m.beadsPolling = true
+	return loadBeadsCmd(m.ctx, m.repoRoot)
+}
+
 // isRefreshing reports whether any background GitHub fetch is in flight, driving
 // the header's sync indicator.
 func (m Model) isRefreshing() bool { return m.inflight > 0 }
@@ -1141,7 +1169,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var cmds []tea.Cmd
 		if m.hasBeads && m.beadsErr == "" {
-			cmds = append(cmds, loadBeadsCmd(m.ctx, m.repoRoot), beadsTickCmd())
+			cmds = append(cmds, m.pollBeadsCmd(), beadsTickCmd())
 		}
 		cmds = append(cmds, m.launchSyncCmd())
 		m.clampCursor()
@@ -1149,11 +1177,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case beadsMsg:
 		m.haveBeads = true
-		if msg.err != nil {
+		m.beadsPolling = false
+		switch {
+		case errors.Is(msg.err, context.DeadlineExceeded):
+			// The poll was abandoned at beadsPollTimeout, not answered — bd.List's
+			// exec.CommandContext killed the child, so msg carries no real data.
+			// Keep the last-known beads/beadsErr untouched and only flag staleness:
+			// a slow tick must never wipe good rows off the screen.
+			m.beadsStale = true
+		case msg.err != nil:
 			m.beadsErr = msg.err.Error()
-		} else {
+		default:
 			m.beads = msg.beads
 			m.beadsErr = ""
+			m.beadsStale = false
 		}
 		m.clampCursor()
 		return m, nil
@@ -1166,7 +1203,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.hasBeads {
 			return m, nil
 		}
-		return m, tea.Batch(loadBeadsCmd(m.ctx, m.repoRoot), beadsTickCmd())
+		return m, tea.Batch(m.pollBeadsCmd(), beadsTickCmd())
 
 	case cacheDataMsg:
 		if msg.ok {
@@ -1916,9 +1953,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		// The Beads tab has no per-row refresh: re-reading the whole workspace is
-		// one local query, so there is nothing a single bead would save.
+		// one local query, so there is nothing a single bead would save. Routed
+		// through pollBeadsCmd like the tick and the launch load, so a manual
+		// refresh can't stack a second `bd list` on top of one already in flight.
 		if m.active == tabBeads {
-			return m, loadBeadsCmd(m.ctx, m.repoRoot)
+			return m, m.pollBeadsCmd()
 		}
 		// On an Issues/PRs row, refresh just that row — one targeted GraphQL call
 		// instead of syncing the whole repo. Anywhere else (the Repo tab, or no row
