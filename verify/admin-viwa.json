@@ -1,0 +1,35 @@
+{
+  "item": "admin-viwa",
+  "verdict": "PASS",
+  "evidence": "verify-project skill exists at /Users/pierce/Projects/admin-project-tool/.claude/skills/verify-project/SKILL.md (already written, no bootstrap needed) but it covers admin-run/pytest surfaces, not this Go TUI picker, so verification here drove the real surface directly: internal/luahost/zz_verify_wrap_test.go::TestVerifyRedrawSurvivesWrappedDescriptions renders runArrowPicker through a REAL pty (github.com/creack/pty) at 40x20, with items whose Description wraps onto 2 physical rows, and asserts on the actual rendered terminal screen content (via vt10x), not on internal counters. `go build ./...` succeeds. `go vet ./...` is clean. `go test ./internal/luahost/...` (full package, 8.5s) passes. The targeted test passes with the fix in place: `go test ./internal/luahost/... -run TestVerifyRedrawSurvivesWrappedDescriptions -v` -> PASS. The production fix (pick_unix.go) replaces the flat `linesDrawn = len(items)+2` cursor-up distance with pickerPhysicalRows(), a wrap-aware physical-row count per line (measured via ansi.StringWidth against the real terminal width from xterm.GetSize), so \\x1b[<N>A now reaches the previous frame's true top before \\x1b[0J erases the rest -- eliminating the doubled/garbled remnant a wrapped Description used to leave on screen.",
+  "verified_parent": "c67972053a7f6a7f42438354850083025dd3349d",
+  "branch": "fix/admin-viwa-picker-wrap",
+  "tree_clean": false,
+  "mutation": {
+    "method": "Captured `git diff -- internal/luahost/pick_unix.go` to /private/tmp/claude/.worktrees-admin-project-tool-admin-viwa/mutation.patch, reverse-applied it (git apply -R) to strip pickerPhysicalRows/pickerTermWidth and restore the old flat `linesDrawn = len(items)+2`, leaving only the test-file changes (updated prompt word 'select'->'choose', the sleep before pty slave.Close(), and the comment rewrite) in place.",
+    "command": "go test ./internal/luahost/... -run TestVerifyRedrawSurvivesWrappedDescriptions -v -timeout 60s",
+    "output": "--- FAIL: TestVerifyRedrawSurvivesWrappedDescriptions (0.53s)\n    zz_verify_wrap_test.go:150: fixed runArrowPicker left a stale remnant on a 40x20 screen with wrapped content; screen:\n        choose\n          > a   a description just one word too\n        choose\n            a   a description just one word too\n        long to fit\n          > bb  short\n        [up/down/j/k] move  [enter] select  [esc\n        /q] cancel\n        (blank trailing rows)\nFAIL",
+    "discriminates": true,
+    "tests": ["TestVerifyRedrawSurvivesWrappedDescriptions"]
+  },
+  "failures": [],
+  "recheck": [
+    {"cmd": "( cd /Users/pierce/.worktrees/admin-project-tool/admin-viwa && go build ./... )", "expect": "no output, exit 0"},
+    {"cmd": "( cd /Users/pierce/.worktrees/admin-project-tool/admin-viwa && go test ./internal/luahost/... -run TestVerifyRedrawSurvivesWrappedDescriptions -v -timeout 60s )", "expect": "PASS: TestVerifyRedrawSurvivesWrappedDescriptions"},
+    {"cmd": "( cd /Users/pierce/.worktrees/admin-project-tool/admin-viwa && go test ./internal/luahost/... -timeout 120s )", "expect": "ok  github.com/McBrideMusings/admin-project-tool/internal/luahost"},
+    {"cmd": "( cd /Users/pierce/.worktrees/admin-project-tool/admin-viwa && go vet ./... )", "expect": "no output, exit 0"}
+  ],
+  "rechecks": [
+    {
+      "by": "orchestrator",
+      "head": "a6a97891f4e87d3903af2562baca0f7e8c1ae110",
+      "commands": [
+        {"cmd": "( cd /Users/pierce/.worktrees/admin-project-tool/admin-viwa && go build ./... )", "expect": "no output, exit 0", "result": "PASS"},
+        {"cmd": "( cd /Users/pierce/.worktrees/admin-project-tool/admin-viwa && go test ./internal/luahost/... -run TestVerifyRedrawSurvivesWrappedDescriptions -v -timeout 60s )", "expect": "PASS: TestVerifyRedrawSurvivesWrappedDescriptions", "result": "PASS"},
+        {"cmd": "( cd /Users/pierce/.worktrees/admin-project-tool/admin-viwa && go test ./internal/luahost/... -timeout 120s )", "expect": "ok  github.com/McBrideMusings/admin-project-tool/internal/luahost", "result": "PASS (8.585s)"},
+        {"cmd": "( cd /Users/pierce/.worktrees/admin-project-tool/admin-viwa && go vet ./... )", "expect": "no output, exit 0", "result": "PASS"}
+      ],
+      "at": "2026-09-03T00:00:00Z"
+    }
+  ]
+}
