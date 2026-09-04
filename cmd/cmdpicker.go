@@ -127,6 +127,14 @@ func pickAndRunCommand(h *luahost.Host, m *manifest.Manifest, names []string) er
 	return handlePickOutcome(h, m, key, outcome)
 }
 
+// clearScreenEscape is emitted immediately before a picked command's own
+// output begins: \x1b[3J clears scrollback (ED-3, an xterm extension most
+// modern terminals honor), \x1b[2J clears the visible screen, \x1b[H homes
+// the cursor. Without it the picker's own rendered frame — the "select a
+// command" prompt, every row, the up/down/j/k footer — is left sitting
+// above the picked command's streamed output instead of being cleared.
+const clearScreenEscape = "\x1b[3J\x1b[2J\x1b[H"
+
 // handlePickOutcome is pickAndRunCommand's outcome switch, split out so a
 // test can drive each luahost.PickOutcome directly — reaching PickChosen and
 // PickCancelled through a real h.PickTarget call needs an actual terminal,
@@ -140,6 +148,9 @@ func handlePickOutcome(h *luahost.Host, m *manifest.Manifest, key string, outcom
 	case luahost.PickUnavailable:
 		return fmt.Errorf("admin cmd: no command could be picked (pass one as `admin <name>`, or run from a TTY)")
 	default:
+		// Erase the picker's leftover frame before the picked command's own
+		// output starts printing on the same stdout — see clearScreenEscape.
+		fmt.Fprint(h.Stdout, clearScreenEscape)
 		return kinds.RunCommandInline(m, kinds.Default, key, nil)
 	}
 }

@@ -202,6 +202,61 @@ func TestHandlePickOutcomeChosenRunsTheCommand(t *testing.T) {
 	}
 }
 
+// TestHandlePickOutcomeChosenClearsScreenBeforeRunning covers admin-qshs.1:
+// the PickChosen branch must write clearScreenEscape to h.Stdout before the
+// picked command's own output — otherwise the picker's leftover rendered
+// frame (prompt, rows, footer) stays sitting in the terminal and the
+// command's output just scrolls it up instead of replacing it.
+func TestHandlePickOutcomeChosenClearsScreenBeforeRunning(t *testing.T) {
+	dir := t.TempDir()
+	m := writeMarkerManifest(t, dir)
+	h := luahost.New(dir)
+	var out, errOut bytes.Buffer
+	h.Stdout, h.Stderr = &out, &errOut
+
+	if err := handlePickOutcome(h, m, "touch", luahost.PickChosen); err != nil {
+		t.Fatalf("handlePickOutcome(PickChosen) = %v, want nil", err)
+	}
+	if !strings.HasPrefix(out.String(), clearScreenEscape) {
+		t.Fatalf("stdout = %q, want it to start with the clear-screen escape sequence %q", out.String(), clearScreenEscape)
+	}
+}
+
+// TestHandlePickOutcomeCancelledDoesNotClearScreen and
+// TestHandlePickOutcomeUnavailableDoesNotClearScreen pin the other half of
+// admin-qshs.1: the clear must stay scoped to PickChosen only, since
+// PickCancelled and PickUnavailable already print their own short messages
+// and should not wipe the screen out from under them.
+func TestHandlePickOutcomeCancelledDoesNotClearScreen(t *testing.T) {
+	dir := t.TempDir()
+	m := writeMarkerManifest(t, dir)
+	h := luahost.New(dir)
+	var out, errOut bytes.Buffer
+	h.Stdout, h.Stderr = &out, &errOut
+
+	if err := handlePickOutcome(h, m, "", luahost.PickCancelled); err != nil {
+		t.Fatalf("handlePickOutcome(PickCancelled) = %v, want nil", err)
+	}
+	if strings.Contains(out.String(), clearScreenEscape) {
+		t.Fatalf("stdout = %q, want no clear-screen escape sequence on cancel", out.String())
+	}
+}
+
+func TestHandlePickOutcomeUnavailableDoesNotClearScreen(t *testing.T) {
+	dir := t.TempDir()
+	m := writeMarkerManifest(t, dir)
+	h := luahost.New(dir)
+	var out, errOut bytes.Buffer
+	h.Stdout, h.Stderr = &out, &errOut
+
+	if err := handlePickOutcome(h, m, "", luahost.PickUnavailable); err == nil {
+		t.Fatal("handlePickOutcome(PickUnavailable) = nil, want an error")
+	}
+	if strings.Contains(out.String(), clearScreenEscape) {
+		t.Fatalf("stdout = %q, want no clear-screen escape sequence when unavailable", out.String())
+	}
+}
+
 // TestHandlePickOutcomeChosenDetachCommandRunsInlineNeverDispatches is
 // admin-cmd-never-dispatch's picker-level proof (acceptance criterion 3): a
 // picked command whose action declares detach=true, with a spawnable
