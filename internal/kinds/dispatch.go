@@ -281,6 +281,10 @@ type CommandProducer struct {
 //     the project's declared [terminal] launcher or falls back to running
 //     the command on this process's own surface: inline (runSteps) for the
 //     CLI, p.Launch (the hosted pty) for the dashboard.
+//
+// RunCommandInline is this function's third entry point, for a caller that
+// must never consult `detach` regardless of reentry or producer — see its
+// own doc comment.
 func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string, p *CommandProducer) error {
 	if inReentry() {
 		return runSteps(m, r, name, args)
@@ -292,6 +296,21 @@ func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string, p
 		fallback = func() error { return p.Launch(m, name, args) }
 	}
 	return launchCommand(m, name, args, env, fallback)
+}
+
+// RunCommandInline runs name's steps directly through runSteps, the same
+// body RunCommand's inReentry() branch already uses — skipping
+// launchCommand's launcher/detach resolution entirely, regardless of
+// reentry state or any CommandProducer. Every other RunCommand caller keeps
+// consulting the command's own `detach` declaration; this one never does.
+//
+// It exists for cmd/cmdpicker.go's `admin cmd` picker: a human sitting at an
+// interactive arrow-key picker, in a terminal they are already watching,
+// expects the picked command's output to appear right there, never in a
+// new pane elsewhere — unlike `admin <name>` typed directly, which still
+// dispatches through RunCommand and keeps today's detach/launcher behavior.
+func RunCommandInline(m *manifest.Manifest, r *Registry, name string, args []string) error {
+	return runSteps(m, r, name, args)
 }
 
 // launchCommand is RunCommand's launcher-resolving half: reached whenever
