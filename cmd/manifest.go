@@ -15,10 +15,10 @@ import (
 // reservedToolVerbs are the five verbs the project's design principle 5
 // ("Tool verbs are reserved") sets aside for the tool itself, listed here
 // independent of whether this Go binary has implemented all of them yet —
-// new, compile and worktree do not exist as cmd/ subcommands at this ticket
-// (admin-3rgp.16 and others port them later), but a manifest still may not
-// claim their names: reserving the word now is what makes adding the real
-// command later a non-breaking change instead of a silent shadow.
+// compile does not exist as a cmd/ subcommand at this ticket (admin-3rgp.30
+// and others port it later), but a manifest still may not claim its name:
+// reserving the word now is what makes adding the real command later a
+// non-breaking change instead of a silent shadow.
 var reservedToolVerbs = []string{"new", "check", "compile", "branch", "worktree"}
 
 // reservedCmdVerbs are cmd/'s own subcommands plus cobra's built-ins —
