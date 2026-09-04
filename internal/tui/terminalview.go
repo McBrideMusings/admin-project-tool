@@ -241,7 +241,7 @@ func (m Model) renderTermHeader(width int) string {
 	if e != nil {
 		name = e.Name
 		state, _ = livework.Default.State(e.ID)
-		activity = e.Activity
+		activity, _ = livework.Default.Activity(e.ID)
 		started = e.StartedAt
 	}
 	glyph, glyphColor := "○", cDim

@@ -65,6 +65,16 @@ func TestWhereColumnDetachedWorkerRowShowsPaneNeverHosted(t *testing.T) {
 		State: livework.StateWaiting, Activity: "awaiting approval", Handle: "pane 3", Via: "terminal",
 		Worker: &livework.WorkerInfo{Branch: "some-branch", Worktree: "/tmp/some-branch"},
 	}
+	// renderWorkRow now reads activity through livework.Default.Activity(e.ID)
+	// (admin-8hlz.1, mirroring admin-ddc8's State fix), so the entry must
+	// actually be in the process-wide registry rather than merely
+	// constructed. See TestWhereColumnHostedCommandRowShowsHostedNeverPane.
+	if err := livework.Default.Add(worker); err != nil {
+		t.Fatalf("Add(%s): %v", worker.ID, err)
+	}
+	t.Cleanup(func() {
+		livework.Default.SetState(worker.ID, livework.StateExited, nil)
+	})
 	line := workTestModel(nil).renderWorkRow(rowItem{kind: rowWorker, work: &workRowData{worker: worker}}, false, 60)
 	plain := stripANSI(line)
 
@@ -121,13 +131,21 @@ func TestWhereColumnStateWordsAreVerbatim(t *testing.T) {
 // where-value is reserved first and never passed through truncR.
 func TestWhereColumnTruncatesActivityKeepsWherewholeAt(t *testing.T) {
 	longActivity := strings.Repeat("writing a very long activity line ", 4)
-	live := &workRowData{
-		cmdName: "build",
-		live: &livework.Entry{
-			ID: "build", Name: "build", State: livework.StateRunning,
-			Activity: longActivity, Handle: "pane 12345", Via: "terminal", StartedAt: time.Now(),
-		},
+	entry := &livework.Entry{
+		ID: "wherecol-truncate-activity", Name: "build", State: livework.StateRunning,
+		Activity: longActivity, Handle: "pane 12345", Via: "terminal", StartedAt: time.Now(),
 	}
+	// renderWorkRow now reads activity through livework.Default.Activity(e.ID)
+	// (admin-8hlz.1, mirroring admin-ddc8's State fix), so the entry must
+	// actually be in the process-wide registry rather than merely
+	// constructed. See TestWhereColumnHostedCommandRowShowsHostedNeverPane.
+	if err := livework.Default.Add(entry); err != nil {
+		t.Fatalf("Add(%s): %v", entry.ID, err)
+	}
+	t.Cleanup(func() {
+		livework.Default.SetState(entry.ID, livework.StateExited, nil)
+	})
+	live := &workRowData{cmdName: "build", live: entry}
 	line := stripANSI(workTestModel(nil).renderWorkRow(rowItem{kind: rowCommand, work: live}, false, 40))
 	if !strings.Contains(line, "…") {
 		t.Errorf("long activity at a narrow width did not truncate with an ellipsis: %q", line)

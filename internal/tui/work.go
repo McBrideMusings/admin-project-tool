@@ -749,8 +749,8 @@ func (m Model) workRows() []rowItem {
 	} else {
 		for _, e := range workers {
 			label := e.Name
-			if e.Activity != "" {
-				label = e.Name + " " + e.Activity
+			if activity, _ := livework.Default.Activity(e.ID); activity != "" {
+				label = e.Name + " " + activity
 			}
 			rows = append(rows, rowItem{
 				kind:  rowWorker,
