@@ -270,6 +270,7 @@ func TestLiveEntryForMatchesAnyStep(t *testing.T) {
 // and workers share one list under one cursor, in a stable order, and the
 // cursor can move across the boundary between them.
 func TestWorkRowsOneListOneCursor(t *testing.T) {
+	freshLivework(t)
 	m := &manifest.Manifest{
 		Custom: map[string]manifest.Command{
 			"build": {Desc: "build the binary", Steps: []string{"build"}},
@@ -335,6 +336,7 @@ func TestWorkRowsOneListOneCursor(t *testing.T) {
 // pane.go's recordLiveWork), and that must show up ON the command row, not
 // as a second row of its own.
 func TestWorkRowsFoldsAProcessEntryIntoItsCommandRow(t *testing.T) {
+	freshLivework(t)
 	m := &manifest.Manifest{
 		Custom: map[string]manifest.Command{
 			"dev-server": {Desc: "start the dev server", Steps: []string{"dev-server"}},
@@ -419,19 +421,28 @@ func TestWorkTabPresentAndActiveWithManifest(t *testing.T) {
 }
 
 func TestRenderWorkRowShowsDescriptionWhenIdleAndLiveStateWhenRunning(t *testing.T) {
+	freshLivework(t)
 	idle := &workRowData{cmdName: "build", cmdDesc: "compile the binary", cmdKind: "shell"}
 	idleLine := workTestModel(nil).renderWorkRow(rowItem{kind: rowCommand, work: idle}, false, 60)
 	if !strings.Contains(idleLine, "compile the binary") {
 		t.Errorf("idle command row did not show its description: %q", idleLine)
 	}
 
-	live := &workRowData{
-		cmdName: "build",
-		live: &livework.Entry{
-			ID: "build", Name: "build", State: livework.StateRunning,
-			Activity: "compiling", Handle: "pane 3", Via: "terminal", StartedAt: time.Now(),
-		},
+	entry := &livework.Entry{
+		ID: "build", Name: "build", State: livework.StateRunning,
+		Activity: "compiling", Handle: "pane 3", Via: "terminal", StartedAt: time.Now(),
 	}
+	// renderWorkRow reads state through livework.Default.State(e.ID) rather
+	// than the struct field directly (admin-ddc8), so the entry must actually
+	// be in the registry — see TestWhereColumnHostedCommandRowShowsHostedNeverPane.
+	// This test used to pass only because another test in the package (e.g.
+	// TestActivateCommandAttachesWhenLive) leaked a "build" entry into the
+	// process-wide livework.Default and left it there (admin-hw2i); with
+	// per-test isolation that leak is gone, so the entry has to be added here.
+	if err := livework.Default.Add(entry); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	live := &workRowData{cmdName: "build", live: entry}
 	liveLine := workTestModel(nil).renderWorkRow(rowItem{kind: rowCommand, work: live}, false, 60)
 	if strings.Contains(liveLine, "compile the binary") {
 		t.Errorf("running command row still showed the idle description: %q", liveLine)
@@ -615,6 +626,7 @@ func TestWorkRowsWorkersHeaderAlwaysPresent(t *testing.T) {
 // the empty-state line and the worker rows are alternatives at the same
 // slot, never a reason for the header itself to shift.
 func TestWorkRowsWorkersHeaderStaysPutAcrossDispatch(t *testing.T) {
+	freshLivework(t)
 	m := &manifest.Manifest{
 		Custom: map[string]manifest.Command{
 			"build": {Desc: "build the binary", Steps: []string{"build"}},
@@ -706,6 +718,7 @@ func TestWorkRowsNoCommandsStillLegible(t *testing.T) {
 // current activity) must not carry a trailing space, since the same label
 // doubles as the row's identity string (rowKey, model.go:120).
 func TestWorkRowsWorkerLabelHasNoTrailingSpaceWhenActivityEmpty(t *testing.T) {
+	freshLivework(t)
 	m := &manifest.Manifest{Custom: map[string]manifest.Command{}, Actions: map[string]manifest.Action{}}
 	mm := workTestModel(m)
 
@@ -717,7 +730,6 @@ func TestWorkRowsWorkerLabelHasNoTrailingSpaceWhenActivityEmpty(t *testing.T) {
 	if err := livework.Default.Add(worker); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	t.Cleanup(func() { livework.Default.SetState(worker.ID, livework.StateExited, nil) })
 
 	rows := mm.workRows()
 	found := false
@@ -741,6 +753,7 @@ func TestWorkRowsWorkerLabelHasNoTrailingSpaceWhenActivityEmpty(t *testing.T) {
 // acceptance criterion: no worker detail pane renders a labelled field with
 // no value.
 func TestWorkerDetailOmitsNowLabelWhenActivityEmpty(t *testing.T) {
+	freshLivework(t)
 	e := &livework.Entry{
 		ID: "test-worker-detail-no-activity", Name: "test-worker-detail-no-activity",
 		State: livework.StateRunning, Activity: "", Handle: "pty-detail-no-activity",
@@ -749,7 +762,6 @@ func TestWorkerDetailOmitsNowLabelWhenActivityEmpty(t *testing.T) {
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	t.Cleanup(func() { livework.Default.SetState(e.ID, livework.StateExited, nil) })
 
 	out := workerDetail(e, 60)
 	for _, line := range out {

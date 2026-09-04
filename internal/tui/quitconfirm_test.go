@@ -23,6 +23,7 @@ import (
 // running" check, and an exited hosted entry has nothing left to warn
 // about.
 func TestHostedRunningEntriesFiltersByAddressAndState(t *testing.T) {
+	freshLivework(t)
 	hosted := &livework.Entry{
 		ID: "quitconfirm-hosted-running", Name: "hosted-running",
 		Handle: "pty-1", State: livework.StateRunning,
@@ -49,15 +50,6 @@ func TestHostedRunningEntriesFiltersByAddressAndState(t *testing.T) {
 			t.Fatalf("Add(%s): %v", e.ID, err)
 		}
 	}
-	// livework.Default is a process-wide singleton with no Remove — leaving
-	// these StateRunning/StateWaiting so later tests in this package see
-	// them too would make hostedRunningEntries() non-empty for every test
-	// that runs after this one, including the "nothing hosted" cases below.
-	t.Cleanup(func() {
-		livework.Default.SetState(hosted.ID, livework.StateExited, nil)
-		livework.Default.SetState(waiting.ID, livework.StateExited, nil)
-	})
-
 	got := hostedRunningEntries()
 	names := map[string]bool{}
 	for _, e := range got {
@@ -84,6 +76,7 @@ func TestHostedRunningEntriesFiltersByAddressAndState(t *testing.T) {
 // path is unchanged from before this feature: no overlay, a Cmd that
 // produces tea.QuitMsg.
 func TestRequestQuitWithNothingHostedQuitsImmediately(t *testing.T) {
+	freshLivework(t)
 	m := workTestModel(nil)
 	updated, cmd := m.requestQuit()
 	um := updated.(Model)
@@ -102,6 +95,7 @@ func TestRequestQuitWithNothingHostedQuitsImmediately(t *testing.T) {
 // entry blocks the immediate quit and opens the overlay over a snapshot of
 // what's running instead.
 func TestRequestQuitWithHostedProcessOpensConfirm(t *testing.T) {
+	freshLivework(t)
 	e := &livework.Entry{
 		ID: "quitconfirm-opens-confirm", Name: "opens-confirm",
 		Handle: "pty-opens-confirm", State: livework.StateRunning,
@@ -109,7 +103,6 @@ func TestRequestQuitWithHostedProcessOpensConfirm(t *testing.T) {
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	t.Cleanup(func() { livework.Default.SetState(e.ID, livework.StateExited, nil) })
 
 	m := workTestModel(nil)
 	updated, cmd := m.requestQuit()
@@ -135,6 +128,7 @@ func TestRequestQuitWithHostedProcessOpensConfirm(t *testing.T) {
 // Kill (via the registry, routed to the entry's own Ops.Kill) on every
 // snapshotted entry and then returns a quit Cmd.
 func TestQuitConfirmKeyEnterKillsAndQuits(t *testing.T) {
+	freshLivework(t)
 	killed := false
 	e := &livework.Entry{
 		ID: "quitconfirm-enter-kills", Name: "enter-kills",
@@ -144,11 +138,6 @@ func TestQuitConfirmKeyEnterKillsAndQuits(t *testing.T) {
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	// The stub Kill above never touches the registry's own State (a real
-	// Ops.Kill's producer does that from outside); this test's own kill call
-	// must not leave the entry looking StateRunning for every test that
-	// runs after it against the same process-wide singleton.
-	t.Cleanup(func() { livework.Default.SetState(e.ID, livework.StateExited, nil) })
 
 	m := workTestModel(nil)
 	m.quitOpen = true
@@ -174,6 +163,7 @@ func TestQuitConfirmKeyEnterKillsAndQuits(t *testing.T) {
 // enter/y/Y cancels: the overlay closes, the entry is never killed, and its
 // state is untouched (still StateRunning).
 func TestQuitConfirmKeyOtherCancelsWithoutKilling(t *testing.T) {
+	freshLivework(t)
 	killed := false
 	e := &livework.Entry{
 		ID: "quitconfirm-esc-cancels", Name: "esc-cancels",
@@ -183,7 +173,6 @@ func TestQuitConfirmKeyOtherCancelsWithoutKilling(t *testing.T) {
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	t.Cleanup(func() { livework.Default.SetState(e.ID, livework.StateExited, nil) })
 
 	m := workTestModel(nil)
 	m.quitOpen = true
@@ -209,6 +198,7 @@ func TestQuitConfirmKeyOtherCancelsWithoutKilling(t *testing.T) {
 // required headless-frame assertion: a frame taken after pressing "q" with a
 // hosted process running must show the confirm and the process's name.
 func TestFrameShowsQuitConfirmOverHostedProcess(t *testing.T) {
+	freshLivework(t)
 	e := &livework.Entry{
 		ID: "quitconfirm-frame-entry", Name: "frame-hosted-fixture",
 		Handle: "pty-frame-entry", State: livework.StateRunning,
@@ -217,7 +207,6 @@ func TestFrameShowsQuitConfirmOverHostedProcess(t *testing.T) {
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	t.Cleanup(func() { livework.Default.SetState(e.ID, livework.StateExited, nil) })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

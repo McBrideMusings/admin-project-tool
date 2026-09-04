@@ -353,6 +353,7 @@ func TestRowKeyDispatchWorkflowNoAgentReportsRedStatus(t *testing.T) {
 // shell command here) is unaffected by this ticket's new branch — it still
 // runs through dispatchCommandCmd exactly as admin-l6kb.2 left it.
 func TestRowKeyDispatchNonWorkflowCommandStillRunsPlain(t *testing.T) {
+	freshLivework(t)
 	gotEnv := stubStartHostedRun(t)
 
 	m := workTestModel(rowKeyWorkflowManifest("claude"))
@@ -398,6 +399,7 @@ func TestRowKeyDispatchNonWorkflowCommandStillRunsPlain(t *testing.T) {
 // unconditionally) and this test fails: "rowKeyDispatch dispatched a second
 // run instead of attaching, attached=false".
 func TestRowKeyDispatchAttachesWhenCommandAlreadyLive(t *testing.T) {
+	freshLivework(t)
 	gotEnv := stubStartHostedRun(t)
 
 	attached := false
@@ -561,6 +563,7 @@ func hasEnvKey(env []string, key string) bool {
 // selection branch was never wired for plain commands" — the review of the
 // epic diff read the ADR literally and could not tell which it was.
 func TestRowKeyDispatchPlainCommandIgnoresTheSelection(t *testing.T) {
+	freshLivework(t)
 	gotEnv := stubStartHostedRun(t)
 
 	m := workTestModel(rowKeyWorkflowManifest("claude"))

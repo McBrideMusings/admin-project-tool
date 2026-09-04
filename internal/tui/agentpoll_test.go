@@ -55,6 +55,7 @@ func (c *int32Counter) value() int {
 // why).
 func addWorkflowEntry(t *testing.T, id string, state livework.State) *livework.Entry {
 	t.Helper()
+	freshLivework(t)
 	e := &livework.Entry{
 		ID:     id,
 		Name:   id,
@@ -127,6 +128,7 @@ func TestAgentPollFailureLeavesStateUnchanged(t *testing.T) {
 }
 
 func TestAgentPollSkipsPTYEntry(t *testing.T) {
+	freshLivework(t)
 	id := "agentpoll-pty"
 	e := &livework.Entry{
 		ID: id, Name: id, Kind: "hosted-pty", Handle: "pty-" + id,

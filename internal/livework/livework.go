@@ -401,3 +401,21 @@ func (r *Registry) Retry(id string) error {
 // every workflow target records itself into, and what the Work tab
 // (admin-3rgp.20) reads.
 var Default = NewRegistry()
+
+// UseRegistry points Default at r for the duration of a test and returns a
+// restore func that puts the previous registry back — the same seam pattern
+// as internal/archetype/search.go's UseInstalledDir. A test that calls
+// Default.Add (or anything that reads Default.List through the package under
+// test) should call this with a fresh NewRegistry() rather than resetting or
+// clearing the shared instance: Default is a process-wide singleton, so an
+// entry one test adds and never removes is still there for the next
+// -count>1 iteration of the same test, or for an unrelated test in the same
+// package that also reads Default (admin-hw2i). Swapping the pointer to a
+// throwaway registry, instead of mutating the shared one, removes that class
+// of leak structurally rather than depending on every test author to
+// remember cleanup.
+func UseRegistry(r *Registry) (restore func()) {
+	prev := Default
+	Default = r
+	return func() { Default = prev }
+}

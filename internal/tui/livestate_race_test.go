@@ -16,6 +16,13 @@ import (
 )
 
 func TestConcurrentStateReadsDoNotRace(t *testing.T) {
+	// freshLivework(t) swaps livework.Default for a throwaway registry before
+	// either goroutine below is spawned, so this entry can never make
+	// hostedRunningEntries() non-empty for a later test — e.g.
+	// TestRequestQuitWithNothingHostedQuitsImmediately, which is exactly the
+	// failure this isolation exists to prevent (admin-hw2i). See
+	// freshLivework's own doc comment in hermetic_test.go.
+	freshLivework(t)
 	e := &livework.Entry{
 		ID: "livestate-race-entry", Name: "livestate-race",
 		Handle: "pty-livestate-race", State: livework.StateRunning,
@@ -23,13 +30,6 @@ func TestConcurrentStateReadsDoNotRace(t *testing.T) {
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add(%s): %v", e.ID, err)
 	}
-	// livework.Default is a process-wide singleton with no Remove — leaving
-	// this entry StateRunning would make hostedRunningEntries() non-empty for
-	// every test that runs after this one, including
-	// TestRequestQuitWithNothingHostedQuitsImmediately.
-	t.Cleanup(func() {
-		livework.Default.SetState(e.ID, livework.StateExited, nil)
-	})
 
 	m := Model{quitHosted: []*livework.Entry{e}}
 

@@ -94,6 +94,7 @@ func (f *termRecorder) lastResize() [2]int {
 // harmless no-op. No real pty is created anywhere.
 func registerFakePTYEntry(t *testing.T, cmdName string, ring *livework.Ring, rec *termRecorder) {
 	t.Helper()
+	freshLivework(t)
 	e := &livework.Entry{
 		ID:     cmdName,
 		Name:   cmdName,
