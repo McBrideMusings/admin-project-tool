@@ -32,19 +32,16 @@ import (
 // can detect the symptom, then drives the real (post-fix) runArrowPicker
 // over the same wrapped content and asserts the symptom is gone.
 //
-// admin-viwa verification finding: this currently FAILS against the
-// shipped fix. \x1b[0J only erases from the (repositioned) cursor to the
-// end of the screen — never anything above it — and pick_unix.go's
-// cursor-up distance is still the unchanged `len(items)+2` (one physical
-// line assumed per item), which undercounts whenever any item wraps. So
-// the cursor lands partway down the previous frame rather than at its true
-// top, \x1b[0J clears everything from there down, and the previous frame's
-// own top rows (its prompt line included) are left on screen untouched
-// above the freshly drawn frame — visible here as "select" appearing
-// twice. The fix needed is the acceptance criteria's second option
-// ("wrap-aware count physical lines per row"): linesDrawn has to reflect
-// the actual wrapped height so the cursor-up reaches the true top before
-// \x1b[0J erases the rest.
+// pick_unix.go's runArrowPicker already computes linesDrawn as the summed
+// wrap-aware physical-row count of every row it writes (pickerPhysicalRows),
+// not a flat `len(items)+2`, so the cursor-up distance already reaches the
+// previous frame's true top before \x1b[0J erases the rest.
+//
+// The prompt below is "choose", not "select": runArrowPicker's own static
+// footer text ("[enter] select") already contains the word "select", so
+// using that as the prompt would make hasStalePrompt count two occurrences
+// on every correctly-drawn single frame (title + footer) regardless of
+// whether a stale remnant is actually on screen.
 func TestVerifyRedrawSurvivesWrappedDescriptions(t *testing.T) {
 	const cols, rows = 40, 20
 
@@ -67,7 +64,7 @@ func TestVerifyRedrawSurvivesWrappedDescriptions(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		redraw(1) // cursor moves onto the short item -> old cursor-up undercounts the wrapped frame it's leaving
 	})
-	if !hasStalePrompt(oldTerm, rows, "select") {
+	if !hasStalePrompt(oldTerm, rows, "choose") {
 		t.Fatalf("expected the OLD redraw (no \\x1b[0J) to leave a stale remnant on a %dx%d screen with wrapped content; screen:\n%s", cols, rows, screenText(oldTerm, rows))
 	}
 
@@ -94,7 +91,7 @@ func TestVerifyRedrawSurvivesWrappedDescriptions(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		k, o := h.runArrowPicker(items, "select")
+		k, o := h.runArrowPicker(items, "choose")
 		done <- result{k, o}
 	}()
 
@@ -149,7 +146,7 @@ func TestVerifyRedrawSurvivesWrappedDescriptions(t *testing.T) {
 	}
 	time.Sleep(150 * time.Millisecond) // let the reader goroutine drain the picker's trailing Fprintln("\n")
 
-	if hasStalePrompt(newTerm, rows, "select") {
+	if hasStalePrompt(newTerm, rows, "choose") {
 		t.Fatalf("fixed runArrowPicker left a stale remnant on a %dx%d screen with wrapped content; screen:\n%s", cols, rows, screenText(newTerm, rows))
 	}
 }
@@ -187,6 +184,14 @@ func renderThroughRealPTY(t *testing.T, cols, rows int, write func(w io.Writer))
 	}()
 
 	write(slave)
+	// Closing the slave races the background reader: on macOS, closing the
+	// last open reference to a pty's slave side can flush the driver's
+	// output queue rather than draining it, discarding whatever the reader
+	// goroutine above hasn't pulled off the master yet. write() returning
+	// only means the bytes reached the kernel's tty queue, not that the
+	// reader has drained them — so give it a moment before the close that
+	// can blow that queue away.
+	time.Sleep(50 * time.Millisecond)
 	slave.Close()
 	<-copyDone
 	return term
@@ -198,7 +203,7 @@ func renderThroughRealPTY(t *testing.T, cols, rows int, write func(w io.Writer))
 func renderFrame(items []TargetEntry, cursor int) string {
 	var b strings.Builder
 	kw := maxKeyWidth(items)
-	fmt.Fprintf(&b, "\x1b[2Kselect\n")
+	fmt.Fprintf(&b, "\x1b[2Kchoose\n")
 	for i, e := range items {
 		marker := "    "
 		if i == cursor {

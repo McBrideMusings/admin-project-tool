@@ -4,8 +4,13 @@ package luahost
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
+	xterm "github.com/charmbracelet/x/term"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/reload"
 )
@@ -46,18 +51,17 @@ func (h *Host) runArrowPicker(items []TargetEntry, prompt string) (string, PickO
 
 	redraw := func() {
 		if linesDrawn > 0 {
-			// Move up by the line count assumed for the previous frame, then
-			// erase everything below the cursor to the end of the screen. A
-			// long Description can wrap onto 2+ physical terminal rows even
-			// though linesDrawn only counts one row per item, so the plain
-			// cursor-up alone can undercount and leave stale wrapped remnants
-			// of the previous frame on screen below the new one (looks like
-			// garbled/doubled text). \x1b[0J tolerates that undercount by
-			// wiping everything past the repositioned cursor every frame.
+			// Move up by the physical-row count computed for the previous
+			// frame, then erase everything below the cursor to the end of
+			// the screen. linesDrawn is now the true wrapped height (see
+			// below), so the cursor-up reaches the previous frame's real top
+			// before \x1b[0J wipes the rest — \x1b[0J stays only as a
+			// defensive clear of anything left below that point.
 			fmt.Fprintf(h.Stdout, "\x1b[%dA\x1b[0J", linesDrawn)
 		}
-		var b strings.Builder
-		fmt.Fprintf(&b, "\x1b[2K%s%s%s\n", ansiBold, prompt, ansiReset)
+
+		rows := make([]string, 0, len(items)+2)
+		rows = append(rows, fmt.Sprintf("%s%s%s", ansiBold, prompt, ansiReset))
 		for i, e := range items {
 			marker := "    "
 			style := ansiReset
@@ -65,11 +69,19 @@ func (h *Host) runArrowPicker(items []TargetEntry, prompt string) (string, PickO
 				marker = "  > "
 				style = ansiCyan + ansiBold
 			}
-			fmt.Fprintf(&b, "\x1b[2K%s%s%-*s%s  %s%s%s\n", marker, style, keyWidth, e.Key, ansiReset, ansiDim, e.Description, ansiReset)
+			rows = append(rows, fmt.Sprintf("%s%s%-*s%s  %s%s%s", marker, style, keyWidth, e.Key, ansiReset, ansiDim, e.Description, ansiReset))
 		}
-		fmt.Fprintf(&b, "\x1b[2K%s[up/down/j/k] move  [enter] select  [esc/q] cancel%s\n", ansiDim, ansiReset)
+		rows = append(rows, fmt.Sprintf("%s[up/down/j/k] move  [enter] select  [esc/q] cancel%s", ansiDim, ansiReset))
+
+		width := pickerTermWidth(h.Stdout)
+		var b strings.Builder
+		physicalRows := 0
+		for _, row := range rows {
+			fmt.Fprintf(&b, "\x1b[2K%s\n", row)
+			physicalRows += pickerPhysicalRows(row, width)
+		}
 		fmt.Fprint(h.Stdout, b.String())
-		linesDrawn = len(items) + 2
+		linesDrawn = physicalRows
 	}
 
 	for {
@@ -87,4 +99,37 @@ func (h *Host) runArrowPicker(items []TargetEntry, prompt string) (string, PickO
 			return "", PickCancelled
 		}
 	}
+}
+
+// pickerTermWidth returns the real terminal width behind w, falling back to
+// 80 columns (matching internal/frame.termSize's fallback) when w isn't a
+// real *os.File or the ioctl fails — e.g. under a non-terminal Stdout, or a
+// platform where the syscall isn't wired up.
+func pickerTermWidth(w io.Writer) int {
+	if f, ok := w.(*os.File); ok {
+		if width, _, err := xterm.GetSize(f.Fd()); err == nil && width > 0 {
+			return width
+		}
+	}
+	return 80
+}
+
+// pickerPhysicalRows returns how many physical terminal rows row wraps to at
+// the given terminal width, measuring only the cells it actually occupies
+// (ansi.StringWidth strips the row's ANSI/SGR styling first). Always at
+// least 1, so a blank row or an undetectable width never collapses the
+// count back toward the pre-fix undercount.
+func pickerPhysicalRows(row string, width int) int {
+	if width <= 0 {
+		width = 80
+	}
+	w := ansi.StringWidth(row)
+	if w <= 0 {
+		return 1
+	}
+	rows := (w + width - 1) / width
+	if rows < 1 {
+		rows = 1
+	}
+	return rows
 }
