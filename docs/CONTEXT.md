@@ -37,7 +37,7 @@ _Avoid_: type, mode
 **Bundler**:
 The component in `gen/bundler.py` that inlined `admin_lib` modules into the generated `./admin` as a flat namespace — strips relative imports, hoists `__future__` imports, dedupes.
 _Avoid_: packer, linker
-_Status_: removed. The flat-namespace bundler was deleted under **Bundler flat namespace** ([ADR-0004](adr/0004-bundler-flat-namespace.md)); **Interpreter mode** ([ADR-0006](adr/0006-interpreter-mode.md)) imports `admin_lib` as a real package and **Compile** produces a `zipapp` (whole files, no flattening).
+_Status_: removed. **Interpreter mode** ([ADR-0006](adr/0006-interpreter-mode.md)) imports `admin_lib` as a real package and **Compile** produces a `zipapp` (whole files, no flattening) — the flat-namespace bundler no longer exists.
 
 **Fragment**:
 A rendered snippet emitted by `gen/fragments.py` — one per command (the function the TUI calls) and one per action (the dispatch body for that kind). Composed by the renderer into the final `./admin`.

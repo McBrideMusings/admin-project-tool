@@ -1,4 +1,4 @@
-# Interpreter mode replaces mandatory code generation
+# ADR-0006: Interpreter mode replaces mandatory code generation
 
 The installed tool reads a project's `admin.toml` and executes commands directly at runtime — "interpreter mode" — rather than generating and committing a self-contained `./admin` script. A project commits only `admin.toml`; the interpreter (`~/.admin/admin`, on PATH) is invoked as `admin <command>` from anywhere inside the project and finds the manifest by walking up from `$PWD`.
 

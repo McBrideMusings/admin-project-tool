@@ -1,4 +1,4 @@
-# Archetypes are merged partial manifests, not inherited templates
+# ADR-0002: Archetypes are merged partial manifests, not inherited templates
 
 Archetypes (`archetypes/<name>.py`) contribute partial manifests — dicts of commands, actions, modules, urls — that the generator merges in list order. There is no base template, no `extends`, no override blocks; `archetypes = ["docker", "apple"]` merges both dicts, later wins on conflicts.
 

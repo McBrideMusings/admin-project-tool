@@ -1,4 +1,4 @@
-# Guards are named preconditions referenced from `requires` on actions and targets
+# ADR-0005: Guards are named preconditions referenced from `requires` on actions and targets
 
 An action or multi-target child target may declare `requires = ["<guard-name>", ...]`. Each name resolves through one shared registry holding both Python-defined built-in Guards (`admin_lib/guards.py`) and TOML-defined user guards (`[guards.<name>]` tables). Before the action's `run` fires, each named guard runs in order, fail-fast; on failure the runtime prints the guard's diagnostic and exits non-zero.
 

@@ -1,4 +1,4 @@
-# Command/action schema validation lives in `admin_lib/validate.py`
+# ADR-0008: Command/action schema validation lives in `admin_lib/validate.py`
 
 All "is this command/action well-formed" checks live in one module, behind `validate_command` / `validate_action_keys` / `validate_action`. The three pipeline sites that used to hand-roll these checks — `manifest.parse`, `archetypes.load_archetype`, and `archetypes._to_command` — delegate to it; after `validate_action` returns, `_to_command` only builds the `Command`, with no schema raises of its own.
 

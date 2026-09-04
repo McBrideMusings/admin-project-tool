@@ -1,4 +1,4 @@
-# A project's manifest references; the archetype carries the implementation
+# ADR-0009: A project's manifest references; the archetype carries the implementation
 
 A project's `admin.toml` is almost entirely reference: it names its archetypes, names commands, and lists the actions each command steps through. Implementation — anything with control flow, anything more than a single line of shell — belongs in the archetype, not the project.
 

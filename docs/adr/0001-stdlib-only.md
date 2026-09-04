@@ -1,4 +1,4 @@
-# Stdlib only — generator and generated `./admin`
+# ADR-0001: Stdlib only — generator and generated `./admin`
 
 Both `admin-project-tool` and every `./admin` script it produces depend only on the Python 3.11+ standard library — no `requirements.txt`, no `pyproject.toml` runtime deps, no unconditional third-party imports.
 
