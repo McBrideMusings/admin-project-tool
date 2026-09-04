@@ -464,6 +464,19 @@ func (f *LogFormatter) renderJSON(level, logger, message string) string {
 }
 
 func (f *LogFormatter) colorizeLevel(line string) string {
+	return ColorizeLevel(line)
+}
+
+// ColorizeLevel wraps the first severity-level word found in line (checked
+// in the same ERROR/WARN/INFO/DEBUG priority order as levelColors) in its
+// color, leaving every other occurrence and the rest of the line untouched.
+// Returns line unchanged when no level word is found.
+//
+// Exported so internal/logcolumns can color an already column-rendered line
+// using the same level->color table LogFormatter.FormatLine uses internally
+// — the Go analogue of admin_lib/log_columns.py importing _LEVEL_COLORS from
+// .log_format instead of keeping its own copy of the table.
+func ColorizeLevel(line string) string {
 	for _, lc := range levelColors {
 		if loc := lc.re.FindStringIndex(line); loc != nil {
 			return line[:loc[0]] + lc.color + line[loc[0]:loc[1]] + ansiReset + line[loc[1]:]

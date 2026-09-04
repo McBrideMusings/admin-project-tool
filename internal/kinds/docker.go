@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/logcolumns"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/reload"
 )
@@ -17,11 +18,14 @@ import (
 //
 // Python's factory also builds a column formatter from the project's
 // `[output]` table (admin_lib/log_columns.make_column_formatter) before
-// passing it to run_with_reload. log_columns.py has no Go port yet
-// (tracked as admin-3rgp.74) — so this leaves reload.Options.Formatter nil
-// and gets only RunWithReload's own always-on HH:MM:SS.mmm timestamp
-// (logformat.StampLine, wired as the pump's DisplayTransform), not
-// [output]'s column layout, until the column formatter lands.
+// passing it to run_with_reload; this does the same via
+// internal/logcolumns.MakeColumnFormatter("docker", ...), reading the
+// manifest's [output] table exactly the way every other kind reads its own
+// settings table. reload.Options.Formatter is therefore non-nil whenever a
+// project declares [output] (or even when it doesn't — the "docker" source
+// default still applies), and RunWithReload's own always-on HH:MM:SS.mmm
+// stamping (logformat.StampLine, wired as the pump's DisplayTransform) is
+// skipped for a pump that already stamps its own lines via FormatLine.
 func makeDockerReloadLoop(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	run, ok := actionString(action, "run")
 	if !ok || run == "" {
@@ -30,12 +34,19 @@ func makeDockerReloadLoop(name string, action manifest.Action, m *manifest.Manif
 	return func(args []string) error {
 		h := newHost(m)
 		h.Info("reload loop: " + run)
+		// A fresh formatter per invocation (not built once at factory time,
+		// shared across every future call) — matching Python's
+		// _make_docker_reload_loop, which calls make_column_formatter inside
+		// its inner _fn rather than outside it, so each `admin dev` run gets
+		// its own header print.
+		formatter := logcolumns.MakeColumnFormatter("docker", archetypeConfigTable(m, "output"))
 		rc := reload.RunWithReload(run, name, reload.Options{
-			Dir:    h.ProjectRoot,
-			Stdout: h.Stdout,
-			LogFn:  h.AppendLog,
-			Info:   h.Info,
-			Warn:   h.Warn,
+			Dir:       h.ProjectRoot,
+			Stdout:    h.Stdout,
+			LogFn:     h.AppendLog,
+			Info:      h.Info,
+			Warn:      h.Warn,
+			Formatter: formatter,
 		})
 		if rc != 0 {
 			return fmt.Errorf("action %q: exited %d", name, rc)

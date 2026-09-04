@@ -138,6 +138,27 @@ func TestFormatLineIsNotDoubleStamped(t *testing.T) {
 	}
 }
 
+// -- ColorizeLevel -----------------------------------------------------------
+
+func TestColorizeLevelColorsFirstMatchInPriorityOrder(t *testing.T) {
+	// ERROR outranks INFO in levelColors, so even though INFO appears first
+	// in the line, ERROR is the one that gets colored — this is the exact
+	// behavior internal/logcolumns.MakeColumnFormatter relies on to color a
+	// rendered column line without keeping its own copy of the level table.
+	out := ColorizeLevel("INFO saw an ERROR while starting up")
+	want := "INFO saw an " + ansiRed + "ERROR" + ansiReset + " while starting up"
+	if out != want {
+		t.Fatalf("got %q, want %q", out, want)
+	}
+}
+
+func TestColorizeLevelNoLevelWordUnchanged(t *testing.T) {
+	in := "nothing to see here"
+	if got := ColorizeLevel(in); got != in {
+		t.Fatalf("got %q, want unchanged %q", got, in)
+	}
+}
+
 // -- StampLine -------------------------------------------------------------
 
 func TestStampLineBlankTextUnchanged(t *testing.T) {
