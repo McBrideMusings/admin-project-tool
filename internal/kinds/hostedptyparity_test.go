@@ -152,8 +152,8 @@ func runHostedFixture(t *testing.T, m *manifest.Manifest, cmdName string, env []
 // same path and in the same format — timestamping and ANSI stripping — as a
 // plain-CLI run of the same Command.
 //
-// The plain-CLI leg runs in-process via RunCommand (dispatch.go:315's
-// documented "plain-CLI entry point"); stdout is not a tty there, so
+// The plain-CLI leg runs in-process via RunCommandInline (dispatch.go's
+// documented plain-CLI entry point); stdout is not a tty there, so
 // frame.Activate declines, but enterFrame already called h.SetLogContext
 // and h.MaterializeLogFile() before that decision is even made — so the log
 // file is still written. That asymmetry (log file: always; footer: only on
@@ -179,8 +179,8 @@ func TestHostedPTYLogFileMatchesAPlainCLIRun(t *testing.T) {
 
 	m := hostedParityManifest()
 
-	if err := RunCommand(m, Default, "hosted-frame-cmd", nil, nil); err != nil {
-		t.Fatalf("RunCommand (plain-CLI leg): %v", err)
+	if err := RunCommandInline(m, Default, "hosted-frame-cmd", nil); err != nil {
+		t.Fatalf("RunCommandInline (plain-CLI leg): %v", err)
 	}
 	plainLogs, err := filepath.Glob(filepath.Join(dir, "tmp", "hosted-frame.*.log"))
 	if err != nil {

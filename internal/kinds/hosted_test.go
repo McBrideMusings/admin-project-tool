@@ -1,15 +1,15 @@
 // hosted_test.go covers the command-dispatch entry point: RunCommand takes a
-// *CommandProducer, and `detach` is dashboard-producer-only (restored by
-// admin-wwrg, withdrawing admin-m6m8's producer-independent contract). A nil
-// producer — the plain CLI's shape, though the CLI itself now dispatches
-// through RunCommandInline and never reaches RunCommand with one at all —
-// always runs inline and never touches the project's declared [terminal]
-// launcher, whatever the first step's `detach` says. A non-nil producer (the
-// dashboard, which cannot host the run itself) resolves `detach`: it reaches
-// the launcher for a detached first step and falls back to its own default
-// surface (Launch) when no launcher dispatch happens. The tests below
-// exercise both halves: the same manifest, the same fake [terminal]
-// launcher, the same detached step, dispatched through each producer.
+// required *CommandProducer, and `detach` is dashboard-producer-only
+// (restored by admin-wwrg, withdrawing admin-m6m8's producer-independent
+// contract). The plain CLI dispatches through RunCommandInline instead,
+// which always runs inline and never touches the project's declared
+// [terminal] launcher, whatever the first step's `detach` says. A
+// CommandProducer (the dashboard, which cannot host the run itself)
+// resolves `detach`: it reaches the launcher for a detached first step and
+// falls back to its own default surface (Launch) when no launcher dispatch
+// happens. The tests below exercise both halves: the same manifest, the
+// same fake [terminal] launcher, the same detached step, dispatched through
+// RunCommandInline and through RunCommand with a dashboard producer.
 package kinds
 
 import (
@@ -82,13 +82,12 @@ func dashboardProducer(launched *bool) *CommandProducer {
 	}
 }
 
-// TestRunCommandPlainCLIDetachRunsInlineNeverReachesLauncher is the CLI half
-// of the pair: a plain-CLI dispatch (producer nil) with a declared [terminal]
-// and a detached first step must run inline and never reach the launcher —
-// `detach` is dashboard-producer-only (admin-wwrg). The CLI itself no longer
-// calls RunCommand with a nil producer at all (it calls RunCommandInline
-// instead), but RunCommand must give the same answer if reached directly.
-func TestRunCommandPlainCLIDetachRunsInlineNeverReachesLauncher(t *testing.T) {
+// TestRunCommandInlinePlainCLIDetachRunsInlineNeverReachesLauncher is the CLI
+// half of the pair: a plain-CLI dispatch, which now always goes through
+// RunCommandInline (admin-wwrg), with a declared [terminal] and a detached
+// first step must run inline and never reach the launcher — `detach` is
+// dashboard-producer-only.
+func TestRunCommandInlinePlainCLIDetachRunsInlineNeverReachesLauncher(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	logPath := filepath.Join(dir, "terminal-calls.log")
@@ -96,18 +95,18 @@ func TestRunCommandPlainCLIDetachRunsInlineNeverReachesLauncher(t *testing.T) {
 
 	before := len(livework.Default.List())
 	inlineRan := false
-	if err := RunCommand(longRunningManifest(terminal), registryRecordingInline(&inlineRan), "dev", nil, nil); err != nil {
-		t.Fatalf("RunCommand = %v, want nil", err)
+	if err := RunCommandInline(longRunningManifest(terminal), registryRecordingInline(&inlineRan), "dev", nil); err != nil {
+		t.Fatalf("RunCommandInline = %v, want nil", err)
 	}
 	if !inlineRan {
-		t.Error("a nil-producer dispatch must run inline, even with a declared [terminal] and detach=true")
+		t.Error("RunCommandInline must run inline, even with a declared [terminal] and detach=true")
 	}
 	logged, err := os.ReadFile(logPath)
 	if err == nil && len(logged) > 0 {
-		t.Errorf("terminal log = %q, want empty — a nil-producer dispatch must never reach the launcher", string(logged))
+		t.Errorf("terminal log = %q, want empty — RunCommandInline must never reach the launcher", string(logged))
 	}
 	if got := len(livework.Default.List()); got != before {
-		t.Errorf("live-work registry grew from %d to %d — a nil-producer dispatch must never register a launcher entry", before, got)
+		t.Errorf("live-work registry grew from %d to %d — RunCommandInline must never register a launcher entry", before, got)
 	}
 }
 
@@ -651,10 +650,10 @@ func TestRunCommandInReentryMultiTargetDetachStaysInline(t *testing.T) {
 	}
 }
 
-// TestRunCommandRunsStepsInOrderAndStops proves the collapsed entry point
-// shares the existing step loop's semantics regardless of producer:
-// declared order, stop-at-first-failure, and an error naming the command.
-func TestRunCommandRunsStepsInOrderAndStops(t *testing.T) {
+// TestRunCommandInlineRunsStepsInOrderAndStops proves RunCommandInline
+// shares the existing step loop's semantics: declared order,
+// stop-at-first-failure, and an error naming the command.
+func TestRunCommandInlineRunsStepsInOrderAndStops(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -668,9 +667,9 @@ func TestRunCommandRunsStepsInOrderAndStops(t *testing.T) {
 			"three": {"kind": "shell", "run": "echo three >> order.txt"},
 		},
 	}
-	err := RunCommand(m, newDispatchTestRegistry(), "build", nil, nil)
+	err := RunCommandInline(m, newDispatchTestRegistry(), "build", nil)
 	if err == nil {
-		t.Fatal("RunCommand = nil, want the failing middle step's error")
+		t.Fatal("RunCommandInline = nil, want the failing middle step's error")
 	}
 	if !strings.Contains(err.Error(), `command "build"`) {
 		t.Errorf("error = %v, want it to name the command", err)

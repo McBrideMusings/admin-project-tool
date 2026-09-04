@@ -183,8 +183,8 @@ func TestRunCommandGlobalPreflightBlocksBeforeAnyStepRuns(t *testing.T) {
 	r := NewRegistry()
 	r.MustRegister("shell", makeShell)
 
-	if err := RunCommand(m, r, "build", nil, nil); err == nil {
-		t.Fatal("RunCommand(build) = nil, want the deps-fresh preflight failure")
+	if err := RunCommandInline(m, r, "build", nil); err == nil {
+		t.Fatal("RunCommandInline(build) = nil, want the deps-fresh preflight failure")
 	}
 	assertFileMissing(t, dir, "ran.txt")
 }
@@ -213,8 +213,8 @@ func TestRunCommandPreflightExemptForDeclaredCommand(t *testing.T) {
 	r := NewRegistry()
 	r.MustRegister("shell", makeShell)
 
-	if err := RunCommand(m, r, "logs", nil, nil); err != nil {
-		t.Fatalf("RunCommand(logs) = %v, want nil — logs declares preflight = false", err)
+	if err := RunCommandInline(m, r, "logs", nil); err != nil {
+		t.Fatalf("RunCommandInline(logs) = %v, want nil — logs declares preflight = false", err)
 	}
 	assertFileExists(t, dir, "ran.txt")
 }

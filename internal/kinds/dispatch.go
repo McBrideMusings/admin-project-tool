@@ -238,18 +238,14 @@ func RunAction(m *manifest.Manifest, r *Registry, name string, args []string) er
 // CommandProducer distinguishes a command dispatch whose producer cannot
 // host the run itself from one that can. `detach` is dashboard-producer-only
 // (restored by admin-wwrg, withdrawing admin-m6m8's producer-independent
-// contract): only a non-nil producer's dispatch through RunCommand consults
-// the command's own launcher/detach declaration, in launchCommand, and
-// either dispatches through the project's declared [terminal] launcher or
-// falls back to Launch (the dashboard's hosted pty). A nil producer — the
-// plain CLI's shape, though the CLI itself now calls RunCommandInline and
-// never reaches RunCommand with one at all — runs inline, same as
-// RunCommandInline, and never consults `detach`. See RunCommand's own doc
-// comment.
+// contract): a dispatch through RunCommand consults the command's own
+// launcher/detach declaration, in launchCommand, and either dispatches
+// through the project's declared [terminal] launcher or falls back to
+// Launch (the dashboard's hosted pty). See RunCommand's own doc comment.
 //
-// A non-nil producer is the dashboard: it cannot run a Command's step loop
-// on its own terminal at all (that would block its alt-screen for the run's
-// whole duration), so its fallback is Launch rather than an inline run.
+// The producer is the dashboard: it cannot run a Command's step loop on its
+// own terminal at all (that would block its alt-screen for the run's whole
+// duration), so its fallback is Launch rather than an inline run.
 type CommandProducer struct {
 	// Launch runs name (with args) on the producer's own default surface —
 	// StartHostedPTY for the dashboard — when the command's first step
@@ -271,7 +267,7 @@ type CommandProducer struct {
 // action produces a non-zero result" (that "non-zero result" surfaces here
 // as a non-nil error; mapping it to a process exit code is CLI wiring).
 //
-// Three cases, checked in this order:
+// Two cases, checked in this order:
 //
 //  1. inReentry() — every step runs inline through runSteps/RunAction, and
 //     `detach` is never consulted. This is __run-command's own re-entry
@@ -279,27 +275,20 @@ type CommandProducer struct {
 //     launched dispatch must never reach a second launcher, however many
 //     levels of delegation separate it from the dispatch that opened that
 //     run.
-//  2. p == nil — every step also runs inline through runSteps, exactly like
-//     case 1. `detach` is dashboard-producer-only (restored by admin-wwrg,
-//     withdrawing admin-m6m8's producer-independent contract): no code path
-//     in this tree calls RunCommand with a nil producer anymore — the CLI
-//     dispatches through RunCommandInline, below, instead — but a nil
-//     producer reaching RunCommand directly (a test, or any future caller)
-//     still gets the plain-CLI answer, inline, never the launcher.
-//  3. p != nil — the dashboard. launchCommand resolves the command's own
-//     launcher/detach declaration once, up front, and either dispatches to
-//     the project's declared [terminal] launcher or falls back to p.Launch
-//     (the hosted pty).
+//  2. Otherwise — the dashboard. p is required. launchCommand resolves the
+//     command's own launcher/detach declaration once, up front, and either
+//     dispatches to the project's declared [terminal] launcher or falls
+//     back to p.Launch (the hosted pty).
 //
-// RunCommandInline is this function's fourth entry point, and is what every
+// RunCommandInline is this function's other entry point, and is what every
 // CLI caller (cmd/root.go's manifest-command RunE and its __run-command
 // re-entry verb) actually calls: it never consults `detach` regardless of
-// reentry or producer — see its own doc comment. Its behavior is now
-// identical to cases 1 and 2 above; it remains a separate function because
-// `admin cmd`'s picker (cmd/cmdpicker.go) calls it directly with no
-// CommandProducer in scope at all.
+// reentry — see its own doc comment. Its behavior is now identical to case
+// 1 above; it remains a separate function because `admin cmd`'s picker
+// (cmd/cmdpicker.go) calls it directly with no CommandProducer in scope at
+// all.
 func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string, p *CommandProducer) error {
-	if inReentry() || p == nil {
+	if inReentry() {
 		return runSteps(m, r, name, args)
 	}
 	return launchCommand(m, name, args, p.Env, func() error { return p.Launch(m, name, args) })
