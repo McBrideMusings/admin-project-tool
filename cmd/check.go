@@ -84,6 +84,9 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	if err := checkQueryWorkflowTracker(m); err != nil {
 		problems = append(problems, validate.Wrap(err))
 	}
+	if err := checkLeakedIPs(m); err != nil {
+		problems = append(problems, validate.Wrap(err))
+	}
 	shadows, err := checkRowKeys(m)
 	if err != nil {
 		problems = append(problems, validate.Wrap(err))
