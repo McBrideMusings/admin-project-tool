@@ -87,10 +87,19 @@ func TestNukeDevProcessesReportsPortHolderKills(t *testing.T) {
 		t.Skipf("python3 unavailable: %v", err)
 	}
 	pid := cmd.Process.Pid
-	go cmd.Wait()
+	t.Cleanup(func() {
+		// Registered before any assertion runs, so it fires whether the test
+		// passes, fails, or skips below — a failing assertion must never
+		// leave this holder LISTENING on the port for the next run. The
+		// holder is usually already dead by the time this runs (that's what
+		// NukeDevProcesses is being tested to do); Kill/Wait on an
+		// already-exited process return an error, which is expected and
+		// ignored rather than failing the test.
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
 
 	if !waitForPortBusy(port, 2*time.Second) {
-		_ = cmd.Process.Kill()
 		t.Skip("http.server never bound the port in time")
 	}
 
