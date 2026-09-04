@@ -315,9 +315,12 @@ func commandLogDir(repoRoot string, m *manifest.Manifest) string {
 
 // logStemTimestamp extracts the "<stem>.<TIMESTAMP>.log" suffix's timestamp
 // segment, which sorts correctly as a plain string (the format is
-// YYYY-MM-DD_HHMMSS) — used so the newest-of-several-matches pick doesn't
-// need a filesystem stat call, since a "which file is really newest" tie
-// only needs to compare the name luahost itself chose.
+// YYYY-MM-DD_HHMMSS_NNNNNNNNN — seconds plus a zero-padded nanosecond
+// disambiguator, underscore-joined so it stays part of the SAME
+// dot-delimited segment rather than adding a second dot) — used so the
+// newest-of-several-matches pick doesn't need a filesystem stat call, since
+// a "which file is really newest" tie only needs to compare the name
+// luahost itself chose.
 func logStemTimestamp(path string) string {
 	base := filepath.Base(path)
 	// base is "<stem>.<ts>.log"; the timestamp is always the last

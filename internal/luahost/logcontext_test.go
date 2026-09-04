@@ -234,6 +234,57 @@ func TestSetLogContextPathDeferredAndOneFile(t *testing.T) {
 	}
 }
 
+// TestTwoDispatchesSameSecondProduceDistinctLogs is admin-yypo.1's
+// acceptance test: two dispatches of the same action stem, back-to-back
+// (well inside the same wall-clock second at normal test speed — no sleep
+// needed), must not collide on one filename with the second overwriting the
+// first. Each dispatch gets its own LogContext, mirroring the real case
+// (internal/kinds/hostedpty.go re-execs a brand-new OS process per
+// dispatch, so each one gets a fresh LogContext, not a shared one an
+// in-process counter could disambiguate) — the two contexts share one
+// LogDir the way two real dispatches of the same project would.
+func TestTwoDispatchesSameSecondProduceDistinctLogs(t *testing.T) {
+	dir := t.TempDir()
+
+	c1 := NewLogContext(dir)
+	c1.Stderr = &bytes.Buffer{}
+	c1.SetLogContext([]string{"dev"}, RetainUnset)
+	path1 := c1.MaterializeLogFile()
+	if path1 == "" {
+		t.Fatal("first dispatch: expected a materialized path")
+	}
+	c1.Write("first dispatch")
+
+	c2 := NewLogContext(dir)
+	c2.Stderr = &bytes.Buffer{}
+	c2.SetLogContext([]string{"dev"}, RetainUnset)
+	path2 := c2.MaterializeLogFile()
+	if path2 == "" {
+		t.Fatal("second dispatch: expected a materialized path")
+	}
+	c2.Write("second dispatch")
+
+	if path1 == path2 {
+		t.Fatalf("two same-second dispatches collided on one filename: %q", path1)
+	}
+
+	data1, err := os.ReadFile(path1)
+	if err != nil {
+		t.Fatalf("reading first dispatch's log %s: %v", path1, err)
+	}
+	if !strings.Contains(string(data1), "first dispatch") {
+		t.Fatalf("first dispatch's log = %q, missing its own content", string(data1))
+	}
+
+	data2, err := os.ReadFile(path2)
+	if err != nil {
+		t.Fatalf("reading second dispatch's log %s: %v", path2, err)
+	}
+	if !strings.Contains(string(data2), "second dispatch") {
+		t.Fatalf("second dispatch's log = %q, missing its own content", string(data2))
+	}
+}
+
 // TestConfigureAppliesLoggingTable proves Configure applies [logging]
 // dir/enabled/retain overrides.
 func TestConfigureAppliesLoggingTable(t *testing.T) {

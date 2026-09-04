@@ -194,17 +194,6 @@ func TestHostedPTYLogFileMatchesAPlainCLIRun(t *testing.T) {
 		t.Fatalf("reading plain-leg log %s: %v", plainLogs[0], err)
 	}
 
-	// luahost's materializeLogContext (internal/luahost/host.go:159) names a
-	// stem-based log file with a SECOND-granularity timestamp
-	// ("2006-01-02_150405") and no other disambiguator. Two dispatches of
-	// the same action stem inside the same wall-clock second therefore
-	// collide on the identical filename and the second overwrites the
-	// first — a real defect independent of this test, worth its own
-	// ticket. Sleeping past the second boundary here keeps this test's own
-	// "two distinct files" assertion meaningful rather than flaking on
-	// which side of a second boundary the run landed.
-	time.Sleep(1100 * time.Millisecond)
-
 	stubSelfExecutableToChildHarness(t, testBin)
 	childEnv := []string{
 		"ADMIN_TEST_HOSTED_CHILD=1",

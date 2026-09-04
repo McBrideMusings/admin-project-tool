@@ -362,7 +362,21 @@ func (c *LogContext) materializeLocked() {
 		retain = c.retainDefault
 	}
 	if pc.stem {
-		ts := time.Now().Format("2006-01-02_150405")
+		// Nanosecond precision, underscore-joined onto the same
+		// dot-delimited segment (never a second dot — internal/tui/work.go's
+		// logStemTimestamp takes everything after the LAST dot before
+		// ".log", so an added dot would truncate the extracted timestamp to
+		// just the fractional tail). Fixed-width, zero-padded, so
+		// pruneLogsLocked's sort.Strings and commandLogPath's lexicographic
+		// bestTS comparison keep tracking chronological order. This is what
+		// makes two dispatches of the same action inside the same
+		// wall-clock second (admin-yypo.1) resolve to two distinct files
+		// instead of the second silently overwriting the first — a
+		// same-process in-process counter would not do the job here, since
+		// each hostedpty dispatch re-execs a brand-new OS process with its
+		// own fresh LogContext.
+		now := time.Now()
+		ts := fmt.Sprintf("%s_%09d", now.Format("2006-01-02_150405"), now.Nanosecond())
 		c.logFile = filepath.Join(c.LogDir, pc.value+"."+ts+".log")
 		_ = os.MkdirAll(c.LogDir, 0o755)
 		f, err := os.Create(c.logFile)
