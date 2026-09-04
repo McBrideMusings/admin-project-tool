@@ -128,7 +128,8 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 		state := renderLiveState(st)
 		whereText, whereStyled := whereSeg(e)
 		actW := maxi(rest-stateW-whereWidth(whereText), 4)
-		act := padEnd(truncR(e.Activity, actW), actW)
+		activity, _ := livework.Default.Activity(e.ID)
+		act := padEnd(truncR(activity, actW), actW)
 		return marker + name + state + faintStyle.Render(act) + whereStyled
 	}
 
@@ -147,7 +148,8 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 			state := renderLiveState(st)
 			whereText, whereStyled := whereSeg(wd.live)
 			actW := maxi(rest-stateW-whereWidth(whereText), 4)
-			act := padEnd(truncR(wd.live.Activity, actW), actW)
+			activity, _ := livework.Default.Activity(wd.live.ID)
+			act := padEnd(truncR(activity, actW), actW)
 			return marker + name + state + faintStyle.Render(act) + whereStyled
 		}
 		if wd.pending {
@@ -189,7 +191,8 @@ func renderTargetRow(wd *workRowData, focused bool, nameW, rest int) string {
 		state := renderLiveState(st)
 		whereText, whereStyled := whereSeg(wd.live)
 		actW := maxi(rest-stateW-whereWidth(whereText), 4)
-		act := padEnd(truncR(wd.live.Activity, actW), actW)
+		activity, _ := livework.Default.Activity(wd.live.ID)
+		act := padEnd(truncR(activity, actW), actW)
 		return faintStyle.Render(connector) + name + state + faintStyle.Render(act) + whereStyled
 	}
 	if wd.pendingHere {
@@ -245,10 +248,10 @@ func workerDetail(e *livework.Entry, w int) []string {
 		lipgloss.NewStyle().Bold(true).Render(e.ID),
 		renderLiveState(st) + faintStyle.Render("  ·  "+truncR(locale, maxi(w-2, 4))),
 	}
-	if e.Activity != "" {
+	if activity, _ := livework.Default.Activity(e.ID); activity != "" {
 		out = append(out, "",
 			faintStyle.Render("now"),
-			"  "+truncR(e.Activity, maxi(w-2, 4)),
+			"  "+truncR(activity, maxi(w-2, 4)),
 		)
 	}
 	if e.Worker != nil {
