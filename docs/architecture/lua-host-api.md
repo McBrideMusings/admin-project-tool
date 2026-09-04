@@ -255,35 +255,27 @@ exercised end to end this pass: `dev_ios`/`dev_tv` (needs a booted simulator, no
 one), `dev_device`/`deploy_ios`/`deploy_tv` (need a paired physical device), and anything reading
 App Store Connect credentials (no key configured in this environment).
 
-Deliberately NOT ported by kind="apple" either — same three items admin-3rgp.38 already deferred,
-still open:
+Deliberately NOT ported by kind="apple" either:
 
-- The dev/prod bundle-suffix convention layer (`_compose_dev_settings`, `_entitlements_paths`,
-  `_target_needs_provisioning_profile`) and the mac dev-rename/re-sign postprocessing
-  (`dev_macos_postprocess`) it would feed — a dev build here builds with the project's own
-  signing settings, unpatched. Observed live in this pass: a project whose
-  `PRODUCT_BUNDLE_IDENTIFIER` is composed via an `.xcconfig` variable
-  (`$(SCRATCHPAD_BUNDLE_ID_SUFFIX)`) gets that substitution back as a literal string in the
-  resolved log predicate — `apple.xcode_setting`'s own documented limitation, not a bug in the
-  dev loop, but a concrete case where the missing bundle-suffix layer would matter.
-- Dev-icon-swap hooks (`build_icon_hooks`) around each build — `apple.backup_icons`/
-  `apple.swap_dev_icons_banner`/`apple.restore_icons` are bound and callable, just not wired into
-  a pre/post-build hook here yet.
 - App Store Connect device registration (`ensure_device_registered`) — lives in
   `admin_lib/appstoreconnect.py`, a separate module this ticket does not port; a device deploy
   that would need it still reports Apple's own "team has no devices" error, just not pre-empted.
-
-- **Xcode-project introspection for the dev/prod bundle-suffix scheme** (`_compose_dev_settings`,
-  `_entitlements_paths`, `_target_needs_provisioning_profile`) — derives `ADMIN_DEV_BUNDLE_SUFFIX`
-  and decides whether a target needs a real provisioning profile, built on top of the pbxproj
-  parsing that *is* now bound (`apple.read_pbxproj` / `apple.xcode_target_settings` /
-  `apple.xcode_setting`). This layer is project-specific convention-following over what those
-  primitives return, not a further parsing capability; a Lua body can still pass a fully composed
-  `extra_settings` string into `apple.xcodebuild` today, just not have this derivation done for it.
 - **Log pruning** (`retain`) — accepted, not enforced (see above).
 - **A richer `pick_target` picker** — arrow-key navigation, scrolling for long lists. The
   current numbered-list picker meets the acceptance criterion (in-process, no subprocess) but
   not the original's UI fidelity.
+
+Everything else this section used to list here as deferred is now ported. The dev/prod
+bundle-suffix convention layer (`_compose_dev_settings`, `_entitlements_paths`,
+`_target_needs_provisioning_profile`) — deriving `ADMIN_DEV_BUNDLE_SUFFIX` and deciding whether a
+target needs a real provisioning profile, on top of the pbxproj parsing (`apple.read_pbxproj` /
+`apple.xcode_target_settings` / `apple.xcode_setting`) — is ported (`internal/kinds/applesign_darwin.go`)
+and wired into every dev-loop build. Dev-icon-swap hooks (`build_icon_hooks`: backup/swap-banner/
+restore around each build) and the iOS/tvOS display-name patch are ported and wired
+(`internal/kinds/appleiconhooks_darwin.go`, admin-7ig8.1) into the simulator and device dev loops.
+The mac dev-rename/re-sign postprocessing (`dev_macos_postprocess`) and the mac dev loop's
+dev/prod-aware `is_running_fn`/`kill_fn` overrides are ported and wired into `appleDevMac`
+(admin-3rgp.75).
 
 Manifest-level archetype config tables reaching a Lua body automatically — the gap this section
 used to list here — is closed by admin-3rgp.43: see "Configuration" above.

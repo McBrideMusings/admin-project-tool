@@ -7,29 +7,31 @@
 // internal/luahost's Apple surface is: xcodebuild, simctl, devicectl and
 // codesign are macOS-specific.
 //
-// What this file deliberately does NOT port, and why — every one of these
-// is a documented gap in docs/architecture/lua-host-api.md's "What is
-// intentionally not here yet", not a silent omission. Tracked as
-// admin-3rgp.75:
+// What this file deliberately does NOT port, and why — a documented gap in
+// docs/architecture/lua-host-api.md's "What is intentionally not here yet",
+// not a silent omission:
 //
-//   - The mac dev-rename/re-sign postprocessing (DevMacOSPostprocess is
-//     bound in internal/luahost/apple_darwin.go and callable, but nothing
-//     here calls it) — a dev mac build is not renamed/re-signed to a
-//     distinct Finder/Dock entry. The dev/prod bundle-suffix convention
-//     layer itself (_compose_dev_settings, _entitlements_paths,
-//     _target_needs_provisioning_profile) IS ported — see
-//     applesign_darwin.go — and its ADMIN_DEV_BUNDLE_SUFFIX override is
-//     wired into every dev-loop build in appledevloop_darwin.go.
-//   - is_running_fn/kill_fn overrides (_make_mac_dev_running_check/
-//     _make_mac_dev_kill) — the mac dev loop always uses the default
-//     pgrep/pkill -x process check.
+//   - App Store Connect device registration (ensure_device_registered) —
+//     lives in admin_lib/appstoreconnect.py, a separate module not ported
+//     here; a device deploy that would need it still surfaces Apple's own
+//     "team has no devices" error, just not pre-empted.
 //
-// Dev-icon-swap hooks (build_icon_hooks: backup/swap-banner/restore around
-// each build) and the iOS/tvOS display-name patch (patch_ios_display_name)
-// ARE ported and wired — see appleiconhooks_darwin.go — into
-// appledevloop_darwin.go's appleDevSimulator and appleDevDevice. The mac
-// dev loop (appleDevMac) gets neither: that's the same mac dev-rename gap
-// named above.
+// Everything else the package doc used to list here as deferred is now
+// ported. The dev/prod bundle-suffix convention layer (_compose_dev_settings,
+// _entitlements_paths, _target_needs_provisioning_profile) is ported — see
+// applesign_darwin.go — and its ADMIN_DEV_BUNDLE_SUFFIX override is wired
+// into every dev-loop build in appledevloop_darwin.go. Dev-icon-swap hooks
+// (build_icon_hooks: backup/swap-banner/restore around each build) and the
+// iOS/tvOS display-name patch (patch_ios_display_name) are ported and wired
+// — see appleiconhooks_darwin.go — into appledevloop_darwin.go's
+// appleDevSimulator and appleDevDevice (admin-7ig8.1). The mac dev-rename/
+// re-sign postprocessing (DevMacOSPostprocess, bound in
+// internal/luahost/apple_darwin.go) and the is_running_fn/kill_fn overrides
+// (_make_mac_dev_running_check/_make_mac_dev_kill) are ported and wired into
+// appleDevMac (admin-3rgp.75) — see this file's "process helpers" section
+// (appleResolveMacDevProductName/appleResolveMacDevProcessPattern/
+// appleMacDevIsRunning/appleMacDevKill) and appledevloop_darwin.go's
+// appleDevMac.
 package kinds
 
 import (
@@ -40,7 +42,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
@@ -524,6 +528,135 @@ func appleKillProcess(h *luahost.Host, process string) {
 	}
 	h.Warn(process + " ignored SIGTERM, sending SIGKILL")
 	_ = exec.Command("pkill", "-9", "-x", process).Run()
+}
+
+// appleResolveMacDevProductName mirrors admin_lib/apple.py's
+// _resolve_mac_dev_product_name: the renamed dev .app's filename (no
+// space — must be a valid filename and bundle path component). Default:
+// "<process>Dev". Returns "" when process is also empty.
+func appleResolveMacDevProductName(cfg map[string]any, process string) string {
+	if v := cfgString(cfg, "mac_dev_product_name", ""); v != "" {
+		return v
+	}
+	if process == "" {
+		return ""
+	}
+	return process + "Dev"
+}
+
+// appleResolveMacDevProcessPattern mirrors admin_lib/apple.py's
+// _resolve_mac_dev_process: a `pgrep -f` pattern that uniquely identifies
+// the running dev instance so it can't be confused with a prod copy.
+//
+// The pattern has to name the bundle the dev loop actually launches, or it
+// matches nothing: the loop never finds its own app to kill and reports
+// that it never launched, while `open -n` stacks a new window every
+// rebuild. Three cases, in Python's own priority order:
+//
+//   - install=true and apple.mac_install_path_dev is set: the app is
+//     copied there before launch (dev --install), so the pattern names
+//     that fixed path.
+//   - mac_dev_rename=false: no "<name>Dev.app" is ever produced, so the
+//     app runs straight out of the build-products directory — the pattern
+//     names that directory instead of a bundle name.
+//   - otherwise: the renamed "<product>.app" bundle.
+//
+// Returns "" when process is empty (nothing to build a pattern from) or,
+// in the mac_dev_rename branch, when the resolved product name is empty.
+func appleResolveMacDevProcessPattern(cfg map[string]any, process string, install bool) string {
+	if v := cfgString(cfg, "mac_dev_process", ""); v != "" {
+		return v
+	}
+	if process == "" {
+		return ""
+	}
+	if install {
+		if dest := cfgString(cfg, "mac_install_path_dev", ""); dest != "" {
+			return strings.TrimRight(dest, "/") + "/Contents/MacOS/" + process
+		}
+	}
+	if !cfgBool(cfg, "mac_dev_rename", true) {
+		config := cfgString(cfg, "mac_build_config", "Debug")
+		return "/Build/Products/" + config + "/" + process + ".app/Contents/MacOS/" + process
+	}
+	product := appleResolveMacDevProductName(cfg, process)
+	if product == "" {
+		return ""
+	}
+	return product + ".app/Contents/MacOS/" + process
+}
+
+// appleMacDevIsRunning mirrors admin_lib/apple.py's
+// _make_mac_dev_running_check: `pgrep -f <dev pattern>` where the pattern
+// (e.g. "CCToolDev.app/Contents/MacOS/CCTool") is itself the disambiguator
+// — a prod build under /Applications/CCTool.app/... doesn't match it.
+// Falls back to the generic `pgrep -x process` check when no dev pattern
+// resolves, and to an always-false check when process is also empty.
+func appleMacDevIsRunning(cfg map[string]any, process string, install bool) func() bool {
+	devPattern := appleResolveMacDevProcessPattern(cfg, process, install)
+	if devPattern != "" {
+		return func() bool { return exec.Command("pgrep", "-f", devPattern).Run() == nil }
+	}
+	if process != "" {
+		return func() bool { return appleProcessRunning(process) }
+	}
+	return func() bool { return false }
+}
+
+// appleMacDevKill mirrors admin_lib/apple.py's _make_mac_dev_kill: kills
+// only the dev instance (matched by the same `pgrep -f` pattern
+// appleMacDevIsRunning uses), never a prod copy, then waits for it to
+// actually exit — returning before the process is gone lets `open -n`
+// race with LaunchServices and silently activate the dying instance.
+// SIGTERM first, escalating to SIGKILL after 1.5s; when SIGKILL still
+// hasn't cleared it after another 1s, warns and gives up rather than
+// blocking forever (the extra post-SIGKILL wait+warn Python's dev-pattern
+// branch has that appleKillProcess's generic prod-process fallback below
+// does not).
+//
+// Falls back to appleKillProcess(h, process) when no dev pattern resolves
+// — the same generic pgrep/pkill -x check dev loops used before this dev-
+// aware split existed.
+func appleMacDevKill(h *luahost.Host, cfg map[string]any, process string, install bool) func() {
+	devPattern := appleResolveMacDevProcessPattern(cfg, process, install)
+	if devPattern == "" {
+		return func() { appleKillProcess(h, process) }
+	}
+	isRunning := appleMacDevIsRunning(cfg, process, install)
+	send := func(sig syscall.Signal) {
+		out, err := exec.Command("pgrep", "-f", devPattern).Output()
+		if err != nil {
+			return
+		}
+		for _, field := range strings.Fields(string(out)) {
+			pid, perr := strconv.Atoi(field)
+			if perr != nil {
+				continue
+			}
+			_ = syscall.Kill(pid, sig)
+		}
+	}
+	return func() {
+		if !isRunning() {
+			return
+		}
+		send(syscall.SIGTERM)
+		for i := 0; i < 15; i++ {
+			if !isRunning() {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		h.Warn(devPattern + " ignored SIGTERM, sending SIGKILL")
+		send(syscall.SIGKILL)
+		for i := 0; i < 10; i++ {
+			if !isRunning() {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		h.Warn(devPattern + " still alive after SIGKILL — proceeding anyway")
+	}
 }
 
 // runQuiet runs name(args...), discarding output and reporting only whether
