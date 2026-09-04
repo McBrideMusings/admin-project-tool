@@ -162,3 +162,23 @@ func TestCheckLeakedIPsInstallTemplateSrc(t *testing.T) {
 		t.Fatalf("error %q does not name %s:1", err.Error(), path)
 	}
 }
+
+// TestCheckLeakedIPsNoDoubleReportWhenInstallTemplateInsideDeploySrc is the
+// admin-cxdv.2.1 round-2 regression: a project that declares [deploy].src =
+// "deploy" and no [install_template] table has its default install-template
+// path ("deploy/unraid-template.xml") already covered by the [deploy].src
+// walk. A leak there must be reported exactly once, not twice.
+func TestCheckLeakedIPsNoDoubleReportWhenInstallTemplateInsideDeploySrc(t *testing.T) {
+	root := t.TempDir()
+	path := writeDeployFile(t, root, "deploy/unraid-template.xml", "<Config>10.1.2.3</Config>\n")
+	m := deployManifest(root, nil)
+
+	err := checkLeakedIPs(m)
+	if err == nil {
+		t.Fatal("checkLeakedIPs = nil, want an error naming the leaked address")
+	}
+	want := path + ":1:"
+	if got := strings.Count(err.Error(), want); got != 1 {
+		t.Fatalf("error %q contains %q %d times, want exactly 1", err.Error(), want, got)
+	}
+}

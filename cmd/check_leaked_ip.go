@@ -74,9 +74,11 @@ func checkLeakedIPs(m *manifest.Manifest) error {
 	var hits []leakedIPHit
 	var setupErrs []string
 
-	if files, err := deploySrcFiles(m); err != nil {
+	deployRoot := ""
+	if files, root, err := deploySrcFiles(m); err != nil {
 		setupErrs = append(setupErrs, err.Error())
 	} else {
+		deployRoot = root
 		for _, path := range files {
 			hits = append(hits, scanFileForLeakedIPs(path)...)
 		}
@@ -84,8 +86,13 @@ func checkLeakedIPs(m *manifest.Manifest) error {
 
 	if src := kinds.InstallTemplateSrc(m); src != "" {
 		path := resolveAgainstRoot(m, src)
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			hits = append(hits, scanFileForLeakedIPs(path)...)
+		// Skip when this path was already walked as part of [deploy].src —
+		// scanning it again would report the same leak twice for the same
+		// file+line (admin-cxdv.2.1 round 2).
+		if !isUnderRoot(path, deployRoot) {
+			if info, err := os.Stat(path); err == nil && !info.IsDir() {
+				hits = append(hits, scanFileForLeakedIPs(path)...)
+			}
 		}
 	}
 
@@ -131,17 +138,20 @@ func resolveAgainstRoot(m *manifest.Manifest, path string) string {
 }
 
 // deploySrcFiles walks [deploy].src (when declared) and returns every file
-// under it that survives [deploy].exclude, or nil with no error when
-// [deploy].src is absent/empty or the resolved directory doesn't exist yet.
-func deploySrcFiles(m *manifest.Manifest) ([]string, error) {
+// under it that survives [deploy].exclude, plus the resolved [deploy].src
+// root directory itself (so a caller can tell whether some other path
+// already falls inside the tree just walked). Both return values are
+// zero-valued with no error when [deploy].src is absent/empty or the
+// resolved directory doesn't exist yet.
+func deploySrcFiles(m *manifest.Manifest) ([]string, string, error) {
 	cfg := kinds.ArchetypeConfigTable(m, "deploy")
 	src, _ := cfg["src"].(string)
 	if src == "" {
-		return nil, nil
+		return nil, "", nil
 	}
 	root := resolveAgainstRoot(m, src)
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {
-		return nil, nil
+		return nil, "", nil
 	}
 
 	var excludes []string
@@ -178,9 +188,26 @@ func deploySrcFiles(m *manifest.Manifest) ([]string, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("[deploy].src %q: %w", src, err)
+		return nil, "", fmt.Errorf("[deploy].src %q: %w", src, err)
 	}
-	return files, nil
+	return files, root, nil
+}
+
+// isUnderRoot reports whether path lies inside root (or equals it) after
+// filepath.Clean-ing both sides. root == "" (no [deploy].src resolved) means
+// "nothing to be under" and always returns false. The comparison joins root
+// with a trailing separator before the prefix check so a root named "deploy"
+// does not falsely swallow a sibling like "deploy-extra/file".
+func isUnderRoot(path, root string) bool {
+	if root == "" {
+		return false
+	}
+	path = filepath.Clean(path)
+	root = filepath.Clean(root)
+	if path == root {
+		return true
+	}
+	return strings.HasPrefix(path, root+string(filepath.Separator))
 }
 
 // excludeMatches reports whether rel (the file's path relative to
