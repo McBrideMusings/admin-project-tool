@@ -304,17 +304,8 @@ func NukeDevProcesses(projectRoot string, opts NukeDevOptions) NukeReport {
 
 	// 1. Ports — plus the bun/node/npm/python supervisor parent of each
 	// holder, matching Python's parent-pid heuristic.
-	var fallbackHolders []Holder
-	fallbackComputed := false
 	for _, ps := range opts.Ports {
-		holders := PortHolders(ps.Port)
-		if len(holders) == 0 && !PortFree(ps.Port) {
-			if !fallbackComputed {
-				fallbackHolders = ProjectDevHolders(root, 2*time.Second)
-				fallbackComputed = true
-			}
-			holders = fallbackHolders
-		}
+		holders := portHoldersWithRetry(ps.Port, root, portHolderRetryBudget)
 		var pids []int
 		for _, h := range holders {
 			pids = append(pids, h.PID)
@@ -470,10 +461,7 @@ func NukeDevProcesses(projectRoot string, opts NukeDevOptions) NukeReport {
 			if PortFree(ps.Port) {
 				break
 			}
-			holders := PortHolders(ps.Port)
-			if len(holders) == 0 {
-				holders = ProjectDevHolders(root, 2*time.Second)
-			}
+			holders := portHoldersWithRetry(ps.Port, root, portHolderRetryBudget)
 			if len(holders) == 0 {
 				break
 			}
@@ -554,6 +542,49 @@ func containerRunning(name string) bool {
 		}
 	}
 	return false
+}
+
+// portHolderRetryBudget bounds portHoldersWithRetry's polling. 1s is enough
+// slack for lsof to catch up with a socket the kernel already reports bound
+// (see portHoldersWithRetry's doc comment) without meaningfully slowing a
+// NukeDevProcesses call on a port that turns out to have no holder at all —
+// that path never enters the retry loop, since it never has PortFree(port)
+// == false with zero holders found.
+const portHolderRetryBudget = 1 * time.Second
+
+// portHoldersWithRetry discovers the holder(s) of a port the caller already
+// knows (or suspects) is busy, retrying with a short poll-and-backoff
+// instead of a single lookup.
+//
+// The single-shot version of this call is where
+// TestNukeDevProcessesReportsPortHolderKills' flake lived: PortFree does a
+// raw bind()-probe, which sees a freshly-listen()ing socket the instant the
+// kernel accepts it, while PortHolders/ProjectDevHolders both shell out to
+// lsof, which walks its own kernel/proc-table snapshot on its own schedule
+// and can momentarily still report zero holders for a socket a bind probe
+// already sees as busy — worse under load or parallel test execution, which
+// matches the observed "flaky solo, passes inside the full suite" shape.
+// Pass 1 calling PortHolders exactly once meant that race silently skipped
+// the port's kill for the rest of NukeDevProcesses, surfacing only in pass
+// 5's own two-attempt, no-delay verify loop — not enough of a gap for lsof
+// to catch up either.
+//
+// portHoldersWithRetry polls every 50ms, up to budget, stopping as soon as
+// a holder turns up, PortFree(port) reports the port is actually free after
+// all, or the budget is spent — never a blind sleep, and never entered at
+// all for a port PortFree already sees as free.
+func portHoldersWithRetry(port int, projectRoot string, budget time.Duration) []Holder {
+	deadline := time.Now().Add(budget)
+	for {
+		holders := PortHolders(port)
+		if len(holders) == 0 && !PortFree(port) {
+			holders = ProjectDevHolders(projectRoot, 2*time.Second)
+		}
+		if len(holders) > 0 || PortFree(port) || time.Now().After(deadline) {
+			return holders
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // matchesAny reports whether s contains any of the substrings.
