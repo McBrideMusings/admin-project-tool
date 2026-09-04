@@ -46,7 +46,15 @@ func (h *Host) runArrowPicker(items []TargetEntry, prompt string) (string, PickO
 
 	redraw := func() {
 		if linesDrawn > 0 {
-			fmt.Fprintf(h.Stdout, "\x1b[%dA", linesDrawn)
+			// Move up by the line count assumed for the previous frame, then
+			// erase everything below the cursor to the end of the screen. A
+			// long Description can wrap onto 2+ physical terminal rows even
+			// though linesDrawn only counts one row per item, so the plain
+			// cursor-up alone can undercount and leave stale wrapped remnants
+			// of the previous frame on screen below the new one (looks like
+			// garbled/doubled text). \x1b[0J tolerates that undercount by
+			// wiping everything past the repositioned cursor every frame.
+			fmt.Fprintf(h.Stdout, "\x1b[%dA\x1b[0J", linesDrawn)
 		}
 		var b strings.Builder
 		fmt.Fprintf(&b, "\x1b[2K%s%s%s\n", ansiBold, prompt, ansiReset)
