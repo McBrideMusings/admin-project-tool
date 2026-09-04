@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -121,6 +122,92 @@ func TestNukeDevProcessesReportsPortHolderKills(t *testing.T) {
 	}
 	if !PortFree(port) {
 		t.Errorf("port %d still bound after NukeDevProcesses", port)
+	}
+}
+
+// TestPortHolderCleanupHelperProcess is not a real test on its own — it is
+// the deliberately-failing body that TestPortHolderCleanupRunsDespiteSubtestFailure
+// re-invokes as a subprocess (via `go test -run` against the already-built
+// test binary at os.Args[0]) to observe a t.Fatal from outside the process,
+// the same "helper process" pattern os/exec_test.go uses in the Go standard
+// library to test a failure path without the failure propagating up into the
+// calling test's own pass/fail result — which a nested t.Run subtest cannot
+// avoid, since a failing subtest always marks its parent test failed too. A
+// normal `go test` run (without the env var below set) skips this
+// immediately, so it never appears as a failure of its own.
+func TestPortHolderCleanupHelperProcess(t *testing.T) {
+	if os.Getenv("ADMIN_PORT_CLEANUP_HELPER") != "1" {
+		t.Skip("only runs as a subprocess of TestPortHolderCleanupRunsDespiteSubtestFailure")
+	}
+	port, err := strconv.Atoi(os.Getenv("ADMIN_PORT_CLEANUP_HELPER_PORT"))
+	if err != nil {
+		t.Fatalf("bad ADMIN_PORT_CLEANUP_HELPER_PORT=%q: %v", os.Getenv("ADMIN_PORT_CLEANUP_HELPER_PORT"), err)
+	}
+
+	cmd := exec.Command("python3", "-m", "http.server", "--bind", "127.0.0.1", itoaLocal(port))
+	if err := cmd.Start(); err != nil {
+		t.Skipf("python3 unavailable: %v", err)
+	}
+	// Registered before the deliberate failure below — this is the exact
+	// shape being proven: the cleanup must fire even though this process is
+	// about to fail before making any kill attempt of its own.
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+
+	if !waitForPortBusy(port, 2*time.Second) {
+		t.Skip("http.server never bound the port in time")
+	}
+
+	t.Fatal("deliberate failure before any kill attempt, to prove t.Cleanup still runs")
+}
+
+// TestPortHolderCleanupRunsDespiteSubtestFailure is a permanent, deterministic
+// regression test for the t.Cleanup leak-fix (admin-6x8l round 1): a spawned
+// port holder must get killed even when the code exercising it fails before
+// reaching any kill attempt.
+//
+// It does not touch NukeDevProcesses' retry/flakiness fix at all — that half
+// is timing/scheduler-dependent and is intentionally left unverified by
+// automation per this ticket. What this test proves is deterministic Go
+// semantics, not scheduler timing: t.Cleanup runs on test completion
+// regardless of pass/fail. TestPortHolderCleanupHelperProcess spawns the real
+// holder, confirms it is bound, registers the kill as a cleanup, then fails
+// immediately — before making any kill attempt itself — mirroring the exact
+// shape that used to leak a holder process when a nuke_test.go assertion
+// failed mid-test. This test runs that body as a subprocess, and after the
+// subprocess exits (with the deliberate failure, confirmed by its nonzero
+// exit code) asserts the port is free: that is only true if the subprocess's
+// t.Cleanup ran despite the failure.
+func TestPortHolderCleanupRunsDespiteSubtestFailure(t *testing.T) {
+	if _, err := exec.LookPath("lsof"); err != nil {
+		t.Skip("lsof not available")
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available")
+	}
+
+	port := freeTCPPortForNuke(t)
+
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestPortHolderCleanupHelperProcess$", "-test.v=true")
+	cmd.Env = append(os.Environ(),
+		"ADMIN_PORT_CLEANUP_HELPER=1",
+		"ADMIN_PORT_CLEANUP_HELPER_PORT="+itoaLocal(port),
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("helper process unexpectedly exited zero; want the deliberate t.Fatal to fail it:\n%s", out)
+	}
+	if strings.Contains(string(out), "--- SKIP") {
+		t.Skipf("helper process skipped instead of exercising the failure path:\n%s", out)
+	}
+
+	// The helper process's t.Cleanup already ran by the time it exited
+	// above. If the cleanup fix were missing or broken, the holder would
+	// still be LISTENING on this port right here.
+	if !PortFree(port) {
+		t.Errorf("port %d still bound after the failing helper process exited — t.Cleanup did not kill the holder\nhelper output:\n%s", port, out)
 	}
 }
 
