@@ -19,13 +19,16 @@
 //     _target_needs_provisioning_profile) IS ported — see
 //     applesign_darwin.go — and its ADMIN_DEV_BUNDLE_SUFFIX override is
 //     wired into every dev-loop build in appledevloop_darwin.go.
-//   - Dev-icon-swap hooks (build_icon_hooks: backup/swap-banner/restore
-//     around each build). apple.backup_icons/apple.swap_dev_icons_banner/
-//     apple.restore_icons are bound and callable from a future pass; wiring
-//     them into pre_build/post_build here is left undone this round.
 //   - is_running_fn/kill_fn overrides (_make_mac_dev_running_check/
 //     _make_mac_dev_kill) — the mac dev loop always uses the default
 //     pgrep/pkill -x process check.
+//
+// Dev-icon-swap hooks (build_icon_hooks: backup/swap-banner/restore around
+// each build) and the iOS/tvOS display-name patch (patch_ios_display_name)
+// ARE ported and wired — see appleiconhooks_darwin.go — into
+// appledevloop_darwin.go's appleDevSimulator and appleDevDevice. The mac
+// dev loop (appleDevMac) gets neither: that's the same mac dev-rename gap
+// named above.
 package kinds
 
 import (
@@ -598,7 +601,6 @@ func appleCopyTree(src, dst string) error {
 	})
 }
 
-
 // appleNotarizeAndStaple submits a Developer ID-signed .app to Apple's notary
 // service, waits for the verdict, and staples the ticket to the bundle.
 //
@@ -678,7 +680,6 @@ func appleNotarySubmissionID(out string) string {
 }
 
 var appleNotaryIDRe = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
-
 
 // appleWantsDeveloperID reports whether this mac deploy should go through the
 // archive/export path. Either key alone implies it: notarization is only
@@ -815,7 +816,6 @@ func appleTailLines(s string, n int) string {
 	}
 	return strings.Join(lines, "\n")
 }
-
 
 // appleAuthArgv returns the App Store Connect authentication flags as separate
 // argv elements.
