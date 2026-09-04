@@ -9,7 +9,8 @@
 //
 // What this file deliberately does NOT port, and why — every one of these
 // is a documented gap in docs/architecture/lua-host-api.md's "What is
-// intentionally not here yet", not a silent omission:
+// intentionally not here yet", not a silent omission. Tracked as
+// admin-3rgp.75:
 //
 //   - The mac dev-rename/re-sign postprocessing (DevMacOSPostprocess is
 //     bound in internal/luahost/apple_darwin.go and callable, but nothing

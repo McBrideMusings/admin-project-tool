@@ -17,12 +17,11 @@ import (
 //
 // Python's factory also builds a column formatter from the project's
 // `[output]` table (admin_lib/log_columns.make_column_formatter) before
-// passing it to run_with_reload. log_columns.py has no Go port yet — no
-// ticket claims it — so this leaves reload.Options.Formatter nil and gets
-// only RunWithReload's own always-on HH:MM:SS.mmm timestamp
+// passing it to run_with_reload. log_columns.py has no Go port yet
+// (tracked as admin-3rgp.74) — so this leaves reload.Options.Formatter nil
+// and gets only RunWithReload's own always-on HH:MM:SS.mmm timestamp
 // (logformat.StampLine, wired as the pump's DisplayTransform), not
-// [output]'s column layout, until the column formatter lands; tracked as a
-// follow-up rather than silently dropped.
+// [output]'s column layout, until the column formatter lands.
 func makeDockerReloadLoop(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	run, ok := actionString(action, "run")
 	if !ok || run == "" {

@@ -19,8 +19,8 @@ import (
 const emptyCmdErr = "refusing to run an empty command"
 
 // makeShell is kind="shell"'s factory — the Go port of
-// admin_lib/interp.py::_make_shell, minus the watch-kind piece (still
-// untouched — no ticket claims it yet). `run` is resolved with
+// admin_lib/interp.py::_make_shell, minus the watch-kind piece (tracked as
+// admin-3rgp.73). `run` is resolved with
 // manifest.ResolveEnv, the same call admin_lib/core.py::run_cmd makes on
 // every command string: a manifest writes ${VAR} precisely so the value can
 // live in .env instead of the file, and handing the placeholder to /bin/sh
