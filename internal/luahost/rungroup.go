@@ -60,9 +60,10 @@ func (h *Host) RunGroup(cmds []GroupCmd, dir string) (int, error) {
 	}
 
 	type running struct {
-		cmd  *exec.Cmd
-		done chan struct{}
-		code int
+		cmd      *exec.Cmd
+		done     chan struct{} // closed once the process has exited (liveness for SIGINT handling)
+		readDone chan struct{} // closed once the output-scanning goroutine's last pump.Write/Flush has completed
+		code     int
 	}
 	procs := make([]*running, len(cmds))
 
@@ -81,13 +82,14 @@ func (h *Host) RunGroup(cmds []GroupCmd, dir string) (int, error) {
 			LogFn:     h.logWrite,
 		}
 
-		r := &running{cmd: cmd, done: make(chan struct{})}
+		r := &running{cmd: cmd, done: make(chan struct{}), readDone: make(chan struct{})}
 		procs[i] = r
 
 		if err := cmd.Start(); err != nil {
 			h.Err("could not start " + tag + ": " + err.Error())
 			pw.Close()
 			close(r.done)
+			close(r.readDone)
 			r.code = 1
 			continue
 		}
@@ -99,6 +101,7 @@ func (h *Host) RunGroup(cmds []GroupCmd, dir string) (int, error) {
 				pump.Write(scanner.Text() + "\n")
 			}
 			pump.Flush()
+			close(r.readDone)
 		}(pr, pump, r)
 
 		go func(cmd *exec.Cmd, pw *io.PipeWriter, r *running) {
@@ -119,6 +122,7 @@ func (h *Host) RunGroup(cmds []GroupCmd, dir string) (int, error) {
 	go func() {
 		for _, r := range procs {
 			<-r.done
+			<-r.readDone
 		}
 		close(allDone)
 	}()
