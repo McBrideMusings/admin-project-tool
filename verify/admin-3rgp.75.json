@@ -1,0 +1,34 @@
+{
+  "item": "admin-3rgp.75",
+  "verdict": "PASS",
+  "verified_parent": "14ac77b909b16f9cad2e59ee0463fa1b2589bb2f",
+  "branch": "fix/admin-3rgp.75-apple-dev-loop-gaps",
+  "tree_clean": false,
+  "evidence": "Read the full diffs of all 3 changed files (git diff HEAD -- <file>) against the 3 acceptance criteria. (1) appleDevMac in appledevloop_darwin.go now calls luahost.DevMacOSPostprocess when cfgBool(cfg,\"mac_dev_rename\",true) is true, renaming/re-signing before install (rename-then-install ordering, matching Python's `_installer(_rename(built_app))`); appPath is reassigned to DevMacOSPostprocess's returned dest and used for the launch that follows. (2) apple_darwin.go adds appleResolveMacDevProductName/appleResolveMacDevProcessPattern/appleMacDevIsRunning/appleMacDevKill (ported from admin_lib/apple.py's _resolve_mac_dev_product_name/_resolve_mac_dev_process/_make_mac_dev_running_check/_make_mac_dev_kill); appledevloop_darwin.go builds isDevRunning/killDev once via these and uses them in place of the old appleProcessRunning/appleKillProcess calls at every call site in the dev loop (kill-before-build, wait-for-appeared, running-check, kill-on-exit). (3) docs/architecture/lua-host-api.md's 'Deliberately NOT ported' section and apple_darwin.go's package doc comment both had the mac-dev-rename and is_running_fn/kill_fn bullets removed and replaced with a paragraph confirming they are now ported and wired into appleDevMac (admin-3rgp.75), keeping App Store Connect device registration and log pruning as the remaining, correctly-still-listed gaps. Ran `go build ./...` (darwin, since these files carry the darwin build tag) — clean, no errors. Ran `go vet ./...` — clean. Ran `go test ./internal/kinds/...` — passed (`ok ... 16.172s`); one run in the middle of this session hit `TestMakeKillPortClearsARealHolder` failing on a port-timing race, confirmed unrelated and flaky by rerunning it alone 3x (all pass) and rerunning the whole package immediately after (clean pass) — that test lives in killport_test.go, untouched by this diff. Wrote a scratch _test.go exercising the new pure functions (appleResolveMacDevProductName default/override/empty-process, appleResolveMacDevProcessPattern's three branches: install-path override, mac_dev_rename=false build-products path, default renamed-bundle path, and appleMacDevIsRunning's always-false fallback with no process) — all 3 tests passed against the real code. Mutation check: reverted appleResolveMacDevProductName's `process + \"Dev\"` to just `process` (removing the dev-suffix behavior the rename story depends on) — 2 of 3 scratch tests failed with clear wrong-value output (e.g. 'product name = \"CCTool\", want CCToolDev'), proving the tests actually exercise the ported logic rather than passing vacuously. Restored the original code, deleted the scratch test file, and confirmed `git diff --stat HEAD` matches exactly what it was before (same 3 files, same line counts) and `go build`+`go test ./internal/kinds/...` pass clean on the restored tree. No live macOS project with a real Xcode scheme/mac_dev_rename config was available in this environment to drive an actual `admin dev` mac loop end-to-end (would need a signed .app target, a real launchable binary, and Finder/process observation) — the pure-function unit+mutation testing above and full package test suite are the closest verifiable surface reachable here; a real end-to-end run is unreachable from this environment, not evidence against the change.",
+  "mutation": {
+    "method": "Wrote a scratch internal/kinds/scratch_verify_75_test.go exercising appleResolveMacDevProductName, appleResolveMacDevProcessPattern (3 branches), and appleMacDevIsRunning's fallback; ran it against the real code (pass), then reverted appleResolveMacDevProductName's dev-suffix behavior to a no-op and reran (fail), then restored the original code and deleted the scratch file.",
+    "command": "go test ./internal/kinds/... -run Scratch75 -v",
+    "output": "Before mutation: PASS (3/3). After mutation (process+\"Dev\" -> process): FAIL (2/3) — 'product name = \"CCTool\", want CCToolDev' and 'default pattern = \"CCTool.app/...\", want \"CCToolDev.app/...\"'. After restore: PASS (3/3) again; scratch file then deleted, git diff --stat HEAD unchanged from before this stage.",
+    "tests": ["TestScratch75ProductName", "TestScratch75ProcessPattern", "TestScratch75IsRunningFallsBackWhenNoPattern"],
+    "discriminates": true
+  },
+  "recheck": [
+    {"cmd": "cd /Users/pierce/.worktrees/admin-project-tool/admin-3rgp.75 && go build ./...", "expect": "exits 0, no output"},
+    {"cmd": "cd /Users/pierce/.worktrees/admin-project-tool/admin-3rgp.75 && go vet ./...", "expect": "exits 0, no output"},
+    {"cmd": "cd /Users/pierce/.worktrees/admin-project-tool/admin-3rgp.75 && go test ./internal/kinds/...", "expect": "ok  github.com/McBrideMusings/admin-project-tool/internal/kinds  <time>s (if TestMakeKillPortClearsARealHolder fails, rerun in isolation — it is a pre-existing port-timing flake unrelated to this diff)"}
+  ],
+  "failures": [],
+  "rechecks": [
+    {
+      "by": "orchestrator",
+      "head": "d2303d15657fe39b52c4f66af174d12a958d3861",
+      "at": "2026-09-04T15:11:00Z",
+      "commands": [
+        {"cmd": "go build -C <worktree> ./...", "expect": "exits 0, no output", "result": "clean"},
+        {"cmd": "go vet -C <worktree> ./...", "expect": "exits 0, no output", "result": "clean"},
+        {"cmd": "go test -C <worktree> ./internal/kinds/... -v", "expect": "ok, pre-existing port-kill flake tolerated", "result": "ok, all PASS, no flake this run"}
+      ],
+      "note": "Branch was rebased onto main (80c8892, admin-wwrg landed concurrently by another session mid-swarm) after verified_parent (14ac77b) was superseded. Rebase was clean (disjoint files from admin-wwrg's cmd/root.go/dispatch.go changes). diff main..HEAD --stat confirmed the diff stayed scoped to docs/architecture/lua-host-api.md, internal/kinds/apple_darwin.go, internal/kinds/appledevloop_darwin.go."
+    }
+  ]
+}

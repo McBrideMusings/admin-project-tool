@@ -1,0 +1,44 @@
+{
+  "item": "admin-3rgp.74",
+  "verdict": "PASS",
+  "verified_parent": "14ac77b909b16f9cad2e59ee0463fa1b2589bb2f",
+  "branch": "fix/admin-3rgp.74-output-key-unread",
+  "tree_clean": false,
+  "evidence": "Confirmed [output] was already in manifest.go's knownTopLevelKeys (`\"output\": true` at internal/manifest/manifest.go:244) before this pass — matches the acceptance criteria's premise ('currently accepted but unread'). `go build ./...` and `go vet ./...` clean. Ran the actual CLI surface end to end: built the binary (go build -o .../admin-bin .), wrote a scratch project at /private/tmp/claude/.worktrees-admin-project-tool-admin-3rgp.74/dockerproj/admin.toml declaring kind=\"docker-reload-loop\" with `run = \"printf 'INFO hello world\\n'\"`. (1) WITH `[output.docker] columns = [\"Level:6\", \"Message:*\"]` declared: `admin dev` printed `Level   Message` header then `INFO  INFO hello world` — the configured column layout, not the bare HH:MM:SS.mmm stamp the old nil-Formatter path produced. (2) WITH NO [output] table at all: `admin dev` printed `Timestamp                   Level     Message` (26-wide Timestamp, the docker source default) then `11:02:23.231782           INFO    INFO hello world` — confirms reload.Options.Formatter is non-nil unconditionally for docker-reload-loop, per the acceptance criterion, and that the docstring's 'docker source default still applies even with no [output]' claim is real, not aspirational. This is the actual admin-dev-loop surface a project author drives, not a synthetic unit call. internal/logcolumns and internal/logformat test packages both pass (go test -count=1, verbose, all green: TestColumnFormatter*, TestMakeColumnFormatter*, TestColorizeLevel*). internal/kinds package has two pre-existing failures unrelated to this diff — TestMakeKillPortClearsARealHolder and TestMakeNukeDevOnAFreeDeclaredPortIsANoOp, both port-kill/process-holder tests reporting 'port still bound/held after the sweep' — neither test touches docker.go, logformat.go, or logcolumns; confirmed by re-running the docker-specific subset (TestMakeDockerReloadLoopMissingRunErrors, TestMakeDockerDevEmptyConfigErrors, TestMakeDockerDevMissingImageTagErrors, TestBuildDockerDevCmd*) with -run filtering, all green, and by the failing tests' own port-holder mechanics being orthogonal to log formatting (looks like this sandbox can't reliably signal/kill a process it spawned to hold a port). Wrote /Users/pierce/Projects/admin-project-tool/.claude/skills/verify-project/SKILL.md was NOT needed — it already existed and its 'Go dashboard / TUI' section (and general go build/vet/test commands) already names this repo's real surface.",
+  "mutation": {
+    "method": "Reversed the tracked diff on internal/kinds/docker.go and internal/logformat/logformat.go via `git apply -R` on a captured patch, and moved the new internal/logcolumns/logcolumns.go (untracked production file) aside to /private/tmp/claude/.worktrees-admin-project-tool-admin-3rgp.74/logcolumns.go.aside, leaving only the two _test.go files behind.",
+    "command": "go test -count=1 ./internal/logcolumns/... ./internal/logformat/...",
+    "output": "# github.com/McBrideMusings/admin-project-tool/internal/logcolumns [...]\ninternal/logcolumns/logcolumns_test.go:11:14: undefined: parseColumnSpec\n... (10 undefined: parseColumnSpec/NewColumnFormatter/Column/DefaultColumns errors)\nFAIL github.com/McBrideMusings/admin-project-tool/internal/logcolumns [build failed]\n# github.com/McBrideMusings/admin-project-tool/internal/logformat [...]\ninternal/logformat/logformat_test.go:148:9: undefined: ColorizeLevel\ninternal/logformat/logformat_test.go:157:12: undefined: ColorizeLevel\nFAIL github.com/McBrideMusings/admin-project-tool/internal/logformat [build failed]",
+    "discriminates": true,
+    "tests": [
+      "TestParseColumnSpecFixedWidth", "TestParseColumnSpecFillRemaining", "TestParseColumnSpecHidden", "TestParseColumnSpecNoColonIsError",
+      "TestColumnFormatterPrintsHeaderOnceBeforeFirstLine", "TestColumnFormatterBlankLinePassesThroughUnchangedAndDoesNotConsumeHeader",
+      "TestColumnFormatterRendersGenericFieldsIntoColumns", "TestColumnFormatterHidesZeroWidthColumn",
+      "TestMakeColumnFormatterUsesSourceDefaultWithNoConfig", "TestMakeColumnFormatterFallsBackToGenericForUnknownSource",
+      "TestMakeColumnFormatterUsesOverrideColumns", "TestMakeColumnFormatterApplesOsLogSelectsAppleFormatter",
+      "TestColorizeLevelColorsFirstMatchInPriorityOrder", "TestColorizeLevelNoLevelWordUnchanged"
+    ]
+  },
+  "failures": [],
+  "recheck": [
+    {"cmd": "go build ./... && go vet ./...", "expect": "no output, exit 0"},
+    {"cmd": "go test -count=1 ./internal/logcolumns/... ./internal/logformat/...", "expect": "both packages 'ok', all 14 tests listed under mutation.tests pass"},
+    {"cmd": "go test -count=1 ./internal/kinds/... -run 'Docker'", "expect": "ok — TestMakeDockerReloadLoopMissingRunErrors, TestMakeDockerDevEmptyConfigErrors, TestMakeDockerDevMissingImageTagErrors, TestBuildDockerDevCmd* all pass"},
+    {"cmd": "go test -count=1 ./internal/kinds/...", "expect": "2 pre-existing unrelated FAILs (TestMakeKillPortClearsARealHolder, TestMakeNukeDevOnAFreeDeclaredPortIsANoOp — port-kill sandbox flakiness), no other failures"}
+  ],
+  "rechecks": [
+    {
+      "by": "orchestrator",
+      "head": "ad0e28530ac1601879ec1495fcddba907801cff4",
+      "at": "2026-09-04T15:08:00Z",
+      "commands": [
+        {"cmd": "go build -C <worktree> ./...", "expect": "exits 0, no output", "result": "clean"},
+        {"cmd": "go vet -C <worktree> ./...", "expect": "exits 0, no output", "result": "clean"},
+        {"cmd": "go test -C <worktree> -count=1 ./internal/logcolumns/... ./internal/logformat/...", "expect": "both ok", "result": "both ok"},
+        {"cmd": "go test -C <worktree> -count=1 ./internal/kinds/... -run 'Docker' -v", "expect": "all docker tests PASS", "result": "all 7 PASS"},
+        {"cmd": "go test -C <worktree> -count=1 ./internal/kinds/...", "expect": "pre-existing port-kill flakes only", "result": "only TestMakeKillPortClearsARealHolder failed this run (fewer flakes than the verdict anticipated, not more); confirmed identical failure on main HEAD with the diff absent"}
+      ],
+      "note": "Branch was rebased onto main (80c8892, admin-wwrg landed concurrently by another session mid-swarm) after verified_parent (14ac77b) was superseded. Rebase was clean (disjoint files from admin-wwrg's cmd/root.go/dispatch.go changes). diff main..HEAD --stat confirmed the diff stayed scoped to internal/kinds/docker.go, internal/logcolumns/*, internal/logformat/*."
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "item": "admin-3rgp.73",
+  "verdict": "PASS",
+  "verified_parent": "14ac77b909b16f9cad2e59ee0463fa1b2589bb2f",
+  "branch": "fix/admin-3rgp.73-shell-watch-key",
+  "tree_clean": false,
+  "evidence": "verify-project SKILL.md exists (read, not rewritten) and its 'Go dashboard / TUI' section names go build/go vet/go test as this repo's Go surface, with a mutation-check requirement for internal/tui-style behavioral changes — applied here to internal/kinds since that's what changed. Ran `go build ./...` (clean, no output) and `go vet ./internal/kinds/...` (clean). Ran the three new tests directly (`go test ./internal/kinds/... -run TestShellWatch -v`): TestShellWatchTriggersRegisteredWatcher drives makeShell with `watch = \"github-action\"` and a run string printing a real actions/runs/4242 URL, and observes the fake `gh` binary on PATH actually invoked with `run watch 4242` (read from the marker file) — this is the surface a manifest author drives (kind=\"shell\" action with a `watch` key), proven via the real Runner closure, not by reading the diff. TestShellWatchUnknownKindWarns confirms an unregistered watch kind warns via stderr rather than failing the action. TestShellWatchSkippedOnFailure confirms watch is never consulted on a nonzero exit (gh never invoked, marker file absent). All three passed. Full `go test ./internal/kinds/...` was also run: it turned up one unrelated failure, TestMakeKillPortClearsARealHolder (killport_test.go, untouched by this diff, exercises binding/killing a real listening socket on port 21017/21018) — reran it alone twice, failed identically both times ('port still bound after the kill-port Runner ran'), which points to this sandbox lacking the ability to actually free a bound port (unrelated capability to shell/watch), not a regression from this change; killport_test.go is not part of this diff and the watch-specific tests target the exact new behavior.",
+  "mutation": {
+    "method": "Reversed the shell.go hunk via `git apply -R` on a captured patch and moved the new watch.go aside (mv, since it's untracked) so makeShell had zero watch-dispatch code and the Watcher/registry/githubActionWatcher types did not exist.",
+    "command": "go test ./internal/kinds/... -run 'TestShellWatch' -v",
+    "output": "TestShellWatchTriggersRegisteredWatcher FAILED: 'watcher never invoked gh: open .../gh-calls.txt: no such file or directory'. TestShellWatchUnknownKindWarns FAILED: 'stderr = \"\", want it to name the unregistered kind'. TestShellWatchSkippedOnFailure still passed (its assertion — gh not invoked on a failing run — holds trivially with or without the feature). Restored both files (`git apply` + `mv` back), confirmed `git status --short` matched the pre-mutation state exactly (M shell.go, ?? watch.go, ?? watch_test.go), then reran the same three tests: all PASS.",
+    "discriminates": true,
+    "tests": ["TestShellWatchTriggersRegisteredWatcher", "TestShellWatchUnknownKindWarns", "TestShellWatchSkippedOnFailure"]
+  },
+  "failures": [],
+  "recheck": [
+    {"cmd": "go build ./... (from repo root)", "expect": "exits 0 with no output"},
+    {"cmd": "go test ./internal/kinds/... -run 'TestShellWatch' -v", "expect": "3 tests PASS: TestShellWatchTriggersRegisteredWatcher, TestShellWatchUnknownKindWarns, TestShellWatchSkippedOnFailure"},
+    {"cmd": "go test ./internal/kinds/...", "expect": "all PASS except the pre-existing, diff-unrelated TestMakeKillPortClearsARealHolder failure (killport_test.go, not touched by this change) if the sandbox still can't bind/free real ports"}
+  ],
+  "rechecks": [
+    {
+      "by": "orchestrator",
+      "head": "2f4f0ffab5cbe1529de5a0d317670978646e6daa",
+      "at": "2026-09-04T15:06:00Z",
+      "commands": [
+        {"cmd": "go build -C <worktree> ./...", "expect": "exits 0, no output", "result": "clean, no output"},
+        {"cmd": "go test -C <worktree> ./internal/kinds/... -run 'TestShellWatch' -v", "expect": "3 PASS", "result": "all 3 PASS"},
+        {"cmd": "go test -C <worktree> ./internal/kinds/...", "expect": "all PASS except pre-existing TestMakeKillPortClearsARealHolder flake", "result": "only TestMakeKillPortClearsARealHolder failed; confirmed identical failure on main HEAD (80c8892) with the diff absent, so it is pre-existing and unrelated"}
+      ],
+      "note": "Branch was rebased onto main (80c8892, admin-wwrg landed concurrently by another session mid-swarm) after verified_parent (14ac77b) was superseded. Rebase was clean (no conflicts — this diff touches only internal/kinds/shell.go, watch.go, watch_test.go, disjoint from admin-wwrg's cmd/root.go and dispatch.go changes). Re-ran every recheck command against the rebased tree; all held. diff main..HEAD --stat confirmed the diff remains scoped to the three files above."
+    }
+  ]
+}
