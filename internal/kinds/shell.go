@@ -19,8 +19,8 @@ import (
 const emptyCmdErr = "refusing to run an empty command"
 
 // makeShell is kind="shell"'s factory — the Go port of
-// admin_lib/interp.py::_make_shell, minus the watch-kind piece (tracked as
-// admin-3rgp.73). `run` is resolved with
+// admin_lib/interp.py::_make_shell, including the watch-kind piece
+// (admin_lib/watch.py, ported to watch.go). `run` is resolved with
 // manifest.ResolveEnv, the same call admin_lib/core.py::run_cmd makes on
 // every command string: a manifest writes ${VAR} precisely so the value can
 // live in .env instead of the file, and handing the placeholder to /bin/sh
@@ -30,6 +30,7 @@ func makeShell(name string, action manifest.Action, m *manifest.Manifest, _ *Sur
 	rawURLs := actionURLs(action)
 	footerVal, hasFooter := actionBool(action, "footer")
 	ptyVal, _ := actionBool(action, "pty")
+	watchKind, hasWatch := actionString(action, "watch")
 	return func(args []string) error {
 		expanded, err := manifest.ResolveEnv(run)
 		if err != nil {
@@ -59,6 +60,9 @@ func makeShell(name string, action manifest.Action, m *manifest.Manifest, _ *Sur
 		if !res.Ok {
 			h.Err(name + " failed")
 			return fmt.Errorf("action %q failed", name)
+		}
+		if hasWatch && watchKind != "" {
+			runWatcher(h, watchKind, res.Output)
 		}
 		h.Ok(name + " complete")
 		return nil
