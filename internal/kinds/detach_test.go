@@ -1,9 +1,12 @@
-// detach_test.go covers `detach = true`'s producer-independent contract:
-// RunAction (every step, plain CLI or already-launched) never consults
+// detach_test.go covers `detach = true`'s dashboard-producer-only contract
+// (restored by admin-wwrg, withdrawing admin-m6m8's producer-independent
+// one): RunAction (every step, plain CLI or already-launched) never consults
 // `detach` and never reaches the project's [terminal] launcher (ADR-0020);
-// RunCommand's top-level dispatch does, through launchCommand, identically
-// whether its CommandProducer is nil (the CLI) or non-nil (the dashboard).
-// It replaces lifetime_test.go — the Lifetime kind-catalog attribute
+// RunCommand's top-level dispatch consults it only for a non-nil
+// (dashboard) CommandProducer, through launchCommand — a nil producer (the
+// CLI's shape, though the CLI itself now calls RunCommandInline instead of
+// reaching RunCommand at all) runs inline exactly like RunAction does. It
+// replaces lifetime_test.go — the Lifetime kind-catalog attribute
 // admin-ysxr.2 deleted.
 package kinds
 

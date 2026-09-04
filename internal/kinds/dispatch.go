@@ -236,13 +236,16 @@ func RunAction(m *manifest.Manifest, r *Registry, name string, args []string) er
 }
 
 // CommandProducer distinguishes a command dispatch whose producer cannot
-// host the run itself from one that can. A nil *CommandProducer passed to
-// RunCommand means "this process would otherwise host the run inline" — the
-// plain CLI, which already owns a terminal — but that no longer exempts it
-// from `detach`: both producers resolve the command's own launcher/detach
-// declaration once, up front, in launchCommand, and either dispatch through
-// the project's declared [terminal] launcher or fall back to running inline
-// (the CLI) / Launch (the dashboard's hosted pty).
+// host the run itself from one that can. `detach` is dashboard-producer-only
+// (restored by admin-wwrg, withdrawing admin-m6m8's producer-independent
+// contract): only a non-nil producer's dispatch through RunCommand consults
+// the command's own launcher/detach declaration, in launchCommand, and
+// either dispatches through the project's declared [terminal] launcher or
+// falls back to Launch (the dashboard's hosted pty). A nil producer — the
+// plain CLI's shape, though the CLI itself now calls RunCommandInline and
+// never reaches RunCommand with one at all — runs inline, same as
+// RunCommandInline, and never consults `detach`. See RunCommand's own doc
+// comment.
 //
 // A non-nil producer is the dashboard: it cannot run a Command's step loop
 // on its own terminal at all (that would block its alt-screen for the run's
@@ -268,34 +271,38 @@ type CommandProducer struct {
 // action produces a non-zero result" (that "non-zero result" surfaces here
 // as a non-nil error; mapping it to a process exit code is CLI wiring).
 //
-// Two cases, checked in this order:
+// Three cases, checked in this order:
 //
 //  1. inReentry() — every step runs inline through runSteps/RunAction, and
-//     `detach` is never consulted. This is __run-command's own RunCommand
-//     call (cmd/root.go): a process already inside a launched dispatch must
-//     never reach a second launcher, however many levels of delegation
-//     separate it from the dispatch that opened that run.
-//  2. Otherwise — a plain-CLI dispatch (p == nil) or a dashboard dispatch (p
-//     non-nil) alike — launchCommand resolves the command's own
+//     `detach` is never consulted. This is __run-command's own re-entry
+//     (cmd/root.go), reached after MarkReentry(): a process already inside a
+//     launched dispatch must never reach a second launcher, however many
+//     levels of delegation separate it from the dispatch that opened that
+//     run.
+//  2. p == nil — every step also runs inline through runSteps, exactly like
+//     case 1. `detach` is dashboard-producer-only (restored by admin-wwrg,
+//     withdrawing admin-m6m8's producer-independent contract): no code path
+//     in this tree calls RunCommand with a nil producer anymore — the CLI
+//     dispatches through RunCommandInline, below, instead — but a nil
+//     producer reaching RunCommand directly (a test, or any future caller)
+//     still gets the plain-CLI answer, inline, never the launcher.
+//  3. p != nil — the dashboard. launchCommand resolves the command's own
 //     launcher/detach declaration once, up front, and either dispatches to
-//     the project's declared [terminal] launcher or falls back to running
-//     the command on this process's own surface: inline (runSteps) for the
-//     CLI, p.Launch (the hosted pty) for the dashboard.
+//     the project's declared [terminal] launcher or falls back to p.Launch
+//     (the hosted pty).
 //
-// RunCommandInline is this function's third entry point, for a caller that
-// must never consult `detach` regardless of reentry or producer — see its
-// own doc comment.
+// RunCommandInline is this function's fourth entry point, and is what every
+// CLI caller (cmd/root.go's manifest-command RunE and its __run-command
+// re-entry verb) actually calls: it never consults `detach` regardless of
+// reentry or producer — see its own doc comment. Its behavior is now
+// identical to cases 1 and 2 above; it remains a separate function because
+// `admin cmd`'s picker (cmd/cmdpicker.go) calls it directly with no
+// CommandProducer in scope at all.
 func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string, p *CommandProducer) error {
-	if inReentry() {
+	if inReentry() || p == nil {
 		return runSteps(m, r, name, args)
 	}
-	var env []string
-	fallback := func() error { return runSteps(m, r, name, args) }
-	if p != nil {
-		env = p.Env
-		fallback = func() error { return p.Launch(m, name, args) }
-	}
-	return launchCommand(m, name, args, env, fallback)
+	return launchCommand(m, name, args, p.Env, func() error { return p.Launch(m, name, args) })
 }
 
 // RunCommandInline runs name's steps directly through runSteps, the same
@@ -307,30 +314,29 @@ func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string, p
 // It exists for cmd/cmdpicker.go's `admin cmd` picker: a human sitting at an
 // interactive arrow-key picker, in a terminal they are already watching,
 // expects the picked command's output to appear right there, never in a
-// new pane elsewhere — unlike `admin <name>` typed directly, which still
-// dispatches through RunCommand and keeps today's detach/launcher behavior.
+// new pane elsewhere. `admin <name>` typed directly now calls
+// RunCommandInline too (admin-wwrg — detach is dashboard-producer-only), so
+// this is no longer a special case relative to the plain CLI: both skip
+// launchCommand's launcher/detach resolution entirely.
 func RunCommandInline(m *manifest.Manifest, r *Registry, name string, args []string) error {
 	return runSteps(m, r, name, args)
 }
 
-// launchCommand is RunCommand's launcher-resolving half: reached whenever
-// this process is not already inside a launched dispatch, for both the
-// plain CLI and the dashboard. It resolves name once, up front — unlike the
+// launchCommand is RunCommand's launcher-resolving half, reached only for a
+// non-nil (dashboard) producer not already inside a launched dispatch — see
+// RunCommand's own doc comment. It resolves name once, up front — unlike the
 // old CLI-only shape, which let runSteps discover an unknown command or an
 // ADR-0003 pure-routing violation mid-dispatch — because a dispatch that
 // ends up spawning through the launcher has no runSteps call on this path to
 // catch that: dispatchToLauncher is a distinct spawn (an exec, a pty), not
 // this process running the command's own step loop. A typo'd or malformed
 // command must still be reported here rather than silently spawning
-// nothing, or (for the CLI) silently falling back to fallback with no error
-// at all.
+// nothing, or silently falling back to fallback with no error at all.
 //
 // env carries the extra ADMIN_ROW_* pairs a row-bound dashboard dispatch
-// would have handed its own launcher (CommandProducer.Env) — nil for the
-// CLI, which has no such row context and falls back to the process
-// environment (launchCtxFrom). fallback runs the command on the caller's own
-// default surface when no launcher dispatch happens: runSteps for the CLI,
-// p.Launch for the dashboard.
+// would have handed its own launcher (CommandProducer.Env). fallback runs
+// the command on the dashboard's own default surface (p.Launch, the hosted
+// pty) when no launcher dispatch happens.
 //
 // The launcher decision looks only at the command's FIRST step's action,
 // looked up by cmd.Steps[0] — the same key StartHostedPTY uses to find the

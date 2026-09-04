@@ -241,7 +241,7 @@ func registerManifestCommand(name string) bool {
 			// both a normal return and an error return, without
 			// needing a second registration mechanism Go doesn't have.
 			defer luahost.Process().AnnounceEnd()
-			return kinds.RunCommand(m, kinds.Default, name, cmdArgs, nil)
+			return kinds.RunCommandInline(m, kinds.Default, name, cmdArgs)
 		},
 	})
 	return true
@@ -300,13 +300,15 @@ var runActionCmd = &cobra.Command{
 // runCommandCmd is admin-3rgp.61's hidden re-entry point: what the pty child
 // a dashboard-hosted command dispatches into actually runs, and (as of
 // admin-ysxr.4) what a detached Command's launcher dispatch re-enters into
-// as well. It calls kinds.RunCommand with a nil producer — the plain-CLI
-// shape — but kinds.MarkReentry() below is what actually keeps this run off
-// the launcher a second time and onto the inline step loop (runSteps, via
-// RunAction): RunCommand consults inReentry() before it ever looks at the
-// producer argument. Hidden and double-underscore prefixed for the same
-// reason as __run-action: plumbing, not something a person types, and never
-// collidable with a project's own admin.toml commands.
+// as well. It calls kinds.RunCommandInline — detach is dashboard-producer-only
+// again (admin-wwrg), so this re-entry point never consults it either way.
+// kinds.MarkReentry() below is kept regardless: nested dispatch reached from
+// inside this run (a multi-target target's `action = "other"` hop, or any
+// step that dispatches a command of its own) still needs inReentry() true so
+// it can never reach a second launcher, whatever RunCommand it goes through.
+// Hidden and double-underscore prefixed for the same reason as __run-action:
+// plumbing, not something a person types, and never collidable with a
+// project's own admin.toml commands.
 var runCommandCmd = &cobra.Command{
 	Use:                "__run-command <name> [args...]",
 	Hidden:             true,
@@ -340,7 +342,7 @@ var runCommandCmd = &cobra.Command{
 		if !ok {
 			return fmt.Errorf("__run-command: no admin.toml in %s or any directory above it", wd)
 		}
-		return kinds.RunCommand(m, kinds.Default, args[0], args[1:], nil)
+		return kinds.RunCommandInline(m, kinds.Default, args[0], args[1:])
 	},
 }
 

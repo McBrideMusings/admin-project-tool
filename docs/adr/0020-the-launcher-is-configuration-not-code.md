@@ -68,6 +68,20 @@ that is `admin-ysxr.2` onward.
 > entry-2 amendment below for the mechanical detail: `internal/kinds.launchCommand` now
 > resolves `detach` identically whether `internal/kinds.RunCommand`'s `*CommandProducer` is
 > nil (the CLI) or non-nil (the dashboard).
+>
+> **Amendment (2026-09-04, `admin-wwrg`): the `admin-m6m8` amendment above is withdrawn.**
+> `detach` is dashboard/producer-only again, restoring the `admin-ysxr.9` contract. The
+> `admin-m6m8` fix addressed a real bug — `etv-station`'s `admin epg` blocked its own shell
+> instead of opening a pane — but at the wrong layer: `cmd/root.go:244` was dispatching every
+> manifest command through `kinds.RunCommand` with a nil `*CommandProducer`, and
+> `launchCommand` resolved `detach` the same way for a nil and a non-nil producer, so the
+> plain CLI got the launcher whether it wanted it or not. The fix is that the CLI's two
+> dispatch sites — the manifest-command `RunE` and the `__run-command` re-entry verb — now
+> call a new `kinds.RunCommandInline`, which runs every step through `runSteps` directly and
+> never reaches `launchCommand` at all, rather than making `launchCommand` resolve `detach`
+> the same way for both producers. `admin <command>` and `admin cmd` typed at a shell run
+> inline unconditionally; only a dashboard row-enter still honours `detach`. See the entry-2
+> amendment below for the mechanical detail.
 
 ## Why
 
@@ -139,6 +153,21 @@ with the rest of the manifest's per-action/per-target override vocabulary.
 > `runSteps` (inline) for the CLI, `p.Launch` (the hosted pty) for the dashboard. Every
 > per-step `RunAction` dispatch, and everything reached from inside an already-launched run,
 > is unaffected — it never consulted `detach` before and still doesn't.
+>
+> **Amendment (2026-09-04, `admin-wwrg`): withdrawn again — `detach` is dashboard/producer-
+> only, and the CLI no longer reaches `launchCommand` at all.** `cmd/root.go`'s two CLI
+> dispatch sites (the manifest-command `RunE` at `cmd/root.go:244` and the `__run-command`
+> re-entry verb at `cmd/root.go:343`) now call `kinds.RunCommandInline`, a new entry point
+> that runs `runSteps` directly and skips `launchCommand`'s launcher/`detach` resolution
+> unconditionally — not `RunCommand` with a nil producer. `RunCommand` itself keeps a nil-
+> producer branch that also runs inline (matching `RunCommandInline`'s answer for any other
+> caller that reaches it with a nil producer), but no live call site passes one anymore; only
+> a non-nil `*CommandProducer` — the dashboard — still falls through to `launchCommand`. The
+> `admin-m6m8` fix traded one bug (a shell blocking on a detached command) for the opposite
+> one (the CLI silently opening panes for every `detach = true` action, including one it was
+> never asked about) by making `launchCommand` producer-blind; this amendment instead moves
+> the CLI off `launchCommand` entirely, so a plain-CLI dispatch can never reach the launcher
+> however the manifest is written.
 
 ### 3. Built-in default when nothing is configured: the dashboard's hosted pty
 

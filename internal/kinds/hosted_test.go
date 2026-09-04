@@ -1,12 +1,15 @@
 // hosted_test.go covers the command-dispatch entry point: RunCommand takes a
-// *CommandProducer, but a nil producer (the plain CLI, which could host a
-// run itself) and a non-nil one (the dashboard, which cannot) resolve
-// `detach` identically — both reach the project's declared [terminal]
-// launcher for a detached first step, and both fall back to their own
-// default surface (inline for the CLI, Launch for the dashboard) when no
-// launcher dispatch happens. The tests below exercise that shared
-// resolution: the same manifest, the same fake [terminal] launcher, the same
-// detached step, dispatched through each producer.
+// *CommandProducer, and `detach` is dashboard-producer-only (restored by
+// admin-wwrg, withdrawing admin-m6m8's producer-independent contract). A nil
+// producer — the plain CLI's shape, though the CLI itself now dispatches
+// through RunCommandInline and never reaches RunCommand with one at all —
+// always runs inline and never touches the project's declared [terminal]
+// launcher, whatever the first step's `detach` says. A non-nil producer (the
+// dashboard, which cannot host the run itself) resolves `detach`: it reaches
+// the launcher for a detached first step and falls back to its own default
+// surface (Launch) when no launcher dispatch happens. The tests below
+// exercise both halves: the same manifest, the same fake [terminal]
+// launcher, the same detached step, dispatched through each producer.
 package kinds
 
 import (
@@ -79,13 +82,13 @@ func dashboardProducer(launched *bool) *CommandProducer {
 	}
 }
 
-// TestRunCommandPlainCLIDetachDispatchesThroughLauncher is the CLI half of
-// the pair: a plain-CLI dispatch (producer nil) with a declared [terminal]
-// and a detached first step must dispatch through the launcher exactly like
-// a dashboard producer would — a shell is where most of a project's
-// long-running commands are actually typed, so the launcher decision is
-// producer-independent again.
-func TestRunCommandPlainCLIDetachDispatchesThroughLauncher(t *testing.T) {
+// TestRunCommandPlainCLIDetachRunsInlineNeverReachesLauncher is the CLI half
+// of the pair: a plain-CLI dispatch (producer nil) with a declared [terminal]
+// and a detached first step must run inline and never reach the launcher —
+// `detach` is dashboard-producer-only (admin-wwrg). The CLI itself no longer
+// calls RunCommand with a nil producer at all (it calls RunCommandInline
+// instead), but RunCommand must give the same answer if reached directly.
+func TestRunCommandPlainCLIDetachRunsInlineNeverReachesLauncher(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	logPath := filepath.Join(dir, "terminal-calls.log")
@@ -96,28 +99,15 @@ func TestRunCommandPlainCLIDetachDispatchesThroughLauncher(t *testing.T) {
 	if err := RunCommand(longRunningManifest(terminal), registryRecordingInline(&inlineRan), "dev", nil, nil); err != nil {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
-	if inlineRan {
-		t.Error("a plain-CLI dispatch with a declared [terminal] and detach=true must reach the launcher, not run inline")
+	if !inlineRan {
+		t.Error("a nil-producer dispatch must run inline, even with a declared [terminal] and detach=true")
 	}
 	logged, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("reading terminal log: %v", err)
+	if err == nil && len(logged) > 0 {
+		t.Errorf("terminal log = %q, want empty — a nil-producer dispatch must never reach the launcher", string(logged))
 	}
-	if !strings.Contains(string(logged), "spawn") {
-		t.Errorf("terminal log = %q, want a `spawn` call", string(logged))
-	}
-	entries := livework.Default.List()
-	found := false
-	for _, e := range entries {
-		if e.ID == "hosted-dev-server" && e.Handle == "fake-handle-1" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("live-work registry = %+v, want an entry keyed on the first step (hosted-dev-server) with handle fake-handle-1", entries)
-	}
-	if got := len(entries); got != before+1 {
-		t.Errorf("live-work registry grew from %d to %d, want exactly one new entry", before, got)
+	if got := len(livework.Default.List()); got != before {
+		t.Errorf("live-work registry grew from %d to %d — a nil-producer dispatch must never register a launcher entry", before, got)
 	}
 }
 
