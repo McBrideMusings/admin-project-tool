@@ -32,6 +32,19 @@ func slugFromAppImage() string {
 	return image
 }
 
+// InstallTemplateSrc resolves the `[install_template].src` manifest key,
+// defaulting to "deploy/unraid-template.xml" when unset — the single source
+// of that literal default, shared by makeInstallTemplate and
+// cmd/check_leaked_ip.go's scanner so the two can't drift apart.
+func InstallTemplateSrc(m *manifest.Manifest) string {
+	cfg := archetypeConfigTable(m, "install_template")
+	src, _ := cfg["src"].(string)
+	if src == "" {
+		src = "deploy/unraid-template.xml"
+	}
+	return src
+}
+
 // makeInstallTemplate is kind="install-template"'s factory — the Go port of
 // admin_lib/interp.py::_make_install_template, which calls
 // admin_lib/unraid.py's install_docker_template_from_config. Reads the
@@ -40,10 +53,7 @@ func slugFromAppImage() string {
 // no host or user literal ever belongs in a tracked manifest.
 func makeInstallTemplate(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	cfg := archetypeConfigTable(m, "install_template")
-	src, _ := cfg["src"].(string)
-	if src == "" {
-		src = "deploy/unraid-template.xml"
-	}
+	src := InstallTemplateSrc(m)
 	cfgName, _ := cfg["name"].(string)
 
 	return func(args []string) error {
