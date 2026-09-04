@@ -77,6 +77,7 @@ func TestActivateCommandDispatchesWhenIdle(t *testing.T) {
 // branch (fall through to dispatch unconditionally) and this test fails:
 // "activateCommand dispatched a second run instead of attaching, attached=false".
 func TestActivateCommandAttachesWhenLive(t *testing.T) {
+	freshLivework(t)
 	attached := false
 	live := &livework.Entry{
 		ID: "build", Name: "build", State: livework.StateRunning,
@@ -168,6 +169,7 @@ func TestActivateCommandStartsWorkflowConfirmNotDirectDispatch(t *testing.T) {
 // a worker is a command) and this test fails: "enter on a worker row did
 // not attach, attached=false".
 func TestActivateWorkerRowAttaches(t *testing.T) {
+	freshLivework(t)
 	attached := false
 	worker := &livework.Entry{
 		ID: "test-enter-worker-attaches", Name: "test-enter-worker-attaches",
@@ -284,6 +286,7 @@ func TestFrameDuringHostedRunShowsTheDashboard(t *testing.T) {
 // also non-empty here; it exists to pin the Via-set path specifically as
 // admin-ysxr.3 defines it, distinct from admin-ysxr.4's hosted-pty case.
 func TestAttachKeyRunsOpsAttachForLauncherRow(t *testing.T) {
+	freshLivework(t)
 	attached := false
 	live := &livework.Entry{
 		ID: "attach-key-launcher", Name: "attach-key-launcher", Kind: "shell",

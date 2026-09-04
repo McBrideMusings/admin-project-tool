@@ -73,6 +73,7 @@ func stubPaneStatus(t *testing.T, fn func(context.Context, string, string) (bool
 // down to StateExited on cleanup, matching addWorkflowEntry's convention.
 func addPaneEntry(t *testing.T, id string, kind string, state livework.State) *livework.Entry {
 	t.Helper()
+	freshLivework(t)
 	e := &livework.Entry{
 		ID:     id,
 		Name:   id,
@@ -164,6 +165,7 @@ func TestPanePollSkipsWhenNoStatusCommandDeclared(t *testing.T) {
 }
 
 func TestPanePollSkipsPTYEntry(t *testing.T) {
+	freshLivework(t)
 	id := "panepoll-pty"
 	e := &livework.Entry{
 		ID: id, Name: id, Kind: "hosted-pty", Handle: "pty-" + id,

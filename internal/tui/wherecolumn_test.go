@@ -23,21 +23,19 @@ import (
 // running command renders running, its activity, and hosted" AC and its
 // negative half: a hosted row must never render a pane identifier.
 func TestWhereColumnHostedCommandRowShowsHostedNeverPane(t *testing.T) {
+	freshLivework(t)
 	entry := &livework.Entry{
 		ID: "docs", Name: "docs", State: livework.StateRunning,
 		Activity: "vitepress dev", Handle: "pty-1", StartedAt: time.Now(),
 	}
 	// renderWorkRow now reads state through livework.Default.State(e.ID)
 	// (admin-ddc8), so the entry must actually be in the process-wide
-	// registry rather than merely constructed. Reset to StateExited after so
-	// this hosted-and-running row doesn't linger for later tests, e.g.
-	// TestRequestQuitWithNothingHostedQuitsImmediately.
+	// registry rather than merely constructed. freshLivework(t) above gives
+	// this test its own registry, so this entry can never linger for a later
+	// test, e.g. TestRequestQuitWithNothingHostedQuitsImmediately.
 	if err := livework.Default.Add(entry); err != nil {
 		t.Fatalf("Add(%s): %v", entry.ID, err)
 	}
-	t.Cleanup(func() {
-		livework.Default.SetState(entry.ID, livework.StateExited, nil)
-	})
 	live := &workRowData{cmdName: "docs", live: entry}
 	line := workTestModel(nil).renderWorkRow(rowItem{kind: rowCommand, work: live}, false, 60)
 	plain := stripANSI(line)
@@ -60,6 +58,7 @@ func TestWhereColumnHostedCommandRowShowsHostedNeverPane(t *testing.T) {
 // worker renders its state, its activity, and its pane identifier" and the
 // negative half: a detached row must never render the word "hosted".
 func TestWhereColumnDetachedWorkerRowShowsPaneNeverHosted(t *testing.T) {
+	freshLivework(t)
 	worker := &livework.Entry{
 		ID: "test-wherecol-detached-worker", Name: "test-wherecol-detached-worker",
 		State: livework.StateWaiting, Activity: "awaiting approval", Handle: "pane 3", Via: "terminal",
@@ -72,9 +71,6 @@ func TestWhereColumnDetachedWorkerRowShowsPaneNeverHosted(t *testing.T) {
 	if err := livework.Default.Add(worker); err != nil {
 		t.Fatalf("Add(%s): %v", worker.ID, err)
 	}
-	t.Cleanup(func() {
-		livework.Default.SetState(worker.ID, livework.StateExited, nil)
-	})
 	line := workTestModel(nil).renderWorkRow(rowItem{kind: rowWorker, work: &workRowData{worker: worker}}, false, 60)
 	plain := stripANSI(line)
 
@@ -95,6 +91,7 @@ func TestWhereColumnDetachedWorkerRowShowsPaneNeverHosted(t *testing.T) {
 // TestWhereColumnStateWordsAreVerbatim pins running/waiting/failed exactly
 // as written — no abbreviation, no different casing.
 func TestWhereColumnStateWordsAreVerbatim(t *testing.T) {
+	freshLivework(t)
 	cases := []struct {
 		state livework.State
 		word  string
@@ -113,9 +110,6 @@ func TestWhereColumnStateWordsAreVerbatim(t *testing.T) {
 	if err := livework.Default.Add(entry); err != nil {
 		t.Fatalf("Add(%s): %v", entry.ID, err)
 	}
-	t.Cleanup(func() {
-		livework.Default.SetState(entry.ID, livework.StateExited, nil)
-	})
 	live := &workRowData{cmdName: "build", live: entry}
 	for _, c := range cases {
 		livework.Default.SetState(entry.ID, c.state, nil)
@@ -130,6 +124,7 @@ func TestWhereColumnStateWordsAreVerbatim(t *testing.T) {
 // truncates with an ellipsis while the where-value stays whole" — the
 // where-value is reserved first and never passed through truncR.
 func TestWhereColumnTruncatesActivityKeepsWherewholeAt(t *testing.T) {
+	freshLivework(t)
 	longActivity := strings.Repeat("writing a very long activity line ", 4)
 	entry := &livework.Entry{
 		ID: "wherecol-truncate-activity", Name: "build", State: livework.StateRunning,
@@ -142,9 +137,6 @@ func TestWhereColumnTruncatesActivityKeepsWherewholeAt(t *testing.T) {
 	if err := livework.Default.Add(entry); err != nil {
 		t.Fatalf("Add(%s): %v", entry.ID, err)
 	}
-	t.Cleanup(func() {
-		livework.Default.SetState(entry.ID, livework.StateExited, nil)
-	})
 	live := &workRowData{cmdName: "build", live: entry}
 	line := stripANSI(workTestModel(nil).renderWorkRow(rowItem{kind: rowCommand, work: live}, false, 40))
 	if !strings.Contains(line, "…") {
@@ -182,6 +174,7 @@ func TestWhereColumnIdleRowUnchanged(t *testing.T) {
 // the assertions only ever look at these two rows, never at the absence of
 // anything else.
 func TestWhereColumnFrameAtMultipleWidths(t *testing.T) {
+	freshLivework(t)
 	const cmdName = "wherecolfixturehosted"
 	dir := t.TempDir()
 	toml := "project_name = \"fixture\"\n\n[commands." + cmdName + "]\ndesc = \"fixture\"\nsteps = [\"" + cmdName + "\"]\n\n[actions." + cmdName + "]\nkind = \"shell\"\nrun = \"true\"\n"

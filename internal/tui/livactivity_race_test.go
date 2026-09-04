@@ -23,6 +23,11 @@ import (
 )
 
 func TestConcurrentActivityReadsDoNotRace(t *testing.T) {
+	// freshLivework(t) swaps livework.Default for a throwaway registry before
+	// either goroutine below is spawned, so this entry can never linger for a
+	// later test the way a process-wide singleton could — see its own doc
+	// comment (internal/tui/hermetic_test.go) and admin-hw2i.
+	freshLivework(t)
 	e := &livework.Entry{
 		ID: "livactivity-race-entry", Name: "livactivity-race",
 		Handle: "pty-livactivity-race", State: livework.StateRunning,
@@ -30,13 +35,6 @@ func TestConcurrentActivityReadsDoNotRace(t *testing.T) {
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add(%s): %v", e.ID, err)
 	}
-	// livework.Default is a process-wide singleton with no Remove — leaving
-	// this entry StateRunning would make it visible to every test that runs
-	// after this one via List()/liveWorkers(), same reasoning as the State
-	// test's cleanup.
-	t.Cleanup(func() {
-		livework.Default.SetState(e.ID, livework.StateExited, nil)
-	})
 
 	workerRow := rowItem{kind: rowWorker, work: &workRowData{worker: e}}
 	liveCommandRow := rowItem{kind: rowCommand, work: &workRowData{cmdName: "cmd", live: e}}

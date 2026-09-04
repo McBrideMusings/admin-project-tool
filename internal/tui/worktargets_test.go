@@ -238,6 +238,7 @@ func TestEnterOnMultiTargetParentLeavesCursorPut(t *testing.T) {
 // list (back to `case rowCommand:` alone) and this test fails: killed stays
 // false.
 func TestKillOnRunningTargetRowKillsIt(t *testing.T) {
+	freshLivework(t)
 	killed := false
 	live := &livework.Entry{
 		ID: kinds.TargetLiveKey("dev", "mac"), Name: "dev:mac", State: livework.StateRunning,
