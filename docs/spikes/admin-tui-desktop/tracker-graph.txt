@@ -1,30 +1,30 @@
- admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+ beads-repo   main  ✔ clean                     w=96 h=25 w/2.3=42→right (hover off, so unused) 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
+ MANIFEST                                                                             admin.toml
+  tracker               beads  ((manifest))                                                     
+  uses pull requests    false  ((manifest))                                                     
+                                                                                                
+ IDENTITY & WORKTREES                                                                 admin.toml
+  login                 not declared                                                            
+  emails                not declared                                                            
+  worktree root         /fixtures/worktrees  ((manifest))  absent                               
+  populate patterns     none declared                                                           
+  default agent         not declared                                                            
+  concurrency ceiling   not declared — dispatcher default applies                               
+                                                                                                
+ KEY FILES                                                                                      
+  admin.toml                                                                                    
+  .gitignore                                                                              absent
+  .claude/settings.json                                                                   absent
+  .claude/settings.local.json                                                             absent
+  CLAUDE.md                                                                               absent
+  CLAUDE.local.md                                                                         absent
+  AGENTS.md                                                                               absent
                                                                                                 
                                                                                                 
-     ┌─[ Bead ]─[ Graph ]─[ Blocking ]──────────────────────────────────────────────[ ✕ ]─┐     
-     │                                                                                    │     
-     │ ┌─────────────────────┐      ┌─────────────────────┐      ┌─────────────────────┐  │     
-     │ │ 3rgp.60 Live-work r…│─────▸│ 3rgp.61 Dashboard r…│─┬───▸│ 3rgp.63 Quitting th…│  │     
-     │ └─────────────────────┘      └─────────────────────┘ │    └─────────────────────┘  │     
-     │                                                      │                             │     
-     │                                                      │    ┌─────────────────────┐  │     
-     │                                                      └───▸│ 3rgp.62 Kill and re…│  │     
-     │                                                           └─────────────────────┘  │     
-     │                                                                                    │     
-     │                                                                                    │     
-     │                                                                                    │     
-     │                                                                                    │     
-     │                                                                                    │     
-     │                                                                                    │     
-     │                                                                                    │     
-     │                                                                                    │     
-     │                                                                                    │     
-     │                                                                                    │     
-     │ ←  →  switch      ↑↓  scroll      esc  close                                       │     
-     └────────────────────────────────────────────────────────────────────────────────────┘     
+                                                                                                
                                                                                                 
                                                                                                 
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ← → switch · ↑↓ scroll · esc close                                                             
+ ←→ tab · 1-4 jump · ↓ body · q quit                                                            

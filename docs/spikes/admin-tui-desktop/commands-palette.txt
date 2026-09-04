@@ -1,18 +1,14 @@
- admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+ beads-repo   main  ✔ clean                     w=96 h=25 w/2.3=42→right (hover off, so unused) 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
-  Commands                                                     │ build ios                      
- ◇ ▾ build         multi-tarBuild: mac | ios | tv | server [--…│ multi-target  ·  apple         
- ◇ ├ mac           @build-mac                                  │                                
- ◆ ├ ios           @build-ios                                  │ runs                           
- ◇ ├ tv            @build-tv                                   │   @build-ios                   
- ◇ └ server        cargo build --release --manifest-path…      │                                
- ◇ check           shell    Parse and resolve admin.toml       │ log                            
- ◇ deploy          sequence Install to ~/.admin, provision the…│   ~/.admin/logs/build-ios.log  
- ◇ docs            running  vitepress dev · localhost:5… hosted│                                
- ◇ logs            logs     Tail a log target                  │ ↵ run   ← collapse             
- ◇ retire-merged   workflow Remove worktrees whose branch is m…│                                
- ◇ test            waiting  Enter a number, or q to can… hosted│                                
+ ┌─ Command Palette ──────────────────────────────────────────┐│ grafana deploy                 
+ │ Press / to search · b to browse all                        ││ multi-target  ·  Grafana alert 
+ │                                                            ││                                
+ │ 3 recent                                                   ││ runs                           
+ │ ◆ grafana deploy      cd apps && bunx wrangler grafan…     ││   cd apps && bunx wrangler gr… 
+ │ ◇ dev cf              cd apps && bunx wrangler dev --…     ││                                
+ │ ◇ test gate           cd apps && bunx wrangler test -…     ││ part of                        
+ └────────────────────────────────────────────────────────────┘│   grafana (3 targets)          
                                                                │                                
   Workers                                                      │                                
  ◇ admin-3rgp.36   running  writing internal/lua/host.go pane 3│                                
@@ -26,5 +22,9 @@
                                                                │                                
                                                                │                                
                                                                │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ run or open · →← submenu · k kill · q/esc quit                                     
+ ↑↓ move · ↵ dispatch · / search · b browse · q/esc quit                                        

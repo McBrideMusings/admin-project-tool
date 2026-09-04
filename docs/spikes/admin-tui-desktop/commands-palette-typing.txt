@@ -1,0 +1,30 @@
+ beads-repo   main  ✔ clean                     w=96 h=25 w/2.3=42→right (hover off, so unused) 
+  Work 12    Repo    Beads 227    Config                                                        
+                                                                                                
+ ┌─ Command Palette ──────────────────────────────────────────┐│ clean                          
+ │ / dev cf▏                                                  ││ shell  ·  Remove build artifact
+ │                                                            ││                                
+ │ ◆ dev cf                  cd apps && bunx wrangler de…     ││ runs                           
+ │ ◇ dev local               cd apps && bunx wrangler de…     ││   bash clean.sh                
+ │ 2 matches · tab complete word · ↵ dispatch                 ││                                
+ └────────────────────────────────────────────────────────────┘│                                
+                                                               │                                
+  Workers                                                      │                                
+ ◇ admin-3rgp.36   running  writing internal/lua/host.go pane 3│                                
+ ◇ admin-3rgp.7    waiting  needs input: root command n… pane 4│                                
+ ◇ admin-3rgp.33   failed   go test ./internal/detect F… pane 5│                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+────────────────────────────────────────────────────────────────────────────────────────────────
+ type to search · tab complete · ↑↓ move · ↵ dispatch · esc cancel                              

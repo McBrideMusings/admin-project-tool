@@ -1,23 +1,23 @@
- admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+ beads-repo   main  ✔ clean                     w=96 h=25 w/2.3=42→right (hover off, so unused) 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
   Commands                                                     │ test                           
- ◇ ▸ build         multi-tarBuild: mac | ios | tv | server [--…│ sequence  ·  (manifest)        
- ◇ check           shell    Parse and resolve admin.toml       │                                
- ◇ deploy          sequence Install to ~/.admin, provision the…│ log                            
- ◇ docs            running  vitepress dev · localhost:5… hosted│   ~/.admin/logs/test.log       
- ◇ logs            logs     Tail a log target                  │                                
- ◇ retire-merged   workflow Remove worktrees whose branch is m…│ steps                          
- ◆ test          ┌────────────────────────────────────────────────────────────┐                 
-                 │  Quit — 2 processes still running                          │...              
-  Workers        │                                                            │i                
- ◇ admin-3rgp.36 │    running  docs      vitepress dev · localhost:5173       │                 
- ◇ admin-3rgp.7  │    waiting  test      Enter a number, or q to cancel:      │/test_install.sh 
- ◇ admin-3rgp.33 │                                                            │fest)            
-                 │    Workers keep running — they have their own panes.       │                 
-                 │                                                            │                 
-                 │    ⏎ kill them and quit     esc cancel                     │                 
-                 └────────────────────────────────────────────────────────────┘                 
+ ◇ build           multi-tarBuild: mac | ios | tv | server [--…│ sequence  ·  (manifest)        
+ ◇ ├ mac           @build-mac                                  │                                
+ ◇ ├ ios           @build-ios                                  │ log                            
+ ◇ ├ tv            @build-tv                                   │   ~/.admin/logs/test.log       
+ ◇ └ server        cargo build --release --manifest-path…      │                                
+ ◇ check           shell    Parse and resolve admin.toml       │ steps                          
+ ◇ deploy        ┌────────────────────────────────────────────────────────────┐                 
+ ◇ docs          │  Quit — 2 processes still running                          │...              
+ ◇ logs          │                                                            │i                
+ ◇ retire-merged │    running  docs      vitepress dev · localhost:5173       │                 
+ ◆ test          │    waiting  test      Enter a number, or q to cancel:      │/test_install.sh 
+                 │                                                            │fest)            
+  Workers        │    Workers keep running — they have their own panes.       │                 
+ ◇ admin-3rgp.36 │                                                            │                 
+ ◇ admin-3rgp.7  │    ⏎ kill them and quit     esc cancel                     │                 
+ ◇ admin-3rgp.33 └────────────────────────────────────────────────────────────┘                 
                                                                │                                
                                                                │                                
                                                                │                                

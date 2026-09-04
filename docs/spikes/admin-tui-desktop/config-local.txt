@@ -1,30 +1,30 @@
- admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+ beads-repo   main  ✔ clean                     w=96 h=25 w/2.3=42→right (hover off, so unused) 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
- MANIFEST  admin.toml                                                                           
+ MANIFEST                                                                             admin.toml
   tracker               beads  ((manifest))                                                     
   uses pull requests    false  ((manifest))                                                     
                                                                                                 
- IDENTITY & WORKTREES  ~/.config/repo/config.toml + .repo/config.toml                           
-  login                 McBrideMusings  (global config)                                         
-  emails                3522175+McBrideMusings@users.noreply.github.com (global)  (defaulted)                          
-  worktree root         /Users/pierce/.worktrees  (defaulted)                                   
-  populate patterns                                                                             
-    .claude/skills/* (symlink, global config)                                                   
-    .claude/herdr-plugins/* (symlink, global config)                                            
-    .claude/settings.local.json (symlink, global config)                                        
-    .claude/CLAUDE.local.md (symlink, global config)                                            
-    CLAUDE.local.md (symlink, global config)                                                    
-    .mcp.json (symlink, global config)                                                          
-    admin.toml (copy, global config)                                                            
-    .env (copy, global config)                                                                  
-    .env.local (copy, global config)                                                            
-    .dev.vars (copy, global config)                                                             
-    .envrc (copy, global config)                                                                
-    Signing.local.xcconfig (symlink, global config)                                             
-    Signing.xcconfig (symlink, global config)                                                   
+ IDENTITY & WORKTREES                                                                 admin.toml
+  login                 not declared                                                            
+  emails                not declared                                                            
+  worktree root         /fixtures/worktrees  ((manifest))  absent                               
+  populate patterns     none declared                                                           
   default agent         not declared                                                            
   concurrency ceiling   not declared — dispatcher default applies                               
                                                                                                 
+ KEY FILES                                                                                      
+  admin.toml                                                                                    
+  .gitignore                                                                              absent
+  .claude/settings.json                                                                   absent
+  .claude/settings.local.json                                                             absent
+  CLAUDE.md                                                                               absent
+  CLAUDE.local.md                                                                         absent
+  AGENTS.md                                                                               absent
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
 ────────────────────────────────────────────────────────────────────────────────────────────────
- q quit · ←→ tab                                                                                
+ ←→ tab · 1-4 jump · ↓ body · q quit                                                            

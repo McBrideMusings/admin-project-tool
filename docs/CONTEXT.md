@@ -141,9 +141,15 @@ _Avoid_: jobs, processes (a worker is neither)
 One live-work record. Addressed by exactly one of a pane or a hosted pseudo-terminal, never both. Its identity survives a **Retry**, which opens a new pane under the same entry.
 _Avoid_: row (that is the Work tab's rendering of an Entry, not the Entry)
 
-**Worker**:
-An agent running in its own git worktree on its own branch — the half of live work that is an agent rather than a process. An Entry is a Worker only when it carries worker info; a dev server never is.
+**Worker** (type):
+An agent running in its own git worktree on its own branch — the half of live work that is an agent rather than a process. An Entry is a Worker only when it carries worker info (`Entry.Worker != nil`); a dev server never is. Unchanged by the Work-tab palette redesign (spike/work-tab-redesign) — `Stuck` and every other Worker-only concept still means agent, specifically.
 _Avoid_: agent (herdr's word for the thing inside the pane), job
+
+**Workers** (section):
+The Work tab's list of everything currently live — every Entry, hosted command or genuine Worker alike, one section, one cursor. Distinct from the type above on purpose: a hosted command (`docs`, `test`) sits in this section too, told apart from a real Worker only by its row's own badge (`hosted` cyan vs. a pane id in magenta), never by which list it's in. "Call all of them workers" (pierce, spike/work-tab-redesign) — the display noun is deliberately broader than the type.
+
+**MRU strip**:
+The Work tab palette's 5 most-recently-run fully-resolved commands (`deploy grafana`, `dev cf` — never a bare parent like `deploy`), most-recent-first, no frequency weighting. Backed by a small per-repo JSON file at `os.UserCacheDir()/work-usage/<safe-nwo>.json`, matching `internal/data/data.go`'s existing cache-path convention. Empty or partial on a fresh project — never seeded with a guess.
 
 **Stuck**:
 A Worker that has been in the waiting state — the agent settled on a question or an approval prompt — longer than a threshold. Deliberately narrower than "not making progress": a worker spinning silently is not Stuck under this definition, and is a recorded open question.

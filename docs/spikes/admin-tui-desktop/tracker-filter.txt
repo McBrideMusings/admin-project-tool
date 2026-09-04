@@ -1,30 +1,30 @@
- admin-project-tool   feat/one-tool-go-merge  ✔ clean                                      live 
+ beads-repo   main  ✔ clean                     w=96 h=25 w/2.3=42→right (hover off, so unused) 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
- Ready                                                                                        81
+   tracker = "beads" is declared, but no beads workspace was found here                         
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
 ────────────────────────────────────────────────────────────────────────────────────────────────
-▸ 3rgp.60  P1  task     Live-work registry addresses a pty as well as a…  3  afk              1h
-  3rgp.59  P1  task     Hosted dispatch entry point that cannot open a …  3  afk              1h
-  7nh3     P1  bug      Two dolt sql-servers for one beads workspace de…  1                   2h
-  3rgp.54  P1  task     Port the six action kinds the Go binary is miss…  1                   2h
-  y5o6     P1  task     Detectors are ported but unreachable: nothing i…                      3h
-  a5km     P1  task     Port the log reader: there is no admin logs ver…                      3h
-  3rgp     P1  epic     One tool: merge repo-dash into admin as a singl…                     14h
-  fy95     P2  bug      admin check does not reserve every cmd/ verb — …                      1h
-  3rgp.58  P2  task     Terminal ladder for workspace dispatch               afk              1h
-  3rgp.57  P2  feature  Multi-target picker runs as a stdin prompt outs…                      2h
-  3rgp.55  P2  task     Register the `new` verb in the Go binary          1                   2h
-  26ge     P2  task     Userscript provisioning has no Go port — the lo…                      3h
-  auqf     P2  bug      test_sign.py designated-requirement test fails …                      3h
-  eptp     P2  feature  Move _log_bridge_allocate_port into ports.py as…     enhancement      3h
-  7us9     P2  task     Wire VitePress docs preview into the admin runn…                      3h
-  98v9     P2  task     Ghost 'admin-tool' skill entry in Claude Code s…                      3h
-  hocp     P2  task     Code review subagents can't access other repos                        3h
-  bsx6     P2  task     Migrate apple-coding-tool to dispatch_target                          3h
-  d2s0     P2  task     Spike: parallel worktrees each rebuild the whol…                      3h
-  n2ci     P2  task     Migrate downstream Apple projects to apple.dev_…                      3h
-  m2y1     P2  task     Audit downstream projects for commands-as-routi…                      3h
-  dc8y     P2  task     Generalize the restart-hotkey dev loop beyond t…     variance         3h
-  ↓ 67 more                                                                                     
-────────────────────────────────────────────────────────────────────────────────────────────────
- /▌   86 matches   esc clear  ·  enter apply                                                    
+ /▌   0 matches   esc clear  ·  enter apply                                                     
