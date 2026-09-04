@@ -262,11 +262,11 @@ func TestHostedPTYLogFileMatchesAPlainCLIRun(t *testing.T) {
 //
 // MUTATION EVIDENCE (run and reverted, see the commit this test landed in):
 //
-//   - Removing the `urls` key from hostedParityManifest's action (so
-//     frame.ShouldActivate sees zero resolved URLs and no footer key) fails
-//     every assertion below while TestStartHostedPTYRegistersALiveEntry and
-//     its siblings stay green — the entry still runs, it just carries no
-//     footer.
+//   - Setting `footer = false` on hostedParityManifest's action (so
+//     frame.ShouldActivate sees an explicit false regardless of the
+//     resolved urls) fails every assertion below while
+//     TestStartHostedPTYRegistersALiveEntry and its siblings stay green —
+//     the entry still runs, it just carries no footer.
 //   - Making internal/kinds/frame.go's enterFrame return nil
 //     unconditionally produces the same failure.
 func TestHostedPTYFooterIsWrittenIntoThePTY(t *testing.T) {

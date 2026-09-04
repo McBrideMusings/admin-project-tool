@@ -142,9 +142,9 @@ func TestFooterTrueWithNoURLsStillHasHeightTwo(t *testing.T) {
 
 // -- ShouldActivate -------------------------------------------------------
 
-func TestShouldActivateNoURLsAndNoFooterKeyMeansNoFrame(t *testing.T) {
-	if ShouldActivate(0, false, false) {
-		t.Fatal("expected false")
+func TestShouldActivateNoURLsAndNoFooterKeyStillRaisesAFrame(t *testing.T) {
+	if !ShouldActivate(0, false, false) {
+		t.Fatal("expected true — footer defaults on")
 	}
 }
 
