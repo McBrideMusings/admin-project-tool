@@ -117,8 +117,21 @@ type Config struct {
 	WorkingDir    string
 }
 
-// ReadConfig validates and normalises the `[launchd]` table.
+// ReadConfig validates and normalises the `[launchd]` table for a local
+// install — `args_cmd`, if set, runs on this machine.
 func ReadConfig(raw map[string]any, r Reporter) (Config, error) {
+	return readConfig(raw, "", r)
+}
+
+// ReadConfigForHost is ReadConfig for a remote install: `args_cmd` runs over
+// SSH on host instead of on this machine, since a command like `tailscale ip
+// -4` answers for whichever machine runs it — evaluating it locally silently
+// bakes the DEPLOYING machine's address into the REMOTE service's bind flags.
+func ReadConfigForHost(raw map[string]any, host string, r Reporter) (Config, error) {
+	return readConfig(raw, host, r)
+}
+
+func readConfig(raw map[string]any, host string, r Reporter) (Config, error) {
 	var unknown []string
 	for k := range raw {
 		known := false
@@ -206,7 +219,13 @@ func ReadConfig(raw map[string]any, r Reporter) (Config, error) {
 	// service that falls back to a narrower bind address is right, and one
 	// that refuses to deploy because the VPN is down is not.
 	if cmdStr := rv.s(str(raw, "args_cmd")); cmdStr != "" {
-		out, err := exec.Command("/bin/sh", "-c", cmdStr).Output()
+		var cmd *exec.Cmd
+		if host != "" {
+			cmd = exec.Command("ssh", host, cmdStr)
+		} else {
+			cmd = exec.Command("/bin/sh", "-c", cmdStr)
+		}
+		out, err := cmd.Output()
 		if err != nil {
 			r.Warn(fmt.Sprintf("[launchd]: args_cmd failed, no extra args added: %v", err))
 		} else if extra := strings.Fields(string(out)); len(extra) > 0 {

@@ -39,7 +39,7 @@ func DeployRemote(raw map[string]any, host, distDir, binary string, r Reporter) 
 	if remotehost.IsLocalHost(host) {
 		return fmt.Errorf("host %s resolves to this machine — use `admin service install` instead", host)
 	}
-	c, err := ReadConfig(raw, r)
+	c, err := ReadConfigForHost(raw, host, r)
 	if err != nil {
 		return err
 	}
