@@ -52,7 +52,7 @@ func TestConcurrentStateReadsDoNotRace(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < iterations; i++ {
 			hostedRunningEntries()
-			workerDetail(e, 40)
+			workerDetail(e, 40, 20)
 			m.quitConfirmContent()
 		}
 	}()

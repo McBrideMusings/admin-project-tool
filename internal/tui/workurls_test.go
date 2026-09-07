@@ -54,7 +54,7 @@ func TestCommandDetailShowsLiveLogElapsedAndURLs(t *testing.T) {
 	}
 	row := mm.commandRowItem(workCmdRow{name: "dev", cmd: m.Custom["dev"]}, map[string]*livework.Entry{"dev": live})
 
-	out := strings.Join(commandDetail(row.work, 60), "\n")
+	out := strings.Join(commandDetail(row.work, 60, 20), "\n")
 	if !strings.Contains(out, "/live/dev.log") {
 		t.Errorf("detail pane missing live log path:\n%s", out)
 	}
@@ -84,7 +84,7 @@ func TestCommandDetailIdleShowsNoElapsedOrIndicator(t *testing.T) {
 	if row.work.live != nil {
 		t.Fatalf("expected no live entry for an idle command")
 	}
-	out := strings.Join(commandDetail(row.work, 60), "\n")
+	out := strings.Join(commandDetail(row.work, 60, 20), "\n")
 	if strings.Contains(out, "elapsed") {
 		t.Errorf("idle command's detail pane shows an elapsed row:\n%s", out)
 	}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
+	"github.com/McBrideMusings/admin-project-tool/internal/logformat"
 )
 
 // renderWorkBody lays out the Work tab: the row list at roughly two thirds
@@ -73,7 +74,7 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		hitLines[last] = hitTarget{kind: hitNone}
 	}
 
-	right := m.renderWorkDetail(rows[cursor], rw)
+	right := m.renderWorkDetail(rows[cursor], rw, height)
 
 	out := make([]string, height)
 	outHits := make([]hitTarget, height)
@@ -225,18 +226,18 @@ func renderTargetRow(wd *workRowData, focused bool, nameW, rest int) string {
 // state/current-activity/branch/worktree/elapsed/actions. They share almost
 // no fields, so this dispatches on the row's own kind rather than trying to
 // print one field set for both.
-func (m Model) renderWorkDetail(r rowItem, w int) []string {
+func (m Model) renderWorkDetail(r rowItem, w, h int) []string {
 	wd := r.work
 	if wd == nil {
 		return nil
 	}
 	if r.kind == rowWorker {
-		return workerDetail(wd.worker, w)
+		return workerDetail(wd.worker, w, h)
 	}
-	return commandDetail(wd, w)
+	return commandDetail(wd, w, h)
 }
 
-func workerDetail(e *livework.Entry, w int) []string {
+func workerDetail(e *livework.Entry, w, h int) []string {
 	locale := "outlives the dashboard"
 	if e.Via == "" {
 		locale = "dies when the dashboard quits"
@@ -269,10 +270,10 @@ func workerDetail(e *livework.Entry, w int) []string {
 	// every kind of work can survive. Kill it and start the work again.
 	actions := []string{"a attach", "k kill"}
 	out = append(out, faintStyle.Render(strings.Join(actions, "   ")))
-	return out
+	return appendLiveTail(out, e, w, h)
 }
 
-func commandDetail(wd *workRowData, w int) []string {
+func commandDetail(wd *workRowData, w, h int) []string {
 	title := wd.cmdName
 	if wd.targetKey != "" {
 		title += " " + wd.targetKey
@@ -315,7 +316,7 @@ func commandDetail(wd *workRowData, w int) []string {
 	if wd.workflow != nil {
 		out = append(out, faintStyle.Render("targets  query"))
 		out = append(out, "  "+faintStyle.Render(truncR(wd.workflow.Query, maxi(w-2, 4))))
-		return out
+		return appendLiveTail(out, wd.live, w, h)
 	}
 
 	out = append(out, faintStyle.Render("steps"))
@@ -324,7 +325,56 @@ func commandDetail(wd *workRowData, w int) []string {
 		out = append(out, "    "+truncR(s.name, maxi(w-4, 4)))
 		out = append(out, "    "+faintStyle.Render("from ")+lipgloss.NewStyle().Foreground(cMag).Render(s.archetype))
 	}
-	return out
+	return appendLiveTail(out, wd.live, w, h)
+}
+
+// appendLiveTail is the shared second half of both detail panes
+// (admin-3rgp.65 follow-up): when e is a live hosted entry with a non-nil
+// Output ring, it keeps the field block exactly as built above and fills
+// every remaining row of the column with the ring's tail, bottom-aligned so
+// a short tail leaves its gap above rather than below — the way terminal
+// output accumulates. A nil entry (idle row) or a nil ring (dispatched
+// through a [terminal] launcher rather than hosted in-process, so nothing
+// is being drained into a Ring at all) leaves out untouched: no header, no
+// empty box, no placeholder.
+func appendLiveTail(out []string, e *livework.Entry, w, h int) []string {
+	if e == nil || e.Output == nil {
+		return out
+	}
+	// Reserve one row for the section header itself; only bother if at
+	// least one row of actual tail content would also fit.
+	avail := h - len(out) - 1
+	if avail < 1 {
+		return out
+	}
+	lines := ringTailLines(e.Output, w)
+	if len(lines) > avail {
+		lines = lines[len(lines)-avail:]
+	}
+	out = append(out, faintStyle.Render("output"))
+	for i := 0; i < avail-len(lines); i++ {
+		out = append(out, "")
+	}
+	return append(out, lines...)
+}
+
+// ringTailLines reads a live entry's whole Ring, strips ANSI escapes (this
+// is a raw peek at the process's own output — internal/logformat already
+// owns re-timestamping and re-colorizing for every other surface, and this
+// pane does neither), splits on lines, and truncates each to w display
+// cells. A trailing blank line left by the child's own final newline is
+// dropped so it doesn't masquerade as a real blank row of output.
+func ringTailLines(r *livework.Ring, w int) []string {
+	raw := logformat.AnsiEscapeRe.ReplaceAllString(string(r.Bytes()), "")
+	raw = strings.TrimRight(raw, "\n")
+	if raw == "" {
+		return nil
+	}
+	lines := strings.Split(raw, "\n")
+	for i, l := range lines {
+		lines[i] = truncR(l, maxi(w, 1))
+	}
+	return lines
 }
 
 // urlRow renders one configured url as "<dot> label  url", truncated to fit

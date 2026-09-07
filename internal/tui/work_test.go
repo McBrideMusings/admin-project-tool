@@ -763,7 +763,7 @@ func TestWorkerDetailOmitsNowLabelWhenActivityEmpty(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	out := workerDetail(e, 60)
+	out := workerDetail(e, 60, 20)
 	for _, line := range out {
 		if strings.Contains(line, "now") {
 			t.Errorf("workerDetail rendered a %q line with empty Activity, want the now label suppressed entirely: %v", line, out)
