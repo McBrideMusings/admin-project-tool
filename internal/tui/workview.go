@@ -16,10 +16,16 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/logformat"
 )
 
-// renderWorkBody lays out the Work tab: the row list at roughly two thirds
-// of the width, a "│" divider, and the cursor row's detail pane filling the
-// rest — the ticket's "a detail pane on the right third whose shape follows
-// the row's kind."
+// renderWorkBody lays out the Work tab. On a wide-enough terminal it's the
+// row list at roughly two thirds of the width, a "│" divider, and the cursor
+// row's detail pane filling the rest — the ticket's "a detail pane on the
+// right third whose shape follows the row's kind." On a tall, narrow one
+// (bottomOrient) it stacks instead: the row list on top (capped to at most
+// half the body height, scrolling within that half), a full-width rule, and
+// the detail pane filling every remaining row — ported from the design
+// prototype's workBody/renderPaletteScreen (docs/spikes/admin-tui-desktop/
+// variants.go), which solved the "detail pane truncated to ~30 columns while
+// most of a tall screen sits empty" problem this mirrors exactly.
 func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 	rows := m.visibleRows()
 	cursor := m.cursor[m.active]
@@ -29,16 +35,27 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 			padHits([]hitTarget{{kind: hitNone}}, height)
 	}
 
-	lw := width * 2 / 3
-	if lw > width-14 {
-		lw = width - 14
-	}
-	if lw < 20 {
-		lw = width
-	}
-	rw := width - lw - 2
-	if rw < 0 {
-		rw = 0
+	// bottomOrient: the exact geometry test the prototype settled on (that
+	// file's own comment has the reasoning for the 2.3 constant) — kept
+	// identical here so the two never disagree.
+	bottomOrient := float64(width)/2.3 < float64(height)
+
+	var lw, rw int
+	if bottomOrient {
+		lw = maxi(width-2, 20)
+		rw = lw
+	} else {
+		lw = width * 2 / 3
+		if lw > width-14 {
+			lw = width - 14
+		}
+		if lw < 20 {
+			lw = width
+		}
+		rw = width - lw - 2
+		if rw < 0 {
+			rw = 0
+		}
 	}
 
 	left := make([]string, len(rows))
@@ -59,6 +76,10 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 			left[i] = m.renderWorkRow(r, i == cursor, lw)
 			hits[i] = hitTarget{kind: hitRow, row: i}
 		}
+	}
+
+	if bottomOrient {
+		return m.renderWorkBodyStacked(rows, left, hits, cursor, width, height, lw)
 	}
 
 	start, end := window(len(left), cursor, height)
@@ -92,6 +113,80 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		outHits[i] = hit
 	}
 	return out, outHits
+}
+
+// renderWorkBodyStacked is bottomOrient's layout: the row list on top
+// (never more than half the body height — it scrolls inside its half once
+// its content would need more), a full-width rule directly beneath the
+// list's own content with no padding above it, then the detail pane filling
+// every remaining row, uncapped. Mirrors workBody's own bottomOrient branch
+// in the prototype byte for byte in geometry: detailH is computed first as
+// "whatever's left after the full, unclipped list plus one rule row," then
+// bumped up to at least half the body height — which is what caps the list
+// to at most the other half, rather than a separate clamp on listH itself.
+func (m Model) renderWorkBodyStacked(rows []rowItem, left []string, hits []hitTarget, cursor, width, height, lw int) ([]string, []hitTarget) {
+	detailH := height - len(left) - 1
+	if detailH < height/2 {
+		detailH = height / 2
+	}
+	if detailH < 0 {
+		detailH = 0
+	}
+	listH := height - detailH - 1
+	if listH < 0 {
+		listH = 0
+	}
+
+	// The preview band alone gets a reasonable cap so it doesn't read as
+	// more important than it is on a very wide-but-short terminal; the list
+	// above it still uses the full lw.
+	previewW := lw
+	if previewW > 100 {
+		previewW = 100
+	}
+
+	listLines := left
+	hitLines := hits
+	if len(left) > listH {
+		start, end := window(len(left), cursor, listH)
+		listLines = append([]string{}, left[start:end]...)
+		hitLines = append([]hitTarget{}, hits[start:end]...)
+		if start > 0 && len(listLines) > 0 {
+			listLines[0] = faintStyle.Render("  ↑ " + strconv.Itoa(start) + " more")
+			hitLines[0] = hitTarget{kind: hitNone}
+		}
+		if end < len(left) && len(listLines) > 0 {
+			last := len(listLines) - 1
+			listLines[last] = faintStyle.Render("  ↓ more")
+			hitLines[last] = hitTarget{kind: hitNone}
+		}
+	}
+
+	detail := m.renderWorkDetail(rows[cursor], previewW, maxi(detailH, 1))
+
+	out := make([]string, 0, height)
+	outHits := make([]hitTarget, 0, height)
+	for i := 0; i < listH; i++ {
+		l, hit := "", hitTarget{kind: hitNone}
+		if i < len(listLines) {
+			l, hit = listLines[i], hitLines[i]
+		}
+		out = append(out, " "+padEnd(l, lw))
+		outHits = append(outHits, hit)
+	}
+	if detailH > 0 {
+		out = append(out, faintStyle.Render(strings.Repeat("─", width)))
+		outHits = append(outHits, hitTarget{kind: hitNone})
+		for i := 0; i < detailH; i++ {
+			d := ""
+			if i < len(detail) {
+				d = detail[i]
+			}
+			out = append(out, " "+padEnd(d, previewW))
+			outHits = append(outHits, hitTarget{kind: hitNone})
+		}
+	}
+	return pad(out, height), padHits(outHits, height)
 }
 
 // renderWorkRow renders one command or worker row: a cursor marker, the
@@ -364,15 +459,30 @@ func appendLiveTail(out []string, e *livework.Entry, w, h int) []string {
 // pane does neither), splits on lines, and truncates each to w display
 // cells. A trailing blank line left by the child's own final newline is
 // dropped so it doesn't masquerade as a real blank row of output.
+//
+// The Ring holds raw bytes straight off the hosted pty's master fd
+// (internal/kinds/hostedpty.go's io.Copy), and a pty in the ordinary cooked
+// mode every plain CLI process runs in (nothing here sets the slave to raw
+// mode) applies ONLCR: every outgoing "\n" the child writes arrives here as
+// "\r\n". Splitting on "\n" alone left that "\r" stuck to the end of every
+// line, and bubbletea's own line-diffing renderer turns that into a visibly
+// blank row: it truncates/pads each rendered line, and pads short lines with
+// an erase-to-end-of-line escape appended AFTER the text — but a trailing
+// "\r" moves the real terminal's cursor back to column 0 first, so that
+// erase wipes out the very content this line just painted, one full row
+// after every real line of tail output. Normalizing CRLF to LF before
+// splitting (rather than only trimming the buffer's own trailing newline)
+// is what keeps that "\r" off the end of every line, not just the last one.
 func ringTailLines(r *livework.Ring, w int) []string {
 	raw := logformat.AnsiEscapeRe.ReplaceAllString(string(r.Bytes()), "")
+	raw = strings.ReplaceAll(raw, "\r\n", "\n")
 	raw = strings.TrimRight(raw, "\n")
 	if raw == "" {
 		return nil
 	}
 	lines := strings.Split(raw, "\n")
 	for i, l := range lines {
-		lines[i] = truncR(l, maxi(w, 1))
+		lines[i] = truncR(strings.TrimRight(l, "\r"), maxi(w, 1))
 	}
 	return lines
 }

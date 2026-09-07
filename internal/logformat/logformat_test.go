@@ -364,6 +364,48 @@ func TestScopeColorsSuppressedByOption(t *testing.T) {
 	}
 }
 
+// -- AnsiEscapeRe: OSC/DCS, not just CSI --------------------------------------
+
+// TestAnsiEscapeReStripsOSCQueryResponse is admin-work-tab-orientation's
+// defect 2: a hosted pty's own terminal-query RESPONSE (an OSC sequence, e.g.
+// a background-color query answered as ESC ] 11 ; ? BEL) has a plain,
+// printable body with no further escape bytes in it, so a stripper that only
+// consumed the opening "ESC ]" left that body — "11;?" — as literal text
+// glued onto whatever real output followed it. Both terminator forms (BEL and
+// the ESC \ "ST" form) must be consumed along with the body.
+func TestAnsiEscapeReStripsOSCQueryResponse(t *testing.T) {
+	cases := []struct {
+		name, in, want string
+	}{
+		{"BEL-terminated", "\x1b]11;?\a→ wrote: /Users/x", "→ wrote: /Users/x"},
+		{"ST-terminated", "before\x1b]0;title\x1b\\after", "beforeafter"},
+	}
+	for _, c := range cases {
+		if got := AnsiEscapeRe.ReplaceAllString(c.in, ""); got != c.want {
+			t.Errorf("%s: AnsiEscapeRe.ReplaceAllString(%q) = %q, want %q", c.name, c.in, got, c.want)
+		}
+	}
+}
+
+// TestAnsiEscapeReStripsDCS proves DCS/SOS/PM/APC (ESC P/X/^/_, the same
+// "runs to its own terminator" shape as OSC) get the same treatment.
+func TestAnsiEscapeReStripsDCS(t *testing.T) {
+	in := "dcs\x1bP1$q\x1b\\end"
+	if got := AnsiEscapeRe.ReplaceAllString(in, ""); got != "dcsend" {
+		t.Errorf("AnsiEscapeRe.ReplaceAllString(%q) = %q, want %q", in, got, "dcsend")
+	}
+}
+
+// TestAnsiEscapeReStillStripsCSI is the regression guard for every existing
+// caller (StampLine, luahost.LogContext.Write/ParseLogAnnounce): plain SGR
+// color codes must strip exactly as before.
+func TestAnsiEscapeReStillStripsCSI(t *testing.T) {
+	in := "\x1b[31mred\x1b[0m"
+	if got := AnsiEscapeRe.ReplaceAllString(in, ""); got != "red" {
+		t.Errorf("AnsiEscapeRe.ReplaceAllString(%q) = %q, want %q", in, got, "red")
+	}
+}
+
 func TestScopeColorsAppliedWhenEnabled(t *testing.T) {
 	f := NewLogFormatter(Options{UseColor: true, ScopeColors: true})
 	out := f.FormatLine("[api] hello\n")

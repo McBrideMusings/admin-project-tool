@@ -58,7 +58,21 @@ func StripLogTimestamp(line string) (string, string) {
 // keeping its own byte-for-byte copy. Used here only to see through color
 // codes when StampLine checks whether a chunk already opens with its own
 // timestamp; the returned/stamped text itself keeps its original escapes.
-var AnsiEscapeRe = regexp.MustCompile("\x1b(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])")
+//
+// Four alternatives, tried in this order: an OSC (ESC ]) runs to its own
+// terminator (BEL or ESC \\, the "ST" form) rather than being cut short after
+// the opening two bytes — a hosted pty's own terminal-query responses (e.g.
+// ESC ] 11 ; ? BEL, a background-color query) are OSC sequences whose BODY
+// ("11;?") is plain, printable ASCII with no further escape bytes in it, so
+// a stripper that only ate the opening "ESC ]" left that body as literal
+// text in the rendered tail (admin-work-tab-orientation: a live pane
+// showing "11;?→ wrote: /Users/…" — the surviving OSC body glued onto the
+// next real line). DCS/SOS/PM/APC (ESC P/X/^/_) are the same shape — content
+// up to ST — and get the same treatment. The last two alternatives are the
+// pre-existing behavior: CSI (ESC [ params intermediates final) and every
+// other single-character Fe escape, unchanged so every existing caller's
+// non-OSC/DCS input strips exactly as before.
+var AnsiEscapeRe = regexp.MustCompile(`\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)?|[PX^_][^\x1b]*(?:\x1b\\)?|[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])`)
 
 // StampLine prefixes an arbitrary chunk of subprocess output with an
 // absolute wall-clock timestamp (HH:MM:SS.mmm) — the Go port of
