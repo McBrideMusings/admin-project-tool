@@ -201,6 +201,46 @@ func TestFixtureTabSetsAreWhatTheDigitKeysAssume(t *testing.T) {
 	}
 }
 
+// TestPaletteDispatchRendersATail pins the fixture-shape fix for
+// admin-3rgp.19's hover axis: a palette-dispatched row must be the same
+// shape as the hosted docs/test fixtures (hasRing: true, a real tail), not
+// the bare state/id/doing/hosted/lastCmd row it used to append. Without
+// this, landing on the freshly-dispatched row and switching Hover to
+// auto-tail rendered the plain now/last field list instead of the tail —
+// dead on the one row a person just dispatched is most likely to be
+// looking at.
+func TestPaletteDispatchRendersATail(t *testing.T) {
+	resetLiveRows()
+	defer resetLiveRows()
+
+	e := paletteEntry{parent: "dev", target: "cf", run: "bun run dev:cf"}
+	dispatchPalette(e)
+
+	var got *liveRow
+	for i := range liveRows {
+		if liveRows[i].cmd == "" && liveRows[i].id == e.resolved() {
+			got = &liveRows[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("dispatchPalette did not append a Workers row for %q", e.resolved())
+	}
+	if !got.hasRing {
+		t.Fatalf("dispatched row %q has hasRing=false — auto-tail/split-pane/inline-peek all gate on it and stay dead", got.id)
+	}
+	if len(got.tail) == 0 {
+		t.Fatalf("dispatched row %q has hasRing=true but an empty tail", got.id)
+	}
+
+	out := Strip(strings.Join(paletteWorkerDetail(got, 60, 12, "auto-tail"), "\n"))
+	if strings.Contains(out, "now") {
+		t.Errorf("auto-tail on the dispatched row still rendered the now/last field list:\n%s", out)
+	}
+	if !strings.Contains(out, got.tail[0]) {
+		t.Errorf("auto-tail on the dispatched row did not render its tail content:\n%s", out)
+	}
+}
+
 // tabBarLine returns line index 1 of a rendered frame — Model.frameRaw always
 // lays out header, tab bar, blank separator in that fixed order.
 func tabBarLine(out string) string {

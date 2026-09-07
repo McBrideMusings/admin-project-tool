@@ -1476,6 +1476,18 @@ func dispatchPalette(e paletteEntry) {
 	}
 	liveRows = append(liveRows, liveRow{
 		state: "running", id: r, doing: "starting…", hosted: true, lastCmd: e.run,
+		// hasRing + tail: a palette dispatch is a hosted command exactly like
+		// docs/test above (comment at dispatchPalette's own call site says
+		// so), so it gets the same shape — a real Ring, not a field-list-only
+		// row. A process that just started legitimately has only a line or
+		// two of output; tailLines already pads short tails to a fixed
+		// height (checked, not assumed — see tailLines above), so this
+		// doesn't jitter once real output starts arriving.
+		hasRing: true, tail: []string{
+			"$ " + e.run,
+			"",
+			"14:22:58 starting…",
+		},
 	})
 }
 
