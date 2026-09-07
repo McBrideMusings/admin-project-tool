@@ -241,6 +241,33 @@ func TestPaletteDispatchRendersATail(t *testing.T) {
 	}
 }
 
+// TestBottomOrientDetailReachesFloor pins the fix for the dead band under
+// workBody's stacked (bottomOrient) layout: on a tall/narrow terminal
+// (w=117 h=59, a real terminal pierce hit this on) the list is short enough
+// that the detail band used to be handed ~43 rows and then clamped to
+// previewMaxH=16, leaving roughly 29 blank rows at the bottom of the
+// screen. The fix hands the detail band every row below the rule, so its
+// last line should be real content (here, the worker detail's own
+// "a attach   k kill" footer) rather than the blank padding the old code
+// fell back to.
+func TestBottomOrientDetailReachesFloor(t *testing.T) {
+	out := Strip(render(State{Values: map[string]string{"screen": "swarm", "hover": "auto-tail"}, W: 117, H: 59}))
+	lines := strings.Split(out, "\n")
+	if len(lines) != 59 {
+		t.Fatalf("got %d lines, want 59", len(lines))
+	}
+	// lines[len-1] is render()'s own keys footer and lines[len-2] its rule
+	// (added after workBody returns) — the line before that is workBody's
+	// own last output row.
+	last := lines[len(lines)-3]
+	if strings.TrimSpace(last) == "" {
+		t.Errorf("bottom row of the body is blank — detail band did not reach the floor:\n%s", strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(last, "attach") {
+		t.Errorf("bottom row of the body = %q, want the worker detail's attach/kill footer", last)
+	}
+}
+
 // tabBarLine returns line index 1 of a rendered frame — Model.frameRaw always
 // lays out header, tab bar, blank separator in that fixed order.
 func tabBarLine(out string) string {

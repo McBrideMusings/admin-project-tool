@@ -801,31 +801,22 @@ func workBody(sp screenSpec, w, h int, empty bool, hover string) []string {
 		// This is a PREVIEW, not an attach — attaching for real is the
 		// existing full-screen "hosted" view (hostedBody, reached with `a`),
 		// which already owns the whole frame and its own detach/kill footer.
-		// A preview earns real space but not the whole screen, so it gets a
-		// capped band: never smaller than previewMinH (so it isn't a sliver
-		// even on a short terminal), never bigger than previewMaxH (so it
-		// isn't the whole screen on a tall one either) — a fixed max height
-		// like the attach view's own full-screen case gets NO cap because it
-		// isn't this code path at all.
-		const previewMinH, previewMaxH = 6, 16
-		const gapRows = 2 // breathing room between the list and the preview
-
-		listH := len(left)
-		if cap := maxInt(6, h*2/5); listH > cap {
-			listH = cap
-		}
-		if listH > h {
-			listH = h
-		}
-		detailH := h - listH - gapRows - 1
-		if detailH > previewMaxH {
-			detailH = previewMaxH
-		}
-		if detailH < previewMinH && h-listH-gapRows-1 >= previewMinH {
-			detailH = previewMinH
+		// The rule sits directly below the list with no padding above it,
+		// and the detail band gets every remaining row, uncapped — except
+		// that the list itself is never handed more than half the body: once
+		// it would need more than that, it's clipped (scrolled, cursor kept
+		// in view) to its half and the rule lands at the midpoint instead of
+		// wherever the list's real content happened to end.
+		detailH := h - len(left) - 1
+		if detailH < h/2 {
+			detailH = h / 2
 		}
 		if detailH < 0 {
 			detailH = 0
+		}
+		listH := h - detailH - 1
+		if listH < 0 {
+			listH = 0
 		}
 		// Reasonable width for the preview band alone — the list above it
 		// still uses the full lw, but a preview that also went edge to edge
@@ -856,9 +847,6 @@ func workBody(sp screenSpec, w, h int, empty bool, hover string) []string {
 		out := make([]string, 0, h)
 		for i := 0; i < listH; i++ {
 			out = append(out, " "+Pad(at(listLines, i), lw))
-		}
-		for i := 0; i < gapRows && len(out) < h; i++ {
-			out = append(out, "")
 		}
 		if detailH > 0 {
 			out = append(out, dim.Render(strings.Repeat("─", w)))
@@ -1888,21 +1876,40 @@ func renderPaletteScreen(w, h int, boxTitle string, boxBody []string, selEntry *
 			detail = paletteEntryDetail(*selEntry, fullW)
 		}
 
-		const previewMinH, previewMaxH = 6, 14
+		// The rule sits directly below the list with no padding above it,
+		// and the detail band gets every remaining row, uncapped — except
+		// that the list itself is never handed more than half the body:
+		// past that it's clipped (scrolled, cursor kept in view, same as
+		// workBody's own stacked layout) to its half and the rule lands at
+		// the midpoint instead of wherever the list's content ended.
 		detailH := h - len(left) - 1
-		if detailH > previewMaxH {
-			detailH = previewMaxH
-		}
-		if detailH < previewMinH && h-len(left)-1 >= previewMinH {
-			detailH = previewMinH
+		if detailH < h/2 {
+			detailH = h / 2
 		}
 		if detailH < 0 {
 			detailH = 0
 		}
+		listH := h - detailH - 1
+		if listH < 0 {
+			listH = 0
+		}
+
+		listLines := left
+		if len(left) > listH {
+			cursorLeftIdx := markedIdx(left)
+			start, end := scrollWindow(len(left), cursorLeftIdx, listH)
+			listLines = append([]string{}, left[start:end]...)
+			if start > 0 && len(listLines) > 0 {
+				listLines[0] = dim.Render("  ↑ " + itoa(start) + " more")
+			}
+			if end < len(left) && len(listLines) > 0 {
+				listLines[len(listLines)-1] = dim.Render("  ↓ more")
+			}
+		}
 
 		out := make([]string, 0, h)
-		for _, l := range left {
-			out = append(out, " "+Pad(l, fullW))
+		for i := 0; i < listH; i++ {
+			out = append(out, " "+Pad(at(listLines, i), fullW))
 		}
 		if detailH > 0 {
 			out = append(out, dim.Render(strings.Repeat("─", w)))
@@ -2285,6 +2292,21 @@ func trunc(s string, n int) string {
 // "keep the cursor roughly centered" rule every other tab already scrolls
 // by, reimplemented here rather than imported since this package can't
 // reach that unexported helper.
+// markedIdx returns the index of the line in ls carrying the cursor glyph
+// mark() draws on the selected row, or 0 if nothing is marked. workBody
+// tracks that index itself (cursorLeftIdx) as it builds `left`; here the
+// left column is assembled by paletteBoxFit and renderWorkersColumn, which
+// already mark the selected row, so this just finds it rather than
+// threading a second index through both.
+func markedIdx(ls []string) int {
+	for i, l := range ls {
+		if strings.Contains(l, "◆") {
+			return i
+		}
+	}
+	return 0
+}
+
 func scrollWindow(total, cursor, height int) (int, int) {
 	if total <= height {
 		return 0, total
