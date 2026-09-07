@@ -149,3 +149,60 @@ func TestCommandDetailNoTailWhenIdle(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkerDetailActionsRowSeparatedFromOutput is the actions-row-collision
+// defect: with a live ring, the "a attach   k kill" actions row must be
+// followed by a blank line before the "output" header, the same separator
+// the pane already puts between its own blocks (log/elapsed/steps) — not
+// butted directly against it. Total line count must still equal h.
+func TestWorkerDetailActionsRowSeparatedFromOutput(t *testing.T) {
+	freshLivework(t)
+	ring := livework.NewRing(4096)
+	ring.Write([]byte("line one\nline two\n"))
+	e := &livework.Entry{
+		ID: "test-actions-worker", Name: "test-actions-worker",
+		State: livework.StateRunning, StartedAt: time.Now(),
+		Output: ring,
+	}
+
+	const h = 20
+	out := workerDetail(e, 44, h)
+	if len(out) != h {
+		t.Fatalf("workerDetail with a live ring produced %d lines, want exactly %d", len(out), h)
+	}
+
+	actionsIdx := -1
+	for i, l := range out {
+		if strings.Contains(l, "attach") {
+			actionsIdx = i
+			break
+		}
+	}
+	if actionsIdx == -1 {
+		t.Fatalf("no actions row found:\n%s", strings.Join(out, "\n"))
+	}
+	if out[actionsIdx+1] != "" {
+		t.Errorf("row after actions row = %q, want a blank separator", out[actionsIdx+1])
+	}
+	if !strings.Contains(out[actionsIdx+2], "output") {
+		t.Errorf("row after the separator = %q, want the \"output\" header", out[actionsIdx+2])
+	}
+}
+
+// TestWorkerDetailActionsRowUnchangedWithoutRing is the negative case: with
+// no Output ring, the actions row and everything around it must render
+// byte-for-byte as it did before this fix — no separator inserted with
+// nothing to separate it from.
+func TestWorkerDetailActionsRowUnchangedWithoutRing(t *testing.T) {
+	freshLivework(t)
+	e := &livework.Entry{
+		ID: "test-actions-no-ring", Name: "test-actions-no-ring",
+		State: livework.StateRunning, StartedAt: time.Now(),
+		Via: "terminal", Handle: "pane-1",
+	}
+
+	out := workerDetail(e, 44, 20)
+	if out[len(out)-1] != faintStyle.Render("a attach   k kill") {
+		t.Fatalf("last row = %q, want the actions row unchanged with no ring", out[len(out)-1])
+	}
+}

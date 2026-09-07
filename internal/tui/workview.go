@@ -436,9 +436,12 @@ func appendLiveTail(out []string, e *livework.Entry, w, h int) []string {
 	if e == nil || e.Output == nil {
 		return out
 	}
-	// Reserve one row for the section header itself; only bother if at
+	// Reserve one row for the blank separator that closes the block built
+	// above (the same separator the pane already puts between its own
+	// blocks — see the blank lines between "log", "elapsed" and "steps"
+	// above) and one for the section header itself; only bother if at
 	// least one row of actual tail content would also fit.
-	avail := h - len(out) - 1
+	avail := h - len(out) - 2
 	if avail < 1 {
 		return out
 	}
@@ -446,7 +449,7 @@ func appendLiveTail(out []string, e *livework.Entry, w, h int) []string {
 	if len(lines) > avail {
 		lines = lines[len(lines)-avail:]
 	}
-	out = append(out, faintStyle.Render("output"))
+	out = append(out, "", faintStyle.Render("output"))
 	for i := 0; i < avail-len(lines); i++ {
 		out = append(out, "")
 	}
