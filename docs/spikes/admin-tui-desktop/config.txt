@@ -1,4 +1,4 @@
- beads-repo   main  ✔ clean                     w=96 h=25 w/2.3=42→right (hover off, so unused) 
+ beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
  MANIFEST                                                                             admin.toml
@@ -27,4 +27,4 @@
                                                                                                 
                                                                                                 
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ←→ tab · 1-4 jump · ↓ body · q quit                                                            
+ ↑↓ move · ↵ body · q quit · 1-4 jump · ↓ body · o config · ←→ tab                              

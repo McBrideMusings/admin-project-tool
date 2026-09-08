@@ -1,16 +1,16 @@
- beads-repo   main  ✔ clean                     w=96 h=25 w/2.3=42→right (hover off, so unused) 
+ beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
-  Commands                                                       │ build                        
- ◇ build           shell    Validate admin.toml                  │ shell  ·  (manifest)         
+  Commands                                                       │  build                       
+ ◇ build           shell    Validate admin.toml                  │                              
  ◇ test            shell    Run the test suite                   │                              
-                                                                 │ log                          
-  Workers                                                        │   none yet                   
+                                                                 │                              
+  Workers                                                        │                              
     no workers running — dispatch a command to start one         │                              
-                                                                 │ steps                        
-                                                                 │   1 shell                    
-                                                                 │     check                    
-                                                                 │     from (manifest)          
+                                                                 │                              
+                                                                 │                              
+                                                                 │                              
+                                                                 │                              
                                                                  │                              
                                                                  │                              
                                                                  │                              
@@ -27,4 +27,4 @@
                                                                  │                              
                                                                  │                              
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ←→ tab · 1-4 jump · ↓ body · q quit                                                            
+ ↑↓ move · ↵ body · a attach · k kill · / filter · q quit · 1-4 jump · o config · ←→ tab        

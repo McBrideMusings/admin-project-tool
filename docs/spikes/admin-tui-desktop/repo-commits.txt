@@ -1,30 +1,30 @@
- beads-repo   main  ✔ clean                     w=96 h=25 w/2.3=42→right (hover off, so unused) 
+ beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
-┌─ Branches ─────────────⇅ next action   ● yours 0   13 ┐ ┌─ Recent commits ────────────────40 ┐
-│◆ main                                              24m│ │ ba813b7   feat(tui): family-t…  12h│
-│                                                       │ │ 622aff3   feat(tui): add pare…  12h│
-│ Continue Working  ─────────────────────────────────  1│ │ 51c0c44   chore(beads): export  13h│
-│◇ spike/work-tab…                             held  12h│ │ 2511431   fix(tui): gate the …  13h│
-│                                                       │ │ f4cbdcf   chore(beads): export  13h│
-│ Reviewing  ── piercermcbride ──────────────────────  3│ │ d0477cd   fix(tui): re-arm Wo…  13h│
-│◇ task/adm… local only     1 unpushed · ac…   held   5h│ │ 38040f2   Merge pull request …  13h│
-│   ↳ commit feat(frame): …                             │ │ 1460faa   docs(adr-0019): mar…  13h│
-│◇ diagnose… local only     1 unpushed · ac…   held   9h│ │ 0e2b0a1   Merge pull request …  13h│
-│   ↳ commit fix(tui): ext…                             │ │ d41e36a   fix(cmd): drop dupl…  14h│
-│· feat/dev…                                   keep  33h│ │ 4d7c4b3   chore(beads): export  14h│
-│   ↳ commit feat(apple): …                             │ │ 100b049   chore(beads): export  14h│
-│                                                       │ │ fff28fa   fix(manifest): tole…  14h│
-│ Clean Up  ── ready ────────────────────────────────  8│ │ adb6238   chore(beads): export  14h│
-│◇ admin/ascapi-token-cache          merged           7h│ │ 14ebea9   fix(install): refus…  14h│
-│◇ feat/admin-j5ep-timing            merged          24h│ │ 25caf48   chore(beads): export  14h│
-│? fix/admin-m6m8-cli-detach         merged          24h│ │ e79b542   feat(tui): detect a…  14h│
-│? fix-shell-cwd                     merged          31h│ │ d9b31ec   fix(kinds): delete …  14h│
-│◇ admin-fy79-dashboard-beads-poll-…                  3d│ │ 244a6c7   fix(apple): use a c…  22h│
-│? tui-sort-priority                 merged           3d│ │ 9d784b7   fix(apple): export …  22h│
-│? n5vg-submenu-collapse             merged           3d│ │ cc99b1a   feat(apple): archiv…  23h│
-│? wihc-tracker-sort-cycle           merged           3d│ │ ↓ 18 more                          │
+┌─ Branches ─────────────⇅ next action   ● yours 0   14 ┐ ┌─ Recent commits ────────────────40 ┐
+│◆ main                                               5h│ │ 0bbb9fd   Merge fix/admin-0tx…   5h│
+│                                                       │ │ 4239f04   fix(frame): re-esta…   5h│
+│ Reviewing  ── piercermcbride ──────────────────────  3│ │ e258145   Merge fix/admin-byv…   6h│
+│◇ feat/adm… local only     3 unpushed · ac…   held   3h│ │ 9a7dbd3   fix(reload): share …   6h│
+│   ↳ commit docs(tui): de…                             │ │ 44416b5   chore(beads): expor…   7h│
+│◇ diagnose… local only     1 unpushed         held   5d│ │ e163380   Merge fix/cnxv-1-no…  21h│
+│   ↳ commit fix(tui): ext…                             │ │ 841abb4   fix(populate): name…  21h│
+│· feat/dev…                                   keep   6d│ │ 8292783   feat(kinds): honor …  21h│
+│   ↳ commit feat(apple): …                             │ │ ce60f5e   fix(config): resolv…  21h│
+│                                                       │ │ bdce50c   fix(git): resolve t…  21h│
+│ Clean Up  ── merged · ready ──────────────────────  10│ │ 2fe637a   fix(tui): stop capp…  21h│
+│? task/admin-krvc.4-footer-default                   5d│ │ dca1269   fix(tui): stop host…  21h│
+│◇ spike/work-tab-redesign                            5d│ │ c3cc630   Merge fix/admin-53w…  22h│
+│◇ admin/ascapi-token-cache                           5d│ │ 7f37d23   fix(luahost): match…  22h│
+│◇ feat/admin-j5ep-timing                             6d│ │ 638569a   fix(luahost): corre…  22h│
+│? fix/admin-m6m8-cli-detach                          6d│ │ dd42699   fix(tui): separate …  22h│
+│? fix-shell-cwd                                      6d│ │ 4c166f5   fix(tui): stack Wor…  22h│
+│◇ admin-fy79-dashboard-beads-poll-piles-up           8d│ │ 9c5a8a4   feat(tui): tail liv…  23h│
+│? tui-sort-priority                                  8d│ │ d0cf004   fix(spike): stacked…  23h│
+│? n5vg-submenu-collapse                              8d│ │ b2e2264   fix(spike): give a …  25h│
+│? wihc-tracker-sort-cycle                            8d│ │ 333b16e   fix(service): run a…   3d│
+│                                                       │ │ ↓ 18 more                          │
 │                                                       │ └────────────────────────────────────┘
-└─────────────────────────────────────── 8 clean up ⇧X ─┘ ── Stashes ────────────────────────0 ─
+└────────────────────────────────────── 10 clean up ⇧X ─┘ ── Stashes ────────────────────────0 ─
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ←→ tab · 1-4 jump · ↓ body · q quit                                                            
+ ↑↓ move · ↵ body · ⇥ pane · / filter · r refresh · 1-4 jump · ↓ body · o config · ←→ tab       

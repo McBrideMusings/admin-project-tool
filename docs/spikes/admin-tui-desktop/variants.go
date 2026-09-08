@@ -53,8 +53,13 @@ var Axes = []Axis{
 		// dumps by value, not position — it only changes launch default and
 		// ⌥s cycle order.
 		"commands-palette", "commands-palette-empty", "commands-palette-typing", "commands-palette-browse",
-		// The ten reference frames .19 names.
-		"commands", "commands-workflow-selected", "repo", "issues", "issues-selected",
+		// The Work tab's live states, then the rest of the reference frames.
+		// "commands" (the flat list) is gone — the palette IS the Commands
+		// surface now, so a frame of the list it replaced would depict a screen
+		// the app no longer has. "commands-workflow-selected" keeps its name
+		// (tickets and docs cite it) and renders the palette's own workflow
+		// dispatch instead.
+		"commands-workflow-selected", "repo", "issues", "issues-selected",
 		"dispatch-sheet", "swarm", "config", "running", "no-manifest",
 		// Every other surface repo-dash draws — see INVENTORY.md. Each is the real
 		// frame, reached by driving the same keys a person would press.
@@ -70,14 +75,6 @@ var Axes = []Axis{
 	// the paths .20 and .28 cite by.
 	{Key: "data", Label: "Data", Values: []string{"populated", "empty"}, Hotkey: "e", NoDump: true},
 	{Key: "tracker", Label: "Tracker", Values: []string{"beads", "github", "prs"}, Hotkey: "r", NoDump: true},
-	// Live-only on purpose, same as data/tracker: this is the hover-preview
-	// spike (spike/work-tab-redesign) under review, not a settled design yet —
-	// dumping it would multiply the ten reference frames by four and pin a
-	// direction nobody picked. Try each on "running" (cursor on the waiting
-	// `test` row, hosted) and "swarm" (cursor on the running `admin-3rgp.36`
-	// worker, no local output) — those are the two screens that already put
-	// the cursor on a live row.
-	{Key: "hover", Label: "Hover", Values: []string{"off", "auto-tail", "split-pane", "inline-peek"}, Hotkey: "v", NoDump: true},
 }
 
 var (
@@ -277,7 +274,7 @@ type screenSpec struct {
 	tab     int
 	noMan   bool
 	sheet   bool
-	cmdSel  int
+	liveSel int
 	running bool
 	// hosted is the terminal view over a Command's hosted pty — the dashboard
 	// runs it on a pty it owns rather than in a herdr pane, and this is where
@@ -298,33 +295,35 @@ type screenSpec struct {
 // numbers don't shift depending on what's expanded — they're just each
 // screen's row, once.
 var screens = map[string]screenSpec{
-	"commands":                   {tab: 0, cmdSel: 6},                 // deploy — an ordinary idle command
-	"commands-workflow-selected": {tab: 0, cmdSel: 9},                 // retire-merged — a workflow row
-	"running":                    {tab: 0, cmdSel: 10, running: true}, // test — hosted, waiting
+	// liveSel is the combined cursor's position in the live sections (commands
+	// first, then workers); -1 leaves the selection up in the palette box,
+	// which is where an idle screen starts.
+	"commands-workflow-selected": {tab: 0, liveSel: -1, demoQuery: "retire"},
+	"running":                    {tab: 0, liveSel: 1, running: true}, // admin test — hosted, waiting
 	"repo":                       {tab: 1},
 	"issues":                     {tab: 2},
 	"issues-selected":            {tab: 2},
 	"dispatch-sheet":             {tab: 2, sheet: true},
-	"swarm":                      {tab: 0, cmdSel: 11}, // admin-3rgp.36 — worker, running
+	"swarm":                      {tab: 0, liveSel: 2}, // admin-3rgp.36 — worker, running
 	"config":                     {tab: 3},
 	"no-manifest":                {tab: 1, noMan: true},
 
 	// Hosted-process surfaces (admin-3rgp.61/.63). Appended after the ten named
 	// reference frames so no existing frame filename shifts.
-	"hosted":       {tab: 0, cmdSel: 10, hosted: true},
-	"hosted-empty": {tab: 0, cmdSel: 10, hosted: true, hostedEmpty: true},
-	"hosted-quit":  {tab: 0, cmdSel: 10, sheet: true, running: true},
+	"hosted":       {tab: 0, liveSel: 1, hosted: true},
+	"hosted-empty": {tab: 0, liveSel: 1, hosted: true, hostedEmpty: true},
+	"hosted-quit":  {tab: 0, liveSel: 1, sheet: true, running: true},
 
 	// The command-palette redesign — see the block above render() for the
 	// fixture and interaction. All four render through their own body
 	// function (isPalette in render()), never workBody/hostedBody.
-	"commands-palette":       {tab: 0},
-	"commands-palette-empty": {tab: 0},
+	"commands-palette":       {tab: 0, liveSel: -1},
+	"commands-palette-empty": {tab: 0, liveSel: -1},
 	// "dev c" — first word already locked (typed or tabbed to "dev "),
 	// second word in progress ("c") — the one frame that shows both a
 	// completed word AND a ghost suggestion for the next one at once.
-	"commands-palette-typing": {tab: 0, demoQuery: "dev c"},
-	"commands-palette-browse": {tab: 0},
+	"commands-palette-typing": {tab: 0, liveSel: -1, demoQuery: "dev c"},
+	"commands-palette-browse": {tab: 0, liveSel: -1},
 
 	// The embedded modes. tab drives only the prototype's own tab bar and
 	// footer; the body comes from repo-dash via the key sequence in `embedded`.
@@ -341,23 +340,28 @@ var screens = map[string]screenSpec{
 
 var selDelta int
 
-var workTabs = []string{"commands", "repo", "issues", "config"}
+var workTabs = []string{"commands-palette", "repo", "issues", "config"}
 
 func onKey(key string, s State, set func(axis, value string)) bool {
 	cur := s.Get("screen")
 	if cur == "" {
 		cur = "commands-palette"
 	}
-	if isPalette(cur) {
-		return onPaletteKey(key, cur, set)
+	// Tab switching is resolved BEFORE the palette's own keys. It used to be
+	// after, so ⇥ / ←→ were swallowed by onPaletteKey (which binds neither) and
+	// the Work tab became a screen you could not leave — and the palette is now
+	// the tab's default, so that was every launch.
+	switch key {
+	case "tab", "right", "l", "shift+tab", "left", "h":
+	default:
+		if isPalette(cur) {
+			return onPaletteKey(key, cur, set)
+		}
 	}
-	// "p" reaches the palette redesign from the original flat list, so both
-	// are one keypress apart for direct comparison — the ask this spike
-	// round exists to answer.
-	// tab==0 && !hosted && !sheet: the plain list and its detail-focused
-	// screens, never the hosted pty view (its own footer promises "typing
-	// goes to the process" — 'p' must reach it, not hijack it) or an open
-	// overlay (its own keys own every keystroke while it's up).
+	// "p" returns to the palette from any other Work-tab screen. It used to be
+	// the A/B key between the palette and the flat list; the flat list is gone,
+	// so it is now just "back to the Commands surface". Never on the hosted pty
+	// view (its footer promises typing goes to the process) or under an overlay.
 	if key == "p" {
 		if sp := screens[cur]; sp.tab == 0 && !sp.hosted && !sp.sheet {
 			set("screen", "commands-palette")
@@ -381,25 +385,6 @@ func onKey(key string, s State, set func(axis, value string)) bool {
 		set("screen", workTabs[(idx-1+len(workTabs))%len(workTabs)])
 		selDelta = 0
 		return true
-	case " ":
-		// Only "inline-peek" binds space — the other two hover modes already
-		// show their preview without a keypress, so space would either do
-		// nothing (confusing on its own) or double as a second way to reach
-		// the same state (redundant). Only a hosted row (hasRing) has
-		// anything to peek; a worker's row has no local bytes regardless of
-		// hover mode.
-		if s.Get("hover") != "inline-peek" {
-			return false
-		}
-		if c := cmdUnderCursor(cur); c != nil {
-			for i := range liveRows {
-				if liveRows[i].cmd == c.name && liveRows[i].hasRing {
-					peeked[c.name] = !peeked[c.name]
-					return true
-				}
-			}
-		}
-		return false
 	case "down", "j":
 		selDelta++
 		return true
@@ -415,8 +400,11 @@ func onKey(key string, s State, set func(axis, value string)) bool {
 		case "dispatch-sheet":
 			set("screen", "issues")
 		case "hosted-quit":
-			set("screen", "commands")
-		case "commands", "commands-workflow-selected", "running", "swarm":
+			set("screen", "commands-palette")
+		case "commands-workflow-selected", "running", "swarm":
+			// ↵ is the row's one primary action and what it IS follows the row's
+			// state: attach to it while it runs. There is no running row whose ↵
+			// restarts what you are already watching.
 			set("screen", "hosted")
 		}
 		return true
@@ -430,9 +418,9 @@ func onKey(key string, s State, set func(axis, value string)) bool {
 		case "dispatch-sheet":
 			set("screen", "issues")
 		case "hosted", "hosted-empty":
-			set("screen", "commands")
+			set("screen", "commands-palette")
 		case "hosted-quit":
-			set("screen", "commands")
+			set("screen", "commands-palette")
 		default:
 			set("screen", "hosted-quit")
 		}
@@ -449,21 +437,6 @@ func onKey(key string, s State, set func(axis, value string)) bool {
 	return false
 }
 
-// cmdUnderCursor resolves the command the cursor is sitting on, following the
-// same wrap the renderer uses so what a key acts on is always the row you can
-// see highlighted. A child row resolves to its parent, so ← closes the submenu
-// you are standing inside rather than doing nothing.
-func cmdUnderCursor(screen string) *cmdRow {
-	sp, ok := screens[screen]
-	if !ok || sp.tab != 0 {
-		return nil
-	}
-	rows := workRows(false)
-	if len(rows) == 0 {
-		return nil
-	}
-	return rows[wrap(sp.cmdSel, len(rows))].cmd
-}
 
 func wrap(base, n int) int {
 	if n <= 0 {
@@ -472,46 +445,7 @@ func wrap(base, n int) int {
 	return ((base+selDelta)%n + n) % n
 }
 
-type cmdRow struct {
-	name, desc, last, kind, arch, note string
-	steps                              [][4]string
-	targets                            []string
-	// subs are a multi-target command's declared targets: a submenu that opens
-	// under the row rather than a separate screen, so picking one never leaves
-	// the list. Each is {key, what it runs}.
-	subs [][2]string
-}
 
-var cmds = []cmdRow{
-	{name: "build", desc: "Build: mac | ios | tv | server [--clean]", last: "2h ago",
-		kind: "multi-target", arch: "apple",
-		steps: [][4]string{{"1", "multi-target", "build", "apple"}},
-		subs: [][2]string{
-			{"mac", "@build-mac"},
-			{"ios", "@build-ios"},
-			{"tv", "@build-tv"},
-			{"server", "cargo build --release --manifest-path server/Cargo.toml"},
-		}},
-	{name: "check", desc: "Parse and resolve admin.toml", last: "2h ago", kind: "shell", arch: "(manifest)",
-		steps: [][4]string{{"1", "shell", "admin check .", "(manifest)"}}},
-	{name: "deploy", desc: "Install to ~/.admin, provision the userscript", last: "18m ago",
-		kind: "sequence", arch: "(manifest)", note: "exit 0 · 41s",
-		steps: [][4]string{
-			{"1", "shell", "bash install.sh", "simple"},
-			{"2", "lua", "scripts/provision.lua", "apple"},
-			{"3", "shell", "admin check .", "(manifest)"}}},
-	{name: "docs", desc: "Serve the docs site with hot reload", last: "—", kind: "shell", arch: "docs",
-		steps: [][4]string{{"1", "shell", "bun run docs:dev", "docs"}}},
-	{name: "logs", desc: "Tail a log target", last: "—", kind: "logs", arch: "docker",
-		steps: [][4]string{{"1", "logs", "admin logs dev", "docker"}}},
-	{name: "retire-merged", desc: "Remove worktrees whose branch is merged", last: "never",
-		kind: "workflow", arch: "(manifest)",
-		targets: []string{"fix-detector-parity-skip", "go-transient-kind-factories", "docs-adr-lua", "launchd-env-file"}},
-	{name: "test", desc: "pytest plus the shell suite", last: "6m ago", kind: "sequence", arch: "(manifest)",
-		steps: [][4]string{
-			{"1", "go", "go test ./...", "go-cli"},
-			{"2", "shell", "bash tests/test_install.sh", "(manifest)"}}},
-}
 
 // liveRow is one live thing. `hosted` is the distinction that matters and the
 // one the old "pane N" column got wrong: a hosted row is a CHILD PROCESS on a
@@ -552,6 +486,12 @@ type liveRow struct {
 	// (commandLogPath, kinds.FrameURLs), not new information invented here.
 	logPath string
 	urls    []string
+	// elapsed, branch and worktree are what the live band shows for a row.
+	// branch/worktree are a worker's alone — a Claude session runs in its own
+	// checkout, and where that is is the first thing you want when it stalls.
+	elapsed  string
+	branch   string
+	worktree string
 }
 
 // liveRowsSeed / liveRows: liveRows now grows at runtime — dispatching a
@@ -561,6 +501,9 @@ type liveRow struct {
 // leak into it.
 var liveRowsSeed = []liveRow{
 	{state: "running", id: "admin-3rgp.36", doing: "writing internal/lua/host.go", pane: "pane 3",
+		elapsed: "18m", branch: "feat/admin-3rgp.36-lua-host",
+		worktree: "/Users/pierce/.worktrees/admin-project-tool/admin-3rgp.36",
+		logPath:  root + "/.admin/logs/worker-admin-3rgp.36.log",
 		lastCmd: "review admin-3rgp.36 (workflow: review-changes)",
 		hasRing: true, tail: []string{
 			"  reading internal/tui/work.go",
@@ -575,6 +518,9 @@ var liveRowsSeed = []liveRow{
 			"  writing internal/lua/host.go",
 		}},
 	{state: "waiting", id: "admin-3rgp.7", doing: "needs input: root command name", pane: "pane 4",
+		elapsed: "6m", branch: "feat/admin-3rgp.7-root-command",
+		worktree: "/Users/pierce/.worktrees/admin-project-tool/admin-3rgp.7",
+		logPath:  root + "/.admin/logs/worker-admin-3rgp.7.log",
 		lastCmd: "implement admin-3rgp.7", hasRing: true, tail: []string{
 			"  the manifest declares no top-level command name —",
 			"  every existing project sets one (admin.toml's",
@@ -588,6 +534,9 @@ var liveRowsSeed = []liveRow{
 			"  needs input: root command name",
 		}},
 	{state: "failed", id: "admin-3rgp.33", doing: "go test ./internal/detect FAIL", pane: "pane 5",
+		elapsed: "2m", branch: "fix/admin-3rgp.33-detect",
+		worktree: "/Users/pierce/.worktrees/admin-project-tool/admin-3rgp.33",
+		logPath:  root + "/.admin/logs/worker-admin-3rgp.33.log",
 		lastCmd: "implement admin-3rgp.33", hasRing: true, tail: []string{
 			"=== RUN   TestDetectHugo",
 			"--- PASS: TestDetectHugo (0.00s)",
@@ -604,9 +553,9 @@ var liveRowsSeed = []liveRow{
 	// dispatched to a pane — so `where` says "hosted", and quitting the
 	// dashboard kills it. A Worker above still runs in its own pane and
 	// outlives the dashboard on purpose; the column is what tells them apart.
-	{state: "running", id: "admin docs", doing: "vitepress dev · localhost:5173", cmd: "docs", hosted: true,
+	{state: "running", id: "admin docs", doing: "vitepress dev · localhost:5173", cmd: "docs", hosted: true, elapsed: "4m12s",
 		lastCmd: "bun run docs:dev", hasRing: true,
-		logPath: "~/.admin/logs/docs.log", urls: []string{"http://localhost:5173"},
+		logPath: root + "/.admin/logs/docs.log", urls: []string{"http://localhost:5173"},
 		tail: []string{
 			"",
 			"  vitepress v1.3.4",
@@ -619,9 +568,9 @@ var liveRowsSeed = []liveRow{
 			"14:23:02 [vite] page reload /architecture/design.md",
 			"14:23:19 [vite] hmr update /guide/index.md",
 		}},
-	{state: "waiting", id: "admin test", doing: "Enter a number, or q to cancel:", cmd: "test", hosted: true,
+	{state: "waiting", id: "admin test", doing: "Enter a number, or q to cancel:", cmd: "test", hosted: true, elapsed: "12s",
 		lastCmd: ".venv/bin/pytest -q", hasRing: true,
-		logPath: "~/.admin/logs/test.log",
+		logPath: root + "/.admin/logs/test.log",
 		tail: []string{
 			"tests/test_frame.py ..........................      [ 47%]",
 			"tests/test_guards.py .................              [ 61%]",
@@ -646,47 +595,8 @@ var liveStyle = map[string]lipgloss.Style{
 	"running": gr, "waiting": yl, "done": dim, "failed": rd,
 }
 
-type workRow struct {
-	cmd    *cmdRow
-	worker *liveRow
-	// target is set on a submenu row: the index into cmd.subs, and whether it
-	// is the last one (which decides the tree connector).
-	target  int
-	isChild bool
-	last    bool
-}
 
-// hasSubs reports whether c has a submenu worth showing. A command with
-// exactly one target doesn't: the CLI already runs a lone target without
-// asking, so a submenu of one would offer nothing to pick. Every command
-// that does have subs shows them always, directly under its row — there is
-// no collapsed state left to gate on and no arrow left to disclose it.
-func hasSubs(c *cmdRow) bool { return len(c.subs) > 1 }
 
-func workRows(empty bool) []workRow {
-	if empty {
-		return nil
-	}
-	var out []workRow
-	for i := range cmds {
-		out = append(out, workRow{cmd: &cmds[i]})
-		if !hasSubs(&cmds[i]) {
-			continue
-		}
-		for j := range cmds[i].subs {
-			out = append(out, workRow{
-				cmd: &cmds[i], target: j, isChild: true,
-				last: j == len(cmds[i].subs)-1,
-			})
-		}
-	}
-	for i := range liveRows {
-		if liveRows[i].cmd == "" {
-			out = append(out, workRow{worker: &liveRows[i]})
-		}
-	}
-	return out
-}
 
 func mark(sel bool, s string) string {
 	if sel {
@@ -695,178 +605,6 @@ func mark(sel bool, s string) string {
 	return dim.Render("◇ ") + s
 }
 
-func workBody(sp screenSpec, w, h int, empty bool, hover string) []string {
-	rows := workRows(empty)
-	if len(rows) == 0 {
-		return []string{
-			" " + bo.Render("Work") + dim.Render("  0"),
-			strings.Repeat("─", w),
-			dim.Render("   nothing here yet — admin.toml declares no commands"),
-		}
-	}
-	sel := wrap(sp.cmdSel, len(rows))
-	// bottomOrient: weight width by the cell aspect ratio, then compare.
-	// 2.3 (not 2.0) because pierce's real terminal measured 132×59 — a
-	// raw ratio of 2.24 — and read as visually tall; 2.0 called that
-	// "wide" by a hair (66 vs 59). 2.3 flips that exact case to bottom
-	// while still leaving 96×30 (the ten committed reference frames) and a
-	// plainly landscape 70×30 window classified as wide, so the built-in
-	// numbers this repo already ships stay unchanged.
-	bottomOrient := hover != "off" && float64(w)/2.3 < float64(h)
-	var lw, rw int
-	if bottomOrient {
-		lw = maxInt(w-2, 20)
-		rw = lw
-	} else {
-		lw = w*2/3 - 2
-		rw = w - lw - 3
-	}
-	dw := maxInt(4, lw-34)
-
-	live := map[string]*liveRow{}
-	for i := range liveRows {
-		if liveRows[i].cmd != "" {
-			live[liveRows[i].cmd] = &liveRows[i]
-		}
-	}
-
-	var left []string
-	// cursorLeftIdx is the line in `left` the selected row actually landed
-	// on — needed for scrolling below, since `left` has more lines than
-	// `rows` (subtext, blanks, peeked tails), so the row index `sel` alone
-	// can't say which rendered line to keep on screen.
-	cursorLeftIdx := 0
-	left = append(left, dim.Render(" Commands"))
-	for i, r := range rows {
-		if r.cmd == nil {
-			continue
-		}
-		// A submenu row: a tree connector, then the target key in the same
-		// name column every other row uses, so the submenu reads as belonging
-		// to the row above it rather than as a new list.
-		if r.isChild {
-			conn := "├ "
-			if r.last {
-				conn = "└ "
-			}
-			sub := r.cmd.subs[r.target]
-			key := Pad(sub[0], 14)
-			if i == sel {
-				key = cy.Render(key)
-				cursorLeftIdx = len(left)
-			}
-			left = append(left, mark(i == sel, "")+dim.Render(conn)+key+
-				dim.Render(trunc(sub[1], maxInt(6, lw-24))))
-			continue
-		}
-		// No disclosure arrow: a multi-target command's submenu is always
-		// shown below it (see hasSubs), so there is nothing left to signal
-		// as openable — the name column is the same width every row uses.
-		if i == sel {
-			cursorLeftIdx = len(left)
-		}
-		row := mark(i == sel, Pad(r.cmd.name, 16))
-		var lr *liveRow
-		if v, ok := live[r.cmd.name]; ok {
-			lr = v
-			row += liveStyle[lr.state].Render(Pad(lr.state, 9)) + liveWhere(lr, dw)
-		} else {
-			row += dim.Render(Pad(r.cmd.kind, 9) + trunc(r.cmd.desc, maxInt(6, lw-27)))
-		}
-		left = append(left, row)
-		if hover != "off" && lr != nil {
-			left = append(left, subtextRow(lr, lw))
-			if hover == "inline-peek" && lr.hasRing && peeked[lr.cmd] {
-				left = append(left, peekLines(lr, lw)...)
-			}
-		}
-	}
-	left = append(left, "", dim.Render(" Workers"))
-	for i, r := range rows {
-		if r.worker == nil {
-			continue
-		}
-		if i == sel {
-			cursorLeftIdx = len(left)
-		}
-		left = append(left, mark(i == sel, Pad(r.worker.id, 16))+
-			liveStyle[r.worker.state].Render(Pad(r.worker.state, 9))+
-			liveWhere(r.worker, dw))
-		if hover != "off" {
-			left = append(left, subtextRow(r.worker, lw))
-		}
-	}
-
-	if bottomOrient {
-		// This is a PREVIEW, not an attach — attaching for real is the
-		// existing full-screen "hosted" view (hostedBody, reached with `a`),
-		// which already owns the whole frame and its own detach/kill footer.
-		// The rule sits directly below the list with no padding above it,
-		// and the detail band gets every remaining row, uncapped — except
-		// that the list itself is never handed more than half the body: once
-		// it would need more than that, it's clipped (scrolled, cursor kept
-		// in view) to its half and the rule lands at the midpoint instead of
-		// wherever the list's real content happened to end.
-		detailH := h - len(left) - 1
-		if detailH < h/2 {
-			detailH = h / 2
-		}
-		if detailH < 0 {
-			detailH = 0
-		}
-		listH := h - detailH - 1
-		if listH < 0 {
-			listH = 0
-		}
-		// Reasonable width for the preview band alone — the list above it
-		// still uses the full lw, but a preview that also went edge to edge
-		// on a very wide terminal would read as more important than it is.
-		previewW := lw
-		if previewW > 100 {
-			previewW = 100
-		}
-		detail := detailOf(rows[sel], previewW, maxInt(detailH, 1), hover)
-
-		// The list only gets a fraction of the height here (unlike the
-		// right-split layout, which hands it the whole frame), so it now
-		// overflows far more readily — scroll it exactly the way every
-		// other tab already does (internal/tui/view.go's window): keep the
-		// cursor on screen, "↑ N more" / "↓ more" mark what's hidden.
-		listLines := left
-		if len(left) > listH {
-			start, end := scrollWindow(len(left), cursorLeftIdx, listH)
-			listLines = append([]string{}, left[start:end]...)
-			if start > 0 && len(listLines) > 0 {
-				listLines[0] = dim.Render("  ↑ " + itoa(start) + " more")
-			}
-			if end < len(left) && len(listLines) > 0 {
-				listLines[len(listLines)-1] = dim.Render("  ↓ more")
-			}
-		}
-
-		out := make([]string, 0, h)
-		for i := 0; i < listH; i++ {
-			out = append(out, " "+Pad(at(listLines, i), lw))
-		}
-		if detailH > 0 {
-			out = append(out, dim.Render(strings.Repeat("─", w)))
-			for i := 0; i < detailH; i++ {
-				out = append(out, " "+Pad(at(detail, i), previewW))
-			}
-		}
-		for len(out) < h {
-			out = append(out, "")
-		}
-		return out[:h]
-	}
-
-	right := detailOf(rows[sel], rw, h, hover)
-	out := make([]string, 0, h)
-	for i := 0; i < h; i++ {
-		out = append(out, " "+Pad(at(left, i), lw)+dim.Render("│ ")+at(right, i))
-	}
-	return out
-}
 
 // peeked tracks which hosted rows (by command name) are expanded inline
 // under "inline-peek" — several at once, since each is independent. Live
@@ -874,35 +612,7 @@ func workBody(sp screenSpec, w, h int, empty bool, hover string) []string {
 // the last keypress left open (in practice never dumped: hover is NoDump).
 var peeked = map[string]bool{}
 
-// subtextRow is the hover-preview spike's other half of the brief: the last
-// command/instruction actually sent to a live row, in small dim text
-// directly beneath it — independent of which hover treatment is picked,
-// since it costs one line and answers a question ("what did I just run
-// here?") none of the three treatments otherwise answer at a glance.
-func subtextRow(lr *liveRow, w int) string {
-	return dim.Render("     └ " + trunc(lr.lastCmd, maxInt(4, w-9)))
-}
 
-// peekLines is "inline-peek"'s expansion: a few lines of lr's own tail,
-// indented under its row with the same tree-connector glyph the multi-target
-// submenu already uses, so this reads as the same kind of disclosure rather
-// than a second mechanism.
-func peekLines(lr *liveRow, w int) []string {
-	n := 5
-	t := lr.tail
-	if len(t) > n {
-		t = t[len(t)-n:]
-	}
-	out := make([]string, len(t))
-	for i, l := range t {
-		conn := "  │ "
-		if i == len(t)-1 {
-			conn = "  └ "
-		}
-		out[i] = dim.Render("   " + conn + trunc(l, maxInt(4, w-9)))
-	}
-	return out
-}
 
 // liveWhere renders the activity plus whatever the current direction uses to
 // say hosted-child vs detached-pane.
@@ -1008,132 +718,16 @@ func hostedBody(w, h int, empty bool) []string {
 	return out
 }
 
-// detailOf is the polymorphic half: the pane's shape follows the row's kind, so
-// a command and a worker never have to be squeezed into one field set. hover
-// is the hover-preview spike's axis — "off" reproduces the shipped pane
-// exactly; the other three are compared in place against everything else
-// this prototype already draws (the dispatch sheet, the full hosted view,
-// tab switching), which is the whole point of putting them here rather than
-// in a prototype of their own.
-func detailOf(r workRow, w, h int, hover string) []string {
-	if r.worker != nil {
-		wk := r.worker
-		if hover == "auto-tail" && wk.hasRing {
-			// Header: who and where, plus the ONE fact worth keeping —
-			// nothing else. Branch/worktree/elapsed are gone in this mode
-			// on purpose, same rule as a hosted command: the rest of the
-			// space is the tail, not a field list.
-			out := []string{
-				bo.Render(wk.id),
-				liveStyle[wk.state].Render(wk.state) + dim.Render("  ·  ") + whereLabel(wk),
-				"",
-			}
-			n := maxInt(4, h-len(out)-1)
-			out = append(out, tailLines(wk.tail, n, w)...)
-			return append(out, dim.Render("a")+" attach   "+dim.Render("k")+" kill")
-		}
-		base := []string{
-			bo.Render(wk.id),
-			liveStyle[wk.state].Render(wk.state) + dim.Render("  ·  ") + whereLabel(wk),
-			"",
-			dim.Render("now"),
-			"  " + trunc(wk.doing, w-3),
-			"",
-			dim.Render("branch"),
-			"  " + cy.Render("embed-lua-vm"),
-			dim.Render("worktree"),
-			"  " + dim.Render("~/.worktrees/…/embed-lua-vm"),
-			dim.Render("elapsed"),
-			"  12m",
-		}
-		if hover == "split-pane" {
-			base = append(base, "", dim.Render("┌─ output "+strings.Repeat("─", maxInt(w-11, 0))))
-			base = append(base, tailBoxed(wk.tail, 6, w)...)
-			base = append(base, dim.Render("└"+strings.Repeat("─", maxInt(w-1, 0))))
-		}
-		return append(base, "", dim.Render("a")+" attach   "+dim.Render("k")+" kill")
-	}
-	c := r.cmd
-	// A selected target names itself as "<command> <target>" — the same shape
-	// you would type — and shows what that one target actually runs, which is
-	// the question the submenu exists to answer.
-	if r.isChild {
-		sub := c.subs[r.target]
-		return []string{
-			bo.Render(c.name + " " + sub[0]),
-			dim.Render(c.kind + "  ·  " + c.arch),
-			"",
-			dim.Render("runs"),
-			"  " + trunc(sub[1], w-3),
-			"",
-			dim.Render("log"),
-			"  " + dim.Render("~/.admin/logs/"+c.name+"-"+sub[0]+".log"),
-			"",
-			dim.Render("↵") + " run",
-		}
-	}
-	// A hosted command (docs, test) has a real Ring to show — auto-tail
-	// replaces the whole pane with it, split-pane appends it below the
-	// fields that are already here. Neither applies to an idle command
-	// (build, check, …), which has no lastLive at all.
-	var lastLive *liveRow
-	for i := range liveRows {
-		if liveRows[i].cmd == c.name {
-			lastLive = &liveRows[i]
-		}
-	}
-	if lastLive != nil && lastLive.hasRing && hover == "auto-tail" {
-		// No "steps" here, no re-rendered child footer either — the header
-		// is exactly what internal/frame's own pinned footer already
-		// resolves for this command (log path, then its urls), because
-		// that's real configured information, not the process's own
-		// stdout replayed a second time. Everything past it is tail.
-		out := []string{
-			bo.Render(c.name),
-			liveStyle[lastLive.state].Render(lastLive.state),
-			"",
-			dim.Render("log") + "  " + dim.Render(lastLive.logPath),
-		}
-		for _, u := range lastLive.urls {
-			out = append(out, dim.Render("url")+"  "+cy.Render(u))
-		}
-		out = append(out, "")
-		n := maxInt(4, h-len(out)-1)
-		out = append(out, tailLines(lastLive.tail, n, w)...)
-		return append(out, dim.Render("a")+" attach")
-	}
-
-	out := []string{
-		bo.Render(c.name),
-		dim.Render(c.kind + "  ·  " + c.arch),
-		"",
-	}
-	out = append(out, dim.Render("log"), "  "+dim.Render("~/.admin/logs/"+c.name+".log"), "")
-	if c.targets != nil {
-		out = append(out, dim.Render("targets  query · 4"))
-		for _, t := range c.targets {
-			out = append(out, "  "+trunc(t, w-3))
-		}
-		return out
-	}
-	out = append(out, dim.Render("steps"))
-	for _, st := range c.steps {
-		out = append(out, "  "+dim.Render(st[0]+" ")+st[1])
-		out = append(out, "    "+trunc(st[2], w-5))
-		out = append(out, "    "+dim.Render("from ")+mg.Render(st[3]))
-	}
-	if lastLive != nil && lastLive.hasRing && hover == "split-pane" {
-		out = append(out, "", dim.Render("┌─ output "+strings.Repeat("─", maxInt(w-11, 0))))
-		out = append(out, tailBoxed(lastLive.tail, 6, w)...)
-		out = append(out, dim.Render("└"+strings.Repeat("─", maxInt(w-1, 0))))
-	}
-	return out
-}
 
 // tailLines returns the last n lines of tail, padded to exactly n lines so
 // the pane never jitters as output scrolls in — the same "fixed height" rule
 // the split-pane box below relies on for the opposite reason (an empty box
 // that doesn't move once something starts running).
+// tailLines returns the last n lines of tail, padded to exactly n lines so the
+// band never jitters as output scrolls in. Lines in the pipe-delimited fixture
+// form ("14:22:33|WARN|test|…") go through outLine, the same colorizer the
+// hosted terminal view uses — a raw "|"-separated line in the band was the
+// fixture leaking its own storage format onto the screen.
 func tailLines(tail []string, n, w int) []string {
 	if n < 1 {
 		n = 1
@@ -1148,19 +742,15 @@ func tailLines(tail []string, n, w int) []string {
 		if i < pad {
 			continue
 		}
+		if strings.Count(t[i-pad], "|") >= 3 {
+			out[i] = outLine(t[i-pad], w)
+			continue
+		}
 		out[i] = dim.Render(trunc(t[i-pad], w))
 	}
 	return out
 }
 
-func tailBoxed(tail []string, n, w int) []string {
-	lines := tailLines(tail, n, w-2)
-	out := make([]string, len(lines))
-	for i, l := range lines {
-		out[i] = dim.Render("│ ") + l
-	}
-	return out
-}
 
 // ---- command palette (spike/work-tab-redesign, round 3) ----
 //
@@ -1214,6 +804,11 @@ var paletteParents = []paletteParent{
 		targets: []string{"local", "preview", "prod", "staging"}},
 	{name: "test", kind: "multi-target", desc: "Run tests — `check` (typecheck+lint+unit) or `gate` (CF harness suite)",
 		targets: []string{"check", "ci", "convergence", "gate", "job", "rehearse", "shards", "workflows"}},
+	// A workflow command: its targets are tracker items, not manifest targets,
+	// which is why commands-workflow-selected is its own frame — the entry
+	// dispatches an agent over a bead rather than running a shell line.
+	{name: "retire-merged", kind: "workflow", desc: "Remove worktrees whose branch is merged",
+		targets: []string{"fix-detector-parity-skip", "go-transient-kind-factories", "docs-adr-lua", "launchd-env-file"}},
 	{name: "grafana", kind: "multi-target", desc: "Grafana alert rules (export / diff / deploy)",
 		targets: []string{"deploy", "diff", "export"}},
 	{name: "xplay-trail", kind: "multi-target", desc: "Trail xplay transfers live (preview|staging|prod, or raw <flags>)",
@@ -1234,7 +829,14 @@ var paletteEntries = func() []paletteEntry {
 			continue
 		}
 		for _, t := range p.targets {
-			out = append(out, paletteEntry{parent: p.name, target: t, run: "cd apps && bunx wrangler " + p.name + " --target " + t})
+			run := "cd apps && bunx wrangler " + p.name + " --target " + t
+			if p.kind == "workflow" {
+				// A workflow entry dispatches an agent over a tracker item; there
+				// is no shell line to show, and printing a fake one would make the
+				// frame lie about what ↵ does.
+				run = "dispatch claude over " + t
+			}
+			out = append(out, paletteEntry{parent: p.name, target: t, run: run})
 		}
 	}
 	return out
@@ -1255,12 +857,17 @@ var (
 	paletteQuery  string
 	paletteCursor int
 	paletteStatus string
+	// paletteCursorMoved lets a screen's declared liveSel seed the combined
+	// cursor without freezing it: until ↑↓ is actually pressed the seed wins,
+	// after that the cursor is the user's. Reset clears it, so every dumped
+	// frame renders its own screen's seed rather than the previous frame's.
+	paletteCursorMoved bool
 )
 
 func isPalette(screen string) bool { return strings.HasPrefix(screen, "commands-palette") }
 
 func resetPalette() {
-	paletteQuery, paletteCursor, paletteStatus = "", 0, ""
+	paletteQuery, paletteCursor, paletteStatus, paletteCursorMoved = "", 0, "", false
 }
 
 // resetPaletteMRU is the DUMP's reset (called from Variants[0].Reset, not
@@ -1508,27 +1115,45 @@ func killLiveRow(id string) {
 // screens, fuzzy candidates on the typing screen — as resolved
 // paletteEntry values, so combined cursor math (box rows first, Workers
 // rows after) works the same regardless of which screen the cursor is on.
+// paletteScreenQuery is the query a screen's box is resolving against: what has
+// actually been typed, or the screen's own demoQuery for a deterministic dump.
+// One function so the box's rows, the box's rendered content and the band can
+// never disagree about which entry is selected.
+func paletteScreenQuery(cur string) string {
+	if paletteQuery != "" {
+		return paletteQuery
+	}
+	if sp, ok := screens[cur]; ok {
+		return sp.demoQuery
+	}
+	return ""
+}
+
+// paletteBoxRows is the box's selectable rows for a screen. Every Work-tab
+// screen shows the palette box now, so the default is the MRU strip rather than
+// nil — returning nil for "running"/"swarm" collapsed the combined cursor onto
+// live row 0 and put the ◆ on the wrong row. And the query comes from
+// paletteScreenQuery, the same one the rendered content uses: reading
+// paletteQuery here while the content read the screen's demoQuery put the ◆ on
+// one row of the box and the band on a different entry entirely.
 func paletteBoxRows(cur string) []paletteEntry {
-	switch cur {
-	case "commands-palette", "commands-palette-empty":
-		mru := paletteMRU
-		if cur == "commands-palette-empty" {
-			mru = nil
-		}
-		var out []paletteEntry
-		for _, m := range mru {
-			for _, e := range paletteEntries {
-				if e.resolved() == m {
-					out = append(out, e)
-				}
-			}
-		}
-		return out
-	case "commands-palette-typing":
-		cands, _, _ := paletteCandidates(paletteQuery)
+	if q := paletteScreenQuery(cur); q != "" {
+		cands, _, _ := paletteCandidates(q)
 		return cands
 	}
-	return nil
+	mru := paletteMRU
+	if cur == "commands-palette-empty" {
+		mru = nil
+	}
+	var out []paletteEntry
+	for _, m := range mru {
+		for _, e := range paletteEntries {
+			if e.resolved() == m {
+				out = append(out, e)
+			}
+		}
+	}
+	return out
 }
 
 // paletteMoveCursor and paletteActivate are shared between the idle and
@@ -1537,10 +1162,29 @@ func paletteBoxRows(cur string) []paletteEntry {
 // cursor down to the workers"). Only what counts as a box row differs
 // between the two screens (paletteBoxRows already abstracts that).
 func paletteMoveCursor(cur string, delta int) {
-	total := len(paletteBoxRows(cur)) + len(paletteWorkerRows())
+	total := len(paletteBoxRows(cur)) + len(liveSectionRows(false))
 	if total > 0 {
-		paletteCursor = (paletteCursor + delta + total) % total
+		paletteCursor = (combinedCursor(cur, false) + delta + total) % total
 	}
+	paletteCursorMoved = true
+}
+
+// combinedCursor is the one cursor every Work-tab screen shares: box rows first,
+// then the live sections in the order liveSectionRows draws them. A screen's
+// liveSel seeds it until ↑↓ moves it.
+func combinedCursor(cur string, empty bool) int {
+	if paletteCursorMoved {
+		return paletteCursor
+	}
+	sp, ok := screens[cur]
+	if !ok || sp.liveSel < 0 {
+		return paletteCursor
+	}
+	total := len(paletteBoxRows(cur)) + len(liveSectionRows(empty))
+	if total == 0 {
+		return 0
+	}
+	return (len(paletteBoxRows(cur)) + sp.liveSel) % total
 }
 
 // paletteActivate is Enter: dispatch if the cursor is on a box row, attach
@@ -1689,15 +1333,22 @@ func paletteBoxFit(w int, title string, body []string) []string {
 // is false once the combined cursor has moved past the strip into Workers
 // — a row here must not still show ◆ once the real selection has moved on.
 func paletteIdleContent(w int, empty, boxSelected bool) []string {
-	body := []string{dim.Render("Press ") + bo.Render("/") + dim.Render(" to search · ") + bo.Render("b") + dim.Render(" to browse all"), ""}
+	cursor := paletteCursor
+	// One hint row, count included. It used to be three rows of chrome (hint,
+	// blank, "N recent") above three MRU rows, and the band's fixed height means
+	// every chrome row is one fewer live row visible below.
 	mru := paletteMRU
 	if empty {
 		mru = nil
 	}
+	hint := dim.Render("/ ") + bo.Render("search") + dim.Render("   b ") + bo.Render("browse all")
+	if len(mru) > 0 {
+		hint += dim.Render("   " + itoa(len(mru)) + " recent")
+	}
+	body := []string{hint}
 	if len(mru) == 0 {
 		body = append(body, dim.Render("no commands run yet"))
 	} else {
-		body = append(body, dim.Render(itoa(len(mru))+" recent"))
 		for i, m := range mru {
 			var run string
 			for _, e := range paletteEntries {
@@ -1705,7 +1356,7 @@ func paletteIdleContent(w int, empty, boxSelected bool) []string {
 					run = e.run
 				}
 			}
-			body = append(body, mark(boxSelected && i == paletteCursor, Pad(m, 20))+dim.Render(trunc(run, maxInt(6, w-30))))
+			body = append(body, mark(boxSelected && i == cursor, Pad(m, 20))+dim.Render(trunc(run, maxInt(6, w-30))))
 		}
 	}
 	if paletteStatus != "" {
@@ -1721,6 +1372,7 @@ func paletteIdleContent(w int, empty, boxSelected bool) []string {
 // a whole-string fuzzy match. Capped to a handful of rows: the box no
 // longer owns the whole pane, so it can't grow to show everything either.
 func paletteTypingContent(w int, demoQuery string, boxSelected bool) []string {
+	cursorIdx := paletteCursor
 	q := paletteQuery
 	if q == "" && Blocking {
 		// ONLY substitute for a deterministic dump frame — Blocking is set
@@ -1745,217 +1397,48 @@ func paletteTypingContent(w int, demoQuery string, boxSelected bool) []string {
 	start, end := scrollWindow(len(cands), cursor, maxRows)
 	for i := start; i < end; i++ {
 		e := cands[i]
-		row := mark(boxSelected && i == paletteCursor, Pad(e.resolved(), 24))
-		row += dim.Render(trunc(e.run, maxInt(6, w-34)))
+		row := mark(boxSelected && i == cursorIdx, Pad(trunc(e.resolved(), 28), 30))
+		row += dim.Render(trunc(e.run, maxInt(6, w-38)))
 		body = append(body, row)
 	}
-	body = append(body, dim.Render(itoa(len(cands))+" match"+plural(len(cands))+" · tab complete word · ↵ dispatch"))
+	body = append(body, dim.Render(itoa(len(cands))+" match"+pluralES(len(cands))+" · tab complete word · ↵ dispatch"))
 	return body
 }
 
-func plural(n int) string {
+// pluralES is the "match / matches" suffix the palette's candidate count uses.
+// plural is the ordinary "command / commands" one. They were one function
+// returning "es" for both, which is how "2 commandes · 3 workeres" got printed.
+func pluralES(n int) string {
 	if n == 1 {
 		return ""
 	}
 	return "es"
 }
 
-// renderWorkersColumn is the Work tab's Workers section, standalone —
-// reads liveRows directly (the same underlying data workBody's own copy of
-// this loop reads through workRows()'s wrapper) since the palette screens
-// have no workRows()-built row list of their own to index into. selIdx is
-// this section's own 0-based position of the combined cursor, -1 when
-// selection is still up in the box.
-func renderWorkersColumn(lw, selIdx int) []string {
-	dw := maxInt(4, lw-34)
-	out := []string{"", dim.Render(" Workers")}
-	i := 0
-	for r := range liveRows {
-		if liveRows[r].cmd != "" {
-			continue
-		}
-		lr := &liveRows[r]
-		out = append(out, mark(i == selIdx, Pad(lr.id, 16))+liveStyle[lr.state].Render(Pad(lr.state, 9))+liveWhere(lr, dw))
-		i++
+func plural(n int) string {
+	if n == 1 {
+		return ""
 	}
-	if i == 0 {
-		out = append(out, dim.Render(" no workers running"))
-	}
-	return out
+	return "s"
 }
 
-// paletteEntryDetail is the right column for whichever entry the palette
-// currently has selected — same job internal/tui/workview.go's
-// commandDetail does for the flat list, scaled to what a resolved
-// invocation actually has: no steps to enumerate, just what it is and
-// what it runs.
-func paletteEntryDetail(e paletteEntry, w int) []string {
-	var parent paletteParent
-	for _, p := range paletteParents {
-		if p.name == e.parent {
-			parent = p
-		}
-	}
-	out := []string{
-		bo.Render(e.resolved()),
-		dim.Render(parent.kind + "  ·  " + parent.desc),
-		"",
-		dim.Render("runs"),
-		"  " + trunc(e.run, maxInt(6, w-3)),
-	}
-	if e.target != "" {
-		out = append(out, "", dim.Render("part of"), "  "+e.parent+dim.Render(" ("+itoa(len(parent.targets))+" targets)"))
-	}
-	return out
-}
 
-// paletteWorkerDetail is the right column when the combined cursor has
-// moved onto a Workers row — the answer to "when I dispatch dev cf it
-// should appear in the workers section and then I can trail its logs, or
-// kill it, or do whatever": this is that "whatever", the same shape
-// detailOf's worker branch renders for the rest of the tab.
-// hover was never threaded through here at all until pierce caught it —
-// the footer showed "Hover: auto-tail" while the worker pane kept
-// rendering the plain now/last fields regardless. Same treatment
-// detailOf's worker branch already has, reused rather than reinvented.
-func paletteWorkerDetail(lr *liveRow, w, h int, hover string) []string {
-	if hover == "auto-tail" && lr.hasRing {
-		out := []string{
-			bo.Render(lr.id),
-			liveStyle[lr.state].Render(lr.state) + dim.Render("  ·  ") + whereLabel(lr),
-			"",
-		}
-		n := maxInt(4, h-len(out)-1)
-		out = append(out, tailLines(lr.tail, n, w)...)
-		return append(out, dim.Render("a")+" attach   "+dim.Render("k")+" kill")
-	}
-	out := []string{
-		bo.Render(lr.id),
-		liveStyle[lr.state].Render(lr.state) + dim.Render("  ·  ") + whereLabel(lr),
-		"",
-		dim.Render("now"),
-		"  " + trunc(lr.doing, maxInt(6, w-3)),
-	}
-	if lr.lastCmd != "" {
-		out = append(out, "", dim.Render("last"), "  "+trunc(lr.lastCmd, maxInt(6, w-3)))
-	}
-	if hover == "split-pane" && lr.hasRing {
-		out = append(out, "", dim.Render("┌─ output "+strings.Repeat("─", maxInt(w-11, 0))))
-		out = append(out, tailBoxed(lr.tail, 6, w)...)
-		out = append(out, dim.Render("└"+strings.Repeat("─", maxInt(w-1, 0))))
-	}
-	return append(out, "", dim.Render("a")+" attach   "+dim.Render("k")+" kill")
-}
 
-// renderPaletteScreen assembles the two-column Work-tab skeleton
-// (workBody's own shape) around whichever palette content is active: the
-// box sits at the top of the LEFT column, Workers renders below it exactly
-// as it does everywhere else on this tab, and the RIGHT column stays a
-// real detail pane for whatever's selected — box entry or Workers row,
-// never erasing the other two.
-func renderPaletteScreen(w, h int, boxTitle string, boxBody []string, selEntry *paletteEntry, selWorker *liveRow, workerSelIdx int, hover string) []string {
-	// bottomOrient reuses the EXACT same geometry test header() already
-	// prints on screen ("w=… h=… w/2.3=…→…") — no hover gate, because that
-	// gate belongs to workBody's tail-preview feature, not to whether this
-	// screen's own list+detail split should stack. This was the real bug
-	// pierce hit: header() always told the truth about the geometry, but
-	// this function never listened to it and just hard-coded a left/right
-	// split regardless.
-	bottomOrient := float64(w)/2.3 < float64(h)
 
-	if bottomOrient {
-		fullW := maxInt(w-2, 20)
-		left := paletteBoxFit(fullW, boxTitle, boxBody)
-		left = append(left, renderWorkersColumn(fullW, workerSelIdx)...)
 
-		var detail []string
-		switch {
-		case selWorker != nil:
-			detail = paletteWorkerDetail(selWorker, fullW, maxInt(h/3, 6), hover)
-		case selEntry != nil:
-			detail = paletteEntryDetail(*selEntry, fullW)
-		}
-
-		// The rule sits directly below the list with no padding above it,
-		// and the detail band gets every remaining row, uncapped — except
-		// that the list itself is never handed more than half the body:
-		// past that it's clipped (scrolled, cursor kept in view, same as
-		// workBody's own stacked layout) to its half and the rule lands at
-		// the midpoint instead of wherever the list's content ended.
-		detailH := h - len(left) - 1
-		if detailH < h/2 {
-			detailH = h / 2
-		}
-		if detailH < 0 {
-			detailH = 0
-		}
-		listH := h - detailH - 1
-		if listH < 0 {
-			listH = 0
-		}
-
-		listLines := left
-		if len(left) > listH {
-			cursorLeftIdx := markedIdx(left)
-			start, end := scrollWindow(len(left), cursorLeftIdx, listH)
-			listLines = append([]string{}, left[start:end]...)
-			if start > 0 && len(listLines) > 0 {
-				listLines[0] = dim.Render("  ↑ " + itoa(start) + " more")
-			}
-			if end < len(left) && len(listLines) > 0 {
-				listLines[len(listLines)-1] = dim.Render("  ↓ more")
-			}
-		}
-
-		out := make([]string, 0, h)
-		for i := 0; i < listH; i++ {
-			out = append(out, " "+Pad(at(listLines, i), fullW))
-		}
-		if detailH > 0 {
-			out = append(out, dim.Render(strings.Repeat("─", w)))
-			for i := 0; i < detailH; i++ {
-				out = append(out, " "+Pad(at(detail, i), fullW))
-			}
-		}
-		for len(out) < h {
-			out = append(out, "")
-		}
-		return out[:h]
-	}
-
-	lw := w*2/3 - 2
-	rw := w - lw - 3
-
-	left := paletteBoxFit(lw, boxTitle, boxBody)
-	left = append(left, renderWorkersColumn(lw, workerSelIdx)...)
-
-	var right []string
-	switch {
-	case selWorker != nil:
-		right = paletteWorkerDetail(selWorker, rw, h, hover)
-	case selEntry != nil:
-		right = paletteEntryDetail(*selEntry, rw)
-	}
-
-	out := make([]string, 0, h)
-	for i := 0; i < h; i++ {
-		out = append(out, " "+Pad(at(left, i), lw)+dim.Render("│ ")+at(right, i))
-	}
-	return out
-}
-
+// renderPaletteBrowse is the browse fallback (`b`): every command in the
+// manifest, full width, groups and their targets. A multi-target parent renders
+// with NO marker — it is a heading over its targets and runs nothing itself, so
+// the cursor cannot land on it and nothing here promises ↵ will run it. The
+// names still start in the same column, so the tree stays aligned.
 func renderPaletteBrowse(w, h int) []string {
-	bottomOrient := float64(w)/2.3 < float64(h)
-	lw := w*2/3 - 2
-	if bottomOrient {
-		lw = maxInt(w-2, 20)
-	}
-	rw := w - lw - 3
-
+	fullW := maxInt(w-2, 20)
 	var left []string
 	for _, p := range paletteParents {
-		desc := trunc(p.desc, maxInt(6, lw-len(p.name)-14))
-		left = append(left, dim.Render("◇ ")+bo.Render(Pad(p.name, 14))+dim.Render(Pad(p.kind, 13)+desc))
+		desc := trunc(p.desc, maxInt(6, fullW-len(p.name)-wState-6))
+		// Two leading spaces where a runnable row has "◇ ": the marker column is
+		// what says the cursor can be here.
+		left = append(left, "  "+bo.Render(Pad(p.name, wName))+dim.Render(Pad(p.kind, wState+wElapsed)+desc))
 		for i, t := range p.targets {
 			conn := "├ "
 			if i == len(p.targets)-1 {
@@ -1963,49 +1446,447 @@ func renderPaletteBrowse(w, h int) []string {
 			}
 			for _, e := range paletteEntries {
 				if e.parent == p.name && e.target == t {
-					left = append(left, "  "+dim.Render(conn)+Pad(trunc(t, 13), 15)+dim.Render(trunc(e.run, maxInt(6, lw-33))))
+					left = append(left, dim.Render("◇ ")+dim.Render(conn)+Pad(trunc(t, wName-2), wName-2)+
+						dim.Render(Pad("", wState+wElapsed-2)+trunc(e.run, maxInt(6, fullW-wName-wState-wElapsed-2))))
 				}
 			}
 		}
 	}
-	left = append(left, renderWorkersColumn(lw, -1)...)
-
-	if bottomOrient {
-		out := make([]string, 0, h)
-		listH := h - 3
-		if listH > len(left) {
-			listH = len(left)
-		}
-		start, end := scrollWindow(len(left), 0, maxInt(listH, 1))
-		for _, l := range left[start:end] {
-			out = append(out, " "+Pad(l, lw))
-		}
-		out = append(out, dim.Render(strings.Repeat("─", w)))
-		out = append(out, " "+dim.Render("↑↓ scroll · / search · esc back to palette"))
-		for len(out) < h {
-			out = append(out, "")
-		}
-		return out[:h]
-	}
 	if len(left) > h {
 		start, end := scrollWindow(len(left), 0, h)
 		left = left[start:end]
+		if start > 0 {
+			left[0] = dim.Render("  ↑ " + itoa(start) + " more")
+		}
+		if end < len(left) {
+			left[len(left)-1] = dim.Render("  ↓ more")
+		}
 	}
-
-	right := []string{
-		dim.Render(trunc("browsing every command", rw)),
-		"",
-		dim.Render(trunc("↑↓ scroll · / search · esc back", rw)),
-	}
-
 	out := make([]string, 0, h)
 	for i := 0; i < h; i++ {
-		out = append(out, " "+Pad(at(left, i), lw)+dim.Render("│ ")+Pad(at(right, i), rw))
+		out = append(out, " "+Pad(at(left, i), fullW))
 	}
 	return out
 }
 
 // ---- frame ----
+// ---- the Work tab: command palette above, one live band below ----
+//
+// This is the settled layout, and it replaced four things that used to be
+// open questions in this file:
+//
+//   - The flat Commands list is gone. At social-poker's real scale (~94
+//     resolved invocations) it could not be scanned, only remembered; the
+//     palette is the default and `b` is the browse fallback. The `commands`
+//     screen and its frame went with it.
+//   - The `hover` axis is gone. It offered off / auto-tail / split-pane /
+//     inline-peek as competing answers to "where does live output go"; the
+//     answer is this band, always on, full width, for whatever the cursor is
+//     on. Nothing is gated on a mode any more.
+//   - The left/right versus stacked orientation switch is gone. The band is
+//     full width at every geometry, so the list gives up height and never
+//     width — the failure the two-thirds split had was that output got a
+//     ~30-column column on exactly the terminals where log lines are longest.
+//   - A multi-target parent is a group, not a command. It holds targets and
+//     runs nothing itself, so the cursor cannot land on one and it carries no
+//     marker: the marker column is what promises ↵ will run the row.
+//
+// Two rules the band obeys everywhere:
+//
+//   - The field block is a FIXED slot (fieldRowsH), padded. The eye reads
+//     motion as meaning, so a block that grew a row for a command that had
+//     actually been run once slid everything below it down and claimed a state
+//     change that had not happened.
+//   - Nothing is said twice. The previewed thing is named once, on the band's
+//     own title rule, with the count of everything else running on the right
+//     of that same rule. There is no chip row and no tab strip: the cursor is
+//     the selector, so a second row of names only reprinted the list.
+
+const root = "/Users/pierce/Projects/admin-project-tool"
+
+// The live sections are a fixed column grid. The boundaries are named because
+// the band's title rule and the row list have to agree on them.
+//
+//	 ◆ admin-3rgp.36   ◈ running 18m    writing internal/lua/host.go   pane 3
+//	└┬──────────────┘ └─────────┘└────┘└───────────────────────────┘ └──────┘
+//	 1  marker+name     state     elapsed        activity              where
+const (
+	wMarker  = 2  // "◆ " / "◇ "
+	wName    = 16 // the name column
+	wState   = 10 // "◈ running"
+	wElapsed = 7  // "18m", "4m12s"
+)
+
+// fieldRowsH is the fixed height of the band's field block, for every row kind:
+// a live command's log+url, a live worker's log+branch+worktree+session+now, or
+// an idle entry's kind+desc+last-run+last-log. Five is the tallest of those.
+const fieldRowsH = 5
+
+// bandH is how many rows the live band takes out of the body. Fixed, so the
+// list above it never reflows as the cursor moves.
+// bandH is fixed per terminal height, never per cursor position: a band that
+// resized with the row under the cursor would reflow the list on every ↑↓. The
+// floor of 9 is title + fieldRowsH + three rows of tail — below that the band
+// says less than the row it is previewing already does. The list keeps the rest.
+func bandH(h int) int { return maxInt(minInt(13, h/2), minInt(9, h-1)) }
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// fitPath keeps a log or worktree path absolute. When it will not fit, whole
+// segments go from the middle — "/Users/…/logs/docs.log" — so it still reads as
+// a path. A mid-rune cut produces "/Users/pierce/Proj…tool/" and reads as
+// corruption.
+func fitPath(p string, w int) string {
+	if VW(p) <= w {
+		return p
+	}
+	if w < 12 {
+		return trunc(p, maxInt(w, 1))
+	}
+	segs := strings.Split(strings.TrimPrefix(p, "/"), "/")
+	for k := len(segs) - 1; k >= 1; k-- {
+		if cand := "/" + segs[0] + "/…/" + strings.Join(segs[len(segs)-k:], "/"); VW(cand) <= w {
+			return cand
+		}
+	}
+	if cand := "…/" + segs[len(segs)-1]; VW(cand) <= w {
+		return cand
+	}
+	return trunc(p, w)
+}
+
+// slotRows pads (or clips) a field block to exactly fieldRowsH rows.
+func slotRows(out []string, w int) []string {
+	for len(out) < fieldRowsH {
+		out = append(out, Pad("", w))
+	}
+	return out[:fieldRowsH]
+}
+
+func blankRows(w, n int) []string {
+	out := make([]string, 0, maxInt(n, 0))
+	for len(out) < n {
+		out = append(out, Pad("", w))
+	}
+	return out
+}
+
+func isWorkerRow(lr *liveRow) bool { return lr.cmd == "" }
+
+func liveGlyph(lr *liveRow) string {
+	switch lr.state {
+	case "waiting":
+		return "◐"
+	case "failed":
+		return "✗"
+	default:
+		if isWorkerRow(lr) {
+			return "◈"
+		}
+		return "●"
+	}
+}
+
+// liveRowLine renders one row of a live section against the column grid,
+// dropping the where-column rather than overflowing when the activity column
+// would be left under eight cells.
+func liveRowLine(lr *liveRow, sel bool, w int) string {
+	marker := dim.Render("◇ ")
+	name := Pad(lr.id, wName)
+	if sel {
+		marker = cy.Render("◆ ")
+		name = cy.Render(Pad(lr.id, wName))
+	}
+	state := liveStyle[lr.state].Render(Pad(liveGlyph(lr)+" "+lr.state, wState))
+	elapsed := dim.Render(Pad(lr.elapsed, wElapsed))
+	used := 1 + wMarker + wName + wState + wElapsed
+	whereText, whereStyle := whereCol(lr)
+	ww := VW(whereText)
+	where := whereStyle.Render(whereText)
+	if ww > 0 && w-used-ww < 8 {
+		ww, where = 0, ""
+	}
+	actW := maxInt(w-used-ww, 4)
+	return Pad(" "+marker+name+state+elapsed+dim.Render(Pad(trunc(lr.doing, actW), actW))+where, w)
+}
+
+// liveSections is the Running and Workers sections under the palette box: two
+// labelled groups under one cursor, commands first. They are separate sections
+// because a worker is not a command — it is a Claude session running mostly
+// autonomously in its own worktree, with its own state, its own current
+// activity and a real terminal session you can attach to.
+//
+// selIdx is the combined cursor's own 0-based position within these sections,
+// -1 while the selection is still up in the box.
+func liveSections(w, selIdx int, empty bool) []string {
+	rows := liveSectionRows(empty)
+	out := []string{Pad("", w)}
+	i := 0
+	wroteWorkers := false
+	nCmd, nWk := 0, 0
+	for _, lr := range rows {
+		if isWorkerRow(lr) {
+			nWk++
+		} else {
+			nCmd++
+		}
+	}
+	if nCmd > 0 {
+		out = append(out, Pad(" "+bo.Render("Running")+dim.Render("  "+itoa(nCmd)), w))
+	}
+	for _, lr := range rows {
+		if isWorkerRow(lr) && !wroteWorkers {
+			out = append(out, Pad("", w), Pad(" "+bo.Render("Workers")+dim.Render("  "+itoa(nWk)), w))
+			wroteWorkers = true
+		}
+		out = append(out, liveRowLine(lr, i == selIdx, w))
+		i++
+	}
+	if !wroteWorkers {
+		out = append(out, Pad("", w), Pad(" "+bo.Render("Workers")+dim.Render("  0"), w),
+			Pad(" "+dim.Render("no workers running — dispatch a bead from the tracker tab"), w))
+	}
+	if len(rows) == 0 {
+		out = append(out, Pad(" "+dim.Render("nothing running"), w))
+	}
+	return out
+}
+
+// liveSectionRows is every live row in the order the sections draw them:
+// commands, then workers. One order, used by the sections, the cursor and the
+// band's own "also running" count, so the three can never disagree.
+func liveSectionRows(empty bool) []*liveRow {
+	if empty {
+		return nil
+	}
+	var cmds, wks []*liveRow
+	for i := range liveRows {
+		lr := &liveRows[i]
+		if isWorkerRow(lr) {
+			wks = append(wks, lr)
+		} else {
+			cmds = append(cmds, lr)
+		}
+	}
+	return append(cmds, wks...)
+}
+
+// othersRunning is the right half of the band's title rule: how much is running
+// that you are NOT looking at. Said once per screen, never once per row.
+func othersRunning(sel *liveRow, empty bool) string {
+	rows := liveSectionRows(empty)
+	if len(rows) == 0 {
+		return "nothing running"
+	}
+	c, wk := 0, 0
+	for _, lr := range rows {
+		if sel != nil && lr.id == sel.id {
+			continue
+		}
+		if isWorkerRow(lr) {
+			wk++
+		} else {
+			c++
+		}
+	}
+	if c == 0 && wk == 0 {
+		return "nothing else running"
+	}
+	parts := ""
+	if c > 0 {
+		parts = itoa(c) + " command" + plural(c)
+	}
+	if wk > 0 {
+		if parts != "" {
+			parts += " · "
+		}
+		parts += itoa(wk) + " worker" + plural(wk)
+	}
+	return "also " + parts
+}
+
+// bandTitle is the rule between the list and the band: the previewed thing on
+// the left, once, and the count of everything else running on the right. The
+// identity wins the space — on a narrow terminal the count drops rather than
+// squeezing the name it is a footnote to.
+func bandTitle(w int, sel *liveRow, idle string, empty bool) string {
+	var title string
+	if sel != nil {
+		title = liveStyle[sel.state].Render(liveGlyph(sel)) + " " + bo.Render(sel.id) +
+			dim.Render("  "+sel.state+"  "+sel.elapsed)
+	} else {
+		title = bo.Render(idle) + dim.Render("  not running")
+	}
+	right := othersRunning(sel, empty)
+	room := w - 4
+	if room-VW(right)-4 < VW(Strip(title)) && room-VW(right)-4 < 28 {
+		right = ""
+	}
+	title = trunc(title, maxInt(room-VW(right)-4, 8))
+	suffix := ""
+	if right != "" {
+		suffix = " " + right
+	}
+	fill := maxInt(room-VW(Strip(title))-VW(suffix)-1, 0)
+	return dim.Render("── ") + title + dim.Render(" "+strings.Repeat("─", fill)+suffix+" ──")
+}
+
+// bandFields is the field block for a live row. Name, state and elapsed are NOT
+// here — the title rule above already said them once.
+func bandFields(lr *liveRow, w int) []string {
+	lw := maxInt(w-11, 8)
+	out := []string{" " + dim.Render("log      ") + dim.Render(fitPath(lr.logPath, lw))}
+	if !isWorkerRow(lr) {
+		if len(lr.urls) == 0 {
+			return slotRows(append(out, " "+dim.Render("url      ")+dim.Render("—")), w)
+		}
+		for _, u := range lr.urls {
+			out = append(out, " "+dim.Render("url      ")+cy.Render(trunc(u, lw)))
+		}
+		return slotRows(out, w)
+	}
+	out = append(out,
+		" "+dim.Render("branch   ")+cy.Render(trunc(lr.branch, lw)),
+		" "+dim.Render("worktree ")+dim.Render(fitPath(lr.worktree, lw)),
+	)
+	// whereLabel already carries its own gloss ("· detached, outlives admin"), so
+	// appending a second one printed the same fact twice on one row.
+	out = append(out, " "+dim.Render("session  ")+trunc(whereLabel(lr), lw))
+	return slotRows(append(out, " "+dim.Render("now      ")+trunc(lr.doing, lw)), w)
+}
+
+// bandIdle is the band while the cursor sits on something that is NOT running:
+// the entry's own detail and its last run. Never a blank rect, never another
+// row's tail — and never a row count that depends on what it has to say. "last
+// run" and "last log" are always two rows, reading "never" and "—" for
+// something nothing has ever run.
+func bandIdle(e *paletteEntry, w int) []string {
+	lw := maxInt(w-11, 8)
+	var parent paletteParent
+	for _, p := range paletteParents {
+		if p.name == e.parent {
+			parent = p
+		}
+	}
+	kind := parent.kind
+	if e.target != "" {
+		kind = "target of " + e.parent
+	}
+	lastRun, lastLog := "", ""
+	for _, m := range paletteMRU {
+		if m == e.resolved() {
+			lastRun = "18m ago · exit 0"
+			lastLog = root + "/.admin/logs/" + strings.ReplaceAll(e.resolved(), " ", "-") + ".log"
+		}
+	}
+	val := func(label, v string) string {
+		if v == "" {
+			return " " + dim.Render(Pad(label, 9)) + dim.Render("—")
+		}
+		return " " + dim.Render(Pad(label, 9)) + trunc(v, lw)
+	}
+	if lastRun == "" {
+		lastRun = "never"
+	}
+	return slotRows([]string{
+		val("kind", kind),
+		val("runs", e.run),
+		val("last run", lastRun),
+		" " + dim.Render(Pad("last log", 9)) + dim.Render(func() string {
+			if lastLog == "" {
+				return "—"
+			}
+			return fitPath(lastLog, lw)
+		}()),
+	}, w)
+}
+
+// renderWorkBody is the whole Work tab: the palette box and the live sections
+// scrolling in the top region, then the band. One layout at every geometry.
+func renderWorkBody(w, h int, boxTitle string, boxBody []string, selEntry *paletteEntry, selWorker *liveRow, workerSelIdx int, empty bool) []string {
+	fullW := maxInt(w-2, 20)
+	bh := bandH(h)
+	listH := maxInt(h-bh, 1)
+
+	// The box is pinned; only the live sections scroll. Clipping the whole list
+	// together was the bug this replaces — the window ate the box's top border
+	// and left a bordered fragment with no title on it.
+	box := paletteBoxFit(fullW, boxTitle, boxBody)
+	sections := liveSections(fullW, workerSelIdx, empty)
+	sectionsH := maxInt(listH-len(box), 0)
+	if len(sections) > sectionsH {
+		start, end := scrollWindow(len(sections), markedIdx(sections), sectionsH)
+		win := append([]string{}, sections[start:end]...)
+		if start > 0 && len(win) > 0 {
+			// The header of whichever section the window starts inside is pinned
+			// to its first row. Without it a scrolled list shows rows with no
+			// way to tell whether they are commands or workers — and the naive
+			// window replaced the header itself with the "N more" marker.
+			win[0] = Pad(" "+sectionHeaderAt(sections, start)+dim.Render("   ↑ "+itoa(start)+" more"), fullW)
+		}
+		if end < len(sections) && len(win) > 0 {
+			win[len(win)-1] = dim.Render("  ↓ more")
+		}
+		sections = win
+	}
+	list := append(append([]string{}, box...), sections...)
+
+	out := make([]string, 0, h)
+	for i := 0; i < listH; i++ {
+		out = append(out, " "+Pad(at(list, i), fullW))
+	}
+
+	idleName := ""
+	if selEntry != nil {
+		idleName = selEntry.resolved()
+	}
+	out = append(out, bandTitle(w, selWorker, idleName, empty))
+	switch {
+	case selWorker != nil:
+		fields := bandFields(selWorker, fullW)
+		out = append(out, prefixRows(fields, fullW)...)
+		out = append(out, prefixRows(tailLines(selWorker.tail, maxInt(bh-1-fieldRowsH, 1), fullW), fullW)...)
+	case selEntry != nil:
+		out = append(out, prefixRows(bandIdle(selEntry, fullW), fullW)...)
+		out = append(out, blankRows(w, maxInt(bh-2-fieldRowsH, 0))...)
+		out = append(out, Pad(" "+dim.Render("output appears here while it runs"), fullW))
+	}
+	for len(out) < h {
+		out = append(out, Pad("", w))
+	}
+	return out[:h]
+}
+
+// prefixRows pads a band block to the body width. The rows already carry their
+// own one-column inset, so nothing is added here — a second space put the band's
+// fields one column right of the rule above them.
+// sectionHeaderAt is which section a scrolled window starting at row i is
+// inside — the nearest header row at or above it. The headers are the only rows
+// liveSections renders bold, which is what makes them findable without a
+// parallel index the two could disagree about.
+func sectionHeaderAt(sections []string, i int) string {
+	for j := i; j >= 0 && j < len(sections); j-- {
+		t := strings.TrimSpace(Strip(sections[j]))
+		if strings.HasPrefix(t, "Running") || strings.HasPrefix(t, "Workers") {
+			return bo.Render(strings.Fields(t)[0])
+		}
+	}
+	return bo.Render("Running")
+}
+
+func prefixRows(rows []string, w int) []string {
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = Pad(r, w)
+	}
+	return out
+}
+
 
 func render(s State) string {
 	w, h := s.W, s.H
@@ -2026,16 +1907,11 @@ func render(s State) string {
 		tracker = "beads"
 	}
 	src := trackerRepo(tracker)
-	hover := s.Get("hover")
-	if hover == "" {
-		hover = "off" // NoDump axes are absent from the dump's combos(), unlike live drive
-	}
-
 	// header's readout has to match the SAME h workBody's bottomOrient check
 	// actually compares against (the body height, after the header/tab/rule
 	// rows are subtracted) — not the raw terminal height — or the number on
 	// screen would lie about what the code just decided.
-	rows := []string{header(w, h-5, hover, src), tabBar(sp, w, s.Get("tracker")), ""}
+	rows := []string{header(w, h-5, src), tabBar(sp, w, s.Get("tracker")), ""}
 	if _, ok := embedded[name]; ok {
 		// repo-dash draws its own rule and footer for these — including the
 		// modal footers, which are the mode.
@@ -2046,48 +1922,45 @@ func render(s State) string {
 		rows = append(rows, body[:h-3]...)
 	} else {
 		var body []string
+		onLive := false
 		switch {
-		case name == "commands-palette", name == "commands-palette-empty":
-			empty := name == "commands-palette-empty"
-			box := paletteBoxRows(name)
-			boxSelected := paletteCursor < len(box)
-			var selEntry *paletteEntry
-			var selWorker *liveRow
-			workerSelIdx := -1
-			if boxSelected {
-				selEntry = &box[paletteCursor]
-			} else if wr := paletteWorkerRows(); paletteCursor-len(box) < len(wr) {
-				workerSelIdx = paletteCursor - len(box)
-				selWorker = wr[workerSelIdx]
-			}
-			content := paletteIdleContent(w*2/3-2, empty, boxSelected)
-			body = renderPaletteScreen(w, h-5, "Command Palette", content, selEntry, selWorker, workerSelIdx, hover)
-		case name == "commands-palette-typing":
-			box := paletteBoxRows(name)
-			boxSelected := paletteCursor < len(box)
-			var selEntry *paletteEntry
-			var selWorker *liveRow
-			workerSelIdx := -1
-			if boxSelected && paletteCursor < len(box) {
-				selEntry = &box[paletteCursor]
-			} else if wr := paletteWorkerRows(); paletteCursor-len(box) < len(wr) {
-				workerSelIdx = paletteCursor - len(box)
-				selWorker = wr[workerSelIdx]
-			}
-			content := paletteTypingContent(w*2/3-2, sp.demoQuery, boxSelected)
-			body = renderPaletteScreen(w, h-5, "Command Palette", content, selEntry, selWorker, workerSelIdx, hover)
 		case name == "commands-palette-browse":
 			body = renderPaletteBrowse(w, h-5)
 		case sp.hosted:
 			body = hostedBody(w, h-5, sp.hostedEmpty)
 		default:
-			body = workBody(sp, w, h-5, empty, hover)
+			// Every other Work-tab screen is the same body: the palette box and
+			// the live sections above, the band below. What differs is only
+			// which content the box holds and where the combined cursor sits —
+			// the screen axis names those, it does not name a second layout.
+			box := paletteBoxRows(name)
+			cursor := combinedCursor(name, empty)
+			inBox := cursor < len(box)
+			content := paletteIdleContent(maxInt(w-6, 12), empty, inBox)
+			if q := paletteScreenQuery(name); q != "" || name == "commands-palette-typing" {
+				content = paletteTypingContent(maxInt(w-6, 12), sp.demoQuery, inBox)
+			}
+			rowsLive := liveSectionRows(empty)
+			liveSel := -1
+			var selLive *liveRow
+			var selEntry *paletteEntry
+			switch {
+			case inBox && len(box) > 0:
+				selEntry = &box[cursor]
+			case cursor-len(box) < len(rowsLive):
+				liveSel = cursor - len(box)
+				selLive = rowsLive[liveSel]
+			case len(box) > 0:
+				selEntry = &box[0]
+			}
+			onLive = selLive != nil
+			body = renderWorkBody(w, h-5, "Command Palette", content, selEntry, selLive, liveSel, empty)
 		}
 		for len(body) < h-5 {
 			body = append(body, "")
 		}
 		rows = append(rows, body[:h-5]...)
-		rows = append(rows, dim.Render(strings.Repeat("─", w)), Pad(" "+dim.Render(keys(name, sp)), w))
+		rows = append(rows, dim.Render(strings.Repeat("─", w)), Pad(" "+dim.Render(keys(name, sp, onLive)), w))
 	}
 	if sp.sheet {
 		if sp.running {
@@ -2102,11 +1975,12 @@ func render(s State) string {
 	return strings.Join(rows, "\n")
 }
 
-// header shows the exact w×h this frame is rendering at, and which way the
-// hover-orientation check just came down, so that's on screen instead of
-// something to estimate from a screenshot: "w=132 h=61 w/2=66<h→bottom" or
-// "…→right", read directly off the number the code actually compared.
-func header(w, h int, hover string, src repoSrc) string {
+// header shows the exact w×h this frame is rendering at, plus how many rows the
+// live band is taking, so both are on screen instead of something to estimate
+// from a screenshot. The old readout printed the w/2.3 orientation verdict; that
+// verdict no longer exists — the band is full width at every geometry — so what
+// is worth showing instead is the split it actually chose.
+func header(w, h int, src repoSrc) string {
 	name := src.nwo
 	if i := strings.IndexByte(name, '/'); i >= 0 {
 		name = name[i+1:]
@@ -2117,16 +1991,7 @@ func header(w, h int, hover string, src repoSrc) string {
 	// applies while a hover mode is on) and folding it into this arrow was
 	// itself the bug: it made the displayed math and the displayed verdict
 	// disagree whenever hover was off, which is exactly what happened here.
-	weighted := float64(w) / 2.3
-	orient := "right"
-	if weighted < float64(h) {
-		orient = "bottom"
-	}
-	hoverNote := ""
-	if hover == "off" {
-		hoverNote = " (hover off, so unused)"
-	}
-	r := dim.Render(fmt.Sprintf("w=%d h=%d w/2.3=%.0f→%s%s", w, h, weighted, orient, hoverNote))
+	r := dim.Render(fmt.Sprintf("w=%d h=%d  list %d · band %d", w, h, h-bandH(h), bandH(h)))
 	gap := w - VW(l) - VW(r) - 2
 	if gap < 1 {
 		gap = 1
@@ -2244,14 +2109,22 @@ func placeBox(rows, box []string, w, h, bw int) []string {
 	return rows
 }
 
-func keys(name string, sp screenSpec) string {
-	switch name {
-	case "commands-palette", "commands-palette-empty":
-		return "↑↓ move · ↵ dispatch · / search · b browse · q/esc quit"
-	case "commands-palette-typing":
+// keys is the footer, and on the Work tab it follows what the cursor is on —
+// ↵ is the row's one primary action and its verb changes with the row's state:
+// attach while it runs, dispatch while it does not. Kill is `x`: `k` is cursor-up
+// everywhere in this dashboard, so a footer advertising "k kill" was a collision.
+func keys(name string, sp screenSpec, onLive bool) string {
+	if name == "commands-palette-typing" {
 		return "type to search · tab complete · ↑↓ move · ↵ dispatch · esc cancel"
-	case "commands-palette-browse":
+	}
+	if name == "commands-palette-browse" {
 		return "↑↓ scroll · / search · esc back to palette"
+	}
+	if sp.tab == 0 && !sp.hosted && !sp.sheet {
+		if onLive {
+			return "↑↓ move · ↵ attach · x kill · / search · b browse · q/esc quit"
+		}
+		return "↑↓ move · ↵ dispatch · / search · b browse · q/esc quit"
 	}
 	switch {
 	case sp.sheet && sp.running:
@@ -2259,9 +2132,7 @@ func keys(name string, sp screenSpec) string {
 	case sp.sheet:
 		return "⏎ dispatch · e edit · esc cancel"
 	case sp.hosted:
-		return "q/esc detach · ↑↓ scroll · k kill · typing goes to the process"
-	case sp.tab == 0:
-		return "↑↓ move · ↵ run or open · k kill · p palette · q/esc quit"
+		return "q/esc detach · ↑↓ scroll · x kill · typing goes to the process"
 	case sp.tab == 1:
 		return "↑↓ move · ↵ checkout · ⌥↵/W worktree · p pull · ←→ tab"
 	case sp.tab == 2:
