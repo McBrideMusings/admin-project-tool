@@ -1,0 +1,36 @@
+Forevr-Games/social-chess   puzzles  ✔ clean                                                                       live 
+ attached  ·  ● preview devvit  ·  running  ·  4m12s                                                                    
+                                                                                                                        
+ /Users/pierce/Projects/social-chess/.admin/logs/preview-devvit.log                                                     
+ ● │                                                                                                                    
+ ● │                                                                                                                    
+ ◐ │                                                                                                                    
+ ◈ │                                                                                                                    
+ ◐ │                                                                                                                    
+   │                                                                                                                    
+   │                                                                                                                    
+   │                                                                                                                    
+   │                                                                                                                    
+   │                                                                                                                    
+   │                                                                                                                    
+   │ 14:55:41  [devvit] bundling client…                                                                                
+   │ 14:55:44  [devvit] bundling server…                                                                                
+   │ 14:55:47  [devvit] uploading 4.2 MB                                                                                
+   │ 14:55:52  [devvit] app version 0.0.1.30 created                                                                    
+   │ 14:55:53  [devvit] installing to r/worldbuilder_dev                                                                
+   │ 14:55:56  Updating... ⣷                                                                                            
+   │ 14:55:58  Updating... ⣟                                                                                            
+   │ 14:56:00  Updating... ⢿                                                                                            
+   │ 14:56:02  Updating... ⣽                                                                                            
+   │ 14:56:04  Updating... ⣷                                                                                            
+   │ 14:56:06  Updating... ⣟                                                                                            
+   │ 14:56:08  Updating... ⢿                                                                                            
+   │ 14:56:10  Updating... ⣯                                                                                            
+   │ 14:56:11  Updating... ⣷                                                                                            
+   │ 14:56:12  Updating... ⣻                                                                                            
+   │ 14:56:13  Updating... ⢿                                                                                            
+   │ 14:56:14  Updating... ⡿                                                                                            
+   │ 14:56:15  Success!                                                                                                 
+   │ 14:56:15  ✓ v0.0.1.30 ➜ https://www.reddit.com/r/worldbuilder_dev                                                  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ esc detach · ⇥ next running · k kill · q quit                                                                          

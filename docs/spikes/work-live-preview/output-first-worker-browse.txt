@@ -1,0 +1,36 @@
+Forevr-Games/social-chess   puzzles  ✔ clean                                                                       live 
+  Work 39     Repo     PRs 4     Beads 14     Config                                                                    
+                                                                                                                        
+ Commands   ↑ 8 more      │  ◦ preview devvit 4m12s  ◦ dev 41m  ◦ test workers 12s  ┊  ◈ chess-4kq2 18m  ◦ chess-9wpe…  
+ ◇ └ devvit               │ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ 
+ ◇ prod                   │  ◈ chess-4kq2  ·  worker  ·  running  ·  18m                                                
+ ◇ test                   │  log      /Users/pierce/Projects/social-chess/.admin/logs/worker-chess-4kq2.log             
+ ◇ ├ all                  │  branch   feat/chess-4kq2-eval-cache                                                        
+ ◇ ├ engine               │  worktree /Users/pierce/.worktrees/social-chess-chess-4kq2                                  
+ ◇ ├ node                 │  session  herdr:pane-7 — a real terminal, outlives the dashboard                            
+ ◇ ├ rules                │  now      editing src/engine/eval.ts — 4 files, 2 tests green                               
+ ◇ └ workers            ◐ │ ─── output ──────────────────────────────────────────────────────────────────────────────── 
+ ◇ vet                    │                                                                                             
+ ◇ fmt                    │                                                                                             
+ ◇ clean                  │                                                                                             
+ ◇ kill                   │                                                                                             
+ ◇ db                     │                                                                                             
+ ◇ perft                  │                                                                                             
+ ◇ db-migrate             │                                                                                             
+ ◇ ├ preview              │                                                                                             
+ ◇ ├ prod                 │                                                                                             
+ ◇ └ staging              │                                                                                             
+ ◇ puzzles-import         │                                                                                             
+ ◇ ├ local                │                                                                                             
+ ◇ ├ preview              │  14:49:12  read src/engine/eval.ts (412 lines)                                              
+ ◇ └ prod                 │  14:50:03  edit src/engine/eval.ts — memoize pawn structure                                 
+ ◇ puzzle-report          │  14:51:20  run  bun test engine/eval                                                        
+ ◇ ├ local                │  14:51:44  ✓ 18 pass, 0 fail                                                                
+ ◇ └ prod                 │  14:52:31  read src/engine/search.ts (890 lines)                                            
+ ◇ prototype              │  14:54:02  edit src/engine/search.ts — reuse eval cache                                     
+                          │  14:55:10  run  bun test engine                                                             
+ Workers  3               │  14:55:52  ✗ engine/search.test.ts: transposition depth mismatch                            
+ ◆ chess-4kq2           ◈ │  14:56:06  read src/engine/tt.ts (204 lines)                                                
+   ↓ more                 │  14:56:13  edit src/engine/tt.ts — key on cache generation                                  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ move · a attach · k kill · ⇥ next running · / filter · q quit                                                       

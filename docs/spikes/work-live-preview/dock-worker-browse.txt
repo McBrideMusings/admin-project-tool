@@ -1,0 +1,36 @@
+Forevr-Games/social-chess   puzzles  ✔ clean                                                                       live 
+  Work 39     Repo     PRs 4     Beads 14     Config                                                                    
+                                                                                                                        
+ Commands   ↑ 22 more                                                                                                   
+ ◇ db-migrate      multi-tgt Run pending dbmate migrations against a target                                             
+ ◇ ├ preview                 @db-migrate-preview                                                                        
+ ◇ ├ prod                    @db-migrate-prod                                                                           
+ ◇ └ staging                 @db-migrate-staging                                                                        
+ ◇ puzzles-import  multi-tgt Import the Lichess puzzle corpus into a target                                             
+ ◇ ├ local                   @puzzles-import-local                                                                      
+ ◇ ├ preview                 @puzzles-import-preview                                                                    
+ ◇ └ prod                    @puzzles-import-prod                                                                       
+ ◇ puzzle-report   multi-tgt Solve rate / retries / hints per difficulty band                                           
+ ◇ ├ local                   @puzzle-difficulty-report-local                                                            
+ ◇ └ prod                    @puzzle-difficulty-report-prod                                                             
+ ◇ prototype       multi-tgt Open a prototype                                                                           
+                                                                                                                        
+ Workers  3                                                                                                             
+ ◆ chess-4kq2      ◈ running 18m    editing src/engine/eval.ts — 4 files, 2 tests green                     herdr:pane-7
+   ↓ more                                                                                                               
+─── live ──────────────────────────────────────────────────────────────────────────────────── 3 commands · 2 workers ───
+ ◦ preview devvit 4m12s  ◦ dev 41m  ◦ test workers 12s  ┊  ◈ chess-4kq2 18m  ◦ chess-9wpe 6m                            
+ log      /Users/pierce/Projects/social-chess/.admin/logs/worker-chess-4kq2.log                                         
+ branch   feat/chess-4kq2-eval-cache                                                                                    
+ worktree /Users/pierce/.worktrees/social-chess-chess-4kq2                                                              
+ session  herdr:pane-7 — a real terminal, outlives the dashboard                                                        
+ now      editing src/engine/eval.ts — 4 files, 2 tests green                                                           
+ 14:51:44  ✓ 18 pass, 0 fail                                                                                            
+ 14:52:31  read src/engine/search.ts (890 lines)                                                                        
+ 14:54:02  edit src/engine/search.ts — reuse eval cache                                                                 
+ 14:55:10  run  bun test engine                                                                                         
+ 14:55:52  ✗ engine/search.test.ts: transposition depth mismatch                                                        
+ 14:56:06  read src/engine/tt.ts (204 lines)                                                                            
+ 14:56:13  edit src/engine/tt.ts — key on cache generation                                                              
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ move · a attach · k kill · ⇥ next running · / filter · q quit                                                       

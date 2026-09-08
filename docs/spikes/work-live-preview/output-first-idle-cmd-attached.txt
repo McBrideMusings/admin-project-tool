@@ -1,0 +1,36 @@
+Forevr-Games/social-chess   puzzles  ✔ clean                                                                       live 
+  Work 39     Repo     PRs 4     Beads 14     Config                                                                    
+                                                                                                                        
+ Commands  34             │ ─── detail ───────────────────────────────────────────────────── 3 commands · 2 workers ─── 
+ ◆ setup                  │  setup  ·  not running                                                                      
+ ◇ build                  │                                                                                             
+ ◇ dev                  ● │  kind     sequence                                                                          
+ ◇ preview                │  desc     Start Postgres, install deps, migrate the dev database                            
+ ◇ ├ cf                   │  last log never run                                                                         
+ ◇ └ devvit             ● │                                                                                             
+ ◇ staging                │  ↵ run   l last log                                                                         
+ ◇ ├ cf                   │                                                                                             
+ ◇ └ devvit               │                                                                                             
+ ◇ prod                   │                                                                                             
+ ◇ test                   │                                                                                             
+ ◇ ├ all                  │                                                                                             
+ ◇ ├ engine               │                                                                                             
+ ◇ ├ node                 │                                                                                             
+ ◇ ├ rules                │                                                                                             
+ ◇ └ workers            ◐ │                                                                                             
+ ◇ vet                    │                                                                                             
+ ◇ fmt                    │                                                                                             
+ ◇ clean                  │                                                                                             
+ ◇ kill                   │                                                                                             
+ ◇ db                     │                                                                                             
+ ◇ perft                  │                                                                                             
+ ◇ db-migrate             │                                                                                             
+ ◇ ├ preview              │                                                                                             
+ ◇ ├ prod                 │                                                                                             
+ ◇ └ staging              │                                                                                             
+ ◇ puzzles-import         │                                                                                             
+ ◇ ├ local                │                                                                                             
+ ◇ ├ preview              │                                                                                             
+   ↓ more                 │                                                                                             
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ move · ↵ run · l last log · / filter · q quit · ←→ tab                                                              

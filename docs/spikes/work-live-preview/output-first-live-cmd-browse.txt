@@ -1,0 +1,36 @@
+Forevr-Games/social-chess   puzzles  ✔ clean                                                                       live 
+  Work 39     Repo     PRs 4     Beads 14     Config                                                                    
+                                                                                                                        
+ Commands  34             │  ● preview devvit 4m12s  ◦ dev 41m  ◦ test workers 12s  ┊  ◦ chess-4kq2 18m  ◦ chess-9wpe…  
+ ◇ setup                  │ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ 
+ ◇ build                  │  ● preview devvit  ·  command  ·  running  ·  4m12s                                         
+ ◇ dev                  ● │  log      /Users/pierce/Projects/social-chess/.admin/logs/preview-devvit.log                
+ ◇ preview                │  url      https://www.reddit.com/r/worldbuilder_dev                                         
+ ◇ ├ cf                   │ ─── output ──────────────────────────────────────────────────────────────────────────────── 
+ ◆ └ devvit             ● │                                                                                             
+ ◇ staging                │                                                                                             
+ ◇ ├ cf                   │                                                                                             
+ ◇ └ devvit               │                                                                                             
+ ◇ prod                   │                                                                                             
+ ◇ test                   │                                                                                             
+ ◇ ├ all                  │  14:55:41  [devvit] bundling client…                                                        
+ ◇ ├ engine               │  14:55:44  [devvit] bundling server…                                                        
+ ◇ ├ node                 │  14:55:47  [devvit] uploading 4.2 MB                                                        
+ ◇ ├ rules                │  14:55:52  [devvit] app version 0.0.1.30 created                                            
+ ◇ └ workers            ◐ │  14:55:53  [devvit] installing to r/worldbuilder_dev                                        
+ ◇ vet                    │  14:55:56  Updating... ⣷                                                                    
+ ◇ fmt                    │  14:55:58  Updating... ⣟                                                                    
+ ◇ clean                  │  14:56:00  Updating... ⢿                                                                    
+ ◇ kill                   │  14:56:02  Updating... ⣽                                                                    
+ ◇ db                     │  14:56:04  Updating... ⣷                                                                    
+ ◇ perft                  │  14:56:06  Updating... ⣟                                                                    
+ ◇ db-migrate             │  14:56:08  Updating... ⢿                                                                    
+ ◇ ├ preview              │  14:56:10  Updating... ⣯                                                                    
+ ◇ ├ prod                 │  14:56:11  Updating... ⣷                                                                    
+ ◇ └ staging              │  14:56:12  Updating... ⣻                                                                    
+ ◇ puzzles-import         │  14:56:13  Updating... ⢿                                                                    
+ ◇ ├ local                │  14:56:14  Updating... ⡿                                                                    
+ ◇ ├ preview              │  14:56:15  Success!                                                                         
+   ↓ more                 │  14:56:15  ✓ v0.0.1.30 ➜ https://www.reddit.com/r/worldbuilder_dev                          
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ move · a attach · k kill · ⇥ next running · ↵ restart · q quit                                                      

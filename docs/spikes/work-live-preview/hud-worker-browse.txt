@@ -1,0 +1,36 @@
+Forevr-Games/social-chess   puzzles  ✔ clean                                                                       live 
+  Work 39     Repo     PRs 4     Beads 14     Config                                                                    
+                                                                                                                        
+ Commands   ↑ 8 more                                                                                                    
+ ◇ └ devvit                  @devvit-staging                                                                            
+ ◇ prod            multi-tgt Deploy to prod (cf)                                                                        
+ ◇ test            multi-tgt Run the test suites (node|workers|engine|rules|all)                                        
+ ◇ ├ all                     @test-all                                                                                  
+ ◇ ├ engine                  @test-engine                                                                               
+ ◇ ├ node                    @test-node                                                                                 
+ ◇ ├ rules                   @test-rules                                                                                
+ ◇ └ workers       ◐ waiting 12s    · waiting for miniflare port 8787                                                   
+ ◇ vet             shell     Typecheck and lint migrations                                                              
+ ◇ fmt             shell     Format the tree with prettier                                                              
+ ◇ clean           shell     Remove build outputs                                                                       
+ ◇ kill            sequence  Kill stray dev processes, free the ports, stop Postgres                                    
+ ◇ db              sequence  Recreate and migrate the local dev database                                                
+ ◇ perft           shell     Run the deep perft conformance suite for chess-rules                                       
+ ◇ db-migrate      multi-tgt Run pending dbmate migrations against a target                                             
+ ◇ ├ preview                 @db-migrate-preview                                                                        
+ ◇ ├ prod                    @db-migrate-prod                                                                           
+ ◇ └ staging                 @db-migrate-staging                                                                        
+ ◇ puzzles-import  multi-tgt Import the Lich…   ╭──preview devvit──dev──test workers─┬[ chess-4kq2 ]─chess-9wpe──────╮  
+ ◇ ├ local                   @puzzles-import…   │ log      /Users/…/social-chess/.admin/logs/worker-chess-4kq2.log   │  
+ ◇ ├ preview                 @puzzles-import…   │ branch   feat/chess-4kq2-eval-cache                                │  
+ ◇ └ prod                    @puzzles-import…   │ worktree /Users/pierce/.worktrees/social-chess-chess-4kq2          │  
+ ◇ puzzle-report   multi-tgt Solve rate / re…   │ 14:51:44  ✓ 18 pass, 0 fail                                        │  
+ ◇ ├ local                   @puzzle-difficu…   │ 14:52:31  read src/engine/search.ts (890 lines)                    │  
+ ◇ └ prod                    @puzzle-difficu…   │ 14:54:02  edit src/engine/search.ts — reuse eval cache             │  
+ ◇ prototype       multi-tgt Open a prototype   │ 14:55:10  run  bun test engine                                     │  
+                                                │ 14:55:52  ✗ engine/search.test.ts: transposition depth mismatch    │  
+ Workers  3                                     │ 14:56:06  read src/engine/tt.ts (204 lines)                        │  
+ ◆ chess-4kq2      ◈ running 18m    editing sr… │ 14:56:13  edit src/engine/tt.ts — key on cache generation          │  
+   ↓ more                                       ╰ ◈ running  18m  ·  a attach  ·  esc collapse                       ╯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ move · a attach · k kill · ⇥ next running · / filter · q quit                                                       

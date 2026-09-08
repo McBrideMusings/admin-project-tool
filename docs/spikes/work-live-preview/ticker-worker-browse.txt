@@ -1,0 +1,36 @@
+Forevr-Games/social-chess   puzzles  ✔ clean                                                                       live 
+  Work 39     Repo     PRs 4     Beads 14     Config                                                                    
+                                                                                                                        
+ Commands   ↑ 16 more                                                                                                   
+ ◇ vet             shell     Typecheck and lint migrations                                                              
+ ◇ fmt             shell     Format the tree with prettier                                                              
+ ◇ clean           shell     Remove build outputs                                                                       
+ ◇ kill            sequence  Kill stray dev processes, free the ports, stop Postgres                                    
+ ◇ db              sequence  Recreate and migrate the local dev database                                                
+ ◇ perft           shell     Run the deep perft conformance suite for chess-rules                                       
+ ◇ db-migrate      multi-tgt Run pending dbmate migrations against a target                                             
+ ◇ ├ preview                 @db-migrate-preview                                                                        
+ ◇ ├ prod                    @db-migrate-prod                                                                           
+ ◇ └ staging                 @db-migrate-staging                                                                        
+ ◇ puzzles-import  multi-tgt Import the Lichess puzzle corpus into a target                                             
+ ◇ ├ local                   @puzzles-import-local                                                                      
+ ◇ ├ preview                 @puzzles-import-preview                                                                    
+ ◇ └ prod                    @puzzles-import-prod                                                                       
+ ◇ puzzle-report   multi-tgt Solve rate / retries / hints per difficulty band                                           
+ ◇ ├ local                   @puzzle-difficulty-report-local                                                            
+ ◇ └ prod                    @puzzle-difficulty-report-prod                                                             
+ ◇ prototype       multi-tgt Open a prototype                                                                           
+                                                                                                                        
+ Workers  3                                                                                                             
+ ◆ chess-4kq2      ◈ running 18m    editing src/engine/eval.ts — 4 files, 2 tests green                     herdr:pane-7
+   ↓ more                                                                                                               
+─── live ──────────────────────────────────────────────────────────────────────────────────── 3 commands · 2 workers ───
+ ● preview devvit 4m12s  │ ✓ v0.0.1.30 ➜ https://www.reddit.com/r/worldbuilder_dev                                      
+ ● dev            41m    │ [api] GET /puzzles/next 200 9ms                                                              
+ ◐ test workers   12s    │ · waiting for miniflare port 8787                                                            
+   workers                                                                                                              
+ ◈ chess-4kq2     18m    │ editing src/engine/eval.ts — 4 files, 2 tests green                                          
+ ◐ chess-9wpe     6m     │ asked a question — needs a decision before it continues                                      
+   log  /Users/pierce/Projects/social-chess/.admin/logs/worker-chess-4kq2.log   a attach                                
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ move · a attach · k kill · ⇥ next running · / filter · q quit                                                       
