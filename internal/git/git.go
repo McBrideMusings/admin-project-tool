@@ -177,9 +177,33 @@ func RepoRoot(ctx context.Context) (string, error) {
 		return top, nil
 	}
 	if gitDir != commonDir {
-		return filepath.Dir(commonDir), nil
+		return primaryWorktreeOf(ctx, commonDir), nil
 	}
 	return top, nil
+}
+
+// primaryWorktreeOf maps a linked worktree's common git dir to the working tree
+// the primary checkout keeps there.
+//
+// For an ordinary repo the common dir is <primary>/.git, so the parent is the
+// answer. A submodule breaks that: its common dir is
+// <super>/.git/modules/<name>, whose parent is <super>/.git/modules — a
+// directory holding no working tree at all. Every populate pattern then globs
+// against nothing and the whole job is a silent no-op.
+//
+// core.worktree is what git itself uses to find a submodule's working tree, and
+// it is set only when the git dir lives away from it, so its presence is also
+// the test for that case. It is stored relative to the common dir
+// (../../../skills), so resolve it from there.
+func primaryWorktreeOf(ctx context.Context, commonDir string) string {
+	wt, err := runner(ctx, "config", "--file", filepath.Join(commonDir, "config"), "--get", "core.worktree")
+	if err != nil || wt == "" {
+		return filepath.Dir(commonDir)
+	}
+	if !filepath.IsAbs(wt) {
+		wt = filepath.Join(commonDir, wt)
+	}
+	return filepath.Clean(wt)
 }
 
 // CurrentBranch returns the checked-out branch at the cwd, or "" if detached.
