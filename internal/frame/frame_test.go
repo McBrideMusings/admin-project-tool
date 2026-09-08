@@ -260,8 +260,8 @@ func TestReflowIsANoOpWhenNotActive(t *testing.T) {
 
 // leave() must re-read the terminal size before positioning the cursor, so
 // teardown targets whatever size is current — not the size enter() captured
-// — or the final absolute-position write lands on a row the footer (at the
-// current size) still owns.
+// — or the erase lands on rows the footer (at the current size) doesn't
+// occupy.
 func TestLeavePositionsBelowTheFooterAtTheCurrentSizeNotTheEnterSize(t *testing.T) {
 	f, buf := testFrame([]URLEntry{{"a", "http://a"}}, "/tmp/x.log", 24, 100)
 	f.enter()
@@ -276,8 +276,9 @@ func TestLeavePositionsBelowTheFooterAtTheCurrentSizeNotTheEnterSize(t *testing.
 
 	out := buf.String()
 	// termSize's 24x80 fallback is what leave() must re-read and use here
-	// — not the 999 this test left stale on the struct.
-	wantAddr := esc + "[24;1H"
+	// — not the 999 this test left stale on the struct. At the re-read
+	// size (24x100, height 3) the footer's first row is RegionRows()+1.
+	wantAddr := esc + "[22;1H"
 	if !strings.Contains(out, wantAddr) {
 		t.Fatalf("expected leave() to reposition using the re-read size %q, got %q", wantAddr, out)
 	}
@@ -286,6 +287,47 @@ func TestLeavePositionsBelowTheFooterAtTheCurrentSizeNotTheEnterSize(t *testing.
 	}
 	if f.Rows != 24 {
 		t.Fatalf("expected leave() to have refreshed f.Rows to the re-read size, got %d", f.Rows)
+	}
+}
+
+// The teardown byte sequence must erase the footer in place rather than
+// scroll it into scrollback: cursor to the footer's first row, erase to end
+// of screen, then release the scroll region — in that order, with no
+// trailing newline pushing the footer up a row.
+func TestLeaveErasesTheFooterInsteadOfScrollingItAway(t *testing.T) {
+	f, buf := testFrame([]URLEntry{{"a", "http://a"}}, "/tmp/x.log", 24, 100)
+	f.enter()
+	buf.Reset()
+	f.leave()
+
+	out := buf.String()
+	first := f.RegionRows() + 1
+	wantAddr := esc + "[" + strconv.Itoa(first) + ";1H"
+	posIdx := strings.Index(out, wantAddr)
+	eraseIdx := strings.Index(out, esc+"[J")
+	regionIdx := strings.Index(out, esc+"[r")
+	if posIdx < 0 {
+		t.Fatalf("expected cursor positioned at the footer's first row %q, got %q", wantAddr, out)
+	}
+	if eraseIdx < 0 {
+		t.Fatalf("expected an erase-to-end-of-screen sequence, got %q", out)
+	}
+	if regionIdx < 0 {
+		t.Fatalf("expected the scroll region reset, got %q", out)
+	}
+	if !(posIdx < eraseIdx && eraseIdx < regionIdx) {
+		t.Fatalf("expected position, then erase, then region reset (in that order), got %q", out)
+	}
+}
+
+func TestLeaveNoLongerEmitsTheNewlineThatScrollsTheFooterAway(t *testing.T) {
+	f, buf := testFrame(nil, "/tmp/x.log", 24, 100)
+	f.enter()
+	buf.Reset()
+	f.leave()
+
+	if strings.Contains(buf.String(), "\n") {
+		t.Fatalf("expected leave() to emit no newline, got %q", buf.String())
 	}
 }
 

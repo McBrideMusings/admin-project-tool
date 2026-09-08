@@ -120,8 +120,24 @@ class Frame:
             if not self.active:
                 return
             self.active = False
-            sys.stdout.write(f"{ESC}[r")            # release the scroll region
-            sys.stdout.write(f"{ESC}[{self.rows};1H\n")
+            # The terminal may have resized since enter() (or the last
+            # reflow) computed rows/cols — a stale value here would
+            # position the cursor on a row the footer (at the CURRENT
+            # size) still owns, mangling whatever prints next (see
+            # admin-0tx3, the Go port's teardown fix in
+            # internal/frame/frame.go).
+            self.rows, self.cols = _term_size()
+            # Erase the footer rather than scrolling it into scrollback:
+            # move to the footer's first row (at the freshly re-read
+            # size), erase to end of screen, then reset the scroll
+            # region. The cursor is left parked there — no trailing
+            # newline — so the next thing printed starts exactly where
+            # the footer used to be, instead of one row into scrollback
+            # below it.
+            first = self.region_rows + 1
+            sys.stdout.write(f"{ESC}[{first};1H")
+            sys.stdout.write(f"{ESC}[J")             # erase to end of screen
+            sys.stdout.write(f"{ESC}[r")              # release the scroll region
             sys.stdout.flush()
 
     def _tick(self):
