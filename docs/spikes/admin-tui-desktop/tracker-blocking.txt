@@ -1,10 +1,10 @@
  beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
- ┌─ Command Palette ────────────────────────────────────────────┐│                              
- │ / search   b browse all                                      ││                              
- │ no commands run yet                                          ││                              
- └──────────────────────────────────────────────────────────────┘│                              
+  Commands                                                       │  build                       
+ ◇ build           shell    Validate admin.toml                  │                              
+ ◇ test            shell    Run the test suite                   │                              
+                                                                 │                              
   Workers                                                        │                              
     no workers running — dispatch a command to start one         │                              
                                                                  │                              
@@ -27,4 +27,4 @@
                                                                  │                              
                                                                  │                              
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ open, run or attach · a attach · k kill · / search · q quit · o config · ←→ tab    
+ ↑↓ move · ↵ body · a attach · k kill · / filter · q quit · 1-4 jump · o config · ←→ tab        

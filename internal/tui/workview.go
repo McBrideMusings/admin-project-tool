@@ -60,20 +60,6 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		}
 	}
 
-	// The palette box (admin-3rgp.72.2) is pinned above the row list in the
-	// left column — it never scrolls with the Workers rows below it, the
-	// same "the box is pinned; only the live sections scroll" rule the
-	// design prototype settled on (docs/spikes/admin-tui-desktop/variants.go's
-	// renderWorkBody). Combining its rows into the one cursor the Workers
-	// list already uses is admin-3rgp.72.4 — until then it just reserves its
-	// own rows off the top of height and renders with no selection.
-	box := m.renderPaletteBox(lw)
-	if len(box) > height {
-		box = box[:height]
-	}
-	boxH := len(box)
-	bodyHeight := maxi(height-boxH, 0)
-
 	left := make([]string, len(rows))
 	hits := make([]hitTarget, len(rows))
 	for i, r := range rows {
@@ -95,11 +81,10 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 	}
 
 	if bottomOrient {
-		out, outHits := m.renderWorkBodyStacked(rows, left, hits, cursor, width, bodyHeight, lw)
-		return prependPinnedRows(box, lw, width, out, outHits)
+		return m.renderWorkBodyStacked(rows, left, hits, cursor, width, height, lw)
 	}
 
-	start, end := window(len(left), cursor, bodyHeight)
+	start, end := window(len(left), cursor, height)
 	leftLines := append([]string{}, left[start:end]...)
 	hitLines := append([]hitTarget{}, hits[start:end]...)
 	if start > 0 && len(leftLines) > 0 {
@@ -112,51 +97,24 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		hitLines[last] = hitTarget{kind: hitNone}
 	}
 
-	// The detail pane spans the FULL height, independent of the box reserving
-	// rows off the top of the left column — it always shows rows[cursor]'s
-	// detail, exactly as it did before the box existed.
 	right := m.renderWorkDetail(rows[cursor], rw, height)
 
 	out := make([]string, height)
 	outHits := make([]hitTarget, height)
 	divider := faintStyle.Render("│ ")
-	for i := 0; i < boxH; i++ {
-		r := ""
-		if i < len(right) {
-			r = right[i]
-		}
-		out[i] = " " + padEnd(box[i], lw) + divider + r
-		outHits[i] = hitTarget{kind: hitNone}
-	}
-	for i := 0; i < bodyHeight; i++ {
+	for i := 0; i < height; i++ {
 		l, hit := "", hitTarget{kind: hitNone}
 		if i < len(leftLines) {
 			l, hit = leftLines[i], hitLines[i]
 		}
 		r := ""
-		if boxH+i < len(right) {
-			r = right[boxH+i]
+		if i < len(right) {
+			r = right[i]
 		}
-		out[boxH+i] = " " + padEnd(l, lw) + divider + r
-		outHits[boxH+i] = hit
+		out[i] = " " + padEnd(l, lw) + divider + r
+		outHits[i] = hit
 	}
 	return out, outHits
-}
-
-// prependPinnedRows puts box (already-composed, lw-wide content lines) above
-// out/outHits — the bottomOrient (stacked) branch's own share of the box's
-// pinning: renderWorkBodyStacked already fills exactly height-len(box) rows
-// on its own, so this just adds the box's rows back on top and pads each to
-// the full body width, matching how every other stacked row is composed
-// (padEnd(" "+padEnd(l, lw), width) in renderWorkBodyStacked itself).
-func prependPinnedRows(box []string, lw, width int, out []string, outHits []hitTarget) ([]string, []hitTarget) {
-	boxOut := make([]string, len(box))
-	boxHits := make([]hitTarget, len(box))
-	for i, l := range box {
-		boxOut[i] = padEnd(" "+padEnd(l, lw), width)
-		boxHits[i] = hitTarget{kind: hitNone}
-	}
-	return append(boxOut, out...), append(boxHits, outHits...)
 }
 
 // renderWorkBodyStacked is bottomOrient's layout: the row list on top

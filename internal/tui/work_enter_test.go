@@ -209,24 +209,20 @@ func TestActivateWorkerRowAttaches(t *testing.T) {
 // TestFrameDuringHostedRunShowsTheDashboard is admin-3rgp.61's AC-7: a frame
 // taken through the headless renderer while a dispatched command's hosted
 // pty is (as far as the dashboard's own model is concerned) still running
-// must show the dashboard's own chrome, not a released terminal — the whole
-// point of replacing tea.Exec with an ordinary async Cmd. It stubs
-// startHostedRun so no real pty is spawned, drives a real admin.toml on disk
-// through New (the same path runDashboard uses), and calls startDispatch
-// directly — the same tea.Cmd activateCommand hands back for an idle
-// command row — rather than reaching it via cursor+enter: the flat Commands
-// list a row like that used to come from is gone (admin-3rgp.72.2), and
-// dispatching straight off a palette box row is admin-3rgp.72.4's job, not
-// this file's. What this test actually guards (dispatchCommandCmd never
-// hands the terminal away) is unchanged by that and is exercised the same
-// way regardless of how the dispatch got started.
+// must show the dashboard's own command list, not a released terminal —
+// the whole point of replacing tea.Exec with an ordinary async Cmd. It
+// stubs startHostedRun so no real pty is spawned, drives a real admin.toml
+// on disk through New (the same path runDashboard uses), presses enter on
+// the (auto-focused, header-skipped) command row, and checks the resulting
+// frame still carries the dashboard's chrome.
 //
 // MUTATION EVIDENCE: reintroduce cmdExecCommand/tea.Exec in
 // dispatchCommandCmd and this test still passes today only because
 // startHostedRun is never reached — it exists to catch a regression where
-// the dispatch path is changed back to something that hands the terminal
-// away, at which point View() would come back missing the dashboard's own
-// chrome.
+// activateCommand's dispatch path is changed back to something that hands
+// the terminal away, at which point the pump's own model stops advancing
+// past the exec and the frame would come back short (Frame's own Settle
+// backstop firing with nothing drawn) or missing the tab bar.
 func TestFrameDuringHostedRunShowsTheDashboard(t *testing.T) {
 	old := startHostedRun
 	defer func() { startHostedRun = old }()
@@ -236,6 +232,12 @@ func TestFrameDuringHostedRunShowsTheDashboard(t *testing.T) {
 		return nil
 	}
 
+	// A name distinct from every other test in this package's fixtures
+	// ("build" in particular): livework.Default is one process-wide
+	// registry, and TestActivateCommandAttachesWhenLive adds a live entry
+	// named "build" that outlives its own test — reusing that name here
+	// would make this row look already-live and attach instead of
+	// dispatching, but only when the whole package's tests run together.
 	const cmdName = "hostedptyfixture"
 	dir := t.TempDir()
 	toml := "project_name = \"fixture\"\n\n[commands." + cmdName + "]\ndesc = \"fixture\"\nsteps = [\"" + cmdName + "\"]\n\n[actions." + cmdName + "]\nkind = \"shell\"\nrun = \"true\"\n"
@@ -247,38 +249,43 @@ func TestFrameDuringHostedRunShowsTheDashboard(t *testing.T) {
 	defer cancel()
 	m := New(ctx, dir, "owner/repo", "main", "main")
 	m.herdr = false
-	m.width, m.height = 100, 24
 
-	next, cmd := m.startDispatch(cmdName)
-	nm := next.(Model)
-	if cmd == nil {
-		t.Fatal("startDispatch returned a nil Cmd")
-	}
-	cmd() // synchronous: dispatchCommandCmd's func() tea.Msg calls startHostedRun (stubbed) directly.
+	out := Frame(ctx, m, FrameOptions{
+		Width: 100, Height: 24,
+		// row 0 of the Work tab is the "Commands" section header, which is
+		// not selectable, and clampCursor (run against every settled state)
+		// already snaps a fresh cursor onto the first real row — see its
+		// own comment. No "down" needed once focus is in the body.
+		//
+		// A fresh session opens with focus on the tab bar (admin-70hb), so
+		// the first enter only moves focus into the body; the second is what
+		// actually dispatches the row.
+		Keys:   []string{"enter", "enter"},
+		Settle: 300 * time.Millisecond,
+	})
 
 	if calledName != cmdName {
-		t.Fatalf("startDispatch never reached the hosted dispatch path — startHostedRun called with %q, want %q", calledName, cmdName)
+		t.Fatalf("enter never reached the hosted dispatch path — startHostedRun called with %q, want %q", calledName, cmdName)
 	}
-	out := nm.View()
+	if !strings.Contains(out, cmdName) {
+		t.Errorf("frame taken during the run lost the command list: %q", out)
+	}
 	if !strings.Contains(out, "Work") {
 		t.Errorf("frame taken during the run lost the dashboard's own tab bar: %q", out)
 	}
 }
 
-// TestAttachEntryRunsOpsAttachForLauncherRow proves the attach path on a
-// launcher-dispatched entry (Via set) reaches Ops.Attach — the registry's
-// own launcher-vs-hosted branch (Via != "" → Ops.Attach) — rather than the
+// TestAttachKeyRunsOpsAttachForLauncherRow proves the `a` key path on a
+// launcher-dispatched row (Via set) reaches Ops.Attach — the registry's own
+// launcher-vs-hosted branch (Via != "" → Ops.Attach) — rather than the
 // hosted-pty terminal opener, which a launcher-dispatched entry never wires
-// or needs. Calls attachEntry directly rather than via cursor+`a`: reaching
-// a live command's row through the cursor is admin-3rgp.72.4's job now that
-// the flat Commands list is gone (admin-3rgp.72.2) — attachEntry itself,
-// what `a` on a row would call, is what this test actually pins.
+// or needs.
 //
 // MUTATION EVIDENCE: flip livework.Registry.Attach's branch to test Handle
 // instead of Via and this test still passes today only because Handle is
 // also non-empty here; it exists to pin the Via-set path specifically as
 // admin-ysxr.3 defines it, distinct from admin-ysxr.4's hosted-pty case.
-func TestAttachEntryRunsOpsAttachForLauncherRow(t *testing.T) {
+func TestAttachKeyRunsOpsAttachForLauncherRow(t *testing.T) {
 	freshLivework(t)
 	attached := false
 	live := &livework.Entry{
@@ -295,12 +302,23 @@ func TestAttachEntryRunsOpsAttachForLauncherRow(t *testing.T) {
 		Actions: map[string]manifest.Action{"attach-key-launcher": {"kind": "shell"}},
 	})
 	m.active = tabWork
+	rows := m.workRows()
+	idx := -1
+	for i, r := range rows {
+		if r.work != nil && r.work.live != nil && r.work.live.ID == live.ID {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		t.Fatalf("no row found for the fixture entry %q in %v", live.ID, rows)
+	}
+	m.cursor[tabWork] = idx
 
-	if _, cmd := m.attachEntry(live); cmd != nil {
-		t.Errorf("attachEntry returned a non-nil Cmd for a launcher row, want nil (attach is synchronous)")
+	if _, cmd := m.attachCurrentWork(); cmd != nil {
+		t.Errorf("attachCurrentWork returned a non-nil Cmd for a launcher row, want nil (attach is synchronous)")
 	}
 	if !attached {
-		t.Error("attachEntry on a Via-set entry did not invoke Ops.Attach, attached=false")
+		t.Error("`a` on a Via-set row did not invoke Ops.Attach, attached=false")
 	}
 }
 

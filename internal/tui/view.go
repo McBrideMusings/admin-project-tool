@@ -763,23 +763,7 @@ func (m Model) viewKeymap() [][2]string {
 	}
 	switch m.active {
 	case tabWork:
-		// Typing mode (admin-3rgp.72.2) replaces the idle pairs outright with
-		// one fixed hint line \u2014 the box is capturing every keystroke as query
-		// text, so there is nothing else on the Work tab a key could mean
-		// right now. Encoded as ordinary [key,label] pairs even though the
-		// "key" column isn't a single key here (keybar() just renders p[0]
-		// cyan, p[1] dim, " \u00b7 " between pairs) \u2014 that composition is exactly
-		// what produces the literal line the reference frame shows.
-		if m.paletteTyping {
-			return [][2]string{
-				{"type", "to search"},
-				{"tab", "complete"},
-				{"\u2191\u2193", "move"},
-				{"\u21b5", "dispatch"},
-				{"esc", "cancel"},
-			}
-		}
-		return [][2]string{{"\u2191\u2193", "move"}, {"\u21b5", "open, run or attach"}, {"a", "attach"}, {"k", "kill"}, {"/", "search"}, {"b", "browse"}, {"q", "quit"}}
+		return [][2]string{{"\u2191\u2193", "move"}, {"\u21b5", "open, run or attach"}, {"a", "attach"}, {"k", "kill"}, {"/", "filter"}, {"q", "quit"}}
 	case tabPRs:
 		return m.rowPairs(keymap.PR)
 	case tabIssues:

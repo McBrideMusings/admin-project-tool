@@ -2,8 +2,10 @@
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
  ┌─ Command Palette ──────────────────────────────────────────────────────────────────────────┐ 
- │ / search   b browse all                                                                    │ 
- │ no commands run yet                                                                        │ 
+ │ / search   b browse all   3 recent                                                         │ 
+ │ ◇ grafana deploy      cd apps && bunx wrangler grafana --target deploy                     │ 
+ │ ◇ dev cf              cd apps && bunx wrangler dev --target cf                             │ 
+ │ ◇ test gate           cd apps && bunx wrangler test --target gate                          │ 
  └────────────────────────────────────────────────────────────────────────────────────────────┘ 
                                                                                                 
   Running  2                                                                                    
@@ -11,9 +13,7 @@
   ◇ admin test      ◐ waiting 12s    Enter a number, or q to cancel:                     hosted 
                                                                                                 
   Workers  3                                                                                    
-  ◇ admin-3rgp.36   ◈ running 18m    writing internal/lua/host.go                        pane 3 
-  ◇ admin-3rgp.7    ◐ waiting 6m     needs input: root command name                      pane 4 
-  ◇ admin-3rgp.33   ✗ failed  2m     go test ./internal/detect FAIL                      pane 5 
+   ↓ more                                                                                       
 ── ● admin docs  running  4m12s ──────────────────────────────────── also 1 command · 3 workers 
  log      /Users/pierce/Projects/admin-project-tool/.admin/logs/docs.log                        
  url      http://localhost:5173                                                                 
