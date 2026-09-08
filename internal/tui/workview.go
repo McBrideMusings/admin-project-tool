@@ -139,13 +139,13 @@ func (m Model) renderWorkBodyStacked(rows []rowItem, left []string, hits []hitTa
 		listH = 0
 	}
 
-	// The preview band alone gets a reasonable cap so it doesn't read as
-	// more important than it is on a very wide-but-short terminal; the list
-	// above it still uses the full lw.
+	// The preview band spans the same width as the list above it (lw is
+	// already width-2: one leading space and one trailing column left
+	// blank on both halves of the stacked layout). A 100-column cap here
+	// was ported from the design prototype's own frame width and left the
+	// detail band's rules and output short of the real body width on any
+	// terminal wider than ~102 columns (admin fix-detail-band-full-width).
 	previewW := lw
-	if previewW > 100 {
-		previewW = 100
-	}
 
 	listLines := left
 	hitLines := hits
@@ -173,7 +173,7 @@ func (m Model) renderWorkBodyStacked(rows []rowItem, left []string, hits []hitTa
 		if i < len(listLines) {
 			l, hit = listLines[i], hitLines[i]
 		}
-		out = append(out, " "+padEnd(l, lw))
+		out = append(out, padEnd(" "+padEnd(l, lw), width))
 		outHits = append(outHits, hit)
 	}
 	if detailH > 0 {
@@ -184,7 +184,11 @@ func (m Model) renderWorkBodyStacked(rows []rowItem, left []string, hits []hitTa
 			if i < len(detail) {
 				d = detail[i]
 			}
-			out = append(out, " "+padEnd(d, previewW))
+			// padEnd's outer call is the trailing one-column margin: lw
+			// (=width-2) already leaves that column blank after the
+			// leading space, this just makes the blank explicit rather
+			// than relying on whatever painted the row before.
+			out = append(out, padEnd(" "+padEnd(d, previewW), width))
 			outHits = append(outHits, hitTarget{kind: hitNone})
 		}
 	}

@@ -155,6 +155,62 @@ func TestRenderWorkBodyWideStaysSideBySide(t *testing.T) {
 	}
 }
 
+// TestRenderWorkBodyStackedDetailSpansFullWidth is the full-width-band
+// regression: at 140 wide (well over the old 100-column cap on previewW),
+// every rendered row of the stacked layout — list rows, the list/detail
+// divider, and every row of the detail band including the output block's
+// two rules — is exactly the body width, w. The visible content inside a
+// detail-band row (the leading space plus lw columns of dashes/text) still
+// stops one column short of the right edge — the "one column left blank"
+// margin — with the padding out to w making that blank explicit rather
+// than leaving it to whatever painted the row before.
+func TestRenderWorkBodyStackedDetailSpansFullWidth(t *testing.T) {
+	const w, h = 140, 100
+	mm := buildRunningWorkModel(t, w, h)
+
+	out, _ := mm.renderWorkBody(w, h)
+	if len(out) != h {
+		t.Fatalf("renderWorkBody produced %d lines, want exactly %d", len(out), h)
+	}
+
+	for i, l := range out {
+		if got := vlen(l); got != w {
+			t.Fatalf("row %d: rendered width %d, want exactly %d (body width) — line %q", i, got, w, l)
+		}
+	}
+
+	dividerIdx := -1
+	for i, l := range out {
+		if strings.Contains(l, "───") {
+			dividerIdx = i
+			break
+		}
+	}
+	if dividerIdx == -1 {
+		t.Fatalf("no list/detail divider found in stacked output:\n%s", strings.Join(out, "\n"))
+	}
+
+	// The output block's two rules (opening "─── output ──…──" and plain
+	// closing rule) render below the divider, each with visible dashes
+	// reaching to within one column of the right edge (w-1, 0-indexed —
+	// the trailing blank margin column) rather than the old cap's
+	// fifteen-odd columns short.
+	ruleCount := 0
+	for _, l := range out[dividerIdx+1:] {
+		if !strings.Contains(l, "───") {
+			continue
+		}
+		ruleCount++
+		trimmed := strings.TrimRight(l, " ")
+		if got := vlen(trimmed); got < w-1 {
+			t.Errorf("output rule reaches only column %d, want at least column %d (one short of the %d-wide body): %q", got, w-1, w, l)
+		}
+	}
+	if ruleCount < 2 {
+		t.Fatalf("expected the output block's opening and closing rules below the divider, found %d rule rows:\n%s", ruleCount, strings.Join(out[dividerIdx+1:], "\n"))
+	}
+}
+
 // TestRingTailLinesNoBlankRowBetweenLines is the third defect: a hosted
 // pty's raw bytes carry ONLCR "\r\n" line endings, and splitting on "\n"
 // alone left a stray "\r" glued to the end of every line — which bubbletea's
