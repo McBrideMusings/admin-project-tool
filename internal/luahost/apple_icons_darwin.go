@@ -226,7 +226,9 @@ var devBannerColor = color.NRGBA{R: 220, G: 40, B: 40, A: 240}
 // transparent mask sized to the band, using the same
 // parsedGoFont/drawCenteredText helpers apple_icons_generate_darwin.go uses
 // for glyph text, and sampled at each pixel's rotated coordinate — so the
-// label rotates with the band instead of being pasted on afterward.
+// label rotates with the band instead of being pasted on afterward. Unlike
+// glyph text (renderGlyph/drawCenteredText, Go Regular), the "DEV" label uses
+// drawCenteredTextBold (Go Bold) to match make_dev_banner's bold system font.
 func RenderDevBanner(size int) *image.NRGBA {
 	img := image.NewNRGBA(image.Rect(0, 0, size, size))
 
@@ -244,35 +246,31 @@ func RenderDevBanner(size int) *image.NRGBA {
 	shift := float64(size) * 0.22
 	bcx, bcy := cx+shift, cy+shift
 
-	// "DEV" is rendered into a mask that occupies the upper half of the
-	// band (in the band's own rotated coordinate frame), with a small
-	// margin off the band's own top edge. That, rather than the band's
-	// exact vertical center, is a deliberate choice: it keeps the label
-	// clear of the band's lower half near the icon's very corner, where
-	// callers (and this file's own tests) sample a plain-red pixel to
-	// confirm the ribbon's position.
-	textHeight := bandHeight * 0.5
-	textHalf := textHeight / 2
-	margin := bandHeight * 0.05
-	textCenterRy := -bandHalf + textHalf + margin
+	// "DEV" is rendered into a mask centered on the band's own center line
+	// (the band's rotated-frame ry = 0), mirroring admin_lib/icons.py's
+	// make_dev_banner: anchor="mm" at the band rectangle's vertical midpoint.
+	// The mask spans the full band height so the larger, bold glyph this
+	// centering produces isn't clipped against the mask's own edges.
+	textCenterRy := 0.0
 
 	maskW := size
 	if maskW < 1 {
 		maskW = 1
 	}
-	maskH := int(textHeight)
+	maskH := int(bandHeight)
 	if maskH < 1 {
 		maskH = 1
 	}
 	mask := image.NewNRGBA(image.Rect(0, 0, maskW, maskH))
-	fontSize := int(textHeight * 0.65)
+	// Mirrors admin_lib/icons.py's make_dev_banner: font_size = int(size * 0.14).
+	fontSize := int(float64(size) * 0.14)
 	if fontSize < 1 {
 		fontSize = 1
 	}
-	// A failure here (only possible if the embedded Go Regular font somehow
+	// A failure here (only possible if the embedded Go Bold font somehow
 	// fails to parse) leaves mask fully transparent, so the banner still
 	// renders — just without the label — rather than failing the icon.
-	_ = drawCenteredText(mask, maskW, maskH, "DEV", color.White, fontSize)
+	_ = drawCenteredTextBold(mask, maskW, maskH, "DEV", color.White, fontSize)
 
 	for y := 0; y < size; y++ {
 		for x := 0; x < size; x++ {

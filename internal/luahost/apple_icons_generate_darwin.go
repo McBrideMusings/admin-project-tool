@@ -77,6 +77,7 @@ import (
 	"sync"
 
 	"golang.org/x/image/font"
+	"golang.org/x/image/font/gofont/gobold"
 	"golang.org/x/image/font/gofont/goregular"
 	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/math/fixed"
@@ -106,6 +107,10 @@ var (
 	goFontOnce sync.Once
 	goFont     *opentype.Font
 	goFontErr  error
+
+	goBoldFontOnce sync.Once
+	goBoldFont     *opentype.Font
+	goBoldFontErr  error
 )
 
 // parsedGoFont parses the embedded Go Regular TTF once per process; a Face
@@ -118,13 +123,44 @@ func parsedGoFont() (*opentype.Font, error) {
 	return goFont, goFontErr
 }
 
+// parsedGoBoldFont parses the embedded Go Bold TTF once per process, the same
+// way parsedGoFont does for Go Regular. Used only where a heavier stroke
+// weight is needed (the dev banner's "DEV" label) — every configured glyph
+// still renders in Go Regular via drawCenteredText/parsedGoFont, unchanged.
+func parsedGoBoldFont() (*opentype.Font, error) {
+	goBoldFontOnce.Do(func() {
+		goBoldFont, goBoldFontErr = opentype.Parse(gobold.TTF)
+	})
+	return goBoldFont, goBoldFontErr
+}
+
 // drawCenteredText renders text in fg onto dst (w×h), centered on the text's
-// own bounding box at the given pixel size.
+// own bounding box at the given pixel size, using the Go Regular face.
 func drawCenteredText(dst draw.Image, w, h int, text string, fg color.Color, pixelSize int) error {
 	f, err := parsedGoFont()
 	if err != nil {
 		return err
 	}
+	return drawCenteredTextWithFont(dst, w, h, text, fg, pixelSize, f)
+}
+
+// drawCenteredTextBold is drawCenteredText's bold-face counterpart, used only
+// by the dev banner (RenderDevBanner in apple_icons_darwin.go) so its "DEV"
+// label reads with the same stroke weight as admin_lib/icons.py's bold
+// system font, without changing renderGlyph's regular-weight glyph text.
+func drawCenteredTextBold(dst draw.Image, w, h int, text string, fg color.Color, pixelSize int) error {
+	f, err := parsedGoBoldFont()
+	if err != nil {
+		return err
+	}
+	return drawCenteredTextWithFont(dst, w, h, text, fg, pixelSize, f)
+}
+
+// drawCenteredTextWithFont is the shared implementation behind
+// drawCenteredText and drawCenteredTextBold: render text in fg onto dst
+// (w×h), centered on the text's own bounding box at the given pixel size,
+// using whichever parsed font face is passed in.
+func drawCenteredTextWithFont(dst draw.Image, w, h int, text string, fg color.Color, pixelSize int, f *opentype.Font) error {
 	face, err := opentype.NewFace(f, &opentype.FaceOptions{
 		Size:    float64(pixelSize),
 		DPI:     72,

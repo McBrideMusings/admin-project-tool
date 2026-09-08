@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -118,12 +119,19 @@ func TestRenderDevBannerBottomRightCornerRibbon(t *testing.T) {
 	const size = 1024
 	img := RenderDevBanner(size)
 
-	// The band sits in the bottom-right corner: a point there is opaque red,
-	// and the image's own center — where the old (buggy) diagonal used to
-	// run straight through — is untouched.
-	r, g, b, a := img.At(3*size/4, 3*size/4).RGBA()
+	// The band sits in the bottom-right corner: a point there, clear of the
+	// "DEV" label itself, is opaque red, and the image's own center — where
+	// the old (buggy) diagonal used to run straight through — is untouched.
+	//
+	// (7*size/8, 5*size/8), not the band's own (3*size/4, 3*size/4) center
+	// point: once the "DEV" text was resized and centered on the band's
+	// center line to match the Python reference (admin-53wv round 2), the
+	// glyphs fill nearly the full band height and the exact band-center
+	// point falls inside the stroke of "E" rather than on bare band color.
+	x, y := 7*size/8, 5*size/8
+	r, g, b, a := img.At(x, y).RGBA()
 	if a>>8 != 240 || r>>8 < 200 || g>>8 > 100 || b>>8 > 100 {
-		t.Errorf("(0.75size,0.75size) = (%d,%d,%d,%d), want opaque banner red", r>>8, g>>8, b>>8, a>>8)
+		t.Errorf("(%d,%d) = (%d,%d,%d,%d), want opaque banner red", x, y, r>>8, g>>8, b>>8, a>>8)
 	}
 	if _, _, _, a := img.At(size/2, size/2).RGBA(); a != 0 {
 		t.Errorf("image center alpha = %d, want fully transparent", a)
@@ -175,6 +183,55 @@ func TestRenderDevBannerHasWhiteDEVText(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected at least one white \"DEV\" pixel inside the band")
+	}
+}
+
+func TestRenderDevBannerTextBoundingBoxMatchesReference(t *testing.T) {
+	const size = 1024
+	img := RenderDevBanner(size)
+
+	// Bounding box of every white "DEV" pixel, as fractions of size. Round 1
+	// (commit 638569a) only checked that at least one white pixel existed,
+	// which let the text render at roughly half the reference's linear size
+	// and biased toward the band's upper edge instead of centered on it.
+	minX, minY, maxX, maxY := size, size, -1, -1
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			r, g, b, a := img.At(x, y).RGBA()
+			if a != 0 && r>>8 > 230 && g>>8 > 230 && b>>8 > 230 {
+				if x < minX {
+					minX = x
+				}
+				if y < minY {
+					minY = y
+				}
+				if x > maxX {
+					maxX = x
+				}
+				if y > maxY {
+					maxY = y
+				}
+			}
+		}
+	}
+	if maxX < 0 {
+		t.Fatal("expected white \"DEV\" pixels inside the band, found none")
+	}
+
+	w := float64(maxX-minX) / float64(size)
+	h := float64(maxY-minY) / float64(size)
+	cx := float64(minX+maxX) / 2 / float64(size)
+	cy := float64(minY+maxY) / 2 / float64(size)
+
+	if w < 0.22 || w > 0.27 {
+		t.Errorf("text bbox width = %.3f of size, want 0.22..0.27", w)
+	}
+	if h < 0.21 || h > 0.25 {
+		t.Errorf("text bbox height = %.3f of size, want 0.21..0.25", h)
+	}
+	const wantCX, wantCY = 0.71, 0.72
+	if d := math.Hypot(cx-wantCX, cy-wantCY); d > 0.02 {
+		t.Errorf("text bbox center = (%.3f,%.3f), want within 0.02 of (%.2f,%.2f), got distance %.3f", cx, cy, wantCX, wantCY, d)
 	}
 }
 
