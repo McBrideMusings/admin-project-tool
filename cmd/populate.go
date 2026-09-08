@@ -51,8 +51,11 @@ func runPopulate(ctx context.Context, all bool) error {
 	if err != nil {
 		return err
 	}
+	// Empty means empty everywhere: a repo with no admin.toml still receives the
+	// base archetype's patterns, so naming only the manifest would send someone
+	// to write patterns that are already configured somewhere else.
 	if len(cfg.Populate) == 0 {
-		fmt.Fprintf(os.Stderr, "No populate patterns configured. Add some to %s.\n",
+		fmt.Fprintf(os.Stderr, "No populate patterns configured — neither %s nor the archetypes it resolves declares any.\n",
 			filepath.Join(repoRoot, manifest.Filename))
 		return nil
 	}
