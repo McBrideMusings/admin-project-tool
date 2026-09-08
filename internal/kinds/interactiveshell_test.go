@@ -42,6 +42,82 @@ func TestMakeInteractiveShellNonZeroExitIsError(t *testing.T) {
 	}
 }
 
+// TestMakeInteractiveShellNoCompleteSuppressesSuccessLine proves
+// `no_complete = true` suppresses kind="interactive-shell"'s success line
+// while the wrapped command still runs.
+func TestMakeInteractiveShellNoCompleteSuppressesSuccessLine(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	runner, err := makeInteractiveShell("logs", manifest.Action{"run": "touch marker.txt", "no_complete": true}, nil, nil)
+	if err != nil {
+		t.Fatalf("makeInteractiveShell: %v", err)
+	}
+	out := captureStdoutTo(t, dir, func() {
+		if err := runner(nil); err != nil {
+			t.Fatalf("runner() = %v, want nil", err)
+		}
+	})
+	if _, err := os.Stat(filepath.Join(dir, "marker.txt")); err != nil {
+		t.Fatalf("marker.txt was not created by the wrapped process: %v", err)
+	}
+	if strings.Contains(out, "logs complete") {
+		t.Errorf("stdout = %q, want no %q line", out, "logs complete")
+	}
+}
+
+// TestMakeInteractiveShellNoCompleteAbsentStillPrintsSuccessLine proves the
+// unaffected case: no `no_complete` key (and the equivalent explicit
+// `false`) still prints the success line exactly as before.
+func TestMakeInteractiveShellNoCompleteAbsentStillPrintsSuccessLine(t *testing.T) {
+	for _, action := range []manifest.Action{
+		{"run": "true"},
+		{"run": "true", "no_complete": false},
+	} {
+		dir := t.TempDir()
+		t.Chdir(dir)
+
+		runner, err := makeInteractiveShell("logs", action, nil, nil)
+		if err != nil {
+			t.Fatalf("makeInteractiveShell: %v", err)
+		}
+		out := captureStdoutTo(t, dir, func() {
+			if err := runner(nil); err != nil {
+				t.Fatalf("runner() = %v, want nil", err)
+			}
+		})
+		if !strings.Contains(out, "logs complete") {
+			t.Errorf("action %#v: stdout = %q, want it to contain %q", action, out, "logs complete")
+		}
+	}
+}
+
+// TestMakeInteractiveShellNoCompleteStillReportsFailure proves
+// `no_complete` suppresses only the success line: a failing wrapped command
+// still prints "failed" and the Runner still returns a non-nil error.
+func TestMakeInteractiveShellNoCompleteStillReportsFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	runner, err := makeInteractiveShell("logs", manifest.Action{"run": "exit 7", "no_complete": true}, nil, nil)
+	if err != nil {
+		t.Fatalf("makeInteractiveShell: %v", err)
+	}
+	var runErr error
+	out := captureStdoutTo(t, dir, func() {
+		runErr = runner(nil)
+	})
+	if runErr == nil {
+		t.Fatal("runner() = nil, want an error for a nonzero exit")
+	}
+	if !strings.Contains(out, "logs failed") {
+		t.Errorf("stdout = %q, want it to still contain %q", out, "logs failed")
+	}
+	if strings.Contains(out, "logs complete") {
+		t.Errorf("stdout = %q, want no %q line", out, "logs complete")
+	}
+}
+
 // TestMakeInteractiveShellRequiresRun proves a missing `run` is refused at
 // factory-build time (before a Runner is even returned), matching
 // admin_lib/interp.py::_make_interactive_shell's eager InterpError.

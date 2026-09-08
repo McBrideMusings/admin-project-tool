@@ -30,6 +30,7 @@ func makeShell(name string, action manifest.Action, m *manifest.Manifest, _ *Sur
 	rawURLs := actionURLs(action)
 	footerVal, hasFooter := actionBool(action, "footer")
 	ptyVal, _ := actionBool(action, "pty")
+	noComplete, _ := actionBool(action, "no_complete")
 	watchKind, hasWatch := actionString(action, "watch")
 	return func(args []string) error {
 		expanded, err := manifest.ResolveEnv(run)
@@ -64,7 +65,9 @@ func makeShell(name string, action manifest.Action, m *manifest.Manifest, _ *Sur
 		if hasWatch && watchKind != "" {
 			runWatcher(h, watchKind, res.Output)
 		}
-		h.Ok(name + " complete")
+		if !noComplete {
+			h.Ok(name + " complete")
+		}
 		return nil
 	}, nil
 }
@@ -89,6 +92,7 @@ func makeShellPassthrough(name string, action manifest.Action, m *manifest.Manif
 	rawURLs := actionURLs(action)
 	footerVal, hasFooter := actionBool(action, "footer")
 	interactive, _ := actionBool(action, "interactive")
+	noComplete, _ := actionBool(action, "no_complete")
 	return func(args []string) error {
 		cmdline := run
 		if len(args) > 0 {
@@ -126,7 +130,9 @@ func makeShellPassthrough(name string, action manifest.Action, m *manifest.Manif
 			h.Err(name + " failed")
 			return fmt.Errorf("action %q failed", name)
 		}
-		h.Ok(name + " complete")
+		if !noComplete {
+			h.Ok(name + " complete")
+		}
 		return nil
 	}, nil
 }

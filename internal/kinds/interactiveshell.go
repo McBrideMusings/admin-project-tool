@@ -100,6 +100,7 @@ func makeInteractiveShell(name string, action manifest.Action, m *manifest.Manif
 	}
 	rawURLs := actionURLs(action)
 	footerVal, hasFooter := actionBool(action, "footer")
+	noComplete, _ := actionBool(action, "no_complete")
 	bridgeCfg := buildLogBridgeConfig(m)
 
 	return func(args []string) error {
@@ -128,7 +129,9 @@ func makeInteractiveShell(name string, action manifest.Action, m *manifest.Manif
 			h.Err(name + " failed")
 			return fmt.Errorf("action %q failed", name)
 		}
-		h.Ok(name + " complete")
+		if !noComplete {
+			h.Ok(name + " complete")
+		}
 		return nil
 	}, nil
 }
@@ -167,6 +170,7 @@ func makeBridgeListen(name string, action manifest.Action, m *manifest.Manifest,
 		return nil, err
 	}
 	hosts, _ := actionString(action, "hosts")
+	noComplete, _ := actionBool(action, "no_complete")
 	bridgeCfg := buildLogBridgeConfig(m)
 
 	return func(args []string) error {
@@ -199,7 +203,9 @@ func makeBridgeListen(name string, action manifest.Action, m *manifest.Manifest,
 			h.Err(name + " failed")
 			return fmt.Errorf("action %q failed", name)
 		}
-		h.Ok(name + " complete")
+		if !noComplete {
+			h.Ok(name + " complete")
+		}
 		return nil
 	}, nil
 }
