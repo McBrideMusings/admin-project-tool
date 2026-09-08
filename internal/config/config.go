@@ -134,21 +134,22 @@ const DefaultWorktreeRoot = "~/.worktrees"
 // internal/tui/work.go's loadWorkManifest, which this mirrors) — and decodes
 // the six config tables from the merged result.
 //
-// A repoRoot with no admin.toml at all returns a zero Config and a nil
-// error: create.Worktree and the TUI both depend on this degrade path, since
-// a fresh worktree with no manifest of its own must fall back to the
-// env-or-default worktree root and skip populate entirely, rather than
-// erroring out of worktree creation altogether.
+// A repoRoot with no admin.toml still resolves, against an empty project
+// manifest. The base archetype carries the machine-wide populate patterns, and
+// gating them on a task-runner manifest locked out every repo with nothing to
+// build: claude-skills has no build, no test of its own and therefore no
+// admin.toml, so its worktrees silently received no local skills, no .env and
+// no CLAUDE.local.md. A repo that declares no manifest still ends up with the
+// env-or-default worktree root, since base sets no [worktrees] table.
 func Load(repoRoot string) (Config, error) {
-	if _, err := os.Stat(filepath.Join(repoRoot, manifest.Filename)); err != nil {
-		if os.IsNotExist(err) {
-			return Config{}, nil
+	project := &manifest.Manifest{Root: repoRoot}
+	if _, err := os.Stat(filepath.Join(repoRoot, manifest.Filename)); err == nil {
+		manifest.LoadDotenv(repoRoot)
+		project, err = manifest.Load(repoRoot)
+		if err != nil {
+			return Config{}, err
 		}
-		return Config{}, err
-	}
-	manifest.LoadDotenv(repoRoot)
-	project, err := manifest.Load(repoRoot)
-	if err != nil {
+	} else if !os.IsNotExist(err) {
 		return Config{}, err
 	}
 	sp, err := archetype.SearchPathFor(repoRoot)
