@@ -246,6 +246,173 @@ func TestShellPTYSequentialStepsDoNotStealEachOthersInput(t *testing.T) {
 	}
 }
 
+// captureStdoutTo redirects the package-level os.Stdout AND os.Stderr to a
+// shared temp file for the duration of fn, then returns the file's full
+// contents. h.Stdout/h.Stderr default to the real os.Stdout/os.Stderr
+// (luahost.New reads them at construction time, inside the Runner closure),
+// so this is the only way a test can see what a factory printed — h.Ok and
+// h.Info go to Stdout, h.Err and h.Warn go to Stderr (internal/luahost/
+// output.go), and a no_complete assertion needs both: the suppressed
+// "complete" line is on Stdout, the "failed" line it must NOT suppress is on
+// Stderr. Redirecting both to the same file mirrors
+// TestShellPassthroughInteractiveInheritsStdout's technique for proving a
+// child's real stdout, extended to cover both streams here.
+func captureStdoutTo(t *testing.T, dir string, fn func()) string {
+	t.Helper()
+	f, err := os.Create(filepath.Join(dir, "stdout.txt"))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	defer f.Close()
+	origOut, origErr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = f, f
+	fn()
+	os.Stdout, os.Stderr = origOut, origErr
+
+	got, err := os.ReadFile(filepath.Join(dir, "stdout.txt"))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return string(got)
+}
+
+// TestShellNoCompleteSuppressesSuccessLine proves `no_complete = true`
+// suppresses kind="shell"'s success line and nothing else — the command
+// still runs (the marker file still gets created).
+func TestShellNoCompleteSuppressesSuccessLine(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	runner, err := makeShell("logs", manifest.Action{"run": "touch marker.txt", "no_complete": true}, nil, nil)
+	if err != nil {
+		t.Fatalf("makeShell: %v", err)
+	}
+	out := captureStdoutTo(t, dir, func() {
+		if err := runner(nil); err != nil {
+			t.Fatalf("runner() = %v, want nil", err)
+		}
+	})
+	if _, err := os.Stat(filepath.Join(dir, "marker.txt")); err != nil {
+		t.Fatalf("marker.txt was not created by the shell action: %v", err)
+	}
+	if strings.Contains(out, "logs complete") {
+		t.Errorf("stdout = %q, want no %q line", out, "logs complete")
+	}
+}
+
+// TestShellNoCompleteAbsentStillPrintsSuccessLine proves the unaffected
+// case: no `no_complete` key (and the equivalent explicit `false`) still
+// prints the success line exactly as before.
+func TestShellNoCompleteAbsentStillPrintsSuccessLine(t *testing.T) {
+	for _, action := range []manifest.Action{
+		{"run": "true"},
+		{"run": "true", "no_complete": false},
+	} {
+		dir := t.TempDir()
+		t.Chdir(dir)
+
+		runner, err := makeShell("logs", action, nil, nil)
+		if err != nil {
+			t.Fatalf("makeShell: %v", err)
+		}
+		out := captureStdoutTo(t, dir, func() {
+			if err := runner(nil); err != nil {
+				t.Fatalf("runner() = %v, want nil", err)
+			}
+		})
+		if !strings.Contains(out, "logs complete") {
+			t.Errorf("action %#v: stdout = %q, want it to contain %q", action, out, "logs complete")
+		}
+	}
+}
+
+// TestShellNoCompleteStillReportsFailure proves `no_complete` suppresses
+// only the success line: a failing command still prints "failed" and the
+// Runner still returns a non-nil error.
+func TestShellNoCompleteStillReportsFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	runner, err := makeShell("logs", manifest.Action{"run": "exit 7", "no_complete": true}, nil, nil)
+	if err != nil {
+		t.Fatalf("makeShell: %v", err)
+	}
+	var runErr error
+	out := captureStdoutTo(t, dir, func() {
+		runErr = runner(nil)
+	})
+	if runErr == nil {
+		t.Fatal("runner() = nil, want an error for a nonzero exit")
+	}
+	if !strings.Contains(out, "logs failed") {
+		t.Errorf("stdout = %q, want it to still contain %q", out, "logs failed")
+	}
+	if strings.Contains(out, "logs complete") {
+		t.Errorf("stdout = %q, want no %q line", out, "logs complete")
+	}
+}
+
+// TestShellPassthroughNoCompleteSuppressesSuccessLine is the same three-case
+// contract for kind="shell-passthrough"'s captured (non-interactive) path.
+func TestShellPassthroughNoCompleteSuppressesSuccessLine(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	runner, err := makeShellPassthrough("logs", manifest.Action{"run": "true", "no_complete": true}, nil, nil)
+	if err != nil {
+		t.Fatalf("makeShellPassthrough: %v", err)
+	}
+	out := captureStdoutTo(t, dir, func() {
+		if err := runner(nil); err != nil {
+			t.Fatalf("runner() = %v, want nil", err)
+		}
+	})
+	if strings.Contains(out, "logs complete") {
+		t.Errorf("stdout = %q, want no %q line", out, "logs complete")
+	}
+}
+
+func TestShellPassthroughNoCompleteAbsentStillPrintsSuccessLine(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	runner, err := makeShellPassthrough("logs", manifest.Action{"run": "true"}, nil, nil)
+	if err != nil {
+		t.Fatalf("makeShellPassthrough: %v", err)
+	}
+	out := captureStdoutTo(t, dir, func() {
+		if err := runner(nil); err != nil {
+			t.Fatalf("runner() = %v, want nil", err)
+		}
+	})
+	if !strings.Contains(out, "logs complete") {
+		t.Errorf("stdout = %q, want it to contain %q", out, "logs complete")
+	}
+}
+
+func TestShellPassthroughNoCompleteStillReportsFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	runner, err := makeShellPassthrough("logs", manifest.Action{"run": "exit 7", "no_complete": true}, nil, nil)
+	if err != nil {
+		t.Fatalf("makeShellPassthrough: %v", err)
+	}
+	var runErr error
+	out := captureStdoutTo(t, dir, func() {
+		runErr = runner(nil)
+	})
+	if runErr == nil {
+		t.Fatal("runner() = nil, want an error for a nonzero exit")
+	}
+	if !strings.Contains(out, "logs failed") {
+		t.Errorf("stdout = %q, want it to still contain %q", out, "logs failed")
+	}
+	if strings.Contains(out, "logs complete") {
+		t.Errorf("stdout = %q, want no %q line", out, "logs complete")
+	}
+}
+
 // TestShellPassthroughAppendsQuotedArgs proves kind="shell-passthrough"
 // appends Runner args to `run`, each shell-quoted so an argument containing
 // shell metacharacters cannot be reinterpreted.
