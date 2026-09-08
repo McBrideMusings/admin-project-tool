@@ -450,6 +450,16 @@ type Model struct {
 	// dispatch — targetRows treats both the same way: nothing lights up.
 	pendingTarget map[string]string
 
+	// paletteTyping/paletteQuery are the Work tab's command palette typing
+	// state (admin-3rgp.72.2): `/` on the Work tab sets paletteTyping rather
+	// than the cross-tab m.filtering, since the palette's query narrows its
+	// own box, not the row list's filter. Scoped to the Work tab only — no
+	// other tab reads either field. A box cursor of its own, and dispatching
+	// straight off a box row, are admin-3rgp.72.4; this slice only decides
+	// idle vs. typing and what the box shows for each.
+	paletteTyping bool
+	paletteQuery  string
+
 	// Config tab (admin-3rgp.21): the resolved config.Config — repoRoot's
 	// admin.toml [identity]/[worktrees]/[[populate]]/[beads]/[workflow]
 	// tables, merged with its declared archetypes. Each field's origin
@@ -1858,6 +1868,34 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Work-tab palette typing mode (admin-3rgp.72.2) swallows keys the same
+	// way filter input does, but scoped to the Work tab's own query buffer
+	// rather than the cross-tab m.filter — a separate early-return, not a
+	// branch inside m.filtering above, since `/` (below) decides which of
+	// the two a given tab enters and the two must never both be live at
+	// once. Every other single-key row binding keeps working on the Work
+	// tab right up until `/` is pressed — this block is the ONLY thing that
+	// starts capturing keystrokes as query text.
+	if m.paletteTyping {
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.paletteTyping = false
+			m.paletteQuery = ""
+		case tea.KeyBackspace:
+			if len(m.paletteQuery) > 0 {
+				r := []rune(m.paletteQuery)
+				m.paletteQuery = string(r[:len(r)-1])
+			} else {
+				m.paletteTyping = false
+			}
+		case tea.KeyRunes:
+			m.paletteQuery += string(msg.Runes)
+		case tea.KeySpace:
+			m.paletteQuery += " "
+		}
+		return m, nil
+	}
+
 	// A row-scoped key binding (ADR-0018, admin-l6kb.2) is consulted after
 	// every overlay/modal/naming/filter early-return above — so a bound key
 	// can never steal a keystroke meant for one of those — but before the
@@ -1941,8 +1979,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.attachCurrentWork()
 		}
 	case "/":
-		m.filtering = true
-		m.filter = ""
+		if m.active == tabWork {
+			m.paletteTyping = true
+			m.paletteQuery = ""
+		} else {
+			m.filtering = true
+			m.filter = ""
+		}
 	case "r":
 		// The Work tab has no `r` at all. It used to mean retry, which was
 		// removed because restarting a live thing under the same identity is

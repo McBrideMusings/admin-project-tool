@@ -437,15 +437,12 @@ func onKey(key string, s State, set func(axis, value string)) bool {
 	return false
 }
 
-
 func wrap(base, n int) int {
 	if n <= 0 {
 		return 0
 	}
 	return ((base+selDelta)%n + n) % n
 }
-
-
 
 // liveRow is one live thing. `hosted` is the distinction that matters and the
 // one the old "pane N" column got wrong: a hosted row is a CHILD PROCESS on a
@@ -504,8 +501,8 @@ var liveRowsSeed = []liveRow{
 		elapsed: "18m", branch: "feat/admin-3rgp.36-lua-host",
 		worktree: "/Users/pierce/.worktrees/admin-project-tool/admin-3rgp.36",
 		logPath:  root + "/.admin/logs/worker-admin-3rgp.36.log",
-		lastCmd: "review admin-3rgp.36 (workflow: review-changes)",
-		hasRing: true, tail: []string{
+		lastCmd:  "review admin-3rgp.36 (workflow: review-changes)",
+		hasRing:  true, tail: []string{
 			"  reading internal/tui/work.go",
 			"  reading internal/tui/workview.go",
 			"  reading internal/livework/livework.go",
@@ -521,7 +518,7 @@ var liveRowsSeed = []liveRow{
 		elapsed: "6m", branch: "feat/admin-3rgp.7-root-command",
 		worktree: "/Users/pierce/.worktrees/admin-project-tool/admin-3rgp.7",
 		logPath:  root + "/.admin/logs/worker-admin-3rgp.7.log",
-		lastCmd: "implement admin-3rgp.7", hasRing: true, tail: []string{
+		lastCmd:  "implement admin-3rgp.7", hasRing: true, tail: []string{
 			"  the manifest declares no top-level command name —",
 			"  every existing project sets one (admin.toml's",
 			"  [identity] or the repo directory name), and this",
@@ -537,7 +534,7 @@ var liveRowsSeed = []liveRow{
 		elapsed: "2m", branch: "fix/admin-3rgp.33-detect",
 		worktree: "/Users/pierce/.worktrees/admin-project-tool/admin-3rgp.33",
 		logPath:  root + "/.admin/logs/worker-admin-3rgp.33.log",
-		lastCmd: "implement admin-3rgp.33", hasRing: true, tail: []string{
+		lastCmd:  "implement admin-3rgp.33", hasRing: true, tail: []string{
 			"=== RUN   TestDetectHugo",
 			"--- PASS: TestDetectHugo (0.00s)",
 			"=== RUN   TestDetectReactNative",
@@ -595,9 +592,6 @@ var liveStyle = map[string]lipgloss.Style{
 	"running": gr, "waiting": yl, "done": dim, "failed": rd,
 }
 
-
-
-
 func mark(sel bool, s string) string {
 	if sel {
 		return cy.Render("◆ ") + s
@@ -605,14 +599,11 @@ func mark(sel bool, s string) string {
 	return dim.Render("◇ ") + s
 }
 
-
 // peeked tracks which hosted rows (by command name) are expanded inline
 // under "inline-peek" — several at once, since each is independent. Live
 // state outside State, so Reset must clear it or a dump inherits whatever
 // the last keypress left open (in practice never dumped: hover is NoDump).
 var peeked = map[string]bool{}
-
-
 
 // liveWhere renders the activity plus whatever the current direction uses to
 // say hosted-child vs detached-pane.
@@ -718,7 +709,6 @@ func hostedBody(w, h int, empty bool) []string {
 	return out
 }
 
-
 // tailLines returns the last n lines of tail, padded to exactly n lines so
 // the pane never jitters as output scrolls in — the same "fixed height" rule
 // the split-pane box below relies on for the opposite reason (an empty box
@@ -750,7 +740,6 @@ func tailLines(tail []string, n, w int) []string {
 	}
 	return out
 }
-
 
 // ---- command palette (spike/work-tab-redesign, round 3) ----
 //
@@ -1422,10 +1411,6 @@ func plural(n int) string {
 	return "s"
 }
 
-
-
-
-
 // renderPaletteBrowse is the browse fallback (`b`): every command in the
 // manifest, full width, groups and their targets. A multi-target parent renders
 // with NO marker — it is a heading over its targets and runs nothing itself, so
@@ -1887,7 +1872,6 @@ func prefixRows(rows []string, w int) []string {
 	return out
 }
 
-
 func render(s State) string {
 	w, h := s.W, s.H
 	if w <= 0 {
@@ -1936,7 +1920,18 @@ func render(s State) string {
 			box := paletteBoxRows(name)
 			cursor := combinedCursor(name, empty)
 			inBox := cursor < len(box)
-			content := paletteIdleContent(maxInt(w-6, 12), empty, inBox)
+			// boxEmpty is "the MRU strip has nothing in it" — decided by
+			// paletteBoxRows already having returned zero rows for this
+			// screen (the "commands-palette-empty" name's own check), never
+			// by the unrelated data-fixture `empty` axis (that one drives
+			// liveSectionRows/hostedBody below and means "no live workers").
+			// The two collided under one bool here: commands-palette-empty
+			// rendered as if the strip were populated because `empty` was
+			// always false for a dumped frame (the data axis is NoDump), so
+			// the "no commands run yet" row this screen exists to depict
+			// never actually appeared — caught while porting this box to
+			// internal/tui (admin-3rgp.72.2).
+			content := paletteIdleContent(maxInt(w-6, 12), len(box) == 0, inBox)
 			if q := paletteScreenQuery(name); q != "" || name == "commands-palette-typing" {
 				content = paletteTypingContent(maxInt(w-6, 12), sp.demoQuery, inBox)
 			}

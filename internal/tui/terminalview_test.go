@@ -128,13 +128,29 @@ func newAttachablePump(t *testing.T, dir string, width, height int) *pump {
 	p.apply(tea.WindowSizeMsg{Width: width, Height: height})
 	p.run(p.model.Init())
 	p.drain(2 * time.Second)
-	// admin-70hb: a fresh session opens with focus on the tab bar, and `a`
-	// (attach) is a row-scoped key that no-ops from there. Every caller of
-	// this helper immediately presses `a` against the first Work-tab row, so
-	// move focus into the body here once rather than at every call site.
-	p.apply(keyMsg("down"))
-	p.drain(150 * time.Millisecond)
 	return p
+}
+
+// attachTerminal enters the terminal view for the live-work entry named
+// cmdName by calling attachEntry directly — the same call `a` on a live
+// command's row makes, without going through the row cursor: a dispatched
+// (process-kind) command's row is gone from the Work tab's list entirely
+// now that the flat Commands list is retired (admin-3rgp.72.2), and giving
+// it one again — the design's "Running" section — is admin-3rgp.72.4's job.
+// What every test in this file actually exercises (the terminal emulator
+// itself, once attached) is unaffected by how attach got reached.
+func attachTerminal(t *testing.T, p *pump, cmdName string) {
+	t.Helper()
+	e, ok := livework.Default.Get(cmdName)
+	if !ok {
+		t.Fatalf("no live-work entry named %q to attach to", cmdName)
+	}
+	next, cmd := p.model.attachEntry(e)
+	if nm, ok := next.(Model); ok {
+		p.model = nm
+	}
+	p.run(cmd)
+	p.drain(150 * time.Millisecond)
 }
 
 // TestTerminalViewAttachedEmptyShowsWaitingCopy is the AC's "before any
@@ -146,14 +162,9 @@ func TestTerminalViewAttachedEmptyShowsWaitingCopy(t *testing.T) {
 	writeFixtureManifest(t, dir, cmdName)
 	registerFakePTYEntry(t, cmdName, livework.NewRing(0), &termRecorder{})
 
-	out := Frame(context.Background(), New(context.Background(), dir, "owner/repo", "main", "main"), FrameOptions{
-		Width: 100, Height: 24,
-		// admin-70hb: a fresh session opens with focus on the tab bar, so
-		// "down" moves it into the body before "a" (attach) — a row-scoped
-		// key — can act on the row under the cursor.
-		Keys:   []string{"down", "a"},
-		Settle: 300 * time.Millisecond,
-	})
+	p := newAttachablePump(t, dir, 100, 24)
+	attachTerminal(t, p, cmdName)
+	out := p.model.View()
 
 	if !strings.Contains(out, "waiting for output…") {
 		t.Errorf("attached-empty frame missing the waiting copy: %q", out)
@@ -188,8 +199,7 @@ func TestTerminalViewDoesNotReplayPreAttachOutput(t *testing.T) {
 	registerFakePTYEntry(t, cmdName, ring, &termRecorder{})
 
 	p := newAttachablePump(t, dir, 100, 24)
-	p.apply(keyMsg("a"))
-	p.drain(300 * time.Millisecond)
+	attachTerminal(t, p, cmdName)
 
 	out := p.model.View()
 	if strings.Contains(out, "predates the attach") {
@@ -213,8 +223,7 @@ func TestTerminalViewRendersColoredOutputAfterAttach(t *testing.T) {
 	registerFakePTYEntry(t, cmdName, ring, &termRecorder{})
 
 	p := newAttachablePump(t, dir, 100, 24)
-	p.apply(keyMsg("a"))
-	p.drain(150 * time.Millisecond)
+	attachTerminal(t, p, cmdName)
 	if !p.model.termAttached {
 		t.Fatal("attach did not enter the terminal view")
 	}
@@ -245,8 +254,7 @@ func TestTerminalViewKeystrokeReachesChild(t *testing.T) {
 	registerFakePTYEntry(t, cmdName, livework.NewRing(0), rec)
 
 	p := newAttachablePump(t, dir, 100, 24)
-	p.apply(keyMsg("a"))
-	p.drain(150 * time.Millisecond)
+	attachTerminal(t, p, cmdName)
 	if !p.model.termAttached {
 		t.Fatal("attach did not enter the terminal view")
 	}
@@ -274,8 +282,7 @@ func TestTerminalViewWindowResizeResizesChildPty(t *testing.T) {
 	registerFakePTYEntry(t, cmdName, livework.NewRing(0), rec)
 
 	p := newAttachablePump(t, dir, 100, 24)
-	p.apply(keyMsg("a"))
-	p.drain(150 * time.Millisecond)
+	attachTerminal(t, p, cmdName)
 	if !p.model.termAttached {
 		t.Fatal("attach did not enter the terminal view")
 	}
@@ -311,8 +318,7 @@ func TestTerminalViewEscDetachesAndQKReachChild(t *testing.T) {
 		registerFakePTYEntry(t, cmdName, livework.NewRing(0), &termRecorder{})
 
 		p := newAttachablePump(t, dir, 100, 24)
-		p.apply(keyMsg("a"))
-		p.drain(150 * time.Millisecond)
+		attachTerminal(t, p, cmdName)
 		if !p.model.termAttached {
 			t.Fatal("attach did not enter the terminal view")
 		}
@@ -326,15 +332,15 @@ func TestTerminalViewEscDetachesAndQKReachChild(t *testing.T) {
 		if _, ok := livework.Default.Get(cmdName); !ok {
 			t.Error("detaching removed the live-work entry — the process must stay registered as still running")
 		}
-		// A prefix, not the full cmdName: the detail pane's header now
-		// shares its row with the live state and elapsed
-		// (internal/tui/workview.go's detailHeader), so a long name
-		// truncates there at a different width than the row list's own
-		// fixed name column — neither is guaranteed to fit all 22 characters
-		// of this fixture's name, but both fit well past this prefix.
+		// The dashboard's own chrome is back, not a released terminal — a
+		// dispatched command's row (where its name used to show, in the
+		// detail pane's header) is gone from the Work tab entirely now that
+		// the flat Commands list is retired (admin-3rgp.72.2); giving it a
+		// row again is admin-3rgp.72.4's "Running" section, not this file's
+		// concern.
 		out := p.model.View()
-		if !strings.Contains(out, cmdName[:10]) {
-			t.Errorf("detached frame lost the command list: %q", out)
+		if !strings.Contains(out, "Work") {
+			t.Errorf("detached frame lost the dashboard's own tab bar: %q", out)
 		}
 	})
 
@@ -347,8 +353,7 @@ func TestTerminalViewEscDetachesAndQKReachChild(t *testing.T) {
 			registerFakePTYEntry(t, cmdName, livework.NewRing(0), rec)
 
 			p := newAttachablePump(t, dir, 100, 24)
-			p.apply(keyMsg("a"))
-			p.drain(150 * time.Millisecond)
+			attachTerminal(t, p, cmdName)
 			if !p.model.termAttached {
 				t.Fatal("attach did not enter the terminal view")
 			}

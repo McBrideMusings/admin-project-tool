@@ -82,6 +82,16 @@ type workRowData struct {
 	// or "@action" when it delegates — so the target group says what each
 	// row will run rather than restating its own name.
 	targetRuns map[string]string
+	// cmdRun is what THIS row itself runs when it dispatches directly — a
+	// flat command's own `run` line ("@action" when it delegates), or, for a
+	// single-target multi-target action (auto-picked, never a menu), that
+	// one target's line. Empty when there is no single resolved invocation
+	// to show: a multi-target command with more than one target (its
+	// targetRuns carry each target's own line instead), a sequence of more
+	// than one step, or a query-sourced workflow. The palette box's entries
+	// (buildPaletteEntries, palette.go) read this for a flat command's run
+	// string, mirroring exactly how targetRuns already supplies a target's.
+	cmdRun string
 	// targetURLs maps each target key to its own resolved urls (the same
 	// per-target inheritance the pinned footer applies — kinds.FrameURLs),
 	// so targetRows can hand each child row its own list without a second
@@ -628,6 +638,11 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 			if u, err := kinds.FrameURLs(a, target, m.manifest); err == nil {
 				wd.urls = u
 			}
+			if kind == "multi-target" {
+				wd.cmdRun = kinds.TargetSummary(a, target)
+			} else {
+				wd.cmdRun = flatActionRun(a)
+			}
 		}
 	}
 	if wd.live != nil && wd.live.LogPath != "" {
@@ -696,53 +711,20 @@ func targetRows(parent rowItem, byName map[string]*livework.Entry, pendingTarget
 	return out
 }
 
-// workRows builds the Work tab's one combined list: every declared command
-// first, then any live-work entry that IS a genuine agent worker — the
-// ticket's own "commands first, then any worker with no command behind it."
-// A process-kind entry (a LongRunning command actually running) never gets
-// a row of its own; it folds into its command's row via commandRowItem's
-// live lookup instead.
+// workRows builds the Work tab's row list: every genuine agent worker (a
+// livework.Entry with no command behind it), under its own "Workers"
+// header. Declared commands no longer render as rows here at all
+// (admin-3rgp.72.2) — they live in the palette box workview.go draws above
+// this list, built from buildPaletteEntries (palette.go) rather than from
+// rowItem values. A process-kind entry (a LongRunning command actually
+// running) still never gets a row of its own here; liveWorkers already
+// filters those out (Worker == nil).
 func (m Model) workRows() []rowItem {
 	if !m.manifestOK {
 		return nil
 	}
-	cmdRows := m.declaredCommands()
-	byName := map[string]*livework.Entry{}
-	for _, e := range livework.Default.List() {
-		if e.Worker == nil {
-			byName[e.Name] = e
-		}
-	}
-
 	var rows []rowItem
-	rows = append(rows, headerRow("Commands"))
-	if len(cmdRows) == 0 {
-		rows = append(rows, rowItem{kind: rowText, label: "admin.toml declares no commands"})
-	} else {
-		lastGroup := 0
-		haveLast := false
-		for _, cr := range cmdRows {
-			// Blank row on every Group change — collectCommands already
-			// sorted cmdRows by Group then Priority; this is just the
-			// visual half of the admin skill's Phase 2c layout (group 1
-			// build/dev/deploy, an automatic spacer, then group 2) that
-			// this tab was missing even though the order itself was
-			// already correct.
-			if haveLast && cr.cmd.Group != lastGroup {
-				rows = append(rows, blankRow())
-			}
-			lastGroup = cr.cmd.Group
-			haveLast = true
-			item := m.commandRowItem(cr, byName)
-			rows = append(rows, item)
-			if targets := targetRows(item, byName, m.pendingTarget[cr.name]); len(targets) > 0 {
-				rows = append(rows, targets...)
-				rows = append(rows, ruleRow())
-			}
-		}
-	}
-
-	rows = append(rows, blankRow(), headerRow("Workers"))
+	rows = append(rows, headerRow("Workers"))
 	workers := liveWorkers()
 	if len(workers) == 0 {
 		rows = append(rows, rowItem{kind: rowText, label: "no workers running — dispatch a command to start one"})
@@ -762,13 +744,13 @@ func (m Model) workRows() []rowItem {
 	return rows
 }
 
-// workRowCount is the tab bar's badge count for Work — every selectable row
-// (commands plus workers), matching how the PRs/Issues/Beads badges already
-// count their own rows.
+// workRowCount is the tab bar's badge count for Work — every selectable row:
+// the palette's own resolved-invocation count plus every genuine worker,
+// matching how the PRs/Issues/Beads badges already count their own rows.
 func (m Model) workRowCount() int {
-	n := 0
+	n := len(m.buildPaletteEntries())
 	for _, r := range m.workRows() {
-		if r.kind == rowCommand || r.kind == rowCommandTarget || r.kind == rowWorker {
+		if r.kind == rowWorker {
 			n++
 		}
 	}
