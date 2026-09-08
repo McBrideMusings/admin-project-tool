@@ -266,76 +266,16 @@ func TestLiveEntryForMatchesAnyStep(t *testing.T) {
 	}
 }
 
-// TestWorkRowsOneListOneCursor is the ticket's own central claim: commands
-// and workers share one list under one cursor, in a stable order, and the
-// cursor can move across the boundary between them.
-func TestWorkRowsOneListOneCursor(t *testing.T) {
-	freshLivework(t)
-	m := &manifest.Manifest{
-		Custom: map[string]manifest.Command{
-			"build": {Desc: "build the binary", Steps: []string{"build"}},
-		},
-		Actions: map[string]manifest.Action{"build": {"kind": "shell"}},
-	}
-	mm := workTestModel(m)
-	mm.active = tabWork
-
-	// A genuine agent worker has no command behind it and must still land in
-	// the same list, after every command — this is the row a workflow target
-	// produces (internal/livework's own doc comment), so use a unique,
-	// test-scoped ID that no other test in this package can collide with.
-	worker := &livework.Entry{
-		ID: "test-work-rows-worker", Name: "test-work-rows-worker",
-		State: livework.StateWaiting, Activity: "needs input", Handle: "pane-worker", Via: "terminal",
-		Worker: &livework.WorkerInfo{Branch: "some-branch", Worktree: "/tmp/some-branch"},
-	}
-	if err := livework.Default.Add(worker); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-
-	rows := mm.workRows()
-	var kinds []rowKind
-	for _, r := range rows {
-		kinds = append(kinds, r.kind)
-	}
-	// Commands section header, the one command, Workers section header
-	// (blank spacer optional), the worker row.
-	foundCmd, foundWorker := -1, -1
-	for i, r := range rows {
-		if r.kind == rowCommand {
-			foundCmd = i
-		}
-		if r.kind == rowWorker && r.work.worker.ID == worker.ID {
-			foundWorker = i
-		}
-	}
-	if foundCmd < 0 {
-		t.Fatalf("no command row in %v", kinds)
-	}
-	if foundWorker < 0 {
-		t.Fatalf("no worker row in %v", kinds)
-	}
-	if foundWorker < foundCmd {
-		t.Errorf("worker row (%d) came before the command row (%d) — commands must come first", foundWorker, foundCmd)
-	}
-
-	// One cursor traverses both: moving down from the command row must reach
-	// the worker row without any special-casing at the boundary.
-	mm.cursor[tabWork] = foundCmd
-	mm.moveCursor(1)
-	r, ok := mm.currentRow()
-	if !ok || r.kind != rowWorker {
-		t.Errorf("moving down from the last command did not land on the worker row")
-	}
-}
-
-// TestWorkRowsFoldsAProcessEntryIntoItsCommandRow is the AC's "running a
-// command from the tab dispatches it, and the row switches to its live
-// status" as read back through the registry: a LongRunning action is
-// recorded under its own action name with no WorkerInfo (internal/kinds/
-// pane.go's recordLiveWork), and that must show up ON the command row, not
-// as a second row of its own.
-func TestWorkRowsFoldsAProcessEntryIntoItsCommandRow(t *testing.T) {
+// TestWorkRowsNeverEmitsAProcessEntryAsAWorkerRow is admin-3rgp.72.2's own
+// interim-state half of what TestWorkRowsFoldsAProcessEntryIntoItsCommandRow
+// used to prove: a LongRunning action's live entry (no WorkerInfo —
+// internal/kinds/pane.go's recordLiveWork) never shows up in workRows() at
+// all now that the flat Commands list it used to fold into is gone — giving
+// it back a row of its own (the design's "Running" section) is
+// admin-3rgp.72.4's job, not this one's. liveWorkers/commandRowItem still
+// resolve the entry correctly; see TestCommandRowItemPrefersLiveEntryLogPath
+// and TestBuildPaletteEntriesNeverEmitsABareMultiTargetParent for that half.
+func TestWorkRowsNeverEmitsAProcessEntryAsAWorkerRow(t *testing.T) {
 	freshLivework(t)
 	m := &manifest.Manifest{
 		Custom: map[string]manifest.Command{
@@ -353,28 +293,10 @@ func TestWorkRowsFoldsAProcessEntryIntoItsCommandRow(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	// livework.Default is a process-wide singleton (internal/livework's own
-	// doc comment: "one registry per process"), so other tests in this
-	// package may have already left entries in it — this only asserts on
-	// e's own row, never on the absence of every other one.
-	rows := mm.workRows()
-	found := false
-	for _, r := range rows {
-		if r.kind == rowCommand && r.work.cmdName == "dev-server" {
-			found = true
-			if r.work.live == nil {
-				t.Fatalf("dev-server's row has no live entry, want the running one")
-			}
-			if r.work.live.ID != e.ID {
-				t.Errorf("dev-server's row live entry = %q, want %q", r.work.live.ID, e.ID)
-			}
-		}
+	for _, r := range mm.workRows() {
 		if r.kind == rowWorker && r.work.worker.ID == e.ID {
-			t.Errorf("the process-kind entry (no WorkerInfo) got its own row: %+v", r.work)
+			t.Errorf("the process-kind entry (no WorkerInfo) got a Workers-section row: %+v", r.work)
 		}
-	}
-	if !found {
-		t.Fatalf("no command row for dev-server")
 	}
 }
 
@@ -676,9 +598,13 @@ func TestWorkRowsWorkersHeaderStaysPutAcrossDispatch(t *testing.T) {
 	}
 }
 
-// TestWorkRowsNoCommandsStillLegible is AC 5: a manifest declaring no
-// commands still gets a Commands header plus its own empty-state line, and
-// the whole-view rowCenter fallback that used to stand in for this is gone.
+// TestWorkRowsNoCommandsStillLegible is AC 5's Work-tab-row half: a manifest
+// declaring no commands still gets a legible Workers section — the flat
+// Commands list's own empty state ("admin.toml declares no commands") moved
+// into the palette box (admin-3rgp.72.2: see TestPaletteIdleContentEmptyMRU,
+// whose "no commands run yet" row covers a manifest with nothing to run same
+// as one with nothing recorded yet) — and the whole-view rowCenter fallback
+// that used to stand in for all of this is gone.
 func TestWorkRowsNoCommandsStillLegible(t *testing.T) {
 	m := &manifest.Manifest{
 		Custom:  map[string]manifest.Command{},
@@ -690,25 +616,16 @@ func TestWorkRowsNoCommandsStillLegible(t *testing.T) {
 	if len(rows) == 0 {
 		t.Fatalf("workRows returned nothing for a manifest with no commands")
 	}
-	if rows[0].kind != rowHeader || rows[0].label != "Commands" {
-		t.Fatalf("rows[0] = %+v, want the Commands header", rows[0])
-	}
-	if len(rows) < 2 || rows[1].kind != rowText || rows[1].label == "" {
-		t.Fatalf("row after Commands header = %+v, want a non-blank empty-state rowText", rows[1])
+	if rows[0].kind != rowHeader || rows[0].label != "Workers" {
+		t.Fatalf("rows[0] = %+v, want the Workers header — the flat Commands list is gone from workRows() entirely", rows[0])
 	}
 	for _, r := range rows {
 		if r.kind == rowCenter {
 			t.Errorf("found a rowCenter row, want the whole-view fallback deleted: %+v", r)
 		}
-	}
-	foundWorkersHeader := false
-	for _, r := range rows {
-		if r.kind == rowHeader && r.label == "Workers" {
-			foundWorkersHeader = true
+		if r.kind == rowCommand || r.kind == rowCommandTarget {
+			t.Errorf("found a %v row in workRows(), want the flat Commands list gone with no fallback: %+v", r.kind, r)
 		}
-	}
-	if !foundWorkersHeader {
-		t.Errorf("no Workers header for a manifest with no commands")
 	}
 }
 

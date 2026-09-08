@@ -10,13 +10,18 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
+	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
 // workFocusModel returns a Work-tab model (through the real New(), so the
-// initial-focus AC is exercised for real) with two commands, one of them
-// carrying targets so the submenu-interception ACs have something to expand.
-func workFocusModel() Model {
+// initial-focus AC is exercised for real) with two declared commands (the
+// palette box's own content, admin-3rgp.72.2 — no longer selectable rows)
+// plus two genuine agent workers, which ARE still selectable Work-tab rows
+// and are what every cursor/focus assertion below actually moves across.
+func workFocusModel(t *testing.T) Model {
+	t.Helper()
+	freshLivework(t)
 	m := New(context.Background(), "/repo", "owner/repo", "main", "main")
 	m.herdr = false
 	m.width, m.height = 100, 30
@@ -38,13 +43,24 @@ func workFocusModel() Model {
 	}
 	m.manifestOK = true
 	m.active = tabWork
+
+	for _, id := range []string{"focus-worker-one", "focus-worker-two"} {
+		w := &livework.Entry{
+			ID: id, Name: id, State: livework.StateWaiting, Activity: "needs input",
+			Handle: "pane-" + id, Via: "terminal",
+			Worker: &livework.WorkerInfo{Branch: id, Worktree: "/tmp/" + id},
+		}
+		if err := livework.Default.Add(w); err != nil {
+			t.Fatalf("Add %s: %v", id, err)
+		}
+	}
 	return m
 }
 
 // TestNewSessionFocusesTabBar is AC1: a new session opens with focus on the
 // tab bar and no row rendered as current.
 func TestNewSessionFocusesTabBar(t *testing.T) {
-	m := workFocusModel()
+	m := workFocusModel(t)
 	if m.focus != focusTabs {
 		t.Fatalf("New() focus = %v, want focusTabs", m.focus)
 	}
@@ -64,7 +80,7 @@ func TestNewSessionFocusesTabBar(t *testing.T) {
 // the tab bar on every tab including Work.
 func TestTabBarFocusStepsTabsOnWorkTab(t *testing.T) {
 	for _, key := range []string{"right", "left", "h", "l"} {
-		m := workFocusModel()
+		m := workFocusModel(t)
 		before := m.active
 		next, _ := m.handleKey(keyMsg(key))
 		nm := next.(Model)
@@ -76,7 +92,7 @@ func TestTabBarFocusStepsTabsOnWorkTab(t *testing.T) {
 		}
 	}
 	// A dedicated case landing back on Work: right then left should return.
-	m := workFocusModel()
+	m := workFocusModel(t)
 	next, _ := m.handleKey(keyMsg("right"))
 	nm := next.(Model)
 	next2, _ := nm.handleKey(keyMsg("left"))
@@ -91,7 +107,7 @@ func TestTabBarFocusStepsTabsOnWorkTab(t *testing.T) {
 // the first row.
 func TestEnterAndDownMoveFocusIntoBody(t *testing.T) {
 	for _, key := range []string{"j", "down", "enter"} {
-		m := workFocusModel()
+		m := workFocusModel(t)
 		m.cursor[tabWork] = 2 // pretend a prior trip left the cursor mid-list
 		next, _ := m.handleKey(keyMsg(key))
 		nm := next.(Model)
@@ -107,7 +123,7 @@ func TestEnterAndDownMoveFocusIntoBody(t *testing.T) {
 // TestUpAtTopRowReturnsToTabBar is AC4: k/up on the top row returns focus to
 // the tab bar; on any other row it moves the cursor as it does today.
 func TestUpAtTopRowReturnsToTabBar(t *testing.T) {
-	m := workFocusModel()
+	m := workFocusModel(t)
 	m.focus = focusBody
 	m.cursor[tabWork] = 0
 	next, _ := m.handleKey(keyMsg("up"))
@@ -120,7 +136,7 @@ func TestUpAtTopRowReturnsToTabBar(t *testing.T) {
 	}
 
 	// Not at the top: up moves the cursor as it always has.
-	m2 := workFocusModel()
+	m2 := workFocusModel(t)
 	m2.focus = focusBody
 	m2.cursor[tabWork] = 2
 	next2, _ := m2.handleKey(keyMsg("up"))
@@ -130,44 +146,6 @@ func TestUpAtTopRowReturnsToTabBar(t *testing.T) {
 	}
 	if nm2.cursor[tabWork] != 1 {
 		t.Errorf("up off the top row cursor = %d, want 1", nm2.cursor[tabWork])
-	}
-}
-
-// TestTargetsAlreadyVisibleRightLeftJustSwitchTabInBody supersedes the
-// ticket's own admin-70hb AC5 ("left/right still expand and collapse a
-// command's targets") — admin-0kxh removes that toggle. A multi-target
-// command's targets render unconditionally, so with focus in the body,
-// right/left on its parent row do exactly what they do on any other Work-tab
-// row: switch the active tab.
-func TestTargetsAlreadyVisibleRightLeftJustSwitchTabInBody(t *testing.T) {
-	m := workFocusModel()
-	m.focus = focusBody
-	rows := m.visibleRows()
-	idx := -1
-	for i, r := range rows {
-		if r.kind == rowCommand && r.work != nil && r.work.cmdName == "deploy" {
-			idx = i
-		}
-	}
-	if idx < 0 {
-		t.Fatalf("no rowCommand for %q in %v", "deploy", rows)
-	}
-	m.cursor[tabWork] = idx
-
-	sawTarget := false
-	for _, r := range rows {
-		if r.kind == rowCommandTarget && r.work != nil && r.work.cmdName == "deploy" {
-			sawTarget = true
-		}
-	}
-	if !sawTarget {
-		t.Fatal("deploy's targets are not already rendered")
-	}
-
-	next, _ := m.handleKey(keyMsg("right"))
-	nm := next.(Model)
-	if nm.active == tabWork {
-		t.Errorf("right on a multi-target row in the body stayed on Work, want it to switch tab")
 	}
 }
 
@@ -181,7 +159,7 @@ func TestTargetsAlreadyVisibleRightLeftJustSwitchTabInBody(t *testing.T) {
 // count of "solid" elements without needing to know exact color numbers.
 func TestExactlyOneSolidHighlight(t *testing.T) {
 	for _, focus := range []focusZone{focusTabs, focusBody} {
-		m := workFocusModel()
+		m := workFocusModel(t)
 		m.focus = focus
 		if focus == focusBody {
 			m.cursor[tabWork] = 1
@@ -222,7 +200,7 @@ func TestExactlyOneSolidHighlight(t *testing.T) {
 // trap focus — j from the tab bar is a no-op on tabIssues before any data
 // has loaded, since the placeholder "loading…" row is not selectable.
 func TestEmptyBodyDoesNotTrapFocus(t *testing.T) {
-	m := workFocusModel()
+	m := workFocusModel(t)
 	m.active = tabIssues
 	if got := m.bodyRowCount(); got != 0 {
 		t.Fatalf("bodyRowCount() on tabIssues = %d, want 0", got)
@@ -237,7 +215,7 @@ func TestEmptyBodyDoesNotTrapFocus(t *testing.T) {
 // TestClickSetsFocus is AC8: clicking a tab (tabBarHit) and clicking a row
 // each set focus to what was clicked.
 func TestClickSetsFocus(t *testing.T) {
-	m := workFocusModel()
+	m := workFocusModel(t)
 	m.focus = focusBody // start in the body so the tab click has to move it back
 
 	next, _ := m.click(1, 1) // row 1 is the tab-bar line; x=1 sits inside the first tab
@@ -248,7 +226,7 @@ func TestClickSetsFocus(t *testing.T) {
 
 	// Clicking a row (the Work tab's own left column, addressed the same way
 	// clickRow's hitRow branch would from click()) moves focus into the body.
-	m3 := workFocusModel() // focusTabs, per New(); already on tabWork
+	m3 := workFocusModel(t) // focusTabs, per New(); already on tabWork
 	next3, _ := m3.clickRow(paneBranches, 0)
 	nm3 := next3.(Model)
 	if nm3.focus != focusBody {
@@ -260,7 +238,7 @@ func TestClickSetsFocus(t *testing.T) {
 // full hotkey set (not just a 3-key nav set) while focus is on the tab bar,
 // with the tab-bar-only nav pairs merged in and no key advertised twice.
 func TestKeybarFollowsFocus(t *testing.T) {
-	m := workFocusModel()
+	m := workFocusModel(t)
 	tabsPairs := m.keymap()
 	foundTab := false
 	for _, p := range tabsPairs {

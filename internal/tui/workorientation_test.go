@@ -17,12 +17,45 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// buildRunningWorkModel is this file's shared fixture: one declared command,
-// backed by a live hosted entry whose Output ring holds real pty-shaped
-// bytes (ONLCR "\r\n" line endings, exactly what internal/kinds/hostedpty.go
-// actually drains off a child's master fd — internal/tui.TestProbeRealPtyBytes
-// confirmed this shape empirically during development), cursor parked on
-// that row so renderWorkBody's detail pane is the live tail.
+// firstPlainRuleRow finds the stacked layout's own list/detail divider — a
+// row of nothing but "─" — as distinct from the palette box's top/bottom
+// border rows (admin-3rgp.72.2), which also carry runs of "─" but mixed with
+// "┌┐│└┘" box-drawing characters a plain rule never contains.
+func firstPlainRuleRow(lines []string) int {
+	for i, l := range lines {
+		s := strings.TrimSpace(stripANSI(l))
+		if s == "" {
+			continue
+		}
+		allDash := true
+		for _, r := range s {
+			if r != '─' {
+				allDash = false
+				break
+			}
+		}
+		if allDash {
+			return i
+		}
+	}
+	return -1
+}
+
+// buildRunningWorkModel is this file's shared fixture: one live agent
+// worker whose Output ring holds real pty-shaped bytes (ONLCR "\r\n" line
+// endings, exactly what internal/kinds/hostedpty.go actually drains off a
+// child's master fd — internal/tui.TestProbeRealPtyBytes confirmed this
+// shape empirically during development), cursor parked on that row so
+// renderWorkBody's detail pane is the live tail.
+//
+// A genuine worker, not a dispatched command, is what this file's geometry
+// assertions (stacked vs. side-by-side, the output block's rules) actually
+// need — they exercise renderWorkBody/renderWorkDetail/appendLiveTail's
+// LAYOUT, which is identical for either row kind. A dispatched command
+// itself has no row to park the cursor on any more (admin-3rgp.72.2 retired
+// the flat Commands list, and giving a live command a row of its own again
+// — the design's "Running" section — is admin-3rgp.72.4's job, not this
+// file's).
 func buildRunningWorkModel(t *testing.T, w, h int) Model {
 	t.Helper()
 	freshLivework(t)
@@ -42,6 +75,7 @@ func buildRunningWorkModel(t *testing.T, w, h int) Model {
 	entry := &livework.Entry{
 		ID: "command-test", Name: "command-test", Handle: "test-command-test",
 		State: livework.StateRunning, StartedAt: time.Now(), Output: ring,
+		Worker: &livework.WorkerInfo{Branch: "command-test", Worktree: "/tmp/command-test"},
 	}
 	if err := livework.Default.Add(entry); err != nil {
 		t.Fatalf("Add: %v", err)
@@ -49,7 +83,7 @@ func buildRunningWorkModel(t *testing.T, w, h int) Model {
 
 	rows := mm.workRows()
 	for i, r := range rows {
-		if r.kind == rowCommand && r.work.cmdName == "command-test" {
+		if r.kind == rowWorker && r.work.worker.ID == entry.ID {
 			mm.cursor[tabWork] = i
 		}
 	}
@@ -73,13 +107,7 @@ func TestRenderWorkBodyStacksOnTallNarrowTerminal(t *testing.T) {
 		t.Fatalf("renderWorkBody produced %d hit targets, want exactly %d", len(hits), h)
 	}
 
-	ruleIdx := -1
-	for i, l := range out {
-		if strings.Contains(l, "───") {
-			ruleIdx = i
-			break
-		}
-	}
+	ruleIdx := firstPlainRuleRow(out)
 	if ruleIdx == -1 {
 		t.Fatalf("no full-width rule found in stacked output:\n%s", strings.Join(out, "\n"))
 	}
@@ -179,13 +207,7 @@ func TestRenderWorkBodyStackedDetailSpansFullWidth(t *testing.T) {
 		}
 	}
 
-	dividerIdx := -1
-	for i, l := range out {
-		if strings.Contains(l, "───") {
-			dividerIdx = i
-			break
-		}
-	}
+	dividerIdx := firstPlainRuleRow(out)
 	if dividerIdx == -1 {
 		t.Fatalf("no list/detail divider found in stacked output:\n%s", strings.Join(out, "\n"))
 	}

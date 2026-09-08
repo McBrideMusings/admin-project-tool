@@ -182,14 +182,12 @@ func TestWhereColumnFrameAtMultipleWidths(t *testing.T) {
 		t.Fatalf("writing fixture admin.toml: %v", err)
 	}
 
-	hosted := &livework.Entry{
-		ID: cmdName, Name: cmdName, State: livework.StateRunning,
-		Activity: "running the fixture", Handle: "pty-wherecol-fixture", StartedAt: time.Now(),
-	}
-	if err := livework.Default.Add(hosted); err != nil {
-		t.Fatalf("Add hosted: %v", err)
-	}
-
+	// A hosted PROCESS-kind entry (no WorkerInfo) no longer gets a row at all
+	// in workRows() — the flat Commands list it used to fold into is gone
+	// (admin-3rgp.72.2), and giving a live command a row of its own again is
+	// admin-3rgp.72.4's "Running" section, not this file's concern. Only the
+	// detached WORKER row below is what this test's own subject (the
+	// where-column rendering) still has to prove itself against.
 	detached := &livework.Entry{
 		ID: "wherecolfixturedetachedworker", Name: "wherecolfixturedetachedworker",
 		State: livework.StateWaiting, Activity: "needs input", Handle: "pane 7", Via: "terminal",
@@ -212,9 +210,6 @@ func TestWhereColumnFrameAtMultipleWidths(t *testing.T) {
 		})
 		plain := stripANSI(out)
 
-		if !strings.Contains(plain, "hosted") {
-			t.Errorf("width %d: frame missing %q for the hosted entry: %q", width, "hosted", plain)
-		}
 		if !strings.Contains(plain, "pane 7") {
 			t.Errorf("width %d: frame missing the detached worker's pane id: %q", width, plain)
 		}
