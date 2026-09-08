@@ -149,8 +149,16 @@ func (f *Frame) leave() {
 	// the CURRENT size) still owns, mangling whatever prints next (see
 	// admin-0tx3).
 	f.Rows, f.Cols = termSize(f.w)
+	// Erase the footer rather than scrolling it into scrollback: move to
+	// the footer's first row (at the freshly re-read size), erase to end
+	// of screen, then reset the scroll region. The cursor is left parked
+	// on that row — no trailing newline — so the next thing printed (e.g.
+	// AnnounceEnd's "-> wrote: <path>" line) starts exactly where the
+	// footer used to be, instead of one row into scrollback below it.
+	first := f.RegionRows() + 1
+	fmt.Fprintf(f.w, "%s[%d;1H", esc, first)
+	io.WriteString(f.w, esc+"[J")
 	io.WriteString(f.w, esc+"[r")
-	fmt.Fprintf(f.w, "%s[%d;1H\n", esc, f.Rows)
 	if flusher, ok := f.w.(interface{ Flush() error }); ok {
 		_ = flusher.Flush()
 	}
