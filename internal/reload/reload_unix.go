@@ -10,9 +10,12 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/muesli/cancelreader"
 
 	xterm "github.com/charmbracelet/x/term"
 
@@ -62,44 +65,148 @@ func SetupReload(pidFile string) (cleanup func(), err error) {
 	return cleanup, nil
 }
 
+// keyReaderMu guards the process-wide shared stdin reader below. Every
+// startKeyReader call — the exported StartKeyReader, PollForReload's and
+// RunWithReload's own internal calls, and therefore every caller reached
+// through any of those (internal/luahost's picker, internal/keybindings' key
+// loop) — goes through this one singleton rather than each opening its own
+// goroutine blocked in Read(os.Stdin). Two readers competing for the same tty
+// steal each other's bytes (a stolen byte is gone, not merely delayed) and
+// shred multi-byte sequences like an arrow key's ESC '[' 'B' across two
+// listeners — a refcounted singleton makes that impossible by construction:
+// there is only ever one goroutine actually reading the fd, however many
+// subscribers are currently registered.
+var (
+	keyReaderMu    sync.Mutex
+	keyReaderCR    cancelreader.CancelReader
+	keyReaderState *termState
+	keyReaderSubs  []chan byte
+	keyReaderRefs  int
+	// keyReaderDone is closed by pumpKeyReader right before it returns. The
+	// last restore() waits on it after cancelling the reader, so a
+	// subsequent startKeyReader() call — gated on the same mutex — is
+	// guaranteed the previous pump goroutine has actually exited before it
+	// opens a new cancelreader on the same fd. Without this join, the old
+	// and new pump goroutines can both read stdin for a brief window, which
+	// is the same byte-stealing race the singleton exists to eliminate.
+	keyReaderDone chan struct{}
+)
+
 // startKeyReader puts fd into cbreak mode (canonical mode and echo off,
 // signal generation left on — the same tty.setcbreak Python's poll_for_reload
-// and run_with_reload both use) and streams single bytes read from it on the
-// returned channel. restore undoes the terminal mode change; it is always
-// safe to call, including when cbreak mode was never entered (stdin not a
-// tty, or the ioctl failed) — restore is then a no-op. The reader goroutine exits
-// (closing the channel) once the fd hits EOF or an error, which happens on
-// Restore since that unblocks the pending Read with the terminal back in
-// canonical mode... in practice the goroutine simply leaks blocked in Read
-// until the process exits, exactly as Python's raw termios thread does
-// nothing to unblock its own blocking read either; both are fine because the
-// process is exiting right after restore in every caller of this function.
+// and run_with_reload both use) on the first subscriber, and hands every
+// subscriber its own byte channel fed by one shared goroutine reading stdin.
+// restore unsubscribes and is always safe to call, including when cbreak
+// mode was never entered (stdin not a tty, or the ioctl failed) — restore is
+// then a no-op. Only the LAST outstanding restore actually restores termios
+// and stops the shared reader: it cancels the reader's blocking Read via
+// github.com/muesli/cancelreader (which — on the darwin/BSD kqueue backend
+// this project runs under — unblocks the pending read synchronously rather
+// than leaving it parked in the kernel) and closes it, so the goroutine
+// exits for real instead of leaking blocked in Read until the process exits.
+// A later fresh startKeyReader call, once refs have dropped to zero, starts
+// a brand-new cancelreader and re-enters cbreak cleanly.
 func startKeyReader() (keys <-chan byte, restore func()) {
 	fd := os.Stdin.Fd()
 	if !xterm.IsTerminal(fd) {
 		return nil, func() {}
 	}
-	state, err := makeCbreak(fd)
-	if err != nil {
-		return nil, func() {}
+
+	keyReaderMu.Lock()
+	if keyReaderRefs == 0 {
+		state, err := makeCbreak(fd)
+		if err != nil {
+			keyReaderMu.Unlock()
+			return nil, func() {}
+		}
+		cr, err := cancelreader.NewReader(os.Stdin)
+		if err != nil {
+			_ = restoreTerm(fd, state)
+			keyReaderMu.Unlock()
+			return nil, func() {}
+		}
+		keyReaderState = state
+		keyReaderCR = cr
+		keyReaderDone = make(chan struct{})
+		go pumpKeyReader(cr, keyReaderDone)
 	}
 	ch := make(chan byte, 8)
-	go func() {
-		buf := make([]byte, 1)
-		for {
-			n, err := os.Stdin.Read(buf)
-			if n > 0 {
+	keyReaderSubs = append(keyReaderSubs, ch)
+	keyReaderRefs++
+	keyReaderMu.Unlock()
+
+	var once sync.Once
+	restore = func() {
+		once.Do(func() {
+			keyReaderMu.Lock()
+			for i, sub := range keyReaderSubs {
+				if sub == ch {
+					keyReaderSubs = append(keyReaderSubs[:i], keyReaderSubs[i+1:]...)
+					break
+				}
+			}
+			keyReaderRefs--
+			var done chan struct{}
+			if keyReaderRefs <= 0 {
+				keyReaderRefs = 0
+				_ = restoreTerm(fd, keyReaderState)
+				keyReaderState = nil
+				if keyReaderCR != nil {
+					keyReaderCR.Cancel()
+					_ = keyReaderCR.Close()
+					keyReaderCR = nil
+				}
+				done = keyReaderDone
+				keyReaderDone = nil
+			}
+			keyReaderMu.Unlock()
+
+			// Join the pump goroutine (if this was the last subscriber) with
+			// the mutex released, not held: pumpKeyReader itself needs
+			// keyReaderMu (to fan out a byte a concurrently-unblocking Read
+			// returns) before it can loop again, see ErrCanceled, and close
+			// done — holding the mutex across this wait would deadlock
+			// against that. A subsequent startKeyReader() call is still
+			// serialized on keyReaderMu, and keyReaderDone/keyReaderCR were
+			// already cleared above, so it cannot observe a half-torn-down
+			// reader even without holding the lock here.
+			if done != nil {
+				<-done
+			}
+		})
+	}
+	return ch, restore
+}
+
+// pumpKeyReader is the ONE goroutine reading stdin at any given time — it
+// reads a byte at a time from cr and fans it out to every currently
+// subscribed channel (a non-blocking send, same drop-on-full behavior each
+// per-call reader used before this became shared). It returns when cr's Read
+// errors, which the owning startKeyReader restore's Cancel()+Close() call
+// causes to happen promptly. done is closed right before this function
+// returns, so the restore that cancelled cr can join this goroutine and know
+// the fd is no longer being read before a fresh startKeyReader opens a new
+// cancelreader on it.
+func pumpKeyReader(cr cancelreader.CancelReader, done chan struct{}) {
+	defer close(done)
+	buf := make([]byte, 1)
+	for {
+		n, err := cr.Read(buf)
+		if n > 0 {
+			b := buf[0]
+			keyReaderMu.Lock()
+			for _, sub := range keyReaderSubs {
 				select {
-				case ch <- buf[0]:
+				case sub <- b:
 				default:
 				}
 			}
-			if err != nil {
-				return
-			}
+			keyReaderMu.Unlock()
 		}
-	}()
-	return ch, func() { _ = restoreTerm(fd, state) }
+		if err != nil {
+			return
+		}
+	}
 }
 
 // PollForReload blocks until a reload is requested (SIGUSR1, or 'r'/'R' on a
