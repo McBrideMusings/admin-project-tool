@@ -51,11 +51,12 @@ type Frame struct {
 	// f.rows/f.cols directly.
 	Rows, Cols int
 
-	w       io.Writer
-	started time.Time
-	active  bool
-	paneID  string
-	stop    chan struct{}
+	w         io.Writer
+	started   time.Time
+	active    bool
+	paneID    string
+	stop      chan struct{}
+	stopWinch func()
 }
 
 func termSize(w io.Writer) (rows, cols int) {
@@ -127,6 +128,10 @@ func (f *Frame) enter() {
 	f.drawLocked()
 	f.stop = make(chan struct{})
 	go f.tick()
+
+	winch := make(chan struct{}, 1)
+	f.stopWinch = notifyWinch(winch)
+	go f.watchWinch(winch)
 }
 
 func (f *Frame) leave() {
@@ -135,6 +140,15 @@ func (f *Frame) leave() {
 	}
 	f.active = false
 	close(f.stop)
+	if f.stopWinch != nil {
+		f.stopWinch()
+		f.stopWinch = nil
+	}
+	// The terminal may have resized since enter() computed Rows/Cols — a
+	// stale value here would position the cursor on a row the footer (at
+	// the CURRENT size) still owns, mangling whatever prints next (see
+	// admin-0tx3).
+	f.Rows, f.Cols = termSize(f.w)
 	io.WriteString(f.w, esc+"[r")
 	fmt.Fprintf(f.w, "%s[%d;1H\n", esc, f.Rows)
 	if flusher, ok := f.w.(interface{ Flush() error }); ok {
@@ -157,6 +171,35 @@ func (f *Frame) tick() {
 			return
 		}
 	}
+}
+
+// watchWinch forwards SIGWINCH notifications into reflow, mirroring tick's
+// lock-check-unlock shape. Exits when the frame's stop channel closes, the
+// same signal tick already watches for.
+func (f *Frame) watchWinch(winch <-chan struct{}) {
+	for {
+		select {
+		case <-winch:
+			mu.Lock()
+			f.reflow()
+			mu.Unlock()
+		case <-f.stop:
+			return
+		}
+	}
+}
+
+// reflow re-reads the terminal size and re-issues the scroll region and
+// footer for it — the resize response admin_lib/frame.py's _on_winch makes.
+// Callers must hold mu. Independent of any real signal so a test can call
+// it directly after mutating Rows/Cols.
+func (f *Frame) reflow() {
+	if !f.active {
+		return
+	}
+	f.Rows, f.Cols = termSize(f.w)
+	f.setRegion()
+	f.drawLocked()
 }
 
 func (f *Frame) setRegion() {

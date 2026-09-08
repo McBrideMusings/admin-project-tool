@@ -214,6 +214,81 @@ func TestDrawRepaintsAtAbsoluteFooterRowsRegardlessOfPriorOutput(t *testing.T) {
 	}
 }
 
+// termSize only re-reads a real size from an *os.File; for the *bytes.Buffer
+// writer every test in this file uses, it always falls back to 24x80 — so
+// reflow's "recompute size" step is only observable through that fallback,
+// not through a genuinely different in-process terminal size.
+func TestReflowReemitsRegionAndRepaintsFooterAtTheRecomputedSize(t *testing.T) {
+	f, buf := testFrame([]URLEntry{{"a", "http://a"}}, "/tmp/x.log", 24, 100)
+	f.enter()
+	defer f.leave()
+
+	// Simulate a resize the frame hasn't reflowed for yet: mutate Rows/Cols
+	// away from what enter() computed.
+	f.Rows, f.Cols = 40, 100
+	buf.Reset()
+
+	mu.Lock()
+	f.reflow()
+	mu.Unlock()
+
+	// termSize falls back to 24x80 for a non-*os.File writer, so reflow
+	// recomputes the region for THAT size, not the 40 this test set.
+	if f.Rows != 24 || f.Cols != 80 {
+		t.Fatalf("expected reflow to recompute Rows/Cols via termSize (24x80 fallback), got %dx%d", f.Rows, f.Cols)
+	}
+	out := buf.String()
+	wantRegion := esc + "[1;" + strconv.Itoa(f.RegionRows()) + "r"
+	if !strings.Contains(out, wantRegion) {
+		t.Fatalf("expected DECSTBM region for the recomputed size %q, got %q", wantRegion, out)
+	}
+	if !strings.Contains(out, "dev:cf") {
+		t.Fatalf("expected the footer repainted after reflow: %q", out)
+	}
+}
+
+func TestReflowIsANoOpWhenNotActive(t *testing.T) {
+	f, buf := testFrame([]URLEntry{{"a", "http://a"}}, "/tmp/x.log", 24, 100)
+	// Never entered — active is false.
+	mu.Lock()
+	f.reflow()
+	mu.Unlock()
+	if buf.String() != "" {
+		t.Fatalf("expected no output from reflow on an inactive frame, got %q", buf.String())
+	}
+}
+
+// leave() must re-read the terminal size before positioning the cursor, so
+// teardown targets whatever size is current — not the size enter() captured
+// — or the final absolute-position write lands on a row the footer (at the
+// current size) still owns.
+func TestLeavePositionsBelowTheFooterAtTheCurrentSizeNotTheEnterSize(t *testing.T) {
+	f, buf := testFrame([]URLEntry{{"a", "http://a"}}, "/tmp/x.log", 24, 100)
+	f.enter()
+
+	// Simulate a resize between enter() and leave() that nothing has
+	// reflowed for: mutate Rows to a value distinct from both the
+	// enter-time value (24) and the termSize fallback (24) that leave()
+	// should recompute to.
+	f.Rows = 999
+	buf.Reset()
+	f.leave()
+
+	out := buf.String()
+	// termSize's 24x80 fallback is what leave() must re-read and use here
+	// — not the 999 this test left stale on the struct.
+	wantAddr := esc + "[24;1H"
+	if !strings.Contains(out, wantAddr) {
+		t.Fatalf("expected leave() to reposition using the re-read size %q, got %q", wantAddr, out)
+	}
+	if strings.Contains(out, esc+"[999;1H") {
+		t.Fatalf("leave() used the stale Rows captured before teardown: %q", out)
+	}
+	if f.Rows != 24 {
+		t.Fatalf("expected leave() to have refreshed f.Rows to the re-read size, got %d", f.Rows)
+	}
+}
+
 // -- Activate / Deactivate guards ------------------------------------------
 
 func TestActivateDeclinesWhenWriterIsNotATerminal(t *testing.T) {
