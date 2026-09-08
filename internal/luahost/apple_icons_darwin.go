@@ -22,25 +22,26 @@ package luahost
 //
 // This file takes the second path for the banner overlay specifically:
 //
-//   - The dev banner is rendered with the standard library alone
-//     (image/draw/color/png) as a solid diagonal ribbon — no text, no font
-//     dependency, no SVG glyph support, no bicubic resample. This covers
-//     swap_dev_icons' has_glyph=False branch (overlay the shipped icon art
-//     with a banner) and swap_dev_icon_composer's banner asset — the two
-//     "mark this build as dev" paths that touch every Apple archetype's
-//     default config. A viewer sees an unlabeled red diagonal stripe rather
-//     than one reading "DEV"; the stripe alone already answers "is this the
-//     dev build" for the workflow's purpose (a glance at the Home Screen).
+//   - The dev banner is rendered with the standard library
+//     (image/draw/color/png) plus the same golang.org/x/image font stack
+//     apple_icons_generate_darwin.go already vendors for glyph text
+//     (parsedGoFont/drawCenteredText) — a red diagonal ribbon with a
+//     rendered "DEV" label, matching admin_lib/icons.py's make_dev_banner.
+//     This covers swap_dev_icons' has_glyph=False branch (overlay the
+//     shipped icon art with a banner) and swap_dev_icon_composer's banner
+//     asset — the two "mark this build as dev" paths that touch every
+//     Apple archetype's default config. No new dependency is taken for
+//     this: the font stack is already a hard Go dependency for
+//     generate_icons/generate_tv_icons (see apple_icons_generate_darwin.go's
+//     file doc comment for that dependency comparison and decision,
+//     including admin-3rgp.48's later removal of SVG glyph support and its
+//     oksvg/rasterx dependency), so reusing it here for the "DEV" label
+//     costs nothing further.
 //   - swap_dev_icons' has_glyph=True branch — generate_icons() compositing a
 //     configured glyph onto a fresh background at every declared size —
-//     needed font rendering as a real dependency. golang.org/x/image's font
-//     stack was taken for that; generate_icons/generate_tv_icons are bound
-//     in full — see apple_icons_generate_darwin.go's file doc comment for
-//     the dependency comparison and decision (including admin-3rgp.48's
-//     later removal of SVG glyph support and its oksvg/rasterx dependency).
-//     This file's own dev-banner rendering deliberately stays stdlib-only
-//     even so: it needs no font capability at all (a plain ribbon, no
-//     text), so taking on that dependency here would buy nothing.
+//     is what took on that font dependency in the first place; see
+//     apple_icons_generate_darwin.go's file doc comment for the full
+//     dependency comparison.
 //
 // Backup/restore (backup_icons, restore_icons, backup_tv_icons,
 // restore_tv_icons) are plain file-copy operations with no imaging
@@ -204,26 +205,35 @@ func copyTree(src, dst string) error {
 	})
 }
 
-// --- Dev banner rendering (stdlib-only; see file doc comment) -----------
+// --- Dev banner rendering ------------------------------------------------
 
 // devBannerColor is the Python original's fill(220, 40, 40, 240) — an opaque
 // red stripe.
 var devBannerColor = color.NRGBA{R: 220, G: 40, B: 40, A: 240}
 
-// RenderDevBanner returns a transparent size×size RGBA image carrying a
-// diagonal red stripe through the bottom-right corner, at roughly the same
-// geometry as admin_lib/icons.py's make_dev_banner (a 0.22×size-tall band
-// rotated 35°) — minus the "DEV" text (see file doc comment for why).
+// RenderDevBanner returns a transparent size×size RGBA image carrying a red
+// "DEV" ribbon in the bottom-right corner, running bottom-left to top-right,
+// at the same geometry as admin_lib/icons.py's make_dev_banner (a
+// 0.22×size-tall band rotated 35° counter-clockwise, shifted so its center
+// lands in the bottom-right corner rather than the middle of the icon).
 //
 // Implemented by inverse rotation: for each output pixel, rotate its
-// position by -35° around the image center and test whether that point
-// falls inside the un-rotated horizontal band. This needs no affine-
+// position by +35° around the band's (shifted) center and test whether that
+// point falls inside the un-rotated horizontal band. This needs no affine-
 // transform or resampling library because nothing is ever forward-rotated —
-// only the band membership test is evaluated in rotated space.
+// only the band (and, inside it, the text mask) membership test is
+// evaluated in rotated space. "DEV" is rendered once into a small
+// transparent mask sized to the band, using the same
+// parsedGoFont/drawCenteredText helpers apple_icons_generate_darwin.go uses
+// for glyph text, and sampled at each pixel's rotated coordinate — so the
+// label rotates with the band instead of being pasted on afterward. Unlike
+// glyph text (renderGlyph/drawCenteredText, Go Regular), the "DEV" label uses
+// drawCenteredTextBold (Go Bold) to match make_dev_banner's bold system font.
 func RenderDevBanner(size int) *image.NRGBA {
 	img := image.NewNRGBA(image.Rect(0, 0, size, size))
 
 	bandHeight := float64(size) * 0.22
+	bandHalf := bandHeight / 2
 	cx, cy := float64(size)/2, float64(size)/2
 	const angle = 35 * math.Pi / 180
 	sin, cos := math.Sin(angle), math.Cos(angle)
@@ -236,14 +246,60 @@ func RenderDevBanner(size int) *image.NRGBA {
 	shift := float64(size) * 0.22
 	bcx, bcy := cx+shift, cy+shift
 
+	// "DEV" is rendered into a mask centered on the band's own center line
+	// (the band's rotated-frame ry = 0), mirroring admin_lib/icons.py's
+	// make_dev_banner: anchor="mm" at the band rectangle's vertical midpoint.
+	// The mask spans the full band height so the larger, bold glyph this
+	// centering produces isn't clipped against the mask's own edges.
+	textCenterRy := 0.0
+
+	maskW := size
+	if maskW < 1 {
+		maskW = 1
+	}
+	maskH := int(bandHeight)
+	if maskH < 1 {
+		maskH = 1
+	}
+	mask := image.NewNRGBA(image.Rect(0, 0, maskW, maskH))
+	// Mirrors admin_lib/icons.py's make_dev_banner: font_size = int(size * 0.14).
+	fontSize := int(float64(size) * 0.14)
+	if fontSize < 1 {
+		fontSize = 1
+	}
+	// A failure here (only possible if the embedded Go Bold font somehow
+	// fails to parse) leaves mask fully transparent, so the banner still
+	// renders — just without the label — rather than failing the icon.
+	_ = drawCenteredTextBold(mask, maskW, maskH, "DEV", color.White, fontSize)
+
 	for y := 0; y < size; y++ {
 		for x := 0; x < size; x++ {
 			dx, dy := float64(x)-bcx, float64(y)-bcy
-			// Rotate (dx, dy) by -angle to test in the band's own frame.
-			ry := -dx*sin + dy*cos
-			if ry >= -bandHeight/2 && ry <= bandHeight/2 {
-				img.SetNRGBA(x, y, devBannerColor)
+			// Rotate (dx, dy) by +angle into the band's own frame: rx runs
+			// along the band, ry perpendicular to it.
+			rx := dx*cos - dy*sin
+			ry := dx*sin + dy*cos
+			if ry < -bandHalf || ry > bandHalf {
+				continue
 			}
+
+			alpha := uint8(0)
+			my := int(ry-textCenterRy) + maskH/2
+			mx := int(rx) + maskW/2
+			if mx >= 0 && mx < maskW && my >= 0 && my < maskH {
+				alpha = mask.NRGBAAt(mx, my).A
+			}
+			if alpha == 0 {
+				img.SetNRGBA(x, y, devBannerColor)
+				continue
+			}
+			t := float64(alpha) / 255
+			img.SetNRGBA(x, y, color.NRGBA{
+				R: uint8(float64(devBannerColor.R)*(1-t) + 255*t),
+				G: uint8(float64(devBannerColor.G)*(1-t) + 255*t),
+				B: uint8(float64(devBannerColor.B)*(1-t) + 255*t),
+				A: devBannerColor.A,
+			})
 		}
 	}
 	return img

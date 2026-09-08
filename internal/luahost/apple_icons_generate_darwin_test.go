@@ -177,9 +177,12 @@ func TestGenerateIconsDevBannerStaysOpaque(t *testing.T) {
 	plain := decodePNG(t, filepath.Join(plainRoot, "100.png"))
 
 	// The bottom-right corner (where the banner lands) must differ between
-	// the dev and non-dev renders.
-	r1, g1, b1, _ := img.At(95, 95).RGBA()
-	r2, g2, b2, _ := plain.At(95, 95).RGBA()
+	// the dev and non-dev renders. (75, 75) — 0.75 of the 100px icon — sits
+	// inside the ribbon's corrected bottom-right band; (95, 95), the old
+	// test's point, no longer does now that the band actually lands in the
+	// corner instead of running through the center.
+	r1, g1, b1, _ := img.At(75, 75).RGBA()
+	r2, g2, b2, _ := plain.At(75, 75).RGBA()
 	if r1 == r2 && g1 == g2 && b1 == b2 {
 		t.Error("dev banner did not change the bottom-right corner pixel")
 	}

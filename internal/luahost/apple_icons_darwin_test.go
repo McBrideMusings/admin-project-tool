@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -114,26 +115,123 @@ func TestBackupTVIconsCopiesWholeTree(t *testing.T) {
 
 // --- dev banner rendering ------------------------------------------------
 
-func TestRenderDevBannerCornersUnpaintedCenterInBand(t *testing.T) {
-	img := RenderDevBanner(200)
+func TestRenderDevBannerBottomRightCornerRibbon(t *testing.T) {
+	const size = 1024
+	img := RenderDevBanner(size)
 
-	// The top-left corner should be untouched (transparent) — the banner is
-	// confined to a diagonal band, not the whole canvas.
-	if _, _, _, a := img.At(0, 0).RGBA(); a != 0 {
-		t.Errorf("top-left alpha = %d, want fully transparent", a)
+	// The band sits in the bottom-right corner: a point there, clear of the
+	// "DEV" label itself, is opaque red, and the image's own center — where
+	// the old (buggy) diagonal used to run straight through — is untouched.
+	//
+	// (7*size/8, 5*size/8), not the band's own (3*size/4, 3*size/4) center
+	// point: once the "DEV" text was resized and centered on the band's
+	// center line to match the Python reference (admin-53wv round 2), the
+	// glyphs fill nearly the full band height and the exact band-center
+	// point falls inside the stroke of "E" rather than on bare band color.
+	x, y := 7*size/8, 5*size/8
+	r, g, b, a := img.At(x, y).RGBA()
+	if a>>8 != 240 || r>>8 < 200 || g>>8 > 100 || b>>8 > 100 {
+		t.Errorf("(%d,%d) = (%d,%d,%d,%d), want opaque banner red", x, y, r>>8, g>>8, b>>8, a>>8)
+	}
+	if _, _, _, a := img.At(size/2, size/2).RGBA(); a != 0 {
+		t.Errorf("image center alpha = %d, want fully transparent", a)
+	}
+}
+
+func TestRenderDevBannerRunsBottomLeftToTopRight(t *testing.T) {
+	const size = 1024
+	img := RenderDevBanner(size)
+
+	// The midpoint of the painted run in a column is a point on the band's
+	// own center line. A larger x must land at a smaller y — the band runs
+	// bottom-left to top-right, not top-left to bottom-right.
+	midY := func(x int) int {
+		min, max := -1, -1
+		for y := 0; y < size; y++ {
+			if _, _, _, a := img.At(x, y).RGBA(); a != 0 {
+				if min == -1 {
+					min = y
+				}
+				max = y
+			}
+		}
+		if min == -1 {
+			t.Fatalf("column x=%d has no painted pixels", x)
+		}
+		return (min + max) / 2
 	}
 
-	// Somewhere along the band's own diagonal near the shifted center should
-	// be painted with the banner color.
-	painted := false
-	for i := 0; i < 200; i++ {
-		if _, _, _, a := img.At(i, i).RGBA(); a != 0 {
-			painted = true
-			break
+	yLeft, yRight := midY(300), midY(800)
+	if yRight >= yLeft {
+		t.Errorf("band center y at x=800 (%d) should be smaller than at x=300 (%d)", yRight, yLeft)
+	}
+}
+
+func TestRenderDevBannerHasWhiteDEVText(t *testing.T) {
+	img := RenderDevBanner(1024)
+
+	found := false
+	b := img.Bounds()
+	for y := b.Min.Y; y < b.Max.Y && !found; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, a := img.At(x, y).RGBA()
+			if a != 0 && r>>8 > 230 && g>>8 > 230 && bl>>8 > 230 {
+				found = true
+				break
+			}
 		}
 	}
-	if !painted {
-		t.Error("expected at least one painted pixel on the main diagonal")
+	if !found {
+		t.Error("expected at least one white \"DEV\" pixel inside the band")
+	}
+}
+
+func TestRenderDevBannerTextBoundingBoxMatchesReference(t *testing.T) {
+	const size = 1024
+	img := RenderDevBanner(size)
+
+	// Bounding box of every white "DEV" pixel, as fractions of size. Round 1
+	// (commit 638569a) only checked that at least one white pixel existed,
+	// which let the text render at roughly half the reference's linear size
+	// and biased toward the band's upper edge instead of centered on it.
+	minX, minY, maxX, maxY := size, size, -1, -1
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			r, g, b, a := img.At(x, y).RGBA()
+			if a != 0 && r>>8 > 230 && g>>8 > 230 && b>>8 > 230 {
+				if x < minX {
+					minX = x
+				}
+				if y < minY {
+					minY = y
+				}
+				if x > maxX {
+					maxX = x
+				}
+				if y > maxY {
+					maxY = y
+				}
+			}
+		}
+	}
+	if maxX < 0 {
+		t.Fatal("expected white \"DEV\" pixels inside the band, found none")
+	}
+
+	w := float64(maxX-minX) / float64(size)
+	h := float64(maxY-minY) / float64(size)
+	cx := float64(minX+maxX) / 2 / float64(size)
+	cy := float64(minY+maxY) / 2 / float64(size)
+
+	if w < 0.22 || w > 0.27 {
+		t.Errorf("text bbox width = %.3f of size, want 0.22..0.27", w)
+	}
+	if h < 0.21 || h > 0.25 {
+		t.Errorf("text bbox height = %.3f of size, want 0.21..0.25", h)
+	}
+	const wantCX, wantCY = 0.71, 0.72
+	if d := math.Hypot(cx-wantCX, cy-wantCY); d > 0.02 {
+		t.Errorf("text bbox center = (%.3f,%.3f), want within 0.02 of (%.2f,%.2f), got distance %.3f", cx, cy, wantCX, wantCY, d)
 	}
 }
 
@@ -203,10 +301,10 @@ func writeRectPNG(t *testing.T, path string, w, h int, c color.Color) {
 func fakeBrandassets(t *testing.T, root string) string {
 	t.Helper()
 	brand := filepath.Join(root, "App.brandassets")
-	writeRectPNG(t,tvLayerPNG(brand, "App Icon.imagestack", "Front", "Front.png"), 400, 240, color.Transparent)
-	writeRectPNG(t,tvLayerPNG(brand, "App Icon.imagestack", "Middle", "Middle.png"), 400, 240, color.Transparent)
-	writeRectPNG(t,tvLayerPNG(brand, "App Icon.imagestack", "Back", "Back.png"), 400, 240, color.NRGBA{R: 30, G: 30, B: 46, A: 255})
-	writeRectPNG(t,filepath.Join(brand, "Top Shelf Image.imageset", "tv.png"), 1920, 720, color.NRGBA{R: 30, G: 30, B: 46, A: 255})
+	writeRectPNG(t, tvLayerPNG(brand, "App Icon.imagestack", "Front", "Front.png"), 400, 240, color.Transparent)
+	writeRectPNG(t, tvLayerPNG(brand, "App Icon.imagestack", "Middle", "Middle.png"), 400, 240, color.Transparent)
+	writeRectPNG(t, tvLayerPNG(brand, "App Icon.imagestack", "Back", "Back.png"), 400, 240, color.NRGBA{R: 30, G: 30, B: 46, A: 255})
+	writeRectPNG(t, filepath.Join(brand, "Top Shelf Image.imageset", "tv.png"), 1920, 720, color.NRGBA{R: 30, G: 30, B: 46, A: 255})
 	return brand
 }
 
