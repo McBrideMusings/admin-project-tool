@@ -326,8 +326,14 @@ func TestTerminalViewEscDetachesAndQKReachChild(t *testing.T) {
 		if _, ok := livework.Default.Get(cmdName); !ok {
 			t.Error("detaching removed the live-work entry — the process must stay registered as still running")
 		}
+		// A prefix, not the full cmdName: the detail pane's header now
+		// shares its row with the live state and elapsed
+		// (internal/tui/workview.go's detailHeader), so a long name
+		// truncates there at a different width than the row list's own
+		// fixed name column — neither is guaranteed to fit all 22 characters
+		// of this fixture's name, but both fit well past this prefix.
 		out := p.model.View()
-		if !strings.Contains(out, cmdName) {
+		if !strings.Contains(out, cmdName[:10]) {
 			t.Errorf("detached frame lost the command list: %q", out)
 		}
 	})

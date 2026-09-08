@@ -44,16 +44,19 @@ func TestWorkerDetailTailsLiveRingBottomAligned(t *testing.T) {
 		t.Fatalf("no \"output\" section header found:\n%s", strings.Join(out, "\n"))
 	}
 
-	// Bottom-aligned: the three ring lines are the LAST three rows of the
-	// whole pane, and the row right before "line one" (if any gap remains)
-	// is blank, not more text.
-	if out[h-1] != "line three" || out[h-2] != "line two" || out[h-3] != "line one" {
-		t.Fatalf("tail not bottom-aligned, last rows = %q", out[h-3:])
+	// Bottom-aligned against the closing rule: the three ring lines are the
+	// last three rows before it, and the row right before "line one" (if any
+	// gap remains) is blank, not more text.
+	if !strings.Contains(out[h-1], "─") {
+		t.Fatalf("last row = %q, want the output block's closing rule", out[h-1])
 	}
-	if headerIdx >= h-3 {
-		t.Fatalf("header at row %d overlaps the tail content starting at row %d", headerIdx, h-3)
+	if out[h-2] != "line three" || out[h-3] != "line two" || out[h-4] != "line one" {
+		t.Fatalf("tail not bottom-aligned against the closing rule, rows h-4..h-2 = %q", out[h-4:h-1])
 	}
-	for i := headerIdx + 1; i < h-3; i++ {
+	if headerIdx >= h-4 {
+		t.Fatalf("header at row %d overlaps the tail content starting at row %d", headerIdx, h-4)
+	}
+	for i := headerIdx + 1; i < h-4; i++ {
 		if out[i] != "" {
 			t.Errorf("row %d between header and tail = %q, want blank (the bottom-align gap)", i, out[i])
 		}
@@ -132,8 +135,11 @@ func TestCommandDetailTailsLiveRing(t *testing.T) {
 	if len(out) != h {
 		t.Fatalf("commandDetail with a live ring produced %d lines, want exactly %d", len(out), h)
 	}
-	if out[h-1] != "done" || out[h-2] != "building..." {
-		t.Fatalf("tail not bottom-aligned, last two rows = %q", out[h-2:])
+	if !strings.Contains(out[h-1], "─") {
+		t.Fatalf("last row = %q, want the output block's closing rule", out[h-1])
+	}
+	if out[h-2] != "done" || out[h-3] != "building..." {
+		t.Fatalf("tail not bottom-aligned against the closing rule, rows h-3..h-2 = %q", out[h-3:h-1])
 	}
 }
 

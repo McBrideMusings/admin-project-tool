@@ -5,6 +5,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -333,17 +335,18 @@ func (m Model) renderWorkDetail(r rowItem, w, h int) []string {
 }
 
 func workerDetail(e *livework.Entry, w, h int) []string {
+	st, _ := livework.Default.State(e.ID)
+	out := detailHeader(e.ID, true, st, e.StartedAt, e.LogPath, w)
+	out = append(out, "")
+
 	locale := "outlives the dashboard"
 	if e.Via == "" {
 		locale = "dies when the dashboard quits"
 	} else if e.Handle != "" {
 		locale = e.Handle + "  ·  outlives the dashboard"
 	}
-	st, _ := livework.Default.State(e.ID)
-	out := []string{
-		lipgloss.NewStyle().Bold(true).Render(e.ID),
-		renderLiveState(st) + faintStyle.Render("  ·  "+truncR(locale, maxi(w-2, 4))),
-	}
+	out = append(out, faintStyle.Render("where"), "  "+truncR(locale, maxi(w-2, 4)))
+
 	if activity, _ := livework.Default.Activity(e.ID); activity != "" {
 		out = append(out, "",
 			faintStyle.Render("now"),
@@ -356,10 +359,7 @@ func workerDetail(e *livework.Entry, w, h int) []string {
 			faintStyle.Render("worktree"), "  "+faintStyle.Render(truncR(e.Worker.Worktree, maxi(w-2, 4))),
 		)
 	}
-	out = append(out, "",
-		faintStyle.Render("elapsed"), "  "+elapsedStr(time.Since(e.StartedAt)),
-		"",
-	)
+	out = append(out, "")
 	// No retry: a worker is an agent session in a worktree, and restarting one
 	// under the same identity is not something every producer can honour or
 	// every kind of work can survive. Kill it and start the work again.
@@ -373,11 +373,15 @@ func commandDetail(wd *workRowData, w, h int) []string {
 	if wd.targetKey != "" {
 		title += " " + wd.targetKey
 	}
-	out := []string{
-		lipgloss.NewStyle().Bold(true).Render(title),
-		faintStyle.Render(wd.cmdKind + "  ·  " + wd.cmdArchetype),
-		"",
+	var state livework.State
+	var started time.Time
+	if wd.live != nil {
+		state, _ = livework.Default.State(wd.live.ID)
+		started = wd.live.StartedAt
 	}
+	out := detailHeader(title, wd.live != nil, state, started, wd.logPath, w)
+	out = append(out, "")
+
 	if len(wd.targets) > 0 {
 		out = append(out, faintStyle.Render("targets"))
 		for _, t := range wd.targets {
@@ -385,21 +389,11 @@ func commandDetail(wd *workRowData, w, h int) []string {
 		}
 		out = append(out, "")
 	}
-	out = append(out, faintStyle.Render("log"))
-	if wd.logPath != "" {
-		out = append(out, "  "+faintStyle.Render(truncR(wd.logPath, maxi(w-2, 4))))
-	} else {
-		out = append(out, "  "+faintStyle.Render("none yet"))
-	}
-	out = append(out, "")
 
-	// elapsed and reachability are both properties of a command actually
-	// running right now — an idle command shows neither, per the ticket's
-	// own "does not show a stale elapsed or a reachability state for a url
-	// nothing is serving."
-	if wd.live != nil {
-		out = append(out, faintStyle.Render("elapsed"), "  "+elapsedStr(time.Since(wd.live.StartedAt)), "")
-	}
+	// Reachability is a property of a command actually running right now —
+	// an idle command shows its configured urls with no dot, per the
+	// ticket's own "does not show a reachability state for a url nothing is
+	// serving."
 	if len(wd.urls) > 0 {
 		out = append(out, faintStyle.Render("urls"))
 		for _, u := range wd.urls {
@@ -411,37 +405,84 @@ func commandDetail(wd *workRowData, w, h int) []string {
 	if wd.workflow != nil {
 		out = append(out, faintStyle.Render("targets  query"))
 		out = append(out, "  "+faintStyle.Render(truncR(wd.workflow.Query, maxi(w-2, 4))))
-		return appendLiveTail(out, wd.live, w, h)
 	}
 
-	out = append(out, faintStyle.Render("steps"))
-	for _, s := range wd.steps {
-		out = append(out, "  "+faintStyle.Render(strconv.Itoa(s.idx)+" ")+s.kind)
-		out = append(out, "    "+truncR(s.name, maxi(w-4, 4)))
-		out = append(out, "    "+faintStyle.Render("from ")+lipgloss.NewStyle().Foreground(cMag).Render(s.archetype))
-	}
 	return appendLiveTail(out, wd.live, w, h)
+}
+
+// detailHeader renders the Work tab detail pane's two-row header, shared by
+// commandDetail and workerDetail: row 1 is the row's name flush left and,
+// while running, the pane's own colored state plus elapsed flush right (the
+// same renderLiveState/elapsedStr the row list and the old field-list pane
+// already used); row 2 is a dim "log" label plus the log path, shown only
+// when one is known. A row that is neither running nor carries a log path
+// renders just the name.
+func detailHeader(name string, running bool, state livework.State, started time.Time, logPath string, w int) []string {
+	var row1 string
+	if running {
+		right := renderLiveState(state) + faintStyle.Render(" · "+elapsedStr(time.Since(started)))
+		left := lipgloss.NewStyle().Bold(true).Render(truncR(name, maxi(w-vlen(right)-2, 1)))
+		gap := maxi(w-vlen(left)-vlen(right), 1)
+		row1 = left + strings.Repeat(" ", gap) + right
+	} else {
+		row1 = lipgloss.NewStyle().Bold(true).Render(truncR(name, maxi(w-1, 1)))
+	}
+	out := []string{" " + row1}
+	if logPath != "" {
+		out = append(out, " "+faintStyle.Render("log")+"  "+faintStyle.Render(shortenLogPath(logPath, maxi(w-6, 4))))
+	}
+	return out
+}
+
+// shortenLogPath fits path into w display cells, preferring the path made
+// relative to the process's own working directory — the project root, since
+// the interpreter cd's there at boot (see the Guards section of this
+// project's own CLAUDE.md) — over truncating the absolute path from the
+// front: the root prefix is most of an absolute log path's length and
+// carries the least information of any part of it. Falls back to a plain
+// truncation when the relative form still doesn't fit, or when the path
+// can't be made relative at all (outside the cwd, or it's unavailable).
+func shortenLogPath(path string, w int) string {
+	if vlen(path) <= w {
+		return path
+	}
+	if wd, err := os.Getwd(); err == nil {
+		if rel, err := filepath.Rel(wd, path); err == nil && !strings.HasPrefix(rel, "..") {
+			return truncR(rel, w)
+		}
+	}
+	return truncR(path, w)
 }
 
 // appendLiveTail is the shared second half of both detail panes
 // (admin-3rgp.65 follow-up): when e is a live hosted entry with a non-nil
 // Output ring, it keeps the field block exactly as built above and fills
-// every remaining row of the column with the ring's tail, bottom-aligned so
-// a short tail leaves its gap above rather than below — the way terminal
-// output accumulates. A nil entry (idle row) or a nil ring (dispatched
-// through a [terminal] launcher rather than hosted in-process, so nothing
-// is being drained into a Ring at all) leaves out untouched: no header, no
-// empty box, no placeholder.
+// every remaining row of the column with the ring's tail — framed by an
+// opening rule carrying the word "output" and a plain closing rule, both
+// spanning the full pane width with no side borders — bottom-aligned
+// against the closing rule so a short tail leaves its gap above rather than
+// below, the way terminal output accumulates. A nil entry (idle row) or a
+// nil ring (dispatched through a [terminal] launcher rather than hosted
+// in-process, so nothing is being drained into a Ring at all) leaves out
+// untouched: no rules, no header, no placeholder.
 func appendLiveTail(out []string, e *livework.Entry, w, h int) []string {
 	if e == nil || e.Output == nil {
 		return out
 	}
-	// Reserve one row for the blank separator that closes the block built
-	// above (the same separator the pane already puts between its own
-	// blocks — see the blank lines between "log", "elapsed" and "steps"
-	// above) and one for the section header itself; only bother if at
-	// least one row of actual tail content would also fit.
-	avail := h - len(out) - 2
+	// Reserve one row for the opening rule and one for the closing rule at
+	// the very bottom of the pane, plus one more for a blank separator
+	// before the opening rule — unless the block built above already ends
+	// in one (most of the pane's own sections close with a blank line
+	// already; reusing it instead of stacking a second one is what keeps a
+	// bare header with nothing else above it from reading as a double gap).
+	// Only bother with a tail if at least one row of actual content would
+	// also fit between the two rules.
+	reserve := 2
+	needsSeparator := len(out) == 0 || out[len(out)-1] != ""
+	if needsSeparator {
+		reserve++
+	}
+	avail := h - len(out) - reserve
 	if avail < 1 {
 		return out
 	}
@@ -449,11 +490,28 @@ func appendLiveTail(out []string, e *livework.Entry, w, h int) []string {
 	if len(lines) > avail {
 		lines = lines[len(lines)-avail:]
 	}
-	out = append(out, "", faintStyle.Render("output"))
+	if needsSeparator {
+		out = append(out, "")
+	}
+	out = append(out, outputRule("output", w))
 	for i := 0; i < avail-len(lines); i++ {
 		out = append(out, "")
 	}
-	return append(out, lines...)
+	out = append(out, lines...)
+	return append(out, outputRule("", w))
+}
+
+// outputRule draws one of the output block's two bounding rules, spanning
+// exactly w display cells with no side borders. label carries the block's
+// name on the opening rule ("─── output ──…──"); the closing rule passes
+// "" and renders as plain dashes.
+func outputRule(label string, w int) string {
+	if label == "" {
+		return faintStyle.Render(strings.Repeat("─", maxi(w, 0)))
+	}
+	prefix := "─── " + label + " "
+	dashes := maxi(w-vlen(prefix), 0)
+	return faintStyle.Render(prefix + strings.Repeat("─", dashes))
 }
 
 // ringTailLines reads a live entry's whole Ring, strips ANSI escapes (this

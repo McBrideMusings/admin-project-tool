@@ -128,9 +128,13 @@ func TestRenderWorkBodyWideStaysSideBySide(t *testing.T) {
 		t.Fatalf("renderWorkBody produced %d hit targets, want exactly %d", len(hits), h)
 	}
 
+	// A rule row can legitimately appear here now — the detail pane's own
+	// live-tail block (appendLiveTail) draws one — but only alongside the
+	// side-by-side divider. The stacked-layout separator this guards against
+	// is a bare full-width rule with no divider at all.
 	for _, l := range out {
-		if strings.Contains(l, "───") {
-			t.Fatalf("found a stacked-layout rule in a wide render:\n%s", strings.Join(out, "\n"))
+		if strings.Contains(l, "───") && !strings.Contains(l, "│") {
+			t.Fatalf("found a stacked-layout rule (no side-by-side divider) in a wide render:\n%s", strings.Join(out, "\n"))
 		}
 	}
 	dividerRows := 0
@@ -192,7 +196,12 @@ func TestWorkerDetailNoBlankRowBetweenTailLines(t *testing.T) {
 
 	const h = 20
 	out := workerDetail(e, 40, h)
-	if out[h-1] != "gamma" || out[h-2] != "beta" || out[h-3] != "alpha" {
-		t.Fatalf("expected the three tail lines with no blank rows between them, got %q", out[h-3:])
+	// Bottom-aligned against the closing rule (the pane's own final row),
+	// not the pane's last row itself.
+	if out[h-2] != "gamma" || out[h-3] != "beta" || out[h-4] != "alpha" {
+		t.Fatalf("expected the three tail lines with no blank rows between them, got %q", out[h-4:h-1])
+	}
+	if !strings.Contains(out[h-1], "─") {
+		t.Fatalf("last row = %q, want the output block's closing rule", out[h-1])
 	}
 }

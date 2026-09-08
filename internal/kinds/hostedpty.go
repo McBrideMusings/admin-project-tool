@@ -17,6 +17,7 @@
 package kinds
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -77,6 +78,79 @@ func (s *logAnnounceSniffer) Write(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
+
+// announceFilterWriter drops the child's own log-announce line ("→ wrote:
+// <path>") from what reaches a hosted entry's Output ring — logAnnounceSniffer
+// (above) already parses that exact line off the same pty stream to learn
+// the log path, so forwarding it into the ring the detail pane reads as
+// "the process's own output" would just duplicate a fact the pane already
+// prints from the entry's own LogPath field. It buffers per-line rather
+// than per-Write-chunk for the same reason logAnnounceSniffer does: a
+// chunk boundary can split the announce line (or the ANSI escapes around
+// it) arbitrarily, so a line is only judged once a newline completes it.
+// An unterminated tail is capped at logAnnounceMaxScan for the same
+// unbounded-growth reason logAnnounceSniffer caps its own scan buffer, and
+// Flush writes out whatever tail remains once the child's stream ends.
+type announceFilterWriter struct {
+	dst io.Writer
+	buf []byte
+}
+
+func (a *announceFilterWriter) Write(p []byte) (int, error) {
+	a.buf = append(a.buf, p...)
+	for {
+		i := bytes.IndexByte(a.buf, '\n')
+		if i < 0 {
+			if len(a.buf) > logAnnounceMaxScan {
+				keep := len(a.buf) - logAnnounceMaxScan
+				if _, err := a.dst.Write(a.buf[:keep]); err != nil {
+					return len(p), err
+				}
+				a.buf = a.buf[keep:]
+			}
+			break
+		}
+		line := a.buf[:i+1]
+		if _, ok := luahost.ParseLogAnnounce(string(line)); !ok {
+			if _, err := a.dst.Write(line); err != nil {
+				return len(p), err
+			}
+		}
+		a.buf = a.buf[i+1:]
+	}
+	return len(p), nil
+}
+
+// Flush writes out any buffered, not-yet-newline-terminated tail — called
+// once the child's pty stream has reached EOF/EIO, so a final partial line
+// (the ordinary case: most processes' last write is a complete line, but a
+// killed child's isn't) still reaches the ring instead of being silently
+// dropped.
+func (a *announceFilterWriter) Flush() {
+	if len(a.buf) == 0 {
+		return
+	}
+	if _, ok := luahost.ParseLogAnnounce(string(a.buf)); !ok {
+		_, _ = a.dst.Write(a.buf)
+	}
+	a.buf = nil
+}
+
+// HostedNoFrameEnv marks the hosted pty child's environment so
+// internal/frame's Activate declines outright, whatever the dispatched
+// Command itself declares — an explicit `footer = true` included.
+// internal/frame exists to pin rows to the bottom of a REAL terminal the
+// user is looking at; a hosted child's pty is read only by this process's
+// own io.Copy (recordHostedPTYWork) and never shown to anyone as a
+// terminal, so raising a footer there just repaints the same three facts
+// (label, elapsed, log path) into the ring the dashboard already shows as
+// the child's own output — the detail pane prints exactly those already.
+// ADMIN_NO_FRAME is the same suppression a user sets by hand
+// (internal/frame/frame.go's Activate checks it unconditionally, even when
+// enterFrame's explicitlyAsked bypasses the CanActivate pre-check for an
+// explicit ask), so this is the dashboard asserting that same fact about
+// its own hosted child rather than adding a second, parallel flag.
+const HostedNoFrameEnv = "ADMIN_NO_FRAME"
 
 // HostedColorProfileEnv and HostedDarkBackgroundEnv carry the PARENT's
 // already-resolved color profile into the pty child's environment. Without
@@ -172,6 +246,7 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 	c.Env = append(os.Environ(),
 		HostedColorProfileEnv+"="+strconv.Itoa(int(lipgloss.ColorProfile())),
 		HostedDarkBackgroundEnv+"="+strconv.FormatBool(lipgloss.HasDarkBackground()),
+		HostedNoFrameEnv+"=1",
 	)
 	c.Env = append(c.Env, env...)
 	// Setsid (pty.StartWithSize sets this unconditionally on the SysProcAttr
@@ -291,7 +366,9 @@ func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args
 	// exact hang that failed Verify.
 	go func() {
 		sniffer := &logAnnounceSniffer{id: e.ID}
-		_, copyErr := io.Copy(io.MultiWriter(e.Output, sniffer), ptmx)
+		filter := &announceFilterWriter{dst: e.Output}
+		_, copyErr := io.Copy(io.MultiWriter(filter, sniffer), ptmx)
+		filter.Flush()
 		// On Linux the master read returns EIO (not io.EOF) once the last
 		// slave closes — that is normal end-of-output, not a failure, so it
 		// must not be surfaced as a wait error.

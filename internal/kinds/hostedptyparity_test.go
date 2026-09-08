@@ -242,28 +242,35 @@ func TestHostedPTYLogFileMatchesAPlainCLIRun(t *testing.T) {
 	}
 }
 
-// TestHostedPTYFooterIsWrittenIntoThePTY is admin-3rgp.70's second gap: a
-// Command declaring `urls` (or `footer`) must still produce its pinned
-// footer, written into the pty, even though no second footer implementation
-// exists for the hosted path — the design turns on the child treating the
-// pty as its own terminal and emitting its own scroll region and footer
-// there (admin-3rgp.61's design note).
+// TestHostedPTYRaisesNoFrame supersedes the old
+// TestHostedPTYFooterIsWrittenIntoThePTY, which pinned the bug this ticket
+// fixes: a Command declaring `urls` (or `footer`), dispatched onto the
+// dashboard's own hosted pty, must NOT raise internal/frame's pinned footer
+// into that pty at all — the footer exists to pin rows to the bottom of a
+// real terminal the user is looking at, and a hosted child's pty is read
+// only by the dashboard's own io.Copy, never shown to anyone as a terminal.
+// The three things the footer would pin (label, elapsed, log path) are
+// exactly what the Work tab's detail pane already prints from the live-work
+// entry, so a hosted run's ring should carry only the child's own real
+// output.
+//
+// StartHostedPTY suppresses the footer by setting HostedNoFrameEnv
+// (ADMIN_NO_FRAME) on the child's environment — the same suppression path a
+// user sets by hand, checked unconditionally in internal/frame's Activate
+// even when enterFrame's explicitlyAsked bypasses the CanActivate pre-check
+// for an explicit footer=true/urls ask (internal/kinds/frame.go's
+// enterFrame). hostedParityManifest's action declares `urls`, which is
+// exactly the explicit-ask shape that must NOT be able to punch through the
+// suppression.
 //
 // MUTATION EVIDENCE (run and reverted, see the commit this test landed in):
 //
-//   - Setting `footer = false` on hostedParityManifest's action (so
-//     frame.ShouldActivate sees an explicit false regardless of the
-//     resolved urls) fails every assertion below while
-//     TestStartHostedPTYRegistersALiveEntry and its siblings stay green —
-//     the entry still runs, it just carries no footer.
-//   - Making internal/kinds/frame.go's enterFrame return nil
-//     unconditionally produces the same failure.
-func TestHostedPTYFooterIsWrittenIntoThePTY(t *testing.T) {
+//   - Dropping the `HostedNoFrameEnv+"=1"` entry from StartHostedPTY's
+//     child env fails every assertion below — the old bug reproduces
+//     exactly: a DECSTBM region, a footer repaint, and the label/log/url
+//     rows are back in the ring.
+func TestHostedPTYRaisesNoFrame(t *testing.T) {
 	testBin := hostedChildTestBin(t)
-	// Explicit rather than assumed: frame.Activate declines outright when
-	// ADMIN_NO_FRAME is set to anything non-empty (frame.go:296), and this
-	// test's whole point is that Activate succeeds.
-	t.Setenv("ADMIN_NO_FRAME", "")
 
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -288,40 +295,27 @@ func TestHostedPTYFooterIsWrittenIntoThePTY(t *testing.T) {
 	}
 	ring := e.Output.Bytes()
 
-	logs, err := filepath.Glob(filepath.Join(dir, "tmp", "hosted-frame.*.log"))
-	if err != nil {
-		t.Fatalf("globbing hosted-leg logs: %v", err)
+	// No scroll region (DECSTBM): "\x1b[1;Nr" would only appear if a frame
+	// had activated and carved out a region for the child's own output.
+	if regexp.MustCompile(`\x1b\[1;\d+r`).Match(ring) {
+		t.Errorf("pty output contains a DECSTBM scroll-region sequence (\\x1b[1;Nr) — a frame was raised in the hosted pty: %q", ring)
 	}
-	if len(logs) != 1 {
-		t.Fatalf("hosted leg produced %d log files, want 1: %v", len(logs), logs)
+	// No footer repaint: cursor-address to a row, then clear-line.
+	if regexp.MustCompile(`\x1b\[\d+;1H\x1b\[2K`).Match(ring) {
+		t.Errorf("pty output contains a footer repaint sequence (cursor-address + clear-line) — a frame was raised in the hosted pty: %q", ring)
 	}
-	logBase := filepath.Base(logs[0])
-
-	// Scroll region (DECSTBM): "\x1b[1;Nr". N (the region's bottom row) is
-	// asserted loosely — StartHostedPTY's frame.SetWinsize on the master
-	// races the child's own frame reading its winsize at Activate, so the
-	// exact row count can flake; the shape is what's load-bearing.
-	if !regexp.MustCompile(`\x1b\[1;\d+r`).Match(ring) {
-		t.Errorf("pty output missing a DECSTBM scroll-region sequence (\\x1b[1;Nr): %q", ring)
+	// No OSC 8 file:// hyperlink — the footer's log row.
+	if bytes.Contains(ring, []byte("\x1b]8;;file://")) {
+		t.Errorf("pty output contains an OSC 8 file hyperlink — the footer's log row was written into the hosted pty: %q", ring)
 	}
-	// A footer repaint: cursor-address to a row, then clear-line.
-	if !regexp.MustCompile(`\x1b\[\d+;1H\x1b\[2K`).Match(ring) {
-		t.Errorf("pty output missing a footer repaint sequence (cursor-address + clear-line): %q", ring)
+	// The declared URL never appears either — the footer's own URL row is
+	// the only thing that would print it; the child's `printf` here never
+	// mentions it.
+	if bytes.Contains(ring, []byte("127.0.0.1:9999")) {
+		t.Errorf("pty output contains the declared URL — the footer's URL row was written into the hosted pty: %q", ring)
 	}
-	// The status row's label.
-	if !bytes.Contains(ring, []byte("hosted-frame")) {
-		t.Errorf("pty output missing the status row's label %q: %q", "hosted-frame", ring)
-	}
-	// The log row: an OSC 8 file:// hyperlink naming the actual log file
-	// this same run just wrote (not merely "some file:// link exists").
-	if !bytes.Contains(ring, []byte("\x1b]8;;file://")) {
-		t.Errorf("pty output missing the log row's OSC 8 file hyperlink: %q", ring)
-	}
-	if !bytes.Contains(ring, []byte(logBase)) {
-		t.Errorf("pty output's file hyperlink doesn't name this run's own log file %q: %q", logBase, ring)
-	}
-	// One row per declared URL.
-	if !bytes.Contains(ring, []byte("127.0.0.1:9999")) {
-		t.Errorf("pty output missing the declared URL row: %q", ring)
+	// The child's own real output still reaches the ring untouched.
+	if !bytes.Contains(ring, []byte("boom")) {
+		t.Errorf("pty output missing the child's own real output %q: %q", "boom", ring)
 	}
 }
