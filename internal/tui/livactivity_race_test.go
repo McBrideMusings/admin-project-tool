@@ -3,7 +3,7 @@
 // neighbouring field. It pairs a goroutine calling livework.Default.
 // SetActivity against the reader paths that used to read Entry.Activity
 // directly off a pointer with no lock — renderWorkRow (both the rowWorker
-// and the wd.live branches), renderTargetRow, workerDetail, and
+// and the wd.live branches), renderTargetRow, bandFieldsWorker, and
 // renderTermHeader (via termEntry). Before the Registry.Activity fix,
 // `go test -race -run TestConcurrentActivityReadsDoNotRace ./internal/tui/`
 // reports a data race on Entry.Activity; a green run alone proves nothing,
@@ -63,7 +63,7 @@ func TestConcurrentActivityReadsDoNotRace(t *testing.T) {
 				m.renderWorkRow(workerRow, false, 80)
 				m.renderWorkRow(liveCommandRow, false, 80)
 				renderTargetRow(targetWD, false, 40)
-				workerDetail(e, 40, 20)
+				bandFieldsWorker(e, 40)
 				m.renderTermHeader(80)
 			}
 		}()

@@ -1,0 +1,207 @@
+// workband_test.go covers admin-3rgp.72.6's own acceptance criteria: the
+// live band's title rule (bandTitle), the fixed-height field block
+// (bandIdle/bandFieldsCommand/bandFieldsWorker via slotRows), the idle
+// row's output placeholder, and fitPath's segment elision. Follows
+// workurls_test.go's pattern of calling the band's own functions directly
+// rather than standing up a full Frame.
+package tui
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/livework"
+)
+
+// TestBandTitleExactlyBodyWidth is AC1: at 80x24, 96x30 and 178x46 (the
+// three geometries the ticket names — the band's own body width, i.e. the
+// row list's own lw = width-2, matching what renderWorkBody actually hands
+// renderWorkBand), the title rule is exactly that width and ends with
+// " ──".
+func TestBandTitleExactlyBodyWidth(t *testing.T) {
+	freshLivework(t)
+	live := &livework.Entry{
+		ID: "band-title-live", Name: "dev", Handle: "pty-band-title-live", State: livework.StateRunning,
+		StartedAt: time.Now().Add(-4 * time.Minute),
+	}
+	if err := livework.Default.Add(live); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	for _, geo := range []struct{ w, h int }{{80, 24}, {96, 30}, {178, 46}} {
+		lw := maxi(geo.w-2, 20)
+		title := bandTitle(lw, live, "dev")
+		if got := vlen(title); got != lw {
+			t.Errorf("%dx%d: bandTitle width = %d, want exactly %d (body width): %q", geo.w, geo.h, got, lw, title)
+		}
+		if !strings.HasSuffix(title, " ──") {
+			t.Errorf("%dx%d: bandTitle = %q, want it to end with \" ──\"", geo.w, geo.h, title)
+		}
+	}
+}
+
+// TestBandTitleDropsCountBeforeSqueezingName is AC1's "identity wins the
+// space": on a narrow terminal the right-side "also N running" count drops
+// entirely rather than truncating the previewed row's own name.
+func TestBandTitleDropsCountBeforeSqueezingName(t *testing.T) {
+	freshLivework(t)
+	live := &livework.Entry{
+		ID: "band-title-narrow-live", Name: "a-fairly-long-command-name", Handle: "pty-band-title-narrow-live",
+		State: livework.StateRunning, StartedAt: time.Now(),
+	}
+	other := &livework.Entry{ID: "band-title-other", Name: "other", Handle: "pty-band-title-other", State: livework.StateRunning, StartedAt: time.Now()}
+	if err := livework.Default.Add(live); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := livework.Default.Add(other); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	const w = 32
+	title := bandTitle(w, live, "a-fairly-long-command-name")
+	if got := vlen(title); got != w {
+		t.Fatalf("bandTitle width = %d, want exactly %d: %q", got, w, title)
+	}
+	if strings.Contains(title, "also") {
+		t.Errorf("bandTitle at w=%d kept the count instead of dropping it, want the name to win the space: %q", w, title)
+	}
+	if !strings.Contains(stripANSI(title), "a-fairly-lo") {
+		t.Errorf("bandTitle at w=%d dropped the name it should have preserved: %q", w, title)
+	}
+}
+
+// TestBandTitleFourStates pins the title rule's verbatim copy across all
+// four states the ticket names: a running row, an idle row, and the two
+// "everything else" phrasings on the right — nothing running at all vs. the
+// previewed thing being the only thing running.
+func TestBandTitleFourStates(t *testing.T) {
+	t.Run("idle, nothing running", func(t *testing.T) {
+		freshLivework(t)
+		title := stripANSI(bandTitle(80, nil, "build"))
+		if !strings.Contains(title, "not running") {
+			t.Errorf("idle title = %q, want \"not running\"", title)
+		}
+		if !strings.Contains(title, "nothing running") {
+			t.Errorf("idle title with an empty registry = %q, want \"nothing running\"", title)
+		}
+	})
+
+	t.Run("live, nothing else running", func(t *testing.T) {
+		freshLivework(t)
+		e := &livework.Entry{ID: "solo-live", Name: "dev", Handle: "pty-solo-live", State: livework.StateRunning, StartedAt: time.Now()}
+		if err := livework.Default.Add(e); err != nil {
+			t.Fatalf("Add: %v", err)
+		}
+		title := stripANSI(bandTitle(80, e, "dev"))
+		if !strings.Contains(title, "running") {
+			t.Errorf("live title = %q, want the running state word", title)
+		}
+		if !strings.Contains(title, "nothing else running") {
+			t.Errorf("live title, only entry previewed = %q, want \"nothing else running\"", title)
+		}
+	})
+
+	t.Run("live, others running, plural counts", func(t *testing.T) {
+		freshLivework(t)
+		e := &livework.Entry{ID: "main-live", Name: "dev", Handle: "pty-main-live", State: livework.StateRunning, StartedAt: time.Now()}
+		c1 := &livework.Entry{ID: "c1", Name: "c1", Handle: "pty-c1", State: livework.StateRunning, StartedAt: time.Now()}
+		c2 := &livework.Entry{ID: "c2", Name: "c2", Handle: "pty-c2", State: livework.StateRunning, StartedAt: time.Now()}
+		w1 := &livework.Entry{ID: "w1", Name: "w1", Handle: "pty-w1", State: livework.StateRunning, StartedAt: time.Now(), Worker: &livework.WorkerInfo{}}
+		w2 := &livework.Entry{ID: "w2", Name: "w2", Handle: "pty-w2", State: livework.StateRunning, StartedAt: time.Now(), Worker: &livework.WorkerInfo{}}
+		w3 := &livework.Entry{ID: "w3", Name: "w3", Handle: "pty-w3", State: livework.StateRunning, StartedAt: time.Now(), Worker: &livework.WorkerInfo{}}
+		for _, x := range []*livework.Entry{e, c1, c2, w1, w2, w3} {
+			if err := livework.Default.Add(x); err != nil {
+				t.Fatalf("Add(%s): %v", x.ID, err)
+			}
+		}
+		title := stripANSI(bandTitle(96, e, "dev"))
+		if !strings.Contains(title, "also 2 commands · 3 workers") {
+			t.Errorf("title with 2 other commands + 3 workers = %q, want \"also 2 commands · 3 workers\"", title)
+		}
+	})
+
+	t.Run("idle, others running singular", func(t *testing.T) {
+		freshLivework(t)
+		c := &livework.Entry{ID: "c1", Name: "c1", Handle: "pty-c1", State: livework.StateRunning, StartedAt: time.Now()}
+		w := &livework.Entry{ID: "w1", Name: "w1", Handle: "pty-w1", State: livework.StateRunning, StartedAt: time.Now(), Worker: &livework.WorkerInfo{}}
+		if err := livework.Default.Add(c); err != nil {
+			t.Fatalf("Add: %v", err)
+		}
+		if err := livework.Default.Add(w); err != nil {
+			t.Fatalf("Add: %v", err)
+		}
+		title := stripANSI(bandTitle(96, nil, "build"))
+		if !strings.Contains(title, "also 1 command · 1 worker") {
+			t.Errorf("title with 1 other command + 1 worker = %q, want singular \"also 1 command · 1 worker\"", title)
+		}
+	})
+}
+
+// TestFieldBlockAlwaysFieldRowsH is the epic's core invariant across all
+// three block kinds: idle command, live command, live worker each produce
+// exactly fieldRowsH rows, whatever they have to say.
+func TestFieldBlockAlwaysFieldRowsH(t *testing.T) {
+	idle := bandIdle(&workRowData{cmdName: "build", cmdDesc: "build it", cmdKind: "shell"}, 60)
+	if len(idle) != fieldRowsH {
+		t.Errorf("bandIdle produced %d rows, want fieldRowsH (%d)", len(idle), fieldRowsH)
+	}
+
+	cmdNoURL := bandFieldsCommand(&workRowData{cmdName: "dev", logPath: "/x/dev.log"}, 60)
+	if len(cmdNoURL) != fieldRowsH {
+		t.Errorf("bandFieldsCommand (no urls) produced %d rows, want fieldRowsH (%d)", len(cmdNoURL), fieldRowsH)
+	}
+
+	worker := bandFieldsWorker(&livework.Entry{
+		ID: "w", LogPath: "/x/w.log", Worker: &livework.WorkerInfo{Branch: "b", Worktree: "/wt"},
+	}, 60)
+	if len(worker) != fieldRowsH {
+		t.Errorf("bandFieldsWorker produced %d rows, want fieldRowsH (%d)", len(worker), fieldRowsH)
+	}
+}
+
+// TestBandIdleOutputPlaceholderOnLastLine is AC2's idle state: the band's
+// LAST line reads the literal placeholder, with the field block above it
+// untouched.
+func TestBandIdleOutputPlaceholderOnLastLine(t *testing.T) {
+	mm := workTestModel(nil)
+	row := rowItem{kind: rowCommand, work: &workRowData{cmdName: "build", cmdDesc: "build it", cmdKind: "shell"}}
+	const h = 12
+	out := mm.renderWorkBand(row, 60, h)
+	if len(out) != h {
+		t.Fatalf("renderWorkBand produced %d lines, want exactly %d", len(out), h)
+	}
+	if !strings.Contains(out[h-1], "output appears here while it runs") {
+		t.Errorf("last band row = %q, want the idle placeholder", out[h-1])
+	}
+}
+
+// TestFitPathElidesWholeSegments is AC-adjacent (fitPath replaces
+// shortenLogPath): a path too long for its width loses whole middle
+// segments — "/Users/…/logs/docs.log" — never a mid-rune cut, which would
+// read as corruption ("/Users/pierce/Proj…tool/").
+func TestFitPathElidesWholeSegments(t *testing.T) {
+	p := "/Users/pierce/Projects/admin-project-tool/tmp/logs/docs.log"
+	got := fitPath(p, 24)
+	if vlen(got) > 24 {
+		t.Fatalf("fitPath(%q, 24) = %q (width %d), want <= 24", p, got, vlen(got))
+	}
+	if !strings.HasPrefix(got, "/Users/") {
+		t.Errorf("fitPath = %q, want it to stay absolute (start with /Users/)", got)
+	}
+	if !strings.Contains(got, "…") {
+		t.Errorf("fitPath = %q, want a segment-elision ellipsis", got)
+	}
+	// A mid-rune cut would produce a truncated final segment like
+	// "Proj…tool" glued mid-word; the elided form's suffix must be an
+	// UNCUT trailing segment straight from the original path.
+	if !strings.HasSuffix(got, "docs.log") && !strings.HasSuffix(got, "…") {
+		t.Errorf("fitPath = %q, want it to end on a whole segment or the ellipsis itself, not a mid-word cut", got)
+	}
+
+	// A path that already fits is returned unchanged.
+	short := "/tmp/x.log"
+	if got := fitPath(short, 40); got != short {
+		t.Errorf("fitPath(%q, 40) = %q, want unchanged (already fits)", short, got)
+	}
+}

@@ -1,7 +1,7 @@
 // livestate_race_test.go is admin-ddc8's required regression test: it pairs a
 // goroutine calling livework.Default.SetState against the reader paths that
 // used to read Entry.State directly off a pointer with no lock —
-// hostedRunningEntries, workerDetail, and quitConfirmContent. Before the fix,
+// hostedRunningEntries, bandFieldsWorker/bandTitle, and quitConfirmContent. Before the fix,
 // `go test -race -run TestConcurrentStateReadsDoNotRace ./internal/tui/`
 // reports a data race on Entry.State; a green run alone (this suite already
 // passes -race today without this test, because nothing else pairs a
@@ -52,7 +52,8 @@ func TestConcurrentStateReadsDoNotRace(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < iterations; i++ {
 			hostedRunningEntries()
-			workerDetail(e, 40, 20)
+			bandFieldsWorker(e, 40)
+			bandTitle(40, e, e.Name)
 			m.quitConfirmContent()
 		}
 	}()
