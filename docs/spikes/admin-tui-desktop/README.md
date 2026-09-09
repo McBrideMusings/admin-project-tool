@@ -12,9 +12,9 @@ follows it. Cutting tickets from it does not end it — the next slate cites thi
   compare: every direction this directory once carried side by side has been decided.
 - `harness.go` — supplied by `spike tui`. Do not edit; rebuild instead.
 - `fixtures.go` — three temp-dir repos, one per tracker shape, built on demand.
-- `*.txt` — 23 reference frames, one per screen. **Dumps of the running program, never
+- `*.txt` — 24 reference frames, one per screen. **Dumps of the running program, never
   hand-written.** Re-shoot all of them after any change: a directory holding one fresh frame
-  and 22 stale ones is worse than 23 stale ones, because nothing on disk marks which is which.
+  and 23 stale ones is worse than 24 stale ones, because nothing on disk marks which is which.
 - `INVENTORY.md` — every surface `internal/tui` draws and every key it binds.
 
 ```

@@ -12,14 +12,14 @@
   ◇ ├ name-check                     cd apps && bunx wrangler deploy --target name-check        
   ◇ └ tournament-proc…               cd apps && bunx wrangler deploy --target tournament-proce… 
    dev             multi-target     Run a local dev server                                      
-  ◇ ├ cf                             cd apps && bunx wrangler dev --target cf                   
+  ◇ ├ cf              ● running 4m12s  vitepress dev · localhost:5173                           
    ↓ more                                                                                       
 ── deploy analytics-eng  not running ────────────────────────────── also 2 commands · 3 workers 
- kind     target of deploy                                                                      
- runs     cd apps && bunx wrangler deploy --target analytics-eng                                
- last run never                                                                                 
- last log —                                                                                     
+ kind     target                                                                                
+ desc     Deploy a service to production                                                        
+ last log never run                                                                             
                                                                                                 
+ ↵ run   l last log                                                                             
                                                                                                 
                                                                                                 
                                                                                                 

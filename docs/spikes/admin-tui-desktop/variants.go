@@ -50,7 +50,7 @@ var Axes = []Axis{
 		// Work tab's default surface. Reordering renames no file —
 		// stateName() keys dumps by value, not position — it only changes
 		// the launch default and the ⌥s cycle order.
-		"commands", "commands-empty",
+		"commands", "commands-running", "commands-empty",
 		// The Work tab's live states, then the rest of the reference frames.
 		"commands-workflow-selected", "repo", "issues", "issues-selected",
 		"dispatch-sheet", "swarm", "config", "running", "no-manifest",
@@ -263,7 +263,10 @@ func realTab(src repoSrc, screen string, w, h int) []string {
 // ---- work tab: the design ----
 
 type screenSpec struct {
-	tab     int
+	tab int
+	// cmdSel seeds the combined cursor onto a Commands row by its index in
+	// selectableCommands(); -1 leaves liveSel to place it.
+	cmdSel  int
 	noMan   bool
 	sheet   bool
 	liveSel int
@@ -304,8 +307,12 @@ var screens = map[string]screenSpec{
 
 	// The Commands surface — see the block above render() for the fixture and
 	// the interaction. Both render through renderWorkBody, never hostedBody.
-	"commands":       {tab: 0, liveSel: -1},
-	"commands-empty": {tab: 0, liveSel: -1},
+	"commands": {tab: 0, liveSel: -1},
+	// The cursor on a command that IS running: the row carries its own state
+	// word and the band previews the running process, not a description of it.
+	// 9 is "dev cf" in selectableCommands() order, stored +1.
+	"commands-running": {tab: 0, liveSel: -1, cmdSel: 9},
+	"commands-empty":   {tab: 0, liveSel: -1},
 
 	// The embedded modes. tab drives only the prototype's own tab bar and
 	// footer; the body comes from repo-dash via the key sequence in `embedded`.
@@ -434,9 +441,12 @@ func wrap(base, n int) int {
 // that pane. The two need different verbs and different lifetimes, so the list
 // has to say which it is at a glance rather than implying "pane" for both.
 type liveRow struct {
-	state, id, doing, cmd string
-	hosted                bool
-	pane                  string // herdr pane id — empty for a hosted child
+	// cmd/target are the resolved invocation this row IS, so a running
+	// command is the same thing in the Commands list and in Running rather
+	// than two rows that happen to share a name.
+	state, id, doing, cmd, target string
+	hosted                        bool
+	pane                          string // herdr pane id — empty for a hosted child
 
 	// lastCmd is the hover-preview spike's addition: the last thing actually
 	// sent to this row, shown as subtext beneath it. For a worker that's the
@@ -532,9 +542,9 @@ var liveRowsSeed = []liveRow{
 	// dispatched to a pane — so `where` says "hosted", and quitting the
 	// dashboard kills it. A Worker above still runs in its own pane and
 	// outlives the dashboard on purpose; the column is what tells them apart.
-	{state: "running", id: "admin docs", doing: "vitepress dev · localhost:5173", cmd: "docs", hosted: true, elapsed: "4m12s",
-		lastCmd: "bun run docs:dev", hasRing: true,
-		logPath: root + "/.admin/logs/docs.log", urls: []string{"http://localhost:5173"},
+	{state: "running", id: "dev cf", doing: "vitepress dev · localhost:5173", cmd: "dev", target: "cf", hosted: true, elapsed: "4m12s",
+		lastCmd: "cd apps && bunx wrangler dev --target cf", hasRing: true,
+		logPath: root + "/.admin/logs/dev-cf.log", urls: []string{"http://localhost:5173"},
 		tail: []string{
 			"",
 			"  vitepress v1.3.4",
@@ -547,9 +557,9 @@ var liveRowsSeed = []liveRow{
 			"14:23:02 [vite] page reload /architecture/design.md",
 			"14:23:19 [vite] hmr update /guide/index.md",
 		}},
-	{state: "waiting", id: "admin test", doing: "Enter a number, or q to cancel:", cmd: "test", hosted: true, elapsed: "12s",
-		lastCmd: ".venv/bin/pytest -q", hasRing: true,
-		logPath: root + "/.admin/logs/test.log",
+	{state: "waiting", id: "test gate", doing: "Enter a number, or q to cancel:", cmd: "test", target: "gate", hosted: true, elapsed: "12s",
+		lastCmd: "cd apps && bunx wrangler test --target gate", hasRing: true,
+		logPath: root + "/.admin/logs/test-gate.log",
 		tail: []string{
 			"tests/test_frame.py ..........................      [ 47%]",
 			"tests/test_guards.py .................              [ 61%]",
@@ -929,6 +939,18 @@ func killLiveRow(id string) {
 	liveRows = out
 }
 
+// liveForEntry is the live row this Commands entry currently IS, if it is
+// running. One lookup, so the Commands row's state word, the band's preview
+// and the cursor can never disagree about whether a command is live.
+func liveForEntry(e commandEntry) *liveRow {
+	for i := range liveRows {
+		if liveRows[i].cmd == e.parent && liveRows[i].target == e.target {
+			return &liveRows[i]
+		}
+	}
+	return nil
+}
+
 // selectableCommands is every Commands row the cursor can land on, in draw
 // order. A group row holds targets and runs nothing itself, so it is not here.
 func selectableCommands() []commandEntry {
@@ -958,6 +980,9 @@ func combinedCursor(cur string, empty bool) int {
 		return cmdCursor
 	}
 	sp, ok := screens[cur]
+	if ok && sp.cmdSel > 0 {
+		return sp.cmdSel - 1 // stored +1 so the zero value means "unset"
+	}
 	if !ok || sp.liveSel < 0 {
 		return cmdCursor
 	}
@@ -1039,6 +1064,16 @@ func commandRowLine(e commandEntry, sel bool, w int) string {
 	marker, name := dim.Render("◇ "), Pad(trunc(e.label(), wName), wName)
 	if sel {
 		marker, name = cy.Render("◆ "), cy.Render(Pad(trunc(e.label(), wName), wName))
+	}
+	// A running command says so HERE, in the state and elapsed columns the row
+	// grid already reserves — the same columns a live row uses, so a command
+	// that is running lines up with the Running section below it instead of
+	// looking like a different kind of thing.
+	if lr := liveForEntry(e); lr != nil {
+		state := liveStyle[lr.state].Render(Pad(liveGlyph(lr)+" "+lr.state, wState))
+		elapsed := dim.Render(Pad(lr.elapsed, wElapsed))
+		actW := maxInt(w-wMarker-wName-wState-wElapsed-1, 4)
+		return Pad(" "+marker+e.connector()+name+state+elapsed+dim.Render(trunc(lr.doing, actW)), w)
 	}
 	run := trunc(e.run, maxInt(6, w-wMarker-wName-wState-wElapsed-1))
 	return Pad(" "+marker+e.connector()+name+dim.Render(Pad("", wState+wElapsed-2)+run), w)
@@ -1351,9 +1386,9 @@ func bandFields(lr *liveRow, w int) []string {
 	lw := maxInt(w-11, 8)
 	out := []string{" " + dim.Render("log      ") + dim.Render(fitPath(lr.logPath, lw))}
 	if !isWorkerRow(lr) {
-		if len(lr.urls) == 0 {
-			return slotRows(append(out, " "+dim.Render("url      ")+dim.Render("—")), w)
-		}
+		// A command with no url gets no url row. The slot is fixed height, so
+		// the space is held either way — printing "url —" spends a row saying
+		// a field is absent, which the blank row already says.
 		for _, u := range lr.urls {
 			out = append(out, " "+dim.Render("url      ")+cy.Render(trunc(u, lw)))
 		}
@@ -1376,46 +1411,34 @@ func bandFields(lr *liveRow, w int) []string {
 // something nothing has ever run.
 func bandIdle(e *commandEntry, w int) []string {
 	lw := maxInt(w-11, 8)
-	var parent commandParent
-	for _, p := range commandParents {
-		if p.name == e.parent {
-			parent = p
-		}
-	}
-	kind := parent.kind
+	p := parentOf(e.parent)
+	kind := p.kind
 	if e.target != "" {
-		kind = "target of " + e.parent
+		kind = "target"
 	}
-	lastRun, lastLog := "", ""
-	// A small fixed set of entries carry a last-run in the fixture, so the
+	lastLog := ""
+	// A small fixed set of entries carry a last log in the fixture, so the
 	// band's "has been run before" state is depicted without the frame
 	// depending on what a prior keypress dispatched.
 	for _, m := range []string{"grafana deploy", "dev cf", "test gate"} {
 		if m == e.resolved() {
-			lastRun = "18m ago · exit 0"
 			lastLog = root + "/.admin/logs/" + strings.ReplaceAll(e.resolved(), " ", "-") + ".log"
 		}
 	}
-	val := func(label, v string) string {
-		if v == "" {
-			return " " + dim.Render(Pad(label, 9)) + dim.Render("—")
-		}
-		return " " + dim.Render(Pad(label, 9)) + trunc(v, lw)
+	out := []string{
+		" " + dim.Render(Pad("kind", 9)) + trunc(kind, lw),
+		" " + dim.Render(Pad("desc", 9)) + trunc(p.desc, lw),
 	}
-	if lastRun == "" {
-		lastRun = "never"
+	if lastLog != "" {
+		out = append(out,
+			" "+dim.Render(Pad("last log", 9))+dim.Render(fitPath(lastLog, lw)),
+			" "+dim.Render(Pad("", 9))+dim.Render("18m ago · exit 0"),
+		)
+	} else {
+		out = append(out, " "+dim.Render(Pad("last log", 9))+dim.Render("never run"))
 	}
-	return slotRows([]string{
-		val("kind", kind),
-		val("runs", e.run),
-		val("last run", lastRun),
-		" " + dim.Render(Pad("last log", 9)) + dim.Render(func() string {
-			if lastLog == "" {
-				return "—"
-			}
-			return fitPath(lastLog, lw)
-		}()),
-	}, w)
+	out = append(out, "", " "+dim.Render("↵ run")+dim.Render("   l last log"))
+	return slotRows(out, w)
 }
 
 // renderWorkBody is the whole Work tab: the palette box and the live sections
@@ -1551,6 +1574,12 @@ func render(s State) string {
 			case inCmds && len(cmds) > 0:
 				cmdSel = cursor
 				selEntry = &cmds[cursor]
+				// A Commands row for a command that is RUNNING previews the
+				// running thing, not a description of it. The band follows the
+				// row's state, the same rule ↵ follows.
+				if lr := liveForEntry(cmds[cursor]); lr != nil {
+					selLive, selEntry = lr, nil
+				}
 			case cursor-len(cmds) < len(rowsLive):
 				liveSel = cursor - len(cmds)
 				selLive = rowsLive[liveSel]

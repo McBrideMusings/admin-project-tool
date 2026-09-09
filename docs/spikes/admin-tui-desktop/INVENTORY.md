@@ -20,6 +20,7 @@ cursor, and the band under them previews whatever that cursor is on.
 | Frame | What it shows |
 | --- | --- |
 | `commands.txt` | The Commands list, the live sections, the band on the selected entry |
+| `commands-running.txt` | The cursor on a command that IS running — the row carries its state, the band previews its output |
 | `commands-empty.txt` | Nothing running and no workers |
 | `commands-workflow-selected.txt` | A workflow entry selected — targets are tracker items, so `↵` dispatches an agent |
 | `running.txt` | The cursor on a live command; the band shows its log, urls and tail |

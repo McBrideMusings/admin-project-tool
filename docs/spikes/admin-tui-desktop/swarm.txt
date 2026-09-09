@@ -7,8 +7,8 @@
   ◇ clean                          bash clean.sh                                                
                                                                                                 
   Running  2                                                                                    
-  ◇ admin docs      ● running 4m12s  vitepress dev · localhost:5173                      hosted 
-  ◇ admin test      ◐ waiting 12s    Enter a number, or q to cancel:                     hosted 
+  ◇ dev cf          ● running 4m12s  vitepress dev · localhost:5173                      hosted 
+  ◇ test gate       ◐ waiting 12s    Enter a number, or q to cancel:                     hosted 
                                                                                                 
   Workers  3                                                                                    
   ◆ admin-3rgp.36   ◈ running 18m    writing internal/lua/host.go                        pane 3 
