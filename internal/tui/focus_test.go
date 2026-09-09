@@ -10,6 +10,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
+	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
@@ -262,8 +263,24 @@ func TestClickSetsFocus(t *testing.T) {
 
 // TestKeybarFollowsFocus is admin-wuz9.1: the footer keybar shows the tab's
 // full hotkey set (not just a 3-key nav set) while focus is on the tab bar,
-// with the tab-bar-only nav pairs merged in and no key advertised twice.
+// with the tab-bar-only nav pairs merged in and no key advertised twice. The
+// Work tab's own pairs are row-state-dependent (admin-3rgp.72.12), so "the
+// tab's full hotkey set" while tab-bar-focused is the idle baseline — there
+// is no current row yet to read a livelier state from.
 func TestKeybarFollowsFocus(t *testing.T) {
+	freshLivework(t)
+	// admin-3rgp.72.12: the footer's a/attach and x/kill pairs are now
+	// row-state-dependent — advertised only for a row backed by a live
+	// livework.Entry, never unconditionally. "build" sorts first among the
+	// fixture's two commands, so give IT a live entry to keep this test's
+	// original intent (the tab-bar keymap merges the row-scoped pairs with
+	// the nav-only ones) exercised against a live row.
+	if err := livework.Default.Add(&livework.Entry{
+		ID: "build", Name: "build", State: livework.StateRunning,
+		Handle: "pane-build", Via: "terminal",
+	}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
 	m := workFocusModel()
 	tabsPairs := m.keymap()
 	foundTab := false
@@ -296,8 +313,14 @@ func TestKeybarFollowsFocus(t *testing.T) {
 	if !foundJump {
 		t.Errorf("tab-bar keymap = %v, want a 1-4/jump pair", tabsPairs)
 	}
-	if !foundKill || !foundAttach {
-		t.Errorf("tab-bar keymap on the Work tab = %v, want the row-scoped %q and %q pairs alongside the nav keys", tabsPairs, "kill", "attach")
+	// admin-3rgp.72.12: currentRow() reports no current row at all while
+	// focus is on the tab bar (m.focus == focusTabs, checked first thing in
+	// currentRow) — and a/x are genuine no-ops in that state for exactly the
+	// same reason. The footer must never advertise an action the key does
+	// not take, so kill/attach are correctly ABSENT here; the idle baseline
+	// ("dispatch") is what a row-less cursor gets.
+	if foundKill || foundAttach {
+		t.Errorf("tab-bar keymap on the Work tab = %v, want no row-scoped %q/%q pairs — there is no current row while the tab bar has focus", tabsPairs, "kill", "attach")
 	}
 	// enter calls enterBody() while focus is on the tab bar — the same
 	// action "↓ body" already advertises — not tabWork's own row-kind
@@ -316,7 +339,7 @@ func TestKeybarFollowsFocus(t *testing.T) {
 		t.Errorf("tab-bar keymap = %v, want a ↵ pair", tabsPairs)
 	}
 
-	m.focus = focusBody
+	m.enterBody()
 	bodyPairs := m.keymap()
 	if len(bodyPairs) == len(tabsPairs) {
 		sameOrder := true
@@ -339,12 +362,13 @@ func TestKeybarFollowsFocus(t *testing.T) {
 		t.Errorf("body keymap on the Work tab = %v, want the row-scoped %q pair", bodyPairs, "kill")
 	}
 	// Once focus moves into the body, ↵ reverts to the row kind's own
-	// label — the tab-bar override is scoped to focusTabs only.
+	// label — the tab-bar override is scoped to focusTabs only. The cursor
+	// row (the fixture's live "build" entry) makes that label "attach".
 	foundEnterRowKind := false
 	for _, p := range bodyPairs {
 		if p[0] == "↵" {
-			if p[1] != "open, run or attach" {
-				t.Errorf("body keymap ↵ pair = %q, want the row kind's own %q", p[1], "open, run or attach")
+			if p[1] != "attach" {
+				t.Errorf("body keymap ↵ pair = %q, want the row kind's own %q", p[1], "attach")
 			}
 			foundEnterRowKind = true
 		}
