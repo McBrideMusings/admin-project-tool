@@ -160,7 +160,6 @@ def _docker_dev_build_cmd(cfg):
       gpu                bool|str|list — true / "all" / ["device=0", ...]
       env_file           str   — path; emitted as --env-file when the
                                  file exists at run time (relative to cwd)
-      pre_kill           bool  — call cmd_kill before launching
       ports              list of {host: int, container: int}
       bind_mounts        list of {host: str, container: str, mode?: str,
                                   mkdir?: bool}  — host path is project-
@@ -330,8 +329,7 @@ def _docker_dev_build_cmd(cfg):
 
 def docker_dev_from_config(cfg):
     """Adapter: read a manifest `[docker_dev]` table and call
-    `run_with_reload` with the rendered docker build+run command. Honors
-    `pre_kill = true` by invoking the project's `cmd_kill` first.
+    `run_with_reload` with the rendered docker build+run command.
 
     Returns the exit code from `run_with_reload`.
     """
@@ -345,13 +343,6 @@ def docker_dev_from_config(cfg):
         host = m.get("host")
         if host and not host.startswith("/") and m.get("mkdir", True):
             os.makedirs(host, exist_ok=True)
-
-    if cfg.get("pre_kill"):
-        # cmd_kill is generated when the project has a kill command. We
-        # look it up via the caller's globals — see render_docker_dev.
-        kill = cfg.get("_pre_kill_callable")
-        if callable(kill):
-            kill([])
 
     try:
         cmd = _docker_dev_build_cmd(cfg)
