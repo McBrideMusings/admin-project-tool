@@ -112,16 +112,33 @@ func cmdRow(t *testing.T, m Model, name string) *workRowData {
 	return nil
 }
 
-// TestEnterOnCommandWithTargetsDoesNotDispatch is the whole point: a
-// multi-target command's parent row has no single run to dispatch — its
-// targets are already listed beneath it — so enter there dispatches nothing.
-func TestEnterOnCommandWithTargetsDoesNotDispatch(t *testing.T) {
+// TestMultiTargetParentRowIsUngroupUnselectable is
+// TestEnterOnCommandWithTargetsDoesNotDispatch's replacement
+// (admin-3rgp.72.11): a multi-target command's parent row has no single run
+// to dispatch — its targets are already listed beneath it — so it is now a
+// group the cursor can never land on at all (rowItem.group,
+// selectable()), rather than a selectable row whose own enter handler used
+// to no-op. Enter can no longer reach activateCommand with such a wd in the
+// first place; see workgrid_test.go for the cursor-skip coverage.
+func TestMultiTargetParentRowIsUngroupUnselectable(t *testing.T) {
 	m := multiTargetModel(t)
-	wd := cmdRow(t, m, "dev")
-
-	_, cmd := m.activateCommand(wd)
-	if cmd != nil {
-		t.Fatal("enter on a multi-target command's parent row dispatched something")
+	var parent rowItem
+	found := false
+	for _, r := range m.workRows() {
+		if r.kind == rowCommand && r.work != nil && r.work.cmdName == "dev" {
+			parent = r
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("dev's own command row is missing from workRows()")
+	}
+	if !parent.group {
+		t.Fatal("dev has more than one target, so its row must be marked group")
+	}
+	if parent.selectable() {
+		t.Fatal("a group row must not be selectable — the cursor must never land on it")
 	}
 }
 

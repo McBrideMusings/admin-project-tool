@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -635,7 +636,11 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 	} else {
 		wd.logPath = commandLogPath(m.manifestDir(), m.manifest, cr.name, cr.cmd)
 	}
-	return rowItem{kind: rowCommand, label: cr.name + " " + cr.cmd.Desc, work: wd}
+	// A multi-target parent with more than one target is a group: it holds
+	// targets and runs nothing itself, so the cursor must never land on it
+	// (admin-3rgp.72.11). group rides on the rowItem, not workRowData, since
+	// selectable() reads it directly with no need to reach into work.
+	return rowItem{kind: rowCommand, label: cr.name + " " + cr.cmd.Desc, group: len(wd.targets) > 0, work: wd}
 }
 
 // targetRows is a command's target group: one rowCommandTarget per target of
@@ -714,10 +719,9 @@ func (m Model) workRows() []rowItem {
 		}
 	}
 
-	var rows []rowItem
-	rows = append(rows, headerRow("Commands"))
+	var cmdList []rowItem
 	if len(cmdRows) == 0 {
-		rows = append(rows, rowItem{kind: rowText, label: "admin.toml declares no commands"})
+		cmdList = append(cmdList, rowItem{kind: rowText, label: "admin.toml declares no commands"})
 	} else {
 		lastGroup := 0
 		haveLast := false
@@ -729,18 +733,34 @@ func (m Model) workRows() []rowItem {
 			// this tab was missing even though the order itself was
 			// already correct.
 			if haveLast && cr.cmd.Group != lastGroup {
-				rows = append(rows, blankRow())
+				cmdList = append(cmdList, blankRow())
 			}
 			lastGroup = cr.cmd.Group
 			haveLast = true
 			item := m.commandRowItem(cr, byName)
-			rows = append(rows, item)
+			cmdList = append(cmdList, item)
+			// No trailing ruleRow() between one group's targets and the next
+			// command: the reference frames show consecutive groups adjoining
+			// with no rule between them (commands.txt:13 -> :14).
 			if targets := targetRows(item, byName, m.pendingTarget[cr.name]); len(targets) > 0 {
-				rows = append(rows, targets...)
-				rows = append(rows, ruleRow())
+				cmdList = append(cmdList, targets...)
 			}
 		}
 	}
+
+	// The Commands header's count is every resolved invocation — a target or
+	// a flat command, never a group parent (docs/spikes/admin-tui-desktop/
+	// commands.txt:4, "Commands  47").
+	invocations := 0
+	for _, r := range cmdList {
+		if r.kind == rowCommandTarget || (r.kind == rowCommand && !r.group) {
+			invocations++
+		}
+	}
+
+	var rows []rowItem
+	rows = append(rows, headerRow("Commands", seg{t: "  " + strconv.Itoa(invocations)}))
+	rows = append(rows, cmdList...)
 
 	rows = append(rows, blankRow(), headerRow("Workers"))
 	workers := liveWorkers()
@@ -768,6 +788,9 @@ func (m Model) workRows() []rowItem {
 func (m Model) workRowCount() int {
 	n := 0
 	for _, r := range m.workRows() {
+		if r.group {
+			continue
+		}
 		if r.kind == rowCommand || r.kind == rowCommandTarget || r.kind == rowWorker {
 			n++
 		}
@@ -838,10 +861,12 @@ func dispatchCommandCmd(m *manifest.Manifest, width, height int, name string, en
 // attaches to its pane instead of dispatching a second run on top of the one
 // that owns its log file and registry entry; a command whose previous enter
 // is still dispatching (wd.pending) queues the attach instead of starting a
-// second run on top of the one that hasn't registered yet (admin-qk77); a
-// multi-target command has no single run to dispatch — its targets already
-// render below it (admin-0kxh), so enter on the parent row is a status-only
-// no-op pointing at them; anything else dispatches.
+// second run on top of the one that hasn't registered yet (admin-qk77);
+// anything else dispatches. A multi-target command with more than one target
+// is a group row (rowItem.group) the cursor can never land on, so this is
+// never reached with wd.targets non-empty (admin-3rgp.72.11 removed the
+// "pick a target below" branch that used to guard that case here — its
+// targets already render below it, and enter on one of those dispatches it).
 func (m Model) activateCommand(wd *workRowData) (tea.Model, tea.Cmd) {
 	if wd.workflow != nil {
 		return m.startWorkflowConfirm(wd)
@@ -857,13 +882,6 @@ func (m Model) activateCommand(wd *workRowData) (tea.Model, tea.Cmd) {
 		// workDispatchStartedMsg's handler resolves and attaches it.
 		m.pendingAttach[wd.cmdName] = true
 		m.setStatus(wd.cmdName+" starting…", cCyan)
-		return m, nil
-	}
-	if len(wd.targets) > 0 {
-		// A command with more than one target can't dispatch from this row —
-		// there's no target argument to run with. Its targets are already
-		// listed beneath it; enter on one of those dispatches it.
-		m.setStatus(wd.cmdName+": pick a target below", cCyan)
 		return m, nil
 	}
 	return m.startDispatch(wd.cmdName)

@@ -365,7 +365,7 @@ func TestPendingCommandRendersStarting(t *testing.T) {
 func TestPendingTargetRowRendersStarting(t *testing.T) {
 	wd := &workRowData{cmdName: "command-test", targetKey: "counter", targetRun: "interactive-shell", pending: true, pendingHere: true}
 
-	out := stripANSI(renderTargetRow(wd, false, 20, 60))
+	out := stripANSI(renderTargetRow(wd, false, 60))
 	if !strings.Contains(out, "starting") {
 		t.Errorf("rendered target row = %q, want it to contain %q", out, "starting")
 	}
@@ -402,7 +402,7 @@ func TestPendingTargetDoesNotLightUpSiblings(t *testing.T) {
 	rows := targetRows(parent, nil, "counter")
 	var counterOut, crashOut string
 	for _, r := range rows {
-		out := stripANSI(renderTargetRow(r.work, false, 20, 60))
+		out := stripANSI(renderTargetRow(r.work, false, 60))
 		switch r.work.targetKey {
 		case "counter":
 			counterOut = out
