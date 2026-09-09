@@ -26,6 +26,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -1093,7 +1095,23 @@ func commandSections(w, selIdx int) []string {
 //     of that same rule. There is no chip row and no tab strip: the cursor is
 //     the selector, so a second row of names only reprinted the list.
 
-const root = "/Users/pierce/Projects/admin-project-tool"
+// root is the repo's checkout path, resolved at runtime so the mock log/
+// worktree paths below read correctly from whichever checkout or worktree
+// this spike is run from — a fixed constant would only ever be right in
+// the one checkout it was written for. It comes from this source file's own
+// location rather than shelling out to git, so it needs no git binary on
+// PATH and no .git directory reachable from the working directory.
+var root = repoRoot()
+
+// repoRoot walks up from this file's own path — .../docs/spikes/
+// admin-tui-desktop/variants.go — to the repo root four levels up.
+func repoRoot() string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("admin-tui-desktop: could not resolve its own source path")
+	}
+	return filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(file))))
+}
 
 // The live sections are a fixed column grid. The boundaries are named because
 // the band's title rule and the row list have to agree on them.
