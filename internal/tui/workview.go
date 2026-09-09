@@ -720,19 +720,28 @@ func fitPath(p string, w int) string {
 	if vlen(p) <= w {
 		return p
 	}
-	if w < 12 {
-		return truncR(p, maxi(w, 1))
-	}
 	segs := strings.Split(strings.TrimPrefix(p, "/"), "/")
-	for k := len(segs) - 1; k >= 1; k-- {
-		if cand := "/" + segs[0] + "/…/" + strings.Join(segs[len(segs)-k:], "/"); vlen(cand) <= w {
-			return cand
+	base := segs[len(segs)-1]
+	if w >= 12 {
+		for k := len(segs) - 1; k >= 1; k-- {
+			if cand := "/" + segs[0] + "/…/" + strings.Join(segs[len(segs)-k:], "/"); vlen(cand) <= w {
+				return cand
+			}
 		}
 	}
-	if cand := "…/" + segs[len(segs)-1]; vlen(cand) <= w {
+	// Root + basename doesn't fit even elided down to one middle segment.
+	// The basename is never elided, so it — not the front of the path —
+	// is what survives from here down.
+	if cand := "…/" + base; vlen(cand) <= w {
 		return cand
 	}
-	return truncR(p, w)
+	if vlen(base) <= w {
+		return base
+	}
+	// Budget too small even for the bare basename: something has to give,
+	// so the basename itself is truncated rather than the path being cut
+	// from the front (which would drop the basename entirely).
+	return truncR(base, maxi(w, 1))
 }
 
 // ringTailLines reads a live entry's whole Ring, strips ANSI escapes (this
