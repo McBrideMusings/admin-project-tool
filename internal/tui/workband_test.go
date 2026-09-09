@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 )
@@ -203,5 +204,134 @@ func TestFitPathElidesWholeSegments(t *testing.T) {
 	short := "/tmp/x.log"
 	if got := fitPath(short, 40); got != short {
 		t.Errorf("fitPath(%q, 40) = %q, want unchanged (already fits)", short, got)
+	}
+}
+
+// TestFitPathBasenameSurvivesTinyBudget is admin-3rgp.72.14's core fix: the
+// basename is never elided. At a budget too small to hold root + basename
+// (even with the whole middle gone), the two escape hatches used to fall
+// through to a plain front-anchored truncation of the FULL path — which
+// keeps the root and cuts the basename, exactly the corruption fitPath
+// exists to prevent. The basename must survive instead.
+func TestFitPathBasenameSurvivesTinyBudget(t *testing.T) {
+	p := "/Users/pierce/Projects/admin-project-tool/tmp/logs/docs.log"
+
+	// Budget can hold "…/docs.log" but not "/Users/…/docs.log".
+	got := fitPath(p, 10)
+	if !strings.HasSuffix(got, "docs.log") {
+		t.Errorf("fitPath(%q, 10) = %q, want the basename kept intact", p, got)
+	}
+	if vlen(got) > 10 {
+		t.Errorf("fitPath(%q, 10) = %q (width %d), want <= 10", p, got, vlen(got))
+	}
+
+	// Budget too small even for "…/docs.log" (10 cells): the bare basename
+	// must still come back whole, not a front-anchored cut of the full path.
+	got = fitPath(p, 8)
+	if !strings.HasSuffix(got, "docs.log") {
+		t.Errorf("fitPath(%q, 8) = %q, want the bare basename \"docs.log\" (8 cells)", p, got)
+	}
+
+	// Budget too small even for the bare basename (8 cells): something must
+	// give, but it's the basename itself that gets truncated — the result
+	// must still be anchored on the basename, not on the path's root.
+	got = fitPath(p, 4)
+	if vlen(got) > 4 {
+		t.Fatalf("fitPath(%q, 4) = %q (width %d), want <= 4", p, got, vlen(got))
+	}
+	if strings.HasPrefix(got, "/Users") {
+		t.Errorf("fitPath(%q, 4) = %q, want the basename truncated, not the root kept and basename dropped", p, got)
+	}
+}
+
+// TestFitPathMeasuresDisplayWidthNotBytes: a multi-byte path's escapes must
+// be counted in terminal cells, not bytes, so it is never cut shorter than
+// its ASCII equivalent would be.
+func TestFitPathMeasuresDisplayWidthNotBytes(t *testing.T) {
+	p := "/Users/pierce/Projects/café-app/tmp/logs/docs.log"
+	got := fitPath(p, 24)
+	if vlen(got) > 24 {
+		t.Fatalf("fitPath(%q, 24) = %q (display width %d), want <= 24", p, got, vlen(got))
+	}
+	if !strings.HasSuffix(got, "docs.log") {
+		t.Errorf("fitPath(%q, 24) = %q, want the basename kept intact", p, got)
+	}
+}
+
+// TestFitPathMeasuresDisplayWidthNotBytesOnBasenameFallback exercises the
+// same display-width requirement one rung further down the ladder: the
+// tiny-budget fallback that truncates the BASENAME ITSELF (fitPath's final
+// return, workview.go), not just the whole-path elision above it. A wide
+// CJK basename has more bytes per rune than display cells, so a byte-length
+// truncation would cut mid-rune (producing invalid UTF-8) or land well
+// under the true display budget; a display-width truncation lands exactly
+// at it with valid UTF-8 throughout.
+func TestFitPathMeasuresDisplayWidthNotBytesOnBasenameFallback(t *testing.T) {
+	p := "/Users/pierce/Projects/admin-project-tool/tmp/logs/日志café.log"
+	got := fitPath(p, 4)
+	if vlen(got) > 4 {
+		t.Fatalf("fitPath(%q, 4) = %q (display width %d), want <= 4", p, got, vlen(got))
+	}
+	if !utf8.ValidString(got) {
+		t.Errorf("fitPath(%q, 4) = %q, want valid UTF-8 (a byte-length cut would split a multi-byte rune)", p, got)
+	}
+	if strings.HasPrefix(got, "/Users") {
+		t.Errorf("fitPath(%q, 4) = %q, want the basename truncated, not the root kept and basename dropped", p, got)
+	}
+}
+
+// TestFitPathSingleEllipsisMark: the elision mark is one "…" standing in
+// for whole segments, never a trailing "..." glued onto a partial component.
+func TestFitPathSingleEllipsisMark(t *testing.T) {
+	p := "/Users/pierce/Projects/admin-project-tool/tmp/logs/docs.log"
+	for _, w := range []int{24, 16, 10, 8, 4} {
+		got := fitPath(p, w)
+		if strings.Contains(got, "...") {
+			t.Errorf("fitPath(%q, %d) = %q, want the single-rune \"…\" mark, not \"...\"", p, w, got)
+		}
+	}
+}
+
+// TestFitPathNarrowingNeverCutsMidSegment walks a real absolute path from
+// its full width down to a 4-column budget and asserts, at EVERY width,
+// that the result never contains a partial segment: every piece on either
+// side of the elision mark (or standing alone) is either the ellipsis
+// itself or a whole segment straight from the original path — never a
+// fragment of one.
+func TestFitPathNarrowingNeverCutsMidSegment(t *testing.T) {
+	p := "/Users/pierce/Projects/admin-project-tool/tmp/logs/docs.log"
+	full := strings.Split(strings.TrimPrefix(p, "/"), "/")
+	base := full[len(full)-1]
+
+	isWholeOrEllipsis := func(part string) bool {
+		if part == "" || part == "…" {
+			return true
+		}
+		for _, s := range full {
+			if part == s {
+				return true
+			}
+		}
+		return false
+	}
+
+	for w := vlen(p); w >= 4; w-- {
+		got := fitPath(p, w)
+		if vlen(got) > w {
+			t.Fatalf("fitPath(p, %d) = %q, width %d exceeds budget", w, got, vlen(got))
+		}
+		// Below the "…/basename" floor, the basename itself may need
+		// truncating (something has to give at a 4-column budget) — that
+		// truncation is character-level by necessity, not a segment cut,
+		// so it's exempt from the whole-segment check below.
+		if !strings.HasSuffix(got, base) && strings.HasSuffix(got, "…") {
+			continue
+		}
+		for _, part := range strings.SplitAfter(got, "/") {
+			part = strings.TrimSuffix(part, "/")
+			if !isWholeOrEllipsis(part) {
+				t.Errorf("fitPath(p, %d) = %q, segment %q is a partial cut, not a whole segment or the ellipsis", w, got, part)
+			}
+		}
 	}
 }
