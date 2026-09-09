@@ -10,6 +10,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -363,5 +364,218 @@ func TestTerminalViewEscDetachesAndQKReachChild(t *testing.T) {
 				t.Errorf("last write = %q, want %q written through to the child", got, key)
 			}
 		})
+	}
+}
+
+// TestAttachedViewDrawsNoTabBar is the ticket's first acceptance criterion:
+// no tab bar at any of the three named sizes, and the second row is the
+// attach breadcrumb — verbatim "attached" — in the tab bar's place.
+func TestAttachedViewDrawsNoTabBar(t *testing.T) {
+	for _, sz := range []struct{ w, h int }{{80, 24}, {96, 30}, {178, 46}} {
+		t.Run(fmt.Sprintf("%dx%d", sz.w, sz.h), func(t *testing.T) {
+			cmdName := "termfixture-nobar"
+			dir := t.TempDir()
+			writeFixtureManifest(t, dir, cmdName)
+			registerFakePTYEntry(t, cmdName, livework.NewRing(0), &termRecorder{})
+
+			out := Frame(context.Background(), New(context.Background(), dir, "owner/repo", "main", "main"), FrameOptions{
+				Width: sz.w, Height: sz.h,
+				Keys:   []string{"down", "a"},
+				Settle: 300 * time.Millisecond,
+			})
+			lines := strings.Split(out, "\n")
+			if len(lines) < 2 {
+				t.Fatalf("frame at %dx%d has fewer than 2 lines", sz.w, sz.h)
+			}
+			for _, tabLabel := range []string{"Work", "PRs", "Issues", "Beads", "Repo"} {
+				if strings.Contains(lines[1], tabLabel) {
+					t.Errorf("%dx%d: second row still shows a tab bar (contains %q): %q", sz.w, sz.h, tabLabel, lines[1])
+				}
+			}
+			if !strings.Contains(lines[1], "attached") {
+				t.Errorf("%dx%d: second row is not the attach breadcrumb: %q", sz.w, sz.h, lines[1])
+			}
+		})
+	}
+}
+
+// TestAttachedViewLogPathOnBreadcrumbOnly is the ticket's second acceptance
+// criterion: the absolute log path is on the breadcrumb row and nowhere
+// beneath the output.
+func TestAttachedViewLogPathOnBreadcrumbOnly(t *testing.T) {
+	cmdName := "termfixture-logpath"
+	dir := t.TempDir()
+	writeFixtureManifest(t, dir, cmdName)
+	registerFakePTYEntry(t, cmdName, livework.NewRing(0), &termRecorder{})
+	const logPath = "/Users/pierce/.admin/logs/worker-termfixture-logpath.log"
+	livework.Default.SetLogPath(cmdName, logPath)
+	// The file's own basename is what fitPath keeps regardless of how much
+	// of the rest gets elided at any given width (see fitPath's own
+	// mid-segment elision) — the substring every width still shows.
+	const logBase = "worker-termfixture-logpath.log"
+
+	out := Frame(context.Background(), New(context.Background(), dir, "owner/repo", "main", "main"), FrameOptions{
+		Width: 100, Height: 24,
+		Keys:   []string{"down", "a"},
+		Settle: 300 * time.Millisecond,
+	})
+	lines := strings.Split(out, "\n")
+	if len(lines) < 2 || !strings.Contains(lines[1], logBase) {
+		t.Fatalf("breadcrumb row missing the log path (want it to contain %q): %q", logBase, lines)
+	}
+	if !strings.Contains(lines[1], "/Users/") {
+		t.Errorf("breadcrumb row's path is not absolute: %q", lines[1])
+	}
+	for i, l := range lines {
+		if i == 1 {
+			continue
+		}
+		if strings.Contains(l, logBase) {
+			t.Errorf("log path also appears on row %d, want it on the breadcrumb alone: %q", i, l)
+		}
+	}
+}
+
+// TestAttachedViewOutputReachesFloor is the ticket's third acceptance
+// criterion: the child's output reaches the last row above the key hint —
+// the bottom output row is never blank when the entry has output. It also
+// proves the "gap above rather than below" rule: a short tail leaves blank
+// rows ABOVE the content, not below it.
+func TestAttachedViewOutputReachesFloor(t *testing.T) {
+	cmdName := "termfixture-floor"
+	dir := t.TempDir()
+	writeFixtureManifest(t, dir, cmdName)
+	ring := livework.NewRing(0)
+	registerFakePTYEntry(t, cmdName, ring, &termRecorder{})
+
+	p := newAttachablePump(t, dir, 96, 30)
+	p.apply(keyMsg("a"))
+	p.drain(150 * time.Millisecond)
+	if _, err := ring.Write([]byte("only line\r\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	p.drain(300 * time.Millisecond)
+
+	out := p.model.View()
+	lines := strings.Split(out, "\n")
+	// Row layout: header(1) + breadcrumb(1) + blank(1) + dashed rule(1) +
+	// output + solid rule(1) + key hint(1) = len(lines). The row directly
+	// above the solid rule (second-to-last) is the floor the child's last
+	// output line must occupy.
+	if len(lines) < 3 {
+		t.Fatalf("frame too short: %d lines", len(lines))
+	}
+	floor := lines[len(lines)-3]
+	if strings.TrimSpace(floor) == "" {
+		t.Errorf("bottom output row is blank though the entry has output: %q", floor)
+	}
+	if !strings.Contains(floor, "only line") {
+		t.Errorf("bottom output row = %q, want it to hold the child's last written line", floor)
+	}
+	// And the row right after the dashed rule (the top of the output
+	// region) must be blank — the short tail's gap sits above, not below.
+	ruleIdx := -1
+	for i, l := range lines {
+		if strings.Contains(l, "╌╌╌") {
+			ruleIdx = i
+			break
+		}
+	}
+	if ruleIdx == -1 || ruleIdx+1 >= len(lines) {
+		t.Fatalf("could not find the dashed rule in the frame: %q", lines)
+	}
+	if strings.TrimSpace(lines[ruleIdx+1]) != "" {
+		t.Errorf("row right after the dashed rule = %q, want blank (gap floats above the tail, not below)", lines[ruleIdx+1])
+	}
+}
+
+// TestAttachedViewSwitchesToDifferentEntry is the ticket's explicit
+// interface requirement: attaching to one entry, detaching, then attaching
+// to a DIFFERENT entry must show the second entry. A hardcoded breadcrumb
+// or body would pass a "does it render" check vacuously while showing the
+// wrong process — this proves the render is keyed off the live entry each
+// attach records, not a cached first attach.
+func TestAttachedViewSwitchesToDifferentEntry(t *testing.T) {
+	dir := t.TempDir()
+	toml := "project_name = \"fixture\"\n\n" +
+		"[commands.termfixture-first]\ndesc = \"fixture\"\nsteps = [\"termfixture-first\"]\n\n" +
+		"[actions.termfixture-first]\nkind = \"shell\"\nrun = \"true\"\n\n" +
+		"[commands.termfixture-second]\ndesc = \"fixture\"\nsteps = [\"termfixture-second\"]\n\n" +
+		"[actions.termfixture-second]\nkind = \"shell\"\nrun = \"true\"\n"
+	if err := os.WriteFile(filepath.Join(dir, manifest.Filename), []byte(toml), 0o644); err != nil {
+		t.Fatalf("writing fixture admin.toml: %v", err)
+	}
+	freshLivework(t)
+	ring1 := livework.NewRing(0)
+	if _, err := ring1.Write([]byte("output from first\r\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	ring2 := livework.NewRing(0)
+	if _, err := ring2.Write([]byte("output from second\r\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	for _, e := range []*livework.Entry{
+		{ID: "termfixture-first", Name: "termfixture-first", Kind: "hosted-pty", Handle: "termfixture-first-pty", State: livework.StateRunning, Output: ring1, Ops: livework.Ops{Kill: func() error { return nil }, Write: (&termRecorder{}).write, Resize: (&termRecorder{}).resize}},
+		{ID: "termfixture-second", Name: "termfixture-second", Kind: "hosted-pty", Handle: "termfixture-second-pty", State: livework.StateRunning, Output: ring2, Ops: livework.Ops{Kill: func() error { return nil }, Write: (&termRecorder{}).write, Resize: (&termRecorder{}).resize}},
+	} {
+		if err := livework.Default.Add(e); err != nil {
+			t.Fatalf("Add(%s): %v", e.ID, err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	m := New(ctx, dir, "owner/repo", "main", "main")
+	m.herdr = false
+	p := &pump{msgs: make(chan tea.Msg, 64), model: m}
+	p.apply(tea.WindowSizeMsg{Width: 100, Height: 24})
+	p.run(p.model.Init())
+	p.drain(2 * time.Second)
+	p.apply(keyMsg("down"))
+	p.drain(150 * time.Millisecond)
+
+	// Attach to the first row (termfixture-first, cursor's default position).
+	p.apply(keyMsg("a"))
+	p.drain(150 * time.Millisecond)
+	if !p.model.termAttached || p.model.termEntryID != "termfixture-first" {
+		t.Fatalf("did not attach to termfixture-first, got termAttached=%v termEntryID=%q", p.model.termAttached, p.model.termEntryID)
+	}
+	if _, err := ring1.Write([]byte("more from first\r\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	p.drain(300 * time.Millisecond)
+	out := p.model.View()
+	if !strings.Contains(out, "termfixture-first") {
+		t.Fatalf("attached frame does not name the first entry: %q", out)
+	}
+
+	// Detach.
+	p.apply(keyMsg("esc"))
+	p.drain(150 * time.Millisecond)
+	if p.model.termAttached {
+		t.Fatal("esc did not detach")
+	}
+	if p.model.termEntryID != "" {
+		t.Errorf("detach left termEntryID = %q, want cleared", p.model.termEntryID)
+	}
+
+	// Move the cursor to the second row and attach to it.
+	p.apply(keyMsg("down"))
+	p.drain(150 * time.Millisecond)
+	p.apply(keyMsg("a"))
+	p.drain(150 * time.Millisecond)
+	if !p.model.termAttached || p.model.termEntryID != "termfixture-second" {
+		t.Fatalf("did not attach to termfixture-second, got termAttached=%v termEntryID=%q", p.model.termAttached, p.model.termEntryID)
+	}
+	if _, err := ring2.Write([]byte("more from second\r\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	p.drain(300 * time.Millisecond)
+	out = p.model.View()
+	if strings.Contains(out, "output from first") || strings.Contains(out, "more from first") {
+		t.Errorf("second attach still shows the FIRST entry's output: %q", out)
+	}
+	if !strings.Contains(out, "termfixture-second") {
+		t.Errorf("second attach's breadcrumb does not name termfixture-second: %q", out)
 	}
 }

@@ -14,19 +14,18 @@
 //   - the emulator lifecycle: creating it sized to the body region on
 //     attach, feeding it only bytes written since attach (never a replay —
 //     the log file holds history), and tearing it down on detach.
-//   - the body renderer: header, dashed rule, then either "waiting for
-//     output…" or the emulator's own grid — view.go routes here instead of
-//     the list/detail layout while attached.
+//   - the body renderer: dashed rule, then either "waiting for output…" or
+//     the emulator's own grid — view.go routes here instead of the
+//     list/detail layout while attached. The identity/log-path row above it
+//     (attachBreadcrumb) is view.go's top chrome, in the tab bar's place.
 package tui
 
 import (
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
 
@@ -138,19 +137,22 @@ func (m Model) termEntry() *livework.Entry {
 }
 
 // termRegion is the pty size the terminal view sizes both the emulator and
-// the child's own pty to: the body content height minus the header and
-// dashed-rule lines, and the full width minus the one leading space every
-// rendered line carries. Sizing the CHILD's pty to exactly this — not the
-// whole terminal — is what keeps its own pinned footer inside the visible
-// grid instead of scrolling off: from the child's point of view this region
-// IS its terminal, so its footer pins to the bottom of it.
+// the child's own pty to: the body content height minus the dashed-rule
+// line, and the full width minus the one leading space every rendered line
+// carries. The identity/log-path row lives in the top chrome now (see
+// attachBreadcrumb), not inside this budget — admin-3rgp.72.17 moved it out
+// of the body so the child gets that row back too. Sizing the CHILD's pty to
+// exactly this — not the whole terminal — is what keeps its own pinned
+// footer inside the visible grid instead of scrolling off: from the child's
+// point of view this region IS its terminal, so its footer pins to the
+// bottom of it.
 func (m Model) termRegion() (rows, cols int) {
 	width, _, bodyHeight := m.frameGeom()
 	contentH := bodyHeight - 1 // frameGeom reserves one line for the outer rule
 	if contentH < 1 {
 		contentH = 1
 	}
-	rows = contentH - 2 // header, dashed rule
+	rows = contentH - 1 // dashed rule
 	if rows < 1 {
 		rows = 1
 	}
@@ -215,83 +217,125 @@ func encodeKey(msg tea.KeyMsg) []byte {
 	return nil
 }
 
-// elapsedMS renders a duration as "0m38s" — the terminal header's elapsed
-// field, matching docs/spikes/admin-tui-desktop/hosted.txt exactly. Distinct
-// from elapsedStr (workview.go's "<1m / 12m / 1h5m"), which that reference
-// frame does not use and which internal/tui's other panes rely on staying
-// as-is.
-func elapsedMS(d time.Duration) string {
-	if d < 0 {
-		d = 0
-	}
-	total := int(d.Seconds())
-	return strconv.Itoa(total/60) + "m" + strconv.Itoa(total%60) + "s"
-}
-
-// renderTermHeader renders the state glyph, command name, state word,
-// elapsed time and current activity — the one line that must always agree
-// with the emulator grid below it, since both read the same live Entry on
-// every frame.
-func (m Model) renderTermHeader(width int) string {
+// attachBreadcrumb renders the row the tab bar gives up while attached (see
+// view.go's frameRaw): what is attached on the left — verbatim "attached",
+// the state glyph, the entry's name, the state word and elapsed — and the
+// absolute log path flush right. Reuses commandGlyph/stateColor/elapsedStr
+// (workview.go) rather than a second glyph/duration mapping, and fitPath
+// (also workview.go, ported from the design prototype) for the same
+// mid-segment elision every other absolute path on the Work tab gets. This
+// is the one line that must always agree with the emulator grid below it,
+// since both read the same live Entry on every frame — see termEntry.
+//
+// The path lives here rather than in a footer under the output — a child's
+// output is what scrolls, so anything pinned beneath it either floats in
+// dead space when the output is short or gets pushed off when it is long.
+// At the top it is neither (docs/spikes/admin-tui-desktop/variants.go's
+// attachCrumb, the design prototype this ports).
+func (m Model) attachBreadcrumb(width int) string {
 	e := m.termEntry()
 	name := m.termEntryID
 	var state livework.State
-	var activity string
 	started := time.Now()
+	logPath := ""
 	if e != nil {
 		name = e.Name
 		state, _ = livework.Default.State(e.ID)
-		activity, _ = livework.Default.Activity(e.ID)
 		started = e.StartedAt
+		logPath = e.LogPath
 	}
-	glyph, glyphColor := "○", cDim
-	switch state {
-	case livework.StateRunning:
-		glyph, glyphColor = "●", cGreen
-	case livework.StateWaiting:
-		glyph, glyphColor = "◐", cYellow
-	case livework.StateFailed:
-		glyph, glyphColor = "✗", cRed
+	left := []seg{
+		{t: "attached", fg: cFg},
+		{t: "  ·  ", fg: cFaint},
+		{t: commandGlyph(state), fg: stateColor(state)},
+		{t: " " + name, fg: cFg},
+		{t: "  ·  " + string(state) + "  ·  " + elapsedStr(time.Since(started)), fg: cFaint},
 	}
-	meta := "  ·  " + string(state) + "  ·  " + elapsedMS(time.Since(started))
-	if activity != "" {
-		meta += "  ·  "
+	// The path's budget is computed exactly, not floored, so composeLR never
+	// overflows width-1 and the caller's outer truncateLine never has to cut
+	// mid-path — that produces the exact corruption fitPath exists to avoid
+	// ("/Users/pierce/Proj…tool/"). Too little room for a legible path (a
+	// long name on a narrow terminal) drops the path entirely instead.
+	inner := width - 1 // the leading space this line always carries
+	lw := segsWidth(left)
+	var right []seg
+	if logPath != "" {
+		if budget := inner - lw - 1; budget >= 4 {
+			right = []seg{{t: fitPath(logPath, budget), fg: cFaint}}
+		}
 	}
-	line := " " +
-		lipgloss.NewStyle().Foreground(glyphColor).Render(glyph) + " " +
-		lipgloss.NewStyle().Bold(true).Render(name) +
-		faintStyle.Render(meta) +
-		activity
-	return truncateLine(line, width)
+	return " " + renderSegs(composeLR(left, right, inner), nil)
 }
 
 // renderTerminalBody is view.go's full-tab replacement for the list/detail
-// layout while attached: header, dashed rule, then either the
-// attached-empty copy or the emulator's own grid — never both, and never a
-// second footer implementation, since the grid IS the child's screen and
-// the child pins its own footer to the bottom of it (see termRegion).
+// layout while attached: the dashed rule, then either the attached-empty
+// copy or the emulator's own grid — never both, and never a second footer
+// implementation, since the grid IS the child's screen and the child pins
+// its own footer to the bottom of it (see termRegion). No header line here
+// any more — attachBreadcrumb (in the top chrome, replacing the tab bar)
+// carries that, so this is the child's alone, floor included.
 func (m Model) renderTerminalBody(width, height int) ([]string, []hitTarget) {
 	lines := make([]string, 0, height)
-	lines = append(lines, m.renderTermHeader(width))
 	lines = append(lines, faintStyle.Render(strings.Repeat("╌", width)))
 
-	if !m.termHasOutput || m.termEmu == nil {
-		lines = append(lines, "")
-		lines = append(lines, " "+mutedStyle.Render("waiting for output…"))
-	} else {
-		rows, cols := m.termEmu.Height(), m.termEmu.Width()
-		for y := 0; y < rows; y++ {
-			lines = append(lines, " "+renderEmuLine(m.termEmu, y, cols))
-		}
+	avail := height - len(lines)
+	if avail < 1 {
+		avail = 1
 	}
 
-	for len(lines) < height {
-		lines = append(lines, "")
+	if !m.termHasOutput || m.termEmu == nil {
+		empty := make([]string, avail)
+		if avail >= 2 {
+			empty[1] = " " + mutedStyle.Render("waiting for output…")
+		} else {
+			empty[0] = " " + mutedStyle.Render("waiting for output…")
+		}
+		lines = append(lines, empty...)
+	} else {
+		lines = append(lines, m.renderTermOutput(avail)...)
+	}
+
+	if len(lines) < height {
+		lines = append(lines, make([]string, height-len(lines))...)
 	}
 	if len(lines) > height {
 		lines = lines[:height]
 	}
 	return lines, noneHits(height)
+}
+
+// renderTermOutput renders the attached emulator's grid bottom-aligned to
+// avail rows: a contiguous run of untouched rows at the very BOTTOM of the
+// grid — the part of a fresh or short-lived child's screen its cursor
+// hasn't reached yet — floats to the TOP as blank fill instead, so a short
+// tail leaves its gap above rather than below (the ticket's own wording,
+// matching docs/spikes/admin-tui-desktop/hosted.txt's row 19-28 content
+// sitting on the floor with blank rows 5-18 above it). A row the child
+// wrote blank lines into on purpose, anywhere but that trailing run, is
+// left exactly where the child put it — only the untouched tail moves.
+func (m Model) renderTermOutput(avail int) []string {
+	rows, cols := m.termEmu.Height(), m.termEmu.Width()
+	raw := make([]string, rows)
+	for y := 0; y < rows; y++ {
+		raw[y] = renderEmuLine(m.termEmu, y, cols)
+	}
+	trailingBlank := 0
+	for trailingBlank < rows && raw[rows-1-trailingBlank] == "" {
+		trailingBlank++
+	}
+	content := raw[:rows-trailingBlank]
+
+	out := make([]string, 0, avail)
+	for i := 0; i < avail-len(content); i++ {
+		out = append(out, "")
+	}
+	for _, l := range content {
+		out = append(out, " "+l)
+	}
+	if len(out) > avail {
+		out = out[len(out)-avail:]
+	}
+	return out
 }
 
 // renderEmuLine renders one row of the emulator's grid as styled text:
