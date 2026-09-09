@@ -67,5 +67,5 @@
 
 sync.remote: "git+ssh://git@github.com/McBrideMusings/admin-project-tool.git"
 export:
-    auto: true
-    git-add: true
+    auto: false
+    git-add: false
