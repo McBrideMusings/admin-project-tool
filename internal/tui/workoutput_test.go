@@ -212,3 +212,58 @@ func TestWorkerDetailActionsRowUnchangedWithoutRing(t *testing.T) {
 		t.Fatalf("last row = %q, want the actions row unchanged with no ring", out[len(out)-1])
 	}
 }
+
+// TestRingTailLinesNoBlankRowBetweenLines is the CRLF defect: a hosted
+// pty's raw bytes carry ONLCR "\r\n" line endings, and splitting on "\n"
+// alone left a stray "\r" glued to the end of every line — which bubbletea's
+// own line-diffing renderer turns into a visibly blank row underneath every
+// real line of tail output (see ringTailLines' own doc comment for the
+// mechanism). Every rendered line must be exactly its plain content, with no
+// blank entries interleaved and no trailing "\r" surviving onto any of them.
+// Independent of the Work tab's layout — kept when the layout's own
+// orientation switch (admin-3rgp.72.15) was deleted.
+func TestRingTailLinesNoBlankRowBetweenLines(t *testing.T) {
+	r := livework.NewRing(4096)
+	r.Write([]byte("line one\r\nline two\r\nline three\r\n"))
+
+	lines := ringTailLines(r, 40)
+	want := []string{"line one", "line two", "line three"}
+	if len(lines) != len(want) {
+		t.Fatalf("ringTailLines = %q (%d lines), want %q (%d lines) — no blank row between each",
+			lines, len(lines), want, len(want))
+	}
+	for i, l := range lines {
+		if l != want[i] {
+			t.Errorf("line %d = %q, want %q", i, l, want[i])
+		}
+		if strings.Contains(l, "\r") {
+			t.Errorf("line %d = %q retained a raw \\r", i, l)
+		}
+	}
+}
+
+// TestWorkerDetailNoBlankRowBetweenTailLines is the same defect proven
+// through the full pane assembly (appendLiveTail), not just ringTailLines in
+// isolation — the shape a real live pane actually renders. Independent of
+// the Work tab's layout — kept when the layout's own orientation switch
+// (admin-3rgp.72.15) was deleted.
+func TestWorkerDetailNoBlankRowBetweenTailLines(t *testing.T) {
+	freshLivework(t)
+	ring := livework.NewRing(4096)
+	ring.Write([]byte("alpha\r\nbeta\r\ngamma\r\n"))
+	e := &livework.Entry{
+		ID: "test-crlf-worker", Name: "test-crlf-worker",
+		State: livework.StateRunning, StartedAt: time.Now(), Output: ring,
+	}
+
+	const h = 20
+	out := workerDetail(e, 40, h)
+	// Bottom-aligned against the closing rule (the pane's own final row),
+	// not the pane's last row itself.
+	if out[h-2] != "gamma" || out[h-3] != "beta" || out[h-4] != "alpha" {
+		t.Fatalf("expected the three tail lines with no blank rows between them, got %q", out[h-4:h-1])
+	}
+	if !strings.Contains(out[h-1], "─") {
+		t.Fatalf("last row = %q, want the output block's closing rule", out[h-1])
+	}
+}

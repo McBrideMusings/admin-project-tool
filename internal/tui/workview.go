@@ -1,7 +1,7 @@
 // workview.go renders the Work tab (admin-3rgp.20): the combined
-// command+worker list in the left two thirds under one cursor, and a detail
-// pane in the right third whose shape follows the row's kind. work.go is the
-// data half this reads.
+// command+worker list under one cursor, filling the body width, and a live
+// band beneath it (full width, never a right-hand column) whose shape
+// follows the cursor row's kind. work.go is the data half this reads.
 package tui
 
 import (
@@ -18,16 +18,24 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/logformat"
 )
 
-// renderWorkBody lays out the Work tab. On a wide-enough terminal it's the
-// row list at roughly two thirds of the width, a "│" divider, and the cursor
-// row's detail pane filling the rest — the ticket's "a detail pane on the
-// right third whose shape follows the row's kind." On a tall, narrow one
-// (bottomOrient) it stacks instead: the row list on top (capped to at most
-// half the body height, scrolling within that half), a full-width rule, and
-// the detail pane filling every remaining row — ported from the design
-// prototype's workBody/renderPaletteScreen (docs/spikes/admin-tui-desktop/
-// variants.go), which solved the "detail pane truncated to ~30 columns while
-// most of a tall screen sits empty" problem this mirrors exactly.
+// bandH is how many rows of the body height the live band takes, fixed per
+// terminal height and never per cursor position or content — ported
+// verbatim from the design prototype (docs/spikes/admin-tui-desktop/
+// variants.go:1263-1269).
+func bandH(h int) int {
+	return maxi(mini(13, h/2), mini(9, h-1))
+}
+
+// renderWorkBody lays out the Work tab: one layout at every geometry — the
+// row list fills the body width, and the live band spans that same full
+// width beneath it. The list gives up HEIGHT to the band (bandH) and never
+// width. Ported from the design prototype's workBody/renderPaletteScreen
+// (docs/spikes/admin-tui-desktop/variants.go); the prototype's own two-
+// orientation switch (a side-by-side split on a wide terminal, a stacked
+// layout on a tall narrow one, picked by comparing width against height) is
+// gone — the side-by-side split gave the detail pane roughly 30 columns on
+// exactly the terminals where log lines are longest, and the two branches
+// were two bodies of layout code that could disagree.
 func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 	rows := m.visibleRows()
 	cursor := m.cursor[m.active]
@@ -37,28 +45,7 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 			padHits([]hitTarget{{kind: hitNone}}, height)
 	}
 
-	// bottomOrient: the exact geometry test the prototype settled on (that
-	// file's own comment has the reasoning for the 2.3 constant) — kept
-	// identical here so the two never disagree.
-	bottomOrient := float64(width)/2.3 < float64(height)
-
-	var lw, rw int
-	if bottomOrient {
-		lw = maxi(width-2, 20)
-		rw = lw
-	} else {
-		lw = width * 2 / 3
-		if lw > width-14 {
-			lw = width - 14
-		}
-		if lw < 20 {
-			lw = width
-		}
-		rw = width - lw - 2
-		if rw < 0 {
-			rw = 0
-		}
-	}
+	lw := maxi(width-2, 20)
 
 	left := make([]string, len(rows))
 	hits := make([]hitTarget, len(rows))
@@ -96,72 +83,8 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		}
 	}
 
-	if bottomOrient {
-		return m.renderWorkBodyStacked(rows, left, hits, cursor, width, height, lw)
-	}
-
-	start, end := window(len(left), cursor, height)
-	leftLines := append([]string{}, left[start:end]...)
-	hitLines := append([]hitTarget{}, hits[start:end]...)
-	if start > 0 && len(leftLines) > 0 {
-		leftLines[0] = faintStyle.Render("  ↑ " + strconv.Itoa(start) + " more")
-		hitLines[0] = hitTarget{kind: hitNone}
-	}
-	if end < len(left) && len(leftLines) > 0 {
-		last := len(leftLines) - 1
-		leftLines[last] = faintStyle.Render("  ↓ more")
-		hitLines[last] = hitTarget{kind: hitNone}
-	}
-
-	right := m.renderWorkDetail(rows[cursor], rw, height)
-
-	out := make([]string, height)
-	outHits := make([]hitTarget, height)
-	divider := faintStyle.Render("│ ")
-	for i := 0; i < height; i++ {
-		l, hit := "", hitTarget{kind: hitNone}
-		if i < len(leftLines) {
-			l, hit = leftLines[i], hitLines[i]
-		}
-		r := ""
-		if i < len(right) {
-			r = right[i]
-		}
-		out[i] = " " + padEnd(l, lw) + divider + r
-		outHits[i] = hit
-	}
-	return out, outHits
-}
-
-// renderWorkBodyStacked is bottomOrient's layout: the row list on top
-// (never more than half the body height — it scrolls inside its half once
-// its content would need more), a full-width rule directly beneath the
-// list's own content with no padding above it, then the detail pane filling
-// every remaining row, uncapped. Mirrors workBody's own bottomOrient branch
-// in the prototype byte for byte in geometry: detailH is computed first as
-// "whatever's left after the full, unclipped list plus one rule row," then
-// bumped up to at least half the body height — which is what caps the list
-// to at most the other half, rather than a separate clamp on listH itself.
-func (m Model) renderWorkBodyStacked(rows []rowItem, left []string, hits []hitTarget, cursor, width, height, lw int) ([]string, []hitTarget) {
-	detailH := height - len(left) - 1
-	if detailH < height/2 {
-		detailH = height / 2
-	}
-	if detailH < 0 {
-		detailH = 0
-	}
-	listH := height - detailH - 1
-	if listH < 0 {
-		listH = 0
-	}
-
-	// The preview band spans the same width as the list above it (lw is
-	// already width-2: one leading space and one trailing column left
-	// blank on both halves of the stacked layout). A 100-column cap here
-	// was ported from the design prototype's own frame width and left the
-	// detail band's rules and output short of the real body width on any
-	// terminal wider than ~102 columns (admin fix-detail-band-full-width).
-	previewW := lw
+	bh := bandH(height)
+	listH := maxi(height-bh, 1)
 
 	listLines := left
 	hitLines := hits
@@ -180,7 +103,7 @@ func (m Model) renderWorkBodyStacked(rows []rowItem, left []string, hits []hitTa
 		}
 	}
 
-	detail := m.renderWorkDetail(rows[cursor], previewW, maxi(detailH, 1))
+	detail := m.renderWorkDetail(rows[cursor], lw, maxi(bh, 1))
 
 	out := make([]string, 0, height)
 	outHits := make([]hitTarget, 0, height)
@@ -192,21 +115,17 @@ func (m Model) renderWorkBodyStacked(rows []rowItem, left []string, hits []hitTa
 		out = append(out, padEnd(" "+padEnd(l, lw), width))
 		outHits = append(outHits, hit)
 	}
-	if detailH > 0 {
-		out = append(out, faintStyle.Render(strings.Repeat("─", width)))
-		outHits = append(outHits, hitTarget{kind: hitNone})
-		for i := 0; i < detailH; i++ {
-			d := ""
-			if i < len(detail) {
-				d = detail[i]
-			}
-			// padEnd's outer call is the trailing one-column margin: lw
-			// (=width-2) already leaves that column blank after the
-			// leading space, this just makes the blank explicit rather
-			// than relying on whatever painted the row before.
-			out = append(out, padEnd(" "+padEnd(d, previewW), width))
-			outHits = append(outHits, hitTarget{kind: hitNone})
+	for i := 0; i < bh; i++ {
+		d := ""
+		if i < len(detail) {
+			d = detail[i]
 		}
+		// padEnd's outer call is the trailing one-column margin: lw
+		// (=width-2) already leaves that column blank after the leading
+		// space, this just makes the blank explicit rather than relying on
+		// whatever painted the row before.
+		out = append(out, padEnd(" "+padEnd(d, lw), width))
+		outHits = append(outHits, hitTarget{kind: hitNone})
 	}
 	return pad(out, height), padHits(outHits, height)
 }
