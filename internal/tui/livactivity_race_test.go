@@ -62,7 +62,7 @@ func TestConcurrentActivityReadsDoNotRace(t *testing.T) {
 			for i := 0; i < iterations; i++ {
 				m.renderWorkRow(workerRow, false, 80)
 				m.renderWorkRow(liveCommandRow, false, 80)
-				renderTargetRow(targetWD, false, 16, 40)
+				renderTargetRow(targetWD, false, 40)
 				workerDetail(e, 40, 20)
 				m.renderTermHeader(80)
 			}

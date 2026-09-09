@@ -102,6 +102,13 @@ type rowItem struct {
 	// with any other tab's row (the epic's own reason the Work tab needs a
 	// polymorphic detail pane rather than a wider rowItem).
 	work *workRowData
+	// group marks a rowCommand row whose command is a multi-target parent
+	// (more than one declared target): it is a heading over its targets and
+	// runs nothing itself, so it carries no cursor marker and selectable()
+	// below skips it in both directions (admin-3rgp.72.11) — the same seam
+	// moveCursor already uses for headers and rules, so no separate skip
+	// logic is needed at the cursor-advance call sites.
+	group bool
 	// cfg carries a Config-tab row's payload — set only for rowConfigValue/
 	// rowConfigPath, following the same one-field-per-tab precedent as work.
 	cfg *configRowData
@@ -110,6 +117,9 @@ type rowItem struct {
 func (r rowItem) selectable() bool {
 	switch r.kind {
 	case rowHeader, rowRule, rowCenter, rowText:
+		return false
+	}
+	if r.group {
 		return false
 	}
 	return true

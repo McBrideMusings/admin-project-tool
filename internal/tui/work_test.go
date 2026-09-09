@@ -450,8 +450,8 @@ func TestRenderWorkRowShowsDescriptionWhenIdleAndLiveStateWhenRunning(t *testing
 	if !strings.Contains(liveLine, "running") {
 		t.Errorf("running command row did not show its live state: %q", liveLine)
 	}
-	if !strings.Contains(liveLine, "pane 3") {
-		t.Errorf("running command row did not show its pane: %q", liveLine)
+	if !strings.Contains(liveLine, "compiling") {
+		t.Errorf("running command row did not show its activity: %q", liveLine)
 	}
 }
 

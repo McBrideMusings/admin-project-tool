@@ -90,16 +90,20 @@ func TestTabBarFocusStepsTabsOnWorkTab(t *testing.T) {
 // body; the previously current row is current again if there was one, else
 // the first row.
 func TestEnterAndDownMoveFocusIntoBody(t *testing.T) {
+	// Row 1 ("build") is the fixture's own flat, selectable command row —
+	// row 2 ("deploy") is a multi-target parent and, since admin-3rgp.72.11,
+	// a group the cursor can never land on, so it can no longer stand in for
+	// "some selectable row mid-list" here.
 	for _, key := range []string{"j", "down", "enter"} {
 		m := workFocusModel()
-		m.cursor[tabWork] = 2 // pretend a prior trip left the cursor mid-list
+		m.cursor[tabWork] = 1 // pretend a prior trip left the cursor mid-list
 		next, _ := m.handleKey(keyMsg(key))
 		nm := next.(Model)
 		if nm.focus != focusBody {
 			t.Errorf("%q from the tab bar left focus at %v, want focusBody", key, nm.focus)
 		}
-		if nm.cursor[tabWork] != 2 {
-			t.Errorf("%q from the tab bar disturbed the preserved cursor: got %d, want 2", key, nm.cursor[tabWork])
+		if nm.cursor[tabWork] != 1 {
+			t.Errorf("%q from the tab bar disturbed the preserved cursor: got %d, want 1", key, nm.cursor[tabWork])
 		}
 	}
 }

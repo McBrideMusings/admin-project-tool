@@ -12,17 +12,23 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// admin-3rgp.64: the where-column replaces a column that used to print
-// wd.live.Handle unconditionally — false for every hosted (Via-empty)
-// entry, which is most of them since admin-3rgp.61. These tests pin the
-// two values it may now show ("hosted" for a hosted-pty entry, the launcher
-// handle for a launcher-dispatched one) and that a hosted row and a
-// detached row can never show each other's value.
+// admin-3rgp.64 gave a running Work-tab row a where-column: "hosted" for a
+// hosted-pty entry, the launcher handle for a launcher-dispatched one.
+// admin-3rgp.72.11 ported the Commands section (flat commands and targets)
+// onto the Dock design's fixed column grid, whose running-row shape is
+// marker+name+state+elapsed+activity with no room left for a where-value
+// (docs/spikes/admin-tui-desktop/commands-running.txt:15 shows no such
+// text) — so the where-column is gone from THAT section's rows. It survives
+// unchanged on the Workers section below (out of scope for that ticket;
+// admin-3rgp.72.16 owns porting Workers onto this same grid) — the tests
+// below that still exercise a rowWorker row are untouched.
 
-// TestWhereColumnHostedCommandRowShowsHostedNeverPane covers the "hosted
-// running command renders running, its activity, and hosted" AC and its
-// negative half: a hosted row must never render a pane identifier.
-func TestWhereColumnHostedCommandRowShowsHostedNeverPane(t *testing.T) {
+// TestCommandRowRunningShowsNoWhereColumn pins the Commands section's own
+// running-row shape: state, elapsed and activity, and never a where-value —
+// replacing TestWhereColumnHostedCommandRowShowsHostedNeverPane, which pinned
+// the opposite (a "hosted" marker) before this ticket removed the column
+// from command rows.
+func TestCommandRowRunningShowsNoWhereColumn(t *testing.T) {
 	freshLivework(t)
 	entry := &livework.Entry{
 		ID: "docs", Name: "docs", State: livework.StateRunning,
@@ -46,11 +52,11 @@ func TestWhereColumnHostedCommandRowShowsHostedNeverPane(t *testing.T) {
 	if !strings.Contains(plain, "vitepress dev") {
 		t.Errorf("hosted running row missing activity: %q", plain)
 	}
-	if !strings.Contains(plain, "hosted") {
-		t.Errorf("hosted running row missing %q: %q", "hosted", plain)
+	if strings.Contains(plain, "hosted") {
+		t.Errorf("command row rendered %q, want none — the where-column no longer applies to Commands rows: %q", "hosted", plain)
 	}
-	if strings.Contains(plain, "pane") {
-		t.Errorf("hosted row rendered a pane identifier, want none: %q", plain)
+	if strings.Contains(plain, "pty-1") {
+		t.Errorf("command row rendered a where value %q, want none: %q", "pty-1", plain)
 	}
 }
 
@@ -120,20 +126,22 @@ func TestWhereColumnStateWordsAreVerbatim(t *testing.T) {
 	}
 }
 
-// TestWhereColumnTruncatesActivityKeepsWherewholeAt covers "a long activity
-// truncates with an ellipsis while the where-value stays whole" — the
-// where-value is reserved first and never passed through truncR.
-func TestWhereColumnTruncatesActivityKeepsWherewholeAt(t *testing.T) {
+// TestCommandRowTruncatesLongActivity covers "a long activity truncates
+// with an ellipsis" for the Commands section's own running row — replacing
+// TestWhereColumnTruncatesActivityKeepsWherewholeAt, whose "the where-value
+// stays whole at the end of the row" half no longer applies now that the
+// where-column is gone from command rows (see the file doc comment above).
+func TestCommandRowTruncatesLongActivity(t *testing.T) {
 	freshLivework(t)
 	longActivity := strings.Repeat("writing a very long activity line ", 4)
 	entry := &livework.Entry{
 		ID: "wherecol-truncate-activity", Name: "build", State: livework.StateRunning,
-		Activity: longActivity, Handle: "pane 12345", Via: "terminal", StartedAt: time.Now(),
+		Activity: longActivity, Handle: "pty-3", StartedAt: time.Now(),
 	}
 	// renderWorkRow now reads activity through livework.Default.Activity(e.ID)
 	// (admin-8hlz.1, mirroring admin-ddc8's State fix), so the entry must
 	// actually be in the process-wide registry rather than merely
-	// constructed. See TestWhereColumnHostedCommandRowShowsHostedNeverPane.
+	// constructed. See TestCommandRowRunningShowsNoWhereColumn.
 	if err := livework.Default.Add(entry); err != nil {
 		t.Fatalf("Add(%s): %v", entry.ID, err)
 	}
@@ -142,22 +150,20 @@ func TestWhereColumnTruncatesActivityKeepsWherewholeAt(t *testing.T) {
 	if !strings.Contains(line, "…") {
 		t.Errorf("long activity at a narrow width did not truncate with an ellipsis: %q", line)
 	}
-	if !strings.HasSuffix(line, "pane 12345") {
-		t.Errorf("where-value was not left whole at the end of the row: %q", line)
-	}
 }
 
-// TestWhereColumnIdleRowUnchanged is the "an idle command row is
-// byte-identical to today's" AC: a row with no live entry must render
-// exactly as it did before this change — kind + description, nothing else.
+// TestWhereColumnIdleRowUnchanged is the "an idle command row shows kind and
+// description, nothing else" AC, updated for the Commands grid
+// (admin-3rgp.72.11): kind now shares a wState+wElapsed-wide column with no
+// separate where segment, matching commands.txt's own idle rows.
 func TestWhereColumnIdleRowUnchanged(t *testing.T) {
 	idle := &workRowData{cmdName: "build", cmdDesc: "compile the binary", cmdKind: "shell"}
 	got := workTestModel(nil).renderWorkRow(rowItem{kind: rowCommand, work: idle}, false, 60)
 
 	marker := faintStyle.Render("◇ ")
-	name := padEnd(truncR("build", 16), 16)
-	kind := padEnd(truncR("shell", 9), 9)
-	desc := truncR("compile the binary", maxi(60-2-16-9, 4))
+	name := padEnd(truncR("build", wName), wName)
+	kind := padEnd(truncR("shell", wState+wElapsed), wState+wElapsed)
+	desc := truncR("compile the binary", maxi(60-wMarker-wName-wState-wElapsed, 6))
 	want := marker + name + faintStyle.Render(kind+desc)
 
 	if got != want {
@@ -212,8 +218,18 @@ func TestWhereColumnFrameAtMultipleWidths(t *testing.T) {
 		})
 		plain := stripANSI(out)
 
-		if !strings.Contains(plain, "hosted") {
-			t.Errorf("width %d: frame missing %q for the hosted entry: %q", width, "hosted", plain)
+		// The hosted entry is a Commands-section row: admin-3rgp.72.11 removed
+		// the where-column from that section (see the file doc comment
+		// above), so the styled " hosted" where-value (a leading space, from
+		// whereSeg) no longer appears anywhere in the frame — only the
+		// detached WORKER's own pane id, which the Workers section still
+		// carries unchanged, is asserted here. " hosted" (leading space),
+		// not "hosted" bare: the fixture's own command name is
+		// "wherecolfixturehosted" and the detail pane (out of scope, still
+		// shows the full name at this width) would otherwise false-positive
+		// on that name's own suffix.
+		if strings.Contains(plain, " hosted") {
+			t.Errorf("width %d: frame rendered a where-value, want none — the where-column no longer applies to Commands rows: %q", width, plain)
 		}
 		if !strings.Contains(plain, "pane 7") {
 			t.Errorf("width %d: frame missing the detached worker's pane id: %q", width, plain)

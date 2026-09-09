@@ -65,7 +65,16 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 	for i, r := range rows {
 		switch r.kind {
 		case rowHeader:
-			left[i] = " " + mutedStyle.Render(r.label)
+			// A header carrying a rightSegs entry (Commands' own resolved-
+			// invocation count — work.go's workRows) renders bold label + dim
+			// count, matching the reference frame's "Commands  47"
+			// (docs/spikes/admin-tui-desktop/commands.txt:4); every other
+			// header (Workers) keeps the plain muted form it always had.
+			if len(r.rightSegs) > 0 {
+				left[i] = " " + lipgloss.NewStyle().Bold(true).Render(r.label) + faintStyle.Render(r.rightSegs[0].t)
+			} else {
+				left[i] = " " + mutedStyle.Render(r.label)
+			}
 			hits[i] = hitTarget{kind: hitNone}
 		case rowText:
 			if r.label != "" {
@@ -76,7 +85,14 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 			hits[i] = hitTarget{kind: hitNone}
 		default:
 			left[i] = m.renderWorkRow(r, i == cursor, lw)
-			hits[i] = hitTarget{kind: hitRow, row: i}
+			if r.group {
+				// A group parent carries no marker and the cursor can never
+				// land on it (selectable() excludes it) — it must not be
+				// clickable into either, matching the header/text rows above.
+				hits[i] = hitTarget{kind: hitNone}
+			} else {
+				hits[i] = hitTarget{kind: hitRow, row: i}
+			}
 		}
 	}
 
@@ -195,15 +211,92 @@ func (m Model) renderWorkBodyStacked(rows []rowItem, left []string, hits []hitTa
 	return pad(out, height), padHits(outHits, height)
 }
 
-// renderWorkRow renders one command or worker row: a cursor marker, the
-// name, then either the description (idle) or the live state, activity and
-// pane (running) — never both at once, per the ticket's "last run is NOT in
-// the list."
+// The Commands section's one column grid (docs/spikes/admin-tui-desktop/
+// variants.go:1252-1255, ported verbatim): a two-cell cursor marker, a
+// 16-cell name (or, on a target row, connector+key sharing that same 16
+// cells), a 10-cell state column ("● running"), a 7-cell elapsed column
+// ("4m12s"), then one free column that spends itself on activity, a run
+// hint, or a kind+description pair depending on the row's shape. Verified
+// against commands.txt at w=96: the name column ends at screen column 19 on
+// every row kind, and the free column begins at column 36 (19 + wState +
+// wElapsed) on every row kind.
+const (
+	wMarker  = 2  // "◆ " / "◇ "
+	wName    = 16 // the name column (target rows: connector + key)
+	wState   = 10 // "● running"
+	wElapsed = 7  // "4m12s"
+)
+
+// kindLabel abbreviates the one kind whose name does not fit the state+
+// elapsed columns verbatim (docs/spikes/admin-tui-desktop/variants.go:1168).
+func kindLabel(k string) string {
+	if k == "multi-target" {
+		return "multi-tgt"
+	}
+	return k
+}
+
+// commandGlyph is the state marker shown to the left of a Commands-section
+// row's state word: waiting and failed override everything else, anything
+// else — running, starting — gets the plain dot (docs/spikes/
+// admin-tui-desktop/variants.go:1319 minus the isWorkerRow branch, which
+// only ever applied to the Workers section — out of scope here, admin-3rgp.
+// 72.16).
+func commandGlyph(s livework.State) string {
+	switch s {
+	case livework.StateWaiting:
+		return "◐"
+	case livework.StateFailed:
+		return "✗"
+	default:
+		return "●"
+	}
+}
+
+// stateColor is the color a livework.State renders in everywhere it
+// appears on the Work tab — running green, waiting yellow, failed red,
+// anything else dim — shared by renderCommandState here and renderLiveState
+// (below, Workers section + detail pane) so the two state-word renderers
+// can differ in padding and glyph without duplicating the color mapping
+// itself.
+func stateColor(s livework.State) lipgloss.TerminalColor {
+	switch s {
+	case livework.StateRunning:
+		return cGreen
+	case livework.StateWaiting:
+		return cYellow
+	case livework.StateFailed:
+		return cRed
+	case livework.StateStarting:
+		return cCyan
+	default:
+		return cDim
+	}
+}
+
+// renderCommandState renders a livework.State as the Commands-section grid's
+// fixed-width, color-coded "<glyph> <word>" padded to wState. Deliberately
+// separate from renderLiveState (below), which the Workers section and the
+// detail pane still use unchanged: both are out of scope for this ticket
+// (admin-3rgp.72.16 owns porting Workers onto this same grid).
+func renderCommandState(s livework.State) string {
+	word := commandGlyph(s) + " " + string(s)
+	return lipgloss.NewStyle().Foreground(stateColor(s)).Render(padEnd(word, wState))
+}
+
+// renderWorkRow renders one command, target or worker row against the grid
+// above. A group row (a multi-target parent with more than one target) is
+// routed to renderGroupRow instead: it carries no marker and no live state
+// of its own — it holds targets and runs nothing itself.
 func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 	wd := r.work
 	if wd == nil {
 		return ""
 	}
+	if r.kind == rowCommand && r.group {
+		return renderGroupRow(wd, width)
+	}
+
 	// current mirrors renderRow's own distinction: the cyan cursor diamond
 	// only means "current" while focus is actually in the body (admin-70hb,
 	// AC1/AC6) — from the tab bar every row falls back to the faint,
@@ -213,29 +306,33 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 	if current {
 		marker = lipgloss.NewStyle().Foreground(cCyan).Render("◆ ")
 	}
-	const nameW, stateW = 16, 9
-	rest := width - 2 - nameW
-	if rest < 6 {
-		rest = 6
-	}
+	rest := maxi(width-wMarker-wName-wState-wElapsed, 6)
 
 	if r.kind == rowCommandTarget {
-		return marker + renderTargetRow(wd, current, nameW, rest)
+		return marker + renderTargetRow(wd, current, rest)
 	}
 
 	if r.kind == rowWorker {
+		// The Workers section keeps its pre-existing grid untouched — porting
+		// it onto the Commands grid above is admin-3rgp.72.16's job, not this
+		// ticket's (see the ticket's own "Out of scope: the Workers section").
+		const workerNameW, workerStateW = 16, 9
+		workerRest := width - 2 - workerNameW
+		if workerRest < 6 {
+			workerRest = 6
+		}
 		e := wd.worker
-		name := padEnd(truncR(e.ID, nameW), nameW)
+		name := padEnd(truncR(e.ID, workerNameW), workerNameW)
 		st, _ := livework.Default.State(e.ID)
 		state := renderLiveState(st)
 		whereText, whereStyled := whereSeg(e)
-		actW := maxi(rest-stateW-whereWidth(whereText), 4)
+		actW := maxi(workerRest-workerStateW-whereWidth(whereText), 4)
 		activity, _ := livework.Default.Activity(e.ID)
 		act := padEnd(truncR(activity, actW), actW)
 		return marker + name + state + faintStyle.Render(act) + whereStyled
 	}
 
-	name := padEnd(truncR(wd.cmdName, nameW), nameW)
+	name := padEnd(truncR(wd.cmdName, wName), wName)
 	// A holder row (it has targets) never runs itself — it is a menu, not a
 	// dispatch — so it must never take the live/pending rendering path even
 	// when wd.live/wd.pending happen to be set (they no longer are, since a
@@ -243,26 +340,40 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 	// on the shared parent name, but this stays the belt-and-suspenders
 	// guard the acceptance criteria name explicitly: the parent holder row
 	// never shows a running indicator). It always falls straight to the
-	// idle kind+desc form below.
+	// idle kind+desc form below — though in practice r.group already routed
+	// any such row to renderGroupRow above, so len(wd.targets) is always 0
+	// by the time this runs.
 	if len(wd.targets) == 0 {
 		if wd.live != nil {
 			st, _ := livework.Default.State(wd.live.ID)
-			state := renderLiveState(st)
-			whereText, whereStyled := whereSeg(wd.live)
-			actW := maxi(rest-stateW-whereWidth(whereText), 4)
+			state := renderCommandState(st)
+			elapsed := faintStyle.Render(padEnd(elapsedStr(time.Since(wd.live.StartedAt)), wElapsed))
 			activity, _ := livework.Default.Activity(wd.live.ID)
-			act := padEnd(truncR(activity, actW), actW)
-			return marker + name + state + faintStyle.Render(act) + whereStyled
+			act := padEnd(truncR(activity, rest), rest)
+			return marker + name + state + elapsed + faintStyle.Render(act)
 		}
 		if wd.pending {
-			state := renderLiveState(livework.StateStarting)
-			desc := truncR(wd.cmdDesc, maxi(rest-stateW, 4))
-			return marker + name + state + faintStyle.Render(desc)
+			state := renderCommandState(livework.StateStarting)
+			elapsed := faintStyle.Render(padEnd("", wElapsed))
+			desc := truncR(wd.cmdDesc, rest)
+			return marker + name + state + elapsed + faintStyle.Render(desc)
 		}
 	}
-	kind := padEnd(truncR(wd.cmdKind, stateW), stateW)
-	desc := truncR(wd.cmdDesc, maxi(rest-stateW, 4))
+	kind := padEnd(truncR(kindLabel(wd.cmdKind), wState+wElapsed), wState+wElapsed)
+	desc := truncR(wd.cmdDesc, rest)
 	return marker + name + faintStyle.Render(kind+desc)
+}
+
+// renderGroupRow renders a multi-target parent's own row: two blank cells
+// where the marker would be — the marker column is what promises enter will
+// run the row, and a group runs nothing itself — then its name, kind and
+// description in the same columns every other row uses.
+func renderGroupRow(wd *workRowData, width int) string {
+	rest := maxi(width-wMarker-wName-wState-wElapsed, 6)
+	name := lipgloss.NewStyle().Bold(true).Render(padEnd(truncR(wd.cmdName, wName), wName))
+	kind := padEnd(truncR(kindLabel(wd.cmdKind), wState+wElapsed), wState+wElapsed)
+	desc := truncR(wd.cmdDesc, rest)
+	return "  " + name + faintStyle.Render(kind+desc)
 }
 
 // renderTargetRow renders one target of an expanded command: a tree
@@ -274,28 +385,26 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 // wd.live is this target's OWN entry (targetRows looks it up by
 // "<cmdName>:<targetKey>", not copied from the parent — admin-0cyu.1), so
 // when it is running this mirrors renderWorkRow's rowWorker/live branch:
-// state, activity and where-segment take the place of the idle
+// state, elapsed and activity take the place of the idle
 // connector+key+hint form.
-func renderTargetRow(wd *workRowData, focused bool, nameW, rest int) string {
+func renderTargetRow(wd *workRowData, focused bool, rest int) string {
 	connector := "├ "
 	if wd.targetLast {
 		connector = "└ "
 	}
-	keyW := maxi(nameW-2, 4)
+	keyW := maxi(wName-2, 4)
 	key := padEnd(truncR(wd.targetKey, keyW), keyW)
 	name := key
 	if focused {
 		name = lipgloss.NewStyle().Foreground(cCyan).Render(key)
 	}
 	if wd.live != nil {
-		const stateW = 9
 		st, _ := livework.Default.State(wd.live.ID)
-		state := renderLiveState(st)
-		whereText, whereStyled := whereSeg(wd.live)
-		actW := maxi(rest-stateW-whereWidth(whereText), 4)
+		state := renderCommandState(st)
+		elapsed := faintStyle.Render(padEnd(elapsedStr(time.Since(wd.live.StartedAt)), wElapsed))
 		activity, _ := livework.Default.Activity(wd.live.ID)
-		act := padEnd(truncR(activity, actW), actW)
-		return faintStyle.Render(connector) + name + state + faintStyle.Render(act) + whereStyled
+		act := padEnd(truncR(activity, rest), rest)
+		return faintStyle.Render(connector) + name + state + elapsed + faintStyle.Render(act)
 	}
 	if wd.pendingHere {
 		// Mirrors renderWorkRow's own wd.pending branch: the window between
@@ -315,11 +424,11 @@ func renderTargetRow(wd *workRowData, focused bool, nameW, rest int) string {
 		// of them (e.g. "counter") was dispatched — a second, distinct bug
 		// this same report caught. pendingHere is targetRows' per-row answer
 		// to "is THIS target the one Model.pendingTarget[cmdName] names".
-		state := renderLiveState(livework.StateStarting)
+		state := renderCommandState(livework.StateStarting)
 		return faintStyle.Render(connector) + name + state
 	}
-	hint := truncR(wd.targetRun, maxi(rest-2, 4))
-	return faintStyle.Render(connector) + name + faintStyle.Render(hint)
+	hint := truncR(wd.targetRun, rest)
+	return faintStyle.Render(connector) + name + faintStyle.Render(padEnd("", wState+wElapsed)+hint)
 }
 
 // renderWorkDetail is the polymorphic half: a command shows
@@ -582,20 +691,12 @@ func urlRow(u frame.URLEntry, live bool, w int) string {
 }
 
 // renderLiveState renders a livework.State as a fixed-width, color-coded
-// word — running green, waiting yellow, failed red, anything else dim.
+// word — running green, waiting yellow, failed red, anything else dim. Used
+// by the Workers section and the detail pane, both out of scope for this
+// ticket (see renderCommandState above for the Commands section's own,
+// glyph-carrying form).
 func renderLiveState(s livework.State) string {
-	var c lipgloss.TerminalColor = cDim
-	switch s {
-	case livework.StateRunning:
-		c = cGreen
-	case livework.StateWaiting:
-		c = cYellow
-	case livework.StateFailed:
-		c = cRed
-	case livework.StateStarting:
-		c = cCyan
-	}
-	return lipgloss.NewStyle().Foreground(c).Render(padEnd(string(s), 9))
+	return lipgloss.NewStyle().Foreground(stateColor(s)).Render(padEnd(string(s), 9))
 }
 
 // whereSeg returns the right-hand where-value for a live entry: the literal
