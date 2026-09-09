@@ -140,26 +140,17 @@ func runeIndex(s, substr string) int {
 	return len([]rune(s[:b]))
 }
 
-// listContentWidth replicates renderWorkBody's own bottomOrient/lw split
-// (workview.go:31-61) so this test drives the exact list width the real Work
-// tab would hand renderWorkRow at a given terminal size, rather than an
+// listContentWidth replicates renderWorkBody's own lw computation
+// (workview.go) so this test drives the exact list width the real Work tab
+// would hand renderWorkRow at a given terminal size, rather than an
 // arbitrary width that happens to be wide enough. Duplicated rather than
-// exported from workview.go because the split itself (bottomOrient) is
-// explicitly out of scope for this ticket — admin-3rgp.72.15 deletes it —
-// and this test only needs the resulting number, not a shared seam into it.
-func listContentWidth(width, height int) int {
-	bottomOrient := float64(width)/2.3 < float64(height)
-	if bottomOrient {
-		return maxi(width-2, 20)
-	}
-	lw := width * 2 / 3
-	if lw > width-14 {
-		lw = width - 14
-	}
-	if lw < 20 {
-		lw = width
-	}
-	return lw
+// exported from workview.go since this test only needs the resulting
+// number, not a shared seam into it. height is unused now that the row
+// list's content width no longer depends on the terminal's aspect ratio —
+// kept as a parameter so every call site here (which always passes both
+// dimensions of a geometry) doesn't need to change.
+func listContentWidth(width, _ int) int {
+	return maxi(width-2, 20)
 }
 
 // TestNameColumnAlignsAcrossRowKindsAndGeometries is AC4: at every terminal
