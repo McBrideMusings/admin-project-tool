@@ -1,30 +1,30 @@
- beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
+ beads-repo   main  ✔ clean                                                                live 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
- ┌─ Command Palette ──────────────────────────────────────────────────────────────────────────┐ 
- │ / search   b browse all   3 recent                                                         │ 
- │ ◇ grafana deploy      cd apps && bunx wrangler grafana --target deploy                     │ 
- │ ◇ dev cf              cd apps && bunx wrangler dev --target cf                             │ 
- │ ◇ test gate           cd apps && bunx wrangler test --target gate                          │ 
- └────────────────────────────────────────────────────────────────────────────────────────────┘ 
-                                                                                                
-  Running  2     ┌────────────────────────────────────────────────────────────┐                 
-  ◆ admin docs   │  Dispatch admin-3rgp.29                                    │          hosted 
-  ◇ admin test   │                                                            │          hosted 
-                 │    agent     claude                                        │                 
-  Workers  3     │    model     sonnet                                        │                 
-   ↓ more        │    branch    two-deployment-paths                          │                 
-── ● admin docs  │    lands to  feat/one-tool-go-merge                        │mand · 3 workers 
- log      /Users/│                                                            │                 
- url      http://│    ⏎ dispatch     e edit     esc cancel                    │                 
+  Commands                                                     │ build                          
+ ◆ ▸ build         multi-tarBuild: mac | ios | tv | server [--…│ multi-target  ·  apple         
+ ◇ check           shell    Parse and resolve admin.toml       │                                
+ ◇ deploy          sequence Install to ~/.admin, provision the…│ log                            
+ ◇ docs            running  vitepress dev · localhost:5… hosted│   ~/.admin/logs/build.log      
+ ◇ logs            logs     Tail a log target                  │                                
+ ◇ retire-merged   workflow Remove worktrees whose branch is m…│ steps                          
+ ◇ test          ┌────────────────────────────────────────────────────────────┐et               
+                 │  Dispatch admin-3rgp.29                                    │                 
+  Workers        │                                                            │                 
+ ◇ admin-3rgp.36 │    agent     claude                                        │                 
+ ◇ admin-3rgp.7  │    model     sonnet                                        │                 
+ ◇ admin-3rgp.33 │    branch    two-deployment-paths                          │                 
+                 │    lands to  feat/one-tool-go-merge                        │                 
+                 │                                                            │                 
+                 │    ⏎ dispatch     e edit     esc cancel                    │                 
                  └────────────────────────────────────────────────────────────┘                 
-                                                                                                
-                                                                                                
-  ➜  Network: use --host to expose                                                              
-                                                                                                
-14:22:14 [vite] hmr update /guide/index.md                                                      
-14:22:41 [vite] hmr update /reference/api.md                                                    
-14:23:02 [vite] page reload /architecture/design.md                                             
-14:23:19 [vite] hmr update /guide/index.md                                                      
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
+                                                               │                                
 ────────────────────────────────────────────────────────────────────────────────────────────────
  ⏎ dispatch · e edit · esc cancel                                                               
