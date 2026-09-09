@@ -25,7 +25,7 @@ cursor, and the band under them previews whatever that cursor is on.
 | `commands-workflow-selected.txt` | A workflow entry selected — targets are tracker items, so `↵` dispatches an agent |
 | `running.txt` | The cursor on a live command; the band shows its log, urls and tail |
 | `swarm.txt` | The cursor on a live worker; the band shows log, branch, worktree, session, now, tail |
-| `hosted.txt` / `hosted-empty.txt` | Attached to a hosted pty — full width, the child's own screen |
+| `hosted.txt` / `hosted-empty.txt` | Attached to a hosted pty — full width, the child's own screen. No tab bar: that row carries the attach breadcrumb and the absolute log path instead |
 | `hosted-quit.txt` | The quit confirm over live children |
 | `dispatch-sheet.txt` | Dispatching from the tracker tab |
 | `no-manifest.txt` | A repo with no `admin.toml` |

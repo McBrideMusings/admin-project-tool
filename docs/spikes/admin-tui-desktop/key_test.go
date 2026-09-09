@@ -414,3 +414,53 @@ func TestAttachingToASecondRowShowsThatRow(t *testing.T) {
 		t.Errorf("second attach did not show %q:\n%s", second.id, v)
 	}
 }
+
+// TestAttachedViewHasNoTabBar pins what the attached view gives that row up
+// for. Every keystroke belongs to the child while attached, so the tabs cannot
+// be switched from there — drawing them advertises navigation that does not
+// work. The row carries the attach breadcrumb and the log path instead.
+func TestAttachedViewHasNoTabBar(t *testing.T) {
+	resetCursor()
+	resetLiveRows()
+	defer func() { resetCursor(); resetLiveRows() }()
+
+	for _, g := range []struct{ w, h int }{{96, 30}, {178, 46}, {80, 24}} {
+		out := Strip(render(State{Values: map[string]string{"screen": "hosted"}, W: g.w, H: g.h}))
+		lines := strings.Split(out, "\n")
+		if len(lines) < 2 {
+			t.Fatalf("%dx%d: render returned %d lines", g.w, g.h, len(lines))
+		}
+		if strings.Contains(lines[1], "Repo") && strings.Contains(lines[1], "Config") {
+			t.Errorf("%dx%d: attached view still draws the tab bar:\n%s", g.w, g.h, lines[1])
+		}
+		if !strings.Contains(lines[1], "attached") {
+			t.Errorf("%dx%d: attached view's second row is not the breadcrumb:\n%s", g.w, g.h, lines[1])
+		}
+		// The log path is on that row, not in a footer under the output: a
+		// child's output scrolls, so anything pinned beneath it either floats
+		// in dead space or gets pushed off.
+		if !strings.Contains(lines[1], ".log") {
+			t.Errorf("%dx%d: the log path is not on the breadcrumb row:\n%s", g.w, g.h, lines[1])
+		}
+	}
+}
+
+// TestAttachedOutputReachesTheFloor: the child owns every row from the rule to
+// the footer, newest line at the bottom the way a terminal puts it. The old
+// view stopped after however many lines the fixture had and left the rest of a
+// tall screen blank below a floating footer.
+func TestAttachedOutputReachesTheFloor(t *testing.T) {
+	resetCursor()
+	resetLiveRows()
+	defer func() { resetCursor(); resetLiveRows() }()
+
+	for _, g := range []struct{ w, h int }{{96, 30}, {178, 46}} {
+		out := Strip(render(State{Values: map[string]string{"screen": "hosted"}, W: g.w, H: g.h}))
+		lines := strings.Split(out, "\n")
+		// lines[len-1] is the keys footer, lines[len-2] its rule; the row above
+		// those is the child's newest output line.
+		if last := lines[len(lines)-3]; strings.TrimSpace(last) == "" {
+			t.Errorf("%dx%d: attached output does not reach the floor, bottom row is blank", g.w, g.h)
+		}
+	}
+}

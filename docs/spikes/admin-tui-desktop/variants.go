@@ -669,21 +669,33 @@ func outLine(l string, w int) string {
 // The child's own pinned footer renders inside it, because from the child's
 // point of view the pty IS its terminal — that is what keeps one footer
 // implementation instead of two.
+// attachCrumb is the row the tab bar gives up while attached: what you are
+// attached to, and the absolute log path, on one line. The path lives HERE
+// rather than in a footer under the output — a child's output is what scrolls,
+// so anything pinned beneath it either floats in dead space when the output is
+// short or gets pushed off when it is long. At the top it is neither.
+func attachCrumb(lr *liveRow, w int) string {
+	if lr == nil {
+		return Pad(" "+dim.Render("attached"), w)
+	}
+	left := " " + cy.Render("attached") + dim.Render("  ·  ") +
+		liveStyle[lr.state].Render(liveGlyph(lr)) + " " + bo.Render(lr.id) +
+		dim.Render("  ·  "+lr.state+"  ·  "+lr.elapsed)
+	right := dim.Render(fitPath(lr.logPath, maxInt(w/2, 20))) + " "
+	gap := maxInt(w-VW(left)-VW(right), 1)
+	return Pad(left+strings.Repeat(" ", gap)+right, w)
+}
+
 func hostedBody(w, h int, empty bool, lr *liveRow) []string {
 	// The header states what the process is actually doing, and the output below
 	// has to agree — so it is read off the row actually attached to, not written
 	// out here. Attaching to a different row has to show that row or the view is
 	// a picture of one process wearing another's name.
-	name, state, el, doing := "test", "waiting", "0m38s", "Enter a number, or q to cancel:"
-	glyph, gStyle := "◐", yl
-	if lr != nil {
-		name, state, el, doing = lr.id, lr.state, lr.elapsed, lr.doing
-		glyph, gStyle = liveGlyph(lr), liveStyle[lr.state]
-	}
-	out := []string{
-		" " + gStyle.Render(glyph) + " " + bo.Render(name) + dim.Render("  ·  "+state+"  ·  "+el+"  ·  ") + doing,
-		dim.Render(strings.Repeat("╌", w)),
-	}
+	// Identity and log path are on the breadcrumb row above (attachCrumb), so
+	// this is the rule and then the child's own screen, nothing else. Whatever
+	// the process is doing right now is the last line of its output — printing
+	// it again in a header said the same thing twice.
+	out := []string{dim.Render(strings.Repeat("╌", w))}
 	if empty {
 		return append(out, "", " "+dim.Render("waiting for output…"))
 	}
@@ -691,24 +703,19 @@ func hostedBody(w, h int, empty bool, lr *liveRow) []string {
 	if lr != nil && len(lr.tail) > 0 {
 		body = lr.tail
 	}
-	// The child's footer is not optional chrome — it is the log path. Reserve
-	// its rows first and let the output scroll, rather than letting it fall off.
-	if n := h - len(out) - 3; n > 0 && n < len(body) {
-		body = body[len(body)-n:]
+	// The child owns every row from the rule to the floor. Its newest line sits
+	// at the bottom, where a terminal puts it, so the output does not float in
+	// the middle of a tall screen with dead space beneath it.
+	avail := maxInt(h-len(out), 1)
+	if len(body) > avail {
+		body = body[len(body)-avail:]
+	}
+	for i := 0; i < avail-len(body); i++ {
+		out = append(out, Pad("", w))
 	}
 	for _, l := range body {
 		out = append(out, " "+outLine(l, w-2))
 	}
-	// The child's own pinned footer: its name, its elapsed, and the absolute log
-	// path — all read off the attached row, same as the header above.
-	logPath := root + "/.admin/logs/test-gate.log"
-	if lr != nil && lr.logPath != "" {
-		logPath = lr.logPath
-	}
-	rule := "─── " + name + " "
-	out = append(out, "",
-		" "+dim.Render(rule+strings.Repeat("─", maxInt(0, w-VW(rule)-VW(el)-10))+" "+el+" ───"),
-		" "+dim.Render("log")+"  "+cy.Render(fitPath(logPath, maxInt(w-8, 8))))
 	return out
 }
 
@@ -1602,7 +1609,15 @@ func render(s State) string {
 	// actually compares against (the body height, after the header/tab/rule
 	// rows are subtracted) — not the raw terminal height — or the number on
 	// screen would lie about what the code just decided.
-	rows := []string{header(w, h-5, src), tabBar(sp, w, s.Get("tracker")), ""}
+	// Attached, the tab bar is replaced by the attach breadcrumb: you cannot
+	// switch tabs from inside a process's own terminal (every keystroke belongs
+	// to the child), so a row of tabs there advertises navigation that does not
+	// work. The breadcrumb spends that row saying what you are attached to.
+	second := tabBar(sp, w, s.Get("tracker"))
+	if sp.hosted {
+		second = attachCrumb(attachedFor(name), w)
+	}
+	rows := []string{header(w, h-5, src), second, ""}
 	if _, ok := embedded[name]; ok {
 		// repo-dash draws its own rule and footer for these — including the
 		// modal footers, which are the mode.

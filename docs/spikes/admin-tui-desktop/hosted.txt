@@ -1,8 +1,21 @@
  beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
-  Work 12    Repo    Beads 227    Config                                                        
+ attached  ·  ◐ test gate  ·  waiting  ·  12s                /Users/…/.admin/logs/test-gate.log 
                                                                                                 
- ◐ test gate  ·  waiting  ·  12s  ·  Enter a number, or q to cancel:                            
 ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
  tests/test_frame.py ..........................      [ 47%]                                     
  tests/test_guards.py .................              [ 61%]                                     
  tests/test_interp.py ......................         [ 78%]                                     
@@ -13,18 +26,5 @@
                                                                                                 
  multi-target: pick a target                                                                    
    1) all   2) py   3) shell                                                                    
-                                                                                                
- ─── test gate ───────────────────────────────────────────────────────────────────── 12s ───    
- log  /Users/pierce/Projects/admin-project-tool/.admin/logs/test-gate.log                       
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
 ────────────────────────────────────────────────────────────────────────────────────────────────
  q/esc detach · ↑↓ scroll · x kill · typing goes to the process                                 
