@@ -1,30 +1,30 @@
- beads-repo   main  ✔ clean                                                                live 
+ beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
   Repo    Beads 227    Config                                                                   
                                                                                                 
-┌─ Branches ─────────────⇅ next action   ● yours 0   14 ┐ ┌─ Recent commits ────────────────40 ┐
-│◆ main                                               3m│ │ eddf754   docs(spikes): resto…   3m│
-│                                                       │ │ 6504c65   Revert "Merge feat/…   8m│
-│ Reviewing  ── piercermcbride ──────────────────────  3│ │ e9d29cc   Merge fix/admin-jdb…  29m│
-│◇ feat/adm… local only     3 unpushed · ac…   held   5h│ │ cb0d633   fix(frame): erase f…  31m│
-│   ↳ commit docs(tui): de…                             │ │ 3faa673   Merge feat/admin-3r…  34m│
-│◇ diagnose… local only     1 unpushed         held   5d│ │ 795517c   feat(tui): port wor…  35m│
-│   ↳ commit fix(tui): ext…                             │ │ a8d3471   chore(beads): the p…   2h│
-│· feat/dev…                                   keep   6d│ │ 7b63837   docs(spikes): merge…   2h│
-│   ↳ commit feat(apple): …                             │ │ 0bbb9fd   Merge fix/admin-0tx…   7h│
-│                                                       │ │ 4239f04   fix(frame): re-esta…   7h│
-│ Clean Up  ── merged · ready ──────────────────────  10│ │ e258145   Merge fix/admin-byv…   9h│
-│? task/admin-krvc.4-footer-default                   5d│ │ 9a7dbd3   fix(reload): share …   9h│
-│◇ spike/work-tab-redesign                            5d│ │ 44416b5   chore(beads): expor…   9h│
-│◇ admin/ascapi-token-cache                           5d│ │ e163380   Merge fix/cnxv-1-no…  23h│
-│◇ feat/admin-j5ep-timing                             6d│ │ 841abb4   fix(populate): name…  23h│
-│? fix/admin-m6m8-cli-detach                          6d│ │ 8292783   feat(kinds): honor …  23h│
-│? fix-shell-cwd                                      6d│ │ ce60f5e   fix(config): resolv…  23h│
-│◇ admin-fy79-dashboard-beads-poll-piles-up           8d│ │ bdce50c   fix(git): resolve t…  23h│
-│? tui-sort-priority                                  8d│ │ 2fe637a   fix(tui): stop capp…  23h│
-│? n5vg-submenu-collapse                              8d│ │ dca1269   fix(tui): stop host…  23h│
-│? wihc-tracker-sort-cycle                            8d│ │ c3cc630   Merge fix/admin-53w…  24h│
-│                                                       │ │ ↓ 18 more                          │
-│                                                       │ └────────────────────────────────────┘
+┌─ Branches ─────────────⇅ next action   ● yours 0   17 ┐ ┌─ Recent commits ────────────────40 ┐
+│◆ main                       unpushed                2h│ │ 230ed45   Merge fix/tlhw.10-p…   2h│
+│                                                       │ │ ba4052d   Merge docs/tlhw.7-s…   2h│
+│ Continue Working  ── active · held ────────────────  3│ │ 05ec2af   fix(interp): drop d…   2h│
+│◇ fix/tlhw.10-pre-kill-python-interp                 2h│ │ 77149c2   docs(spikes): answe…   2h│
+│◇ docs/tlhw.7-spike-thin-binary                      2h│ │ fe00d15   chore(beads): stop …   2h│
+│◇ docs/tlhw.9-adr-0019-shape-1-fixed                 2h│ │ 3590fc1   chore(beads): stop …   2h│
+│                                                       │ │ 69a7129   docs(spikes): roll …   4h│
+│ Reviewing  ── piercermcbride ──────────────────────  3│ │ eddf754   docs(spikes): resto…   4h│
+│◇ feat/adm… local only     3 unpushed · ac…   held   9h│ │ 6504c65   Revert "Merge feat/…   4h│
+│   ↳ commit docs(tui): de…                             │ │ e9d29cc   Merge fix/admin-jdb…   4h│
+│◇ diagnose… local only     1 unpushed         held   5d│ │ cb0d633   fix(frame): erase f…   4h│
+│   ↳ commit fix(tui): ext…                             │ │ 3faa673   Merge feat/admin-3r…   4h│
+│· feat/dev…                                   keep   6d│ │ 795517c   feat(tui): port wor…   4h│
+│   ↳ commit feat(apple): …                             │ │ a8d3471   chore(beads): the p…   6h│
+│                                                       │ │ 7b63837   docs(spikes): merge…   6h│
+│ Clean Up  ── merged · ready ──────────────────────  10│ │ 0bbb9fd   Merge fix/admin-0tx…  11h│
+│? task/admin-krvc.4-footer-default                   5d│ │ 4239f04   fix(frame): re-esta…  11h│
+│◇ spike/work-tab-redesign                            5d│ │ e258145   Merge fix/admin-byv…  12h│
+│◇ admin/ascapi-token-cache                           5d│ │ 9a7dbd3   fix(reload): share …  12h│
+│◇ feat/admin-j5ep-timing                             6d│ │ 44416b5   chore(beads): expor…  13h│
+│? fix/admin-m6m8-cli-detach                          6d│ │ e163380   Merge fix/cnxv-1-no…  27h│
+│? fix-shell-cwd                                      6d│ │ ↓ 18 more                          │
+│ ↓ 3 more                                              │ └────────────────────────────────────┘
 └────────────────────────────────────── 10 clean up ⇧X ─┘ ── Stashes ────────────────────────0 ─
 ────────────────────────────────────────────────────────────────────────────────────────────────
  ↑↓ move · ↵ body · ⌥↵/W worktree · w new · x delete · p pull · ⇥ pane · o config · ←→ tab      

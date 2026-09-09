@@ -1,0 +1,30 @@
+ beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
+  Work 12    Repo    Beads 227    Config                                                        
+                                                                                                
+   deploy          multi-target     Deploy a service to production                              
+ ◇ ├ analytics-eng                cd apps && bunx wrangler deploy --target analytics-eng        
+ ◇ ├ chat-moderati…               cd apps && bunx wrangler deploy --target chat-moderation      
+ ◇ ├ hand-reports-…               cd apps && bunx wrangler deploy --target hand-reports-drain   
+ ◇ ├ ios                          cd apps && bunx wrangler deploy --target ios                  
+ ◇ ├ ios-device                   cd apps && bunx wrangler deploy --target ios-device           
+ ◇ ├ mainframe                    cd apps && bunx wrangler deploy --target mainframe            
+ ◇ ├ name-check                   cd apps && bunx wrangler deploy --target name-check           
+ ◇ └ tournament-pr…               cd apps && bunx wrangler deploy --target tournament-proces…   
+   dev             multi-target     Run a local dev server                                      
+ ◇ ├ cf                           cd apps && bunx wrangler dev --target cf                      
+ ◇ └ local                        cd apps && bunx wrangler dev --target local                   
+   logs            multi-target     Tail logs (prod webview client console via Tampermonkey bri 
+ ◇ ├ branch-client                cd apps && bunx wrangler logs --target branch-client          
+ ◇ ├ local-client                 cd apps && bunx wrangler logs --target local-client           
+ ◇ ├ preview-cf                   cd apps && bunx wrangler logs --target preview-cf             
+ ◇ ├ prod-client                  cd apps && bunx wrangler logs --target prod-client            
+ ◇ ├ staging-server               cd apps && bunx wrangler logs --target staging-server         
+ ◇ └ workstream-se…               cd apps && bunx wrangler logs --target workstream-server      
+   kill            multi-target     Kill local dev server processes (local zombies only — never 
+ ◇ ├ all                          cd apps && bunx wrangler kill --target all                    
+ ◇ ├ cf                           cd apps && bunx wrangler kill --target cf                     
+ ◇ ├ local                        cd apps && bunx wrangler kill --target local                  
+ ◇ ├ mainframe                    cd apps && bunx wrangler kill --target mainframe              
+ ◇ └ supabase                     cd apps && bunx wrangler kill --target supabase               
+────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ scroll · / search · esc back to palette                                                     

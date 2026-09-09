@@ -1,4 +1,4 @@
- beads-repo   main  ✔ clean                                                                live 
+ beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
  ◐ test  ·  waiting  ·  0m38s  ·  Enter a number, or q to cancel:                               
@@ -27,4 +27,4 @@
                                                                                                 
                                                                                                 
 ────────────────────────────────────────────────────────────────────────────────────────────────
- q/esc detach · ↑↓ scroll · k kill · typing goes to the process                                 
+ q/esc detach · ↑↓ scroll · x kill · typing goes to the process                                 

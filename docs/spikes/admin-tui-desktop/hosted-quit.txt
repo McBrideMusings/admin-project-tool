@@ -1,30 +1,30 @@
- beads-repo   main  ✔ clean                                                                live 
+ beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
-  Commands                                                     │ test                           
- ◇ ▸ build         multi-tarBuild: mac | ios | tv | server [--…│ sequence  ·  (manifest)        
- ◇ check           shell    Parse and resolve admin.toml       │                                
- ◇ deploy          sequence Install to ~/.admin, provision the…│ log                            
- ◇ docs            running  vitepress dev · localhost:5… hosted│   ~/.admin/logs/test.log       
- ◇ logs            logs     Tail a log target                  │                                
- ◇ retire-merged   workflow Remove worktrees whose branch is m…│ steps                          
- ◆ test          ┌────────────────────────────────────────────────────────────┐                 
-                 │  Quit — 2 processes still running                          │...              
-  Workers        │                                                            │i                
- ◇ admin-3rgp.36 │    running  docs      vitepress dev · localhost:5173       │                 
- ◇ admin-3rgp.7  │    waiting  test      Enter a number, or q to cancel:      │/test_install.sh 
- ◇ admin-3rgp.33 │                                                            │fest)            
-                 │    Workers keep running — they have their own panes.       │                 
-                 │                                                            │                 
-                 │    ⏎ kill them and quit     esc cancel                     │                 
+ ┌─ Command Palette ──────────────────────────────────────────────────────────────────────────┐ 
+ │ / search   b browse all   3 recent                                                         │ 
+ │ ◇ grafana deploy      cd apps && bunx wrangler grafana --target deploy                     │ 
+ │ ◇ dev cf              cd apps && bunx wrangler dev --target cf                             │ 
+ │ ◇ test gate           cd apps && bunx wrangler test --target gate                          │ 
+ └────────────────────────────────────────────────────────────────────────────────────────────┘ 
+                                                                                                
+  Running  2     ┌────────────────────────────────────────────────────────────┐                 
+  ◇ admin docs   │  Quit — 2 processes still running                          │          hosted 
+  ◆ admin test   │                                                            │          hosted 
+                 │    running  docs      vitepress dev · localhost:5173       │                 
+  Workers  3     │    waiting  test      Enter a number, or q to cancel:      │                 
+   ↓ more        │                                                            │                 
+── ◐ admin test  │    Workers keep running — they have their own panes.       │mand · 3 workers 
+ log      /Users/│                                                            │                 
+ url      —      │    ⏎ kill them and quit     esc cancel                     │                 
                  └────────────────────────────────────────────────────────────┘                 
-                                                               │                                
-                                                               │                                
-                                                               │                                
-                                                               │                                
-                                                               │                                
-                                                               │                                
-                                                               │                                
-                                                               │                                
+                                                                                                
+                                                                                                
+14:22:33 [WARN] test tests/test_apple.py::TestIconRender slow (4.1s)                            
+tests/test_manifest.py ...........                  [ 88%]                                      
+tests/test_validate.py .....                                                                    
+                                                                                                
+multi-target: pick a target                                                                     
+  1) all   2) py   3) shell                                                                     
 ────────────────────────────────────────────────────────────────────────────────────────────────
  ⏎ kill them and quit · esc cancel                                                              

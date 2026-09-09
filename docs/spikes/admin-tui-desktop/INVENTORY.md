@@ -1,12 +1,40 @@
 # repo-dash: complete render and capability inventory
 
-Every surface `internal/tui` draws and every key it binds, as of `da92d07`. The prototype
-beside this file must be able to reach all of it — a mode the prototype cannot show is a mode
-the merge can silently drop.
+Every surface `internal/tui` draws and every key it binds. The prototype beside this file must
+be able to reach all of it — a mode the prototype cannot show is a mode the merge can silently
+drop.
+
+**Read `README.md` first: this directory is the design source of truth, not an expiring spike.**
+The Work-tab rows below describe the design the app is being brought to; every other row
+describes what the app draws today, rendered through `internal/tui.Frame`.
 
 Read from the source, not from memory: tabs at `model.go:27`, visibility at `model.go:352`,
 keymap at `view.go:591`, footer states at `view.go:500`, overlay tabs at `beadoverlay.go:24`,
 local panes at `local.go:16`.
+
+## The Work tab
+
+One surface, three states, one band. There is no flat Commands list any more — the palette is
+the Commands surface, and `commands.txt` was deleted with the list it depicted.
+
+| Frame | What it shows |
+| --- | --- |
+| `commands-palette.txt` | Idle: the box with its MRU strip, the live sections, the band on the selected entry |
+| `commands-palette-empty.txt` | Nothing run yet and no workers |
+| `commands-palette-typing.txt` | `/` search, word-by-word candidates, inline ghost suggestion |
+| `commands-palette-browse.txt` | `b`: every command, groups unmarked and unpickable, targets runnable |
+| `commands-workflow-selected.txt` | A workflow entry selected — targets are tracker items, so `↵` dispatches an agent |
+| `running.txt` | The cursor on a live command; the band shows its log, urls and tail |
+| `swarm.txt` | The cursor on a live worker; the band shows log, branch, worktree, session, now, tail |
+| `hosted.txt` / `hosted-empty.txt` | Attached to a hosted pty — full width, the child's own screen |
+| `hosted-quit.txt` | The quit confirm over live children |
+| `dispatch-sheet.txt` | Dispatching from the tracker tab |
+| `no-manifest.txt` | A repo with no `admin.toml` |
+
+**Work-tab keys.** `↑↓`/`jk` move the one combined cursor (box rows, then Running, then
+Workers) · `↵` the row's primary action, following its state · `x` kill · `/` search ·
+`b` browse · `p` back to the palette · `←→`/`⇥` switch tabs · `q`/`esc` quit, or detach while
+attached.
 
 ## Tabs
 

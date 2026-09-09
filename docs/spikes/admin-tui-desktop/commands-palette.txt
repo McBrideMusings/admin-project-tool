@@ -1,0 +1,30 @@
+ beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
+  Work 12    Repo    Beads 227    Config                                                        
+                                                                                                
+ ┌─ Command Palette ──────────────────────────────────────────────────────────────────────────┐ 
+ │ / search   b browse all   3 recent                                                         │ 
+ │ ◆ grafana deploy      cd apps && bunx wrangler grafana --target deploy                     │ 
+ │ ◇ dev cf              cd apps && bunx wrangler dev --target cf                             │ 
+ │ ◇ test gate           cd apps && bunx wrangler test --target gate                          │ 
+ └────────────────────────────────────────────────────────────────────────────────────────────┘ 
+                                                                                                
+  Running  2                                                                                    
+  ◇ admin docs      ● running 4m12s  vitepress dev · localhost:5173                      hosted 
+  ◇ admin test      ◐ waiting 12s    Enter a number, or q to cancel:                     hosted 
+                                                                                                
+  Workers  3                                                                                    
+   ↓ more                                                                                       
+── grafana deploy  not running ──────────────────────────────────── also 2 commands · 3 workers 
+ kind     target of grafana                                                                     
+ runs     cd apps && bunx wrangler grafana --target deploy                                      
+ last run 18m ago · exit 0                                                                      
+ last log /Users/pierce/Projects/admin-project-tool/.admin/logs/grafana-deploy.log              
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+ output appears here while it runs                                                              
+────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ move · ↵ dispatch · / search · b browse · q/esc quit                                        

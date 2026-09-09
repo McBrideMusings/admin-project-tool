@@ -1,30 +1,30 @@
- beads-repo   main  ✔ clean                                                                live 
+ beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
-  Commands                                                     │ retire-merged                  
- ◇ ▸ build         multi-tarBuild: mac | ios | tv | server [--…│ workflow  ·  (manifest)        
- ◇ check           shell    Parse and resolve admin.toml       │                                
- ◇ deploy          sequence Install to ~/.admin, provision the…│ log                            
- ◇ docs            running  vitepress dev · localhost:5… hosted│   ~/.admin/logs/retire-merged.l
- ◇ logs            logs     Tail a log target                  │                                
- ◆ retire-merged   workflow Remove worktrees whose branch is m…│ targets  query · 4             
- ◇ test            waiting  Enter a number, or q to can… hosted│   fix-detector-parity-skip     
-                                                               │   go-transient-kind-factories  
-  Workers                                                      │   docs-adr-lua                 
- ◇ admin-3rgp.36   running  writing internal/lua/host.go pane 3│   launchd-env-file             
- ◇ admin-3rgp.7    waiting  needs input: root command n… pane 4│                                
- ◇ admin-3rgp.33   failed   go test ./internal/detect F… pane 5│                                
-                                                               │                                
-                                                               │                                
-                                                               │                                
-                                                               │                                
-                                                               │                                
-                                                               │                                
-                                                               │                                
-                                                               │                                
-                                                               │                                
-                                                               │                                
-                                                               │                                
-                                                               │                                
+ ┌─ Command Palette ──────────────────────────────────────────────────────────────────────────┐ 
+ │ / retire-merged▏                                                                           │ 
+ │                                                                                            │ 
+ │ ◆ retire-merged docs-adr-lua    dispatch claude over docs-adr-lua                          │ 
+ │ ◇ retire-merged fix-detector-…  dispatch claude over fix-detector-parity-skip              │ 
+ │ ◇ retire-merged go-transient-…  dispatch claude over go-transient-kind-factories           │ 
+ │ ◇ retire-merged launchd-env-f…  dispatch claude over launchd-env-file                      │ 
+ │ 4 matches · tab complete word · ↵ dispatch                                                 │ 
+ └────────────────────────────────────────────────────────────────────────────────────────────┘ 
+                                                                                                
+  Running  2                                                                                    
+  ◇ admin docs      ● running 4m12s  vitepress dev · localhost:5173                      hosted 
+   ↓ more                                                                                       
+── retire-merged docs-adr-lua  not running ──────────────────────── also 2 commands · 3 workers 
+ kind     target of retire-merged                                                               
+ runs     dispatch claude over docs-adr-lua                                                     
+ last run never                                                                                 
+ last log —                                                                                     
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+ output appears here while it runs                                                              
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ run or open · →← submenu · k kill · q/esc quit                                     
+ ↑↓ move · ↵ dispatch · / search · b browse · q/esc quit                                        

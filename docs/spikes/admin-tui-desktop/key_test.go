@@ -42,34 +42,47 @@ func send(m model, k string) model {
 	return out.(model)
 }
 
+// TestArrowsMoveTheCursor drives the combined cursor: the palette box's rows
+// first, then the live sections. The band must follow it — there is no second
+// selector, so a cursor the band ignores is the bug this pins.
 func TestArrowsMoveTheCursor(t *testing.T) {
+	resetPalette()
 	m := newModel()
 	m.w, m.h = 120, 40
-	if got := m.state().Get("screen"); got != "commands" {
-		t.Fatalf("start screen = %q, want commands", got)
+	if got := m.state().Get("screen"); got != "commands-palette" {
+		t.Fatalf("start screen = %q, want commands-palette", got)
 	}
-	// The commands screen starts on deploy (index 2), so one down is docs and
-	// two is logs. The reader must follow the cursor, not just the marker.
-	m = send(m, "down")
-	if v := m.View(); !strings.Contains(v, "◆ docs") {
-		t.Errorf("one down from deploy did not land on docs")
+	if len(paletteMRU) < 2 {
+		t.Fatal("fixture has fewer than two MRU rows to move between")
 	}
 	m = send(m, "down")
-	v := m.View()
-	if !strings.Contains(v, "◆ logs") {
-		t.Errorf("two downs from deploy did not land on logs")
+	if v := Strip(m.View()); !strings.Contains(v, "◆ "+paletteMRU[1]) {
+		t.Errorf("one down did not land on %q", paletteMRU[1])
 	}
-	if !strings.Contains(v, "admin logs dev") {
-		t.Errorf("the reader pane did not follow the cursor to logs")
+	// Past the box, the cursor enters the live sections and the band switches
+	// from an entry's detail to a live row's own fields.
+	for i := 0; i < len(paletteMRU); i++ {
+		m = send(m, "down")
+	}
+	v := Strip(m.View())
+	if !strings.Contains(v, "log      /") {
+		t.Errorf("the band did not follow the cursor into the live sections:\n%s", v)
 	}
 }
 
 func TestUpWrapsBackwards(t *testing.T) {
+	resetPalette()
+	resetLiveRows()
+	defer resetLiveRows()
 	m := newModel()
 	m.w, m.h = 120, 40
-	m = send(m, "up") // deploy -> check
-	if v := m.View(); !strings.Contains(v, "◆ check") {
-		t.Errorf("up from deploy did not land on check")
+	m = send(m, "up") // from the box's first row, wrap to the last live row
+	last := liveSectionRows(false)
+	if len(last) == 0 {
+		t.Fatal("no live rows to wrap onto")
+	}
+	if v := Strip(m.View()); !strings.Contains(v, "◆ "+last[len(last)-1].id) {
+		t.Errorf("up from the first box row did not wrap onto the last live row %q", last[len(last)-1].id)
 	}
 }
 
@@ -197,6 +210,113 @@ func TestFixtureTabSetsAreWhatTheDigitKeysAssume(t *testing.T) {
 			if strings.Contains(tabRow, excl) {
 				t.Errorf("%s: tab bar %q unexpectedly drew %q — digit keys would mis-index", c.axis, tabRow, excl)
 			}
+		}
+	}
+}
+
+// TestPaletteDispatchRendersATail pins the fixture shape a palette-dispatched
+// row must have: the same shape as the hosted docs/test fixtures (hasRing, a
+// real tail), not the bare state/id/doing row it used to append. Without it the
+// band is dead on the one row a person just dispatched is most likely to be
+// looking at.
+func TestPaletteDispatchRendersATail(t *testing.T) {
+	resetLiveRows()
+	defer resetLiveRows()
+
+	e := paletteEntry{parent: "dev", target: "cf", run: "bun run dev:cf"}
+	dispatchPalette(e)
+
+	var got *liveRow
+	for i := range liveRows {
+		if liveRows[i].cmd == "" && liveRows[i].id == e.resolved() {
+			got = &liveRows[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("dispatchPalette did not append a live row for %q", e.resolved())
+	}
+	if !got.hasRing {
+		t.Fatalf("dispatched row %q has hasRing=false", got.id)
+	}
+	if len(got.tail) == 0 {
+		t.Fatalf("dispatched row %q has hasRing=true but an empty tail", got.id)
+	}
+	out := Strip(strings.Join(tailLines(got.tail, 6, 60), "\n"))
+	if !strings.Contains(out, strings.TrimSpace(got.tail[len(got.tail)-1])) {
+		t.Errorf("the band did not render the dispatched row's newest tail line:\n%s", out)
+	}
+}
+
+// TestBandReachesFloor replaces the old bottomOrient test: the two-orientation
+// switch is gone, so the invariant is no longer "the stacked band reaches the
+// floor" but "the band's last row is real content at every geometry". 117x59 is
+// the tall, narrow terminal the old layout wasted ~29 rows on.
+func TestBandReachesFloor(t *testing.T) {
+	for _, g := range []struct{ w, h int }{{117, 59}, {96, 30}, {200, 50}, {80, 24}} {
+		out := Strip(render(State{Values: map[string]string{"screen": "swarm"}, W: g.w, H: g.h}))
+		lines := strings.Split(out, "\n")
+		if len(lines) != g.h {
+			t.Fatalf("%dx%d: got %d lines, want %d", g.w, g.h, len(lines), g.h)
+		}
+		// lines[len-1] is render's keys footer and lines[len-2] its rule; the
+		// row before those is the band's own last output row.
+		if last := lines[len(lines)-3]; strings.TrimSpace(last) == "" {
+			t.Errorf("%dx%d: band's bottom row is blank, so it did not reach the floor", g.w, g.h)
+		}
+	}
+}
+
+// TestBandDoesNotShift is the invariant the fixed field slot exists for: moving
+// the cursor between things in different states must not move any row of the
+// band. The eye reads motion as meaning, and a block that grew a row for an
+// entry that had actually been run once slid everything below it down and
+// claimed a state change that had not happened.
+func TestBandDoesNotShift(t *testing.T) {
+	if n := len(bandIdle(&paletteEntry{parent: "dev", target: "cf", run: "bun run dev:cf"}, 60)); n != fieldRowsH {
+		t.Errorf("bandIdle for a never-run entry is %d rows, want exactly %d", n, fieldRowsH)
+	}
+	ran := paletteEntry{}
+	for _, e := range paletteEntries {
+		if len(paletteMRU) > 0 && e.resolved() == paletteMRU[0] {
+			ran = e
+		}
+	}
+	if ran.parent == "" {
+		t.Fatal("no MRU entry to test the has-run shape against")
+	}
+	if n := len(bandIdle(&ran, 60)); n != fieldRowsH {
+		t.Errorf("bandIdle for an entry that HAS run is %d rows, want exactly %d", n, fieldRowsH)
+	}
+	resetLiveRows()
+	defer resetLiveRows()
+	for i := range liveRows {
+		if n := len(bandFields(&liveRows[i], 60)); n != fieldRowsH {
+			t.Errorf("bandFields for %q is %d rows, want exactly %d", liveRows[i].id, n, fieldRowsH)
+		}
+	}
+
+	// And the rule itself lands on the same line whatever the cursor is on.
+	want := -1
+	for _, screen := range []string{"commands-palette", "running", "swarm"} {
+		resetPalette()
+		out := Strip(render(State{Values: map[string]string{"screen": screen}, W: 120, H: 40}))
+		lines := strings.Split(out, "\n")
+		got := -1
+		for i, l := range lines {
+			if strings.HasPrefix(l, "── ") {
+				got = i
+				break
+			}
+		}
+		if got < 0 {
+			t.Fatalf("%s: no band title rule found", screen)
+		}
+		if want < 0 {
+			want = got
+			continue
+		}
+		if got != want {
+			t.Errorf("%s: band title rule on line %d, want %d — the band moved with the cursor", screen, got, want)
 		}
 	}
 }
