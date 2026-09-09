@@ -41,6 +41,7 @@ alternatives are deleted, and the frames depict the answer:
 | What does `↵` do? | **The row's one primary action, following its state:** attach while it runs, dispatch while it does not, open the transcript of a worker that has finished. |
 | Where is kill bound? | **`x`.** `k` is cursor-up everywhere in this dashboard, so a footer advertising `k kill` was a collision. |
 | Are workers commands? | **No.** Separate section, own state words, own fields (branch, worktree, session), own verbs. |
+| Does a running command get a second row? | **No.** It is the row it always was, wearing its state in the columns the grid already reserves. A Running section under its own heading said the same thing twice. |
 
 Two rules everything on the Work tab obeys:
 

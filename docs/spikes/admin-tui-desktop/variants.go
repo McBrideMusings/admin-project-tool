@@ -681,8 +681,8 @@ func attachCrumb(lr *liveRow, w int) string {
 	left := " " + cy.Render("attached") + dim.Render("  ·  ") +
 		liveStyle[lr.state].Render(liveGlyph(lr)) + " " + bo.Render(lr.id) +
 		dim.Render("  ·  "+lr.state+"  ·  "+lr.elapsed)
-	right := dim.Render(fitPath(lr.logPath, maxInt(w/2, 20))) + " "
-	gap := maxInt(w-VW(left)-VW(right), 1)
+	right := dim.Render(fitPath(lr.logPath, maxInt(w-VW(Strip(left))-3, 20))) + " "
+	gap := maxInt(w-VW(Strip(left))-VW(Strip(right)), 1)
 	return Pad(left+strings.Repeat(" ", gap)+right, w)
 }
 
@@ -971,7 +971,10 @@ func killLiveRow(id string) {
 // liveForEntry is the live row this Commands entry currently IS, if it is
 // running. One lookup, so the Commands row's state word, the band's preview
 // and the cursor can never disagree about whether a command is live.
-func liveForEntry(e commandEntry) *liveRow {
+func liveForEntry(e commandEntry, empty bool) *liveRow {
+	if empty {
+		return nil
+	}
 	for i := range liveRows {
 		if liveRows[i].cmd == e.parent && liveRows[i].target == e.target {
 			return &liveRows[i]
@@ -1032,7 +1035,10 @@ func attachedFor(screen string) *liveRow {
 	if attachedRow != nil {
 		return attachedRow
 	}
-	rows := liveSectionRows(false)
+	var rows []*liveRow
+	for i := range liveRows {
+		rows = append(rows, &liveRows[i])
+	}
 	if sp, ok := screens[screen]; ok && sp.liveSel >= 0 && sp.liveSel < len(rows) {
 		return rows[sp.liveSel]
 	}
@@ -1045,7 +1051,7 @@ func attachedFor(screen string) *liveRow {
 func cursorLive() *liveRow {
 	cmds := selectableCommands()
 	if cmdCursor < len(cmds) {
-		return liveForEntry(cmds[cmdCursor])
+		return liveForEntry(cmds[cmdCursor], false)
 	}
 	rows := liveSectionRows(false)
 	if i := cmdCursor - len(cmds); i >= 0 && i < len(rows) {
@@ -1119,45 +1125,67 @@ func plural(n int) string {
 // renders with NO marker — it is a heading over its targets and runs nothing
 // itself, so the cursor cannot land on it and nothing here promises ↵ will run
 // it. The names still start in the same column, so the tree stays aligned.
-func commandRowLine(e commandEntry, sel bool, w int) string {
+func commandRowLine(e commandEntry, sel bool, w int, empty bool) string {
+	// Every row is the same grid: marker, name, then the state+elapsed columns,
+	// then one free column. What fills the last two is what differs — a running
+	// row spends them on state and activity, an idle one on kind and desc, a
+	// target on its run line.
+	rest := maxInt(w-wMarker-wName-wState-wElapsed-1, 6)
+
 	if e.group {
 		p := parentOf(e.parent)
-		desc := trunc(p.desc, maxInt(6, w-wName-wState-wElapsed-4))
 		// Two leading spaces where a runnable row has "◇ ": the marker column is
-		// what says the cursor can be here.
-		return Pad("  "+bo.Render(Pad(p.name, wName))+dim.Render(Pad(p.kind, wState+wElapsed)+desc), w)
+		// what says the cursor can be here, and a group runs nothing itself.
+		return Pad("   "+bo.Render(Pad(p.name, wName))+
+			dim.Render(Pad(kindLabel(p.kind), wState+wElapsed)+trunc(p.desc, rest)), w)
 	}
-	marker, name := dim.Render("◇ "), Pad(trunc(e.label(), wName), wName)
+
+	marker, name := dim.Render("◇ "), Pad(trunc(e.label(), wName-VW(Strip(e.connector()))), wName-VW(Strip(e.connector())))
 	if sel {
-		marker, name = cy.Render("◆ "), cy.Render(Pad(trunc(e.label(), wName), wName))
+		marker = cy.Render("◆ ")
+		name = cy.Render(name)
 	}
-	// A running command says so HERE, in the state and elapsed columns the row
-	// grid already reserves — the same columns a live row uses, so a command
-	// that is running lines up with the Running section below it instead of
-	// looking like a different kind of thing.
-	if lr := liveForEntry(e); lr != nil {
-		state := liveStyle[lr.state].Render(Pad(liveGlyph(lr)+" "+lr.state, wState))
-		elapsed := dim.Render(Pad(lr.elapsed, wElapsed))
-		actW := maxInt(w-wMarker-wName-wState-wElapsed-1, 4)
-		return Pad(" "+marker+e.connector()+name+state+elapsed+dim.Render(trunc(lr.doing, actW)), w)
+	head := " " + marker + e.connector() + name
+
+	// A running command says so HERE, on its own row, in the columns the grid
+	// already reserves. There is no separate Running section: a command that is
+	// running is the same row it always was, wearing its state.
+	if lr := liveForEntry(e, empty); lr != nil {
+		return Pad(head+
+			liveStyle[lr.state].Render(Pad(liveGlyph(lr)+" "+lr.state, wState))+
+			dim.Render(Pad(lr.elapsed, wElapsed))+
+			dim.Render(trunc(lr.doing, rest)), w)
 	}
-	run := trunc(e.run, maxInt(6, w-wMarker-wName-wState-wElapsed-1))
-	return Pad(" "+marker+e.connector()+name+dim.Render(Pad("", wState+wElapsed-2)+run), w)
+	// A target says what it will run; a flat command says its kind and what it
+	// is for, because it has no parent heading above it carrying that already.
+	if e.target != "" {
+		return Pad(head+dim.Render(Pad("", wState+wElapsed)+trunc(e.run, rest)), w)
+	}
+	p := parentOf(e.parent)
+	return Pad(head+dim.Render(Pad(kindLabel(p.kind), wState+wElapsed)+trunc(p.desc, rest)), w)
+}
+
+// kindLabel abbreviates the one kind whose name does not fit the column.
+func kindLabel(k string) string {
+	if k == "multi-target" {
+		return "multi-tgt"
+	}
+	return k
 }
 
 // commandSections is the Commands list above the live sections: every declared
 // command, groups and their targets, under the same cursor the live rows use.
 // selIdx is the cursor's own 0-based position among the SELECTABLE rows, -1
 // once the selection has moved down into the live sections.
-func commandSections(w, selIdx int) []string {
+func commandSections(w, selIdx int, empty bool) []string {
 	out := []string{Pad(" "+bo.Render("Commands")+dim.Render("  "+itoa(len(commandEntries))), w)}
 	sel := 0
 	for _, e := range commandRows() {
 		if e.group {
-			out = append(out, commandRowLine(e, false, w))
+			out = append(out, commandRowLine(e, false, w, empty))
 			continue
 		}
-		out = append(out, commandRowLine(e, sel == selIdx, w))
+		out = append(out, commandRowLine(e, sel == selIdx, w, empty))
 		sel++
 	}
 	return out
@@ -1333,36 +1361,19 @@ func liveRowLine(lr *liveRow, sel bool, w int) string {
 //
 // selIdx is the combined cursor's own 0-based position within these sections,
 // -1 while the selection is still up in the box.
+// liveSections is the Workers section under the Commands list. There is no
+// Running section: a running COMMAND is its own row in the list above, wearing
+// its state, so a second row for it under a different heading said the same
+// thing twice. A worker is not a command — its own section, its own state
+// words, its own fields — so it keeps one.
 func liveSections(w, selIdx int, empty bool) []string {
 	rows := liveSectionRows(empty)
-	out := []string{Pad("", w)}
-	i := 0
-	wroteWorkers := false
-	nCmd, nWk := 0, 0
-	for _, lr := range rows {
-		if isWorkerRow(lr) {
-			nWk++
-		} else {
-			nCmd++
-		}
-	}
-	if nCmd > 0 {
-		out = append(out, Pad(" "+bo.Render("Running")+dim.Render("  "+itoa(nCmd)), w))
-	}
-	for _, lr := range rows {
-		if isWorkerRow(lr) && !wroteWorkers {
-			out = append(out, Pad("", w), Pad(" "+bo.Render("Workers")+dim.Render("  "+itoa(nWk)), w))
-			wroteWorkers = true
-		}
-		out = append(out, liveRowLine(lr, i == selIdx, w))
-		i++
-	}
-	if !wroteWorkers {
-		out = append(out, Pad("", w), Pad(" "+bo.Render("Workers")+dim.Render("  0"), w),
-			Pad(" "+dim.Render("no workers running — dispatch a bead from the tracker tab"), w))
-	}
+	out := []string{Pad("", w), Pad(" "+bo.Render("Workers")+dim.Render("  "+itoa(len(rows))), w)}
 	if len(rows) == 0 {
-		out = append(out, Pad(" "+dim.Render("nothing running"), w))
+		return append(out, Pad(" "+dim.Render("no workers running — dispatch a bead from the tracker tab"), w))
+	}
+	for i, lr := range rows {
+		out = append(out, liveRowLine(lr, i == selIdx, w))
 	}
 	return out
 }
@@ -1370,26 +1381,31 @@ func liveSections(w, selIdx int, empty bool) []string {
 // liveSectionRows is every live row in the order the sections draw them:
 // commands, then workers. One order, used by the sections, the cursor and the
 // band's own "also running" count, so the three can never disagree.
+// liveSectionRows is every row the Workers section draws. Live COMMANDS are not
+// here — they render in the Commands list on their own row — so this is the one
+// order the section, the cursor and the band's "also running" count all read.
 func liveSectionRows(empty bool) []*liveRow {
 	if empty {
 		return nil
 	}
-	var cmds, wks []*liveRow
+	var wks []*liveRow
 	for i := range liveRows {
-		lr := &liveRows[i]
-		if isWorkerRow(lr) {
+		if lr := &liveRows[i]; isWorkerRow(lr) {
 			wks = append(wks, lr)
-		} else {
-			cmds = append(cmds, lr)
 		}
 	}
-	return append(cmds, wks...)
+	return wks
 }
 
 // othersRunning is the right half of the band's title rule: how much is running
 // that you are NOT looking at. Said once per screen, never once per row.
 func othersRunning(sel *liveRow, empty bool) string {
-	rows := liveSectionRows(empty)
+	var rows []*liveRow
+	if !empty {
+		for i := range liveRows {
+			rows = append(rows, &liveRows[i])
+		}
+	}
 	if len(rows) == 0 {
 		return "nothing running"
 	}
@@ -1433,16 +1449,26 @@ func bandTitle(w int, sel *liveRow, idle string, empty bool) string {
 		title = bo.Render(idle) + dim.Render("  not running")
 	}
 	right := othersRunning(sel, empty)
-	room := w - 4
-	if room-VW(right)-4 < VW(Strip(title)) && room-VW(right)-4 < 28 {
+	// Budget: "── " + title + " " + fill + suffix + " ──" = w, so the dashes are
+	// whatever is left after everything with a fixed width. The identity wins
+	// the space — on a narrow terminal the count drops rather than squeezing
+	// the name it is a footnote to.
+	const fixed = 7 // "── ", the space after the title, and " ──"
+	if w-fixed-VW(right)-1 < VW(Strip(title)) && w-fixed-VW(right)-1 < 28 {
 		right = ""
 	}
-	title = trunc(title, maxInt(room-VW(right)-4, 8))
 	suffix := ""
 	if right != "" {
 		suffix = " " + right
 	}
-	fill := maxInt(room-VW(Strip(title))-VW(suffix)-1, 0)
+	// trunc counts raw bytes, and title carries color escapes, so cutting it
+	// unconditionally spent the budget on invisible characters and clipped a
+	// name that fits. Only cut when the VISIBLE width is actually over.
+	budget := maxInt(w-fixed-VW(suffix), 8)
+	if VW(Strip(title)) > budget {
+		title = trunc(title, budget)
+	}
+	fill := maxInt(w-fixed-VW(Strip(title))-VW(suffix), 0)
 	return dim.Render("── ") + title + dim.Render(" "+strings.Repeat("─", fill)+suffix+" ──")
 }
 
@@ -1491,20 +1517,17 @@ func bandIdle(e *commandEntry, w int) []string {
 			lastLog = root + "/.admin/logs/" + strings.ReplaceAll(e.resolved(), " ", "-") + ".log"
 		}
 	}
-	out := []string{
-		" " + dim.Render(Pad("kind", 9)) + trunc(kind, lw),
-		" " + dim.Render(Pad("desc", 9)) + trunc(p.desc, lw),
-	}
+	lastRun := "never"
+	logCell := dim.Render("—")
 	if lastLog != "" {
-		out = append(out,
-			" "+dim.Render(Pad("last log", 9))+dim.Render(fitPath(lastLog, lw)),
-			" "+dim.Render(Pad("", 9))+dim.Render("18m ago · exit 0"),
-		)
-	} else {
-		out = append(out, " "+dim.Render(Pad("last log", 9))+dim.Render("never run"))
+		lastRun, logCell = "18m ago · exit 0", dim.Render(fitPath(lastLog, lw))
 	}
-	out = append(out, "", " "+dim.Render("↵ run")+dim.Render("   l last log"))
-	return slotRows(out, w)
+	return slotRows([]string{
+		" " + dim.Render(Pad("kind", 9)) + trunc(kindLabel(kind), lw),
+		" " + dim.Render(Pad("desc", 9)) + trunc(p.desc, lw),
+		" " + dim.Render(Pad("last run", 9)) + dim.Render(lastRun),
+		" " + dim.Render(Pad("last log", 9)) + logCell,
+	}, w)
 }
 
 // renderWorkBody is the whole Work tab: the palette box and the live sections
@@ -1518,7 +1541,7 @@ func renderWorkBody(w, h int, cmdSelIdx int, selEntry *commandEntry, selWorker *
 	// The window is taken over the whole thing rather than per section, so a
 	// long command list scrolls its own rows off rather than pushing Workers
 	// out of the body entirely.
-	list := append(commandSections(fullW, cmdSelIdx), liveSections(fullW, workerSelIdx, empty)...)
+	list := append(commandSections(fullW, cmdSelIdx, empty), liveSections(fullW, workerSelIdx, empty)...)
 	if len(list) > listH {
 		start, end := scrollWindow(len(list), markedIdx(list), listH)
 		win := append([]string{}, list[start:end]...)
@@ -1530,14 +1553,17 @@ func renderWorkBody(w, h int, cmdSelIdx int, selEntry *commandEntry, selWorker *
 			win[0] = Pad(" "+sectionHeaderAt(list, start)+dim.Render("   ↑ "+itoa(start)+" more"), fullW)
 		}
 		if end < len(list) && len(win) > 0 {
-			win[len(win)-1] = dim.Render("  ↓ more")
+			win[len(win)-1] = dim.Render("   ↓ more")
 		}
 		list = win
 	}
 
+	// Each row already carries its own single leading space, so nothing is added
+	// here — a second one put the whole list one column right of the band's
+	// rules and fields beneath it.
 	out := make([]string, 0, h)
 	for i := 0; i < listH; i++ {
-		out = append(out, " "+Pad(at(list, i), fullW))
+		out = append(out, Pad(at(list, i), w))
 	}
 
 	idleName := ""
@@ -1549,7 +1575,7 @@ func renderWorkBody(w, h int, cmdSelIdx int, selEntry *commandEntry, selWorker *
 	case selWorker != nil:
 		fields := bandFields(selWorker, fullW)
 		out = append(out, prefixRows(fields, fullW)...)
-		out = append(out, prefixRows(tailLines(selWorker.tail, maxInt(bh-1-fieldRowsH, 1), fullW), fullW)...)
+		out = append(out, insetRows(tailLines(selWorker.tail, maxInt(bh-1-fieldRowsH, 1), fullW-1), w)...)
 	case selEntry != nil:
 		out = append(out, prefixRows(bandIdle(selEntry, fullW), fullW)...)
 		out = append(out, blankRows(w, maxInt(bh-2-fieldRowsH, 0))...)
@@ -1578,6 +1604,17 @@ func sectionHeaderAt(sections []string, i int) string {
 	return bo.Render("Commands")
 }
 
+// insetRows puts a band block in the same one-column inset the band's own
+// fields use. The tail was flush at column 0 while the fields above it were
+// not, so the block read as two different panes.
+func insetRows(rows []string, w int) []string {
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = Pad(" "+r, w)
+	}
+	return out
+}
+
 func prefixRows(rows []string, w int) []string {
 	out := make([]string, len(rows))
 	for i, r := range rows {
@@ -1599,7 +1636,10 @@ func render(s State) string {
 		name = "commands"
 	}
 	sp := screens[name]
-	empty := s.Is("data", "empty")
+	// The empty screen depicts a project with nothing running and no workers.
+	// The data axis says the same thing but is NoDump, so without the name check
+	// the dumped frame was byte-identical to the populated one.
+	empty := s.Is("data", "empty") || name == "commands-empty"
 	tracker := s.Get("tracker")
 	if tracker == "" {
 		tracker = "beads"
@@ -1651,7 +1691,7 @@ func render(s State) string {
 				// A Commands row for a command that is RUNNING previews the
 				// running thing, not a description of it. The band follows the
 				// row's state, the same rule ↵ follows.
-				if lr := liveForEntry(cmds[cursor]); lr != nil {
+				if lr := liveForEntry(cmds[cursor], empty); lr != nil {
 					selLive, selEntry = lr, nil
 				}
 			case cursor-len(cmds) < len(rowsLive):

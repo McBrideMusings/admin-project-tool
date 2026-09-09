@@ -1,5 +1,5 @@
  beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
- attached  ·  ◐ test gate  ·  waiting  ·  12s                /Users/…/.admin/logs/test-gate.log 
+ attached  ·  ◐ admin-3rgp.7  ·  waiting  ·  6m    /Users/…/.admin/logs/worker-admin-3rgp.7.log 
                                                                                                 
 ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
                                                                                                 
@@ -16,15 +16,15 @@
                                                                                                 
                                                                                                 
                                                                                                 
- tests/test_frame.py ..........................      [ 47%]                                     
- tests/test_guards.py .................              [ 61%]                                     
- tests/test_interp.py ......................         [ 78%]                                     
- 14:22:31 [DEBUG] test cache hit: archetypes/apple.toml                                         
- 14:22:33 [WARN] test tests/test_apple.py::TestIconRender slow (4.1s)                           
- tests/test_manifest.py ...........                  [ 88%]                                     
- tests/test_validate.py .....                                                                   
+   the manifest declares no top-level command name —                                            
+   every existing project sets one (admin.toml's                                                
+   [identity] or the repo directory name), and this                                             
+   fixture repo has neither.                                                                    
                                                                                                 
- multi-target: pick a target                                                                    
-   1) all   2) py   3) shell                                                                    
+   what should the root command be called? this                                                 
+   decides the CLI verb ("admin <name>") and the                                                
+   dashboard's header line.                                                                     
+                                                                                                
+   needs input: root command name                                                               
 ────────────────────────────────────────────────────────────────────────────────────────────────
  q/esc detach · ↑↓ scroll · x kill · typing goes to the process                                 

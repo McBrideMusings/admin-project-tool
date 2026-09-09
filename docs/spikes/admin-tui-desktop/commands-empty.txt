@@ -1,25 +1,25 @@
  beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
-  Commands  47                                                                                  
-   deploy          multi-target     Deploy a service to production                              
-  ◆ ├ analytics-eng                  cd apps && bunx wrangler deploy --target analytics-eng     
-  ◇ ├ chat-moderation                cd apps && bunx wrangler deploy --target chat-moderation   
-  ◇ ├ hand-reports-dr…               cd apps && bunx wrangler deploy --target hand-reports-dra… 
-  ◇ ├ ios                            cd apps && bunx wrangler deploy --target ios               
-  ◇ ├ ios-device                     cd apps && bunx wrangler deploy --target ios-device        
-  ◇ ├ mainframe                      cd apps && bunx wrangler deploy --target mainframe         
-  ◇ ├ name-check                     cd apps && bunx wrangler deploy --target name-check        
-  ◇ └ tournament-proc…               cd apps && bunx wrangler deploy --target tournament-proce… 
-   dev             multi-target     Run a local dev server                                      
-  ◇ ├ cf              ● running 4m12s  vitepress dev · localhost:5173                           
+ Commands  47                                                                                   
+   deploy          multi-tgt        Deploy a service to production                              
+ ◆ ├ analytics-eng                  cd apps && bunx wrangler deploy --target analytics-eng      
+ ◇ ├ chat-moderati…                 cd apps && bunx wrangler deploy --target chat-moderation    
+ ◇ ├ hand-reports-…                 cd apps && bunx wrangler deploy --target hand-reports-dra…  
+ ◇ ├ ios                            cd apps && bunx wrangler deploy --target ios                
+ ◇ ├ ios-device                     cd apps && bunx wrangler deploy --target ios-device         
+ ◇ ├ mainframe                      cd apps && bunx wrangler deploy --target mainframe          
+ ◇ ├ name-check                     cd apps && bunx wrangler deploy --target name-check         
+ ◇ └ tournament-pr…                 cd apps && bunx wrangler deploy --target tournament-proce…  
+   dev             multi-tgt        Run a local dev server                                      
+ ◇ ├ cf                             cd apps && bunx wrangler dev --target cf                    
    ↓ more                                                                                       
-── deploy analytics-eng  not running ────────────────────────────── also 2 commands · 3 workers 
+── deploy analytics-eng  not running ──────────────────────────────────────── nothing running ──
  kind     target                                                                                
  desc     Deploy a service to production                                                        
- last log never run                                                                             
+ last run never                                                                                 
+ last log —                                                                                     
                                                                                                 
- ↵ run   l last log                                                                             
                                                                                                 
                                                                                                 
                                                                                                 

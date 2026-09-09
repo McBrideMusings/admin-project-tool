@@ -1,5 +1,5 @@
  beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
- attached  ·  ◐ test gate  ·  waiting  ·  12s                /Users/…/.admin/logs/test-gate.log 
+ attached  ·  ◐ admin-3rgp.7  ·  waiting  ·  6m    /Users/…/.admin/logs/worker-admin-3rgp.7.log 
                                                                                                 
 ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
                                                                                                 

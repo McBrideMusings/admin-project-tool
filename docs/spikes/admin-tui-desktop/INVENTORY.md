@@ -14,8 +14,9 @@ local panes at `local.go:16`.
 
 ## The Work tab
 
-One surface, one band. The Commands list, Running and Workers are three sections under one
-cursor, and the band under them previews whatever that cursor is on.
+One surface, one band. Commands and Workers are two sections under one cursor, and the band
+under them previews whatever that cursor is on. There is no Running section: a running command
+is its own row in the Commands list, wearing its state.
 
 | Frame | What it shows |
 | --- | --- |
@@ -23,15 +24,14 @@ cursor, and the band under them previews whatever that cursor is on.
 | `commands-running.txt` | The cursor on a command that IS running — the row carries its state, the band previews its output |
 | `commands-empty.txt` | Nothing running and no workers |
 | `commands-workflow-selected.txt` | A workflow entry selected — targets are tracker items, so `↵` dispatches an agent |
-| `running.txt` | The cursor on a live command; the band shows its log, urls and tail |
+| `running.txt` | The cursor on a live worker; the band shows its log, urls and tail |
 | `swarm.txt` | The cursor on a live worker; the band shows log, branch, worktree, session, now, tail |
 | `hosted.txt` / `hosted-empty.txt` | Attached to a hosted pty — full width, the child's own screen. No tab bar: that row carries the attach breadcrumb and the absolute log path instead |
 | `hosted-quit.txt` | The quit confirm over live children |
 | `dispatch-sheet.txt` | Dispatching from the tracker tab |
 | `no-manifest.txt` | A repo with no `admin.toml` |
 
-**Work-tab keys.** `↑↓`/`jk` move the one combined cursor (Commands, then Running, then
-Workers) · `↵` the row's primary action, following its state · `x` kill · `a` attach ·
+**Work-tab keys.** `↑↓`/`jk` move the one combined cursor (Commands, then Workers) · `↵` the row's primary action, following its state · `x` kill · `a` attach ·
 `p` back to the Commands surface · `←→`/`⇥` switch tabs · `q`/`esc` quit, or detach while
 attached. A multi-target parent is a group row: no marker, and the cursor skips over it.
 
