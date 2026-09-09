@@ -61,20 +61,27 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 	for i, r := range rows {
 		switch r.kind {
 		case rowHeader:
-			// A header carrying a rightSegs entry (Commands' own resolved-
-			// invocation count — work.go's workRows) renders bold label + dim
-			// count, matching the reference frame's "Commands  47"
-			// (docs/spikes/admin-tui-desktop/commands.txt:4); every other
-			// header (Workers) keeps the plain muted form it always had.
+			// A header carrying a rightSegs entry (Commands' and Workers' own
+			// counts — work.go's workRows) renders bold label + dim count,
+			// matching the reference frames' "Commands  47" (docs/spikes/
+			// admin-tui-desktop/commands.txt:4) and "Workers  3" (swarm.txt:
+			// 13); any other header keeps the plain muted form it always had.
+			// No leading space of its own — the outer render loop below
+			// (padEnd(" "+padEnd(l, lw), width)) already supplies the single
+			// leading column every row gets, headers included.
 			if len(r.rightSegs) > 0 {
-				left[i] = " " + lipgloss.NewStyle().Bold(true).Render(r.label) + faintStyle.Render(r.rightSegs[0].t)
+				left[i] = lipgloss.NewStyle().Bold(true).Render(r.label) + faintStyle.Render(r.rightSegs[0].t)
 			} else {
-				left[i] = " " + mutedStyle.Render(r.label)
+				left[i] = mutedStyle.Render(r.label)
 			}
 			hits[i] = hitTarget{kind: hitNone}
 		case rowText:
+			// Same rule as rowHeader just above: the outer loop already
+			// supplies the row's one leading column, so this adds none of its
+			// own — matching the empty-Workers reference line's single
+			// leading space (docs/spikes/admin-tui-desktop/variants.go:1373).
 			if r.label != "" {
-				left[i] = "   " + faintStyle.Render(r.label)
+				left[i] = faintStyle.Render(r.label)
 			} else {
 				left[i] = ""
 			}
@@ -102,7 +109,13 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		listLines = append([]string{}, left[start:end]...)
 		hitLines = append([]hitTarget{}, hits[start:end]...)
 		if start > 0 && len(listLines) > 0 {
-			listLines[0] = faintStyle.Render("  ↑ " + strconv.Itoa(start) + " more")
+			// The header of whichever section the window starts inside is
+			// pinned to its first row, PLUS the "↑ N more" marker — never the
+			// marker alone replacing it — so a scrolled list still says
+			// whether the rows below are Commands or Workers (docs/spikes/
+			// admin-tui-desktop/swarm.txt:4, "Commands   ↑ 49 more").
+			header := lipgloss.NewStyle().Bold(true).Render(sectionHeaderAt(rows, start))
+			listLines[0] = header + faintStyle.Render("   ↑ "+strconv.Itoa(start)+" more")
 			hitLines[0] = hitTarget{kind: hitNone}
 		}
 		if end < len(left) && len(listLines) > 0 {
@@ -137,6 +150,21 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		outHits = append(outHits, hitTarget{kind: hitNone})
 	}
 	return pad(out, height), padHits(outHits, height)
+}
+
+// sectionHeaderAt is which section a scrolled window starting at row i is
+// inside — the nearest rowHeader at or above it in the combined (unwindowed)
+// row list, matching the design prototype's own sectionHeaderAt (docs/
+// spikes/admin-tui-desktop/variants.go:1597-1605), ported here against the
+// real rowItem list rather than re-parsing rendered text, since the header
+// row's own label is already the answer.
+func sectionHeaderAt(rows []rowItem, i int) string {
+	for j := i; j >= 0 && j < len(rows); j-- {
+		if rows[j].kind == rowHeader {
+			return rows[j].label
+		}
+	}
+	return "Commands"
 }
 
 // The Commands section's one column grid (docs/spikes/admin-tui-desktop/
@@ -203,10 +231,9 @@ func liveGlyph(e *livework.Entry) string {
 
 // stateColor is the color a livework.State renders in everywhere it
 // appears on the Work tab — running green, waiting yellow, failed red,
-// anything else dim — shared by renderCommandState here and renderLiveState
-// (below, Workers section + the live band's title) so the two state-word
-// renderers can differ in padding and glyph without duplicating the color
-// mapping itself.
+// anything else dim — shared by renderCommandState, renderWorkerState (below)
+// and the live band's title so every state-word renderer can differ in
+// padding and glyph without duplicating the color mapping itself.
 func stateColor(s livework.State) lipgloss.TerminalColor {
 	switch s {
 	case livework.StateRunning:
@@ -258,23 +285,36 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 	}
 
 	if r.kind == rowWorker {
-		// The Workers section keeps its pre-existing grid untouched — porting
-		// it onto the Commands grid above is admin-3rgp.72.16's job, not this
-		// ticket's (see the ticket's own "Out of scope: the Workers section").
-		const workerNameW, workerStateW = 16, 9
-		workerRest := width - 2 - workerNameW
-		if workerRest < 6 {
-			workerRest = 6
-		}
+		// The Workers section now renders on the exact same grid the
+		// Commands section uses (admin-3rgp.72.16): marker, name, state,
+		// elapsed, activity, then a right-hand where-column — verified
+		// against docs/spikes/admin-tui-desktop/swarm.txt:14-16.
 		e := wd.worker
-		name := padEnd(truncR(e.ID, workerNameW), workerNameW)
+		name := padEnd(truncR(e.ID, wName), wName)
 		st, _ := livework.Default.State(e.ID)
-		state := renderLiveState(st)
+		state := renderWorkerState(st)
+		elapsed := faintStyle.Render(padEnd(elapsedStr(time.Since(e.StartedAt)), wElapsed))
+		// used counts the row's own leading column (the "1", matching the
+		// design prototype's liveRowLine — docs/spikes/admin-tui-desktop/
+		// variants.go:1345) plus the fixed grid columns, even though that
+		// leading column is prepended by renderWorkBody's caller rather than
+		// by this function: the row's total on-screen width is the same
+		// either way, and activity/where would each claim one cell too many
+		// without it, shifting the where-column one column right of
+		// swarm.txt's own.
+		used := 1 + wMarker + wName + wState + wElapsed
 		whereText, whereStyled := whereSeg(e)
-		actW := maxi(workerRest-workerStateW-whereWidth(whereText), 4)
+		ww := whereWidth(whereText)
+		// Drop the where-column rather than overflow when the activity
+		// column would be left under eight cells (docs/spikes/admin-tui-
+		// desktop/variants.go:1349-1351's own liveRowLine rule).
+		if ww > 0 && width-used-ww < 8 {
+			ww, whereStyled = 0, ""
+		}
+		actW := maxi(width-used-ww, 4)
 		activity, _ := livework.Default.Activity(e.ID)
 		act := padEnd(truncR(activity, actW), actW)
-		return marker + name + state + faintStyle.Render(act) + whereStyled
+		return marker + name + state + elapsed + faintStyle.Render(act) + whereStyled
 	}
 
 	name := padEnd(truncR(wd.cmdName, wName), wName)
@@ -758,12 +798,31 @@ func urlRow(u frame.URLEntry, live bool, w int) string {
 	return dot + lipgloss.NewStyle().Bold(true).Render(label) + "  " + faintStyle.Render(url)
 }
 
-// renderLiveState renders a livework.State as a fixed-width, color-coded
-// word — running green, waiting yellow, failed red, anything else dim. Used
-// by the Workers section row (see renderCommandState above for the
-// Commands section's own, glyph-carrying form).
-func renderLiveState(s livework.State) string {
-	return lipgloss.NewStyle().Foreground(stateColor(s)).Render(padEnd(string(s), 9))
+// workerGlyph is the Workers-section state marker: the same waiting/failed
+// overrides as commandGlyph, but the default is the diamond ◈ — a worker row
+// is always a genuine agent session, never the plain-dot default commandGlyph
+// falls back to for a running/starting command (docs/spikes/admin-tui-
+// desktop/variants.go:1319-1331's isWorkerRow branch, applied here
+// unconditionally since renderWorkRow only reaches this for r.kind ==
+// rowWorker).
+func workerGlyph(s livework.State) string {
+	switch s {
+	case livework.StateWaiting:
+		return "◐"
+	case livework.StateFailed:
+		return "✗"
+	default:
+		return "◈"
+	}
+}
+
+// renderWorkerState renders a livework.State as the Workers grid's
+// fixed-width, color-coded "<glyph> <word>" padded to wState — the same
+// shape renderCommandState gives the Commands section, but with workerGlyph's
+// diamond default instead of commandGlyph's dot.
+func renderWorkerState(s livework.State) string {
+	word := workerGlyph(s) + " " + string(s)
+	return lipgloss.NewStyle().Foreground(stateColor(s)).Render(padEnd(word, wState))
 }
 
 // whereSeg returns the right-hand where-value for a live entry: the literal

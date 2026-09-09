@@ -762,10 +762,10 @@ func (m Model) workRows() []rowItem {
 	rows = append(rows, headerRow("Commands", seg{t: "  " + strconv.Itoa(invocations)}))
 	rows = append(rows, cmdList...)
 
-	rows = append(rows, blankRow(), headerRow("Workers"))
 	workers := liveWorkers()
+	rows = append(rows, blankRow(), headerRow("Workers", seg{t: "  " + strconv.Itoa(len(workers))}))
 	if len(workers) == 0 {
-		rows = append(rows, rowItem{kind: rowText, label: "no workers running — dispatch a command to start one"})
+		rows = append(rows, rowItem{kind: rowText, label: "no workers running — dispatch a bead from the tracker tab"})
 	} else {
 		for _, e := range workers {
 			label := e.Name
