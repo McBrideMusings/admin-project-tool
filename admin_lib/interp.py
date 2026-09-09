@@ -663,17 +663,10 @@ def _make_dev_precheck(cmd, ns):
     return _fn
 
 
-def _kill_command_exists():
-    """True if a command/action named 'kill' is registered (configless pre_kill)."""
-    return "kill" in core._all_commands() or "kill" in core._actions
-
-
 def _make_clean_dev(cmd, ns):
     def _fn(args):
         from admin_lib.cleanup import clean_dev_from_config
         cfg = ns.get("_CLEAN_DEV_CONFIG") or {}
-        if cfg.get("pre_kill", True) and _kill_command_exists():
-            run_command("kill", args)
         clean_dev_from_config(cfg, force=("--force" in args or "--db" in args))
     return _fn
 
@@ -700,8 +693,6 @@ def _make_vite_dev(cmd, ns):
     def _fn(args):
         from admin_lib.web_dev import vite_dev_from_config
         cfg = ns.get("_VITE_DEV_CONFIG") or {}
-        if cfg.get("pre_kill") and _kill_command_exists():
-            run_command("kill", args)
         return vite_dev_from_config(cfg)
     return _fn
 
@@ -710,8 +701,6 @@ def _make_docker_dev(cmd, ns):
     def _fn(args):
         from admin_lib.docker import docker_dev_from_config
         cfg = dict(ns.get("_DOCKER_DEV_CONFIG") or {})
-        if cfg.get("pre_kill") and _kill_command_exists():
-            cfg["_pre_kill_callable"] = lambda a: run_command("kill", a)
         return docker_dev_from_config(cfg)
     return _fn
 
