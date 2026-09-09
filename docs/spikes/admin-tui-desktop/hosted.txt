@@ -1,27 +1,27 @@
  beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
- ◐ test  ·  waiting  ·  0m38s  ·  Enter a number, or q to cancel:                               
+ ◐ test gate  ·  waiting  ·  12s  ·  Enter a number, or q to cancel:                            
 ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
- 14:22:07 [INFO] test .venv/bin/pytest -q                                                       
- 14:22:09 [INFO] test ======================= test session starts =======================       
- 14:22:09 [INFO] test platform darwin -- Python 3.13.1, pytest-8.3.4                            
- 14:22:09 [INFO] test rootdir: .                                                                
- 14:22:09 [INFO] test collected 221 items                                                       
- 14:22:11 [INFO] test tests/test_archetypes.py ....................       [ 12%]                
- 14:22:14 [INFO] test tests/test_apple.py .............                   [ 28%]                
- 14:22:19 [INFO] test tests/test_frame.py ..........................      [ 47%]                
- 14:22:24 [INFO] test tests/test_guards.py .................              [ 61%]                
- 14:22:28 [INFO] test tests/test_interp.py ......................         [ 78%]                
+ tests/test_frame.py ..........................      [ 47%]                                     
+ tests/test_guards.py .................              [ 61%]                                     
+ tests/test_interp.py ......................         [ 78%]                                     
  14:22:31 [DEBUG] test cache hit: archetypes/apple.toml                                         
  14:22:33 [WARN] test tests/test_apple.py::TestIconRender slow (4.1s)                           
- 14:22:35 [INFO] test tests/test_manifest.py ...........                  [ 88%]                
- 14:22:37 [INFO] test tests/test_validate.py .....                                              
- 14:22:39 [INFO] test multi-target: pick a target                                               
- 14:22:39 [INFO] test   1) all   2) py   3) shell                                               
+ tests/test_manifest.py ...........                  [ 88%]                                     
+ tests/test_validate.py .....                                                                   
                                                                                                 
- ─── test ───────────────────────────────────────────────────────────────────── 0m38s ───       
- log  ~/.admin/logs/test.log                                                                    
+ multi-target: pick a target                                                                    
+   1) all   2) py   3) shell                                                                    
+                                                                                                
+ ─── test gate ───────────────────────────────────────────────────────────────────── 12s ───    
+ log  /Users/pierce/Projects/admin-project-tool/.admin/logs/test-gate.log                       
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
                                                                                                 
                                                                                                 
                                                                                                 

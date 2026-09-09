@@ -346,3 +346,71 @@ func markedRowHas(view, want string) bool {
 	}
 	return false
 }
+
+// TestEnterAttachesToTheRowUnderTheCursor is the interactive promise the footer
+// makes: ↵ on a running row goes to the hosted view, and that view shows THAT
+// row. Attaching used to set a status string nothing rendered, so the key did
+// nothing visible at all.
+func TestEnterAttachesToTheRowUnderTheCursor(t *testing.T) {
+	resetCursor()
+	resetLiveRows()
+	defer func() { resetCursor(); resetLiveRows() }()
+
+	m := newModel()
+	m.w, m.h = 120, 40
+	// Walk onto the first live row, past every Commands row.
+	for i := 0; i < len(selectableCommands()); i++ {
+		m = send(m, "down")
+	}
+	want := cursorLive()
+	if want == nil {
+		t.Fatal("cursor did not land on a live row")
+	}
+	m = send(m, "enter")
+	if got := m.state().Get("screen"); got != "hosted" {
+		t.Fatalf("enter on a live row went to %q, want hosted", got)
+	}
+	if v := Strip(m.View()); !strings.Contains(v, want.id) {
+		t.Errorf("the hosted view does not show the attached row %q:\n%s", want.id, v)
+	}
+	// Detaching returns to the list and forgets what it was attached to, so the
+	// next attach renders its own row rather than the previous one.
+	m = send(m, "esc")
+	if got := m.state().Get("screen"); got != "commands" {
+		t.Fatalf("esc from hosted went to %q, want commands", got)
+	}
+	if attachedRow != nil {
+		t.Error("detaching left attachedRow set")
+	}
+}
+
+// TestAttachingToASecondRowShowsThatRow pins the bug a hardcoded hosted view
+// hides: every attach rendered the same fixture regardless of what was picked.
+func TestAttachingToASecondRowShowsThatRow(t *testing.T) {
+	resetCursor()
+	resetLiveRows()
+	defer func() { resetCursor(); resetLiveRows() }()
+
+	rows := liveSectionRows(false)
+	if len(rows) < 2 {
+		t.Fatal("need two live rows to tell one attach from another")
+	}
+	first, second := rows[0], rows[1]
+
+	m := newModel()
+	m.w, m.h = 120, 40
+	for i := 0; i < len(selectableCommands()); i++ {
+		m = send(m, "down")
+	}
+	m = send(m, "enter")
+	if v := Strip(m.View()); !strings.Contains(v, first.id) {
+		t.Fatalf("first attach did not show %q", first.id)
+	}
+	m = send(m, "esc")
+	m = send(m, "down")
+	m = send(m, "enter")
+	v := Strip(m.View())
+	if !strings.Contains(v, second.id) {
+		t.Errorf("second attach did not show %q:\n%s", second.id, v)
+	}
+}

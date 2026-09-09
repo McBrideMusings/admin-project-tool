@@ -390,11 +390,6 @@ func onKey(key string, s State, set func(axis, value string)) bool {
 			set("screen", "issues")
 		case "hosted-quit":
 			set("screen", "commands")
-		case "commands-workflow-selected", "running", "swarm":
-			// ↵ is the row's one primary action and what it IS follows the row's
-			// state: attach to it while it runs. There is no running row whose ↵
-			// restarts what you are already watching.
-			set("screen", "hosted")
 		}
 		return true
 
@@ -407,6 +402,7 @@ func onKey(key string, s State, set func(axis, value string)) bool {
 		case "dispatch-sheet":
 			set("screen", "issues")
 		case "hosted", "hosted-empty":
+			attachedRow = nil
 			set("screen", "commands")
 		case "hosted-quit":
 			set("screen", "commands")
@@ -673,19 +669,28 @@ func outLine(l string, w int) string {
 // The child's own pinned footer renders inside it, because from the child's
 // point of view the pty IS its terminal — that is what keeps one footer
 // implementation instead of two.
-func hostedBody(w, h int, empty bool) []string {
+func hostedBody(w, h int, empty bool, lr *liveRow) []string {
 	// The header states what the process is actually doing, and the output below
-	// has to agree: this run ends on the multi-target picker, so it is waiting for
-	// input, not running.
+	// has to agree — so it is read off the row actually attached to, not written
+	// out here. Attaching to a different row has to show that row or the view is
+	// a picture of one process wearing another's name.
+	name, state, el, doing := "test", "waiting", "0m38s", "Enter a number, or q to cancel:"
+	glyph, gStyle := "◐", yl
+	if lr != nil {
+		name, state, el, doing = lr.id, lr.state, lr.elapsed, lr.doing
+		glyph, gStyle = liveGlyph(lr), liveStyle[lr.state]
+	}
 	out := []string{
-		" " + yl.Render("◐") + " " + bo.Render("test") + dim.Render("  ·  waiting  ·  0m38s  ·  ") +
-			"Enter a number, or q to cancel:",
+		" " + gStyle.Render(glyph) + " " + bo.Render(name) + dim.Render("  ·  "+state+"  ·  "+el+"  ·  ") + doing,
 		dim.Render(strings.Repeat("╌", w)),
 	}
 	if empty {
 		return append(out, "", " "+dim.Render("waiting for output…"))
 	}
 	body := hostedOut
+	if lr != nil && len(lr.tail) > 0 {
+		body = lr.tail
+	}
 	// The child's footer is not optional chrome — it is the log path. Reserve
 	// its rows first and let the output scroll, rather than letting it fall off.
 	if n := h - len(out) - 3; n > 0 && n < len(body) {
@@ -694,10 +699,16 @@ func hostedBody(w, h int, empty bool) []string {
 	for _, l := range body {
 		out = append(out, " "+outLine(l, w-2))
 	}
-	el := "0m38s"
+	// The child's own pinned footer: its name, its elapsed, and the absolute log
+	// path — all read off the attached row, same as the header above.
+	logPath := root + "/.admin/logs/test-gate.log"
+	if lr != nil && lr.logPath != "" {
+		logPath = lr.logPath
+	}
+	rule := "─── " + name + " "
 	out = append(out, "",
-		" "+dim.Render("─── test "+strings.Repeat("─", maxInt(0, w-22-VW(el)))+" "+el+" ───"),
-		" "+dim.Render("log")+"  "+cy.Render("~/.admin/logs/test.log"))
+		" "+dim.Render(rule+strings.Repeat("─", maxInt(0, w-VW(rule)-VW(el)-10))+" "+el+" ───"),
+		" "+dim.Render("log")+"  "+cy.Render(fitPath(logPath, maxInt(w-8, 8))))
 	return out
 }
 
@@ -887,11 +898,22 @@ var (
 	// renders its own screen's seed rather than the previous frame's.
 	cmdCursorMoved bool
 	cmdStatus      string
+	// attachedRow is which live row the hosted view is showing. Set by ↵/a,
+	// cleared on detach, so attaching to a different row actually changes what
+	// that view renders.
+	attachedRow *liveRow
 )
 
-func isWorkTab(screen string) bool { return strings.HasPrefix(screen, "commands") }
+// isWorkTab is every Work-tab list screen — the Commands surface and the
+// live-cursor screens alike. Keying off the name prefix missed running/swarm,
+// so ↵ on a live row fell through to onKey's own switch and the two disagreed
+// about what attach meant.
+func isWorkTab(screen string) bool {
+	sp, ok := screens[screen]
+	return ok && sp.tab == 0 && !sp.hosted && !sp.sheet
+}
 
-func resetCursor() { cmdCursor, cmdCursorMoved, cmdStatus = 0, false, "" }
+func resetCursor() { cmdCursor, cmdCursorMoved, cmdStatus, attachedRow = 0, false, "", nil }
 
 // dispatchCommand is Enter on a Commands row: materialize it as a live row so
 // there is something to attach to, kill or trail. cmd is left "" on purpose so
@@ -995,14 +1017,49 @@ func combinedCursor(cur string, empty bool) int {
 
 // activate is Enter: dispatch if the cursor is on a Commands row, attach if it
 // is on a live row. One key, and what it means follows the row's state.
-func activate() {
+// attachedFor is which row the hosted view renders: whatever ↵ attached to
+// while driving, or — for a dumped frame, where nothing has been pressed — the
+// screen's own declared liveSel, so hosted.txt stays a picture of one specific
+// row rather than of whichever row happened to be first.
+func attachedFor(screen string) *liveRow {
+	if attachedRow != nil {
+		return attachedRow
+	}
+	rows := liveSectionRows(false)
+	if sp, ok := screens[screen]; ok && sp.liveSel >= 0 && sp.liveSel < len(rows) {
+		return rows[sp.liveSel]
+	}
+	return nil
+}
+
+// cursorLive is the live row the combined cursor is on, whether it got there
+// through the Commands list (a command that is running) or through the live
+// sections. nil means the cursor is on something idle.
+func cursorLive() *liveRow {
+	cmds := selectableCommands()
+	if cmdCursor < len(cmds) {
+		return liveForEntry(cmds[cmdCursor])
+	}
+	rows := liveSectionRows(false)
+	if i := cmdCursor - len(cmds); i >= 0 && i < len(rows) {
+		return rows[i]
+	}
+	return nil
+}
+
+// activate is ↵, and what it does follows the row's state: attach if the row
+// is running, dispatch if it is not. Attaching sets attachedRow and switches
+// to the hosted view — the prototype has to actually go there, or ↵ on a
+// running row is a footer promising something the prototype does not do.
+func activate(set func(axis, value string)) {
+	if lr := cursorLive(); lr != nil {
+		attachedRow = lr
+		set("screen", "hosted")
+		return
+	}
 	cmds := selectableCommands()
 	if cmdCursor < len(cmds) {
 		dispatchCommand(cmds[cmdCursor])
-		return
-	}
-	if wr := paletteWorkerRows(); cmdCursor-len(cmds) < len(wr) {
-		cmdStatus = "attached to " + wr[cmdCursor-len(cmds)].id
 	}
 }
 
@@ -1028,11 +1085,13 @@ func onWorkTabKey(key string, cur string, set func(axis, value string)) bool {
 		moveCursor(-1)
 		return true
 	case "enter":
-		activate()
+		activate(set)
 		return true
 	case "a":
-		if wr := paletteWorkerRows(); cmdCursor-len(selectableCommands()) < len(wr) {
-			activate() // same effect as enter on a live row
+		// `a` is attach and nothing else, so it is a no-op on an idle row
+		// rather than a second key that starts things.
+		if cursorLive() != nil {
+			activate(set)
 		}
 		return true
 	case "x":
@@ -1557,7 +1616,7 @@ func render(s State) string {
 		onLive := false
 		switch {
 		case sp.hosted:
-			body = hostedBody(w, h-5, sp.hostedEmpty)
+			body = hostedBody(w, h-5, sp.hostedEmpty, attachedFor(name))
 		default:
 			// Every Work-tab screen is the same body: the Commands list and the
 			// live sections above, the band below. What differs is only where
