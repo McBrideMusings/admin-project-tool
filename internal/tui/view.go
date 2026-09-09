@@ -109,12 +109,24 @@ func (m Model) frameRaw() (lines []string, hits []hitTarget) {
 	width, height, bodyHeight := m.frameGeom()
 
 	header := truncateLine(m.headerLine(width), width)
-	tabs := truncateLine(m.tabBar(), width)
 	footerLines := m.footerLines(width)
 
-	// Top chrome: header, tab bar, one blank separator.
-	top := []string{header, tabs, ""}
-	topHits := []hitTarget{{kind: hitNone}, m.tabBarHit(), {kind: hitNone}}
+	// Top chrome: header, then either the tab bar or — while attached —
+	// the attach breadcrumb in its place. Every keystroke belongs to the
+	// child while attached, so the tab bar cannot be switched from there;
+	// drawing it would advertise navigation that does not work (ticket
+	// admin-3rgp.72.17). One blank separator either way.
+	var second string
+	var secondHit hitTarget
+	if m.termAttached {
+		second = truncateLine(m.attachBreadcrumb(width), width)
+		secondHit = hitTarget{kind: hitNone}
+	} else {
+		second = truncateLine(m.tabBar(), width)
+		secondHit = m.tabBarHit()
+	}
+	top := []string{header, second, ""}
+	topHits := []hitTarget{{kind: hitNone}, secondHit, {kind: hitNone}}
 	body, bodyHits := m.renderBodyHits(width, bodyHeight)
 
 	lines = make([]string, 0, height)
@@ -683,7 +695,19 @@ func builtinPairs(k keymap.RowKind) [][2]string {
 func (m Model) keymap() [][2]string {
 	if m.termAttached {
 		// No shared keys: the terminal view takes the whole tab. Every
-		// keystroke belongs to the child process, `o` included.
+		// keystroke belongs to the child process, `o` included — including
+		// arrows and x, which terminalKey/encodeKey (terminalview.go) write
+		// straight through to the child's pty; only esc is intercepted, and
+		// there is no scrollback and no in-view kill (see terminalKey's own
+		// comment). admin-3rgp.72.17's ticket quotes a verbatim copy string
+		// "q/esc detach · ↑↓ scroll · x kill · typing goes to the process",
+		// but every clause past "esc detach" describes behavior this view
+		// does not have — advertising "↑↓ scroll" or "x kill" would be a
+		// footgun (a user presses x meaning to kill a runaway child and
+		// types the literal character into it instead). This keeps the
+		// landed, behavior-accurate hint. Reported as a blocker: the
+		// ticket's verbatim copy and the landed key contract disagree, on
+		// three of its four clauses ("q/", "↑↓ scroll", "x kill").
 		return [][2]string{
 			{"esc", "detach"},
 			{"typing", "goes to the process"},

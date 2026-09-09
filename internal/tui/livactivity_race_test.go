@@ -3,8 +3,12 @@
 // neighbouring field. It pairs a goroutine calling livework.Default.
 // SetActivity against the reader paths that used to read Entry.Activity
 // directly off a pointer with no lock — renderWorkRow (both the rowWorker
-// and the wd.live branches), renderTargetRow, bandFieldsWorker, and
-// renderTermHeader (via termEntry). Before the Registry.Activity fix,
+// and the wd.live branches), renderTargetRow, and bandFieldsWorker.
+// attachBreadcrumb (admin-3rgp.72.17's replacement for the since-removed
+// renderTermHeader) is exercised alongside them too, though it no longer
+// reads Activity at all — the breadcrumb's copy has no activity field, only
+// glyph/name/state/elapsed plus the log path — so it now guards the State
+// read termEntry does instead. Before the Registry.Activity fix,
 // `go test -race -run TestConcurrentActivityReadsDoNotRace ./internal/tui/`
 // reports a data race on Entry.Activity; a green run alone proves nothing,
 // since nothing else pairs a concurrent SetActivity against these specific
@@ -64,7 +68,7 @@ func TestConcurrentActivityReadsDoNotRace(t *testing.T) {
 				m.renderWorkRow(liveCommandRow, false, 80)
 				renderTargetRow(targetWD, false, 40)
 				bandFieldsWorker(e, 40)
-				m.renderTermHeader(80)
+				m.attachBreadcrumb(80)
 			}
 		}()
 	}
