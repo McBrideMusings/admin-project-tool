@@ -6,7 +6,6 @@ package tui
 
 import (
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +24,16 @@ import (
 func bandH(h int) int {
 	return maxi(mini(13, h/2), mini(9, h-1))
 }
+
+// fieldRowsH is the fixed height of the live band's field block, for every
+// row kind: a live command's log+url, a live worker's log+branch+worktree+
+// session+now, or an idle entry's kind+desc+last-run+last-log. Five is the
+// tallest of those. This is the epic's own single most important invariant
+// (docs/spikes/admin-tui-desktop/variants.go:1258-1261): the field block is
+// a fixed slot, padded or clipped to exactly this height by slotRows, so
+// moving the cursor between rows in different states never moves a row of
+// the band.
+const fieldRowsH = 5
 
 // renderWorkBody lays out the Work tab: one layout at every geometry — the
 // row list fills the body width, and the live band spans that same full
@@ -103,7 +112,7 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		}
 	}
 
-	detail := m.renderWorkDetail(rows[cursor], lw, maxi(bh, 1))
+	detail := m.renderWorkBand(rows[cursor], lw, maxi(bh, 1))
 
 	out := make([]string, 0, height)
 	outHits := make([]hitTarget, 0, height)
@@ -172,12 +181,32 @@ func commandGlyph(s livework.State) string {
 	}
 }
 
+// liveGlyph is the live band title's own state marker: the same waiting/
+// failed overrides as commandGlyph, but a worker's default glyph is the
+// diamond ◈, not the dot — ported from the design prototype's liveRow
+// version of this rule (docs/spikes/admin-tui-desktop/variants.go:1319-
+// 1331), which commandGlyph above deliberately dropped since the Commands
+// section never draws a worker row.
+func liveGlyph(e *livework.Entry) string {
+	switch e.State {
+	case livework.StateWaiting:
+		return "◐"
+	case livework.StateFailed:
+		return "✗"
+	default:
+		if e.Worker != nil {
+			return "◈"
+		}
+		return "●"
+	}
+}
+
 // stateColor is the color a livework.State renders in everywhere it
 // appears on the Work tab — running green, waiting yellow, failed red,
 // anything else dim — shared by renderCommandState here and renderLiveState
-// (below, Workers section + detail pane) so the two state-word renderers
-// can differ in padding and glyph without duplicating the color mapping
-// itself.
+// (below, Workers section + the live band's title) so the two state-word
+// renderers can differ in padding and glyph without duplicating the color
+// mapping itself.
 func stateColor(s livework.State) lipgloss.TerminalColor {
 	switch s {
 	case livework.StateRunning:
@@ -194,10 +223,7 @@ func stateColor(s livework.State) lipgloss.TerminalColor {
 }
 
 // renderCommandState renders a livework.State as the Commands-section grid's
-// fixed-width, color-coded "<glyph> <word>" padded to wState. Deliberately
-// separate from renderLiveState (below), which the Workers section and the
-// detail pane still use unchanged: both are out of scope for this ticket
-// (admin-3rgp.72.16 owns porting Workers onto this same grid).
+// fixed-width, color-coded "<glyph> <word>" padded to wState.
 func renderCommandState(s livework.State) string {
 	word := commandGlyph(s) + " " + string(s)
 	return lipgloss.NewStyle().Foreground(stateColor(s)).Render(padEnd(word, wState))
@@ -350,200 +376,323 @@ func renderTargetRow(wd *workRowData, focused bool, rest int) string {
 	return faintStyle.Render(connector) + name + faintStyle.Render(padEnd("", wState+wElapsed)+hint)
 }
 
-// renderWorkDetail is the polymorphic half: a command shows
-// kind/archetype/last-run/log/steps-with-archetype, a worker shows
-// state/current-activity/branch/worktree/elapsed/actions. They share almost
-// no fields, so this dispatches on the row's own kind rather than trying to
-// print one field set for both.
-func (m Model) renderWorkDetail(r rowItem, w, h int) []string {
+// renderWorkBand is the Work tab's full-width live band (admin-3rgp.72.6): a
+// title rule naming whatever the combined cursor sits on plus a count of
+// everything else running (bandTitle), a fixed fieldRowsH-row field block
+// chosen by the row's own state (bandIdle / bandFieldsCommand /
+// bandFieldsWorker), then the row's own live output tail filling the rest.
+// Ported from the design prototype's renderWorkBody band half (docs/spikes/
+// admin-tui-desktop/variants.go:1533-1588) — the row-list half of that
+// function stays in Model.renderWorkBody above, unchanged; this replaces
+// the old right-hand detail pane (renderWorkDetail/commandDetail/
+// workerDetail/detailHeader/appendLiveTail/outputRule) entirely.
+//
+// Contract: given the body width w and the band's own fixed height h,
+// returns exactly h lines, whatever row r is — the field block's fixed
+// height is what keeps the band from reflowing as the cursor moves between
+// rows in different states (fieldRowsH's own doc comment).
+func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 	wd := r.work
 	if wd == nil {
-		return nil
+		return blankRows(w, h)
+	}
+
+	var live *livework.Entry
+	name := wd.cmdName
+	if wd.targetKey != "" {
+		name += " " + wd.targetKey
 	}
 	if r.kind == rowWorker {
-		return workerDetail(wd.worker, w, h)
-	}
-	return commandDetail(wd, w, h)
-}
-
-func workerDetail(e *livework.Entry, w, h int) []string {
-	st, _ := livework.Default.State(e.ID)
-	out := detailHeader(e.ID, true, st, e.StartedAt, e.LogPath, w)
-	out = append(out, "")
-
-	locale := "outlives the dashboard"
-	if e.Via == "" {
-		locale = "dies when the dashboard quits"
-	} else if e.Handle != "" {
-		locale = e.Handle + "  ·  outlives the dashboard"
-	}
-	out = append(out, faintStyle.Render("where"), "  "+truncR(locale, maxi(w-2, 4)))
-
-	if activity, _ := livework.Default.Activity(e.ID); activity != "" {
-		out = append(out, "",
-			faintStyle.Render("now"),
-			"  "+truncR(activity, maxi(w-2, 4)),
-		)
-	}
-	if e.Worker != nil {
-		out = append(out, "",
-			faintStyle.Render("branch"), "  "+truncR(e.Worker.Branch, maxi(w-2, 4)),
-			faintStyle.Render("worktree"), "  "+faintStyle.Render(truncR(e.Worker.Worktree, maxi(w-2, 4))),
-		)
-	}
-	out = append(out, "")
-	// No retry: a worker is an agent session in a worktree, and restarting one
-	// under the same identity is not something every producer can honour or
-	// every kind of work can survive. Kill it and start the work again.
-	actions := []string{"a attach", "k kill"}
-	out = append(out, faintStyle.Render(strings.Join(actions, "   ")))
-	return appendLiveTail(out, e, w, h)
-}
-
-func commandDetail(wd *workRowData, w, h int) []string {
-	title := wd.cmdName
-	if wd.targetKey != "" {
-		title += " " + wd.targetKey
-	}
-	var state livework.State
-	var started time.Time
-	if wd.live != nil {
-		state, _ = livework.Default.State(wd.live.ID)
-		started = wd.live.StartedAt
-	}
-	out := detailHeader(title, wd.live != nil, state, started, wd.logPath, w)
-	out = append(out, "")
-
-	if len(wd.targets) > 0 {
-		out = append(out, faintStyle.Render("targets"))
-		for _, t := range wd.targets {
-			out = append(out, "  "+truncR(t, maxi(w-2, 4)))
+		live = wd.worker
+		if live != nil {
+			name = live.Name
 		}
-		out = append(out, "")
-	}
-
-	// Reachability is a property of a command actually running right now —
-	// an idle command shows its configured urls with no dot, per the
-	// ticket's own "does not show a reachability state for a url nothing is
-	// serving."
-	if len(wd.urls) > 0 {
-		out = append(out, faintStyle.Render("urls"))
-		for _, u := range wd.urls {
-			out = append(out, "  "+urlRow(u, wd.live != nil, maxi(w-2, 4)))
-		}
-		out = append(out, "")
-	}
-
-	if wd.workflow != nil {
-		out = append(out, faintStyle.Render("targets  query"))
-		out = append(out, "  "+faintStyle.Render(truncR(wd.workflow.Query, maxi(w-2, 4))))
-	}
-
-	return appendLiveTail(out, wd.live, w, h)
-}
-
-// detailHeader renders the Work tab detail pane's two-row header, shared by
-// commandDetail and workerDetail: row 1 is the row's name flush left and,
-// while running, the pane's own colored state plus elapsed flush right (the
-// same renderLiveState/elapsedStr the row list and the old field-list pane
-// already used); row 2 is a dim "log" label plus the log path, shown only
-// when one is known. A row that is neither running nor carries a log path
-// renders just the name.
-func detailHeader(name string, running bool, state livework.State, started time.Time, logPath string, w int) []string {
-	var row1 string
-	if running {
-		right := renderLiveState(state) + faintStyle.Render(" · "+elapsedStr(time.Since(started)))
-		left := lipgloss.NewStyle().Bold(true).Render(truncR(name, maxi(w-vlen(right)-2, 1)))
-		gap := maxi(w-vlen(left)-vlen(right), 1)
-		row1 = left + strings.Repeat(" ", gap) + right
 	} else {
-		row1 = lipgloss.NewStyle().Bold(true).Render(truncR(name, maxi(w-1, 1)))
+		live = wd.live
 	}
-	out := []string{" " + row1}
-	if logPath != "" {
-		out = append(out, " "+faintStyle.Render("log")+"  "+faintStyle.Render(shortenLogPath(logPath, maxi(w-6, 4))))
+
+	out := make([]string, 0, h)
+	out = append(out, bandTitle(w, live, name))
+
+	switch {
+	case live != nil:
+		var fields []string
+		if live.Worker != nil {
+			fields = bandFieldsWorker(live, w)
+		} else {
+			fields = bandFieldsCommand(wd, w)
+		}
+		out = append(out, fields...)
+		avail := maxi(h-1-fieldRowsH, 1)
+		var tail []string
+		if live.Output != nil {
+			tail = ringTailLines(live.Output, maxi(w-1, 1))
+		}
+		out = append(out, bandTail(tail, avail, w)...)
+	default:
+		out = append(out, bandIdle(wd, w)...)
+		out = append(out, blankRows(w, maxi(h-2-fieldRowsH, 0))...)
+		out = append(out, padEnd(" "+faintStyle.Render("output appears here while it runs"), w))
+	}
+
+	for i, l := range out {
+		out[i] = padEnd(l, w)
+	}
+	for len(out) < h {
+		out = append(out, padEnd("", w))
+	}
+	return out[:h]
+}
+
+// othersRunning is the live band title's right side: how much is live that
+// is NOT the row being previewed, read from the exact same
+// livework.Default.List() the row list itself reads (work.go's byName/
+// liveWorkers), so the row list and this count can never disagree about
+// what is running. Ported from the design prototype (docs/spikes/
+// admin-tui-desktop/variants.go:1400-1437).
+func othersRunning(selID string) string {
+	entries := livework.Default.List()
+	if len(entries) == 0 {
+		return "nothing running"
+	}
+	cmds, workers := 0, 0
+	for _, e := range entries {
+		if selID != "" && e.ID == selID {
+			continue
+		}
+		if e.Worker != nil {
+			workers++
+		} else {
+			cmds++
+		}
+	}
+	if cmds == 0 && workers == 0 {
+		return "nothing else running"
+	}
+	parts := ""
+	if cmds > 0 {
+		parts = strconv.Itoa(cmds) + " command" + plural(cmds)
+	}
+	if workers > 0 {
+		if parts != "" {
+			parts += " · "
+		}
+		parts += strconv.Itoa(workers) + " worker" + plural(workers)
+	}
+	return "also " + parts
+}
+
+// bandTitle is the rule between the row list and the live band: the
+// previewed row's own identity on the left, once, and the count of
+// everything else running on the right — ported from the design prototype
+// (docs/spikes/admin-tui-desktop/variants.go:1439-1473). live nil means the
+// previewed row is idle; name is the row's own identity (a command's name,
+// a target's "<cmd> <target>", or a worker's own name).
+func bandTitle(w int, live *livework.Entry, name string) string {
+	var titlePlain, titleStyled, selID string
+	if live != nil {
+		selID = live.ID
+		glyph := liveGlyph(live)
+		state := string(live.State)
+		elapsed := elapsedStr(time.Since(live.StartedAt))
+		titlePlain = glyph + " " + name + "  " + state + "  " + elapsed
+		titleStyled = lipgloss.NewStyle().Foreground(stateColor(live.State)).Render(glyph) + " " +
+			lipgloss.NewStyle().Bold(true).Render(name) +
+			faintStyle.Render("  "+state+"  "+elapsed)
+	} else {
+		titlePlain = name + "  not running"
+		titleStyled = lipgloss.NewStyle().Bold(true).Render(name) + faintStyle.Render("  not running")
+	}
+
+	right := othersRunning(selID)
+	// Budget: "── " + title + " " + fill + suffix + " ──" = w, so the dashes
+	// are whatever is left after everything with a fixed width. The
+	// identity wins the space: on a narrow terminal the count drops rather
+	// than squeezing the name it is a footnote to.
+	const fixed = 7 // "── ", the space after the title, and " ──"
+	if w-fixed-vlen(right)-1 < vlen(titlePlain) && w-fixed-vlen(right)-1 < 28 {
+		right = ""
+	}
+	suffix := ""
+	if right != "" {
+		suffix = " " + right
+	}
+	// truncR counts display cells, not raw bytes, and title carries color
+	// escapes — cutting it unconditionally would spend the budget on
+	// invisible characters and clip a name that fits. Only cut when the
+	// VISIBLE width is actually over, and cut the PLAIN text (never the
+	// styled composite, which risks slicing mid-escape-sequence) from the
+	// tail — which preserves the leading glyph+name and drops the trailing
+	// state/elapsed first, the same "identity wins" rule the count-drop
+	// above already follows.
+	budget := maxi(w-fixed-vlen(suffix), 8)
+	if vlen(titlePlain) > budget {
+		titlePlain = truncR(titlePlain, budget)
+		titleStyled = titlePlain
+	}
+	fill := maxi(w-fixed-vlen(titlePlain)-vlen(suffix), 0)
+	return faintStyle.Render("── ") + titleStyled + faintStyle.Render(" "+strings.Repeat("─", fill)+suffix+" ──")
+}
+
+// slotRows pads (or clips) a field block to exactly fieldRowsH rows, each
+// already padded to w — the fixed slot every one of the band's three field
+// blocks renders through, so a block that would otherwise grow or shrink
+// with what it has to say never moves a row of the band beneath it.
+func slotRows(out []string, w int) []string {
+	for i, l := range out {
+		out[i] = padEnd(l, w)
+	}
+	for len(out) < fieldRowsH {
+		out = append(out, padEnd("", w))
+	}
+	return out[:fieldRowsH]
+}
+
+// blankRows returns n rows, each padded to w — used to fill the band below
+// a field block with nothing, rather than leaving short rows for the outer
+// caller to pad.
+func blankRows(w, n int) []string {
+	out := make([]string, 0, maxi(n, 0))
+	for len(out) < n {
+		out = append(out, padEnd("", w))
 	}
 	return out
 }
 
-// shortenLogPath fits path into w display cells, preferring the path made
-// relative to the process's own working directory — the project root, since
-// the interpreter cd's there at boot (see the Guards section of this
-// project's own CLAUDE.md) — over truncating the absolute path from the
-// front: the root prefix is most of an absolute log path's length and
-// carries the least information of any part of it. Falls back to a plain
-// truncation when the relative form still doesn't fit, or when the path
-// can't be made relative at all (outside the cwd, or it's unavailable).
-func shortenLogPath(path string, w int) string {
-	if vlen(path) <= w {
-		return path
+// bandIdle is the band's field block while the cursor sits on something
+// that is NOT running: the entry's own kind, description and last run — a
+// never-run command reads "never" and "—" for both. Ported from the design
+// prototype's bandIdle (docs/spikes/admin-tui-desktop/variants.go:1499-
+// 1531). A target row's kind is the literal "target", matching the
+// reference frame (commands.txt:18) — its wd.cmdKind carries the PARENT's
+// kind ("multi-target"), which is not what a target itself is.
+//
+// "last run" is derived from the resolved log file's own mtime (there is no
+// separate exit-status/run-history record in this codebase — commandLogPath
+// already does the best-effort glob commandRowItem falls back to for an
+// idle row) rather than the design prototype's fixture-only "· exit 0",
+// which nothing here tracks.
+func bandIdle(wd *workRowData, w int) []string {
+	lw := maxi(w-11, 8)
+	kind := kindLabel(wd.cmdKind)
+	if wd.targetKey != "" {
+		kind = "target"
 	}
-	if wd, err := os.Getwd(); err == nil {
-		if rel, err := filepath.Rel(wd, path); err == nil && !strings.HasPrefix(rel, "..") {
-			return truncR(rel, w)
+	lastRun := "never"
+	logCell := faintStyle.Render("—")
+	if wd.logPath != "" {
+		logCell = faintStyle.Render(fitPath(wd.logPath, lw))
+		if fi, err := os.Stat(wd.logPath); err == nil {
+			lastRun = humanizeAge(time.Since(fi.ModTime()))
 		}
 	}
-	return truncR(path, w)
+	return slotRows([]string{
+		" " + faintStyle.Render(padEnd("kind", 9)) + truncR(kind, lw),
+		" " + faintStyle.Render(padEnd("desc", 9)) + truncR(wd.cmdDesc, lw),
+		" " + faintStyle.Render(padEnd("last run", 9)) + faintStyle.Render(lastRun),
+		" " + faintStyle.Render(padEnd("last log", 9)) + logCell,
+	}, w)
 }
 
-// appendLiveTail is the shared second half of both detail panes
-// (admin-3rgp.65 follow-up): when e is a live hosted entry with a non-nil
-// Output ring, it keeps the field block exactly as built above and fills
-// every remaining row of the column with the ring's tail — framed by an
-// opening rule carrying the word "output" and a plain closing rule, both
-// spanning the full pane width with no side borders — bottom-aligned
-// against the closing rule so a short tail leaves its gap above rather than
-// below, the way terminal output accumulates. A nil entry (idle row) or a
-// nil ring (dispatched through a [terminal] launcher rather than hosted
-// in-process, so nothing is being drained into a Ring at all) leaves out
-// untouched: no rules, no header, no placeholder.
-func appendLiveTail(out []string, e *livework.Entry, w, h int) []string {
-	if e == nil || e.Output == nil {
-		return out
+// bandFieldsCommand is the band's field block for a live (running) command:
+// its log path, then one row per configured url — a command with no url
+// gets no url row, since the fixed slot already holds the space (printing
+// "url —" would spend a row saying a field is absent, which the blank row
+// already says). Ported from the design prototype's bandFields (docs/
+// spikes/admin-tui-desktop/variants.go:1475-1487); the url row reuses
+// urlRow's own reachability indicator rather than the prototype's plain
+// string, since the real app (unlike the fixture) actually probes.
+func bandFieldsCommand(wd *workRowData, w int) []string {
+	lw := maxi(w-11, 8)
+	out := []string{" " + faintStyle.Render(padEnd("log", 9)) + faintStyle.Render(fitPath(wd.logPath, lw))}
+	for _, u := range wd.urls {
+		out = append(out, " "+faintStyle.Render(padEnd("url", 9))+urlRow(u, true, lw))
 	}
-	// Reserve one row for the opening rule and one for the closing rule at
-	// the very bottom of the pane, plus one more for a blank separator
-	// before the opening rule — unless the block built above already ends
-	// in one (most of the pane's own sections close with a blank line
-	// already; reusing it instead of stacking a second one is what keeps a
-	// bare header with nothing else above it from reading as a double gap).
-	// Only bother with a tail if at least one row of actual content would
-	// also fit between the two rules.
-	reserve := 2
-	needsSeparator := len(out) == 0 || out[len(out)-1] != ""
-	if needsSeparator {
-		reserve++
+	return slotRows(out, w)
+}
+
+// bandFieldsWorker is the band's field block for a live worker: log,
+// branch, worktree, session, now — always all five, since a worker (unlike
+// a command) has no idle state to preview instead. Ported from the design
+// prototype's bandFields worker branch (docs/spikes/admin-tui-desktop/
+// variants.go:1489-1496); "now" is the worker's own self-reported Activity.
+func bandFieldsWorker(e *livework.Entry, w int) []string {
+	lw := maxi(w-11, 8)
+	var branch, worktree string
+	if e.Worker != nil {
+		branch, worktree = e.Worker.Branch, e.Worker.Worktree
 	}
-	avail := h - len(out) - reserve
+	activity, _ := livework.Default.Activity(e.ID)
+	return slotRows([]string{
+		" " + faintStyle.Render(padEnd("log", 9)) + faintStyle.Render(fitPath(e.LogPath, lw)),
+		" " + faintStyle.Render(padEnd("branch", 9)) + lipgloss.NewStyle().Foreground(cCyan).Render(truncR(branch, lw)),
+		" " + faintStyle.Render(padEnd("worktree", 9)) + faintStyle.Render(fitPath(worktree, lw)),
+		" " + faintStyle.Render(padEnd("session", 9)) + sessionField(e, lw),
+		" " + faintStyle.Render(padEnd("now", 9)) + faintStyle.Render(truncR(activity, lw)),
+	}, w)
+}
+
+// sessionField is the worker band's "session" value: hosted-here vs a
+// detached launcher pane, ported from the design prototype's whereLabel
+// (docs/spikes/admin-tui-desktop/variants.go:604-609) — decided from Via,
+// never from a possibly-empty Handle, the same rule whereSeg (below) already
+// follows for the Workers section's own where-column.
+func sessionField(e *livework.Entry, w int) string {
+	if e.Via == "" {
+		return lipgloss.NewStyle().Foreground(cCyan).Render(truncR("hosted here", w)) +
+			faintStyle.Render(" · dies when admin quits")
+	}
+	return lipgloss.NewStyle().Foreground(cMag).Render(truncR(e.Handle, w)) +
+		faintStyle.Render(" · detached, outlives admin")
+}
+
+// bandTail is the live band's output tail: the row's ring, bottom-aligned
+// against the floor of the band so a short tail leaves its gap above rather
+// than below — the way terminal output accumulates. A nil/empty lines slice
+// (a launcher-dispatched worker's bytes live in its own pane, not this
+// process's — admin-spjp.6, a known capability gap out of scope here)
+// renders as an empty tail: every row blank, nothing more.
+func bandTail(lines []string, avail, w int) []string {
 	if avail < 1 {
-		return out
+		avail = 1
 	}
-	lines := ringTailLines(e.Output, w)
 	if len(lines) > avail {
 		lines = lines[len(lines)-avail:]
 	}
-	if needsSeparator {
-		out = append(out, "")
-	}
-	out = append(out, outputRule("output", w))
+	out := make([]string, 0, avail)
 	for i := 0; i < avail-len(lines); i++ {
-		out = append(out, "")
+		out = append(out, padEnd("", w))
 	}
-	out = append(out, lines...)
-	return append(out, outputRule("", w))
+	for _, l := range lines {
+		out = append(out, padEnd(" "+l, w))
+	}
+	return out
 }
 
-// outputRule draws one of the output block's two bounding rules, spanning
-// exactly w display cells with no side borders. label carries the block's
-// name on the opening rule ("─── output ──…──"); the closing rule passes
-// "" and renders as plain dashes.
-func outputRule(label string, w int) string {
-	if label == "" {
-		return faintStyle.Render(strings.Repeat("─", maxi(w, 0)))
+// fitPath keeps a log or worktree path absolute. When it will not fit,
+// whole segments go from the middle — "/Users/…/logs/docs.log" — so it
+// still reads as a path. A mid-rune cut produces "/Users/pierce/Proj…tool/"
+// and reads as corruption. Ported from the design prototype (docs/spikes/
+// admin-tui-desktop/variants.go:1278-1299). Replaces shortenLogPath, which
+// made a path relative to the process's cwd instead — the wrong rule per
+// the design README's own "Log paths are absolute" section.
+func fitPath(p string, w int) string {
+	if vlen(p) <= w {
+		return p
 	}
-	prefix := "─── " + label + " "
-	dashes := maxi(w-vlen(prefix), 0)
-	return faintStyle.Render(prefix + strings.Repeat("─", dashes))
+	if w < 12 {
+		return truncR(p, maxi(w, 1))
+	}
+	segs := strings.Split(strings.TrimPrefix(p, "/"), "/")
+	for k := len(segs) - 1; k >= 1; k-- {
+		if cand := "/" + segs[0] + "/…/" + strings.Join(segs[len(segs)-k:], "/"); vlen(cand) <= w {
+			return cand
+		}
+	}
+	if cand := "…/" + segs[len(segs)-1]; vlen(cand) <= w {
+		return cand
+	}
+	return truncR(p, w)
 }
 
 // ringTailLines reads a live entry's whole Ring, strips ANSI escapes (this
@@ -611,9 +760,8 @@ func urlRow(u frame.URLEntry, live bool, w int) string {
 
 // renderLiveState renders a livework.State as a fixed-width, color-coded
 // word — running green, waiting yellow, failed red, anything else dim. Used
-// by the Workers section and the detail pane, both out of scope for this
-// ticket (see renderCommandState above for the Commands section's own,
-// glyph-carrying form).
+// by the Workers section row (see renderCommandState above for the
+// Commands section's own, glyph-carrying form).
 func renderLiveState(s livework.State) string {
 	return lipgloss.NewStyle().Foreground(stateColor(s)).Render(padEnd(string(s), 9))
 }
@@ -646,10 +794,10 @@ func whereWidth(text string) int {
 	return vlen(text) + 1
 }
 
-// elapsedStr renders a duration as a compact "<1m / 12m / 1h5m" — the
-// worker detail pane's "elapsed" field. Distinct from humanizeAge (which
-// always appends "ago" for a point-in-time age) since "elapsed" reads as a
-// span, not an age.
+// elapsedStr renders a duration as a compact "<1m / 12m / 1h5m" — the live
+// band's "elapsed" value. Distinct from humanizeAge (which always appends
+// "ago" for a point-in-time age) since "elapsed" reads as a span, not an
+// age.
 func elapsedStr(d time.Duration) string {
 	if d < 0 {
 		d = 0

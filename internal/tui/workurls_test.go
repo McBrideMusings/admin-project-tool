@@ -1,10 +1,14 @@
-// workurls_test.go covers admin-1azz's acceptance criteria: the Work tab's
-// detail pane showing a running command's log, elapsed time, and resolved
-// urls with a non-blocking reachability indicator. Follows work_test.go's
-// workTestModel + livework.Default fixture pattern used throughout this
-// package rather than standing up a full headless Frame (which needs a real
-// repo on disk) — commandRowItem/commandDetail/renderWorkDetail ARE the
-// dashboard's own rendering path for this pane, just invoked directly.
+// workurls_test.go covers admin-1azz's acceptance criteria: the live band's
+// field block showing a running command's log and resolved urls with a
+// non-blocking reachability indicator (admin-3rgp.72.6 moved this from the
+// old right-hand detail pane onto the full-width band's bandFieldsCommand,
+// with the row's own state/elapsed now said once on the band's title rule
+// instead — see TestBandTitleShowsRunningStateAndElapsed in
+// workband_test.go). Follows work_test.go's workTestModel + livework.
+// Default fixture pattern used throughout this package rather than standing
+// up a full headless Frame (which needs a real repo on disk) —
+// commandRowItem/bandFieldsCommand ARE the dashboard's own rendering path
+// for this block, just invoked directly.
 package tui
 
 import (
@@ -31,10 +35,11 @@ func stubProbe(t *testing.T, fn func(string) bool) {
 	})
 }
 
-// TestCommandDetailShowsLiveLogElapsedAndURLs is the running-command half of
-// the acceptance criteria: the pane shows the live entry's own log path (not
-// a glob), an elapsed value, and one row per configured url.
-func TestCommandDetailShowsLiveLogElapsedAndURLs(t *testing.T) {
+// TestBandShowsLiveLogElapsedAndURLs is the running-command half of the
+// acceptance criteria: the band's title rule shows the elapsed value and its
+// field block shows the live entry's own log path (not a glob) plus one row
+// per configured url.
+func TestBandShowsLiveLogElapsedAndURLs(t *testing.T) {
 	stubProbe(t, func(string) bool { return true })
 
 	m := &manifest.Manifest{
@@ -54,22 +59,26 @@ func TestCommandDetailShowsLiveLogElapsedAndURLs(t *testing.T) {
 	}
 	row := mm.commandRowItem(workCmdRow{name: "dev", cmd: m.Custom["dev"]}, map[string]*livework.Entry{"dev": live})
 
-	out := strings.Join(commandDetail(row.work, 60, 20), "\n")
-	if !strings.Contains(out, "/live/dev.log") {
-		t.Errorf("detail pane missing live log path:\n%s", out)
+	title := bandTitle(80, live, row.work.cmdName)
+	if !strings.Contains(title, "5m") {
+		t.Errorf("band title missing elapsed value:\n%s", title)
 	}
-	if !strings.Contains(out, "5m") {
-		t.Errorf("detail pane missing elapsed value:\n%s", out)
+
+	fields := strings.Join(bandFieldsCommand(row.work, 60), "\n")
+	if !strings.Contains(fields, "/live/dev.log") {
+		t.Errorf("band fields missing live log path:\n%s", fields)
 	}
-	if !strings.Contains(out, "api") || !strings.Contains(out, "http://example.com/api") {
-		t.Errorf("detail pane missing the resolved [urls]-keyed row:\n%s", out)
+	if !strings.Contains(fields, "api") || !strings.Contains(fields, "http://example.com/api") {
+		t.Errorf("band fields missing the resolved [urls]-keyed row:\n%s", fields)
 	}
 }
 
-// TestCommandDetailIdleShowsNoElapsedOrIndicator is the idle half: no
-// elapsed row, and (checked via urlRow directly, since an idle row's urls
-// still render but with no dot) no reachability glyph.
-func TestCommandDetailIdleShowsNoElapsedOrIndicator(t *testing.T) {
+// TestBandIdleShowsNeverAndDropsURLs is the idle half: the field block shows
+// kind/desc/last run/last log — never/— for a command with no log on disk —
+// and carries no url row at all (bandIdle's own field set has no "url"
+// label; a command's configured urls are a live-only field per the design,
+// docs/spikes/admin-tui-desktop/README.md's own field list).
+func TestBandIdleShowsNeverAndDropsURLs(t *testing.T) {
 	m := &manifest.Manifest{
 		Custom: map[string]manifest.Command{
 			"build": {Desc: "build it", Steps: []string{"build"}},
@@ -84,17 +93,15 @@ func TestCommandDetailIdleShowsNoElapsedOrIndicator(t *testing.T) {
 	if row.work.live != nil {
 		t.Fatalf("expected no live entry for an idle command")
 	}
-	out := strings.Join(commandDetail(row.work, 60, 20), "\n")
-	if strings.Contains(out, "elapsed") {
-		t.Errorf("idle command's detail pane shows an elapsed row:\n%s", out)
+	out := strings.Join(bandIdle(row.work, 60), "\n")
+	if !strings.Contains(out, "never") {
+		t.Errorf("idle band fields missing \"never\" for last run:\n%s", out)
 	}
-	for _, glyph := range []string{"●", "○"} {
-		if strings.Contains(out, glyph) {
-			t.Errorf("idle command's detail pane shows a reachability glyph %q:\n%s", glyph, out)
-		}
+	if !strings.Contains(out, "—") {
+		t.Errorf("idle band fields missing \"—\" for last log:\n%s", out)
 	}
-	if !strings.Contains(out, "http://localhost:9") {
-		t.Errorf("idle command's detail pane dropped its configured url entirely:\n%s", out)
+	if strings.Contains(out, "http://localhost:9") {
+		t.Errorf("idle band fields show a url row, want none (urls are live-only):\n%s", out)
 	}
 }
 

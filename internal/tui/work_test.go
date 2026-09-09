@@ -749,10 +749,14 @@ func TestWorkRowsWorkerLabelHasNoTrailingSpaceWhenActivityEmpty(t *testing.T) {
 	}
 }
 
-// TestWorkerDetailOmitsNowLabelWhenActivityEmpty is admin-spjp.4's other
-// acceptance criterion: no worker detail pane renders a labelled field with
-// no value.
-func TestWorkerDetailOmitsNowLabelWhenActivityEmpty(t *testing.T) {
+// TestWorkerBandFieldsAlwaysHasNowRow supersedes admin-spjp.4's old rule (no
+// labelled field with no value): the live band's field block is a fixed
+// fieldRowsH-row slot (admin-3rgp.72.6) that always shows exactly the same
+// five rows for a worker — log/branch/worktree/session/now — whatever the
+// worker's own Activity is, since a block that grows or shrinks a row moves
+// everything beneath it. An empty Activity still gets its "now" row; it is
+// simply blank after the label.
+func TestWorkerBandFieldsAlwaysHasNowRow(t *testing.T) {
 	freshLivework(t)
 	e := &livework.Entry{
 		ID: "test-worker-detail-no-activity", Name: "test-worker-detail-no-activity",
@@ -763,11 +767,18 @@ func TestWorkerDetailOmitsNowLabelWhenActivityEmpty(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	out := workerDetail(e, 60, 20)
+	out := bandFieldsWorker(e, 60)
+	if len(out) != fieldRowsH {
+		t.Fatalf("bandFieldsWorker produced %d rows, want exactly fieldRowsH (%d)", len(out), fieldRowsH)
+	}
+	found := false
 	for _, line := range out {
 		if strings.Contains(line, "now") {
-			t.Errorf("workerDetail rendered a %q line with empty Activity, want the now label suppressed entirely: %v", line, out)
+			found = true
 		}
+	}
+	if !found {
+		t.Errorf("bandFieldsWorker with empty Activity dropped the \"now\" row entirely, want it present (fixed slot): %v", out)
 	}
 }
 
