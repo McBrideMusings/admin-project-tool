@@ -27,8 +27,15 @@ import (
 //
 //  1. every field block — idle-never-run, idle-has-run, live-command-with-
 //     url, live-command-without-url, worker — is exactly fieldRowsH rows.
-//  2. the band's title rule lands on the same rendered line index whatever
-//     the cursor sits on: an idle command, a running command, a worker.
+//  2. the row directly BELOW the field block — the output tail's own
+//     content, bottom-aligned within the band, for a running command or a
+//     worker; the "output appears here while it runs" placeholder for an
+//     idle command — lands on the same rendered line index whatever the
+//     cursor sits on. That is the line fieldRowsH actually protects: the
+//     band's title rule sits at a fixed band-local offset (0) no matter
+//     what the field block does, so asserting ITS position proves nothing —
+//     it is the boundary between the field block and whatever follows it
+//     that moves when the block grows or shrinks.
 func TestBandDoesNotShift(t *testing.T) {
 	t.Run("field blocks are always fieldRowsH rows", func(t *testing.T) {
 		// idle, never run: no logPath at all, so bandIdle has only kind/desc
@@ -75,7 +82,7 @@ func TestBandDoesNotShift(t *testing.T) {
 		}
 	})
 
-	t.Run("band title rule lands on the same line whatever the cursor is on", func(t *testing.T) {
+	t.Run("the row directly below the field block lands on the same line whatever the cursor is on", func(t *testing.T) {
 		freshLivework(t)
 
 		dir := t.TempDir()
@@ -86,16 +93,31 @@ func TestBandDoesNotShift(t *testing.T) {
 			t.Fatalf("writing fixture admin.toml: %v", err)
 		}
 
+		// A single-line marker in each live entry's Output ring: bandTail
+		// bottom-aligns a short tail (a gap goes above it, never below), so
+		// with exactly one line of content the marker always renders on the
+		// band's OWN last row when the field block above it is sized
+		// correctly — the same last row the idle placeholder below occupies
+		// (TestBandIdleOutputPlaceholderOnLastLine). That shared landing
+		// spot is what makes the three states comparable at all: an
+		// oversized or undersized field block shifts avail (the tail's
+		// available height, computed from the fixed fieldRowsH constant
+		// rather than the field block's own actual length) and the marker
+		// moves off the last row.
+		runningRing := livework.NewRing(4096)
+		runningRing.Write([]byte("RUNNING-TAIL-MARKER\r\n"))
 		live := &livework.Entry{
 			ID: "running-cmd", Name: "running-cmd", Handle: "pty-running-cmd",
-			State: livework.StateRunning, StartedAt: time.Now(),
+			State: livework.StateRunning, StartedAt: time.Now(), Output: runningRing,
 		}
 		if err := livework.Default.Add(live); err != nil {
 			t.Fatalf("Add(running): %v", err)
 		}
+		workerRing := livework.NewRing(4096)
+		workerRing.Write([]byte("WORKER-TAIL-MARKER\r\n"))
 		worker := &livework.Entry{
 			ID: "worker-1", Name: "worker-1", Handle: "pane-worker-1", Via: "herdr",
-			State: livework.StateRunning, StartedAt: time.Now(),
+			State: livework.StateRunning, StartedAt: time.Now(), Output: workerRing,
 			Worker: &livework.WorkerInfo{Branch: "worker-1", Worktree: "/tmp/worker-1"},
 		}
 		if err := livework.Default.Add(worker); err != nil {
@@ -107,7 +129,10 @@ func TestBandDoesNotShift(t *testing.T) {
 		base := New(ctx, dir, "owner/repo", "main", "main")
 		base.herdr = false
 
-		lineOf := func(t *testing.T, cursorOn string) int {
+		// lineContaining renders the whole Work tab with the cursor on
+		// cursorOn and returns the index of the one line carrying want —
+		// the idle placeholder text, or a tail marker unique to that entry.
+		lineContaining := func(t *testing.T, cursorOn, want string) int {
 			t.Helper()
 			m := base
 			m.active = tabWork
@@ -130,20 +155,20 @@ func TestBandDoesNotShift(t *testing.T) {
 			out := Frame(ctx, m, FrameOptions{Width: 120, Height: 40, Settle: 300 * time.Millisecond})
 			lines := strings.Split(stripANSI(out), "\n")
 			for i, l := range lines {
-				if strings.Contains(l, "── ") {
+				if strings.Contains(l, want) {
 					return i
 				}
 			}
-			t.Fatalf("%s: no band title rule found in:\n%s", cursorOn, out)
+			t.Fatalf("%s: %q not found in:\n%s", cursorOn, want, out)
 			return -1
 		}
 
-		want := lineOf(t, "idle-cmd")
-		if got := lineOf(t, "running-cmd"); got != want {
-			t.Errorf("cursor on a running command: band title rule on line %d, want %d (idle command's line) — the band moved with the cursor", got, want)
+		idleLine := lineContaining(t, "idle-cmd", "output appears here while it runs")
+		if got := lineContaining(t, "running-cmd", "RUNNING-TAIL-MARKER"); got != idleLine {
+			t.Errorf("cursor on a running command: tail marker on line %d, want %d (idle command's placeholder line) — the field block above it moved the row below", got, idleLine)
 		}
-		if got := lineOf(t, "worker-1"); got != want {
-			t.Errorf("cursor on a worker: band title rule on line %d, want %d (idle command's line) — the band moved with the cursor", got, want)
+		if got := lineContaining(t, "worker-1", "WORKER-TAIL-MARKER"); got != idleLine {
+			t.Errorf("cursor on a worker: tail marker on line %d, want %d (idle command's placeholder line) — the field block above it moved the row below", got, idleLine)
 		}
 	})
 }
