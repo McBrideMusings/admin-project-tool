@@ -12,9 +12,9 @@ follows it. Cutting tickets from it does not end it — the next slate cites thi
   compare: every direction this directory once carried side by side has been decided.
 - `harness.go` — supplied by `spike tui`. Do not edit; rebuild instead.
 - `fixtures.go` — three temp-dir repos, one per tracker shape, built on demand.
-- `*.txt` — 25 reference frames, one per screen. **Dumps of the running program, never
+- `*.txt` — 23 reference frames, one per screen. **Dumps of the running program, never
   hand-written.** Re-shoot all of them after any change: a directory holding one fresh frame
-  and 24 stale ones is worse than 25 stale ones, because nothing on disk marks which is which.
+  and 22 stale ones is worse than 23 stale ones, because nothing on disk marks which is which.
 - `INVENTORY.md` — every surface `internal/tui` draws and every key it binds.
 
 ```
@@ -34,7 +34,7 @@ alternatives are deleted, and the frames depict the answer:
 
 | Question | Answer |
 | --- | --- |
-| Flat command list or a palette? | **Palette.** At ~94 resolved invocations a flat list can only be remembered, not scanned. `b` is the browse fallback. |
+| Flat command list or a palette? | **The list.** A palette was tried here and removed: it made every command a thing you have to remember the name of before you can reach it, and the Commands surface is where you go precisely when you do not. The list is a section like Running and Workers, under the same cursor. |
 | Where does live output go? | **A full-width band pinned under the list**, always on, for whatever the cursor is on. The `off / auto-tail / split-pane / inline-peek` axis is gone. |
 | Side-by-side or stacked? | **Neither.** The band is full width at every geometry, so the list gives up height and never width. The `w/2.3` orientation switch is gone. |
 | Can the cursor land on a multi-target parent? | **No.** It is a group: it holds targets and runs nothing itself, so it carries no marker — the marker column is what promises `↵` will run the row. |

@@ -43,22 +43,13 @@ const (
 
 var Axes = []Axis{
 	{Key: "screen", Label: "Screen", Hotkey: "s", Values: []string{
-		// commands-palette is FIRST on purpose — this is the resolved design
-		// (grill-me round 3, Q2: "compact strip plus search box, full list
-		// gone by default"). The first Values entry is what launching the
-		// prototype actually lands on, so putting it anywhere else silently
-		// contradicts the answer that was picked. "commands" (the flat list,
-		// below) is the old design kept for direct ⌥s comparison, not the
-		// default anymore. Reordering renames no file — stateName() keys
-		// dumps by value, not position — it only changes launch default and
-		// ⌥s cycle order.
-		"commands-palette", "commands-palette-empty", "commands-palette-typing", "commands-palette-browse",
+		// "commands" is FIRST on purpose: the first Values entry is what
+		// launching the prototype lands on, and the Commands list is the
+		// Work tab's default surface. Reordering renames no file —
+		// stateName() keys dumps by value, not position — it only changes
+		// the launch default and the ⌥s cycle order.
+		"commands", "commands-empty",
 		// The Work tab's live states, then the rest of the reference frames.
-		// "commands" (the flat list) is gone — the palette IS the Commands
-		// surface now, so a frame of the list it replaced would depict a screen
-		// the app no longer has. "commands-workflow-selected" keeps its name
-		// (tickets and docs cite it) and renders the palette's own workflow
-		// dispatch instead.
 		"commands-workflow-selected", "repo", "issues", "issues-selected",
 		"dispatch-sheet", "swarm", "config", "running", "no-manifest",
 		// Every other surface repo-dash draws — see INVENTORY.md. Each is the real
@@ -106,8 +97,7 @@ var Variants = []Variant{{
 	Reset: func() {
 		selDelta = 0
 		peeked = map[string]bool{}
-		resetPalette()
-		resetPaletteMRU()
+		resetCursor()
 		resetLiveRows()
 	},
 	OnDump: func() { Blocking = true },
@@ -282,10 +272,6 @@ type screenSpec struct {
 	// log line to "14:22:09 [INFO] test: ======…", which is unreadable.
 	hosted      bool
 	hostedEmpty bool
-	// demoQuery seeds the palette's typing screen for a deterministic dump —
-	// live typing overrides it the instant paletteQuery is non-empty (see
-	// renderPaletteTyping).
-	demoQuery string
 }
 
 // cmdSel indices below are row positions in workRows()'s always-expanded
@@ -298,7 +284,7 @@ var screens = map[string]screenSpec{
 	// liveSel is the combined cursor's position in the live sections (commands
 	// first, then workers); -1 leaves the selection up in the palette box,
 	// which is where an idle screen starts.
-	"commands-workflow-selected": {tab: 0, liveSel: -1, demoQuery: "retire"},
+	"commands-workflow-selected": {tab: 0, liveSel: -1},
 	"running":                    {tab: 0, liveSel: 1, running: true}, // admin test — hosted, waiting
 	"repo":                       {tab: 1},
 	"issues":                     {tab: 2},
@@ -314,16 +300,10 @@ var screens = map[string]screenSpec{
 	"hosted-empty": {tab: 0, liveSel: 1, hosted: true, hostedEmpty: true},
 	"hosted-quit":  {tab: 0, liveSel: 1, sheet: true, running: true},
 
-	// The command-palette redesign — see the block above render() for the
-	// fixture and interaction. All four render through their own body
-	// function (isPalette in render()), never workBody/hostedBody.
-	"commands-palette":       {tab: 0, liveSel: -1},
-	"commands-palette-empty": {tab: 0, liveSel: -1},
-	// "dev c" — first word already locked (typed or tabbed to "dev "),
-	// second word in progress ("c") — the one frame that shows both a
-	// completed word AND a ghost suggestion for the next one at once.
-	"commands-palette-typing": {tab: 0, liveSel: -1, demoQuery: "dev c"},
-	"commands-palette-browse": {tab: 0, liveSel: -1},
+	// The Commands surface — see the block above render() for the fixture and
+	// the interaction. Both render through renderWorkBody, never hostedBody.
+	"commands":       {tab: 0, liveSel: -1},
+	"commands-empty": {tab: 0, liveSel: -1},
 
 	// The embedded modes. tab drives only the prototype's own tab bar and
 	// footer; the body comes from repo-dash via the key sequence in `embedded`.
@@ -340,31 +320,31 @@ var screens = map[string]screenSpec{
 
 var selDelta int
 
-var workTabs = []string{"commands-palette", "repo", "issues", "config"}
+var workTabs = []string{"commands", "repo", "issues", "config"}
 
 func onKey(key string, s State, set func(axis, value string)) bool {
 	cur := s.Get("screen")
 	if cur == "" {
-		cur = "commands-palette"
+		cur = "commands"
 	}
-	// Tab switching is resolved BEFORE the palette's own keys. It used to be
-	// after, so ⇥ / ←→ were swallowed by onPaletteKey (which binds neither) and
-	// the Work tab became a screen you could not leave — and the palette is now
-	// the tab's default, so that was every launch.
+	// Tab switching is resolved BEFORE the Work tab's own keys. It used to be
+	// after, so ⇥ / ←→ were swallowed by the tab's own handler (which binds
+	// neither) and the Work tab became a screen you could not leave.
 	switch key {
 	case "tab", "right", "l", "shift+tab", "left", "h":
 	default:
-		if isPalette(cur) {
-			return onPaletteKey(key, cur, set)
+		if isWorkTab(cur) {
+			if onWorkTabKey(key, cur, set) {
+				return true
+			}
 		}
 	}
-	// "p" returns to the palette from any other Work-tab screen. It used to be
-	// the A/B key between the palette and the flat list; the flat list is gone,
-	// so it is now just "back to the Commands surface". Never on the hosted pty
-	// view (its footer promises typing goes to the process) or under an overlay.
+	// "p" returns to the Commands surface from any other Work-tab screen. Never
+	// on the hosted pty view (its footer promises typing goes to the process)
+	// or under an overlay.
 	if key == "p" {
 		if sp := screens[cur]; sp.tab == 0 && !sp.hosted && !sp.sheet {
-			set("screen", "commands-palette")
+			set("screen", "commands")
 			return true
 		}
 	}
@@ -400,7 +380,7 @@ func onKey(key string, s State, set func(axis, value string)) bool {
 		case "dispatch-sheet":
 			set("screen", "issues")
 		case "hosted-quit":
-			set("screen", "commands-palette")
+			set("screen", "commands")
 		case "commands-workflow-selected", "running", "swarm":
 			// ↵ is the row's one primary action and what it IS follows the row's
 			// state: attach to it while it runs. There is no running row whose ↵
@@ -418,9 +398,9 @@ func onKey(key string, s State, set func(axis, value string)) bool {
 		case "dispatch-sheet":
 			set("screen", "issues")
 		case "hosted", "hosted-empty":
-			set("screen", "commands-palette")
+			set("screen", "commands")
 		case "hosted-quit":
-			set("screen", "commands-palette")
+			set("screen", "commands")
 		default:
 			set("screen", "hosted-quit")
 		}
@@ -437,15 +417,12 @@ func onKey(key string, s State, set func(axis, value string)) bool {
 	return false
 }
 
-
 func wrap(base, n int) int {
 	if n <= 0 {
 		return 0
 	}
 	return ((base+selDelta)%n + n) % n
 }
-
-
 
 // liveRow is one live thing. `hosted` is the distinction that matters and the
 // one the old "pane N" column got wrong: a hosted row is a CHILD PROCESS on a
@@ -504,8 +481,8 @@ var liveRowsSeed = []liveRow{
 		elapsed: "18m", branch: "feat/admin-3rgp.36-lua-host",
 		worktree: "/Users/pierce/.worktrees/admin-project-tool/admin-3rgp.36",
 		logPath:  root + "/.admin/logs/worker-admin-3rgp.36.log",
-		lastCmd: "review admin-3rgp.36 (workflow: review-changes)",
-		hasRing: true, tail: []string{
+		lastCmd:  "review admin-3rgp.36 (workflow: review-changes)",
+		hasRing:  true, tail: []string{
 			"  reading internal/tui/work.go",
 			"  reading internal/tui/workview.go",
 			"  reading internal/livework/livework.go",
@@ -521,7 +498,7 @@ var liveRowsSeed = []liveRow{
 		elapsed: "6m", branch: "feat/admin-3rgp.7-root-command",
 		worktree: "/Users/pierce/.worktrees/admin-project-tool/admin-3rgp.7",
 		logPath:  root + "/.admin/logs/worker-admin-3rgp.7.log",
-		lastCmd: "implement admin-3rgp.7", hasRing: true, tail: []string{
+		lastCmd:  "implement admin-3rgp.7", hasRing: true, tail: []string{
 			"  the manifest declares no top-level command name —",
 			"  every existing project sets one (admin.toml's",
 			"  [identity] or the repo directory name), and this",
@@ -537,7 +514,7 @@ var liveRowsSeed = []liveRow{
 		elapsed: "2m", branch: "fix/admin-3rgp.33-detect",
 		worktree: "/Users/pierce/.worktrees/admin-project-tool/admin-3rgp.33",
 		logPath:  root + "/.admin/logs/worker-admin-3rgp.33.log",
-		lastCmd: "implement admin-3rgp.33", hasRing: true, tail: []string{
+		lastCmd:  "implement admin-3rgp.33", hasRing: true, tail: []string{
 			"=== RUN   TestDetectHugo",
 			"--- PASS: TestDetectHugo (0.00s)",
 			"=== RUN   TestDetectReactNative",
@@ -595,9 +572,6 @@ var liveStyle = map[string]lipgloss.Style{
 	"running": gr, "waiting": yl, "done": dim, "failed": rd,
 }
 
-
-
-
 func mark(sel bool, s string) string {
 	if sel {
 		return cy.Render("◆ ") + s
@@ -605,14 +579,11 @@ func mark(sel bool, s string) string {
 	return dim.Render("◇ ") + s
 }
 
-
 // peeked tracks which hosted rows (by command name) are expanded inline
 // under "inline-peek" — several at once, since each is independent. Live
 // state outside State, so Reset must clear it or a dump inherits whatever
 // the last keypress left open (in practice never dumped: hover is NoDump).
 var peeked = map[string]bool{}
-
-
 
 // liveWhere renders the activity plus whatever the current direction uses to
 // say hosted-child vs detached-pane.
@@ -718,7 +689,6 @@ func hostedBody(w, h int, empty bool) []string {
 	return out
 }
 
-
 // tailLines returns the last n lines of tail, padded to exactly n lines so
 // the pane never jitters as output scrolls in — the same "fixed height" rule
 // the split-pane box below relies on for the opposite reason (an empty box
@@ -751,7 +721,6 @@ func tailLines(tail []string, n, w int) []string {
 	return out
 }
 
-
 // ---- command palette (spike/work-tab-redesign, round 3) ----
 //
 // The question: at social-poker's real scale (~94 commands, several
@@ -762,36 +731,92 @@ func tailLines(tail []string, n, w int) []string {
 // SHAPE: several deep multi-target parents plus a handful of single
 // commands, which is the density that actually stresses the design.
 //
-// paletteEntries is deliberately separate from `cmds`/liveRows above — the
+// commandEntries is deliberately separate from `cmds`/liveRows above — the
 // original ten reference frames (commands.txt, swarm.txt, …) render from
 // that smaller admin-project-tool-shaped fixture and must not shift under
 // this change. The palette screens are new frames, appended to the screen
 // axis, with their own fixture.
 
-// paletteEntry is one FULLY RESOLVED invocation — what actually gets
+// commandEntry is one FULLY RESOLVED invocation — what actually gets
 // dispatched. "deploy grafana" is an entry; "deploy" alone (the parent,
-// ambiguous among 8 targets) never is.
-type paletteEntry struct {
+// ambiguous among 8 targets) never is, which is why a parent row carries
+// group=true and no marker.
+type commandEntry struct {
 	parent, target, run string
+	group               bool
+	last                bool
 }
 
-func (e paletteEntry) resolved() string {
+func (e commandEntry) resolved() string {
 	if e.target == "" {
 		return e.parent
 	}
 	return e.parent + " " + e.target
 }
 
-// paletteParent is the browse screen's view — same shape the flat list
-// already renders today (commands.txt, swarm.txt), just against the denser
-// fixture, to prove browse mode still works at this scale rather than
-// merely existing in theory.
-type paletteParent struct {
+// label is what the row prints in the name column: a target prints its own key
+// under its parent's heading, a flat command prints its name.
+func (e commandEntry) label() string {
+	if e.target == "" {
+		return e.parent
+	}
+	return e.target
+}
+
+// connector is the tree glyph a target row draws under its parent. A flat
+// command has no parent heading above it, so it draws none.
+func (e commandEntry) connector() string {
+	if e.target == "" {
+		return ""
+	}
+	if e.last {
+		return dim.Render("└ ")
+	}
+	return dim.Render("├ ")
+}
+
+func parentOf(name string) commandParent {
+	for _, p := range commandParents {
+		if p.name == name {
+			return p
+		}
+	}
+	return commandParent{name: name}
+}
+
+// commandRows is the Commands section in draw order: each parent heading (a
+// group row, unselectable) followed by its targets, and a flat command as a
+// single selectable row of its own.
+func commandRows() []commandEntry {
+	var out []commandEntry
+	for _, p := range commandParents {
+		if len(p.targets) == 0 {
+			out = append(out, commandEntry{parent: p.name, run: "bash " + p.name + ".sh"})
+			continue
+		}
+		out = append(out, commandEntry{parent: p.name, group: true})
+		for i, t := range p.targets {
+			for _, e := range commandEntries {
+				if e.parent == p.name && e.target == t {
+					e.last = i == len(p.targets)-1
+					out = append(out, e)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// commandParent is one declared command: a flat one (no targets) or a
+// multi-target group whose targets are the things that actually run. The
+// fixture is deliberately dense — social-poker's real scale — so the list is
+// judged at the size that made it hard to scan, not at a toy one.
+type commandParent struct {
 	name, kind, desc string
 	targets          []string // resolved suffixes, "" entry means no targets
 }
 
-var paletteParents = []paletteParent{
+var commandParents = []commandParent{
 	{name: "deploy", kind: "multi-target", desc: "Deploy a service to production",
 		targets: []string{"analytics-eng", "chat-moderation", "hand-reports-drain", "ios", "ios-device", "mainframe", "name-check", "tournament-processor"}},
 	{name: "dev", kind: "multi-target", desc: "Run a local dev server",
@@ -818,14 +843,14 @@ var paletteParents = []paletteParent{
 	{name: "clean", kind: "shell", desc: "Remove build artifacts"},
 }
 
-// paletteEntries is paletteParents flattened to the resolved shape fuzzy
+// commandEntries is commandParents flattened to the resolved shape fuzzy
 // search actually matches against — the whole point being that "cf" has to
 // find "dev cf" and "kill cf" directly, never just "dev" or "kill".
-var paletteEntries = func() []paletteEntry {
-	var out []paletteEntry
-	for _, p := range paletteParents {
+var commandEntries = func() []commandEntry {
+	var out []commandEntry
+	for _, p := range commandParents {
 		if len(p.targets) == 0 {
-			out = append(out, paletteEntry{parent: p.name, run: "bash " + p.name + ".sh"})
+			out = append(out, commandEntry{parent: p.name, run: "bash " + p.name + ".sh"})
 			continue
 		}
 		for _, t := range p.targets {
@@ -836,234 +861,32 @@ var paletteEntries = func() []paletteEntry {
 				// frame lie about what ↵ does.
 				run = "dispatch claude over " + t
 			}
-			out = append(out, paletteEntry{parent: p.name, target: t, run: run})
+			out = append(out, commandEntry{parent: p.name, target: t, run: run})
 		}
 	}
 	return out
 }()
 
-// paletteMRUSeed / paletteMRU: the strip's live state, seeded PARTIAL (3 of
-// the strip's own N=5), never a full guessed set, since a fresh project has
-// no history to guess from (grill-me round 3, Q7: "empty or partial...
-// never seeded with a guess"). dispatchPalette below is what grows it;
-// resetPalette below restores the seed, so a dump is deterministic no
-// matter what a prior interactive keypress did to it.
-var paletteMRUSeed = []string{"grafana deploy", "dev cf", "test gate"}
-var paletteMRU = append([]string{}, paletteMRUSeed...)
-
-const paletteStripN = 5
-
 var (
-	paletteQuery  string
-	paletteCursor int
-	paletteStatus string
-	// paletteCursorMoved lets a screen's declared liveSel seed the combined
-	// cursor without freezing it: until ↑↓ is actually pressed the seed wins,
-	// after that the cursor is the user's. Reset clears it, so every dumped
-	// frame renders its own screen's seed rather than the previous frame's.
-	paletteCursorMoved bool
+	cmdCursor int
+	// cmdCursorMoved lets a screen's declared liveSel seed the combined cursor
+	// without freezing it: until ↑↓ is actually pressed the seed wins, after
+	// that the cursor is the user's. Reset clears it, so every dumped frame
+	// renders its own screen's seed rather than the previous frame's.
+	cmdCursorMoved bool
+	cmdStatus      string
 )
 
-func isPalette(screen string) bool { return strings.HasPrefix(screen, "commands-palette") }
+func isWorkTab(screen string) bool { return strings.HasPrefix(screen, "commands") }
 
-func resetPalette() {
-	paletteQuery, paletteCursor, paletteStatus, paletteCursorMoved = "", 0, "", false
-}
+func resetCursor() { cmdCursor, cmdCursorMoved, cmdStatus = 0, false, "" }
 
-// resetPaletteMRU is the DUMP's reset (called from Variants[0].Reset, not
-// from resetPaletteMRU — entering/leaving typing mode must NOT wipe usage
-// history, only a fresh dump frame should) — restores the seed so a dump
-// is deterministic regardless of what a prior interactive Enter dispatched.
-func resetPaletteMRU() {
-	paletteMRU = append([]string{}, paletteMRUSeed...)
-}
-
-// fuzzyScore is a subsequence match: every rune of query must appear in
-// target IN ORDER (case-insensitive); score rewards contiguous runs and a
-// literal prefix match, so "cf" ranks "dev cf" and "kill cf" above a
-// scattered match like "chat-moderation" — realistic enough for the
-// question this spike is answering without pulling in a real fuzzy-match
-// library the shipped tool doesn't otherwise depend on.
-func fuzzyScore(query, target string) (int, bool) {
-	q, t := strings.ToLower(query), strings.ToLower(target)
-	if q == "" {
-		return 0, true
-	}
-	score, ti, lastMatch := 0, 0, -1
-	for _, qc := range q {
-		found := false
-		for ; ti < len(t); ti++ {
-			if rune(t[ti]) == qc {
-				if lastMatch == ti-1 {
-					score += 3 // contiguous run
-				} else {
-					score++
-				}
-				lastMatch = ti
-				ti++
-				found = true
-				break
-			}
-		}
-		if !found {
-			return 0, false
-		}
-	}
-	if strings.HasPrefix(t, q) {
-		score += 10
-	}
-	return score, true
-}
-
-// ---- word-by-word completion ----
-//
-// pierce's correction (round 3, second pass): tab was replacing the WHOLE
-// query with the whole resolved string in one press. Real command-palette
-// tab-completion goes word by word — "d" Tab → "dev ", then "c" Tab →
-// "dev cf" — with the remainder of the top match shown inline, dim, as you
-// type, before you ever press Tab. That's what everything below builds:
-// paletteWords splits what's already fully typed from the word still being
-// typed; paletteCandidates ranks entries consistent with the typed words
-// and scores the REST by the in-progress word only (never the whole
-// string); paletteGhost is the dim suffix shown after the cursor.
-
-// paletteWords splits query into its complete (space-terminated) words and
-// the partial word still being typed — "" if query ends in a space or is
-// empty, meaning nothing is in progress yet.
-func paletteWords(query string) (complete []string, partial string) {
-	fields := strings.Fields(query)
-	if query == "" || strings.HasSuffix(query, " ") {
-		return fields, ""
-	}
-	if len(fields) == 0 {
-		return nil, ""
-	}
-	return fields[:len(fields)-1], fields[len(fields)-1]
-}
-
-// tokenAt is a resolved entry's word at position idx: 0 is the parent
-// command, 1 is its target ("" for a single command like lint/fmt/clean,
-// which only ever has a word 0).
-func tokenAt(e paletteEntry, idx int) string {
-	switch idx {
-	case 0:
-		return e.parent
-	case 1:
-		return e.target
-	}
-	return ""
-}
-
-func matchesPrefix(complete []string, e paletteEntry) bool {
-	for i, w := range complete {
-		t := tokenAt(e, i)
-		if t == "" || !strings.HasPrefix(strings.ToLower(t), strings.ToLower(w)) {
-			return false
-		}
-	}
-	return true
-}
-
-// paletteCandidates is every entry consistent with the words already fully
-// typed, ranked by how well the IN-PROGRESS word matches the token at that
-// same position — "dev c" ranks by "c" against each candidate's target
-// (having already filtered to parent-starts-with-"dev"), never by a fuzzy
-// match across the whole resolved string.
-func paletteCandidates(query string) (cands []paletteEntry, wordIdx int, partial string) {
-	var complete []string
-	complete, partial = paletteWords(query)
-	wordIdx = len(complete)
-	type scored struct {
-		e paletteEntry
-		s int
-	}
-	var out []scored
-	for _, e := range paletteEntries {
-		if !matchesPrefix(complete, e) {
-			continue
-		}
-		tok := tokenAt(e, wordIdx)
-		if tok == "" && partial != "" {
-			continue // this entry has no word at this position — nothing to match the partial against
-		}
-		if s, ok := fuzzyScore(partial, tok); ok {
-			out = append(out, scored{e, s})
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].s != out[j].s {
-			return out[i].s > out[j].s
-		}
-		return out[i].e.resolved() < out[j].e.resolved()
-	})
-	cands = make([]paletteEntry, len(out))
-	for i, sc := range out {
-		cands[i] = sc.e
-	}
-	return cands, wordIdx, partial
-}
-
-// paletteGhost is the dim inline suggestion — the rest of the TOP
-// candidate's current-word token, past what's already typed. Only shown
-// when that token genuinely starts with the typed partial (a real
-// completion, not a fuzzy guess dressed up as one).
-func paletteGhost(cands []paletteEntry, wordIdx int, partial string) string {
-	if len(cands) == 0 {
-		return ""
-	}
-	tok := tokenAt(cands[0], wordIdx)
-	if !strings.HasPrefix(strings.ToLower(tok), strings.ToLower(partial)) {
-		return ""
-	}
-	return tok[len(partial):]
-}
-
-// paletteAcceptGhost is Tab's effect: lock in the current word (typed text
-// plus its ghost) and, if the top candidate has a next word, add a
-// trailing space so typing continues straight into it.
-func paletteAcceptGhost(query string) string {
-	cands, wordIdx, partial := paletteCandidates(query)
-	ghost := paletteGhost(cands, wordIdx, partial)
-	if ghost == "" {
-		return query
-	}
-	complete, _ := paletteWords(query)
-	var b strings.Builder
-	for _, w := range complete {
-		b.WriteString(w)
-		b.WriteString(" ")
-	}
-	b.WriteString(partial + ghost)
-	if tokenAt(cands[0], wordIdx+1) != "" {
-		b.WriteString(" ")
-	}
-	return b.String()
-}
-
-// dispatchPalette is Enter's effect: move e to the front of the MRU
-// (deduped, capped), and leave a one-line confirmation — the live proof
-// that the strip actually updates from real usage, not just a mockup of
-// one fixed state.
-func dispatchPalette(e paletteEntry) {
+// dispatchCommand is Enter on a Commands row: materialize it as a live row so
+// there is something to attach to, kill or trail. cmd is left "" on purpose so
+// it renders in Workers, the same shape a hosted command already has.
+func dispatchCommand(e commandEntry) {
 	r := e.resolved()
-	next := []string{r}
-	for _, m := range paletteMRU {
-		if m != r {
-			next = append(next, m)
-		}
-	}
-	if len(next) > paletteStripN {
-		next = next[:paletteStripN]
-	}
-	paletteMRU = next
-	paletteStatus = "dispatched: " + r
-
-	// Materialize it as a live Workers row — the whole point of pierce's
-	// correction here: dispatching from the palette has to actually show
-	// up somewhere to attach to, kill, or trail, not just move a name to
-	// the top of the strip. cmd is left "" on purpose so it renders in
-	// Workers (renderWorkersColumn's own filter), same as docs/test above
-	// — a palette dispatch and a hosted command are the same shape.
+	cmdStatus = "dispatched: " + r
 	for i := range liveRows {
 		if liveRows[i].cmd == "" && liveRows[i].id == r {
 			return // already running — dispatching again just re-selects it
@@ -1071,13 +894,6 @@ func dispatchPalette(e paletteEntry) {
 	}
 	liveRows = append(liveRows, liveRow{
 		state: "running", id: r, doing: "starting…", hosted: true, lastCmd: e.run,
-		// hasRing + tail: a palette dispatch is a hosted command exactly like
-		// docs/test above (comment at dispatchPalette's own call site says
-		// so), so it gets the same shape — a real Ring, not a field-list-only
-		// row. A process that just started legitimately has only a line or
-		// two of output; tailLines already pads short tails to a fixed
-		// height (checked, not assumed — see tailLines above), so this
-		// doesn't jitter once real output starts arriving.
 		hasRing: true, tail: []string{
 			"$ " + e.run,
 			"",
@@ -1111,308 +927,92 @@ func killLiveRow(id string) {
 	liveRows = out
 }
 
-// paletteBoxRows is the box's own row list — MRU entries on the idle
-// screens, fuzzy candidates on the typing screen — as resolved
-// paletteEntry values, so combined cursor math (box rows first, Workers
-// rows after) works the same regardless of which screen the cursor is on.
-// paletteScreenQuery is the query a screen's box is resolving against: what has
-// actually been typed, or the screen's own demoQuery for a deterministic dump.
-// One function so the box's rows, the box's rendered content and the band can
-// never disagree about which entry is selected.
-func paletteScreenQuery(cur string) string {
-	if paletteQuery != "" {
-		return paletteQuery
-	}
-	if sp, ok := screens[cur]; ok {
-		return sp.demoQuery
-	}
-	return ""
-}
-
-// paletteBoxRows is the box's selectable rows for a screen. Every Work-tab
-// screen shows the palette box now, so the default is the MRU strip rather than
-// nil — returning nil for "running"/"swarm" collapsed the combined cursor onto
-// live row 0 and put the ◆ on the wrong row. And the query comes from
-// paletteScreenQuery, the same one the rendered content uses: reading
-// paletteQuery here while the content read the screen's demoQuery put the ◆ on
-// one row of the box and the band on a different entry entirely.
-func paletteBoxRows(cur string) []paletteEntry {
-	if q := paletteScreenQuery(cur); q != "" {
-		cands, _, _ := paletteCandidates(q)
-		return cands
-	}
-	mru := paletteMRU
-	if cur == "commands-palette-empty" {
-		mru = nil
-	}
-	var out []paletteEntry
-	for _, m := range mru {
-		for _, e := range paletteEntries {
-			if e.resolved() == m {
-				out = append(out, e)
-			}
+// selectableCommands is every Commands row the cursor can land on, in draw
+// order. A group row holds targets and runs nothing itself, so it is not here.
+func selectableCommands() []commandEntry {
+	var out []commandEntry
+	for _, e := range commandRows() {
+		if !e.group {
+			out = append(out, e)
 		}
 	}
 	return out
 }
 
-// paletteMoveCursor and paletteActivate are shared between the idle and
-// typing screens — both are "box rows first, Workers rows after" over one
-// combined index, per pierce's correction ("I can no longer move the
-// cursor down to the workers"). Only what counts as a box row differs
-// between the two screens (paletteBoxRows already abstracts that).
-func paletteMoveCursor(cur string, delta int) {
-	total := len(paletteBoxRows(cur)) + len(liveSectionRows(false))
+// moveCursor walks ONE combined list: the Commands rows first, then the live
+// sections in the order liveSectionRows draws them.
+func moveCursor(delta int) {
+	total := len(selectableCommands()) + len(liveSectionRows(false))
 	if total > 0 {
-		paletteCursor = (combinedCursor(cur, false) + delta + total) % total
+		cmdCursor = (combinedCursor("", false) + delta + total) % total
 	}
-	paletteCursorMoved = true
+	cmdCursorMoved = true
 }
 
-// combinedCursor is the one cursor every Work-tab screen shares: box rows first,
-// then the live sections in the order liveSectionRows draws them. A screen's
+// combinedCursor is the one cursor every Work-tab screen shares. A screen's
 // liveSel seeds it until ↑↓ moves it.
 func combinedCursor(cur string, empty bool) int {
-	if paletteCursorMoved {
-		return paletteCursor
+	if cmdCursorMoved {
+		return cmdCursor
 	}
 	sp, ok := screens[cur]
 	if !ok || sp.liveSel < 0 {
-		return paletteCursor
+		return cmdCursor
 	}
-	total := len(paletteBoxRows(cur)) + len(liveSectionRows(empty))
+	total := len(selectableCommands()) + len(liveSectionRows(empty))
 	if total == 0 {
 		return 0
 	}
-	return (len(paletteBoxRows(cur)) + sp.liveSel) % total
+	return (len(selectableCommands()) + sp.liveSel) % total
 }
 
-// paletteActivate is Enter: dispatch if the cursor is on a box row, attach
-// if it's on a Workers row — the two things Enter already means elsewhere
-// on this tab (run vs. attach), unified behind one key here too.
-func paletteActivate(cur string) {
-	box := paletteBoxRows(cur)
-	if paletteCursor < len(box) {
-		dispatchPalette(box[paletteCursor])
+// activate is Enter: dispatch if the cursor is on a Commands row, attach if it
+// is on a live row. One key, and what it means follows the row's state.
+func activate() {
+	cmds := selectableCommands()
+	if cmdCursor < len(cmds) {
+		dispatchCommand(cmds[cmdCursor])
 		return
 	}
-	if wr := paletteWorkerRows(); paletteCursor-len(box) < len(wr) {
-		paletteStatus = "attached to " + wr[paletteCursor-len(box)].id
+	if wr := paletteWorkerRows(); cmdCursor-len(cmds) < len(wr) {
+		cmdStatus = "attached to " + wr[cmdCursor-len(cmds)].id
 	}
 }
 
-// paletteKillSelected is `k` on a Workers row — idle screen only (see
-// onPaletteKey: in typing mode every letter is query text, so kill moves
-// to ctrl+k there instead of colliding with it).
-func paletteKillSelected(cur string) {
-	box := paletteBoxRows(cur)
+// killSelected is `x` on a live row. Kill is x, never k — k is cursor-up
+// everywhere in this dashboard.
+func killSelected() {
+	cmds := selectableCommands()
 	wr := paletteWorkerRows()
-	if idx := paletteCursor - len(box); idx >= 0 && idx < len(wr) {
+	if idx := cmdCursor - len(cmds); idx >= 0 && idx < len(wr) {
 		killLiveRow(wr[idx].id)
-		if paletteCursor > 0 {
-			paletteCursor--
+		if cmdCursor > 0 {
+			cmdCursor--
 		}
 	}
 }
 
-func onPaletteKey(key string, cur string, set func(axis, value string)) bool {
-	switch cur {
-	case "commands-palette", "commands-palette-empty":
-		switch key {
-		case "/":
-			resetPalette()
-			set("screen", "commands-palette-typing")
-			return true
-		case "b":
-			set("screen", "commands-palette-browse")
-			return true
-		case "down", "j":
-			paletteMoveCursor(cur, 1)
-			return true
-		case "up":
-			paletteMoveCursor(cur, -1)
-			return true
-		case "enter":
-			paletteActivate(cur)
-			return true
-		case "a":
-			if wr := paletteWorkerRows(); paletteCursor-len(paletteBoxRows(cur)) < len(wr) {
-				paletteActivate(cur) // same effect as enter on a worker row
-			}
-			return true
-		case "k":
-			paletteKillSelected(cur)
-			return true
+func onWorkTabKey(key string, cur string, set func(axis, value string)) bool {
+	switch key {
+	case "down", "j":
+		moveCursor(1)
+		return true
+	case "up":
+		moveCursor(-1)
+		return true
+	case "enter":
+		activate()
+		return true
+	case "a":
+		if wr := paletteWorkerRows(); cmdCursor-len(selectableCommands()) < len(wr) {
+			activate() // same effect as enter on a live row
 		}
-	case "commands-palette-typing":
-		switch key {
-		case "esc":
-			resetPalette()
-			set("screen", "commands-palette")
-			return true
-		case "backspace":
-			if paletteQuery != "" {
-				r := []rune(paletteQuery)
-				paletteQuery = string(r[:len(r)-1])
-				paletteCursor = 0
-			} else {
-				set("screen", "commands-palette")
-			}
-			return true
-		case "tab":
-			paletteQuery = paletteAcceptGhost(paletteQuery)
-			paletteCursor = 0
-			return true
-		case "down":
-			paletteMoveCursor(cur, 1)
-			return true
-		case "up":
-			paletteMoveCursor(cur, -1)
-			return true
-		case "enter":
-			box := paletteBoxRows(cur)
-			onBoxRow := paletteCursor < len(box)
-			paletteActivate(cur)
-			if onBoxRow {
-				resetPalette()
-				set("screen", "commands-palette")
-			}
-			return true
-		case "ctrl+k":
-			// Plain `k` means kill on the idle screen, but here every
-			// letter is query text — ctrl+k reaches the same action
-			// without swallowing a real search character.
-			paletteKillSelected(cur)
-			return true
-		default:
-			if len([]rune(key)) == 1 {
-				paletteQuery += key
-				paletteCursor = 0
-				return true
-			}
-		}
-	case "commands-palette-browse":
-		switch key {
-		case "esc", "b":
-			set("screen", "commands-palette")
-			return true
-		}
+		return true
+	case "x":
+		killSelected()
+		return true
 	}
 	return false
-}
-
-// paletteBoxFit draws a box sized to its content — height h, never
-// stretched to fill the pane. This is the third-pass correction: the
-// earlier version filled the WHOLE Work-tab body with the box, which threw
-// away the Workers section and the right-hand detail pane entirely
-// ("you've completely erased the details view and any space for the
-// workers"). The box now sits at the TOP of the left column only, same as
-// Alfred/Spotlight/Raycast dock their search box near the top of their own
-// window instead of filling it — pierce's own reference screenshots.
-func paletteBoxFit(w int, title string, body []string) []string {
-	// No leading-margin space this time — unlike the earlier full-height
-	// version, this box's caller (renderPaletteScreen) supplies its own
-	// leading " " once, for the whole two-column row, so baking a second
-	// one in here double-counted a column and left every content row two
-	// short of the border rows — the mismatched "┘│" vs "│  │" gap pierce
-	// spotted. Budget: "│ "+inner+" │" = w  →  inner = w-4. Top border:
-	// "┌─ "+title+" "+dashes+"┐" = w  →  dashes = w-5-VW(title).
-	inner := maxInt(w-4, 8)
-	dashes := maxInt(w-5-VW(title), 0)
-	out := []string{"┌─ " + bo.Render(title) + " " + dim.Render(strings.Repeat("─", dashes)) + "┐"}
-	for _, l := range body {
-		out = append(out, "│ "+Pad(l, inner)+" │")
-	}
-	out = append(out, "└"+strings.Repeat("─", w-2)+"┘")
-	return out
-}
-
-// paletteIdleContent is the box's inner lines for the idle screen — the
-// MRU strip. Empty of anything but the "press / to search" hint until
-// something's actually been dispatched (never a guessed seed). boxSelected
-// is false once the combined cursor has moved past the strip into Workers
-// — a row here must not still show ◆ once the real selection has moved on.
-func paletteIdleContent(w int, empty, boxSelected bool) []string {
-	cursor := paletteCursor
-	// One hint row, count included. It used to be three rows of chrome (hint,
-	// blank, "N recent") above three MRU rows, and the band's fixed height means
-	// every chrome row is one fewer live row visible below.
-	mru := paletteMRU
-	if empty {
-		mru = nil
-	}
-	hint := dim.Render("/ ") + bo.Render("search") + dim.Render("   b ") + bo.Render("browse all")
-	if len(mru) > 0 {
-		hint += dim.Render("   " + itoa(len(mru)) + " recent")
-	}
-	body := []string{hint}
-	if len(mru) == 0 {
-		body = append(body, dim.Render("no commands run yet"))
-	} else {
-		for i, m := range mru {
-			var run string
-			for _, e := range paletteEntries {
-				if e.resolved() == m {
-					run = e.run
-				}
-			}
-			body = append(body, mark(boxSelected && i == cursor, Pad(m, 20))+dim.Render(trunc(run, maxInt(6, w-30))))
-		}
-	}
-	if paletteStatus != "" {
-		body = append(body, "", gr.Render(paletteStatus))
-	}
-	return body
-}
-
-// paletteTypingContent is the box's inner lines for the typing screen.
-// Typed text renders plain, the rest of the top candidate's CURRENT WORD
-// renders dim right after the cursor (paletteGhost) — visible before Tab
-// is ever pressed — and the candidate list narrows by word position, not
-// a whole-string fuzzy match. Capped to a handful of rows: the box no
-// longer owns the whole pane, so it can't grow to show everything either.
-func paletteTypingContent(w int, demoQuery string, boxSelected bool) []string {
-	cursorIdx := paletteCursor
-	q := paletteQuery
-	if q == "" && Blocking {
-		// ONLY substitute for a deterministic dump frame — Blocking is set
-		// exclusively inside the dump's OnDump hook, never during live
-		// driving, so pressing `/` interactively always starts genuinely
-		// empty.
-		q = demoQuery
-	}
-	cands, wordIdx, partial := paletteCandidates(q)
-	ghost := paletteGhost(cands, wordIdx, partial)
-
-	body := []string{"/ " + bo.Render(q) + dim.Render(ghost) + cy.Render("▏"), ""}
-	if len(cands) == 0 {
-		body = append(body, dim.Render("no match"))
-		return body
-	}
-	const maxRows = 5
-	cursor := paletteCursor
-	if !boxSelected {
-		cursor = 0 // scroll window centers on the box's own top row instead
-	}
-	start, end := scrollWindow(len(cands), cursor, maxRows)
-	for i := start; i < end; i++ {
-		e := cands[i]
-		row := mark(boxSelected && i == cursorIdx, Pad(trunc(e.resolved(), 28), 30))
-		row += dim.Render(trunc(e.run, maxInt(6, w-38)))
-		body = append(body, row)
-	}
-	body = append(body, dim.Render(itoa(len(cands))+" match"+pluralES(len(cands))+" · tab complete word · ↵ dispatch"))
-	return body
-}
-
-// pluralES is the "match / matches" suffix the palette's candidate count uses.
-// plural is the ordinary "command / commands" one. They were one function
-// returning "es" for both, which is how "2 commandes · 3 workeres" got printed.
-func pluralES(n int) string {
-	if n == 1 {
-		return ""
-	}
-	return "es"
 }
 
 func plural(n int) string {
@@ -1422,49 +1022,40 @@ func plural(n int) string {
 	return "s"
 }
 
-
-
-
-
-// renderPaletteBrowse is the browse fallback (`b`): every command in the
-// manifest, full width, groups and their targets. A multi-target parent renders
-// with NO marker — it is a heading over its targets and runs nothing itself, so
-// the cursor cannot land on it and nothing here promises ↵ will run it. The
-// names still start in the same column, so the tree stays aligned.
-func renderPaletteBrowse(w, h int) []string {
-	fullW := maxInt(w-2, 20)
-	var left []string
-	for _, p := range paletteParents {
-		desc := trunc(p.desc, maxInt(6, fullW-len(p.name)-wState-6))
+// commandRowLine is one row of the Commands section. A multi-target parent
+// renders with NO marker — it is a heading over its targets and runs nothing
+// itself, so the cursor cannot land on it and nothing here promises ↵ will run
+// it. The names still start in the same column, so the tree stays aligned.
+func commandRowLine(e commandEntry, sel bool, w int) string {
+	if e.group {
+		p := parentOf(e.parent)
+		desc := trunc(p.desc, maxInt(6, w-wName-wState-wElapsed-4))
 		// Two leading spaces where a runnable row has "◇ ": the marker column is
 		// what says the cursor can be here.
-		left = append(left, "  "+bo.Render(Pad(p.name, wName))+dim.Render(Pad(p.kind, wState+wElapsed)+desc))
-		for i, t := range p.targets {
-			conn := "├ "
-			if i == len(p.targets)-1 {
-				conn = "└ "
-			}
-			for _, e := range paletteEntries {
-				if e.parent == p.name && e.target == t {
-					left = append(left, dim.Render("◇ ")+dim.Render(conn)+Pad(trunc(t, wName-2), wName-2)+
-						dim.Render(Pad("", wState+wElapsed-2)+trunc(e.run, maxInt(6, fullW-wName-wState-wElapsed-2))))
-				}
-			}
-		}
+		return Pad("  "+bo.Render(Pad(p.name, wName))+dim.Render(Pad(p.kind, wState+wElapsed)+desc), w)
 	}
-	if len(left) > h {
-		start, end := scrollWindow(len(left), 0, h)
-		left = left[start:end]
-		if start > 0 {
-			left[0] = dim.Render("  ↑ " + itoa(start) + " more")
-		}
-		if end < len(left) {
-			left[len(left)-1] = dim.Render("  ↓ more")
-		}
+	marker, name := dim.Render("◇ "), Pad(trunc(e.label(), wName), wName)
+	if sel {
+		marker, name = cy.Render("◆ "), cy.Render(Pad(trunc(e.label(), wName), wName))
 	}
-	out := make([]string, 0, h)
-	for i := 0; i < h; i++ {
-		out = append(out, " "+Pad(at(left, i), fullW))
+	run := trunc(e.run, maxInt(6, w-wMarker-wName-wState-wElapsed-1))
+	return Pad(" "+marker+e.connector()+name+dim.Render(Pad("", wState+wElapsed-2)+run), w)
+}
+
+// commandSections is the Commands list above the live sections: every declared
+// command, groups and their targets, under the same cursor the live rows use.
+// selIdx is the cursor's own 0-based position among the SELECTABLE rows, -1
+// once the selection has moved down into the live sections.
+func commandSections(w, selIdx int) []string {
+	out := []string{Pad(" "+bo.Render("Commands")+dim.Render("  "+itoa(len(commandEntries))), w)}
+	sel := 0
+	for _, e := range commandRows() {
+		if e.group {
+			out = append(out, commandRowLine(e, false, w))
+			continue
+		}
+		out = append(out, commandRowLine(e, sel == selIdx, w))
+		sel++
 	}
 	return out
 }
@@ -1765,10 +1356,10 @@ func bandFields(lr *liveRow, w int) []string {
 // row's tail — and never a row count that depends on what it has to say. "last
 // run" and "last log" are always two rows, reading "never" and "—" for
 // something nothing has ever run.
-func bandIdle(e *paletteEntry, w int) []string {
+func bandIdle(e *commandEntry, w int) []string {
 	lw := maxInt(w-11, 8)
-	var parent paletteParent
-	for _, p := range paletteParents {
+	var parent commandParent
+	for _, p := range commandParents {
 		if p.name == e.parent {
 			parent = p
 		}
@@ -1778,7 +1369,10 @@ func bandIdle(e *paletteEntry, w int) []string {
 		kind = "target of " + e.parent
 	}
 	lastRun, lastLog := "", ""
-	for _, m := range paletteMRU {
+	// A small fixed set of entries carry a last-run in the fixture, so the
+	// band's "has been run before" state is depicted without the frame
+	// depending on what a prior keypress dispatched.
+	for _, m := range []string{"grafana deploy", "dev cf", "test gate"} {
 		if m == e.resolved() {
 			lastRun = "18m ago · exit 0"
 			lastLog = root + "/.admin/logs/" + strings.ReplaceAll(e.resolved(), " ", "-") + ".log"
@@ -1808,33 +1402,31 @@ func bandIdle(e *paletteEntry, w int) []string {
 
 // renderWorkBody is the whole Work tab: the palette box and the live sections
 // scrolling in the top region, then the band. One layout at every geometry.
-func renderWorkBody(w, h int, boxTitle string, boxBody []string, selEntry *paletteEntry, selWorker *liveRow, workerSelIdx int, empty bool) []string {
+func renderWorkBody(w, h int, cmdSelIdx int, selEntry *commandEntry, selWorker *liveRow, workerSelIdx int, empty bool) []string {
 	fullW := maxInt(w-2, 20)
 	bh := bandH(h)
 	listH := maxInt(h-bh, 1)
 
-	// The box is pinned; only the live sections scroll. Clipping the whole list
-	// together was the bug this replaces — the window ate the box's top border
-	// and left a bordered fragment with no title on it.
-	box := paletteBoxFit(fullW, boxTitle, boxBody)
-	sections := liveSections(fullW, workerSelIdx, empty)
-	sectionsH := maxInt(listH-len(box), 0)
-	if len(sections) > sectionsH {
-		start, end := scrollWindow(len(sections), markedIdx(sections), sectionsH)
-		win := append([]string{}, sections[start:end]...)
+	// Commands and the live sections are one scrolling list under one cursor.
+	// The window is taken over the whole thing rather than per section, so a
+	// long command list scrolls its own rows off rather than pushing Workers
+	// out of the body entirely.
+	list := append(commandSections(fullW, cmdSelIdx), liveSections(fullW, workerSelIdx, empty)...)
+	if len(list) > listH {
+		start, end := scrollWindow(len(list), markedIdx(list), listH)
+		win := append([]string{}, list[start:end]...)
 		if start > 0 && len(win) > 0 {
 			// The header of whichever section the window starts inside is pinned
 			// to its first row. Without it a scrolled list shows rows with no
 			// way to tell whether they are commands or workers — and the naive
 			// window replaced the header itself with the "N more" marker.
-			win[0] = Pad(" "+sectionHeaderAt(sections, start)+dim.Render("   ↑ "+itoa(start)+" more"), fullW)
+			win[0] = Pad(" "+sectionHeaderAt(list, start)+dim.Render("   ↑ "+itoa(start)+" more"), fullW)
 		}
-		if end < len(sections) && len(win) > 0 {
+		if end < len(list) && len(win) > 0 {
 			win[len(win)-1] = dim.Render("  ↓ more")
 		}
-		sections = win
+		list = win
 	}
-	list := append(append([]string{}, box...), sections...)
 
 	out := make([]string, 0, h)
 	for i := 0; i < listH; i++ {
@@ -1872,11 +1464,11 @@ func renderWorkBody(w, h int, boxTitle string, boxBody []string, selEntry *palet
 func sectionHeaderAt(sections []string, i int) string {
 	for j := i; j >= 0 && j < len(sections); j-- {
 		t := strings.TrimSpace(Strip(sections[j]))
-		if strings.HasPrefix(t, "Running") || strings.HasPrefix(t, "Workers") {
+		if strings.HasPrefix(t, "Commands") || strings.HasPrefix(t, "Running") || strings.HasPrefix(t, "Workers") {
 			return bo.Render(strings.Fields(t)[0])
 		}
 	}
-	return bo.Render("Running")
+	return bo.Render("Commands")
 }
 
 func prefixRows(rows []string, w int) []string {
@@ -1886,7 +1478,6 @@ func prefixRows(rows []string, w int) []string {
 	}
 	return out
 }
-
 
 func render(s State) string {
 	w, h := s.W, s.H
@@ -1898,7 +1489,7 @@ func render(s State) string {
 	}
 	name := s.Get("screen")
 	if name == "" {
-		name = "commands-palette"
+		name = "commands"
 	}
 	sp := screens[name]
 	empty := s.Is("data", "empty")
@@ -1924,37 +1515,33 @@ func render(s State) string {
 		var body []string
 		onLive := false
 		switch {
-		case name == "commands-palette-browse":
-			body = renderPaletteBrowse(w, h-5)
 		case sp.hosted:
 			body = hostedBody(w, h-5, sp.hostedEmpty)
 		default:
-			// Every other Work-tab screen is the same body: the palette box and
-			// the live sections above, the band below. What differs is only
-			// which content the box holds and where the combined cursor sits —
-			// the screen axis names those, it does not name a second layout.
-			box := paletteBoxRows(name)
+			// Every Work-tab screen is the same body: the Commands list and the
+			// live sections above, the band below. What differs is only where
+			// the combined cursor sits — the screen axis names that, it does
+			// not name a second layout.
+			cmds := selectableCommands()
 			cursor := combinedCursor(name, empty)
-			inBox := cursor < len(box)
-			content := paletteIdleContent(maxInt(w-6, 12), empty, inBox)
-			if q := paletteScreenQuery(name); q != "" || name == "commands-palette-typing" {
-				content = paletteTypingContent(maxInt(w-6, 12), sp.demoQuery, inBox)
-			}
+			inCmds := cursor < len(cmds)
 			rowsLive := liveSectionRows(empty)
-			liveSel := -1
+			cmdSel, liveSel := -1, -1
 			var selLive *liveRow
-			var selEntry *paletteEntry
+			var selEntry *commandEntry
 			switch {
-			case inBox && len(box) > 0:
-				selEntry = &box[cursor]
-			case cursor-len(box) < len(rowsLive):
-				liveSel = cursor - len(box)
+			case inCmds && len(cmds) > 0:
+				cmdSel = cursor
+				selEntry = &cmds[cursor]
+			case cursor-len(cmds) < len(rowsLive):
+				liveSel = cursor - len(cmds)
 				selLive = rowsLive[liveSel]
-			case len(box) > 0:
-				selEntry = &box[0]
+			case len(cmds) > 0:
+				cmdSel = 0
+				selEntry = &cmds[0]
 			}
 			onLive = selLive != nil
-			body = renderWorkBody(w, h-5, "Command Palette", content, selEntry, selLive, liveSel, empty)
+			body = renderWorkBody(w, h-5, cmdSel, selEntry, selLive, liveSel, empty)
 		}
 		for len(body) < h-5 {
 			body = append(body, "")
@@ -2114,17 +1701,11 @@ func placeBox(rows, box []string, w, h, bw int) []string {
 // attach while it runs, dispatch while it does not. Kill is `x`: `k` is cursor-up
 // everywhere in this dashboard, so a footer advertising "k kill" was a collision.
 func keys(name string, sp screenSpec, onLive bool) string {
-	if name == "commands-palette-typing" {
-		return "type to search · tab complete · ↑↓ move · ↵ dispatch · esc cancel"
-	}
-	if name == "commands-palette-browse" {
-		return "↑↓ scroll · / search · esc back to palette"
-	}
 	if sp.tab == 0 && !sp.hosted && !sp.sheet {
 		if onLive {
-			return "↑↓ move · ↵ attach · x kill · / search · b browse · q/esc quit"
+			return "↑↓ move · ↵ attach · x kill · q/esc quit"
 		}
-		return "↑↓ move · ↵ dispatch · / search · b browse · q/esc quit"
+		return "↑↓ move · ↵ dispatch · q/esc quit"
 	}
 	switch {
 	case sp.sheet && sp.running:

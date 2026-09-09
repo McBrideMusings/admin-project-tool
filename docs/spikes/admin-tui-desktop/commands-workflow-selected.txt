@@ -1,22 +1,22 @@
  beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
- ┌─ Command Palette ──────────────────────────────────────────────────────────────────────────┐ 
- │ / retire-merged▏                                                                           │ 
- │                                                                                            │ 
- │ ◆ retire-merged docs-adr-lua    dispatch claude over docs-adr-lua                          │ 
- │ ◇ retire-merged fix-detector-…  dispatch claude over fix-detector-parity-skip              │ 
- │ ◇ retire-merged go-transient-…  dispatch claude over go-transient-kind-factories           │ 
- │ ◇ retire-merged launchd-env-f…  dispatch claude over launchd-env-file                      │ 
- │ 4 matches · tab complete word · ↵ dispatch                                                 │ 
- └────────────────────────────────────────────────────────────────────────────────────────────┘ 
-                                                                                                
-  Running  2                                                                                    
-  ◇ admin docs      ● running 4m12s  vitepress dev · localhost:5173                      hosted 
+  Commands  47                                                                                  
+   deploy          multi-target     Deploy a service to production                              
+  ◆ ├ analytics-eng                  cd apps && bunx wrangler deploy --target analytics-eng     
+  ◇ ├ chat-moderation                cd apps && bunx wrangler deploy --target chat-moderation   
+  ◇ ├ hand-reports-dr…               cd apps && bunx wrangler deploy --target hand-reports-dra… 
+  ◇ ├ ios                            cd apps && bunx wrangler deploy --target ios               
+  ◇ ├ ios-device                     cd apps && bunx wrangler deploy --target ios-device        
+  ◇ ├ mainframe                      cd apps && bunx wrangler deploy --target mainframe         
+  ◇ ├ name-check                     cd apps && bunx wrangler deploy --target name-check        
+  ◇ └ tournament-proc…               cd apps && bunx wrangler deploy --target tournament-proce… 
+   dev             multi-target     Run a local dev server                                      
+  ◇ ├ cf                             cd apps && bunx wrangler dev --target cf                   
    ↓ more                                                                                       
-── retire-merged docs-adr-lua  not running ──────────────────────── also 2 commands · 3 workers 
- kind     target of retire-merged                                                               
- runs     dispatch claude over docs-adr-lua                                                     
+── deploy analytics-eng  not running ────────────────────────────── also 2 commands · 3 workers 
+ kind     target of deploy                                                                      
+ runs     cd apps && bunx wrangler deploy --target analytics-eng                                
  last run never                                                                                 
  last log —                                                                                     
                                                                                                 
@@ -27,4 +27,4 @@
                                                                                                 
  output appears here while it runs                                                              
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ dispatch · / search · b browse · q/esc quit                                        
+ ↑↓ move · ↵ dispatch · q/esc quit                                                              

@@ -42,26 +42,30 @@ func send(m model, k string) model {
 	return out.(model)
 }
 
-// TestArrowsMoveTheCursor drives the combined cursor: the palette box's rows
-// first, then the live sections. The band must follow it — there is no second
+// TestArrowsMoveTheCursor drives the combined cursor: the Commands rows first,
+// then the live sections. The band must follow it — there is no second
 // selector, so a cursor the band ignores is the bug this pins.
 func TestArrowsMoveTheCursor(t *testing.T) {
-	resetPalette()
+	resetCursor()
 	m := newModel()
 	m.w, m.h = 120, 40
-	if got := m.state().Get("screen"); got != "commands-palette" {
-		t.Fatalf("start screen = %q, want commands-palette", got)
+	if got := m.state().Get("screen"); got != "commands" {
+		t.Fatalf("start screen = %q, want commands", got)
 	}
-	if len(paletteMRU) < 2 {
-		t.Fatal("fixture has fewer than two MRU rows to move between")
+	cmds := selectableCommands()
+	if len(cmds) < 2 {
+		t.Fatal("fixture has fewer than two command rows to move between")
 	}
+	// A target row draws its tree connector between the marker and the name
+	// ("◆ ├ chat-moderation"), so the invariant is that the marker and the
+	// label land on the SAME row, not that they are adjacent characters.
 	m = send(m, "down")
-	if v := Strip(m.View()); !strings.Contains(v, "◆ "+paletteMRU[1]) {
-		t.Errorf("one down did not land on %q", paletteMRU[1])
+	if !markedRowHas(Strip(m.View()), cmds[1].label()) {
+		t.Errorf("one down did not land on %q", cmds[1].label())
 	}
-	// Past the box, the cursor enters the live sections and the band switches
-	// from an entry's detail to a live row's own fields.
-	for i := 0; i < len(paletteMRU); i++ {
+	// Past the Commands rows, the cursor enters the live sections and the band
+	// switches from an entry's detail to a live row's own fields.
+	for i := 0; i < len(cmds); i++ {
 		m = send(m, "down")
 	}
 	v := Strip(m.View())
@@ -71,18 +75,18 @@ func TestArrowsMoveTheCursor(t *testing.T) {
 }
 
 func TestUpWrapsBackwards(t *testing.T) {
-	resetPalette()
+	resetCursor()
 	resetLiveRows()
 	defer resetLiveRows()
 	m := newModel()
 	m.w, m.h = 120, 40
-	m = send(m, "up") // from the box's first row, wrap to the last live row
+	m = send(m, "up") // from the first Commands row, wrap to the last live row
 	last := liveSectionRows(false)
 	if len(last) == 0 {
 		t.Fatal("no live rows to wrap onto")
 	}
-	if v := Strip(m.View()); !strings.Contains(v, "◆ "+last[len(last)-1].id) {
-		t.Errorf("up from the first box row did not wrap onto the last live row %q", last[len(last)-1].id)
+	if !markedRowHas(Strip(m.View()), last[len(last)-1].id) {
+		t.Errorf("up from the first Commands row did not wrap onto the last live row %q", last[len(last)-1].id)
 	}
 }
 
@@ -219,12 +223,12 @@ func TestFixtureTabSetsAreWhatTheDigitKeysAssume(t *testing.T) {
 // real tail), not the bare state/id/doing row it used to append. Without it the
 // band is dead on the one row a person just dispatched is most likely to be
 // looking at.
-func TestPaletteDispatchRendersATail(t *testing.T) {
+func TestDispatchRendersATail(t *testing.T) {
 	resetLiveRows()
 	defer resetLiveRows()
 
-	e := paletteEntry{parent: "dev", target: "cf", run: "bun run dev:cf"}
-	dispatchPalette(e)
+	e := commandEntry{parent: "dev", target: "cf", run: "bun run dev:cf"}
+	dispatchCommand(e)
 
 	var got *liveRow
 	for i := range liveRows {
@@ -233,7 +237,7 @@ func TestPaletteDispatchRendersATail(t *testing.T) {
 		}
 	}
 	if got == nil {
-		t.Fatalf("dispatchPalette did not append a live row for %q", e.resolved())
+		t.Fatalf("dispatchCommand did not append a live row for %q", e.resolved())
 	}
 	if !got.hasRing {
 		t.Fatalf("dispatched row %q has hasRing=false", got.id)
@@ -272,17 +276,17 @@ func TestBandReachesFloor(t *testing.T) {
 // entry that had actually been run once slid everything below it down and
 // claimed a state change that had not happened.
 func TestBandDoesNotShift(t *testing.T) {
-	if n := len(bandIdle(&paletteEntry{parent: "dev", target: "cf", run: "bun run dev:cf"}, 60)); n != fieldRowsH {
+	if n := len(bandIdle(&commandEntry{parent: "dev", target: "cf", run: "bun run dev:cf"}, 60)); n != fieldRowsH {
 		t.Errorf("bandIdle for a never-run entry is %d rows, want exactly %d", n, fieldRowsH)
 	}
-	ran := paletteEntry{}
-	for _, e := range paletteEntries {
-		if len(paletteMRU) > 0 && e.resolved() == paletteMRU[0] {
+	ran := commandEntry{}
+	for _, e := range commandEntries {
+		if e.resolved() == "grafana deploy" {
 			ran = e
 		}
 	}
 	if ran.parent == "" {
-		t.Fatal("no MRU entry to test the has-run shape against")
+		t.Fatal("no previously-run entry to test the has-run shape against")
 	}
 	if n := len(bandIdle(&ran, 60)); n != fieldRowsH {
 		t.Errorf("bandIdle for an entry that HAS run is %d rows, want exactly %d", n, fieldRowsH)
@@ -298,7 +302,7 @@ func TestBandDoesNotShift(t *testing.T) {
 	// And the rule itself lands on the same line whatever the cursor is on.
 	want := -1
 	for _, screen := range []string{"commands-palette", "running", "swarm"} {
-		resetPalette()
+		resetCursor()
 		out := Strip(render(State{Values: map[string]string{"screen": screen}, W: 120, H: 40}))
 		lines := strings.Split(out, "\n")
 		got := -1
@@ -329,4 +333,16 @@ func tabBarLine(out string) string {
 		return ""
 	}
 	return lines[1]
+}
+
+// markedRowHas reports whether the row carrying the cursor marker also carries
+// want. Marker and name are not adjacent on every row kind — a target row has
+// its tree connector between them — so proximity, not adjacency, is the rule.
+func markedRowHas(view, want string) bool {
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "◆") && strings.Contains(line, want) {
+			return true
+		}
+	}
+	return false
 }

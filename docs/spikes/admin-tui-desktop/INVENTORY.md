@@ -14,15 +14,13 @@ local panes at `local.go:16`.
 
 ## The Work tab
 
-One surface, three states, one band. There is no flat Commands list any more — the palette is
-the Commands surface, and `commands.txt` was deleted with the list it depicted.
+One surface, one band. The Commands list, Running and Workers are three sections under one
+cursor, and the band under them previews whatever that cursor is on.
 
 | Frame | What it shows |
 | --- | --- |
-| `commands-palette.txt` | Idle: the box with its MRU strip, the live sections, the band on the selected entry |
-| `commands-palette-empty.txt` | Nothing run yet and no workers |
-| `commands-palette-typing.txt` | `/` search, word-by-word candidates, inline ghost suggestion |
-| `commands-palette-browse.txt` | `b`: every command, groups unmarked and unpickable, targets runnable |
+| `commands.txt` | The Commands list, the live sections, the band on the selected entry |
+| `commands-empty.txt` | Nothing running and no workers |
 | `commands-workflow-selected.txt` | A workflow entry selected — targets are tracker items, so `↵` dispatches an agent |
 | `running.txt` | The cursor on a live command; the band shows its log, urls and tail |
 | `swarm.txt` | The cursor on a live worker; the band shows log, branch, worktree, session, now, tail |
@@ -31,10 +29,10 @@ the Commands surface, and `commands.txt` was deleted with the list it depicted.
 | `dispatch-sheet.txt` | Dispatching from the tracker tab |
 | `no-manifest.txt` | A repo with no `admin.toml` |
 
-**Work-tab keys.** `↑↓`/`jk` move the one combined cursor (box rows, then Running, then
-Workers) · `↵` the row's primary action, following its state · `x` kill · `/` search ·
-`b` browse · `p` back to the palette · `←→`/`⇥` switch tabs · `q`/`esc` quit, or detach while
-attached.
+**Work-tab keys.** `↑↓`/`jk` move the one combined cursor (Commands, then Running, then
+Workers) · `↵` the row's primary action, following its state · `x` kill · `a` attach ·
+`p` back to the Commands surface · `←→`/`⇥` switch tabs · `q`/`esc` quit, or detach while
+attached. A multi-target parent is a group row: no marker, and the cursor skips over it.
 
 ## Tabs
 

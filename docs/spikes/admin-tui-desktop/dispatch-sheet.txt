@@ -1,19 +1,19 @@
  beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
- ┌─ Command Palette ──────────────────────────────────────────────────────────────────────────┐ 
- │ / search   b browse all   3 recent                                                         │ 
- │ ◇ grafana deploy      cd apps && bunx wrangler grafana --target deploy                     │ 
- │ ◇ dev cf              cd apps && bunx wrangler dev --target cf                             │ 
- │ ◇ test gate           cd apps && bunx wrangler test --target gate                          │ 
- └────────────────────────────────────────────────────────────────────────────────────────────┘ 
+  Commands   ↑ 53 more                                                                          
+  ◇ lint                           bash lint.sh                                                 
+  ◇ fmt                            bash fmt.sh                                                  
+  ◇ clean                          bash clean.sh                                                
                                                                                                 
-  Running  2     ┌────────────────────────────────────────────────────────────┐                 
-  ◆ admin docs   │  Dispatch admin-3rgp.29                                    │          hosted 
-  ◇ admin test   │                                                            │          hosted 
-                 │    agent     claude                                        │                 
-  Workers  3     │    model     sonnet                                        │                 
-   ↓ more        │    branch    two-deployment-paths                          │                 
+  Running  2                                                                                    
+  ◆ admin docs      ● running 4m12s  vitepress dev · localhost:5173                      hosted 
+  ◇ admin test   ┌────────────────────────────────────────────────────────────┐          hosted 
+                 │  Dispatch admin-3rgp.29                                    │                 
+  Workers  3     │                                                            │                 
+  ◇ admin-3rgp.36│    agent     claude                                        │          pane 3 
+  ◇ admin-3rgp.7 │    model     sonnet                                        │          pane 4 
+  ◇ admin-3rgp.33│    branch    two-deployment-paths                          │          pane 5 
 ── ● admin docs  │    lands to  feat/one-tool-go-merge                        │mand · 3 workers 
  log      /Users/│                                                            │                 
  url      http://│    ⏎ dispatch     e edit     esc cancel                    │                 
