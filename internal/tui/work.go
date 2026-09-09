@@ -1015,6 +1015,64 @@ func (m Model) attachCurrentWork() (tea.Model, tea.Cmd) {
 	return m.attachEntry(m.currentLiveEntry())
 }
 
+// entryIsLive reports whether e is still running in the sense that matters to
+// the footer and to kill: something a and x can act on. StateExited/
+// StateFailed are terminal — nothing to attach-and-watch, nothing to kill —
+// even though the row (a finished worker) keeps its own Entry around.
+func entryIsLive(e *livework.Entry) bool {
+	if e == nil {
+		return false
+	}
+	switch e.State {
+	case livework.StateExited, livework.StateFailed:
+		return false
+	default:
+		return true
+	}
+}
+
+// workFooterPairs is the Work tab's viewKeymap() branch, computed from the
+// SAME row-state resolution currentLiveEntry()'s callers already use — so the
+// footer can never advertise an action the key does not take (admin-3rgp.
+// 72.12's whole point: one dispatch point resolves the row's state, both the
+// key handler and the footer read it, never two parallel checks). It follows
+// the cursor row:
+//
+//   - idle command/target → "↵ dispatch", no kill.
+//   - live command/target or live worker → "↵ attach · x kill".
+//   - finished worker → "↵ transcript", no kill (nothing left to stop).
+//   - no actionable row under the cursor → the idle pairs, matching what a
+//     fresh Work tab (cursor on the first idle command) already shows.
+//
+// docs/spikes/admin-tui-desktop/commands.txt:30 and commands-running.txt:30
+// are the verbatim targets for the idle/live cases. `a attach` and `/ filter`
+// are deliberately not advertised here even though both keys still work —
+// the frames don't show them, and the footer's job is to say only what the
+// current row can actually do.
+func (m Model) workFooterPairs() [][2]string {
+	move := [2]string{"↑↓", "move"}
+	quit := [2]string{"q/esc", "quit"}
+	idle := [][2]string{move, {"↵", "dispatch"}, quit}
+
+	r, ok := m.currentRow()
+	if !ok || r.work == nil {
+		return idle
+	}
+	switch r.kind {
+	case rowCommand, rowCommandTarget:
+		if entryIsLive(r.work.live) {
+			return [][2]string{move, {"↵", "attach"}, {"x", "kill"}, quit}
+		}
+		return idle
+	case rowWorker:
+		if entryIsLive(r.work.worker) {
+			return [][2]string{move, {"↵", "attach"}, {"x", "kill"}, quit}
+		}
+		return [][2]string{move, {"↵", "transcript"}, quit}
+	}
+	return idle
+}
+
 func (m Model) killCurrentWork() (tea.Model, tea.Cmd) {
 	e := m.currentLiveEntry()
 	if e == nil || e.Ops.Kill == nil {

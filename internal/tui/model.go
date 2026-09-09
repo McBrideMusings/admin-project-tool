@@ -1929,15 +1929,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.moveCursor(-1)
 	case "k":
-		// The Work tab reuses k for "kill" (a running row's own action) rather
-		// than "move up" — the prototype's own footer ("↑↓ move · k kill"), and
-		// the reason arrow-only movement is what the Work tab's keymap advertises.
-		// It stays "kill" in every focus state on that tab — only the arrow `up`
-		// returns focus to the tab bar there, and killCurrentWork is already a
-		// no-op with no current row.
-		if m.active == tabWork {
-			return m.killCurrentWork()
-		}
+		// k is cursor-up everywhere in this dashboard, the Work tab included
+		// (admin-3rgp.72.12) — a footer advertising `k kill` beside `j`/`k`
+		// navigation was a collision waiting to fire on a row someone did not
+		// mean to be on. Kill lives on `x` now (see case "x" below).
 		if m.focus == focusTabs {
 			return m, nil
 		}
@@ -2098,6 +2093,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m.deleteSelectedBranches()
 			}
 			return m.deleteBranchUnderCursor()
+		}
+		// The Work tab's kill, moved off k (admin-3rgp.72.12) — x is free here:
+		// it isn't in keymap.Reserved and tabWork's row kinds are in
+		// keymap.NotBindable, so no manifest [keys.*] binding can collide with
+		// it. killCurrentWork is already a no-op with no live row under the
+		// cursor.
+		if m.active == tabWork {
+			return m.killCurrentWork()
 		}
 	case "X":
 		// Clean-all works from any Repo-tab pane: the collapsed Cleanup box advertises
