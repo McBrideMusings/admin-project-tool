@@ -126,10 +126,10 @@ func (m Model) renderQuitConfirmBody(width, height int) []string {
 
 // quitConfirmContent builds the overlay's title, badge, and body lines from
 // the snapshot taken when the overlay opened. The state color mirrors
-// renderLiveState's own switch (workview.go) — that helper isn't reused
-// directly because it returns an already-ANSI-styled string, and nesting
-// that inside a seg's own fg style would double-apply color rather than let
-// boxPanel's segment renderer own it.
+// stateColor's own switch (workview.go) — that helper isn't reused directly
+// because renderWorkerState/renderCommandState return an already-ANSI-styled
+// string, and nesting that inside a seg's own fg style would double-apply
+// color rather than let boxPanel's segment renderer own it.
 func (m Model) quitConfirmContent() (title, badge string, lines [][]seg) {
 	for _, e := range m.quitHosted {
 		st, _ := livework.Default.State(e.ID)
