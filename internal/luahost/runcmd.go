@@ -34,11 +34,10 @@ type RunCmdOptions struct {
 type RunCmdResult struct {
 	Ok     bool
 	Output string
-	// ExitCode is the child's exit status when Ok is false and the process
-	// ran to completion (-1 when it was killed by a signal, never started,
-	// or Ok is true). Not part of the Lua run_cmd(...) return shape — added
-	// for a Go caller that needs to report the exact code a failing guard
-	// command exited with (e.g. appleRunMacDeployVerify).
+	// ExitCode is 0 when Ok is true, the child's exit status when Ok is
+	// false and the process ran to completion, and -1 when it was killed by
+	// a signal or never started. Not part of the Lua run_cmd(...) return
+	// shape — a Go caller reads it directly off the struct.
 	ExitCode int
 }
 

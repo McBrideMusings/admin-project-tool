@@ -154,7 +154,7 @@ func TestRunApplePrebuildRunsOnceAndErrorsOnFailure(t *testing.T) {
 	}
 }
 
-// --- mac_deploy_verify (admin-7ip8) -----------------------------------------
+// --- mac_deploy_verify -------------------------------------------------
 //
 // appleDeployMac only calls appleRunMacDeployVerify and, on a nil error,
 // proceeds to os.RemoveAll(installPath) + appleCopyTree — so a non-nil error

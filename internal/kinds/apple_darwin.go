@@ -422,10 +422,7 @@ func appleDeployMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 
 // appleRunMacDeployVerify runs [apple] mac_deploy_verify — a guard command
 // that gets the built app's path as its one argument and must exit zero
-// before deploy_mac is allowed to install it. Ports admin_lib/apple.py's
-// deploy_mac verify_cmd block (previously the only implementation of this
-// key; the Go deploy_mac silently skipped it until this ticket). Unset or
-// empty: a no-op, matching Python's `if verify_cmd:` guard.
+// before deploy_mac is allowed to install it. Unset or empty: a no-op.
 func appleRunMacDeployVerify(cfg map[string]any, h *luahost.Host, appPath string) error {
 	verifyCmd := strings.TrimSpace(cfgString(cfg, "mac_deploy_verify", ""))
 	if verifyCmd == "" {
