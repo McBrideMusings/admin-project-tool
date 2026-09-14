@@ -317,7 +317,11 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 		return marker + name + state + elapsed + faintStyle.Render(act) + whereStyled
 	}
 
-	name := padEnd(truncR(wd.cmdName, wName), wName)
+	// truncR to wName-1, not wName: a name that exactly fills the column
+	// leaves no blank cell before the kind column starts, and the elision
+	// mark plus "shell" read as one token (admin-3rgp.72.19). Padding still
+	// fills out to wName, so the column's start and width are unchanged.
+	name := padEnd(truncR(wd.cmdName, wName-1), wName)
 	// A holder row (it has targets) never runs itself — it is a menu, not a
 	// dispatch — so it must never take the live/pending rendering path even
 	// when wd.live/wd.pending happen to be set (they no longer are, since a
@@ -355,7 +359,10 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 // description in the same columns every other row uses.
 func renderGroupRow(wd *workRowData, width int) string {
 	rest := maxi(width-wMarker-wName-wState-wElapsed, 6)
-	name := lipgloss.NewStyle().Bold(true).Render(padEnd(truncR(wd.cmdName, wName), wName))
+	// Same reserved cell as renderWorkRow's flat-command branch, for the same
+	// reason: a full-width group name must not run straight into the kind
+	// column (admin-3rgp.72.19).
+	name := lipgloss.NewStyle().Bold(true).Render(padEnd(truncR(wd.cmdName, wName-1), wName))
 	kind := padEnd(truncR(kindLabel(wd.cmdKind), wState+wElapsed), wState+wElapsed)
 	desc := truncR(wd.cmdDesc, rest)
 	return "  " + name + faintStyle.Render(kind+desc)

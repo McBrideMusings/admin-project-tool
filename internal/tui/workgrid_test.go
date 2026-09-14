@@ -254,3 +254,43 @@ func TestGroupRowIsNotClickable(t *testing.T) {
 		t.Errorf("group row at index %d is clickable (hitRow), want hitNone", groupIdx)
 	}
 }
+
+// TestNameColumnLeavesGapBeforeKindColumn is admin-3rgp.72.19: a name that
+// exactly fills (or overflows) the wName-wide name column must still leave
+// at least one blank cell before the kind column starts, on both a flat
+// command row and a group row — otherwise the elision mark and the kind
+// word ("shell") read as one token, as they did for the real
+// "tampermonkey-status" command. A short name is unaffected: its own
+// padding already supplies the gap.
+func TestNameColumnLeavesGapBeforeKindColumn(t *testing.T) {
+	mm := workTestModel(nil)
+	lw := listContentWidth(96, 30)
+
+	long := "tampermonkey-status" // 20 chars: longer than wName (16)
+	short := "build"
+
+	cases := []struct {
+		name string
+		line string
+	}{
+		{"flat/long", stripANSI(mm.renderWorkRow(rowItem{kind: rowCommand, work: &workRowData{cmdName: long, cmdDesc: "d", cmdKind: "shell"}}, false, lw))},
+		{"flat/short", stripANSI(mm.renderWorkRow(rowItem{kind: rowCommand, work: &workRowData{cmdName: short, cmdDesc: "d", cmdKind: "shell"}}, false, lw))},
+		{"group/long", stripANSI(renderGroupRow(&workRowData{cmdName: long, cmdDesc: "d", cmdKind: "shell", targets: []string{"a", "b"}}, lw))},
+		{"group/short", stripANSI(renderGroupRow(&workRowData{cmdName: short, cmdDesc: "d", cmdKind: "shell", targets: []string{"a", "b"}}, lw))},
+	}
+
+	for _, c := range cases {
+		r := []rune(c.line)
+		nameColEnd := wMarker + wName
+		if nameColEnd > len(r) {
+			t.Fatalf("%s: line too short: %q", c.name, c.line)
+		}
+		if r[nameColEnd-1] != ' ' {
+			t.Errorf("%s: cell just before the kind column (rune %d) = %q, want a blank — got %q", c.name, nameColEnd-1, string(r[nameColEnd-1]), c.line)
+		}
+		kindIdx := runeIndex(c.line, "shell")
+		if kindIdx != nameColEnd {
+			t.Errorf("%s: kind column starts at rune %d, want %d (must not move) — line: %q", c.name, kindIdx, nameColEnd, c.line)
+		}
+	}
+}
