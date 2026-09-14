@@ -153,3 +153,71 @@ func TestRunApplePrebuildRunsOnceAndErrorsOnFailure(t *testing.T) {
 		t.Fatal("runApplePrebuild: want error when prebuild_cmd exits non-zero, got nil")
 	}
 }
+
+// --- mac_deploy_verify (admin-7ip8) -----------------------------------------
+//
+// appleDeployMac only calls appleRunMacDeployVerify and, on a nil error,
+// proceeds to os.RemoveAll(installPath) + appleCopyTree — so a non-nil error
+// from this function is exactly what keeps installPath untouched. These
+// tests exercise the extracted function directly rather than the full
+// appleDeployMac flow, which needs a real xcodebuild.
+
+func writeAppleVerifyScript(t *testing.T, dir, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, "verify.sh")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+		t.Fatalf("writing verify script: %v", err)
+	}
+	return path
+}
+
+func TestAppleRunMacDeployVerifyUnsetIsNoop(t *testing.T) {
+	dir := t.TempDir()
+	h := luahost.New(dir)
+
+	if err := appleRunMacDeployVerify(map[string]any{}, h, filepath.Join(dir, "Built.app")); err != nil {
+		t.Fatalf("appleRunMacDeployVerify with no mac_deploy_verify: %v", err)
+	}
+	if err := appleRunMacDeployVerify(map[string]any{"mac_deploy_verify": ""}, h, filepath.Join(dir, "Built.app")); err != nil {
+		t.Fatalf("appleRunMacDeployVerify with empty mac_deploy_verify: %v", err)
+	}
+}
+
+func TestAppleRunMacDeployVerifyFailureReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	h := luahost.New(dir)
+	script := writeAppleVerifyScript(t, dir, "exit 1")
+	cfg := map[string]any{"mac_deploy_verify": script}
+
+	err := appleRunMacDeployVerify(cfg, h, filepath.Join(dir, "Built.app"))
+	if err == nil {
+		t.Fatal("appleRunMacDeployVerify: want error when the verify command exits non-zero, got nil")
+	}
+	if !strings.Contains(err.Error(), script) {
+		t.Errorf("error %q does not name the failing command %q", err.Error(), script)
+	}
+	if !strings.Contains(err.Error(), "exited 1") {
+		t.Errorf("error %q does not name the exit code", err.Error())
+	}
+}
+
+func TestAppleRunMacDeployVerifySuccessReceivesAppPath(t *testing.T) {
+	dir := t.TempDir()
+	h := luahost.New(dir)
+	marker := filepath.Join(dir, "marker")
+	t.Setenv("APPLE_MAC_DEPLOY_VERIFY_TEST_MARKER", marker)
+	script := writeAppleVerifyScript(t, dir, `echo "$1" > "$APPLE_MAC_DEPLOY_VERIFY_TEST_MARKER"`)
+	cfg := map[string]any{"mac_deploy_verify": script}
+	appPath := filepath.Join(dir, "Built.app")
+
+	if err := appleRunMacDeployVerify(cfg, h, appPath); err != nil {
+		t.Fatalf("appleRunMacDeployVerify: %v", err)
+	}
+	got, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("reading marker: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != appPath {
+		t.Errorf("verify command received %q, want the app path %q", strings.TrimSpace(string(got)), appPath)
+	}
+}

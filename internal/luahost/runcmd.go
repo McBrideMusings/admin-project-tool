@@ -2,6 +2,7 @@ package luahost
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -33,6 +34,12 @@ type RunCmdOptions struct {
 type RunCmdResult struct {
 	Ok     bool
 	Output string
+	// ExitCode is the child's exit status when Ok is false and the process
+	// ran to completion (-1 when it was killed by a signal, never started,
+	// or Ok is true). Not part of the Lua run_cmd(...) return shape — added
+	// for a Go caller that needs to report the exact code a failing guard
+	// command exited with (e.g. appleRunMacDeployVerify).
+	ExitCode int
 }
 
 // shellCommand builds the /bin/sh -c child both RunCmd and RunCmdPTY run, so
@@ -183,11 +190,20 @@ func (h *Host) RunCmd(cmd string, opts RunCmdOptions) (RunCmdResult, error) {
 	if startErr != nil {
 		pw.Close()
 		<-done
-		return RunCmdResult{Ok: false, Output: ""}, startErr
+		return RunCmdResult{Ok: false, Output: "", ExitCode: -1}, startErr
 	}
 	waitErr := c.Wait()
 	pw.Close()
 	<-done
 
-	return RunCmdResult{Ok: waitErr == nil, Output: string(collected)}, nil
+	exitCode := 0
+	if waitErr != nil {
+		exitCode = -1
+		var exitErr *exec.ExitError
+		if errors.As(waitErr, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		}
+	}
+
+	return RunCmdResult{Ok: waitErr == nil, Output: string(collected), ExitCode: exitCode}, nil
 }

@@ -73,7 +73,6 @@ import os
 import shutil
 import signal
 import re
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -3730,19 +3729,6 @@ def deploy_mac(cfg, *, clean=False):
         rc = notarize_and_staple(app_path)
         if rc != 0:
             err("Refusing to install an app that did not notarize.")
-            sys.exit(rc)
-
-    # Runs after build and notarize/staple, before anything touches
-    # install_path, so a rejecting verify command never lets a bad app
-    # replace the installed one.
-    verify_cmd = cfg.get("mac_deploy_verify")
-    if verify_cmd:
-        full_cmd = f"{verify_cmd} {shlex.quote(app_path)}"
-        info(f"Running mac_deploy_verify: {full_cmd}")
-        rc = subprocess.run(full_cmd, shell=True, cwd=get_project_root()).returncode
-        if rc != 0:
-            err(f"mac_deploy_verify failed ({full_cmd!r} exited {rc}) — "
-                "refusing to install.")
             sys.exit(rc)
 
     info(f"Installing to {install_path}")
