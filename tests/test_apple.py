@@ -2474,3 +2474,109 @@ def test_a_first_time_success_neither_sleeps_nor_relooks():
     assert calls["install"] == ["DEVICE-1"]
     assert calls["sleeps"] == []
     assert calls["find"] == [True], "a successful install must not re-resolve"
+
+
+# --- deploy_mac's mac_deploy_verify gate (admin-hsig) -----------------------
+#
+# deploy_mac built the app, optionally notarized it, then rmtree'd
+# install_path and copytree'd the new build in with no way to reject a build
+# that compiled but is otherwise bad. mac_deploy_verify runs a project-supplied
+# shell command against the built .app, after build/notarize and before
+# install_path is touched, so a non-zero exit aborts the deploy with
+# install_path left exactly as it was.
+
+def _deploy_mac_harness(root, verify_returncode=None, cfg_extra=None):
+    """Load apple.py with deploy_mac's collaborators stubbed.
+
+    Builds a fake .app under `root` that find_app() "finds", and points
+    install_path at a second path under `root` so the test can assert
+    whether it was touched. subprocess.run is faked to answer pkill, `open`,
+    and (if configured) the mac_deploy_verify shell command; returns
+    (ns, calls, app_path, install_path).
+    """
+    app_path = os.path.join(root, "Built.app")
+    os.mkdir(app_path)
+    with open(os.path.join(app_path, "marker.txt"), "w") as f:
+        f.write("built")
+    install_path = os.path.join(root, "Installed.app")
+
+    calls = {"verify_cmds": [], "opened": []}
+
+    def fake_run(cmd, *a, **k):
+        if isinstance(cmd, list) and cmd[:2] == ["pkill", "-x"]:
+            return _FakeCompleted(returncode=0)
+        if isinstance(cmd, list) and cmd and cmd[0] == "open":
+            calls["opened"].append(cmd)
+            return _FakeCompleted(returncode=0)
+        calls["verify_cmds"].append(cmd)
+        rc = 0 if verify_returncode is None else verify_returncode
+        return _FakeCompleted(returncode=rc)
+
+    ns = _load_apple(subprocess_run=fake_run, project_root=root)
+    ns["restore_stranded_dev_icons"] = lambda *a, **k: None
+    ns["xcodebuild_filtered"] = lambda *a, **k: 0
+    ns["find_app"] = lambda *a, **k: app_path
+    ns["_detect_project_path"] = lambda cfg: os.path.join(root, "Fake.xcodeproj")
+    ns["_resolve_mac_process"] = lambda cfg: "Fake"
+    ns["_resolve_mac_install_path_prod"] = lambda cfg: install_path
+    ns["_resolve_derived_data_name"] = lambda cfg: "Fake"
+    ns["_compose_sign_settings"] = lambda cfg, platform=None: []
+    ns["_with_global_defaults"] = lambda cfg, section: cfg
+    return ns, calls, app_path, install_path
+
+
+_MAC_CFG = {"mac_scheme": "Fake"}
+
+
+def test_mac_deploy_verify_failure_blocks_install_and_leaves_it_untouched():
+    with tempfile.TemporaryDirectory() as root:
+        ns, calls, app_path, install_path = _deploy_mac_harness(
+            root, verify_returncode=1
+        )
+        os.mkdir(install_path)
+        with open(os.path.join(install_path, "marker.txt"), "w") as f:
+            f.write("old install")
+        cfg = {**_MAC_CFG, "mac_deploy_verify": "bash scripts/check.sh"}
+
+        try:
+            ns["deploy_mac"](cfg)
+        except SystemExit as exit_code:
+            assert exit_code.code == 1, exit_code.code
+        else:
+            raise AssertionError("a failing mac_deploy_verify must abort the deploy")
+
+        assert len(calls["verify_cmds"]) == 1, calls["verify_cmds"]
+        assert app_path in calls["verify_cmds"][0], calls["verify_cmds"][0]
+        with open(os.path.join(install_path, "marker.txt")) as f:
+            assert f.read() == "old install", (
+                "install_path must be untouched when mac_deploy_verify fails"
+            )
+    print("OK: a failing mac_deploy_verify aborts the deploy and leaves install_path alone")
+
+
+def test_mac_deploy_verify_success_allows_install():
+    with tempfile.TemporaryDirectory() as root:
+        ns, calls, app_path, install_path = _deploy_mac_harness(
+            root, verify_returncode=0
+        )
+        cfg = {**_MAC_CFG, "mac_deploy_verify": "bash scripts/check.sh"}
+
+        ns["deploy_mac"](cfg)
+
+        assert len(calls["verify_cmds"]) == 1, calls["verify_cmds"]
+        assert app_path in calls["verify_cmds"][0], calls["verify_cmds"][0]
+        with open(os.path.join(install_path, "marker.txt")) as f:
+            assert f.read() == "built", "a passing verify must let install proceed"
+    print("OK: a passing mac_deploy_verify lets the deploy install")
+
+
+def test_mac_deploy_verify_unset_runs_no_verify_command():
+    with tempfile.TemporaryDirectory() as root:
+        ns, calls, app_path, install_path = _deploy_mac_harness(root)
+
+        ns["deploy_mac"](dict(_MAC_CFG))
+
+        assert calls["verify_cmds"] == [], calls["verify_cmds"]
+        with open(os.path.join(install_path, "marker.txt")) as f:
+            assert f.read() == "built"
+    print("OK: no mac_deploy_verify key means no verify subprocess and unchanged behavior")
