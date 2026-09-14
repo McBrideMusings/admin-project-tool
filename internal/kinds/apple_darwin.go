@@ -397,6 +397,13 @@ func appleDeployMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 		}
 	}
 
+	// Runs after build and notarize/staple, before anything touches
+	// installPath, so a rejecting verify command never lets a bad app
+	// replace the installed one.
+	if err := appleRunMacDeployVerify(cfg, h, appPath); err != nil {
+		return err
+	}
+
 	h.Info("Installing to " + installPath)
 	_ = os.RemoveAll(installPath)
 	if err := appleCopyTree(appPath, installPath); err != nil {
@@ -410,6 +417,26 @@ func appleDeployMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 		}
 	}
 	h.Ok("deploy mac -> " + installPath)
+	return nil
+}
+
+// appleRunMacDeployVerify runs [apple] mac_deploy_verify — a guard command
+// that gets the built app's path as its one argument and must exit zero
+// before deploy_mac is allowed to install it. Unset or empty: a no-op.
+func appleRunMacDeployVerify(cfg map[string]any, h *luahost.Host, appPath string) error {
+	verifyCmd := strings.TrimSpace(cfgString(cfg, "mac_deploy_verify", ""))
+	if verifyCmd == "" {
+		return nil
+	}
+	fullCmd := verifyCmd + " " + shellQuote(appPath)
+	h.Info("Running mac_deploy_verify: " + fullCmd)
+	res, err := h.RunCmd(fullCmd, luahost.RunCmdOptions{CaptureLog: true})
+	if err != nil {
+		return fmt.Errorf("mac_deploy_verify failed (%q): %w", fullCmd, err)
+	}
+	if !res.Ok {
+		return fmt.Errorf("mac_deploy_verify failed (%q exited %d) — refusing to install", fullCmd, res.ExitCode)
+	}
 	return nil
 }
 
