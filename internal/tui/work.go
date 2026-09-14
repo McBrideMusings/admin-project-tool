@@ -855,6 +855,66 @@ func dispatchCommandCmd(m *manifest.Manifest, width, height int, name string, en
 	}
 }
 
+// rowAction is what ↵ does on a row — resolved once, in resolveRowAction
+// below, from the row's own state rather than re-derived per caller.
+//
+// admin-3rgp.72.18: activateCommandTarget carried its own copy of
+// activateCommand's ladder, and only the activateCommand copy ever got the
+// "already live → attach" branch (admin-3rgp.72.12 added it there and
+// nowhere else) — so ↵ on a running target row (e.g. command-test's
+// "counter") dispatched a SECOND run while workFooterPairs, which already
+// read row state independently and got it right, advertised "↵ attach". The
+// fix is not a second copy of the missing branch on the target ladder; it is
+// this one function, read by activateCommand, activateCommandTarget, the
+// rowWorker case in Model.activate (model.go), and workFooterPairs — so the
+// four can no longer drift the way the two ladders just did.
+type rowAction int
+
+const (
+	actionNone rowAction = iota
+	actionDispatch
+	actionAttach
+	actionTranscript
+	actionWorkflowConfirm
+)
+
+// resolveRowAction decides ↵'s primary action for kind+wd. wd may be nil (a
+// row with no work payload, or one whose kind carries no primary action at
+// all) — actionNone then, same as any kind resolveRowAction doesn't
+// recognize (rowHeader, rowConfigValue, …).
+//
+// rowCommand checks wd.workflow before wd.live, exactly as activateCommand
+// always has: a query-sourced workflow command opens the confirm overlay
+// even once it is live, because the confirm step is what resolves the query
+// and picks the target to dispatch — attaching skips that. That ordering is
+// unchanged by this ticket; only the duplication is what's fixed.
+func resolveRowAction(kind rowKind, wd *workRowData) rowAction {
+	if wd == nil {
+		return actionNone
+	}
+	switch kind {
+	case rowCommand:
+		if wd.workflow != nil {
+			return actionWorkflowConfirm
+		}
+		if entryIsLive(wd.live) {
+			return actionAttach
+		}
+		return actionDispatch
+	case rowCommandTarget:
+		if entryIsLive(wd.live) {
+			return actionAttach
+		}
+		return actionDispatch
+	case rowWorker:
+		if entryIsLive(wd.worker) {
+			return actionAttach
+		}
+		return actionTranscript
+	}
+	return actionNone
+}
+
 // activateCommand handles enter on a command row: a query-sourced workflow
 // resolves its query and opens the confirm overlay rather than dispatching
 // directly (admin-3rgp.26 — see workflowconfirm.go); an already-live command
@@ -868,10 +928,10 @@ func dispatchCommandCmd(m *manifest.Manifest, width, height int, name string, en
 // "pick a target below" branch that used to guard that case here — its
 // targets already render below it, and enter on one of those dispatches it).
 func (m Model) activateCommand(wd *workRowData) (tea.Model, tea.Cmd) {
-	if wd.workflow != nil {
+	switch resolveRowAction(rowCommand, wd) {
+	case actionWorkflowConfirm:
 		return m.startWorkflowConfirm(wd)
-	}
-	if wd.live != nil {
+	case actionAttach:
 		return m.attachEntry(wd.live)
 	}
 	if wd.pending {
@@ -938,17 +998,23 @@ func (m Model) liveEntryForCommand(name string) *livework.Entry {
 }
 
 // activateCommandTarget handles enter on one target of a command's target
-// group: it dispatches the parent command with that target as its argument,
-// which is exactly what `admin <cmd> <target>` does from a shell — makeMultiTarget
-// takes args[0] as the picked target and never raises its own picker. Until
-// the dispatch registers a livework.Entry there is no target-qualified name
-// to key on yet (the entry doesn't exist), so pending stays keyed on
-// wd.cmdName here too, matching how the parent row itself already reads it,
-// and the same "don't dispatch a second run into the one still starting"
-// guard applies (admin-qk77). Once the entry lands it's keyed on
-// "<cmdName>:<targetKey>" (multiTargetLiveID) and targetRows resolves it
-// per target from then on.
+// group: an already-live target attaches to its pane instead of dispatching
+// a second run on top of the one that owns its log file and registry entry
+// (resolveRowAction above — this used to be a separate copy of the ladder
+// that never got that branch, admin-3rgp.72.18); otherwise it dispatches the
+// parent command with that target as its argument, which is exactly what
+// `admin <cmd> <target>` does from a shell — makeMultiTarget takes args[0]
+// as the picked target and never raises its own picker. Until the dispatch
+// registers a livework.Entry there is no target-qualified name to key on yet
+// (the entry doesn't exist), so pending stays keyed on wd.cmdName here too,
+// matching how the parent row itself already reads it, and the same "don't
+// dispatch a second run into the one still starting" guard applies
+// (admin-qk77). Once the entry lands it's keyed on "<cmdName>:<targetKey>"
+// (multiTargetLiveID) and targetRows resolves it per target from then on.
 func (m Model) activateCommandTarget(wd *workRowData) (tea.Model, tea.Cmd) {
+	if resolveRowAction(rowCommandTarget, wd) == actionAttach {
+		return m.attachEntry(wd.live)
+	}
 	if wd.pending {
 		m.pendingAttach[wd.cmdName] = true
 		m.setStatus(wd.cmdName+" starting…", cCyan)
@@ -1058,16 +1124,10 @@ func (m Model) workFooterPairs() [][2]string {
 	if !ok || r.work == nil {
 		return idle
 	}
-	switch r.kind {
-	case rowCommand, rowCommandTarget:
-		if entryIsLive(r.work.live) {
-			return [][2]string{move, {"↵", "attach"}, {"x", "kill"}, quit}
-		}
-		return idle
-	case rowWorker:
-		if entryIsLive(r.work.worker) {
-			return [][2]string{move, {"↵", "attach"}, {"x", "kill"}, quit}
-		}
+	switch resolveRowAction(r.kind, r.work) {
+	case actionAttach:
+		return [][2]string{move, {"↵", "attach"}, {"x", "kill"}, quit}
+	case actionTranscript:
 		return [][2]string{move, {"↵", "transcript"}, quit}
 	}
 	return idle

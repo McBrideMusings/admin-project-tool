@@ -2188,6 +2188,12 @@ func (m Model) activate() (tea.Model, tea.Cmd) {
 	case rowCommandTarget:
 		return m.activateCommandTarget(r.work)
 	case rowWorker:
+		// Every rowWorker row carries a non-nil work.worker (workRows()
+		// always sets it), so resolveRowAction never returns actionNone
+		// here — it's either actionAttach (still running) or
+		// actionTranscript (finished); attachEntry's own Attach call is
+		// what unifies both into "open its pane" (livework.go's Attach
+		// doc comment).
 		return m.attachEntry(r.work.worker)
 	case rowConfigValue:
 		m.setStatus("nothing to open on this row", cDim)
