@@ -1136,11 +1136,24 @@ func commandRowLine(e commandEntry, sel bool, w int, empty bool) string {
 		p := parentOf(e.parent)
 		// Two leading spaces where a runnable row has "◇ ": the marker column is
 		// what says the cursor can be here, and a group runs nothing itself.
-		return Pad("   "+bo.Render(Pad(p.name, wName))+
+		// Pad(p.name, wName-1) before the outer Pad(_, wName) reserves one
+		// blank cell: a name that exactly fills wName would otherwise run
+		// straight into the kind column (admin-3rgp.72.19).
+		return Pad("   "+bo.Render(Pad(Pad(p.name, wName-1), wName))+
 			dim.Render(Pad(kindLabel(p.kind), wState+wElapsed)+trunc(p.desc, rest)), w)
 	}
 
-	marker, name := dim.Render("◇ "), Pad(trunc(e.label(), wName-VW(Strip(e.connector()))), wName-VW(Strip(e.connector())))
+	// Target rows already get a blank column after the key — the state+
+	// elapsed columns sit between the key and the run line — so only a flat
+	// command's own name (no connector, e.target == "") needs the reserved
+	// cell that keeps its truncation mark off the kind column
+	// (admin-3rgp.72.19).
+	nameW := wName - VW(Strip(e.connector()))
+	truncW := nameW
+	if e.target == "" {
+		truncW--
+	}
+	marker, name := dim.Render("◇ "), Pad(trunc(e.label(), truncW), nameW)
 	if sel {
 		marker = cy.Render("◆ ")
 		name = cy.Render(name)
