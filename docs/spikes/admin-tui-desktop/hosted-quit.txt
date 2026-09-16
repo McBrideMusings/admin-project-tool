@@ -15,7 +15,7 @@
  ◆ admin-3rgp.7  │    waiting  test      Enter a number, or q to cancel:      │         pane 4  
  ◇ admin-3rgp.33 │                                                            │         pane 5  
 ── ◐ admin-3rgp.7│    Workers keep running — they have their own panes.       │ds · 2 workers ──
- log      /Users/│                                                            │gp.7.log         
+ log      /Users/│                                                            │                 
  branch   feat/ad│    ⏎ kill them and quit     esc cancel                     │                 
  worktree /Users/└────────────────────────────────────────────────────────────┘                 
  session  pane 4 · detached, outlives admin                                                     

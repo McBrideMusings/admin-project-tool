@@ -15,7 +15,7 @@
  ◇ ├ preview-cf                     cd apps && bunx wrangler logs --target preview-cf           
    ↓ more                                                                                       
 ── ● dev cf  running  4m12s ────────────────────────────────────── also 1 command · 3 workers ──
- log      /Users/pierce/Projects/admin-project-tool/.admin/logs/dev-cf.log                      
+ log      /Users/dev/admin-project-tool/.admin/logs/dev-cf.log                                  
  url      http://localhost:5173                                                                 
                                                                                                 
                                                                                                 

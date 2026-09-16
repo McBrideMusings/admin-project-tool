@@ -1,30 +1,30 @@
  beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
   Work 12    Repo    Beads 227    Config                                                        
                                                                                                 
-  Commands                                                       │  build                       
- ◇ build           shell    Validate admin.toml                  │                              
- ◇ test            shell    Run the test suite                   │                              
-                                                                 │                              
-  Workers                                                        │                              
-    no workers running — dispatch a command to start one         │                              
-                                                                 │                              
-                                                                 │                              
-                                                                 │                              
-                                                                 │                              
-                                                                 │                              
-                                                                 │                              
-                                                                 │                              
-                                                                 │                              
-                                                                 │                              
-                                                                 │                              
-                                                                 │                              
-                                                                 │                              
-                                                                 │                              
-                                                                 │                              
-                                                                 │                              
-                                                                 │                              
-                                                                 │                              
-                                                                 │                              
-                                                                 │                              
+ Commands  2                                                                                    
+ ◇ build           shell            Validate admin.toml                                         
+ ◇ test            shell            Run the test suite                                          
+                                                                                                
+ Workers  0                                                                                     
+ no workers running — dispatch a bead from the tracker tab                                      
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+ ── build  not running ───────────────────────────────────────────────────── nothing running ── 
+  kind     shell                                                                                
+  desc     Validate admin.toml                                                                  
+  last run never                                                                                
+  last log —                                                                                    
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+  output appears here while it runs                                                             
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ body · a attach · k kill · / filter · q quit · 1-4 jump · o config · ←→ tab        
+ ↑↓ move · ↵ body · q/esc quit · 1-4 jump · ↓ body · o config · ←→ tab                          

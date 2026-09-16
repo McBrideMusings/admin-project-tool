@@ -15,7 +15,7 @@
  ◇ admin-3rgp.7  │    model     sonnet                                        │         pane 4  
  ◇ admin-3rgp.33 │    branch    two-deployment-paths                          │         pane 5  
 ── ◈ admin-3rgp.3│    lands to  feat/one-tool-go-merge                        │ds · 2 workers ──
- log      /Users/│                                                            │gp.36.log        
+ log      /Users/│                                                            │                 
  branch   feat/ad│    ⏎ dispatch     e edit     esc cancel                    │                 
  worktree /Users/└────────────────────────────────────────────────────────────┘                 
  session  pane 3 · detached, outlives admin                                                     

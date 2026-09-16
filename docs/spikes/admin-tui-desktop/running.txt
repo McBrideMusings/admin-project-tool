@@ -15,7 +15,7 @@
  ◆ admin-3rgp.7    ◐ waiting 6m     needs input: root command name                      pane 4  
  ◇ admin-3rgp.33   ✗ failed  2m     go test ./internal/detect FAIL                      pane 5  
 ── ◐ admin-3rgp.7  waiting  6m ────────────────────────────────── also 2 commands · 2 workers ──
- log      /Users/pierce/Projects/admin-project-tool/.admin/logs/worker-admin-3rgp.7.log         
+ log      /Users/dev/admin-project-tool/.admin/logs/worker-admin-3rgp.7.log                     
  branch   feat/admin-3rgp.7-root-command                                                        
  worktree /Users/pierce/.worktrees/admin-project-tool/admin-3rgp.7                              
  session  pane 4 · detached, outlives admin                                                     
