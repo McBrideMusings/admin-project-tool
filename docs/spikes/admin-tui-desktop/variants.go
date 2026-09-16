@@ -848,6 +848,11 @@ func commandRows() []commandEntry {
 type commandParent struct {
 	name, kind, desc string
 	targets          []string // resolved suffixes, "" entry means no targets
+	// query is the raw `over = { query = "..." }` string a kind="workflow"
+	// entry resolves against the tracker — set only on the one workflow
+	// parent the fixture carries, since a selection-sourced workflow never
+	// reaches the Commands tab at all (WorkflowTarget.AppearsInCommandList).
+	query string
 }
 
 var commandParents = []commandParent{
@@ -867,7 +872,8 @@ var commandParents = []commandParent{
 	// which is why commands-workflow-selected is its own frame — the entry
 	// dispatches an agent over a bead rather than running a shell line.
 	{name: "retire-merged", kind: "workflow", desc: "Remove worktrees whose branch is merged",
-		targets: []string{"fix-detector-parity-skip", "go-transient-kind-factories", "docs-adr-lua", "launchd-env-file"}},
+		targets: []string{"fix-detector-parity-skip", "go-transient-kind-factories", "docs-adr-lua", "launchd-env-file"},
+		query:   "status:closed label:worktree"},
 	{name: "grafana", kind: "multi-target", desc: "Grafana alert rules (export / diff / deploy)",
 		targets: []string{"deploy", "diff", "export"}},
 	{name: "xplay-trail", kind: "multi-target", desc: "Trail xplay transfers live (preview|staging|prod, or raw <flags>)",
@@ -1537,12 +1543,20 @@ func bandIdle(e *commandEntry, w int) []string {
 	if lastLog != "" {
 		lastRun, logCell = "18m ago · exit 0", dim.Render(fitPath(lastLog, lw))
 	}
-	return slotRows([]string{
+	rows := []string{
 		" " + dim.Render(Pad("kind", 9)) + trunc(kindLabel(kind), lw),
 		" " + dim.Render(Pad("desc", 9)) + trunc(p.desc, lw),
 		" " + dim.Render(Pad("last run", 9)) + dim.Render(lastRun),
 		" " + dim.Render(Pad("last log", 9)) + logCell,
-	}, w)
+	}
+	// A query-sourced kind="workflow" parent carries the tracker query enter
+	// will actually run over — the one field that distinguishes it from a
+	// shell row on this surface. p.query is empty for every other parent, so
+	// this only ever fires for the fixture's one workflow entry.
+	if p.query != "" {
+		rows = append(rows, " "+dim.Render(Pad("query", 9))+trunc(p.query, lw))
+	}
+	return slotRows(rows, w)
 }
 
 // renderWorkBody is the whole Work tab: the palette box and the live sections
