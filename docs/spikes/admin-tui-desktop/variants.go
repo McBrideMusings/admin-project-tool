@@ -491,7 +491,7 @@ type liveRow struct {
 var liveRowsSeed = []liveRow{
 	{state: "running", id: "admin-3rgp.36", doing: "writing internal/lua/host.go", pane: "pane 3",
 		elapsed: "18m", branch: "feat/admin-3rgp.36-lua-host",
-		worktree: "/Users/pierce/.worktrees/admin-project-tool/admin-3rgp.36",
+		worktree: "/Users/dev/.worktrees/admin-project-tool/admin-3rgp.36",
 		logPath:  root + "/.admin/logs/worker-admin-3rgp.36.log",
 		lastCmd:  "review admin-3rgp.36 (workflow: review-changes)",
 		hasRing:  true, tail: []string{
@@ -508,7 +508,7 @@ var liveRowsSeed = []liveRow{
 		}},
 	{state: "waiting", id: "admin-3rgp.7", doing: "needs input: root command name", pane: "pane 4",
 		elapsed: "6m", branch: "feat/admin-3rgp.7-root-command",
-		worktree: "/Users/pierce/.worktrees/admin-project-tool/admin-3rgp.7",
+		worktree: "/Users/dev/.worktrees/admin-project-tool/admin-3rgp.7",
 		logPath:  root + "/.admin/logs/worker-admin-3rgp.7.log",
 		lastCmd:  "implement admin-3rgp.7", hasRing: true, tail: []string{
 			"  the manifest declares no top-level command name —",
@@ -524,7 +524,7 @@ var liveRowsSeed = []liveRow{
 		}},
 	{state: "failed", id: "admin-3rgp.33", doing: "go test ./internal/detect FAIL", pane: "pane 5",
 		elapsed: "2m", branch: "fix/admin-3rgp.33-detect",
-		worktree: "/Users/pierce/.worktrees/admin-project-tool/admin-3rgp.33",
+		worktree: "/Users/dev/.worktrees/admin-project-tool/admin-3rgp.33",
 		logPath:  root + "/.admin/logs/worker-admin-3rgp.33.log",
 		lastCmd:  "implement admin-3rgp.33", hasRing: true, tail: []string{
 			"=== RUN   TestDetectHugo",
@@ -1292,7 +1292,7 @@ func minInt(a, b int) int {
 
 // fitPath keeps a log or worktree path absolute. When it will not fit, whole
 // segments go from the middle — "/Users/…/logs/docs.log" — so it still reads as
-// a path. A mid-rune cut produces "/Users/pierce/Proj…tool/" and reads as
+// a path. A mid-rune cut produces "/Users/dev/Proj…tool/" and reads as
 // corruption.
 func fitPath(p string, w int) string {
 	if VW(p) <= w {
