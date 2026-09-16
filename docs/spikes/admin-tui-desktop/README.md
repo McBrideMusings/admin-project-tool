@@ -75,4 +75,4 @@ Two rules everything on the Work tab obeys:
 
 Everywhere, browse and attached. Where one will not fit, whole middle *segments* are elided —
 `/Users/…/logs/docs.log` — so it still reads as a path. A mid-rune cut produces
-`/Users/pierce/Proj…tool/` and reads as corruption.
+`/Users/dev/Proj…tool/` and reads as corruption.
