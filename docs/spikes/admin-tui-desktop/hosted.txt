@@ -27,4 +27,4 @@
                                                                                                 
    needs input: root command name                                                               
 ────────────────────────────────────────────────────────────────────────────────────────────────
- q/esc detach · ↑↓ scroll · x kill · typing goes to the process                                 
+ esc detach · typing goes to the process                                                        

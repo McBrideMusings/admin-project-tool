@@ -1889,7 +1889,7 @@ func keys(name string, sp screenSpec, onLive bool) string {
 	case sp.sheet:
 		return "⏎ dispatch · e edit · esc cancel"
 	case sp.hosted:
-		return "q/esc detach · ↑↓ scroll · x kill · typing goes to the process"
+		return "esc detach · typing goes to the process"
 	case sp.tab == 1:
 		return "↑↓ move · ↵ checkout · ⌥↵/W worktree · p pull · ←→ tab"
 	case sp.tab == 2:
