@@ -172,3 +172,28 @@ func TestBandDoesNotShift(t *testing.T) {
 		}
 	})
 }
+
+// TestSlotRowsTruncatesOverLongBlock covers slotRows' OTHER half: the pad
+// loop (len(out) < fieldRowsH) is exercised by every existing bandIdle/
+// bandFieldsCommand/bandFieldsWorker input above, none of which has ever
+// produced more than fieldRowsH rows — so `return out[:fieldRowsH]` losing
+// its truncation to a bare `return out` still leaves every assertion in
+// TestBandDoesNotShift green. The two are independent failure modes: a
+// field block that grows past the fixed slot must fail exactly as loudly as
+// one that grows past it because a shorter one shrank, and only feeding
+// slotRows an over-long input directly (no production caller has a reason
+// to build one — this is a guard against the NEXT one that does) proves the
+// truncation half is still wired up.
+func TestSlotRowsTruncatesOverLongBlock(t *testing.T) {
+	over := slotRows([]string{"one", "two", "three", "four", "five", "six", "seven"}, 20)
+	if n := len(over); n != fieldRowsH {
+		t.Fatalf("slotRows with 7 input rows returned %d rows, want exactly %d (fieldRowsH)", n, fieldRowsH)
+	}
+	for _, surplus := range []string{"six", "seven"} {
+		for _, l := range over {
+			if strings.Contains(l, surplus) {
+				t.Errorf("slotRows kept surplus row %q past fieldRowsH, want it dropped", surplus)
+			}
+		}
+	}
+}
