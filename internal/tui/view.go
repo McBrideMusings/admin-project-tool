@@ -699,15 +699,9 @@ func (m Model) keymap() [][2]string {
 		// arrows and x, which terminalKey/encodeKey (terminalview.go) write
 		// straight through to the child's pty; only esc is intercepted, and
 		// there is no scrollback and no in-view kill (see terminalKey's own
-		// comment). admin-3rgp.72.17's ticket quotes a verbatim copy string
-		// "q/esc detach · ↑↓ scroll · x kill · typing goes to the process",
-		// but every clause past "esc detach" describes behavior this view
-		// does not have — advertising "↑↓ scroll" or "x kill" would be a
-		// footgun (a user presses x meaning to kill a runaway child and
-		// types the literal character into it instead). This keeps the
-		// landed, behavior-accurate hint. Reported as a blocker: the
-		// ticket's verbatim copy and the landed key contract disagree, on
-		// three of its four clauses ("q/", "↑↓ scroll", "x kill").
+		// comment). Advertising "↑↓ scroll" or "x kill" would be a footgun —
+		// a user pressing x to stop a runaway child would type the literal
+		// character into it instead — so the hint below names only esc.
 		return [][2]string{
 			{"esc", "detach"},
 			{"typing", "goes to the process"},
