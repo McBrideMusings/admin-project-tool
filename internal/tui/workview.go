@@ -633,12 +633,24 @@ func bandIdle(wd *workRowData, w int) []string {
 			lastRun = humanizeAge(time.Since(fi.ModTime()))
 		}
 	}
-	return slotRows([]string{
+	rows := []string{
 		" " + faintStyle.Render(padEnd("kind", 9)) + truncR(kind, lw),
 		" " + faintStyle.Render(padEnd("desc", 9)) + truncR(wd.cmdDesc, lw),
 		" " + faintStyle.Render(padEnd("last run", 9)) + faintStyle.Render(lastRun),
 		" " + faintStyle.Render(padEnd("last log", 9)) + logCell,
-	}, w)
+	}
+	// wd.workflow is non-nil only for a query-sourced kind="workflow"
+	// command (commandRowItem sets it from ParseWorkflowOver, and
+	// workTabInclude already dropped every selection-sourced workflow
+	// before a row for it exists at all — WorkflowTarget.
+	// AppearsInCommandList is the single source of truth for that split).
+	// query is what enter will actually run the workflow over, so it is
+	// the one field that distinguishes a workflow row from a shell row on
+	// this surface — fieldRowsH's fifth slot exists for exactly this.
+	if wd.workflow != nil {
+		rows = append(rows, " "+faintStyle.Render(padEnd("query", 9))+truncR(wd.workflow.Query, lw))
+	}
+	return slotRows(rows, w)
 }
 
 // bandFieldsCommand is the band's field block for a live (running) command:

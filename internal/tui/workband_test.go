@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 )
 
@@ -158,6 +159,35 @@ func TestFieldBlockAlwaysFieldRowsH(t *testing.T) {
 	}, 60)
 	if len(worker) != fieldRowsH {
 		t.Errorf("bandFieldsWorker produced %d rows, want fieldRowsH (%d)", len(worker), fieldRowsH)
+	}
+}
+
+// TestBandIdleShowsQueryOnlyForWorkflow is admin-3rgp.72.21's own acceptance
+// criteria: a query-sourced kind="workflow" command's idle block carries its
+// query as the fifth row, labelled in the same 9-cell column the other
+// fields use; a non-workflow row shows no query row at all; both are still
+// exactly fieldRowsH rows.
+func TestBandIdleShowsQueryOnlyForWorkflow(t *testing.T) {
+	plain := bandIdle(&workRowData{cmdName: "build", cmdDesc: "build it", cmdKind: "shell"}, 60)
+	if len(plain) != fieldRowsH {
+		t.Errorf("bandIdle (non-workflow) produced %d rows, want fieldRowsH (%d)", len(plain), fieldRowsH)
+	}
+	for _, l := range plain {
+		if strings.Contains(stripANSI(l), "query") {
+			t.Errorf("bandIdle (non-workflow) row %q carries a query label, want none", stripANSI(l))
+		}
+	}
+
+	wf := bandIdle(&workRowData{
+		cmdName: "retire-merged", cmdDesc: "Remove merged worktrees", cmdKind: "workflow",
+		workflow: &kinds.WorkflowTarget{Source: kinds.WorkflowSourceQuery, Query: "status:closed label:worktree"},
+	}, 60)
+	if len(wf) != fieldRowsH {
+		t.Errorf("bandIdle (workflow) produced %d rows, want fieldRowsH (%d)", len(wf), fieldRowsH)
+	}
+	last := stripANSI(wf[fieldRowsH-1])
+	if !strings.Contains(last, "query") || !strings.Contains(last, "status:closed label:worktree") {
+		t.Errorf("bandIdle (workflow) fifth row = %q, want the query labelled \"query\"", last)
 	}
 }
 
