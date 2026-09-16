@@ -15,9 +15,9 @@
  ◇ admin-3rgp.7    ◐ waiting 6m     needs input: root command name                      pane 4  
  ◆ admin-3rgp.33   ✗ failed  2m     go test ./internal/detect FAIL                      pane 5  
 ── ✗ admin-3rgp.33  failed  2m ────────────────────────────────── also 2 commands · 2 workers ──
- log      /Users/pierce/Projects/admin-project-tool/.admin/logs/worker-admin-3rgp.33.log        
+ log      /Users/dev/admin-project-tool/.admin/logs/worker-admin-3rgp.33.log                    
  branch   fix/admin-3rgp.33-detect                                                              
- worktree /Users/pierce/.worktrees/admin-project-tool/admin-3rgp.33                             
+ worktree /Users/dev/.worktrees/admin-project-tool/admin-3rgp.33                                
  session  pane 5 · detached, outlives admin                                                     
  now      go test ./internal/detect FAIL                                                        
      detect_test.go:88: expected archetype                                                      

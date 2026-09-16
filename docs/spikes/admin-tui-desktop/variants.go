@@ -26,8 +26,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -56,6 +54,12 @@ var Axes = []Axis{
 		"dispatch-sheet", "swarm", "config", "running", "no-manifest",
 		// Every other surface repo-dash draws — see INVENTORY.md. Each is the real
 		// frame, reached by driving the same keys a person would press.
+		//
+		// "repo", "no-manifest", "repo-commits", "repo-filter" and
+		// "repo-new-worktree" still have to be dumped — set() (harness.go)
+		// indexes into this list to reach them at all, interactively or from a
+		// test — but their .txt output is gitignored and not part of the
+		// reference set: see docs/spikes/admin-tui-desktop/live-frames/README.md.
 		"repo-commits", "repo-filter", "repo-new-worktree",
 		"tracker-detail", "tracker-graph", "tracker-blocking", "tracker-tree", "tracker-filter",
 		"config-local",
@@ -487,7 +491,7 @@ type liveRow struct {
 var liveRowsSeed = []liveRow{
 	{state: "running", id: "admin-3rgp.36", doing: "writing internal/lua/host.go", pane: "pane 3",
 		elapsed: "18m", branch: "feat/admin-3rgp.36-lua-host",
-		worktree: "/Users/pierce/.worktrees/admin-project-tool/admin-3rgp.36",
+		worktree: "/Users/dev/.worktrees/admin-project-tool/admin-3rgp.36",
 		logPath:  root + "/.admin/logs/worker-admin-3rgp.36.log",
 		lastCmd:  "review admin-3rgp.36 (workflow: review-changes)",
 		hasRing:  true, tail: []string{
@@ -504,7 +508,7 @@ var liveRowsSeed = []liveRow{
 		}},
 	{state: "waiting", id: "admin-3rgp.7", doing: "needs input: root command name", pane: "pane 4",
 		elapsed: "6m", branch: "feat/admin-3rgp.7-root-command",
-		worktree: "/Users/pierce/.worktrees/admin-project-tool/admin-3rgp.7",
+		worktree: "/Users/dev/.worktrees/admin-project-tool/admin-3rgp.7",
 		logPath:  root + "/.admin/logs/worker-admin-3rgp.7.log",
 		lastCmd:  "implement admin-3rgp.7", hasRing: true, tail: []string{
 			"  the manifest declares no top-level command name —",
@@ -520,7 +524,7 @@ var liveRowsSeed = []liveRow{
 		}},
 	{state: "failed", id: "admin-3rgp.33", doing: "go test ./internal/detect FAIL", pane: "pane 5",
 		elapsed: "2m", branch: "fix/admin-3rgp.33-detect",
-		worktree: "/Users/pierce/.worktrees/admin-project-tool/admin-3rgp.33",
+		worktree: "/Users/dev/.worktrees/admin-project-tool/admin-3rgp.33",
 		logPath:  root + "/.admin/logs/worker-admin-3rgp.33.log",
 		lastCmd:  "implement admin-3rgp.33", hasRing: true, tail: []string{
 			"=== RUN   TestDetectHugo",
@@ -1237,23 +1241,21 @@ func commandSections(w, selIdx int, empty bool) []string {
 //     of that same rule. There is no chip row and no tab strip: the cursor is
 //     the selector, so a second row of names only reprinted the list.
 
-// root is the repo's checkout path, resolved at runtime so the mock log/
-// worktree paths below read correctly from whichever checkout or worktree
-// this spike is run from — a fixed constant would only ever be right in
-// the one checkout it was written for. It comes from this source file's own
-// location rather than shelling out to git, so it needs no git binary on
-// PATH and no .git directory reachable from the working directory.
-var root = repoRoot()
-
-// repoRoot walks up from this file's own path — .../docs/spikes/
-// admin-tui-desktop/variants.go — to the repo root four levels up.
-func repoRoot() string {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		panic("admin-tui-desktop: could not resolve its own source path")
-	}
-	return filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(file))))
-}
+// root is a fixed, illustrative checkout path for the mock log/worktree
+// paths below. These rows are fiction — no dispatched command, log file or
+// worktree in liveRowsSeed was ever actually run — so nothing reads them off
+// disk, and "the checkout this happens to run from" was never the right
+// answer for what they should say. It used to be resolved at runtime from
+// this source file's own location on the theory that a fixed constant would
+// only ever be right in the one checkout it was written for; in practice
+// that made every re-shoot from a linked worktree grow the worktree's own
+// segment into eleven mock paths long enough to trip fitPath's elision,
+// corrupting them (admin-3rgp.72.20). A fixed constant is right precisely
+// because these paths are fiction: the dump must produce the same fiction
+// regardless of which checkout or worktree it runs from. Deliberately not
+// any real developer's home directory — a generic stand-in, same as the
+// fixture repo names below (fixtures.go's "fixture/beads-repo" etc).
+const root = "/Users/dev/admin-project-tool"
 
 // The live sections are a fixed column grid. The boundaries are named because
 // the band's title rule and the row list have to agree on them.
@@ -1290,7 +1292,7 @@ func minInt(a, b int) int {
 
 // fitPath keeps a log or worktree path absolute. When it will not fit, whole
 // segments go from the middle — "/Users/…/logs/docs.log" — so it still reads as
-// a path. A mid-rune cut produces "/Users/pierce/Proj…tool/" and reads as
+// a path. A mid-rune cut produces "/Users/dev/Proj…tool/" and reads as
 // corruption.
 func fitPath(p string, w int) string {
 	if VW(p) <= w {
