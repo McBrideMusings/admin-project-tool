@@ -85,8 +85,8 @@ func TestBandTitleFourStates(t *testing.T) {
 		if !strings.Contains(title, "not running") {
 			t.Errorf("idle title = %q, want \"not running\"", title)
 		}
-		if !strings.Contains(title, "nothing running") {
-			t.Errorf("idle title with an empty registry = %q, want \"nothing running\"", title)
+		if strings.Count(title, "running") != 1 {
+			t.Errorf("idle title with an empty registry = %q, want \"running\" exactly once", title)
 		}
 	})
 

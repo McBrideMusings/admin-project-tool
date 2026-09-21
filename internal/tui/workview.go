@@ -490,11 +490,12 @@ func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 // livework.Default.List() the row list itself reads (work.go's byName/
 // liveWorkers), so the row list and this count can never disagree about
 // what is running. Ported from the design prototype (docs/spikes/
-// admin-tui-desktop/variants.go:1400-1437).
+// admin-tui-desktop/variants.go:1400-1437). An empty registry returns ""
+// — the idle title's own "not running" already says it.
 func othersRunning(selID string) string {
 	entries := livework.Default.List()
 	if len(entries) == 0 {
-		return "nothing running"
+		return ""
 	}
 	cmds, workers := 0, 0
 	for _, e := range entries {
