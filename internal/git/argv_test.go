@@ -85,6 +85,16 @@ func TestCommandArgv(t *testing.T) {
 			},
 		},
 		{
+			name: "RepoRootFor prefixes every rev-parse with -C dir",
+			out:  []string{"/repo", "/repo/.git", "/repo/.git"},
+			call: func(ctx context.Context) { RepoRootFor(ctx, "/dir") },
+			want: []call{
+				rd("-C", "/dir", "rev-parse", "--show-toplevel"),
+				rd("-C", "/dir", "rev-parse", "--path-format=absolute", "--git-dir"),
+				rd("-C", "/dir", "rev-parse", "--path-format=absolute", "--git-common-dir"),
+			},
+		},
+		{
 			name: "CurrentBranch",
 			out:  []string{"feat/x"},
 			call: func(ctx context.Context) { CurrentBranch(ctx) },
@@ -398,6 +408,7 @@ var coveredCommands = map[string]bool{
 	"RecentCommits":         true,
 	"RemoveWorktree":        true,
 	"RepoRoot":              true,
+	"RepoRootFor":           true,
 	"SetBranchNote":         true,
 	"StashWorktree":         true,
 	"Stashes":               true,

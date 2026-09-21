@@ -29,6 +29,38 @@ func (t beadTreeMode) next() beadTreeMode {
 	return (t + 1) % numBeadTreeModes
 }
 
+// viewString names the mode the way view.toml's beads.tree key spells it
+// (admin-y5lc.1) — a string rather than the int this type is stored as
+// on-disk, so the file reads well hand-edited. beadListFlat's own zero
+// value is "flat", so an unset/unrecognized key and an explicit "flat" both
+// resolve here to the same mode.
+func (t beadTreeMode) viewString() string {
+	switch t {
+	case beadListBlocksTree:
+		return "blocks"
+	case beadListFamilyTree:
+		return "family"
+	default:
+		return "flat"
+	}
+}
+
+// beadTreeModeFromView is viewString's inverse, for loading view.toml.
+// ok is false for anything but the three recognized strings, which is how
+// viewstate.Load's cascade treats a bad value as "this level didn't set it".
+func beadTreeModeFromView(s string) (beadTreeMode, bool) {
+	switch s {
+	case "flat":
+		return beadListFlat, true
+	case "blocks":
+		return beadListBlocksTree, true
+	case "family":
+		return beadListFamilyTree, true
+	default:
+		return beadListFlat, false
+	}
+}
+
 // beadNode is one bead in the dependency forest: depth is how far down a chain
 // of blockers it sits, extra counts the open blockers beyond the one that placed
 // it here (an edge position cannot carry, shown as "+N" after the title).

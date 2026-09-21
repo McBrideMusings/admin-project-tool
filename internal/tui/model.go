@@ -25,6 +25,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/shim"
+	"github.com/McBrideMusings/admin-project-tool/internal/viewstate"
 	"github.com/McBrideMusings/admin-project-tool/internal/workusage"
 )
 
@@ -227,10 +228,12 @@ type Model struct {
 	// trackSort is the active order for the tracker list — the Beads tab's flat
 	// list and the Issues tab — cycled by `s` (see tracksort.go). It is shared
 	// across both tabs rather than kept per-tab: one key, one order, named in
-	// the header. Session-scoped only: it lives on Model and resets on restart,
-	// same as beadTreeMode. It does not reach beadTreeRows — the dependency tree's
-	// order already comes from the graph itself, and an arbitrary sort would
-	// scramble the blocker-above-blocked shape that view exists to show.
+	// the header. Persisted to view.toml's tracker.sort (admin-y5lc.1): New()
+	// loads it through viewstate's cascade and every `s` press saves the new
+	// order to the project-level file. It does not reach beadTreeRows — the
+	// dependency tree's order already comes from the graph itself, and an
+	// arbitrary sort would scramble the blocker-above-blocked shape that view
+	// exists to show.
 	trackSort trackSort
 	haveBeads bool
 	beadsErr  string
@@ -345,8 +348,10 @@ type Model struct {
 	// which only means the first frame files every branch as Unsorted rather than
 	// mis-filing any of them.
 	identity config.Identity
-	// minesOnly (g) narrows the Branches pane to your work. Clean Up is exempt —
-	// see branchRows.
+	// minesOnly (G) narrows the Branches pane to your work. Clean Up is exempt —
+	// see branchRows. Persisted to view.toml's branches.mine_only (admin-y5lc.1):
+	// New() loads it through viewstate's cascade and every `G` press saves it
+	// to the project-level file.
 	minesOnly bool
 
 	// sel is the in-progress or just-finished drag-to-copy gesture — anchor on
@@ -459,20 +464,25 @@ type Model struct {
 	// dispatch is pending for that command, or it was a flat (non-target)
 	// dispatch — targetRows treats both the same way: nothing lights up.
 	pendingTarget map[string]string
-	// workCollapsed is the Work tab's session-only display mode, toggled by
-	// `c` (admin-4zz9): false (the zero value, and the launch default) is
-	// expanded — every command's targets render, byte-identical to the
-	// dashboard's behavior before this field existed. true is collapsed —
-	// only the command named by workOpenCmd shows its targets; see workRows'
-	// showTargets gate. Never persisted — a fresh launch always starts
-	// expanded.
+	// workCollapsed is the Work tab's display mode, toggled by `c` (admin-4zz9):
+	// false (the zero value, and the launch default when no view.toml sets it)
+	// is expanded — every command's targets render, byte-identical to the
+	// dashboard's original behavior. true is collapsed — only the command
+	// named by workOpenCmd shows its targets; see workRows' showTargets gate.
+	// Persisted to view.toml's work.collapsed (admin-y5lc.1): New() loads it
+	// through viewstate's cascade — seeding workOpenCmd from the cursor row
+	// when it starts collapsed, since toggleWorkCollapse isn't what set it
+	// this time — and toggleWorkCollapse saves every flip to the
+	// project-level file.
 	workCollapsed bool
 	// workOpenCmd is which command's targets show while workCollapsed is
 	// true: the command owning whatever row the cursor is currently on.
 	// toggleWorkCollapse seeds it the instant collapse turns on (from the
 	// row under the cursor at that moment); moveCursorWork keeps it in sync
-	// as the cursor moves through a collapsed row list. Ignored entirely
-	// while workCollapsed is false.
+	// as the cursor moves through a collapsed row list. New() seeds it the
+	// same way when the dashboard launches already collapsed (view.toml's
+	// work.collapsed = true), since there is no toggle keypress to do it.
+	// Ignored entirely while workCollapsed is false.
 	workOpenCmd string
 
 	// Config tab (admin-3rgp.21): the resolved config.Config — repoRoot's
@@ -612,11 +622,42 @@ func New(ctx context.Context, repoRoot, nwo, current, def string, opts ...Option
 	for _, opt := range opts {
 		opt(&m)
 	}
+	// view.toml cascade (admin-y5lc.1): project dir, then the main checkout
+	// when this is a linked worktree, then ~/.admin/view.toml, then these
+	// fields' own zero values — see viewstate.Load. Read before loadManifest
+	// only because manifestDir() (which this uses) doesn't need the manifest
+	// itself loaded to resolve.
+	vs := viewstate.Load(ctx, m.manifestDir())
+	m.workCollapsed = vs.WorkCollapsed
+	if mode, ok := beadTreeModeFromView(vs.BeadTree); ok {
+		m.beadTreeMode = mode
+	}
+	if sort, ok := trackSortFromView(vs.TrackSort); ok {
+		m.trackSort = sort
+	}
+	m.minesOnly = vs.MinesOnly
 	m.loadManifest()
 	if m.manifestOK {
 		// AC: "the dashboard opens on the Work tab when the project has a
 		// manifest."
 		m.active = tabWork
+	}
+	if m.workCollapsed {
+		// Launching already collapsed (view.toml's work.collapsed = true) has
+		// no toggle keypress to seed workOpenCmd the way toggleWorkCollapse
+		// does, so do it here from the row the cursor starts on. loadManifest
+		// has already run, so workRows() (gated on m.manifestOK) reflects the
+		// real command list; clampCursor moves the zero-value cursor off row
+		// 0's section header onto the first real row. m.focus is still its
+		// zero value (focusBody) here — m.focus = focusTabs runs later below
+		// — so currentRow() reads the same row a keypress would at this
+		// point, same as toggleWorkCollapse's own before, ok := m.currentRow().
+		m.clampCursor()
+		if row, ok := m.currentRow(); ok {
+			if name := ownerCmdName(row); name != "" {
+				m.workOpenCmd = name
+			}
+		}
 	}
 	// Init dispatches workTickCmd/detectBeadsCmd exactly when these are true at
 	// boot — seed the guard flags to match so fsChangedMsg's later gates don't
@@ -2133,6 +2174,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.trackSort = m.trackSort.next()
 			m.cursor[m.active] = 0
 			m.setStatus("sorted: "+m.trackSort.label(), cDim)
+			if err := viewstate.SaveTrackSort(m.manifestDir(), m.trackSort.viewString()); err != nil {
+				m.setStatus("view.toml: "+err.Error(), cRed)
+			}
 		}
 	case "g":
 		if m.active == tabBeads {
@@ -2145,6 +2189,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setStatus("family tree — parents sit above their children", cDim)
 			default:
 				m.setStatus("flat list, grouped by what's ready", cDim)
+			}
+			if err := viewstate.SaveBeadTree(m.manifestDir(), m.beadTreeMode.viewString()); err != nil {
+				m.setStatus("view.toml: "+err.Error(), cRed)
 			}
 			break
 		}
@@ -2165,6 +2212,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setStatus("showing every branch", cDim)
 			}
 			m.clampCursor()
+			if err := viewstate.SaveMinesOnly(m.manifestDir(), m.minesOnly); err != nil {
+				m.setStatus("view.toml: "+err.Error(), cRed)
+			}
 		}
 	case "w":
 		if m.active == tabLocal && m.pane == paneBranches {

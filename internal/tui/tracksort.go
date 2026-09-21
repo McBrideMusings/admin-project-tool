@@ -51,6 +51,50 @@ func (s trackSort) next() trackSort {
 	return (s + 1) % numTrackSorts
 }
 
+// viewString names the order the way view.toml's tracker.sort key spells it
+// (admin-y5lc.1) — hyphenated, unlike label()'s spaced-out header text.
+// sortLastModified's own zero value is "last-modified", so an
+// unset/unrecognized key and an explicit "last-modified" both resolve here
+// to the same order.
+func (s trackSort) viewString() string {
+	switch s {
+	case sortPriority:
+		return "priority"
+	case sortOldestFirst:
+		return "oldest-first"
+	case sortNewestFirst:
+		return "newest-first"
+	case sortMostDeps:
+		return "most-deps"
+	case sortByType:
+		return "by-type"
+	default:
+		return "last-modified"
+	}
+}
+
+// trackSortFromView is viewString's inverse, for loading view.toml. ok is
+// false for anything but the six recognized strings, which is how
+// viewstate.Load's cascade treats a bad value as "this level didn't set it".
+func trackSortFromView(s string) (trackSort, bool) {
+	switch s {
+	case "last-modified":
+		return sortLastModified, true
+	case "priority":
+		return sortPriority, true
+	case "oldest-first":
+		return sortOldestFirst, true
+	case "newest-first":
+		return sortNewestFirst, true
+	case "most-deps":
+		return sortMostDeps, true
+	case "by-type":
+		return sortByType, true
+	default:
+		return sortLastModified, false
+	}
+}
+
 // sortBeadsBy stably reorders beads in place under one of the five orders.
 // unblocks is the whole-graph "how much open work would finishing this free"
 // map (bd.Unblocks) — "most dependencies" is the closest thing the graph has
