@@ -1,12 +1,13 @@
 // workband_test.go covers admin-3rgp.72.6's own acceptance criteria: the
-// live band's title rule (bandTitle), the fixed-height field block
-// (bandFieldsCommand/bandFieldsWorker via slotRows), the idle row's
+// live band's title rule (bandTitle), the content-sized field block
+// (bandFieldsCommand/bandFieldsWorker, admin-dky7), the idle row's
 // title-only band, and fitPath's segment elision. Follows
 // workurls_test.go's pattern of calling the band's own functions directly
 // rather than standing up a full Frame.
 package tui
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -141,20 +142,65 @@ func TestBandTitleFourStates(t *testing.T) {
 	})
 }
 
-// TestFieldBlockAlwaysFieldRowsH is the epic's core invariant across both
-// block kinds: live command and live worker each produce exactly fieldRowsH
-// rows, whatever they have to say.
-func TestFieldBlockAlwaysFieldRowsH(t *testing.T) {
+// TestFieldBlockSizedToContent is admin-dky7's core invariant across both
+// block kinds: a command's field block is exactly one row (log) plus one row
+// per configured url — no padding, no fixed slot — and a worker's is always
+// its five real rows (log/branch/worktree/session/now), since a worker has
+// no field that can be absent.
+func TestFieldBlockSizedToContent(t *testing.T) {
 	cmdNoURL := bandFieldsCommand(&workRowData{cmdName: "dev", logPath: "/x/dev.log"}, 60)
-	if len(cmdNoURL) != fieldRowsH {
-		t.Errorf("bandFieldsCommand (no urls) produced %d rows, want fieldRowsH (%d)", len(cmdNoURL), fieldRowsH)
+	if len(cmdNoURL) != 1 {
+		t.Errorf("bandFieldsCommand (no urls) produced %d rows, want exactly 1 (log only)", len(cmdNoURL))
+	}
+
+	cmdSixURLs := bandFieldsCommand(&workRowData{cmdName: "dev", logPath: "/x/dev.log", urls: []frame.URLEntry{
+		{Label: "a", URL: "http://a"}, {Label: "b", URL: "http://b"}, {Label: "c", URL: "http://c"},
+		{Label: "d", URL: "http://d"}, {Label: "e", URL: "http://e"}, {Label: "f", URL: "http://f"},
+	}}, 60)
+	if len(cmdSixURLs) != 7 {
+		t.Errorf("bandFieldsCommand (6 urls) produced %d rows, want exactly 7 (log + 6 urls, none clipped)", len(cmdSixURLs))
 	}
 
 	worker := bandFieldsWorker(&livework.Entry{
 		ID: "w", LogPath: "/x/w.log", Worker: &livework.WorkerInfo{Branch: "b", Worktree: "/wt"},
 	}, 60)
-	if len(worker) != fieldRowsH {
-		t.Errorf("bandFieldsWorker produced %d rows, want fieldRowsH (%d)", len(worker), fieldRowsH)
+	if len(worker) != 5 {
+		t.Errorf("bandFieldsWorker produced %d rows, want exactly 5 (log/branch/worktree/session/now)", len(worker))
+	}
+}
+
+// TestRenderWorkBandOverflowingFieldsStillFillsExactlyH is a content-sized
+// field block's own edge case: a command with enough configured urls that
+// the field block ALONE (1 log row + 20 url rows) runs past the band's own
+// height h — an inherent geometry limit a content-sized block accepts (a
+// fixed-height terminal cannot show more rows than it has), not a
+// regression this diff introduces. renderWorkBand's own contract — exactly
+// h lines, whatever r is — still has to hold: the trailing `out[:h]` is
+// what keeps this from ever returning a ragged slice, and it must still
+// show the field block's OWN first rows (log, then urls in order) rather
+// than garbling the output.
+func TestRenderWorkBandOverflowingFieldsStillFillsExactlyH(t *testing.T) {
+	freshLivework(t)
+	urls := make([]frame.URLEntry, 20)
+	for i := range urls {
+		urls[i] = frame.URLEntry{Label: "u" + strconv.Itoa(i), URL: "http://example.com/" + strconv.Itoa(i)}
+	}
+	wd := &workRowData{
+		cmdName: "dev", logPath: "/x/dev.log", urls: urls,
+		live: &livework.Entry{ID: "dev-many-urls", StartedAt: time.Now()},
+	}
+	row := rowItem{kind: rowCommand, work: wd}
+
+	const h = 10
+	out := (Model{}).renderWorkBand(row, 60, h)
+	if len(out) != h {
+		t.Fatalf("renderWorkBand with a field block larger than h produced %d rows, want exactly %d", len(out), h)
+	}
+	if !strings.Contains(out[1], "log") {
+		t.Errorf("row 1 = %q, want the log field row", out[1])
+	}
+	if !strings.Contains(out[h-1], "u7") {
+		t.Errorf("last visible row = %q, want the field block's own rows in order (log, u0..u7), not garbled or reordered", out[h-1])
 	}
 }
 

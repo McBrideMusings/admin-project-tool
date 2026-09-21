@@ -59,10 +59,14 @@ func buildRunningWorkModelAt(t *testing.T, w, h int) Model {
 // TestWorkBodyOneLayoutAtEveryGeometry is the ticket's core claim: at 80x24
 // (narrow), 96x30 (the reference frame's own geometry) and 178x46 (wide),
 // renderWorkBody produces the identical shape — list on top spanning the
-// full body width, live band beneath it spanning that same width, with
-// bandH(height) rows given to the band and the rest to the list. No
+// full body width, live band beneath it spanning that same width. No
 // side-by-side divider ("│") ever appears, and every rendered row is
-// exactly width cells wide.
+// exactly width cells wide. buildRunningWorkModelAt's fixture is a single
+// row, so the band here is the SHORT-LIST case (admin-dky7): it grows past
+// bandH(height) to take every row the one-row list doesn't need, rather than
+// being clipped to bandH's floor — see TestWorkBodyShortListGrowsBandPastFloor
+// for that behavior asserted directly against renderWorkBody's own listH/bh
+// split.
 func TestWorkBodyOneLayoutAtEveryGeometry(t *testing.T) {
 	for _, geo := range []struct{ w, h int }{{80, 24}, {96, 30}, {178, 46}} {
 		mm := buildRunningWorkModelAt(t, geo.w, geo.h)
@@ -91,28 +95,63 @@ func TestWorkBodyOneLayoutAtEveryGeometry(t *testing.T) {
 			}
 		}
 
-		// The band takes exactly bandH(height) rows off the bottom, fixed by
-		// height alone — the row list gives up HEIGHT to the band and never
-		// width.
-		wantBandH := bandH(geo.h)
-		wantListH := geo.h - wantBandH
+		// The list is 2 rows (the "Commands" section header, then the sole
+		// command-test row); every row below that belongs to the band.
 		joined := strings.Join(out, "\n")
 		if !strings.Contains(joined, "command-test") {
 			t.Fatalf("%dx%d: command-test's own row not found anywhere in the body:\n%s", geo.w, geo.h, joined)
 		}
-		above := strings.Join(out[:wantListH], "\n")
-		if !strings.Contains(above, "command-test") {
-			t.Errorf("%dx%d: command-test's row not found in the list's %d rows above the band:\n%s", geo.w, geo.h, wantListH, above)
+		if !strings.Contains(out[1], "command-test") {
+			t.Errorf("%dx%d: row 1 = %q, want the list's sole command-test row", geo.w, geo.h, out[1])
 		}
 
-		// The live tail — the band's own content — renders in exactly the
-		// bottom bandH(height) rows, at full width, not squeezed into a
-		// side column.
-		below := strings.Join(out[wantListH:], "\n")
+		// The live tail — the band's own content — renders bottom-aligned in
+		// the band (rows 2..end), at full width, not squeezed into a side
+		// column.
+		below := strings.Join(out[2:], "\n")
 		for _, want := range []string{"collecting tests", "test_a ... ok", "test_b ... ok"} {
 			if !strings.Contains(below, want) {
-				t.Errorf("%dx%d: band (bottom %d rows) missing live tail line %q:\n%s", geo.w, geo.h, wantBandH, want, below)
+				t.Errorf("%dx%d: band (rows 2..%d) missing live tail line %q:\n%s", geo.w, geo.h, geo.h-1, want, below)
 			}
 		}
+	}
+}
+
+// TestWorkBodyShortListGrowsBandPastFloor is admin-dky7's own acceptance
+// criterion: a list short enough to fit in fewer rows than bandH(height)
+// lets the band take every spare row rather than being clipped to bandH's
+// floor and leaving blank rows above it. buildRunningWorkModelAt's fixture
+// (one command, no workers) produces 5 real list rows at 96x30 — Commands
+// header, the command-test row, a blank section separator, the Workers
+// header, and its own "no workers" text — well short of bandH(30)=13.
+func TestWorkBodyShortListGrowsBandPastFloor(t *testing.T) {
+	const w, h = 96, 30
+	mm := buildRunningWorkModelAt(t, w, h)
+	rows := mm.workRows()
+	wantListH := len(rows)
+
+	out, _ := mm.renderWorkBody(w, h)
+	if len(out) != h {
+		t.Fatalf("renderWorkBody produced %d lines, want exactly %d", len(out), h)
+	}
+
+	if got := bandH(h); got >= h-wantListH {
+		t.Fatalf("test fixture invalid: bandH(%d)=%d leaves no spare rows over a %d-row list to prove growth with", h, got, wantListH)
+	}
+
+	// The band's own title rule ("── ...") must start immediately after the
+	// real list content (row wantListH), not at h-bandH(h), which would pad
+	// the rows in between with blank list filler instead of handing them to
+	// the band.
+	titleIdx := -1
+	for i, l := range out {
+		if strings.Contains(l, "── ") && strings.Contains(stripANSI(l), "command-test") {
+			titleIdx = i
+			break
+		}
+	}
+	if titleIdx != wantListH {
+		t.Errorf("band title rule found at row %d, want exactly %d (immediately below the %d-row list, not padded out to h-bandH(h)=%d)",
+			titleIdx, wantListH, wantListH, h-bandH(h))
 	}
 }

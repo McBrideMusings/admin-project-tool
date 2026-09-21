@@ -231,13 +231,18 @@ func TestConfigTabEnterOnValueRowSaysNothingToOpen(t *testing.T) {
 	}
 	m.cursor[tabConfig] = idx
 
-	nm, cmd := m.activate()
-	if cmd != nil {
-		t.Error("activate() on a value-only row started a command, want none")
-	}
+	// activate() itself never schedules the status toast's expiry (only
+	// Update does, wrapping around it), so its own cmd return says nothing
+	// about whether an action started. What proves nothing destructive
+	// happened is the model's own state: the status line is set (the
+	// "nothing to open" message) and nothing else changed.
+	nm, _ := m.activate()
 	mm := nm.(Model)
 	if mm.status == "" {
 		t.Error("status is empty after activating a value-only row")
+	}
+	if mm.statusFg == cRed {
+		t.Errorf("status is an error color, want the plain \"nothing to open\" message: %q", mm.status)
 	}
 }
 

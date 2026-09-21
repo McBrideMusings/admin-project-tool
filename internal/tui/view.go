@@ -128,6 +128,7 @@ func (m Model) frameRaw() (lines []string, hits []hitTarget) {
 	top := []string{header, second, ""}
 	topHits := []hitTarget{{kind: hitNone}, secondHit, {kind: hitNone}}
 	body, bodyHits := m.renderBodyHits(width, bodyHeight)
+	body = m.spliceStatusToast(body)
 
 	lines = make([]string, 0, height)
 	lines = append(lines, top...)
@@ -626,21 +627,10 @@ func (m Model) footer(width int) string {
 	if m.filtering || m.filter != "" {
 		return m.filterFooter()
 	}
-	keys := m.keybar(width)
-	if m.status != "" {
-		fg := m.statusFg
-		if fg == nil {
-			fg = cDim
-		}
-		if m.statusHint != "" {
-			right := []seg{{t: m.statusHint + " ", fg: cCyan}}
-			msg := truncateLine(m.status, width-segsWidth(right)-2)
-			line := composeLR([]seg{{t: " "}, {t: msg, fg: fg}}, right, width)
-			return renderSegs(line, nil) + "\n" + keys
-		}
-		return renderSegs([]seg{{t: " "}, {t: m.status, fg: fg}}, nil) + "\n" + keys
-	}
-	return keys
+	// A status message renders as a one-line toast spliced over the last
+	// body row instead (frameRaw, below), so the footer here is always just
+	// the keybar and body height never depends on whether a status is set.
+	return m.keybar(width)
 }
 
 // nameCandLines renders the new-worktree prompt's bead search as extra footer
@@ -1270,6 +1260,74 @@ func selRangeOnLine(sel selection, row, width int) (a, b int, ok bool) {
 		return 0, 0, false
 	}
 	return a, b, true
+}
+
+// spliceStatusToast overlays a transient status message as a one-line toast on
+// the LAST row of body (the rule line just above the footer), right-aligned
+// with a 1-column right margin — the row's own left part is untouched.
+// footer() never grows a second line for it, so body height never depends on
+// whether m.status is set.
+//
+// The splice is ANSI-aware (ansi.Cut/StringWidth), the same technique
+// applyHighlight uses for the drag-to-copy highlight below, so it can land in
+// the middle of a rule line's box-drawing run without landing mid-escape-
+// sequence or mid-glyph.
+func (m Model) spliceStatusToast(body []string) []string {
+	if m.status == "" || len(body) == 0 {
+		return body
+	}
+	idx := len(body) - 1
+	line := body[idx]
+	w := ansi.StringWidth(line)
+	const margin = 1
+	if w <= margin {
+		return body
+	}
+
+	fg := m.statusFg
+	if fg == nil {
+		fg = cDim
+	}
+	avail := w - margin
+	if avail <= 0 {
+		return body
+	}
+
+	// The hint (e.g. "e for detail") reserves its own room first, so a
+	// message far longer than the terminal is wide still leaves the hint
+	// visible: the message truncates down to nothing before the hint gives
+	// up any of its own space. Only a terminal too narrow to fit the hint
+	// PLUS the message's minimum 2-column " …"/" " padding truncates the
+	// hint itself (fitSegs' own overall-width clip below) — a width no real
+	// terminal reaches for hints this short.
+	var hintSeg *seg
+	hintW := 0
+	if m.statusHint != "" {
+		hintW = vlen("  " + m.statusHint)
+		hintSeg = &seg{t: "  " + m.statusHint, fg: cCyan}
+	}
+	msgBudget := avail - 2 - hintW // 2 = leading + trailing space
+	msg := truncR(m.status, maxi(msgBudget, 0))
+	segs := []seg{{t: " " + msg, fg: fg}}
+	if hintSeg != nil {
+		segs = append(segs, *hintSeg)
+	}
+	segs = append(segs, seg{t: " "})
+
+	toastW := segsWidth(segs)
+	if toastW > avail {
+		toastW = avail
+	}
+	if toastW <= 0 {
+		return body
+	}
+	toast := renderSegs(fitSegs(segs, toastW), cSel)
+
+	b := w - margin
+	a := b - toastW
+	out := append([]string(nil), body...)
+	out[idx] = ansi.Cut(line, 0, a) + toast + ansi.Cut(line, b, w)
+	return out
 }
 
 // applyHighlight paints the selected cell range of each line the current drag

@@ -1011,10 +1011,15 @@ func (m *Model) moveCursorWork(delta int) {
 }
 
 // setStatus sets the transient status line and its color in one place.
+// toastGen bumps on every call, error included, so Update can tell a status
+// change happened and schedule that status's expiry itself — see Update's
+// wrapper around update. A caller never needs to thread an expiry cmd of its
+// own back out; setting m.status here is enough.
 func (m *Model) setStatus(text string, fg lipgloss.TerminalColor) {
 	m.status = text
 	m.statusFg = fg
 	m.statusHint = ""
+	m.toastGen++
 }
 
 // stashErrDetail parks a failed action's full git output for the `e` overlay, and
@@ -1290,8 +1295,25 @@ func (m Model) localCurrent() (rowItem, bool) {
 	}
 }
 
-// Update handles messages and key input.
+// Update handles messages and key input. It wraps update with one piece of
+// shared bookkeeping: whenever update's changes bump m.toastGen and leave a
+// non-error status on screen, this schedules that status's expiry — the one
+// place that decision is made, so no individual case inside update has to
+// remember to return its own expiry cmd.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	genBefore := m.toastGen
+	updated, cmd := m.update(msg)
+	mm := updated.(Model)
+	if mm.toastGen != genBefore && mm.status != "" && mm.statusFg != cRed {
+		cmd = tea.Batch(cmd, statusExpireCmd(mm.toastGen))
+	}
+	return mm, cmd
+}
+
+// update is Update's actual message handling — see Update's own doc comment
+// for why status-toast expiry is scheduled around this rather than inside
+// it.
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -1676,8 +1698,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case copyToastExpiredMsg:
-		if msg.gen == m.toastGen {
+	case statusExpiredMsg:
+		// An error status (fg == cRed) never expires on the timer — it
+		// clears on the next keypress instead (handleKey) — so even a tick
+		// that matches the current gen leaves it alone.
+		if msg.gen == m.toastGen && m.statusFg != cRed {
 			m.status = ""
 			m.statusFg = nil
 		}
@@ -1749,16 +1774,17 @@ func (m Model) finishMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m.click(msg.Y, msg.X)
 }
 
-// copyToastExpiredMsg clears the "copied to clipboard" toast once it has had
-// its 2 seconds on screen — but only if gen still matches: a copy toast that a
-// newer status line has already replaced must not be blanked out from under it.
-type copyToastExpiredMsg struct{ gen int }
+// statusExpiredMsg clears the status toast once it has had its
+// statusToastDuration on screen — but only if gen still matches: a toast a
+// newer status line has already replaced must not be blanked out from under
+// it. Update schedules one of these around every non-error setStatus call.
+type statusExpiredMsg struct{ gen int }
 
-// copyToastDuration is how long the "copied to clipboard" toast stays up.
-const copyToastDuration = 2 * time.Second
+// statusToastDuration is how long a non-error status toast stays up.
+const statusToastDuration = 3 * time.Second
 
-func copyToastCmd(gen int) tea.Cmd {
-	return tea.Tick(copyToastDuration, func(time.Time) tea.Msg { return copyToastExpiredMsg{gen: gen} })
+func statusExpireCmd(gen int) tea.Cmd {
+	return tea.Tick(statusToastDuration, func(time.Time) tea.Msg { return statusExpiredMsg{gen: gen} })
 }
 
 // copySelection extracts sel's plain text and writes it to the clipboard. An
@@ -1773,9 +1799,8 @@ func (m Model) copySelection(sel selection) (tea.Model, tea.Cmd) {
 		m.setStatus("copy failed: "+err.Error(), cRed)
 		return m, nil
 	}
-	m.toastGen++
 	m.setStatus("copied to clipboard", cGreen)
-	return m, copyToastCmd(m.toastGen)
+	return m, nil
 }
 
 // click is a bare mouse-up: resolve the hit at (y, x) against the last frame
@@ -1839,6 +1864,15 @@ func (m Model) clickRow(pane localPane, row int) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// An error status (fg == cRed) doesn't expire on the toast timer — Update
+	// only schedules an expiry for a non-error status — it clears on the next
+	// keypress instead, whatever that key turns out to do. errDetail (the
+	// `e`-for-detail overlay's own content) is a separate field and survives
+	// this; only the status line itself clears.
+	if m.statusFg == cRed {
+		m.status, m.statusFg, m.statusHint = "", nil, ""
+	}
+
 	// The terminal view (admin-3rgp.65, narrowed by admin-3rgp.71) owns the
 	// keyboard completely while attached: only esc detaches, so everything
 	// else — including "q" — goes to the child, and nothing below this
@@ -1870,8 +1904,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirming = false
 			m.confirmTargets = nil
 			m.setStatus("cancelled", cDim)
+			return m, nil
 		}
-		return m, nil
 	}
 
 	// The workflow-picker overlay (admin-3rgp.27) owns the keyboard while the
