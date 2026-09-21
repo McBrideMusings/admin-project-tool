@@ -14,8 +14,8 @@ import (
 )
 
 // TestFooterStaysOneLineWithStatusSet is the core layout claim: setting a
-// status no longer turns footer() into two lines, so body height (frameGeom)
-// never has to shrink to make room for it.
+// status leaves footer() at one line, so body height (frameGeom) is the
+// same with or without it.
 func TestFooterStaysOneLineWithStatusSet(t *testing.T) {
 	m := seededModel()
 	const width = 100
