@@ -133,21 +133,6 @@ func TestRenderWorkBandCommandTailsLiveRing(t *testing.T) {
 	}
 }
 
-// TestRenderWorkBandNoTailWhenIdle is the idle-command negative case: no
-// live entry at all, so the band's own idle placeholder — not a tail —
-// occupies the last row (bandIdle's own contract, covered by workband_test.
-// go).
-func TestRenderWorkBandNoTailWhenIdle(t *testing.T) {
-	wd := &workRowData{cmdName: "build", cmdKind: "shell", cmdDesc: "build it"}
-	mm := workTestModel(nil)
-	row := rowItem{kind: rowCommand, work: wd}
-	out := mm.renderWorkBand(row, 60, 40)
-	joined := strings.Join(out, "\n")
-	if !strings.Contains(joined, "output appears here while it runs") {
-		t.Errorf("idle band missing the placeholder line:\n%s", joined)
-	}
-}
-
 // TestRingTailLinesNoBlankRowBetweenLines is the CRLF defect: a hosted
 // pty's raw bytes carry ONLCR "\r\n" line endings, and splitting on "\n"
 // alone left a stray "\r" glued to the end of every line — which bubbletea's
