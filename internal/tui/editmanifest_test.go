@@ -154,9 +154,14 @@ func cmdBatchMsgs(t *testing.T, cmd tea.Cmd) []tea.Msg {
 	}
 	msg := cmd()
 	if b, ok := msg.(tea.BatchMsg); ok {
-		out := make([]tea.Msg, len(b))
-		for i, c := range b {
-			out[i] = c() // compactCmds never invokes these itself — safe to run here (loadLocalCmd/workTickCmd/detectBeadsCmd, all fast and side-effect-free against a temp dir).
+		var out []tea.Msg
+		for _, c := range b {
+			// Recurse: Update can itself batch a status-toast expiry cmd
+			// around whatever update returns, so a single cmd here may
+			// unpack into a batch nested inside a batch — loadLocalCmd/
+			// workTickCmd/detectBeadsCmd/statusExpireCmd are all fast and
+			// side-effect-free against a temp dir, safe to run here.
+			out = append(out, cmdBatchMsgs(t, c)...)
 		}
 		return out
 	}

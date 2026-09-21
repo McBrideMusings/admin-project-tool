@@ -231,12 +231,11 @@ func TestConfigTabEnterOnValueRowSaysNothingToOpen(t *testing.T) {
 	}
 	m.cursor[tabConfig] = idx
 
-	// activate()'s own cmd is no longer diagnostic here (admin-dky7):
-	// setStatus now always schedules the status toast's own expiry tick for
-	// a non-error status, so a non-nil cmd on its own no longer means an
-	// action started. What proves nothing destructive happened is the
-	// model's own state: the status line is set (the "nothing to open"
-	// message) and nothing else changed.
+	// activate() itself never schedules the status toast's expiry (only
+	// Update does, wrapping around it), so its own cmd return says nothing
+	// about whether an action started. What proves nothing destructive
+	// happened is the model's own state: the status line is set (the
+	// "nothing to open" message) and nothing else changed.
 	nm, _ := m.activate()
 	mm := nm.(Model)
 	if mm.status == "" {

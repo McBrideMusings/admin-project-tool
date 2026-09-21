@@ -140,9 +140,9 @@ func TestWorkBodyShortListGrowsBandPastFloor(t *testing.T) {
 	}
 
 	// The band's own title rule ("── ...") must start immediately after the
-	// real list content (row wantListH), not at h-bandH(h) — which is where
-	// the OLD fixed-clip behavior would have placed it, padding the rows in
-	// between with blank list filler instead of handing them to the band.
+	// real list content (row wantListH), not at h-bandH(h), which would pad
+	// the rows in between with blank list filler instead of handing them to
+	// the band.
 	titleIdx := -1
 	for i, l := range out {
 		if strings.Contains(l, "── ") && strings.Contains(stripANSI(l), "command-test") {

@@ -627,10 +627,9 @@ func (m Model) footer(width int) string {
 	if m.filtering || m.filter != "" {
 		return m.filterFooter()
 	}
-	// A status message no longer grows the footer to a second line — it
-	// renders as a one-line toast spliced over the last body row instead
-	// (frameRaw, below), so the footer here is always just the keybar and
-	// body height never depends on whether a status is set (admin-dky7).
+	// A status message renders as a one-line toast spliced over the last
+	// body row instead (frameRaw, below), so the footer here is always just
+	// the keybar and body height never depends on whether a status is set.
 	return m.keybar(width)
 }
 
@@ -1265,11 +1264,9 @@ func selRangeOnLine(sel selection, row, width int) (a, b int, ok bool) {
 
 // spliceStatusToast overlays a transient status message as a one-line toast on
 // the LAST row of body (the rule line just above the footer), right-aligned
-// with a 1-column right margin — the row's own left part is untouched. This
-// replaces the old two-line footer (a status row above the keybar, which
-// shrank the body by a row and made the layout jump whenever a status
-// appeared or cleared, admin-dky7): footer() never grows anymore, and body
-// height never depends on whether m.status is set.
+// with a 1-column right margin — the row's own left part is untouched.
+// footer() never grows a second line for it, so body height never depends on
+// whether m.status is set.
 //
 // The splice is ANSI-aware (ansi.Cut/StringWidth), the same technique
 // applyHighlight uses for the drag-to-copy highlight below, so it can land in
@@ -1296,8 +1293,7 @@ func (m Model) spliceStatusToast(body []string) []string {
 		return body
 	}
 
-	// The hint (e.g. "e for detail") reserves its own room first — matching
-	// the old two-line footer's own rule (composeLR's right side) — so a
+	// The hint (e.g. "e for detail") reserves its own room first, so a
 	// message far longer than the terminal is wide still leaves the hint
 	// visible: the message truncates down to nothing before the hint gives
 	// up any of its own space. Only a terminal too narrow to fit the hint

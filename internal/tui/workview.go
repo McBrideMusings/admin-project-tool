@@ -19,10 +19,7 @@ import (
 // bandH is the live band's MINIMUM row count: a short row list lets the band
 // grow past this to fill the body's spare rows (renderWorkBody's own
 // listH/bh split below), but the band never shrinks under it even when the
-// list alone would fill the body. Originally ported verbatim from the design
-// prototype (docs/spikes/admin-tui-desktop/variants.go:1263-1269) as a FIXED
-// height; admin-dky7 turned it into a floor instead so a short list stops
-// leaving blank rows above the band.
+// list alone would fill the body.
 func bandH(h int) int {
 	return maxi(mini(13, h/2), mini(9, h-1))
 }
@@ -30,9 +27,9 @@ func bandH(h int) int {
 // renderWorkBody lays out the Work tab: one layout at every geometry — the
 // row list fills the body width, and the live band spans that same full
 // width beneath it. The list gives up HEIGHT to the band and never width —
-// but never more than its own rows need (admin-dky7): bandH is the band's
-// floor, not its fixed size, so a short list lets the band grow past it
-// instead of leaving blank rows above it (see the listH/bh split below).
+// but never more than its own rows need: bandH is the band's floor, not its
+// fixed size, so a short list lets the band grow past it instead of leaving
+// blank rows above it (see the listH/bh split below).
 // Ported from the design prototype's workBody/renderPaletteScreen
 // (docs/spikes/admin-tui-desktop/variants.go); the prototype's own two-
 // orientation switch (a side-by-side split on a wide terminal, a stacked
@@ -97,8 +94,7 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 	// The list gets only what its own rows need, capped so the band never
 	// drops below its floor (bandH); the band takes every row the list
 	// doesn't use. On a short list this lets the band grow past bandH
-	// instead of leaving blank rows above it — the list no longer forces the
-	// band down to its minimum just because the terminal is tall.
+	// instead of leaving blank rows above it.
 	listH := mini(len(left), maxi(height-bandH(height), 1))
 	bh := maxi(height-listH, 1)
 
@@ -437,11 +433,11 @@ func renderTargetRow(wd *workRowData, focused bool, rest int) string {
 //
 // Contract: given the body width w and the band's own height h, returns
 // exactly h lines, whatever row r is. The field block is sized to its own
-// content (admin-dky7): a command's block is one log row plus one row per
-// configured url, and a worker's is always its five real rows (log, branch,
-// worktree, session, now) — neither is padded to a fixed slot anymore, so the
-// tail's available height is computed from the field block's ACTUAL length
-// each time, not a shared constant. A command with more configured urls than
+// content: a command's block is one log row plus one row per configured url,
+// and a worker's is always its five real rows (log, branch, worktree,
+// session, now); neither is padded to a fixed slot, so the tail's available
+// height is computed from the field block's ACTUAL length each time, not a
+// shared constant. A command with more configured urls than
 // h-1 has rows for still returns exactly h lines (the trailing out[:h] below
 // keeps that contract) but shows only the field block's own leading rows —
 // an inherent geometry limit of a finite terminal, not something this
@@ -586,8 +582,8 @@ func bandTitle(w int, live *livework.Entry, name string) string {
 }
 
 // padRows pads every row of a field block to w, without changing how many
-// rows there are — the field block is sized to its own content now
-// (admin-dky7), so nothing pads or clips it to a shared fixed height anymore.
+// rows there are — the field block is sized to its own content, so nothing
+// pads or clips it to a shared fixed height.
 func padRows(out []string, w int) []string {
 	for i, l := range out {
 		out[i] = padEnd(l, w)
@@ -607,10 +603,10 @@ func blankRows(w, n int) []string {
 }
 
 // bandFieldsCommand is the band's field block for a live (running) command:
-// its log path, then one row per configured url — sized to its own content
-// (admin-dky7): a command with no url gets no url row at all, and one with
-// several gets a row for every one of them rather than being clipped at a
-// fixed slot. Ported from the design prototype's bandFields (docs/spikes/
+// its log path, then one row per configured url — sized to its own content:
+// a command with no url gets no url row at all, and one with several gets a
+// row for every one of them rather than being clipped at a fixed slot.
+// Ported from the design prototype's bandFields (docs/spikes/
 // admin-tui-desktop/variants.go:1475-1487); the url row reuses urlRow's own
 // reachability indicator rather than the prototype's plain string, since the
 // real app (unlike the fixture) actually probes.

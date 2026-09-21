@@ -137,8 +137,7 @@ func TestRenderWorkBandCommandTailsLiveRing(t *testing.T) {
 // TestRenderWorkBandNoURLsTailGetsFullSpareHeight is admin-dky7's own
 // acceptance criterion: a running command with no configured urls has a
 // one-row field block (log only, no padding), so the tail gets h-2 rows —
-// h minus the title row minus that single field row — rather than the
-// h-1-fieldRowsH the old fixed slot used to leave it.
+// h minus the title row minus that single field row.
 func TestRenderWorkBandNoURLsTailGetsFullSpareHeight(t *testing.T) {
 	freshLivework(t)
 	ring := livework.NewRing(4096)
