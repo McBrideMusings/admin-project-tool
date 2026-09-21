@@ -569,6 +569,24 @@ func (m Model) cmdOriginOf(name string) string {
 	return "(manifest)"
 }
 
+// commandInvocationCount is how many resolved invocations cr resolves to: the
+// same count commandRowItem uses to decide whether a multi-target action gets
+// a target group (len(keys) > 1) rather than a plain single dispatch row — 1
+// for a flat command or a single-target multi-target, len(keys) for a
+// multi-target action with more than one target. It reads only cr's action,
+// never a rendered row, so both workRows' "Commands  N" header and
+// workRowCount can total invocations without depending on whether collapse
+// mode currently hides any target rows. commandRowItem calls this too, so the
+// two can never disagree about which multi-target actions get a group.
+func (m Model) commandInvocationCount(cr workCmdRow) int {
+	if a, ok := m.soleAction(cr.cmd); ok && actionKind(a) == "multi-target" {
+		if keys := kinds.TargetKeys(a); len(keys) > 1 {
+			return len(keys)
+		}
+	}
+	return 1
+}
+
 // commandRowItem builds one Work-tab row for a declared command, resolving
 // its live status (if any), its workflow target (if it is one), and its
 // best-effort last-run/log.
@@ -604,7 +622,9 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 			// target without prompting (makeMultiTarget's "is this
 			// project's only target"), so the row stays a plain dispatch
 			// rather than a group with a target list under it.
-			if len(keys) > 1 {
+			// commandInvocationCount makes exactly this same call so the two
+			// can never disagree about which actions get a target group.
+			if m.commandInvocationCount(cr) > 1 {
 				wd.targets = keys
 				wd.targetRuns = map[string]string{}
 				wd.targetURLs = map[string][]frame.URLEntry{}
@@ -763,12 +783,12 @@ func (m Model) workRows() []rowItem {
 
 	// The Commands header's count is every resolved invocation — a target or
 	// a flat command, never a group parent (docs/spikes/admin-tui-desktop/
-	// commands.txt:4, "Commands  47").
+	// commands.txt:4, "Commands  47") — computed from cmdRows directly rather
+	// than from cmdList, so it stays the same whether or not collapse mode
+	// hid any target rows out of cmdList (admin-4zz9).
 	invocations := 0
-	for _, r := range cmdList {
-		if r.kind == rowCommandTarget || (r.kind == rowCommand && !r.group) {
-			invocations++
-		}
+	for _, cr := range cmdRows {
+		invocations += m.commandInvocationCount(cr)
 	}
 
 	var rows []rowItem
@@ -874,20 +894,24 @@ func (m *Model) toggleWorkCollapse() {
 	m.clampCursor()
 }
 
-// workRowCount is the tab bar's badge count for Work — every selectable row
-// (commands plus workers), matching how the PRs/Issues/Beads badges already
-// count their own rows.
+// workRowCount is the tab bar's badge count for Work — every resolved
+// invocation (a flat command, or one entry per target of a multi-target
+// command) plus every live worker, matching how the PRs/Issues/Beads badges
+// count what exists rather than what's currently painted. It totals
+// commandInvocationCount over declaredCommands() directly rather than
+// counting rendered rows, so the number is the same in collapsed and
+// expanded mode and at every cursor position — collapsing the Work tab's
+// `c` toggle only changes which target rows are drawn, never how many
+// commands or targets exist.
 func (m Model) workRowCount() int {
-	n := 0
-	for _, r := range m.workRows() {
-		if r.group {
-			continue
-		}
-		if r.kind == rowCommand || r.kind == rowCommandTarget || r.kind == rowWorker {
-			n++
-		}
+	if !m.manifestOK {
+		return 0
 	}
-	return n
+	n := 0
+	for _, cr := range m.declaredCommands() {
+		n += m.commandInvocationCount(cr)
+	}
+	return n + len(liveWorkers())
 }
 
 // workDispatchStartedMsg carries a hosted dispatch's START outcome back to

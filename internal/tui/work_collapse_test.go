@@ -151,6 +151,57 @@ func TestMoveCursorWorkDownThroughTargetsAndOutNoDrift(t *testing.T) {
 	}
 }
 
+// TestWorkRowCountStableAcrossCollapseAndCursorWalk pins the AC "the badge
+// and section header count what exists, not what's currently painted":
+// workRowCount must read the same total in expanded mode, right after
+// collapsing (with the cursor inside dev, so dev's targets still render),
+// and at every step of a cursor walk that closes dev and opens it again —
+// the exact flicker (10 -> 6 -> 10 -> 6) admin-4zz9 round 2 was filed over.
+func TestWorkRowCountStableAcrossCollapseAndCursorWalk(t *testing.T) {
+	m := multiTargetModel(t)
+	m.active = tabWork
+	const want = 6 // dev's 4 targets + solo + test — multiTargetModel's own invocation count
+
+	if got := m.workRowCount(); got != want {
+		t.Fatalf("expanded workRowCount = %d, want %d", got, want)
+	}
+
+	m.cursor[tabWork] = rowIndex(t, m, isTargetRow("dev", "ios"))
+	m.toggleWorkCollapse()
+	if !m.workCollapsed {
+		t.Fatal("toggleWorkCollapse did not turn collapse on")
+	}
+	if got := m.workRowCount(); got != want {
+		t.Fatalf("collapsed workRowCount (cursor inside dev) = %d, want %d", got, want)
+	}
+
+	// Walk off dev (closing it) through solo and test, then back (reopening
+	// it) — the count must not move at any step, though the rendered row
+	// list does.
+	walk := []string{
+		"target:dev/mac", "target:dev/server", "target:dev/tv",
+		"cmd:solo", "cmd:test",
+	}
+	for _, wantRow := range walk {
+		m.moveCursor(1)
+		if got := currentRowName(t, m); got != wantRow {
+			t.Fatalf("cursor walk landed on %q, want %q", got, wantRow)
+		}
+		if got := m.workRowCount(); got != want {
+			t.Fatalf("workRowCount at %q = %d, want %d", wantRow, got, want)
+		}
+	}
+	for range walk {
+		m.moveCursor(-1)
+		if got := m.workRowCount(); got != want {
+			t.Fatalf("workRowCount walking back = %d, want %d", got, want)
+		}
+	}
+	if got := currentRowName(t, m); got != "target:dev/ios" {
+		t.Fatalf("walk back landed on %q, want %q (retrace)", got, "target:dev/ios")
+	}
+}
+
 // TestCKeyOnOtherTabsIsANoOp proves `c` does nothing outside the Work tab —
 // no collapse field ever flips, no tab switch, no crash.
 func TestCKeyOnOtherTabsIsANoOp(t *testing.T) {
