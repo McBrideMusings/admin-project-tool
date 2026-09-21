@@ -1010,11 +1010,25 @@ func (m *Model) moveCursorWork(delta int) {
 	}
 }
 
-// setStatus sets the transient status line and its color in one place.
-func (m *Model) setStatus(text string, fg lipgloss.TerminalColor) {
+// setStatus sets the transient status line and its color in one place, and
+// returns the tea.Cmd that expires it — every caller must route this cmd
+// back out through Update (batched with whatever else it returns) for the
+// toast to actually clear itself; bubbletea has no side channel for
+// scheduling a Cmd outside that return path. An error status (fg == cRed)
+// returns nil instead: an error doesn't expire on the timer, it clears on
+// the next keypress (handleKey, top of the function).
+func (m *Model) setStatus(text string, fg lipgloss.TerminalColor) tea.Cmd {
 	m.status = text
 	m.statusFg = fg
 	m.statusHint = ""
+	// toastGen bumps on every status, error included, so a still-in-flight
+	// expiry tick from an EARLIER non-error toast can never accidentally
+	// match an error status that replaced it and clear it early.
+	m.toastGen++
+	if fg == cRed {
+		return nil
+	}
+	return statusExpireCmd(m.toastGen)
 }
 
 // stashErrDetail parks a failed action's full git output for the `e` overlay, and
@@ -1146,11 +1160,12 @@ func (m *Model) launchSyncCmd() tea.Cmd {
 // sync now, whatever the clock says. Bound to `⇧R`, and to `r` anywhere a
 // row-scoped refresh doesn't apply.
 func (m *Model) refreshAllCmd() tea.Cmd {
-	m.setStatus("refreshing…", cDim)
+	scmd := m.setStatus("refreshing…", cDim)
 	// The launch sync is moot once an explicit one has been asked for; marking it
 	// considered keeps the local reload below from firing a second sync.
 	m.synced = true
 	return tea.Batch(
+		scmd,
 		loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def),
 		m.startSyncCmd(true),
 	)
@@ -1404,7 +1419,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.manifestErr != "" {
 				m.setStatus("admin.toml: "+m.manifestErr, cRed)
 			} else if m.manifestOK {
-				m.setStatus("manifest reloaded", cDim)
+				reloadCmds = append(reloadCmds, m.setStatus("manifest reloaded", cDim))
 			}
 			// Init only fires workTickCmd's first link (line ~584) and
 			// detectBeadsCmd (line ~576) when manifestOK/tracker="beads" are
@@ -1469,6 +1484,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// is fresher, so drop this one rather than stomping it with stale data.
 			return m, nil
 		}
+		var scmd tea.Cmd
 		switch {
 		case msg.err != nil:
 			m.setStatus("refresh failed: "+msg.err.Error(), cRed)
@@ -1481,7 +1497,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 			}
-			m.setStatus("closed — removed from list", cDim)
+			scmd = m.setStatus("closed — removed from list", cDim)
 		default:
 			for i := range m.remote.Issues {
 				if m.remote.Issues[i].Number == msg.item.Number {
@@ -1489,10 +1505,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 			}
-			m.setStatus("refreshed #"+strconv.Itoa(msg.item.Number), cDim)
+			scmd = m.setStatus("refreshed #"+strconv.Itoa(msg.item.Number), cDim)
 		}
 		m.clampCursor()
-		return m, nil
+		return m, scmd
 
 	case openPRRowMsg:
 		m.fetchDone()
@@ -1501,6 +1517,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// stale result instead of stomping it.
 			return m, nil
 		}
+		var scmd tea.Cmd
 		if msg.err != nil {
 			m.setStatus("refresh failed: "+msg.err.Error(), cRed)
 		} else {
@@ -1510,10 +1527,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 			}
-			m.setStatus("refreshed #"+strconv.Itoa(msg.pr.Number), cDim)
+			scmd = m.setStatus("refreshed #"+strconv.Itoa(msg.pr.Number), cDim)
 		}
 		m.clampCursor()
-		return m, nil
+		return m, scmd
 
 	case deleteStepMsg:
 		return m.advanceDelete(msg)
@@ -1559,12 +1576,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Nothing suspended, so there is no return signal to reload on — the
 		// launched app owns its own window, and the fsnotify watcher
 		// (fsChangedMsg) is what notices the save and reloads the manifest.
-		m.setStatus("opened "+msg.target+" in "+msg.name, cDim)
-		return m, nil
+		return m, m.setStatus("opened "+msg.target+" in "+msg.name, cDim)
 
 	case actionMsg:
 		m.creating = false
 		m.createLabel = ""
+		var scmd tea.Cmd
 		if msg.err != nil {
 			m.stashErrDetail(msg.text, msg.err)
 			m.setStatus(msg.text+": "+msg.err.Error(), cRed)
@@ -1576,10 +1593,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if fg == nil {
 				fg = cDim
 			}
-			m.setStatus(msg.text, fg)
+			scmd = m.setStatus(msg.text, fg)
 		}
 		// refresh local state after any mutation
-		return m, loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def)
+		return m, tea.Batch(scmd, loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def))
 
 	case settingsMsg:
 		m.identity = msg.id
@@ -1607,17 +1624,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setStatus(msg.name+" failed to start: "+msg.err.Error(), cRed)
 			return m, nil
 		}
-		m.setStatus(msg.name+" started", cGreen)
+		scmd := m.setStatus(msg.name+" started", cGreen)
 		workusage.Record(m.nwo, resolvedInvocation(msg.name, msg.args))
 		m.refreshDetailProbes()
 		if m.pendingAttach[msg.name] {
 			delete(m.pendingAttach, msg.name)
 			if e := m.liveEntryForCommand(msg.name); e != nil {
 				am, acmd := m.attachEntry(e)
-				return am, tea.Batch(acmd, workTickCmd())
+				return am, tea.Batch(scmd, acmd, workTickCmd())
 			}
 		}
-		return m, workTickCmd()
+		return m, tea.Batch(scmd, workTickCmd())
 
 	case workflowResolvedMsg:
 		m.workflowResolved(msg)
@@ -1676,8 +1693,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case copyToastExpiredMsg:
-		if msg.gen == m.toastGen {
+	case statusExpiredMsg:
+		// An error status (fg == cRed) never expires on the timer — it
+		// clears on the next keypress instead (handleKey) — so even a tick
+		// that matches the current gen leaves it alone.
+		if msg.gen == m.toastGen && m.statusFg != cRed {
 			m.status = ""
 			m.statusFg = nil
 		}
@@ -1749,16 +1769,18 @@ func (m Model) finishMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m.click(msg.Y, msg.X)
 }
 
-// copyToastExpiredMsg clears the "copied to clipboard" toast once it has had
-// its 2 seconds on screen — but only if gen still matches: a copy toast that a
-// newer status line has already replaced must not be blanked out from under it.
-type copyToastExpiredMsg struct{ gen int }
+// statusExpiredMsg clears the status toast once it has had its
+// statusToastDuration on screen — but only if gen still matches: a toast a
+// newer status line has already replaced must not be blanked out from under
+// it. Every non-error setStatus call schedules one of these (generalised
+// from the "copied to clipboard" toast this mechanism started as).
+type statusExpiredMsg struct{ gen int }
 
-// copyToastDuration is how long the "copied to clipboard" toast stays up.
-const copyToastDuration = 2 * time.Second
+// statusToastDuration is how long a non-error status toast stays up.
+const statusToastDuration = 3 * time.Second
 
-func copyToastCmd(gen int) tea.Cmd {
-	return tea.Tick(copyToastDuration, func(time.Time) tea.Msg { return copyToastExpiredMsg{gen: gen} })
+func statusExpireCmd(gen int) tea.Cmd {
+	return tea.Tick(statusToastDuration, func(time.Time) tea.Msg { return statusExpiredMsg{gen: gen} })
 }
 
 // copySelection extracts sel's plain text and writes it to the clipboard. An
@@ -1770,12 +1792,9 @@ func (m Model) copySelection(sel selection) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if err := pbcopy(text); err != nil {
-		m.setStatus("copy failed: "+err.Error(), cRed)
-		return m, nil
+		return m, m.setStatus("copy failed: "+err.Error(), cRed)
 	}
-	m.toastGen++
-	m.setStatus("copied to clipboard", cGreen)
-	return m, copyToastCmd(m.toastGen)
+	return m, m.setStatus("copied to clipboard", cGreen)
 }
 
 // click is a bare mouse-up: resolve the hit at (y, x) against the last frame
@@ -1839,6 +1858,15 @@ func (m Model) clickRow(pane localPane, row int) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// An error status (fg == cRed) doesn't expire on the toast timer
+	// (setStatus returns nil for it) — it clears on the next keypress
+	// instead, whatever that key turns out to do. errDetail (the `e`-for-
+	// detail overlay's own content) is a separate field and survives this;
+	// only the status line itself clears.
+	if m.statusFg == cRed {
+		m.status, m.statusFg, m.statusHint = "", nil, ""
+	}
+
 	// The terminal view (admin-3rgp.65, narrowed by admin-3rgp.71) owns the
 	// keyboard completely while attached: only esc detaches, so everything
 	// else — including "q" — goes to the child, and nothing below this
@@ -1869,9 +1897,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		default:
 			m.confirming = false
 			m.confirmTargets = nil
-			m.setStatus("cancelled", cDim)
+			return m, m.setStatus("cancelled", cDim)
 		}
-		return m, nil
 	}
 
 	// The workflow-picker overlay (admin-3rgp.27) owns the keyboard while the
@@ -2034,6 +2061,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return mm, cmd
 	}
 
+	// scmd carries the expiry tick a case below schedules via setStatus (nil
+	// when the matched case sets no status, or sets an error one — errors
+	// don't expire on a timer). Batched into whatever cmd the case itself
+	// returns, or into the switch's own shared fallthrough return at the end
+	// when the case falls through instead of returning.
+	var scmd tea.Cmd
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m.requestQuit()
@@ -2166,16 +2199,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "p":
 		if m.active == tabLocal && m.pane == paneBranches {
-			m.setStatus("pulling…", cDim)
-			return m, pullCmd(m.ctx, m.repoRoot)
+			scmd = m.setStatus("pulling…", cDim)
+			return m, tea.Batch(scmd, pullCmd(m.ctx, m.repoRoot))
 		}
 	case "s":
 		if m.active == tabBeads || m.active == tabIssues {
 			m.trackSort = m.trackSort.next()
 			m.cursor[m.active] = 0
-			m.setStatus("sorted: "+m.trackSort.label(), cDim)
+			scmd = m.setStatus("sorted: "+m.trackSort.label(), cDim)
 			if err := viewstate.SaveTrackSort(m.manifestDir(), m.trackSort.viewString()); err != nil {
-				m.setStatus("view.toml: "+err.Error(), cRed)
+				scmd = m.setStatus("view.toml: "+err.Error(), cRed)
 			}
 		}
 	case "g":
@@ -2184,14 +2217,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor[tabBeads] = 0
 			switch m.beadTreeMode {
 			case beadListBlocksTree:
-				m.setStatus("dependency tree — blockers sit above what they block", cDim)
+				scmd = m.setStatus("dependency tree — blockers sit above what they block", cDim)
 			case beadListFamilyTree:
-				m.setStatus("family tree — parents sit above their children", cDim)
+				scmd = m.setStatus("family tree — parents sit above their children", cDim)
 			default:
-				m.setStatus("flat list, grouped by what's ready", cDim)
+				scmd = m.setStatus("flat list, grouped by what's ready", cDim)
 			}
 			if err := viewstate.SaveBeadTree(m.manifestDir(), m.beadTreeMode.viewString()); err != nil {
-				m.setStatus("view.toml: "+err.Error(), cRed)
+				scmd = m.setStatus("view.toml: "+err.Error(), cRed)
 			}
 			break
 		}
@@ -2204,16 +2237,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					// Narrowing to "yours" with nothing defining yours would empty the pane and
 					// look like a repo with no work in it. Say which it is.
 					m.minesOnly = false
-					m.setStatus("no [identity] configured — nothing is known to be yours", cYellow)
+					scmd = m.setStatus("no [identity] configured — nothing is known to be yours", cYellow)
 					break
 				}
-				m.setStatus("showing your branches (Clean Up still shows everything)", cDim)
+				scmd = m.setStatus("showing your branches (Clean Up still shows everything)", cDim)
 			} else {
-				m.setStatus("showing every branch", cDim)
+				scmd = m.setStatus("showing every branch", cDim)
 			}
 			m.clampCursor()
 			if err := viewstate.SaveMinesOnly(m.manifestDir(), m.minesOnly); err != nil {
-				m.setStatus("view.toml: "+err.Error(), cRed)
+				scmd = m.setStatus("view.toml: "+err.Error(), cRed)
 			}
 		}
 	case "w":
@@ -2282,7 +2315,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.cleanAll()
 		}
 	}
-	return m, nil
+	return m, scmd
 }
 
 // rowRefreshCmd returns the row-scoped refresh for the row under the cursor —
@@ -2306,8 +2339,7 @@ func (m *Model) rowRefreshCmd() (tea.Cmd, bool) {
 		return nil, false
 	}
 	m.inflight++
-	m.setStatus("refreshing #"+strconv.Itoa(number)+"…", cDim)
-	return cmd, true
+	return tea.Batch(cmd, m.setStatus("refreshing #"+strconv.Itoa(number)+"…", cDim)), true
 }
 
 // activate handles enter on the selected row, per view.
@@ -2328,8 +2360,7 @@ func (m Model) activate() (tea.Model, tea.Cmd) {
 	case rowCommit:
 		return m, copyClipboardCmd(r.label, "copied "+r.label+" to clipboard")
 	case rowStash:
-		m.setStatus(r.label+"  ·  local only", cMag)
-		return m, nil
+		return m, m.setStatus(r.label+"  ·  local only", cMag)
 	case rowPR:
 		if r.wtPath != "" {
 			if m.herdr {
@@ -2369,15 +2400,13 @@ func (m Model) activate() (tea.Model, tea.Cmd) {
 		// doc comment).
 		return m.attachEntry(r.work.worker)
 	case rowConfigValue:
-		m.setStatus("nothing to open on this row", cDim)
-		return m, nil
+		return m, m.setStatus("nothing to open on this row", cDim)
 	case rowConfigPath:
 		if r.cfg == nil {
 			return m, nil
 		}
 		if r.cfg.absent {
-			m.setStatus(r.cfg.label+" does not exist", cRed)
-			return m, nil
+			return m, m.setStatus(r.cfg.label+" does not exist", cRed)
 		}
 		return m, openPathCmd(r.cfg.path, r.cfg.label)
 	}

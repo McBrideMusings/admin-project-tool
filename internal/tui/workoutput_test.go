@@ -17,8 +17,8 @@ import (
 
 // TestRenderWorkBandTailsLiveRingBottomAligned is the core acceptance
 // criterion: a worker with a live Output ring shows its last lines
-// bottom-aligned against the floor of the band, with the fixed field block
-// (fieldRowsH rows) and the title rule above it untouched.
+// bottom-aligned against the floor of the band, with the field block (a
+// worker's own five real rows) and the title rule above it untouched.
 func TestRenderWorkBandTailsLiveRingBottomAligned(t *testing.T) {
 	freshLivework(t)
 	ring := livework.NewRing(4096)
@@ -43,9 +43,10 @@ func TestRenderWorkBandTailsLiveRingBottomAligned(t *testing.T) {
 	if strings.TrimSpace(out[h-1]) != "line three" || strings.TrimSpace(out[h-2]) != "line two" || strings.TrimSpace(out[h-3]) != "line one" {
 		t.Fatalf("tail not bottom-aligned against the band's floor, rows h-3..h-1 = %q", out[h-3:])
 	}
-	// The field block occupies exactly 1 (title) + fieldRowsH rows above the
-	// tail; everything between it and the tail must be blank.
-	for i := 1 + fieldRowsH; i < h-3; i++ {
+	// The field block occupies exactly 1 (title) + 5 (a worker's own
+	// log/branch/worktree/session/now rows) above the tail; everything
+	// between it and the tail must be blank.
+	for i := 1 + 5; i < h-3; i++ {
 		if strings.TrimSpace(out[i]) != "" {
 			t.Errorf("row %d between the field block and the tail = %q, want blank (the bottom-align gap)", i, out[i])
 		}
@@ -72,7 +73,7 @@ func TestRenderWorkBandEmptyTailWithoutLiveRing(t *testing.T) {
 	if len(out) != h {
 		t.Fatalf("renderWorkBand produced %d lines, want exactly %d", len(out), h)
 	}
-	for i := 1 + fieldRowsH; i < h; i++ {
+	for i := 1 + 5; i < h; i++ {
 		if strings.TrimSpace(out[i]) != "" {
 			t.Errorf("row %d with no live ring = %q, want blank", i, out[i])
 		}
@@ -130,6 +131,40 @@ func TestRenderWorkBandCommandTailsLiveRing(t *testing.T) {
 	}
 	if strings.TrimSpace(out[h-1]) != "done" || strings.TrimSpace(out[h-2]) != "building..." {
 		t.Fatalf("tail not bottom-aligned against the band's floor, rows h-2..h-1 = %q", out[h-2:])
+	}
+}
+
+// TestRenderWorkBandNoURLsTailGetsFullSpareHeight is admin-dky7's own
+// acceptance criterion: a running command with no configured urls has a
+// one-row field block (log only, no padding), so the tail gets h-2 rows —
+// h minus the title row minus that single field row — rather than the
+// h-1-fieldRowsH the old fixed slot used to leave it.
+func TestRenderWorkBandNoURLsTailGetsFullSpareHeight(t *testing.T) {
+	freshLivework(t)
+	ring := livework.NewRing(4096)
+	for i := 0; i < 30; i++ {
+		ring.Write([]byte("line\n"))
+	}
+	wd := &workRowData{
+		cmdName: "dev", cmdKind: "shell", cmdDesc: "start dev",
+		live: &livework.Entry{ID: "dev-no-urls", StartedAt: time.Now(), Output: ring},
+	}
+
+	mm := workTestModel(nil)
+	row := rowItem{kind: rowCommand, work: wd}
+	const h = 20
+	out := mm.renderWorkBand(row, 60, h)
+	if len(out) != h {
+		t.Fatalf("renderWorkBand produced %d lines, want exactly %d", len(out), h)
+	}
+	// Row 0 is the title, row 1 is the sole "log" field row; every row from
+	// 2 onward is tail — h-2 rows of it — so row 2 itself must already carry
+	// tail content rather than a blank field-block gap.
+	if strings.TrimSpace(stripANSI(out[1])) == "" || !strings.Contains(out[1], "log") {
+		t.Fatalf("row 1 = %q, want the sole log field row", out[1])
+	}
+	if strings.TrimSpace(out[2]) == "" {
+		t.Errorf("row 2 (first tail row, h-2 available) = %q, want tail content, not a leftover fixed-slot gap", out[2])
 	}
 }
 

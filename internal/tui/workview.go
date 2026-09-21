@@ -16,27 +16,24 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/logformat"
 )
 
-// bandH is how many rows of the body height the live band takes, fixed per
-// terminal height and never per cursor position or content — ported
-// verbatim from the design prototype (docs/spikes/admin-tui-desktop/
-// variants.go:1263-1269).
+// bandH is the live band's MINIMUM row count: a short row list lets the band
+// grow past this to fill the body's spare rows (renderWorkBody's own
+// listH/bh split below), but the band never shrinks under it even when the
+// list alone would fill the body. Originally ported verbatim from the design
+// prototype (docs/spikes/admin-tui-desktop/variants.go:1263-1269) as a FIXED
+// height; admin-dky7 turned it into a floor instead so a short list stops
+// leaving blank rows above the band.
 func bandH(h int) int {
 	return maxi(mini(13, h/2), mini(9, h-1))
 }
 
-// fieldRowsH is the fixed height of the live band's field block, for every
-// live row kind: a live command's log+url, or a live worker's log+branch+
-// worktree+session+now. Five is the tallest of those. This is the epic's own single most important invariant
-// (docs/spikes/admin-tui-desktop/variants.go:1258-1261): the field block is
-// a fixed slot, padded or clipped to exactly this height by slotRows, so
-// moving the cursor between rows in different states never moves a row of
-// the band.
-const fieldRowsH = 5
-
 // renderWorkBody lays out the Work tab: one layout at every geometry — the
 // row list fills the body width, and the live band spans that same full
-// width beneath it. The list gives up HEIGHT to the band (bandH) and never
-// width. Ported from the design prototype's workBody/renderPaletteScreen
+// width beneath it. The list gives up HEIGHT to the band and never width —
+// but never more than its own rows need (admin-dky7): bandH is the band's
+// floor, not its fixed size, so a short list lets the band grow past it
+// instead of leaving blank rows above it (see the listH/bh split below).
+// Ported from the design prototype's workBody/renderPaletteScreen
 // (docs/spikes/admin-tui-desktop/variants.go); the prototype's own two-
 // orientation switch (a side-by-side split on a wide terminal, a stacked
 // layout on a tall narrow one, picked by comparing width against height) is
@@ -97,8 +94,13 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		}
 	}
 
-	bh := bandH(height)
-	listH := maxi(height-bh, 1)
+	// The list gets only what its own rows need, capped so the band never
+	// drops below its floor (bandH); the band takes every row the list
+	// doesn't use. On a short list this lets the band grow past bandH
+	// instead of leaving blank rows above it — the list no longer forces the
+	// band down to its minimum just because the terminal is tall.
+	listH := mini(len(left), maxi(height-bandH(height), 1))
+	bh := maxi(height-listH, 1)
 
 	listLines := left
 	hitLines := hits
@@ -423,8 +425,8 @@ func renderTargetRow(wd *workRowData, focused bool, rest int) string {
 
 // renderWorkBand is the Work tab's full-width live band (admin-3rgp.72.6): a
 // title rule naming whatever the combined cursor sits on plus a count of
-// everything else running (bandTitle), then — for a live row only — a fixed
-// fieldRowsH-row field block (bandFieldsCommand / bandFieldsWorker) and the
+// everything else running (bandTitle), then — for a live row only — a
+// content-sized field block (bandFieldsCommand / bandFieldsWorker) and the
 // row's own live output tail filling the rest. An idle row shows the title
 // alone: its name and "not running" are all it has to say.
 // Ported from the design prototype's renderWorkBody band half (docs/spikes/
@@ -433,10 +435,17 @@ func renderTargetRow(wd *workRowData, focused bool, rest int) string {
 // the old right-hand detail pane (renderWorkDetail/commandDetail/
 // workerDetail/detailHeader/appendLiveTail/outputRule) entirely.
 //
-// Contract: given the body width w and the band's own fixed height h,
-// returns exactly h lines, whatever row r is — the field block's fixed
-// height is what keeps the band from reflowing as the cursor moves between
-// rows in different states (fieldRowsH's own doc comment).
+// Contract: given the body width w and the band's own height h, returns
+// exactly h lines, whatever row r is. The field block is sized to its own
+// content (admin-dky7): a command's block is one log row plus one row per
+// configured url, and a worker's is always its five real rows (log, branch,
+// worktree, session, now) — neither is padded to a fixed slot anymore, so the
+// tail's available height is computed from the field block's ACTUAL length
+// each time, not a shared constant. A command with more configured urls than
+// h-1 has rows for still returns exactly h lines (the trailing out[:h] below
+// keeps that contract) but shows only the field block's own leading rows —
+// an inherent geometry limit of a finite terminal, not something this
+// function can grow past.
 func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 	wd := r.work
 	if wd == nil {
@@ -468,7 +477,7 @@ func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 			fields = bandFieldsCommand(wd, w)
 		}
 		out = append(out, fields...)
-		avail := maxi(h-1-fieldRowsH, 1)
+		avail := maxi(h-1-len(fields), 1)
 		var tail []string
 		if live.Output != nil {
 			tail = ringTailLines(live.Output, maxi(w-1, 1))
@@ -576,18 +585,14 @@ func bandTitle(w int, live *livework.Entry, name string) string {
 	return faintStyle.Render("── ") + titleStyled + faintStyle.Render(" "+strings.Repeat("─", fill)+suffix+" ──")
 }
 
-// slotRows pads (or clips) a field block to exactly fieldRowsH rows, each
-// already padded to w — the fixed slot every one of the band's three field
-// blocks renders through, so a block that would otherwise grow or shrink
-// with what it has to say never moves a row of the band beneath it.
-func slotRows(out []string, w int) []string {
+// padRows pads every row of a field block to w, without changing how many
+// rows there are — the field block is sized to its own content now
+// (admin-dky7), so nothing pads or clips it to a shared fixed height anymore.
+func padRows(out []string, w int) []string {
 	for i, l := range out {
 		out[i] = padEnd(l, w)
 	}
-	for len(out) < fieldRowsH {
-		out = append(out, padEnd("", w))
-	}
-	return out[:fieldRowsH]
+	return out
 }
 
 // blankRows returns n rows, each padded to w — used to fill the band below
@@ -602,20 +607,20 @@ func blankRows(w, n int) []string {
 }
 
 // bandFieldsCommand is the band's field block for a live (running) command:
-// its log path, then one row per configured url — a command with no url
-// gets no url row, since the fixed slot already holds the space (printing
-// "url —" would spend a row saying a field is absent, which the blank row
-// already says). Ported from the design prototype's bandFields (docs/
-// spikes/admin-tui-desktop/variants.go:1475-1487); the url row reuses
-// urlRow's own reachability indicator rather than the prototype's plain
-// string, since the real app (unlike the fixture) actually probes.
+// its log path, then one row per configured url — sized to its own content
+// (admin-dky7): a command with no url gets no url row at all, and one with
+// several gets a row for every one of them rather than being clipped at a
+// fixed slot. Ported from the design prototype's bandFields (docs/spikes/
+// admin-tui-desktop/variants.go:1475-1487); the url row reuses urlRow's own
+// reachability indicator rather than the prototype's plain string, since the
+// real app (unlike the fixture) actually probes.
 func bandFieldsCommand(wd *workRowData, w int) []string {
 	lw := maxi(w-11, 8)
 	out := []string{" " + faintStyle.Render(padEnd("log", 9)) + faintStyle.Render(fitPath(wd.logPath, lw))}
 	for _, u := range wd.urls {
 		out = append(out, " "+faintStyle.Render(padEnd("url", 9))+urlRow(u, true, lw))
 	}
-	return slotRows(out, w)
+	return padRows(out, w)
 }
 
 // bandFieldsWorker is the band's field block for a live worker: log,
@@ -630,7 +635,7 @@ func bandFieldsWorker(e *livework.Entry, w int) []string {
 		branch, worktree = e.Worker.Branch, e.Worker.Worktree
 	}
 	activity, _ := livework.Default.Activity(e.ID)
-	return slotRows([]string{
+	return padRows([]string{
 		" " + faintStyle.Render(padEnd("log", 9)) + faintStyle.Render(fitPath(e.LogPath, lw)),
 		" " + faintStyle.Render(padEnd("branch", 9)) + lipgloss.NewStyle().Foreground(cCyan).Render(truncR(branch, lw)),
 		" " + faintStyle.Render(padEnd("worktree", 9)) + faintStyle.Render(fitPath(worktree, lw)),

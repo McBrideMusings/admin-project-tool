@@ -750,12 +750,10 @@ func TestWorkRowsWorkerLabelHasNoTrailingSpaceWhenActivityEmpty(t *testing.T) {
 }
 
 // TestWorkerBandFieldsAlwaysHasNowRow supersedes admin-spjp.4's old rule (no
-// labelled field with no value): the live band's field block is a fixed
-// fieldRowsH-row slot (admin-3rgp.72.6) that always shows exactly the same
-// five rows for a worker — log/branch/worktree/session/now — whatever the
-// worker's own Activity is, since a block that grows or shrinks a row moves
-// everything beneath it. An empty Activity still gets its "now" row; it is
-// simply blank after the label.
+// labelled field with no value): a worker's field block always shows the
+// same five rows — log/branch/worktree/session/now — whatever the worker's
+// own Activity is. An empty Activity still gets its "now" row; it is simply
+// blank after the label.
 func TestWorkerBandFieldsAlwaysHasNowRow(t *testing.T) {
 	freshLivework(t)
 	e := &livework.Entry{
@@ -768,8 +766,8 @@ func TestWorkerBandFieldsAlwaysHasNowRow(t *testing.T) {
 	}
 
 	out := bandFieldsWorker(e, 60)
-	if len(out) != fieldRowsH {
-		t.Fatalf("bandFieldsWorker produced %d rows, want exactly fieldRowsH (%d)", len(out), fieldRowsH)
+	if len(out) != 5 {
+		t.Fatalf("bandFieldsWorker produced %d rows, want exactly 5 (log/branch/worktree/session/now)", len(out))
 	}
 	found := false
 	for _, line := range out {
