@@ -18,6 +18,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/viewstate"
 )
 
 // workRowData is the Work-tab payload riding on a rowItem — either a
@@ -864,23 +865,28 @@ func indexOfCommandRow(rows []rowItem, name string) int {
 	return -1
 }
 
-// toggleWorkCollapse flips the Work tab's session-only display mode (key
-// `c`): expanded (every command's targets render — the launch default and
-// this dashboard's only behavior before this existed) versus collapsed (only
-// the command the cursor is inside shows its targets — see workRows'
-// showTargets gate and moveCursorWork). before is read with the OLD mode
-// still in effect (the expanded list always has every row, so ownerCmdName
-// always resolves correctly there) — reading it after flipping the bool
-// would ask m.currentRow() to rebuild against a workOpenCmd that hasn't been
-// set yet, hiding the very command the cursor is sitting on. Once the mode
-// (and, when turning collapse on, workOpenCmd) is set, the cursor is
-// relocated onto that same row's identity in the freshly built list, since
-// collapsing removes rows that may sit ahead of it.
+// toggleWorkCollapse flips the Work tab's display mode (key `c`): expanded
+// (every command's targets render — this dashboard's original behavior)
+// versus collapsed (only the command the cursor is inside shows its targets
+// — see workRows' showTargets gate and moveCursorWork). before is read with
+// the OLD mode still in effect (the expanded list always has every row, so
+// ownerCmdName always resolves correctly there) — reading it after flipping
+// the bool would ask m.currentRow() to rebuild against a workOpenCmd that
+// hasn't been set yet, hiding the very command the cursor is sitting on.
+// Once the mode (and, when turning collapse on, workOpenCmd) is set, the
+// cursor is relocated onto that same row's identity in the freshly built
+// list, since collapsing removes rows that may sit ahead of it. The new mode
+// is persisted to view.toml's work.collapsed (admin-y5lc.1) — a write
+// failure is reported on the status line but never undoes the in-memory
+// flip.
 func (m *Model) toggleWorkCollapse() {
 	before, ok := m.currentRow()
 	m.workCollapsed = !m.workCollapsed
 	if m.workCollapsed && ok {
 		m.workOpenCmd = ownerCmdName(before)
+	}
+	if err := viewstate.SaveWorkCollapsed(m.manifestDir(), m.workCollapsed); err != nil {
+		m.setStatus("view.toml: "+err.Error(), cRed)
 	}
 	if !ok {
 		return

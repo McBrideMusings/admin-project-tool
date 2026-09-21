@@ -164,15 +164,30 @@ func TopLevel(ctx context.Context) (string, error) {
 // RepoRoot returns the main repo's top-level directory, resolving correctly even
 // when the cwd is inside a linked worktree.
 func RepoRoot(ctx context.Context) (string, error) {
-	top, err := runner(ctx, "rev-parse", "--show-toplevel")
+	return RepoRootFor(ctx, "")
+}
+
+// RepoRootFor is RepoRoot for a directory other than the process's own cwd —
+// dir == "" runs in the process cwd exactly as RepoRoot. Needed by any
+// caller (the TUI's view.toml cascade, admin-y5lc.1) that resolves a repo
+// root for a directory it was merely handed, not the one it happens to be
+// running in.
+func RepoRootFor(ctx context.Context, dir string) (string, error) {
+	args := func(a ...string) []string {
+		if dir == "" {
+			return a
+		}
+		return append([]string{"-C", dir}, a...)
+	}
+	top, err := runner(ctx, args("rev-parse", "--show-toplevel")...)
 	if err != nil {
 		return "", ErrNotInRepo
 	}
-	gitDir, err := runner(ctx, "rev-parse", "--path-format=absolute", "--git-dir")
+	gitDir, err := runner(ctx, args("rev-parse", "--path-format=absolute", "--git-dir")...)
 	if err != nil {
 		return top, nil
 	}
-	commonDir, err := runner(ctx, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	commonDir, err := runner(ctx, args("rev-parse", "--path-format=absolute", "--git-common-dir")...)
 	if err != nil {
 		return top, nil
 	}
