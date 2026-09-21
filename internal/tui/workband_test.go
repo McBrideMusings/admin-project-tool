@@ -1,7 +1,7 @@
 // workband_test.go covers admin-3rgp.72.6's own acceptance criteria: the
 // live band's title rule (bandTitle), the fixed-height field block
-// (bandIdle/bandFieldsCommand/bandFieldsWorker via slotRows), the idle
-// row's output placeholder, and fitPath's segment elision. Follows
+// (bandFieldsCommand/bandFieldsWorker via slotRows), the idle row's
+// title-only band, and fitPath's segment elision. Follows
 // workurls_test.go's pattern of calling the band's own functions directly
 // rather than standing up a full Frame.
 package tui
@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 )
@@ -140,15 +141,10 @@ func TestBandTitleFourStates(t *testing.T) {
 	})
 }
 
-// TestFieldBlockAlwaysFieldRowsH is the epic's core invariant across all
-// three block kinds: idle command, live command, live worker each produce
-// exactly fieldRowsH rows, whatever they have to say.
+// TestFieldBlockAlwaysFieldRowsH is the epic's core invariant across both
+// block kinds: live command and live worker each produce exactly fieldRowsH
+// rows, whatever they have to say.
 func TestFieldBlockAlwaysFieldRowsH(t *testing.T) {
-	idle := bandIdle(&workRowData{cmdName: "build", cmdDesc: "build it", cmdKind: "shell"}, 60)
-	if len(idle) != fieldRowsH {
-		t.Errorf("bandIdle produced %d rows, want fieldRowsH (%d)", len(idle), fieldRowsH)
-	}
-
 	cmdNoURL := bandFieldsCommand(&workRowData{cmdName: "dev", logPath: "/x/dev.log"}, 60)
 	if len(cmdNoURL) != fieldRowsH {
 		t.Errorf("bandFieldsCommand (no urls) produced %d rows, want fieldRowsH (%d)", len(cmdNoURL), fieldRowsH)
@@ -162,48 +158,30 @@ func TestFieldBlockAlwaysFieldRowsH(t *testing.T) {
 	}
 }
 
-// TestBandIdleShowsQueryOnlyForWorkflow is admin-3rgp.72.21's own acceptance
-// criteria: a query-sourced kind="workflow" command's idle block carries its
-// query as the fifth row, labelled in the same 9-cell column the other
-// fields use; a non-workflow row shows no query row at all; both are still
-// exactly fieldRowsH rows.
-func TestBandIdleShowsQueryOnlyForWorkflow(t *testing.T) {
-	plain := bandIdle(&workRowData{cmdName: "build", cmdDesc: "build it", cmdKind: "shell"}, 60)
-	if len(plain) != fieldRowsH {
-		t.Errorf("bandIdle (non-workflow) produced %d rows, want fieldRowsH (%d)", len(plain), fieldRowsH)
-	}
-	for _, l := range plain {
-		if strings.Contains(stripANSI(l), "query") {
-			t.Errorf("bandIdle (non-workflow) row %q carries a query label, want none", stripANSI(l))
-		}
-	}
-
-	wf := bandIdle(&workRowData{
-		cmdName: "retire-merged", cmdDesc: "Remove merged worktrees", cmdKind: "workflow",
-		workflow: &kinds.WorkflowTarget{Source: kinds.WorkflowSourceQuery, Query: "status:closed label:worktree"},
-	}, 60)
-	if len(wf) != fieldRowsH {
-		t.Errorf("bandIdle (workflow) produced %d rows, want fieldRowsH (%d)", len(wf), fieldRowsH)
-	}
-	last := stripANSI(wf[fieldRowsH-1])
-	if !strings.Contains(last, "query") || !strings.Contains(last, "status:closed label:worktree") {
-		t.Errorf("bandIdle (workflow) fifth row = %q, want the query labelled \"query\"", last)
-	}
-}
-
-// TestBandIdleOutputPlaceholderOnLastLine is AC2's idle state: the band's
-// LAST line reads the literal placeholder, with the field block above it
-// untouched.
-func TestBandIdleOutputPlaceholderOnLastLine(t *testing.T) {
+// TestBandIdleIsTitleOnly: an idle row's band is its title rule — the name
+// and "not running" — and nothing else. Every row beneath it is blank: no
+// kind, desc, last run, last log, url or query field, and no placeholder.
+func TestBandIdleIsTitleOnly(t *testing.T) {
+	freshLivework(t)
 	mm := workTestModel(nil)
-	row := rowItem{kind: rowCommand, work: &workRowData{cmdName: "build", cmdDesc: "build it", cmdKind: "shell"}}
+	row := rowItem{kind: rowCommand, work: &workRowData{
+		cmdName: "build", cmdDesc: "build it", cmdKind: "workflow", targetKey: "fast", logPath: "/x/build.log",
+		urls:     []frame.URLEntry{{Label: "local", URL: "http://localhost:9"}},
+		workflow: &kinds.WorkflowTarget{Source: kinds.WorkflowSourceQuery, Query: "status:closed"},
+	}}
 	const h = 12
 	out := mm.renderWorkBand(row, 60, h)
 	if len(out) != h {
 		t.Fatalf("renderWorkBand produced %d lines, want exactly %d", len(out), h)
 	}
-	if !strings.Contains(out[h-1], "output appears here while it runs") {
-		t.Errorf("last band row = %q, want the idle placeholder", out[h-1])
+	title := stripANSI(out[0])
+	if !strings.Contains(title, "build fast") || !strings.Contains(title, "not running") {
+		t.Errorf("idle title = %q, want the name and \"not running\"", title)
+	}
+	for i, l := range out[1:] {
+		if s := strings.TrimSpace(stripANSI(l)); s != "" {
+			t.Errorf("idle band row %d = %q, want blank", i+1, s)
+		}
 	}
 }
 

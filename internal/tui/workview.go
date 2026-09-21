@@ -5,7 +5,6 @@
 package tui
 
 import (
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -26,9 +25,8 @@ func bandH(h int) int {
 }
 
 // fieldRowsH is the fixed height of the live band's field block, for every
-// row kind: a live command's log+url, a live worker's log+branch+worktree+
-// session+now, or an idle entry's kind+desc+last-run+last-log. Five is the
-// tallest of those. This is the epic's own single most important invariant
+// live row kind: a live command's log+url, or a live worker's log+branch+
+// worktree+session+now. Five is the tallest of those. This is the epic's own single most important invariant
 // (docs/spikes/admin-tui-desktop/variants.go:1258-1261): the field block is
 // a fixed slot, padded or clipped to exactly this height by slotRows, so
 // moving the cursor between rows in different states never moves a row of
@@ -425,9 +423,10 @@ func renderTargetRow(wd *workRowData, focused bool, rest int) string {
 
 // renderWorkBand is the Work tab's full-width live band (admin-3rgp.72.6): a
 // title rule naming whatever the combined cursor sits on plus a count of
-// everything else running (bandTitle), a fixed fieldRowsH-row field block
-// chosen by the row's own state (bandIdle / bandFieldsCommand /
-// bandFieldsWorker), then the row's own live output tail filling the rest.
+// everything else running (bandTitle), then — for a live row only — a fixed
+// fieldRowsH-row field block (bandFieldsCommand / bandFieldsWorker) and the
+// row's own live output tail filling the rest. An idle row shows the title
+// alone: its name and "not running" are all it has to say.
 // Ported from the design prototype's renderWorkBody band half (docs/spikes/
 // admin-tui-desktop/variants.go:1533-1588) — the row-list half of that
 // function stays in Model.renderWorkBody above, unchanged; this replaces
@@ -461,8 +460,7 @@ func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 	out := make([]string, 0, h)
 	out = append(out, bandTitle(w, live, name))
 
-	switch {
-	case live != nil:
+	if live != nil {
 		var fields []string
 		if live.Worker != nil {
 			fields = bandFieldsWorker(live, w)
@@ -476,10 +474,6 @@ func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 			tail = ringTailLines(live.Output, maxi(w-1, 1))
 		}
 		out = append(out, bandTail(tail, avail, w)...)
-	default:
-		out = append(out, bandIdle(wd, w)...)
-		out = append(out, blankRows(w, maxi(h-2-fieldRowsH, 0))...)
-		out = append(out, padEnd(" "+faintStyle.Render("output appears here while it runs"), w))
 	}
 
 	for i, l := range out {
@@ -604,53 +598,6 @@ func blankRows(w, n int) []string {
 		out = append(out, padEnd("", w))
 	}
 	return out
-}
-
-// bandIdle is the band's field block while the cursor sits on something
-// that is NOT running: the entry's own kind, description and last run — a
-// never-run command reads "never" and "—" for both. Ported from the design
-// prototype's bandIdle (docs/spikes/admin-tui-desktop/variants.go:1499-
-// 1531). A target row's kind is the literal "target", matching the
-// reference frame (commands.txt:18) — its wd.cmdKind carries the PARENT's
-// kind ("multi-target"), which is not what a target itself is.
-//
-// "last run" is derived from the resolved log file's own mtime (there is no
-// separate exit-status/run-history record in this codebase — commandLogPath
-// already does the best-effort glob commandRowItem falls back to for an
-// idle row) rather than the design prototype's fixture-only "· exit 0",
-// which nothing here tracks.
-func bandIdle(wd *workRowData, w int) []string {
-	lw := maxi(w-11, 8)
-	kind := kindLabel(wd.cmdKind)
-	if wd.targetKey != "" {
-		kind = "target"
-	}
-	lastRun := "never"
-	logCell := faintStyle.Render("—")
-	if wd.logPath != "" {
-		logCell = faintStyle.Render(fitPath(wd.logPath, lw))
-		if fi, err := os.Stat(wd.logPath); err == nil {
-			lastRun = humanizeAge(time.Since(fi.ModTime()))
-		}
-	}
-	rows := []string{
-		" " + faintStyle.Render(padEnd("kind", 9)) + truncR(kind, lw),
-		" " + faintStyle.Render(padEnd("desc", 9)) + truncR(wd.cmdDesc, lw),
-		" " + faintStyle.Render(padEnd("last run", 9)) + faintStyle.Render(lastRun),
-		" " + faintStyle.Render(padEnd("last log", 9)) + logCell,
-	}
-	// wd.workflow is non-nil only for a query-sourced kind="workflow"
-	// command (commandRowItem sets it from ParseWorkflowOver, and
-	// workTabInclude already dropped every selection-sourced workflow
-	// before a row for it exists at all — WorkflowTarget.
-	// AppearsInCommandList is the single source of truth for that split).
-	// query is what enter will actually run the workflow over, so it is
-	// the one field that distinguishes a workflow row from a shell row on
-	// this surface — fieldRowsH's fifth slot exists for exactly this.
-	if wd.workflow != nil {
-		rows = append(rows, " "+faintStyle.Render(padEnd("query", 9))+truncR(wd.workflow.Query, lw))
-	}
-	return slotRows(rows, w)
 }
 
 // bandFieldsCommand is the band's field block for a live (running) command:

@@ -73,38 +73,6 @@ func TestBandShowsLiveLogElapsedAndURLs(t *testing.T) {
 	}
 }
 
-// TestBandIdleShowsNeverAndDropsURLs is the idle half: the field block shows
-// kind/desc/last run/last log — never/— for a command with no log on disk —
-// and carries no url row at all (bandIdle's own field set has no "url"
-// label; a command's configured urls are a live-only field per the design,
-// docs/spikes/admin-tui-desktop/README.md's own field list).
-func TestBandIdleShowsNeverAndDropsURLs(t *testing.T) {
-	m := &manifest.Manifest{
-		Custom: map[string]manifest.Command{
-			"build": {Desc: "build it", Steps: []string{"build"}},
-		},
-		Actions: map[string]manifest.Action{
-			"build": {"kind": "shell", "run": "go build", "urls": []any{"http://localhost:9"}},
-		},
-	}
-	mm := workTestModel(m)
-	row := mm.commandRowItem(workCmdRow{name: "build", cmd: m.Custom["build"]}, map[string]*livework.Entry{})
-
-	if row.work.live != nil {
-		t.Fatalf("expected no live entry for an idle command")
-	}
-	out := strings.Join(bandIdle(row.work, 60), "\n")
-	if !strings.Contains(out, "never") {
-		t.Errorf("idle band fields missing \"never\" for last run:\n%s", out)
-	}
-	if !strings.Contains(out, "—") {
-		t.Errorf("idle band fields missing \"—\" for last log:\n%s", out)
-	}
-	if strings.Contains(out, "http://localhost:9") {
-		t.Errorf("idle band fields show a url row, want none (urls are live-only):\n%s", out)
-	}
-}
-
 // TestFrameURLsBareVsKeyedLabel proves the [urls]-keyed entry renders its
 // key as the label and a bare URL renders as itself — both through the same
 // kinds.FrameURLs path commandRowItem calls.

@@ -25,37 +25,19 @@ import (
 
 // TestBandDoesNotShift has two halves, both ported from the prototype:
 //
-//  1. every field block — idle-never-run, idle-has-run, live-command-with-
-//     url, live-command-without-url, worker — is exactly fieldRowsH rows.
+//  1. every field block — live-command-with-url, live-command-without-url,
+//     worker — is exactly fieldRowsH rows.
 //  2. the row directly BELOW the field block — the output tail's own
 //     content, bottom-aligned within the band, for a running command or a
-//     worker; the "output appears here while it runs" placeholder for an
-//     idle command — lands on the same rendered line index whatever the
-//     cursor sits on. That is the line fieldRowsH actually protects: the
+//     worker — lands on the same rendered line index whatever the cursor
+//     sits on. That is the line fieldRowsH actually protects: the
 //     band's title rule sits at a fixed band-local offset (0) no matter
 //     what the field block does, so asserting ITS position proves nothing —
 //     it is the boundary between the field block and whatever follows it
 //     that moves when the block grows or shrinks.
 func TestBandDoesNotShift(t *testing.T) {
 	t.Run("field blocks are always fieldRowsH rows", func(t *testing.T) {
-		// idle, never run: no logPath at all, so bandIdle has only kind/desc
-		// to say and falls back to "never"/"—" for last run/last log.
-		neverRun := bandIdle(&workRowData{cmdName: "dev", cmdDesc: "start dev", cmdKind: "shell"}, 60)
-		if n := len(neverRun); n != fieldRowsH {
-			t.Errorf("bandIdle for a never-run entry is %d rows, want exactly %d", n, fieldRowsH)
-		}
-
-		// idle, HAS run: a real log file on disk so bandIdle computes a real
-		// "last run" age from its mtime — the case the whole invariant
-		// exists for, since it is the one that used to grow a row.
-		logPath := filepath.Join(t.TempDir(), "dev.log")
-		if err := os.WriteFile(logPath, []byte("log\n"), 0o644); err != nil {
-			t.Fatalf("writing fixture log: %v", err)
-		}
-		hasRun := bandIdle(&workRowData{cmdName: "dev", cmdDesc: "start dev", cmdKind: "shell", logPath: logPath}, 60)
-		if n := len(hasRun); n != fieldRowsH {
-			t.Errorf("bandIdle for an entry that HAS run is %d rows, want exactly %d", n, fieldRowsH)
-		}
+		logPath := "/x/dev.log"
 
 		// live command, with a url.
 		withURL := bandFieldsCommand(&workRowData{
@@ -97,9 +79,8 @@ func TestBandDoesNotShift(t *testing.T) {
 		// bottom-aligns a short tail (a gap goes above it, never below), so
 		// with exactly one line of content the marker always renders on the
 		// band's OWN last row when the field block above it is sized
-		// correctly — the same last row the idle placeholder below occupies
-		// (TestBandIdleOutputPlaceholderOnLastLine). That shared landing
-		// spot is what makes the three states comparable at all: an
+		// correctly. That shared landing spot is what makes the two states
+		// comparable at all: an
 		// oversized or undersized field block shifts avail (the tail's
 		// available height, computed from the fixed fieldRowsH constant
 		// rather than the field block's own actual length) and the marker
@@ -131,7 +112,7 @@ func TestBandDoesNotShift(t *testing.T) {
 
 		// lineContaining renders the whole Work tab with the cursor on
 		// cursorOn and returns the index of the one line carrying want —
-		// the idle placeholder text, or a tail marker unique to that entry.
+		// a tail marker unique to that entry.
 		lineContaining := func(t *testing.T, cursorOn, want string) int {
 			t.Helper()
 			m := base
@@ -163,18 +144,15 @@ func TestBandDoesNotShift(t *testing.T) {
 			return -1
 		}
 
-		idleLine := lineContaining(t, "idle-cmd", "output appears here while it runs")
-		if got := lineContaining(t, "running-cmd", "RUNNING-TAIL-MARKER"); got != idleLine {
-			t.Errorf("cursor on a running command: tail marker on line %d, want %d (idle command's placeholder line) — the field block above it moved the row below", got, idleLine)
-		}
-		if got := lineContaining(t, "worker-1", "WORKER-TAIL-MARKER"); got != idleLine {
-			t.Errorf("cursor on a worker: tail marker on line %d, want %d (idle command's placeholder line) — the field block above it moved the row below", got, idleLine)
+		cmdLine := lineContaining(t, "running-cmd", "RUNNING-TAIL-MARKER")
+		if got := lineContaining(t, "worker-1", "WORKER-TAIL-MARKER"); got != cmdLine {
+			t.Errorf("cursor on a worker: tail marker on line %d, want %d (running command's tail line) — the field block above it moved the row below", got, cmdLine)
 		}
 	})
 }
 
 // TestSlotRowsTruncatesOverLongBlock covers slotRows' OTHER half: the pad
-// loop (len(out) < fieldRowsH) is exercised by every existing bandIdle/
+// loop (len(out) < fieldRowsH) is exercised by every existing
 // bandFieldsCommand/bandFieldsWorker input above, none of which has ever
 // produced more than fieldRowsH rows — so `return out[:fieldRowsH]` losing
 // its truncation to a bare `return out` still leaves every assertion in
