@@ -1,7 +1,9 @@
-// work_submenu_test.go pins admin-0kxh: on the Work tab, a command's targets
-// always render beneath it — there is no collapse/expand toggle — and
-// left/right/h/l stay pure tab-switching everywhere, including on a target
-// row. esc is a no-op on the Work tab, matching every other tab.
+// work_submenu_test.go pins admin-0kxh: left/right/h/l stay pure
+// tab-switching everywhere on the Work tab, including on a target row, and
+// esc is a no-op there, matching every other tab. None of the four keys open
+// or close a command's targets — that is `c`'s job (work_collapse_test.go);
+// these tests run in the default expanded mode, where every command's
+// targets already render beneath it with nothing left for right/left to do.
 package tui
 
 import (

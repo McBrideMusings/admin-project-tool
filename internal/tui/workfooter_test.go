@@ -168,17 +168,20 @@ func TestWorkFooterMatchesFramesVerbatim(t *testing.T) {
 
 	m := twoCommandModel()
 
-	idlePairs := [][2]string{{"↑↓", "move"}, {"↵", "dispatch"}, {"q/esc", "quit"}}
+	idlePairs := [][2]string{{"↑↓", "move"}, {"↵", "dispatch"}, {"c", "collapse"}, {"q/esc", "quit"}}
 	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("build"))
 	if got := m.workFooterPairs(); !pairsEqual(got, idlePairs) {
-		t.Errorf("footer pairs on an idle command row = %v, want %v (commands.txt:30 verbatim)", got, idlePairs)
+		t.Errorf("footer pairs on an idle command row = %v, want %v (commands.txt:30 verbatim, plus admin-4zz9's c collapse)", got, idlePairs)
 	}
 
-	livePairs := [][2]string{{"↑↓", "move"}, {"↵", "attach"}, {"x", "kill"}, {"q/esc", "quit"}}
+	livePairs := [][2]string{{"↑↓", "move"}, {"↵", "attach"}, {"x", "kill"}, {"c", "collapse"}, {"q/esc", "quit"}}
 	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("deploy"))
 	if got := m.workFooterPairs(); !pairsEqual(got, livePairs) {
-		t.Errorf("footer pairs on a live command row = %v, want %v (commands-running.txt:30 verbatim)", got, livePairs)
+		t.Errorf("footer pairs on a live command row = %v, want %v (commands-running.txt:30 verbatim, plus admin-4zz9's c collapse)", got, livePairs)
 	}
+
+	// TestCKeyTogglesFooterHintCollapseVsExpand below pins the hint flipping
+	// to "expand" once collapsed; this test stays on the expanded default.
 }
 
 func pairsEqual(a, b [][2]string) bool {

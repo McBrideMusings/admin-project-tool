@@ -459,6 +459,21 @@ type Model struct {
 	// dispatch is pending for that command, or it was a flat (non-target)
 	// dispatch — targetRows treats both the same way: nothing lights up.
 	pendingTarget map[string]string
+	// workCollapsed is the Work tab's session-only display mode, toggled by
+	// `c` (admin-4zz9): false (the zero value, and the launch default) is
+	// expanded — every command's targets render, byte-identical to the
+	// dashboard's behavior before this field existed. true is collapsed —
+	// only the command named by workOpenCmd shows its targets; see workRows'
+	// showTargets gate. Never persisted — a fresh launch always starts
+	// expanded.
+	workCollapsed bool
+	// workOpenCmd is which command's targets show while workCollapsed is
+	// true: the command owning whatever row the cursor is currently on.
+	// toggleWorkCollapse seeds it the instant collapse turns on (from the
+	// row under the cursor at that moment); moveCursorWork keeps it in sync
+	// as the cursor moves through a collapsed row list. Ignored entirely
+	// while workCollapsed is false.
+	workOpenCmd string
 
 	// Config tab (admin-3rgp.21): the resolved config.Config — repoRoot's
 	// admin.toml [identity]/[worktrees]/[[populate]]/[beads]/[workflow]
@@ -832,6 +847,16 @@ func (m *Model) moveCursor(delta int) {
 		m.paneCursor[m.pane] = clampi(0, m.paneCursor[m.pane]+delta, n-1)
 		return
 	}
+	// Collapsed Work-tab mode needs its own walk: the row list is a function
+	// of (m.workCollapsed, m.workOpenCmd), and workOpenCmd itself has to
+	// track where the cursor is heading, so this can't reuse the generic
+	// fixed-list skip loop below. Expanded mode (workCollapsed false, the
+	// default) renders every row exactly as it always has, so it keeps using
+	// the generic walk.
+	if m.active == tabWork && m.workCollapsed {
+		m.moveCursorWork(delta)
+		return
+	}
 	rows := m.visibleRows()
 	n := len(rows)
 	if n == 0 {
@@ -848,6 +873,97 @@ func (m *Model) moveCursor(delta int) {
 		}
 		if rows[i].selectable() {
 			m.cursor[m.active] = i
+			return
+		}
+	}
+}
+
+// moveCursorWork is moveCursor's collapsed-Work-tab variant. The generic
+// walk above assumes the row list is fixed for the whole walk; here it
+// isn't, in two ways:
+//
+//   - Stepping onto a closed command's group header (unselectable, since a
+//     header never gets a cursor marker) is the signal to open that
+//     command, which inserts its target rows into the list right where the
+//     header sits. This lands directly on the first selectable row after
+//     the header (moving down) or the last one before it (moving up) —
+//     never on the header itself, and never by continuing to add delta to
+//     an index whose meaning changed out from under it once the rebuild ran.
+//   - Stepping onto an ALREADY-selectable row that belongs to a different
+//     command than the one currently open also changes which command is
+//     open (to that row's own owner) — and opening or closing a command
+//     resizes the list by however many target rows it has. The row just
+//     landed on is still in the rebuilt list (opening/closing some OTHER
+//     command never removes it), so it's relocated there by identity
+//     (sameRowIdentity) rather than by reusing the old index i, which was
+//     computed against the list from before the resize.
+//
+// This is the reason the row list can be treated as "a pure function of
+// (mode, cursor)" per the ticket: the cursor here is workOpenCmd (which
+// command is open) plus the row index, and moveCursorWork is what keeps the
+// two in lockstep as the index moves across a command boundary.
+func (m *Model) moveCursorWork(delta int) {
+	rows := m.visibleRows()
+	n := len(rows)
+	if n == 0 {
+		return
+	}
+	i := m.cursor[m.active]
+	for steps := 0; steps < n; steps++ {
+		i += delta
+		if i < 0 {
+			i = n - 1
+		}
+		if i >= n {
+			i = 0
+		}
+		r := rows[i]
+		if r.selectable() {
+			owner := ownerCmdName(r)
+			if owner == m.workOpenCmd {
+				m.cursor[m.active] = i
+				return
+			}
+			m.workOpenCmd = owner
+			newRows := m.visibleRows()
+			for j, rr := range newRows {
+				if sameRowIdentity(rr, r) {
+					m.cursor[m.active] = j
+					return
+				}
+			}
+			m.cursor[m.active] = i // defensive fallback; should be unreachable
+			return
+		}
+		if r.kind == rowCommand && r.group && r.work != nil && r.work.cmdName != m.workOpenCmd {
+			name := r.work.cmdName
+			m.workOpenCmd = name
+			newRows := m.visibleRows()
+			idx := indexOfCommandRow(newRows, name)
+			if idx < 0 {
+				return
+			}
+			// A command's target rows always sit immediately after its own
+			// header, whichever direction opened it — targetRows never
+			// inserts anything before the header it belongs to. So the
+			// block to land in is the contiguous run starting right after
+			// idx, and the direction only picks which end of that run: the
+			// first row (moving down, arriving from above) or the last
+			// (moving up, arriving from below).
+			start := idx + 1
+			end := start
+			for end < len(newRows) && newRows[end].kind == rowCommandTarget &&
+				newRows[end].work != nil && newRows[end].work.cmdName == name {
+				end++
+			}
+			if end == start {
+				return // defensive: a group row always has at least one target
+			}
+			if delta > 0 {
+				m.cursor[m.active] = start
+			} else {
+				m.cursor[m.active] = end - 1
+			}
 			return
 		}
 	}
@@ -1944,6 +2060,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "a":
 		if m.active == tabWork {
 			return m.attachCurrentWork()
+		}
+	case "c":
+		// Cursor-following collapse toggle (admin-4zz9): Work-tab only, a
+		// no-op everywhere else — every other tab already uses "c" for
+		// nothing, so there is nothing to preserve there.
+		if m.active == tabWork {
+			m.toggleWorkCollapse()
 		}
 	case "/":
 		m.filtering = true

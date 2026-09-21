@@ -62,8 +62,10 @@ func rowNames(rows []rowItem) []string {
 	return out
 }
 
-// TestEveryCommandsTargetsRenderUnconditionally: a multi-target command's
-// targets are always listed beneath it — there is no collapsed state.
+// TestEveryCommandsTargetsRenderUnconditionally: in the default expanded
+// mode (workCollapsed's zero value, and the only mode before `c` existed —
+// see work_collapse_test.go), a multi-target command's targets are always
+// listed beneath it.
 func TestEveryCommandsTargetsRenderUnconditionally(t *testing.T) {
 	m := multiTargetModel(t)
 	got := rowNames(m.workRows())

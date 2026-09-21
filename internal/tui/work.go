@@ -644,10 +644,13 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 }
 
 // targetRows is a command's target group: one rowCommandTarget per target of
-// parent, or nothing at all when parent has no targets. They always render —
-// there is no collapsed state — and sit directly under their parent in the
-// same flat row list, so every cursor, filter, window and hit-test rule
-// already written for the Work tab applies to them with no special case.
+// parent, or nothing at all when parent has no targets. It always builds the
+// full set for parent — whether that set actually reaches the row list is
+// workRows' call, gated on m.workCollapsed and m.workOpenCmd (`c` toggles
+// between the two; see moveCursorWork for how the open command tracks the
+// cursor). Target rows sit directly under their parent in the same flat row
+// list, so every cursor, filter, window and hit-test rule already written
+// for the Work tab applies to them with no special case.
 //
 // byName is the same registry-name -> entry map workRows() built for the
 // parent rows: once a target is actually dispatched, its entry is keyed on
@@ -742,8 +745,18 @@ func (m Model) workRows() []rowItem {
 			// No trailing ruleRow() between one group's targets and the next
 			// command: the reference frames show consecutive groups adjoining
 			// with no rule between them (commands.txt:13 -> :14).
-			if targets := targetRows(item, byName, m.pendingTarget[cr.name]); len(targets) > 0 {
-				cmdList = append(cmdList, targets...)
+			//
+			// showTargets is the collapse gate (admin-4zz9): expanded mode
+			// (m.workCollapsed false, the default and the launch state) shows
+			// every command's targets exactly as before this existed;
+			// collapsed mode shows them only for the one command currently
+			// "open" (m.workOpenCmd), which moveCursorWork keeps pointed at
+			// whichever command the cursor is inside.
+			showTargets := !m.workCollapsed || cr.name == m.workOpenCmd
+			if showTargets {
+				if targets := targetRows(item, byName, m.pendingTarget[cr.name]); len(targets) > 0 {
+					cmdList = append(cmdList, targets...)
+				}
 			}
 		}
 	}
@@ -780,6 +793,85 @@ func (m Model) workRows() []rowItem {
 		}
 	}
 	return rows
+}
+
+// ownerCmdName is the command a row belongs to, for collapse purposes: a
+// command row's own name, or a target row's parent's name. Empty for
+// anything else (a worker row, a header, a rule) — those rows carry no
+// command to keep open.
+func ownerCmdName(r rowItem) string {
+	if r.work == nil {
+		return ""
+	}
+	switch r.kind {
+	case rowCommand, rowCommandTarget:
+		return r.work.cmdName
+	}
+	return ""
+}
+
+// sameRowIdentity reports whether a and b are the same logical row — not the
+// same rowItem value, since collapsing/expanding rebuilds every row from
+// scratch, but the same command, the same command's same target, or the
+// same worker entry. toggleWorkCollapse uses this to relocate the cursor
+// after a rebuild changes how many rows come before it.
+func sameRowIdentity(a, b rowItem) bool {
+	if a.kind != b.kind || a.work == nil || b.work == nil {
+		return false
+	}
+	switch a.kind {
+	case rowCommand:
+		return a.work.cmdName == b.work.cmdName
+	case rowCommandTarget:
+		return a.work.cmdName == b.work.cmdName && a.work.targetKey == b.work.targetKey
+	case rowWorker:
+		return a.work.worker != nil && b.work.worker != nil && a.work.worker.ID == b.work.worker.ID
+	}
+	return false
+}
+
+// indexOfCommandRow finds name's own rowCommand row (never one of its
+// targets) in rows, or -1. moveCursorWork uses this right after opening a
+// command to find where its header landed in the freshly rebuilt list —
+// rebuilding shifts every row after the point of change, so the header's old
+// index is no longer trustworthy.
+func indexOfCommandRow(rows []rowItem, name string) int {
+	for i, r := range rows {
+		if r.kind == rowCommand && r.work != nil && r.work.cmdName == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// toggleWorkCollapse flips the Work tab's session-only display mode (key
+// `c`): expanded (every command's targets render — the launch default and
+// this dashboard's only behavior before this existed) versus collapsed (only
+// the command the cursor is inside shows its targets — see workRows'
+// showTargets gate and moveCursorWork). before is read with the OLD mode
+// still in effect (the expanded list always has every row, so ownerCmdName
+// always resolves correctly there) — reading it after flipping the bool
+// would ask m.currentRow() to rebuild against a workOpenCmd that hasn't been
+// set yet, hiding the very command the cursor is sitting on. Once the mode
+// (and, when turning collapse on, workOpenCmd) is set, the cursor is
+// relocated onto that same row's identity in the freshly built list, since
+// collapsing removes rows that may sit ahead of it.
+func (m *Model) toggleWorkCollapse() {
+	before, ok := m.currentRow()
+	m.workCollapsed = !m.workCollapsed
+	if m.workCollapsed && ok {
+		m.workOpenCmd = ownerCmdName(before)
+	}
+	if !ok {
+		return
+	}
+	for i, r := range m.visibleRows() {
+		if sameRowIdentity(r, before) {
+			m.cursor[m.active] = i
+			return
+		}
+	}
+	m.clampCursor()
 }
 
 // workRowCount is the tab bar's badge count for Work — every selectable row
@@ -1111,14 +1203,21 @@ func entryIsLive(e *livework.Entry) bool {
 //     fresh Work tab (cursor on the first idle command) already shows.
 //
 // docs/spikes/admin-tui-desktop/commands.txt:30 and commands-running.txt:30
-// are the verbatim targets for the idle/live cases. `a attach` and `/ filter`
+// are the verbatim targets for the idle/live cases, with one addition since:
+// `c` (admin-4zz9) always appears, right before quit, reading "collapse"
+// while expanded and "expand" once collapsed — it names what pressing it
+// would do next, not the mode it's currently in. `a attach` and `/ filter`
 // are deliberately not advertised here even though both keys still work —
 // the frames don't show them, and the footer's job is to say only what the
 // current row can actually do.
 func (m Model) workFooterPairs() [][2]string {
 	move := [2]string{"↑↓", "move"}
 	quit := [2]string{"q/esc", "quit"}
-	idle := [][2]string{move, {"↵", "dispatch"}, quit}
+	collapse := [2]string{"c", "collapse"}
+	if m.workCollapsed {
+		collapse = [2]string{"c", "expand"}
+	}
+	idle := [][2]string{move, {"↵", "dispatch"}, collapse, quit}
 
 	r, ok := m.currentRow()
 	if !ok || r.work == nil {
@@ -1126,9 +1225,9 @@ func (m Model) workFooterPairs() [][2]string {
 	}
 	switch resolveRowAction(r.kind, r.work) {
 	case actionAttach:
-		return [][2]string{move, {"↵", "attach"}, {"x", "kill"}, quit}
+		return [][2]string{move, {"↵", "attach"}, {"x", "kill"}, collapse, quit}
 	case actionTranscript:
-		return [][2]string{move, {"↵", "transcript"}, quit}
+		return [][2]string{move, {"↵", "transcript"}, collapse, quit}
 	}
 	return idle
 }
