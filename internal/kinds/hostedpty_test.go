@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
+	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
@@ -210,6 +211,94 @@ func TestStartHostedPTYWiresWriteAndResize(t *testing.T) {
 	}
 	if err := e.Ops.Resize(24, 80); err == nil {
 		t.Error("Resize after Kill closed the pty = nil error, want one")
+	}
+}
+
+// TestStartHostedPTYAnswersTerminalQueries proves the hosted pty answers a
+// child's cursor-position query (ESC[6n) the way a real terminal does — the
+// fixture reads the reply off its own tty — and that the entry's Screen
+// shows what the child printed. Every admin child sends such a query from
+// bubbletea's package init; an unanswered one costs termenv's 5s timeout.
+func TestStartHostedPTYAnswersTerminalQueries(t *testing.T) {
+	replyFile := filepath.Join(t.TempDir(), "reply.out")
+	stubSelfExecutable(t, fixtureAdminScript(t,
+		"stty raw -echo\n"+
+			"printf '\\033[6n'\n"+
+			"head -c 6 > "+replyFile+"\n"+
+			"stty sane\n"+
+			"echo answered\n"+
+			"exit 0",
+	))
+
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"asker": {Steps: []string{"asker-step"}},
+		},
+	}
+	if err := StartHostedPTY(m, "asker", nil, 24, 80, nil); err != nil {
+		t.Fatalf("StartHostedPTY: %v", err)
+	}
+	t.Cleanup(func() {
+		if e, ok := livework.Default.Get("asker-step"); ok && e.Ops.Kill != nil {
+			_ = e.Ops.Kill()
+		}
+	})
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if state, _ := livework.Default.State("asker-step"); state == livework.StateExited {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	reply, _ := os.ReadFile(replyFile)
+	if !strings.HasPrefix(string(reply), "\x1b[") || !strings.HasSuffix(string(reply), "R") {
+		t.Fatalf("child's ESC[6n reply = %q, want a cursor-position report like \\x1b[1;1R", reply)
+	}
+	e, _ := livework.Default.Get("asker-step")
+	if e.Screen == nil || !strings.Contains(e.Screen.String(), "answered") {
+		t.Errorf("entry Screen does not show the child's output")
+	}
+}
+
+// TestStartHostedPTYRecordsLogPathFromAnnouncePipe proves the child's log
+// path reaches the entry over the luahost.LogAnnounceFDEnv pipe — first
+// path wins — and never through its output.
+func TestStartHostedPTYRecordsLogPathFromAnnouncePipe(t *testing.T) {
+	stubSelfExecutable(t, fixtureAdminScript(t,
+		`echo /tmp/announced-first.log >&"$`+luahost.LogAnnounceFDEnv+`"`+"\n"+
+			`echo /tmp/announced-second.log >&"$`+luahost.LogAnnounceFDEnv+`"`+"\n"+
+			"echo visible output\n"+
+			"exit 0",
+	))
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"logger": {Steps: []string{"logger-step"}},
+		},
+	}
+	if err := StartHostedPTY(m, "logger", nil, 24, 80, nil); err != nil {
+		t.Fatalf("StartHostedPTY: %v", err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if e, ok := livework.Default.Get("logger-step"); ok && e.LogPath != "" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	e, _ := livework.Default.Get("logger-step")
+	if e.LogPath != "/tmp/announced-first.log" {
+		t.Errorf("LogPath = %q, want the first announced path", e.LogPath)
+	}
+	for time.Now().Before(deadline) {
+		if strings.Contains(string(e.Output.Bytes()), "visible output") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if out := string(e.Output.Bytes()); strings.Contains(out, "announced") || !strings.Contains(out, "visible output") {
+		t.Errorf("Output = %q, want the child's output without the announced paths", out)
 	}
 }
 

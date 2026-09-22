@@ -11,6 +11,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/vt"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
@@ -89,13 +91,32 @@ func (f *termRecorder) lastResize() [2]int {
 	return f.resizes[len(f.resizes)-1]
 }
 
+// fakePTY stands in for the hosted pty's drain (internal/kinds/hostedpty.go):
+// Write feeds the entry's Output ring and Screen the same bytes, as that
+// drain does.
+type fakePTY struct{ e *livework.Entry }
+
+func (f fakePTY) Write(p []byte) (int, error) {
+	_, _ = f.e.Output.Write(p)
+	return f.e.Screen.Write(p)
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
 // registerFakePTYEntry adds a pty-addressed live-work Entry named cmdName
 // (matching the fixture manifest's own command/step name, so the Work tab's
 // row for it shows live), with Ops.Write/Ops.Resize wired to rec and Kill a
-// harmless no-op. No real pty is created anywhere.
-func registerFakePTYEntry(t *testing.T, cmdName string, ring *livework.Ring, rec *termRecorder) {
+// harmless no-op. Its Screen's replies to terminal queries reach rec as
+// writes to the child, the way hostedpty.go copies them to the real pty. No
+// real pty is created anywhere.
+func registerFakePTYEntry(t *testing.T, cmdName string, ring *livework.Ring, rec *termRecorder) fakePTY {
 	t.Helper()
 	freshLivework(t)
+	screen := vt.NewSafeEmulator(80, 24)
+	go func() { _, _ = io.Copy(writerFunc(rec.write), screen) }()
+	t.Cleanup(func() { _ = screen.Close() })
 	e := &livework.Entry{
 		ID:     cmdName,
 		Name:   cmdName,
@@ -103,15 +124,20 @@ func registerFakePTYEntry(t *testing.T, cmdName string, ring *livework.Ring, rec
 		Handle: cmdName + "-pty",
 		State:  livework.StateRunning,
 		Output: ring,
+		Screen: screen,
 		Ops: livework.Ops{
-			Kill:   func() error { return nil },
-			Write:  rec.write,
-			Resize: rec.resize,
+			Kill:  func() error { return nil },
+			Write: rec.write,
+			Resize: func(rows, cols int) error {
+				screen.Resize(cols, rows)
+				return rec.resize(rows, cols)
+			},
 		},
 	}
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
+	return fakePTY{e: e}
 }
 
 // newAttachablePump builds a Model over a real fixture admin.toml, runs it
@@ -170,18 +196,17 @@ func TestTerminalViewAttachedEmptyShowsWaitingCopy(t *testing.T) {
 	}
 }
 
-// TestTerminalViewReplaysPreAttachOutput proves attach replays what the ring
-// already holds: a counter attached at 16 shows 1 through 16, not a blank
+// TestTerminalViewShowsPreAttachOutput proves attach shows what the child
+// already printed: a counter attached at 16 shows 1 through 16, not a blank
 // screen waiting for 17.
-func TestTerminalViewReplaysPreAttachOutput(t *testing.T) {
-	const cmdName = "termfixture-replay"
+func TestTerminalViewShowsPreAttachOutput(t *testing.T) {
+	const cmdName = "termfixture-preattach"
 	dir := t.TempDir()
 	writeFixtureManifest(t, dir, cmdName)
-	ring := livework.NewRing(0)
-	if _, err := ring.Write([]byte("this line predates the attach\r\n")); err != nil {
+	pty := registerFakePTYEntry(t, cmdName, livework.NewRing(0), &termRecorder{})
+	if _, err := pty.Write([]byte("this line predates the attach\r\n")); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
-	registerFakePTYEntry(t, cmdName, ring, &termRecorder{})
 
 	p := newAttachablePump(t, dir, 100, 24)
 	p.apply(keyMsg("a"))
@@ -195,7 +220,7 @@ func TestTerminalViewReplaysPreAttachOutput(t *testing.T) {
 		t.Errorf("attached frame with pre-attach output still reads as empty: %q", out)
 	}
 
-	if _, err := ring.Write([]byte("this line follows the attach\r\n")); err != nil {
+	if _, err := pty.Write([]byte("this line follows the attach\r\n")); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	p.drain(300 * time.Millisecond)
@@ -208,19 +233,19 @@ func TestTerminalViewReplaysPreAttachOutput(t *testing.T) {
 	}
 }
 
-// TestTerminalViewAttachSurvivesTerminalQueries proves a child's terminal
-// queries — the OSC 11 background query and ESC[6n cursor report that
-// command-test counter's child sends at startup — neither freeze attach when
-// replayed nor freeze the poll when they arrive after it.
-func TestTerminalViewAttachSurvivesTerminalQueries(t *testing.T) {
+// TestTerminalViewAnswersTerminalQueries proves the child's terminal queries
+// — the OSC 11 background query and ESC[6n cursor report every admin child
+// sends at startup — get answered on its pty before and after attach, and
+// never freeze the dashboard.
+func TestTerminalViewAnswersTerminalQueries(t *testing.T) {
 	const cmdName = "termfixture-query"
 	dir := t.TempDir()
 	writeFixtureManifest(t, dir, cmdName)
-	ring := livework.NewRing(0)
-	if _, err := ring.Write([]byte("\x1b]11;?\x1b\\\x1b[6nbefore attach\r\n")); err != nil {
+	rec := &termRecorder{}
+	pty := registerFakePTYEntry(t, cmdName, livework.NewRing(0), rec)
+	if _, err := pty.Write([]byte("\x1b]11;?\x1b\\\x1b[6nbefore attach\r\n")); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
-	registerFakePTYEntry(t, cmdName, ring, &termRecorder{})
 	p := newAttachablePump(t, dir, 100, 24)
 
 	within := func(step string, f func()) {
@@ -238,10 +263,12 @@ func TestTerminalViewAttachSurvivesTerminalQueries(t *testing.T) {
 		p.apply(keyMsg("a"))
 		p.drain(300 * time.Millisecond)
 	})
-	if _, err := ring.Write([]byte("\x1b[6nafter attach\r\n")); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
-	within("poll", func() { p.drain(300 * time.Millisecond) })
+	within("write after attach", func() {
+		if _, err := pty.Write([]byte("\x1b[6nafter attach\r\n")); err != nil {
+			t.Errorf("Write: %v", err)
+		}
+		p.drain(300 * time.Millisecond)
+	})
 
 	out := p.model.View()
 	for _, want := range []string{"before attach", "after attach"} {
@@ -249,32 +276,18 @@ func TestTerminalViewAttachSurvivesTerminalQueries(t *testing.T) {
 			t.Errorf("attached frame missing %q: %q", want, out)
 		}
 	}
-}
 
-// TestTerminalViewReplayOfLappedRingStartsAtWholeLine proves a ring that has
-// overwritten its oldest bytes replays from the first complete line, so a
-// line cut in half by the wrap never reaches the emulator.
-func TestTerminalViewReplayOfLappedRingStartsAtWholeLine(t *testing.T) {
-	const cmdName = "termfixture-lapped"
-	dir := t.TempDir()
-	writeFixtureManifest(t, dir, cmdName)
-	ring := livework.NewRing(24)
-	// 26 bytes into a 24-byte ring: the first line loses its first 2 bytes.
-	if _, err := ring.Write([]byte("xxxxxxPARTIAL\r\nwhole\r\nok\r\n")); err != nil {
-		t.Fatalf("Write: %v", err)
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	var sent []byte
+	for _, w := range rec.writes {
+		sent = append(sent, w...)
 	}
-	registerFakePTYEntry(t, cmdName, ring, &termRecorder{})
-
-	p := newAttachablePump(t, dir, 100, 24)
-	p.apply(keyMsg("a"))
-	p.drain(300 * time.Millisecond)
-
-	out := p.model.View()
-	if strings.Contains(out, "PARTIAL") {
-		t.Errorf("replay kept the line the wrap cut in half: %q", out)
+	if !strings.Contains(string(sent), "\x1b]11;rgb:") {
+		t.Errorf("child never got a background-color reply; pty writes = %q", sent)
 	}
-	if !strings.Contains(out, "whole") {
-		t.Errorf("replay dropped the first whole line: %q", out)
+	if n := strings.Count(string(sent), "R"); n < 2 {
+		t.Errorf("child got %d cursor-position replies, want 2 (one per ESC[6n); pty writes = %q", n, sent)
 	}
 }
 
@@ -287,8 +300,7 @@ func TestTerminalViewRendersColoredOutputAfterAttach(t *testing.T) {
 	const cmdName = "termfixture-color"
 	dir := t.TempDir()
 	writeFixtureManifest(t, dir, cmdName)
-	ring := livework.NewRing(0)
-	registerFakePTYEntry(t, cmdName, ring, &termRecorder{})
+	pty := registerFakePTYEntry(t, cmdName, livework.NewRing(0), &termRecorder{})
 
 	p := newAttachablePump(t, dir, 100, 24)
 	p.apply(keyMsg("a"))
@@ -297,7 +309,7 @@ func TestTerminalViewRendersColoredOutputAfterAttach(t *testing.T) {
 		t.Fatal("attach did not enter the terminal view")
 	}
 
-	if _, err := ring.Write([]byte("\x1b[31mERROR\x1b[0m boom\r\n")); err != nil {
+	if _, err := pty.Write([]byte("\x1b[31mERROR\x1b[0m boom\r\n")); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	p.drain(300 * time.Millisecond)
@@ -541,13 +553,12 @@ func TestAttachedViewOutputReachesFloor(t *testing.T) {
 	cmdName := "termfixture-floor"
 	dir := t.TempDir()
 	writeFixtureManifest(t, dir, cmdName)
-	ring := livework.NewRing(0)
-	registerFakePTYEntry(t, cmdName, ring, &termRecorder{})
+	pty := registerFakePTYEntry(t, cmdName, livework.NewRing(0), &termRecorder{})
 
 	p := newAttachablePump(t, dir, 96, 30)
 	p.apply(keyMsg("a"))
 	p.drain(150 * time.Millisecond)
-	if _, err := ring.Write([]byte("only line\r\n")); err != nil {
+	if _, err := pty.Write([]byte("only line\r\n")); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	p.drain(300 * time.Millisecond)

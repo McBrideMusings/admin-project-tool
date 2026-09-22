@@ -11,18 +11,17 @@
 //     Model.Init) rather than mutating a value-type Model directly. The
 //     callback can only record which handle was requested; work.go's
 //     attachEntry reads that back and does the actual transition.
-//   - the emulator lifecycle: creating it sized to the body region on
-//     attach, replaying what the ring still holds, then feeding it each
-//     poll's new bytes, and tearing it down on detach.
-//   - the body renderer: dashed rule, then either "waiting for output…" or
-//     the emulator's own grid — view.go routes here instead of the
-//     list/detail layout while attached. The identity/log-path row above it
+//   - sizing: attach resizes the child's pty, and the entry's Screen with
+//     it, to the body region. The Screen itself belongs to the hosted pty
+//     (internal/kinds/hostedpty.go), which feeds it for the child's whole
+//     run.
+//   - the body renderer: field rows, dashed rule, then either "waiting for
+//     output…" or the Screen's grid — view.go routes here instead of the
+//     list/detail layout while attached. The identity row above it
 //     (attachBreadcrumb) is view.go's top chrome, in the tab bar's place.
 package tui
 
 import (
-	"bytes"
-	"io"
 	"strings"
 	"sync"
 	"time"
@@ -76,51 +75,27 @@ func takePendingTerminal() (string, bool) {
 	return id, true
 }
 
-// termTickMsg drives the ring-drain poll while a terminal view is open —
-// workTickMsg's 1s cadence is far too slow for a terminal a person is
-// typing into. Re-armed only while termAttached; see the Update case.
+// termTickMsg repaints the terminal view while it is open — the entry's
+// Screen changes on the pty drain's goroutine, and workTickMsg's 1s cadence
+// is far too slow for a terminal a person is typing into. Re-armed only
+// while termAttached; see the Update case.
 type termTickMsg struct{}
 
 func termTickCmd() tea.Cmd {
 	return tea.Tick(50*time.Millisecond, func(time.Time) tea.Msg { return termTickMsg{} })
 }
 
-// openTerminal transitions m into the attached state over e: sizes the
-// emulator to the body region, replays everything the ring still holds into
-// it so the screen shows what the child already printed, records the ring
-// offset that replay reached, and resizes the child's own pty to match.
-// Called only from attachEntry, after livework.Default.Attach has already
-// succeeded for e.
+// openTerminal transitions m into the attached state over e and resizes the
+// child's pty — and with it the entry's Screen — to the body region. The
+// Screen has been the child's terminal since it started, so everything it
+// already printed is on it. Called only from attachEntry, after
+// livework.Default.Attach has already succeeded for e.
 func (m Model) openTerminal(e *livework.Entry) Model {
 	m.termAttached = true
 	m.termEntryID = e.ID
 	m.termPTYID = e.Handle
-	m.termHasOutput = false
-	m.termOff = 0
 	rows, cols := m.termRegion()
 	m.termRows, m.termCols = rows, cols
-	m.termEmu = vt.NewEmulator(cols, rows)
-	// The emulator writes its replies to the child's terminal queries
-	// (ESC[6n, OSC 11 and the like) into an unbuffered pipe, and Write
-	// blocks until something reads it. Nothing sends those replies to the
-	// child — a replayed query's reply would reach it as stale input — so
-	// drain them until detachTerminal closes the emulator.
-	go func(emu *vt.Emulator) { _, _ = io.Copy(io.Discard, emu) }(m.termEmu)
-	if e.Output != nil {
-		held, next := e.Output.Since(0)
-		// A ring that has lapped starts mid-line, possibly mid-escape
-		// sequence; start the replay at the first whole line instead.
-		if next > int64(len(held)) {
-			if i := bytes.IndexByte(held, '\n'); i >= 0 {
-				held = held[i+1:]
-			}
-		}
-		if len(held) > 0 {
-			_, _ = m.termEmu.Write(held)
-			m.termHasOutput = true
-		}
-		m.termOff = next
-	}
 	if e.Ops.Resize != nil {
 		_ = e.Ops.Resize(rows, cols)
 	}
@@ -133,12 +108,6 @@ func (m Model) detachTerminal() Model {
 	m.termAttached = false
 	m.termEntryID = ""
 	m.termPTYID = ""
-	if m.termEmu != nil {
-		_ = m.termEmu.Close()
-	}
-	m.termEmu = nil
-	m.termOff = 0
-	m.termHasOutput = false
 	m.termRows, m.termCols = 0, 0
 	return m
 }
@@ -313,7 +282,8 @@ func (m Model) renderTerminalBody(width, height int) ([]string, []hitTarget) {
 		avail = 1
 	}
 
-	if !m.termHasOutput || m.termEmu == nil {
+	e := m.termEntry()
+	if e == nil || e.Screen == nil || e.Output == nil || e.Output.Total() == 0 {
 		empty := make([]string, avail)
 		if avail >= 2 {
 			empty[1] = " " + mutedStyle.Render("waiting for output…")
@@ -322,7 +292,7 @@ func (m Model) renderTerminalBody(width, height int) ([]string, []hitTarget) {
 		}
 		lines = append(lines, empty...)
 	} else {
-		lines = append(lines, m.renderTermOutput(avail)...)
+		lines = append(lines, renderTermOutput(e.Screen, avail)...)
 	}
 
 	if len(lines) < height {
@@ -334,7 +304,7 @@ func (m Model) renderTerminalBody(width, height int) ([]string, []hitTarget) {
 	return lines, noneHits(height)
 }
 
-// renderTermOutput renders the attached emulator's grid bottom-aligned to
+// renderTermOutput renders the attached entry's Screen bottom-aligned to
 // avail rows: a contiguous run of untouched rows at the very BOTTOM of the
 // grid — the part of a fresh or short-lived child's screen its cursor
 // hasn't reached yet — floats to the TOP as blank fill instead, so a short
@@ -343,11 +313,11 @@ func (m Model) renderTerminalBody(width, height int) ([]string, []hitTarget) {
 // sitting on the floor with blank rows 5-18 above it). A row the child
 // wrote blank lines into on purpose, anywhere but that trailing run, is
 // left exactly where the child put it — only the untouched tail moves.
-func (m Model) renderTermOutput(avail int) []string {
-	rows, cols := m.termEmu.Height(), m.termEmu.Width()
+func renderTermOutput(screen *vt.SafeEmulator, avail int) []string {
+	rows, cols := screen.Height(), screen.Width()
 	raw := make([]string, rows)
 	for y := 0; y < rows; y++ {
-		raw[y] = renderEmuLine(m.termEmu, y, cols)
+		raw[y] = renderEmuLine(screen, y, cols)
 	}
 	trailingBlank := 0
 	for trailingBlank < rows && raw[rows-1-trailingBlank] == "" {
@@ -377,7 +347,7 @@ func (m Model) renderTermOutput(avail int) []string {
 // child's own [ERROR]/[WARN]/[INFO]/[DEBUG] and scope-tag colors through
 // unchanged — the child emits them as real SGR sequences into what is, from
 // its point of view, a real terminal.
-func renderEmuLine(term *vt.Emulator, y, width int) string {
+func renderEmuLine(term *vt.SafeEmulator, y, width int) string {
 	type cellInfo struct {
 		style   uv.Style
 		content string

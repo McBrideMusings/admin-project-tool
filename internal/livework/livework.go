@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/charmbracelet/x/vt"
 )
 
 // State is an Entry's coarse lifecycle. Nothing in this package transitions
@@ -145,10 +147,16 @@ type Entry struct {
 	// unless Via is empty (a hosted-pty entry), since only that case has
 	// a master this process reads. StartHostedPTY is the sole producer:
 	// it creates the Ring, copies the pty into it for as long as the
-	// child runs, and leaves it here for a later reader (admin-3rgp.65's
-	// terminal view) rather than opening a second reader on the same
-	// master.
+	// child runs, and leaves it here for the Work band's text tail rather
+	// than opening a second reader on the same master.
 	Output *Ring
+
+	// Screen is the terminal the hosted child writes to: a vt emulator fed
+	// the same bytes as Output, for the child's whole run, whose replies to
+	// terminal queries (OSC 11, ESC[6n) go back to the child as a real
+	// terminal's would. nil exactly when Output is. The attached terminal
+	// view renders this grid directly.
+	Screen *vt.SafeEmulator
 
 	StartedAt time.Time
 	State     State

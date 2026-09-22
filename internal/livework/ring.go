@@ -11,11 +11,11 @@ const defaultRingLimit = 64 * 1024
 // bytes once full. It is the drain target for a hosted pty's master fd
 // (admin-3rgp.61): reading the master is what lets the child's tty close at
 // exit complete on macOS (nothing reads, nothing drains, the child blocks
-// forever), and a Ring makes that read double as the output a later view
-// (admin-3rgp.65) renders — one drain, not two.
+// forever), and a Ring makes that read double as the Work band's text tail
+// — one drain, not two. The attached terminal view renders the entry's
+// Screen instead, fed by the same drain.
 //
-// The API is deliberately small: admin-3rgp.62 through .66 build on top of
-// this exact shape, so it stays a Write sink plus a read-only snapshot and
+// The API is deliberately small: a Write sink plus a read-only snapshot and
 // nothing else — no growth, no seeking, no per-entry configuration.
 type Ring struct {
 	mu    sync.Mutex
@@ -78,9 +78,7 @@ func (r *Ring) Bytes() []byte {
 	return r.bytesLocked()
 }
 
-// bytesLocked is Bytes' body, callable by another method already holding
-// r.mu (Since below) so it doesn't have to re-lock or duplicate the
-// wrap-around copy.
+// bytesLocked is Bytes' body, run with r.mu held.
 func (r *Ring) bytesLocked() []byte {
 	out := make([]byte, r.len)
 	if r.len == 0 {
@@ -94,49 +92,6 @@ func (r *Ring) bytesLocked() []byte {
 	n := copy(out, r.buf[r.next:])
 	copy(out[n:], r.buf[:r.next])
 	return out
-}
-
-// Since returns the bytes written after off — a position in the ring's
-// total-written-byte count, as returned by a previous Since or by Total —
-// plus the offset to pass on the next call. This is the terminal view's
-// (admin-3rgp.65) read: attach calls Since(0) to replay everything still
-// held, and each poll calls Since(lastOff) to feed the emulator only what is
-// new, never the same bytes twice.
-//
-// off is clamped up to the oldest byte the ring still holds when the ring
-// has lapped it since the caller last read — the returned next reports that
-// clamp (it jumps past whatever off asked for) rather than erroring, since a
-// dropped span of output is a visible gap in the emulator's screen, not a
-// failure of the read itself.
-func (r *Ring) Since(off int64) (b []byte, next int64) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if off < 0 {
-		off = 0
-	}
-	if off > r.total {
-		off = r.total
-	}
-	oldest := r.total - int64(r.len)
-	if off < oldest {
-		off = oldest
-	}
-	if off == r.total {
-		return nil, r.total
-	}
-
-	all := r.bytesLocked()
-	skip := int(off - oldest)
-	if skip < 0 {
-		skip = 0
-	}
-	if skip > len(all) {
-		skip = len(all)
-	}
-	out := make([]byte, len(all)-skip)
-	copy(out, all[skip:])
-	return out, r.total
 }
 
 // Total returns the number of bytes ever written to the ring, monotonic and

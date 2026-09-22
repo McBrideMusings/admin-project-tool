@@ -55,8 +55,8 @@ func TestMaterializeSettlesNameAndCreatesExactlyOneFile(t *testing.T) {
 	if !strings.Contains(errOut.String(), LogAnnouncePrefix) {
 		t.Fatalf("expected the announce prefix on Stderr, got %q", errOut.String())
 	}
-	if got, ok := ParseLogAnnounce(errOut.String()); !ok || got != path {
-		t.Fatalf("ParseLogAnnounce(%q) = %q, %v; want %q, true", errOut.String(), got, ok, path)
+	if !strings.Contains(errOut.String(), LogAnnouncePrefix+path) {
+		t.Fatalf("Stderr = %q, want it to announce %q", errOut.String(), path)
 	}
 }
 
@@ -339,27 +339,6 @@ func TestSetEnabledFalseBlocksLogging(t *testing.T) {
 	}
 }
 
-// TestParseLogAnnounceTolerant proves ParseLogAnnounce tolerates ANSI
-// escapes and trailing control bytes.
-func TestParseLogAnnounceTolerant(t *testing.T) {
-	line := "\x1b[2m" + LogAnnouncePrefix + "/tmp/x/dev.2026-01-01_100000.log\x1b[0m\r\n"
-	path, ok := ParseLogAnnounce(line)
-	if !ok {
-		t.Fatal("expected ParseLogAnnounce to find the prefix")
-	}
-	if path != "/tmp/x/dev.2026-01-01_100000.log" {
-		t.Fatalf("path = %q", path)
-	}
-}
-
-// TestParseLogAnnounceAbsent proves a line with no announce prefix returns
-// ok=false rather than a garbage match.
-func TestParseLogAnnounceAbsent(t *testing.T) {
-	if _, ok := ParseLogAnnounce("just some regular output\n"); ok {
-		t.Fatal("expected ok=false for a line with no announce prefix")
-	}
-}
-
 // TestAnnounceEndPrintsOnceAfterMaterialize proves AnnounceEnd (the "→
 // wrote:" line at the end of a run, admin-krvc.1) prints the materialized
 // path once a context has actually been used — the Go port of
@@ -373,8 +352,8 @@ func TestAnnounceEndPrintsOnceAfterMaterialize(t *testing.T) {
 	if !strings.Contains(errOut.String(), LogAnnouncePrefix) {
 		t.Fatalf("expected the announce prefix on Stderr, got %q", errOut.String())
 	}
-	if got, ok := ParseLogAnnounce(errOut.String()); !ok || got != path {
-		t.Fatalf("ParseLogAnnounce(%q) = %q, %v; want %q, true", errOut.String(), got, ok, path)
+	if !strings.Contains(errOut.String(), LogAnnouncePrefix+path) {
+		t.Fatalf("Stderr = %q, want it to announce %q", errOut.String(), path)
 	}
 }
 
