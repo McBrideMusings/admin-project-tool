@@ -61,6 +61,9 @@ func TestMakeKillPortClearsARealHolder(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Skipf("python3 unavailable: %v", err)
 	}
+	// A failed kill must not leave the fixture bound to its port: the next run
+	// picks the same first free port, finds it taken, and fails too.
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
 	go cmd.Wait()
 	if !waitForPortBusyKillPort(port, 2*time.Second) {
 		_ = cmd.Process.Kill()
