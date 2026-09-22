@@ -88,6 +88,7 @@ func dashboardProducer(launched *bool) *CommandProducer {
 // first step must run inline and never reach the launcher — `detach` is
 // dashboard-producer-only.
 func TestRunCommandInlinePlainCLIDetachRunsInlineNeverReachesLauncher(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
 	logPath := filepath.Join(dir, "terminal-calls.log")
@@ -116,6 +117,7 @@ func TestRunCommandInlinePlainCLIDetachRunsInlineNeverReachesLauncher(t *testing
 // first step through the launcher and must never call its own Launch
 // fallback.
 func TestRunCommandDashboardProducerUsesLauncherNotDefaultSurface(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
 	logPath := filepath.Join(dir, "terminal-calls.log")
@@ -144,12 +146,12 @@ func TestRunCommandDashboardProducerUsesLauncherNotDefaultSurface(t *testing.T) 
 		// launchCommand keys the entry on the command's first step, per
 		// StartHostedPTY's own convention, so `a` (attach) resolves the
 		// same row regardless of which surface the command landed on.
-		if e.ID == "dashboard-dev-server" && e.Handle == "fake-handle-1" {
+		if e.ID == "dev" && e.Handle == "fake-handle-1" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("live-work registry = %+v, want an entry keyed on the first step (dashboard-dev-server) with handle fake-handle-1", entries)
+		t.Errorf("live-work registry = %+v, want an entry keyed on the command (dev) with handle fake-handle-1", entries)
 	}
 	if got := len(entries); got != before+1 {
 		t.Errorf("live-work registry grew from %d to %d, want exactly one new entry", before, got)
@@ -161,6 +163,7 @@ func TestRunCommandDashboardProducerUsesLauncherNotDefaultSurface(t *testing.T) 
 // dashboard producer's own Launch fallback runs, and the launcher's
 // registry never grows — byte-for-byte today's no-launcher behaviour.
 func TestRunCommandDashboardProducerNoTerminalFallsBackToLaunch(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -246,6 +249,7 @@ func TestRunCommandDashboardProducerMultiTargetOverridesParentDetachFalse(t *tes
 // saw the parent's absent/false detach and fell through to p.Launch, never
 // reaching the launcher the target asked for.
 func TestRunCommandDashboardProducerMultiTargetOverridesParentDetachTrue(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
 	logPath := filepath.Join(dir, "terminal-calls.log")
@@ -270,12 +274,12 @@ func TestRunCommandDashboardProducerMultiTargetOverridesParentDetachTrue(t *test
 	entries := livework.Default.List()
 	found := false
 	for _, e := range entries {
-		if e.ID == "dev-target-opts-in" && e.Handle == "fake-handle-1" {
+		if e.ID == "dev" && e.Handle == "fake-handle-1" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("live-work registry = %+v, want an entry keyed on the first step (dev-target-opts-in) with handle fake-handle-1", entries)
+		t.Errorf("live-work registry = %+v, want an entry keyed on the command (dev) with handle fake-handle-1", entries)
 	}
 	if got := len(entries); got != before+1 {
 		t.Errorf("live-work registry grew from %d to %d, want exactly one new entry", before, got)
@@ -398,6 +402,7 @@ func TestRunCommandDashboardProducerMultiTargetNoTargetArgFallsBackToLaunch(t *t
 // dispatchDetach treated every empty-picked dispatch as unresolvable and
 // fell through to p.Launch regardless.
 func TestRunCommandDashboardProducerMultiTargetSoleInlineTargetAutoPicksLauncher(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
 	logPath := filepath.Join(dir, "terminal-calls.log")
@@ -423,12 +428,12 @@ func TestRunCommandDashboardProducerMultiTargetSoleInlineTargetAutoPicksLauncher
 	entries := livework.Default.List()
 	found := false
 	for _, e := range entries {
-		if e.ID == "dev-sole-inline-target" && e.Handle == "fake-handle-1" {
+		if e.ID == "dev" && e.Handle == "fake-handle-1" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("live-work registry = %+v, want an entry keyed on the first step (dev-sole-inline-target) with handle fake-handle-1", entries)
+		t.Errorf("live-work registry = %+v, want an entry keyed on the command (dev) with handle fake-handle-1", entries)
 	}
 	if got := len(entries); got != before+1 {
 		t.Errorf("live-work registry grew from %d to %d, want exactly one new entry", before, got)
@@ -471,6 +476,7 @@ func TestRunCommandDashboardProducerMultiTargetSoleInlineTargetOverrideFalseFall
 // same way and inherits the parent's `detach` (a flat entry can never
 // declare its own override).
 func TestRunCommandDashboardProducerMultiTargetFlatSingleTargetAutoPicksLauncher(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
 	logPath := filepath.Join(dir, "terminal-calls.log")
@@ -495,12 +501,12 @@ func TestRunCommandDashboardProducerMultiTargetFlatSingleTargetAutoPicksLauncher
 	entries := livework.Default.List()
 	found := false
 	for _, e := range entries {
-		if e.ID == "dev-flat-sole-target" && e.Handle == "fake-handle-1" {
+		if e.ID == "dev" && e.Handle == "fake-handle-1" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("live-work registry = %+v, want an entry keyed on the first step (dev-flat-sole-target) with handle fake-handle-1", entries)
+		t.Errorf("live-work registry = %+v, want an entry keyed on the command (dev) with handle fake-handle-1", entries)
 	}
 	if got := len(entries); got != before+1 {
 		t.Errorf("live-work registry grew from %d to %d, want exactly one new entry", before, got)
@@ -540,6 +546,7 @@ func TestRunCommandDashboardProducerMultiTargetFlatTwoTargetsFallsBackToLaunch(t
 // before dispatching) must run every step inline and must never reach a
 // launcher — whatever producer is passed, nil or not.
 func TestRunCommandInReentryRunsInlineRegardlessOfProducer(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
 	logPath := filepath.Join(dir, "terminal-calls.log")

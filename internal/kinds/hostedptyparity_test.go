@@ -107,8 +107,8 @@ func stubSelfExecutableToChildHarness(t *testing.T, testBin string) {
 }
 
 // runHostedFixture dispatches cmdName through StartHostedPTY against m and
-// waits (up to 10s) for its entry — keyed on the command's first step name,
-// per StartHostedPTY's own doc comment — to report StateExited, going
+// waits (up to 10s) for its entry — keyed on the command name, per
+// StartHostedPTY's own doc comment — to report StateExited, going
 // through livework.Default.State rather than reading an Entry's State field
 // directly (the field is mutated under the registry's own lock by the wait
 // goroutine's SetState call). On StateFailed it dumps the child's own ring
@@ -116,11 +116,7 @@ func stubSelfExecutableToChildHarness(t *testing.T, testBin string) {
 // is otherwise an opaque "reached StateFailed".
 func runHostedFixture(t *testing.T, m *manifest.Manifest, cmdName string, env []string) string {
 	t.Helper()
-	cmd, ok := resolveCommand(m, cmdName)
-	if !ok || len(cmd.Steps) == 0 {
-		t.Fatalf("fixture manifest declares no steps for command %q", cmdName)
-	}
-	entryID := cmd.Steps[0]
+	entryID := cmdName
 
 	if err := StartHostedPTY(m, cmdName, nil, 24, 80, env); err != nil {
 		t.Fatalf("StartHostedPTY(%q): %v", cmdName, err)

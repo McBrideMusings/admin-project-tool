@@ -24,9 +24,7 @@ import (
 // (ran.txt) if it executed inline — so "did the launcher intercept it" and
 // "did it run inline" are both directly observable. The "dev" command lets a
 // producer-path test dispatch through RunCommand; launchCommand keys the
-// live entry on the command's first step ("dev-server"), the same name the
-// action-level RunAction tests use, so existing livework lookups by that
-// name work either way.
+// live entry on that command name.
 func detachManifest(terminal map[string]any) *manifest.Manifest {
 	return &manifest.Manifest{
 		Terminal: terminal,
@@ -49,6 +47,7 @@ func detachManifest(terminal map[string]any) *manifest.Manifest {
 // launcher, even with a spawnable [terminal] declared. The launcher decision
 // is made once, in launchCommand, before any step runs.
 func TestRunActionCLIDetachRunsInlineNeverReachesLauncher(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -83,6 +82,7 @@ func TestRunActionCLIDetachRunsInlineNeverReachesLauncher(t *testing.T) {
 // RunCommand with a non-nil CommandProducer, still reaches the launcher and
 // never falls back to the producer's own default surface.
 func TestRunCommandDashboardProducerDetachDispatchesThroughLauncher(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -105,12 +105,12 @@ func TestRunCommandDashboardProducerDetachDispatchesThroughLauncher(t *testing.T
 	entries := livework.Default.List()
 	found := false
 	for _, e := range entries {
-		if e.Name == "dev-server" && e.Handle == "fake-handle-1" {
+		if e.Name == "dev" && e.Handle == "fake-handle-1" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("live-work registry = %+v, want an entry for dev-server with handle fake-handle-1", entries)
+		t.Errorf("live-work registry = %+v, want an entry for dev with handle fake-handle-1", entries)
 	}
 	if got := len(entries); got != before+1 {
 		t.Errorf("live-work registry grew from %d to %d, want exactly one new entry", before, got)
@@ -124,6 +124,7 @@ func TestRunCommandDashboardProducerDetachDispatchesThroughLauncher(t *testing.T
 // RunAction. Unlike RunCommand, this must hold with no dependence on
 // inReentry() or a CommandProducer at all.
 func TestRunCommandInlineNeverReachesLauncher(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -152,6 +153,7 @@ func TestRunCommandInlineNeverReachesLauncher(t *testing.T) {
 // [terminal] declared runs inline — the unaffected case, since a CLI
 // dispatch never consulted the launcher in the first place.
 func TestRunActionNoTerminalRunsInline(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -267,6 +269,7 @@ func TestResolveTargetDetachInheritance(t *testing.T) {
 // picked target's own `detach = true` override is never consulted from a
 // plain-CLI dispatch (RunAction), whatever the parent action's default is.
 func TestMultiTargetPerTargetDetachRunsInlineFromCLI(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -307,6 +310,7 @@ func TestMultiTargetPerTargetDetachRunsInlineFromCLI(t *testing.T) {
 // through RunCommand with a non-nil CommandProducer, still reaches the
 // launcher via launchCommand's own dispatchDetach resolution.
 func TestMultiTargetPerTargetDetachDashboardProducerDispatchesThroughLauncher(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -343,12 +347,12 @@ func TestMultiTargetPerTargetDetachDashboardProducerDispatchesThroughLauncher(t 
 	entries := livework.Default.List()
 	found := false
 	for _, e := range entries {
-		if e.Name == "pick:cf" && e.Handle == "fake-handle-2" {
+		if e.Name == "dev:cf" && e.Handle == "fake-handle-2" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("live-work registry = %+v, want an entry named pick:cf with handle fake-handle-2 (admin-0cyu.1: a genuine multi-target menu's entry is keyed on the picked target, not the shared parent action name)", entries)
+		t.Errorf("live-work registry = %+v, want an entry named dev:cf with handle fake-handle-2 (a genuine multi-target menu keys its entry on the command and the picked target)", entries)
 	}
 	if got := len(entries); got != before+1 {
 		t.Errorf("live-work registry has %d entries, want exactly %d", got, before+1)
@@ -363,6 +367,7 @@ func TestMultiTargetPerTargetDetachDashboardProducerDispatchesThroughLauncher(t 
 // file's content. Dispatched through a dashboard CommandProducer here, but a
 // nil (CLI) producer reaches the identical launcher entry.
 func TestDetachedEntryAttachRunsLauncherAttachWithHandle(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -379,8 +384,8 @@ func TestDetachedEntryAttachRunsLauncherAttachWithHandle(t *testing.T) {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 
-	if err := livework.Default.Attach("dev-server"); err != nil {
-		t.Fatalf("Attach(dev-server) = %v, want nil", err)
+	if err := livework.Default.Attach("dev"); err != nil {
+		t.Fatalf("Attach(dev) = %v, want nil", err)
 	}
 	assertFileExists(t, dir, "attached.txt")
 	body, err := os.ReadFile(filepath.Join(dir, "attached.txt"))
@@ -397,6 +402,7 @@ func TestDetachedEntryAttachRunsLauncherAttachWithHandle(t *testing.T) {
 // ADMIN_HANDLE set to the spawned handle. Reached through the producer path,
 // for the same reason TestDetachedEntryAttachRunsLauncherAttachWithHandle is.
 func TestDetachedEntryKillRunsLauncherKillWithHandle(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -413,8 +419,8 @@ func TestDetachedEntryKillRunsLauncherKillWithHandle(t *testing.T) {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 
-	if err := livework.Default.Kill("dev-server"); err != nil {
-		t.Fatalf("Kill(dev-server) = %v, want nil", err)
+	if err := livework.Default.Kill("dev"); err != nil {
+		t.Fatalf("Kill(dev) = %v, want nil", err)
 	}
 	assertFileExists(t, dir, "killed.txt")
 	body, err := os.ReadFile(filepath.Join(dir, "killed.txt"))

@@ -254,15 +254,48 @@ func TestComputeOriginsAttributesBaseAndManifestOverride(t *testing.T) {
 	}
 }
 
-func TestLiveEntryForMatchesAnyStep(t *testing.T) {
-	c := manifest.Command{Steps: []string{"lint", "build"}}
-	e := &livework.Entry{ID: "build", Name: "build", State: livework.StateRunning}
-	byName := map[string]*livework.Entry{"build": e}
-	if got := liveEntryFor(c, byName); got != e {
-		t.Errorf("liveEntryFor did not find the entry backing the second step")
+// TestRunningCommandLightsOnlyItsOwnRow is the social-chess case: dev and
+// setup share the db-ensure step, and running dev must show dev as running
+// and leave setup idle.
+func TestRunningCommandLightsOnlyItsOwnRow(t *testing.T) {
+	freshLivework(t)
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"setup": {Desc: "install and migrate", Steps: []string{"install-deps", "db-ensure"}},
+			"dev":   {Desc: "run the dev stack", Steps: []string{"db-ensure", "dev"}},
+		},
+		Actions: map[string]manifest.Action{
+			"install-deps": {"kind": "shell"},
+			"db-ensure":    {"kind": "shell"},
+			"dev":          {"kind": "shell"},
+		},
 	}
-	if got := liveEntryFor(manifest.Command{Steps: []string{"other"}}, byName); got != nil {
-		t.Errorf("liveEntryFor matched a step that isn't in byName: %v", got)
+	if err := livework.Default.Add(&livework.Entry{ID: "dev", Name: "dev", Handle: "pty-dev", State: livework.StateRunning}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	live := map[string]bool{}
+	for _, r := range workTestModel(m).workRows() {
+		if r.kind == rowCommand && r.work != nil {
+			live[r.work.cmdName] = r.work.live != nil
+		}
+	}
+	if !live["dev"] {
+		t.Error("dev row is not live while dev runs")
+	}
+	if live["setup"] {
+		t.Error("setup row is live while only dev runs — it shares the db-ensure step, not the run")
+	}
+
+	// An entry keyed on the shared step is not either command's run.
+	freshLivework(t)
+	if err := livework.Default.Add(&livework.Entry{ID: "db-ensure", Name: "db-ensure", Handle: "pty-db", State: livework.StateRunning}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	for _, r := range workTestModel(m).workRows() {
+		if r.kind == rowCommand && r.work != nil && r.work.live != nil {
+			t.Errorf("%s row is live from an entry keyed on its step db-ensure", r.work.cmdName)
+		}
 	}
 }
 
@@ -527,18 +560,13 @@ func TestCommandRowItemFallsBackToGlobWhenNoLiveEntry(t *testing.T) {
 	}
 }
 
-// TestTargetRowsResolvesLiveEntryByActionNameNotCommandName is admin-0cyu.1's
-// regression case: the live-work registry keys a multi-target dispatch's
-// entry on the ACTION name (internal/kinds.multiTargetLiveID, via
-// kinds.TargetLiveKey), not the manifest COMMAND name that steps to it —
-// nothing guarantees the two match. Command "dev" steps to action "pick",
-// so a registry entry named "pick:cf" (exactly the shape
-// internal/kinds/detach_test.go's
-// TestMultiTargetPerTargetDetachDashboardProducerDispatchesThroughLauncher
-// proves the real registry writes) must resolve on the "cf" target row even
-// though byName["dev:cf"] — the command-name-keyed lookup round 1 shipped —
-// would miss it entirely.
-func TestTargetRowsResolvesLiveEntryByActionNameNotCommandName(t *testing.T) {
+// TestTargetRowsResolvesLiveEntryByCommandName proves a target row resolves
+// the entry keyed "<command>:<target>" — the shape
+// internal/kinds.multiTargetLiveID writes (see detach_test.go's
+// TestMultiTargetPerTargetDetachDashboardProducerDispatchesThroughLauncher)
+// — even when the command ("dev") steps to a differently named action
+// ("pick"), and never an entry keyed on that action.
+func TestTargetRowsResolvesLiveEntryByCommandName(t *testing.T) {
 	m := &manifest.Manifest{
 		Custom: map[string]manifest.Command{
 			"dev": {Desc: "dev", Steps: []string{"pick"}},
@@ -553,26 +581,21 @@ func TestTargetRowsResolvesLiveEntryByActionNameNotCommandName(t *testing.T) {
 	}
 	mm := workTestModel(m)
 
-	live := &livework.Entry{ID: "pick:cf", Name: "pick:cf", State: livework.StateRunning}
-	byName := map[string]*livework.Entry{"pick:cf": live}
+	live := &livework.Entry{ID: "dev:cf", Name: "dev:cf", State: livework.StateRunning}
+	other := &livework.Entry{ID: "pick:prod", Name: "pick:prod", State: livework.StateRunning}
+	byName := map[string]*livework.Entry{"dev:cf": live, "pick:prod": other}
 
 	parent := mm.commandRowItem(workCmdRow{name: "dev", cmd: m.Custom["dev"]}, byName)
-	if parent.work.actionName != "pick" {
-		t.Fatalf("parent actionName = %q, want %q (cmd.Steps[0])", parent.work.actionName, "pick")
-	}
-
 	rows := targetRows(parent, byName, "")
-	var cfRow *workRowData
+	got := map[string]*livework.Entry{}
 	for _, r := range rows {
-		if r.work.targetKey == "cf" {
-			cfRow = r.work
-		}
+		got[r.work.targetKey] = r.work.live
 	}
-	if cfRow == nil {
-		t.Fatalf("no target row for %q among %+v", "cf", rows)
+	if got["cf"] != live {
+		t.Errorf("cf target row's live entry = %v, want the entry keyed \"dev:cf\"", got["cf"])
 	}
-	if cfRow.live != live {
-		t.Errorf("cf target row's live entry = %v, want the registry entry keyed \"pick:cf\" (byName[\"dev:cf\"] must NOT be what resolves it)", cfRow.live)
+	if got["prod"] != nil {
+		t.Errorf("prod target row resolved %v, want nothing — \"pick:prod\" is keyed on the action, not the command", got["prod"])
 	}
 }
 

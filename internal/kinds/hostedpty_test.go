@@ -51,14 +51,9 @@ func stubSelfExecutable(t *testing.T, path string) {
 }
 
 // TestStartHostedPTYRegistersALiveEntry proves a successful dispatch
-// registers a hosted-pty (Via empty) live-work entry keyed on the command's
-// first STEP name
-// (matching internal/tui/work.go:liveEntryFor, which looks entries up by
-// step name, not command name) with Kill and Retry both wired.
-//
-// MUTATION EVIDENCE: key the entry on the command name instead of
-// cmd.Steps[0] and this test fails — livework.Default.Get("build-step")
-// finds nothing.
+// registers a hosted-pty (Via empty) live-work entry keyed on the command
+// name, not its first step (matching internal/tui/work.go:liveEntryFor,
+// which looks entries up by command name), with Kill and Retry both wired.
 func TestStartHostedPTYRegistersALiveEntry(t *testing.T) {
 	stubSelfExecutable(t, fixtureAdminScript(t, "sleep 0.3\nexit 0"))
 
@@ -71,12 +66,12 @@ func TestStartHostedPTYRegistersALiveEntry(t *testing.T) {
 		t.Fatalf("StartHostedPTY: %v", err)
 	}
 	t.Cleanup(func() {
-		if e, ok := livework.Default.Get("build-step"); ok && e.Ops.Kill != nil {
+		if e, ok := livework.Default.Get("build"); ok && e.Ops.Kill != nil {
 			_ = e.Ops.Kill()
 		}
 	})
 
-	e, ok := livework.Default.Get("build-step")
+	e, ok := livework.Default.Get("build")
 	if !ok {
 		t.Fatal("no live-work entry registered under the command's first step name")
 	}
@@ -92,7 +87,7 @@ func TestStartHostedPTYRegistersALiveEntry(t *testing.T) {
 	if e.Ops.Retry == nil {
 		t.Error("entry missing a Retry op")
 	}
-	if state, _ := livework.Default.State("build-step"); state != livework.StateRunning {
+	if state, _ := livework.Default.State("build"); state != livework.StateRunning {
 		t.Errorf("entry state = %q, want %q", state, livework.StateRunning)
 	}
 }
@@ -128,8 +123,8 @@ func TestStartHostedPTYEntryReportsExited(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if e, ok := livework.Default.Get("quick-step"); ok {
-			if state, _ := livework.Default.State("quick-step"); state != livework.StateExited {
+		if e, ok := livework.Default.Get("quick"); ok {
+			if state, _ := livework.Default.State("quick"); state != livework.StateExited {
 				time.Sleep(10 * time.Millisecond)
 				continue
 			}
@@ -176,7 +171,7 @@ func TestStartHostedPTYWiresWriteAndResize(t *testing.T) {
 		t.Fatalf("StartHostedPTY: %v", err)
 	}
 
-	e, ok := livework.Default.Get("echoer-step")
+	e, ok := livework.Default.Get("echoer")
 	if !ok {
 		t.Fatal("no live-work entry registered")
 	}
@@ -200,7 +195,7 @@ func TestStartHostedPTYWiresWriteAndResize(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if got, ok := livework.Default.Get("echoer-step"); ok && got.State == livework.StateExited {
+		if got, ok := livework.Default.Get("echoer"); ok && got.State == livework.StateExited {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -239,14 +234,14 @@ func TestStartHostedPTYAnswersTerminalQueries(t *testing.T) {
 		t.Fatalf("StartHostedPTY: %v", err)
 	}
 	t.Cleanup(func() {
-		if e, ok := livework.Default.Get("asker-step"); ok && e.Ops.Kill != nil {
+		if e, ok := livework.Default.Get("asker"); ok && e.Ops.Kill != nil {
 			_ = e.Ops.Kill()
 		}
 	})
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if state, _ := livework.Default.State("asker-step"); state == livework.StateExited {
+		if state, _ := livework.Default.State("asker"); state == livework.StateExited {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -255,7 +250,7 @@ func TestStartHostedPTYAnswersTerminalQueries(t *testing.T) {
 	if !strings.HasPrefix(string(reply), "\x1b[") || !strings.HasSuffix(string(reply), "R") {
 		t.Fatalf("child's ESC[6n reply = %q, want a cursor-position report like \\x1b[1;1R", reply)
 	}
-	e, _ := livework.Default.Get("asker-step")
+	e, _ := livework.Default.Get("asker")
 	if e.Screen == nil || !strings.Contains(e.Screen.String(), "answered") {
 		t.Errorf("entry Screen does not show the child's output")
 	}
@@ -282,12 +277,12 @@ func TestStartHostedPTYRecordsLogPathFromAnnouncePipe(t *testing.T) {
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if e, ok := livework.Default.Get("logger-step"); ok && e.LogPath != "" {
+		if e, ok := livework.Default.Get("logger"); ok && e.LogPath != "" {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	e, _ := livework.Default.Get("logger-step")
+	e, _ := livework.Default.Get("logger")
 	if e.LogPath != "/tmp/announced-first.log" {
 		t.Errorf("LogPath = %q, want the first announced path", e.LogPath)
 	}
@@ -359,7 +354,7 @@ func TestHostedPTYKillTerminatesTheWholeProcessGroup(t *testing.T) {
 		t.Fatalf("grandchild pid %d not alive before Kill: %v", grandchildPID, err)
 	}
 
-	e, ok := livework.Default.Get("host-and-spawn-step")
+	e, ok := livework.Default.Get("host-and-spawn")
 	if !ok {
 		t.Fatal("no live-work entry registered")
 	}
@@ -371,7 +366,7 @@ func TestHostedPTYKillTerminatesTheWholeProcessGroup(t *testing.T) {
 	for time.Now().Before(deadline) {
 		if err := syscall.Kill(grandchildPID, 0); err != nil {
 			// ESRCH (or any error) means the process is gone.
-			if state, ok := livework.Default.State("host-and-spawn-step"); ok && state != livework.StateExited {
+			if state, ok := livework.Default.State("host-and-spawn"); ok && state != livework.StateExited {
 				t.Errorf("entry state = %q, want %q", state, livework.StateExited)
 			}
 			return
@@ -401,8 +396,8 @@ func TestHostedPTYKillIsIdempotent(t *testing.T) {
 		deadline := time.Now().Add(5 * time.Second)
 		var e *livework.Entry
 		for time.Now().Before(deadline) {
-			if got, ok := livework.Default.Get("finishes-fast-step"); ok {
-				if state, _ := livework.Default.State("finishes-fast-step"); state == livework.StateExited {
+			if got, ok := livework.Default.Get("finishes-fast"); ok {
+				if state, _ := livework.Default.State("finishes-fast"); state == livework.StateExited {
 					e = got
 					break
 				}
@@ -416,7 +411,7 @@ func TestHostedPTYKillIsIdempotent(t *testing.T) {
 		if err := e.Ops.Kill(); err != nil {
 			t.Fatalf("Ops.Kill() on an already-exited entry = %v, want nil", err)
 		}
-		if state, ok := livework.Default.State("finishes-fast-step"); !ok || state != livework.StateExited {
+		if state, ok := livework.Default.State("finishes-fast"); !ok || state != livework.StateExited {
 			t.Errorf("state after Kill on exited entry = %v, want %q", state, livework.StateExited)
 		}
 	})
@@ -433,7 +428,7 @@ func TestHostedPTYKillIsIdempotent(t *testing.T) {
 			t.Fatalf("StartHostedPTY: %v", err)
 		}
 
-		e, ok := livework.Default.Get("long-running-step")
+		e, ok := livework.Default.Get("long-running")
 		if !ok {
 			t.Fatal("no live-work entry registered")
 		}
@@ -443,7 +438,7 @@ func TestHostedPTYKillIsIdempotent(t *testing.T) {
 		if err := e.Ops.Kill(); err != nil {
 			t.Fatalf("second Ops.Kill() = %v, want nil", err)
 		}
-		if state, ok := livework.Default.State("long-running-step"); !ok || state != livework.StateExited {
+		if state, ok := livework.Default.State("long-running"); !ok || state != livework.StateExited {
 			t.Errorf("state after double Kill = %v, want %q", state, livework.StateExited)
 		}
 	})
