@@ -46,6 +46,7 @@ var (
 
 func runGit(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = readOnlyGitEnv()
 	out, err := cmd.Output()
 	if err != nil {
 		// Fold git's own message into the error. cmd.Output populates ExitError.Stderr,
@@ -122,6 +123,15 @@ func errHeadline(s string) string {
 	// Nothing but hints: fall back to the first line so the headline is never empty.
 	h, _, _ := strings.Cut(s, "\n")
 	return strings.TrimSpace(h)
+}
+
+// readOnlyGitEnv is the environment for runGit's reads: GIT_OPTIONAL_LOCKS=0
+// stops `git status` from refreshing the index, which it otherwise does under
+// index.lock. The dashboard polls every worktree this way, so without it a
+// poll collides with a commit happening in the same checkout, and a poll
+// killed by its context mid-refresh leaves the lock file behind.
+func readOnlyGitEnv() []string {
+	return append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
 }
 
 // runMutating runs a git command that would otherwise stream progress to the
