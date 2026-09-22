@@ -255,10 +255,7 @@ func (m Model) termFields(width int) []string {
 		if e == nil || e.ID != m.termEntryID {
 			continue
 		}
-		if e.Worker != nil {
-			return bandFieldsWorker(e, width)
-		}
-		return bandFieldsCommand(r.work, width)
+		return bandFields(e, r.work, width)
 	}
 	if e := m.termEntry(); e != nil && e.LogPath != "" {
 		return bandFieldsCommand(&workRowData{logPath: e.LogPath}, width)

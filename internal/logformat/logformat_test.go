@@ -397,7 +397,7 @@ func TestAnsiEscapeReStripsDCS(t *testing.T) {
 }
 
 // TestAnsiEscapeReStillStripsCSI is the regression guard for every existing
-// caller (StampLine, luahost.LogContext.Write/ParseLogAnnounce): plain SGR
+// caller (StampLine, luahost.LogContext.Write): plain SGR
 // color codes must strip exactly as before.
 func TestAnsiEscapeReStillStripsCSI(t *testing.T) {
 	in := "\x1b[31mred\x1b[0m"

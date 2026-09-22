@@ -2,7 +2,9 @@ package luahost
 
 import (
 	"bytes"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -381,5 +383,33 @@ func TestAnnounceEndIsIdempotent(t *testing.T) {
 	c.AnnounceEnd()
 	if errOut.String() != first {
 		t.Fatalf("expected no additional output on second call, got %q after %q", errOut.String(), first)
+	}
+}
+
+// TestAnnounceFDIsCloseOnExec proves a hosted child marks its announce pipe
+// close-on-exec at startup, so a step's shell — or anything it daemonizes —
+// never inherits the write end and keeps the dashboard's reader waiting. The
+// test re-runs its own binary as that child, with a pipe on fd 3.
+func TestAnnounceFDIsCloseOnExec(t *testing.T) {
+	if os.Getenv("LUAHOST_ANNOUNCE_CHILD") == "1" {
+		out, _ := exec.Command("sh", "-c", `if [ -e /dev/fd/3 ]; then echo open; else echo closed; fi`).Output()
+		fmt.Print(string(out))
+		os.Exit(0)
+	}
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe: %v", err)
+	}
+	defer r.Close()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestAnnounceFDIsCloseOnExec$")
+	cmd.Env = append(os.Environ(), "LUAHOST_ANNOUNCE_CHILD=1", LogAnnounceFDEnv+"=3")
+	cmd.ExtraFiles = []*os.File{w}
+	out, err := cmd.Output()
+	w.Close()
+	if err != nil {
+		t.Fatalf("child: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "closed" {
+		t.Errorf("a process the hosted child started sees fd 3 %q, want closed", got)
 	}
 }

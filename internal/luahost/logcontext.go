@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/logformat"
@@ -50,16 +51,37 @@ const LogAnnouncePrefix = "→ wrote: "
 // so the dashboard learns the path without parsing the child's output.
 const LogAnnounceFDEnv = "ADMIN_LOG_ANNOUNCE_FD"
 
+// announceFDNum is the descriptor LogAnnounceFDEnv names, or false when the
+// variable is unset or invalid.
+func announceFDNum() (int, bool) {
+	raw, ok := os.LookupEnv(LogAnnounceFDEnv)
+	if !ok {
+		return 0, false
+	}
+	fd, err := strconv.Atoi(raw)
+	if err != nil || fd < 3 {
+		return 0, false
+	}
+	return fd, true
+}
+
+// init marks the announce pipe close-on-exec before this process can start
+// anything. The descriptor arrives inherited and without that flag, so every
+// step's shell — and anything it daemonizes past the process group — would
+// hold the write end open, and the dashboard's reader would wait on it for
+// as long as that grandchild lives.
+func init() {
+	if fd, ok := announceFDNum(); ok {
+		syscall.CloseOnExec(fd)
+	}
+}
+
 // announceFD is the pipe LogAnnounceFDEnv names, opened once and never
 // closed (os.NewFile's finalizer would close the descriptor if a second
 // *os.File for it were dropped). nil when the variable is unset or invalid.
 var announceFD = sync.OnceValue(func() *os.File {
-	raw, ok := os.LookupEnv(LogAnnounceFDEnv)
+	fd, ok := announceFDNum()
 	if !ok {
-		return nil
-	}
-	fd, err := strconv.Atoi(raw)
-	if err != nil || fd < 3 {
 		return nil
 	}
 	return os.NewFile(uintptr(fd), "log-announce")
