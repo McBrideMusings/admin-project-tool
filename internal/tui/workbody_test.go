@@ -61,12 +61,7 @@ func buildRunningWorkModelAt(t *testing.T, w, h int) Model {
 // renderWorkBody produces the identical shape — list on top spanning the
 // full body width, live band beneath it spanning that same width. No
 // side-by-side divider ("│") ever appears, and every rendered row is
-// exactly width cells wide. buildRunningWorkModelAt's fixture is a single
-// row, so the band here is the SHORT-LIST case (admin-dky7): it grows past
-// bandH(height) to take every row the one-row list doesn't need, rather than
-// being clipped to bandH's floor — see TestWorkBodyShortListGrowsBandPastFloor
-// for that behavior asserted directly against renderWorkBody's own listH/bh
-// split.
+// exactly width cells wide.
 func TestWorkBodyOneLayoutAtEveryGeometry(t *testing.T) {
 	for _, geo := range []struct{ w, h int }{{80, 24}, {96, 30}, {178, 46}} {
 		mm := buildRunningWorkModelAt(t, geo.w, geo.h)
@@ -117,14 +112,11 @@ func TestWorkBodyOneLayoutAtEveryGeometry(t *testing.T) {
 	}
 }
 
-// TestWorkBodyShortListGrowsBandPastFloor is admin-dky7's own acceptance
-// criterion: a list short enough to fit in fewer rows than bandH(height)
-// lets the band take every spare row rather than being clipped to bandH's
-// floor and leaving blank rows above it. buildRunningWorkModelAt's fixture
-// (one command, no workers) produces 5 real list rows at 96x30 — Commands
-// header, the command-test row, a blank section separator, the Workers
-// header, and its own "no workers" text — well short of bandH(30)=13.
-func TestWorkBodyShortListGrowsBandPastFloor(t *testing.T) {
+// TestWorkBodyBandIsFixedHeightAtBottom proves a short list does not grow
+// the band: buildRunningWorkModelAt's fixture produces 5 list rows at 96x30,
+// well short of the 30-bandH(30)=17 the list is given, and the band still
+// starts at row 17 with blank rows between it and the list.
+func TestWorkBodyBandIsFixedHeightAtBottom(t *testing.T) {
 	const w, h = 96, 30
 	mm := buildRunningWorkModelAt(t, w, h)
 	rows := mm.workRows()
@@ -135,14 +127,11 @@ func TestWorkBodyShortListGrowsBandPastFloor(t *testing.T) {
 		t.Fatalf("renderWorkBody produced %d lines, want exactly %d", len(out), h)
 	}
 
-	if got := bandH(h); got >= h-wantListH {
-		t.Fatalf("test fixture invalid: bandH(%d)=%d leaves no spare rows over a %d-row list to prove growth with", h, got, wantListH)
+	wantTitle := h - bandH(h)
+	if wantListH >= wantTitle {
+		t.Fatalf("test fixture invalid: a %d-row list leaves no spare rows above row %d", wantListH, wantTitle)
 	}
 
-	// The band's own title rule ("── ...") must start immediately after the
-	// real list content (row wantListH), not at h-bandH(h), which would pad
-	// the rows in between with blank list filler instead of handing them to
-	// the band.
 	titleIdx := -1
 	for i, l := range out {
 		if strings.Contains(l, "── ") && strings.Contains(stripANSI(l), "command-test") {
@@ -150,8 +139,12 @@ func TestWorkBodyShortListGrowsBandPastFloor(t *testing.T) {
 			break
 		}
 	}
-	if titleIdx != wantListH {
-		t.Errorf("band title rule found at row %d, want exactly %d (immediately below the %d-row list, not padded out to h-bandH(h)=%d)",
-			titleIdx, wantListH, wantListH, h-bandH(h))
+	if titleIdx != wantTitle {
+		t.Errorf("band title rule found at row %d, want %d (h-bandH(h), independent of the %d-row list)", titleIdx, wantTitle, wantListH)
+	}
+	for i := wantListH; i < wantTitle; i++ {
+		if strings.TrimSpace(stripANSI(out[i])) != "" {
+			t.Errorf("row %d between the list and the band = %q, want blank", i, out[i])
+		}
 	}
 }
