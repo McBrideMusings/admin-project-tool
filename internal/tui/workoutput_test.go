@@ -53,32 +53,6 @@ func TestRenderWorkBandTailsLiveRingBottomAligned(t *testing.T) {
 	}
 }
 
-// TestRenderWorkBandClearsTailOnceExited proves an exited entry's band shows
-// no output, while a failed one keeps its tail for the error.
-func TestRenderWorkBandClearsTailOnceExited(t *testing.T) {
-	freshLivework(t)
-	for _, tc := range []struct {
-		state    livework.State
-		wantTail bool
-	}{
-		{livework.StateExited, false},
-		{livework.StateFailed, true},
-	} {
-		ring := livework.NewRing(4096)
-		ring.Write([]byte("last line\n"))
-		e := &livework.Entry{
-			ID: "test-exit-" + string(tc.state), Name: "test-exit",
-			State: tc.state, StartedAt: time.Now(),
-			Output: ring,
-		}
-		row := rowItem{kind: rowWorker, work: &workRowData{worker: e}}
-		out := strings.Join(workTestModel(nil).renderWorkBand(row, 60, 20), "\n")
-		if got := strings.Contains(out, "last line"); got != tc.wantTail {
-			t.Errorf("%s: band shows tail = %v, want %v:\n%s", tc.state, got, tc.wantTail, out)
-		}
-	}
-}
-
 // TestRenderWorkBandEmptyTailWithoutLiveRing is the negative case: a worker
 // with no Output ring (nil — e.g. dispatched through a [terminal] launcher
 // rather than hosted in-process, admin-spjp.6's known capability gap)

@@ -689,6 +689,11 @@ func targetRows(parent rowItem, byName map[string]*livework.Entry, pendingTarget
 	}
 	out := make([]rowItem, 0, len(wd.targets))
 	for i, key := range wd.targets {
+		live := byName[kinds.TargetLiveKey(wd.actionName, key)]
+		logPath := wd.logPath
+		if live != nil && live.LogPath != "" {
+			logPath = live.LogPath
+		}
 		out = append(out, rowItem{
 			kind:  rowCommandTarget,
 			label: wd.cmdName + " " + key,
@@ -699,7 +704,7 @@ func targetRows(parent rowItem, byName map[string]*livework.Entry, pendingTarget
 				cmdKind:      wd.cmdKind,
 				cmdArchetype: wd.cmdArchetype,
 				steps:        wd.steps,
-				logPath:      wd.logPath,
+				logPath:      logPath,
 				targetKey:    key,
 				targetRun:    wd.targetRuns[key],
 				targetLast:   i == len(wd.targets)-1,
@@ -708,7 +713,7 @@ func targetRows(parent rowItem, byName map[string]*livework.Entry, pendingTarget
 				// see the byName doc comment above. renderTargetRow now
 				// renders state/activity/where from this exactly as
 				// renderWorkRow does for a plain command row.
-				live: byName[kinds.TargetLiveKey(wd.actionName, key)],
+				live: live,
 				// Same reasoning as live just above: a multi-target
 				// dispatch is pending under the parent action's own name
 				// until a livework.Entry registers (there is no target

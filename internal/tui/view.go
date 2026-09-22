@@ -108,25 +108,13 @@ func (m Model) frame() (lines []string, hits []hitTarget) {
 func (m Model) frameRaw() (lines []string, hits []hitTarget) {
 	width, height, bodyHeight := m.frameGeom()
 
-	header := truncateLine(m.headerLine(width), width)
 	footerLines := m.footerLines(width)
 
-	// Top chrome: header, then either the tab bar or — while attached —
-	// the attach breadcrumb in its place. Every keystroke belongs to the
-	// child while attached, so the tab bar cannot be switched from there;
-	// drawing it would advertise navigation that does not work (ticket
-	// admin-3rgp.72.17). One blank separator either way.
-	var second string
-	var secondHit hitTarget
-	if m.termAttached {
-		second = truncateLine(m.attachBreadcrumb(width), width)
-		secondHit = hitTarget{kind: hitNone}
-	} else {
-		second = truncateLine(m.tabBar(), width)
-		secondHit = m.tabBarHit()
+	top := m.topChrome(width)
+	topHits := make([]hitTarget, len(top))
+	if !m.termAttached {
+		topHits[1] = m.tabBarHit()
 	}
-	top := []string{header, second, ""}
-	topHits := []hitTarget{{kind: hitNone}, secondHit, {kind: hitNone}}
 	body, bodyHits := m.renderBodyHits(width, bodyHeight)
 	body = m.spliceStatusToast(body)
 
@@ -144,6 +132,20 @@ func (m Model) frameRaw() (lines []string, hits []hitTarget) {
 	return lines, hits
 }
 
+// topChrome is the rows above the body: the header, then either the tab bar
+// and a blank separator, or — while attached — the attach breadcrumb alone,
+// so the attached view's log and url rows (termFields) sit directly under
+// it. Every keystroke belongs to the child while attached, so the tab bar
+// cannot be switched from there; drawing it would advertise navigation that
+// does not work (ticket admin-3rgp.72.17).
+func (m Model) topChrome(width int) []string {
+	header := truncateLine(m.headerLine(width), width)
+	if m.termAttached {
+		return []string{header, truncateLine(m.attachBreadcrumb(width), width)}
+	}
+	return []string{header, truncateLine(m.tabBar(), width), ""}
+}
+
 // frameGeom is the line budget View lays the frame out against: the usable width
 // and height, and how many rows the body gets between the top chrome and the
 // footer.
@@ -155,8 +157,7 @@ func (m Model) frameGeom() (width, height, bodyHeight int) {
 	if height <= 0 {
 		height = 24
 	}
-	const bodyTop = 3 // header, tab bar, blank separator
-	bodyHeight = height - bodyTop - len(m.footerLines(width))
+	bodyHeight = height - len(m.topChrome(width)) - len(m.footerLines(width))
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}

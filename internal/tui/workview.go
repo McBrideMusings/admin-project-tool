@@ -16,16 +16,17 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/logformat"
 )
 
-// bandH is the live band's row count: fixed for a given body height,
-// whatever the row list holds, so the band always sits in the same rows at
-// the bottom of the body.
+// bandH is the open band's row count: fixed for a given body height,
+// whatever the row list holds, so an open band always sits in the same rows
+// at the bottom of the body.
 func bandH(h int) int {
 	return maxi(mini(13, h/2), mini(9, h-1))
 }
 
 // renderWorkBody lays out the Work tab: one layout at every geometry — the
 // row list fills the body width, and the live band spans that same full
-// width beneath it, pinned to the bottom at bandH rows. The list gives up
+// width beneath it, pinned to the bottom: bandH rows while the cursor row is
+// live (see bandOpen), its title rule alone otherwise. The list gives up
 // HEIGHT to the band and never width; a short list leaves blank rows between
 // itself and the band.
 // Ported from the design prototype's workBody/renderPaletteScreen
@@ -89,9 +90,14 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		}
 	}
 
-	// The band takes bandH rows at the bottom; the list gets the rest,
+	// The band takes bandH rows at the bottom while the cursor row is live,
+	// and collapses to its title rule otherwise; the list gets the rest,
 	// padded with blank rows when its own rows don't fill them.
-	listH := maxi(height-bandH(height), 1)
+	bandRows := 1
+	if bandOpen(bandEntry(rows[cursor])) {
+		bandRows = bandH(height)
+	}
+	listH := maxi(height-bandRows, 1)
 	bh := maxi(height-listH, 1)
 
 	listLines := left
@@ -444,18 +450,13 @@ func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 		return blankRows(w, h)
 	}
 
-	var live *livework.Entry
+	live := bandEntry(r)
 	name := wd.cmdName
 	if wd.targetKey != "" {
 		name += " " + wd.targetKey
 	}
-	if r.kind == rowWorker {
-		live = wd.worker
-		if live != nil {
-			name = live.Name
-		}
-	} else {
-		live = wd.live
+	if r.kind == rowWorker && live != nil {
+		name = live.Name
 	}
 
 	out := make([]string, 0, h)
@@ -470,10 +471,8 @@ func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 		}
 		out = append(out, fields...)
 		avail := maxi(h-1-len(fields), 1)
-		// An exited entry's output is cleared from the band; a failed one
-		// keeps its tail, since that is where the error is.
 		var tail []string
-		if live.Output != nil && live.State != livework.StateExited {
+		if live.Output != nil {
 			tail = ringTailLines(live.Output, maxi(w-1, 1))
 		}
 		out = append(out, bandTail(tail, avail, w)...)
@@ -486,6 +485,32 @@ func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 		out = append(out, padEnd("", w))
 	}
 	return out[:h]
+}
+
+// bandEntry is the live entry the band previews for row r: a worker row's
+// own session, or a command/target row's running entry. nil when r has none.
+func bandEntry(r rowItem) *livework.Entry {
+	if r.work == nil {
+		return nil
+	}
+	if r.kind == rowWorker {
+		return r.work.worker
+	}
+	return r.work.live
+}
+
+// bandOpen reports whether the band opens to its full bandH height for e:
+// only while e is still going. A row with no entry, or one that exited or
+// failed, collapses the band to its title rule.
+func bandOpen(e *livework.Entry) bool {
+	if e == nil {
+		return false
+	}
+	switch e.State {
+	case livework.StateRunning, livework.StateStarting, livework.StateWaiting:
+		return true
+	}
+	return false
 }
 
 // othersRunning is the live band title's right side: how much is live that

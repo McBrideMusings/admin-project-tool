@@ -479,11 +479,16 @@ func TestAttachedViewDrawsNoTabBar(t *testing.T) {
 // TestAttachedViewLogPathOnBreadcrumbOnly is the ticket's second acceptance
 // criterion: the absolute log path is on the breadcrumb row and nowhere
 // beneath the output.
-func TestAttachedViewLogPathOnBreadcrumbOnly(t *testing.T) {
+func TestAttachedViewLogPathAndURLRowsUnderBreadcrumb(t *testing.T) {
 	cmdName := "termfixture-logpath"
 	dir := t.TempDir()
-	writeFixtureManifest(t, dir, cmdName)
-	registerFakePTYEntry(t, cmdName, livework.NewRing(0), &termRecorder{})
+	toml := "project_name = \"fixture\"\n\n[commands." + cmdName + "]\ndesc = \"fixture\"\nsteps = [\"" + cmdName +
+		"\"]\n\n[actions." + cmdName + "]\nkind = \"shell\"\nrun = \"true\"\nurls = [\"http://127.0.0.1:9/fixture-url\"]\n"
+	if err := os.WriteFile(filepath.Join(dir, manifest.Filename), []byte(toml), 0o644); err != nil {
+		t.Fatalf("writing fixture admin.toml: %v", err)
+	}
+	rec := &termRecorder{}
+	registerFakePTYEntry(t, cmdName, livework.NewRing(0), rec)
 	const logPath = "/Users/pierce/.admin/logs/worker-termfixture-logpath.log"
 	livework.Default.SetLogPath(cmdName, logPath)
 	// The file's own basename is what fitPath keeps regardless of how much
@@ -496,20 +501,34 @@ func TestAttachedViewLogPathOnBreadcrumbOnly(t *testing.T) {
 		Keys:   []string{"down", "a"},
 		Settle: 300 * time.Millisecond,
 	})
-	lines := strings.Split(out, "\n")
-	if len(lines) < 2 || !strings.Contains(lines[1], logBase) {
-		t.Fatalf("breadcrumb row missing the log path (want it to contain %q): %q", logBase, lines)
+	lines := strings.Split(stripANSI(out), "\n")
+	if len(lines) < 5 {
+		t.Fatalf("attached frame too short: %q", lines)
 	}
-	if !strings.Contains(lines[1], "/Users/") {
-		t.Errorf("breadcrumb row's path is not absolute: %q", lines[1])
+	if !strings.Contains(lines[1], "attached") || strings.Contains(lines[1], logBase) {
+		t.Errorf("row 1 = %q, want the breadcrumb without the log path", lines[1])
+	}
+	if !strings.Contains(lines[2], "log") || !strings.Contains(lines[2], "/Users/") || !strings.Contains(lines[2], logBase) {
+		t.Errorf("row 2 = %q, want the absolute log path under the breadcrumb", lines[2])
+	}
+	if !strings.Contains(lines[3], "url") || !strings.Contains(lines[3], "fixture-url") {
+		t.Errorf("row 3 = %q, want the configured url under the log row", lines[3])
+	}
+	if !strings.Contains(lines[4], "╌") {
+		t.Errorf("row 4 = %q, want the dashed rule under the field rows", lines[4])
 	}
 	for i, l := range lines {
-		if i == 1 {
-			continue
+		if i != 2 && strings.Contains(l, logBase) {
+			t.Errorf("log path also appears on row %d: %q", i, l)
 		}
-		if strings.Contains(l, logBase) {
-			t.Errorf("log path also appears on row %d, want it on the breadcrumb alone: %q", i, l)
-		}
+	}
+
+	// The child's pty gives up the two field rows: 24 total, minus header,
+	// breadcrumb, log, url, dashed rule, solid rule and key hint = 17.
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.resizes) == 0 || rec.resizes[len(rec.resizes)-1][0] != 17 {
+		t.Errorf("pty resizes = %v, want the last one to be 17 rows", rec.resizes)
 	}
 }
 
@@ -535,7 +554,7 @@ func TestAttachedViewOutputReachesFloor(t *testing.T) {
 
 	out := p.model.View()
 	lines := strings.Split(out, "\n")
-	// Row layout: header(1) + breadcrumb(1) + blank(1) + dashed rule(1) +
+	// Row layout: header(1) + breadcrumb(1) + log row(1) + dashed rule(1) +
 	// output + solid rule(1) + key hint(1) = len(lines). The row directly
 	// above the solid rule (second-to-last) is the floor the child's last
 	// output line must occupy.
