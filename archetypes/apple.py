@@ -297,8 +297,10 @@ for _t in _to_run:
 
 _ICONS_PY = '''\
 cfg = globals().get("_APPLE_CONFIG") or {}
-sub = args[0] if args else "regenerate"
-if sub == "regenerate":
+sub = args[0] if args else None
+if sub is None:
+    info("usage: admin icons [regenerate|swap-dev|restore]")
+elif sub == "regenerate":
     regenerate_icons(cfg)
 elif sub == "swap-dev":
     pre, _post = build_icon_hooks(cfg, restore_on_exit=False)
