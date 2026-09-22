@@ -474,8 +474,10 @@ func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 		}
 		out = append(out, fields...)
 		avail := maxi(h-1-len(fields), 1)
+		// An exited entry's output is cleared from the band; a failed one
+		// keeps its tail, since that is where the error is.
 		var tail []string
-		if live.Output != nil {
+		if live.Output != nil && live.State != livework.StateExited {
 			tail = ringTailLines(live.Output, maxi(w-1, 1))
 		}
 		out = append(out, bandTail(tail, avail, w)...)
