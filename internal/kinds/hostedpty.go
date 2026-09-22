@@ -48,14 +48,18 @@ import (
 // the dashboard shows and the file the child writes are the same.
 func readLogAnnounce(id string, r *os.File) {
 	defer r.Close()
-	sc := bufio.NewScanner(r)
-	recorded := false
-	for sc.Scan() {
-		if path := strings.TrimSpace(sc.Text()); path != "" && !recorded {
-			recorded = true
+	br := bufio.NewReader(r)
+	for {
+		line, err := br.ReadString('\n')
+		if path := strings.TrimSpace(line); path != "" {
 			livework.Default.SetLogPath(id, path)
+			break
+		}
+		if err != nil {
+			return
 		}
 	}
+	_, _ = io.Copy(io.Discard, br)
 }
 
 // HostedNoFrameEnv marks the hosted pty child's environment so

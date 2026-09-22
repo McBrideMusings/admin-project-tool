@@ -54,7 +54,7 @@ func StripLogTimestamp(line string) (string, string) {
 // AnsiEscapeRe strips every ANSI escape sequence, not just SGR colour codes —
 // admin_lib/core.py's _ANSI_ESCAPE_RE. The single definition every ANSI-aware
 // stripper in this repo imports rather than redeclaring — internal/luahost's
-// LogContext (ParseLogAnnounce, Write) uses this same regexp instead of
+// LogContext.Write uses this same regexp instead of
 // keeping its own byte-for-byte copy. Used here only to see through color
 // codes when StampLine checks whether a chunk already opens with its own
 // timestamp; the returned/stamped text itself keeps its original escapes.

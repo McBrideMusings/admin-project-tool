@@ -440,7 +440,7 @@ func renderTargetRow(wd *workRowData, focused bool, rest int) string {
 // session, now); neither is padded to a fixed slot, so the tail's available
 // height is computed from the field block's ACTUAL length each time, not a
 // shared constant. A command with more configured urls than
-// h-1 has rows for still returns exactly h lines (the trailing out[:h] below
+// h-2 has rows for still returns exactly h lines (the trailing out[:h] below
 // keeps that contract) but shows only the field block's own leading rows —
 // an inherent geometry limit of a finite terminal, not something this
 // function can grow past.
@@ -463,12 +463,7 @@ func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 	out = append(out, bandTitle(w, live, name))
 
 	if live != nil {
-		var fields []string
-		if live.Worker != nil {
-			fields = bandFieldsWorker(live, w)
-		} else {
-			fields = bandFieldsCommand(wd, w)
-		}
+		fields := bandFields(live, wd, w)
 		out = append(out, fields...)
 		// The same dashed rule the attached view draws between its field
 		// rows and the output (terminalview.go's renderTerminalBody).
@@ -490,6 +485,17 @@ func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 	return out[:h]
 }
 
+// bandFields is the field block for live entry e on row data wd: a worker's
+// five rows, or a command's log and url rows. The docked band and the
+// attached view (terminalview.go's termFields) both draw it, so the two
+// always match.
+func bandFields(e *livework.Entry, wd *workRowData, w int) []string {
+	if e.Worker != nil {
+		return bandFieldsWorker(e, w)
+	}
+	return bandFieldsCommand(wd, w)
+}
+
 // bandEntry is the live entry the band previews for row r: a worker row's
 // own session, or a command/target row's running entry. nil when r has none.
 func bandEntry(r rowItem) *livework.Entry {
@@ -509,7 +515,8 @@ func bandOpen(e *livework.Entry) bool {
 	if e == nil {
 		return false
 	}
-	switch e.State {
+	state, _ := livework.Default.State(e.ID)
+	switch state {
 	case livework.StateRunning, livework.StateStarting, livework.StateWaiting:
 		return true
 	}
