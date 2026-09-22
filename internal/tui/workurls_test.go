@@ -163,6 +163,29 @@ func TestFrameURLsExpandsComputedVar(t *testing.T) {
 	}
 }
 
+// TestMultiStepCommandCollectsAllStepsURLs pins the admin-tui-multistep-urls
+// fix: a two-step command (social-chess's `dev` — db-ensure then dev) must
+// show the running step's url row even though only the second step declares
+// one. soleAction returns false for any command with more than one step, so
+// before this fix wd.urls stayed empty for every multi-step command.
+func TestMultiStepCommandCollectsAllStepsURLs(t *testing.T) {
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"dev": {Desc: "start dev server", Steps: []string{"db-ensure", "dev"}},
+		},
+		Actions: map[string]manifest.Action{
+			"db-ensure": {"kind": "shell", "run": "run-db-ensure"},
+			"dev":       {"kind": "interactive-shell", "run": "run-dev", "urls": []any{"http://127.0.0.1:5173"}},
+		},
+	}
+	mm := workTestModel(m)
+	row := mm.commandRowItem(workCmdRow{name: "dev", cmd: m.Custom["dev"]}, map[string]*livework.Entry{})
+
+	if len(row.work.urls) != 1 || row.work.urls[0].URL != "http://127.0.0.1:5173" {
+		t.Errorf("urls = %+v, want the second step's url", row.work.urls)
+	}
+}
+
 // TestURLProbeDistinguishesUpFromDown proves the reachability indicator
 // actually differs between a url stubbed as up and one stubbed as down.
 func TestURLProbeDistinguishesUpFromDown(t *testing.T) {

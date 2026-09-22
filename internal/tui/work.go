@@ -256,6 +256,43 @@ func (m Model) soleAction(c manifest.Command) (manifest.Action, bool) {
 	return a, ok
 }
 
+// multiStepURLs collects the urls a multi-step command's row should show:
+// every step's own action urls, in step order, de-duplicated by URL — the
+// CLI footer resolves this same list per step as each one runs (enterFrame,
+// internal/kinds/frame.go), so the Work tab's row mirrors it up front rather
+// than showing only the last step's list or nothing at all. A step naming an
+// undeclared action is skipped, matching commandSteps' own "?" handling. A
+// step whose action is a single-target multi-target resolves that one
+// target's inherited list, same as soleAction's single-step path.
+func (m Model) multiStepURLs(c manifest.Command) []frame.URLEntry {
+	var out []frame.URLEntry
+	seen := map[string]bool{}
+	for _, s := range c.Steps {
+		a, ok := m.manifest.Actions[s]
+		if !ok {
+			continue
+		}
+		target := ""
+		if actionKind(a) == "multi-target" {
+			if keys := kinds.TargetKeys(a); len(keys) == 1 {
+				target = keys[0]
+			}
+		}
+		u, err := kinds.FrameURLs(a, target, m.manifest)
+		if err != nil {
+			continue
+		}
+		for _, e := range u {
+			if seen[e.URL] {
+				continue
+			}
+			seen[e.URL] = true
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // commandKind is a command's displayed kind: a single step's own declared
 // kind, or "sequence" for more than one — matching the reference frames
 // (docs/spikes/admin-tui-desktop/commands.txt: "deploy" with three steps
@@ -632,6 +669,8 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 				wd.urls = u
 			}
 		}
+	} else {
+		wd.urls = m.multiStepURLs(cr.cmd)
 	}
 	if wd.live != nil && wd.live.LogPath != "" {
 		wd.logPath = wd.live.LogPath
