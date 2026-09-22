@@ -170,16 +170,11 @@ func TestTerminalViewAttachedEmptyShowsWaitingCopy(t *testing.T) {
 	}
 }
 
-// TestTerminalViewDoesNotReplayPreAttachOutput proves attach records the
-// ring's CURRENT total-written as its offset: bytes already sitting in the
-// ring before attach must never reach the emulator — the ticket's explicit
-// "output produced before attaching is not replayed."
-//
-// MUTATION EVIDENCE: change openTerminal to seed m.termOff at 0 instead of
-// e.Output.Total() and this test fails — the pre-attach line shows up in
-// the attached frame instead of "waiting for output…".
-func TestTerminalViewDoesNotReplayPreAttachOutput(t *testing.T) {
-	const cmdName = "termfixture-noreplay"
+// TestTerminalViewReplaysPreAttachOutput proves attach replays what the ring
+// already holds: a counter attached at 16 shows 1 through 16, not a blank
+// screen waiting for 17.
+func TestTerminalViewReplaysPreAttachOutput(t *testing.T) {
+	const cmdName = "termfixture-replay"
 	dir := t.TempDir()
 	writeFixtureManifest(t, dir, cmdName)
 	ring := livework.NewRing(0)
@@ -193,11 +188,50 @@ func TestTerminalViewDoesNotReplayPreAttachOutput(t *testing.T) {
 	p.drain(300 * time.Millisecond)
 
 	out := p.model.View()
-	if strings.Contains(out, "predates the attach") {
-		t.Errorf("attached frame replayed pre-attach output, want none: %q", out)
+	if !strings.Contains(out, "predates the attach") {
+		t.Errorf("attached frame is missing pre-attach output: %q", out)
 	}
-	if !strings.Contains(out, "waiting for output…") {
-		t.Errorf("attached frame with only pre-attach output should still read as empty: %q", out)
+	if strings.Contains(out, "waiting for output…") {
+		t.Errorf("attached frame with pre-attach output still reads as empty: %q", out)
+	}
+
+	if _, err := ring.Write([]byte("this line follows the attach\r\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	p.drain(300 * time.Millisecond)
+	out = p.model.View()
+	if n := strings.Count(out, "predates the attach"); n != 1 {
+		t.Errorf("pre-attach line appears %d times after the next poll, want 1: %q", n, out)
+	}
+	if !strings.Contains(out, "follows the attach") {
+		t.Errorf("attached frame is missing post-attach output: %q", out)
+	}
+}
+
+// TestTerminalViewReplayOfLappedRingStartsAtWholeLine proves a ring that has
+// overwritten its oldest bytes replays from the first complete line, so a
+// line cut in half by the wrap never reaches the emulator.
+func TestTerminalViewReplayOfLappedRingStartsAtWholeLine(t *testing.T) {
+	const cmdName = "termfixture-lapped"
+	dir := t.TempDir()
+	writeFixtureManifest(t, dir, cmdName)
+	ring := livework.NewRing(24)
+	// 26 bytes into a 24-byte ring: the first line loses its first 2 bytes.
+	if _, err := ring.Write([]byte("xxxxxxPARTIAL\r\nwhole\r\nok\r\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	registerFakePTYEntry(t, cmdName, ring, &termRecorder{})
+
+	p := newAttachablePump(t, dir, 100, 24)
+	p.apply(keyMsg("a"))
+	p.drain(300 * time.Millisecond)
+
+	out := p.model.View()
+	if strings.Contains(out, "PARTIAL") {
+		t.Errorf("replay kept the line the wrap cut in half: %q", out)
+	}
+	if !strings.Contains(out, "whole") {
+		t.Errorf("replay dropped the first whole line: %q", out)
 	}
 }
 

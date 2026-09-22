@@ -99,10 +99,9 @@ func (r *Ring) bytesLocked() []byte {
 // Since returns the bytes written after off — a position in the ring's
 // total-written-byte count, as returned by a previous Since or by Total —
 // plus the offset to pass on the next call. This is the terminal view's
-// (admin-3rgp.65) incremental read: attach records Total() so nothing
-// written before it is ever replayed, and each poll calls Since(lastOff) to
-// feed the emulator only what is new, never the whole ring, and never the
-// same bytes twice.
+// (admin-3rgp.65) read: attach calls Since(0) to replay everything still
+// held, and each poll calls Since(lastOff) to feed the emulator only what is
+// new, never the same bytes twice.
 //
 // off is clamped up to the oldest byte the ring still holds when the ring
 // has lapped it since the caller last read — the returned next reports that
@@ -141,7 +140,7 @@ func (r *Ring) Since(off int64) (b []byte, next int64) {
 }
 
 // Total returns the number of bytes ever written to the ring, monotonic and
-// never reset — the terminal view's attach-time replay offset (see Since).
+// never reset.
 func (r *Ring) Total() int64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()

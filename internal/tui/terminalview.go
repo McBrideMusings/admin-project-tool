@@ -12,8 +12,8 @@
 //     callback can only record which handle was requested; work.go's
 //     attachEntry reads that back and does the actual transition.
 //   - the emulator lifecycle: creating it sized to the body region on
-//     attach, feeding it only bytes written since attach (never a replay —
-//     the log file holds history), and tearing it down on detach.
+//     attach, replaying what the ring still holds, then feeding it each
+//     poll's new bytes, and tearing it down on detach.
 //   - the body renderer: dashed rule, then either "waiting for output…" or
 //     the emulator's own grid — view.go routes here instead of the
 //     list/detail layout while attached. The identity/log-path row above it
@@ -21,6 +21,7 @@
 package tui
 
 import (
+	"bytes"
 	"strings"
 	"sync"
 	"time"
@@ -84,23 +85,35 @@ func termTickCmd() tea.Cmd {
 }
 
 // openTerminal transitions m into the attached state over e: sizes the
-// emulator to the body region, records the ring offset so nothing written
-// before this moment is ever replayed (the log file holds that), and resizes
-// the child's own pty to match. Called only from attachEntry, after
-// livework.Default.Attach has already succeeded for e.
+// emulator to the body region, replays everything the ring still holds into
+// it so the screen shows what the child already printed, records the ring
+// offset that replay reached, and resizes the child's own pty to match.
+// Called only from attachEntry, after livework.Default.Attach has already
+// succeeded for e.
 func (m Model) openTerminal(e *livework.Entry) Model {
 	m.termAttached = true
 	m.termEntryID = e.ID
 	m.termPTYID = e.Handle
 	m.termHasOutput = false
-	if e.Output != nil {
-		m.termOff = e.Output.Total()
-	} else {
-		m.termOff = 0
-	}
+	m.termOff = 0
 	rows, cols := m.termRegion()
 	m.termRows, m.termCols = rows, cols
 	m.termEmu = vt.NewEmulator(cols, rows)
+	if e.Output != nil {
+		held, next := e.Output.Since(0)
+		// A ring that has lapped starts mid-line, possibly mid-escape
+		// sequence; start the replay at the first whole line instead.
+		if next > int64(len(held)) {
+			if i := bytes.IndexByte(held, '\n'); i >= 0 {
+				held = held[i+1:]
+			}
+		}
+		if len(held) > 0 {
+			_, _ = m.termEmu.Write(held)
+			m.termHasOutput = true
+		}
+		m.termOff = next
+	}
 	if e.Ops.Resize != nil {
 		_ = e.Ops.Resize(rows, cols)
 	}
