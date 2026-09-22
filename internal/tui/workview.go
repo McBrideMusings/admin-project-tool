@@ -470,7 +470,10 @@ func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 			fields = bandFieldsCommand(wd, w)
 		}
 		out = append(out, fields...)
-		avail := maxi(h-1-len(fields), 1)
+		// The same dashed rule the attached view draws between its field
+		// rows and the output (terminalview.go's renderTerminalBody).
+		out = append(out, faintStyle.Render(strings.Repeat("╌", w)))
+		avail := maxi(h-2-len(fields), 1)
 		var tail []string
 		if live.Output != nil {
 			tail = ringTailLines(live.Output, maxi(w-1, 1))

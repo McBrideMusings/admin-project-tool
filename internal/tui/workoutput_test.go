@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 )
 
@@ -50,6 +51,30 @@ func TestRenderWorkBandTailsLiveRingBottomAligned(t *testing.T) {
 		if strings.TrimSpace(out[i]) != "" {
 			t.Errorf("row %d between the field block and the tail = %q, want blank (the bottom-align gap)", i, out[i])
 		}
+	}
+}
+
+// TestRenderWorkBandRuleSeparatesFieldsFromTail proves the open band draws
+// the attached view's dashed rule on the row right after its field rows —
+// here a command's log row and one url row — with the tail below it.
+func TestRenderWorkBandRuleSeparatesFieldsFromTail(t *testing.T) {
+	freshLivework(t)
+	ring := livework.NewRing(4096)
+	ring.Write([]byte("tail line\n"))
+	wd := &workRowData{
+		cmdName: "dev", cmdKind: "shell",
+		urls: []frame.URLEntry{{Label: "local", URL: "http://localhost:1"}},
+		live: &livework.Entry{ID: "dev-rule", StartedAt: time.Now(), State: livework.StateRunning, Output: ring},
+	}
+	out := workTestModel(nil).renderWorkBand(rowItem{kind: rowCommand, work: wd}, 60, 12)
+	if !strings.Contains(out[1], "log") || !strings.Contains(out[2], "url") {
+		t.Fatalf("rows 1-2 = %q, want the log and url field rows", out[1:3])
+	}
+	if got := strings.TrimSpace(stripANSI(out[3])); got != strings.Repeat("╌", 60) {
+		t.Errorf("row 3 = %q, want a full-width dashed rule", got)
+	}
+	if strings.TrimSpace(out[11]) != "tail line" {
+		t.Errorf("last row = %q, want the tail", out[11])
 	}
 }
 
