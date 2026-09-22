@@ -17,17 +17,20 @@
 package kinds
 
 import (
-	"bytes"
+	"bufio"
 	"fmt"
+	"image/color"
 	"io"
 	"log"
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/vt"
 	"github.com/creack/pty"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
@@ -36,104 +39,23 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// logAnnounceMaxScan bounds how much of the pty stream logAnnounceSniffer
-// keeps around while it hasn't yet found luahost.LogAnnouncePrefix — enough
-// to hold the announce line plus a healthy margin for whatever else the
-// child prints before it (a multi-line command's earlier steps), without
-// letting the buffer grow unboundedly for a command that runs a long time
-// with `[logging] log = false`.
-const logAnnounceMaxScan = 8192
-
-// logAnnounceSniffer is a Write-only io.Writer teed into a hosted-pty
-// child's output stream (recordHostedPTYWork's io.Copy) alongside the real
-// Ring buffer, whose only job is to notice the child's own
-// "→ wrote: <path>" line and record it on the live-work entry. The child is
-// a separate OS process (StartHostedPTY re-execs this binary), so its
-// materialized log path only exists in ITS OWN output — this handshake, not
-// a parent-side guess, is the only way the announced path and the path the
-// child actually writes to are guaranteed to be the same file.
-//
-// It buffers across Write calls because io.Copy's chunk boundaries can
-// split the announce line (or the ANSI escapes around it) arbitrarily; once
-// found is true, every later Write is a no-op so a second announce (a
-// second step in the same command, appending to the SAME file per
-// admin-rc82's "one file per command invocation") doesn't re-fire.
-type logAnnounceSniffer struct {
-	id    string
-	buf   []byte
-	found bool
-}
-
-func (s *logAnnounceSniffer) Write(p []byte) (int, error) {
-	if s.found {
-		return len(p), nil
-	}
-	s.buf = append(s.buf, p...)
-	if len(s.buf) > logAnnounceMaxScan {
-		s.buf = s.buf[len(s.buf)-logAnnounceMaxScan:]
-	}
-	if path, ok := luahost.ParseLogAnnounce(string(s.buf)); ok {
-		s.found = true
-		livework.Default.SetLogPath(s.id, path)
-	}
-	return len(p), nil
-}
-
-// announceFilterWriter drops the child's own log-announce line ("→ wrote:
-// <path>") from what reaches a hosted entry's Output ring — logAnnounceSniffer
-// (above) already parses that exact line off the same pty stream to learn
-// the log path, so forwarding it into the ring the detail pane reads as
-// "the process's own output" would just duplicate a fact the pane already
-// prints from the entry's own LogPath field. It buffers per-line rather
-// than per-Write-chunk for the same reason logAnnounceSniffer does: a
-// chunk boundary can split the announce line (or the ANSI escapes around
-// it) arbitrarily, so a line is only judged once a newline completes it.
-// An unterminated tail is capped at logAnnounceMaxScan for the same
-// unbounded-growth reason logAnnounceSniffer caps its own scan buffer, and
-// Flush writes out whatever tail remains once the child's stream ends.
-type announceFilterWriter struct {
-	dst io.Writer
-	buf []byte
-}
-
-func (a *announceFilterWriter) Write(p []byte) (int, error) {
-	a.buf = append(a.buf, p...)
-	for {
-		i := bytes.IndexByte(a.buf, '\n')
-		if i < 0 {
-			if len(a.buf) > logAnnounceMaxScan {
-				keep := len(a.buf) - logAnnounceMaxScan
-				if _, err := a.dst.Write(a.buf[:keep]); err != nil {
-					return len(p), err
-				}
-				a.buf = a.buf[keep:]
-			}
-			break
+// readLogAnnounce records the first log path a hosted child reports over its
+// luahost.LogAnnounceFDEnv pipe on entry id, then drains the rest — a later
+// step, or the end-of-run announce, names the same file — until the child
+// and everything it spawned have closed the write end. The child is a
+// separate OS process (StartHostedPTY re-execs this binary), so its
+// materialized log path only exists on its side; this pipe is how the path
+// the dashboard shows and the file the child writes are the same.
+func readLogAnnounce(id string, r *os.File) {
+	defer r.Close()
+	sc := bufio.NewScanner(r)
+	recorded := false
+	for sc.Scan() {
+		if path := strings.TrimSpace(sc.Text()); path != "" && !recorded {
+			recorded = true
+			livework.Default.SetLogPath(id, path)
 		}
-		line := a.buf[:i+1]
-		if _, ok := luahost.ParseLogAnnounce(string(line)); !ok {
-			if _, err := a.dst.Write(line); err != nil {
-				return len(p), err
-			}
-		}
-		a.buf = a.buf[i+1:]
 	}
-	return len(p), nil
-}
-
-// Flush writes out any buffered, not-yet-newline-terminated tail — called
-// once the child's pty stream has reached EOF/EIO, so a final partial line
-// (the ordinary case: most processes' last write is a complete line, but a
-// killed child's isn't) still reaches the ring instead of being silently
-// dropped.
-func (a *announceFilterWriter) Flush() {
-	if len(a.buf) == 0 {
-		return
-	}
-	if _, ok := luahost.ParseLogAnnounce(string(a.buf)); !ok {
-		_, _ = a.dst.Write(a.buf)
-	}
-	a.buf = nil
 }
 
 // HostedNoFrameEnv marks the hosted pty child's environment so
@@ -242,11 +164,19 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 		liveID = multiTargetLiveID(entryID, action, args)
 	}
 
+	// The child reports its log path on this pipe (fd 3 on its side, named
+	// by luahost.LogAnnounceFDEnv) rather than in its output.
+	announceR, announceW, err := os.Pipe()
+	if err != nil {
+		return fmt.Errorf("command %q: log announce pipe: %w", name, err)
+	}
 	c := exec.Command(selfExecutable(), hostedReentryArgs(name, args)...)
+	c.ExtraFiles = []*os.File{announceW}
 	c.Env = append(os.Environ(),
 		HostedColorProfileEnv+"="+strconv.Itoa(int(lipgloss.ColorProfile())),
 		HostedDarkBackgroundEnv+"="+strconv.FormatBool(lipgloss.HasDarkBackground()),
 		HostedNoFrameEnv+"=1",
+		luahost.LogAnnounceFDEnv+"=3",
 	)
 	c.Env = append(c.Env, env...)
 	// Setsid (pty.StartWithSize sets this unconditionally on the SysProcAttr
@@ -259,7 +189,11 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 	// session leader returns EPERM, which would fail every hosted dispatch.
 	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	ptmx, err := pty.Start(c)
+	// The child holds its own copy of the write end; closing ours is what
+	// lets readLogAnnounce see EOF once the child's copies are gone.
+	_ = announceW.Close()
 	if err != nil {
+		_ = announceR.Close()
 		return fmt.Errorf("command %q: starting hosted pty: %w", name, err)
 	}
 	if rows <= 0 || cols <= 0 {
@@ -267,7 +201,7 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 	}
 	frame.SetWinsize(ptmx.Fd(), rows, cols)
 
-	recordHostedPTYWork(liveID, m, name, args, rows, cols, env, c, ptmx)
+	recordHostedPTYWork(liveID, m, name, args, rows, cols, env, c, ptmx, announceR)
 	return nil
 }
 
@@ -277,8 +211,8 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 // recordLiveWork's launcher-backed entry does — the only visible
 // difference to a caller is whether Via is empty. args, rows/cols, and env
 // are kept so Retry can re-run StartHostedPTY exactly as it ran the first
-// time.
-func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args []string, rows, cols int, env []string, c *exec.Cmd, ptmx *os.File) {
+// time. announce is the read end of the child's log-path pipe.
+func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args []string, rows, cols int, env []string, c *exec.Cmd, ptmx, announce *os.File) {
 	// killed is set by Ops.Kill before it closes ptmx, so the wait goroutine
 	// below knows the resulting "signal: killed" c.Wait() error is expected
 	// and must not overwrite the StateExited Kill already set. exited is set
@@ -294,12 +228,24 @@ func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args
 	// whatever the OS happens to return for that.
 	var closed atomic.Bool
 
+	// screen is the child's terminal: it answers the child's terminal
+	// queries — bubbletea's package init asks for the background color
+	// before main, so no environment variable can pre-empt it, and an
+	// unanswered query costs termenv's 5s OSCTimeout on every run. Its
+	// background reports the dashboard's own terminal's, light or dark.
+	screen := vt.NewSafeEmulator(cols, rows)
+	if !lipgloss.HasDarkBackground() {
+		screen.SetDefaultBackgroundColor(color.White)
+	}
+	go func() { _, _ = io.Copy(ptmx, screen) }()
+
 	e := &livework.Entry{
 		ID:     entryID,
 		Name:   entryID,
 		Kind:   "hosted-pty",
 		Handle: ptmx.Name(),
 		Output: livework.NewRing(0),
+		Screen: screen,
 	}
 	e.Ops = livework.Ops{
 		Kill: func() error {
@@ -349,13 +295,16 @@ func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args
 				return fmt.Errorf("command %q: pty closed", name)
 			}
 			frame.SetWinsize(ptmx.Fd(), rows, cols)
+			screen.Resize(cols, rows)
 			return nil
 		},
 	}
 	if err := livework.Default.Add(e); err != nil {
 		log.Printf("recordHostedPTYWork: %v", err)
+		_ = announce.Close()
 		return
 	}
+	go readLogAnnounce(e.ID, announce)
 
 	// Ordering is load-bearing (admin-3rgp.61's Cause A): the pty's output
 	// queue only drains when something reads the master, and on macOS the
@@ -365,10 +314,9 @@ func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args
 	// early truncates the child's tail output; never draining at all is the
 	// exact hang that failed Verify.
 	go func() {
-		sniffer := &logAnnounceSniffer{id: e.ID}
-		filter := &announceFilterWriter{dst: e.Output}
-		_, copyErr := io.Copy(io.MultiWriter(filter, sniffer), ptmx)
-		filter.Flush()
+		_, copyErr := io.Copy(io.MultiWriter(e.Output, screen), ptmx)
+		// Ends the reply copy above; the grid stays readable after Close.
+		_ = screen.Close()
 		// On Linux the master read returns EIO (not io.EOF) once the last
 		// slave closes — that is normal end-of-output, not a failure, so it
 		// must not be surfaced as a wait error.

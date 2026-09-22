@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,37 +39,40 @@ import (
 // this constant, never 0.
 const RetainUnset = -1
 
-// LogAnnouncePrefix is the literal text materialize() writes to Stderr,
-// dimmed, immediately before the log path — the single format string both
-// the producer (this file) and a consumer reading a child process's own
-// stderr (internal/kinds/hostedpty.go's pty sniffer, which cannot call
-// LogFile() directly because the child is a separate OS process) agree on.
+// LogAnnouncePrefix is the literal text announce writes to Stderr, dimmed,
+// immediately before the log path, so a person running a command in a
+// terminal sees where its log went.
 const LogAnnouncePrefix = "→ wrote: "
 
-// ParseLogAnnounce scans line (ANSI escapes tolerated, and possibly a
-// larger buffer than just the one line — the sniffer scans an accumulated
-// chunk, since io.Copy's boundaries can split the announce line and later
-// output can follow it in the same buffer before the scan runs) for the
-// announce prefix and returns the path that follows, up to the next
-// newline/carriage return or the end of the buffer, whichever comes first.
-// ok is false when the prefix is not present at all. Takes the LAST
-// occurrence so a re-scanned, growing buffer always reports the most recent
-// announce line.
-func ParseLogAnnounce(line string) (path string, ok bool) {
-	plain := logformat.AnsiEscapeRe.ReplaceAllString(line, "")
-	idx := strings.LastIndex(plain, LogAnnouncePrefix)
-	if idx < 0 {
-		return "", false
+// LogAnnounceFDEnv names the file descriptor a hosted child writes its log
+// path to, one path per line, instead of printing the announce line.
+// internal/kinds/hostedpty.go sets it and reads the other end of the pipe,
+// so the dashboard learns the path without parsing the child's output.
+const LogAnnounceFDEnv = "ADMIN_LOG_ANNOUNCE_FD"
+
+// announceFD is the pipe LogAnnounceFDEnv names, opened once and never
+// closed (os.NewFile's finalizer would close the descriptor if a second
+// *os.File for it were dropped). nil when the variable is unset or invalid.
+var announceFD = sync.OnceValue(func() *os.File {
+	raw, ok := os.LookupEnv(LogAnnounceFDEnv)
+	if !ok {
+		return nil
 	}
-	rest := plain[idx+len(LogAnnouncePrefix):]
-	if i := strings.IndexAny(rest, "\r\n"); i >= 0 {
-		rest = rest[:i]
+	fd, err := strconv.Atoi(raw)
+	if err != nil || fd < 3 {
+		return nil
 	}
-	rest = strings.TrimSpace(rest)
-	if rest == "" {
-		return "", false
+	return os.NewFile(uintptr(fd), "log-announce")
+})
+
+// announce reports the log path: over LogAnnounceFDEnv's pipe when a
+// dashboard hosts this process, otherwise as a dimmed line on Stderr.
+func (c *LogContext) announce() {
+	if f := announceFD(); f != nil {
+		fmt.Fprintln(f, c.logFile)
+		return
 	}
-	return rest, true
+	fmt.Fprintf(c.Stderr, "\033[2m%s%s\033[0m\n", LogAnnouncePrefix, c.logFile)
 }
 
 // pendingContext mirrors admin_lib/core.py's module-level _pending_context:
@@ -321,7 +325,7 @@ func (c *LogContext) AnnounceEnd() {
 		return
 	}
 	c.announcedEnd = true
-	fmt.Fprintf(c.Stderr, "\033[2m%s%s\033[0m\n", LogAnnouncePrefix, c.logFile)
+	c.announce()
 }
 
 // Write appends text (ANSI-stripped, newline-terminated) to the active log
@@ -398,7 +402,7 @@ func (c *LogContext) materializeLocked() {
 		}
 	}
 	c.active = true
-	fmt.Fprintf(c.Stderr, "\033[2m%s%s\033[0m\n", LogAnnouncePrefix, c.logFile)
+	c.announce()
 }
 
 // pruneLogsLocked deletes older same-stem logs beyond retain, matching

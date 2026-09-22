@@ -13,7 +13,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/vt"
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/bd"
@@ -553,18 +552,15 @@ type Model struct {
 	quitHosted []*livework.Entry
 
 	// Terminal view (admin-3rgp.65): attaching to a pty-addressed live-work
-	// row replaces the whole tab with a live terminal emulator over its
-	// pty rather than the list/detail layout — see terminalview.go.
-	// termAttached is the switch view.go and handleKey both read; the rest
-	// describe the one open view, all zeroed together by detachTerminal.
-	termAttached  bool
-	termEntryID   string
-	termPTYID     string
-	termEmu       *vt.Emulator
-	termOff       int64 // the ring offset last fed to termEmu — see livework.Ring.Since
-	termHasOutput bool  // true once anything has been fed to termEmu — drives "waiting for output…"
-	termRows      int
-	termCols      int
+	// row replaces the whole tab with that entry's Screen rather than the
+	// list/detail layout — see terminalview.go. termAttached is the switch
+	// view.go and handleKey both read; the rest describe the one open view,
+	// all zeroed together by detachTerminal.
+	termAttached bool
+	termEntryID  string
+	termPTYID    string
+	termRows     int
+	termCols     int
 }
 
 // manifestDir is the directory to read admin.toml, and anything co-located with
@@ -1320,9 +1316,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.termAttached {
 			rows, cols := m.termRegion()
 			m.termRows, m.termCols = rows, cols
-			if m.termEmu != nil {
-				m.termEmu.Resize(cols, rows)
-			}
 			if e := m.termEntry(); e != nil && e.Ops.Resize != nil {
 				_ = e.Ops.Resize(rows, cols)
 			}
@@ -1675,14 +1668,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case termTickMsg:
 		if !m.termAttached {
 			return m, nil
-		}
-		if e := m.termEntry(); e != nil && e.Output != nil && m.termEmu != nil {
-			b, next := e.Output.Since(m.termOff)
-			if len(b) > 0 {
-				_, _ = m.termEmu.Write(b)
-				m.termHasOutput = true
-			}
-			m.termOff = next
 		}
 		return m, termTickCmd()
 
