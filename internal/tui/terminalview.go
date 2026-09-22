@@ -22,6 +22,7 @@ package tui
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -99,6 +100,12 @@ func (m Model) openTerminal(e *livework.Entry) Model {
 	rows, cols := m.termRegion()
 	m.termRows, m.termCols = rows, cols
 	m.termEmu = vt.NewEmulator(cols, rows)
+	// The emulator writes its replies to the child's terminal queries
+	// (ESC[6n, OSC 11 and the like) into an unbuffered pipe, and Write
+	// blocks until something reads it. Nothing sends those replies to the
+	// child — a replayed query's reply would reach it as stale input — so
+	// drain them until detachTerminal closes the emulator.
+	go func(emu *vt.Emulator) { _, _ = io.Copy(io.Discard, emu) }(m.termEmu)
 	if e.Output != nil {
 		held, next := e.Output.Since(0)
 		// A ring that has lapped starts mid-line, possibly mid-escape
@@ -126,6 +133,9 @@ func (m Model) detachTerminal() Model {
 	m.termAttached = false
 	m.termEntryID = ""
 	m.termPTYID = ""
+	if m.termEmu != nil {
+		_ = m.termEmu.Close()
+	}
 	m.termEmu = nil
 	m.termOff = 0
 	m.termHasOutput = false
