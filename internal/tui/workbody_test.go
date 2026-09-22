@@ -112,6 +112,40 @@ func TestWorkBodyOneLayoutAtEveryGeometry(t *testing.T) {
 	}
 }
 
+// TestWorkBodyBandCollapsesUnlessLive proves the band is only its title rule,
+// on the body's last row, for a row that is not going — exited, failed, or
+// never started — and opens to bandH rows for a running one.
+func TestWorkBodyBandCollapsesUnlessLive(t *testing.T) {
+	const w, h = 96, 30
+	for _, tc := range []struct {
+		state     livework.State
+		wantTitle int
+	}{
+		{livework.StateRunning, h - bandH(h)},
+		{livework.StateWaiting, h - bandH(h)},
+		{livework.StateExited, h - 1},
+		{livework.StateFailed, h - 1},
+	} {
+		mm := buildRunningWorkModelAt(t, w, h)
+		livework.Default.SetState("command-test", tc.state, nil)
+
+		out, _ := mm.renderWorkBody(w, h)
+		titleIdx := -1
+		for i, l := range out {
+			if strings.Contains(l, "── ") && strings.Contains(stripANSI(l), "command-test") {
+				titleIdx = i
+				break
+			}
+		}
+		if titleIdx != tc.wantTitle {
+			t.Errorf("%s: band title at row %d, want %d", tc.state, titleIdx, tc.wantTitle)
+		}
+		if tc.wantTitle == h-1 && strings.Contains(strings.Join(out, "\n"), "test_b ... ok") {
+			t.Errorf("%s: collapsed band still shows output", tc.state)
+		}
+	}
+}
+
 // TestWorkBodyBandIsFixedHeightAtBottom proves a short list does not grow
 // the band: buildRunningWorkModelAt's fixture produces 5 list rows at 96x30,
 // well short of the 30-bandH(30)=17 the list is given, and the band still

@@ -160,11 +160,10 @@ func (m Model) termEntry() *livework.Entry {
 }
 
 // termRegion is the pty size the terminal view sizes both the emulator and
-// the child's own pty to: the body content height minus the dashed-rule
-// line, and the full width minus the one leading space every rendered line
-// carries. The identity/log-path row lives in the top chrome now (see
-// attachBreadcrumb), not inside this budget — admin-3rgp.72.17 moved it out
-// of the body so the child gets that row back too. Sizing the CHILD's pty to
+// the child's own pty to: the body content height minus the field block
+// (termFields) and the dashed-rule line, and the full width minus the one
+// leading space every rendered line carries. The identity row lives in the
+// top chrome (attachBreadcrumb), outside this budget. Sizing the CHILD's pty to
 // exactly this — not the whole terminal — is what keeps its own pinned
 // footer inside the visible grid instead of scrolling off: from the child's
 // point of view this region IS its terminal, so its footer pins to the
@@ -175,7 +174,7 @@ func (m Model) termRegion() (rows, cols int) {
 	if contentH < 1 {
 		contentH = 1
 	}
-	rows = contentH - 1 // dashed rule
+	rows = contentH - len(m.termFields(width)) - 1 // field block, dashed rule
 	if rows < 1 {
 		rows = 1
 	}
@@ -242,30 +241,23 @@ func encodeKey(msg tea.KeyMsg) []byte {
 
 // attachBreadcrumb renders the row the tab bar gives up while attached (see
 // view.go's frameRaw): what is attached on the left — verbatim "attached",
-// the state glyph, the entry's name, the state word and elapsed — and the
-// absolute log path flush right. Reuses commandGlyph/stateColor/elapsedStr
-// (workview.go) rather than a second glyph/duration mapping, and fitPath
-// (also workview.go, ported from the design prototype) for the same
-// mid-segment elision every other absolute path on the Work tab gets. This
-// is the one line that must always agree with the emulator grid below it,
-// since both read the same live Entry on every frame — see termEntry.
-//
-// The path lives here rather than in a footer under the output — a child's
-// output is what scrolls, so anything pinned beneath it either floats in
-// dead space when the output is short or gets pushed off when it is long.
-// At the top it is neither (docs/spikes/admin-tui-desktop/variants.go's
-// attachCrumb, the design prototype this ports).
+// the state glyph, the entry's name, the state word and elapsed. Reuses
+// commandGlyph/stateColor/elapsedStr (workview.go) rather than a second
+// glyph/duration mapping. This is the one line that must always agree with
+// the emulator grid below it, since both read the same live Entry on every
+// frame — see termEntry. The log path and urls get rows of their own under
+// it (termFields), at the top rather than under the output: a child's output
+// is what scrolls, so anything pinned beneath it either floats in dead space
+// when the output is short or gets pushed off when it is long.
 func (m Model) attachBreadcrumb(width int) string {
 	e := m.termEntry()
 	name := m.termEntryID
 	var state livework.State
 	started := time.Now()
-	logPath := ""
 	if e != nil {
 		name = e.Name
 		state, _ = livework.Default.State(e.ID)
 		started = e.StartedAt
-		logPath = e.LogPath
 	}
 	left := []seg{
 		{t: "attached", fg: cFg},
@@ -274,31 +266,46 @@ func (m Model) attachBreadcrumb(width int) string {
 		{t: " " + name, fg: cFg},
 		{t: "  ·  " + string(state) + "  ·  " + elapsedStr(time.Since(started)), fg: cFaint},
 	}
-	// The path's budget is computed exactly, not floored, so composeLR never
-	// overflows width-1 and the caller's outer truncateLine never has to cut
-	// mid-path — that produces the exact corruption fitPath exists to avoid
-	// ("/Users/pierce/Proj…tool/"). Too little room for a legible path (a
-	// long name on a narrow terminal) drops the path entirely instead.
 	inner := width - 1 // the leading space this line always carries
-	lw := segsWidth(left)
-	var right []seg
-	if logPath != "" {
-		if budget := inner - lw - 1; budget >= 4 {
-			right = []seg{{t: fitPath(logPath, budget), fg: cFaint}}
-		}
+	return " " + renderSegs(composeLR(left, nil, inner), nil)
+}
+
+// termFields is the attached view's field block: the same rows the docked
+// band shows under its title for this entry — a command's log path and one
+// row per configured url, or a worker's five rows. It finds them by matching
+// the attached entry to its Work row, with collapse off so a hidden target
+// row still counts. An entry with no row falls back to its log path alone.
+func (m Model) termFields(width int) []string {
+	if !m.termAttached {
+		return nil
 	}
-	return " " + renderSegs(composeLR(left, right, inner), nil)
+	all := m
+	all.workCollapsed = false
+	for _, r := range all.workRows() {
+		e := bandEntry(r)
+		if e == nil || e.ID != m.termEntryID {
+			continue
+		}
+		if e.Worker != nil {
+			return bandFieldsWorker(e, width)
+		}
+		return bandFieldsCommand(r.work, width)
+	}
+	if e := m.termEntry(); e != nil && e.LogPath != "" {
+		return bandFieldsCommand(&workRowData{logPath: e.LogPath}, width)
+	}
+	return nil
 }
 
 // renderTerminalBody is view.go's full-tab replacement for the list/detail
-// layout while attached: the dashed rule, then either the attached-empty
-// copy or the emulator's own grid — never both, and never a second footer
-// implementation, since the grid IS the child's screen and the child pins
-// its own footer to the bottom of it (see termRegion). No header line here
-// any more — attachBreadcrumb (in the top chrome, replacing the tab bar)
-// carries that, so this is the child's alone, floor included.
+// layout while attached: the field block (termFields), the dashed rule, then
+// either the attached-empty copy or the emulator's own grid — never both,
+// and never a second footer implementation, since the grid IS the child's
+// screen and the child pins its own footer to the bottom of it (see
+// termRegion). The identity row is attachBreadcrumb, in the top chrome.
 func (m Model) renderTerminalBody(width, height int) ([]string, []hitTarget) {
 	lines := make([]string, 0, height)
+	lines = append(lines, m.termFields(width)...)
 	lines = append(lines, faintStyle.Render(strings.Repeat("╌", width)))
 
 	avail := height - len(lines)
