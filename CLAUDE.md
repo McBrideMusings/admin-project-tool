@@ -1,6 +1,6 @@
 # admin-project-tool
 
-Runs per-project tasks from a short `admin.toml` manifest plus a library of composable archetypes. The installed tool **interprets** `admin.toml` at runtime (ADR-0006) — a project commits only the manifest; the `admin` command (installed on PATH at `~/.admin/admin`) finds it by walking up from `$PWD`. `admin compile` packages a standalone `./admin` (a zipapp) for the rare case the tool isn't installed. See `docs/architecture/design.md` for the full architecture.
+Runs per-project tasks from a short `admin.toml` manifest plus a library of composable archetypes. The installed tool **interprets** `admin.toml` at runtime (ADR-0006) — a project commits only the manifest; the `admin` command (installed on PATH at `~/.admin/admin`) finds it by walking up from `$PWD`. `admin compile` builds a standalone `./admin` — a full copy of the Go binary with the project's resolved manifest embedded (`internal/compiledinfo`) — for the rare case the tool isn't installed; the Python `admin compile` (`admin_lib/compile.py`, a zipapp) is unreachable through the `admin` command now that the Go verb is registered, but is still what `admin-py compile` runs directly. See `docs/architecture/design.md` for the full architecture.
 
 ## `admin.toml` is NOT committed — this overrides the README
 
@@ -30,7 +30,7 @@ Some `admin.toml` files embed secrets today, which is a second and independent r
 - **`detectors/`** — heuristics that suggest archetypes from a project's file layout. (The data dir — the loader is `admin_lib/detectors.py`.)
 - **`install.sh`** — builds the Go binary and installs it as `~/.admin/admin`, installs the Python interpreter alongside it as `~/.admin/admin-py`, copies (or links) `admin_lib` + the `archetypes`/`detectors` data dirs, and puts `~/.admin` on PATH so `admin` runs from any project. The binary is recompiled on every run including `--link`, since nothing else recompiles Go.
 
-**`admin` on PATH is the Go binary; `admin-py` is the outgoing Python one.** admin-py exists only for what Go has not absorbed yet — the `new` and `compile` verbs, and six action kinds (`command`, `docker`, `file`, `pick`, `python`, `python-script`) that 10 of 51 local projects still declare. Tracked by `admin-3rgp.54` and `admin-3rgp.55`, which block the deletion ticket `admin-3rgp.30`. Do not add callers of `admin-py`.
+**`admin` on PATH is the Go binary; `admin-py` is the outgoing Python one.** admin-py exists only for what Go has not absorbed yet — the `new` verb, and six action kinds (`command`, `docker`, `file`, `pick`, `python`, `python-script`) that 10 of 51 local projects still declare. A manifest declaring one of the six unported kinds fails at `admin check`/dispatch with an unknown-kind error naming it, on the Go binary and inside a compiled artifact alike — nothing routes those to admin-py. Tracked by `admin-3rgp.54` and `admin-3rgp.55`, which block the deletion ticket `admin-3rgp.30`. Do not add callers of `admin-py`.
 
 ## Design principles (don't violate)
 
@@ -70,9 +70,9 @@ Tests that exercise full dispatch write a temp `admin.toml` and run it through `
 | Run full test suite | `go run . test`, or the PATH `admin test` |
 | Build a standalone `./admin` for a project | `admin compile [DIR]` |
 
-Pre-install (or while developing the Python-only half of the tool — `new`, `compile`, and the six action kinds `admin-py` still owns), invoke the interpreter directly with `./admin-run <verb-or-command>` instead of the PATH `admin`. This repo's own `admin.toml` declares `kind = "workflow"` (admin-7wy5), which `admin-py`'s catalog does not know — so `./admin-run <anything>` in *this* repo now fails at manifest parse; validate it with the Go checker or the PATH `admin` instead.
+Pre-install (or while developing the Python-only half of the tool — `new` and the six action kinds `admin-py` still owns), invoke the interpreter directly with `./admin-run <verb-or-command>` instead of the PATH `admin`. This repo's own `admin.toml` declares `kind = "workflow"` (admin-7wy5), which `admin-py`'s catalog does not know — so `./admin-run <anything>` in *this* repo now fails at manifest parse; validate it with the Go checker or the PATH `admin` instead.
 
-**Never `./admin <cmd>` in this repo.** That name belongs to an `admin compile` zipapp, which embeds a *frozen copy* of the manifest — so it runs whatever every command meant on the day it was built, with no warning that it is doing so. Nothing regenerates it: `admin check` validates and `admin compile` is the only writer. Use the PATH `admin`, or `go run .`, here.
+**Never `./admin <cmd>` in this repo.** That name belongs to an `admin compile` artifact — a full copy of the Go binary with a *frozen copy* of the manifest embedded — so it runs whatever every command meant on the day it was built, with no warning that it is doing so (`--compiled-info` reports the source manifest and build time; nothing else does). Nothing regenerates it: `admin check` validates and `admin compile` is the only writer. Use the PATH `admin`, or `go run .`, here.
 
 ## Log bridge
 

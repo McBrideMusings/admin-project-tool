@@ -38,6 +38,11 @@ var (
 	dumpHeight int
 	dumpKeys   []string
 	dumpSettle time.Duration
+
+	// compiledInfoFlag backs --compiled-info: ADR-0006's frozen-manifest
+	// hazard, made visible from the artifact itself rather than left to a
+	// rule a human has to remember. See runCompiledInfo (cmd/compile.go).
+	compiledInfoFlag bool
 )
 
 var rootCmd = &cobra.Command{
@@ -50,6 +55,9 @@ var rootCmd = &cobra.Command{
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if compiledInfoFlag {
+			return runCompiledInfo(cmd)
+		}
 		if dumpFrame {
 			return runDumpFrame(cmd.Context())
 		}
@@ -431,6 +439,7 @@ func init() {
 	f.IntVar(&dumpHeight, "height", 40, "terminal height for --dump-frame")
 	f.StringSliceVar(&dumpKeys, "keys", nil, "keys to press before --dump-frame takes the frame, e.g. --keys tab,tab")
 	f.DurationVar(&dumpSettle, "settle", 2*time.Second, "how long --dump-frame waits for background loads")
+	f.BoolVar(&compiledInfoFlag, "compiled-info", false, "report which admin.toml this binary was compiled from and when, then exit")
 }
 
 // dashboardManifestRoot is where the dashboard should read admin.toml from.

@@ -3,10 +3,13 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/archetype"
+	"github.com/McBrideMusings/admin-project-tool/internal/compiledinfo"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/timing"
@@ -14,10 +17,8 @@ import (
 
 // reservedToolVerbs are the five verbs the project's design principle 5
 // ("Tool verbs are reserved") sets aside for the tool itself, listed here
-// independent of whether this Go binary has implemented all of them yet —
-// compile does not exist as a cmd/ subcommand at this ticket (admin-3rgp.30
-// and others port it later), but a manifest still may not claim its name:
-// reserving the word now is what makes adding the real command later a
+// independent of whether this Go binary implements each one: reserving a
+// word before its command exists is what makes adding the command a
 // non-breaking change instead of a silent shadow.
 var reservedToolVerbs = []string{"new", "check", "compile", "branch", "worktree"}
 
@@ -52,6 +53,31 @@ var reservedCmdVerbs = []string{"prs", "populate", "cmd", "help", "completion"}
 // here and it's broken" (a real error the caller should not swallow the same
 // way).
 func resolveProjectManifest(ctx context.Context, dir string) (m *manifest.Manifest, ok bool, err error) {
+	// A ./admin built by `admin compile` (cmd/compile.go) carries its
+	// resolved manifest frozen inside the binary (internal/compiledinfo) —
+	// that is the whole point of ADR-0006: the artifact runs standalone on a
+	// machine with no ~/.admin and no admin.toml beside it. dir is ignored
+	// entirely in that case, the same way the Python compiled zipapp ignores
+	// cwd and uses argv[0]'s directory as project_root
+	// (admin_lib/compile.py's _MAIN).
+	if compiledinfo.Embedded() {
+		return loadEmbeddedManifest()
+	}
+	return resolveProjectManifestFromDisk(ctx, dir)
+}
+
+// resolveProjectManifestFromDisk is resolveProjectManifest's body with no
+// compiledinfo short-circuit — always reads dir's admin.toml off disk,
+// regardless of whether the running binary itself carries an embedded
+// manifest. runCompile (cmd/compile.go) calls this one directly, never
+// resolveProjectManifest: `admin compile <DIR>` means "resolve DIR's own
+// admin.toml", and if that were ever run from inside a compiled artifact
+// (sourceDir baked in, compiledinfo.Embedded() also true — not possible
+// today, since build_binary never sets sourceDir on a compile-time build of
+// a compile-time build, but not a combination worth relying on staying
+// impossible), resolveProjectManifest's short-circuit would silently ignore
+// DIR and re-embed the artifact's own frozen manifest instead.
+func resolveProjectManifestFromDisk(ctx context.Context, dir string) (m *manifest.Manifest, ok bool, err error) {
 	// The nearest admin.toml at or above dir, not dir's own: a project's
 	// commands mean the same thing from any directory inside it, and the
 	// root the walk lands on is what every action's subprocess runs in.
@@ -85,6 +111,24 @@ func resolveProjectManifest(ctx context.Context, dir string) (m *manifest.Manife
 		return nil, true, err
 	}
 	return resolved, true, nil
+}
+
+// loadEmbeddedManifest decodes the manifest compiledinfo carries and points
+// its Root at the running executable's own directory — argv[0]'s absolute
+// path, not a symlink-resolved one, matching
+// admin_lib/compile.py's `os.path.dirname(os.path.abspath(sys.argv[0]))` —
+// so every action's `run` string executes relative to wherever this compiled
+// ./admin was actually placed, never the directory admin compile happened to
+// run in.
+func loadEmbeddedManifest() (*manifest.Manifest, bool, error) {
+	m, err := compiledinfo.Load()
+	if err != nil {
+		return nil, true, err
+	}
+	if abs, absErr := filepath.Abs(os.Args[0]); absErr == nil {
+		m.Root = filepath.Dir(abs)
+	}
+	return m, true, nil
 }
 
 // reservedVerbCollisions returns every command name m declares (custom or

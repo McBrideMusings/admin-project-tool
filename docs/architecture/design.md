@@ -17,8 +17,8 @@ Projects cluster into ~5 archetypes: **docker-to-unraid**, **stash-plugin**, **a
 1. **Manifest is truth.** `admin.toml` (committed) fully describes the admin script. `./admin` is a generated bundle from `admin.toml` + archetypes + `admin_lib`.
 2. **Archetypes are mixins, not monoliths.** A manifest can list multiple archetypes; the generator merges their command sets. This kills the "one template" bottleneck that forced `open-assistant` and `cctool` to be hand-maintained.
 3. **Manifest read live.** *(ADR-0006: was "strict regeneration".)* The interpreter reads `admin.toml` on each run; there is no generated artifact to keep idempotent or audit for drift. The loop is simply *edit manifest → run*.
-4. **Interpreter installed; standalone on demand.** *(ADR-0006: was "zero contributor install".)* A project commits only `admin.toml`; the installed `admin` (on PATH) runs it from anywhere inside the project. For a machine without the tool installed, `admin compile` emits a self-contained zipapp `./admin`.
-5. **Stdlib only.** Manifest parses via stdlib `tomllib` (3.11+). No third-party deps in the interpreter or compiled output. (`zipapp`, used by `compile`, is stdlib.)
+4. **Interpreter installed; standalone on demand.** *(ADR-0006: was "zero contributor install".)* A project commits only `admin.toml`; the installed `admin` (on PATH) runs it from anywhere inside the project. For a machine without the tool installed, `admin compile` emits a self-contained `./admin` — a full copy of the Go binary with the project's resolved manifest embedded.
+5. **Stdlib only.** Manifest parses via stdlib `tomllib` (3.11+). No third-party deps in the Python interpreter or its compiled output. The Go binary (including `admin compile`'s output) is stdlib-only except dependencies already in `go.mod`.
 6. **Composability over expressiveness.** The manifest is a short, flat declaration — not a DSL. If a project needs real logic, it drops a custom command as a shell string or, rarely, a small Python snippet the generator inlines verbatim.
 
 ## Manifest Format (`admin.toml`)

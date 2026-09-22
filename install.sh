@@ -9,9 +9,9 @@
 # is rebuilt on EVERY run, --link included.
 #
 # `admin-py` is the outgoing Python interpreter, installed alongside it. It
-# exists only to cover the verbs the Go binary does not carry yet — `new` and
-# `compile` — and is deleted along with admin_lib/ when admin-3rgp.30 closes.
-# Do not add callers.
+# exists only to cover what the Go binary does not carry yet — the `new` verb
+# plus six action kinds — and is deleted along with admin_lib/ when
+# admin-3rgp.30 closes. Do not add callers.
 #
 # Default installs a COPY of the Python half, so edits to this source tree do
 # not affect admin-py until the next install. --link symlinks instead. Once
@@ -131,19 +131,26 @@ INSTALLED_SHA="none"
 # the main logic including "already linked" and "already up to date": source
 # edits reach admin_lib live through a symlink, but a binary only changes when
 # something compiles it, so skipping this is how ~/.admin/admin goes stale.
+#
+# -ldflags -X bakes SRC_DIR itself into cmd.sourceDir — the Go equivalent of
+# admin-run's REPO_DIR = Path(__file__).resolve().parent (admin-run:25) — so
+# `admin compile` knows where this tool's own Go source lives
+# on this machine without needing a second installed copy the way admin-py
+# reads REPO_DIR from wherever admin-run itself was installed.
 build_binary() {
     mkdir -p "$DEST_DIR"
 
     # rm first: from a pre-Go install $DEST_DIR/admin is a symlink to admin-run,
     # and `go build -o` would follow it and write the binary over the source file.
     rm -f "$DEST_DIR/admin"
-    ( cd "$SRC_DIR" && go build -o "$DEST_DIR/admin" . )
+    ( cd "$SRC_DIR" && go build -ldflags "-X github.com/McBrideMusings/admin-project-tool/cmd.sourceDir=$SRC_DIR" -o "$DEST_DIR/admin" . )
     chmod +x "$DEST_DIR/admin"
     echo "  admin (go) built -> $DEST_DIR/admin"
 }
 
-# admin-py: the outgoing Python interpreter. Covers `new` and `compile`, the two
-# verbs the Go binary does not carry. Goes away with admin-3rgp.30.
+# admin-py: the outgoing Python interpreter. Covers `new`, the one verb the
+# Go binary does not carry, plus six
+# action kinds. Goes away with admin-3rgp.30.
 install_python() {
     local mode="$1"   # copy | link
 
