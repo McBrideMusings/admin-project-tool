@@ -16,20 +16,18 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/logformat"
 )
 
-// bandH is the live band's MINIMUM row count: a short row list lets the band
-// grow past this to fill the body's spare rows (renderWorkBody's own
-// listH/bh split below), but the band never shrinks under it even when the
-// list alone would fill the body.
+// bandH is the live band's row count: fixed for a given body height,
+// whatever the row list holds, so the band always sits in the same rows at
+// the bottom of the body.
 func bandH(h int) int {
 	return maxi(mini(13, h/2), mini(9, h-1))
 }
 
 // renderWorkBody lays out the Work tab: one layout at every geometry — the
 // row list fills the body width, and the live band spans that same full
-// width beneath it. The list gives up HEIGHT to the band and never width —
-// but never more than its own rows need: bandH is the band's floor, not its
-// fixed size, so a short list lets the band grow past it instead of leaving
-// blank rows above it (see the listH/bh split below).
+// width beneath it, pinned to the bottom at bandH rows. The list gives up
+// HEIGHT to the band and never width; a short list leaves blank rows between
+// itself and the band.
 // Ported from the design prototype's workBody/renderPaletteScreen
 // (docs/spikes/admin-tui-desktop/variants.go); the prototype's own two-
 // orientation switch (a side-by-side split on a wide terminal, a stacked
@@ -91,11 +89,9 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		}
 	}
 
-	// The list gets only what its own rows need, capped so the band never
-	// drops below its floor (bandH); the band takes every row the list
-	// doesn't use. On a short list this lets the band grow past bandH
-	// instead of leaving blank rows above it.
-	listH := mini(len(left), maxi(height-bandH(height), 1))
+	// The band takes bandH rows at the bottom; the list gets the rest,
+	// padded with blank rows when its own rows don't fill them.
+	listH := maxi(height-bandH(height), 1)
 	bh := maxi(height-listH, 1)
 
 	listLines := left
