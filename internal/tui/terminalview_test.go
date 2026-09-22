@@ -208,6 +208,49 @@ func TestTerminalViewReplaysPreAttachOutput(t *testing.T) {
 	}
 }
 
+// TestTerminalViewAttachSurvivesTerminalQueries proves a child's terminal
+// queries — the OSC 11 background query and ESC[6n cursor report that
+// command-test counter's child sends at startup — neither freeze attach when
+// replayed nor freeze the poll when they arrive after it.
+func TestTerminalViewAttachSurvivesTerminalQueries(t *testing.T) {
+	const cmdName = "termfixture-query"
+	dir := t.TempDir()
+	writeFixtureManifest(t, dir, cmdName)
+	ring := livework.NewRing(0)
+	if _, err := ring.Write([]byte("\x1b]11;?\x1b\\\x1b[6nbefore attach\r\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	registerFakePTYEntry(t, cmdName, ring, &termRecorder{})
+	p := newAttachablePump(t, dir, 100, 24)
+
+	within := func(step string, f func()) {
+		t.Helper()
+		done := make(chan struct{})
+		go func() { f(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s did not return within 5s — the emulator blocked on its query reply", step)
+		}
+	}
+
+	within("attach", func() {
+		p.apply(keyMsg("a"))
+		p.drain(300 * time.Millisecond)
+	})
+	if _, err := ring.Write([]byte("\x1b[6nafter attach\r\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	within("poll", func() { p.drain(300 * time.Millisecond) })
+
+	out := p.model.View()
+	for _, want := range []string{"before attach", "after attach"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("attached frame missing %q: %q", want, out)
+		}
+	}
+}
+
 // TestTerminalViewReplayOfLappedRingStartsAtWholeLine proves a ring that has
 // overwritten its oldest bytes replays from the first complete line, so a
 // line cut in half by the wrap never reaches the emulator.
