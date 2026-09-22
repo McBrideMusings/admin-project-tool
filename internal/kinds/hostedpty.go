@@ -139,17 +139,12 @@ func hostedReentryArgs(name string, args []string) []string {
 // row-scoped key binding's ADMIN_ROW_KIND/ADMIN_ROW_ID/ADMIN_ROW_URL
 // (admin-l6kb.2); nil for every ordinary Commands-tab dispatch.
 //
-// The registered live-work entry is keyed on the command's first Step's
-// action name, not the command name — internal/tui/work.go's liveEntryFor
-// looks entries up by step name, so keying on the command name would leave
-// the row not showing live and let a second run start on top of the one
-// that already owns the log file. When that first step is itself a genuine
-// multi-target menu (more than one declared target) and args names a
-// resolvable target, the entry is instead keyed on
-// multiTargetLiveID(entryID, action, args) — "<action>:<target>" — so
-// internal/tui/work.go's targetRows can resolve a target row's own live
-// entry instead of only ever finding the shared parent one; every other
-// dispatch keeps today's plain action-name key.
+// The registered live-work entry is keyed on the command name — the thing
+// the user ran — so only that command's row shows it, never another command
+// that happens to share one of its steps. When the command's first step is
+// a genuine multi-target menu (more than one declared target) and args
+// names a resolvable target, the key is multiTargetLiveID's
+// "<command>:<target>" instead, so the target row resolves its own entry.
 func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols int, env []string) error {
 	cmd, ok := resolveCommand(m, name)
 	if !ok {
@@ -158,10 +153,9 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 	if len(cmd.Steps) == 0 {
 		return fmt.Errorf("command %q has no steps", name)
 	}
-	entryID := cmd.Steps[0]
-	liveID := entryID
-	if action, ok := m.Actions[entryID]; ok {
-		liveID = multiTargetLiveID(entryID, action, args)
+	liveID := name
+	if action, ok := m.Actions[cmd.Steps[0]]; ok {
+		liveID = multiTargetLiveID(name, action, args)
 	}
 
 	// The child reports its log path on this pipe (fd 3 on its side, named

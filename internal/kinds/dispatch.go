@@ -328,15 +328,13 @@ func RunCommandInline(m *manifest.Manifest, r *Registry, name string, args []str
 // pty) when no launcher dispatch happens.
 //
 // The launcher decision looks only at the command's FIRST step's action,
-// looked up by cmd.Steps[0] — the same key StartHostedPTY uses to find the
-// action. The recorded live-work entry, though, is keyed by
-// multiTargetLiveID(entryID, action, args) (detach.go): plain cmd.Steps[0]
-// for a flat action or a multi-target action with at most one target, or
-// "<entryID>:<picked target>" for a genuine multi-target menu dispatched
-// with a resolvable target — so internal/tui/work.go's targetRows can
-// resolve a target row's OWN live entry instead of only ever finding the
-// shared parent one, while a plain command's row still resolves under its
-// bare name exactly as before. `a` (attach) looks entries up the same way.
+// looked up by cmd.Steps[0], the same way StartHostedPTY finds it. The
+// recorded live-work entry is keyed by the command itself,
+// multiTargetLiveID(name, action, args) (detach.go): the bare command name,
+// or "<command>:<picked target>" for a genuine multi-target menu dispatched
+// with a resolvable target — so only the command that was run, or its
+// picked target, shows the entry; another command sharing one of its steps
+// never does. `a` (attach) looks entries up the same way.
 //
 // When that first step is itself kind="multi-target", its own top-level
 // `detach` is only the default a picked target inherits — the effective
@@ -362,8 +360,7 @@ func launchCommand(m *manifest.Manifest, name string, args []string, env []strin
 		return fmt.Errorf("command %q has no steps", name)
 	}
 
-	entryID := cmd.Steps[0]
-	if action, ok := m.Actions[entryID]; ok {
+	if action, ok := m.Actions[cmd.Steps[0]]; ok {
 		if detach, ok := dispatchDetach(action, args); ok && detach {
 			cfg, _ := config.FromManifest(m)
 			if cfg.Terminal.Spawn != "" {
@@ -372,7 +369,7 @@ func launchCommand(m *manifest.Manifest, name string, args []string, env []strin
 				handle, err := dispatchToLauncher("__run-command", name, args, ctx, cfg.Terminal, root)
 				if err == nil {
 					kind, _ := actionString(action, "kind")
-					liveID := multiTargetLiveID(entryID, action, args)
+					liveID := multiTargetLiveID(name, action, args)
 					recordLiveWork(liveID, kind, handle, "__run-command", name, args, ctx, cfg.Terminal, root)
 					return nil
 				}

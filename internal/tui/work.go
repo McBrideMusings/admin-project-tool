@@ -28,14 +28,7 @@ import (
 // detail pane has to be polymorphic rather than one wide field set.
 type workRowData struct {
 	// Command rows (rowCommand):
-	cmdName string
-	// actionName is cmd.Steps[0] — the same base name
-	// internal/kinds.multiTargetLiveID (via kinds.TargetLiveKey) keys a
-	// multi-target live entry on. A command's name and its sole action's
-	// name are not guaranteed to match (a command's steps can reference a
-	// differently-named action), so targetRows builds its registry lookup
-	// key from this field, not cmdName.
-	actionName   string
+	cmdName      string
 	cmdDesc      string
 	cmdKind      string // the sole step's declared kind, or "sequence"
 	cmdArchetype string
@@ -526,23 +519,16 @@ func unseenCommandNames(m *manifest.Manifest, seen map[string]bool) []string {
 }
 
 // liveEntryFor returns the process-kind livework.Entry currently backing
-// c, if any: a LongRunning action is recorded under its own action name
-// (internal/kinds/pane.go's recordLiveWork), so a command counts as live
-// whenever one of its steps names an entry in byName (which the caller has
-// already filtered to Worker == nil — a genuine agent worker never folds
-// into a command row). For a genuine multi-target menu (more than one
-// declared target) the registry keys the entry on "<action>:<target>"
-// instead (internal/kinds.multiTargetLiveID) once a target is actually
-// picked, so this lookup by the bare step name naturally returns nil for
-// the parent row while targetRows resolves each target's own qualified
-// entry below — a parent holder row is never "live" on its own account.
-func liveEntryFor(c manifest.Command, byName map[string]*livework.Entry) *livework.Entry {
-	for _, s := range c.Steps {
-		if e, ok := byName[s]; ok {
-			return e
-		}
-	}
-	return nil
+// the command named name, if any. Both producers (internal/kinds'
+// StartHostedPTY and launchCommand) key an entry on the command that was
+// run, so this is a lookup by that name alone: a command that merely shares
+// a step with the running one never shows it. byName is already filtered to
+// Worker == nil — a genuine agent worker never folds into a command row.
+// For a genuine multi-target menu the registry keys the entry on
+// "<command>:<target>" once a target is picked, so this returns nil for the
+// parent row while targetRows resolves each target's own entry below.
+func liveEntryFor(name string, byName map[string]*livework.Entry) *livework.Entry {
+	return byName[name]
 }
 
 // liveWorkers is every registry entry that IS a genuine agent worker
@@ -592,18 +578,13 @@ func (m Model) commandInvocationCount(cr workCmdRow) int {
 // its live status (if any), its workflow target (if it is one), and its
 // best-effort last-run/log.
 func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) rowItem {
-	actionName := cr.name
-	if len(cr.cmd.Steps) > 0 {
-		actionName = cr.cmd.Steps[0]
-	}
 	wd := &workRowData{
 		cmdName:      cr.name,
-		actionName:   actionName,
 		cmdDesc:      cr.cmd.Desc,
 		cmdKind:      m.commandKind(cr.cmd),
 		cmdArchetype: m.cmdOriginOf(cr.name),
 		steps:        m.commandSteps(cr.cmd),
-		live:         liveEntryFor(cr.cmd, byName),
+		live:         liveEntryFor(cr.name, byName),
 		pending:      m.pendingDispatch[cr.name],
 	}
 	if a, ok := m.soleAction(cr.cmd); ok {
@@ -675,13 +656,10 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 //
 // byName is the same registry-name -> entry map workRows() built for the
 // parent rows: once a target is actually dispatched, its entry is keyed on
-// "<actionName>:<targetKey>" (internal/kinds.TargetLiveKey, as written by
+// "<command>:<targetKey>" (internal/kinds.TargetLiveKey, as written by
 // internal/kinds.multiTargetLiveID), so each target row resolves its OWN
 // live entry here rather than inheriting whatever the parent happened to
-// find — the fix for a parent holder row showing running for every target
-// sharing it, and for a running target showing no indicator at all. The key
-// is built from wd.actionName (cmd.Steps[0]), not wd.cmdName — a command's
-// name and its sole action's name are not guaranteed to match.
+// find.
 func targetRows(parent rowItem, byName map[string]*livework.Entry, pendingTargetKey string) []rowItem {
 	wd := parent.work
 	if wd == nil {
@@ -689,7 +667,7 @@ func targetRows(parent rowItem, byName map[string]*livework.Entry, pendingTarget
 	}
 	out := make([]rowItem, 0, len(wd.targets))
 	for i, key := range wd.targets {
-		live := byName[kinds.TargetLiveKey(wd.actionName, key)]
+		live := byName[kinds.TargetLiveKey(wd.cmdName, key)]
 		logPath := wd.logPath
 		if live != nil && live.LogPath != "" {
 			logPath = live.LogPath
@@ -699,7 +677,6 @@ func targetRows(parent rowItem, byName map[string]*livework.Entry, pendingTarget
 			label: wd.cmdName + " " + key,
 			work: &workRowData{
 				cmdName:      wd.cmdName,
-				actionName:   wd.actionName,
 				cmdDesc:      wd.cmdDesc,
 				cmdKind:      wd.cmdKind,
 				cmdArchetype: wd.cmdArchetype,

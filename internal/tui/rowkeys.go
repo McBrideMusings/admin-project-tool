@@ -154,7 +154,7 @@ func (m Model) rowKeyDispatch(key string) (tea.Model, tea.Cmd, bool) {
 	}
 	if found {
 		// Same filter as workRows' byName build (work.go): only non-worker
-		// entries are keyed by command/step name. Duplicated rather than
+		// entries are keyed by command name. Duplicated rather than
 		// shared because work.go is under concurrent modification by
 		// another swarm — see commandNamed's comment for the same call.
 		byName := map[string]*livework.Entry{}
@@ -163,7 +163,7 @@ func (m Model) rowKeyDispatch(key string) (tea.Model, tea.Cmd, bool) {
 				byName[e.Name] = e
 			}
 		}
-		if e := liveEntryFor(c, byName); e != nil {
+		if e := liveEntryFor(name, byName); e != nil {
 			mm, cmd := m.attachEntry(e)
 			return mm, cmd, true
 		}
