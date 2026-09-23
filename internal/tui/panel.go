@@ -173,11 +173,14 @@ func renderSegs(segs []seg, bg lipgloss.TerminalColor) string {
 		if s.strike {
 			st = st.Strikethrough(true)
 		}
-		txt := s.t
+		// The link wraps the styled text, never the other way round: a strikethrough
+		// style renders rune by rune, and styling an OSC-8 sequence that way splits
+		// its escape into separately colored characters the terminal prints as text.
+		txt := st.Render(s.t)
 		if s.link != "" {
 			txt = link(s.link, txt)
 		}
-		b.WriteString(st.Render(txt))
+		b.WriteString(txt)
 	}
 	return b.String()
 }

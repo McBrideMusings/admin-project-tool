@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/bd"
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
@@ -2348,6 +2349,24 @@ func TestBranchNamesLinkToGitHub(t *testing.T) {
 	}
 	if strings.Contains(m.View(), "\x1b]8;;") {
 		t.Errorf("origin isn't GitHub, yet the view carries an OSC-8 hyperlink")
+	}
+}
+
+// TestStruckLinkStaysOneEscape pins a struck-through linked segment — a ready
+// Clean Up row's name — to a single intact OSC-8 wrapper. Strikethrough makes
+// lipgloss style rune by rune; styled inside the link, the escape split into
+// separately colored characters and the terminal printed the URL as row text.
+func TestStruckLinkStaysOneEscape(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI)
+	defer lipgloss.SetColorProfile(termenv.Ascii)
+
+	url := "https://github.com/owner/repo/tree/done"
+	out := renderSegs([]seg{{t: "done", link: url, strike: true}}, nil)
+	if !strings.HasPrefix(out, "\x1b]8;;"+url+"\x1b\\") || !strings.HasSuffix(out, "\x1b]8;;\x1b\\") {
+		t.Errorf("struck link is not wrapped in one OSC-8 sequence: %q", out)
+	}
+	if got := vlen(out); got != len("done") {
+		t.Errorf("struck link renders %d cells wide, want %d: %q", got, len("done"), out)
 	}
 }
 
