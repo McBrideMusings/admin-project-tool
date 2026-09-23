@@ -267,8 +267,12 @@ type Model struct {
 	// the fresher wholesale data.
 	syncGen int
 
-	fsCh      <-chan struct{}   // file-watcher signal; nil if watching is off
-	fsWatcher *fsnotify.Watcher // owned so it can be closed on quit; nil if off
+	fsCh <-chan struct{} // file-watcher signal; nil if watching is off
+	// fsReloading is true from a watcher-triggered local reload until its
+	// localDataMsg lands; fsStale records a change that arrived meanwhile, so
+	// reloads run one at a time with one trailing catch-up instead of piling up.
+	fsReloading, fsStale bool
+	fsWatcher            *fsnotify.Watcher // owned so it can be closed on quit; nil if off
 
 	filtering bool
 	filter    string
@@ -1331,6 +1335,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// worktree overlay (enter → cd) the first time they are drawn, instead of
 		// after a re-render — and every later local reload leaves synced set, so the
 		// reload each sync ends with cannot start another one.
+		m.fsReloading = false
+		if m.fsStale {
+			m.fsStale, m.fsReloading = false, true
+			return m, tea.Batch(m.launchSyncCmd(), loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def))
+		}
 		return m, m.launchSyncCmd()
 
 	case beadsDetectedMsg:
@@ -1449,10 +1458,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				reloadCmds = append(reloadCmds, detectBeadsCmd(m.ctx, m.repoRoot))
 			}
 		}
-		reloadCmds = append(reloadCmds,
-			loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def),
-			waitForFSCmd(m.fsCh),
-		)
+		reloadCmds = append(reloadCmds, waitForFSCmd(m.fsCh))
+		if m.fsReloading {
+			m.fsStale = true
+		} else {
+			m.fsReloading = true
+			reloadCmds = append(reloadCmds, loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def))
+		}
 		return m, tea.Batch(reloadCmds...)
 
 	case syncDoneMsg:

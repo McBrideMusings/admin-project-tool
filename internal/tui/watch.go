@@ -74,7 +74,10 @@ func debounceLoop(w *fsnotify.Watcher, ch chan<- struct{}) {
 			if !ok {
 				return
 			}
-			if isGitPath(ev.Name) {
+			// A CHMOD-only event is an attribute change (atime, xattr), not an edit:
+			// something reading a tracked file on a loop emits one every few hundred
+			// ms, which outruns the debounce and reloads git state continuously.
+			if isGitPath(ev.Name) || ev.Op == fsnotify.Chmod {
 				continue
 			}
 			if ev.Op&fsnotify.Create != 0 {
