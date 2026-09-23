@@ -67,3 +67,32 @@ func TestDebounceLoopFiresOnWrite(t *testing.T) {
 	case <-time.After(fsDebounce * 2):
 	}
 }
+
+// TestDebounceLoopIgnoresChmod proves an attribute-only change (what a reader
+// updating atime produces) does not signal a reload.
+func TestDebounceLoopIgnoresChmod(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "f.txt")
+	if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("NewWatcher: %v", err)
+	}
+	defer w.Close()
+	if err := w.Add(dir); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	ch := make(chan struct{}, 1)
+	go debounceLoop(w, ch)
+
+	if err := os.Chmod(f, 0o600); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	select {
+	case <-ch:
+		t.Error("watcher signaled for a chmod-only change")
+	case <-time.After(fsDebounce * 3):
+	}
+}
