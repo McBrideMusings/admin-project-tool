@@ -171,6 +171,28 @@ func TopLevel(ctx context.Context) (string, error) {
 	return top, nil
 }
 
+// TopLevelFor is TopLevel for a directory other than the process's own cwd —
+// admin-1xgi: admin check uses this to test whether an absolute path found
+// on an action's `run` line resolves inside a git checkout, without having
+// to chdir the whole process there first.
+//
+// Deliberately not RepoRootFor: that function resolves a linked worktree
+// back to the *primary* checkout that shares its common git dir, which is
+// the wrong answer here — the error this check reports names the checkout
+// the stale absolute path itself still points at, worktree copy included,
+// not whatever repo that worktree happens to be linked from. RepoRootFor
+// also spends two more git calls doing that resolution, and this function
+// is invoked once per absolute-path candidate found across a whole
+// manifest, so the cheaper single rev-parse matters here in a way it
+// doesn't for RepoRootFor's existing (much rarer) callers.
+func TopLevelFor(ctx context.Context, dir string) (string, error) {
+	top, err := runner(ctx, "-C", dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", ErrNotInRepo
+	}
+	return top, nil
+}
+
 // RepoRoot returns the main repo's top-level directory, resolving correctly even
 // when the cwd is inside a linked worktree.
 func RepoRoot(ctx context.Context) (string, error) {

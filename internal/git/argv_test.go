@@ -75,6 +75,12 @@ func TestCommandArgv(t *testing.T) {
 			want: []call{rd("rev-parse", "--show-toplevel")},
 		},
 		{
+			name: "TopLevelFor prefixes rev-parse with -C dir",
+			out:  []string{"/repo"},
+			call: func(ctx context.Context) { TopLevelFor(ctx, "/dir") },
+			want: []call{rd("-C", "/dir", "rev-parse", "--show-toplevel")},
+		},
+		{
 			name: "RepoRoot compares the worktree's git dir against the common one",
 			out:  []string{"/repo", "/repo/.git", "/repo/.git"},
 			call: func(ctx context.Context) { RepoRoot(ctx) },
@@ -413,6 +419,7 @@ var coveredCommands = map[string]bool{
 	"StashWorktree":         true,
 	"Stashes":               true,
 	"TopLevel":              true,
+	"TopLevelFor":           true,
 	"TrackedDirs":           true,
 	"ValidBranchName":       true,
 	"WorkingStatus":         true,

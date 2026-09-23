@@ -69,6 +69,9 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	if err := checkPreRunRefs(m); err != nil {
 		problems = append(problems, validate.Wrap(err))
 	}
+	if err := checkAbsoluteRunPaths(cmd.Context(), m); err != nil {
+		problems = append(problems, validate.Wrap(err))
+	}
 	if err := frame.ValidateURLRefs(m.Actions, m.Urls); err != nil {
 		problems = append(problems, validate.Wrap(err))
 	}
