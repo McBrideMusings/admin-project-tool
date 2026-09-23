@@ -202,12 +202,10 @@ func TestHandlePickOutcomeChosenRunsTheCommand(t *testing.T) {
 	}
 }
 
-// TestHandlePickOutcomeChosenClearsScreenBeforeRunning covers admin-qshs.1:
-// the PickChosen branch must write clearScreenEscape to h.Stdout before the
-// picked command's own output — otherwise the picker's leftover rendered
-// frame (prompt, rows, footer) stays sitting in the terminal and the
-// command's output just scrolls it up instead of replacing it.
-func TestHandlePickOutcomeChosenClearsScreenBeforeRunning(t *testing.T) {
+// TestHandlePickOutcomeChosenDoesNotClearScreen: the PickChosen branch must
+// not wipe the terminal or its scrollback; the picker erases only its own
+// rows (internal/luahost/pick_unix.go).
+func TestHandlePickOutcomeChosenDoesNotClearScreen(t *testing.T) {
 	dir := t.TempDir()
 	m := writeMarkerManifest(t, dir)
 	h := luahost.New(dir)
@@ -217,8 +215,10 @@ func TestHandlePickOutcomeChosenClearsScreenBeforeRunning(t *testing.T) {
 	if err := handlePickOutcome(h, m, "touch", luahost.PickChosen); err != nil {
 		t.Fatalf("handlePickOutcome(PickChosen) = %v, want nil", err)
 	}
-	if !strings.HasPrefix(out.String(), clearScreenEscape) {
-		t.Fatalf("stdout = %q, want it to start with the clear-screen escape sequence %q", out.String(), clearScreenEscape)
+	for _, seq := range []string{"\x1b[2J", "\x1b[3J"} {
+		if strings.Contains(out.String(), seq) {
+			t.Fatalf("stdout = %q, want no %q", out.String(), seq)
+		}
 	}
 }
 
@@ -237,7 +237,7 @@ func TestHandlePickOutcomeCancelledDoesNotClearScreen(t *testing.T) {
 	if err := handlePickOutcome(h, m, "", luahost.PickCancelled); err != nil {
 		t.Fatalf("handlePickOutcome(PickCancelled) = %v, want nil", err)
 	}
-	if strings.Contains(out.String(), clearScreenEscape) {
+	if strings.Contains(out.String(), "\x1b[2J") {
 		t.Fatalf("stdout = %q, want no clear-screen escape sequence on cancel", out.String())
 	}
 }
@@ -252,7 +252,7 @@ func TestHandlePickOutcomeUnavailableDoesNotClearScreen(t *testing.T) {
 	if err := handlePickOutcome(h, m, "", luahost.PickUnavailable); err == nil {
 		t.Fatal("handlePickOutcome(PickUnavailable) = nil, want an error")
 	}
-	if strings.Contains(out.String(), clearScreenEscape) {
+	if strings.Contains(out.String(), "\x1b[2J") {
 		t.Fatalf("stdout = %q, want no clear-screen escape sequence when unavailable", out.String())
 	}
 }

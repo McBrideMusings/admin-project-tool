@@ -92,7 +92,9 @@ func (h *Host) runArrowPicker(items []TargetEntry, prompt string) (string, PickO
 		case pickerKeyDown:
 			cursor = wrapCursor(cursor, 1, len(items))
 		case pickerKeyEnter:
-			fmt.Fprintln(h.Stdout)
+			// Erase the picker's own frame so the picked command's output
+			// starts where the prompt was; nothing above it is touched.
+			fmt.Fprintf(h.Stdout, "\x1b[%dA\x1b[0J", linesDrawn)
 			return items[cursor].Key, PickChosen
 		case pickerKeyCancel:
 			fmt.Fprintln(h.Stdout)
