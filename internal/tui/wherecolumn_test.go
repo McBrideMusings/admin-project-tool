@@ -152,7 +152,7 @@ func TestCommandRowTruncatesLongActivity(t *testing.T) {
 	}
 }
 
-// TestWhereColumnIdleRowUnchanged is the "an idle command row shows kind and
+// TestWhereColumnIdleRowUnchanged is the "an idle command row shows its
 // description, nothing else" AC, updated for the Commands grid
 // (admin-3rgp.72.11): kind now shares a wState+wElapsed-wide column with no
 // separate where segment, matching commands.txt's own idle rows.
@@ -162,9 +162,9 @@ func TestWhereColumnIdleRowUnchanged(t *testing.T) {
 
 	marker := faintStyle.Render("◇ ")
 	name := padEnd(truncR("build", wName), wName)
-	kind := padEnd(truncR("shell", wState+wElapsed), wState+wElapsed)
+	gap := strings.Repeat(" ", wState+wElapsed)
 	desc := truncR("compile the binary", maxi(60-wMarker-wName-wState-wElapsed, 6))
-	want := marker + name + faintStyle.Render(kind+desc)
+	want := marker + name + faintStyle.Render(gap+desc)
 
 	if got != want {
 		t.Errorf("idle row changed shape:\n got  %q\n want %q", got, want)

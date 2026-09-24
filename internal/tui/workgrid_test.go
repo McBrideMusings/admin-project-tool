@@ -169,8 +169,8 @@ func TestNameColumnAlignsAcrossRowKindsAndGeometries(t *testing.T) {
 		t.Fatalf("Add(%s): %v", entry.ID, err)
 	}
 
-	groupWD := &workRowData{cmdName: "deploy", cmdDesc: "ship it", cmdKind: "widgetlabel", targets: []string{"a", "b"}}
-	flatWD := &workRowData{cmdName: "build", cmdDesc: "build it", cmdKind: "widgetlabel"}
+	groupWD := &workRowData{cmdName: "deploy", cmdDesc: "shipit-desc", cmdKind: "widgetlabel", targets: []string{"a", "b"}}
+	flatWD := &workRowData{cmdName: "build", cmdDesc: "buildit-desc", cmdKind: "widgetlabel"}
 	targetWD := &workRowData{cmdName: "dev", targetKey: "cf", targetRun: "vitepress dev", live: entry}
 
 	mm := workTestModel(nil)
@@ -181,23 +181,26 @@ func TestNameColumnAlignsAcrossRowKindsAndGeometries(t *testing.T) {
 		flatLine := stripANSI(mm.renderWorkRow(rowItem{kind: rowCommand, work: flatWD}, false, lw))
 		targetLine := stripANSI(mm.renderWorkRow(rowItem{kind: rowCommandTarget, work: targetWD}, false, lw))
 
-		// The group and flat rows both place their kindLabel text at the
-		// state column's start; the target row (given a live entry above)
-		// places its glyph+state word ("● running") there instead — the
-		// glyph itself is the state column's first cell, so it (not the bare
-		// word, which sits two cells further in, after the glyph and its
-		// separating space) is the fair comparison. All three must land at
-		// the same rune offset: wMarker + wName.
+		// The group and flat rows show no kind column: their description
+		// starts where the state and elapsed columns end. The target row
+		// (given a live entry above) places its glyph+state word ("● running")
+		// at the state column's start, wMarker + wName.
 		want := wMarker + wName
-		groupIdx := runeIndex(groupLine, "widgetlabel")
-		flatIdx := runeIndex(flatLine, "widgetlabel")
+		wantDesc := want + wState + wElapsed
+		groupIdx := runeIndex(groupLine, "shipit-desc")
+		flatIdx := runeIndex(flatLine, "buildit-desc")
 		targetIdx := runeIndex(targetLine, "● running")
 
-		if groupIdx != want {
-			t.Errorf("%dx%d (lw=%d): group row's state column starts at rune %d, want %d\n  line: %q", geo.w, geo.h, lw, groupIdx, want, groupLine)
+		for _, line := range []string{groupLine, flatLine} {
+			if strings.Contains(line, "widgetlabel") {
+				t.Errorf("%dx%d (lw=%d): row shows its kind: %q", geo.w, geo.h, lw, line)
+			}
 		}
-		if flatIdx != want {
-			t.Errorf("%dx%d (lw=%d): flat row's state column starts at rune %d, want %d\n  line: %q", geo.w, geo.h, lw, flatIdx, want, flatLine)
+		if groupIdx != wantDesc {
+			t.Errorf("%dx%d (lw=%d): group row's description starts at rune %d, want %d\n  line: %q", geo.w, geo.h, lw, groupIdx, wantDesc, groupLine)
+		}
+		if flatIdx != wantDesc {
+			t.Errorf("%dx%d (lw=%d): flat row's description starts at rune %d, want %d\n  line: %q", geo.w, geo.h, lw, flatIdx, wantDesc, flatLine)
 		}
 		if targetIdx != want {
 			t.Errorf("%dx%d (lw=%d): target row's state column starts at rune %d, want %d\n  line: %q", geo.w, geo.h, lw, targetIdx, want, targetLine)
@@ -288,9 +291,8 @@ func TestNameColumnLeavesGapBeforeKindColumn(t *testing.T) {
 		if r[nameColEnd-1] != ' ' {
 			t.Errorf("%s: cell just before the kind column (rune %d) = %q, want a blank — got %q", c.name, nameColEnd-1, string(r[nameColEnd-1]), c.line)
 		}
-		kindIdx := runeIndex(c.line, "shell")
-		if kindIdx != nameColEnd {
-			t.Errorf("%s: kind column starts at rune %d, want %d (must not move) — line: %q", c.name, kindIdx, nameColEnd, c.line)
+		if strings.Contains(c.line, "shell") {
+			t.Errorf("%s: row shows its kind: %q", c.name, c.line)
 		}
 	}
 }

@@ -170,7 +170,7 @@ func sectionHeaderAt(rows []rowItem, i int) string {
 // 16-cell name (or, on a target row, connector+key sharing that same 16
 // cells), a 10-cell state column ("● running"), a 7-cell elapsed column
 // ("4m12s"), then one free column that spends itself on activity, a run
-// hint, or a kind+description pair depending on the row's shape. Verified
+// hint, or a description depending on the row's shape. Verified
 // against commands.txt at w=96: the name column ends at screen column 19 on
 // every row kind, and the free column begins at column 36 (19 + wState +
 // wElapsed) on every row kind.
@@ -180,15 +180,6 @@ const (
 	wState   = 10 // "● running"
 	wElapsed = 7  // "4m12s"
 )
-
-// kindLabel abbreviates the one kind whose name does not fit the state+
-// elapsed columns verbatim (docs/spikes/admin-tui-desktop/variants.go:1168).
-func kindLabel(k string) string {
-	if k == "multi-target" {
-		return "multi-tgt"
-	}
-	return k
-}
 
 // commandGlyph is the state marker shown to the left of a Commands-section
 // row's state word: waiting and failed override everything else, anything
@@ -346,9 +337,9 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 			return marker + name + state + elapsed + faintStyle.Render(desc)
 		}
 	}
-	kind := padEnd(truncR(kindLabel(wd.cmdKind), wState+wElapsed), wState+wElapsed)
+	gap := strings.Repeat(" ", wState+wElapsed)
 	desc := truncR(wd.cmdDesc, rest)
-	return marker + name + faintStyle.Render(kind+desc)
+	return marker + name + faintStyle.Render(gap+desc)
 }
 
 // renderGroupRow renders a multi-target parent's own row: two blank cells
@@ -361,9 +352,9 @@ func renderGroupRow(wd *workRowData, width int) string {
 	// reason: a full-width group name must not run straight into the kind
 	// column (admin-3rgp.72.19).
 	name := lipgloss.NewStyle().Bold(true).Render(padEnd(truncR(wd.cmdName, wName-1), wName))
-	kind := padEnd(truncR(kindLabel(wd.cmdKind), wState+wElapsed), wState+wElapsed)
+	gap := strings.Repeat(" ", wState+wElapsed)
 	desc := truncR(wd.cmdDesc, rest)
-	return "  " + name + faintStyle.Render(kind+desc)
+	return "  " + name + faintStyle.Render(gap+desc)
 }
 
 // renderTargetRow renders one target of an expanded command: a tree
