@@ -102,7 +102,7 @@ func TestCommandArgv(t *testing.T) {
 				"--state", "closed",
 				"--search", "is:unmerged",
 				"--limit", "40",
-				"--json", "headRefName,mergedAt",
+				"--json", "headRefName,headRefOid,mergedAt",
 			}},
 		},
 		{

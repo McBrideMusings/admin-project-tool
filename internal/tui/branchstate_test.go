@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/git"
 )
 
 const (
@@ -24,6 +26,7 @@ func TestClassifyProofTier(t *testing.T) {
 		{"merged PR", branchSignals{mergedPR: true}, "merged"},
 		{"merged locally", branchSignals{gitSignals: gitSignals{mergedLocal: true}}, "merged"},
 		{"superseded", branchSignals{superseded: true}, "superseded"},
+		{"closed with tip match", branchSignals{closedPR: true, closedTipMatch: true}, "closed"},
 		{"empty", branchSignals{gitSignals: gitSignals{empty: true}}, "empty"},
 		{"on origin", branchSignals{gitSignals: gitSignals{fullyPushed: true}}, "on origin"},
 
@@ -242,6 +245,61 @@ func TestSquashMergedBranchIsMergedWhileAhead(t *testing.T) {
 	st := classifyBranch(sig)
 	if st.reason != "merged" || st.conf != confCertain {
 		t.Fatalf("got %q/%v, want merged/confCertain", st.reason, st.conf)
+	}
+}
+
+// TestClosedTipMatchBeatsFullyPushed pins the fix this proof exists for: a
+// pushed branch whose PR was closed unmerged used to read as "on origin" (a
+// pushed-but-live reading landedProof deliberately refuses to treat as a proof)
+// because fullyPushed fired first and the closed-PR signal was only ever
+// circumstantial. With the tip match wired in, "closed" must fire before
+// fullyPushed is ever reached.
+func TestClosedTipMatchBeatsFullyPushed(t *testing.T) {
+	sig := branchSignals{
+		closedPR:       true,
+		closedTipMatch: true,
+		gitSignals:     gitSignals{fullyPushed: true},
+	}
+	st := classifyBranch(sig)
+	if st.reason != "closed" || st.conf != confCertain {
+		t.Fatalf("got %q/%v, want closed/confCertain", st.reason, st.conf)
+	}
+}
+
+// TestClosedPRWithDifferentTipIsNotProof pins that a closed PR whose head no
+// longer matches the local tip stays in the circumstantial tier — the branch
+// has moved on since the PR was declined, so deleting it is no longer free.
+// TestEvidenceTier's "1436-challengeday-lock" case already exercises this exact
+// shape (closedPR without closedTipMatch reaching "stale" via the evidence
+// tier); this pins the negative directly: it must never reach confCertain.
+func TestClosedPRWithDifferentTipIsNotProof(t *testing.T) {
+	sig := branchSignals{
+		closedPR:       true,
+		closedTipMatch: false,
+		gitSignals:     gitSignals{idle: 8 * day, behind: 509},
+	}
+	if st := classifyBranch(sig); st.conf == confCertain {
+		t.Errorf("a closed PR with a mismatched tip produced confCertain (%q); it is not a proof", st.reason)
+	}
+}
+
+// TestClosedTipMatchEmptyOIDNeverMatches pins the join-level guard in
+// Model.branchState: a blank OID on either side (a PR fetched before it carried
+// a SHA, or a branch whose tip could not be read) must never compare equal to
+// another blank and manufacture a match. Mirrors TestReusedBranchNameIsNotMerged
+// for the merged side.
+func TestClosedTipMatchEmptyOIDNeverMatches(t *testing.T) {
+	m := seededModel()
+	m.local.branches = []git.BranchInfo{{Name: "declined", HasRemote: true, LastCommit: "1 hour ago"}}
+	m.local.signals = map[string]gitSignals{"declined": {}}
+	m.local.tips = map[string]string{} // tip unreadable — blank
+	m.remote.ClosedHeads = map[string]string{"declined": ""}
+	st := m.branchState("declined")
+	if st.signals.closedTipMatch {
+		t.Error("two blank OIDs compared equal; closedTipMatch must require a non-empty match")
+	}
+	if st.reason == "closed" {
+		t.Errorf("a blank-OID closed PR produced the closed proof: %q", st.reason)
 	}
 }
 

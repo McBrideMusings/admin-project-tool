@@ -58,15 +58,18 @@ const PollInterval = 5 * time.Minute
 // over. Fetched, staled, and cached on the same clock as MergedHeads.
 //
 // ClosedHeads is the same shape for PRs closed WITHOUT merging — the branches a
-// human explicitly declined. It rides the merged section's clock and cache entry
-// because it comes from the same fetch and answers the same question from the
-// other side: MergedHeads says the work landed, ClosedHeads says it was dropped.
+// human explicitly declined — mapping each to the commit GitHub had as that PR's
+// head. It rides the merged section's clock and cache entry because it comes from
+// the same fetch and answers the same question from the other side: MergedHeads
+// says the work landed, ClosedHeads says it was dropped. The OID is compared
+// against the local tip the same way MergedHeads' is; see
+// branchSignals.closedTipMatch.
 type Remote struct {
 	PRs              []gh.OpenPR           `json:"prs"`
 	Issues           []gh.IssueItem        `json:"issues"`
 	MergedHeads      map[string]string     `json:"merged_head_oids"`
 	MergedAuthors    map[string]string     `json:"merged_authors"`
-	ClosedHeads      map[string]bool       `json:"closed_heads"`
+	ClosedHeads      map[string]string     `json:"closed_heads"`
 	MergedByIssue    map[int][]MergedPRRef `json:"merged_by_issue"`
 	ViewerLogin      string                `json:"viewer_login"`
 	PRsFetchedAt     time.Time             `json:"prs_fetched_at"`

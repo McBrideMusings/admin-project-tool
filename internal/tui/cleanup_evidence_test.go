@@ -45,7 +45,11 @@ func staleModel() Model {
 	m.local.touched = map[string]time.Time{}
 	m.remote = data.Remote{
 		MergedHeads: map[string]string{"old-merged": "abc123"},
-		ClosedHeads: map[string]bool{"declined": true},
+		// No matching local tip is set for "declined" (m.local.tips is nil here), so
+		// closedTipMatch stays false and this PR's closure stays circumstantial —
+		// exactly the "declined" fixture this test wants: on origin, PR closed
+		// unmerged, everything backed up, nothing held.
+		ClosedHeads: map[string]string{"declined": "zzz999"},
 	}
 	return m
 }
