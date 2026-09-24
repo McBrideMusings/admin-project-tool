@@ -11,8 +11,132 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/archetype"
 	"github.com/McBrideMusings/admin-project-tool/internal/worktree"
 )
+
+// initGitRepo creates a fresh git repo at dir with one commit, so it (and
+// any archetype directory placed inside it) is a real, independently
+// resolvable repo — not a worktree of anything else.
+func initGitRepo(t *testing.T, dir string) {
+	t.Helper()
+	gitE2E(t, dir, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitE2E(t, dir, "add", "-A")
+	gitE2E(t, dir, "commit", "-qm", "base")
+}
+
+// TestWorktreeFlagArchetypeMergeUsesTargetRepo proves archetype merge is
+// keyed off the -w target's own repo, not the invoking shell's cwd. Without
+// this, `admin -w <target>` run from repo A against a target living in repo
+// B would resolve archetypes/manifest.go's repo-local search-path slot
+// (internal/archetype.SearchPathFor -> <repoDir>/.admin/archetypes) against
+// A instead of B — invisible whenever the two repos happen to be the same,
+// which every other test in this file arranges for simplicity, so this one
+// deliberately does not.
+func TestWorktreeFlagArchetypeMergeUsesTargetRepo(t *testing.T) {
+	t.Cleanup(func() { worktreeTarget, worktreePrimaryRoot = nil, "" })
+	installed := t.TempDir()
+	defer archetype.UseInstalledDir(installed)()
+
+	repoA := realPathE2E(t, t.TempDir())
+	initGitRepo(t, repoA)
+
+	repoB := realPathE2E(t, t.TempDir())
+	initGitRepo(t, repoB)
+
+	// Only repoB carries a local archetype override.
+	archDir := filepath.Join(repoB, ".admin", "archetypes", "probe")
+	if err := os.MkdirAll(archDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archToml := "[commands.build]\ndesc = \"from-repoB\"\nsteps = [\"x\"]\n"
+	if err := os.WriteFile(filepath.Join(archDir, archetype.Filename), []byte(archToml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	adminToml := `project_name = "b"
+archetypes   = ["probe"]
+
+[commands.build]
+steps = ["x"]
+
+[actions.x]
+kind = "shell"
+run  = "true"
+`
+	if err := os.WriteFile(filepath.Join(repoB, "admin.toml"), []byte(adminToml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The invoking shell is in repoA; -w targets a directory in repoB.
+	t.Chdir(repoA)
+	worktreeTarget = &worktree.Target{Path: repoB}
+	worktreePrimaryRoot = repoA
+
+	m, ok, err := resolveProjectManifestFromDisk(context.Background(), repoB)
+	if err != nil || !ok {
+		t.Fatalf("resolveProjectManifestFromDisk(repoB) = ok=%v err=%v, want ok=true err=nil", ok, err)
+	}
+	if got := m.Overrides["build"].Desc; got != "from-repoB" {
+		t.Fatalf("Overrides[build].Desc = %q, want %q — archetype merge must be keyed off the -w target's repo (repoB), not the invoking shell's cwd (repoA)", got, "from-repoB")
+	}
+}
+
+// TestWorktreeFlagFallbackBorrowsPrimaryManifestButRunsInTarget covers the
+// -w fallback path: a target worktree with no admin.toml of its own (the
+// common case, since admin.toml is never committed) borrows the primary
+// checkout's manifest content but still executes with the target as Root —
+// resolveProjectManifestFromDisk's execRoot override. Previously only
+// exercised manually against a real sibling repo (see the comment this test
+// replaces in TestWorktreeFlagRunsInsideTargetNotInvokingCwd), never
+// asserted in `go test`.
+func TestWorktreeFlagFallbackBorrowsPrimaryManifestButRunsInTarget(t *testing.T) {
+	t.Cleanup(func() { worktreeTarget, worktreePrimaryRoot = nil, "" })
+	installed := t.TempDir()
+	defer archetype.UseInstalledDir(installed)()
+
+	primary := realPathE2E(t, t.TempDir())
+	initGitRepo(t, primary)
+
+	adminToml := `project_name = "primary"
+
+[commands.build]
+steps = ["x"]
+
+[actions.x]
+kind = "shell"
+run  = "true"
+`
+	if err := os.WriteFile(filepath.Join(primary, "admin.toml"), []byte(adminToml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	targetPath := filepath.Join(primary, "..", "fallback-target")
+	gitE2E(t, primary, "worktree", "add", "-q", "-b", "feat/fallback-target", targetPath)
+	targetPath = realPathE2E(t, targetPath)
+	// Deliberately no admin.toml written into targetPath — the fallback
+	// case: a fresh worktree with none of its own.
+
+	t.Chdir(primary)
+	worktreeTarget = &worktree.Target{Path: targetPath, Branch: "feat/fallback-target"}
+	worktreePrimaryRoot = primary
+
+	m, ok, err := resolveProjectManifestFromDisk(context.Background(), targetPath)
+	if err != nil || !ok {
+		t.Fatalf("resolveProjectManifestFromDisk(targetPath) = ok=%v err=%v, want ok=true err=nil", ok, err)
+	}
+	if m.Root != targetPath {
+		t.Fatalf("Root = %q, want the target worktree %q — the borrowed manifest must still execute inside the target, not the primary checkout it was borrowed from", m.Root, targetPath)
+	}
+	if _, ok := m.Custom["build"]; !ok {
+		if _, ok := m.Overrides["build"]; !ok {
+			t.Fatalf("resolved manifest has no build command — the primary checkout's admin.toml was not borrowed")
+		}
+	}
+}
 
 // gitE2E runs a git command in dir, failing the test on error — same shape
 // as internal/git's own helpers_test.go and internal/worktree's own

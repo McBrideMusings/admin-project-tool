@@ -10,6 +10,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -110,27 +111,11 @@ func (m Model) targetLabel() string {
 	if m.wtTarget == "" {
 		return ""
 	}
-	name := m.wtTarget
-	if i := lastSlash(name); i >= 0 {
-		name = name[i+1:]
-	}
+	name := filepath.Base(m.wtTarget)
 	if m.wtTargetBranch != "" {
 		return fmt.Sprintf("%s (%s)", name, m.wtTargetBranch)
 	}
 	return name
-}
-
-// lastSlash finds the last path separator without pulling in path/filepath
-// for a one-line basename — every worktree path this package renders is
-// already the absolute, forward-slash form git and os.Getwd() both use on
-// every platform this dashboard ships for.
-func lastSlash(s string) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == '/' {
-			return i
-		}
-	}
-	return -1
 }
 
 // renderWorktreePickerBody draws the picker as a centered box, the same
