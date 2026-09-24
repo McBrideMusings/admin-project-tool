@@ -4,16 +4,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 )
 
-// TestCopyKeepsWorktreeEdits pins that re-running populate over a copy-mode entry
-// leaves the worktree's own file alone. The point of copy mode is that each
-// worktree can diverge — a worktree-local .env on a different port, say — so a
-// re-run that overwrote it would destroy exactly the thing the mode exists for.
-func TestCopyKeepsWorktreeEdits(t *testing.T) {
+// TestCopyOverwritesAndReportsDiff pins that re-running populate over a
+// copy-mode entry that differs brings the primary's version in, and hands back
+// the diff of what it replaced so the worktree's edit is not lost unseen.
+func TestCopyOverwritesAndReportsDiff(t *testing.T) {
 	src, dst := t.TempDir(), t.TempDir()
 	if err := os.WriteFile(filepath.Join(src, ".env"), []byte("PORT=1111\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -28,15 +28,23 @@ func TestCopyKeepsWorktreeEdits(t *testing.T) {
 	}
 
 	res := Run(src, dst, entries)
-	if len(res) != 1 || !res[0].Skipped {
-		t.Fatalf("second run over an existing copy = %+v, want one skipped result", res)
+	if len(res) != 1 || res[0].Err != nil || res[0].Unchanged {
+		t.Fatalf("second run over a divergent copy = %+v, want it replaced", res)
+	}
+	if !strings.Contains(res[0].Diff, "-PORT=9999") || !strings.Contains(res[0].Diff, "+PORT=1111") {
+		t.Errorf("diff = %q, want the worktree's PORT=9999 replaced by the primary's PORT=1111", res[0].Diff)
 	}
 	got, err := os.ReadFile(filepath.Join(dst, ".env"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != "PORT=9999\n" {
-		t.Errorf(".env = %q after re-run, want the worktree's own %q", got, "PORT=9999\n")
+	if string(got) != "PORT=1111\n" {
+		t.Errorf(".env = %q after re-run, want the primary's %q", got, "PORT=1111\n")
+	}
+
+	res = Run(src, dst, entries)
+	if len(res) != 1 || !res[0].Unchanged || res[0].Diff != "" {
+		t.Errorf("third run over an identical copy = %+v, want Unchanged with no diff", res)
 	}
 }
 
@@ -55,7 +63,7 @@ func TestCopyReplacesLeftoverSymlink(t *testing.T) {
 	}
 
 	res := Run(src, dst, []config.Entry{{Pattern: ".env", Mode: config.Copy}})
-	if len(res) != 1 || res[0].Err != nil || res[0].Skipped {
+	if len(res) != 1 || res[0].Err != nil || res[0].Unchanged {
 		t.Fatalf("copy over a symlink = %+v, want it replaced", res)
 	}
 	info, err := os.Lstat(filepath.Join(dst, ".env"))
@@ -85,7 +93,7 @@ func TestSymlinkIsRelaid(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if res := Run(src, dst, entries); res[0].Err != nil || res[0].Skipped {
+	if res := Run(src, dst, entries); res[0].Err != nil {
 		t.Fatalf("re-run = %+v, want the link remade", res)
 	}
 	got, err := os.Readlink(filepath.Join(dst, "CLAUDE.local.md"))

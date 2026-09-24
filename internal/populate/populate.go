@@ -17,9 +17,12 @@ import (
 type Result struct {
 	Rel  string
 	Mode config.Mode
-	// Skipped is set when a copy-mode entry found a real file already at the
-	// destination and left it alone.
-	Skipped bool
+	// Unchanged is set when a copy-mode entry found the destination already
+	// byte-identical to the source and left it alone.
+	Unchanged bool
+	// Diff is the unified diff from the worktree's old copy to the primary's
+	// file, set when a copy-mode entry overwrote a file that differed.
+	Diff string
 	// Tracked is set when the match was left alone because git tracks it. See
 	// Run for why a tracked path is never populated.
 	Tracked bool
@@ -86,19 +89,27 @@ func tracked(root, rel string) bool {
 
 func apply(src, dst, rel string, mode config.Mode) Result {
 	r := Result{Rel: rel, Mode: mode}
-	// A copy-mode file is the worktree's own to diverge — overwriting it on a
-	// re-run would throw away edits (a worktree-local .env pointed at a different
-	// port, say) and replace them with the primary repo's version. A symlink is
-	// not the worktree's own by definition, so it is always relaid.
+	// The primary repo's file is the truth, so a copy-mode file that differs is
+	// overwritten. The worktree's old content is not thrown away unseen: the
+	// diff from it to the primary's version goes back in the Result for the
+	// caller to print, so an edit made in the worktree can be re-applied.
 	//
-	// Lstat, not Stat: only a real file counts as the worktree's copy. A symlink
-	// sitting there is left over from when this pattern was symlink-mode, and a
-	// broken one would make Stat fail and hide it entirely — either way it is a
-	// stale artifact to replace, not user work to protect.
+	// Lstat, not Stat: only a real file is diffed. A symlink sitting there is
+	// left over from when this pattern was symlink-mode, and a broken one would
+	// make Stat fail and hide it entirely — either way it is a stale artifact to
+	// replace, with no content of the worktree's own to report.
 	if mode == config.Copy {
 		if info, err := os.Lstat(dst); err == nil && info.Mode()&os.ModeSymlink == 0 {
-			r.Skipped = true
-			return r
+			diff, err := unifiedDiff(dst, src, rel)
+			if err != nil {
+				r.Err = err
+				return r
+			}
+			if diff == "" {
+				r.Unchanged = true
+				return r
+			}
+			r.Diff = diff
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
@@ -114,6 +125,27 @@ func apply(src, dst, rel string, mode config.Mode) Result {
 		r.Err = os.Symlink(src, dst)
 	}
 	return r
+}
+
+// unifiedDiff returns the unified diff from old to new, or "" when the two are
+// identical. `git diff --no-index` works on any two paths outside a repository
+// and exits 1 when they differ, so exit 1 is the diff and only a higher code is
+// an error. git's own header names both absolute paths; it is replaced with
+// worktree/<rel> and primary/<rel>, keeping the hunks from the first "@@" on.
+func unifiedDiff(old, new, rel string) (string, error) {
+	out, err := exec.Command("git", "diff", "--no-index", "--no-color", "--", old, new).Output()
+	if err == nil {
+		return "", nil
+	}
+	exit, ok := err.(*exec.ExitError)
+	if !ok || exit.ExitCode() != 1 {
+		return "", fmt.Errorf("diff %s: %w", rel, err)
+	}
+	hunks := out
+	if i := bytes.Index(out, []byte("\n@@")); i >= 0 {
+		hunks = out[i+1:]
+	}
+	return fmt.Sprintf("--- worktree/%s\n+++ primary/%s\n%s", rel, rel, hunks), nil
 }
 
 func copyPath(src, dst string) error {

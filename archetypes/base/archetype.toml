@@ -12,7 +12,9 @@ name = "base"
 
 # Gitignored files brought from the primary repo into each new worktree.
 # mode = "symlink" (default) points at the primary repo's file; mode = "copy"
-# gives the worktree its own so it can diverge.
+# gives the worktree its own, so a write there never reaches the primary.
+# `admin populate` re-copies a copy that differs from the primary and prints
+# the diff of what it replaced.
 #
 # A pattern is glob-matched against the PRIMARY repo, and the primary repo is
 # derived from the worktree, so a pattern can never reach into a different

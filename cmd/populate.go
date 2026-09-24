@@ -26,8 +26,9 @@ on disk.
 
 Patterns come from the PRIMARY checkout's admin.toml [[populate]] table,
 merged with its declared archetypes. A symlink entry is always relaid. A copy
-entry is skipped when a real file is already there, so a worktree-local edit
-is never overwritten.`,
+entry is overwritten whenever it differs from the primary's file, and the diff
+from the worktree's old copy is printed so an edit made there can be
+re-applied.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		all, _ := cmd.Flags().GetBool("all")
@@ -113,8 +114,10 @@ func reportPopulateResults(results []populate.Result) {
 			fmt.Fprintf(os.Stderr, "populate %s: %v\n", r.Rel, r.Err)
 		case r.Tracked:
 			fmt.Fprintf(os.Stderr, "skipped  %s (git tracks it)\n", r.Rel)
-		case r.Skipped:
-			fmt.Fprintf(os.Stderr, "skipped  %s (already there)\n", r.Rel)
+		case r.Unchanged:
+			fmt.Fprintf(os.Stderr, "same     %s (matches the primary)\n", r.Rel)
+		case r.Diff != "":
+			fmt.Fprintf(os.Stderr, "replaced %s (%s) — the worktree's old copy differed:\n%s", r.Rel, r.Mode, r.Diff)
 		default:
 			fmt.Fprintf(os.Stderr, "populate %s (%s)\n", r.Rel, r.Mode)
 		}
