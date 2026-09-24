@@ -288,6 +288,12 @@ func run(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
+		// A context that expired killed the child, and the exit error then reads
+		// only "signal: killed". Return the context's own error so callers can
+		// tell an abandoned call from a bd failure.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("bd %s: %w", args[0], ctxErr)
+		}
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
 			return nil, fmt.Errorf("bd %s: %s", args[0], firstLine(msg))
 		}

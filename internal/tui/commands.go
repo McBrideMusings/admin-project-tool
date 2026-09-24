@@ -371,14 +371,13 @@ func fetchOpenPRRowCmd(ctx context.Context, nwo string, number, gen int) tea.Cmd
 const beadsInterval = 15 * time.Second
 
 // beadsPollTimeout bounds a single beads poll, mirroring agentPollTimeout's own
-// per-query timeout in agentpoll.go. `bd list` is a local Dolt read, so 5s is
-// generous headroom for a slow-but-healthy query while still keeping the
-// worst-case in-flight time well under one beadsInterval tick — the fix for a
-// wedged embedded Dolt (one writer at a time) piling up an unkillable `bd list`
-// process every 15s: exec.CommandContext kills the child the moment this
-// timeout's ctx is done, instead of letting the poll block forever on a busy
-// database.
-const beadsPollTimeout = 5 * time.Second
+// per-query timeout in agentpoll.go. `bd list` is a local Dolt read that takes
+// about 2s healthy and 6s when several dashboards and agents query the embedded
+// Dolt (one writer at a time) together, so 15s covers contention. A wedged Dolt
+// costs one beadsInterval: Model.beadsPolling skips the ticks that land while a
+// poll is in flight, so polls never stack, and exec.CommandContext kills the
+// child the moment this timeout's ctx is done.
+const beadsPollTimeout = 15 * time.Second
 
 // beadsDetectedMsg answers "does this repo keep its work in beads": present says
 // a workspace was found, err says one was found but this build can't read it.

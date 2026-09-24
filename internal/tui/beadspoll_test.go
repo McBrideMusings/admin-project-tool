@@ -86,6 +86,21 @@ func TestBeadsMsgTimeoutKeepsLastKnownAndFlagsStale(t *testing.T) {
 	}
 }
 
+// TestBeadsTimeoutOnFirstLoadStaysLoading: with no rows yet, an abandoned poll
+// must leave the tab on "loading…" rather than an empty list.
+func TestBeadsTimeoutOnFirstLoadStaysLoading(t *testing.T) {
+	m := seededModel()
+	m.hasBeads = true
+	m.haveBeads = false
+	m.beadsPolling = true
+
+	next, _ := m.Update(beadsMsg{err: context.DeadlineExceeded})
+	nm := next.(Model)
+	if nm.haveBeads {
+		t.Errorf("first-load timeout: want haveBeads=false so the tab keeps loading…, got true")
+	}
+}
+
 // TestBeadsFreshnessSegReflectsStale covers the header readout the stale
 // flag exists to drive: freshnessSeg must say "stale", not "live", while a
 // poll has been abandoned.

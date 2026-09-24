@@ -1380,14 +1380,18 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case beadsMsg:
-		m.haveBeads = true
 		m.beadsPolling = false
+		if !errors.Is(msg.err, context.DeadlineExceeded) {
+			m.haveBeads = true
+		}
 		switch {
 		case errors.Is(msg.err, context.DeadlineExceeded):
 			// The poll was abandoned at beadsPollTimeout, not answered — bd.List's
 			// exec.CommandContext killed the child, so msg carries no real data.
 			// Keep the last-known beads/beadsErr untouched and only flag staleness:
-			// a slow tick must never wipe good rows off the screen.
+			// a slow tick must never wipe good rows off the screen. haveBeads stays
+			// as it was, so a timeout on the first load still reads "loading…"
+			// rather than an empty list.
 			m.beadsStale = true
 		case msg.err != nil:
 			m.beadsErr = msg.err.Error()

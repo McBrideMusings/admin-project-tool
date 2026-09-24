@@ -1,7 +1,9 @@
 package bd
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -185,5 +187,15 @@ func TestUnblocksSurvivesACycle(t *testing.T) {
 		if got[id] == 0 || got[id] > 3 {
 			t.Errorf("%s unblocks %d in a 3-cycle, want 1..3", id, got[id])
 		}
+	}
+}
+
+func TestRunReturnsContextErrorWhenCancelled(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := run(ctx, t.TempDir(), "list")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("want an error wrapping context.Canceled, got %v", err)
 	}
 }
