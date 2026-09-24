@@ -13,6 +13,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/timing"
+	"github.com/McBrideMusings/admin-project-tool/internal/worktree"
 )
 
 // reservedToolVerbs are the five verbs the project's design principle 5
@@ -84,6 +85,22 @@ func resolveProjectManifestFromDisk(ctx context.Context, dir string) (m *manifes
 	start := timing.Start()
 	root, found := manifest.FindRoot(dir)
 	timing.Phase("find admin.toml", start)
+	// -w/--worktree's fallback: dir is the resolved worktree target (never
+	// true for an ordinary call, since worktreeTarget is nil unless -w was
+	// given) and it has no admin.toml of its own — a fresh worktree usually
+	// won't, since admin.toml is never committed. Borrow the primary
+	// checkout's manifest content, but keep running the target: execRoot
+	// below overrides m.Root back to dir once Load/Resolve are done, so
+	// every step, log and ${VAR} still resolves inside the worktree that was
+	// actually asked for, never the primary checkout its admin.toml lives
+	// in. See internal/worktree.ManifestContentRoot's own doc comment.
+	execRoot := ""
+	if !found && worktreeTarget != nil && worktreeTarget.Path == dir {
+		if content, ok := worktree.ManifestContentRoot(dir, worktreePrimaryRoot); ok {
+			root, found = content, true
+			execRoot = dir
+		}
+	}
 	if !found {
 		return nil, false, nil
 	}
@@ -109,6 +126,15 @@ func resolveProjectManifestFromDisk(ctx context.Context, dir string) (m *manifes
 	timing.Phase("resolve archetypes", start)
 	if err != nil {
 		return nil, true, err
+	}
+	if execRoot != "" {
+		// -w's fallback ran: resolved.Root currently points at wherever the
+		// borrowed admin.toml actually lives (the primary checkout). Every
+		// downstream consumer of Root (internal/kinds.projectRoot: the
+		// subprocess cwd for every step, the tmp/ log dir, ${VAR} resolution
+		// against it) must instead see the worktree that was actually asked
+		// for.
+		resolved.Root = execRoot
 	}
 	return resolved, true, nil
 }

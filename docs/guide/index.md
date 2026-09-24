@@ -8,6 +8,7 @@ Jumping-off points into that reference:
 
 - [Reusable library helpers in `kind = "python"` bodies](/architecture/design#reusable-library-helpers-in-kind-python-bodies) — the flat-namespace calling contract and the iOS-simulator helper set.
 - [`apple` archetype `[apple]` schema](/archetypes/apple) — every `[apple]` config key.
+- [Running against another worktree (`-w`/`--worktree`)](/guide/worktree-target) — run a command, or open the dashboard, against a different git worktree without `cd`'ing there.
 
 ## Quick start
 

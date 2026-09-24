@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +28,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/shim"
 	"github.com/McBrideMusings/admin-project-tool/internal/timing"
 	"github.com/McBrideMusings/admin-project-tool/internal/tui"
+	"github.com/McBrideMusings/admin-project-tool/internal/worktree"
 )
 
 // Flags for --dump-frame, the headless render. They exist so a change can be
@@ -43,7 +45,127 @@ var (
 	// hazard, made visible from the artifact itself rather than left to a
 	// rule a human has to remember. See runCompiledInfo (cmd/compile.go).
 	compiledInfoFlag bool
+
+	// worktreeFlag is -w/--worktree's raw value, registered on rootCmd purely
+	// so it shows in --help and cobra's own flag parsing doesn't choke on it
+	// reaching a command with DisableFlagParsing unset (e.g. `admin --help
+	// -w`). The value cobra parses here is never read — Execute strips a
+	// literal -w/--worktree out of argv by hand (stripWorktreeFlag) before
+	// cobra ever sees it, for the same reason stripTimingFlag exists: a
+	// manifest command runs with DisableFlagParsing, so an un-stripped -w
+	// would reach the step as one of its own arguments instead of being
+	// consumed here.
+	worktreeFlag string
 )
+
+// worktreeTarget is admin-76tv's single re-target point: nil for an ordinary
+// invocation (every os.Getwd() call site below behaves exactly as before),
+// or the -w/--worktree flag's resolved directory once resolveWorktreeFlag has
+// run. startDir() is what every root-resolution call site in this file reads
+// instead of calling os.Getwd() itself, so a worktree target reaches every
+// one of them — admin.toml lookup, the manifest's Root (and so every
+// subprocess cwd, the tmp/ log dir, ${VAR} resolution — internal/kinds.
+// projectRoot), and the dashboard's own repo/manifest roots — without
+// threading a parameter through each of their callers individually.
+var worktreeTarget *worktree.Target
+
+// worktreePrimaryRoot is the primary checkout of the repo worktreeTarget was
+// resolved against, captured alongside it. cmd/manifest.go's
+// resolveProjectManifestFromDisk falls back to this checkout's admin.toml
+// when the target itself has none — a fresh git worktree usually won't,
+// since admin.toml is never committed (see internal/worktree.
+// ManifestContentRoot) — while still executing every step inside the target,
+// never inside this checkout.
+var worktreePrimaryRoot string
+
+// startDir is where every project-root resolution in this package starts:
+// worktreeTarget's resolved path when -w was given, else the process's own
+// working directory. Every call site cmd/root.go's own doc comment names as
+// a root-resolution candidate (unknownCommandError, registerManifestCommand,
+// runActionCmd, runCommandCmd, dashboardManifestRoot) calls this instead of
+// os.Getwd() directly, which is what makes -w's effect reach every one of
+// them from this single function.
+func startDir() (string, error) {
+	if worktreeTarget != nil {
+		return worktreeTarget.Path, nil
+	}
+	return os.Getwd()
+}
+
+// effectiveRepoRoot is git.RepoRoot, re-targeted at worktreeTarget the same
+// way startDir re-targets os.Getwd(): RepoRootFor resolves the *main*
+// worktree of whatever repo target lives in, exactly what RepoRoot itself
+// does for the process's own cwd (see internal/git/git.go), so `admin -w
+// <target>` with no further args opens the dashboard against the target's
+// repo rather than the invoking shell's.
+func effectiveRepoRoot(ctx context.Context) (string, error) {
+	if worktreeTarget != nil {
+		return git.RepoRootFor(ctx, worktreeTarget.Path)
+	}
+	return git.RepoRoot(ctx)
+}
+
+// stripWorktreeFlag removes a -w/--worktree flag and its value from args
+// (in every form cobra itself would accept: "-w x", "--worktree x",
+// "-w=x", "--worktree=x") before dispatchArgs or cobra's own parser ever see
+// them — the same reason stripTimingFlag exists, and for the same root
+// cause: a manifest command's DisableFlagParsing means cobra would otherwise
+// hand -w straight to the step as one of its own arguments. found is false
+// when neither form appears, in which case value is meaningless.
+func stripWorktreeFlag(args []string) (out []string, value string, found bool) {
+	out = make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "-w" || a == "--worktree":
+			if i+1 >= len(args) {
+				// No value follows — leave it in place so cobra's own flag
+				// parser reports the missing argument rather than this
+				// function silently swallowing a malformed invocation.
+				out = append(out, a)
+				continue
+			}
+			value, found = args[i+1], true
+			i++
+		case strings.HasPrefix(a, "--worktree="):
+			value, found = strings.TrimPrefix(a, "--worktree="), true
+		case strings.HasPrefix(a, "-w="):
+			value, found = strings.TrimPrefix(a, "-w="), true
+		default:
+			out = append(out, a)
+		}
+	}
+	return out, value, found
+}
+
+// resolveWorktreeFlag resolves -w/--worktree's value against the worktrees of
+// the repo containing the invoking shell's own working directory — real
+// os.Getwd(), the one and only time this file calls it directly, since
+// nothing has set worktreeTarget yet and internal/worktree.Resolve needs to
+// know which repo's `git worktree list` to read. On success it records both
+// package vars startDir/effectiveRepoRoot/resolveProjectManifestFromDisk
+// read from then on. On failure (ambiguous or no match) it returns the error
+// as-is: *worktree.AmbiguousError and *worktree.NotFoundError already format
+// every candidate, one per line, and main.go prints an Execute error
+// verbatim to stderr before exiting non-zero.
+func resolveWorktreeFlag(ctx context.Context, value string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	t, err := worktree.Resolve(ctx, cwd, value)
+	if err != nil {
+		return err
+	}
+	if abs, absErr := filepath.Abs(t.Path); absErr == nil {
+		t.Path = abs
+	}
+	worktreeTarget = &t
+	if primary, perr := git.RepoRoot(ctx); perr == nil {
+		worktreePrimaryRoot = primary
+	}
+	return nil
+}
 
 var rootCmd = &cobra.Command{
 	Use: "admin",
@@ -88,6 +210,14 @@ func Execute() error {
 		timing.Enable()
 	}
 	defer timing.Total()
+
+	args, wtValue, wtFound := stripWorktreeFlag(args)
+	if wtFound {
+		if err := resolveWorktreeFlag(context.Background(), wtValue); err != nil {
+			return err
+		}
+	}
+
 	rootCmd.SetArgs(dispatchArgs(args))
 	return rootCmd.ExecuteContext(context.Background())
 }
@@ -178,7 +308,7 @@ func unknownCommandError(name string) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "unknown command %q", name)
 
-	wd, wdErr := os.Getwd()
+	wd, wdErr := startDir()
 	if wdErr == nil {
 		if m, ok, err := resolveProjectManifest(context.Background(), wd); ok && err == nil {
 			if names := kinds.CommandNames(m); len(names) > 0 {
@@ -213,7 +343,7 @@ func unknownCommandError(name string) error {
 // under name whose RunE reports the manifest problem, so a broken manifest is
 // never reported as a typo.
 func registerManifestCommand(name string) bool {
-	wd, err := os.Getwd()
+	wd, err := startDir()
 	if err != nil {
 		return false
 	}
@@ -440,6 +570,9 @@ func init() {
 	f.StringSliceVar(&dumpKeys, "keys", nil, "keys to press before --dump-frame takes the frame, e.g. --keys tab,tab")
 	f.DurationVar(&dumpSettle, "settle", 2*time.Second, "how long --dump-frame waits for background loads")
 	f.BoolVar(&compiledInfoFlag, "compiled-info", false, "report which admin.toml this binary was compiled from and when, then exit")
+
+	rootCmd.PersistentFlags().StringVarP(&worktreeFlag, "worktree", "w", "",
+		"run against another git worktree instead of the cwd — a directory path, a worktree's basename, its branch, or a substring of either")
 }
 
 // dashboardManifestRoot is where the dashboard should read admin.toml from.
@@ -452,11 +585,23 @@ func init() {
 // way resolveProjectManifest already does for the CLI, so the dashboard lists
 // exactly the commands a bare `admin <name>` would run here.
 func dashboardManifestRoot() string {
-	cwd, err := os.Getwd()
+	cwd, err := startDir()
 	if err != nil {
 		return ""
 	}
-	return tui.FindManifestRoot(cwd)
+	if root := tui.FindManifestRoot(cwd); root != "" {
+		return root
+	}
+	// -w's fallback (cmd/manifest.go's own resolveProjectManifestFromDisk
+	// comment has the full rationale): the target has no admin.toml of its
+	// own, so fall back to the primary checkout's for the dashboard's Work
+	// tab content too, same as a plain `admin <cmd>` in the target would.
+	if worktreeTarget != nil {
+		if root, ok := worktree.ManifestContentRoot(cwd, worktreePrimaryRoot); ok {
+			return root
+		}
+	}
+	return ""
 }
 
 // runDumpFrame prints one frame of the dashboard to stdout and exits. Unlike the
@@ -464,7 +609,7 @@ func dashboardManifestRoot() string {
 // output, there is no cd sentinel to keep it clear of, and the repo() shell
 // function passes non-sentinel stdout lines straight through.
 func runDumpFrame(ctx context.Context) error {
-	repoRoot, err := git.RepoRoot(ctx)
+	repoRoot, err := effectiveRepoRoot(ctx)
 	if err != nil {
 		return err
 	}
@@ -497,7 +642,7 @@ func runDashboard(ctx context.Context) error {
 	defer timing.Flush()
 
 	start := timing.Start()
-	repoRoot, err := git.RepoRoot(ctx)
+	repoRoot, err := effectiveRepoRoot(ctx)
 	if err != nil {
 		return err
 	}

@@ -547,6 +547,18 @@ type Model struct {
 	swOptions []workCmdRow
 	swCursor  int
 
+	// Worktree-target picker overlay (admin-76tv, worktreepicker.go): `T`
+	// lists the repo's worktrees (git.WorktreesFor(m.repoRoot)) so the user
+	// can point the dashboard at one of them; enter switches wtTarget/
+	// wtTargetBranch and reloads the manifest from there. wtTarget is ""
+	// until a pick is made, which is what headerLine treats as "nothing to
+	// show" — the dashboard's original repoRoot-rooted behavior.
+	wtPickerOpen    bool
+	wtPickerOptions []git.Worktree
+	wtPickerCursor  int
+	wtTarget        string
+	wtTargetBranch  string
+
 	// Quit confirm overlay (admin-3rgp.63): quitting while the dashboard is
 	// hosting a running process on its own pty must not kill it silently —
 	// see requestQuit in quitconfirm.go. quitHosted is the snapshot taken
@@ -1914,6 +1926,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.workflowPickerKey(msg.String())
 	}
 
+	// The worktree-target picker overlay (admin-76tv) owns the keyboard the
+	// same way the workflow picker above does — a plain list, nothing to
+	// resolve, so it sits right beside it rather than behind any state the
+	// workflow picker itself depends on.
+	if m.wtPickerOpen {
+		return m.worktreePickerKey(msg.String())
+	}
+
 	// The workflow confirm overlay (admin-3rgp.26) owns the keyboard while a
 	// query is resolving or its resolved set is up for confirmation: nothing
 	// underneath (the Work tab's own cursor, dispatch, anything else) can
@@ -2312,6 +2332,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.active == tabLocal {
 			return m.cleanAll()
 		}
+	case "T":
+		// Worktree-target picker (admin-76tv): global, not tab-scoped — the
+		// same reason `q`/arrow navigation isn't either. Free of any existing
+		// binding (not in keymap.Reserved, and every tab already treats a
+		// bare "T" as a no-op).
+		return m.startWorktreePicker()
 	}
 	return m, nil
 }

@@ -202,6 +202,9 @@ func (m Model) renderBodyHits(width, bodyHeight int) ([]string, []hitTarget) {
 	case m.swOpen:
 		content = m.renderWorkflowPickerBody(width, contentH)
 		hits = noneHits(len(content))
+	case m.wtPickerOpen:
+		content = m.renderWorktreePickerBody(width, contentH)
+		hits = noneHits(len(content))
 	case m.wfResolving || m.wfOpen:
 		content = m.renderWorkflowConfirmBody(width, contentH)
 		hits = noneHits(len(content))
@@ -343,6 +346,12 @@ func (m Model) headerLine(width int) string {
 	}
 	left := []seg{
 		{t: nwo, fg: cFg, link: repoURL(m.nwo)}, {t: "  " + branchGlyph(), fg: cDim}, branchSeg,
+	}
+	// The picked worktree target (admin-76tv, `T`), when one has been picked
+	// — absent otherwise, so a dashboard nobody has retargeted looks exactly
+	// as it always did.
+	if label := m.targetLabel(); label != "" {
+		left = append(left, seg{t: "  target: ", fg: cDim}, seg{t: label, fg: cCyan})
 	}
 	if m.haveLocal {
 		if m.local.status.Clean() {

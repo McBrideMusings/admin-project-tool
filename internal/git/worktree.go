@@ -36,7 +36,21 @@ type Worktree struct {
 // reports every worktree regardless of where it lives, so it does not care
 // whether the dashboard, Claude Code, or plain git created it.
 func Worktrees(ctx context.Context) ([]Worktree, error) {
-	out, err := runner(ctx, "worktree", "list", "--porcelain")
+	return WorktreesFor(ctx, "")
+}
+
+// WorktreesFor is Worktrees for a directory other than the process's own cwd —
+// dir == "" runs in the process cwd exactly as Worktrees. Needed by the -w/
+// --worktree flag's resolver (internal/worktree), which must list the
+// worktrees of the repo containing a directory it was merely handed, not the
+// one the admin process happens to be running in — same shape as
+// RepoRootFor's own doc comment above.
+func WorktreesFor(ctx context.Context, dir string) ([]Worktree, error) {
+	args := []string{"worktree", "list", "--porcelain"}
+	if dir != "" {
+		args = append([]string{"-C", dir}, args...)
+	}
+	out, err := runner(ctx, args...)
 	if err != nil {
 		return nil, err
 	}

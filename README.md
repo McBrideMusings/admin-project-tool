@@ -37,3 +37,14 @@ Once installed, `admin` is on your PATH. Run it from anywhere inside a project �
 | `admin <command>` | Run a command defined in the project's `admin.toml` |
 
 To update the tool: edit, commit, push, then re-run `./install.sh`. There is no per-project regeneration.
+
+### Running against another worktree
+
+`-w`/`--worktree <target>` runs against a different git worktree of the current repo instead of the current directory:
+
+```bash
+admin -w redux-c38.5 dev      # run the "dev" command with that worktree as the project root
+admin -w redux-c38.5          # open the dashboard on that worktree instead
+```
+
+`<target>` resolves against `git worktree list` in this order, stopping at the first tier that matches: an existing directory path, a worktree's directory name, its branch name, then a substring of either (case-insensitive). Two or more matches at the deciding tier, or no match at all, exits non-zero and lists every candidate rather than guessing. Everything the command runs — the manifest lookup, the working directory, the log directory, `${VAR}` resolution — then behaves as though `admin` had been invoked from inside that worktree. If the target has no `admin.toml` of its own (worktrees never get one, since `admin.toml` is never committed), it borrows the primary checkout's manifest but still executes inside the target worktree. See `docs/guide/worktree-target.md` for the full four-tier resolution and the dashboard's `T` picker.

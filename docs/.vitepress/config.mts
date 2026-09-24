@@ -17,6 +17,7 @@ export default defineConfig({
           text: 'Guide',
           items: [
             { text: 'Overview', link: '/guide/' },
+            { text: 'Running against another worktree', link: '/guide/worktree-target' },
           ],
         },
       ],

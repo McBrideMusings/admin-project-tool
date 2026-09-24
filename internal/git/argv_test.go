@@ -347,6 +347,16 @@ func TestCommandArgv(t *testing.T) {
 			call: func(ctx context.Context) { Worktrees(ctx) },
 			want: []call{rd("worktree", "list", "--porcelain")},
 		},
+		{
+			name: "WorktreesFor with an empty dir behaves exactly like Worktrees",
+			call: func(ctx context.Context) { WorktreesFor(ctx, "") },
+			want: []call{rd("worktree", "list", "--porcelain")},
+		},
+		{
+			name: "WorktreesFor with a dir prepends -C",
+			call: func(ctx context.Context) { WorktreesFor(ctx, "/repo") },
+			want: []call{rd("-C", "/repo", "worktree", "list", "--porcelain")},
+		},
 	}
 
 	for _, tt := range tests {
@@ -418,6 +428,7 @@ var coveredCommands = map[string]bool{
 	"WorkingStatus":         true,
 	"WorktreeTouched":       true,
 	"Worktrees":             true,
+	"WorktreesFor":          true,
 }
 
 func TestArgvCoverage(t *testing.T) {
