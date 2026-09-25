@@ -93,7 +93,7 @@ type workRowData struct {
 	// cmdName holds the PARENT command's name on these rows too, so
 	// dispatch reads the same field on either shape.
 	targetKey string
-	// targetDesc is that target's own run command, shown beside its name.
+	// targetDesc is what that target does, shown beside its name.
 	targetDesc string
 	// targetLast marks the final target of an expanded command, so the
 	// renderer can close the tree with └ instead of ├.
