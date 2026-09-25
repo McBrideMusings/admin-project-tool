@@ -11,7 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
+
+// recordMu serialises Record's read-modify-write. Callers run Record from
+// separate tea.Cmd goroutines, so two dispatches in quick succession would
+// otherwise both load the same list and one entry would overwrite the other.
+var recordMu sync.Mutex
 
 // maxEntries caps the stored list. The palette wants the top 5 (Top's n
 // parameter), but the cap here is deliberately larger so a recently-bumped
@@ -96,6 +102,8 @@ func Record(nwo, invocation string) {
 	if nwo == "" || invocation == "" {
 		return
 	}
+	recordMu.Lock()
+	defer recordMu.Unlock()
 	list := load(nwo)
 	out := make([]string, 0, len(list)+1)
 	out = append(out, invocation)

@@ -20,6 +20,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/resolve"
 	"github.com/McBrideMusings/admin-project-tool/internal/shim"
+	"github.com/McBrideMusings/admin-project-tool/internal/workusage"
 )
 
 // localData is everything the Local and Cleanup views need from git.
@@ -425,6 +426,17 @@ func loadBeadsCmd(ctx context.Context, repoRoot string) tea.Cmd {
 		defer cancel()
 		beads, err := bd.List(ctx, repoRoot)
 		return beadsMsg{beads: beads, err: err}
+	}
+}
+
+// recordUsageCmd writes a successful dispatch to the Work tab's MRU list. The
+// write reads, rewrites and renames a file, so it runs in a Cmd rather than on
+// the update goroutine. It reports nothing back: nothing in the dashboard
+// reads the list yet.
+func recordUsageCmd(nwo, invocation string) tea.Cmd {
+	return func() tea.Msg {
+		workusage.Record(nwo, invocation)
+		return nil
 	}
 }
 

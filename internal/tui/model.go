@@ -26,7 +26,6 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/shim"
 	"github.com/McBrideMusings/admin-project-tool/internal/viewstate"
-	"github.com/McBrideMusings/admin-project-tool/internal/workusage"
 )
 
 type tab int
@@ -1653,16 +1652,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.setStatus(msg.name+" started", cGreen)
-		workusage.Record(m.nwo, resolvedInvocation(msg.name, msg.args))
+		record := recordUsageCmd(m.nwo, resolvedInvocation(msg.name, msg.args))
 		m.refreshDetailProbes()
 		if m.pendingAttach[msg.name] {
 			delete(m.pendingAttach, msg.name)
 			if e := m.liveEntryForCommand(msg.name); e != nil {
 				am, acmd := m.attachEntry(e)
-				return am, tea.Batch(acmd, workTickCmd())
+				return am, tea.Batch(acmd, workTickCmd(), record)
 			}
 		}
-		return m, workTickCmd()
+		return m, tea.Batch(workTickCmd(), record)
 
 	case workflowResolvedMsg:
 		m.workflowResolved(msg)
