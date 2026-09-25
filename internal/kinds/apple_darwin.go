@@ -49,6 +49,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
+	"github.com/McBrideMusings/admin-project-tool/internal/macapp"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/streams"
 )
@@ -405,8 +406,7 @@ func appleDeployMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 	}
 
 	h.Info("Installing to " + installPath)
-	_ = os.RemoveAll(installPath)
-	if err := appleCopyTree(appPath, installPath); err != nil {
+	if _, err := macapp.Install(appPath, installPath, h); err != nil {
 		return err
 	}
 
@@ -719,47 +719,6 @@ func pumpAttached(h *luahost.Host, r io.Reader) {
 		pump.Write(scanner.Text() + "\n")
 	}
 	pump.Flush()
-}
-
-// appleCopyTree recursively copies src to dst, matching Python's
-// shutil.copytree — used by the macOS --install path and deploy_mac's
-// install-to-/Applications step, both of which shutil.copytree an .app
-// bundle wholesale in the original. Named distinctly from sync.go's own
-// copyTree (a different signature — excludes-aware, dest already exists)
-// rather than overloading that name.
-func appleCopyTree(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode())
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			link, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			return os.Symlink(link, target)
-		}
-		in, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer in.Close()
-		out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
-		if err != nil {
-			return err
-		}
-		defer out.Close()
-		_, err = io.Copy(out, in)
-		return err
-	})
 }
 
 // appleNotarizeAndStaple submits a Developer ID-signed .app to Apple's notary

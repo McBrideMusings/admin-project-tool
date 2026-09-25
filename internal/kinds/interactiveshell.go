@@ -14,6 +14,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/keybindings"
 	"github.com/McBrideMusings/admin-project-tool/internal/logbridge"
 	"github.com/McBrideMusings/admin-project-tool/internal/logformat"
+	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
@@ -101,11 +102,17 @@ func makeInteractiveShell(name string, action manifest.Action, m *manifest.Manif
 	rawURLs := actionURLs(action)
 	footerVal, hasFooter := actionBool(action, "footer")
 	noComplete, _ := actionBool(action, "no_complete")
+	hosts, _ := actionString(action, "hosts")
 	bridgeCfg := buildLogBridgeConfig(m)
 
 	return func(args []string) error {
 		resolved := manifest.ResolveComputed(run)
 		h := newHost(m)
+		restore, err := scopeActionBridge(h, name, hosts)
+		if err != nil {
+			return err
+		}
+		defer restore()
 		f := enterFrame(h, name, rawURLs, hasFooter, footerVal, m)
 		defer frame.Deactivate(f)
 		h.Info("running: " + resolved)
@@ -159,6 +166,29 @@ func scopeLogBridgeHosts(hosts string) (string, error) {
 	return resolved, nil
 }
 
+// scopeActionBridge applies an action's own `hosts` (interactive-shell or
+// bridge-listen) before its bridge starts. Empty hosts leaves the manifest's
+// [log_bridge].hosts in charge. The returned restore puts the previous scope
+// back, so a later action in the same process does not inherit this one's.
+func scopeActionBridge(h *luahost.Host, name, hosts string) (restore func(), err error) {
+	if hosts == "" {
+		return func() {}, nil
+	}
+	prev, had := os.LookupEnv("ADMIN_LOG_BRIDGE_HOSTS")
+	resolved, err := scopeLogBridgeHosts(hosts)
+	if err != nil {
+		return func() {}, fmt.Errorf("action %q: %w", name, err)
+	}
+	h.Info("log bridge scoped to: " + resolved)
+	return func() {
+		if had {
+			os.Setenv("ADMIN_LOG_BRIDGE_HOSTS", prev)
+		} else {
+			os.Unsetenv("ADMIN_LOG_BRIDGE_HOSTS")
+		}
+	}, nil
+}
+
 // makeBridgeListen is kind="bridge-listen"'s factory — the Go port of
 // admin_lib/interp.py::_make_bridge_listen. `hosts` on the action narrows
 // what THIS listener advertises (via ADMIN_LOG_BRIDGE_HOSTS, read by
@@ -175,13 +205,11 @@ func makeBridgeListen(name string, action manifest.Action, m *manifest.Manifest,
 
 	return func(args []string) error {
 		h := newHost(m)
-		if hosts != "" {
-			resolved, rerr := scopeLogBridgeHosts(hosts)
-			if rerr != nil {
-				return fmt.Errorf("action %q: %w", name, rerr)
-			}
-			h.Info("log bridge scoped to: " + resolved)
+		restore, err := scopeActionBridge(h, name, hosts)
+		if err != nil {
+			return err
 		}
+		defer restore()
 		h.Info("waiting for browser console output (Ctrl-C to stop)")
 		fmtFn := logformat.MakeFormatter(logformat.DefaultOptions())
 		rc, rerr := keybindings.Run(bridgePark, keys, keybindings.Options{

@@ -32,6 +32,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/macapp"
 )
 
 // Config is the Go port of admin_lib/electron.py's `[electron]` cfg dict.
@@ -186,41 +188,14 @@ func BuildElectron(cfg Config, projectRoot string) (string, error) {
 	return appPath, nil
 }
 
-func killRunning(installDir, appName string) {
-	exePath := filepath.Join(installDir, appName+".app", "Contents/MacOS", appName)
-	if err := exec.Command("pgrep", "-f", exePath).Run(); err == nil {
-		_ = exec.Command("pkill", "-f", exePath).Run()
-	}
-}
-
-// InstallElectron is the Go port of admin_lib/electron.py::install_electron:
-// atomically install a built .app into cfg.InstallDir, killing any running
-// copy first. Uses `ditto`, not a generic recursive copy — a signed .app
-// bundle's validity depends on its exact symlink/resource-fork structure
-// (e.g. *.framework/Versions/Current), which a generic copy doesn't reliably
-// preserve; see admin_lib/electron.py's own comment for the codesign
-// failure this fixes.
-func InstallElectron(builtPath string, cfg Config) error {
+// InstallElectron installs a built .app into cfg.InstallDir through
+// internal/macapp, then opens it.
+func InstallElectron(builtPath string, cfg Config, log macapp.Logger) error {
 	if cfg.AppName == "" {
 		return fmt.Errorf("[electron].app_name not set")
 	}
-	installDir := cfg.installDir()
-	target := filepath.Join(installDir, cfg.AppName+".app")
-	staged := filepath.Join(installDir, "."+cfg.AppName+".app.staged")
-
-	_ = os.RemoveAll(staged)
-	killRunning(installDir, cfg.AppName)
-
-	if err := exec.Command("ditto", builtPath, staged).Run(); err != nil {
-		return fmt.Errorf("ditto failed: %w", err)
-	}
-
-	// rename(2) can only replace an EMPTY directory — a non-empty existing
-	// target (every install after the first) fails with ENOTEMPTY. The
-	// running instance is already dead, so clearing the old bundle
-	// immediately before the rename is safe.
-	_ = os.RemoveAll(target)
-	if err := os.Rename(staged, target); err != nil {
+	target := filepath.Join(cfg.installDir(), cfg.AppName+".app")
+	if _, err := macapp.Install(builtPath, target, log); err != nil {
 		return fmt.Errorf("could not install %s: %w", target, err)
 	}
 	_ = exec.Command("open", target).Run()
@@ -229,12 +204,12 @@ func InstallElectron(builtPath string, cfg Config) error {
 
 // DeployElectron is the Go port of admin_lib/electron.py::deploy_electron:
 // BuildElectron, then InstallElectron.
-func DeployElectron(cfg Config, projectRoot string) error {
+func DeployElectron(cfg Config, projectRoot string, log macapp.Logger) error {
 	built, err := BuildElectron(cfg, projectRoot)
 	if err != nil {
 		return err
 	}
-	return InstallElectron(built, cfg)
+	return InstallElectron(built, cfg, log)
 }
 
 // DevOptions configures DevElectron.

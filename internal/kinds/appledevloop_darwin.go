@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
+	"github.com/McBrideMusings/admin-project-tool/internal/macapp"
 	"github.com/McBrideMusings/admin-project-tool/internal/reload"
 )
 
@@ -161,8 +162,7 @@ func appleDevMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 				return fmt.Errorf("--install requires apple.mac_install_path_dev in admin.toml")
 			}
 			h.Info("Installing to " + dest)
-			_ = os.RemoveAll(dest)
-			if err := appleCopyTree(appPath, dest); err != nil {
+			if _, err := macapp.Install(appPath, dest, h); err != nil {
 				return err
 			}
 			appPath = dest

@@ -157,7 +157,7 @@ func TestRunApplePrebuildRunsOnceAndErrorsOnFailure(t *testing.T) {
 // --- mac_deploy_verify -------------------------------------------------
 //
 // appleDeployMac only calls appleRunMacDeployVerify and, on a nil error,
-// proceeds to os.RemoveAll(installPath) + appleCopyTree — so a non-nil error
+// proceeds to macapp.Install(appPath, installPath) — so a non-nil error
 // from this function is exactly what keeps installPath untouched. These
 // tests exercise the extracted function directly rather than the full
 // appleDeployMac flow, which needs a real xcodebuild.

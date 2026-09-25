@@ -28,6 +28,30 @@ func TestMakeInteractiveShellRunsAndSucceeds(t *testing.T) {
 	}
 }
 
+// TestMakeInteractiveShellHostsScopesTheBridge proves an interactive-shell
+// action's own `hosts` narrows its log bridge before the command runs — the
+// shape `logs dev` / `logs live` need to stream side by side.
+func TestMakeInteractiveShellHostsScopesTheBridge(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("ADMIN_LOG_BRIDGE_HOSTS", "")
+	t.Setenv("DEV_PAGES", "dev.example.com")
+	action := manifest.Action{"run": `printf %s "$ADMIN_LOG_BRIDGE_HOSTS" > seen.txt`, "hosts": "${DEV_PAGES}"}
+	runner, err := makeInteractiveShell("logs-dev", action, nil, nil)
+	if err != nil {
+		t.Fatalf("makeInteractiveShell: %v", err)
+	}
+	if err := runner(nil); err != nil {
+		t.Fatalf("runner() = %v, want nil", err)
+	}
+	seen, err := os.ReadFile("seen.txt")
+	if err != nil || string(seen) != "dev.example.com" {
+		t.Fatalf("bridge hosts seen by the run = %q (%v), want %q", seen, err, "dev.example.com")
+	}
+	if got := os.Getenv("ADMIN_LOG_BRIDGE_HOSTS"); got != "" {
+		t.Errorf("after the action: ADMIN_LOG_BRIDGE_HOSTS = %q, want the previous empty scope restored", got)
+	}
+}
+
 // TestMakeInteractiveShellNonZeroExitIsError proves a wrapped command that
 // exits non-zero (and isn't a user-interrupt code) is reported as a
 // failure.

@@ -4,8 +4,12 @@ package luahost
 
 import (
 	"errors"
+	"os/exec"
+	"path/filepath"
 
 	lua "github.com/yuin/gopher-lua"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/macapp"
 )
 
 // registerApple binds the `apple` table documented in
@@ -84,6 +88,37 @@ func (h *Host) registerApple(L *lua.LState) {
 			return 1
 		}
 		L.Push(lua.LString(path))
+		return 1
+	})
+
+	set("install_app", func(L *lua.LState) int {
+		opts := L.OptTable(2, L.NewTable())
+		src, err := macapp.Resolve(L.CheckString(1))
+		if err != nil {
+			L.RaiseError("apple.install_app: %v", err)
+			return 0
+		}
+		destDir := "/Applications"
+		if v, ok := opts.RawGetString("dest_dir").(lua.LString); ok && v != "" {
+			destDir = string(v)
+		}
+		dest := filepath.Join(destDir, filepath.Base(src))
+		wasRunning, err := macapp.Install(src, dest, h)
+		if err != nil {
+			L.RaiseError("apple.install_app: %v", err)
+			return 0
+		}
+		h.Ok("installed " + dest)
+		// relaunch unset: relaunch only what was running when the install began.
+		relaunch := wasRunning
+		if v, ok := opts.RawGetString("relaunch").(lua.LBool); ok {
+			relaunch = bool(v)
+		}
+		if relaunch {
+			h.Info("relaunching " + filepath.Base(dest))
+			_ = exec.Command("open", dest).Run()
+		}
+		L.Push(lua.LString(dest))
 		return 1
 	})
 

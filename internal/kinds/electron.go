@@ -69,7 +69,7 @@ func makeElectron(name string, action manifest.Action, m *manifest.Manifest, _ *
 			return nil
 
 		case "deploy":
-			if err := electron.DeployElectron(cfg, root); err != nil {
+			if err := electron.DeployElectron(cfg, root, h); err != nil {
 				return fmt.Errorf("action %q: %w", name, err)
 			}
 			h.Ok("installed " + cfg.AppName + ".app")
