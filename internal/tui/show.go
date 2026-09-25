@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -38,6 +37,7 @@ func ShowTabNames() []string {
 // come from the same functions the dashboard draws them from (Model.rows and
 // the Repo tab's branchRows/localPanes, which is where that tab's panes get their
 // data) — this type only flattens the result.
+//
 // Cells is the row's visible text, one entry per rendered segment; the fields
 // after it are the row's payload and appear only when the row carries one.
 type ShowRow struct {
@@ -93,7 +93,7 @@ type ShowPR struct {
 // rows that tab holds. A tab the project does not draw — Work without an
 // admin.toml, Beads without the tracker, PRs and Issues without a GitHub
 // origin — is an error, the same absence the tab bar shows.
-func ShowRows(ctx context.Context, m Model, name string, opts FrameOptions) ([]ShowRow, error) {
+func ShowRows(m Model, name string, opts FrameOptions) ([]ShowRow, error) {
 	var want tab = -1
 	for _, t := range showTabs {
 		if t.name == strings.ToLower(name) {
@@ -114,13 +114,14 @@ func ShowRows(ctx context.Context, m Model, name string, opts FrameOptions) ([]S
 		opts.Settle = 2 * time.Second
 	}
 
-	deadline := time.Now().Add(opts.Settle)
 	p := loadedPump(m, opts)
 	if p.model.tabIndex(want) < 0 {
 		return nil, fmt.Errorf("the %s tab is not shown in this project", name)
 	}
 	// A tab's data can arrive in several hops (the Beads probe, then its list),
-	// so keep pumping until this tab has it, bounded by opts.Settle.
+	// so keep pumping until this tab has it, bounded by a further opts.Settle
+	// that starts once the first load has finished.
+	deadline := time.Now().Add(opts.Settle)
 	// Idle with nothing in flight means nothing more can arrive: stop, don't spin.
 	for !p.model.tabLoaded(want) && time.Now().Before(deadline) && atomic.LoadInt32(&p.inFlight) > 0 {
 		p.drain(100 * time.Millisecond)

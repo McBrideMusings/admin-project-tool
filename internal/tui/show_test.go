@@ -31,7 +31,7 @@ func TestShowRowsPRsClassifiesByBucket(t *testing.T) {
 	defer cancel()
 	m := New(ctx, t.TempDir(), "o/r", "main", "main")
 	m.manifest = &manifest.Manifest{HasUsesPullRequests: true, UsesPullRequests: true}
-	rows, err := ShowRows(ctx, m, "prs", FrameOptions{Settle: 500 * time.Millisecond})
+	rows, err := ShowRows(m, "prs", FrameOptions{Settle: 500 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,10 +57,10 @@ func TestShowRowsRejectsUnknownAndAbsentTab(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	m := New(ctx, t.TempDir(), "", "main", "main")
-	if _, err := ShowRows(ctx, m, "nope", FrameOptions{Settle: time.Millisecond}); err == nil || !strings.Contains(err.Error(), "unknown tab") {
+	if _, err := ShowRows(m, "nope", FrameOptions{Settle: time.Millisecond}); err == nil || !strings.Contains(err.Error(), "unknown tab") {
 		t.Errorf("unknown tab err = %v, want \"unknown tab\"", err)
 	}
-	if _, err := ShowRows(ctx, m, "prs", FrameOptions{Settle: time.Millisecond}); err == nil || !strings.Contains(err.Error(), "not shown") {
+	if _, err := ShowRows(m, "prs", FrameOptions{Settle: time.Millisecond}); err == nil || !strings.Contains(err.Error(), "not shown") {
 		t.Errorf("absent tab err = %v, want \"not shown\"", err)
 	}
 }
@@ -84,7 +84,7 @@ func TestShowRowsRepoListsBranches(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	m := New(ctx, dir, "", "main", "main")
-	rows, err := ShowRows(ctx, m, "repo", FrameOptions{Settle: 5 * time.Second})
+	rows, err := ShowRows(m, "repo", FrameOptions{Settle: 5 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestShowRowsBeadsWaitsForData(t *testing.T) {
 	m := New(ctx, t.TempDir(), "", "main", "main")
 	m.manifest = &manifest.Manifest{HasTracker: true, Trackers: []string{"beads"}}
 	m.manifestOK = true
-	rows, err := ShowRows(ctx, m, "beads", FrameOptions{Settle: 5 * time.Second})
+	rows, err := ShowRows(m, "beads", FrameOptions{Settle: 5 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestShowRowsBeadsNeverPrintsPlaceholder(t *testing.T) {
 	m := New(ctx, t.TempDir(), "", "main", "main")
 	m.manifest = &manifest.Manifest{HasTracker: true, Trackers: []string{"beads"}}
 	m.manifestOK = true
-	rows, err := ShowRows(ctx, m, "beads", FrameOptions{Settle: 400 * time.Millisecond})
+	rows, err := ShowRows(m, "beads", FrameOptions{Settle: 400 * time.Millisecond})
 	if err == nil || !strings.Contains(err.Error(), "had not loaded") {
 		t.Errorf("rows = %+v, err = %v; want a \"had not loaded\" error, not a placeholder row", rows, err)
 	}

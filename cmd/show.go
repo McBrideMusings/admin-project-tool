@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -57,9 +56,9 @@ func runShow(ctx context.Context, tab string, settle time.Duration) error {
 	nwo, _ := git.OriginNWO(ctx)
 	model := tui.New(ctx, repoRoot, nwo, git.CurrentBranch(ctx), git.DefaultBranch(ctx),
 		tui.WithManifestRoot(dashboardManifestRoot()))
-	rows, err := tui.ShowRows(ctx, model, tab, tui.FrameOptions{Settle: settle})
+	rows, err := tui.ShowRows(model, tab, tui.FrameOptions{Settle: settle})
 	if err != nil {
-		return fmt.Errorf("show: %s", strings.TrimPrefix(err.Error(), "show: "))
+		return fmt.Errorf("show: %w", err)
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
