@@ -57,18 +57,18 @@ func TestCheckReservedCollisionsRejectsToolVerb(t *testing.T) {
 }
 
 // TestCheckReservedCollisionsRejectsCmdVerb proves the same rule extends to
-// cmd/'s own verbs (branch, prs, populate), not only the five tool verbs.
+// cmd/'s own verbs (branch, show, populate), not only the five tool verbs.
 func TestCheckReservedCollisionsRejectsCmdVerb(t *testing.T) {
 	m := &manifest.Manifest{
 		Overrides: map[string]manifest.Command{
-			"prs": {Steps: []string{"noop"}},
+			"show": {Steps: []string{"noop"}},
 		},
 	}
 	err := checkReservedCollisions(m)
 	if err == nil {
-		t.Fatal("checkReservedCollisions(prs) = nil, want an error naming \"prs\"")
+		t.Fatal("checkReservedCollisions(show) = nil, want an error naming \"show\"")
 	}
-	if !strings.Contains(err.Error(), "prs") {
+	if !strings.Contains(err.Error(), "show") {
 		t.Fatalf("error %q does not name the colliding command", err.Error())
 	}
 }

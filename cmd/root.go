@@ -241,7 +241,7 @@ func stripTimingFlag(args []string) ([]string, bool) {
 
 // dispatchArgs resolves a bare first argument in two steps:
 //
-//  1. A tool verb or an existing cmd/ verb (branch, worktree, prs, populate,
+//  1. A tool verb or an existing cmd/ verb (branch, worktree, show, populate,
 //     plus cobra's help/completion) — handled by the loop below.
 //  2. A command declared in the current project's admin.toml — handled by
 //     registerManifestCommand.
@@ -549,7 +549,7 @@ func colorfgbgDarkBackground(raw string) bool {
 func init() {
 	rootCmd.AddCommand(branchCmd)
 	rootCmd.AddCommand(worktreeCmd)
-	rootCmd.AddCommand(prsCmd)
+	rootCmd.AddCommand(showCmd)
 	rootCmd.AddCommand(populateCmd)
 	rootCmd.AddCommand(cmdCmd)
 	rootCmd.AddCommand(runActionCmd)

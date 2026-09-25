@@ -47,10 +47,7 @@ func Frame(ctx context.Context, m Model, opts FrameOptions) string {
 		opts.Settle = 2 * time.Second
 	}
 
-	p := &pump{msgs: make(chan tea.Msg, 64), model: m}
-	p.apply(tea.WindowSizeMsg{Width: opts.Width, Height: opts.Height})
-	p.run(p.model.Init())
-	p.drain(opts.Settle)
+	p := loadedPump(m, opts)
 
 	// Keys go in after the loads, so a pane that only appears once data has
 	// arrived is focusable — pressing tab against an empty dashboard would land
@@ -84,10 +81,7 @@ func Frames(ctx context.Context, m Model, opts FrameOptions, seqs [][]string) []
 		opts.Settle = 2 * time.Second
 	}
 
-	p := &pump{msgs: make(chan tea.Msg, 64), model: m}
-	p.apply(tea.WindowSizeMsg{Width: opts.Width, Height: opts.Height})
-	p.run(p.model.Init())
-	p.drain(opts.Settle)
+	p := loadedPump(m, opts)
 	base := p.model
 
 	out := make([]string, len(seqs))
@@ -100,6 +94,17 @@ func Frames(ctx context.Context, m Model, opts FrameOptions, seqs [][]string) []
 		out[i] = p.model.View()
 	}
 	return out
+}
+
+// loadedPump sizes m, runs its Init commands through the real Update loop and
+// waits (bounded by opts.Settle) for them to land — the shared start of Frame,
+// Frames and ShowRows.
+func loadedPump(m Model, opts FrameOptions) *pump {
+	p := &pump{msgs: make(chan tea.Msg, 64), model: m}
+	p.apply(tea.WindowSizeMsg{Width: opts.Width, Height: opts.Height})
+	p.run(p.model.Init())
+	p.drain(opts.Settle)
+	return p
 }
 
 // pump is a single-goroutine Bubble Tea loop: commands run in the background and

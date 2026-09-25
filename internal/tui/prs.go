@@ -43,7 +43,7 @@ func (m Model) prRows() []rowItem {
 			left, right := m.openPRRow(pr, pc, cols)
 			rows = append(rows, rowItem{
 				kind: rowPR, leftSegs: left, rightSegs: right,
-				prNum: pr.Number, branch: pr.HeadBranch,
+				prNum: pr.Number, pr: &pr, branch: pr.HeadBranch,
 				wtPath: wtByBranch[pr.HeadBranch], url: gh.PRURL(m.nwo, pr.Number),
 			})
 		}

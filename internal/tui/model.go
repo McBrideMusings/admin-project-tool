@@ -18,6 +18,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/bd"
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
+	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/keymap"
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
@@ -91,6 +92,7 @@ type rowItem struct {
 	branch     string
 	wtPath     string
 	prNum      int
+	pr         *gh.OpenPR // set by prRows so `admin show prs` can report bucket/checks/review by name
 	issueNum   int
 	issueTitle string
 	beadID     string

@@ -25,7 +25,7 @@ var reservedToolVerbs = []string{"new", "check", "compile", "branch", "worktree"
 
 // reservedCmdVerbs are cmd/'s own subcommands plus cobra's built-ins —
 // ADR-0011 §2's explicit enumeration of what step 1 of the resolution order
-// covers ("new, check, compile, branch, worktree, prs, populate, plus
+// covers ("new, check, compile, branch, worktree, show, populate, plus
 // cobra's help and completion") — and §3 extends the "tool verbs are
 // reserved" rule to these too, rather than inventing a second concept.
 //
@@ -41,7 +41,7 @@ var reservedToolVerbs = []string{"new", "check", "compile", "branch", "worktree"
 // "cmd" (admin-u7qi.1) was added alongside the ADR's original enumeration
 // rather than left to fall into the "caught but not reported" gap the
 // comment above describes, since it's a verb this ticket introduces itself.
-var reservedCmdVerbs = []string{"prs", "populate", "cmd", "help", "completion"}
+var reservedCmdVerbs = []string{"show", "populate", "cmd", "help", "completion"}
 
 // resolveProjectManifest loads dir's admin.toml (if any) and resolves it
 // against its declared archetypes, using the same search path
