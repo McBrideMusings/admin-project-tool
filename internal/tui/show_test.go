@@ -2,6 +2,9 @@ package tui
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -59,5 +62,94 @@ func TestShowRowsRejectsUnknownAndAbsentTab(t *testing.T) {
 	}
 	if _, err := ShowRows(ctx, m, "prs", FrameOptions{Settle: time.Millisecond}); err == nil || !strings.Contains(err.Error(), "not shown") {
 		t.Errorf("absent tab err = %v, want \"not shown\"", err)
+	}
+}
+
+// TestShowRowsRepoListsBranches runs ShowRows against a real git repo: the Repo
+// tab's rows must hold the branches it draws, not the empty list a model that
+// never received its local load would give.
+func TestShowRowsRepoListsBranches(t *testing.T) {
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main"},
+		{"-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "first"},
+		{"branch", "topic"},
+	} {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	t.Chdir(dir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := New(ctx, dir, "", "main", "main")
+	rows, err := ShowRows(ctx, m, "repo", FrameOptions{Settle: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, r := range rows {
+		if r.Kind == "branch" {
+			names[r.Branch] = true
+		}
+	}
+	if !names["main"] || !names["topic"] {
+		t.Errorf("repo rows hold branches %v, want main and topic", names)
+	}
+}
+
+// TestShowRowsBeadsWaitsForData puts a fake bd on PATH: the Beads tab needs two
+// hops (bd where, then bd list) and ShowRows must return the bead, never the
+// "loading…" placeholder.
+func TestShowRowsBeadsWaitsForData(t *testing.T) {
+	bin := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"case \"$1\" in\n" +
+		"where) echo '{\"path\":\"/x/.beads\",\"prefix\":\"t\",\"schema_version\":1}';;\n" +
+		"list) echo '[{\"id\":\"t-1\",\"title\":\"first bead\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\"}]';;\n" +
+		"esac\n"
+	if err := os.WriteFile(filepath.Join(bin, "bd"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := New(ctx, t.TempDir(), "", "main", "main")
+	m.manifest = &manifest.Manifest{HasTracker: true, Trackers: []string{"beads"}}
+	m.manifestOK = true
+	rows, err := ShowRows(ctx, m, "beads", FrameOptions{Settle: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Kind != "bead" || rows[0].ID != "t-1" || rows[0].Title != "first bead" {
+		t.Errorf("beads rows = %+v, want the one bead t-1", rows)
+	}
+}
+
+// TestShowRowsBeadsNeverPrintsPlaceholder: when the bead list is slower than the
+// settle bound, ShowRows reports the tab as not loaded instead of returning the
+// tab's "loading…" row as if it were data.
+func TestShowRowsBeadsNeverPrintsPlaceholder(t *testing.T) {
+	bin := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"case \"$1\" in\n" +
+		"where) echo '{\"path\":\"/x/.beads\",\"prefix\":\"t\",\"schema_version\":1}';;\n" +
+		"list) sleep 3; echo '[]';;\n" +
+		"esac\n"
+	if err := os.WriteFile(filepath.Join(bin, "bd"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := New(ctx, t.TempDir(), "", "main", "main")
+	m.manifest = &manifest.Manifest{HasTracker: true, Trackers: []string{"beads"}}
+	m.manifestOK = true
+	rows, err := ShowRows(ctx, m, "beads", FrameOptions{Settle: 400 * time.Millisecond})
+	if err == nil || !strings.Contains(err.Error(), "had not loaded") {
+		t.Errorf("rows = %+v, err = %v; want a \"had not loaded\" error, not a placeholder row", rows, err)
 	}
 }

@@ -179,6 +179,15 @@ func (p *pump) drain(backstop time.Duration) {
 		default:
 		}
 		if atomic.LoadInt32(&p.inFlight) == 0 {
+			// A command hands its message off before it decrements, so a zero
+			// read can follow a send that landed after the check above: look
+			// once more before calling the pump quiet.
+			select {
+			case msg := <-p.msgs:
+				p.apply(msg)
+				continue
+			default:
+			}
 			return
 		}
 		select {

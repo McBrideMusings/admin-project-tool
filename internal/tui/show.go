@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
@@ -113,13 +114,37 @@ func ShowRows(ctx context.Context, m Model, name string, opts FrameOptions) ([]S
 		opts.Settle = 2 * time.Second
 	}
 
+	deadline := time.Now().Add(opts.Settle)
 	p := loadedPump(m, opts)
-	m = p.model
-	if m.tabIndex(want) < 0 {
+	if p.model.tabIndex(want) < 0 {
 		return nil, fmt.Errorf("the %s tab is not shown in this project", name)
+	}
+	// A tab's data can arrive in several hops (the Beads probe, then its list),
+	// so keep pumping until this tab has it, bounded by opts.Settle.
+	// Idle with nothing in flight means nothing more can arrive: stop, don't spin.
+	for !p.model.tabLoaded(want) && time.Now().Before(deadline) && atomic.LoadInt32(&p.inFlight) > 0 {
+		p.drain(100 * time.Millisecond)
+	}
+	m = p.model
+	if !m.tabLoaded(want) {
+		return nil, fmt.Errorf("the %s tab had not loaded its data after %s", name, opts.Settle)
 	}
 	m.active = want
 	return m.showRows(), nil
+}
+
+// tabLoaded reports whether the tab has the data it draws, so ShowRows never
+// prints a "loading…" placeholder as if it were a row.
+func (m Model) tabLoaded(t tab) bool {
+	switch t {
+	case tabLocal:
+		return m.haveLocal
+	case tabBeads:
+		return m.haveBeads || m.beadsErr != ""
+	case tabPRs, tabIssues:
+		return m.haveData
+	}
+	return true
 }
 
 // showRows flattens the active tab. Header rows become the Section of the rows
