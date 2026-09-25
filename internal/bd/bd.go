@@ -72,6 +72,10 @@ type Bead struct {
 func Detect(ctx context.Context, dir string) (Workspace, error) {
 	out, err := runner(ctx, dir, "where", "--json")
 	if err != nil {
+		// An abandoned call says nothing about whether a workspace exists.
+		if ctx.Err() != nil {
+			return Workspace{}, err
+		}
 		return Workspace{}, ErrNoWorkspace
 	}
 	var ws Workspace

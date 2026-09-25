@@ -56,6 +56,7 @@ func TestBeadsMsgTimeoutKeepsLastKnownAndFlagsStale(t *testing.T) {
 	m := seededModel()
 	m.hasBeads = true
 	m.beads = []bd.Bead{{ID: "keep-1"}, {ID: "keep-2"}}
+	m.haveBeads = true
 	m.beadsErr = ""
 	m.beadsPolling = true // a poll is in flight when the timeout fires
 
@@ -86,9 +87,10 @@ func TestBeadsMsgTimeoutKeepsLastKnownAndFlagsStale(t *testing.T) {
 	}
 }
 
-// TestBeadsTimeoutOnFirstLoadStaysLoading: with no rows yet, an abandoned poll
-// must leave the tab on "loading…" rather than an empty list.
-func TestBeadsTimeoutOnFirstLoadStaysLoading(t *testing.T) {
+// TestBeadsTimeoutOnFirstLoadNamesTheTimeout covers admin-3rgp.56: with no rows
+// yet, an abandoned poll replaces "loading…" with a timeout message, and the next
+// answer clears it.
+func TestBeadsTimeoutOnFirstLoadNamesTheTimeout(t *testing.T) {
 	m := seededModel()
 	m.hasBeads = true
 	m.haveBeads = false
@@ -96,8 +98,43 @@ func TestBeadsTimeoutOnFirstLoadStaysLoading(t *testing.T) {
 
 	next, _ := m.Update(beadsMsg{err: context.DeadlineExceeded})
 	nm := next.(Model)
-	if nm.haveBeads {
-		t.Errorf("first-load timeout: want haveBeads=false so the tab keeps loading…, got true")
+	rows := nm.beadRows()
+	if len(rows) != 1 || rows[0].label != beadsTimeoutText("list") {
+		t.Fatalf("first-load timeout: want the one timeout row, got %+v", rows)
+	}
+
+	next2, _ := nm.Update(beadsMsg{beads: []bd.Bead{{ID: "fresh-1"}}})
+	if got := next2.(Model).beadsErr; got != "" {
+		t.Errorf("answer after a timeout: want the message cleared, got %q", got)
+	}
+}
+
+// TestBeadsDetectTimeoutReprobes covers admin-3rgp.56's probe half: a `bd where`
+// that never answers shows the timeout, starts no poll, and asks again.
+func TestBeadsDetectTimeoutReprobes(t *testing.T) {
+	m := seededModel()
+	m.beadsProbing = true
+
+	next, cmd := m.Update(beadsDetectedMsg{present: true, err: context.DeadlineExceeded})
+	nm := next.(Model)
+	if nm.beadsErr != beadsTimeoutText("where") {
+		t.Errorf("detect timeout: want the timeout message, got %q", nm.beadsErr)
+	}
+	if nm.hasBeads {
+		t.Errorf("detect timeout: want hasBeads=false so no poll reads an unprobed workspace")
+	}
+	if nm.beadsPolling {
+		t.Errorf("detect timeout: want no bd list dispatched")
+	}
+	if cmd == nil {
+		t.Fatalf("detect timeout: want a re-probe scheduled, got no cmd")
+	}
+
+	next2, _ := nm.Update(beadsDetectedMsg{present: true, ws: bd.Workspace{Prefix: "x"}})
+	nm2 := next2.(Model)
+	if nm2.beadsErr != "" || !nm2.hasBeads || !nm2.beadsPolling {
+		t.Errorf("probe answers after a timeout: want error cleared and a poll started, got err=%q hasBeads=%v polling=%v",
+			nm2.beadsErr, nm2.hasBeads, nm2.beadsPolling)
 	}
 }
 

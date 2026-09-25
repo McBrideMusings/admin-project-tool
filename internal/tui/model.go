@@ -1366,13 +1366,21 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.hasBeads = msg.present
 		m.beadPrefix = msg.ws.Prefix
 		m.beadsErr = ""
+		var cmds []tea.Cmd
 		switch {
+		case errors.Is(msg.err, context.DeadlineExceeded):
+			// bd where never answered. Say so, and ask again: unlike a schema
+			// mismatch, a wedged bd can recover on its own.
+			// hasBeads stays false until a probe answers, so no poll or `r`
+			// refresh reads a workspace whose prefix is still unknown.
+			m.hasBeads = false
+			m.beadsErr = beadsTimeoutText("where")
+			cmds = append(cmds, beadsReprobeCmd())
 		case msg.err != nil:
 			m.beadsErr = msg.err.Error()
 		case !msg.present:
 			m.beadsErr = `tracker = "beads" is declared, but no beads workspace was found here`
 		}
-		var cmds []tea.Cmd
 		if m.hasBeads && m.beadsErr == "" {
 			cmds = append(cmds, m.pollBeadsCmd(), beadsTickCmd())
 		}
@@ -1390,10 +1398,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// The poll was abandoned at beadsPollTimeout, not answered — bd.List's
 			// exec.CommandContext killed the child, so msg carries no real data.
 			// Keep the last-known beads/beadsErr untouched and only flag staleness:
-			// a slow tick must never wipe good rows off the screen. haveBeads stays
-			// as it was, so a timeout on the first load still reads "loading…"
-			// rather than an empty list.
+			// a slow tick must never wipe good rows off the screen. With no rows
+			// yet there is nothing to keep, so the pane names the timeout instead
+			// of reading "loading…" forever; the next answer clears it.
 			m.beadsStale = true
+			if !m.haveBeads {
+				m.beadsErr = beadsTimeoutText("list")
+			}
 		case msg.err != nil:
 			m.beadsErr = msg.err.Error()
 		default:
@@ -1403,6 +1414,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.clampCursor()
 		return m, nil
+
+	case beadsReprobeMsg:
+		return m, detectBeadsCmd(m.ctx, m.repoRoot)
 
 	case beadsTickMsg:
 		// Beads live in a local database, so re-reading them costs a subprocess and

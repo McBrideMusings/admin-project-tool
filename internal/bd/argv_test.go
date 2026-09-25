@@ -2,8 +2,10 @@ package bd
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/argvscan"
 )
@@ -83,6 +85,25 @@ func TestCommandArgv(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestDetectTimeoutIsNotNoWorkspace: a `bd where` abandoned at its deadline
+// says nothing about whether a workspace exists, so Detect must return the
+// deadline error rather than ErrNoWorkspace (admin-3rgp.56).
+func TestDetectTimeoutIsNotNoWorkspace(t *testing.T) {
+	restore := runner
+	runner = func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	defer func() { runner = restore }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	_, err := Detect(ctx, "/repo")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Detect on an expired ctx: want context.DeadlineExceeded, got %v", err)
 	}
 }
 

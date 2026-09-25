@@ -397,12 +397,30 @@ type beadsMsg struct {
 // beadsTickMsg fires on a repeating timer to re-read the beads workspace.
 type beadsTickMsg struct{}
 
+// beadsReprobeMsg re-runs the `bd where` probe after one timed out.
+type beadsReprobeMsg struct{}
+
+// beadsReprobeCmd schedules the next `bd where` probe one beadsInterval out.
+func beadsReprobeCmd() tea.Cmd {
+	return tea.Tick(beadsInterval, func(time.Time) tea.Msg { return beadsReprobeMsg{} })
+}
+
+// beadsTimeoutText is what the Beads pane shows in place of rows when bd
+// answered nothing at all — so a wedged bd reads as one, not as a slow load.
+func beadsTimeoutText(verb string) string {
+	return fmt.Sprintf("bd %s did not answer within %s — retrying every %s",
+		verb, beadsPollTimeout, beadsInterval)
+}
+
 // detectBeadsCmd runs the `bd where` probe. It asks bd rather than testing for a
 // .beads directory because a worktree has none of its own — bd's own discovery
 // walks to the main repository — and a directory test would hide the Beads tab in
-// every worktree of a beads repo.
+// every worktree of a beads repo. It is bounded by beadsPollTimeout for the same
+// reason loadBeadsCmd is.
 func detectBeadsCmd(ctx context.Context, repoRoot string) tea.Cmd {
 	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(ctx, beadsPollTimeout)
+		defer cancel()
 		ws, err := bd.Detect(ctx, repoRoot)
 		if errors.Is(err, bd.ErrNoWorkspace) {
 			return beadsDetectedMsg{}
