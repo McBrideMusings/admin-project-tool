@@ -189,7 +189,7 @@ func TestAttachUnsupportedErrors(t *testing.T) {
 	}
 }
 
-// TestAttachUnknownIDErrors proves Attach/Kill/Retry all report a clear
+// TestAttachUnknownIDErrors proves Attach/Kill both report a clear
 // error for an ID the registry has never seen, rather than panicking.
 func TestAttachUnknownIDErrors(t *testing.T) {
 	r := NewRegistry()
@@ -198,9 +198,6 @@ func TestAttachUnknownIDErrors(t *testing.T) {
 	}
 	if err := r.Kill("nope"); err == nil {
 		t.Error("Kill(nope) = nil, want an error")
-	}
-	if err := r.Retry("nope"); err == nil {
-		t.Error("Retry(nope) = nil, want an error")
 	}
 }
 
@@ -219,67 +216,27 @@ func TestKillInvokesOps(t *testing.T) {
 	}
 }
 
-// TestRetryRequiresFailedState proves Retry refuses to restart an entry
-// that isn't StateFailed — retrying a still-running or cleanly-exited entry
-// is not what "restart a failed entry" means.
-//
-// MUTATION EVIDENCE: remove the `e.State != StateFailed` guard from Retry —
-// this test fails with "Retry() = <nil>, want an error for a running
-// entry" because the wired Retry op (which would panic/mutate state
-// wrongly if invoked) runs anyway. Reverted after confirming.
-func TestRetryRequiresFailedState(t *testing.T) {
-	r := NewRegistry()
-	called := false
-	r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-a", Via: "terminal", State: StateRunning, Ops: Ops{
-		Retry: func() error { called = true; return nil },
-	}})
-	if err := r.Retry("a"); err == nil {
-		t.Error("Retry() = nil, want an error for a running entry")
-	}
-	if called {
-		t.Error("Retry invoked Ops.Retry on a non-failed entry")
-	}
-}
-
-// TestRetrySucceedsOnFailedEntry proves Retry invokes Ops.Retry once an
-// entry has actually failed.
-func TestRetrySucceedsOnFailedEntry(t *testing.T) {
-	r := NewRegistry()
-	called := false
-	r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-a", Via: "terminal", Ops: Ops{
-		Retry: func() error { called = true; return nil },
-	}})
-	r.SetState("a", StateFailed, errors.New("boom"))
-	if err := r.Retry("a"); err != nil {
-		t.Errorf("Retry() = %v, want nil", err)
-	}
-	if !called {
-		t.Error("Retry did not invoke the entry's Ops.Retry")
-	}
-}
-
-// TestAddOverwritesInPlaceForRetry proves the mechanism a successful Retry
-// relies on: re-Adding an Entry under an ID already in the registry
-// replaces its pane/state/Ops but keeps the same List position — a retried
-// worker stays the same row, it doesn't grow the list a second row.
-func TestAddOverwritesInPlaceForRetry(t *testing.T) {
+// TestAddOverwritesInPlace proves re-Adding an Entry under an ID already in
+// the registry replaces its pane/state/Ops but keeps the same List position
+// — a re-dispatched worker stays the same row, it doesn't grow a second one.
+func TestAddOverwritesInPlace(t *testing.T) {
 	r := NewRegistry()
 	r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-1", Via: "terminal"})
 	r.Add(&Entry{ID: "b", Name: "two", Handle: "pane-2", Via: "terminal"})
 	r.SetState("a", StateFailed, errors.New("boom"))
 
-	// Simulate a successful Retry: a brand new Entry, same ID, new pane.
+	// A brand new Entry, same ID, new pane.
 	r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-3", Via: "terminal", State: StateRunning})
 
 	entries := r.List()
 	if len(entries) != 2 {
-		t.Fatalf("List() has %d entries, want 2 (retry replaces, doesn't append)", len(entries))
+		t.Fatalf("List() has %d entries, want 2 (re-add replaces, doesn't append)", len(entries))
 	}
 	if entries[0].Name != "one" || entries[0].Handle != "pane-3" {
-		t.Errorf("entries[0] = %+v, want the retried entry (pane-3) still in slot 0", entries[0])
+		t.Errorf("entries[0] = %+v, want the re-added entry (pane-3) still in slot 0", entries[0])
 	}
 	if entries[0].State != StateRunning {
-		t.Errorf("entries[0].State = %q, want running after retry", entries[0].State)
+		t.Errorf("entries[0].State = %q, want running after re-add", entries[0].State)
 	}
 }
 
@@ -327,34 +284,6 @@ func TestAttachPTYEntryWithNoOpenerErrors(t *testing.T) {
 	r.Add(&Entry{ID: "a", Name: "one", Handle: "pty-7"})
 	if err := r.Attach("a"); err == nil {
 		t.Error("Attach() = nil, want an error when no terminal opener is installed")
-	}
-}
-
-// TestRetryReplacesPTYEntryInPlace proves the pty analogue of
-// TestAddOverwritesInPlaceForRetry: re-Adding a hosted-pty entry under an
-// ID already in the registry (a successful Retry building a brand new Entry
-// with a new Handle) replaces it in place — one row, not two — exactly like
-// a launcher-dispatched retry.
-func TestRetryReplacesPTYEntryInPlace(t *testing.T) {
-	r := NewRegistry()
-	r.Add(&Entry{ID: "a", Name: "one", Handle: "pty-1"})
-	r.Add(&Entry{ID: "b", Name: "two", Handle: "pane-b", Via: "terminal"})
-	r.SetState("a", StateFailed, errors.New("boom"))
-
-	// Simulate a successful Retry: a brand new Entry, same ID, new pty.
-	if err := r.Add(&Entry{ID: "a", Name: "one", Handle: "pty-2", State: StateRunning}); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-
-	entries := r.List()
-	if len(entries) != 2 {
-		t.Fatalf("List() has %d entries, want 2 (retry replaces, doesn't append)", len(entries))
-	}
-	if entries[0].Name != "one" || entries[0].Handle != "pty-2" {
-		t.Errorf("entries[0] = %+v, want the retried entry (pty-2) still in slot 0", entries[0])
-	}
-	if entries[0].State != StateRunning {
-		t.Errorf("entries[0].State = %q, want running after retry", entries[0].State)
 	}
 }
 

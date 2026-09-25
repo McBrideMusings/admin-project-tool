@@ -243,11 +243,7 @@ func dispatchOne(actionName, agentKind string, t config.Terminal, drv agent.Driv
 	// means a reader of the registry mid-dispatch, not only after every
 	// target has finished.
 	//
-	// Keyed on agentName, not the handle: agentName is stable across a
-	// Retry (which starts a new agent under the same name in a new pane),
-	// so the entry Retry re-adds under this same ID replaces this one in
-	// place rather than appearing as a second row beside a stale failed
-	// entry.
+	// Keyed on agentName, not the handle.
 	e := &livework.Entry{
 		ID:     agentName,
 		Name:   actionName,
@@ -263,14 +259,6 @@ func dispatchOne(actionName, agentKind string, t config.Terminal, drv agent.Driv
 				return err
 			}
 			livework.Default.SetState(e.ID, livework.StateExited, nil)
-			return nil
-		},
-		// Retry re-runs this exact target against its existing worktree
-		// (never a fresh one — a worker never removes its own worktree, so
-		// there's nothing to recreate) in the background and returns
-		// immediately, matching how DispatchTargets originally launched it.
-		Retry: func() error {
-			go dispatchOne(actionName, agentKind, t, drv, tgt, wt)
 			return nil
 		},
 	}

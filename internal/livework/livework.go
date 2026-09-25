@@ -69,10 +69,8 @@ type WorkerInfo struct {
 }
 
 // Ops holds the real, producer-supplied implementations of an entry's
-// lifecycle actions — attach (focus the pane), kill (stop it), retry
-// (restart a failed entry). A nil field means that action genuinely isn't
-// available for this entry (e.g. a kind that has no notion of retrying),
-// and the Registry methods below report that as an error rather than a
+// lifecycle actions — attach (focus the pane) and kill (stop it). A nil
+// field means that action genuinely isn't available for this entry, and the Registry methods below report that as an error rather than a
 // panic, so a caller (the Work tab) never has to know which entry shape it
 // is holding before invoking one.
 //
@@ -88,7 +86,6 @@ type WorkerInfo struct {
 type Ops struct {
 	Attach func() error
 	Kill   func() error
-	Retry  func() error
 
 	// Write and Resize are the pty-entry counterpart of Attach's pane-only
 	// role: a pane-addressed entry's terminal IS a real terminal (attach
@@ -108,11 +105,8 @@ type Entry struct {
 	// ID uniquely identifies this live-work slot and is chosen by the
 	// producer that adds the entry — the declared action name for a
 	// single-pane long-running kind (one dispatch, one slot), or the
-	// derived agent session name for a workflow target (stable across a
-	// Retry, which starts a brand new agent under the same name in a brand
-	// new pane). ID is deliberately NOT the pane ID: a Retry that succeeds
-	// opens a different pane, and the entry must keep the same identity
-	// across that so the Work tab's cursor stays on the same row.
+	// derived agent session name for a workflow target. ID is not the
+	// pane ID: the pane address lives in Handle.
 	ID string
 
 	// Name is the declared action name that was dispatched (e.g. the
@@ -123,11 +117,9 @@ type Entry struct {
 	// Kind is the action's declared kind (e.g. "vite-dev", "workflow").
 	Kind string
 
-	// Handle is the opaque address this entry is CURRENTLY reachable at —
-	// a hosted pty's device name, or whatever a project's [terminal]
-	// launcher minted for it (ADR-0020). Unlike ID, this can change over
-	// the entry's life — a successful Retry records the new handle it
-	// opened here while ID stays put.
+	// Handle is the opaque address this entry is reachable at — a hosted
+	// pty's device name, or whatever a project's [terminal] launcher minted
+	// for it (ADR-0020).
 	//
 	// Handle must be non-empty — Add rejects an entry that leaves it
 	// blank.
@@ -139,8 +131,7 @@ type Entry struct {
 	// launcher dispatch, including a workflow target's pane (ADR-0020);
 	// what runs inside that pane is a separate concern, resolved through a
 	// compiled-in internal/agent.Driver rather than named here (ADR-0021).
-	// Like Handle, Via is set by the producer and may be re-set across a
-	// Retry while ID stays put.
+	// Like Handle, Via is set by the producer.
 	Via string
 
 	// Output is the drained bytes read off Handle's master fd — nil
@@ -171,7 +162,7 @@ type Entry struct {
 	// process — see WorkerInfo's doc comment.
 	Worker *WorkerInfo
 
-	// Ops are this entry's real attach/kill/retry implementations. See
+	// Ops are this entry's real attach/kill implementations. See
 	// Ops's doc comment.
 	Ops Ops
 
@@ -217,11 +208,8 @@ func (r *Registry) SetTerminalOpener(open func(handle string) error) {
 
 // Add records e, defaulting StartedAt to now and State to StateRunning when
 // the caller left them zero. Re-adding an existing ID overwrites that
-// entry's fields but keeps its original position in List's order — this is
-// exactly what a successful Retry relies on: it builds a brand new Entry
-// (new Handle/Via, new Ops bound to that new handle, StartedAt reset) and
-// Adds it back under the same ID, so the Work tab's cursor stays on the
-// same row instead of a second one appearing beside a stale failed one.
+// entry's fields but keeps its original position in List's order, so a
+// re-dispatch under the same ID stays on the same row.
 //
 // Add rejects e and stores nothing when e carries an empty Handle — an
 // entry must address something.
@@ -335,7 +323,7 @@ func (r *Registry) List() []*Entry {
 	return out
 }
 
-// lookup is Attach/Kill/Retry's shared "find the entry or say why not"
+// lookup is Attach/Kill's shared "find the entry or say why not"
 // step.
 func (r *Registry) lookup(id string) (*Entry, error) {
 	r.mu.Lock()
@@ -384,25 +372,6 @@ func (r *Registry) Kill(id string) error {
 		return fmt.Errorf("live-work: entry %q does not support kill", id)
 	}
 	return e.Ops.Kill()
-}
-
-// Retry restarts id. It errors when id doesn't exist, isn't StateFailed
-// (retry restarts a FAILED entry — one still running or already exited
-// cleanly has nothing to restart), or its producer never wired a Retry
-// operation.
-func (r *Registry) Retry(id string) error {
-	e, err := r.lookup(id)
-	if err != nil {
-		return err
-	}
-	st, _ := r.State(id)
-	if st != StateFailed {
-		return fmt.Errorf("live-work: entry %q is %s, not failed — nothing to retry", id, st)
-	}
-	if e.Ops.Retry == nil {
-		return fmt.Errorf("live-work: entry %q does not support retry", id)
-	}
-	return e.Ops.Retry()
 }
 
 // Default is the process-wide registry every long-running dispatch and

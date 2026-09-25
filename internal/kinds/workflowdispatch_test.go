@@ -2,7 +2,6 @@ package kinds
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -414,9 +413,7 @@ func TestDispatchTargetsRecordsLiveWorkWithPaneHandle(t *testing.T) {
 	}()
 
 	<-seenRunning
-	// Keyed on the derived agent session name, not the launcher handle —
-	// see dispatchOne's own comment for why the entry's ID must survive a
-	// Retry that opens a different pane.
+	// Keyed on the derived agent session name, not the launcher handle.
 	entry, ok := livework.Default.Get(agentSessionName("sweep", "t1"))
 	if !ok {
 		t.Fatal("live-work entry not present while the target's agent is still running")
@@ -442,8 +439,8 @@ func stubAgentInfo(fd *fakeDriver, status string) {
 
 // TestDispatchOneRecordsWorkerInfo proves a workflow target's live-work
 // entry carries its branch and worktree — the acceptance criterion "an
-// agent worker has a branch and a worktree" — and that Attach/Kill/Retry
-// are all wired, not left nil.
+// agent worker has a branch and a worktree" — and that Attach/Kill
+// are both wired, not left nil.
 func TestDispatchOneRecordsWorkerInfo(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+terminalTOML)
 	fd := stubAgent(t,
@@ -470,8 +467,8 @@ func TestDispatchOneRecordsWorkerInfo(t *testing.T) {
 	if entry.Worker.Worktree == "" {
 		t.Error("entry.Worker.Worktree is empty, want the target's worktree path")
 	}
-	if entry.Ops.Attach == nil || entry.Ops.Kill == nil || entry.Ops.Retry == nil {
-		t.Errorf("entry.Ops = %+v, want Attach/Kill/Retry all wired", entry.Ops)
+	if entry.Ops.Attach == nil || entry.Ops.Kill == nil {
+		t.Errorf("entry.Ops = %+v, want Attach/Kill both wired", entry.Ops)
 	}
 }
 
@@ -531,70 +528,6 @@ func TestDispatchOneReportsExitedWhenAgentIdle(t *testing.T) {
 	}
 	if entry.State != livework.StateExited {
 		t.Errorf("entry.State = %q, want %q for an idle agent", entry.State, livework.StateExited)
-	}
-}
-
-// TestDispatchOneRetryRestartsFailedTarget proves the acceptance criterion
-// "retrying restarts a failed entry" end to end: a target's first attempt
-// fails, its live-work entry's Retry op is invoked through the registry
-// (livework.Default.Retry, the same call the Work tab would make), and a
-// second attempt runs against the SAME worktree, replacing the entry in
-// place (same ID) with a successful run.
-func TestDispatchOneRetryRestartsFailedTarget(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+terminalTOML)
-
-	var attempt int32
-	fd := stubAgent(t,
-		func(cwd string) (string, error) {
-			n := atomic.AddInt32(&attempt, 1)
-			return fmt.Sprintf("pane-retry-%d", n), nil
-		},
-		nil,
-		func(handle, text string, until []agent.Status) error {
-			if atomic.LoadInt32(&attempt) == 1 {
-				return errors.New("boom")
-			}
-			return nil
-		},
-	)
-	stubAgentInfo(fd, "idle")
-
-	res := DispatchTargets(repoRoot, "retry-me", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1", Prompt: "go"}})
-	if res[0].Err == nil {
-		t.Fatal("want the first attempt to fail")
-	}
-
-	id := agentSessionName("retry-me", "t1")
-	entry, ok := livework.Default.Get(id)
-	if !ok {
-		t.Fatal("live-work entry not found after first attempt")
-	}
-	if entry.State != livework.StateFailed {
-		t.Fatalf("entry.State = %q, want %q before retry", entry.State, livework.StateFailed)
-	}
-	if entry.Handle != "pane-retry-1" {
-		t.Fatalf("entry.Handle = %q, want pane-retry-1 before retry", entry.Handle)
-	}
-
-	if err := livework.Default.Retry(id); err != nil {
-		t.Fatalf("Retry() = %v, want nil", err)
-	}
-	// dispatchOne's Retry op re-runs in a goroutine (matching how
-	// DispatchTargets originally launched it) — wait for the second
-	// attempt's pane to land rather than racing it.
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		entry, _ = livework.Default.Get(id)
-		if entry.Handle == "pane-retry-2" {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("entry never advanced to the retried pane; last seen %+v", entry)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if entry.State != livework.StateExited {
-		t.Errorf("entry.State = %q, want %q after a successful retry", entry.State, livework.StateExited)
 	}
 }
 

@@ -246,15 +246,8 @@ func runLauncherShell(run, handle string) error {
 
 // recordLiveWork adds a running entry for a successfully-dispatched
 // detached action or command to the process-wide live-work registry, keyed
-// on id — stable across a Retry, which opens a brand new launcher handle
-// under the same id. verb and reentryName are what Retry re-dispatches:
-// reentryName is the action name for an "__run-action" entry, or the whole
-// command name for an "__run-command" one, which is not always the same
-// string as id (launchCommand keys id on the command's first step, per
-// StartHostedPTY's own convention, while reentryName is the command itself).
-// args, ctx and root are kept only so Retry can re-run dispatchToLauncher
-// exactly as it ran the first time.
-func recordLiveWork(id, kind, handle, verb, reentryName string, args []string, ctx launchCtx, t config.Terminal, root string) {
+// on id.
+func recordLiveWork(id, kind, handle string, t config.Terminal) {
 	e := &livework.Entry{
 		ID:     id,
 		Name:   id,
@@ -269,18 +262,6 @@ func recordLiveWork(id, kind, handle, verb, reentryName string, args []string, c
 				return err
 			}
 			livework.Default.SetState(e.ID, livework.StateExited, nil)
-			return nil
-		},
-		// Retry re-dispatches through the launcher and re-adds the entry
-		// under the same ID (id) — Add's documented overwrite-in-place
-		// behavior is what keeps this the same row rather than a second
-		// one appearing beside the stale failed entry.
-		Retry: func() error {
-			newHandle, err := dispatchToLauncher(verb, reentryName, args, ctx, t, root)
-			if err != nil {
-				return err
-			}
-			recordLiveWork(id, kind, newHandle, verb, reentryName, args, ctx, t, root)
 			return nil
 		},
 	}

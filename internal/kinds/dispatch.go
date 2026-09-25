@@ -370,7 +370,7 @@ func launchCommand(m *manifest.Manifest, name string, args []string, env []strin
 				if err == nil {
 					kind, _ := actionString(action, "kind")
 					liveID := multiTargetLiveID(name, action, args)
-					recordLiveWork(liveID, kind, handle, "__run-command", name, args, ctx, cfg.Terminal, root)
+					recordLiveWork(liveID, kind, handle, cfg.Terminal)
 					return nil
 				}
 				// A launcher IS configured but spawning through it failed —

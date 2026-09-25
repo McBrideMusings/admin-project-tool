@@ -53,7 +53,7 @@ func stubSelfExecutable(t *testing.T, path string) {
 // TestStartHostedPTYRegistersALiveEntry proves a successful dispatch
 // registers a hosted-pty (Via empty) live-work entry keyed on the command
 // name, not its first step (matching internal/tui/work.go:liveEntryFor,
-// which looks entries up by command name), with Kill and Retry both wired.
+// which looks entries up by command name), with Kill wired.
 func TestStartHostedPTYRegistersALiveEntry(t *testing.T) {
 	stubSelfExecutable(t, fixtureAdminScript(t, "sleep 0.3\nexit 0"))
 
@@ -83,9 +83,6 @@ func TestStartHostedPTYRegistersALiveEntry(t *testing.T) {
 	}
 	if e.Ops.Kill == nil {
 		t.Error("entry missing a Kill op")
-	}
-	if e.Ops.Retry == nil {
-		t.Error("entry missing a Retry op")
 	}
 	if state, _ := livework.Default.State("build"); state != livework.StateRunning {
 		t.Errorf("entry state = %q, want %q", state, livework.StateRunning)

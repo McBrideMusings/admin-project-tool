@@ -199,7 +199,7 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 	}
 	frame.SetWinsize(ptmx.Fd(), rows, cols)
 
-	recordHostedPTYWork(liveID, m, name, args, rows, cols, env, c, ptmx, announceR)
+	recordHostedPTYWork(liveID, name, rows, cols, c, ptmx, announceR)
 	return nil
 }
 
@@ -207,10 +207,8 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 // a successfully-spawned hosted dispatch, and waits for the child to exit
 // in a goroutine so the entry can flip to exited/failed the same way
 // recordLiveWork's launcher-backed entry does — the only visible
-// difference to a caller is whether Via is empty. args, rows/cols, and env
-// are kept so Retry can re-run StartHostedPTY exactly as it ran the first
-// time. announce is the read end of the child's log-path pipe.
-func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args []string, rows, cols int, env []string, c *exec.Cmd, ptmx, announce *os.File) {
+// difference to a caller is whether Via is empty. announce is the read end of the child's log-path pipe.
+func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx, announce *os.File) {
 	// killed is set by Ops.Kill before it closes ptmx, so the wait goroutine
 	// below knows the resulting "signal: killed" c.Wait() error is expected
 	// and must not overwrite the StateExited Kill already set. exited is set
@@ -271,13 +269,6 @@ func recordHostedPTYWork(entryID string, m *manifest.Manifest, name string, args
 			_ = ptmx.Close()
 			livework.Default.SetState(e.ID, livework.StateExited, nil)
 			return nil
-		},
-		// Retry re-dispatches to a fresh pty and re-adds the entry under the
-		// same ID (entryID) — Add's documented overwrite-in-place behavior is
-		// what keeps this the same row rather than a second one appearing
-		// beside the stale failed entry.
-		Retry: func() error {
-			return StartHostedPTY(m, name, args, rows, cols, env)
 		},
 		// Write and Resize are the terminal view's (admin-3rgp.65) only way
 		// to reach this child: a keystroke typed while attached, and a pty

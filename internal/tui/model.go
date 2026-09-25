@@ -2169,10 +2169,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filtering = true
 		m.filter = ""
 	case "r":
-		// The Work tab has no `r` at all. It used to mean retry, which was
-		// removed because restarting a live thing under the same identity is
-		// not something every producer can honour. It must not silently become
-		// "refresh" by falling through either: the Work tab renders the live
+		// The Work tab has no `r`. It must not become "refresh" by falling
+		// through either: the Work tab renders the live
 		// registry and the resolved manifest, neither of which a refresh
 		// fetches, so `r` there would spend a network sync to redraw the same
 		// rows. `R` still syncs everything from any tab.
