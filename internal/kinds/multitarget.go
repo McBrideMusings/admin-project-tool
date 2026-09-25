@@ -151,6 +151,36 @@ func TargetSummary(action manifest.Action, key string) string {
 	return ""
 }
 
+// TargetDescription is the line a display caller shows beside a target's key:
+// the target's own `desc` when it declares one, else — for a target that
+// delegates — the delegated action's `desc`, else what TargetSummary says the
+// target runs. A delegating target with no description anywhere shows the
+// delegated action's own `run` rather than its bare "@name", which restates
+// the row's key.
+func TargetDescription(m *manifest.Manifest, action manifest.Action, key string) string {
+	if tbl, ok := action[key].(map[string]any); ok && !multiTargetReserved[key] {
+		if s, ok := tbl["desc"].(string); ok && s != "" {
+			return s
+		}
+	}
+	summary := TargetSummary(action, key)
+	name, delegates := strings.CutPrefix(summary, "@")
+	if !delegates || m == nil {
+		return summary
+	}
+	inner, ok := m.Actions[name]
+	if !ok {
+		return summary
+	}
+	if s, ok := actionString(inner, "desc"); ok && s != "" {
+		return s
+	}
+	if s, ok := actionString(inner, "run"); ok && s != "" {
+		return s
+	}
+	return summary
+}
+
 // makeMultiTarget is kind="multi-target"'s factory — the Go port of
 // admin_lib/interp.py::_make_multi_target, with BOTH per-target inheritance
 // mechanisms:

@@ -305,3 +305,37 @@ func TestMultiTargetReservedKeysIncludeURLsAndFooter(t *testing.T) {
 		}
 	}
 }
+
+// TestTargetDescriptionPrefersDescOverRun pins the order the Work tab's target
+// rows read: a target's own desc, then the delegated action's desc, then the
+// delegated action's run — never the bare "@name" while something better exists.
+func TestTargetDescriptionPrefersDescOverRun(t *testing.T) {
+	m := &manifest.Manifest{Actions: map[string]manifest.Action{
+		"documented": {"kind": "shell", "run": "make docs", "desc": "Build the docs"},
+		"bare":       {"kind": "shell", "run": "make bare"},
+	}}
+	parent := manifest.Action{
+		"kind": "multi-target",
+		"targets": map[string]any{
+			"docs": "@documented", "bare": "@bare", "gone": "@missing", "raw": "echo hi",
+		},
+	}
+	for key, want := range map[string]string{
+		"docs": "Build the docs", "bare": "make bare", "gone": "@missing", "raw": "echo hi",
+	} {
+		if got := TargetDescription(m, parent, key); got != want {
+			t.Errorf("flat target %q = %q, want %q", key, got, want)
+		}
+	}
+	inline := manifest.Action{
+		"kind":    "multi-target",
+		"own":     map[string]any{"run": "go test", "desc": "Run the tests"},
+		"forward": map[string]any{"action": "documented"},
+	}
+	if got := TargetDescription(m, inline, "own"); got != "Run the tests" {
+		t.Errorf("inline own desc = %q", got)
+	}
+	if got := TargetDescription(m, inline, "forward"); got != "Build the docs" {
+		t.Errorf("inline delegate = %q", got)
+	}
+}

@@ -73,10 +73,10 @@ type workRowData struct {
 	// rather than something enter dispatches directly: its targets always
 	// render beneath it, and enter on one of those dispatches it.
 	targets []string
-	// targetRuns maps each target key to what it does — its shell command,
-	// or "@action" when it delegates — so the target group says what each
-	// row will run rather than restating its own name.
-	targetRuns map[string]string
+	// targetDescs maps each target key to what it does — its own desc, the
+	// delegated action's desc, or the shell command it runs — so the target
+	// group says what each row will do rather than restating its own name.
+	targetDescs map[string]string
 	// targetURLs maps each target key to its own resolved urls (the same
 	// per-target inheritance the pinned footer applies — kinds.FrameURLs),
 	// so targetRows can hand each child row its own list without a second
@@ -93,8 +93,8 @@ type workRowData struct {
 	// cmdName holds the PARENT command's name on these rows too, so
 	// dispatch reads the same field on either shape.
 	targetKey string
-	// targetRun is that target's own run command, shown beside its name.
-	targetRun string
+	// targetDesc is that target's own run command, shown beside its name.
+	targetDesc string
 	// targetLast marks the final target of an expanded command, so the
 	// renderer can close the tree with └ instead of ├.
 	targetLast bool
@@ -645,10 +645,10 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 			// can never disagree about which actions get a target group.
 			if m.commandInvocationCount(cr) > 1 {
 				wd.targets = keys
-				wd.targetRuns = map[string]string{}
+				wd.targetDescs = map[string]string{}
 				wd.targetURLs = map[string][]frame.URLEntry{}
 				for _, k := range keys {
-					wd.targetRuns[k] = kinds.TargetSummary(a, k)
+					wd.targetDescs[k] = kinds.TargetDescription(m.manifest, a, k)
 					if u, err := kinds.FrameURLs(a, k, m.manifest); err == nil {
 						wd.targetURLs[k] = u
 					}
@@ -722,7 +722,7 @@ func targetRows(parent rowItem, byName map[string]*livework.Entry, pendingTarget
 				steps:        wd.steps,
 				logPath:      logPath,
 				targetKey:    key,
-				targetRun:    wd.targetRuns[key],
+				targetDesc:   wd.targetDescs[key],
 				targetLast:   i == len(wd.targets)-1,
 				urls:         wd.targetURLs[key],
 				// This target's own qualified entry, if one is running —

@@ -154,17 +154,16 @@ func TestCommandRowTruncatesLongActivity(t *testing.T) {
 
 // TestWhereColumnIdleRowUnchanged is the "an idle command row shows its
 // description, nothing else" AC, updated for the Commands grid
-// (admin-3rgp.72.11): kind now shares a wState+wElapsed-wide column with no
-// separate where segment, matching commands.txt's own idle rows.
+// (admin-3rgp.72.11): the description starts right after the name column,
+// with no separate where segment.
 func TestWhereColumnIdleRowUnchanged(t *testing.T) {
 	idle := &workRowData{cmdName: "build", cmdDesc: "compile the binary", cmdKind: "shell"}
 	got := workTestModel(nil).renderWorkRow(rowItem{kind: rowCommand, work: idle}, false, 60)
 
 	marker := faintStyle.Render("◇ ")
 	name := padEnd(truncR("build", wName), wName)
-	gap := strings.Repeat(" ", wState+wElapsed)
-	desc := truncR("compile the binary", maxi(60-wMarker-wName-wState-wElapsed, 6))
-	want := marker + name + faintStyle.Render(gap+desc)
+	desc := truncR("compile the binary", maxi(60-wMarker-wName, 6))
+	want := marker + name + faintStyle.Render(desc)
 
 	if got != want {
 		t.Errorf("idle row changed shape:\n got  %q\n want %q", got, want)

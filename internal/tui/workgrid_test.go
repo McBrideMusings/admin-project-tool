@@ -171,7 +171,7 @@ func TestNameColumnAlignsAcrossRowKindsAndGeometries(t *testing.T) {
 
 	groupWD := &workRowData{cmdName: "deploy", cmdDesc: "shipit-desc", cmdKind: "widgetlabel", targets: []string{"a", "b"}}
 	flatWD := &workRowData{cmdName: "build", cmdDesc: "buildit-desc", cmdKind: "widgetlabel"}
-	targetWD := &workRowData{cmdName: "dev", targetKey: "cf", targetRun: "vitepress dev", live: entry}
+	targetWD := &workRowData{cmdName: "dev", targetKey: "cf", targetDesc: "vitepress dev", live: entry}
 
 	mm := workTestModel(nil)
 	for _, geo := range []struct{ w, h int }{{80, 24}, {96, 30}, {178, 46}} {
@@ -182,11 +182,12 @@ func TestNameColumnAlignsAcrossRowKindsAndGeometries(t *testing.T) {
 		targetLine := stripANSI(mm.renderWorkRow(rowItem{kind: rowCommandTarget, work: targetWD}, false, lw))
 
 		// The group and flat rows show no kind column: their description
-		// starts where the state and elapsed columns end. The target row
+		// starts right after the name column, since an idle row has no state
+		// or elapsed to leave room for. The target row
 		// (given a live entry above) places its glyph+state word ("● running")
 		// at the state column's start, wMarker + wName.
 		want := wMarker + wName
-		wantDesc := want + wState + wElapsed
+		wantDesc := want
 		groupIdx := runeIndex(groupLine, "shipit-desc")
 		flatIdx := runeIndex(flatLine, "buildit-desc")
 		targetIdx := runeIndex(targetLine, "● running")

@@ -360,10 +360,10 @@ func TestPendingCommandRendersStarting(t *testing.T) {
 //
 // MUTATION EVIDENCE: delete the `if wd.pendingHere { ... }` branch this test
 // added to renderTargetRow (fall through to the idle hint branch) and this
-// test fails: the rendered row contains the idle targetRun hint instead of
+// test fails: the rendered row contains the idle targetDesc hint instead of
 // "starting".
 func TestPendingTargetRowRendersStarting(t *testing.T) {
-	wd := &workRowData{cmdName: "command-test", targetKey: "counter", targetRun: "interactive-shell", pending: true, pendingHere: true}
+	wd := &workRowData{cmdName: "command-test", targetKey: "counter", targetDesc: "interactive-shell", pending: true, pendingHere: true}
 
 	out := stripANSI(renderTargetRow(wd, false, 60))
 	if !strings.Contains(out, "starting") {
@@ -393,7 +393,7 @@ func TestPendingTargetDoesNotLightUpSiblings(t *testing.T) {
 		cmdName: "command-test",
 		pending: true,
 		targets: []string{"counter", "crash"},
-		targetRuns: map[string]string{
+		targetDescs: map[string]string{
 			"counter": "interactive-shell",
 			"crash":   "interactive-shell",
 		},

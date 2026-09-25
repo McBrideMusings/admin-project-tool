@@ -181,6 +181,12 @@ const (
 	wElapsed = 7  // "4m12s"
 )
 
+// idleRest is the width an idle row's description gets: the free column plus
+// the state and elapsed cells an idle row leaves empty.
+func idleRest(width int) int {
+	return maxi(width-wMarker-wName, 6)
+}
+
 // commandGlyph is the state marker shown to the left of a Commands-section
 // row's state word: waiting and failed override everything else, anything
 // else — running, starting — gets the plain dot (docs/spikes/
@@ -337,9 +343,8 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 			return marker + name + state + elapsed + faintStyle.Render(desc)
 		}
 	}
-	gap := strings.Repeat(" ", wState+wElapsed)
-	desc := truncR(wd.cmdDesc, rest)
-	return marker + name + faintStyle.Render(gap+desc)
+	desc := truncR(wd.cmdDesc, idleRest(width))
+	return marker + name + faintStyle.Render(desc)
 }
 
 // renderGroupRow renders a multi-target parent's own row: two blank cells
@@ -347,14 +352,12 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 // run the row, and a group runs nothing itself — then its name, kind and
 // description in the same columns every other row uses.
 func renderGroupRow(wd *workRowData, width int) string {
-	rest := maxi(width-wMarker-wName-wState-wElapsed, 6)
 	// Same reserved cell as renderWorkRow's flat-command branch, for the same
 	// reason: a full-width group name must not run straight into the kind
 	// column (admin-3rgp.72.19).
 	name := lipgloss.NewStyle().Bold(true).Render(padEnd(truncR(wd.cmdName, wName-1), wName))
-	gap := strings.Repeat(" ", wState+wElapsed)
-	desc := truncR(wd.cmdDesc, rest)
-	return "  " + name + faintStyle.Render(gap+desc)
+	desc := truncR(wd.cmdDesc, idleRest(width))
+	return "  " + name + faintStyle.Render(desc)
 }
 
 // renderTargetRow renders one target of an expanded command: a tree
@@ -369,12 +372,15 @@ func renderGroupRow(wd *workRowData, width int) string {
 // state, elapsed and activity take the place of the idle
 // connector+key+hint form.
 func renderTargetRow(wd *workRowData, focused bool, rest int) string {
+	// An idle row has no state or elapsed to show, so its description starts
+	// right after the name column and may use the cells those columns hold on
+	// a live row.
 	connector := "├ "
 	if wd.targetLast {
 		connector = "└ "
 	}
 	keyW := maxi(wName-2, 4)
-	key := padEnd(truncR(wd.targetKey, keyW), keyW)
+	key := padEnd(truncR(wd.targetKey, keyW-1), keyW)
 	name := key
 	if focused {
 		name = lipgloss.NewStyle().Foreground(cCyan).Render(key)
@@ -408,8 +414,8 @@ func renderTargetRow(wd *workRowData, focused bool, rest int) string {
 		state := renderCommandState(livework.StateStarting)
 		return faintStyle.Render(connector) + name + state
 	}
-	hint := truncR(wd.targetRun, rest)
-	return faintStyle.Render(connector) + name + faintStyle.Render(padEnd("", wState+wElapsed)+hint)
+	hint := truncR(wd.targetDesc, rest+wState+wElapsed)
+	return faintStyle.Render(connector) + name + faintStyle.Render(hint)
 }
 
 // renderWorkBand is the Work tab's full-width live band (admin-3rgp.72.6): a
