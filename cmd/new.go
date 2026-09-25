@@ -92,14 +92,25 @@ func runNew(cmd *cobra.Command, args []string) error {
 // matching admin-run:208's
 // `project_dir.resolve().name.replace("-", " ").title()`.
 func starterProjectName(dir string) string {
-	words := strings.Fields(strings.ReplaceAll(filepath.Base(dir), "-", " "))
-	for i, w := range words {
-		// strings.Fields never yields an empty word, so w always has a first rune.
-		r := []rune(w)
-		r[0] = unicode.ToUpper(r[0])
-		words[i] = string(r)
-	}
-	return strings.Join(words, " ")
+	// Python's str.title(): a letter that follows a non-letter is upper-cased,
+	// every other letter is lower-cased. "-" becomes a space first, so empty
+	// words survive ("a--b" -> "A  B") exactly as they do in Python.
+	prevLetter := false
+	return strings.Map(func(r rune) rune {
+		if r == '-' {
+			r = ' '
+		}
+		isLetter := unicode.IsLetter(r)
+		defer func() { prevLetter = isLetter }()
+		switch {
+		case !isLetter:
+			return r
+		case prevLetter:
+			return unicode.ToLower(r)
+		default:
+			return unicode.ToUpper(r)
+		}
+	}, filepath.Base(dir))
 }
 
 // ensureTmpGitignore is the Go port of admin-run's _ensure_tmp_gitignore
