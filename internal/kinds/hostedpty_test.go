@@ -274,15 +274,15 @@ func TestStartHostedPTYRecordsLogPathFromAnnouncePipe(t *testing.T) {
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if e, ok := livework.Default.Get("logger"); ok && e.LogPath != "" {
+		if p, ok := livework.Default.LogPath("logger"); ok && p != "" {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	e, _ := livework.Default.Get("logger")
-	if e.LogPath != "/tmp/announced-first.log" {
-		t.Errorf("LogPath = %q, want the first announced path", e.LogPath)
+	if p, _ := livework.Default.LogPath("logger"); p != "/tmp/announced-first.log" {
+		t.Errorf("LogPath = %q, want the first announced path", p)
 	}
+	e, _ := livework.Default.Get("logger")
 	for time.Now().Before(deadline) {
 		if strings.Contains(string(e.Output.Bytes()), "visible output") {
 			break

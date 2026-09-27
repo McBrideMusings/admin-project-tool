@@ -108,14 +108,17 @@ func TestVerifyRedrawSurvivesWrappedDescriptions(t *testing.T) {
 	// fixed, generous sleeps instead, matching the real keystroke cadence a
 	// person's fingers produce; the reader goroutine below is intentionally
 	// left running past the end of the test (it can never observe EOF here
-	// either) rather than joined.
+	// either) rather than joined. Because it is never joined, it never
+	// touches newTerm: it hands copies of what it reads to this goroutine,
+	// which is newTerm's only writer and reader.
 	newTerm := vt.NewEmulator(cols, rows)
+	chunks := make(chan []byte, 1024)
 	go func() {
 		buf := make([]byte, 4096)
 		for {
 			n, err := master.Read(buf)
 			if n > 0 {
-				newTerm.Write(buf[:n])
+				chunks <- append([]byte(nil), buf[:n]...)
 			}
 			if err != nil {
 				return
@@ -145,6 +148,15 @@ func TestVerifyRedrawSurvivesWrappedDescriptions(t *testing.T) {
 		t.Fatal("runArrowPicker did not return within 2s — picker likely hung reading the real pty")
 	}
 	time.Sleep(150 * time.Millisecond) // let the reader goroutine drain the picker's trailing Fprintln("\n")
+drain:
+	for {
+		select {
+		case c := <-chunks:
+			newTerm.Write(c)
+		default:
+			break drain
+		}
+	}
 
 	if hasStalePrompt(newTerm, rows, "choose") {
 		t.Fatalf("fixed runArrowPicker left a stale remnant on a %dx%d screen with wrapped content; screen:\n%s", cols, rows, screenText(newTerm, rows))
