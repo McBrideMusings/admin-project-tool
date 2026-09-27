@@ -115,8 +115,19 @@ func registerFakePTYEntry(t *testing.T, cmdName string, ring *livework.Ring, rec
 	t.Helper()
 	freshLivework(t)
 	screen := vt.NewSafeEmulator(80, 24)
-	go func() { _, _ = io.Copy(writerFunc(rec.write), screen) }()
-	t.Cleanup(func() { _ = screen.Close() })
+	copied := make(chan struct{})
+	go func() {
+		defer close(copied)
+		_, _ = io.Copy(writerFunc(rec.write), screen)
+	}()
+	// Emulator.Read checks an unlocked closed flag that Close writes, so the
+	// copy must have returned before Close runs. Closing the reply pipe's
+	// write end (InputPipe) ends the copy's read with EOF on its own.
+	t.Cleanup(func() {
+		_ = screen.InputPipe().(io.Closer).Close()
+		<-copied
+		_ = screen.Close()
+	})
 	e := &livework.Entry{
 		ID:     cmdName,
 		Name:   cmdName,
