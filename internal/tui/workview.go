@@ -209,9 +209,11 @@ func commandGlyph(s livework.State) string {
 // diamond ◈, not the dot — ported from the design prototype's liveRow
 // version of this rule (docs/spikes/admin-tui-desktop/variants.go:1319-
 // 1331), which commandGlyph above deliberately dropped since the Commands
-// section never draws a worker row.
-func liveGlyph(e *livework.Entry) string {
-	switch e.State {
+// section never draws a worker row. The caller passes st, read through
+// livework.Default.State, since e.State is written by SetState on another
+// goroutine.
+func liveGlyph(e *livework.Entry, st livework.State) string {
+	switch st {
 	case livework.StateWaiting:
 		return "◐"
 	case livework.StateFailed:
@@ -569,11 +571,12 @@ func bandTitle(w int, live *livework.Entry, name string) string {
 	var titlePlain, titleStyled, selID string
 	if live != nil {
 		selID = live.ID
-		glyph := liveGlyph(live)
-		state := string(live.State)
+		st, _ := livework.Default.State(live.ID)
+		glyph := liveGlyph(live, st)
+		state := string(st)
 		elapsed := elapsedStr(time.Since(live.StartedAt))
 		titlePlain = glyph + " " + name + "  " + state + "  " + elapsed
-		titleStyled = lipgloss.NewStyle().Foreground(stateColor(live.State)).Render(glyph) + " " +
+		titleStyled = lipgloss.NewStyle().Foreground(stateColor(st)).Render(glyph) + " " +
 			lipgloss.NewStyle().Bold(true).Render(name) +
 			faintStyle.Render("  "+state+"  "+elapsed)
 	} else {
@@ -661,8 +664,9 @@ func bandFieldsWorker(e *livework.Entry, w int) []string {
 		branch, worktree = e.Worker.Branch, e.Worker.Worktree
 	}
 	activity, _ := livework.Default.Activity(e.ID)
+	logPath, _ := livework.Default.LogPath(e.ID)
 	return padRows([]string{
-		" " + faintStyle.Render(padEnd("log", 9)) + faintStyle.Render(fitPath(e.LogPath, lw)),
+		" " + faintStyle.Render(padEnd("log", 9)) + faintStyle.Render(fitPath(logPath, lw)),
 		" " + faintStyle.Render(padEnd("branch", 9)) + lipgloss.NewStyle().Foreground(cCyan).Render(truncR(branch, lw)),
 		" " + faintStyle.Render(padEnd("worktree", 9)) + faintStyle.Render(fitPath(worktree, lw)),
 		" " + faintStyle.Render(padEnd("session", 9)) + sessionField(e, lw),

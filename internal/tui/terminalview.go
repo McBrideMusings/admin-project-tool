@@ -257,8 +257,10 @@ func (m Model) termFields(width int) []string {
 		}
 		return bandFields(e, r.work, width)
 	}
-	if e := m.termEntry(); e != nil && e.LogPath != "" {
-		return bandFieldsCommand(&workRowData{logPath: e.LogPath}, width)
+	if e := m.termEntry(); e != nil {
+		if logPath, _ := livework.Default.LogPath(e.ID); logPath != "" {
+			return bandFieldsCommand(&workRowData{logPath: logPath}, width)
+		}
 	}
 	return nil
 }

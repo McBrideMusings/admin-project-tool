@@ -269,6 +269,20 @@ func (r *Registry) Activity(id string) (string, bool) {
 	return e.Activity, true
 }
 
+// LogPath returns the entry for id's current LogPath, safe for concurrent
+// use with SetLogPath — a render must go through this rather than reading a
+// *Entry's LogPath field directly, since that field is mutated under r.mu by
+// the producer's announce-line sniffer on its own goroutine.
+func (r *Registry) LogPath(id string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.entries[id]
+	if !ok {
+		return "", false
+	}
+	return e.LogPath, true
+}
+
 // SetState transitions the entry for id, if present. err is recorded only
 // when state is StateFailed.
 func (r *Registry) SetState(id string, state State, err error) {

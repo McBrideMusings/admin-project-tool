@@ -672,8 +672,12 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 	} else {
 		wd.urls = m.multiStepURLs(cr.cmd)
 	}
-	if wd.live != nil && wd.live.LogPath != "" {
-		wd.logPath = wd.live.LogPath
+	var livePath string
+	if wd.live != nil {
+		livePath, _ = livework.Default.LogPath(wd.live.ID)
+	}
+	if livePath != "" {
+		wd.logPath = livePath
 	} else {
 		wd.logPath = commandLogPath(m.manifestDir(), m.manifest, cr.name, cr.cmd)
 	}
@@ -708,8 +712,10 @@ func targetRows(parent rowItem, byName map[string]*livework.Entry, pendingTarget
 	for i, key := range wd.targets {
 		live := byName[kinds.TargetLiveKey(wd.cmdName, key)]
 		logPath := wd.logPath
-		if live != nil && live.LogPath != "" {
-			logPath = live.LogPath
+		if live != nil {
+			if p, _ := livework.Default.LogPath(live.ID); p != "" {
+				logPath = p
+			}
 		}
 		out = append(out, rowItem{
 			kind:  rowCommandTarget,
@@ -1232,7 +1238,8 @@ func entryIsLive(e *livework.Entry) bool {
 	if e == nil {
 		return false
 	}
-	switch e.State {
+	st, _ := livework.Default.State(e.ID)
+	switch st {
 	case livework.StateExited, livework.StateFailed:
 		return false
 	default:

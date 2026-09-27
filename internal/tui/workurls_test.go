@@ -53,9 +53,13 @@ func TestBandShowsLiveLogElapsedAndURLs(t *testing.T) {
 	}
 	mm := workTestModel(m)
 
+	freshLivework(t)
 	live := &livework.Entry{
-		ID: "dev-detail-test", Name: "dev", State: livework.StateRunning,
+		ID: "dev-detail-test", Name: "dev", Handle: "pty-dev-detail-test", State: livework.StateRunning,
 		LogPath: "/live/dev.log", StartedAt: time.Now().Add(-5 * time.Minute),
+	}
+	if err := livework.Default.Add(live); err != nil {
+		t.Fatalf("Add(%s): %v", live.ID, err)
 	}
 	row := mm.commandRowItem(workCmdRow{name: "dev", cmd: m.Custom["dev"]}, map[string]*livework.Entry{"dev": live})
 

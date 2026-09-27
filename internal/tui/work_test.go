@@ -513,7 +513,11 @@ func TestCommandRowItemPrefersLiveEntryLogPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	live := &livework.Entry{ID: "build", Name: "build", State: livework.StateRunning, LogPath: "/live/current.log"}
+	freshLivework(t)
+	live := &livework.Entry{ID: "build", Name: "build", Handle: "pty-build", State: livework.StateRunning, LogPath: "/live/current.log"}
+	if err := livework.Default.Add(live); err != nil {
+		t.Fatalf("Add(%s): %v", live.ID, err)
+	}
 	byName := map[string]*livework.Entry{"build": live}
 
 	row := mm.commandRowItem(workCmdRow{name: "build", cmd: m.Custom["build"]}, byName)
