@@ -1,19 +1,12 @@
-// Package remotehost is the Go port of the slice of admin_lib/remote.py that
-// is reachable through a registered action kind — IsLocalHost and ScpTo,
-// which kind="install-template" (admin_lib/unraid.py's
-// install_docker_template_from_config) needs to sync a template file to an
-// Unraid host's Docker GUI.
+// Package remotehost holds IsLocalHost and ScpTo — the two host helpers
+// reachable through a registered action kind. kind="install-template" needs
+// them to sync a template file to an Unraid host's Docker GUI.
 //
-// admin_lib/remote.py's other helpers (ssh_cmd, require_host,
-// make_systemd_unit, systemd_user_install/status) and admin_lib/docker.py's
-// remote-deploy pipeline (docker_deploy, remote_docker_build,
-// remote_recreate_container, remote_logs, remote_container_diff) are not
-// ported here: none of them is called from any kind admin_lib/interp.py
-// registers (confirmed by grepping interp.py for "unraid"/"remote." —
-// install_docker_template_from_config is the only hit). They were only
-// reachable from a project's own kind="python" body, and kind="python" is
-// gone under ADR-0010 — there is no Go home left for a project to call them
-// from, so porting them now would be dead code with no caller.
+// No other remote-host helpers (an ssh_cmd wrapper, systemd unit rendering, a
+// remote Docker deploy pipeline) live here: nothing calls them from any
+// registered kind, and kind="python" is gone under ADR-0010 — there is no Go
+// home left for a project to call them from, so adding them now would be
+// dead code with no caller.
 package remotehost
 
 import (
@@ -25,17 +18,13 @@ import (
 )
 
 // IsLocalHost reports whether host (a bare address, or "user@address") names
-// the machine this process is running on. The Go port of
-// admin_lib/remote.py's _is_local_host.
+// the machine this process is running on.
 //
 // Primary check: the ADMIN_LOCAL env var (set by per-command env injection,
 // or manually as DEPLOY_LOCAL=true → ADMIN_LOCAL=true). Secondary: comparing
-// the address's resolved IPs against this machine's own interface addresses
-// — a portable substitute for Python's `hostname -I` shell-out, which reads
-// its own answer from ip(8)/ifconfig(8) output that isn't available (or
-// meaningfully parseable) the same way across platforms; net.InterfaceAddrs
-// answers the identical question ("which IPs does this machine own") without
-// shelling out at all.
+// the address's resolved IPs against this machine's own interface addresses,
+// via net.InterfaceAddrs — a portable way to answer "which IPs does this
+// machine own" with no shell-out to ip(8)/ifconfig(8) at all.
 func IsLocalHost(host string) bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("ADMIN_LOCAL"))) {
 	case "1", "true", "yes":
@@ -66,8 +55,7 @@ func IsLocalHost(host string) bool {
 
 // localAddrSet returns every IP address bound to a local network interface,
 // as a set. Best-effort: an error midway through just yields whatever was
-// already collected, matching the fail-open spirit of Python's
-// `except Exception: pass` around its own hostname -I fallback.
+// already collected.
 func localAddrSet() map[string]bool {
 	out := map[string]bool{"127.0.0.1": true, "::1": true}
 	addrs, err := net.InterfaceAddrs()
@@ -102,8 +90,7 @@ type Reporter interface {
 // ScpTo copies the local file src to dest on host — a plain os-level copy
 // when host is this machine, an actual `scp` invocation otherwise. Returns
 // an error on failure (also reported through r, when non-nil) so a caller
-// can decide whether that's fatal. The Go port of admin_lib/remote.py's
-// scp_to.
+// can decide whether that's fatal.
 func ScpTo(r Reporter, src, host, dest string) error {
 	base := src
 	if idx := strings.LastIndex(src, "/"); idx >= 0 {

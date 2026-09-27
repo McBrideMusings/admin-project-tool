@@ -2,9 +2,8 @@
 
 package luahost
 
-// Long-running Apple log/console primitives — the platform-argv half of
-// admin_lib/apple.py's stream_os_log and the --console mode of
-// launch_on_device that LaunchOnDevice (apple_devices_darwin.go) explicitly
+// Long-running Apple log/console primitives, covering the --console mode of
+// device launch that LaunchOnDevice (apple_devices_darwin.go) explicitly
 // does not cover. These start a child process and hand back its combined
 // stdout/stderr as an io.ReadCloser plus a "still running" channel; feeding
 // that stream to a terminal/log is the caller's job via
@@ -24,8 +23,7 @@ import (
 // the simulator via `xcrun simctl spawn <simID> log stream ...`) and
 // returns it already started. done closes once the child exits (from
 // either end — Kill() or a natural exit), so a caller can poll "is it still
-// running" without racing exec.Cmd's internal state. Ports the argv half of
-// admin_lib/apple.py's stream_os_log.
+// running" without racing exec.Cmd's internal state.
 func StreamMacLog(predicate, simID string) (cmd *exec.Cmd, out io.ReadCloser, done <-chan struct{}, err error) {
 	if simID != "" {
 		cmd = exec.Command("xcrun", "simctl", "spawn", simID, "log", "stream",
@@ -39,8 +37,8 @@ func StreamMacLog(predicate, simID string) (cmd *exec.Cmd, out io.ReadCloser, do
 
 // SweepOrphanLogStreams kills any `log stream` process whose argv mentions
 // subsystem, guarding against a stream orphaned by a prior hard-killed dev
-// session (terminal closed, SIGKILL, OOM — the Python original's issue
-// #353). Best-effort: a failing pkill (nothing matched) is not an error.
+// session (terminal closed, SIGKILL, OOM — issue #353). Best-effort: a
+// failing pkill (nothing matched) is not an error.
 func SweepOrphanLogStreams(subsystem string) {
 	if subsystem == "" {
 		return
@@ -51,7 +49,7 @@ func SweepOrphanLogStreams(subsystem string) {
 // StartDeviceConsole launches bundleID on deviceID with --console attached,
 // terminating any existing instance first, forwarding env as launch
 // environment variables (OS_ACTIVITY_DT_MODE=YES un-redacts the app's own
-// os_log output — the Python original's _DEVICE_LOG_ENV). This is the mode
+// os_log output). This is the mode
 // LaunchOnDevice's doc comment names as deliberately not covered there: it
 // blocks on the child's stdout until the app exits, which belongs to an
 // output pump, not a one-shot host function.

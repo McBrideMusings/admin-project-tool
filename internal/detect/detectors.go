@@ -37,7 +37,7 @@ func searchable(match, root string, vendored map[string]bool) bool {
 }
 
 // toRelPosix converts an absolute path under root to a POSIX-style relative
-// path, matching Python's Path.relative_to(root).as_posix().
+// path.
 func toRelPosix(abs, root string) string {
 	rel, err := filepath.Rel(root, abs)
 	if err != nil {
@@ -47,8 +47,7 @@ func toRelPosix(abs, root string) string {
 }
 
 // sortedGlob is filepath.Glob with the ErrBadPattern case treated as no
-// matches, mirroring Python's Path.glob() never raising on a literal
-// pattern. filepath.Glob already returns lexically sorted matches.
+// matches. filepath.Glob already returns lexically sorted matches.
 func sortedGlob(pattern string) []string {
 	matches, _ := filepath.Glob(pattern)
 	return matches
@@ -97,8 +96,7 @@ var appleVendored = map[string]bool{
 
 func detectApple(root string) *Match {
 	// Depth-ordered (root first), .xcworkspace preferred over .xcodeproj at
-	// each depth — the same precedence admin_lib.apple._detect_project_path
-	// applies within a single dir.
+	// each depth within a single dir.
 	for _, depth := range []string{"", "*/", "*/*/"} {
 		for _, suffix := range []string{"xcworkspace", "xcodeproj"} {
 			pattern := filepath.Join(root, depth+"*."+suffix)

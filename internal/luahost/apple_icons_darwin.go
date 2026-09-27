@@ -2,23 +2,19 @@
 
 package luahost
 
-// Ports the "icon-composer / asset-swap subsystem" admin-3rgp.38's NOTES
-// named as remaining — admin_lib/apple.py's backup_icons / swap_dev_icons /
-// restore_icons / backup_tv_icons / restore_tv_icons / swap_dev_icon_composer
-// / restore_icon_composer, plus the piece of admin_lib/icons.py they call
-// into for rendering (make_dev_banner / _apply_dev_banner).
+// Implements the "icon-composer / asset-swap subsystem": backing up and
+// restoring appiconset PNGs, swapping in a dev-marked icon (with or without
+// a configured glyph), and the icon-composer banner asset swap, plus the
+// rendering piece those call into (make_dev_banner / apply-dev-banner).
 //
 // # The imaging decision this file makes
 //
-// admin_lib/icons.py's rendering is Pillow (+ optionally cairosvg) end to
-// end: solid/text/SVG glyph backgrounds, a rotated "DEV" ribbon with a
-// system font, bicubic resampling. ADR-0001's one stdlib-only carve-out was
-// exactly this: try/except-guard Pillow/cairosvg and degrade to "skip icon
-// generation, warn" when they're absent. Go has no equivalent optional-
-// import — an unresolved package is a build failure, not a runtime nil — so
-// the choice is binary: vendor a real imaging + font stack as a hard Go
-// dependency (the epic's amendment already retires ADR-0001's dependency
-// ban, so this is allowed), or find a smaller capability that needs none.
+// Full imaging support (solid/text/SVG glyph backgrounds, a rotated "DEV"
+// ribbon with a system font, bicubic resampling) needs a real imaging
+// library. Go has no optional-import mechanism — an unresolved package is a
+// build failure, not a runtime nil — so the choice is binary: vendor a real
+// imaging + font stack as a hard Go dependency (ADR-0001 allows it), or find
+// a smaller capability that needs none.
 //
 // This file takes the second path for the banner overlay specifically:
 //
@@ -26,26 +22,24 @@ package luahost
 //     (image/draw/color/png) plus the same golang.org/x/image font stack
 //     apple_icons_generate_darwin.go already vendors for glyph text
 //     (parsedGoFont/drawCenteredText) — a red diagonal ribbon with a
-//     rendered "DEV" label, matching admin_lib/icons.py's make_dev_banner.
-//     This covers swap_dev_icons' has_glyph=False branch (overlay the
-//     shipped icon art with a banner) and swap_dev_icon_composer's banner
-//     asset — the two "mark this build as dev" paths that touch every
-//     Apple archetype's default config. No new dependency is taken for
-//     this: the font stack is already a hard Go dependency for
-//     generate_icons/generate_tv_icons (see apple_icons_generate_darwin.go's
+//     rendered "DEV" label. This covers the no-glyph swap-dev-icons case
+//     (overlay the shipped icon art with a banner) and the icon-composer
+//     banner asset swap — the two "mark this build as dev" paths that
+//     touch every Apple archetype's default config. No new dependency is
+//     taken for this: the font stack is already a hard Go dependency for
+//     GenerateIcons/GenerateTVIcons (see apple_icons_generate_darwin.go's
 //     file doc comment for that dependency comparison and decision,
 //     including admin-3rgp.48's later removal of SVG glyph support and its
 //     oksvg/rasterx dependency), so reusing it here for the "DEV" label
 //     costs nothing further.
-//   - swap_dev_icons' has_glyph=True branch — generate_icons() compositing a
+//   - The glyph-configured swap-dev-icons case — GenerateIcons compositing a
 //     configured glyph onto a fresh background at every declared size —
 //     is what took on that font dependency in the first place; see
 //     apple_icons_generate_darwin.go's file doc comment for the full
 //     dependency comparison.
 //
-// Backup/restore (backup_icons, restore_icons, backup_tv_icons,
-// restore_tv_icons) are plain file-copy operations with no imaging
-// involved at all, and are bound in full below.
+// Backup/restore are plain file-copy operations with no imaging involved at
+// all, and are bound in full below.
 
 import (
 	"encoding/json"
@@ -66,9 +60,8 @@ import (
 
 // BackupIcons copies every *.png in each iconDirs[label] into
 // backupDir/label, creating the destination if needed. A missing source
-// directory is skipped, not an error — mirrors the Python original, which
-// tolerates an archetype declaring a platform's icon dir that doesn't exist
-// in a given checkout.
+// directory is skipped, not an error, so an archetype can declare a
+// platform's icon dir that doesn't exist in a given checkout.
 func BackupIcons(iconDirs map[string]string, backupDir string) error {
 	for label, srcDir := range iconDirs {
 		dest := filepath.Join(backupDir, label)
@@ -207,15 +200,13 @@ func copyTree(src, dst string) error {
 
 // --- Dev banner rendering ------------------------------------------------
 
-// devBannerColor is the Python original's fill(220, 40, 40, 240) — an opaque
-// red stripe.
+// devBannerColor is an opaque red stripe.
 var devBannerColor = color.NRGBA{R: 220, G: 40, B: 40, A: 240}
 
 // RenderDevBanner returns a transparent size×size RGBA image carrying a red
-// "DEV" ribbon in the bottom-right corner, running bottom-left to top-right,
-// at the same geometry as admin_lib/icons.py's make_dev_banner (a
-// 0.22×size-tall band rotated 35° counter-clockwise, shifted so its center
-// lands in the bottom-right corner rather than the middle of the icon).
+// "DEV" ribbon in the bottom-right corner, running bottom-left to top-right:
+// a 0.22×size-tall band rotated 35° counter-clockwise, shifted so its center
+// lands in the bottom-right corner rather than the middle of the icon.
 //
 // Implemented by inverse rotation: for each output pixel, rotate its
 // position by +35° around the band's (shifted) center and test whether that
@@ -228,7 +219,7 @@ var devBannerColor = color.NRGBA{R: 220, G: 40, B: 40, A: 240}
 // for glyph text, and sampled at each pixel's rotated coordinate — so the
 // label rotates with the band instead of being pasted on afterward. Unlike
 // glyph text (renderGlyph/drawCenteredText, Go Regular), the "DEV" label uses
-// drawCenteredTextBold (Go Bold) to match make_dev_banner's bold system font.
+// drawCenteredTextBold (Go Bold), for a bold system-font look.
 func RenderDevBanner(size int) *image.NRGBA {
 	img := image.NewNRGBA(image.Rect(0, 0, size, size))
 
@@ -239,18 +230,16 @@ func RenderDevBanner(size int) *image.NRGBA {
 	sin, cos := math.Sin(angle), math.Cos(angle)
 
 	// The band, before rotation, is centered vertically on the canvas and
-	// spans the full width — matching make_dev_banner's oversized-canvas
-	// rectangle before crop. Shifting the center down-and-right by 0.22*size
-	// (Python's crop offset, expressed directly instead of via an oversized
-	// canvas + crop) lands the stripe in the bottom-right corner.
+	// spans the full width. Shifting the center down-and-right by 0.22*size
+	// lands the stripe in the bottom-right corner.
 	shift := float64(size) * 0.22
 	bcx, bcy := cx+shift, cy+shift
 
 	// "DEV" is rendered into a mask centered on the band's own center line
-	// (the band's rotated-frame ry = 0), mirroring admin_lib/icons.py's
-	// make_dev_banner: anchor="mm" at the band rectangle's vertical midpoint.
-	// The mask spans the full band height so the larger, bold glyph this
-	// centering produces isn't clipped against the mask's own edges.
+	// (the band's rotated-frame ry = 0), anchored at the band rectangle's
+	// vertical midpoint. The mask spans the full band height so the larger,
+	// bold glyph this centering produces isn't clipped against the mask's
+	// own edges.
 	textCenterRy := 0.0
 
 	maskW := size
@@ -262,7 +251,6 @@ func RenderDevBanner(size int) *image.NRGBA {
 		maskH = 1
 	}
 	mask := image.NewNRGBA(image.Rect(0, 0, maskW, maskH))
-	// Mirrors admin_lib/icons.py's make_dev_banner: font_size = int(size * 0.14).
 	fontSize := int(float64(size) * 0.14)
 	if fontSize < 1 {
 		fontSize = 1
@@ -320,10 +308,9 @@ func SaveDevBannerPNG(size int, outPath string) error {
 }
 
 // ApplyDevBannerToPNGFile overlays a dev banner (sized to the image's own
-// width) onto the PNG at path and re-saves it as opaque RGB — mirrors
-// _apply_dev_banner + the "drop the alpha channel" step swap_dev_icons'
-// no-glyph branch performs so macOS renders the icon full-bleed instead of
-// insetting it into a padded tile.
+// width) onto the PNG at path and re-saves it as opaque RGB, dropping the
+// alpha channel so macOS renders the icon full-bleed instead of insetting
+// it into a padded tile.
 func ApplyDevBannerToPNGFile(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -339,10 +326,8 @@ func ApplyDevBannerToPNGFile(path string) error {
 	banner := RenderDevBanner(bounds.Dx())
 
 	// Composite banner over a copy of src, then flatten onto opaque white
-	// (matching Python's Image.convert("RGB"), which drops any residual
-	// alpha by compositing over black in Pillow's default — the icons this
-	// runs against are always fully opaque already, so the flatten backing
-	// color never actually shows through in practice).
+	// (the icons this runs against are always fully opaque already, so the
+	// flatten backing color never actually shows through in practice).
 	out := image.NewNRGBA(bounds)
 	draw.Draw(out, bounds, src, bounds.Min, draw.Src)
 	draw.Draw(out, banner.Bounds().Add(bounds.Min), banner, image.Point{}, draw.Over)
@@ -363,10 +348,9 @@ func ApplyDevBannerToPNGFile(path string) error {
 }
 
 // SwapDevIconsBanner overlays the dev banner onto every *.png in each
-// iconDirs[label], in place. Binds swap_dev_icons' has_glyph=False branch
-// only (see file doc comment); a caller wanting glyph-based fresh generation
-// gets false back so it can warn and skip, exactly as the Python original
-// does when Pillow is missing.
+// iconDirs[label], in place. Covers the no-glyph swap-dev-icons case only
+// (see file doc comment); a caller wanting glyph-based fresh generation
+// gets false back so it can warn and skip.
 func SwapDevIconsBanner(iconDirs map[string]string) (bool, error) {
 	ok := true
 	for _, srcDir := range iconDirs {
@@ -393,20 +377,17 @@ func SwapDevIconsBanner(iconDirs map[string]string) (bool, error) {
 // ApplyTVDevBanner overlays the dev banner onto an EXISTING tvOS
 // .brandassets tree in place, without regenerating anything — the overlay
 // counterpart to GenerateTVIcons for a project that ships its own tvOS art
-// rather than a glyph config. Mirrors admin_lib/icons.py's
-// apply_tv_dev_banner: only the topmost Front layer of each imagestack
-// (tvIconStacks, from apple_icons_generate_darwin.go) and the Top Shelf
-// images get the banner, matching Apple's own guidance to keep markup on the
-// uppermost layer — Back and Middle are never touched, so ADR-0007's
-// "Back must be fully opaque" rule is never at stake here.
+// rather than a glyph config. Only the topmost Front layer of each
+// imagestack (tvIconStacks, from apple_icons_generate_darwin.go) and the
+// Top Shelf images get the banner, matching Apple's own guidance to keep
+// markup on the uppermost layer — Back and Middle are never touched, so
+// ADR-0007's "Back must be fully opaque" rule is never at stake here.
 //
 // Unlike ApplyDevBannerToPNGFile (the flat appiconset overlay), this does
 // NOT flatten to opaque RGB: it preserves whatever alpha channel the source
-// PNG already carries, matching the Python original's
-// Image.open(...).convert("RGBA") + paste round-trip — the Front layer is
-// meant to float transparently over Middle/Back, so flattening it here
-// would reintroduce exactly the inset-icon bug ADR-0007 exists to avoid on
-// the *other* layers.
+// PNG already carries — the Front layer is meant to float transparently
+// over Middle/Back, so flattening it here would reintroduce exactly the
+// inset-icon bug ADR-0007 exists to avoid on the *other* layers.
 func ApplyTVDevBanner(h *Host, brandassetsDir string) bool {
 	for _, stack := range tvIconStacks {
 		frontDir := filepath.Join(brandassetsDir, stack.Name, "Front.imagestacklayer", "Content.imageset")
@@ -426,12 +407,10 @@ func ApplyTVDevBanner(h *Host, brandassetsDir string) bool {
 
 // overlayDevBannerDir overlays a rectangular dev banner (sized to each
 // image's own bounds) onto every *.png directly inside dir, in place. A
-// missing directory is a no-op, not an error — mirrors
-// admin_lib/icons.py's _overlay_dev_banner_dir. A file that fails to decode
-// as a PNG is skipped, also matching the Python original's per-file
-// try/except; any other failure (a banner that fails to encode/write)
-// aborts and is returned to the caller, matching apply_tv_dev_banner's
-// outer try/except aborting the whole operation on a non-decode error.
+// missing directory is a no-op, not an error. A file that fails to decode
+// as a PNG is skipped; any other failure (a banner that fails to
+// encode/write) aborts and is returned to the caller, so ApplyTVDevBanner
+// stops the whole operation on a non-decode error.
 func overlayDevBannerDir(dir string) error {
 	if !isDir(dir) {
 		return nil
@@ -500,9 +479,8 @@ func isBannerGroup(group map[string]any) bool {
 
 // IconComposerInjectBanner appends the opaque DEV-banner group to a parsed
 // icon.json document. Idempotent (a stale banner group from a re-swap is
-// dropped first) and a pure transform — no filesystem access — mirroring
-// admin_lib/apple.py's _inject_banner_layer exactly, including its return
-// value (the same doc, mutated).
+// dropped first) and a pure transform — no filesystem access. Returns the
+// same doc, mutated.
 func IconComposerInjectBanner(doc map[string]any) map[string]any {
 	groups := stripBannerGroups(doc)
 	groups = append(groups, map[string]any{
@@ -523,7 +501,7 @@ func IconComposerInjectBanner(doc map[string]any) map[string]any {
 }
 
 // IconComposerStripBanner removes the injected DEV-banner group from a
-// parsed icon.json document. Pure transform, mirrors _strip_banner_layer.
+// parsed icon.json document. Pure transform.
 func IconComposerStripBanner(doc map[string]any) map[string]any {
 	doc["groups"] = stripBannerGroups(doc)
 	return doc
@@ -546,8 +524,8 @@ func stripBannerGroups(doc map[string]any) []any {
 // bundle at iconPath, backing up the pristine icon.json to backupDir first
 // and rendering the banner asset sized to the base art (Assets/icon-raw.png)
 // when present, else 1024. Returns false (with no error) when icon.json is
-// missing, matching the Python original's "skip, don't fail" behaviour for
-// a bundle that isn't actually Icon-Composer-shaped.
+// missing: a bundle that isn't actually Icon-Composer-shaped is skipped,
+// not a failure.
 func SwapDevIconComposer(iconPath, backupDir string) (bool, error) {
 	jsonPath := iconComposerJSONPath(iconPath)
 	if !isFile(jsonPath) {

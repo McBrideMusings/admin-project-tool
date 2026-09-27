@@ -8,31 +8,19 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-go@v5
         with:
-          python-version: "3.11"
+          go-version-file: go.mod
 
-      - name: Python test suites
-        run: |
-          python3 tests/test_archetypes.py
-          python3 tests/test_manifest.py
-          python3 tests/test_logtail.py
+      - name: Go test suite
+        run: go test ./...
 
       - name: Shell test suite
-        run: bash tests/test_install.sh
-
-  test-apple:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Apple-specific tests (requires macOS)
-        run: python3 tests/test_apple.py
+        run: bash tests/test_install.sh && bash tests/test_uninstall.sh

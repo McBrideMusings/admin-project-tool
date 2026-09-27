@@ -12,12 +12,6 @@ import (
 // from the `[launchd]` table — launchd on macOS, systemd --user on Linux, or
 // either one on a remote host over SSH.
 //
-// admin_lib/launchd.py was deleted in 71451f2 with the reasoning that it
-// "never had a kind factory in the Go runtime". Projects reached it from a
-// kind="python" body, which was the dispatch shape at the time, so the
-// deletion silently broke every `deploy server` in the fleet. internal/service
-// is the restored implementation and this is the factory it was missing.
-//
 // Verbs come from the CLI: `admin service install`,
 // `... uninstall|status|restart|stop|start`. `run`, when set, is the verb a
 // bare invocation takes — a `deploy server` target sets run = "install"

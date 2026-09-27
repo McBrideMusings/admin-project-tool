@@ -1,16 +1,6 @@
-// Package ports holds port-probing and preflight helpers — the Go port of
-// the subset of admin_lib/ports.py a dev-loop kind (vite-dev today; docker-dev
-// and the kill-port/nuke-dev kinds later) needs before it can bind a port.
-//
-// Full parity with admin_lib/ports.py's holder-naming chain (the /proc walk,
-// fuser fallback) and admin_lib/ports_nuke.py's project-wide orphan sweep
-// (kill_stale_supervisors, the four-pass escalating nuke) is explicitly out
-// of scope here — that is admin-3rgp.15's job ("Port ports, process cleanup
-// and the remaining kinds": kill-port, nuke-dev, dev-precheck). This package
-// is the minimal, real (not stubbed) primitive vite-dev's own preflight
-// check needs: is the port free, and if not, who's on it and can it be
-// cleared. .15 is expected to extend this package (PortHolders in
-// particular) rather than re-derive it.
+// Package ports holds port-probing and preflight helpers a dev-loop kind
+// (vite-dev today; docker-dev and the kill-port/nuke-dev kinds later) needs
+// before it can bind a port.
 package ports
 
 import (
@@ -72,7 +62,7 @@ func psCommand(pid int) string {
 // probe is one bind attempt PortFree makes.
 type probe struct{ network, host string }
 
-// probes mirrors admin_lib/ports.py::port_free's _PORT_PROBE_ADDRS: wildcard
+// probes lists the addresses PortFree binds against: wildcard
 // and loopback on both IP stacks. A listener bound to a specific address
 // (Vite on 127.0.0.1) only collides with a bind to that same address, so the
 // wildcard probe alone would miss it.
@@ -83,11 +73,10 @@ var probes = []probe{
 	{"tcp6", "::1"},
 }
 
-// reuseAddrControl sets SO_REUSEADDR on the probe socket before bind — the
-// same reason admin_lib/ports.py::port_free sets it: a connection socket
-// left in TIME_WAIT by a just-exited server must read as free, or a
-// back-to-back `admin dev` restart would be refused for 30-60s even though
-// nothing is listening.
+// reuseAddrControl sets SO_REUSEADDR on the probe socket before bind: a
+// connection socket left in TIME_WAIT by a just-exited server must read as
+// free, or a back-to-back `admin dev` restart would be refused for 30-60s
+// even though nothing is listening.
 func reuseAddrControl(_, _ string, c syscall.RawConn) error {
 	var sockErr error
 	err := c.Control(func(fd uintptr) {
@@ -99,7 +88,7 @@ func reuseAddrControl(_, _ string, c syscall.RawConn) error {
 	return sockErr
 }
 
-// PortFree is the Go port of admin_lib/ports.py::port_free: an authoritative
+// PortFree does an authoritative
 // bind() probe, not a holder lookup — a bind touches no process file tables,
 // so it can't hang the way `lsof` can on a stale/disconnected network mount.
 // Only EADDRINUSE counts as busy; a probe that fails for any other reason
@@ -121,9 +110,7 @@ func PortFree(port int) bool {
 	return true
 }
 
-// Holder is one process found listening on a probed port — the Go port of
-// admin_lib/ports.py::port_holders' per-entry dict shape ({pid, command,
-// parent_pid, parent_command}).
+// Holder is one process found listening on a probed port.
 type Holder struct {
 	PID           int
 	Command       string
@@ -131,11 +118,10 @@ type Holder struct {
 	ParentCommand string // "" means unknown
 }
 
-// PortHolders names the process(es) listening on port — the Go port of
-// admin_lib/ports.py::port_holders' detection chain: /proc/net/tcp{,6} +
-// /proc/<pid>/fd (Linux, no external deps), then `fuser`, then `lsof`
-// (macOS/BSD). Every pid found is enriched with its parent's pid/command via
-// `ps`, matching Python's per-holder _ps_parent call. Returns nil, never an
+// PortHolders names the process(es) listening on port, via a detection
+// chain: /proc/net/tcp{,6} + /proc/<pid>/fd (Linux, no external deps), then
+// `fuser`, then `lsof` (macOS/BSD). Every pid found is enriched with its
+// parent's pid/command via `ps`. Returns nil, never an
 // error, when every detection method is unavailable or times out — a caller
 // must treat "no holders named" as "could not identify", not "port is free"
 // (PortFree is the only source of truth for that).
@@ -159,7 +145,7 @@ func PortHolders(port int) []Holder {
 }
 
 // portHolderPIDs finds listener pids via /proc/net/tcp{,6}, then `fuser`,
-// then `lsof` — the Go port of admin_lib/ports.py::_port_holder_pids.
+// then `lsof`.
 func portHolderPIDs(port int, timeout time.Duration) []int {
 	if pids := pidsForSocketInodes(procNetListeners(port)); len(pids) > 0 {
 		return pids
@@ -202,8 +188,7 @@ func portHolderPIDs(port int, timeout time.Duration) []int {
 }
 
 // procNetListeners parses /proc/net/tcp{,6} for sockets in LISTEN state on
-// port, returning their inode strings — the Go port of
-// admin_lib/ports.py::_proc_net_listeners. Absent on any non-Linux host (and
+// port, returning their inode strings. Absent on any non-Linux host (and
 // most containers without /proc/net/tcp), in which case it returns nil and
 // portHolderPIDs falls through to fuser/lsof.
 func procNetListeners(port int) []string {
@@ -235,7 +220,7 @@ func procNetListeners(port int) []string {
 }
 
 // pidsForSocketInodes walks /proc/<pid>/fd once looking for any socket fd
-// matching inodes — the Go port of admin_lib/ports.py::_pids_for_socket_inodes.
+// matching inodes.
 func pidsForSocketInodes(inodes []string) []int {
 	if len(inodes) == 0 {
 		return nil
@@ -274,9 +259,8 @@ func pidsForSocketInodes(inodes []string) []int {
 	return pids
 }
 
-// PreflightPort is the Go port of admin_lib/ports.py::preflight_port: ensure
-// port is free, prompting (on a TTY) or force-killing (non-TTY, matching
-// Python's `sys.stdin.isatty()` branch) any holder found. Returns true if
+// PreflightPort ensures port is free, prompting (on a TTY) or force-killing
+// (non-TTY) any holder found. Returns true if
 // the port is free or was cleared, false if the user declined, no holder
 // could be named for a busy port, or the port is still busy after the kill
 // attempt.
@@ -329,14 +313,13 @@ func PreflightPort(port int, label string) bool {
 	KillPIDs(pids, 3*time.Second)
 	// Re-probe with bind, not pid-liveness: a child can respawn, or the
 	// socket can linger after the pid dies — the bind probe is the real
-	// answer, matching admin_lib/ports.py::preflight_port.
+	// answer.
 	return PortFree(port)
 }
 
-// WaitForPort is the Go port of admin_lib/web_dev.py::_wait_for_port: poll
-// until port accepts a TCP connection or timeout elapses. Returns false (and
-// leaves it to the caller to warn) on timeout rather than erroring — matches
-// Python's "continuing anyway" behaviour.
+// WaitForPort polls until port accepts a TCP connection or timeout elapses.
+// Returns false (and leaves it to the caller to warn) on timeout rather
+// than erroring, so the caller can continue anyway.
 func WaitForPort(port int, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {

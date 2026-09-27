@@ -9,8 +9,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/ports"
 )
 
-// parsePorts converts every string in values to an int, matching
-// admin_lib/interp.py::_make_kill_port's _parse_ports.
+// parsePorts converts every string in values to an int.
 func parsePorts(values []string) ([]int, error) {
 	out := make([]int, 0, len(values))
 	for _, v := range values {
@@ -23,15 +22,14 @@ func parsePorts(values []string) ([]int, error) {
 	return out, nil
 }
 
-// makeKillPort is kind="kill-port"'s factory — the Go port of
-// admin_lib/interp.py::_make_kill_port. `run` is a space-separated list of
-// default ports, validated at build time; a Runner invocation may override
-// them with its own argv, or (with no default configured) must supply at
-// least one port. Each port is cleared via ports.KillPortInteractive, which
-// prints who's holding it, prompts on a TTY (force-kills otherwise), and
-// escalates SIGTERM to SIGKILL — the acceptance criteria's "identifies the
-// processes holding a port, kills them in escalating passes, and reports
-// what it killed" made concrete.
+// makeKillPort is kind="kill-port"'s factory. `run` is a space-separated
+// list of default ports, validated at build time; a Runner invocation may
+// override them with its own argv, or (with no default configured) must
+// supply at least one port. Each port is cleared via
+// ports.KillPortInteractive, which prints who's holding it, prompts on a
+// TTY (force-kills otherwise), and escalates SIGTERM to SIGKILL — the
+// acceptance criteria's "identifies the processes holding a port, kills
+// them in escalating passes, and reports what it killed" made concrete.
 func makeKillPort(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	raw, _ := actionString(action, "run")
 	raw = strings.TrimSpace(raw)

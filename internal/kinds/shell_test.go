@@ -56,8 +56,7 @@ func TestShellEmptyRunIsRefused(t *testing.T) {
 }
 
 // TestShellResolvesEnvBeforeTheShellSeesIt proves `run` goes through
-// manifest.ResolveEnv — the same call admin_lib/core.py::run_cmd makes on
-// every command string — rather than being handed to /bin/sh with its
+// manifest.ResolveEnv rather than being handed to /bin/sh with its
 // ${VAR} placeholders intact. Handing them over is what let
 // `ssh ${UNRAID_USER:-root}@${UNRAID_HOST}` run as `ssh root@`: the shell
 // expands an unset name to the empty string and executes anyway.

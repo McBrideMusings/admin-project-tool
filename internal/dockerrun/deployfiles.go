@@ -7,17 +7,15 @@ import (
 	"strings"
 )
 
-// DeployKeys is every key [deploy] accepts — ported from
-// admin_lib/kinds.py's DEPLOY_KEYS, the single source deploy_files' own
-// unknown-key check and the manifest schema both read from there.
+// DeployKeys is every key [deploy] accepts — the single source both the
+// unknown-key check and the manifest schema read from.
 var DeployKeys = map[string]bool{
 	"src": true, "dest": true, "host": true, "exclude": true,
 	"delete": true, "chown": true, "post_sync": true, "owns": true,
 }
 
 // OwnsFilterArgs renders the rsync filter rules that restrict a sync to the
-// src-relative paths in owns — the Go port of admin_lib/core.py's
-// _owns_filter_args.
+// src-relative paths in owns.
 //
 // An allow-list in rsync is include rules terminated by a catch-all exclude:
 // the first matching rule wins, so anything the includes don't name falls
@@ -66,8 +64,7 @@ func OwnsFilterArgs(src string, owns []string) []string {
 }
 
 // validateOwns refuses an owns list that would make --delete destructive,
-// returning user-facing error strings. Mirrors the checks in
-// admin_lib/remote.py::deploy_files.
+// returning user-facing error strings.
 //
 // The empty-directory case is the one that matters: mirroring an empty source
 // with --delete removes everything under the corresponding destination path,
@@ -101,9 +98,7 @@ func validateOwns(src string, owns []string) []string {
 	return errs
 }
 
-// UnknownDeployKeys returns any [deploy] key not in DeployKeys, sorted —
-// ported from admin_lib/remote.py::deploy_files' `unknown = set(cfg) -
-// _DEPLOY_KEYS` check.
+// UnknownDeployKeys returns any [deploy] key not in DeployKeys, sorted.
 func UnknownDeployKeys(cfg map[string]any) []string {
 	var out []string
 	for _, k := range sortedKeys(cfg) {
@@ -114,18 +109,15 @@ func UnknownDeployKeys(cfg map[string]any) []string {
 	return out
 }
 
-// DeploySyncPlan is the fully-resolved plan for one [deploy] files sync —
-// the Go port of admin_lib/remote.py::deploy_files composed with
-// admin_lib/core.py::sync, but pure (no I/O, no ssh, no rsync execution):
-// every ${VAR} expansion, the --chown flag, the --delete flag, the exclude
-// flags, and the post_sync command are all rendered exactly once here, so a
-// caller (the docker archetype's deploy action) cannot reach a second,
-// competing implementation that silently drops chown/post_sync — the
-// specific failure shape admin-9bex suspected (interp.py's generic
-// `_make_sync` reads none of `[deploy]`'s chown/post_sync/host keys; if a
-// docker deploy were ever routed through it instead of deploy_dispatch,
-// both would silently no-op). This package is deploy_dispatch's only Go
-// counterpart, so that second path does not exist to be routed through.
+// DeploySyncPlan is the fully-resolved plan for one [deploy] files sync,
+// pure (no I/O, no ssh, no rsync execution): every ${VAR} expansion, the
+// --chown flag, the --delete flag, the exclude flags, and the post_sync
+// command are all rendered exactly once here, so a caller (the docker
+// archetype's deploy action) cannot reach a second, competing
+// implementation that silently drops chown/post_sync — the specific
+// failure shape admin-9bex suspected. This package is the only
+// implementation of a docker deploy sync, so that second path does not
+// exist to be routed through.
 type DeploySyncPlan struct {
 	Src         string
 	Dest        string
@@ -244,8 +236,8 @@ func BuildDeploySyncPlan(cfg map[string]any, envVars map[string]string, isLocal 
 	return plan, nil
 }
 
-// isRemoteTarget mirrors admin_lib/core.py::sync's is_remote check:
-// "user@host:/path" — a colon present, with an "@" somewhere before it.
+// isRemoteTarget checks for "user@host:/path" — a colon present, with an
+// "@" somewhere before it.
 func isRemoteTarget(target string) bool {
 	idx := strings.Index(target, ":")
 	if idx < 0 {

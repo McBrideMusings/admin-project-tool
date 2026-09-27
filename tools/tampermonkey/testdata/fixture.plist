@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>jsonImport</key>
+	<array>
+		<dict>
+			<key>haltOnError</key>
+			<false/>
+			<key>hash</key>
+			<string>1:659e7f0259638e3c1903c8904ca7e3f0d2c1da8462d2590afab57f26e1dd8e8c</string>
+			<key>installAsSystemScripts</key>
+			<false/>
+			<key>url</key>
+			<string>data:application/json;base64,eyJ2ZXJzaW9uIjoiMSIsInNjcmlwdHMiOlt7Im5hbWUiOiJGaXh0dXJlIGJyaWRnZSIsImVuYWJsZWQiOnRydWUsInNvdXJjZSI6Ikx5OGdQVDFWYzJWeVUyTnlhWEIwUFQwS0x5OGdRRzVoYldVZ0lDQWdJQ0FnSUNCR2FYaDBkWEpsSUdKeWFXUm5aUW92THlCQWRtVnljMmx2YmlBZ0lDQWdJREV1TWk0ekNpOHZJRUJqYjI1dVpXTjBJQ0FnSUNBZ1ltOTRMbVY0WVcxd2JHVUtMeThnUUcxaGRHTm9JQ0FnSUNBZ0lDQXFPaTh2S2k4cUNpOHZJRDA5TDFWelpYSlRZM0pwY0hROVBRcGpiMjV6ZENCb2IzTjBJRDBnWUNSN2JHOWpZWFJwYjI0dWFHOXpkSDFnT3dwamIyNXpkQ0J3Y205aVpTQTlJQ0k1T1RnNElqc0sifV19</string>
+		</dict>
+	</array>
+</dict>
+</plist>

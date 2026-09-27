@@ -3,15 +3,14 @@ package dockerrun
 import "strings"
 
 // MaskValue replaces a credential-looking value everywhere it's rendered
-// for a human — ported verbatim from admin_lib/core.py's MASK_VALUE
-// (issue #436).
+// for a human (issue #436).
 const MaskValue = "••••"
 
 var secretNameSuffixes = []string{"_TOKEN", "_KEY", "_SECRET", "_PASSWORD"}
 
 // IsSecretEnvName reports whether name looks like it holds a credential, by
 // suffix convention (*_TOKEN, *_KEY, *_SECRET, *_PASSWORD), case-insensitive.
-// A name-only heuristic — ported from admin_lib/core.py::is_secret_env_name.
+// A name-only heuristic.
 func IsSecretEnvName(name string) bool {
 	if name == "" {
 		return false
@@ -27,8 +26,7 @@ func IsSecretEnvName(name string) bool {
 
 // MaskEnvAssignment returns a "NAME=VALUE" env assignment with VALUE
 // replaced by MaskValue when NAME looks like a credential; anything else
-// (including a string with no "=") comes back unchanged. Ported from
-// admin_lib/docker.py::_mask_env_assignment.
+// (including a string with no "=") comes back unchanged.
 func MaskEnvAssignment(assignment string) string {
 	idx := strings.Index(assignment, "=")
 	if idx < 0 {
@@ -43,9 +41,8 @@ func MaskEnvAssignment(assignment string) string {
 
 // MaskArgvForDisplay returns a copy of a `docker run` argv-pieces list with
 // secret-looking `-e NAME=VALUE` values replaced by MaskValue (issue #436).
-// Display-only — ported from admin_lib/docker.py::_mask_argv_for_display.
-// Never call this on the argv actually passed to `docker run` or written to
-// a restore script.
+// Display-only. Never call this on the argv actually passed to `docker run`
+// or written to a restore script.
 func MaskArgvForDisplay(argv []string) []string {
 	masked := make([]string, len(argv))
 	copy(masked, argv)

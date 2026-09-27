@@ -1,4 +1,4 @@
-// precheck.go is the Go port of admin_lib/ports_nuke.py's live-vs-orphan dev
+// precheck.go implements a live-vs-orphan dev
 // precheck: nuke.go kills whatever matches; a precheck must not. The point
 // is to reap the corpse of a previous dev run (its terminal is gone) while
 // never killing the session a human is sitting in right now. The two are
@@ -24,9 +24,8 @@ type ttyEntry struct {
 	hasTTY bool
 }
 
-// procTTYMap returns {pid: (ppid, hasTTY)} for every visible process — the
-// Go port of admin_lib/ports_nuke.py::_proc_tty_map. /proc/<pid>/stat on
-// Linux; `ps -Ao pid=,ppid=,tty=` otherwise (macOS/BSD).
+// procTTYMap returns {pid: (ppid, hasTTY)} for every visible process, via
+// /proc/<pid>/stat on Linux, or `ps -Ao pid=,ppid=,tty=` otherwise (macOS/BSD).
 func procTTYMap() map[int]ttyEntry {
 	if info, err := os.Stat("/proc"); err == nil && info.IsDir() {
 		if m := procTTYMapProc(); m != nil {
@@ -106,8 +105,7 @@ func procTTYMapPS() map[int]ttyEntry {
 }
 
 // HasTTYAncestor reports whether pid or any ancestor up to init owns a
-// controlling terminal — the live-vs-orphan test, and the Go port of
-// admin_lib/ports_nuke.py::has_tty_ancestor. tmap is a snapshot from
+// controlling terminal — the live-vs-orphan test. tmap is a snapshot from
 // procTTYMap; nil triggers building one on demand. A chain that hits a pid
 // absent from the snapshot (a race, or a permission gap) is treated as
 // orphaned: better to reap a corpse than refuse to start dev.
@@ -132,8 +130,7 @@ func HasTTYAncestor(pid int, tmap map[int]ttyEntry) bool {
 }
 
 // argvInProject reports whether any argv token of p is a path at or under
-// projectRoot — the Go port of admin_lib/ports_nuke.py::_argv_in_project.
-// Narrows a bare-runtime match to this project's own scripts.
+// projectRoot. Narrows a bare-runtime match to this project's own scripts.
 func argvInProject(p Proc, projectRoot string) bool {
 	root := absPath(projectRoot)
 	prefix := root + string(os.PathSeparator)
@@ -145,8 +142,7 @@ func argvInProject(p Proc, projectRoot string) bool {
 	return false
 }
 
-// DevPrecheckOptions is the Go port of
-// admin_lib/ports_nuke.py::dev_precheck's keyword parameters.
+// DevPrecheckOptions is DevPrecheck's parameter set.
 type DevPrecheckOptions struct {
 	Runtimes       []string // default: bun, node, vite, esbuild
 	AcceptRuntimes []string
@@ -167,8 +163,7 @@ type DevPrecheckResult struct {
 }
 
 // DevPrecheck refuses to start a dev loop when a live one already owns this
-// project — the Go port of admin_lib/ports_nuke.py::dev_precheck. Every
-// process rooted in projectRoot is classified as live (its ancestry crosses
+// project. Every process rooted in projectRoot is classified as live (its ancestry crosses
 // a real TTY) or orphan (its chain reaches init with no TTY); orphans are
 // reaped silently, a live session or a running container aborts.
 func DevPrecheck(projectRoot string, opts DevPrecheckOptions) DevPrecheckResult {

@@ -1,18 +1,14 @@
-// logcontext.go is the Go port of admin_lib/core.py's module-level
-// set_log_context/_materialize_log_context machinery, hoisted into its own
-// type so every luahost.Host a single command dispatch builds (26 kind
-// factories, each with its own Host — internal/kinds/helpers.go's newHost)
-// can share ONE deferred log-context rather than each Host racing to
-// materialize its own file. Python got this for free because
-// _pending_context/_log_context_active/LOG_FILE are bare module globals,
-// shared by construction; Go's equivalent of "shared by construction" is
-// one LogContext value every Host in a dispatch borrows (Host.UseLogContext)
-// rather than owns.
+// logcontext.go implements the set_log_context/materializeLocked
+// machinery, hoisted into its own type so every luahost.Host a single
+// command dispatch builds (26 kind factories, each with its own Host —
+// internal/kinds/helpers.go's newHost) can share ONE deferred log-context
+// rather than each Host racing to materialize its own file: one LogContext
+// value every Host in a dispatch borrows (Host.UseLogContext) rather than
+// owns.
 //
 // admin-rc82 is the ticket that made this unconditional: every command names
 // a log before its first step runs (internal/kinds/dispatch.go's runSteps),
-// not just a step body that happens to call set_log_context itself. See that
-// file's own doc comment for the full port.
+// not just a step body that happens to call set_log_context itself.
 package luahost
 
 import (
@@ -33,10 +29,8 @@ import (
 // RetainUnset marks "no explicit retain value was given" — the caller falls
 // back to the LogContext's configured default (5, or an explicit
 // `[logging] retain`). It is distinct from 0, which explicitly disables
-// pruning/rotation — mirroring Python's retain=None (fall back to
-// LOG_CONFIG.get("retain", 5)) versus retain=0 (prune to nothing... no,
-// prune to zero pruning: n == 0 means _prune_logs/_rotate_log return
-// immediately). Any real caller that means "I did not set retain" must pass
+// pruning/rotation: retain == 0 means pruneLogsLocked/rotateLogLocked return
+// immediately. Any real caller that means "I did not set retain" must pass
 // this constant, never 0.
 const RetainUnset = -1
 
@@ -97,8 +91,8 @@ func (c *LogContext) announce() {
 	fmt.Fprintf(c.Stderr, "\033[2m%s%s\033[0m\n", LogAnnouncePrefix, c.logFile)
 }
 
-// pendingContext mirrors admin_lib/core.py's module-level _pending_context:
-// a log-file name or path is held pending — not created — until first use,
+// pendingContext holds a log-file name or path pending — not created —
+// until first use,
 // so an outer set_log_context (a command's step-runner) and an inner one (a
 // multi-target target re-scoping, a framed action) don't both materialize a
 // file. Whichever call fires first (i.e. is still pending when the log is
@@ -111,9 +105,7 @@ type pendingContext struct {
 }
 
 // LogContext is the process-level owner of one command dispatch's deferred
-// log-file state — the Go analogue of admin_lib/core.py's
-// LOG_DIR/LOG_FILE/LOG_CONFIG/_pending_context/_log_context_active module
-// globals, minus the bit where Python gets sharing for free.
+// log-file state.
 //
 // internal/kinds/helpers.go's newHost points every kind-factory Host at
 // the single package-level instance (Process()), so a command's 26-ish
@@ -146,8 +138,7 @@ type LogContext struct {
 }
 
 // NewLogContext returns a LogContext rooted at projectRoot, logging
-// enabled, retain defaulted to 5 (matching Python's
-// `LOG_CONFIG.get("retain", 5)` when no `[logging]` table overrides it).
+// enabled, retain defaulted to 5 when no `[logging]` table overrides it.
 func NewLogContext(projectRoot string) *LogContext {
 	return &LogContext{
 		ProjectRoot:   projectRoot,
@@ -193,15 +184,13 @@ func ResetProcessLogContext(projectRoot string) {
 }
 
 // Configure applies (or re-applies) a manifest's `[logging]` table and
-// re-roots c at projectRoot — the Go port of admin_lib/core.py's _init +
-// _apply_log_config.
+// re-roots c at projectRoot.
 //
 // **It does not touch pending, logFile or active**, and that is the whole
-// point of the function. In Python those two calls run once per process from
-// boot(); naming a log is a separate concern that runs per command and is
-// guarded by _log_context_taken(). This port originally cleared the context
-// here, on the theory that "a Go process runs exactly one command per
-// Configure call". That premise is false: internal/kinds/dispatch.go:217
+// point of the function. Naming a log is a separate concern that runs per
+// command and is guarded by taken(). This function originally cleared the
+// context here, on the theory that "a Go process runs exactly one command
+// per Configure call". That premise is false: internal/kinds/dispatch.go:217
 // routes surf.Command straight back into runSteps, which calls Configure
 // again, and three shipped kinds take that hop before starting
 // (vitedev.go, docker.go, cleandev.go, each via runPreHook's
@@ -260,18 +249,17 @@ func (c *LogContext) SetStderr(w io.Writer) {
 }
 
 // SetEnabled turns logging on or off for the rest of this context's life —
-// the Go port of a command's `[logging] log = false` (which bypasses
+// backs a command's `[logging] log = false` (which bypasses
 // set_log_context entirely, so nothing this context does for the rest of
-// the run creates a file) and of Python's `LOG_CONFIG.get("enabled") is
-// False`.
+// the run creates a file).
 func (c *LogContext) SetEnabled(enabled bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.enabled = enabled
 }
 
-// taken mirrors admin_lib/core.py's _log_context_taken: a context is
-// already live and owns a real file. Caller must hold c.mu.
+// taken reports whether a context is already live and owns a real file.
+// Caller must hold c.mu.
 func (c *LogContext) taken() bool {
 	return c.active && c.logFile != ""
 }
@@ -312,9 +300,8 @@ func (c *LogContext) LogFile() string {
 }
 
 // MaterializeLogFile forces any pending log context to be created now and
-// returns its path — the Go port of admin_lib/core.py's get_log_file():
-// "asking for the path is a use". Empty when no context was ever set (or
-// logging is disabled).
+// returns its path: "asking for the path is a use". Empty when no context
+// was ever set (or logging is disabled).
 func (c *LogContext) MaterializeLogFile() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -322,24 +309,18 @@ func (c *LogContext) MaterializeLogFile() string {
 	return c.logFile
 }
 
-// AnnounceEnd prints the materialized log path to Stderr once, the Go port
-// of admin_lib/core.py's _announce_log_end — the "→ wrote: <path>" line
-// Python printed both explicitly right after a command's func() returned
-// (core.py:1701-1702, core.py:1412 for the interactive menu) and, as a
-// safety net for any other exit path, from an atexit.register hook
-// (core.py:449). Go has no atexit; callers get the same coverage by
+// AnnounceEnd prints the materialized log path to Stderr once — the
+// "→ wrote: <path>" line. Go has no atexit; callers get full coverage by
 // deferring AnnounceEnd at the outermost per-process dispatch boundary
 // (cmd/root.go's three RunE closures) so it fires whether the run
 // succeeds or fails, without needing a second registration.
 //
 // A no-op when nothing ever materialized this run (active is false — e.g.
 // a `branch`/`worktree` verb dispatch that never touched logging) and a
-// no-op on any call after the first: unlike Python, which reuses the
-// consumed _log_context_active flag both to gate this print AND to answer
-// "is a context live" elsewhere (_log_context_taken), Go's taken() must
-// keep answering that question correctly for the rest of this
-// LogContext's life — so AnnounceEnd tracks its own one-shot
-// announcedEnd flag instead of clearing active.
+// no-op on any call after the first: taken() must keep answering "is a
+// context live" correctly for the rest of this LogContext's life, so
+// AnnounceEnd tracks its own one-shot announcedEnd flag instead of clearing
+// active.
 func (c *LogContext) AnnounceEnd() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -369,7 +350,7 @@ func (c *LogContext) Write(text string) {
 	}
 	f, err := os.OpenFile(c.logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return // best-effort, matching Python's bare except OSError: pass
+		return // best-effort; a failed open is silently swallowed
 	}
 	defer f.Close()
 	_, _ = f.WriteString(plain)
@@ -427,10 +408,9 @@ func (c *LogContext) materializeLocked() {
 	c.announce()
 }
 
-// pruneLogsLocked deletes older same-stem logs beyond retain, matching
-// admin_lib/core.py's _prune_logs(stem, retain). retain == 0 means "no
-// pruning" (Python's n == 0 early return). Errors are silently swallowed —
-// pruning is best-effort, exactly like the Python original's bare except.
+// pruneLogsLocked deletes older same-stem logs beyond retain. retain == 0
+// means "no pruning". Errors are silently swallowed — pruning is
+// best-effort.
 func (c *LogContext) pruneLogsLocked(stem string, retain int) {
 	if retain == 0 {
 		return
@@ -449,11 +429,10 @@ func (c *LogContext) pruneLogsLocked(stem string, retain int) {
 	}
 }
 
-// rotateLogLocked ports admin_lib/core.py's _rotate_log: numbered-suffix
-// rotation for an explicit-path (log_file) context, run before the fresh
-// file is created. retain == 0 means "no rotation". A path that doesn't
-// exist yet (the first-ever run under this log_file) is left alone — there
-// is nothing to rotate.
+// rotateLogLocked performs numbered-suffix rotation for an explicit-path
+// (log_file) context, run before the fresh file is created. retain == 0
+// means "no rotation". A path that doesn't exist yet (the first-ever run
+// under this log_file) is left alone — there is nothing to rotate.
 func (c *LogContext) rotateLogLocked(path string, retain int) {
 	if retain == 0 {
 		return
@@ -470,9 +449,8 @@ func (c *LogContext) rotateLogLocked(path string, retain int) {
 	_ = os.Rename(path, path+".1")
 }
 
-// escapedGlob escapes glob metacharacters in a stem name — the Go analogue
-// of Python's glob.escape(), used so a stem containing *, ?, or [ is
-// matched literally rather than as a pattern.
+// escapedGlob escapes glob metacharacters in a stem name, so a stem
+// containing *, ?, or [ is matched literally rather than as a pattern.
 func escapedGlob(s string) string {
 	s = strings.ReplaceAll(s, "[", "[[]")
 	s = strings.ReplaceAll(s, "*", "[*]")

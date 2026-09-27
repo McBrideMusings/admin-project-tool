@@ -8,18 +8,16 @@ import (
 )
 
 // TargetEntry is one row of a pick_target menu: a stable key and its
-// display description, matching admin_lib/core.py's {name: description}
-// dict entries. Order is carried separately (see PickTarget) since Go maps
-// don't preserve insertion order.
+// display description. Order is carried separately (see PickTarget) since Go
+// maps don't preserve insertion order.
 type TargetEntry struct {
 	Key         string
 	Description string
 }
 
 // isTTY reports whether f looks like an interactive terminal. A minimal,
-// dependency-free stand-in for isatty: good enough to gate the picker the
-// same way admin_lib/core.py's sys.stdout.isatty() does, without pulling in
-// golang.org/x/term for one check.
+// dependency-free stand-in for isatty: good enough to gate the picker
+// without pulling in golang.org/x/term for one check.
 func isTTY(f *os.File) bool {
 	info, err := f.Stat()
 	if err != nil {
@@ -46,20 +44,19 @@ const (
 	PickUnavailable
 )
 
-// PickTarget prompts for one of order (in order — matching admin_lib's
-// display_order, "" entries render as a blank spacer row exactly as
-// Python's pick_target does, and are filtered out of items below so the
-// picker's cursor only ever lands on a real target) and returns the chosen
-// key with PickChosen, or "" with PickCancelled / PickUnavailable.
+// PickTarget prompts for one of order (in order — "" entries render as a
+// blank spacer row and are filtered out of items below so the picker's
+// cursor only ever lands on a real target) and returns the chosen key with
+// PickChosen, or "" with PickCancelled / PickUnavailable.
 //
 // This runs entirely in-process against h.Stdin/h.Stdout/h.Stderr — the
 // acceptance criterion ADR-0010 exists to satisfy ("pick_target prompts
 // from the same process, with no subprocess and no wire protocol"). On a
 // real terminal (unix) it is an in-place arrow-key picker: Up/Down (and
 // k/j) move a highlighted cursor, Enter selects, Esc/q/Ctrl-C cancel, and
-// each keystroke redraws the same block of lines in place — the Go port of
-// admin_lib/core.py's read_key()-driven TUI loop applied to pick_target's
-// flat list. On Windows, where this repo has no raw-mode terminal support
+// each keystroke redraws the same block of lines in place, driven by a
+// read_key()-style keystroke loop applied to pick_target's flat list. On
+// Windows, where this repo has no raw-mode terminal support
 // (see internal/reload's Windows stub), it falls back to the original
 // numbered-list prompt read from a line of stdin. Both platforms degrade
 // identically off a TTY: no target given → an explicit error naming the
@@ -113,15 +110,15 @@ const (
 // from a terminal in cbreak mode (see internal/reload.StartKeyReader — the
 // same byte-at-a-time reader internal/keybindings already reuses for its
 // own key loop rather than each caller opening the terminal in raw mode a
-// second time). It mirrors admin_lib/core.py's read_key(): Ctrl-C and a
+// second time). Ctrl-C and a
 // closed channel (EOF) both cancel; a bare Esc byte followed by nothing
 // else within escTimeout is a cancel; "\x1b[A"/"\x1b[B" are up/down; 'k'/'j'
 // are up/down; Enter (\r or \n) selects; 'q'/'Q' cancels; anything else is
 // pickerKeyOther and is ignored by the render loop.
 //
-// escTimeout mirrors Python's select(..., 0.1) wait for the rest of an
-// arrow-key escape sequence — tests pass a short duration since a closed
-// or already-populated channel never actually blocks for it.
+// escTimeout is the wait for the rest of an arrow-key escape sequence —
+// tests pass a short duration since a closed or already-populated channel
+// never actually blocks for it.
 func readPickerKey(ch <-chan byte, escTimeout time.Duration) pickerKey {
 	b, ok := <-ch
 	if !ok {
@@ -201,10 +198,9 @@ func wrapCursor(cur, delta, n int) int {
 
 // OnlyTarget returns the sole entry in choices when there is exactly one,
 // announcing it with Info so a no-prompt run is never mistaken for a picker
-// that silently failed to appear — matching admin_lib/apple.py's
-// only_target exactly, including its own "cmdName: key is this project's
-// only target" phrasing. Returns ("", false) when choices has zero or more
-// than one entry.
+// that silently failed to appear, using the "cmdName: key is this
+// project's only target" phrasing. Returns ("", false) when choices has
+// zero or more than one entry.
 // Host function: only_target(choices_table, cmd_name).
 func (h *Host) OnlyTarget(choices []TargetEntry, cmdName string) (string, bool) {
 	if len(choices) != 1 {

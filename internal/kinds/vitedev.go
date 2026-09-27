@@ -17,17 +17,15 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/reload"
 )
 
-// devMount is one parsed `name=path` entry from DEV_MOUNTS — the Go port of
-// admin_lib/web_dev.py::parse_dev_mounts's return shape.
+// devMount is one parsed `name=path` entry from DEV_MOUNTS.
 type devMount struct {
 	Name string
 	Path string
 }
 
-// parseDevMounts is the Go port of admin_lib/web_dev.py::parse_dev_mounts.
-// A malformed entry (missing "=", empty name/path, or a name of "." or
-// "..") returns (nil, false) — the caller treats that as refuse-to-start,
-// matching Python's "caller is expected to treat None as an error" contract.
+// parseDevMounts parses DEV_MOUNTS. A malformed entry (missing "=", empty
+// name/path, or a name of "." or "..") returns (nil, false) — the caller
+// treats that as refuse-to-start.
 func parseDevMounts(h *luahost.Host, raw string) ([]devMount, bool) {
 	var mounts []devMount
 	for _, entry := range strings.Split(raw, ",") {
@@ -70,8 +68,8 @@ func expandHome(p string) string {
 	return p
 }
 
-// setupDevMounts is the Go port of admin_lib/web_dev.py::setup_dev_mounts:
-// validate every mount target exists, then ensure `dataDir/<name>` is a
+// setupDevMounts validates every mount target exists, then ensures
+// `dataDir/<name>` is a
 // symlink to it — refusing to clobber a non-symlink — then prune any
 // symlink directly under dataDir whose name is no longer in mounts.
 // mountsOK=false (parseDevMounts's failure signal) is a hard refuse, mounts
@@ -136,8 +134,8 @@ func setupDevMounts(h *luahost.Host, dataDir string, mounts []devMount, mountsOK
 	return true
 }
 
-// ensureDeps is the Go port of admin_lib/docker.py::ensure_deps: install
-// only when checkPath is missing. dir is where installCmd runs, and
+// ensureDeps installs only when checkPath is missing. dir is where
+// installCmd runs, and
 // checkPath is resolved against it — both are project-relative, so neither
 // may be left to the process's own cwd.
 func ensureDeps(h *luahost.Host, dir, checkPath, installCmd string) error {
@@ -155,8 +153,7 @@ func ensureDeps(h *luahost.Host, dir, checkPath, installCmd string) error {
 	return nil
 }
 
-// viteDevOptions is run_vite_dev's parameter list, ported from
-// admin_lib/web_dev.py::run_vite_dev's signature.
+// viteDevOptions is runViteDev's parameter list.
 type viteDevOptions struct {
 	VitePort     int
 	BackendPort  int
@@ -171,19 +168,17 @@ type viteDevOptions struct {
 	ViteLogName  string
 }
 
-// runViteDev is the Go port of admin_lib/web_dev.py::run_vite_dev. Vite runs
-// detached in the background (its own process group, log redirected to
-// tmp/<ViteLogName>); the backend runs in the foreground under
-// reload.RunWithReload so a SIGUSR1 reload/restart applies to the backend
-// only, exactly as in Python. Returns the backend's exit code.
+// runViteDev runs Vite detached in the background (its own process group,
+// log redirected to tmp/<ViteLogName>); the backend runs in the foreground
+// under reload.RunWithReload so a SIGUSR1 reload/restart applies to the
+// backend only. Returns the backend's exit code.
 //
-// kill_stale_supervisors — Python's startup sweep for orphaned
-// nodemon/cargo-watch processes left by an uncleanly-shut-down prior dev
-// session — is not ported: it is a project-wide ps/argv sweep belonging to
-// admin_lib/ports_nuke.py, itself admin-3rgp.15's scope, not vite-dev's own
+// A startup sweep for orphaned nodemon/cargo-watch processes left by an
+// uncleanly-shut-down prior dev session is out of scope here: it would be a
+// project-wide ps/argv sweep, admin-3rgp.15's scope, not vite-dev's own
 // preflight. PreflightPort (this file's other dependency, internal/ports)
 // still catches the common case — a stale process still holding the port —
-// which is the failure this sweep exists to prevent for a process that
+// which is the failure such a sweep exists to prevent for a process that
 // changed ports or exited between kills.
 func runViteDev(h *luahost.Host, o viteDevOptions) int {
 	frontend := resolveUnder(h.ProjectRoot, o.FrontendDir)
@@ -299,10 +294,9 @@ func runViteDev(h *luahost.Host, o viteDevOptions) int {
 	envStr := strings.Join(backendEnvParts, " ")
 
 	// `exec env ...` so the shell replaces itself with the backend binary
-	// (cargo-watch / nodemon / etc.) instead of fork-exec'ing it — see
-	// admin_lib/web_dev.py::run_vite_dev's own comment on this for why:
-	// admin's pdeathsig-equivalent (Setpgid + explicit killpg here) only
-	// reaches the shell otherwise.
+	// (cargo-watch / nodemon / etc.) instead of fork-exec'ing it: admin's
+	// pdeathsig-equivalent (Setpgid + explicit killpg here) only reaches the
+	// shell otherwise.
 	backendCmd := "exec env " + envStr + " " + o.BackendCmd
 	return reload.RunWithReload(backendCmd, "dev", reload.Options{
 		// Same reason as vite's own Dir above: BackendDir is relative to the
@@ -325,9 +319,8 @@ func sortedStringMapKeys(m map[string]string) []string {
 	return out
 }
 
-// viteDevFromConfig is the Go port of
-// admin_lib/web_dev.py::vite_dev_from_config: read the manifest's
-// [vite_dev] table and call runViteDev.
+// viteDevFromConfig reads the manifest's [vite_dev] table and calls
+// runViteDev.
 func viteDevFromConfig(h *luahost.Host, cfg map[string]any) int {
 	opts, err := buildViteDevOptions(h.ProjectRoot, cfg)
 	if err != nil {
@@ -337,10 +330,9 @@ func viteDevFromConfig(h *luahost.Host, cfg map[string]any) int {
 	return runViteDev(h, opts)
 }
 
-// buildViteDevOptions does the config-table-to-viteDevOptions translation
-// half of admin_lib/web_dev.py::vite_dev_from_config, split out from
-// viteDevFromConfig so it's testable without spinning up a real vite/backend
-// process. It still performs vite_dev_from_config's real side effect of
+// buildViteDevOptions does the config-table-to-viteDevOptions translation,
+// split out from viteDevFromConfig so it's testable without spinning up a
+// real vite/backend process. It still performs the real side effect of
 // creating each data_subdirs directory (and the plain data root when none is
 // configured as the root) — that part of the adapter has nothing to do with
 // launching a process, so a test can assert on the filesystem exactly as
@@ -448,8 +440,7 @@ func buildViteDevOptions(root string, cfg map[string]any) (viteDevOptions, error
 	}, nil
 }
 
-// makeViteDev is kind="vite-dev"'s factory — the Go port of
-// admin_lib/interp.py::_make_vite_dev. `pre_kill` (admin-tlhw.3) names
+// makeViteDev is kind="vite-dev"'s factory. `pre_kill` (admin-tlhw.3) names
 // whatever command or action the project wants run before this dev loop
 // starts — absent means no hook fires.
 func makeViteDev(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {

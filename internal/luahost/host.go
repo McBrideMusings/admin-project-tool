@@ -33,13 +33,13 @@ type Host struct {
 	// Lua (set_log_context_path, run_cmd's cwd) resolve against it.
 	ProjectRoot string
 
-	// LogDir mirrors admin_lib/core.py's LOG_DIR (conventionally
-	// "<ProjectRoot>/tmp") for callers that want a scratch path under the
-	// project's log directory without going through the log-context
-	// machinery at all (metro.go's pid/log files, apple_devices_darwin.go's
-	// --json-output path). It is independent of logCtx.LogDir — a Host
-	// pointed at the shared process LogContext (internal/kinds/helpers.go's
-	// newHost) still keeps its own LogDir for these non-log-context uses.
+	// LogDir (conventionally "<ProjectRoot>/tmp") is for callers that want a
+	// scratch path under the project's log directory without going through
+	// the log-context machinery at all (metro.go's pid/log files,
+	// apple_devices_darwin.go's --json-output path). It is independent of
+	// logCtx.LogDir — a Host pointed at the shared process LogContext
+	// (internal/kinds/helpers.go's newHost) still keeps its own LogDir for
+	// these non-log-context uses.
 	LogDir string
 
 	// Stdout/Stderr/Stdin are the streams info/ok/warn/err/pick_target/
@@ -50,11 +50,9 @@ type Host struct {
 	Stdin  io.Reader
 
 	// RunAction, when set, backs the `run_action(name, ...)` Lua global: run
-	// another declared action from inside this one. admin_lib/interp.py's
-	// namespace carried run_command for exactly this, and several archetype
-	// bodies were built on it — a picker that routes to one of several
-	// sub-actions, a teardown that runs three of them in order. Nothing in the
-	// Lua surface replaced it, so those bodies had no expressible form at all:
+	// another declared action from inside this one — a picker that routes to
+	// one of several sub-actions, a teardown that runs three of them in
+	// order. Without it those bodies would have no expressible form at all:
 	// run_cmd shells out, and a shell cannot reach a sibling action.
 	//
 	// Left nil (a Host built outside a kind dispatch, or a test), calling
@@ -71,7 +69,7 @@ type Host struct {
 
 // New returns a Host defaulted to the real terminal and the given project
 // root, with a private LogContext of its own (logging enabled). LogDir
-// defaults to "<projectRoot>/tmp", matching admin_lib/core.py's LOG_DIR.
+// defaults to "<projectRoot>/tmp".
 func New(projectRoot string) *Host {
 	return &Host{
 		ProjectRoot: projectRoot,
@@ -94,24 +92,24 @@ func (h *Host) UseLogContext(c *LogContext) {
 }
 
 // LogFile returns the materialized log path, or "" if no context has been
-// set (or logging is disabled). Reading this — like Python's LOG_FILE global
-// — forces nothing; a body that never calls set_log_context just gets "".
+// set (or logging is disabled). Reading this forces nothing; a body that
+// never calls set_log_context just gets "".
 func (h *Host) LogFile() string { return h.logCtx.LogFile() }
 
 // MaterializeLogFile forces any pending log context to be created now and
-// returns its path — the Go port of admin_lib/core.py's get_log_file(),
-// where "asking for the path is a use": a caller (the pinned footer wants
-// to print a log path before the action has necessarily written a line)
-// that read a path and then found the log created somewhere else later
-// would be worse than announcing it slightly early. Plain LogFile() does
-// NOT do this — a Lua body reading a global must not create a log file
-// just by asking what it's named. Empty when no context was ever set.
+// returns its path — "asking for the path is a use": a caller (the pinned
+// footer wants to print a log path before the action has necessarily
+// written a line) that read a path and then found the log created
+// somewhere else later would be worse than announcing it slightly early.
+// Plain LogFile() does NOT do this — a Lua body reading a global must not
+// create a log file just by asking what it's named. Empty when no context
+// was ever set.
 func (h *Host) MaterializeLogFile() string { return h.logCtx.MaterializeLogFile() }
 
 // logWrite appends plain (ANSI-stripped) text to the active log file via
 // h's log context. A no-op if logging is disabled or no context has been
-// materialized yet — mirrors admin_lib/core.py's _log_write, including that
-// it must never call info/ok/warn/err (which call back into this).
+// materialized yet. Must never call info/ok/warn/err (which call back into
+// this).
 func (h *Host) logWrite(text string) { h.logCtx.Write(text) }
 
 // writeLine writes a single already-terminated line to w, ignoring errors —

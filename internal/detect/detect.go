@@ -1,5 +1,5 @@
-// Package detect ports admin_lib/detectors.py: file-layout heuristics that
-// scan a project root and propose which archetypes apply. Unlike archetypes
+// Package detect holds file-layout heuristics that scan a project root and
+// propose which archetypes apply. Unlike archetypes
 // (data, merged by internal/archetype), detectors are logic — Go functions,
 // one per archetype name, registered in a run order that decides precedence
 // when more than one matches.
@@ -17,7 +17,7 @@ type Match struct {
 	Archetypes     []string
 	URLs           map[string]string
 	ProjectName    string
-	HasProjectName bool // distinguish "not set" from "set to empty string" (mirrors admin_lib/detectors.py:80-81)
+	HasProjectName bool // distinguish "not set" from "set to empty string"
 	// Tables holds every other key a detector returns, passed through as a
 	// manifest table verbatim — e.g. Tables["apple"] = map[string]any{"project_path": "ios/App.xcodeproj"}.
 	Tables map[string]any
@@ -25,22 +25,18 @@ type Match struct {
 
 // Detector inspects root and returns a Match, or nil if the stack doesn't
 // match. A detector never errors: any I/O or parse failure while probing is
-// itself a non-match, exactly like the Python originals swallowing
-// OSError/ValueError.
+// itself treated as a non-match.
 type Detector func(root string) *Match
 
-// Order is the run order from admin_lib.detectors.DETECTOR_ORDER, preserved
-// exactly — it is not alphabetical and later entries win merge conflicts.
-// "simple" is last and is handled as a fallback by Run rather than run in
-// the loop, matching the Python loader.
+// Order is the run order: it is not alphabetical and later entries win
+// merge conflicts. "simple" is last and is handled as a fallback by Run
+// rather than run in the loop.
 //
 // forge-engine has a detector (detectForgeEngine, registered in Registry)
-// and a matching archetype directory, but is deliberately absent from Order:
-// admin_lib.detectors.DETECTOR_ORDER never lists it either, so it never
-// runs. tests/test_archetype_detector_pairing.py::test_detector_order_entries_have_backing_files
-// documents that the detector<->order relationship is one-directional — every
-// name in Order must have a detector file, but a detector file need not be
-// in Order.
+// and a matching archetype directory, but is deliberately absent from
+// Order, so it never runs. The detector<->order relationship is
+// one-directional — every name in Order must have a detector file, but a
+// detector file need not be in Order.
 var Order = []string{
 	"hugo",
 	"go-cli",
@@ -80,7 +76,7 @@ var Registry = map[string]Detector{
 	"docs":               detectDocs,
 	"simple":             detectSimple,
 	"forge-engine":       detectForgeEngine, // not in Order — see comment above Order
-	"raylib-game":        detectRaylibGame,  // not in Order — no Python entry either; kept for parity with detectors/raylib-game.py
+	"raylib-game":        detectRaylibGame,  // not in Order
 }
 
 // Result is the merged outcome of a detection run: the union of every
@@ -128,8 +124,9 @@ func Propose(root string) (archetypes []string, urls map[string]string, projectN
 		for k, v := range m.URLs {
 			urls[k] = v
 		}
-		// Python merges project_name based on presence, not truthiness (admin_lib/detectors.py:80-81).
-		// Later detectors can explicitly clear it by setting HasProjectName=true with ProjectName="".
+		// project_name merges based on presence, not truthiness. Later
+		// detectors can explicitly clear it by setting HasProjectName=true
+		// with ProjectName="".
 		if m.HasProjectName {
 			projectName = m.ProjectName
 		}
@@ -141,11 +138,10 @@ func Propose(root string) (archetypes []string, urls map[string]string, projectN
 }
 
 // Run performs a full detection pass, applying the "simple" fallback when
-// nothing else matched — the Go equivalent of admin_lib.detectors.detect().
-// It never returns an error: a project matching no detector still yields a
-// valid Result (archetypes ["simple"], Detector "fallback"), satisfying
-// "empty proposal, not an error" while Propose exposes the true empty set
-// beforehand.
+// nothing else matched. It never returns an error: a project matching no
+// detector still yields a valid Result (archetypes ["simple"], Detector
+// "fallback"), satisfying "empty proposal, not an error" while Propose
+// exposes the true empty set beforehand.
 func Run(root string) Result {
 	archetypes, urls, projectName, tables, matched := Propose(root)
 

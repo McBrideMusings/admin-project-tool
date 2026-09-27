@@ -35,7 +35,7 @@ info("exit=" .. tostring(code))
 }
 
 // TestRunGroupReturnsHighestExitCode proves the aggregate exit code is the
-// max across every child, matching the Python original's sys.exit(max(rcs)).
+// max across every child.
 //
 // MUTATION EVIDENCE: change RunGroup's `if r.code > maxCode` to `if false`
 // (never updating maxCode), and this test fails: exit=0 is reported instead

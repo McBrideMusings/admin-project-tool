@@ -15,7 +15,7 @@ A partial manifest (commands, actions, modules, URLs) bundled per project type �
 _Avoid_: template, preset, profile
 
 **Detector**:
-A file-layout heuristic that scans a project root and proposes which archetypes apply. Lives in `detectors/<name>.py`, paired by filename with its archetype.
+A file-layout heuristic that scans a project root and proposes which archetypes apply. Lives in `internal/detect`, keyed by its archetype's name.
 _Avoid_: probe, sniffer
 
 **Command**:
@@ -31,35 +31,15 @@ A string in a command's `steps` list; names an action to dispatch. Reading `step
 _Avoid_: stage, phase
 
 **Kind**:
-An action's execution strategy. The discriminator that selects an action's runtime closure factory in `admin_lib/interp._FACTORIES`; the closed catalog of valid kinds (`KNOWN_KINDS`) lives in `admin_lib/kinds.py`, which the manifest/archetype validators consult. Examples: `shell`, `python`, `multi-target`, `interactive-shell`, `apple-dev-loop`, `kill-port`, `dev-precheck`, `http`. Closed set — adding a new kind means adding a factory.
+An action's execution strategy. The discriminator that selects an action's factory in `internal/kinds`' `Registry`; the closed catalog of valid kinds is `kinds.Kinds` (`internal/kinds/catalog.go`), which `admin check` consults. Examples: `shell`, `lua`, `multi-target`, `interactive-shell`, `apple-dev-loop`, `kill-port`, `dev-precheck`, `http`. Closed set — adding a new kind means adding a factory.
 _Avoid_: type, mode
 
-**Bundler**:
-The component in `gen/bundler.py` that inlined `admin_lib` modules into the generated `./admin` as a flat namespace — strips relative imports, hoists `__future__` imports, dedupes.
-_Avoid_: packer, linker
-_Status_: removed. **Interpreter mode** ([ADR-0006](adr/0006-interpreter-mode.md)) imports `admin_lib` as a real package and **Compile** produces a `zipapp` (whole files, no flattening) — the flat-namespace bundler no longer exists.
-
-**Fragment**:
-A rendered snippet emitted by `gen/fragments.py` — one per command (the function the TUI calls) and one per action (the dispatch body for that kind). Composed by the renderer into the final `./admin`.
-_Avoid_: section, block
-_Status_: removed under **Interpreter mode** ([ADR-0006](adr/0006-interpreter-mode.md)) — there is no rendering step; the interpreter builds live closures directly (`admin_lib/interp.py`). `gen/fragments.py` was reduced to kind metadata + the `${VAR}` scanner and renamed `admin_lib/kinds.py`.
-
-**Generator_commit**:
-The git SHA of `admin-project-tool` at the time a manifest was last regenerated, written into `admin.toml` and embedded in the `./admin` header banner.
-_Avoid_: version, build_id
-_Status_: removed under **Interpreter mode** ([ADR-0006](adr/0006-interpreter-mode.md)) — the global installed tool version replaces the per-project pin; **Compile** is the new pin.
-
-**Drift**:
-A mismatch between a project's `admin.toml` `generator_commit` and the currently installed `admin-project-tool` SHA. Detected by `admin-gen --audit`; the SessionStart hook regenerates silently when drift is found.
-_Avoid_: stale, out-of-date
-_Status_: removed under **Interpreter mode** ([ADR-0006](adr/0006-interpreter-mode.md)) — with no vendored artifact there is nothing to drift; `admin audit` shrinks to a manifest-validity `check`.
-
 **Guard**:
-A named precondition referenced from an action's or target's `requires` list. A Guard returns pass/fail; on fail it blocks the action and prints an actionable message. Built-in Guards (`git-clean`, `git-pushed`, `deps-fresh`) live in `admin_lib/guards.py` as Python with dynamic diagnostics; user-defined Guards live in `[guards.<name>]` tables as a shell expression (`run`) plus a static failure string (`fail`). Both share one name namespace; `requires` resolves names through both.
+A named precondition referenced from an action's or target's `requires` list. A Guard returns pass/fail; on fail it blocks the action and prints an actionable message. Built-in Guards (`git-clean`, `git-pushed`, `deps-fresh`) live in `internal/guards` with dynamic diagnostics; user-defined Guards live in `[guards.<name>]` tables as a shell expression (`run`) plus a static failure string (`fail`). Both share one name namespace; `requires` resolves names through both.
 _Avoid_: gate, check, precondition (overloaded), validator
 
 **Global preflight**:
-An always-on check that runs before every command (CLI or TUI), independent of any `requires` list, via `run_global_preflight` in `admin_lib/guards.py` (memoized — once per invocation). Currently just `deps-fresh`: a node/bun workspace integrity check that blocks when a `workspace:*` dependency is declared but not linked into `node_modules` (stale install — fresh worktree, or a dep added without reinstalling), pointing at the right `<pm> install`. A no-op on non-node projects.
+An always-on check that runs before every command (CLI or TUI), independent of any `requires` list, via `guards.RunGlobalPreflight` (memoized — once per invocation). Currently just `deps-fresh`: a node/bun workspace integrity check that blocks when a `workspace:*` dependency is declared but not linked into `node_modules` (stale install — fresh worktree, or a dep added without reinstalling), pointing at the right `<pm> install`. A no-op on non-node projects.
 _Avoid_: hook, gate (reserved for Guard)
 
 **Requires**:
@@ -79,7 +59,7 @@ The input-classification-and-resolution stage shared by **Branch** and **Worktre
 _Avoid_: parser, classify (that names only phase 1)
 
 **Dead branch**:
-A local branch that cleanup can force-delete safely, origin untouched: its remote is gone, its PR merged on GitHub (catches squash/rebase that `git branch --merged` misses, gated on not-ahead), it's merged into the default, or it's fully pushed. Everything else is a *survivor* (needs human judgment). Classified by `admin_lib/gitwt.classify_dead`. Surfaced by `admin branch --prune` / `admin worktree --prune` and the bare-verb TUI.
+A local branch that cleanup can force-delete safely, origin untouched: its remote is gone, its PR merged on GitHub (catches squash/rebase that `git branch --merged` misses, gated on not-ahead), it's merged into the default, or it's fully pushed. Everything else is a *survivor* (needs human judgment). Classified by `git.ClassifyDead` (`internal/git`). Surfaced by `admin branch --prune` / `admin worktree --prune` and the bare-verb TUI.
 _Avoid_: stale (that's only one weaker signal), orphan
 
 **Binding**:
@@ -128,7 +108,7 @@ The default execution model after [ADR-0006](adr/0006-interpreter-mode.md): the 
 _Avoid_: runtime mode, JIT
 
 **Compile**:
-The `admin compile` verb. Packages the interpreter + `admin_lib` + the project's resolved `admin.toml` into a single self-contained `.pyz` (stdlib `zipapp`). The compiled artifact is both the portable standalone (no install needed) and the version pin for a project.
+The `admin compile` verb. Builds a copy of the `admin` binary with the project's resolved `admin.toml` embedded. The compiled artifact is both the portable standalone (no install needed) and the version pin for a project.
 _Avoid_: build (reserved for project-level build commands), freeze, bundle
 
 ### Live work and supervision
@@ -172,10 +152,9 @@ _Avoid_: supervisor, scheduler, daemon (it is not a separate process)
 - A **Manifest** lists zero or more **Archetypes** and is merged with each in order.
 - Merging produces a flat set of **Commands** and **Actions**.
 - A **Command** has one or more **Steps**; each Step names an **Action**.
-- An **Action** has exactly one **Kind**; the Kind selects the runtime closure factory in `admin_lib/interp.py` that executes it.
-- **Compile** packages `admin_lib/` + the resolved **Manifest** into a standalone `zipapp`.
+- An **Action** has exactly one **Kind**; the Kind selects the factory in `internal/kinds` that executes it.
+- **Compile** builds a copy of the binary with the resolved **Manifest** embedded.
 - A **Detector** proposes which **Archetypes** apply to a project; paired with its archetype by filename.
-- **Drift** is the audit signal that something downstream of the **Generator_commit** has changed.
 - An **Action** (or a multi-target child) may carry a `**Requires**` list of **Guard** names; each Guard is checked before the Action runs.
 - A long-running **Action**'s dispatch, and each **Worker** a workflow starts, both register an **Entry** in the live-work registry.
 - The **Orchestrator** runs a **Sweep** over those Entries, finds the **Stuck** ones, and sends each a **Nudge**.
@@ -183,10 +162,10 @@ _Avoid_: supervisor, scheduler, daemon (it is not a separate process)
 ## Example dialogue
 
 > **Dev:** "If I add a new **Kind** like `interactive-shell`, what else has to move?"
-> **Maintainer:** "Add a factory to `admin_lib/interp._FACTORIES` and its name to `KNOWN_KINDS` in `admin_lib/kinds.py`, then validate the new fields it accepts in `admin_lib/manifest.py` and `admin_lib/archetypes.py`. **Compile** is unaware of **Kinds** — it just packages `admin_lib/`."
+> **Maintainer:** "Add it to `Kinds` in `internal/kinds/catalog.go` and register its factory in `internal/kinds/factories.go` — a declared kind with no factory fails at startup. **Compile** is unaware of **Kinds** — it copies the binary."
 >
 > **Dev:** "And if a project's **Action** uses a kind the installed tool doesn't know about?"
-> **Maintainer:** "Resolve fails fast — `admin_lib/archetypes.py` checks every action's **Kind** against `KNOWN_KINDS` and raises `unknown kind`. There's no **Drift** to track: the installed tool reads `admin.toml` live ([ADR-0006](adr/0006-interpreter-mode.md)), so a project always runs against whatever tool is on PATH. To pin a version, `admin compile`."
+> **Maintainer:** "Resolve fails fast — `admin check` rejects any action whose **Kind** is not in `kinds.Kinds`. The installed tool reads `admin.toml` live ([ADR-0006](adr/0006-interpreter-mode.md)), so a project always runs against whatever tool is on PATH. To pin a version, `admin compile`."
 
 ## Flagged ambiguities
 

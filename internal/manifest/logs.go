@@ -6,10 +6,10 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/dockerrun"
 )
 
-// LogKind is one [logs.<name>] source kind's flat-field shape — a port of
-// admin_lib/kinds.py's LOG_KINDS catalog. "file" is special (per-environment
-// path/host/user subtables) and is parsed on its own in parseFileLog; every
-// other kind is flat string fields named by Required/Optional.
+// LogKind is one [logs.<name>] source kind's flat-field shape. "file" is
+// special (per-environment path/host/user subtables) and is parsed on its
+// own in parseFileLog; every other kind is flat string fields named by
+// Required/Optional.
 type LogKind struct {
 	Name     string
 	Required []string
@@ -59,8 +59,8 @@ type LogEnv struct {
 	Path string
 	Host string
 	User string
-	// HasHost/HasUser distinguish "not set" from "set to empty string", matching
-	// Python's None vs "" distinction on these optional fields.
+	// HasHost/HasUser distinguish "not set" from "set to empty string" on
+	// these optional fields.
 	HasHost bool
 	HasUser bool
 }
@@ -80,12 +80,10 @@ type LogSource struct {
 }
 
 // logCommonKeys are keys that carry meaning for every log kind and are never
-// treated as file-kind environment names — the port of
-// admin_lib/manifest.py::_LOG_COMMON_KEYS.
+// treated as file-kind environment names.
 var logCommonKeys = map[string]bool{"kind": true, "highlight": true}
 
-// parseLogs normalizes the raw [logs] table into per-source LogSource specs —
-// the port of admin_lib/manifest.py::_parse_logs.
+// parseLogs normalizes the raw [logs] table into per-source LogSource specs.
 func parseLogs(raw any, source string) (map[string]LogSource, error) {
 	if raw == nil {
 		return map[string]LogSource{}, nil
@@ -160,8 +158,7 @@ func parseLogs(raw any, source string) (map[string]LogSource, error) {
 }
 
 // parseFileLog parses a file-kind [logs.<name>] section into its default_env
-// and per-environment path/host/user — the port of
-// admin_lib/manifest.py::_parse_file_log.
+// and per-environment path/host/user.
 func parseFileLog(target map[string]any, source, name string) (LogSource, error) {
 	var spec LogSource
 	spec.Envs = map[string]LogEnv{}

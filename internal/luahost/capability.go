@@ -46,8 +46,7 @@ func jsonDecode(L *lua.LState) int {
 // embedding "${VAR}" directly in a string passed to run_cmd lets /bin/sh -c
 // resolve it without Lua ever seeing the value; this exists for the smaller
 // set of bodies (an archetype's own deploy-target dispatch, e.g.) that
-// branch in Lua on whether a var is set, the way the Python original's
-// os.environ.get(...) let a body check without spawning a shell.
+// branch in Lua on whether a var is set, without spawning a shell.
 func envGet(L *lua.LState) int {
 	name := L.CheckString(1)
 	v, ok := os.LookupEnv(name)

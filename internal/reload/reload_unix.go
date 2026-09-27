@@ -93,8 +93,7 @@ var (
 )
 
 // startKeyReader puts fd into cbreak mode (canonical mode and echo off,
-// signal generation left on — the same tty.setcbreak Python's poll_for_reload
-// and run_with_reload both use) on the first subscriber, and hands every
+// signal generation left on) on the first subscriber, and hands every
 // subscriber its own byte channel fed by one shared goroutine reading stdin.
 // restore unsubscribes and is always safe to call, including when cbreak
 // mode was never entered (stdin not a tty, or the ioctl failed) — restore is
@@ -212,8 +211,7 @@ func pumpKeyReader(cr cancelreader.CancelReader, done chan struct{}) {
 // PollForReload blocks until a reload is requested (SIGUSR1, or 'r'/'R' on a
 // terminal stdin) or isRunning returns false, checking isRunning at least
 // once per timeout. Returns true for "reload requested", false for "the
-// watched process is gone". The Go port of admin_lib/reload.py's
-// poll_for_reload, for the caller-owned loop shape.
+// watched process is gone" — for the caller-owned loop shape.
 func PollForReload(isRunning func() bool, timeout time.Duration) bool {
 	keys, restore := startKeyReader()
 	defer restore()
@@ -267,11 +265,10 @@ const maxFastExitAttempts = 3
 // request (SIGUSR1, or an 'r'/'R' keypress when stdin is a terminal). A
 // child that exits within 2s of launch is relaunched after a 1s pause, up to
 // maxFastExitAttempts total launches, then the loop gives up and returns
-// that exit code — the Go port of admin_lib/reload.py's run_with_reload.
+// that exit code.
 //
 // Returns the child's exit code, or 130 on a user-initiated Ctrl-C/SIGINT
-// (matching the shell convention Python's own KeyboardInterrupt branch
-// returns).
+// (the shell convention for a SIGINT-terminated process).
 func RunWithReload(cmd, target string, opts Options) int {
 	pidFile := fmt.Sprintf("%s-%s.pid", PIDPrefix, target)
 	if err := WritePIDFile(pidFile); err != nil && opts.Warn != nil {
@@ -346,15 +343,14 @@ func RunWithReload(cmd, target string, opts Options) int {
 
 		switch outcome {
 		case outcomeSigint:
-			// Matches Python's KeyboardInterrupt branch: prints "Stopped."
-			// and returns the shell's conventional 128+SIGINT exit code.
+			// Prints "Stopped." and returns the shell's conventional
+			// 128+SIGINT exit code.
 			if opts.Info != nil {
 				opts.Info("Stopped.")
 			}
 			return 130
 		case outcomeSigterm:
-			// Matches Python's _on_sigterm, which raises SystemExit(0) — a
-			// clean shutdown with no "Stopped." banner and exit code 0,
+			// A clean shutdown with no "Stopped." banner and exit code 0,
 			// deliberately distinct from a user-initiated Ctrl-C.
 			return 0
 		case outcomeReload:
@@ -399,8 +395,8 @@ const (
 	// an actual SIGINT) — maps to exit code 130, with a "Stopped." banner.
 	outcomeSigint
 	// outcomeSigterm means the process was asked to terminate via SIGTERM —
-	// mirrors Python's _on_sigterm (raises SystemExit(0)): a clean shutdown,
-	// exit code 0, no banner. Deliberately distinct from outcomeSigint.
+	// a clean shutdown, exit code 0, no banner. Deliberately distinct from
+	// outcomeSigint.
 	outcomeSigterm
 )
 
@@ -453,9 +449,7 @@ func waitForExitOrSignal(c *exec.Cmd, sigCh <-chan os.Signal, keys <-chan byte, 
 }
 
 // killAndWait sends sig to c's whole process group, then waits up to 5s for
-// it to exit before escalating to SIGKILL — the Go port of
-// admin_lib/reload.py's _wait_or_kill, generalized to send the initial
-// signal to the group (os.killpg) the way run_with_reload's own callers do.
+// it to exit before escalating to SIGKILL.
 func killAndWait(c *exec.Cmd, exitCh <-chan error, sig syscall.Signal) {
 	if c.Process == nil {
 		return
@@ -498,8 +492,7 @@ func StartKeyReader() (keys <-chan byte, restore func()) {
 // no longer running) are removed. Returns the number of signals actually
 // delivered; a zero count is always accompanied by a non-nil error naming
 // why (no PID files at all, vs. none matched/alive) so a caller (the
-// server-reload kind) can tell the two apart the way
-// admin_lib/docker.py::reload_running_targets's distinct error messages do.
+// server-reload kind) can tell the two apart.
 func SignalAll(prefix, filter string, r Reporter) (int, error) {
 	files, _ := globPIDFiles(prefix)
 	if len(files) == 0 {

@@ -1,7 +1,7 @@
 // Package agentskill installs an agent-facing SKILL.md (plus reference/*.md)
 // into a coding agent's skill directories — ~/.claude/skills/<name> and
 // ~/.codex/skills/<name> by default — so an agent working in the project can
-// discover its CLI. The Go port of admin_lib/agent_skill.py.
+// discover its CLI.
 //
 // Refuses to overwrite a skill it did not write: every file it installs
 // carries a marker line, and a target that exists without that marker is
@@ -16,9 +16,8 @@ import (
 	"strings"
 )
 
-// Marker is the line every installed file carries. Kept byte-identical to
-// admin_lib/agent_skill.py's MARKER so a skill installed by the Python tool
-// is still recognised as ours and gets updated rather than skipped.
+// Marker is the line every installed file carries, so a previously installed
+// skill is still recognised as ours and gets updated rather than skipped.
 const Marker = "<!-- installed by admin: agent_skill.install_agent_skill() -->"
 
 // Reporter is the subset of the host's output surface this package needs.

@@ -10,7 +10,7 @@ import (
 )
 
 // TestNpmMissingRunIsRejected proves kind="npm" requires 'run' at build
-// time, matching admin_lib/validate.py's "npm kind requires 'run'".
+// time.
 func TestNpmMissingRunIsRejected(t *testing.T) {
 	if _, err := makeNpm("bad", manifest.Action{}, nil, nil); err == nil {
 		t.Fatal("makeNpm with no 'run' should error")

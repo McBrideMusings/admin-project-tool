@@ -1,16 +1,10 @@
 // Package validate is the ADR-0008 umbrella for manifest/action schema
-// errors — the Go counterpart of admin_lib/validate.py's `ValidationError`.
+// errors, centralizing every "is this command/action well-formed" check so
+// the pipeline sites that need them (manifest parsing, archetype resolution)
+// delegate to one place, and wraps every failure as the single *Error type
+// so a caller can catch one umbrella type regardless of which phase raised
+// it.
 //
-// Python centralizes every "is this command/action well-formed" check
-// behind validate_command/validate_action_keys/validate_action so the three
-// pipeline sites that used to hand-roll them (manifest.parse,
-// archetypes.load_archetype, archetypes._to_command) delegate to one place,
-// and raises the caller-supplied phase exception (ManifestError at parse,
-// ArchetypeError at resolve) so admin-run can still catch one umbrella type,
-// ValidationError.
-//
-// Go has no exception hierarchy to mirror that with, and — unlike Python,
-// where admin_lib.kinds carries no dependency on admin_lib.manifest —
 // internal/kinds imports internal/manifest, so a validate package that
 // itself imported internal/kinds (for the kind catalog) could not also be
 // imported by internal/manifest without a cycle. This package therefore
@@ -63,13 +57,11 @@ func Wrap(err error) *Error {
 	return &Error{msg: err.Error()}
 }
 
-// knownCommandKeys is ADR-0003's pure-routing key set — the Go port of
-// admin_lib/validate.py::VALID_COMMAND_KEYS. Kept here (rather than
-// exported from internal/manifest, which builds its own copy for the
+// knownCommandKeys is ADR-0003's pure-routing key set. Kept here (rather
+// than exported from internal/manifest, which builds its own copy for the
 // type-checking toCommand does while parsing) so this package's
-// CommandRouting stays the single description of the *rule*; the two
-// lists must be kept in sync by hand, same as every other admin_lib
-// constant this project ports into two languages during the migration.
+// CommandRouting stays the single description of the *rule*; the two lists
+// must be kept in sync by hand.
 var knownCommandKeys = map[string]bool{
 	"desc": true, "steps": true, "log_file": true, "log_retain": true,
 	"log": true, "group": true, "priority": true, "env": true,
@@ -126,8 +118,7 @@ func KnownCommandKeys() map[string]bool {
 }
 
 // KeyBinding is one entry in an interactive-shell/bridge-listen action's
-// `keys` table, normalized by ParseKeys — the Go port of the dict
-// admin_lib/validate.py::parse_keys returns per key. Exactly one of
+// `keys` table, normalized by ParseKeys. Exactly one of
 // Run/Action/Signal is set (ParseKeys enforces that); PidFile is set
 // together with Signal, never alone.
 type KeyBinding struct {
@@ -138,16 +129,14 @@ type KeyBinding struct {
 	PidFile string
 }
 
-// validKeyBindingFields mirrors admin_lib/validate.py's
-// _VALID_KEY_BINDING_FIELDS.
+// validKeyBindingFields is the set of fields a key binding may declare.
 var validKeyBindingFields = map[string]bool{
 	"label": true, "run": true, "action": true, "signal": true, "pid_file": true,
 }
 
 // ParseKeys validates the raw `keys` table on an interactive-shell/
 // bridge-listen action and returns a normalized copy keyed by the single
-// keychar — the Go port of admin_lib/validate.py::parse_keys. raw is
-// whatever TOML decoded action["keys"] into (map[string]any, each value
+// keychar. raw is whatever TOML decoded action["keys"] into (map[string]any, each value
 // itself a map[string]any) — nil/absent is not this function's job to
 // distinguish from "declared empty"; a caller with an absent `keys` key
 // should skip calling ParseKeys entirely and use a nil map. lead names the

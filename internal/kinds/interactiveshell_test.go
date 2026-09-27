@@ -143,8 +143,7 @@ func TestMakeInteractiveShellNoCompleteStillReportsFailure(t *testing.T) {
 }
 
 // TestMakeInteractiveShellRequiresRun proves a missing `run` is refused at
-// factory-build time (before a Runner is even returned), matching
-// admin_lib/interp.py::_make_interactive_shell's eager InterpError.
+// factory-build time (before a Runner is even returned).
 func TestMakeInteractiveShellRequiresRun(t *testing.T) {
 	if _, err := makeInteractiveShell("dev", manifest.Action{}, nil, nil); err == nil {
 		t.Fatal("makeInteractiveShell = nil error, want one for a missing run")

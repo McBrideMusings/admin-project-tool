@@ -342,8 +342,8 @@ func TestParseMalformedNamesOffendingKey(t *testing.T) {
 // TestParseScalarSettingsKeyIsTolerated proves a scalar value under a
 // settings-shaped name — a typo like `docs = "oops"` meant to be a table, or
 // any other top-level key the parser doesn't otherwise recognize — is
-// tolerated exactly like any other unrecognized key (admin-tlhw.4), matching
-// admin_lib/manifest.py's own warn-only behavior. Before admin-tlhw.4, "docs"
+// tolerated exactly like any other unrecognized key (admin-tlhw.4) — the
+// parser warns rather than fails. Before admin-tlhw.4, "docs"
 // was one of ~20 names the parser specially validated as a table, so this
 // same manifest raised "'[docs]' must be a table"; treating settings-shaped
 // keys differently from other unknown keys by type would reintroduce a

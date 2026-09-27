@@ -9,9 +9,8 @@ import (
 )
 
 // TestMakeInstallTemplateMissingSrcErrors proves a missing source XML fails
-// before anything else is checked (UNRAID_HOST included) — matching
-// admin_lib/unraid.py's install_docker_template_from_config, which checks
-// os.path.exists(src) first.
+// before anything else is checked (UNRAID_HOST included) — the source path
+// is checked first.
 func TestMakeInstallTemplateMissingSrcErrors(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -47,7 +46,7 @@ func TestMakeInstallTemplateMissingHostErrors(t *testing.T) {
 
 // TestMakeInstallTemplateMissingNameErrors proves that with no
 // [install_template].name and no usable APP_IMAGE, the action fails asking
-// for one of the two — admin_lib/unraid.py checks this before UNRAID_HOST.
+// for one of the two — this is checked before UNRAID_HOST.
 func TestMakeInstallTemplateMissingNameErrors(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -64,8 +63,7 @@ func TestMakeInstallTemplateMissingNameErrors(t *testing.T) {
 	}
 }
 
-// TestSlugFromAppImage proves the registry-prefix-and-tag stripping matches
-// admin_lib/unraid.py's _slug_from_app_image exactly.
+// TestSlugFromAppImage proves the registry-prefix-and-tag stripping.
 //
 // MUTATION EVIDENCE: change the tag-stripping `strings.Index(image, ":")` to
 // `strings.LastIndex(image, ":")` and this test fails for a registry host

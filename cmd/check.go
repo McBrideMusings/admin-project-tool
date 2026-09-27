@@ -90,6 +90,9 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	if err := checkLeakedIPs(m); err != nil {
 		problems = append(problems, validate.Wrap(err))
 	}
+	if err := checkConfigEnvRefs(m); err != nil {
+		problems = append(problems, err)
+	}
 	shadows, err := checkRowKeys(m)
 	if err != nil {
 		problems = append(problems, validate.Wrap(err))

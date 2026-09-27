@@ -9,7 +9,7 @@ import (
 
 // memFlags is the set of flags whose value is a byte size, normalized to
 // bytes before drift compare so "24g" and "25769803776" don't read as
-// divergent — ported from admin_lib/docker.py's _MEM_FLAGS.
+// divergent.
 var memFlags = map[string]bool{
 	"--memory": true, "-m": true, "--memory-swap": true,
 	"--memory-reservation": true, "--shm-size": true,
@@ -20,8 +20,7 @@ var memSizeRe = regexp.MustCompile(`(?i)^\s*(\d+(?:\.\d+)?)\s*([bkmg]?)\s*$`)
 // NormalizeMemBytes canonicalizes a Docker --memory-shaped value to an
 // integer byte-count string, matching docker's 1024-based RAMInBytes size
 // suffixes (b/k/m/g, case-insensitive, fractional magnitudes allowed).
-// Returns the value unchanged if it doesn't parse as a size — the Go port
-// of admin_lib/docker.py::_normalize_mem_bytes.
+// Returns the value unchanged if it doesn't parse as a size.
 func NormalizeMemBytes(value string) string {
 	m := memSizeRe.FindStringSubmatch(value)
 	if m == nil {
@@ -45,8 +44,7 @@ func NormalizeMemBytes(value string) string {
 
 // ArgvPairAt reads the flag/value pair starting at argv[i], returning
 // (flag, value, hasValue, nextIndex). The single source of truth for "does
-// this flag take a value" — ported from admin_lib/docker.py::_argv_pair_at.
-// Arity comes from BooleanFlags, never from whether the next token happens
+// this flag take a value" question. Arity comes from BooleanFlags, never from whether the next token happens
 // to start with "-" (a value can legitimately start with "-", e.g.
 // `--ulimit core=-1`).
 func ArgvPairAt(argv []string, i int) (flag string, value string, hasValue bool, next int) {
@@ -59,8 +57,7 @@ func ArgvPairAt(argv []string, i int) (flag string, value string, hasValue bool,
 
 // ArgvToPairSet canonicalizes an argv-pieces list into a set of
 // "flag\tvalue" strings so two lists with different orderings compare
-// cleanly. Byte-size flags are normalized to a byte count first. Ported
-// from admin_lib/docker.py::_argv_to_pair_set.
+// cleanly. Byte-size flags are normalized to a byte count first.
 func ArgvToPairSet(argv []string) map[string]bool {
 	out := map[string]bool{}
 	i := 0
@@ -82,7 +79,7 @@ func ArgvToPairSet(argv []string) map[string]bool {
 // ComputeDrift diffs target (from TOML) against live (from docker inspect).
 // Returns (inTargetOnly, inLiveOnly), each a sorted list of "flag\tvalue"
 // strings. Strict semantics: any divergence in either direction counts as
-// drift. Ported from admin_lib/docker.py::_compute_drift.
+// drift.
 func ComputeDrift(targetArgv, liveArgv []string) (inTargetOnly, inLiveOnly []string) {
 	targetSet := ArgvToPairSet(targetArgv)
 	liveSet := ArgvToPairSet(liveArgv)
@@ -103,10 +100,8 @@ func ComputeDrift(targetArgv, liveArgv []string) (inTargetOnly, inLiveOnly []str
 
 // LiveArgvForDrift builds the live-side argv for drift comparison, stripping
 // noise that's never expressible from TOML so the report only shows
-// actionable drift — the Go port of
-// admin_lib/docker.py::_live_argv_for_drift. cfg (nil-safe) is the
-// [docker_run] table being compared against, needed to resolve
-// DeclaredOnly/ImageField rows.
+// actionable drift. cfg (nil-safe) is the [docker_run] table being compared
+// against, needed to resolve DeclaredOnly/ImageField rows.
 func LiveArgvForDrift(inspect map[string]any, imageEnv []string, imageLabels map[string]string, imageWorkdir, imageUser string, cfg map[string]any) []string {
 	args := BuildArgsFromInspect(inspect)
 	imageEnvSet := map[string]bool{}
@@ -171,11 +166,10 @@ func LiveArgvForDrift(inspect map[string]any, imageEnv []string, imageLabels map
 	return filtered
 }
 
-// FormatDriftReport renders a drift report for human eyeballs — the Go port
-// of admin_lib/docker.py::_format_drift_report. "-e" entries are masked by
-// variable name (IsSecretEnvName) before printing, same as the deploy-time
-// dry-run preview and admin diff's own masking. Returns "" when there is no
-// drift.
+// FormatDriftReport renders a drift report for human eyeballs. "-e" entries
+// are masked by variable name (IsSecretEnvName) before printing, same as
+// the deploy-time dry-run preview and admin diff's own masking. Returns ""
+// when there is no drift.
 func FormatDriftReport(inTargetOnly, inLiveOnly []string, refusing bool) string {
 	if len(inTargetOnly) == 0 && len(inLiveOnly) == 0 {
 		return ""

@@ -13,8 +13,7 @@ import (
 
 func TestAppleProcessFallsBackToScheme(t *testing.T) {
 	// No project (empty string skips the pbxproj lookup) and no
-	// mac_process override — should fall back to the scheme name itself,
-	// matching admin_lib/apple.py's _resolve_mac_process fallback chain.
+	// mac_process override — should fall back to the scheme name itself.
 	got := appleProcess("", map[string]any{}, "mac", "MyScheme")
 	if got != "MyScheme" {
 		t.Errorf("appleProcess fallback = %q, want %q", got, "MyScheme")

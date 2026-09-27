@@ -1,8 +1,7 @@
-// Package reload is the Go port of admin_lib/reload.py — the ONE place a
-// rebuild request (SIGUSR1, or an 'r' keypress from a live terminal) and its
-// PID-file bookkeeping live.
+// Package reload is the ONE place a rebuild request (SIGUSR1, or an 'r'
+// keypress from a live terminal) and its PID-file bookkeeping live.
 //
-// The Python original held two shapes on one piece of state, because dev
+// This package holds two shapes on one piece of state, because dev
 // commands come in two shapes:
 //
 //   - RunWithReload(cmd, target, ...) — this package owns the loop. For a
@@ -15,12 +14,10 @@
 //     loops admin-3rgp.12 ports) where "reload" means running the whole cycle
 //     again, not restarting one child.
 //
-// Both previously kept their own `_rebuild_requested` flag and their own
-// SIGUSR1 handler in the Python — docker.py for the first, apple.py for the
-// second — which is exactly the duplication this repo's CLAUDE.md records as
-// past pain. Both shapes live in this one package now, so a future port never
-// has to choose between adopting this package and writing a second copy of
-// its own.
+// Keeping a separate rebuild-requested flag and SIGUSR1 handler per caller is
+// exactly the duplication this repo's CLAUDE.md records as past pain. Both
+// shapes live in this one package instead, so a future caller never has to
+// choose between adopting this package and writing a second copy of its own.
 //
 // `admin logs`/`admin kill` and the `server-reload` kind find a running dev
 // loop through the PID files this package writes under PIDPrefix.
@@ -34,7 +31,7 @@ import (
 	"strings"
 )
 
-// PIDPrefix mirrors admin_lib/reload.py's _ADMIN_PID_PREFIX. A per-target
+// PIDPrefix is the base path for every PID file this package writes. A per-target
 // loop's PID file is "<PIDPrefix>-<target>.pid"; SetupReload's caller-owned
 // shape defaults to the bare "<PIDPrefix>.pid".
 const PIDPrefix = "/tmp/admin-run"
@@ -51,8 +48,7 @@ type Reporter interface {
 }
 
 // WritePIDFile writes the current process's PID to path, creating parent
-// directories as needed. The Go port of admin_lib/reload.py's inline
-// `with open(pid_file, "w") as f: f.write(str(os.getpid()))`.
+// directories as needed.
 func WritePIDFile(path string) error {
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -62,8 +58,7 @@ func WritePIDFile(path string) error {
 	return os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0o644)
 }
 
-// CleanupPIDFile removes path if it exists. The Go port of
-// admin_lib/reload.py's cleanup_pid_file — best-effort, errors swallowed.
+// CleanupPIDFile removes path if it exists — best-effort, errors swallowed.
 func CleanupPIDFile(path string) {
 	_ = os.Remove(path)
 }
@@ -81,15 +76,13 @@ func readPIDFile(path string) (int, error) {
 	return pid, nil
 }
 
-// globPIDFiles returns every "<prefix>-*.pid" path, mirroring
-// admin_lib/reload.py's `glob.glob(f"{prefix}-*.pid")`.
+// globPIDFiles returns every "<prefix>-*.pid" path.
 func globPIDFiles(prefix string) ([]string, error) {
 	return filepath.Glob(prefix + "-*.pid")
 }
 
 // baseName returns path's final path element — filepath.Base, named locally
-// so reload_unix.go's target-name derivation reads as plainly as the Python
-// os.path.basename call it ports.
+// so reload_unix.go's target-name derivation reads plainly.
 func baseName(path string) string {
 	return filepath.Base(path)
 }

@@ -21,29 +21,27 @@ type GroupCmd struct {
 }
 
 // RunGroup runs every entry in cmds concurrently through /bin/sh -c,
-// prefixing each line of output with "[tag] " (matching
-// admin_lib/forge_engine's workspace-mode dev loop's own "[" + tag + "] "
-// convention) as it streams to Host.Stdout and the active log. This is the
-// Go port of the ONE archetype body ADR-0010 names as not becoming Lua: the
-// forge-engine `dev` workspace path's threading.Lock + subprocess.Popen +
-// poll/wait supervision. Per this repo's CLAUDE.md ("reload state lives only
-// in admin_lib/reload.py; the output pump only in streams.OutputPump"), the
-// composition here is exactly those two pieces — internal/streams.OutputPump
-// per child (this file's only reason to exist: giving N children their own
-// tagged pump feeding one shared, mutex-serialized writer) plus this
-// package's own os/exec — not a third hand-rolled pump.
+// prefixing each line of output with "[tag] " (the forge-engine workspace-
+// mode dev loop's own "[" + tag + "] " convention) as it streams to
+// Host.Stdout and the active log. This is the ONE archetype body ADR-0010
+// names as not becoming Lua: the forge-engine `dev` workspace path's
+// concurrent-process supervision. Per this repo's "reload state lives only
+// in one place; the output pump only in one place" rule, the composition
+// here is exactly those two pieces — internal/streams.OutputPump per child
+// (this file's only reason to exist: giving N children their own tagged
+// pump feeding one shared, mutex-serialized writer) plus this package's own
+// os/exec — not a third hand-rolled pump.
 //
 // On SIGINT: cmds already share this process's terminal foreground process
 // group (no Setpgid), so the terminal delivers Ctrl+C's SIGINT to every
-// child directly, same as the Python original's Popen children did. This
-// function additionally intercepts SIGINT itself (so the Go runtime's
-// default "terminate immediately" doesn't race the children's own signal
-// handling) and, mirroring the original's belt-and-suspenders cleanup,
+// child directly. This function additionally intercepts SIGINT itself (so
+// the Go runtime's default "terminate immediately" doesn't race the
+// children's own signal handling) and, as a belt-and-suspenders cleanup,
 // explicitly SIGTERMs any still-running child, gives them 5s, then SIGKILLs
 // stragglers — for a child that caught SIGINT but hung, or ignored it.
 //
 // Returns the highest exit code across all children (0 if every child
-// exited 0), matching the original's sys.exit(max(rcs)).
+// exited 0).
 func (h *Host) RunGroup(cmds []GroupCmd, dir string) (int, error) {
 	if dir == "" {
 		dir = h.ProjectRoot

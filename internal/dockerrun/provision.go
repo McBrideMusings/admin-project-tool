@@ -5,9 +5,9 @@ import (
 	"strings"
 )
 
-// shq quotes s for a POSIX shell — the Go port of Python's shlex.quote /
-// the archetype Lua bodies' shq, used only by this file's shell-snippet
-// builders (ProvisionCommands, HealthCheckShell).
+// shq quotes s for a POSIX shell — matching the archetype Lua bodies' own
+// shq, used only by this file's shell-snippet builders (ProvisionCommands,
+// HealthCheckShell).
 func shq(s string) string {
 	if s != "" && !strings.ContainsAny(s, " \t\n'\"\\$`!*?[]{}()~&|;<>#") {
 		return s
@@ -18,8 +18,8 @@ func shq(s string) string {
 // ProvisionCommands returns shell commands that prepare bind-mount host
 // dirs before `docker run` — one `mkdir -p` (and optional `chown`) per
 // [[docker_run.bind_mounts]] entry declaring `mkdir = true` and/or
-// `chown = "UID:GID"`. Ported from admin_lib/docker.py::_provision_commands.
-// Pure: the caller runs each command on the host (locally or over ssh).
+// `chown = "UID:GID"`. Pure: the caller runs each command on the host
+// (locally or over ssh).
 func ProvisionCommands(cfg map[string]any, envVars map[string]string, warn Warner) []string {
 	if warn == nil {
 		warn = noopWarn
@@ -57,7 +57,7 @@ func ProvisionCommands(cfg map[string]any, envVars map[string]string, warn Warne
 // HealthCheckShell returns a shell snippet that polls the container's
 // health URL until it returns the expected HTTP status or times out, or ""
 // when no [docker_run.health] table is declared (or its url references an
-// unset var). Ported from admin_lib/docker.py::_health_check_shell.
+// unset var).
 func HealthCheckShell(cfg map[string]any, envVars map[string]string, warn Warner) string {
 	if warn == nil {
 		warn = noopWarn
@@ -104,7 +104,7 @@ func HealthCheckShell(cfg map[string]any, envVars map[string]string, warn Warner
 }
 
 // DefaultContainerName derives a sensible default container name from an
-// image reference. Ported from admin_lib/docker.py::_default_container_name.
+// image reference.
 func DefaultContainerName(image string) string {
 	if idx := strings.Index(image, ":"); idx >= 0 {
 		image = image[:idx]
@@ -118,8 +118,7 @@ func DefaultContainerName(image string) string {
 // RestoreImageFromInspect returns the image reference a restore script
 // should use — the running container's Image SHA when present (so the
 // script stays valid even after the tag is overwritten by a new docker
-// load), else image itself. Ported from
-// admin_lib/docker.py::_restore_image_from_inspect.
+// load), else image itself.
 func RestoreImageFromInspect(inspect map[string]any, image string) string {
 	sha := strings.TrimSpace(getString(inspect, "Image"))
 	if sha != "" {
@@ -130,9 +129,9 @@ func RestoreImageFromInspect(inspect map[string]any, image string) string {
 
 // ParseEnvText parses KEY=value env-file text — # comments, blank lines,
 // values NOT unquoted (docker's --env-file injects the post-'=' string
-// verbatim). Ported from admin_lib/docker.py::_parse_env_text; shared by
-// callers reading a local env_file (already-read text) or a remote
-// remote_env_file (read over ssh by the Lua caller, then parsed here).
+// verbatim). Shared by callers reading a local env_file (already-read text)
+// or a remote remote_env_file (read over ssh by the Lua caller, then parsed
+// here).
 func ParseEnvText(text string) map[string]string {
 	out := map[string]string{}
 	for _, line := range strings.Split(text, "\n") {
@@ -155,8 +154,7 @@ func ParseEnvText(text string) map[string]string {
 
 // MountEnvDeps returns the env-var names optional_mounts/bind_mounts in cfg
 // would need resolved, in declaration order (names may repeat). Empty when
-// neither table references an env var at all. Ported from
-// admin_lib/docker.py::_mount_env_deps.
+// neither table references an env var at all.
 func MountEnvDeps(cfg map[string]any) []string {
 	var names []string
 	for _, raw := range getSlice(cfg, "optional_mounts") {

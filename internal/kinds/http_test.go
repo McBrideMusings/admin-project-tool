@@ -72,9 +72,9 @@ func TestHTTPRespectsExplicitMethod(t *testing.T) {
 	}
 }
 
-// TestHTTPNeverFailsOnErrorResponse proves the Python-parity quirk this
-// factory deliberately keeps: a >=400 response, or a request that can't be
-// sent at all, only warns — the Runner still returns nil.
+// TestHTTPNeverFailsOnErrorResponse proves the deliberate behaviour this
+// factory keeps: a >=400 response, or a request that can't be sent at all,
+// only warns — the Runner still returns nil.
 func TestHTTPNeverFailsOnErrorResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -86,7 +86,7 @@ func TestHTTPNeverFailsOnErrorResponse(t *testing.T) {
 		t.Fatalf("makeHTTP: %v", err)
 	}
 	if err := runner(nil); err != nil {
-		t.Fatalf("runner() = %v, want nil even on a 500 response (Python parity)", err)
+		t.Fatalf("runner() = %v, want nil even on a 500 response", err)
 	}
 }
 

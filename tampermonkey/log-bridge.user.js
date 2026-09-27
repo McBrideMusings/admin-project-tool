@@ -43,9 +43,8 @@
   // ----- Machine addresses come from the environment, never from this file. -----
   //
   // The UPPER_CASE dollar-brace placeholders below (and on the @connect lines
-  // above) are expanded by `admin tampermonkey`
-  // (admin_lib/tampermonkey.py::expand_env_placeholders) from the deploying
-  // shell's environment before the script is embedded in the browser policy.
+  // above) are expanded by `admin tampermonkey` from the deploying shell's
+  // environment before the script is embedded in the browser policy.
   // Lower-case template literals elsewhere in this file are left alone. The
   // committed file never carries a real address; the values live in the
   // machine's .env.

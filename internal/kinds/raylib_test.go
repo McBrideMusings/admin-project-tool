@@ -9,7 +9,7 @@ import (
 )
 
 // TestMakeRaylibRejectsAnUnknownMode proves the build-time mode validation
-// admin_lib/interp.py::_make_raylib does on `run`.
+// makeRaylib does on `run`.
 func TestMakeRaylibRejectsAnUnknownMode(t *testing.T) {
 	_, err := makeRaylib("game", manifest.Action{"run": "launch"}, &manifest.Manifest{}, nil)
 	if err == nil {
@@ -18,8 +18,8 @@ func TestMakeRaylibRejectsAnUnknownMode(t *testing.T) {
 }
 
 // TestMakeRaylibRunModeRequiresABinary proves run/smoke modes refuse to
-// proceed with no [raylib].binary configured — the Go port of
-// admin_lib/interp.py::_make_raylib's "nothing to run" guard.
+// proceed with no [raylib].binary configured — makeRaylib's "nothing to
+// run" guard.
 func TestMakeRaylibRunModeRequiresABinary(t *testing.T) {
 	runner, err := makeRaylib("game-run", manifest.Action{"run": "run"}, &manifest.Manifest{}, nil)
 	if err != nil {
@@ -31,10 +31,9 @@ func TestMakeRaylibRunModeRequiresABinary(t *testing.T) {
 }
 
 // TestMakeRaylibCleanRemovesGlobMatchedPaths proves clean mode's glob
-// expansion actually removes matched files/dirs — the Go port of
-// admin_lib/interp.py::_make_raylib's clean branch, which the doc comment
-// there specifically calls out as needing real glob expansion (not `rm
-// -rf`, since clean_dirs entries may be globs).
+// expansion actually removes matched files/dirs — makeRaylib's clean
+// branch needs real glob expansion (not `rm -rf`, since clean_dirs entries
+// may be globs).
 //
 // MUTATION EVIDENCE: change the `mode == "clean"` branch's os.RemoveAll
 // call to a no-op (skip the actual removal) and this test fails — the

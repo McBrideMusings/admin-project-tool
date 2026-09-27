@@ -8,12 +8,10 @@ import (
 )
 
 // buildDockerDevCmd renders the `docker build && docker run` shell script
-// from a `[docker_dev]` config table — the Go port of
-// admin_lib/docker.py::_docker_dev_build_cmd. Pure (no side effects beyond
+// from a `[docker_dev]` config table. Pure (no side effects beyond
 // reading cfg); the caller hands the result to reload.RunWithReload.
 //
-// Schema (every field optional unless noted) — identical to the Python
-// original's docstring:
+// Schema (every field optional unless noted):
 //
 //	image_tag          string        required; build+run tag
 //	build_context      string        defaults to "."
@@ -158,7 +156,7 @@ func buildDockerDevCmd(cfg map[string]any) (string, error) {
 	// Optional mounts gated on env vars. Can't expand env vars at render
 	// time (would bake host-specific paths into the shell string and freeze
 	// them for the loop's lifetime), so shell conditionals re-check at each
-	// invocation, exactly as the Python original does.
+	// invocation.
 	var optionalMountShell []string
 	for _, m := range asMapSlice(cfg["optional_mounts"]) {
 		env := cfgString(m, "env", "")

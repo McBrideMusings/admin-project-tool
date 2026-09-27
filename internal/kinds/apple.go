@@ -6,12 +6,10 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// makeApple is kind="apple"'s factory — the Go port of
-// admin_lib/interp.py::_make_apple. `run` names one of the Apple verb
+// makeApple is kind="apple"'s factory. `run` names one of the Apple verb
 // functions runAppleVerb dispatches on (build_mac, dev_ios, deploy_tv,
 // clean_ios, ...); the top-level `[apple]` manifest table (m.Settings["apple"]) is the
-// config every verb reads, mirroring the Python original's
-// `ns.get("_APPLE_CONFIG")` lookup. The actual verb bodies live in
+// config every verb reads. The actual verb bodies live in
 // apple_darwin.go (real implementation, darwin-only — xcodebuild/simctl/
 // devicectl don't exist anywhere else) and apple_other.go (a clear
 // "macOS only" error everywhere else), following the same build-tag split
@@ -31,10 +29,8 @@ func makeApple(name string, action manifest.Action, m *manifest.Manifest, _ *Sur
 }
 
 // appleFlags is the small set of long flags an "apple" kind action's
-// leftover CLI args may carry — the Go equivalent of the argparse options
-// admin_lib/apple.py's archetype scripts (build.py/dev.py/deploy.py) used
-// to parse before calling into the functions this file ports. Every field
-// defaults to its Python default when the flag is absent.
+// leftover CLI args may carry: --log LEVEL, --clean, --install, and --args.
+// Every field has a documented default when the flag is absent.
 type appleFlags struct {
 	logLevel   string
 	clean      bool

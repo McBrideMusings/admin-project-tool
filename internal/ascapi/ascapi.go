@@ -1,15 +1,14 @@
-// Package ascapi is the Go port of admin_lib/appstoreconnect.py — enough of
-// the App Store Connect API to stop the developer portal being a manual
-// step. Registering an App ID and ticking a capability are the two things
+// Package ascapi implements enough of the App Store Connect API to stop the
+// developer portal being a manual step. Registering an App ID and ticking a
+// capability are the two things
 // that reliably stop an otherwise-automatable Apple build, and both are API
 // calls: an identifier that exists but lacks a capability fails a build by
 // naming the capability, not by naming itself, so the portal is where you'd
 // otherwise go to check something invisible from here.
 //
-// No third-party dependencies, on purpose (ADR-0001, "stdlib only"). Go has
-// no stdlib ES256 JWS signer either, so this signs with `openssl` — every
-// macOS has it — exactly as the Python original did, and converts the DER
-// signature openssl returns to the raw r||s pair JWS requires.
+// Go has no stdlib ES256 JWS signer, so this signs with `openssl` — every
+// macOS has it — and converts the DER signature openssl returns to the raw
+// r||s pair JWS requires.
 //
 // Credentials come from the environment, never from a manifest — the same
 // three variables internal/kinds' appleAuthArgv and
@@ -188,9 +187,8 @@ func derToRawSignature(der []byte, size int) ([]byte, error) {
 	return out, nil
 }
 
-// leftPad mirrors Python's bytes.rjust(size, b"\x00") — pads on the left
-// with zero bytes, and leaves b untouched (no truncation) when it is
-// already size or longer.
+// leftPad pads b on the left with zero bytes to size, and leaves b untouched
+// (no truncation) when it is already size or longer.
 func leftPad(b []byte, size int) []byte {
 	if len(b) >= size {
 		return b

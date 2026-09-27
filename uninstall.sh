@@ -4,17 +4,10 @@
 #
 # Usage: ./uninstall.sh [--shell zsh|bash|sh]
 #
-# Targets exactly what install.sh writes today (ADR-0006): $DEST_DIR/{admin_lib,
-# archetypes,detectors,admin,VERSION} plus the "# admin-project-tool" PATH block
-# it appends to the rc file. Anything else under $DEST_DIR is left alone.
-#
-# Pre-ADR-0006 leftovers (templates/, hooks/, gen/, bundle, init-admin,
-# init-admin-v2, admin-gen) are not targeted here — install.sh itself deletes
-# them on the next `./install.sh` run (do_install/do_link), so any checkout
-# that has already been reinstalled since the cutover has none of them left.
-# A checkout uninstalled without ever re-running install.sh since before the
-# cutover could still have them; that's a one-time manual cleanup, not this
-# script's job.
+# Targets what install.sh writes: $DEST_DIR/{admin,archetypes,VERSION} plus the
+# "# admin-project-tool" PATH block it appends to the rc file, and the Python
+# pieces (admin_lib/, admin-py, detectors/) an older install left behind.
+# Anything else under $DEST_DIR is left alone.
 
 set -euo pipefail
 
@@ -82,9 +75,9 @@ shell_rc() {
 if [[ ! -e "$DEST_DIR" ]]; then
     echo "admin-project-tool: $DEST_DIR does not exist — nothing to uninstall"
 else
-    rm -rf "$DEST_DIR/admin_lib" "$DEST_DIR/archetypes" "$DEST_DIR/detectors"
+    rm -rf "$DEST_DIR/archetypes" "$DEST_DIR/admin_lib" "$DEST_DIR/detectors"
     rm -f  "$DEST_DIR/admin" "$DEST_DIR/admin-py" "$DEST_DIR/VERSION"
-    echo "  removed $DEST_DIR/{admin_lib,archetypes,detectors,admin,admin-py,VERSION}"
+    echo "  removed $DEST_DIR/{admin,archetypes,VERSION} and any admin_lib, admin-py, detectors"
 
     # Leave any unrelated content in $DEST_DIR alone; only remove the
     # directory itself if install.sh's artifacts were all it contained.

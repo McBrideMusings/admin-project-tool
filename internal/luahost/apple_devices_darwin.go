@@ -18,8 +18,7 @@ var simDeviceLine = regexp.MustCompile(`^\s+(.+?)\s+\(([A-F0-9-]{36})\)(?:\s+\((
 var simRuntimeHeader = regexp.MustCompile(`^-- (.+) --$`)
 
 // FindSimulator finds a simulator device ID by exact name, preferring a
-// booted instance. Returns "" if none match. Ports
-// admin_lib/apple.py's find_simulator.
+// booted instance. Returns "" if none match.
 func FindSimulator(deviceName string) (string, error) {
 	out, err := execOutput("xcrun", "simctl", "list", "devices", "available")
 	if err != nil {
@@ -43,12 +42,10 @@ func FindSimulator(deviceName string) (string, error) {
 
 // ResolveSimulator picks the best simulator for platform ("ios" or "tv"):
 // an already-booted device of that platform first, else the newest
-// available device — matches admin_lib/apple.py's resolve_simulator
-// (including its runtime-header grouping to tell an Apple TV apart from an
-// iPhone simulator). infoLines carries the "Using booted/available
-// simulator: ..." message the Python original prints via info(); the Lua
-// binding relays it. Returns ("", "", nil, nil) with a non-nil error
-// message when nothing matched.
+// available device, grouping by runtime header to tell an Apple TV apart
+// from an iPhone simulator. infoLines carries the "Using booted/available
+// simulator: ..." message; the Lua binding relays it via info(). Returns
+// ("", "", nil, nil) with a non-nil error message when nothing matched.
 func ResolveSimulator(platform string) (deviceID, deviceName string, infoLine string, err error) {
 	plat, ok := simPlatforms[platform]
 	if !ok {
@@ -110,8 +107,7 @@ func BootSimulator(deviceID string) {
 // EnsureBootedSimulator resolves a simulator for platform, opens
 // Simulator.app, and blocks on `simctl bootstatus -b` until it finishes
 // booting (which itself boots the device if it wasn't already — no race
-// between "boot" and "install"). Ports
-// admin_lib/apple.py's ensure_booted_simulator.
+// between "boot" and "install").
 func EnsureBootedSimulator(platform string) (deviceID, deviceName, infoLine string, err error) {
 	deviceID, deviceName, infoLine, err = ResolveSimulator(platform)
 	if err != nil {
@@ -196,17 +192,16 @@ type deviceCtlDevice struct {
 }
 
 // listDevices queries `xcrun devicectl list devices` and returns every
-// wired or local-network device — ports admin_lib/apple.py's _list_devices.
-// Uses h.LogDir for the required --json-output path, matching the Python
-// original's use of the project's own log directory (admin-project-tool#447
-// keys it per-checkout rather than one shared /tmp path).
+// wired or local-network device. Uses h.LogDir for the required
+// --json-output path, keying it per-checkout rather than one shared /tmp
+// path (admin-project-tool#447).
 func (h *Host) listDevices() ([]deviceCtlDevice, error) {
 	if err := os.MkdirAll(h.LogDir, 0o755); err != nil {
 		return nil, err
 	}
 	jsonPath := filepath.Join(h.LogDir, "devices.json")
 	if err := execRun("xcrun", "devicectl", "list", "devices", "--json-output", jsonPath); err != nil {
-		return nil, nil // matches Python: non-zero exit -> []
+		return nil, nil // non-zero exit -> no devices, not an error
 	}
 	data, err := os.ReadFile(jsonPath)
 	if err != nil {
@@ -227,10 +222,8 @@ func (h *Host) listDevices() ([]deviceCtlDevice, error) {
 
 // FindConnectedDevice finds a connected device of platform ("ios" or "tv"),
 // filtered by deviceType (e.g. "iPhone") when there is more than one
-// candidate and deviceType is non-empty. Ports
-// admin_lib/apple.py's find_connected_device, minus its os.environ fallback
-// for the device-type selector (an archetype's Lua body reads its own
-// config/env and passes the resolved value in).
+// candidate and deviceType is non-empty. An archetype's Lua body reads its
+// own config/env and passes the resolved device-type selector in.
 func (h *Host) FindConnectedDevice(platform, deviceType string) (deviceID, deviceName, udid string, warnLines []string, err error) {
 	plat, ok := devicePlatforms[platform]
 	if !ok {
@@ -283,9 +276,8 @@ func InstallOnDevice(deviceID, appPath string) error {
 }
 
 // LaunchOnDevice launches bundleID on deviceID, terminating any existing
-// instance first, passing env as launch environment variables. Ports the
-// non-console half of admin_lib/apple.py's launch_on_device — the
-// --console/attached-stdout mode is explicitly not ported here: it blocks
+// instance first, passing env as launch environment variables. The
+// --console/attached-stdout mode is explicitly not covered here: it blocks
 // on the child's stdout until exit, which is the output-pump's job
 // (internal/streams.OutputPump), not a one-shot host function. A caller
 // needing attached device console output is admin-3rgp.11/.17's concern

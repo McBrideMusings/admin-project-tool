@@ -20,8 +20,7 @@ func TestPortFreeOnAnUnusedPort(t *testing.T) {
 }
 
 // TestPortFreeFalseWhileListening proves PortFree reports false for a port
-// with a live listener — the Go port of admin_lib/ports.py::port_free's
-// core contract.
+// with a live listener.
 //
 // MUTATION EVIDENCE: change PortFree's probe host list to skip
 // "127.0.0.1" (only probe "0.0.0.0") and this test fails — SO_REUSEADDR
@@ -44,7 +43,7 @@ func TestPortFreeFalseWhileListening(t *testing.T) {
 // TestPortFreeTrueAfterListenerCloses proves SO_REUSEADDR is actually being
 // set: without it, a connection left in TIME_WAIT after Close() can make a
 // bind probe fail for up to ~60s even though nothing is listening —
-// admin_lib/ports.py::port_free's whole reason for setting the option.
+// the whole reason PortFree sets the option.
 // This test only proves the immediate-reuse case (no TIME_WAIT was
 // generated, since nothing ever connected) — a lighter but still real
 // regression guard: it fails if PortFree's Control callback is dropped
@@ -64,8 +63,7 @@ func TestPortFreeTrueAfterListenerCloses(t *testing.T) {
 }
 
 // TestWaitForPortSucceedsOnceListening proves WaitForPort returns true once
-// a listener comes up mid-poll — the Go port of
-// admin_lib/web_dev.py::_wait_for_port.
+// a listener comes up mid-poll.
 func TestWaitForPortSucceedsOnceListening(t *testing.T) {
 	port := freeTCPPort(t)
 	go func() {

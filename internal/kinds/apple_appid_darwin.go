@@ -1,8 +1,7 @@
 //go:build darwin
 
-// App Store Connect App ID management — the Go port of admin_lib/apple.py's
-// appid() and ensure_device_registered(), both of which call into
-// admin_lib/appstoreconnect.py (ported as internal/ascapi). Darwin-only for
+// App Store Connect App ID management — appleEnsureDeviceRegistered and
+// parseAppIDArgs, both of which call into internal/ascapi. Darwin-only for
 // consistency with the rest of this package's Apple surface, though nothing
 // here is actually macOS-specific beyond openssl being assumed present.
 package kinds
@@ -67,8 +66,7 @@ func appleEnsureDeviceRegistered(h *luahost.Host, udid, name string) {
 // parseAppIDArgs splits `admin appid`'s leftover CLI args into the wanted
 // capabilities (resolved through ascapi.CapabilityAliases, upper-cased when
 // not a known alias), an optional --name display name, and the positional
-// bundle identifiers — mirroring admin_lib/apple.py::appid's own hand-rolled
-// parse loop.
+// bundle identifiers.
 func parseAppIDArgs(args []string) (wanted []string, displayName string, identifiers []string) {
 	for i := 0; i < len(args); i++ {
 		switch {

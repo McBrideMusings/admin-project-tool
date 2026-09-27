@@ -2,11 +2,11 @@
 
 Hands-on docs for using `admin-project-tool` in a project.
 
-> **Status:** stub. The architecture overview at [/architecture/design](/architecture/design) is the canonical reference until this section is fleshed out. Its "Superseded in part" banner applies only to the old *code-generation* framing — the manifest, archetype-merge, and action-**kind** model it documents (including how `kind = "python"` bodies call reusable `admin_lib` helpers) is current.
+> **Status:** stub. The architecture overview at [/architecture/design](/architecture/design) is the canonical reference until this section is fleshed out. The manifest, archetype-merge, and action-**kind** model it documents is current.
 
 Jumping-off points into that reference:
 
-- [Reusable library helpers in `kind = "python"` bodies](/architecture/design#reusable-library-helpers-in-kind-python-bodies) — the flat-namespace calling contract and the iOS-simulator helper set.
+- [Lua host API](/architecture/lua-host-api) — the functions a `kind = "lua"` body can call, and the Go modules that back them.
 - [`apple` archetype `[apple]` schema](/archetypes/apple) — every `[apple]` config key.
 - [Running against another worktree (`-w`/`--worktree`)](/guide/worktree-target) — run a command, or open the dashboard, against a different git worktree without `cd`'ing there.
 

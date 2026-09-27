@@ -20,8 +20,8 @@ func checkGitRepo(guardName string) (bool, string) {
 	return true, ""
 }
 
-// gitCleanGuard is the Go port of admin_lib/guards.py::_git_clean_guard.
-// Unchanged from Python — no known bugs here.
+// gitCleanGuard fails when the working tree has uncommitted or untracked
+// changes.
 func gitCleanGuard() (bool, string) {
 	if ok, msg := checkGitRepo("git-clean"); !ok {
 		return false, msg
@@ -37,26 +37,21 @@ func gitCleanGuard() (bool, string) {
 	return true, ""
 }
 
-// gitPushedGuard is the Go port of admin_lib/guards.py::_git_pushed_guard,
-// deliberately NOT a faithful port: the Python original hard-codes
-// "origin/<branch>" as the upstream and compares against the local
-// remote-tracking ref with no fetch, which are two independently filed bugs
-// (admin-c8lc, admin-d03k) this port fixes rather than carries forward:
+// gitPushedGuard checks that HEAD has no commits missing from its upstream.
+// It deliberately avoids two bugs (admin-c8lc, admin-d03k) an earlier
+// implementation had:
 //
-//   - admin-c8lc: a branch tracking anything other than origin/<same-name>
-//     (a fork remote, a differently-named upstream branch) got a false
-//     "not on origin" failure even when fully pushed. Fixed by reading the
-//     branch's actual configured upstream (`@{upstream}`) instead of
-//     assuming one.
-//   - admin-d03k: the "pushed" check compared HEAD against the local
-//     remote-tracking ref, which is only as fresh as the last fetch — a
-//     branch rewound or advanced on the remote by someone else could read
-//     as "pushed" against stale local knowledge. Fixed by fetching the
-//     upstream ref immediately before comparing (bd's own first listed
-//     option for d03k: "git fetch --quiet origin <branch> before the
-//     rev-list — accurate, but adds network latency + a failure mode",
-//     which this guard accepts since git-pushed is already a network-shaped
-//     precondition by definition).
+//   - admin-c8lc: hard-coding "origin/<branch>" as the upstream gives a
+//     false "not on origin" failure for a branch tracking anything else (a
+//     fork remote, a differently-named upstream branch) even when fully
+//     pushed. Fixed by reading the branch's actual configured upstream
+//     (`@{upstream}`) instead of assuming one.
+//   - admin-d03k: comparing HEAD against the local remote-tracking ref is
+//     only as fresh as the last fetch — a branch rewound or advanced on the
+//     remote by someone else could read as "pushed" against stale local
+//     knowledge. Fixed by fetching the upstream ref immediately before
+//     comparing (accepting the added network latency, since git-pushed is
+//     already a network-shaped precondition by definition).
 func gitPushedGuard() (bool, string) {
 	if ok, msg := checkGitRepo("git-pushed"); !ok {
 		return false, msg

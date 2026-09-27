@@ -93,8 +93,8 @@ func TestShellWatchUnknownKindWarns(t *testing.T) {
 
 // TestShellWatchSkippedOnFailure proves watch is never consulted when the
 // action's own command fails: the watcher must not run (and must not shell
-// out to gh) for a non-zero exit, matching admin_lib/interp.py::_make_shell,
-// which only calls run_watcher after rc == 0.
+// out to gh) for a non-zero exit — makeShell only calls runWatcher after
+// rc == 0.
 func TestShellWatchSkippedOnFailure(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

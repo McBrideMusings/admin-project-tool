@@ -125,9 +125,9 @@ func TestRenderDevBannerBottomRightCornerRibbon(t *testing.T) {
 	//
 	// (7*size/8, 5*size/8), not the band's own (3*size/4, 3*size/4) center
 	// point: once the "DEV" text was resized and centered on the band's
-	// center line to match the Python reference (admin-53wv round 2), the
-	// glyphs fill nearly the full band height and the exact band-center
-	// point falls inside the stroke of "E" rather than on bare band color.
+	// center line (admin-53wv round 2), the glyphs fill nearly the full
+	// band height and the exact band-center point falls inside the stroke
+	// of "E" rather than on bare band color.
 	x, y := 7*size/8, 5*size/8
 	r, g, b, a := img.At(x, y).RGBA()
 	if a>>8 != 240 || r>>8 < 200 || g>>8 > 100 || b>>8 > 100 {

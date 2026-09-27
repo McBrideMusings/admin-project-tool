@@ -9,8 +9,7 @@ import (
 )
 
 // numOrZero reads a JSON-decoded number (float64) or int, defaulting to 0
-// for anything else (missing key, wrong type) — mirrors Python's
-// u.get("Soft", 0).
+// for anything else (missing key, wrong type).
 func numOrZero(v any) int {
 	switch n := v.(type) {
 	case float64:
@@ -26,10 +25,9 @@ func formatNum(n int) string {
 	return strconv.Itoa(n)
 }
 
-// truthy mirrors admin_lib/docker.py's _is_trivial(v) inverted (and the Lua
-// run-args body's `truthy`): nil, false, "", 0, and an empty
-// list/map are all falsy; everything else — including a non-empty list/map
-// — is truthy.
+// truthy matches the Lua run-args body's own `truthy`: nil, false, "", 0,
+// and an empty list/map are all falsy; everything else — including a
+// non-empty list/map — is truthy.
 func truthy(v any) bool {
 	switch val := v.(type) {
 	case nil:
@@ -51,9 +49,9 @@ func truthy(v any) bool {
 	}
 }
 
-// toStr renders a JSON/TOML-decoded scalar the way Python's str(value) or
-// Lua's tostring(value) would for the values this package actually sees:
-// strings pass through, bools render as "true"/"false" (docker flag values
+// toStr renders a JSON/TOML-decoded scalar the way Lua's tostring(value)
+// would for the values this package actually sees: strings pass through,
+// bools render as "true"/"false" (docker flag values
 // are never fed a raw Go bool otherwise), and a float64 that is a whole
 // number (every TOML/JSON integer becomes float64 after the Lua round trip)
 // prints without a trailing ".0" so e.g. a port number renders "8080", not
@@ -109,11 +107,9 @@ func getString(m map[string]any, key string) string {
 
 // EnvLookup resolves one env var name to (value, present). Passing a nil
 // envVars map to the functions in this package means "fall back to the
-// admin process's own environment" (os.LookupEnv) — the Go equivalent of
-// admin_lib/docker.py defaulting env_vars=None to os.environ. A non-nil map
-// (built from a parsed remote_env_file, or from process env captured by the
-// caller) is consulted instead of — never merged with — process env, same
-// as the Python original.
+// admin process's own environment" (os.LookupEnv). A non-nil map (built
+// from a parsed remote_env_file, or from process env captured by the
+// caller) is consulted instead of — never merged with — process env.
 func envLookup(envVars map[string]string, name string) (string, bool) {
 	if envVars == nil {
 		return os.LookupEnv(name)
@@ -126,13 +122,12 @@ func envLookup(envVars map[string]string, name string) (string, bool) {
 // from envVars (or process env when envVars is nil). Returns (substituted,
 // allResolved) — allResolved=false means at least one reference had neither
 // a value nor a default, so the caller should drop the entry rather than
-// emit a literal ${VAR}. Ported from admin_lib/docker.py::_expand_env_refs /
-// the docker archetype's Lua expand_refs — brace-matched, so a default value
-// may itself contain nested ${...} references. Does not implement
-// COMPUTED_VARS (e.g. ${LAN_IP}) — same simplification the existing Lua port
-// already made (see docs/architecture/lua-host-api.md's run-args section):
-// a computed name comes back unresolved, same as any other unset var with
-// no default.
+// emit a literal ${VAR}. Shares brace-matching with the docker archetype's
+// Lua expand_refs, so a default value may itself contain nested ${...}
+// references. Does not implement computed vars (e.g. ${LAN_IP}) — same
+// simplification the existing Lua port already made (see
+// docs/architecture/lua-host-api.md's run-args section): a computed name
+// comes back unresolved, same as any other unset var with no default.
 func ExpandEnvRefs(value string, envVars map[string]string) (string, bool) {
 	if !strings.Contains(value, "${") {
 		return value, true

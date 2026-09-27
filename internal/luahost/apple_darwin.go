@@ -9,10 +9,10 @@
 // non-Apple archetype never touches this file at all.
 package luahost
 
-// Package-level primitives ported from admin_lib/apple.py — the Apple
-// platform surface ADR-0010 calls "business logic for one archetype", bound
-// from Go per that ADR's rule ("Bind capability from Go … rather than
-// expecting it from Lua's stdlib") exactly like json/glob/plist already are.
+// Package-level primitives for the Apple platform surface ADR-0010 calls
+// "business logic for one archetype", bound from Go per that ADR's rule
+// ("Bind capability from Go … rather than expecting it from Lua's stdlib")
+// exactly like json/glob/plist already are.
 //
 // Scope of this file and its siblings (apple_xcode.go, apple_devices.go,
 // apple_register.go, apple_pbxproj.go, apple_icons.go): the OS-facing
@@ -20,9 +20,9 @@ package luahost
 // commands — running xcodebuild, resolving and driving simulators and
 // physical devices, code-signing, pbxproj parsing, icon backup/dev-banner-
 // swap/restore, glyph-based fresh icon generation, and the small
-// string/log-parsing helpers those need. Two things admin_lib/apple.py also
-// contains are still NOT ported here — see docs/architecture/lua-host-api.md's
-// "What is intentionally not here yet" for the full reasoning:
+// string/log-parsing helpers those need. Two things are still NOT ported
+// here — see docs/architecture/lua-host-api.md's "What is intentionally not
+// here yet" for the full reasoning:
 //
 //   - Continuous dev-loop supervision (dev_mac/dev_ios/dev_tv/dev_device's
 //     rebuild-on-signal loop) and attached device console output. The
@@ -69,24 +69,20 @@ func flockUnlock(f *os.File) error {
 
 // execOutput runs name with args and returns its captured stdout. A package
 // var (not a method) so tests can redirect it without threading a runner
-// through every call site — mirrors the Python original's bare
-// subprocess.run(...).stdout reads, which is what every function in this
-// file replaces one-for-one.
+// through every call site.
 var execOutput = func(name string, args ...string) (string, error) {
 	out, err := exec.Command(name, args...).Output()
 	return string(out), err
 }
 
-// execRun runs name with args, discarding output, for the fire-and-forget
-// calls (simctl boot, simctl install, etc.) the Python original made with
-// subprocess.run(..., capture_output=True) and never inspected the result of.
+// execRun runs name with args, discarding output, for fire-and-forget
+// calls (simctl boot, simctl install, etc.) whose result is never inspected.
 var execRun = func(name string, args ...string) error {
 	return exec.Command(name, args...).Run()
 }
 
 // --- Platform catalogs ---------------------------------------------------
-// Mirrors admin_lib/apple.py's SIM_PLATFORMS / DEVICE_PLATFORMS /
-// APPLE_PLATFORMS tables. Kept as Go data (not Lua) because they are
+// Kept as Go data (not Lua) because they are
 // referenced by the Go-side functions below (resolveSimulator, deviceInfo
 // filtering); an archetype's Lua body needing the raw table gets it via
 // apple.sim_platforms() / apple.device_platforms() (see apple_register.go).
@@ -136,8 +132,7 @@ var devicePlatforms = map[string]devicePlatform{
 
 // simPlatformKeys/devicePlatformKeys return the map's keys sorted, so any
 // caller reporting "expected one of: ..." is deterministic across runs (a Go
-// map's iteration order is not) — matches the Python original's `sorted(...)`
-// in the same error paths.
+// map's iteration order is not).
 func simPlatformKeys() []string {
 	keys := make([]string, 0, len(simPlatforms))
 	for k := range simPlatforms {
@@ -157,8 +152,7 @@ func devicePlatformKeys() []string {
 }
 
 // --- Log predicates --------------------------------------------------------
-// Ports admin_lib/apple.py's _LOG_LEVEL_PREDICATES + log_predicate. Pure
-// string composition, no process — bound alongside the process-touching
+// Pure string composition, no process — bound alongside the process-touching
 // functions in this file because it is part of the same "platform verbs"
 // surface and every caller of it also calls into simctl/devicectl.
 
@@ -206,9 +200,8 @@ func LogPredicate(process, subsystem, level string) (string, error) {
 // XcodebuildFiltered (apple_xcode.go) is the one caller that has a path.
 
 // XcodeIsSignedOut reports whether buildLog shows a build that failed
-// because no Apple ID is signed in — see admin_lib/apple.py's
-// xcode_is_signed_out for why the two error shapes checked here are both
-// symptoms of the same missing-account cause.
+// because no Apple ID is signed in: the two error shapes checked here are
+// both symptoms of the same missing-account cause.
 func XcodeIsSignedOut(buildLog string) bool {
 	if strings.Contains(buildLog, "No Accounts: Add a new account") {
 		return true
@@ -223,18 +216,16 @@ func XcodeIsSignedOut(buildLog string) bool {
 
 // AppStoreConnectKeyRejected reports whether buildLog shows xcodebuild
 // refusing an -authenticationKey* credential outright (distinct from
-// XcodeIsSignedOut — see admin_lib/apple.py's app_store_connect_key_rejected
-// for why the remedies are opposites).
+// XcodeIsSignedOut: the remedies are opposites).
 func AppStoreConnectKeyRejected(buildLog string) bool {
 	return strings.Contains(buildLog, "Authentication failed: Make sure a bearer token was provided")
 }
 
 // DiagnoseBuildFailure reads logPath and returns the remediation lines to
 // warn() with, or nil if the log is unreadable or names nothing this
-// function recognizes. Ports admin_lib/apple.py's diagnose_build_failure,
-// minus its side effect of calling warn() itself — the Lua binding
-// (apple_register.go) does that so this stays a pure function of the log
-// text plus the path it read.
+// function recognizes. This stays a pure function of the log text plus the
+// path it read; the Lua binding (apple_register.go) is what calls warn()
+// with the result.
 func DiagnoseBuildFailure(logPath string) []string {
 	content, err := os.ReadFile(logPath)
 	if err != nil {
@@ -256,10 +247,10 @@ func DiagnoseBuildFailure(logPath string) []string {
 	return lines
 }
 
-// signedOutMessage is the fixed explanation admin_lib/apple.py's
-// _report_signed_out prints — kept as one function so XcodebuildFiltered's
-// retry path and DiagnoseBuildFailure's post-mortem path show the identical
-// text rather than two hand-copied versions drifting apart.
+// signedOutMessage is the fixed explanation, kept as one function so
+// XcodebuildFiltered's retry path and DiagnoseBuildFailure's post-mortem
+// path show the identical text rather than two hand-copied versions
+// drifting apart.
 func signedOutMessage() []string {
 	return []string{
 		"This build could not get a provisioning profile carrying the capability it",
@@ -282,10 +273,9 @@ func signedOutMessage() []string {
 
 // AppStoreConnectAuthFlags returns the -authenticationKey* xcodebuild flags
 // when APP_STORE_CONNECT_KEY_PATH/_KEY_ID/_ISSUER_ID are all set and the key
-// file exists, or nil otherwise — ports admin_lib/apple.py's
-// app_store_connect_auth_flags, minus its "stop offering the key for the
-// rest of this run" latch (that's per-run state XcodebuildFiltered owns, not
-// this pure function).
+// file exists, or nil otherwise. The "stop offering the key for the rest of
+// this run" latch is per-run state XcodebuildFiltered owns, not this pure
+// function.
 func AppStoreConnectAuthFlags() []string {
 	path := strings.TrimSpace(os.Getenv("APP_STORE_CONNECT_KEY_PATH"))
 	keyID := strings.TrimSpace(os.Getenv("APP_STORE_CONNECT_KEY_ID"))
@@ -324,8 +314,7 @@ func expandUser(path string) string {
 // --- App bundle discovery ---------------------------------------------------
 
 // FindApp globs pattern (after expanding a leading ~) and returns the
-// newest match by mtime, or "" if nothing matched — ports
-// admin_lib/apple.py's find_app.
+// newest match by mtime, or "" if nothing matched.
 func FindApp(pattern string) (string, error) {
 	matches, err := filepath.Glob(expandUser(pattern))
 	if err != nil {
@@ -358,8 +347,7 @@ func mtimeOrZero(path string) time.Time {
 // ~/Library/Developer/Xcode/DerivedData.
 var derivedDataRoot = expandUser("~/Library/Developer/Xcode/DerivedData")
 
-// CleanDerivedData removes every DerivedData directory for projectName —
-// ports admin_lib/apple.py's clean_derived_data.
+// CleanDerivedData removes every DerivedData directory for projectName.
 func CleanDerivedData(projectName string) error {
 	pattern := filepath.Join(derivedDataRoot, fmt.Sprintf("%s-*", projectName))
 	matches, err := filepath.Glob(pattern)
@@ -375,8 +363,7 @@ func CleanDerivedData(projectName string) error {
 }
 
 // --- Per-checkout Xcode build lock ------------------------------------------
-// Ports _acquire_xcode_lock / _release_xcode_lock / run_locked_xcode: two
-// admin invocations against the same checkout (a test run started while a
+// Two admin invocations against the same checkout (a test run started while a
 // dev build is in flight) both call xcodebuild, and the second would
 // otherwise queue silently behind Xcode's own lock and look like a slow
 // build. Refusing outright beats an unannounced multi-minute wait.
@@ -391,10 +378,9 @@ type AppleLock struct {
 
 // AcquireXcodeLock takes the exclusive per-checkout Xcode build lock under
 // h.LogDir, or returns (nil, nil) after calling h.Err naming the build
-// already running (matching the Python original's "print and return None"
-// shape — a caller checks the returned lock for nil, not the error, to
-// decide whether to proceed). A non-nil error means the lock file itself
-// could not be opened or locked for a reason other than contention.
+// already running (a caller checks the returned lock for nil, not the
+// error, to decide whether to proceed). A non-nil error means the lock file
+// itself could not be opened or locked for a reason other than contention.
 func (h *Host) AcquireXcodeLock(description string) (*AppleLock, error) {
 	lockPath := filepath.Join(h.LogDir, xcodeLockName)
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
@@ -422,8 +408,7 @@ func (h *Host) AcquireXcodeLock(description string) (*AppleLock, error) {
 	return &AppleLock{f: f}, nil
 }
 
-// ReleaseXcodeLock releases and closes l. A no-op on nil, matching the
-// Python original's _release_xcode_lock(None) no-op.
+// ReleaseXcodeLock releases and closes l. A no-op on nil.
 func (h *Host) ReleaseXcodeLock(l *AppleLock) {
 	if l == nil {
 		return
@@ -445,10 +430,9 @@ func firstNonEmpty(a, b string) string {
 // matching selector (a case-insensitive substring of the identity's
 // description — a team name, "Apple Development", etc; empty auto-picks
 // when exactly one identity exists), returning its SHA-1 hash. warnLines
-// carries the same "using ad-hoc" / "multiple match" explanations the
-// Python original prints via warn() when it returns ""/no match — the Lua
-// binding is what actually calls h.Warn with them.
-// Ports admin_lib/apple.py's resolve_signing_identity.
+// carries the "using ad-hoc" / "multiple match" explanations for when it
+// returns ""/no match — the Lua binding is what actually calls h.Warn with
+// them.
 func ResolveSigningIdentity(selector string) (identity string, warnLines []string) {
 	out, err := execOutput("security", "find-identity", "-v", "-p", "codesigning")
 	if err != nil {
@@ -528,9 +512,9 @@ type SignOptions struct {
 	DeepSet bool
 }
 
-// signResult is what Sign reports back, since it can no longer sys.exit(1)
-// like the Python original on failure — the caller (a Lua body via
-// apple_register.go) decides what a failed sign means for its own flow.
+// signResult is what Sign reports back on failure instead of exiting the
+// process — the caller (a Lua body via apple_register.go) decides what a
+// failed sign means for its own flow.
 type SignResult struct {
 	Identity string // the identity actually used
 	Stable   bool   // true when Identifier was set and the signed attempt used it
@@ -539,8 +523,7 @@ type SignResult struct {
 // Sign code-signs path with a stable identifier, so macOS's TCC keychain
 // grants (camera, Documents, …) survive a rebuild. An ad-hoc-signed binary's
 // designated requirement is its raw cdhash, which changes every build, so
-// without Identifier each rebuild looks like a new app to macOS. Ports
-// admin_lib/apple.py's sign().
+// without Identifier each rebuild looks like a new app to macOS.
 func Sign(path string, opts SignOptions) (SignResult, error) {
 	if _, err := os.Stat(path); err != nil {
 		return SignResult{}, fmt.Errorf("sign: no such path: %s", path)
@@ -589,10 +572,9 @@ func Sign(path string, opts SignOptions) (SignResult, error) {
 }
 
 // DevMacOSPostprocess renames a Debug .app to <devProductName>.app, patches
-// CFBundleName/CFBundleDisplayName, and re-signs. Ports
-// admin_lib/apple.py's dev_macos_postprocess — see that function's docstring
-// (ADR-0007) for why the Dock/Finder tooltip requires renaming the bundle
-// file itself rather than only patching the plist. Returns the renamed path.
+// CFBundleName/CFBundleDisplayName, and re-signs. See ADR-0007 for why the
+// Dock/Finder tooltip requires renaming the bundle file itself rather than
+// only patching the plist. Returns the renamed path.
 func DevMacOSPostprocess(builtAppPath, devProductName, devDisplayName, signIdentity string) (string, error) {
 	if !strings.HasSuffix(builtAppPath, ".app") {
 		return "", fmt.Errorf("dev_macos_postprocess: not an .app bundle: %s", builtAppPath)
@@ -642,8 +624,7 @@ func DevMacOSPostprocess(builtAppPath, devProductName, devDisplayName, signIdent
 // postprocessWarning carries non-fatal warnings from DevMacOSPostprocess —
 // the rename+patch succeeded (dest is usable) but a cosmetic step failed.
 // The caller (apple_register.go) unwraps this to call h.Warn per line
-// instead of treating it as a hard failure, matching the Python original's
-// warn()-and-continue behaviour.
+// instead of treating it as a hard failure.
 type postprocessWarning struct{ lines []string }
 
 func (e *postprocessWarning) Error() string { return strings.Join(e.lines, "; ") }

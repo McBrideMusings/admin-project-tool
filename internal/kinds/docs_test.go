@@ -9,8 +9,7 @@ import (
 )
 
 // TestDocsMissingDirIsAnError proves makeDocs refuses to run when
-// [docs].dir doesn't exist — the Go port of admin_lib/interp.py::_make_docs'
-// `if not os.path.isdir(dirpath)` guard.
+// [docs].dir doesn't exist.
 func TestDocsMissingDirIsAnError(t *testing.T) {
 	m := &manifest.Manifest{Settings: map[string]map[string]any{"docs": {"dir": "does-not-exist"}}}
 	runner, err := makeDocs("docs", manifest.Action{}, m, nil)

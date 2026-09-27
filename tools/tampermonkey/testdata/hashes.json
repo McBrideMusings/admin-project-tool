@@ -1,0 +1,51 @@
+{
+  "null": {
+    "value": null,
+    "hash": "7d4ec811ddaa49d564ff30b1a88e51e423326bdb289d6aa6c6662f91e6e2a5a6"
+  },
+  "true": {
+    "value": true,
+    "hash": "9a216a2f4a203e994d7b212e043484692dc7bbf7d1aabd7cea18168ee322c9d3"
+  },
+  "false": {
+    "value": false,
+    "hash": "55a7dd3fe08bf2241845e7ec2008893eaffc2c1594b28e7c251065df488b0c33"
+  },
+  "int": {
+    "value": 1,
+    "hash": "8831223cda2028f442d5b06998e47bc748b11574bba849699d32244fd77d7329"
+  },
+  "float_int": {
+    "value": 1.0,
+    "hash": "8831223cda2028f442d5b06998e47bc748b11574bba849699d32244fd77d7329"
+  },
+  "float": {
+    "value": 1.5,
+    "hash": "25ac7da3ba1c2b13def259600ea9fa0d2ec4530a65515956d9e0f4fafb1172d3"
+  },
+  "neg": {
+    "value": -3,
+    "hash": "850449799362211dfe2bd3b7b9120dcbbdf61b45275e0c707281f6b5c64a9551"
+  },
+  "str": {
+    "value": "héllo",
+    "hash": "f5d10a05e9a44b23524e4be234e027bbee4aeaaae561cb915d72d56cb5264c70"
+  },
+  "list": {
+    "value": [
+      1,
+      "a",
+      null
+    ],
+    "hash": "39f6f775b7068fe14ffe8281ec57f9eb0a29dd2f168f8342fead7a7764b4e8d8"
+  },
+  "obj": {
+    "value": {
+      "b": 2,
+      "a": [
+        true
+      ]
+    },
+    "hash": "eaeed9042790cd655a043c7cfc7a9296488e674e444e307657a72c160c6e8181"
+  }
+}

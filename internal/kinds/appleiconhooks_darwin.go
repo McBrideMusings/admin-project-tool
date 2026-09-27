@@ -2,17 +2,14 @@
 
 package kinds
 
-// Dev-icon-swap hooks and the iOS display-name patch — the Go port of
-// admin_lib/apple.py's build_icon_hooks + patch_ios_display_name, wired
-// into the dev-loop build sequence in appledevloop_darwin.go. Closes the
-// gap apple_darwin.go's package doc comment used to name explicitly.
+// Dev-icon-swap hooks and the iOS display-name patch, wired into the
+// dev-loop build sequence in appledevloop_darwin.go.
 //
-// Scope matches build_icon_hooks(cfg)'s default call exactly: icon dirs are
-// always resolved from [apple.icons] mac_asset_dir/ios_asset_dir regardless
-// of which platform (mac/ios/tv) is actually building — tv brandassets and
-// the Icon Composer .icon path are out of scope here, since only
-// backup_icons/swap_dev_icons_banner/restore_icons are bound in
-// internal/luahost today.
+// Icon dirs are always resolved from [apple.icons] mac_asset_dir/
+// ios_asset_dir regardless of which platform (mac/ios/tv) is actually
+// building — tv brandassets and the Icon Composer .icon path are out of
+// scope here, since only backup_icons/swap_dev_icons_banner/restore_icons
+// are bound in internal/luahost today.
 //
 // appleIconDirs deliberately does NOT resolve its configured paths against
 // h.ProjectRoot: archetypes/apple/archetype.toml's own "icons swap-dev"
@@ -30,9 +27,9 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 )
 
-// appleIconDirs mirrors _resolve_icon_dirs(cfg, ("mac", "ios")): only the
-// configured entries come back, keyed by label, as the raw relative path
-// from admin.toml.
+// appleIconDirs resolves icon dirs for ("mac", "ios"): only the configured
+// entries come back, keyed by label, as the raw relative path from
+// admin.toml.
 func appleIconDirs(cfg map[string]any) map[string]string {
 	icons := cfgMap(cfg, "icons")
 	dirs := map[string]string{}
@@ -47,23 +44,20 @@ func appleIconDirs(cfg map[string]any) map[string]string {
 
 // appleIconBackupDir is the literal relative path every icon-swap caller
 // shares — archetypes/apple/archetype.toml's "icons" action and
-// admin_lib/apple.py's build_icon_hooks default alike — so a dev-loop
-// backup and the standalone `admin icons restore` verb stay interoperable.
+// appleBuildIconHooks' default alike — so a dev-loop backup and the
+// standalone `admin icons restore` verb stay interoperable.
 const appleIconBackupDir = "tmp/icon-backup"
 
-// appleBuildIconHooks returns (pre, post) for the dev-icon swap, mirroring
-// build_icon_hooks: pre backs up the committed appiconset PNGs then swaps
-// in the DEV banner; post restores the originals. Both are safe to call
-// unconditionally — they no-op when [apple.icons] has no mac/ios asset dir
-// configured, so call sites don't need their own "if hooks configured"
-// branch (matching Python's `if pre_build: pre_build()` callers).
+// appleBuildIconHooks returns (pre, post) for the dev-icon swap: pre backs
+// up the committed appiconset PNGs then swaps in the DEV banner; post
+// restores the originals. Both are safe to call unconditionally — they
+// no-op when [apple.icons] has no mac/ios asset dir configured, so call
+// sites don't need their own "if hooks configured" branch.
 //
 // pre also self-heals a stranded backup left by an interrupted prior dev
 // run (Ctrl-C between BackupIcons and SwapDevIconsBanner, or between a
-// build and RestoreIcons) — the Go equivalent of
-// restore_stranded_dev_icons/_restore_stranded_appiconset_dev_icons: restore
-// from the backup dir first, so a crash never lets a DEV-banner icon reach
-// a fresh build undetected.
+// build and RestoreIcons): restore from the backup dir first, so a crash
+// never lets a DEV-banner icon reach a fresh build undetected.
 func appleBuildIconHooks(cfg map[string]any, h *luahost.Host) (pre func() error, post func() error) {
 	dirs := appleIconDirs(cfg)
 	if len(dirs) == 0 {

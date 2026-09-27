@@ -1,9 +1,8 @@
-// Package manifest parses a project's admin.toml into a normalized Manifest —
-// the Go port of admin_lib/manifest.py::parse. It reads one file into a data
-// structure: no archetype merging (admin_lib/archetypes.py), no full schema
-// validation (admin_lib/validate.py), and nothing is executed. ${VAR} /
-// ${VAR:-default} placeholders are preserved verbatim wherever the Python
-// parser leaves them — they are resolved at dispatch time, not here.
+// Package manifest parses a project's admin.toml into a normalized Manifest.
+// It reads one file into a data structure: no archetype merging, no full
+// schema validation, and nothing is executed. ${VAR} / ${VAR:-default}
+// placeholders are preserved verbatim — they are resolved at dispatch time,
+// not here.
 package manifest
 
 import (
@@ -53,10 +52,8 @@ func FindRoot(start string) (string, bool) {
 // an empty "" or "---" entry in the raw `order` list normalizes to this.
 const Spacer = ""
 
-// Error is ManifestError's Go counterpart: every message is
-// "<source>: <what about which key>", matching admin_lib/manifest.py's
-// ManifestError text so a Go and a Python parse of the same bad file report
-// the same complaint.
+// Error is every parse-error message's shape: "<source>: <what about which
+// key>".
 type Error struct{ msg string }
 
 func (e *Error) Error() string { return e.msg }
@@ -83,9 +80,8 @@ type Command struct {
 	LogFile     string
 	HasLogFile  bool
 	// Log is the raw `log` value — a string (a log-source name) or a bool
-	// (Python's admin_lib/archetypes.py:352 does bool(data["log"]) at merge
-	// time rather than typing it at parse time, e.g. archetypes/docker.py's
-	// [commands.run-args] sets `log = false`). Kept untyped here to match.
+	// (a command can set `log = false` to opt out). Kept untyped here; the
+	// bool/string distinction is resolved at merge time, not parse time.
 	Log       any
 	HasLog    bool
 	LogRetain int
@@ -107,9 +103,9 @@ type Command struct {
 }
 
 // Action is one [actions.X] entry, kept exactly as raw TOML — kind, run,
-// targets, and everything else a kind cares about live here, mirroring the
-// Python parser's raw actions dict. Typing this further would pull archetype/
-// kind-catalog knowledge into the parser (out of scope for this ticket).
+// targets, and everything else a kind cares about live here. Typing this
+// further would pull archetype/kind-catalog knowledge into the parser (out
+// of scope for this ticket).
 type Action map[string]any
 
 // Guard is a user-defined [guards.<name>] shell guard.
@@ -184,10 +180,9 @@ type Manifest struct {
 	// a project's own kind="lua" body reads an arbitrary one as
 	// config.<name>. There is deliberately no closed list of permitted
 	// names: a project adds [my_thing] to admin.toml and it is readable with
-	// no change to the tool (admin-tlhw.4). Each stays a raw map exactly as
-	// the Python parser kept it (ADR-0009: the manifest references, the
-	// archetype implements) — typing them here would pull archetype
-	// knowledge into the parser.
+	// no change to the tool (admin-tlhw.4). Each stays a raw map (ADR-0009:
+	// the manifest references, the archetype implements) — typing them here
+	// would pull archetype knowledge into the parser.
 	Settings map[string]map[string]any
 
 	Logging   map[string]any
@@ -219,12 +214,10 @@ type Manifest struct {
 	// internal/config into []config.Entry.
 	Populate []map[string]any
 
-	// Raw is the originally-decoded TOML, kept for debugging — mirrors
-	// admin_lib.manifest.Manifest.raw.
+	// Raw is the originally-decoded TOML, kept for debugging.
 	Raw map[string]any
-	// Unknown lists top-level keys the parser doesn't recognize. Python
-	// prints a warning to stderr for these; the Go parser leaves printing to
-	// the caller.
+	// Unknown lists top-level keys the parser doesn't recognize. The parser
+	// leaves printing a warning for these to the caller.
 	Unknown []string
 }
 
@@ -233,7 +226,7 @@ type Manifest struct {
 // against this set.
 var KnownTrackers = []string{"beads", "github"}
 
-// knownTopLevelKeys mirrors admin_lib/manifest.py::_KNOWN_KEYS.
+// knownTopLevelKeys is every top-level admin.toml key the parser recognizes.
 var knownTopLevelKeys = map[string]bool{
 	"project_name": true, "python_min": true, "tracker": true, "uses_pull_requests": true,
 	"archetypes": true, "modules": true, "urls": true,
@@ -589,9 +582,8 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 	// helper), so a scalar there raised '[docs]' must be a table'; now that
 	// no name is specially known to the parser, treating a settings-shaped
 	// key differently from any other unknown key by type would just be the
-	// closed registry again, one field at a time. This also keeps parity
-	// with admin_lib/manifest.py, which has always warned rather than
-	// failed on an unrecognized key regardless of its shape.
+	// closed registry again, one field at a time. This also warns rather than
+	// fails on an unrecognized key regardless of its shape.
 	m.Settings = map[string]map[string]any{"deploy": deploy}
 	for k, v := range data {
 		if nonSettingsTopLevelKeys[k] {
@@ -635,7 +627,7 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 // against it. It is deliberately not the full Manifest struct above — a
 // starter manifest never has commands, guards, or any of the other tables a
 // hand-edited admin.toml grows over time — so Dump only needs to serialize
-// the five fields cmd_new (admin-run:196-223) ever populated.
+// the five fields `admin new` ever populates.
 type Starter struct {
 	ProjectName string
 	PythonMin   string
@@ -644,13 +636,11 @@ type Starter struct {
 	Urls        map[string]string
 }
 
-// Dump serializes a Starter to admin.toml text — the Go counterpart of
-// admin_lib/manifest.py::dump, scoped to only the fields a starter manifest
-// carries (project_name, python_min, archetypes, modules, urls) rather than
-// the full multi-table dump the Python version grows into for `admin
-// compile`. Stdlib has no TOML writer, so — like its Python counterpart —
-// this is a hand-rolled minimal emitter for exactly this shape, not a
-// general-purpose serializer.
+// Dump serializes a Starter to admin.toml text, scoped to only the fields a
+// starter manifest carries (project_name, python_min, archetypes, modules,
+// urls) rather than the full multi-table dump `admin compile` grows into.
+// Stdlib has no TOML writer, so this is a hand-rolled minimal emitter for
+// exactly this shape, not a general-purpose serializer.
 func Dump(s Starter) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "project_name = %s\n", tomlQuote(s.ProjectName))
@@ -772,8 +762,7 @@ func (m *Manifest) SortCommandNames(names []string) {
 	})
 }
 
-// knownCommandKeys is the ADR-0003 pure-routing key set — the port of
-// admin_lib/validate.py::VALID_COMMAND_KEYS.
+// knownCommandKeys is the ADR-0003 pure-routing key set.
 var knownCommandKeys = map[string]bool{
 	"desc": true, "steps": true, "log_file": true, "log_retain": true,
 	"log": true, "group": true, "priority": true, "env": true,
@@ -855,11 +844,11 @@ func toCommand(val map[string]any) (Command, error) {
 			cmd.Raw[k] = v
 		}
 	}
-	_ = knownCommandKeys // referenced for documentation/symmetry with Python's key set
+	_ = knownCommandKeys // referenced for documentation/symmetry
 	return cmd, nil
 }
 
-// parseGuardTables is the port of admin_lib/guards.py::parse_guard_tables.
+// parseGuardTables parses the [guards.<name>] tables into user-defined Guards.
 func parseGuardTables(data map[string]any, source string) (map[string]Guard, error) {
 	raw, err := table(data, "guards", source)
 	if err != nil {
@@ -874,7 +863,7 @@ func parseGuardTables(data map[string]any, source string) (map[string]Guard, err
 		if guardsBuiltin[name] {
 			return nil, errf(
 				"%s: '[guards.%s]' collides with a built-in guard name (%s). "+
-					"Built-in guards are registered by admin_lib/guards.py and cannot be redefined in TOML.",
+					"Built-in guards are registered by internal/guards and cannot be redefined in TOML.",
 				source, name, joinStrings(sortedBuiltinGuards(), ", "))
 		}
 		var unknown []string
@@ -902,8 +891,7 @@ func parseGuardTables(data map[string]any, source string) (map[string]Guard, err
 	return guards, nil
 }
 
-// guardsBuiltin mirrors admin_lib/guards.py::GUARDS_BUILTIN — names a
-// [guards.<name>] table may not use.
+// guardsBuiltin names a [guards.<name>] table may not use.
 var guardsBuiltin = map[string]bool{"git-clean": true, "git-pushed": true, "deps-fresh": true}
 
 func sortedBuiltinGuards() []string {
@@ -915,7 +903,7 @@ func sortedBuiltinGuards() []string {
 	return out
 }
 
-// --- small shape-checking helpers, mirroring the Python parser's inline checks ---
+// --- small shape-checking helpers ---
 
 func table(data map[string]any, key, source string) (map[string]any, error) {
 	v, present := data[key]
@@ -1011,8 +999,8 @@ func stringSlice(data map[string]any, key, source string) ([]string, error) {
 	return list, nil
 }
 
-// truthy mirrors Python's truthiness for deploy.get(key) checks:
-// nil/absent → false; string → v != ""; bool → v; []any/map[string]any → len > 0;
+// truthy reports whether v is truthy for deploy.get(key) checks: nil/absent
+// → false; string → v != ""; bool → v; []any/map[string]any → len > 0;
 // int64/float64 → != 0; anything else → true.
 func truthy(v any) bool {
 	if v == nil {

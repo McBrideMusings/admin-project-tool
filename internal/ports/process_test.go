@@ -46,9 +46,7 @@ func TestListProcessesFindsASpawnedChild(t *testing.T) {
 	}
 }
 
-// TestListProcessesSkipsSelf proves the self-pid exclusion — the Go port of
-// admin_lib/ports_nuke.py::list_processes' `if skip_self and pid ==
-// self_pid: continue`.
+// TestListProcessesSkipsSelf proves the self-pid exclusion.
 func TestListProcessesSkipsSelf(t *testing.T) {
 	self := os.Getpid()
 	for _, p := range ListProcesses() {

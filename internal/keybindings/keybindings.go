@@ -1,5 +1,5 @@
-// Package keybindings is the Go port of admin_lib/keybindings.py: generic
-// interactive keybindings for kind="interactive-shell" and
+// Package keybindings implements generic interactive keybindings for
+// kind="interactive-shell" and
 // kind="bridge-listen". It runs a long-lived subprocess like
 // internal/reload.RunWithReload does, but instead of restarting the wrapped
 // process on a keypress, it side-fires a user-declared binding while the
@@ -16,8 +16,7 @@
 // This package also owns starting/stopping the log bridge
 // (internal/logbridge) for the duration of the wrapped process and wiring
 // its output through the shared pump (internal/streams.OutputPump) and
-// footer (internal/frame) — mirroring admin_lib/keybindings.py's own import
-// of log_bridge/log_server, and the CLAUDE.md "Log bridge" section's
+// footer (internal/frame), per the CLAUDE.md "Log bridge" section's
 // requirement that a browser line and a server line reach the terminal
 // indistinguishably.
 package keybindings
@@ -42,8 +41,7 @@ type Options struct {
 	// process's own output before it reaches Stdout — internal/streams.
 	// OutputPump's own contract. It is ALSO what decides whether log-bridge
 	// lines get formatted at all (see installBridgeSink in the platform
-	// file): a nil Formatter here means bridge lines are written raw,
-	// matching admin_lib/keybindings.py::_install_bridge_sink's own check.
+	// file): a nil Formatter here means bridge lines are written raw.
 	Formatter func(lineWithNewline string) string
 
 	// Stdout is where the wrapped process's output (through Formatter/the
@@ -79,13 +77,10 @@ type Options struct {
 	Err  func(msg string)
 }
 
-// formatBanner renders the keybinding banner run_with_keybindings prints
-// once at startup — the Go port of admin_lib/keybindings.py::_format_banner.
+// formatBanner renders the keybinding banner Run prints once at startup.
 // Sorted by keychar so the banner (and any test asserting on it) is
-// deterministic — Python iterates a dict in insertion order, which TOML
-// table decoding does not guarantee to preserve in Go's map[string]any, so
-// this is a deliberate, harmless divergence rather than a port of insertion
-// order that doesn't exist on this side.
+// deterministic — TOML table decoding does not guarantee to preserve
+// insertion order in Go's map[string]any.
 func formatBanner(keys map[string]validate.KeyBinding, label string) string {
 	chars := make([]string, 0, len(keys))
 	for ch := range keys {

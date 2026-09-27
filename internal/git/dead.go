@@ -32,9 +32,8 @@ type DeadBranch struct {
 }
 
 // ClassifyDead splits candidates into branches provably safe to delete and
-// survivors that need a human to look. Ported from admin_lib/gitwt's
-// classify_dead: origin is never touched, and the read is deliberately
-// conservative.
+// survivors that need a human to look. origin is never touched, and the
+// read is deliberately conservative.
 //
 // mergedPRs holds the head-branch names of PRs GitHub has merged (from gh) —
 // the only way to catch a squash or rebase merge, which lands the work under

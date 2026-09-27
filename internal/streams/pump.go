@@ -2,9 +2,8 @@
 // process's output reaches the terminal, a log, and/or an in-memory
 // collector, from one read of one pipe.
 //
-// This is the Go port of admin_lib/streams.py's OutputPump. It used to be
-// (in the Python original) five separate copies of the same
-// read-a-chunk/format/write-to-terminal/write-to-log loop; this repo's
+// This loop used to exist as five separate copies of the same
+// read-a-chunk/format/write-to-terminal/write-to-log logic; this repo's
 // CLAUDE.md records that as the reason the pump exists in exactly one place
 // at all. Every real difference between callers — pty vs pipe, whether a
 // formatter is set, whether the log gets raw or formatted text, whether a

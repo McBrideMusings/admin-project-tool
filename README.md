@@ -8,12 +8,13 @@ Interprets a project's `admin.toml` task-runner manifest at runtime. A project c
 ./install.sh
 ```
 
-Installs the interpreter (`admin_lib`, `gen/`, `archetypes/`, `detectors/`, and the `admin` entrypoint) to `~/.admin/` and adds it to your PATH.
+Builds the `admin` Go binary (Go toolchain required) into `~/.admin/admin`, copies the archetypes to `~/.admin/archetypes/`, and adds `~/.admin` to your PATH. The binary needs nothing else installed to run.
 
 ### Flags
 
 | Flag | Description |
 |------|-------------|
+| `--link` | Symlink the archetypes instead of copying them, so archetype edits are live |
 | `--force` | Reinstall even when already up to date |
 | `--shell zsh\|bash\|sh` | Override shell detection for rc-file PATH setup |
 
@@ -23,7 +24,7 @@ Installs the interpreter (`admin_lib`, `gen/`, `archetypes/`, `detectors/`, and 
 ./uninstall.sh
 ```
 
-Removes everything `install.sh` writes to `~/.admin/` (`admin_lib`, `archetypes`, `detectors`, the `admin` entrypoint, `VERSION`) and the PATH entry `install.sh` added to your shell rc file. Anything else you've put under `~/.admin/` is left alone.
+Removes everything `install.sh` writes to `~/.admin/` (the `admin` binary, `archetypes`, `VERSION`) and the PATH entry `install.sh` added to your shell rc file. Anything else you've put under `~/.admin/` is left alone.
 
 ## Usage
 

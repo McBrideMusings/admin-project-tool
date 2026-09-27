@@ -13,17 +13,15 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// newCmd is admin-3rgp.55: the Go port of admin-run's cmd_new
-// (admin-run:196-223), registered as a real cobra command so dispatchArgs'
+// newCmd is admin-3rgp.55, registered as a real cobra command so dispatchArgs'
 // loop over rootCmd.Commands() (root.go's dispatchArgs, ~line 136) finds
 // "new" and never falls through to branch shorthand — reservedToolVerbs
 // (cmd/manifest.go) has always reserved the word; only the cobra command was
 // missing.
 //
 // It scaffolds a starter admin.toml from internal/detect's file-layout
-// heuristics (the Go port of admin_lib/detectors.py, previously wired to
-// nothing but its own tests) and finishes by invoking runCheck on the
-// freshly written file, mirroring admin-run:223's `return cmd_check(project_dir)`.
+// heuristics (previously wired to nothing but its own tests) and finishes by
+// invoking runCheck on the freshly written file.
 var newCmd = &cobra.Command{
 	Use:   "new [DIR]",
 	Short: "Detect the project stack and write a starter admin.toml",
@@ -82,19 +80,16 @@ func runNew(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintln(os.Stderr, "run 'admin <command>' from anywhere in this project (the tool is on PATH).")
 
-	// Validate the starter manifest resolves before declaring success —
-	// mirrors admin-run:226's `return cmd_check(project_dir)`.
+	// Validate the starter manifest resolves before declaring success.
 	return runCheck(cmd, []string{dir})
 }
 
 // starterProjectName falls back to the target directory's base name,
-// title-cased with "-" replaced by " ", when detect.Run proposed none —
-// matching admin-run:208's
-// `project_dir.resolve().name.replace("-", " ").title()`.
+// title-cased with "-" replaced by " ", when detect.Run proposed none.
 func starterProjectName(dir string) string {
-	// Python's str.title(): a letter that follows a non-letter is upper-cased,
-	// every other letter is lower-cased. "-" becomes a space first, so empty
-	// words survive ("a--b" -> "A  B") exactly as they do in Python.
+	// A letter that follows a non-letter is upper-cased, every other letter
+	// is lower-cased. "-" becomes a space first, so empty words survive
+	// ("a--b" -> "A  B").
 	prevLetter := false
 	return strings.Map(func(r rune) rune {
 		if r == '-' {
@@ -113,9 +108,9 @@ func starterProjectName(dir string) string {
 	}, filepath.Base(dir))
 }
 
-// ensureTmpGitignore is the Go port of admin-run's _ensure_tmp_gitignore
-// (admin-run:188-193): a fresh starter manifest needs tmp/.gitignore so
-// tmp/'s own contents (logs, scratch) never get committed by accident.
+// ensureTmpGitignore ensures a fresh starter manifest's tmp/.gitignore
+// exists, so tmp/'s own contents (logs, scratch) never get committed by
+// accident.
 func ensureTmpGitignore(dir string) error {
 	tmp := filepath.Join(dir, "tmp")
 	if err := os.MkdirAll(tmp, 0o755); err != nil {

@@ -14,7 +14,7 @@ import (
 // remoteInstaller is the portable POSIX-sh installer pushed to the remote host
 // and run there. It duplicates a small slice of the plist/unit rendering logic
 // in shell rather than importing this package, on purpose: the remote host is
-// not assumed to have Python, Go, or the admin tool installed at all.
+// not assumed to have Go or the admin tool installed at all.
 //
 //go:embed resources/install_service_remote.sh
 var remoteInstaller string
@@ -30,7 +30,7 @@ var archMap = map[string]string{
 
 // DeployRemote pushes a [go_dist]-built binary for host's architecture, plus
 // the portable installer, and runs it there over SSH — installing the same
-// [launchd] service remotely with no Python or the admin tool required on the
+// [launchd] service remotely with no Go or the admin tool required on the
 // remote host.
 //
 // distDir/binary match the [go_dist] config that built the matrix
@@ -137,8 +137,8 @@ func UninstallRemote(raw map[string]any, host string, r Reporter) error {
 }
 
 // writeTempInstaller materialises the embedded installer so scp has a real
-// path to send. The Python original scp'd it straight out of the package
-// directory; a Go binary carries it inside itself instead.
+// path to send — the Go binary carries it embedded rather than as a file on
+// disk, so it has to be written out before scp can push it.
 func writeTempInstaller() (string, func(), error) {
 	f, err := os.CreateTemp("", "install_service_remote-*.sh")
 	if err != nil {

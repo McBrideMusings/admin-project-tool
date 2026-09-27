@@ -10,8 +10,7 @@ import (
 
 // origins tracks, per merged key, the label of whichever source last
 // contributed it — so a later collision can name what it overrode ("command
-// 'build' from 'archetype a' overridden by archetype 'b'"), matching
-// admin_lib/archetypes.py::resolve's merge_log.
+// 'build' from 'archetype a' overridden by archetype 'b'").
 type origins struct {
 	urls, overrides, custom, actions, logs, guards map[string]string
 }
@@ -128,11 +127,11 @@ func Resolve(project *manifest.Manifest, sp SearchPath) (*manifest.Manifest, []s
 // the merge log ("archetype 'a'" or "manifest").
 //
 // isManifest distinguishes the two callers of merge: archetype-to-archetype
-// [commands.X] collisions keep whole-value replacement (Python:145-151,
-// ADR-0002 last-wins), while the final manifest overlay merges each
-// [commands.X] override onto the archetype-provided command field by field
-// (admin_lib/archetypes.py:155-185) — ADR-0009: the manifest references, the
-// archetype implements, so naming one field must not delete the rest.
+// [commands.X] collisions keep whole-value replacement (ADR-0002 last-wins),
+// while the final manifest overlay merges each [commands.X] override onto
+// the archetype-provided command field by field — ADR-0009: the manifest
+// references, the archetype implements, so naming one field must not delete
+// the rest.
 func merge(dst, src *manifest.Manifest, srcLabel string, isManifest bool, log *[]string, o *origins) error {
 	if src.ProjectName != "" {
 		dst.ProjectName = src.ProjectName
@@ -152,9 +151,8 @@ func merge(dst, src *manifest.Manifest, srcLabel string, isManifest bool, log *[
 	dst.HideCommands = mergeStringSet(dst.HideCommands, src.HideCommands)
 	dst.HideUrls = mergeStringSet(dst.HideUrls, src.HideUrls)
 
-	// A non-empty Order REPLACES dst's, matching Python's archetype_order
-	// behaviour (the last archetype/manifest to declare an order wins
-	// outright rather than being appended to).
+	// A non-empty Order REPLACES dst's outright: the last archetype/manifest
+	// to declare an order wins rather than being appended to.
 	if len(src.Order) > 0 {
 		dst.Order = append([]string(nil), src.Order...)
 	}
@@ -332,15 +330,15 @@ func mergeMap[V any](dst, src map[string]V, srcLabel, label string, origin map[s
 }
 
 // mergeCommandOverrides merges the project manifest's [commands.X] overrides
-// onto dst, one field at a time, per admin_lib/archetypes.py:155-185 — the
-// manifest-only counterpart to mergeMap's whole-value replacement.
+// onto dst, one field at a time — the manifest-only counterpart to mergeMap's
+// whole-value replacement.
 //
 // When a command name already exists (contributed by an archetype), each
 // field of the override wins when present and otherwise falls back to dst's
 // existing value, so naming only `desc` cannot delete `steps`. When the name
 // does not already exist, the override must carry `steps` — an override with
 // no archetype behind it and no steps of its own resolves to nothing, which
-// Python treats as a manifest error rather than a silently empty command.
+// is treated as a manifest error rather than a silently empty command.
 func mergeCommandOverrides(dst, src map[string]manifest.Command, srcLabel string, origin map[string]string, log *[]string) error {
 	for _, k := range sortedKeys(src) {
 		override := src[k]

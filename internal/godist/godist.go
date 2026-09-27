@@ -1,6 +1,6 @@
 // Package godist cross-compiles a Go binary for an os/arch matrix, with an
 // optional git-revision/dirty ldflags stamp and a VERSION file derived from
-// running the binary's own version flag — the Go port of admin_lib/godist.py.
+// running the binary's own version flag.
 //
 // Generic: any Go project configures source_dir/out_dir/binary/targets via a
 // [go_dist] table. No project-specific paths live here.
@@ -14,7 +14,7 @@ import (
 	"strings"
 )
 
-// DefaultTargets matches admin_lib/godist.py's DEFAULT_TARGETS.
+// DefaultTargets is the os/arch matrix used when [go_dist] declares none.
 var DefaultTargets = []string{"darwin/arm64", "darwin/amd64", "linux/amd64", "linux/arm64"}
 
 // Config is the Go port of the `[go_dist]` cfg dict.
@@ -167,10 +167,10 @@ func Build(cfg Config, r Reporter) (int, error) {
 }
 
 // Stage copies a Build()-produced matrix (binary-* plus VERSION) into
-// destDir, clearing stale copies first — the port of
-// admin_lib/godist.py::stage_dist. For an app that bundles the binaries as a
-// resource (an iOS folder reference, an Electron server-dist). Fails loudly
-// when the dist is missing rather than shipping a bundle with nothing in it.
+// destDir, clearing stale copies first. For an app that bundles the
+// binaries as a resource (an iOS folder reference, an Electron
+// server-dist). Fails loudly when the dist is missing rather than shipping
+// a bundle with nothing in it.
 func Stage(cfg Config, destDir string, r Reporter) (int, error) {
 	if cfg.Binary == "" {
 		return 0, fmt.Errorf("go_dist.binary not set")

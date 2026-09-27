@@ -8,8 +8,7 @@ import (
 )
 
 // TestBuiltAppPathFindsArchSuffixedMacDir proves builtAppPath finds
-// electron-builder's `mac-arm64`-style output dir, not just plain `mac` —
-// the Go port of admin_lib/electron.py::_built_app_path.
+// electron-builder's `mac-arm64`-style output dir, not just plain `mac`.
 //
 // MUTATION EVIDENCE: change the prefix check from `strings.HasPrefix(name,
 // "mac-")` to an exact `name == "mac-arm64"` and this test fails on the
@@ -45,8 +44,7 @@ func TestBuiltAppPathFallsBackToPlainMac(t *testing.T) {
 }
 
 // TestBuildElectronRequiresDesktopDir proves BuildElectron refuses to run
-// without desktop_dir/app_name set, matching admin_lib/electron.py's
-// `_desktop_dir`/`_app_name` sys.exit(1) guards.
+// without desktop_dir/app_name set.
 func TestBuildElectronRequiresDesktopDir(t *testing.T) {
 	if _, err := BuildElectron(Config{}, t.TempDir()); err == nil {
 		t.Fatal("BuildElectron err = nil, want an error for missing desktop_dir")
@@ -117,8 +115,7 @@ func TestDevElectronRequiresElectronBinary(t *testing.T) {
 
 // TestDevElectronInvokesRunWithReloadWithTheElectronBinary proves DevElectron
 // builds a command line that execs the project's own electron binary, not
-// a bare "electron" that would resolve against the wrong PATH — the whole
-// point of admin_lib/electron.py::dev_electron's `_electron_bin` lookup.
+// a bare "electron" that would resolve against the wrong PATH.
 //
 // MUTATION EVIDENCE: change the cmd string to just `"electron ."` (drop the
 // desktop_dir-scoped bin path) and this test fails — gotCmd would no longer

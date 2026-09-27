@@ -6,10 +6,8 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// TestMakeNukeDevWithNoConfigIsANoOp proves the acceptance-criterion-adjacent
-// case admin_lib/ports_nuke.py::nuke_dev_from_config guards explicitly: a
-// nuke-dev command declared with no [dev_kill] table configured must be a
-// no-op, not an error.
+// TestMakeNukeDevWithNoConfigIsANoOp proves a nuke-dev command declared
+// with no [dev_kill] table configured must be a no-op, not an error.
 func TestMakeNukeDevWithNoConfigIsANoOp(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)

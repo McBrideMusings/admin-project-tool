@@ -6,7 +6,7 @@ remote-SSH target. It exists as its own doc because the install has invariants a
 would get wrong by guessing at the obvious implementation.
 
 **Call chain:** `[actions.X]` with `kind = "launchd"` and a `[launchd]` config table →
-`admin_lib/interp.py` / `internal/kinds/service.go` (the kind's factory) → `internal/service`
+`internal/kinds/service.go` (the kind's factory) → `internal/service`
 (`local.go`, `remote.go`, `config.go`, `render.go`) for the install, swap and teardown
 mechanics.
 

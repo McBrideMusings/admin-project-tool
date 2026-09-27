@@ -18,15 +18,14 @@ type EnvRef struct {
 
 var nameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// IterEnvRefs is a port of admin_lib/core.py::iter_env_refs. It finds every
-// ${VAR} / ${VAR:-default} reference in s, brace-matched rather than
-// regex-matched, so a default may itself contain a placeholder:
-// ${GOPATH_BIN:-${HOME}/go/bin} yields one ref whose default is the whole
-// ${HOME}/go/bin, not a truncated ${HOME.
+// IterEnvRefs finds every ${VAR} / ${VAR:-default} reference in s,
+// brace-matched rather than regex-matched, so a default may itself contain a
+// placeholder: ${GOPATH_BIN:-${HOME}/go/bin} yields one ref whose default is
+// the whole ${HOME}/go/bin, not a truncated ${HOME.
 //
 // Anything that isn't a well-formed ${NAME} or ${NAME:-…} — an unbalanced
-// brace, a shell construct like ${x%.c} — is skipped, matching the Python
-// scanner's behaviour of leaving it to whoever consumes the string next.
+// brace, a shell construct like ${x%.c} — is skipped, left for whoever
+// consumes the string next.
 func IterEnvRefs(s string) []EnvRef {
 	var refs []EnvRef
 	i := 0
@@ -80,7 +79,7 @@ func IterEnvRefs(s string) []EnvRef {
 }
 
 // findDefaultSep returns the index of the ":-" separating name from default, at
-// brace depth 0 within inner — the port of admin_lib/core.py::_find_default_sep.
+// brace depth 0 within inner.
 func findDefaultSep(inner string) int {
 	depth := 0
 	for i := 0; i < len(inner); i++ {

@@ -1,15 +1,13 @@
 // Package dockerrun renders and compares `docker run` argv between three
 // representations: an admin.toml [docker_run] table (cfg->argv), a `docker
 // inspect` JSON blob (inspect->argv), and the resulting flat argv lists
-// themselves (drift compare). It is the Go port (admin-3rgp.37) of
-// admin_lib/docker.py's _DOCKER_FIELD_TABLE / _build_run_args_from_cfg /
-// _build_run_args_from_inspect / _compute_drift / _live_argv_for_drift
-// family — pure, no I/O, no host functions — so it is unit-testable without
-// a Lua VM or a live Docker daemon. internal/luahost binds it into a `dockerrun`
-// Lua table for the docker archetype's run-args/deploy/diff actions to call,
-// so the field table is declared exactly once (issue #388's own lesson:
-// before it existed, the cfg->argv and inspect->argv directions drifted
-// apart because each was hand-written Lua/Python with no shared source).
+// themselves (drift compare). It is pure, no I/O, no host functions — so it
+// is unit-testable without a Lua VM or a live Docker daemon. internal/luahost
+// binds it into a `dockerrun` Lua table for the docker archetype's
+// run-args/deploy/diff actions to call, so the field table is declared
+// exactly once (issue #388's own lesson: before it existed, the cfg->argv
+// and inspect->argv directions drifted apart because each was hand-written
+// with no shared source).
 package dockerrun
 
 // Shape describes how a FieldRow's value renders into argv pieces.
@@ -23,8 +21,6 @@ const (
 )
 
 // FieldRow is one row of the field table both render directions read from.
-// See admin_lib/docker.py's _DOCKER_FIELD_TABLE comment for the full
-// rationale of each column; ported verbatim here.
 type FieldRow struct {
 	Key        string // [docker_run] TOML key
 	Flag       string // docker run flag
@@ -32,18 +28,17 @@ type FieldRow struct {
 	Section    string // "host" or "config" — ignored when Reader is set
 	InspectKey string
 
-	KVSep             string // default "="
-	KVOmitSepIfEmpty  bool
-	Expand            bool   // cfg value goes through ExpandEnvRefs before rendering
-	ImageField        string // "workdir" | "user" — live value stripped when it equals the image default
-	DeclaredOnly      bool   // live value stripped entirely unless cfg declares this key
-	InspectTransform  func(raw any) []string
-	Reader            func(hostCfg, config, netSettings map[string]any) any
+	KVSep            string // default "="
+	KVOmitSepIfEmpty bool
+	Expand           bool   // cfg value goes through ExpandEnvRefs before rendering
+	ImageField       string // "workdir" | "user" — live value stripped when it equals the image default
+	DeclaredOnly     bool   // live value stripped entirely unless cfg declares this key
+	InspectTransform func(raw any) []string
+	Reader           func(hostCfg, config, netSettings map[string]any) any
 }
 
-// FieldTable is the single declarative source _build_run_args_from_cfg's Go
-// port (BuildArgsFromCfg) and _build_run_args_from_inspect's Go port
-// (BuildArgsFromInspect) both render from.
+// FieldTable is the single declarative source BuildArgsFromCfg and
+// BuildArgsFromInspect both render from.
 var FieldTable = []FieldRow{
 	{Key: "cap_add", Flag: "--cap-add", Shape: ShapeRepeated, Section: "host", InspectKey: "CapAdd"},
 	{Key: "cap_drop", Flag: "--cap-drop", Shape: ShapeRepeated, Section: "host", InspectKey: "CapDrop"},
@@ -100,7 +95,7 @@ var FieldTable = []FieldRow{
 }
 
 // BooleanFlags is every boolean-shaped row's flag, derived (not
-// hand-maintained) from FieldTable — see _argv_pair_at's doc comment for why
+// hand-maintained) from FieldTable — see ArgvPairAt's doc comment for why
 // arity must come from this table rather than "does the next token start
 // with a dash".
 var BooleanFlags = booleanFlagSet()
@@ -115,9 +110,8 @@ func booleanFlagSet() map[string]bool {
 	return out
 }
 
-// liveStripRows indexes FieldTable by flag for rows _live_argv_for_drift's
-// Go port (LiveArgvForDrift) consults — only rows with ImageField or
-// DeclaredOnly participate.
+// liveStripRows indexes FieldTable by flag for rows LiveArgvForDrift
+// consults — only rows with ImageField or DeclaredOnly participate.
 var liveStripRows = func() map[string]FieldRow {
 	out := map[string]FieldRow{}
 	for _, row := range FieldTable {

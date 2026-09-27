@@ -1,13 +1,13 @@
 # Handoff: Generic Keybindings for Long-Running Actions
 
-**Status:** ready to start
+**Status:** implemented (`internal/keybindings`, `kind = "interactive-shell"`); Phase 6 (recodarr adoption) outstanding.
 **Driver:** add `r`/`R`/`v` key reloads to recodarr's `dev local` flow, but generalize so any project can wire keys → actions in `admin.toml` without re-implementing the runtime loop.
 
 ## Why
 
-Today the `docker-dev` kind has an `r` keypress baked into `run_with_reload` (`admin_lib/docker.py`). It's the only kind with interactive key handling. The `shell` kind has none — so projects with bespoke supervisors (recodarr's `bun main.js` + Vite combo) can't bind keys without writing custom Python.
+The `docker-dev` kind has an `r` keypress baked into its reload loop (`internal/reload`). It's the only kind with interactive key handling. The plain `shell` kind has none — so projects with bespoke supervisors (recodarr's `bun main.js` + Vite combo) can't bind keys without writing a custom runner.
 
-This handoff adds a manifest-driven keybinding system that any long-running action can opt into. Recodarr is the first consumer (drives the design), but the feature stands alone.
+This handoff adds a manifest-driven keybinding system that any long-running action can opt into: `kind = "interactive-shell"`, implemented in `internal/keybindings` and wired into `internal/kinds/interactiveshell.go`. Recodarr is the first consumer (drives the design), but the feature stands alone.
 
 ## Concrete goal — what recodarr wants to write
 
@@ -58,115 +58,14 @@ The runtime prints a footer like:
 3. **Keys are case-sensitive single characters.** `r` and `R` are distinct (Shift = uppercase). Plain letters + digits + punctuation; no Ctrl/Alt combos in v1 — many are unreachable in cbreak mode. (Ctrl-C / Ctrl-D stay reserved for exit.)
 4. **New action kind: `interactive-shell`.** Don't silently upgrade `shell` — too easy to break existing projects whose shells don't expect cbreak stdin. Opt-in via the explicit kind.
 
-## Implementation plan
+## Implementation
 
-### Phase 1 — runtime helper
+Phases 1-5 below are done, in Go:
 
-**File:** `admin_lib/keybindings.py` (new module).
-
-Public function:
-
-```python
-def run_with_keybindings(cmd, keys, *, label=None, formatter=None):
-    """Run `cmd` as a long-lived subprocess; dispatch keystrokes to bindings.
-
-    keys is an OrderedDict[str, dict] where each value has exactly one of:
-        {"run": "<shell snippet>"}
-        {"action": "<action-name>"}   # resolved to cmd_<safe_ident> at runtime
-        {"signal": "TERM", "pid_file": "/path/to.pid"}
-    Optional keys on each value: "label" (string, for the footer).
-
-    Layout & lifecycle mirror docker.run_with_reload:
-      - selector-loop on (proc.stdout, stdin)
-      - cbreak stdin via termios; restored in finally
-      - Ctrl-C raises KeyboardInterrupt → SIGINT child → exit
-      - On unknown key: silently ignored
-      - Banner printed on entry: "[r] restart web · …"
-    """
-```
-
-Internal helpers:
-
-- `_resolve_action(name)` — looks up `cmd_<safe_ident>(name)` in globals, calls it with `[]`.
-- `_send_signal(sig_name, pid_file)` — reads PID, sends `signal.Signals[sig_name.upper()]`. ENOENT / stale PID → warn + no-op. Bad sig name → validator should reject upstream, but defensive at runtime too.
-- `_run_inline(snippet)` — `subprocess.Popen(snippet, shell=True)`; non-blocking unless the binding has `wait = true` (deferred to v2).
-
-**Don't duplicate** the SIGUSR1 reload plumbing from `docker.py` — its `r` handler is specific to "tear down the wrapped process and respawn it." Here the wrapped process keeps running; we just side-fire commands.
-
-### Phase 2 — manifest model
-
-**File:** `gen/manifest.py`
-
-Extend `Command` with:
-
-```python
-keys: dict[str, dict] = field(default_factory=dict)
-```
-
-Where each value is a dict with keys: `label` (optional str), `run` | `action` | `signal+pid_file` (exclusive). Schema validation in the manifest loader; rejects:
-
-- Multiple targets on the same binding.
-- Empty bindings.
-- Keys longer than 1 char.
-- `signal` without `pid_file` and vice versa.
-- `action` referencing an unknown action name (cross-checked after the action map is built).
-
-Add `"interactive-shell"` to the kinds enum docstring at line 35.
-
-### Phase 3 — fragment renderer
-
-**File:** `gen/fragments.py`
-
-Add `render_interactive_shell(cmd)`. Pattern matches `render_shell` but emits a call to `run_with_keybindings` with the keys dict literalized:
-
-```python
-def render_interactive_shell(cmd: Command) -> str:
-    func_name = "cmd_" + _safe_ident(cmd.name)
-    keys_repr = _pyrepr(cmd.keys)  # OrderedDict serialized
-    body = textwrap.dedent(f"""\
-        @command({_pyrepr(cmd.name)}, {_pyrepr(cmd.desc)})
-        def {func_name}(args):
-            info({_pyrepr(f"running: {cmd.run}")})
-            rc = run_with_keybindings({_pyrepr(cmd.run)}, {keys_repr}, label={_pyrepr(cmd.name)})
-            if rc != 0:
-                err({_pyrepr(cmd.name + " failed")})
-                sys.exit(rc)
-            ok({_pyrepr(cmd.name + " complete")})
-    """)
-    return body
-```
-
-Register in the dispatch table:
-
-```python
-_ACTION_RENDERERS = {
-    ...,
-    "interactive-shell": render_interactive_shell,
-}
-
-KIND_MODULES = {
-    ...,
-    "interactive-shell": ["keybindings"],
-}
-```
-
-### Phase 4 — bundler hookup
-
-**File:** `gen/bundler.py` (or wherever module assembly happens)
-
-`KIND_MODULES["interactive-shell"] = ["keybindings"]` already pulls the new module in. Confirm the bundler hand-rolls section delimiters for `admin_lib/keybindings.py` the same way it does for `docker.py`.
-
-### Phase 5 — tests
-
-**Dir:** `tests/`
-
-Three integration tests, each generating an `admin` from a fixture `admin.toml` and exercising the keybinding loop with `expect`-style input injection (or a Python subprocess + PTY harness — there's likely existing scaffolding in `tests/`):
-
-1. `run` snippet fires on the matching key, doesn't fire on others.
-2. `signal + pid_file` sends the right signal to a sleeper process.
-3. `action` reference invokes the named action's body (assert via side-effect file).
-
-Plus a unit-level test that the manifest validator rejects each malformed binding listed in Phase 2.
+- **Runtime.** `internal/keybindings.Run` runs the wrapped process as a long-lived subprocess and dispatches keystrokes to bindings — a selector loop over the child's stdout and stdin, cbreak stdin restored on exit, Ctrl-C tears the child down, an unknown key is silently ignored, and a banner prints on entry (`formatBanner`). Each binding is exactly one of `Run` (shell snippet), `Action` (invoke a registered action by name, dispatched through the `RunAction` callback `internal/kinds` supplies), or `Signal`+`PIDFile` (read a PID, send a signal). It does not duplicate `internal/reload`'s SIGUSR1 plumbing — that handler tears the wrapped process down and respawns it; here the wrapped process keeps running and bindings side-fire commands.
+- **Manifest model.** `internal/manifest` parses the raw `keys.<keychar>` table on an action; `internal/validate.ParseKeys` validates it — rejects multiple targets on one binding, empty bindings, keys longer than one character, `signal` without `pid_file` and vice versa, and (cross-checked once the action map is built) an `action` referencing an unknown name.
+- **Kind wiring.** `kind = "interactive-shell"` is a catalog entry in `internal/kinds/catalog.go` (`Modules: []string{"ports", "log_server", "log_bridge", "keybindings", "log_format"}`) with its factory in `internal/kinds/interactiveshell.go` (`makeInteractiveShell`), registered in `factories.go`.
+- **Tests.** `internal/keybindings/keybindings_test.go` and `internal/kinds/interactiveshell_test.go` cover the binding shapes and validation.
 
 ### Phase 6 — apply to recodarr
 
@@ -199,7 +98,7 @@ In `/root/projects/recodarr/admin.toml`:
    done
    ```
 
-4. Regen `./admin` via `admin-gen --regenerate`.
+4. Run `admin check .` in recodarr to validate the manifest — the tool reads `admin.toml` live, so there is no regeneration step.
 
 5. Verify:
    - `./admin dev local` starts as before, prints the binding footer.
@@ -207,13 +106,6 @@ In `/root/projects/recodarr/admin.toml`:
    - `R` → main.js's SIGINT path kills both children; heredoc loop respawns; new worker PID.
    - `v` → Vite restart, bun untouched.
    - Ctrl-C cleans up everything (no orphan `bun main.js` or `vite`).
-
-## Open questions for the implementer
-
-- **Validator placement.** Manifest validation today happens in `gen/manifest.py` (loader-side) vs `gen/render.py` (cross-reference pass). The `action = "@name"` cross-check needs the latter. Pick whichever fits the existing seams.
-- **Footer rendering.** Print on action entry, or only when stdin is a TTY? `run_with_reload` already gates `tty.setcbreak` on the latter; reuse that check.
-- **Should `interactive-shell` support `pty = true` like `shell` does?** Probably not in v1 — PTY changes the stdin semantics and would conflict with cbreak. Document as unsupported, refuse in validator if both set.
-- **Conflict with archetype-provided keys.** If an archetype-merged action already defines `keys`, project-level keys should override per-key (not whole-table replace). Consistent with how the rest of the manifest merges archetypes today (confirm in `gen/archetypes.py`).
 
 ## Non-goals
 
@@ -226,18 +118,16 @@ In `/root/projects/recodarr/admin.toml`:
 
 | File | Change |
 |---|---|
-| `admin_lib/keybindings.py` | NEW — `run_with_keybindings()` + helpers |
-| `gen/manifest.py` | Add `keys` to `Command`; validate |
-| `gen/fragments.py` | `render_interactive_shell`; register kind |
-| `gen/render.py` | Cross-reference `action = "@name"` keys |
-| `gen/archetypes.py` | Merge `keys` per-key when combining archetype + project |
-| `tests/` | Integration + validator tests |
-| `docs/design.md` | Document the new kind under the manifest format section |
-| (consumer) `recodarr/admin.toml` | Switch dev-local to `interactive-shell`; add keys; respawn loop |
+| `internal/keybindings` | `Run()` + helpers — the runtime loop |
+| `internal/manifest` | Parses `keys` on an action |
+| `internal/validate` | `ParseKeys` — binding-shape validation and the `action = "@name"` cross-check |
+| `internal/kinds/interactiveshell.go` | `makeInteractiveShell`; registered in `factories.go` |
+| `internal/keybindings/keybindings_test.go`, `internal/kinds/interactiveshell_test.go` | Binding-shape and validation tests |
+| (consumer) `recodarr/admin.toml` | Switch dev-local to `interactive-shell`; add keys; respawn loop (Phase 6, outstanding) |
 
 ## Acceptance
 
-- `admin-gen --regenerate` succeeds on recodarr.
+- `admin check .` passes on recodarr.
 - `./admin dev local` boots, footer shows three bindings.
 - `r` restarts web only, worker PID stays stable.
 - `R` restarts everything.

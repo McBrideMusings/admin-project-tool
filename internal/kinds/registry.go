@@ -7,24 +7,18 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// Runner is the closure a Factory returns — the Go shape of Python's
-// _make_x(cmd, ns) -> fn(args): the thing that actually runs when the kind
-// dispatches.
+// Runner is the closure a Factory returns — the thing that actually runs
+// when the kind dispatches.
 type Runner func(args []string) error
 
 // Factory builds a Runner for one [actions.X] entry. name is the kind name
-// (so one Factory value, like the Python apple-dev-loop/multi-target pair,
-// can be registered under more than one kind and still know which it's
-// running as); action is the manifest.Action being dispatched; m is the
-// fully resolved project Manifest the action lives in.
+// (so one Factory value can be registered under more than one kind and
+// still know which it's running as); action is the manifest.Action being
+// dispatched; m is the fully resolved project Manifest the action lives in.
 //
-// admin-3rgp.43: m is what the earlier (name, action) shape lacked. The
-// Python interpreter's exec() namespace always carried the *whole* resolved
-// manifest (admin_lib/interp.py::build_namespace injects every
-// [go]/[apple]/[react_native]/... table as a global unconditionally,
-// regardless of which kind is running), so a body picked out whichever
-// table it needed by name. A bare (name, action) Factory signature could
-// only see an action's own inline keys — the gap this ticket closes. m is
+// admin-3rgp.43: m is what the earlier (name, action) shape lacked. A
+// Factory may need any manifest-level table by name, not just its own
+// action's inline keys — the gap this ticket closes. m is
 // threaded through rather than a narrower "just the config" struct because
 // the same gap already applies to other manifest-level tables a Factory may
 // need (guards for admin-3rgp.10, urls for admin-3rgp.11): one foundational
@@ -65,8 +59,7 @@ func NewRegistry() *Registry {
 // Register binds f as the factory for the declared kind name. It errors if
 // name is not in Kinds — you can't register a factory for a kind absent from
 // the catalog — or if name already has a factory bound (a copy-paste double
-// registration). This is the Go port of admin_lib/kinds.py's
-// register_factory.
+// registration).
 func (r *Registry) Register(name string, f Factory) error {
 	if _, ok := Kinds[name]; !ok {
 		return fmt.Errorf(
@@ -95,8 +88,7 @@ func (r *Registry) MustRegister(name string, f Factory) {
 }
 
 // Validate returns an error naming every declared kind with no registered
-// factory, sorted — the Go port of admin_lib/interp.py's import-time
-// coverage check ("action kinds with no registered factory: [...]"). This is
+// factory, sorted ("action kinds with no registered factory: [...]"). This is
 // the function that makes invariant 2 ("a declared kind with no registered
 // factory fails at startup, not at dispatch") true: factories.go's init()
 // panics on this, and cmd.Execute calls it as its first statement so the

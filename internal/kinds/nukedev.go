@@ -14,8 +14,7 @@ import (
 // resolvePortValue resolves one `[dev_kill].ports[]` scalar entry to an int
 // — an int/int64 straight from TOML, or a string resolved through
 // manifest.ResolveEnv first (so `"${PORT:-3300}"` works the same way a
-// pidfile path does), matching admin_lib/ports_nuke.py::nuke_dev_from_config's
-// `_port` helper.
+// pidfile path does).
 func resolvePortValue(v any) (int, error) {
 	switch x := v.(type) {
 	case int64:
@@ -62,8 +61,7 @@ func buildPortSpecs(cfg map[string]any) ([]ports.PortSpec, error) {
 
 // buildPidfileSpecs reads `[dev_kill].pidfiles[]` — each a {path=} or
 // {env=, default=} table, plus optional format/key — into
-// []ports.PidfileSpec, matching admin_lib/ports_nuke.py::nuke_dev_from_config's
-// pidfile loop. An entry that resolves to an empty path is dropped.
+// []ports.PidfileSpec. An entry that resolves to an empty path is dropped.
 func buildPidfileSpecs(cfg map[string]any) []ports.PidfileSpec {
 	var out []ports.PidfileSpec
 	for _, raw := range cfgList(cfg, "pidfiles") {
@@ -129,13 +127,11 @@ func buildPatternSpecs(cfg map[string]any, projectRoot string) []ports.PatternSp
 	return out
 }
 
-// makeNukeDev is kind="nuke-dev"'s factory — the Go port of
-// admin_lib/interp.py::_make_nuke_dev, reading the manifest's [dev_kill]
-// table and running ports.NukeDevProcesses. A manifest with no [dev_kill]
-// table configured is a no-op that reports "nothing was running" and exits
-// zero, matching admin_lib/ports_nuke.py::nuke_dev_from_config's `if not
-// cfg` branch — a nuke-dev command declared but never configured must never
-// be treated as an error.
+// makeNukeDev is kind="nuke-dev"'s factory, reading the manifest's
+// [dev_kill] table and running ports.NukeDevProcesses. A manifest with no
+// [dev_kill] table configured is a no-op that reports "nothing was running"
+// and exits zero — a nuke-dev command declared but never configured must
+// never be treated as an error.
 //
 // An inline `[actions.X.config]` table REPLACES [dev_kill] for that action
 // (ADR-0005's "inheritance is replace-not-merge"). One project-wide teardown

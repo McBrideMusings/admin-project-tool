@@ -11,11 +11,10 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// raylibModes is the Go port of admin_lib/interp.py's _RAYLIB_MODES.
+// raylibModes lists the valid kind="raylib" `run` mode names.
 var raylibModes = map[string]bool{"build": true, "run": true, "smoke": true, "clean": true}
 
-// makeRaylib is kind="raylib"'s factory — the Go port of
-// admin_lib/interp.py::_make_raylib. `run` names the mode
+// makeRaylib is kind="raylib"'s factory. `run` names the mode
 // (build|run|smoke|clean); the seven raylib games this replaced shared a
 // CMake configure/build/run/smoke/clean skeleton and differed only in
 // binary name, cmake flags, job count, the smoke env var, and which dirs
@@ -61,8 +60,7 @@ func makeRaylib(name string, action manifest.Action, m *manifest.Manifest, _ *Su
 		if mode == "clean" {
 			// Done in Go, not `rm -rf`: clean_dirs entries may be globs, and
 			// shell-quoting a glob stops it expanding while not quoting it
-			// breaks paths with spaces — matches Python's own choice to do
-			// this with glob.glob + shutil.rmtree instead of a shell command.
+			// breaks paths with spaces.
 			for _, pattern := range cleanDirs {
 				matches, _ := filepath.Glob(pattern)
 				sort.Strings(matches)

@@ -1,6 +1,6 @@
-// nuke.go is the Go port of admin_lib/ports_nuke.py's bulletproof dev-process
-// cleanup: port + pidfile + argv sweep, plus the interactive single-port kill
-// and orphaned-supervisor reaping it builds on top of process.go.
+// nuke.go implements bulletproof dev-process cleanup: port + pidfile + argv
+// sweep, plus the interactive single-port kill and orphaned-supervisor
+// reaping it builds on top of process.go.
 package ports
 
 import (
@@ -17,9 +17,8 @@ import (
 	"github.com/mattn/go-isatty"
 )
 
-// devCmdlineMarkers and devRuntimes are the Go port of
-// admin_lib/ports_nuke.py's _DEV_CMDLINE_MARKERS / _DEV_RUNTIMES —
-// heuristics for "this looks like a dev process" used when lsof can't map a
+// devCmdlineMarkers and devRuntimes are heuristics for "this looks like a
+// dev process" used when lsof can't map a
 // port to a pid (macOS + a stale mount) and a holder must be identified by
 // what it is instead of what socket it holds.
 var devCmdlineMarkers = []string{
@@ -30,8 +29,7 @@ var devCmdlineMarkers = []string{
 var devRuntimes = map[string]bool{"node": true, "bun": true, "deno": true, "python": true, "python3": true}
 
 // isProjectDevProc reports whether p is one of this project's dev
-// processes — the Go port of admin_lib/ports_nuke.py::_is_project_dev_proc.
-// Deliberately narrow: a bare language runtime only counts when the script
+// processes. Deliberately narrow: a bare language runtime only counts when the script
 // it runs lives inside projectRoot, so unrelated tooling merely running with
 // a cwd inside the project (MCP servers, npx packages, editors) is never
 // swept up.
@@ -72,8 +70,8 @@ func argvTail(argv []string) []string {
 }
 
 // ProjectDevHolders returns holder-shaped entries for this project's dev
-// processes — the Go port of admin_lib/ports_nuke.py::project_dev_holders:
-// the fallback for naming a port's holder when lsof can't map port→pid.
+// processes: the fallback for naming a port's holder when lsof can't map
+// port→pid.
 // Every dev process rooted in projectRoot is treated as a holder regardless
 // of which port is asked about, since the degraded path can't tell which
 // port each process listens on; scoping is by per-pid cwd, so unrelated
@@ -102,9 +100,8 @@ func ProjectDevHolders(projectRoot string, timeout time.Duration) []Holder {
 	return holders
 }
 
-// defaultSupervisorMarkers is the Go port of
-// admin_lib/ports_nuke.py::kill_stale_supervisors' default `markers` tuple —
-// both the shell-wrapper form ("cargo watch", with a space) and the bare
+// defaultSupervisorMarkers is the default `markers` set for
+// KillStaleSupervisors — both the shell-wrapper form ("cargo watch", with a space) and the bare
 // binary form ("cargo-watch", with a hyphen), since /proc reports whichever
 // one the shell exec'd into or died leaving behind.
 var defaultSupervisorMarkers = []string{
@@ -115,9 +112,8 @@ var defaultSupervisorMarkers = []string{
 }
 
 // KillStaleSupervisors kills orphaned file-watcher / dev-supervisor
-// processes inside projectRoot and returns how many pids were signalled —
-// the Go port of admin_lib/ports_nuke.py::kill_stale_supervisors. markers
-// defaults to defaultSupervisorMarkers when nil. Match is project-scoped:
+// processes inside projectRoot and returns how many pids were signalled.
+// markers defaults to defaultSupervisorMarkers when nil. Match is project-scoped:
 // cmdline must contain a marker AND cwd must be inside projectRoot.
 func KillStaleSupervisors(projectRoot string, markers []string) int {
 	if markers == nil {
@@ -157,8 +153,7 @@ func KillStaleSupervisors(projectRoot string, markers []string) int {
 }
 
 // KillPortInteractive shows port's holders, prompts (on a TTY; force-kills
-// otherwise), then kills — the Go port of
-// admin_lib/ports_nuke.py::kill_port_interactive. Returns true if the port
+// otherwise), then kills. Returns true if the port
 // ended up cleared (including "nothing was listening").
 func KillPortInteractive(port int) bool {
 	holders := PortHolders(port)
@@ -205,16 +200,14 @@ func KillPortInteractive(port int) bool {
 	return false
 }
 
-// PidfileSpec is one `[dev_kill].pidfiles[]` entry — the Go port of
-// admin_lib/ports_nuke.py::nuke_dev_processes' `pidfiles` parameter shape.
+// PidfileSpec is one `[dev_kill].pidfiles[]` entry.
 type PidfileSpec struct {
 	Path   string
 	Format string // "int" (default) or "json"
 	Key    string // JSON key, default "pid"
 }
 
-// PatternSpec is one `[dev_kill].patterns[]` entry — the Go port of
-// admin_lib/ports_nuke.py::nuke_dev_processes' `patterns` parameter shape.
+// PatternSpec is one `[dev_kill].patterns[]` entry.
 type PatternSpec struct {
 	Match  string
 	Regex  bool
@@ -228,8 +221,7 @@ type PortSpec struct {
 	Label string
 }
 
-// NukeDevOptions is the Go port of
-// admin_lib/ports_nuke.py::nuke_dev_processes' keyword parameters.
+// NukeDevOptions is NukeDevProcesses' parameter set.
 type NukeDevOptions struct {
 	Ports             []PortSpec
 	Pidfiles          []PidfileSpec
@@ -242,8 +234,7 @@ type NukeDevOptions struct {
 }
 
 // NukeReport is what NukeDevProcesses actually did — the acceptance
-// criterion's "reports what it killed" made concrete, in place of Python's
-// side-effecting info()/ok()/err() calls plus a bare []int return.
+// criterion's "reports what it killed" made concrete.
 type NukeReport struct {
 	Killed    []KillResult // every pid signalled, across every pass
 	StillHeld []int        // ports still occupied after the verify pass
@@ -254,10 +245,8 @@ func defaultWebMarkers() []string {
 	return []string{"vite", "esbuild", "npm run dev"}
 }
 
-// NukeDevProcesses is the Go port of
-// admin_lib/ports_nuke.py::nuke_dev_processes: four kill passes plus a
-// verify pass. See that function's doc comment for why each pass exists —
-// this port keeps the same five-pass structure and the same reasons.
+// NukeDevProcesses runs four kill passes plus a verify pass — see the inline
+// comment above each pass below for why it exists.
 func NukeDevProcesses(projectRoot string, opts NukeDevOptions) NukeReport {
 	root := absPath(projectRoot)
 	runtimes := opts.Runtimes
@@ -303,7 +292,7 @@ func NukeDevProcesses(projectRoot string, opts NukeDevOptions) NukeReport {
 	}
 
 	// 1. Ports — plus the bun/node/npm/python supervisor parent of each
-	// holder, matching Python's parent-pid heuristic.
+	// holder.
 	for _, ps := range opts.Ports {
 		holders := portHoldersWithRetry(ps.Port, root, portHolderRetryBudget)
 		var pids []int
@@ -524,9 +513,8 @@ func joinPath(root, name string) string {
 }
 
 // containerRunning reports whether a docker container named exactly name is
-// up — the Go port of admin_lib/ports_nuke.py::_container_running. A
-// missing docker binary or any error is treated as not-running, matching
-// Python: a broken/absent docker must never block starting dev.
+// up. A missing docker binary or any error is treated as not-running: a
+// broken/absent docker must never block starting dev.
 func containerRunning(name string) bool {
 	dockerPath, err := exec.LookPath("docker")
 	if err != nil {

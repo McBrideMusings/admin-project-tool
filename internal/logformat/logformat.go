@@ -4,10 +4,10 @@
 // hand, and colorize scope tags (`[api]`, `[Messaging]`) by a hash of the
 // label so a tag reads the same color in every project and every run.
 //
-// This is the Go port of admin_lib/log_format.py. It has no dependency on
-// internal/frame or internal/streams — a formatter is a pure string-in,
-// string-out function, and every pump wires one in as a constructor
-// parameter rather than this package knowing about pumps or terminals.
+// It has no dependency on internal/frame or internal/streams — a formatter
+// is a pure string-in, string-out function, and every pump wires one in as
+// a constructor parameter rather than this package knowing about pumps or
+// terminals.
 package logformat
 
 import (
@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-// ANSI codes — mirrors admin_lib/core.py's class C.
+// ANSI codes.
 const (
 	ansiRed    = "\x1b[31m"
 	ansiYellow = "\x1b[33m"
@@ -32,8 +32,8 @@ const (
 // Each pattern eats at most ONE trailing space/tab after the stamp, not the
 // whole run: the rest is the line's own indentation, and a stack trace's
 // continuation lines are unreadable without it. Go's regexp has no
-// look-behind and (unlike Python's re.match) does not anchor at position 0
-// by default, so every pattern here carries its own explicit "^".
+// look-behind and does not anchor at position 0 by default, so every
+// pattern here carries its own explicit "^".
 var timestampPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[.,]\d+([+-]\d{4}|Z)?[ \t]?`),
 	regexp.MustCompile(`^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}([+-]\d{4}|Z)?[ \t]?`),
@@ -51,11 +51,11 @@ func StripLogTimestamp(line string) (string, string) {
 	return "", line
 }
 
-// AnsiEscapeRe strips every ANSI escape sequence, not just SGR colour codes —
-// admin_lib/core.py's _ANSI_ESCAPE_RE. The single definition every ANSI-aware
-// stripper in this repo imports rather than redeclaring — internal/luahost's
-// LogContext.Write uses this same regexp instead of
-// keeping its own byte-for-byte copy. Used here only to see through color
+// AnsiEscapeRe strips every ANSI escape sequence, not just SGR colour codes.
+// The single definition every ANSI-aware stripper in this repo imports
+// rather than redeclaring — internal/luahost's LogContext.Write uses this
+// same regexp instead of keeping its own byte-for-byte copy. Used here only
+// to see through color
 // codes when StampLine checks whether a chunk already opens with its own
 // timestamp; the returned/stamped text itself keeps its original escapes.
 //
@@ -75,8 +75,7 @@ func StripLogTimestamp(line string) (string, string) {
 var AnsiEscapeRe = regexp.MustCompile(`\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)?|[PX^_][^\x1b]*(?:\x1b\\)?|[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])`)
 
 // StampLine prefixes an arbitrary chunk of subprocess output with an
-// absolute wall-clock timestamp (HH:MM:SS.mmm) — the Go port of
-// admin_lib/core.py's _stamp_log, meant to be wired in as
+// absolute wall-clock timestamp (HH:MM:SS.mmm), meant to be wired in as
 // internal/streams.OutputPump.DisplayTransform for a pump that has no
 // Formatter (one already stamps its own lines via FormatLine, so a pump
 // running one is left alone to avoid a double stamp).
@@ -405,7 +404,7 @@ func DefaultOptions() Options {
 }
 
 // LogFormatter stamps every line with one timestamp format and colorizes
-// its level. The Go port of admin_lib/log_format.py's LogFormatter class.
+// its level.
 type LogFormatter struct {
 	opts Options
 }
@@ -487,9 +486,8 @@ func (f *LogFormatter) colorizeLevel(line string) string {
 // Returns line unchanged when no level word is found.
 //
 // Exported so internal/logcolumns can color an already column-rendered line
-// using the same level->color table LogFormatter.FormatLine uses internally
-// — the Go analogue of admin_lib/log_columns.py importing _LEVEL_COLORS from
-// .log_format instead of keeping its own copy of the table.
+// using the same level->color table LogFormatter.FormatLine uses internally,
+// instead of keeping its own copy of the table.
 func ColorizeLevel(line string) string {
 	for _, lc := range levelColors {
 		if loc := lc.re.FindStringIndex(line); loc != nil {

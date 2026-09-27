@@ -9,8 +9,8 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// pkgRunner is the Go port of admin_lib/interp.py::_pkg_runner: bun if a bun
-// lockfile sits next to dirpath's package.json, npm otherwise.
+// pkgRunner returns bun if a bun lockfile sits next to dirpath's
+// package.json, npm otherwise.
 func pkgRunner(dirpath string) string {
 	for _, lock := range []string{"bun.lockb", "bun.lock"} {
 		if _, err := os.Stat(filepath.Join(dirpath, lock)); err == nil {
@@ -20,8 +20,7 @@ func pkgRunner(dirpath string) string {
 	return "npm"
 }
 
-// makeNpm is kind="npm"'s factory — the Go port of
-// admin_lib/interp.py::_make_npm. `run` is the package.json script name.
+// makeNpm is kind="npm"'s factory. `run` is the package.json script name.
 func makeNpm(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	script, ok := actionString(action, "run")
 	if !ok || script == "" {

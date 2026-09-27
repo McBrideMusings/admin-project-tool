@@ -9,21 +9,16 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// httpClientTimeout mirrors admin_lib/interp.py::_make_http's urlopen(...,
-// timeout=15).
+// httpClientTimeout is the request timeout for kind="http".
 const httpClientTimeout = 15 * time.Second
 
-// makeHTTP is kind="http"'s factory — the Go port of
-// admin_lib/interp.py::_make_http. `run` is the URL, `method` defaults to
+// makeHTTP is kind="http"'s factory. `run` is the URL, `method` defaults to
 // POST, and an optional `body` is sent as JSON.
 //
-// Deliberate parity quirk carried over from Python: a failed or >=400
-// request only warns — the Runner returns nil — never fails the action.
-// This is not an oversight; _make_http's _fn has no sys.exit on any request
-// outcome, only on... nothing, actually: it never exits at all. Only a
-// resolution failure (an unset ${VAR} the URL or body references, with no
-// default) is a hard error here, matching resolve_env's own
-// sys.exit(2)-equivalent behaviour.
+// Deliberate design choice: a failed or >=400 request only warns — the
+// Runner returns nil — never fails the action. This is not an oversight.
+// Only a resolution failure (an unset ${VAR} the URL or body references,
+// with no default) is a hard error here.
 func makeHTTP(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	urlTmpl, ok := actionString(action, "run")
 	if !ok || urlTmpl == "" {

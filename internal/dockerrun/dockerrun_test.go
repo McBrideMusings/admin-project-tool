@@ -8,9 +8,9 @@ import (
 func TestExpandEnvRefs(t *testing.T) {
 	env := map[string]string{"FOO": "bar"}
 	cases := []struct {
-		in       string
-		wantOut  string
-		wantOk   bool
+		in      string
+		wantOut string
+		wantOk  bool
 	}{
 		{"plain", "plain", true},
 		{"${FOO}", "bar", true},
@@ -64,11 +64,11 @@ func TestBuildArgsFromCfgUserExpand(t *testing.T) {
 func TestBuildArgsFromInspectRoundTrip(t *testing.T) {
 	inspect := map[string]any{
 		"HostConfig": map[string]any{
-			"Binds":        []any{"/mnt/data:/data"},
-			"PortBindings": map[string]any{"80/tcp": []any{map[string]any{"HostIp": "", "HostPort": "8080"}}},
+			"Binds":         []any{"/mnt/data:/data"},
+			"PortBindings":  map[string]any{"80/tcp": []any{map[string]any{"HostIp": "", "HostPort": "8080"}}},
 			"RestartPolicy": map[string]any{"Name": "unless-stopped"},
-			"Privileged":   true,
-			"Memory":       float64(25769803776),
+			"Privileged":    true,
+			"Memory":        float64(25769803776),
 		},
 		"Config": map[string]any{
 			"Env":  []any{"FOO=bar"},
@@ -150,11 +150,11 @@ func TestLiveArgvForDriftKeepsDeclaredMismatch(t *testing.T) {
 func TestIsSecretEnvName(t *testing.T) {
 	for name, want := range map[string]bool{
 		"TAUTULLI_API_KEY": true,
-		"DB_PASSWORD":       true,
-		"AUTH_TOKEN":        true,
-		"APP_SECRET":        true,
-		"PORT":              false,
-		"APP_UID":           false,
+		"DB_PASSWORD":      true,
+		"AUTH_TOKEN":       true,
+		"APP_SECRET":       true,
+		"PORT":             false,
+		"APP_UID":          false,
 	} {
 		if got := IsSecretEnvName(name); got != want {
 			t.Errorf("IsSecretEnvName(%q) = %v, want %v", name, got, want)
@@ -202,10 +202,10 @@ func indexOf(s, sub string) int {
 
 func TestNormalizeMemBytes(t *testing.T) {
 	cases := map[string]string{
-		"24g":  "25769803776",
-		"1.5g": "1610612736",
-		"512m": "536870912",
-		"1024": "1024",
+		"24g":   "25769803776",
+		"1.5g":  "1610612736",
+		"512m":  "536870912",
+		"1024":  "1024",
 		"bogus": "bogus",
 	}
 	for in, want := range cases {
@@ -217,9 +217,9 @@ func TestNormalizeMemBytes(t *testing.T) {
 
 func TestDefaultContainerName(t *testing.T) {
 	cases := map[string]string{
-		"myapp:latest":           "myapp",
-		"registry.io/org/myapp":  "myapp",
-		"myapp":                  "myapp",
+		"myapp:latest":          "myapp",
+		"registry.io/org/myapp": "myapp",
+		"myapp":                 "myapp",
 	}
 	for in, want := range cases {
 		if got := DefaultContainerName(in); got != want {

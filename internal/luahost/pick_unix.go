@@ -17,8 +17,7 @@ import (
 
 // pickerEscTimeout is how long the picker waits for the rest of an
 // arrow-key escape sequence (or for nothing, meaning a bare Esc) after
-// seeing \x1b — matches the 0.1s admin_lib/core.py's read_key() waits via
-// select().
+// seeing \x1b.
 const pickerEscTimeout = 100 * time.Millisecond
 
 // runArrowPicker is PickTarget's interactive body once the TTY gate has

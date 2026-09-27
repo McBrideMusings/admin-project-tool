@@ -343,8 +343,7 @@ func TestSetEnabledFalseBlocksLogging(t *testing.T) {
 
 // TestAnnounceEndPrintsOnceAfterMaterialize proves AnnounceEnd (the "→
 // wrote:" line at the end of a run, admin-krvc.1) prints the materialized
-// path once a context has actually been used — the Go port of
-// admin_lib/core.py's _announce_log_end.
+// path once a context has actually been used.
 func TestAnnounceEndPrintsOnceAfterMaterialize(t *testing.T) {
 	c, errOut := newTestLogContext(t)
 	c.SetLogContext([]string{"dev"}, RetainUnset)
@@ -371,8 +370,8 @@ func TestAnnounceEndNoopWithoutMaterialize(t *testing.T) {
 }
 
 // TestAnnounceEndIsIdempotent proves a second AnnounceEnd call — the
-// explicit call plus a hypothetical safety-net call racing it, mirroring
-// Python's flag-consuming _announce_log_end — does not print twice.
+// explicit call plus a hypothetical safety-net call racing it — does not
+// print twice.
 func TestAnnounceEndIsIdempotent(t *testing.T) {
 	c, errOut := newTestLogContext(t)
 	c.SetLogContext([]string{"dev"}, RetainUnset)

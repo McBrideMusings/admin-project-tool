@@ -3,7 +3,7 @@ package cmd
 import "testing"
 
 func TestStarterProjectName(t *testing.T) {
-	// Expected values are Python's `name.replace("-", " ").title()`.
+	// Expected values are `name.replace("-", " ").title()`.
 	for dir, want := range map[string]string{
 		"/x/MY-APP":    "My App",
 		"/x/my-app":    "My App",

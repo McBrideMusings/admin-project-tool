@@ -12,9 +12,9 @@ import (
 // and skip re-registration when nothing changed (see the package doc's
 // Background Task Management note).
 //
-// Keys are emitted sorted, matching Python plistlib.dumps(sort_keys=True), so
-// a plist written by the old tool and one written by this port compare equal
-// byte-for-byte and an upgrade does not look like a change.
+// Keys are emitted sorted, so a plist written by an earlier run and one
+// written now compare equal byte-for-byte and an upgrade does not look like
+// a change.
 func RenderPlist(c Config) []byte {
 	env := map[string]string{}
 	for k, v := range c.Env {

@@ -1,7 +1,6 @@
-// Package kinds is the Go port of admin_lib/kinds.py's KINDS catalog plus the
-// register_factory/coverage-check half of admin_lib/interp.py. It is the
-// closed, single source of truth for valid action kinds: what a kind is
-// (Kinds, the catalog) and what runs it (Registry, the factory map).
+// Package kinds is the closed, single source of truth for valid action
+// kinds: what a kind is (Kinds, the catalog) and what runs it (Registry, the
+// factory map).
 //
 // Two invariants are enforced structurally, not documented:
 //
@@ -11,25 +10,19 @@
 //     dispatch (Registry.Validate, called from factories.go's init() and
 //     again from cmd.Execute).
 //
-// kind = "python" and kind = "python-script" are GONE from this catalog.
-// ADR-0010 (docs/adr/0010-lua-and-bash-are-the-authoring-languages.md)
-// reverses the earlier reversal recorded above: Bash (kind = "shell") and
-// Lua (kind = "lua", dispatching through internal/luahost) are the two
-// archetype authoring languages, full stop. No Python kind is declared here,
-// even though admin_lib/kinds.py (the Python interpreter being replaced)
-// still declares "python" and "python-script" — that file is deleted
-// wholesale by admin-3rgp.30, not migrated kind-by-kind, so the two
-// catalogs are expected to diverge on exactly this one point until then.
+// Bash (kind = "shell") and Lua (kind = "lua", dispatching through
+// internal/luahost) are the two archetype authoring languages (ADR-0010,
+// docs/adr/0010-lua-and-bash-are-the-authoring-languages.md). No kind runs
+// Python.
 package kinds
 
 import "sort"
 
 // Kind is one action kind's validation metadata — name, whether its body is
-// a config table rather than a `run` string, which admin_lib-equivalent
-// modules it auto-pulls, and whether its factory actually reads a target
-// map. This is a direct port of admin_lib/kinds.py's Kind dataclass, minus
-// the `factory` field: Go keeps the factory in the Registry rather than
-// mutating the catalog record, so Kinds stays an immutable map.
+// a config table rather than a `run` string, which modules it auto-pulls,
+// and whether its factory actually reads a target map. The factory itself
+// lives in the Registry rather than on the catalog record, so Kinds stays
+// an immutable map.
 //
 // Whether a kind's dispatch reaches its own terminal instead of running
 // inline is no longer a property of the kind at all — ADR-0020 moved that
@@ -43,9 +36,8 @@ type Kind struct {
 	// `run` string — validators skip the "needs run/targets" check for these.
 	Configless bool
 
-	// Modules are the admin_lib-equivalent modules this kind auto-pulls into
-	// scope, so a project doesn't have to declare them (using the kind is
-	// enough).
+	// Modules are the modules this kind auto-pulls into scope, so a project
+	// doesn't have to declare them (using the kind is enough).
 	Modules []string
 
 	// ConsumesTargets means the kind's factory actually reads the action's
@@ -58,8 +50,7 @@ type Kind struct {
 // Adding a kind is one entry here plus a Register call in factories.go's
 // registerBuiltins; the init-time coverage check in factories.go rejects a
 // declared kind left without a factory, so the catalog and the factories
-// cannot drift. This mirrors admin_lib/kinds.py's KINDS dict exactly,
-// including python and python-script.
+// cannot drift.
 //
 // Whether an action carrying a given kind dispatches through a project's
 // [terminal] launcher is no longer a catalog property (ADR-0020): a project
@@ -172,9 +163,9 @@ var TargetConsumingKinds = func() []string {
 	return out
 }()
 
-// KindModules is the admin_lib-equivalent modules a kind auto-pulls into
-// scope, keyed by kind name — only kinds with at least one module are
-// present, matching admin_lib/kinds.py's KIND_MODULES. Derived from Kinds.
+// KindModules is the modules a kind auto-pulls into scope, keyed by kind
+// name — only kinds with at least one module are present. Derived from
+// Kinds.
 var KindModules = func() map[string][]string {
 	out := map[string][]string{}
 	for name, k := range Kinds {

@@ -17,9 +17,8 @@ import (
 
 // sourceDir is this admin binary's own Go module checkout on this machine —
 // baked in at install time by install.sh's build_binary via
-// -ldflags -X github.com/McBrideMusings/admin-project-tool/cmd.sourceDir=...,
-// the Go equivalent of admin-run's
-// REPO_DIR = Path(__file__).resolve().parent (admin-run:25). It is empty for
+// -ldflags -X github.com/McBrideMusings/admin-project-tool/cmd.sourceDir=....
+// It is empty for
 // any binary built without that flag — `go build .`, `go test ./...`,
 // `go run .` — which is what makes admin compile fail with a clear message
 // instead of silently trying to build from nothing. Tests that need a
@@ -30,16 +29,15 @@ var sourceDir string
 // compileSourceEntries is every top-level path admin compile copies out of
 // sourceDir before running `go build` against the copy — exactly what a Go
 // build of this module needs (module files, the main package, cmd/,
-// internal/) and nothing else: archetypes/, detectors/, admin_lib/, docs/,
-// tests/ etc. are either Python-only or, for archetypes/detectors, already
+// internal/) and nothing else: archetypes/, detectors/, docs/, tests/ etc.
+// are not needed for the build — archetypes/detectors are already
 // merged into the manifest before compile ever runs (internal/archetype's
 // SearchPathFor resolves them once, at admin compile time — the compiled
 // artifact dispatches off the already-resolved manifest and never looks them
 // up again).
 var compileSourceEntries = []string{"go.mod", "go.sum", "main.go", "cmd", "internal"}
 
-// compileCmd is admin-tlhw.6: the Go port of admin-run's cmd_compile
-// (admin-run:174-184, admin_lib/compile.py). Per the recommendation in
+// compileCmd is admin-tlhw.6. Per the recommendation in
 // docs/spikes/thin-binary-compile.md ("Recommendation to admin-tlhw.6"), it
 // emits a full copy of this binary — every kind, the dashboard, every tool
 // verb — with the target project's resolved manifest embedded
@@ -111,9 +109,8 @@ func runCompile(cmd *cobra.Command, args []string) error {
 // buildStandalone copies sourceDir's Go module into a temp directory,
 // overwrites that copy's internal/compiledinfo/generated.go with the
 // resolved manifest plus its provenance, `go build`s the copy, and moves the
-// resulting binary to target — never touching sourceDir itself, the same
-// "never leave a half-written target" shape admin_lib/compile.py's
-// tempfile.TemporaryDirectory + shutil.move follows.
+// resulting binary to target — never touching sourceDir itself, and never
+// leaving a half-written target.
 func buildStandalone(ctx context.Context, srcDir, target, manifestB64, sourcePath string, builtAt time.Time) error {
 	buildDir, err := os.MkdirTemp("", "admin-compile-*")
 	if err != nil {

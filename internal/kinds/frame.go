@@ -25,21 +25,18 @@ func FrameURLs(action manifest.Action, target string, m *manifest.Manifest) ([]f
 	return frame.ResolveURLs(raw, m)
 }
 
-// enterFrame is the Go port of admin_lib/interp.py's _enter_frame, called by
-// each kind factory that can declare `urls`/`footer` on itself — mirroring
-// the reference architecture exactly: Python's _make_shell and
-// _make_multi_target each call _enter_frame themselves rather than a shared
-// dispatch wrapper doing it once for every kind. A generic wrapper can't
-// work here: a multi-target's label and log-context name depend on which
-// target gets picked, information only its own closure has once it has read
-// args — the same reason _enter_frame in the Python original is called once
-// per target, after picking, not once per command.
+// enterFrame is called by each kind factory that can declare `urls`/`footer`
+// on itself, rather than by a shared dispatch wrapper doing it once for
+// every kind. A generic wrapper can't work here: a multi-target's label and
+// log-context name depend on which target gets picked, information only its
+// own closure has once it has read args — so enterFrame is called once per
+// target, after picking, not once per command.
 //
-// hasFooter/footerVal carry the tri-state Python gets from
-// cmd.meta.get("footer") returning None/True/False: hasFooter=false means
-// "the key was absent", which now defaults the footer ON regardless of the
-// resolved URL count — TOML has no undecided-boolean literal, so that's
-// threaded as a second return from actionBool rather than a pointer.
+// hasFooter/footerVal carry a tri-state — absent/true/false — for the
+// `footer` key: hasFooter=false means "the key was absent", which now
+// defaults the footer ON regardless of the resolved URL count — TOML has no
+// undecided-boolean literal, so that's threaded as a second return from
+// actionBool rather than a pointer.
 //
 // h is reused (not a fresh Host) for both the log context this sets and the
 // h.RunCmd the caller goes on to make, so the log path the footer names is

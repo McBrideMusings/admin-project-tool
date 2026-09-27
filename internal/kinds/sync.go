@@ -11,18 +11,16 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// makeSync is kind="sync"'s factory — the Go port of
-// admin_lib/interp.py::_make_sync plus admin_lib/core.py::sync's local
-// branch. `run` is the destination path (resolved with manifest.ResolveEnv,
-// erroring on an unset var with no default — a sync destination is never
-// something to guess at), `src` defaults to "dist/", and `excludes` is a
-// list of glob patterns matched against each entry's own basename, mirroring
-// Python's shutil.ignore_patterns.
+// makeSync is kind="sync"'s factory. `run` is the destination path
+// (resolved with manifest.ResolveEnv, erroring on an unset var with no
+// default — a sync destination is never something to guess at), `src`
+// defaults to "dist/", and `excludes` is a list of glob patterns matched
+// against each entry's own basename.
 //
-// Only the local-copy branch of Python's sync() is ported (delete=True, the
-// historical default, always on): a remote user@host:/path destination
-// shells out to rsync exactly as Python did, since that machinery already
-// exists as a single command line. dry_run, post_sync and chown are not
+// Only the local-copy branch is implemented (delete=True, the historical
+// default, always on): a remote user@host:/path destination shells out to
+// rsync, since that machinery already exists as a single command line.
+// dry_run, post_sync and chown are not
 // exposed — none of the 14 archetypes' current sync actions use them
 // (measured the same way ADR-0010 measured Lua's host-call surface), and
 // adding an unused knob is exactly the anti-pattern ADR-0009 warns against.
@@ -53,8 +51,8 @@ func makeSync(name string, action manifest.Action, m *manifest.Manifest, _ *Surf
 	}, nil
 }
 
-// isRemoteDest mirrors admin_lib/core.py::sync's is_remote check:
-// "user@host:/path" — a colon present, with an "@" somewhere before it.
+// isRemoteDest reports whether dest looks like "user@host:/path" — a colon
+// present, with an "@" somewhere before it.
 func isRemoteDest(dest string) bool {
 	idx := strings.Index(dest, ":")
 	if idx < 0 {
@@ -87,7 +85,7 @@ func runSync(h *luahost.Host, srcDir, dest string, excludes []string) error {
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return err
 	}
-	// Mirror the source exactly (Python's delete=True default): remove
+	// Mirror the source exactly (delete=True default): remove
 	// anything at dest with no counterpart in src before copying, so a
 	// renamed or deleted source file doesn't linger forever in dest.
 	if err := pruneExtraneous(srcDir, dest, excludes); err != nil {
@@ -101,8 +99,7 @@ func runSync(h *luahost.Host, srcDir, dest string, excludes []string) error {
 }
 
 // matchesExclude reports whether basename matches any of excludes — glob
-// patterns matched against the entry's own name, mirroring Python's
-// shutil.ignore_patterns (which matches basenames, not full paths).
+// patterns matched against the entry's own name, not full paths.
 func matchesExclude(basename string, excludes []string) bool {
 	for _, pat := range excludes {
 		if ok, _ := filepath.Match(pat, basename); ok {

@@ -1,34 +1,26 @@
 //go:build darwin
 
-// Package kinds' Apple verb dispatch — the Go port of the
-// dev/build/deploy/clean half of admin_lib/apple.py's "High-level archetype
-// wrappers" section (its own comment: "The apple archetype's kind:"python"
-// commands call these with _APPLE_CONFIG"). Darwin-only for the same reason
+// Package kinds' Apple verb dispatch — the dev/build/deploy/clean commands
+// a kind="apple" action's `run` names. Darwin-only for the same reason
 // internal/luahost's Apple surface is: xcodebuild, simctl, devicectl and
 // codesign are macOS-specific.
 //
-// What this file deliberately does NOT port, and why — a documented gap in
-// docs/architecture/lua-host-api.md's "What is intentionally not here yet",
-// not a silent omission:
+// App Store Connect device registration (appleEnsureDeviceRegistered, in
+// apple_appid_darwin.go) is wired into the device deploy/dev-loop paths so a
+// device Apple hasn't seen gets registered before the build asks for a
+// profile that has to include it.
 //
-//   - App Store Connect device registration (ensure_device_registered) —
-//     lives in admin_lib/appstoreconnect.py, a separate module not ported
-//     here; a device deploy that would need it still surfaces Apple's own
-//     "team has no devices" error, just not pre-empted.
-//
-// Everything else the package doc used to list here as deferred is now
-// ported. The dev/prod bundle-suffix convention layer (_compose_dev_settings,
-// _entitlements_paths, _target_needs_provisioning_profile) is ported — see
-// applesign_darwin.go — and its ADMIN_DEV_BUNDLE_SUFFIX override is wired
+// The dev/prod bundle-suffix convention layer (appleComposeDevSettings,
+// appleEntitlementsPaths, appleTargetNeedsProvisioningProfile) lives in
+// applesign_darwin.go, and its ADMIN_DEV_BUNDLE_SUFFIX override is wired
 // into every dev-loop build in appledevloop_darwin.go. Dev-icon-swap hooks
-// (build_icon_hooks: backup/swap-banner/restore around each build) and the
-// iOS/tvOS display-name patch (patch_ios_display_name) are ported and wired
-// — see appleiconhooks_darwin.go — into appledevloop_darwin.go's
-// appleDevSimulator and appleDevDevice (admin-7ig8.1). The mac dev-rename/
-// re-sign postprocessing (DevMacOSPostprocess, bound in
-// internal/luahost/apple_darwin.go) and the is_running_fn/kill_fn overrides
-// (_make_mac_dev_running_check/_make_mac_dev_kill) are ported and wired into
-// appleDevMac (admin-3rgp.75) — see this file's "process helpers" section
+// (backup/swap-banner/restore around each build) and the iOS/tvOS
+// display-name patch live in appleiconhooks_darwin.go and are wired into
+// appledevloop_darwin.go's appleDevSimulator and appleDevDevice
+// (admin-7ig8.1). The mac dev-rename/re-sign postprocessing
+// (DevMacOSPostprocess, bound in internal/luahost/apple_darwin.go) and the
+// is-running/kill overrides are wired into appleDevMac (admin-3rgp.75) —
+// see this file's "process helpers" section
 // (appleResolveMacDevProductName/appleResolveMacDevProcessPattern/
 // appleMacDevIsRunning/appleMacDevKill) and appledevloop_darwin.go's
 // appleDevMac.
@@ -77,8 +69,7 @@ var appleDeviceSDK = map[string]struct {
 }
 
 // runAppleVerb dispatches a kind="apple" action's `run` verb to its
-// implementation, mirroring admin_lib/interp.py::_make_apple's
-// `getattr(apple_mod, func_name)(cfg)`.
+// implementation.
 func runAppleVerb(verb, action string, cfg map[string]any, args []string, m *manifest.Manifest) error {
 	h := newHost(m)
 	f := parseAppleFlags(args)
@@ -115,22 +106,20 @@ func runAppleVerb(verb, action string, cfg map[string]any, args []string, m *man
 }
 
 // --- config resolution -----------------------------------------------------
-// Ports the plain (non-dev/prod-suffix) half of admin_lib/apple.py's
-// _resolve_* helpers: the Xcode project is the source of truth for anything
-// not overridden in [apple], via apple.xcode_setting.
+// The Xcode project is the source of truth for anything not overridden in
+// [apple], via apple.xcode_setting.
 
 // applePrebuildRan memoizes [apple] prebuild_cmd per process — a single
 // `admin` invocation resolves the project path many times (build, dev loop
 // iterations, deploy), and re-running the prereq each time would be wasted
-// work. Mirrors admin_lib/apple.py::_run_prebuild_cmd's _PREBUILD_RAN set.
+// work.
 var applePrebuildRan = map[string]bool{}
 
 // runApplePrebuild runs [apple] prebuild_cmd once per process, at the moment
 // the project path is resolved. Every apple verb funnels through
 // appleProject, so a generated .xcodeproj (XcodeGen, Tuist) kept out of
 // version control — absent on a fresh clone, stale after a project.yml edit —
-// gets regenerated before anything reads it. Ports
-// admin_lib/apple.py::_run_prebuild_cmd.
+// gets regenerated before anything reads it.
 func runApplePrebuild(cfg map[string]any, h *luahost.Host) error {
 	rv := &envResolver{}
 	cmd := strings.TrimSpace(rv.s(cfgString(cfg, "prebuild_cmd", "")))
@@ -207,7 +196,7 @@ func appleDerivedDataName(cfg map[string]any, project string) string {
 	return base
 }
 
-// appleDerivedGlob mirrors admin_lib/apple.py's _derived_glob. FindApp
+// appleDerivedGlob builds the DerivedData glob for the built .app. FindApp
 // expands the leading "~" itself.
 func appleDerivedGlob(derivedName, config, sdkSuffix, productName string) string {
 	return fmt.Sprintf("~/Library/Developer/Xcode/DerivedData/%s-*/Build/Products/%s%s/%s.app",
@@ -557,8 +546,7 @@ func appleKillProcess(h *luahost.Host, process string) {
 	_ = exec.Command("pkill", "-9", "-x", process).Run()
 }
 
-// appleResolveMacDevProductName mirrors admin_lib/apple.py's
-// _resolve_mac_dev_product_name: the renamed dev .app's filename (no
+// appleResolveMacDevProductName resolves the renamed dev .app's filename (no
 // space — must be a valid filename and bundle path component). Default:
 // "<process>Dev". Returns "" when process is also empty.
 func appleResolveMacDevProductName(cfg map[string]any, process string) string {
@@ -571,14 +559,14 @@ func appleResolveMacDevProductName(cfg map[string]any, process string) string {
 	return process + "Dev"
 }
 
-// appleResolveMacDevProcessPattern mirrors admin_lib/apple.py's
-// _resolve_mac_dev_process: a `pgrep -f` pattern that uniquely identifies
-// the running dev instance so it can't be confused with a prod copy.
+// appleResolveMacDevProcessPattern resolves a `pgrep -f` pattern that
+// uniquely identifies the running dev instance so it can't be confused with
+// a prod copy.
 //
 // The pattern has to name the bundle the dev loop actually launches, or it
 // matches nothing: the loop never finds its own app to kill and reports
 // that it never launched, while `open -n` stacks a new window every
-// rebuild. Three cases, in Python's own priority order:
+// rebuild. Three cases, checked in priority order:
 //
 //   - install=true and apple.mac_install_path_dev is set: the app is
 //     copied there before launch (dev --install), so the pattern names
@@ -613,8 +601,7 @@ func appleResolveMacDevProcessPattern(cfg map[string]any, process string, instal
 	return product + ".app/Contents/MacOS/" + process
 }
 
-// appleMacDevIsRunning mirrors admin_lib/apple.py's
-// _make_mac_dev_running_check: `pgrep -f <dev pattern>` where the pattern
+// appleMacDevIsRunning runs `pgrep -f <dev pattern>` where the pattern
 // (e.g. "CCToolDev.app/Contents/MacOS/CCTool") is itself the disambiguator
 // — a prod build under /Applications/CCTool.app/... doesn't match it.
 // Falls back to the generic `pgrep -x process` check when no dev pattern
@@ -630,16 +617,14 @@ func appleMacDevIsRunning(cfg map[string]any, process string, install bool) func
 	return func() bool { return false }
 }
 
-// appleMacDevKill mirrors admin_lib/apple.py's _make_mac_dev_kill: kills
-// only the dev instance (matched by the same `pgrep -f` pattern
-// appleMacDevIsRunning uses), never a prod copy, then waits for it to
-// actually exit — returning before the process is gone lets `open -n`
-// race with LaunchServices and silently activate the dying instance.
-// SIGTERM first, escalating to SIGKILL after 1.5s; when SIGKILL still
-// hasn't cleared it after another 1s, warns and gives up rather than
-// blocking forever (the extra post-SIGKILL wait+warn Python's dev-pattern
-// branch has that appleKillProcess's generic prod-process fallback below
-// does not).
+// appleMacDevKill kills only the dev instance (matched by the same
+// `pgrep -f` pattern appleMacDevIsRunning uses), never a prod copy, then
+// waits for it to actually exit — returning before the process is gone lets
+// `open -n` race with LaunchServices and silently activate the dying
+// instance. SIGTERM first, escalating to SIGKILL after 1.5s; when SIGKILL
+// still hasn't cleared it after another 1s, warns and gives up rather than
+// blocking forever (a post-SIGKILL wait+warn the generic prod-process
+// fallback below does not do).
 //
 // Falls back to appleKillProcess(h, process) when no dev pattern resolves
 // — the same generic pgrep/pkill -x check dev loops used before this dev-

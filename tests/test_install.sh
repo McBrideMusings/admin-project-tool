@@ -132,16 +132,12 @@ out="$(run_install "$T")"
 assert_contains "reports not-installed" "not installed" "$out"
 assert_contains "reports done" "Done." "$out"
 assert_file_exists "VERSION written" "$T/.admin/VERSION"
-assert_file_exists "admin_lib copied" "$T/.admin/admin_lib"
-assert_file_exists "manifest frontend folded into admin_lib" "$T/.admin/admin_lib/manifest.py"
 assert_file_exists "archetype data dir copied" "$T/.admin/archetypes"
-assert_file_exists "detector data dir copied" "$T/.admin/detectors"
 assert_file_exists "admin binary built" "$T/.admin/admin"
-assert_file_exists "admin-py fallback installed" "$T/.admin/admin-py"
 if [[ -x "$T/.admin/admin" && ! -L "$T/.admin/admin" ]] && file "$T/.admin/admin" | grep -q 'executable'; then
-    ok "admin is a compiled binary, not the Python entry"
+    ok "admin is a compiled binary"
 else
-    fail "admin is a compiled binary, not the Python entry" "$(file "$T/.admin/admin")"
+    fail "admin is a compiled binary" "$(file "$T/.admin/admin")"
 fi
 assert_file_contains "PATH added to rc" '.admin' "$T/$ZSH_RC"
 rm -rf "$T"
@@ -181,7 +177,7 @@ echo "oldshaxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" > "$T/.admin/VERSION"
 
 out="$(run_install "$T")"
 assert_contains "reports updating" "updating" "$out"
-assert_file_exists "admin_lib updated" "$T/.admin/admin_lib"
+assert_file_exists "archetypes updated" "$T/.admin/archetypes"
 
 NEW_VER="$(cat "$T/.admin/VERSION")"
 if [[ "$NEW_VER" != "oldshaxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" ]]; then
@@ -204,7 +200,7 @@ echo "$(get_current_sha)" > "$T/.admin/VERSION"
 
 out="$(run_install "$T" --force)"
 assert_contains "reports force-installing" "force-installing" "$out"
-assert_file_exists "admin_lib present after --force" "$T/.admin/admin_lib"
+assert_file_exists "archetypes present after --force" "$T/.admin/archetypes"
 rm -rf "$T"
 
 # ---------------------------------------------------------------------------
@@ -222,11 +218,33 @@ echo "$FAKE_SHA" > "$T/.admin/VERSION"
 out="$(run_install "$T")"
 if [[ "$(get_current_sha)" == *+dirty ]]; then
     assert_not_contains "dirty SHA never says already up to date" "already up to date" "$out"
-    assert_file_exists "admin_lib reinstalled" "$T/.admin/admin_lib"
+    assert_file_exists "archetypes reinstalled" "$T/.admin/archetypes"
 else
     assert_contains "clean tree with dirty-version reinstalls" "updating" "$out"
-    assert_file_exists "admin_lib reinstalled after dirty-version" "$T/.admin/admin_lib"
+    assert_file_exists "archetypes reinstalled after dirty-version" "$T/.admin/archetypes"
 fi
+rm -rf "$T"
+
+# ---------------------------------------------------------------------------
+# Test: an install removes the Python pieces an older install left behind
+# ---------------------------------------------------------------------------
+
+echo
+echo "--- stale Python install is cleaned ---"
+T="$(mktemp -d)"
+touch "$T/$ZSH_RC"
+mkdir -p "$T/.admin/admin_lib" "$T/.admin/detectors"
+touch "$T/.admin/admin-py"
+echo "oldshaxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" > "$T/.admin/VERSION"
+
+run_install "$T" >/dev/null
+for stale in admin_lib detectors admin-py; do
+    if [[ -e "$T/.admin/$stale" ]]; then
+        fail "$stale removed" "still present"
+    else
+        ok "$stale removed"
+    fi
+done
 rm -rf "$T"
 
 # ---------------------------------------------------------------------------
@@ -290,12 +308,9 @@ touch "$T/$ZSH_RC"
 out="$(run_install "$T" --link)"
 assert_contains "reports linking" "linking" "$out"
 assert_contains "reports edits are live" "edits are live" "$out"
-assert_symlink "admin_lib symlinked" "$T/.admin/admin_lib"
 assert_symlink "archetype data dir symlinked" "$T/.admin/archetypes"
-assert_symlink "detector data dir symlinked" "$T/.admin/detectors"
-# --link makes Python edits live; the binary is compiled either way, so `admin`
-# is a real file in both modes and only admin-py is ever a symlink.
-assert_symlink "admin-py symlinked" "$T/.admin/admin-py"
+# --link makes archetype edits live; the binary is compiled either way, so
+# `admin` is a real file in both modes.
 if [[ -L "$T/.admin/admin" ]]; then
     fail "admin binary is not symlinked under --link" "unexpectedly a symlink"
 else
@@ -307,9 +322,9 @@ assert_file_contains "VERSION records the linked source" "linked:$REPO" "$T/.adm
 # -- that is the entire point of the mode. Probe with a NEW throwaway file
 # rather than appending to a tracked one: a `git checkout --` to undo that would
 # silently destroy a developer's uncommitted work if the suite ran on a dirty tree.
-probe_file="$REPO/admin_lib/_link_probe_$$.py"
+probe_file="$REPO/archetypes/_link_probe_$$.toml"
 echo "# link liveness probe" > "$probe_file"
-if [[ -f "$T/.admin/admin_lib/_link_probe_$$.py" ]]; then
+if [[ -f "$T/.admin/archetypes/_link_probe_$$.toml" ]]; then
     ok "source edits are live through the link"
 else
     fail "source edits are live through the link" "probe not visible via $T/.admin"
@@ -320,17 +335,17 @@ rm -f "$probe_file"
 # that would quietly reintroduce staleness.
 out="$(run_install "$T")"
 assert_contains "plain install reports it is linked" "edits are already live" "$out"
-assert_symlink "plain install leaves the link intact" "$T/.admin/admin_lib"
+assert_symlink "plain install leaves the link intact" "$T/.admin/archetypes"
 
 # --force is the documented way back to a copied install.
 out="$(run_install "$T" --force)"
 assert_contains "force reports installing" "force-installing" "$out"
-if [[ -L "$T/.admin/admin_lib" ]]; then
+if [[ -L "$T/.admin/archetypes" ]]; then
     fail "--force replaces the link with a real copy" "still a symlink"
 else
     ok "--force replaces the link with a real copy"
 fi
-assert_file_exists "source tree survives unlinking" "$REPO/admin_lib/apple.py"
+assert_file_exists "source tree survives unlinking" "$REPO/archetypes/apple/archetype.toml"
 rm -rf "$T"
 
 # ---------------------------------------------------------------------------

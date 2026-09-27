@@ -56,8 +56,8 @@ func TestDetectProjectPathNoneFound(t *testing.T) {
 func TestXcodeTargetSettingsResolvesConfigurationByName(t *testing.T) {
 	objects := map[string]any{
 		"TARGET1": map[string]any{
-			"isa":                     "PBXNativeTarget",
-			"name":                    "MyApp",
+			"isa":                    "PBXNativeTarget",
+			"name":                   "MyApp",
 			"buildConfigurationList": "CFGLIST1",
 		},
 		"CFGLIST1": map[string]any{
@@ -94,8 +94,7 @@ func TestXcodeTargetSettingsResolvesConfigurationByName(t *testing.T) {
 		t.Errorf("Debug settings = %v, want the debug bundle id", settings)
 	}
 
-	// Unknown configuration falls back to the target's first configuration
-	// (Python original's behaviour when the requested name isn't found).
+	// Unknown configuration falls back to the target's first configuration.
 	settings = XcodeTargetSettings(fakeProjectPath, "MyApp", "Nonexistent")
 	if settings["PRODUCT_BUNDLE_IDENTIFIER"] != "com.example.app" {
 		t.Errorf("fallback settings = %v, want the first configuration's bundle id", settings)
@@ -116,8 +115,8 @@ func TestXcodeTargetSettingsUnknownScheme(t *testing.T) {
 func TestXcodeSettingRejectsVariableSubstitution(t *testing.T) {
 	objects := map[string]any{
 		"TARGET1": map[string]any{
-			"isa":                     "PBXNativeTarget",
-			"name":                    "MyApp",
+			"isa":                    "PBXNativeTarget",
+			"name":                   "MyApp",
 			"buildConfigurationList": "CFGLIST1",
 		},
 		"CFGLIST1": map[string]any{"buildConfigurations": []any{"CFG_DEBUG"}},
@@ -144,9 +143,8 @@ func TestXcodeSettingRejectsVariableSubstitution(t *testing.T) {
 }
 
 func TestXcodeSettingExpandsResolvableSubstitution(t *testing.T) {
-	// The dev/prod bundle-suffix convention (_compose_dev_settings in
-	// admin_lib/apple.py) writes a suffix key right into the same
-	// buildSettings dict as the templated bundle id — e.g.
+	// The dev/prod bundle-suffix convention writes a suffix key right into
+	// the same buildSettings dict as the templated bundle id — e.g.
 	// PRODUCT_BUNDLE_ID_SUFFIX = "" in Release, ".dev" in Debug. This is the
 	// case XcodeSetting can actually resolve without running xcodebuild.
 	objects := map[string]any{

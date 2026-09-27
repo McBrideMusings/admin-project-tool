@@ -1,10 +1,9 @@
 # React Native's `[apple].project_path` must be set explicitly in the
 # project's admin.toml — e.g. project_path = "<app_dir>/ios/App.xcworkspace".
-# The Python original (admin_lib/react_native.py::apple_config_for) derived
-# it automatically from [react_native].app_dir + a glob when unset; a
-# kind="apple" leaf action here reads m.Apple directly at Go dispatch time,
-# with no way for a Lua pre-step to hand it a computed override, so that
-# auto-derivation did not carry over. One explicit config line replaces it.
+# A kind="apple" leaf action here reads m.Apple directly at Go dispatch time,
+# with no way for a Lua pre-step to hand it a computed override, so
+# auto-deriving it from [react_native].app_dir + a glob is not implemented.
+# One explicit config line replaces it.
 name = "react-native"
 modules = ["core", "reload", "apple", "android", "metro", "react_native", "log_columns"]
 
@@ -61,7 +60,7 @@ kind = "lua"
 desc = "Android emulator/device (Metro + build + install) — not yet ported"
 run = '''
 err("android dev loop is not ported to the Go tool yet")
-info("admin_lib/android.py's dev_loop_android has no Go/Lua equivalent — see the tracker for the follow-up")
+info("android dev loop has no Go/Lua implementation yet — see the tracker for the follow-up")
 error("android dev loop not ported")
 '''
 

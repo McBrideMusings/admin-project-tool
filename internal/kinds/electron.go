@@ -9,12 +9,12 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/reload"
 )
 
-// makeElectron is kind="electron"'s factory. internal/electron is a complete
-// port of admin_lib/electron.py — StageResources, BuildElectron,
-// InstallElectron, DeployElectron, DevElectron — and its own package doc says
-// it is "the real, callable, ready-to-wire port" waiting for exactly this
-// file. Until it existed the package had zero callers, so an Electron project
-// could neither build, deploy, nor dev its shell under the Go tool.
+// makeElectron is kind="electron"'s factory. internal/electron provides
+// StageResources, BuildElectron, InstallElectron, DeployElectron, and
+// DevElectron, and its own package doc says it is "the real, callable,
+// ready-to-wire port" waiting for exactly this file. Until it existed the
+// package had zero callers, so an Electron project could neither build,
+// deploy, nor dev its shell under the Go tool.
 //
 // The shape deliberately copies kind="apple" (apple.go): `run` names a verb,
 // the top-level `[electron]` table is the config every verb reads. A project

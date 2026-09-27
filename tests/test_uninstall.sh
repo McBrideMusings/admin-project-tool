@@ -100,10 +100,8 @@ run_install "$T"
 
 out="$(run_uninstall "$T")"
 assert_contains "reports done" "Done." "$out"
-assert_not_exists "admin_lib removed" "$T/.admin/admin_lib"
 assert_not_exists "archetypes removed" "$T/.admin/archetypes"
-assert_not_exists "detectors removed" "$T/.admin/detectors"
-assert_not_exists "admin entrypoint removed" "$T/.admin/admin"
+assert_not_exists "admin binary removed" "$T/.admin/admin"
 assert_not_exists "VERSION removed" "$T/.admin/VERSION"
 assert_not_exists "empty .admin dir removed" "$T/.admin"
 assert_file_not_contains "PATH entry removed from rc" '.admin' "$T/$ZSH_RC"
@@ -121,9 +119,9 @@ touch "$T/$ZSH_RC"
 run_install "$T" --link
 
 out="$(run_uninstall "$T")"
-assert_not_exists "linked admin_lib removed" "$T/.admin/admin_lib"
+assert_not_exists "linked archetypes removed" "$T/.admin/archetypes"
 assert_not_exists ".admin dir removed" "$T/.admin"
-assert_file_exists "source tree survives uninstall" "$REPO/admin_lib/apple.py"
+assert_file_exists "source tree survives uninstall" "$REPO/archetypes/apple/archetype.toml"
 rm -rf "$T"
 
 # ---------------------------------------------------------------------------
@@ -153,7 +151,7 @@ echo "keep me" > "$T/.admin/unrelated-file"
 
 run_uninstall "$T" >/dev/null
 assert_file_exists "unrelated file survives" "$T/.admin/unrelated-file"
-assert_not_exists "admin_lib still removed" "$T/.admin/admin_lib"
+assert_not_exists "archetypes still removed" "$T/.admin/archetypes"
 rm -rf "$T"
 
 # ---------------------------------------------------------------------------

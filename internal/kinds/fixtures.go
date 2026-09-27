@@ -1,7 +1,7 @@
-// fixtures.go is the Go port of admin_lib/fixtures.py: synthesize a dev
-// fixture tree of real random-byte files (generate), and restore a mutable
-// working copy from that baseline (reset) — pairing with cleandev.go's
-// cleanDevFromConfig for the optional cache/DB wipe reset can fold in.
+// fixtures.go synthesizes a dev fixture tree of real random-byte files
+// (generate), and restores a mutable working copy from that baseline
+// (reset) — pairing with cleandev.go's cleanDevFromConfig for the optional
+// cache/DB wipe reset can fold in.
 package kinds
 
 import (
@@ -17,9 +17,8 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// parseFixtureSize parses a human size ("1.5GB", "500KB", "2048") to bytes —
-// the Go port of admin_lib/fixtures.py::parse_size. nil (an absent `size`
-// key) is 0 bytes, matching Python's `f.get("size", 0)` default.
+// parseFixtureSize parses a human size ("1.5GB", "500KB", "2048") to bytes.
+// nil (an absent `size` key) is 0 bytes.
 func parseFixtureSize(spec any) (int64, error) {
 	switch v := spec.(type) {
 	case nil:
@@ -71,9 +70,8 @@ type fixtureFile struct {
 }
 
 // iterFixtureFiles expands one tree entry's `files` list into concrete
-// (name, size) pairs — the Go port of admin_lib/fixtures.py::_iter_files. A
-// file with count = N expands to N numbered copies, zero-padded to the
-// count's own width (minimum 2).
+// (name, size) pairs. A file with count = N expands to N numbered copies,
+// zero-padded to the count's own width (minimum 2).
 func iterFixtureFiles(entry map[string]any) ([]fixtureFile, error) {
 	var out []fixtureFile
 	for _, raw := range cfgList(entry, "files") {
@@ -111,10 +109,9 @@ func iterFixtureFiles(entry map[string]any) ([]fixtureFile, error) {
 }
 
 // writeRandomFixtureFile writes size bytes of crypto/rand output to path in
-// 8MB chunks — the Go port of admin_lib/fixtures.py::_write_random.
-// crypto/rand, not math/rand, to match Python's os.urandom: this data feeds
-// a media scanner's fixture tree, not a simulation, so there is no reason
-// to accept a weaker source.
+// 8MB chunks. crypto/rand, not math/rand: this data feeds a media scanner's
+// fixture tree, not a simulation, so there is no reason to accept a weaker
+// source.
 func writeRandomFixtureFile(path string, size int64) error {
 	f, err := os.Create(path)
 	if err != nil {
@@ -141,8 +138,7 @@ func writeRandomFixtureFile(path string, size int64) error {
 }
 
 // generateFixtureTree synthesizes tree into baseline as real files of
-// random bytes — the Go port of admin_lib/fixtures.py::generate_tree.
-// Refuses to populate a non-empty baseline unless force.
+// random bytes. Refuses to populate a non-empty baseline unless force.
 func generateFixtureTree(h *luahost.Host, baseline string, tree []any, force bool) error {
 	if baseline == "" {
 		return fmt.Errorf("fixtures: no baseline path configured")
@@ -239,8 +235,8 @@ func copyFixtureFile(src, dst string, mode os.FileMode) error {
 }
 
 // restoreFixtureTree wipes working entirely then deep-copies baseline into
-// it — the Go port of admin_lib/fixtures.py::restore_tree (a pure-Go
-// `rsync -a --delete`). Refuses if baseline is missing or empty.
+// it — a pure-Go `rsync -a --delete`. Refuses if baseline is missing or
+// empty.
 func restoreFixtureTree(h *luahost.Host, baseline, working string) error {
 	info, statErr := os.Stat(baseline)
 	entries, _ := os.ReadDir(baseline)
@@ -277,8 +273,7 @@ func restoreFixtureTree(h *luahost.Host, baseline, working string) error {
 }
 
 // resolveFixtureDir resolves a baseline/working path from the [fixtures]
-// table — expand ${VAR}, make absolute — the Go port of
-// admin_lib/fixtures.py::_resolve_dir.
+// table — expand ${VAR}, make absolute.
 func resolveFixtureDir(cfg map[string]any, key string) (string, error) {
 	val, err := manifest.ResolveEnv(cfgString(cfg, key, ""))
 	if err != nil {
@@ -292,10 +287,8 @@ func resolveFixtureDir(cfg map[string]any, key string) (string, error) {
 	return val, nil
 }
 
-// makeFixturesGenerate is kind="fixtures-generate"'s factory — the Go port
-// of admin_lib/interp.py's fixtures-generate wiring
-// (fixtures_generate_from_config). `--force` on the command line permits
-// regenerating a non-empty baseline.
+// makeFixturesGenerate is kind="fixtures-generate"'s factory. `--force` on
+// the command line permits regenerating a non-empty baseline.
 func makeFixturesGenerate(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	cfg := archetypeConfigTable(m, "fixtures")
 
@@ -324,11 +317,9 @@ func makeFixturesGenerate(name string, action manifest.Action, m *manifest.Manif
 	}, nil
 }
 
-// makeFixturesReset is kind="fixtures-reset"'s factory — the Go port of
-// admin_lib/interp.py's fixtures-reset wiring (fixtures_reset_from_config).
-// Optional `clean`/`db` keys fold a project's cache/DB wipe into the same
-// reset by handing them to cleanDevFromConfig (cleandev.go) with force=true,
-// exactly as Python routes the same two keys into admin_lib.cleanup.
+// makeFixturesReset is kind="fixtures-reset"'s factory. Optional `clean`/`db`
+// keys fold a project's cache/DB wipe into the same reset by handing them to
+// cleanDevFromConfig (cleandev.go) with force=true.
 func makeFixturesReset(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	cfg := archetypeConfigTable(m, "fixtures")
 

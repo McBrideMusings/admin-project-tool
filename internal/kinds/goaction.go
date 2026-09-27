@@ -7,22 +7,18 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// goModes mirrors admin_lib/interp.py's _GO_MODES.
+// goModes is the set of valid kind="go" run modes.
 var goModes = map[string]bool{"build": true, "install": true, "clean": true}
 
-// makeGoKind is kind="go"'s factory — the Go port of
-// admin_lib/interp.py::_make_go. `run` names the mode (build|install|clean,
-// default "build"), not a shell command.
+// makeGoKind is kind="go"'s factory. `run` names the mode (build|install|
+// clean, default "build"), not a shell command.
 //
-// binary/main come from the manifest-level [go] table (m.Settings["go"]), exactly as
-// Python's _make_go reads ns.get("_GO_CONFIG") — admin-3rgp.43 is what makes
-// that table reachable here: a Factory now receives the resolved Manifest,
-// not just the one action being dispatched. There is deliberately no
-// per-action inline override (an [actions.X].binary key): Python's
-// _make_go never had one either, so adding one here would be new surface
-// with no precedent to port, and a project builds at most a handful of Go
-// binaries through this kind, all of which already share the single project-
-// level [go] table.
+// binary/main come from the manifest-level [go] table (m.Settings["go"]) —
+// admin-3rgp.43 is what makes that table reachable here: a Factory now
+// receives the resolved Manifest, not just the one action being dispatched.
+// There is deliberately no per-action inline override (an [actions.X].binary
+// key): a project builds at most a handful of Go binaries through this kind,
+// all of which already share the single project-level [go] table.
 func makeGoKind(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	mode, _ := actionString(action, "run")
 	if mode == "" {

@@ -9,10 +9,9 @@ import (
 )
 
 // resolveEnvList resolves every entry of a `[dev_precheck]` string list
-// through manifest.ResolveEnv, dropping any that resolve to empty —
-// matches admin_lib/ports_nuke.py::dev_precheck_from_config's container and
-// reap_pidfiles handling. Returns an error (rather than exiting the
-// process, as Python's resolve_env does) on an unresolvable required var.
+// through manifest.ResolveEnv, dropping any that resolve to empty.
+// Returns an error (rather than exiting the process) on an unresolvable
+// required var.
 func resolveEnvList(cfg map[string]any, key string) ([]string, error) {
 	var out []string
 	for _, raw := range cfgStrings(cfg, key) {
@@ -27,8 +26,7 @@ func resolveEnvList(cfg map[string]any, key string) ([]string, error) {
 	return out, nil
 }
 
-// makeDevPrecheck is kind="dev-precheck"'s factory — the Go port of
-// admin_lib/interp.py::_make_dev_precheck, reading the manifest's
+// makeDevPrecheck is kind="dev-precheck"'s factory, reading the manifest's
 // [dev_precheck] table and running ports.DevPrecheck. A live session or a
 // running declared container aborts (non-nil error); orphaned processes are
 // reaped and reported, never treated as a failure.

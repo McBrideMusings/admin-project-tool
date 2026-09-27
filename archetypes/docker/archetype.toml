@@ -47,8 +47,8 @@ steps = ["open"]
 kind = "lua"
 desc = "Build the Docker image — locally for linux/amd64, or on the target when [docker_build].on_host"
 run = '''
--- Go port (admin-3rgp.37) of admin_lib/docker.py's docker_build/remote_docker_build,
--- as called from the docker archetype's "build" action.
+-- Builds the Docker image locally or on the target host (admin-3rgp.37), as
+-- called from the docker archetype's "build" action.
 local run_cfg = config.docker_run or {}
 local build_cfg = config.docker_build or {}
 local target = run_cfg.target
@@ -58,8 +58,7 @@ local function shq(s)
   return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
 end
 
--- Brace-matched ${VAR} / ${VAR:-default} expansion — the Lua port of
--- admin_lib/core.py::iter_env_refs + _expand_env_refs, minus COMPUTED_VARS
+-- Brace-matched ${VAR} / ${VAR:-default} expansion, minus COMPUTED_VARS
 -- (e.g. ${LAN_IP}): env() only reads real process env vars, so a computed
 -- name comes back nil and is treated as unresolved, same as any other unset
 -- var with no default. Returns (expanded, all_resolved).
@@ -155,22 +154,28 @@ end
 kind = "lua"
 desc = "Deploy to Unraid — `image` (default, rebuild + recreate from [docker_run]), `files` ([deploy] mirror dir only), or `all`; --force to override drift, --dry-run to preview"
 run = '''
--- Go port (admin-3rgp.37) of admin_lib/docker.py::deploy_dispatch +
--- remote_recreate_container, via the shared dockerrun cfg<->argv/drift/
--- deploy-sync-plan bindings (also used by run-args and diff).
+-- Deploys and recreates the container (admin-3rgp.37), via the shared
+-- dockerrun cfg<->argv/drift/deploy-sync-plan bindings (also used by
+-- run-args and diff).
 --
 -- Fixes admin-9bex along the way: [deploy].chown and post_sync are rendered
 -- and invoked by dockerrun.build_deploy_sync_plan, the ONLY implementation
 -- of a [deploy] sync in this tool — there is no second, generic sync path
--- (like admin_lib/interp.py's `_make_sync`) that could silently read
--- neither key.
+-- that could silently read neither key.
 local run_cfg = config.docker_run or {}
 local deploy_cfg = config.deploy
+-- The uid a deployed directory must be writable by is the uid the app runs
+-- as, so [deploy].chown defaults to [docker_run].user. An explicit chown wins.
+if deploy_cfg and not deploy_cfg.chown and run_cfg.user then
+  local with_chown = {}
+  for k, v in pairs(deploy_cfg) do with_chown[k] = v end
+  with_chown.chown = run_cfg.user
+  deploy_cfg = with_chown
+end
 local build_cfg = config.docker_build or {}
 local template_cfg = config.install_template or {}
 -- An empty [docker_run] table (declared or absent) means "no TOML-canonical
--- config" — the legacy inspect-and-recreate path below, matching
--- admin_lib's target_cfg=None branch of remote_recreate_container.
+-- config" — the legacy inspect-and-recreate path below.
 local run_cfg_present = false
 for _ in pairs(run_cfg) do run_cfg_present = true break end
 
@@ -278,9 +283,8 @@ end
 if target == nil then
   if deploy_cfg then
     -- pick_target degrades to nil on a non-TTY exactly like "logs"' own
-    -- picker above — a deliberate, already-shipped simplification of
-    -- admin_lib's isatty-gated default-to-"image": for a safety-critical
-    -- deploy, "do nothing when nothing was confirmed" is the safer
+    -- picker above — a deliberate, already-shipped simplification: for a
+    -- safety-critical deploy, "do nothing when nothing was confirmed" is the safer
     -- direction to simplify in, and it keeps every picker in this
     -- archetype behaving the same way.
     target = pick_target({
@@ -396,7 +400,7 @@ end
 
 if not dry_run then
   -- ensure_docker_template: sync the Unraid GUI template every deploy,
-  -- non-fatal — admin_lib/unraid.py::ensure_docker_template.
+  -- non-fatal.
   local tsrc = template_cfg.src or "deploy/unraid-template.xml"
   if fs.read(tsrc) then
     local tname = template_cfg.name
@@ -493,8 +497,7 @@ if run_cfg_present then
             "remote_env_file to a path on " .. host .. " that admin can read over ssh.")
         error("docker deploy: unresolved mount env var")
       end
-      -- run_env_vars stays nil: dockerrun falls back to process env, matching
-      -- admin_lib's env_vars=None -> os.environ default.
+      -- run_env_vars stays nil: dockerrun falls back to process env.
     end
   end
 
@@ -650,9 +653,8 @@ end
 kind = "lua"
 desc = "Show run-config drift across declared [docker_run], last-deploy snapshot, and the live container; --format json for CI"
 run = '''
--- Go port (admin-3rgp.37) of admin_lib/docker.py::remote_container_diff, via
--- the shared dockerrun cfg<->argv/drift bindings (also used by "run-args"
--- and "deploy" above).
+-- Shows run-config drift (admin-3rgp.37), via the shared dockerrun
+-- cfg<->argv/drift bindings (also used by "run-args" and "deploy" above).
 --
 -- Extends the original two-way (last-deploy snapshot vs live) diff to three
 -- axes per admin-dbmj: declared ([docker_run]) is also compared against
@@ -891,8 +893,7 @@ end
 kind = "lua"
 desc = "Tail logs — `dev` (newest local log) or `live` (container); --from DD:HH:MM:SS rolls back, --tail N --no-follow prints and exits"
 run = '''
--- Go port (admin-3rgp.37) of admin_lib/docker.py::logs_dispatch +
--- tail_dev_log + remote_logs, as called from the docker archetype's "logs"
+-- Tails logs (admin-3rgp.37), as called from the docker archetype's "logs"
 -- action.
 local function shq(s)
   return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
@@ -990,7 +991,7 @@ end
 
 -- target == "dev": trail the newest local dev log file. Newest-by-filename
 -- (the timestamp stem sorts lexicographically, oldest to newest) rather than
--- newest-by-mtime (admin_lib's tail_dev_log) — there is no host binding for
+-- newest-by-mtime — there is no host binding for
 -- file mtimes in this VM; correct for every dev log set_log_context creates
 -- (always timestamped), an approximation only for a hand-placed bare
 -- "dev.log" with no timestamp suffix.
@@ -1083,9 +1084,9 @@ detach = true
 kind = "lua"
 desc = "Print [docker_run] rendered to shlex-quoted `docker run` args (for external native-build scripts). Expands env_file into -e NAME=VALUE tokens, so any secrets appear in stdout — treat the output as sensitive."
 run = '''
--- Go port (admin-3rgp.37) of admin_lib/docker.py::render_run_args. Renders
--- through the shared dockerrun.build_args_from_cfg (also used by "deploy"
--- and "diff" below) rather than a body-local copy of the [docker_run]
+-- Renders [docker_run] to shlex-quoted args (admin-3rgp.37) through the
+-- shared dockerrun.build_args_from_cfg (also used by "deploy" and "diff"
+-- below) rather than a body-local copy of the [docker_run]
 -- cfg->argv logic — issue #388's own lesson (the cfg->argv and inspect->argv
 -- directions once drifted apart because each was hand-written separately)
 -- applies just as much to two Lua bodies implementing the same direction.

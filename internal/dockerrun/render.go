@@ -84,15 +84,13 @@ func mountFlag(host, container, mode string) string {
 
 // Warner receives every warning BuildArgsFromCfg/BuildArgsFromInspect would
 // otherwise have swallowed — the caller (internal/luahost's binding) routes
-// it to h.Warn so a Lua body sees the identical diagnostic text
-// admin_lib/docker.py's warn() calls produced.
+// it to h.Warn so a Lua body sees the identical diagnostic text.
 type Warner func(string)
 
 func noopWarn(string) {}
 
 // BuildArgsFromCfg renders argv pieces (no `docker run -d --name X` prefix,
-// no image) from a [docker_run] config table — the Go port of
-// admin_lib/docker.py::_build_run_args_from_cfg, reused by the docker
+// no image) from a [docker_run] config table, reused by the docker
 // archetype's run-args, deploy, and diff actions so the renderer has exactly
 // one implementation (issue #388's own lesson about the two directions
 // drifting apart applies just as much to "two languages implementing the
@@ -313,8 +311,7 @@ func BuildArgsFromCfg(cfg map[string]any, envVars map[string]string, envFileVars
 
 // BuildArgsFromInspect translates `docker inspect` JSON (single-container,
 // already decoded via json.decode) into argv pieces reproducing the
-// container's runtime config — the Go port of
-// admin_lib/docker.py::_build_run_args_from_inspect. Field-table rows are
+// container's runtime config. Field-table rows are
 // read via the same FieldTable BuildArgsFromCfg renders from, so the live
 // side can never carry a field the declared side has no way to express
 // (issue #388).

@@ -13,9 +13,8 @@ import (
 // PostSyncCmd must be set — with no code path that reads one but not the
 // other. The bug report's suspected root cause was a second, generic sync
 // implementation that never read [deploy]'s chown/post_sync/host keys at
-// all (interp.py's `_make_sync`); this package is the only Go
-// implementation of a [deploy] sync, so that class of bug has no second
-// path to hide in.
+// all; this package is the only implementation of a [deploy] sync, so that
+// class of bug has no second path to hide in.
 func TestBuildDeploySyncPlanChownAndPostSync(t *testing.T) {
 	cfg := map[string]any{
 		"src":       "deploy/appdata",
@@ -25,7 +24,7 @@ func TestBuildDeploySyncPlanChownAndPostSync(t *testing.T) {
 		"post_sync": "chown -R ${APP_UID:-99}:${APP_GID:-100} ${APPDATA_PATH}",
 	}
 	envVars := map[string]string{
-		"UNRAID_HOST": "unraid.example.com",
+		"UNRAID_HOST":  "unraid.example.com",
 		"APPDATA_PATH": "/mnt/user/appdata/etv-station",
 	}
 	plan, errs := BuildDeploySyncPlan(cfg, envVars, false, false)
@@ -50,7 +49,7 @@ func TestBuildDeploySyncPlanChownAndPostSync(t *testing.T) {
 func TestBuildDeploySyncPlanLocalHostSkipsChownFlag(t *testing.T) {
 	// A local deploy target renders no rsync command at all (the Lua caller
 	// takes the local-copy branch instead) — chown has no effect on a local
-	// copy, matching admin_lib/core.py::sync's warning for that case.
+	// copy.
 	cfg := map[string]any{"src": "deploy/appdata", "dest": "/tmp/x", "host": "localhost", "chown": "99:100"}
 	plan, errs := BuildDeploySyncPlan(cfg, nil, true, false)
 	if len(errs) != 0 {

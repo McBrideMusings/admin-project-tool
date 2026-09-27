@@ -9,8 +9,7 @@ signature here does not change without updating this page in the same commit.
 Implementation: [`internal/luahost`](https://github.com/McBrideMusings/admin-project-tool/tree/main/internal/luahost)
 (`github.com/yuin/gopher-lua`, pure Go, Lua 5.1, no cgo). `internal/luahost.Host.Exec(source,
 config)` is the entrypoint `kind = "lua"`'s factory (`internal/kinds`'s `makeLua`) calls to run
-a Lua body — `run` holds the body's source text, exactly as `kind = "python"`'s `run` held a
-Python code block before this ADR replaced it. An inline `[actions.X.config]` table on the
+a Lua body — `run` holds the body's source text. An inline `[actions.X.config]` table on the
 action, if present, becomes the `config` global.
 
 A Lua body gets Lua's `base`, `table`, `string` and `math` libraries. It does **not** get `os`
@@ -21,7 +20,7 @@ surface stays exactly what this page lists rather than whatever Lua's stdlib hap
 
 | Global | Shape | Behaviour |
 |---|---|---|
-| `args` | `string[]` | The CLI arguments the action was invoked with — `args[1]`, `args[2]`, ... (1-indexed, per Lua array convention), `#args` for the count. Mirrors the Python original's bare `args` name (`sys.argv`'s tail). Always present, as an empty table when no arguments were given. |
+| `args` | `string[]` | The CLI arguments the action was invoked with — `args[1]`, `args[2]`, ... (1-indexed, per Lua array convention), `#args` for the count. Always present, as an empty table when no arguments were given. |
 
 ## Output
 
@@ -31,15 +30,14 @@ surface stays exactly what this page lists rather than whatever Lua's stdlib hap
 | `ok(msg)` | `(string) -> ()` | Prints `msg` in green to stdout, appends it to the active log. |
 | `warn(msg)` | `(string) -> ()` | Prints `msg` in yellow to stderr, appends `"WARNING: msg"` to the active log. |
 | `err(msg)` | `(string) -> ()` | Prints `msg` in red to stderr, appends `"ERROR: msg"` to the active log. |
-| `print(msg)` | `(string) -> ()` | Writes `msg` plus a newline to stdout verbatim — no colour, no log write. For output a caller captures and re-parses (`$(admin run-args)`, `admin diff --format json`) rather than a diagnostic a person reads: `info`/`ok`/`warn`/`err` all wrap `msg` in an ANSI colour code unconditionally, which corrupts a captured string. Added by [admin-3rgp.37](https://github.com/McBrideMusings/admin-project-tool/issues) for the docker archetype's `run-args` action — the Go port of Python's bare `print()` builtin. |
+| `print(msg)` | `(string) -> ()` | Writes `msg` plus a newline to stdout verbatim — no colour, no log write. For output a caller captures and re-parses (`$(admin run-args)`, `admin diff --format json`) rather than a diagnostic a person reads: `info`/`ok`/`warn`/`err` all wrap `msg` in an ANSI colour code unconditionally, which corrupts a captured string. Added by [admin-3rgp.37](https://github.com/McBrideMusings/admin-project-tool/issues) for the docker archetype's `run-args` action. |
 
 ## Log context
 
 | Function | Signature | Behaviour |
 |---|---|---|
 A command already names a log unconditionally before its first step runs — every dispatch
-through `RunCommand` calls `internal/kinds/dispatch.go`'s `nameCommandLog`,
-which is the Go port of `admin_lib/interp.py`'s `_make_step_runner` opening block. Neither Lua
+through `RunCommand` calls `internal/kinds/dispatch.go`'s `nameCommandLog`. Neither Lua
 function below is what makes a log exist; both are how a step (a multi-target target, a framed
 action) *refines* the name the command already set, before anything is actually created.
 
@@ -47,7 +45,7 @@ action) *refines* the name the command already set, before anything is actually 
 | `set_log_context_path(path[, {retain=N}])` | `(string, table?) -> ()` | Same deferral rule, but names an explicit path instead of a timestamped stem. |
 
 `retain` omitted (or its table key absent) falls back to the configured default — 5, or an
-explicit `[logging] retain` — matching the Python original's `retain=None`. `retain = 0` means
+explicit `[logging] retain`. `retain = 0` means
 "no pruning" for a stem context, or "no rotation" for a `log_file` path context (numbered
 `.1`/`.2`/... suffixes) — both are implemented, not a gap; see `internal/luahost/logcontext.go`.
 
@@ -61,9 +59,9 @@ Process supervision (a long-running dev-server loop with reload) is explicitly *
 `run_cmd` — that logic lives in the host's own reload/output-pump machinery per the project's
 "never re-hand-roll the pump" rule, not in a Lua body.
 
-| `run_action(name[, arg, ...])` | `(string, string...) -> nil` | Dispatches another declared action by name with the given string arguments, raising a Lua error if it fails — the port of the `run_command` a `kind="python"` body had in scope. Two shapes need it and have no other form: a picker that routes to one of several sub-actions, and a teardown that runs three of them in order. `run_cmd` cannot stand in, because it shells out and a shell cannot reach a sibling action. Backed by `Host.RunAction`, wired from `makeLua`'s `*Surface`; a Host built outside a kind dispatch leaves it nil and the call raises rather than silently doing nothing. |
+| `run_action(name[, arg, ...])` | `(string, string...) -> nil` | Dispatches another declared action by name with the given string arguments, raising a Lua error if it fails. Two shapes need it and have no other form: a picker that routes to one of several sub-actions, and a teardown that runs three of them in order. `run_cmd` cannot stand in, because it shells out and a shell cannot reach a sibling action. Backed by `Host.RunAction`, wired from `makeLua`'s `*Surface`; a Host built outside a kind dispatch leaves it nil and the call raises rather than silently doing nothing. |
 
-| `run_group(commands[, {dir=path}])` | `({tag=string, cmd=string}[], table?) -> number` | Runs every `commands[i].cmd` concurrently through `/bin/sh -c`, prefixing each one's output with `"[tag] "` as it streams — the Go port (admin-3rgp.37) of the one archetype body ADR-0010 names as NOT becoming Lua: a multi-process dev loop (forge-engine's workspace mode) that used raw `threading.Lock` + `subprocess.Popen` + `poll`/`wait` in Python. Composes `internal/streams.OutputPump` (one per child, tagging its lines) with this repo's own process/signal handling — not a third hand-rolled pump. Ctrl+C is forwarded to every still-running child, given 5s, then killed. Returns the highest exit code across every child (0 if all exited zero), matching the Python original's `sys.exit(max(rcs))`. |
+| `run_group(commands[, {dir=path}])` | `({tag=string, cmd=string}[], table?) -> number` | Runs every `commands[i].cmd` concurrently through `/bin/sh -c`, prefixing each one's output with `"[tag] "` as it streams (admin-3rgp.37) — the shape a multi-process dev loop (forge-engine's workspace mode) needs. Composes `internal/streams.OutputPump` (one per child, tagging its lines) with this repo's own process/signal handling — not a third hand-rolled pump. Ctrl+C is forwarded to every still-running child, given 5s, then killed. Returns the highest exit code across every child (0 if all exited zero). |
 
 ## Target selection
 
@@ -72,10 +70,10 @@ Process supervision (a long-running dev-server loop with reload) is explicitly *
 | `pick_target(entries[, prompt])` | `({key=string, description=string}[], string?) -> string?` | Prompts for one of `entries` (an ordered array — order is the display order) and returns the chosen key, or `nil` if there was nothing to pick, stdin isn't a TTY, or the user cancelled (`q` or empty input). Runs entirely in-process against the host's stdin/stdout — the property ADR-0010 requires ("no subprocess and no wire protocol"). |
 | `only_target(choices, cmd_name)` | `({key=string, description=string}[], string) -> string?` | Returns the sole entry's key when `choices` has exactly one, announcing it via `info` as `"<cmd_name>: <key> is this project's only target"` so a no-prompt run reads as a deliberate skip, not a silently failed picker. Returns `nil` for zero or more than one choice. |
 
-`pick_target`'s picker is a numbered list read from a line of stdin, not the Python original's
-raw-mode arrow-key TUI — it satisfies the "same process, no subprocess" requirement and
-degrades the same way on a non-TTY, but is a plainer interaction. A richer in-terminal picker
-is a follow-up, not a requirement this page's functions fail to meet.
+`pick_target`'s picker is a numbered list read from a line of stdin, not a raw-mode arrow-key
+TUI — it satisfies the "same process, no subprocess" requirement and degrades cleanly on a
+non-TTY, but is a plainer interaction. A richer in-terminal picker is a follow-up, not a
+requirement this page's functions fail to meet.
 
 ## Environment
 
@@ -87,12 +85,11 @@ is a follow-up, not a requirement this page's functions fail to meet.
 
 Bound by [admin-3rgp.37](https://github.com/McBrideMusings/admin-project-tool/issues), wrapping
 [`internal/dockerrun`](https://github.com/McBrideMusings/admin-project-tool/tree/main/internal/dockerrun)
-— a pure, host-independent Go port of admin_lib/docker.py's `[docker_run]` cfg↔argv renderers,
+— a pure, host-independent package holding the `[docker_run]` cfg↔argv renderers,
 drift comparison, and `[deploy]` file-sync planner. The docker archetype's `run-args`, `deploy`,
 and `diff` actions all call through this one table rather than each carrying its own copy of the
 field-table renderer, so the cfg→argv and inspect→argv directions (and the declared/last-deploy/
-live three-way diff `diff` computes) cannot drift apart the way the original two hand-written
-Python functions once did (issue #388).
+live three-way diff `diff` computes) cannot drift apart (issue #388).
 
 | Function | Signature | Behaviour |
 |---|---|---|
@@ -107,7 +104,7 @@ Python functions once did (issue #388).
 | `dockerrun.provision_commands(cfg[, env_vars])` / `dockerrun.health_check_shell(cfg[, env_vars])` | `(table, table?) -> string[]` / `(table, table?) -> string?` | Shell snippets for bind-mount dir provisioning (`mkdir`/`chown`) and a post-deploy health-check poll, both expanding `${VAR}` the same way `build_args_from_cfg` does. |
 | `dockerrun.mount_env_deps(cfg)` | `(table) -> string[]` | Every env-var name an `optional_mounts`/`bind_mounts` host path references — `deploy` uses this to refuse a remote deploy that would otherwise resolve a mount path against the wrong machine's environment (see `remote_env_file` below). |
 | `dockerrun.parse_env_text(text)` | `(string) -> table` | Parses `KEY=value` env-file text (`#` comments, blank lines skipped; values are **not** unquoted, matching `docker --env-file`'s own literal handling). |
-| `dockerrun.build_deploy_sync_plan(cfg, env_vars, is_local, dry_run)` | `(table, table?, bool, bool) -> (table?, string[])` | Resolves a `[deploy]` table into a sync plan — `src`/`dest`/`target`/`is_remote`/`host`/`rsync_cmd`/`chown`/`post_sync_cmd` — or `nil` plus a list of user-facing error strings (missing `src`/`dest`, an unknown key). This is the **only** implementation of a `[deploy]` sync in the tool, so `chown` and `post_sync` (admin-9bex) can't be silently dropped by a second, more-generic sync path the way they could when `admin_lib/interp.py`'s `_make_sync` existed alongside `deploy_files`. |
+| `dockerrun.build_deploy_sync_plan(cfg, env_vars, is_local, dry_run)` | `(table, table?, bool, bool) -> (table?, string[])` | Resolves a `[deploy]` table into a sync plan — `src`/`dest`/`target`/`is_remote`/`host`/`rsync_cmd`/`chown`/`post_sync_cmd` — or `nil` plus a list of user-facing error strings (missing `src`/`dest`, an unknown key). This is the **only** implementation of a `[deploy]` sync in the tool, so `chown` and `post_sync` (admin-9bex) can't be silently dropped by a second, more-generic sync path. |
 
 `[docker_run]`'s `remote_env_file` (a path on the *target*, read over ssh) is not itself a
 `dockerrun` function — a Lua body reads it with `run_cmd("ssh ... cat ...")` and parses the result
@@ -117,12 +114,12 @@ with `parse_env_text`, then passes it as `build_args_from_cfg`'s `env_vars` argu
 ## React Native — Metro
 
 Bound by [admin-3rgp.37](https://github.com/McBrideMusings/admin-project-tool/issues), wiring
-`internal/metro` (admin-3rgp.14's self-contained Go port of `admin_lib/metro.py`) into a Lua
-table for the first time — that package's own doc comment named this exact gap.
+`internal/metro` (admin-3rgp.14's self-contained package for driving Metro) into a Lua
+table.
 
 | Function | Signature | Behaviour |
 |---|---|---|
-| `metro.ensure(app_dir[, {port=, log_file=, pid_file=}])` | `(string, table?) -> bool` | Starts Metro in `app_dir` unless one is already answering `/status` on `port` (default `8081`). Returns whether it started a new process. `log_file`/`pid_file` default under the active log directory (`tmp/metro.log`, `tmp/metro.pid`). Raises a Lua error if a freshly started Metro exits immediately or never answers within 60s — the same "must not continue toward a build that would only show a red screen" contract the Python original enforced with `RuntimeError`. |
+| `metro.ensure(app_dir[, {port=, log_file=, pid_file=}])` | `(string, table?) -> bool` | Starts Metro in `app_dir` unless one is already answering `/status` on `port` (default `8081`). Returns whether it started a new process. `log_file`/`pid_file` default under the active log directory (`tmp/metro.log`, `tmp/metro.pid`). Raises a Lua error if a freshly started Metro exits immediately or never answers within 60s — a build must never continue toward one that would only show a red screen. |
 | `metro.stop([{port=, pid_file=}])` | `(table?) -> bool` | Stops a Metro started by `ensure`, returning whether one was actually stopped. |
 | `metro.running([port])` | `(number?) -> bool` | True if a Metro bundler is answering `/status` on `port` (default `8081`). |
 
@@ -149,22 +146,18 @@ Every Lua body runs with a global `config` table, built by `internal/kinds.makeL
    `.Go`, and siblings (see [ADR-0009](../adr/0009-manifests-reference-archetypes-carry-implementation.md))
    — is placed under its own admin.toml name: `config.go`, `config.apple`, `config.server`, and
    so on (`internal/kinds.archetypeConfigTables`). Every table is exposed unconditionally to
-   every Lua body, regardless of which kind is running — the same shape as the Python
-   interpreter's `_CONFIG_GLOBALS` (`_APPLE_CONFIG`, `_GO_CONFIG`, ...), which likewise injected
-   every table into the exec namespace unconditionally and let a body read whichever name it was
+   every Lua body, regardless of which kind is running, so a body reads whichever name it was
    authored against. A `kinds.Factory` carries the full resolved `*manifest.Manifest`
    (admin-3rgp.43's signature change — see `internal/kinds/registry.go`'s `Factory` doc comment),
    so `makeLua` can reach any of these tables without a per-action record of which archetype an
    action came from (`manifest.Action` is a bare `map[string]any` with no such provenance field).
 2. An optional inline `[actions.X.config]` table is merged on top, at the top level, so an
-   action can still pass its own ad hoc values (`config.value`) the way the original single-table
-   design worked. An inline key wins on collision with a domain-table name (an inline key
-   literally named `go` would shadow `config.go`).
+   action can still pass its own ad hoc values (`config.value`). An inline key wins on collision
+   with a domain-table name (an inline key literally named `go` would shadow `config.go`).
 
 A body reads a nested field the normal way: `config.go.binary`, `config.apple.ios_scheme`,
-`config.nested.field`, `config.list[1]`. This replaces the Python interpreter's
-`globals().get("_APPLE_CONFIG")` lookup with a real, nested Lua table under one predictable
-global rather than N string-prefixed globals.
+`config.nested.field`, `config.list[1]` — a real, nested Lua table under one predictable global
+rather than N string-prefixed globals.
 
 Wiring these tables into `config` is entirely `internal/kinds`' job — `internal/luahost.Host.Exec(source,
 cfg)` is unchanged by admin-3rgp.43 and still just takes whatever `map[string]any` its caller
@@ -172,21 +165,19 @@ hands it as the `config` global.
 
 ## Apple platform verbs
 
-Bound by [admin-3rgp.38](https://github.com/McBrideMusings/admin-project-tool/issues), ported
-from `admin_lib/apple.py`. Registered only on darwin builds (`apple_register_darwin.go`); a
-non-darwin build gets a no-op `registerApple` (`apple_stub.go`) and the global `apple` table is
-simply absent — the same "undefined global" a body gets for typoing any other host function
-name, rather than a table of functions that all error. This table itself is a **partial** port —
-the OS-facing primitives (xcodebuild, simctl, devicectl, codesign, log parsing), pbxproj parsing,
-icon backup/dev-banner-swap/restore, and glyph-based fresh icon generation are bound — see "What
-is intentionally not here yet" below for what remains unbound. Continuous dev-loop supervision and
-attached device console output, this table's other historical gap, are covered too, but as the Go-side
-`kind = "apple"`/`kind = "apple-dev-loop"` action kinds rather than more entries in this table —
-see "What kind=\"apple\"/kind=\"apple-dev-loop\" cover" just below the table.
+Bound by [admin-3rgp.38](https://github.com/McBrideMusings/admin-project-tool/issues). Registered
+only on darwin builds (`apple_register_darwin.go`); a non-darwin build gets a no-op
+`registerApple` (`apple_stub.go`) and the global `apple` table is simply absent — the same
+"undefined global" a body gets for typoing any other host function name, rather than a table of
+functions that all error. The OS-facing primitives (xcodebuild, simctl, devicectl, codesign, log
+parsing), pbxproj parsing, icon backup/dev-banner-swap/restore, and glyph-based fresh icon
+generation are bound here — see "What is intentionally not here yet" below for what isn't.
+Continuous dev-loop supervision and attached device console output are covered too, but as the
+Go-side `kind = "apple"`/`kind = "apple-dev-loop"` action kinds rather than more entries in this
+table — see "What kind=\"apple\"/kind=\"apple-dev-loop\" cover" just below the table.
 
-All error paths that the Python original reported via `warn()`/`err()` mid-call are relayed the
-same way here (the Lua binding calls `h.Warn`/`h.Err`), so a body sees the identical explanatory
-text, not just a bare `nil`.
+Every error path warns or errors through `h.Warn`/`h.Err`, so a body sees explanatory text, not
+just a bare `nil`.
 
 | Function | Signature | Behaviour |
 |---|---|---|
@@ -221,62 +212,60 @@ text, not just a bare `nil`.
 | `apple.xcode_setting(project_path, scheme, key)` | `(string, string, string) -> string?` | `xcode_target_settings(project_path, scheme).key` (always at `"Debug"`), or `nil` if missing, non-string, or an unresolved `$(...)` substitution the caller can't act on. |
 | `apple.backup_icons(icon_dirs, backup_dir)` / `apple.restore_icons(icon_dirs, backup_dir)` | `(table, string) -> ()` | Copies every `*.png` between each `icon_dirs[label]` appiconset directory and `backup_dir/label`. `icon_dirs` is `{label = path, ...}` (e.g. `{mac = "...", ios = "..."}`); a missing source directory is skipped, not an error. `restore_icons` removes `backup_dir` when done. |
 | `apple.backup_tv_icons(brandassets_dir, backup_dir)` / `apple.restore_tv_icons(brandassets_dir, backup_dir)` | `(string, string) -> ()` | Same shape as `backup_icons`/`restore_icons`, but for a tvOS `.brandassets` catalog — a directory tree, not a flat set of PNGs, so it's copied whole rather than by filename. |
-| `apple.swap_dev_icons_banner(icon_dirs)` | `(table) -> bool` | Overlays a red diagonal dev banner (stdlib-rendered — see below) onto every `*.png` in each `icon_dirs[label]`, in place, flattening to opaque RGB so macOS renders the icon full-bleed. Binds only `swap_dev_icons`' "overlay the existing icon art" path (`admin_lib/apple.py`'s `has_glyph=False` branch) — see below for what's not bound. Returns `false` if any file failed to process. |
+| `apple.swap_dev_icons_banner(icon_dirs)` | `(table) -> bool` | Overlays a red diagonal dev banner (stdlib-rendered — see below) onto every `*.png` in each `icon_dirs[label]`, in place, flattening to opaque RGB so macOS renders the icon full-bleed. This is the "overlay the existing icon art" path, used when a project has no `glyph_text` config — see below for what's not bound. Returns `false` if any file failed to process. |
 | `apple.apply_tv_dev_banner(brandassets_dir)` | `(string) -> bool` | Overlays the same dev banner onto an *existing* tvOS `.brandassets` tree in place — the overlay-in-place counterpart to `generate_tv_icons`'s `dev=true`, for a project shipping its own tvOS art rather than a glyph config. Only the topmost `Front` layer of each imagestack and the Top Shelf images are touched; `Back`/`Middle` and the art itself are left untouched. Unlike `swap_dev_icons_banner`, this does **not** flatten to opaque RGB — the Front layer keeps its alpha channel so it still floats transparently over `Middle`/`Back`. Returns `false` (after warning via `h.Err`) if a file other than a plain decode failure could not be processed; a directory that doesn't exist is skipped, not an error. |
 | `apple.swap_dev_icon_composer(icon_path, backup_dir)` / `apple.restore_icon_composer(icon_path, backup_dir)` | `(string, string) -> bool` / `(string, string) -> ()` | Injects (or removes) an opaque `DEV`-banner group into an Icon Composer `.icon` bundle's `icon.json`, rendering the banner asset sized to `Assets/icon-raw.png` (or 1024 if absent). `swap` backs up the pristine `icon.json` to `backup_dir` first and returns `false` (no error) if `icon.json` is missing — not an Icon-Composer-shaped bundle. `restore` prefers the byte-exact backup, else strips the banner group from whatever's on disk, and removes the generated banner asset and `backup_dir` either way. |
-| `apple.generate_icons(sizes, output_dir[, {bg_color=, glyph_svg=, glyph_text=, glyph_color=, glyph_scale=, dev=, filename_format=}])` | `(number[], string, table?) -> bool` | Renders a flat mac/iOS appiconset ladder — one PNG per entry in `sizes` — into `output_dir`, always flattened to opaque RGB (ADR-0007). The only supported glyph source is `glyph_text` (drawn with `golang.org/x/image`'s embedded Go Regular font) over a plain `bg_color` square; `dev` overlays the same stdlib-rendered banner `swap_dev_icons_banner` uses. `glyph_scale` (default `0.55`) is the glyph's fraction of the icon's shorter side. `filename_format` defaults to `"{size}.png"`. **`glyph_svg` is no longer supported** (admin-3rgp.48 dropped SVG glyph rendering and its unmaintained `oksvg`/`rasterx` dependency) — configuring it always returns `false` with an error naming the dropped capability, never a blank or silently-wrong icon. A malformed `bg_color` fails the same way. Returns `false` after warning (via `h.Err`) if any size fails to render, matching the Python original's "warn, build continues without custom icons" contract, not a crash. |
+| `apple.generate_icons(sizes, output_dir[, {bg_color=, glyph_svg=, glyph_text=, glyph_color=, glyph_scale=, dev=, filename_format=}])` | `(number[], string, table?) -> bool` | Renders a flat mac/iOS appiconset ladder — one PNG per entry in `sizes` — into `output_dir`, always flattened to opaque RGB (ADR-0007). The only supported glyph source is `glyph_text` (drawn with `golang.org/x/image`'s embedded Go Regular font) over a plain `bg_color` square; `dev` overlays the same stdlib-rendered banner `swap_dev_icons_banner` uses. `glyph_scale` (default `0.55`) is the glyph's fraction of the icon's shorter side. `filename_format` defaults to `"{size}.png"`. **`glyph_svg` is no longer supported** (admin-3rgp.48 dropped SVG glyph rendering and its unmaintained `oksvg`/`rasterx` dependency) — configuring it always returns `false` with an error naming the dropped capability, never a blank or silently-wrong icon. A malformed `bg_color` fails the same way. Returns `false` after warning (via `h.Err`) if any size fails to render — the build continues without custom icons rather than crashing. |
 | `apple.generate_tv_icons(brandassets_dir[, {bg_color=, glyph_svg=, glyph_text=, glyph_color=, glyph_scale=, dev=}])` | `(string, table?) -> bool` | Generates a complete tvOS `.brandassets` catalog (both `App Icon` imagestacks' Front/Middle/Back layers, both Top Shelf image sets, and every `Contents.json`) from the same glyph inputs `generate_icons` takes — including the same `glyph_svg` rejection. Always overwrites `brandassets_dir`. The `Back` layer of every imagestack is always opaque (tvOS errors on a transparent bottom layer); `Middle` is always a transparent spacer; only `Front` and the Top Shelf images carry the glyph and the `dev` banner. Returns `false` after warning on failure, same contract as `generate_icons`. |
 
 ## What kind="apple"/kind="apple-dev-loop" cover (admin-3rgp.12)
 
 Continuous dev-loop supervision (`dev_mac`/`dev_ios`/`dev_tv`/`dev_device`) and attached device
-console output — the two items this section used to list as deferred — are ported, but **not**
-as `apple.*` Lua bindings. They live in `internal/kinds` (`apple_darwin.go`,
-`appledevloop_darwin.go`) as the Go implementation of `kind = "apple"` (one verb per `run` value —
-`build_mac`, `dev_ios`, `deploy_tv`, `clean_ios`, ...) and `kind = "apple-dev-loop"` (the same
-target-picker shape as `kind = "multi-target"`, registered to the same factory; an archetype
-opts one of its targets into its own terminal by declaring `detach = true` on it, per ADR-0020
-— the kind itself carries no dispatch opinion). A Lua archetype body never calls these
-directly — they're a manifest-driven action kind, the same shape `docker-dev`/`vite-dev` already
-are — composing:
+console output are **not** `apple.*` Lua bindings. They live in `internal/kinds`
+(`apple_darwin.go`, `appledevloop_darwin.go`) as the Go implementation of `kind = "apple"` (one
+verb per `run` value — `build_mac`, `dev_ios`, `deploy_tv`, `clean_ios`, ...) and
+`kind = "apple-dev-loop"` (the same target-picker shape as `kind = "multi-target"`, registered to
+the same factory; an archetype opts one of its targets into its own terminal by declaring
+`detach = true` on it, per ADR-0020 — the kind itself carries no dispatch opinion). A Lua
+archetype body never calls these directly — they're a manifest-driven action kind, the same shape
+`docker-dev`/`vite-dev` already are — composing:
 
 - `internal/reload`'s caller-owned shape (`SetupReload`/`PollForReload`/`IsRebuildRequested`/
   `ClearRebuildRequest`) for the "run the whole build-install-launch cycle again" signal.
 - `internal/streams.OutputPump` for the attached log/console stream.
 - The already-bound primitives below (`apple.xcodebuild` et al., called directly from Go as
   `luahost.XcodebuildFiltered` and siblings — no Lua VM involved) for every OS-facing call, plus
-  two new Go-only starters for the long-running streams the bound primitives don't cover:
+  two Go-only starters for the long-running streams the bound primitives don't cover:
   `luahost.StreamMacLog` (`log stream` / `simctl spawn ... log stream`) and
   `luahost.StartDeviceConsole` (`devicectl device process launch --console`).
 
-Real-machine verified (a genuine multi-target `.xcodeproj`, this ticket's pass): `build_mac`,
-`build_ios` (simulator auto-resolve), `clean_ios`, and a full `dev_mac` cycle — build, launch,
-attach `log stream`, detect the launched app dying, tear down and return with no error. Not
-exercised end to end this pass: `dev_ios`/`dev_tv` (needs a booted simulator, not run against
-one), `dev_device`/`deploy_ios`/`deploy_tv` (need a paired physical device), and anything reading
-App Store Connect credentials (no key configured in this environment).
+Real-machine verified (a genuine multi-target `.xcodeproj`): `build_mac`, `build_ios` (simulator
+auto-resolve), `clean_ios`, and a full `dev_mac` cycle — build, launch, attach `log stream`,
+detect the launched app dying, tear down and return with no error. Not exercised end to end:
+`dev_ios`/`dev_tv` (needs a booted simulator), `dev_device`/`deploy_ios`/`deploy_tv` (need a
+paired physical device), and anything reading App Store Connect credentials (no key configured
+in this environment).
 
-Deliberately NOT ported by kind="apple" either:
+Not covered by `kind = "apple"` either:
 
-- App Store Connect device registration (`ensure_device_registered`) — lives in
-  `admin_lib/appstoreconnect.py`, a separate module this ticket does not port; a device deploy
-  that would need it still reports Apple's own "team has no devices" error, just not pre-empted.
+- App Store Connect device registration (`appleEnsureDeviceRegistered`,
+  `internal/kinds/apple_appid_darwin.go`) calls `internal/ascapi` directly rather than an
+  `apple.*` Lua binding; a device deploy that needs it reports Apple's own "team has no devices"
+  error if no App Store Connect key is configured, rather than pre-empting it.
 - **Log pruning** (`retain`) — accepted, not enforced (see above).
-- **A richer `pick_target` picker** — arrow-key navigation, scrolling for long lists. The
-  current numbered-list picker meets the acceptance criterion (in-process, no subprocess) but
-  not the original's UI fidelity.
+- **A richer target picker** — arrow-key navigation, scrolling for long lists. The current
+  numbered-list picker is in-process (no subprocess) but has no scrolling or arrow-key nav.
 
-Everything else this section used to list here as deferred is now ported. The dev/prod
-bundle-suffix convention layer (`_compose_dev_settings`, `_entitlements_paths`,
-`_target_needs_provisioning_profile`) — deriving `ADMIN_DEV_BUNDLE_SUFFIX` and deciding whether a
-target needs a real provisioning profile, on top of the pbxproj parsing (`apple.read_pbxproj` /
-`apple.xcode_target_settings` / `apple.xcode_setting`) — is ported (`internal/kinds/applesign_darwin.go`)
-and wired into every dev-loop build. Dev-icon-swap hooks (`build_icon_hooks`: backup/swap-banner/
-restore around each build) and the iOS/tvOS display-name patch are ported and wired
-(`internal/kinds/appleiconhooks_darwin.go`, admin-7ig8.1) into the simulator and device dev loops.
-The mac dev-rename/re-sign postprocessing (`dev_macos_postprocess`) and the mac dev loop's
-dev/prod-aware `is_running_fn`/`kill_fn` overrides are ported and wired into `appleDevMac`
+The dev/prod bundle-suffix convention layer (`appleComposeDevSettings`, `appleEntitlementsPaths`,
+`appleTargetNeedsProvisioningProfile`, `internal/kinds/applesign_darwin.go`) — deriving
+`ADMIN_DEV_BUNDLE_SUFFIX` and deciding whether a target needs a real provisioning profile, on top
+of the pbxproj parsing (`apple.read_pbxproj` / `apple.xcode_target_settings` /
+`apple.xcode_setting`) — is wired into every dev-loop build. Dev-icon-swap hooks (backup/
+swap-banner/restore around each build, `internal/kinds/appleiconhooks_darwin.go`, admin-7ig8.1)
+and the iOS/tvOS display-name patch are wired into the simulator and device dev loops. The mac
+dev-rename/re-sign postprocessing (`apple.dev_macos_postprocess`) and the mac dev loop's
+dev/prod-aware `is_running_fn`/`kill_fn` overrides are wired into `appleDevMac`
 (admin-3rgp.75).
 
-Manifest-level archetype config tables reaching a Lua body automatically — the gap this section
-used to list here — is closed by admin-3rgp.43: see "Configuration" above.
+Manifest-level archetype config tables reach a Lua body automatically (admin-3rgp.43): see
+"Configuration" above.

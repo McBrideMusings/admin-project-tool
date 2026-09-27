@@ -8,26 +8,23 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// registerMetro binds internal/metro (admin-3rgp.14's self-contained Go port
-// of admin_lib/metro.py) into the `metro` global table — the wiring that
-// package's own doc comment says it's waiting on ("ready for whichever
-// ticket wires a React Native dev loop to call it"). The react-native
-// archetype (admin-3rgp.37) is that ticket: its dev/metro action bodies used
-// to call admin_lib/react_native.py's ensure_metro_for/stop_metro_for, which
-// this table replaces one-for-one.
+// registerMetro binds internal/metro (admin-3rgp.14's self-contained
+// Metro-dev-server package) into the `metro` global table — the wiring
+// that package's own doc comment says it's waiting on ("ready for
+// whichever ticket wires a React Native dev loop to call it"). The
+// react-native archetype (admin-3rgp.37) is that ticket: its dev/metro
+// action bodies call through this table.
 //
-// metro.log_file/metro.pid_file default under h.LogDir ("<project>/tmp"),
-// matching admin_lib/react_native.py::_metro_paths' get_log_dir()-or-"tmp"
-// fallback — a project only overrides them by passing an explicit path.
+// metro.log_file/metro.pid_file default under h.LogDir ("<project>/tmp") —
+// a project only overrides them by passing an explicit path.
 func (h *Host) registerMetro(L *lua.LState) {
 	tbl := L.NewTable()
 
 	// metro.ensure(app_dir[, {port=, log_file=, pid_file=}]) -> started(bool)
 	// Raises a Lua error on failure (Metro exited immediately, or never
-	// answered /status in time) — the same "must not continue toward a build
-	// that would only show a red screen" contract as the Python original's
-	// RuntimeError, translated to Lua's error-raising idiom rather than a
-	// second (ok, err) return a caller could accidentally ignore.
+	// answered /status in time) — must not continue toward a build that
+	// would only show a red screen, using Lua's error-raising idiom rather
+	// than a second (ok, err) return a caller could accidentally ignore.
 	tbl.RawSetString("ensure", L.NewFunction(func(L *lua.LState) int {
 		appDir := L.CheckString(1)
 		port := metro.DefaultPort

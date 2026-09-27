@@ -58,9 +58,8 @@ func TestRenderPlistContent(t *testing.T) {
 	if !strings.HasPrefix(out, "<?xml") {
 		t.Error("plist must start with the XML declaration")
 	}
-	// Keys sorted, matching Python plistlib.dumps(sort_keys=True), so a plist
-	// written by the old tool and one written here compare equal and an upgrade
-	// does not read as a change.
+	// Keys sorted, so a plist written by an earlier run and one written here
+	// compare equal and an upgrade does not read as a change.
 	if strings.Index(out, "<key>KeepAlive</key>") > strings.Index(out, "<key>Label</key>") {
 		t.Error("top-level keys are not sorted")
 	}

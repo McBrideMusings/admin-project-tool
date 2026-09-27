@@ -12,19 +12,17 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// emptyCmdErr matches admin_lib/interp.py's _EMPTY_CMD_ERR: a blank `run`
-// would otherwise reach /bin/sh -c "" and exit 0, which a factory would then
-// report as success — refuse it explicitly instead of trusting the shell to
-// fail on nothing.
+// emptyCmdErr: a blank `run` would otherwise reach /bin/sh -c "" and exit
+// 0, which a factory would then report as success — refuse it explicitly
+// instead of trusting the shell to fail on nothing.
 const emptyCmdErr = "refusing to run an empty command"
 
-// makeShell is kind="shell"'s factory — the Go port of
-// admin_lib/interp.py::_make_shell, including the watch-kind piece
-// (admin_lib/watch.py, ported to watch.go). `run` is resolved with
-// manifest.ResolveEnv, the same call admin_lib/core.py::run_cmd makes on
-// every command string: a manifest writes ${VAR} precisely so the value can
-// live in .env instead of the file, and handing the placeholder to /bin/sh
-// instead expands an unset name to "" and runs the command anyway.
+// makeShell is kind="shell"'s factory, including the watch-kind piece
+// (watch.go). `run` is resolved with manifest.ResolveEnv, the same call
+// used on every command string: a manifest writes ${VAR} precisely so the
+// value can live in .env instead of the file, and handing the placeholder
+// to /bin/sh instead expands an unset name to "" and runs the command
+// anyway.
 func makeShell(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	run, _ := actionString(action, "run")
 	rawURLs := actionURLs(action)
@@ -72,10 +70,9 @@ func makeShell(name string, action manifest.Action, m *manifest.Manifest, _ *Sur
 	}, nil
 }
 
-// makeShellPassthrough is kind="shell-passthrough"'s factory — the Go port
-// of admin_lib/interp.py::_make_shell_passthrough. Runner args are appended
-// to `run`, each shell-quoted, so a caller-supplied argument can never be
-// re-interpreted as shell syntax.
+// makeShellPassthrough is kind="shell-passthrough"'s factory. Runner args
+// are appended to `run`, each shell-quoted, so a caller-supplied argument
+// can never be re-interpreted as shell syntax.
 //
 // `interactive = true` is a raw terminal handover: the child inherits this
 // process's own stdin/stdout/stderr with no pipe anywhere in the path, no
@@ -115,8 +112,8 @@ func makeShellPassthrough(name string, action manifest.Action, m *manifest.Manif
 		if interactive {
 			// No frame and no banner: both would paint into a terminal this
 			// process is about to hand over wholesale, and a full-screen child
-			// clears them anyway. Nothing is logged, matching Python's
-			// interactive branch, because there is no pipe to tee from.
+			// clears them anyway. Nothing is logged, because there is no pipe
+			// to tee from.
 			return runInteractive(name, resolved, projectRoot(m))
 		}
 		f := enterFrame(h, name, rawURLs, hasFooter, footerVal, m)

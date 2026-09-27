@@ -12,20 +12,19 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/timing"
 )
 
-// RunCmdOptions mirrors the handful of admin_lib/core.py run_cmd knobs a Lua
-// body actually uses (measured in ADR-0010: 4 call sites, none passing a pty
-// or collect callback). Left extensible rather than exhaustive — the
-// process-supervision half of run_cmd (threading.Lock + Popen + poll/wait,
-// used by exactly one body) is explicitly out of this ticket's scope; it
-// belongs in admin_lib/reload.go's Go port (per the repo's OutputPump rule),
-// not reimplemented here.
+// RunCmdOptions covers the handful of run_cmd knobs a Lua body actually
+// uses (measured in ADR-0010: 4 call sites, none passing a pty or collect
+// callback). Left extensible rather than exhaustive — process supervision
+// (a locked, long-running child with poll/wait) is explicitly out of this
+// ticket's scope; it belongs in internal/reload (per the repo's OutputPump
+// rule), not reimplemented here.
 type RunCmdOptions struct {
 	// Dir overrides the command's working directory. Empty means
 	// Host.ProjectRoot.
 	Dir string
-	// CaptureLog mirrors Python's capture_log=True default: when true (the
-	// default), each line the child prints is also appended to the active
-	// log file, same as info/ok/warn/err already do.
+	// CaptureLog defaults to true: when true (the default), each line the
+	// child prints is also appended to the active log file, same as
+	// info/ok/warn/err already do.
 	CaptureLog bool
 }
 
@@ -46,10 +45,10 @@ type RunCmdResult struct {
 // of the two it went through. Stdin, stdout and stderr are left unset — how
 // the child is wired to the terminal is exactly what differs between them.
 //
-// Every string reaching a shell is expanded here and nowhere else, matching
-// admin_lib/core.py::run_cmd ("Strings are passed through resolve_env()
-// first"). A caller that resolves first is unaffected — a resolved string
-// has no "${" left to expand — but a caller that forgets no longer ships a
+// Every string reaching a shell is expanded here and nowhere else — strings
+// are passed through ResolveEnv first. A caller that resolves first is
+// unaffected — a resolved string has no "${" left to expand — but a caller
+// that forgets no longer ships a
 // literal ${VAR} to /bin/sh, which expands an unset name to the empty
 // string and runs anyway: that is how `ssh ${UNRAID_USER:-root}@${UNRAID_HOST}`
 // became `ssh root@` and reported "Could not resolve hostname" instead of a

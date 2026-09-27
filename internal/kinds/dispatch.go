@@ -52,8 +52,7 @@ func checkPureRouting(name string, cmd manifest.Command) error {
 
 // resolveCommand looks up name against the merged manifest's custom
 // commands first, then its (archetype + manifest-override) commands —
-// mirroring admin_lib/archetypes.py::resolve's "custom shadows
-// archetype-provided" rule. Menu-level concerns beyond that — hide_commands,
+// custom commands shadow archetype-provided ones. Menu-level concerns beyond that — hide_commands,
 // group/priority ordering — belong to the Work-tab tickets (admin-3rgp.20/
 // .21), not to running one named command, so they are not reproduced here.
 func resolveCommand(m *manifest.Manifest, name string) (manifest.Command, bool) {
@@ -177,15 +176,13 @@ func (s *Surface) Command(name string, args []string) error {
 }
 
 // RunAction dispatches one named action: resolves its kind (defaulting to
-// "shell", matching admin_lib/validate.py's own `data.get("kind", "shell")"),
-// looks up that kind's factory in r, builds a Surface, and invokes the
-// factory with it so a multi-target target's `action = "other"` can call
-// back into RunAction for another step without needing its own
+// "shell"), looks up that kind's factory in r, builds a Surface, and
+// invokes the factory with it so a multi-target target's `action = "other"`
+// can call back into RunAction for another step without needing its own
 // Manifest/Registry reference.
 //
 // Every non-multi-target action is wrapped with its own `requires` check
-// before the Runner fires — the Go port of admin_lib/interp.py's "wraps
-// each flat action with a run_requires([...]) check" (ADR-0005). A
+// before the Runner fires (ADR-0005). A
 // kind="multi-target" action is deliberately excluded here: its `requires`
 // is only the *default* the picked target inherits, and which target gets
 // picked isn't known until the Runner itself runs, so the multi-target
@@ -411,6 +408,9 @@ func runSteps(m *manifest.Manifest, r *Registry, name string, args []string) err
 		return fmt.Errorf("command %q has no steps", name)
 	}
 	nameCommandLog(m, name, cmd)
+	if err := applyEnv(cmd.Env); err != nil {
+		return fmt.Errorf("command %q: %w", name, err)
+	}
 	for _, step := range cmd.Steps {
 		if err := RunAction(m, r, step, args); err != nil {
 			return fmt.Errorf("command %q: %w", name, err)
@@ -419,12 +419,32 @@ func runSteps(m *manifest.Manifest, r *Registry, name string, args []string) err
 	return nil
 }
 
-// nameCommandLog is the Go port of admin_lib/interp.py's _make_step_runner
-// opening block: every command names a log unconditionally, before its
-// first step runs — admin-rc82's fix. Go had no equivalent of this call at
-// all, so a command whose step bodies never called set_log_context
-// themselves (directly, or via a multi-target target or a framed action)
-// wrote no log at all.
+// applyEnv sets each entry of a command's (or a multi-target target's) `env`
+// table in this process's environment, ${VAR} expanded, so every step and
+// every child it starts sees them. An unresolvable reference is an error
+// rather than an empty value.
+func applyEnv(env map[string]string) error {
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v, err := manifest.ResolveEnv(env[k])
+		if err != nil {
+			return fmt.Errorf("env %s: %w", k, err)
+		}
+		if err := os.Setenv(k, v); err != nil {
+			return fmt.Errorf("env %s: %w", k, err)
+		}
+	}
+	return nil
+}
+
+// nameCommandLog names every command's log unconditionally, before its
+// first step runs — admin-rc82's fix for a command whose step bodies never
+// called SetLogContext themselves (directly, or via a multi-target target
+// or a framed action), which wrote no log at all.
 //
 // This only NAMES the log (deferred, on the process-wide luahost.Process()
 // every kind-factory Host shares — see internal/kinds/helpers.go's
@@ -433,8 +453,7 @@ func runSteps(m *manifest.Manifest, r *Registry, name string, args []string) err
 // it. A step's own kind factory can still refine the name before that
 // happens — SetLogContext/SetLogContextPath are no-ops only once the
 // context has materialized, so whichever call is still pending at first use
-// (typically the innermost — a multi-target target, a framed action) wins,
-// exactly as in the Python original.
+// (typically the innermost — a multi-target target, a framed action) wins.
 func nameCommandLog(m *manifest.Manifest, name string, cmd manifest.Command) {
 	// The project root, not the cwd: LogDir is "<root>/tmp" (or the
 	// [logging].dir under it), and rooting it at the invocation directory put
@@ -451,8 +470,7 @@ func nameCommandLog(m *manifest.Manifest, name string, cmd manifest.Command) {
 
 	switch {
 	case cmd.HasLog && logIsFalse(cmd.Log):
-		// Python's _make_step_runner (admin_lib/interp.py:855) is a bare
-		// `pass` here: `log = false` means this command names no context,
+		// `log = false` means this command names no context,
 		// not that logging is switched off process-wide. Calling
 		// SetEnabled(false) instead let a nested `log = false` command —
 		// reached through dispatch.go:217's surf.Command hop — silence the
@@ -467,8 +485,8 @@ func nameCommandLog(m *manifest.Manifest, name string, cmd manifest.Command) {
 }
 
 // logIsFalse reports whether v — manifest.Command.Log's untyped `log` value
-// — is the boolean false, mirroring Python's `log_cfg.get("log") is False`
-// (a string value, e.g. a log-source name, is never "false").
+// — is the boolean false (a string value, e.g. a log-source name, is never
+// "false").
 func logIsFalse(v any) bool {
 	b, ok := v.(bool)
 	return ok && !b

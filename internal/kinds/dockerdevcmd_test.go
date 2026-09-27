@@ -15,7 +15,7 @@ func TestBuildDockerDevCmdRequiresImageTag(t *testing.T) {
 // TestBuildDockerDevCmdRendersPortsMountsAndEnv proves the rendered script
 // carries a -p flag mapping host to container port, in that order, plus a
 // bind-mount -v flag and a literal -e flag — the core of
-// admin_lib/docker.py's _docker_dev_build_cmd schema.
+// buildDockerDevCmd's schema.
 //
 // MUTATION EVIDENCE: swap `hostPort+":"+contPort` for `contPort+":"+hostPort`
 // in buildDockerDevCmd's ports loop and this test fails: it asserts on
@@ -54,8 +54,7 @@ func TestBuildDockerDevCmdRendersPortsMountsAndEnv(t *testing.T) {
 }
 
 // TestBuildDockerDevCmdPortDefaultsToHostPort proves an omitted `container`
-// port falls back to the host port, matching Python's
-// `p.get("container", host_port)`.
+// port falls back to the host port.
 func TestBuildDockerDevCmdPortDefaultsToHostPort(t *testing.T) {
 	cfg := map[string]any{
 		"image_tag": "myapp:dev",
@@ -83,8 +82,8 @@ func TestBuildDockerDevCmdGPUAll(t *testing.T) {
 
 // TestBuildDockerDevCmdOptionalMountIsConditional proves an optional_mounts
 // entry renders as a runtime shell conditional (checked at container-launch
-// time, not baked in) rather than an unconditional -v flag — the whole
-// reason Python defers env expansion to the shell for this field.
+// time, not baked in) rather than an unconditional -v flag — env expansion
+// for this field is deferred to the shell.
 func TestBuildDockerDevCmdOptionalMountIsConditional(t *testing.T) {
 	cfg := map[string]any{
 		"image_tag": "x",

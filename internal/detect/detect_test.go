@@ -1,10 +1,7 @@
 package detect
 
 import (
-	"bytes"
-	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"testing"
@@ -109,8 +106,7 @@ func TestFixtureTreesProposeExpectedArchetypes(t *testing.T) {
 		})
 		res := Run(root)
 		// The rust detector also matches (Cargo.toml, no Dockerfile) and runs
-		// first in Order, so both archetypes are proposed — same union
-		// behavior as admin_lib.detectors.detect() on this exact fixture.
+		// first in Order, so both archetypes are proposed as a union.
 		assertArchetypes(t, res.Archetypes, []string{"rust", "rust-tauri"})
 	})
 
@@ -305,8 +301,8 @@ func TestNoMatchYieldsFallbackNotError(t *testing.T) {
 
 // TestLaterDetectorClearingProjectNameWins verifies that a later detector can
 // explicitly clear project_name by returning HasProjectName=true with an empty
-// ProjectName value. This matches admin_lib/detectors.py:80-81, where the
-// presence of the key (not its truthiness) drives the merge.
+// ProjectName value — the presence of the key, not its truthiness, drives
+// the merge.
 func TestLaterDetectorClearingProjectNameWins(t *testing.T) {
 	// Save original Order and Registry so we can restore them.
 	origOrder := Order
@@ -349,184 +345,4 @@ func TestLaterDetectorClearingProjectNameWins(t *testing.T) {
 	if res.ProjectName != "" {
 		t.Fatalf("Run ProjectName = %q, want empty after clearing", res.ProjectName)
 	}
-}
-
-// ---------------------------------------------------------------------------
-// parity with the Python detectors
-// ---------------------------------------------------------------------------
-
-// repoRoot walks up from the current test file's directory looking for
-// go.mod, returning "" if none is found (e.g. run from a stripped-down
-// checkout).
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return ""
-		}
-		dir = parent
-	}
-}
-
-// parityPython locates a Python interpreter capable of running the
-// reference admin_lib detector loader (stdlib-only, so any interpreter
-// works — no venv is actually required) and fails the test loudly if none
-// is found, rather than letting the parity check silently report success
-// without comparing anything. Candidates, in order: <root>/.venv/bin/python
-// (if present), then "python3" and "python" on PATH. Each candidate is
-// version-gated at >= 3.11 — matching admin.toml's python_min — since a
-// stray python2 or old python3 on PATH must not produce a bogus failure;
-// any error or non-zero exit from the probe just moves on to the next
-// candidate. If nothing qualifies, ADMIN_SKIP_PYTHON_PARITY opts out with a
-// skip; otherwise the test fails and names both ways out.
-func parityPython(t *testing.T, root string) string {
-	t.Helper()
-
-	var candidates []string
-	venvPython := filepath.Join(root, ".venv", "bin", "python")
-	if _, err := os.Stat(venvPython); err == nil {
-		candidates = append(candidates, venvPython)
-	}
-	if p, err := exec.LookPath("python3"); err == nil {
-		candidates = append(candidates, p)
-	}
-	if p, err := exec.LookPath("python"); err == nil {
-		candidates = append(candidates, p)
-	}
-
-	const versionCheck = "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)"
-	for _, c := range candidates {
-		cmd := exec.Command(c, "-c", versionCheck)
-		if err := cmd.Run(); err == nil {
-			return c
-		}
-	}
-
-	if os.Getenv("ADMIN_SKIP_PYTHON_PARITY") != "" {
-		t.Skip("no usable Python >= 3.11 interpreter found — ADMIN_SKIP_PYTHON_PARITY set, skipping parity check")
-	}
-	t.Fatalf(
-		"no usable Python >= 3.11 interpreter found (searched %s, python3, python on PATH) — "+
-			"this test exists to catch Go/Python detector divergence and must not report success "+
-			"without running it; install python3 >= 3.11, or set ADMIN_SKIP_PYTHON_PARITY=1 to explicitly opt out",
-		venvPython,
-	)
-	return "" // unreachable: t.Fatalf stops the test
-}
-
-// TestParityWithPythonDetectors shells out to the reference admin_lib
-// detector loader against the same fixture trees the Go tests exercise and
-// diffs the archetype sets, the strongest evidence this port matches
-// today's behaviour. It fails when no Python interpreter capable of running
-// the reference implementation can be found — a parity check that could not
-// run must not report success — and skips only when the Python source
-// itself is absent (a stripped checkout or the installed ~/.admin copy) or
-// when ADMIN_SKIP_PYTHON_PARITY is explicitly set.
-func TestParityWithPythonDetectors(t *testing.T) {
-	root := repoRoot(t)
-	if root == "" {
-		t.Skip("repo root (go.mod) not found — skipping Python parity check")
-	}
-	if _, err := os.Stat(filepath.Join(root, "admin_lib", "detectors.py")); err != nil {
-		t.Skip("admin_lib/detectors.py not found — Python reference source is not present, skipping parity check")
-	}
-	python := parityPython(t, root)
-
-	cases := []struct {
-		name  string
-		files map[string]string
-		dirs  []string
-	}{
-		{"empty", nil, nil},
-		{"go-cli", map[string]string{"go.mod": "module x\n"}, nil},
-		{"go-docker", map[string]string{"go.mod": "module x\n", "Dockerfile": "FROM scratch\n"}, nil},
-		{"rust", map[string]string{"Cargo.toml": "[package]\nname=\"x\"\n"}, nil},
-		{"hugo-nested", map[string]string{"site/hugo.toml": "baseURL=\"/\"\n"}, nil},
-		{"cloudflare", map[string]string{"wrangler.toml": "name=\"x\"\n"}, nil},
-		{"unraid", map[string]string{"myplugin.plg": "<PLUGIN/>\n"}, nil},
-		{
-			"firefox",
-			map[string]string{"manifest.json": `{"manifest_version": 2, "browser_specific_settings": {"gecko": {"id": "x@example.com"}}}`},
-			nil,
-		},
-		{
-			"apple-nested",
-			nil,
-			[]string{"ios/MyApp.xcodeproj"},
-		},
-		{
-			"react-native",
-			map[string]string{"apps/mobile/package.json": `{"dependencies": {"react-native": "0.74.0"}}`},
-			[]string{"apps/mobile/ios", "apps/mobile/android"},
-		},
-		{
-			"docs-nested",
-			map[string]string{"docs/package.json": `{"scripts": {"docs:dev": "vitepress dev"}}`},
-			nil,
-		},
-		{
-			"multi-match",
-			map[string]string{
-				"MyMacApp.xcodeproj/project.pbxproj": "// stub\n",
-				"apps/mobile/package.json":           `{"dependencies": {"react-native": "0.74.0"}}`,
-				"docs/package.json":                  `{"scripts": {"docs:dev": "vitepress dev"}}`,
-			},
-			[]string{"apps/mobile/ios", "apps/mobile/android"},
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			fixture := writeFixture(t, c.files, c.dirs...)
-
-			goResult := Run(fixture)
-
-			script := `
-import json, sys
-sys.path.insert(0, ` + pyStr(root) + `)
-from pathlib import Path
-from admin_lib import detectors
-result = detectors.detect(Path(` + pyStr(fixture) + `), Path(` + pyStr(filepath.Join(root, "detectors")) + `))
-print(json.dumps(sorted(result.get("archetypes", []))))
-`
-			cmd := exec.Command(python, "-c", script)
-			var stdout, stderr bytes.Buffer
-			cmd.Stdout = &stdout
-			cmd.Stderr = &stderr
-			if err := cmd.Run(); err != nil {
-				t.Fatalf("python detector run failed: %v\nstderr: %s", err, stderr.String())
-			}
-
-			var pyArchetypes []string
-			if err := json.Unmarshal(stdout.Bytes(), &pyArchetypes); err != nil {
-				t.Fatalf("parsing python output %q: %v", stdout.String(), err)
-			}
-
-			goSorted := sortedCopy(goResult.Archetypes)
-			pySorted := sortedCopy(pyArchetypes)
-			if len(goSorted) != len(pySorted) {
-				t.Fatalf("archetype set mismatch: go=%v python=%v", goSorted, pySorted)
-			}
-			for i := range goSorted {
-				if goSorted[i] != pySorted[i] {
-					t.Fatalf("archetype set mismatch: go=%v python=%v", goSorted, pySorted)
-				}
-			}
-		})
-	}
-}
-
-// pyStr renders s as a double-quoted Python string literal for embedding in
-// the -c script above.
-func pyStr(s string) string {
-	b, _ := json.Marshal(s)
-	return string(b)
 }

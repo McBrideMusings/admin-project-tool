@@ -1,9 +1,9 @@
 #!/bin/sh
 # install_service_remote.sh — install a binary as an always-on user service
 # ON THIS MACHINE (launchd on macOS, systemd --user on Linux). Portable POSIX
-# sh with no dependency on Python or the admin tool being installed here —
-# pushed and run on a remote host by admin_lib.launchd.service_deploy_remote,
-# which has already scp'd the binary into place before invoking this script.
+# sh with no dependency on Go or the admin tool being installed here — pushed
+# and run on a remote host by internal/service's DeployRemote, which has
+# already scp'd the binary into place before invoking this script.
 #
 #   install_service_remote.sh --label L --bin PATH
 #       [--arg A]... [--env KEY=VAL]... [--stdout PATH] [--stderr PATH]

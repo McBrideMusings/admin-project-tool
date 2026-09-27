@@ -1,13 +1,11 @@
-// Package logbridge is the Go port of admin_lib/log_bridge.py +
-// admin_lib/log_server.py combined: the per-process HTTP listener that
-// receives batched browser console-log entries and appends them to the same
-// log file the wrapping action is already writing.
+// Package logbridge implements the per-process HTTP listener that receives
+// batched browser console-log entries and appends them to the same log file
+// the wrapping action is already writing.
 //
 // A project opts in with `[log_bridge] hosts = [...]` in admin.toml. An
 // interactive-shell (or bridge-listen) action then calls Start before
 // spawning its wrapped process and Stop in its cleanup path — internal/
-// keybindings is the one caller, mirroring admin_lib/keybindings.py's own
-// import of log_bridge/log_server.
+// keybindings is the one caller.
 //
 // Two things this package must never silently change, both named in this
 // repo's CLAUDE.md: the bind is 0.0.0.0 unconditionally (anyone on the
@@ -34,9 +32,8 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/logformat"
 )
 
-// DefaultPortRangeStart/End mirror admin_lib/log_bridge.py's
-// LOG_BRIDGE_PORT_RANGE_DEFAULT (range(9988, 10000) — inclusive of 9988,
-// exclusive of 10000, i.e. 9988-9999).
+// DefaultPortRangeStart/End is the default log-bridge port range, inclusive
+// on both ends (9988-9999).
 const (
 	DefaultPortRangeStart = 9988
 	DefaultPortRangeEnd   = 9999
@@ -52,9 +49,8 @@ const BindHost = "0.0.0.0"
 var DiscoveryDir = "/tmp/admin-project-tool"
 
 // Config is one project's [log_bridge] table, resolved: Hosts already had
-// any ${VAR} expanded by the caller (mirrors admin_lib/interp.py's
-// configure_log_bridge doing `resolve_env(h) for h in hosts`), PortRange is
-// (0, 0) to mean "use the default range".
+// any ${VAR} expanded by the caller, PortRange is (0, 0) to mean "use the
+// default range".
 type Config struct {
 	Hosts     []string
 	PortRange [2]int
@@ -62,7 +58,7 @@ type Config struct {
 }
 
 // Enabled reports whether cfg declares at least one host — log_bridge is
-// opt-in per admin_lib/log_bridge.py::log_bridge_enabled.
+// opt-in.
 func (c Config) Enabled() bool { return len(c.Hosts) > 0 }
 
 func (c Config) portRange() (start, end int) {
@@ -73,9 +69,8 @@ func (c Config) portRange() (start, end int) {
 }
 
 // consoleLevels maps a browser console level onto admin's own severity
-// words, matching admin_lib/log_server.py's _CONSOLE_LEVELS. console.log
-// carries no severity of its own and maps to INFO, exactly like a server
-// line at the same visual weight.
+// words. console.log carries no severity of its own and maps to INFO,
+// exactly like a server line at the same visual weight.
 var consoleLevels = map[string]string{
 	"log": "INFO", "info": "INFO",
 	"warn": "WARN", "warning": "WARN",
@@ -96,18 +91,15 @@ func mapLevel(raw string) string {
 }
 
 // innerPrefixRe matches an app's own logger prefix printed INTO the console
-// message: a wall clock, then its own level. Mirrors
-// admin_lib/log_server.py's _INNER_PREFIX_RE exactly — only the full
-// HH:MM:SS[.mmm] [LEVEL] shape counts, never a message that merely starts
-// with a clock.
+// message: a wall clock, then its own level. Only the full HH:MM:SS[.mmm]
+// [LEVEL] shape counts, never a message that merely starts with a clock.
 var innerPrefixRe = regexp.MustCompile(
 	`(?i)^\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\s+\[(ERROR|ERR|FATAL|CRIT|CRITICAL|WARN|WARNING|INFO|DEBUG|TRACE|LOG)\]\s*`)
 
 // UnwrapInnerPrefix splits an app-logger prefix off a console message,
-// returning (level, remainder) with ok=false when msg has no such prefix —
-// the Go port of admin_lib/log_server.py::unwrap_inner_prefix. The stripped
-// clock is discarded: the entry's own timestamp is the same instant and
-// carries a date, so nothing is lost.
+// returning (level, remainder) with ok=false when msg has no such prefix.
+// The stripped clock is discarded: the entry's own timestamp is the same
+// instant and carries a date, so nothing is lost.
 func UnwrapInnerPrefix(msg string) (level, remainder string, ok bool) {
 	loc := innerPrefixRe.FindStringSubmatchIndex(msg)
 	if loc == nil {
@@ -128,8 +120,7 @@ type Entry struct {
 
 // entryHost returns entry's page host — new clients send `host` directly;
 // older ones sent the full `url` (which carried auth tokens in its query
-// string), so that's parsed down to just the hostname. Mirrors
-// admin_lib/log_server.py::_entry_host.
+// string), so that's parsed down to just the hostname.
 func entryHost(e Entry) string {
 	if e.Host != "" {
 		return e.Host
@@ -150,14 +141,13 @@ func entryHost(e Entry) string {
 // it as a sort key.
 const sortLayout = "2006-01-02T15:04:05.000000000"
 
-// inTimeOrder sorts one POSTed batch by the entries' own timestamps — the
-// Go port of admin_lib/log_server.py::_in_time_order. The userscript
-// buffers from document-start but only flushes once its listener probe
-// resolves, so a frame's first POST can be a backlog predating lines
+// inTimeOrder sorts one POSTed batch by the entries' own timestamps. The
+// userscript buffers from document-start but only flushes once its listener
+// probe resolves, so a frame's first POST can be a backlog predating lines
 // another frame already delivered; sorting the batch puts that backlog back
 // in order. A stable sort with the previous valid key carried forward
 // leaves an entry with an unparseable timestamp exactly where the client
-// put it, matching Python's behavior.
+// put it.
 func inTimeOrder(entries []Entry) []Entry {
 	type keyed struct {
 		key string
@@ -187,13 +177,13 @@ func inTimeOrder(entries []Entry) []Entry {
 	return result
 }
 
-// FormatEntry renders one bridged console entry as one or more log lines —
-// the Go port of admin_lib/log_server.py::format_log_bridge_entry. Shape is
-// `<iso-timestamp> [LEVEL] [CLIENT] <message>`, matching the `[LEVEL] <scope>
-// message` order a server process prints so both streams render identically
-// once admin's formatter strips the timestamp and colorizes the level. A
-// message with embedded newlines (a stack trace) becomes one stamped line
-// per physical line, with the level/[CLIENT] tag on the head line only.
+// FormatEntry renders one bridged console entry as one or more log lines.
+// Shape is `<iso-timestamp> [LEVEL] [CLIENT] <message>`, matching the
+// `[LEVEL] <scope> message` order a server process prints so both streams
+// render identically once admin's formatter strips the timestamp and
+// colorizes the level. A message with embedded newlines (a stack trace)
+// becomes one stamped line per physical line, with the level/[CLIENT] tag
+// on the head line only.
 func FormatEntry(e Entry) string {
 	ts := e.Timestamp
 	if ts == "" {
@@ -216,12 +206,9 @@ func FormatEntry(e Entry) string {
 	return b.String()
 }
 
-// Bridge is one running log-bridge HTTP listener — the Go port of the module
-// state admin_lib/log_bridge.py and admin_lib/log_server.py keep at module
-// scope. Kept as an instance (not package globals) so a test can start
-// several without interfering with each other; production code starts
-// exactly one per process, exactly like the Python original's single module-
-// level server.
+// Bridge is one running log-bridge HTTP listener. Kept as an instance (not
+// package globals) so a test can start several without interfering with
+// each other; production code starts exactly one per process.
 type Bridge struct {
 	mu            sync.Mutex
 	logPath       string
@@ -237,11 +224,10 @@ type Bridge struct {
 	seenClients   map[string]bool
 }
 
-// bindFreePort scans port_range for a free port and returns it still bound —
-// the Go port of admin_lib/log_bridge.py::_log_bridge_bind_port. Returning
-// the open listener (not a bare port number, then closing and rebinding
-// later) makes acquisition atomic: no window for another process to steal
-// the port between a probe and the real bind.
+// bindFreePort scans port_range for a free port and returns it still bound.
+// Returning the open listener (not a bare port number, then closing and
+// rebinding later) makes acquisition atomic: no window for another process
+// to steal the port between a probe and the real bind.
 func bindFreePort(start, end int) (net.Listener, int, error) {
 	for port := start; port <= end; port++ {
 		ln, err := net.Listen("tcp", net.JoinHostPort(BindHost, strconv.Itoa(port)))
@@ -260,8 +246,7 @@ func (e *portRangeError) Error() string {
 }
 
 // sweepStaleDiscoveryFiles removes discovery files naming a pid that is no
-// longer alive, or that fail to parse — the Go port of
-// admin_lib/log_bridge.py::_log_bridge_sweep_stale.
+// longer alive, or that fail to parse.
 func sweepStaleDiscoveryFiles() {
 	entries, err := os.ReadDir(DiscoveryDir)
 	if err != nil {
@@ -291,11 +276,10 @@ func sweepStaleDiscoveryFiles() {
 }
 
 // Start binds a free port from cfg's range and begins serving — a no-op
-// (nil, nil) when cfg is not Enabled(), matching
-// admin_lib/log_bridge.py::start_log_bridge's early return. ADMIN_LOG_BRIDGE_
-// HOSTS, when set, overrides cfg.Hosts for this one listener (comma-
-// separated) — the per-dispatch narrowing kind="bridge-listen" uses so two
-// bridges in the same project isolate by host.
+// (nil, nil) when cfg is not Enabled(). ADMIN_LOG_BRIDGE_HOSTS, when set,
+// overrides cfg.Hosts for this one listener (comma-separated) — the
+// per-dispatch narrowing kind="bridge-listen" uses so two bridges in the
+// same project isolate by host.
 func Start(logPath string, cfg Config) (*Bridge, error) {
 	if !cfg.Enabled() {
 		return nil, nil
@@ -355,11 +339,10 @@ func (b *Bridge) Port() int { return b.port }
 // SetSink routes every appended line through fn instead of leaving it
 // unrouted — internal/keybindings wires this to frame.Write through this
 // action's formatter, so a browser line and a server line reach the
-// terminal indistinguishably. A nil fn (or never calling SetSink) means
-// appended lines are written only to the log file, matching Python's
-// _emit_sink defaulting to a raw os.Stdout write when unset — callers of
-// this package should always set a sink in production; the fallback here
-// exists only so a unit test exercising Start/append doesn't need one.
+// terminal indistinguishably. A nil fn (or never calling SetSink) falls
+// back to a raw os.Stdout write — callers of this package should always set
+// a sink in production; the fallback here exists only so a unit test
+// exercising Start/append doesn't need one.
 func (b *Bridge) SetSink(fn func(line string)) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -369,9 +352,8 @@ func (b *Bridge) SetSink(fn func(line string)) {
 // ClearSink removes the sink set by SetSink.
 func (b *Bridge) ClearSink() { b.SetSink(nil) }
 
-// Stop shuts the listener down and removes the discovery file — the Go port
-// of admin_lib/log_bridge.py::stop_log_bridge. Safe to call once; b is
-// unusable afterward.
+// Stop shuts the listener down and removes the discovery file. Safe to call
+// once; b is unusable afterward.
 func (b *Bridge) Stop() {
 	if b.server != nil {
 		_ = b.server.Close()
@@ -424,9 +406,8 @@ func writeJSON(w http.ResponseWriter, status int, body map[string]any) {
 
 // Append sorts entries into timestamp order, formats each into log lines,
 // appends them to the bridge's log file, and routes them to the sink (or
-// writes them to os.Stdout when no sink is set) — the Go port of
-// admin_lib/log_server.py::append_log_bridge_entries. Returns how many
-// entries were written.
+// writes them to os.Stdout when no sink is set). Returns how many entries
+// were written.
 func (b *Bridge) Append(entries []Entry, userAgent string) int {
 	if b.logPath == "" || len(entries) == 0 {
 		return 0
@@ -487,9 +468,7 @@ func orUnknown(s string) string {
 	return s
 }
 
-// splitKeepEnds splits s into lines, each retaining its trailing "\n" —
-// Python's str.splitlines(keepends=True) has no direct stdlib equivalent in
-// Go.
+// splitKeepEnds splits s into lines, each retaining its trailing "\n".
 func splitKeepEnds(s string) []string {
 	var out []string
 	start := 0

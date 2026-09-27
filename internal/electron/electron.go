@@ -1,7 +1,7 @@
 // Package electron builds, deploys, and runs an Electron desktop shell from
-// a project's own config — the Go port of admin_lib/electron.py. Any
-// project shipping an Electron client configures the equivalent of Python's
-// [electron] table and gets three operations, all driven by config:
+// a project's own config. Any project shipping an Electron client
+// configures the [electron] table and gets three operations, all driven by
+// config:
 //
 //	BuildElectron   stage web/server resources, then `electron-builder
 //	                --mac dir` — an artifact only, nothing installed.
@@ -11,8 +11,8 @@
 //	                main process when a watched file changes.
 //
 // macOS-only: `ditto`, `.app` bundles, `/Applications`, and
-// `electron-builder --mac` are all Apple-specific, matching the Python
-// original's own scope (it hardcodes `--mac dir`).
+// `electron-builder --mac` are all Apple-specific; this package hardcodes
+// `--mac dir`.
 //
 // Not yet wired into a kind or a Lua host binding — see this ticket's (Go
 // port of the "metro, react-native and electron helpers") own note in
@@ -36,7 +36,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/macapp"
 )
 
-// Config is the Go port of admin_lib/electron.py's `[electron]` cfg dict.
+// Config is the `[electron]` table's resolved settings.
 type Config struct {
 	DesktopDir        string // required — the Electron project dir.
 	AppName           string // required — release bundle name.
@@ -98,8 +98,7 @@ func electronBin(desktopDir string) (string, error) {
 }
 
 // builtAppPath finds electron-builder's `dir` target output — named `mac`
-// on x64 but `mac-<arch>` on everything else (e.g. `mac-arm64`) — the Go
-// port of admin_lib/electron.py::_built_app_path.
+// on x64 but `mac-<arch>` on everything else (e.g. `mac-arm64`).
 func builtAppPath(desktopDir, outDir, appName string) string {
 	base := filepath.Join(desktopDir, outDir)
 	macDir := "mac"
@@ -130,10 +129,9 @@ func runShell(dir, cmd string) error {
 	return c.Run()
 }
 
-// StageResources is the Go port of
-// admin_lib/electron.py::stage_electron_resources: build the web client (if
-// configured) and copy the repo's server dist (if configured) into the
-// desktop project, ready for electron-builder.
+// StageResources builds the web client (if configured) and copies the
+// repo's server dist (if configured) into the desktop project, ready for
+// electron-builder.
 func StageResources(cfg Config, projectRoot string) error {
 	if cfg.WebSourceDir != "" {
 		webDir := filepath.Join(projectRoot, cfg.WebSourceDir)
@@ -162,9 +160,9 @@ func StageResources(cfg Config, projectRoot string) error {
 	return nil
 }
 
-// BuildElectron is the Go port of admin_lib/electron.py::build_electron:
-// StageResources, then `electron-builder --mac dir`. Returns the built
-// .app's path (release identity, self-contained — nothing installed).
+// BuildElectron runs StageResources, then `electron-builder --mac dir`.
+// Returns the built .app's path (release identity, self-contained —
+// nothing installed).
 func BuildElectron(cfg Config, projectRoot string) (string, error) {
 	if cfg.DesktopDir == "" {
 		return "", fmt.Errorf("[electron].desktop_dir not set")
@@ -202,8 +200,7 @@ func InstallElectron(builtPath string, cfg Config, log macapp.Logger) error {
 	return nil
 }
 
-// DeployElectron is the Go port of admin_lib/electron.py::deploy_electron:
-// BuildElectron, then InstallElectron.
+// DeployElectron runs BuildElectron, then InstallElectron.
 func DeployElectron(cfg Config, projectRoot string, log macapp.Logger) error {
 	built, err := BuildElectron(cfg, projectRoot)
 	if err != nil {
@@ -214,19 +211,16 @@ func DeployElectron(cfg Config, projectRoot string, log macapp.Logger) error {
 
 // DevOptions configures DevElectron.
 type DevOptions struct {
-	// Info/Warn print status lines the way admin_lib's info()/warn() do.
+	// Info/Warn print status lines.
 	Info func(msg string)
 }
 
-// DevElectron is the Go port of admin_lib/electron.py::dev_electron: run
-// Electron from source, unpackaged (no electron-builder step — main-process
-// files are read live), restarting the child when a watched file changes.
-// Reuses internal/reload.RunWithReload's spawn/kill/signal-forward
-// machinery — the watcher goroutine below sends this process the same
-// SIGUSR1 that machinery already treats as "reload requested", the same
-// "one restart-a-child implementation, not two" reasoning
-// admin_lib/electron.py's own doc comment gives for reusing
-// admin_lib.reload.run_with_reload.
+// DevElectron runs Electron from source, unpackaged (no electron-builder
+// step — main-process files are read live), restarting the child when a
+// watched file changes. Reuses internal/reload.RunWithReload's
+// spawn/kill/signal-forward machinery, rather than a second restart-a-child
+// implementation — the watcher goroutine below sends this process the same
+// SIGUSR1 that machinery already treats as "reload requested".
 //
 // runWithReload is injected (rather than importing internal/reload
 // directly) to keep this package's own tests free of spawning a real
@@ -328,11 +322,11 @@ func shQuote(s string) string {
 }
 
 // copyTree recursively copies src to dst, preserving each file's mode —
-// the Go stdlib has no shutil.copytree equivalent. This is used only for
-// staging plain build output (web dist, server dist) into the Electron
+// the Go stdlib has no directory-tree-copy equivalent. This is used only
+// for staging plain build output (web dist, server dist) into the Electron
 // project, never for the signed .app bundle itself — InstallElectron uses
-// `ditto` for that, exactly as admin_lib/electron.py does, since a generic
-// copy does not reliably preserve a signed bundle's structure.
+// `ditto` for that, since a generic copy does not reliably preserve a
+// signed bundle's structure.
 func copyTree(src, dst string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {

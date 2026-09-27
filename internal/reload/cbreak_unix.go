@@ -13,8 +13,6 @@ type termState struct {
 
 // makeCbreak puts fd into cbreak mode — canonical input and echo off, so a
 // single keypress is readable immediately, with EVERYTHING ELSE left alone.
-// This is Python's tty.setcbreak, which is what admin_lib/reload.py and
-// admin_lib/keybindings.py both used.
 //
 // It is deliberately NOT term.MakeRaw. MakeRaw additionally clears OPOST,
 // which turns off the line discipline's ONLCR translation for the whole

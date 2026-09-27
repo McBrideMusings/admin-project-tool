@@ -5,8 +5,6 @@
 // without re-running install. The symptom is an opaque bundler "failed to
 // resolve import" deep in a build; this turns it into "your install is
 // stale — run <pm> install" up front.
-//
-// The Go port of the deps-fresh half of admin_lib/guards.py.
 package guards
 
 import (
@@ -78,7 +76,7 @@ func asStrings(list []any) []string {
 // pnpmGlobs parses a pnpm-workspace.yaml's top-level `packages:` block
 // directly — it's a flat list of glob strings, not worth a YAML dependency
 // for a tool that otherwise ships none. Only the standard block-list form
-// is handled; anything else degrades to nil, matching the Python original.
+// is handled; anything else degrades to nil.
 func pnpmGlobs(root string) []string {
 	data, err := os.ReadFile(filepath.Join(root, "pnpm-workspace.yaml"))
 	if err != nil {

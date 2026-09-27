@@ -1,6 +1,6 @@
 # `apple` archetype — the `[apple]` schema
 
-The `apple` archetype (`archetypes/apple.py`) exposes `build` / `dev` / `deploy` / `test` / `clean` / `icons` / `reload` as `kind = "python"` actions that read one config dict — the `[apple]` table of a project's `admin.toml`, delivered to the bodies as the `_APPLE_CONFIG` global. Every key below is read by a high-level wrapper in `admin_lib/apple.py`; the "read by" column names the wrapper (or `admin_lib/apple.py` line) so the source stays the authority.
+The `apple` archetype (`archetypes/apple/archetype.toml`) declares one `kind = "apple"` action per platform+verb (`build-mac`, `dev-ios`, `deploy-tv`, `clean-ios`, ...; see [ADR-0019](../adr/0019-the-tool-defines-mechanism-admin-toml-defines-structure.md) for why the archetype itself wires no `build`/`dev`/`deploy` command or picker — a project composes only the targets it has, typically via its own `kind = "multi-target"` action). Each action's `run` names a verb (`build_mac`, `dev_ios`, ...) that `internal/kinds/apple.go`'s `makeApple` dispatches through `runAppleVerb` in `internal/kinds/apple_darwin.go`, against one config map — the `[apple]` table of the project's `admin.toml`. Every key below is read by that dispatch or one of the verb bodies in `apple_darwin.go`.
 
 All keys are **optional** unless noted — a wrapper that needs a missing key errors with a clear message at call time rather than at parse. Signing **team** is never a key: it comes from the `IOS_DEVELOPMENT_TEAM` environment variable (global convention), never `admin.toml`.
 
@@ -8,17 +8,17 @@ All keys are **optional** unless noted — a wrapper that needs a missing key er
 
 | Key | Default | Meaning |
 |---|---|---|
-| `project_path` | auto-detect | Path to the `.xcworkspace`/`.xcodeproj`. When omitted, the first `*.xcworkspace` then `*.xcodeproj` in the project root is used; errors if none found (`_detect_project_path`). |
-| `prebuild_cmd` | — | Shell command run once per invocation, before the project path resolves — so it covers `build`, `dev`, `deploy`, and `icons` on both platforms. Runs in `_run_prebuild_cmd`, called from `_detect_project_path`, which every apple action funnels through. A non-zero exit aborts the command. The motivating case is a generated `.xcodeproj` (XcodeGen, Tuist) kept out of version control: `prebuild_cmd = "xcodegen generate"` means a fresh clone or an edited spec can never be built against a missing or stale project. |
+| `project_path` | auto-detect | Path to the `.xcworkspace`/`.xcodeproj`. When omitted, the first `*.xcworkspace` then `*.xcodeproj` in the project root is used; errors if none found (`appleProject`, `internal/kinds/apple_darwin.go`). |
+| `prebuild_cmd` | — | Shell command run once per invocation, before the project path resolves — so it covers `build`, `dev`, `deploy`, and `icons` on both platforms. Runs in `runApplePrebuild`, called from `appleProject`, which every apple action funnels through. A non-zero exit aborts the command. The motivating case is a generated `.xcodeproj` (XcodeGen, Tuist) kept out of version control: `prebuild_cmd = "xcodegen generate"` means a fresh clone or an edited spec can never be built against a missing or stale project. |
 | `derived_data_name` | — | DerivedData folder name; sets `-derivedDataPath`. |
 
 ## Schemes and build configurations
 
 | Key | Default | Meaning |
 |---|---|---|
-| `mac_scheme` | — | Xcode scheme for the macOS target. Its presence is what puts `mac` in the `build` / `dev` / `deploy` target pickers at all. |
-| `ios_scheme` | — | Xcode scheme for the iOS target. Its presence is what puts `ios` — and `dev`'s `device` target — in the pickers at all. |
-| `tv_scheme` | — | Xcode scheme for the tvOS target. Its presence is what puts `tv` in the `build` / `dev` / `deploy` pickers at all. `dev tv` runs the tvOS simulator; `deploy tv` builds Release and installs on a paired Apple TV. |
+| `mac_scheme` | — | Xcode scheme for the macOS target. Required by `build-mac`/`dev-mac`/`deploy-mac`/`clean` (when clean falls back to it). |
+| `ios_scheme` | — | Xcode scheme for the iOS target. Required by `build-ios`/`dev-ios`/`dev-device`/`deploy-ios`. |
+| `tv_scheme` | — | Xcode scheme for the tvOS target. Required by `build-tv`/`dev-tv`/`dev-device-tv`/`deploy-tv`. `dev-tv` runs the tvOS simulator; `deploy-tv` builds Release and installs on a paired Apple TV. |
 | `mac_build_config` | `Debug` | Configuration for macOS `build`/`dev`. |
 | `ios_build_config` | `Debug` | Configuration for iOS `build`/`dev`. |
 | `tv_build_config` | `Debug` | Configuration for tvOS `build`/`dev`. |
@@ -27,7 +27,7 @@ All keys are **optional** unless noted — a wrapper that needs a missing key er
 | `tv_deploy_config` | `Release` | Configuration for tvOS `deploy`. |
 | `dev_build_settings` | — | Extra `KEY=value` `xcodebuild` build settings appended in **dev** builds only. |
 
-**The archetype assumes no platform.** A project gets exactly the targets its scheme keys declare. An iOS-only manifest is never shown `mac`, and `admin deploy mac` there stops immediately, naming the targets the project does have, instead of getting as far as `deploy_mac` and reporting a missing `mac_scheme`. One source decides this for all three commands: `APPLE_PLATFORMS` / `apple_platforms()` / `resolve_apple_platform()` in `admin_lib/apple.py`. Adding a platform is one entry there plus a dispatch branch in the bodies. Cover: `tests/test_apple_platform_gating.py`.
+**The archetype assumes no platform.** Because `build-mac`/`build-ios`/`build-tv` (and their `dev`/`deploy`/`clean` counterparts) are separate actions rather than targets behind one auto-populated picker, a project wires up only the ones matching the schemes it declares — usually as targets of its own `kind = "multi-target"` command. Calling a verb whose scheme key is missing fails immediately naming the missing key (e.g. `apple.mac_scheme required for clean`, from `runAppleVerb` in `internal/kinds/apple_darwin.go`), rather than getting partway through a build.
 
 ## Process names (for kill / running-detection)
 
@@ -114,22 +114,22 @@ has none.
 
 ### Physical devices (`deploy ios` / `deploy tv`)
 
-Both go through `deploy_device()`, which builds for the real SDK
+Both go through `appleDeployDevice` (`internal/kinds/apple_darwin.go`), which builds for the real SDK
 (`generic/platform=iOS` → `-iphoneos`, `generic/platform=tvOS` → `-appletvos`),
 installs with `xcrun devicectl device install app`, and launches the production
-bundle ID. `DEVICE_PLATFORMS` in `admin_lib/apple.py` holds everything that
-differs between the two.
+bundle ID. `devicePlatforms` in `internal/luahost/apple_darwin.go` holds
+everything that differs between the two.
 
 `xcrun devicectl list devices` returns every paired CoreDevice in one array — a
-phone and an Apple TV side by side — so `find_connected_device(platform)`
-filters on `hardwareProperties.platform` before taking the first row. Without
-that filter, a paired Apple TV listed first became the target of `deploy ios`
-and the iPhone build was pushed at the TV.
+phone and an Apple TV side by side — so `h.FindConnectedDevice(platform, deviceType)`
+(`internal/luahost/apple_devices_darwin.go`) filters on `hardwareProperties.platform` before
+taking the first row. Without that filter, a paired Apple TV listed first became the target
+of `deploy-ios` and the iPhone build was pushed at the TV.
 
 **The device is registered with the team automatically.** Before the build, both
-paths call `ensure_device_registered()`, which looks the hardware UDID up in App
-Store Connect and POSTs it if Apple has never seen it (and re-enables it if it
-was disabled). Without that, a new device fails the build with *"Your team has
+paths call `appleEnsureDeviceRegistered` (`internal/kinds/apple_appid_darwin.go`), which looks
+the hardware UDID up in App Store Connect and POSTs it if Apple has never seen it (and
+re-enables it if it was disabled). Without that, a new device fails the build with *"Your team has
 no devices from which to generate a provisioning profile"* — a message about the
 team, so it reads as a broken account rather than as an unregistered device, and
 the old fix was a trip to the developer portal. `-allowProvisioningUpdates`
@@ -144,24 +144,32 @@ rather than failing on a missing device.
 
 ## Icons — the nested `[apple.icons]` table
 
-Read by the icon-rendering wrappers (see [ADR-0007](../adr/0007-apple-icon-rendering.md)).
+Read by the `icons` action's Lua body (`archetypes/apple/archetype.toml`, `kind = "lua"`), which
+calls the `apple.generate_icons`/`apple.generate_tv_icons` host functions (see
+[ADR-0007](../adr/0007-apple-icon-rendering.md) and
+[architecture/lua-host-api.md](../architecture/lua-host-api.md)).
 
 | Key | Meaning |
 |---|---|
 | `mac_asset_dir` | Path to the macOS `.appiconset` (or asset) directory. |
 | `ios_asset_dir` | Path to the iOS asset directory. |
-| `tv_asset_dir` | Path to the tvOS `.brandassets` directory (the whole bundle — `App Icon.imagestack`, `App Icon - App Store.imagestack`, `Top Shelf Image.imageset`, `Top Shelf Image Wide.imageset` — not a single appiconset). Wholly regenerated by `regenerate_icons()`/`generate_tv_icons()`; unlike `mac_asset_dir`/`ios_asset_dir`, the sizes and layer names inside are fixed by Apple's schema, not read off existing PNGs. |
-| `mac_icon` | Path to an Icon Composer `.icon` bundle; its presence routes the mac/iOS dev-icon swap through the `.icon` path instead of the appiconset PNG path. Independent of `tv_asset_dir` — a project can use Icon Composer for mac/iOS and a `.brandassets` catalog for tv at the same time. |
-| `bg_color`, `glyph_text`, `glyph_color`, `glyph_scale` | Forwarded to `generate_icons()` (mac/iOS) and `generate_tv_icons()` (tv) for procedural icon generation — one glyph config drives all three platforms. `glyph_text` is the only supported glyph source. |
-| `glyph_svg` | **No longer supported** (admin-3rgp.48 dropped SVG glyph rendering, along with its unmaintained `oksvg`/`rasterx` dependency). Setting it fails `generate_icons()`/`generate_tv_icons()` with an error naming the dropped capability, rather than rendering a blank icon — use `glyph_text` instead. |
+| `tv_asset_dir` | Path to the tvOS `.brandassets` directory (the whole bundle — `App Icon.imagestack`, `App Icon - App Store.imagestack`, `Top Shelf Image.imageset`, `Top Shelf Image Wide.imageset` — not a single appiconset). Wholly regenerated by `apple.generate_tv_icons`; the sizes and layer names inside are fixed by Apple's schema. |
+| `sizes` | **Required** for `icons regenerate` on `mac_asset_dir`/`ios_asset_dir` — a list of pixel sizes (e.g. `[16, 32, 128, 256, 512, 1024]`) passed to `apple.generate_icons`. `admin icons regenerate` errors naming the missing key if unset; there is no auto-detection of sizes from existing committed PNGs or a fresh catalog's `Contents.json`. |
+| `mac_icon` | **Not implemented.** The Icon Composer `.icon` bundle dev-icon-swap path is not wired into `admin icons` today (`archetypes/apple/archetype.toml`'s `icons` action notes this as a follow-up); only the appiconset PNG path works. |
+| `bg_color`, `glyph_text`, `glyph_color`, `glyph_scale` | Forwarded to `apple.generate_icons` (mac/iOS) and `apple.generate_tv_icons` (tv) for procedural icon generation — one glyph config drives all three platforms. `glyph_text` is the only supported glyph source. |
+| `glyph_svg` | **No longer supported** (admin-3rgp.48 dropped SVG glyph rendering, along with its unmaintained `oksvg`/`rasterx` dependency). Setting it fails `apple.generate_icons`/`apple.generate_tv_icons` with an error naming the dropped capability, rather than rendering a blank icon — use `glyph_text` instead. |
+
+Also not implemented in the `icons` action today: a separate always-committed `*-dev` asset
+catalog (`mac_dev_asset_dir`/`ios_dev_asset_dir`), and self-healing a stranded dev banner left by
+an interrupted process. Both are noted as follow-ups in the action's own source comment.
 
 ### tvOS: a layered stack, not a flat PNG
 
 A tvOS app icon isn't a size ladder like mac/iOS — it's a **parallax image
 stack** (Front/Middle/Back layers Xcode slides apart as the icon takes
-focus) plus a separate wide **Top Shelf image**. `generate_tv_icons()` in
-`admin_lib/icons.py` builds the real Xcode asset-catalog schema under
-`tv_asset_dir`:
+focus) plus a separate wide **Top Shelf image**. `apple.generate_tv_icons`
+(`GenerateTVIcons` in `internal/luahost/apple_icons_generate_darwin.go`) builds the real Xcode
+asset-catalog schema under `tv_asset_dir`:
 
 ```
 App Icon.imagestack/                 400x240 @1x, 800x480 @2x   (home screen)
@@ -183,18 +191,18 @@ art direction to configure.
 
 The DEV-banner swap (`swap-dev`/`restore`) follows suit: with a glyph
 configured it regenerates the whole stack with the banner baked into the
-Front layer and the Top Shelf images (same `dev=True` path as mac/iOS);
+Front layer and the Top Shelf images (the same `dev` path as mac/iOS);
 without one it overlays the banner onto the *existing* Front-layer and
-Top-Shelf PNGs in place via `apply_tv_dev_banner()`, leaving the committed
-Back/Middle art untouched — mirroring `swap_dev_icons`'s no-glyph path for
+Top-Shelf PNGs in place via `apple.apply_tv_dev_banner`, leaving the committed
+Back/Middle art untouched — mirroring `apple.swap_dev_icons_banner`'s no-glyph path for
 appiconsets. Backup/restore copies the whole `.brandassets` tree
-(`backup_tv_icons`/`restore_tv_icons` in `admin_lib/apple.py`) rather than
+(`BackupTVIcons`/`RestoreTVIcons` in `internal/luahost/apple_icons_darwin.go`) rather than
 individual files, since the catalog is a directory tree, not a flat set of
 PNGs.
 
 ## Reusable simulator helpers
 
-The `admin_lib.apple` iOS-simulator helpers (`resolve_simulator`, `ensure_booted_simulator`, `install_and_launch_sim`, …) are callable by bare name from any `kind = "python"` action once the `apple` module is in scope — the calling contract, signatures, and a minimal example are tabulated under **"Reusable library helpers in `kind = "python"` bodies"** in [architecture/design.md](../architecture/design.md).
+The `apple.*` iOS-simulator functions (`apple.resolve_simulator`, `apple.ensure_booted_simulator`, `apple.install_and_launch_sim`, …) registered by `internal/luahost` are callable from any `kind = "lua"` action — the full function catalog and signatures are tabulated in [architecture/lua-host-api.md](../architecture/lua-host-api.md).
 
 ## App Store Connect API key (optional, and worth it)
 
@@ -217,6 +225,6 @@ admin appid com.example.app --capability icloud   # enable a capability
 admin appid com.example.new --name "New" --capability push   # register, then enable
 ```
 
-Capability names accept Apple's enum (`ICLOUD`, `PUSH_NOTIFICATIONS`, …) or the friendlier aliases in `admin_lib/appstoreconnect.py` (`icloud`, `push`, `app-groups`, …).
+Capability names accept Apple's enum (`ICLOUD`, `PUSH_NOTIFICATIONS`, …) or the friendlier aliases in `internal/ascapi/ascapi.go` (`icloud`, `push`, `app-groups`, …).
 
 All three variables or none: `xcodebuild` rejects a partial set, and a path pointing at a missing file falls back to whatever account Xcode has rather than failing every build on that machine.

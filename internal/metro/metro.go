@@ -1,22 +1,19 @@
-// Package metro manages the React Native Metro bundler lifecycle — the Go
-// port of admin_lib/metro.py. Metro is the JS bundler a React Native app
-// fetches its bundle from when it launches; without one running, a debug
-// build shows the red "No script URL provided" screen instead of the app.
-// One Metro serves every target of a project (iOS simulator, physical
-// device, Android emulator all pull from the same port), so it is started
-// once and reused rather than owned by any single dev command, and left
-// running when a dev command exits — StopMetro is for a `down`/`kill`
-// command to call explicitly.
+// Package metro manages the React Native Metro bundler lifecycle. Metro is
+// the JS bundler a React Native app fetches its bundle from when it
+// launches; without one running, a debug build shows the red "No script URL
+// provided" screen instead of the app. One Metro serves every target of a
+// project (iOS simulator, physical device, Android emulator all pull from
+// the same port), so it is started once and reused rather than owned by any
+// single dev command, and left running when a dev command exits — StopMetro
+// is for a `down`/`kill` command to call explicitly.
 //
 // Not yet wired into a kind or a Lua host binding: the higher-level
-// wrappers admin_lib/react_native.py builds on top of this (ensure_metro_for,
-// dev_android, apple_config_for) drive admin_lib.apple / admin_lib.android
-// directly for the iOS/Android build+launch step, and neither of those has a
-// Go port yet — admin-3rgp.12 (Apple kinds) and an as-yet-untracked Android
-// port own that. This package is the self-contained half admin-3rgp.14
-// ("port... the metro, react-native and electron helpers") is scoped to:
-// real, callable, and ready for whichever ticket wires a React Native dev
-// loop to call it, rather than a stub that would need rewriting anyway.
+// iOS/Android build+launch step has no Go port yet — admin-3rgp.12 (Apple
+// kinds) and an as-yet-untracked Android port own that. This package is the
+// self-contained half admin-3rgp.14 ("port... the metro, react-native and
+// electron helpers") is scoped to: real, callable, and ready for whichever
+// ticket wires a React Native dev loop to call it, rather than a stub that
+// would need rewriting anyway.
 package metro
 
 import (
@@ -32,7 +29,7 @@ import (
 	"time"
 )
 
-// DefaultPort mirrors admin_lib/metro.py's DEFAULT_PORT.
+// DefaultPort is Metro's default bundler port.
 const DefaultPort = 8081
 
 // statusBody is the exact response Metro's /status answers with. Checking
@@ -40,8 +37,7 @@ const DefaultPort = 8081
 // holding the port for a live bundler.
 const statusBody = "packager-status:running"
 
-// Running is the Go port of admin_lib/metro.py::metro_running: true if a
-// Metro bundler is answering on port.
+// Running reports true if a Metro bundler is answering on port.
 func Running(port int) bool {
 	client := &http.Client{Timeout: 1 * time.Second}
 	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/status", port))
@@ -72,12 +68,11 @@ func pidAlive(pidFile string) (int, bool) {
 	return pid, true
 }
 
-// Ensure is the Go port of admin_lib/metro.py::ensure_metro: start Metro in
-// cwd unless one is already serving port. Returns (started, error) — started
-// is false and error is nil when a bundler was already up; error is
-// non-nil if a freshly started Metro never answers /status within timeout,
-// matching Python's RuntimeError-on-failure contract (the caller must not
-// go on to build+launch an app that would only show a red screen).
+// Ensure starts Metro in cwd unless one is already serving port. Returns
+// (started, error) — started is false and error is nil when a bundler was
+// already up; error is non-nil if a freshly started Metro never answers
+// /status within timeout (the caller must not go on to build+launch an app
+// that would only show a red screen).
 func Ensure(cwd string, port int, logFile, pidFile string, timeout time.Duration) (bool, error) {
 	if Running(port) {
 		return false, nil
@@ -145,8 +140,8 @@ func Ensure(cwd string, port int, logFile, pidFile string, timeout time.Duration
 	return false, fmt.Errorf("Metro did not answer :%d/status within %s%s", port, timeout, suffix)
 }
 
-// Stop is the Go port of admin_lib/metro.py::stop_metro: stop a Metro
-// started by Ensure. Returns true if one was stopped. The port is the
+// Stop stops a Metro started by Ensure. Returns true if one was stopped.
+// The port is the
 // source of truth, not the pid file — a pid file goes stale easily (Ensure
 // writes none when it finds a bundler already up), so trusting it alone
 // would report "no Metro running" at a port still answering, and leave it

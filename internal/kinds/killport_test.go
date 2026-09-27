@@ -10,9 +10,8 @@ import (
 )
 
 // TestMakeKillPortRejectsNonNumericDefaultPorts proves the build-time
-// validation admin_lib/interp.py::_make_kill_port does on `run` — a
-// non-numeric token is rejected when the factory is built, not deferred to
-// the first Runner call.
+// validation on `run` — a non-numeric token is rejected when the factory is
+// built, not deferred to the first Runner call.
 func TestMakeKillPortRejectsNonNumericDefaultPorts(t *testing.T) {
 	_, err := makeKillPort("kill", manifest.Action{"run": "3000 not-a-port"}, &manifest.Manifest{}, nil)
 	if err == nil {
@@ -22,8 +21,7 @@ func TestMakeKillPortRejectsNonNumericDefaultPorts(t *testing.T) {
 
 // TestMakeKillPortRequiresAPortWithNoDefault proves a kill-port command
 // declared with an empty `run` (no default ports) requires an explicit argv
-// port — matching admin_lib/interp.py::_make_kill_port's "port argument
-// required" branch.
+// port — the "port argument required" branch.
 func TestMakeKillPortRequiresAPortWithNoDefault(t *testing.T) {
 	runner, err := makeKillPort("kill", manifest.Action{}, &manifest.Manifest{}, nil)
 	if err != nil {

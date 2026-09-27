@@ -26,8 +26,7 @@ func testHost(t *testing.T) *luahost.Host {
 	return h
 }
 
-// TestFormatBytesUsesBinaryUnits proves formatBytes matches
-// admin_lib/cleanup.py::format_bytes's 1024-based units.
+// TestFormatBytesUsesBinaryUnits proves formatBytes uses 1024-based units.
 //
 // MUTATION EVIDENCE: change the divisor from 1024 to 1000 and this test
 // fails — 1536 bytes reports "1.5KB" only under base-1024 division; base-1000
@@ -48,8 +47,7 @@ func TestFormatBytesUsesBinaryUnits(t *testing.T) {
 }
 
 // TestDirectorySizeSumsFilesRecursively proves directorySize walks nested
-// directories and sums file sizes, matching
-// admin_lib/cleanup.py::directory_size.
+// directories and sums file sizes.
 //
 // MUTATION EVIDENCE: change `total += fi.Size()` to skip nested dirs (only
 // walk the top level) and this test fails — the nested file's 4 bytes would
@@ -71,8 +69,7 @@ func TestDirectorySizeSumsFilesRecursively(t *testing.T) {
 	}
 }
 
-// TestDirectorySizeMissingPathIsZero proves a missing path is a silent 0,
-// matching Python's `if not os.path.lexists(path): return 0`.
+// TestDirectorySizeMissingPathIsZero proves a missing path is a silent 0.
 func TestDirectorySizeMissingPathIsZero(t *testing.T) {
 	if got := directorySize("/no/such/path/at/all"); got != 0 {
 		t.Errorf("directorySize(missing) = %d, want 0", got)
@@ -80,7 +77,7 @@ func TestDirectorySizeMissingPathIsZero(t *testing.T) {
 }
 
 // TestNukePathRemovesFileAndReportsSize proves nukePath removes the target
-// and returns its size, matching admin_lib/cleanup.py::nuke_path.
+// and returns its size.
 func TestNukePathRemovesFileAndReportsSize(t *testing.T) {
 	h := testHost(t)
 	dir := t.TempDir()
@@ -106,8 +103,7 @@ func TestNukePathMissingIsNoop(t *testing.T) {
 }
 
 // TestCleanPathsSkipsDuplicatesAndEmpty proves cleanPaths dedupes by
-// absolute path and skips blank entries — the Go port of
-// admin_lib/cleanup.py::clean_paths' `seen` set and `if not path: continue`.
+// absolute path and skips blank entries.
 //
 // MUTATION EVIDENCE: remove the `if seen[ap] { continue }` dedup check and
 // this test fails — the duplicate entry would free the same (now-missing)
@@ -140,7 +136,7 @@ func TestCleanPathsSkipsDuplicatesAndEmpty(t *testing.T) {
 }
 
 // TestDBQuickCheckMissingFileReportsMissing proves a nonexistent DB path
-// reports "missing", matching admin_lib/cleanup.py::db_quick_check.
+// reports "missing".
 func TestDBQuickCheckMissingFileReportsMissing(t *testing.T) {
 	healthy, status := dbQuickCheck(filepath.Join(t.TempDir(), "no.db"))
 	if healthy {
@@ -161,9 +157,8 @@ func TestDBQuickCheckEmptyPathReportsMissing(t *testing.T) {
 }
 
 // TestCleanWithDBForceDropsHealthyDB proves --force drops the DB (and its
-// companions) even when it's healthy — matching
-// admin_lib/cleanup.py::clean_with_db's `should_drop = force or (not
-// healthy and exists)`.
+// companions) even when it's healthy — cleanWithDB's
+// `shouldDrop := force || (!healthy && exists)`.
 //
 // MUTATION EVIDENCE: change `shouldDrop := force || (...)` to just
 // `shouldDrop := !healthy && ...` (dropping the `force ||`) and this test
@@ -216,9 +211,7 @@ func TestCleanWithDBKeepsHealthyDBWithoutForce(t *testing.T) {
 }
 
 // TestCleanDevFromConfigResolvesEnvPathEntry proves clean_dev's `paths`
-// entries resolve an `env`-sourced base directory, matching
-// admin_lib/cleanup.py::clean_dev_from_config's `os.environ.get(entry["env"],
-// ...)` branch.
+// entries resolve an `env`-sourced base directory.
 //
 // MUTATION EVIDENCE: swap `os.Getenv(envName)` for
 // `cfgString(entry, "default", "")` unconditionally (ignore the env
@@ -249,7 +242,7 @@ func TestCleanDevFromConfigResolvesEnvPathEntry(t *testing.T) {
 }
 
 // TestCleanDevFromConfigEmptyIsNoop proves an empty/absent [clean_dev]
-// table is a 0-byte no-op, matching Python's `if not cfg: return 0`.
+// table is a 0-byte no-op.
 func TestCleanDevFromConfigEmptyIsNoop(t *testing.T) {
 	h := testHost(t)
 	if freed := cleanDevFromConfig(h, nil, false); freed != 0 {
@@ -258,9 +251,7 @@ func TestCleanDevFromConfigEmptyIsNoop(t *testing.T) {
 }
 
 // TestMakeCleanDevForceFlagTriggersDBDrop proves makeCleanDev's Runner
-// treats a literal "--force" arg as force=true, matching
-// admin_lib/interp.py::_make_clean_dev's `"--force" in args or "--db" in
-// args`.
+// treats a literal "--force" arg as force=true.
 //
 // MUTATION EVIDENCE: change the force-flag scan to only check for "--db"
 // (drop the "--force" branch) and this test fails — passing ["--force"]

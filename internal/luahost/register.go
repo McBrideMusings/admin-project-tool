@@ -54,8 +54,7 @@ func (h *Host) NewState(cfg map[string]any) *lua.LState {
 //
 // args (variadic so every pre-existing 2-argument call site keeps compiling
 // unchanged) becomes the `args` global — a Lua array of the CLI arguments
-// the action was invoked with, exactly as the Python original's bare `args`
-// name held sys.argv's tail. admin-3rgp.37 is the first caller that needs
+// the action was invoked with. admin-3rgp.37 is the first caller that needs
 // this: a body doing its own target-selection/flag-parsing (`./admin build
 // windows`, `./admin dev --clean`) has to see what was typed.
 func (h *Host) Exec(source string, cfg map[string]any, args ...string) error {
@@ -144,8 +143,8 @@ func (h *Host) registerRunCmd(L *lua.LState) {
 
 // registerRunAction binds run_action(name[, arg, ...]) — dispatch another
 // declared action by name, with the given string arguments, and raise a Lua
-// error if it fails. The Go port of the run_command a kind="python" body had
-// in scope. See Host.RunAction for why the Lua surface needs it.
+// error if it fails: the same run_command capability a kind="python" body
+// once had in scope. See Host.RunAction for why the Lua surface needs it.
 func (h *Host) registerRunAction(L *lua.LState) {
 	L.SetGlobal("run_action", L.NewFunction(func(L *lua.LState) int {
 		name := L.CheckString(1)

@@ -12,10 +12,10 @@ import (
 // error, dropping gopher-lua's stack trace when present. *lua.ApiError's own
 // Error() always concatenates "<message>\n<trace>" (state.go), so a body
 // that calls error("build failed") — the only way a kind="lua" action can
-// signal failure, there being no Python-style bare sys.exit(1) — would
-// otherwise print a "[G]: in function 'error' ..." traceback to the user on
-// every deliberate, expected failure (an unknown build target, a failed
-// xcodebuild), not just a genuine bug in the body. Falls back to err.Error()
+// signal failure — would otherwise print a "[G]: in function 'error' ..."
+// traceback to the user on every deliberate, expected failure (an unknown
+// build target, a failed xcodebuild), not just a genuine bug in the body.
+// Falls back to err.Error()
 // for anything that isn't an *lua.ApiError (a Go-side error Exec itself
 // returned, e.g. a syntax error) so no information is lost there.
 func luaErrorMessage(err error) string {
@@ -31,11 +31,8 @@ func luaErrorMessage(err error) string {
 // makeLua is kind="lua"'s factory — the piece admin-3rgp.36's
 // docs/architecture/lua-host-api.md explicitly deferred to this ticket:
 // "wiring an actual kind=\"lua\" into internal/kinds is admin-3rgp.35's job;
-// Exec is what that kind's factory calls." `run` is the Lua source text,
-// exactly as kind="python"'s `run` held a Python code block before
-// ADR-0010 replaced it — a body is always inline source, never a
-// script-path reference, since ADR-0010 deletes the kind="python-script"
-// half of that old pair along with kind="python" itself.
+// Exec is what that kind's factory calls." `run` is the Lua source text —
+// a body is always inline source, never a script-path reference.
 //
 // The `config` global a body sees is built in two layers (admin-3rgp.43):
 //
@@ -46,14 +43,13 @@ func luaErrorMessage(err error) string {
 //     kind=\"lua\" action generically needs either a wider Factory signature
 //     or a second dispatch-time pass" — admin-3rgp.43 is that wider
 //     signature. Every table is exposed unconditionally to every lua body,
-//     mirroring admin_lib/interp.py::build_namespace, which injects
-//     _APPLE_CONFIG/_GO_CONFIG/... as globals regardless of which kind is
-//     running: a body reads whichever table its archetype cares about by
-//     name. A Factory's (name, action) pair alone carries no record of which
-//     archetype an action was merged from (manifest.Action is a bare
-//     map[string]any with no provenance field), so exposing all tables under
-//     their own keys is the option that needs no new attribution machinery
-//     — narrower than that would require inventing one.
+//     regardless of which kind is running: a body reads whichever table its
+//     archetype cares about by name. A Factory's (name, action) pair alone
+//     carries no record of which archetype an action was merged from
+//     (manifest.Action is a bare map[string]any with no provenance field),
+//     so exposing all tables under their own keys is the option that needs
+//     no new attribution machinery — narrower than that would require
+//     inventing one.
 //  2. An optional inline `[actions.X.config]` table is then merged in at the
 //     top level, on top of the domain tables, so an action can still pass
 //     ad hoc values the way the pre-existing TestLuaConfigReachesBody

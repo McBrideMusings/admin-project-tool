@@ -2,14 +2,10 @@
 
 package luahost
 
-// Glyph-based fresh Apple icon generation — the last piece of admin-3rgp.38,
-// which apple_icons_darwin.go's file doc comment named as deliberately
-// unbound pending a dependency decision (see that comment for the earlier
-// reasoning; ADR-0001's stdlib-only rule was superseded for this epic
-// specifically so this decision could be made). Ports admin_lib/icons.py's
-// generate_icons and generate_tv_icons: compositing a configured glyph_text
-// over a background at every declared size, for both the flat mac/iOS
-// appiconset ladder and the tvOS layered .brandassets stack.
+// Glyph-based fresh Apple icon generation. GenerateIcons and
+// GenerateTVIcons composite a configured glyph_text over a background at
+// every declared size, for both the flat mac/iOS appiconset ladder and the
+// tvOS layered .brandassets stack.
 //
 // # The dependency decision (admin-3rgp.48)
 //
@@ -46,19 +42,14 @@ package luahost
 //     argues directly against this for a feature this narrow — and the
 //     feature itself was dropped rather than rebuilt.
 //
-// # A deliberate simplification versus the Python original
+// # One shared rendering path
 //
-// admin_lib/icons.py computes a different font-pixel-size formula per call
-// site (_render_text uses size*scale directly; _render_tv_layer uses
-// glyph_size*0.9 where glyph_size is already min(w,h)*scale) and centers a
-// glyph_svg's raster differently (rendered straight at the target size for
-// the flat case, rendered to a glyph-sized sub-image and pasted for the tv
-// case). This port unifies both into one renderGlyph: always render the
-// glyph (SVG or text) into a shortSide*scale square sub-image, centered, and
-// composite it onto the background — the same visual contract (a centered
-// glyph occupying roughly `scale` of the icon) with one code path instead of
-// four. Pixel-exact parity with the Python renderer was never the contract;
-// producing a correct, consistently-scaled icon set from a glyph config is.
+// The flat mac/iOS case and the tvOS layered case could each compute their
+// own font-pixel-size formula and center a glyph raster differently. Instead
+// both go through one renderGlyph: always render the glyph (SVG or text)
+// into a shortSide*scale square sub-image, centered, and composite it onto
+// the background — the same visual contract (a centered glyph occupying
+// roughly `scale` of the icon) with one code path instead of two.
 //
 // Backed by the same alpha-flattening rule ADR-0007 documents: every PNG
 // this writes for a mac/iOS icon (and every opaque tvOS layer) is flattened
@@ -85,8 +76,7 @@ import (
 
 const defaultGlyphScale = 0.55
 
-// hexToNRGBA parses a "#RRGGBB" (leading # optional) into an opaque NRGBA,
-// mirroring admin_lib/icons.py's _hex_to_rgba.
+// hexToNRGBA parses a "#RRGGBB" (leading # optional) into an opaque NRGBA.
 func hexToNRGBA(hex string) (color.NRGBA, error) {
 	h := strings.TrimPrefix(hex, "#")
 	if len(h) != 6 {
@@ -146,8 +136,8 @@ func drawCenteredText(dst draw.Image, w, h int, text string, fg color.Color, pix
 
 // drawCenteredTextBold is drawCenteredText's bold-face counterpart, used only
 // by the dev banner (RenderDevBanner in apple_icons_darwin.go) so its "DEV"
-// label reads with the same stroke weight as admin_lib/icons.py's bold
-// system font, without changing renderGlyph's regular-weight glyph text.
+// label reads with a bold system-font weight, without changing
+// renderGlyph's regular-weight glyph text.
 func drawCenteredTextBold(dst draw.Image, w, h int, text string, fg color.Color, pixelSize int) error {
 	f, err := parsedGoBoldFont()
 	if err != nil {
@@ -199,8 +189,7 @@ var errSVGGlyphDropped = fmt.Errorf("glyph_svg is no longer supported: SVG glyph
 // than silently rendering nothing (admin-3rgp.48). Returns an error when a
 // requested glyph fails to render (glyph_svg configured at all, or an
 // unparseable font size) — callers treat that as "generation failed for
-// this size", matching the Python original's outer try/except-and-warn
-// contract, not a hard crash.
+// this size" and warn, not a hard crash.
 func renderGlyph(w, h int, bg color.NRGBA, glyphSVG, glyphText string, fg color.NRGBA, scale float64) (*image.NRGBA, error) {
 	img := image.NewNRGBA(image.Rect(0, 0, w, h))
 	draw.Draw(img, img.Bounds(), image.NewUniform(bg), image.Point{}, draw.Src)
@@ -265,9 +254,9 @@ func savePNG(path string, img image.Image) error {
 // IconOptions is the shared {bg_color=, glyph_svg=, glyph_text=,
 // glyph_color=, glyph_scale=, dev=} shape apple.generate_icons and
 // apple.generate_tv_icons both take as their trailing options table.
-// GlyphScale <= 0 means "use the 0.55 default" (mirrors Python's
-// glyph_scale=None sentinel — 0 is not a meaningful scale, so it doubles as
-// the Lua-side "unset" value with no separate optionality flag needed).
+// GlyphScale <= 0 means "use the 0.55 default" — 0 is not a meaningful
+// scale, so it doubles as the Lua-side "unset" value with no separate
+// optionality flag needed.
 type IconOptions struct {
 	BGColor     string
 	GlyphSVG    string
@@ -303,10 +292,9 @@ func (o IconOptions) resolved() (bg, fg color.NRGBA, scale float64, err error) {
 }
 
 // GenerateIcons renders a full ladder of flat mac/iOS app-icon PNGs, one per
-// size, into outputDir. Mirrors admin_lib/icons.py's generate_icons. Returns
-// false (after warning via h) if any size fails to render — generation is
-// all-or-nothing per call, matching the Python original's "warn, build
-// continues without custom icons" contract rather than a partial ladder.
+// size, into outputDir. Returns false (after warning via h) if any size
+// fails to render — generation is all-or-nothing per call: warn and let the
+// build continue without custom icons, rather than leave a partial ladder.
 func GenerateIcons(h *Host, sizes []int, outputDir string, opts IconOptions) bool {
 	bg, fg, scale, err := opts.resolved()
 	if err != nil {
@@ -346,8 +334,8 @@ func GenerateIcons(h *Host, sizes []int, outputDir string, opts IconOptions) boo
 	return true
 }
 
-// --- tvOS layered icon stack (mirrors the schema apple_icons_darwin.go's
-// sibling admin_lib/icons.py doc comment describes in full) --------------
+// --- tvOS layered icon stack (see apple_icons_darwin.go's file doc comment
+// for the schema this describes in full) --------------------------------
 
 type tvScale struct {
 	Label string
@@ -387,8 +375,7 @@ func tvBrandassetsContents() map[string]any {
 // makeDevBannerRect is the rectangular analog of RenderDevBanner for tvOS's
 // non-square layers: renders the square banner at the larger of the two
 // dimensions, then crops to the requested rectangle from the bottom-right —
-// where the stripe lives — instead of squashing it to fit. Mirrors
-// admin_lib/icons.py's make_dev_banner_rect.
+// where the stripe lives — instead of squashing it to fit.
 func makeDevBannerRect(w, h int) *image.NRGBA {
 	size := w
 	if h > size {
@@ -415,11 +402,10 @@ func makeDevBannerRect(w, h int) *image.NRGBA {
 
 // GenerateTVIcons generates a complete tvOS .brandassets catalog from the
 // same bg_color/glyph_* inputs GenerateIcons takes for the flat mac/iOS
-// icons — mirrors admin_lib/icons.py's generate_tv_icons. Always overwrites
-// whatever is at brandassetsDir. Returns false (after warning via h) if
-// generation fails partway; a partially-written brandassets tree on disk
-// after a false return is possible (matches the Python original, which also
-// doesn't roll back a partial write on exception).
+// icons. Always overwrites whatever is at brandassetsDir. Returns false
+// (after warning via h) if generation fails partway; a partially-written
+// brandassets tree on disk after a false return is possible — this does not
+// roll back a partial write on failure.
 func GenerateTVIcons(h *Host, brandassetsDir string, opts IconOptions) bool {
 	bg, fg, scale, err := opts.resolved()
 	if err != nil {

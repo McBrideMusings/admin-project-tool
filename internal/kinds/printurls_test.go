@@ -10,8 +10,8 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// TestCheckURLTreats2xxAnd3xxAsLive proves CheckURL matches
-// admin_lib/core.py::check_url's "200 <= status < 400" window.
+// TestCheckURLTreats2xxAnd3xxAsLive proves CheckURL treats the
+// "200 <= status < 400" window as live.
 //
 // MUTATION EVIDENCE: change the upper bound from 400 to 300 and this test
 // fails on the 302 case — a redirecting health endpoint (common behind a
@@ -45,8 +45,7 @@ func TestCheckURLTreats4xxAnd5xxAsDown(t *testing.T) {
 	}
 }
 
-// TestCheckURLUnreachableIsDown proves a connection failure reads as down,
-// matching Python's broad `except Exception: return False`.
+// TestCheckURLUnreachableIsDown proves a connection failure reads as down.
 func TestCheckURLUnreachableIsDown(t *testing.T) {
 	if CheckURL("http://127.0.0.1:1") {
 		t.Error("CheckURL against an unreachable port should be down")
@@ -54,8 +53,7 @@ func TestCheckURLUnreachableIsDown(t *testing.T) {
 }
 
 // TestFormatURLStatusShowsLiveOrDown proves formatURLStatus's text content
-// switches on the `live` flag — the Go port of
-// admin_lib/core.py::format_url_status.
+// switches on the `live` flag.
 //
 // MUTATION EVIDENCE: swap the ternary so `live=true` renders "DOWN" and this
 // test fails on the live-case substring check.
@@ -71,8 +69,7 @@ func TestFormatURLStatusShowsLiveOrDown(t *testing.T) {
 }
 
 // TestMakePrintURLsNoopWithoutURLsTable proves a manifest with no [urls]
-// table prints nothing and doesn't error — matching
-// admin_lib/core.py::print_url_status's `if not _urls: return`.
+// table prints nothing and doesn't error.
 func TestMakePrintURLsNoopWithoutURLsTable(t *testing.T) {
 	runner, err := makePrintURLs("print-urls", manifest.Action{}, &manifest.Manifest{}, nil)
 	if err != nil {
@@ -84,9 +81,7 @@ func TestMakePrintURLsNoopWithoutURLsTable(t *testing.T) {
 }
 
 // TestMakePrintURLsChecksEveryDeclaredURL proves the Runner health-checks
-// every entry in the manifest's [urls] table by hitting <url>/health —
-// matching admin_lib/core.py::print_url_status's
-// `url.rstrip("/") + "/health"`.
+// every entry in the manifest's [urls] table by hitting <url>/health.
 //
 // MUTATION EVIDENCE: drop the "/health" suffix (health-check the bare URL
 // instead) and this test fails — the fake server only answers 200 on

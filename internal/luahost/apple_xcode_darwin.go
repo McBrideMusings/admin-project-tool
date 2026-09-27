@@ -17,8 +17,7 @@ func (h *Host) rawBuildLogPath() string {
 }
 
 // XcodebuildOptions is the argument to XcodebuildFiltered and
-// TargetBuildDir — ports the positional arguments admin_lib/apple.py's
-// xcodebuild_filtered/target_build_dir take.
+// TargetBuildDir.
 type XcodebuildOptions struct {
 	Project     string // .xcodeproj or .xcworkspace path; "" omits -project/-workspace
 	Scheme      string
@@ -28,8 +27,8 @@ type XcodebuildOptions struct {
 	// "build" when empty. Unused by TargetBuildDir.
 	Action string
 	// ExtraSettings is appended verbatim (already-composed KEY=value pairs,
-	// e.g. from a future _compose_dev_settings port) — this function does
-	// not interpret it.
+	// e.g. from a future dev/prod bundle-suffix settings composer) — this
+	// function does not interpret it.
 	ExtraSettings string
 	// AllowProvisioning defaults to true when unset; set AllowProvisioningSet
 	// to force false.
@@ -58,9 +57,8 @@ func (o XcodebuildOptions) projectFlag() string {
 // TargetBuildDir asks xcodebuild for TARGET_BUILD_DIR — the exact directory
 // the build for this scheme/config/destination writes into — rather than
 // globbing DerivedData, which is keyed by the project's absolute path and so
-// accumulates one entry per git worktree (see admin_lib/apple.py's
-// target_build_dir doc comment for the incident this avoids). Returns ""
-// with a nil error if the query ran but the setting wasn't in its output.
+// accumulates one entry per git worktree. Returns "" with a nil error if the
+// query ran but the setting wasn't in its output.
 func TargetBuildDir(opts XcodebuildOptions) (string, error) {
 	parts := []string{"xcodebuild"}
 	if f := opts.projectFlag(); f != "" {
@@ -82,7 +80,7 @@ func TargetBuildDir(opts XcodebuildOptions) (string, error) {
 
 	out, err := execOutput("/bin/sh", "-c", strings.Join(parts, " "))
 	if err != nil {
-		return "", nil // matches Python: non-zero exit -> None, not an error
+		return "", nil // a non-zero exit is treated as "no result", not an error
 	}
 	for _, line := range strings.Split(out, "\n") {
 		key, value, found := strings.Cut(strings.TrimSpace(line), " = ")
@@ -103,9 +101,9 @@ type XcodebuildResult struct {
 	// (h.LogDir/admin-xcode-build.log), for DiagnoseBuildFailure or a
 	// caller that wants to show more than the filtered stream.
 	RawLogPath string
-	// Warnings carries the sign-in / API-key-rejection explanations the
-	// Python original prints via warn() mid-build — the Lua binding
-	// relays these through h.Warn so the caller's log gets them too.
+	// Warnings carries the sign-in / API-key-rejection explanations printed
+	// mid-build — the Lua binding relays these through h.Warn so the
+	// caller's log gets them too.
 	Warnings []string
 }
 
@@ -113,17 +111,17 @@ type XcodebuildResult struct {
 // warning: lines only), the full log tee'd to h.LogDir/admin-xcode-build.log,
 // under the per-checkout Xcode build lock (AcquireXcodeLock) so a second
 // concurrent build in the same checkout refuses immediately instead of
-// silently queuing. Ports admin_lib/apple.py's xcodebuild_filtered,
-// including its at-most-two-attempt retry: once when the App Store Connect
-// key is rejected (drops the key and retries on the Apple ID instead), and
-// once when the failure looks like a signed-out Xcode and stdin is an
-// interactive terminal (prints instructions and waits for Return).
+// silently queuing. Includes an at-most-two-attempt retry: once when the App
+// Store Connect key is rejected (drops the key and retries on the Apple ID
+// instead), and once when the failure looks like a signed-out Xcode and
+// stdin is an interactive terminal (prints instructions and waits for
+// Return).
 //
-// WARNING (carried over from the Python original): ExtraSettings applies to
-// every target in the project, including SwiftPM resource bundles — only
-// PRODUCT_BUNDLE_IDENTIFIER is safe there; PRODUCT_NAME and
-// INFOPLIST_KEY_CFBundleDisplayName cause "Multiple commands produce"
-// failures. Use DevMacOSPostprocess for product/display-name differences.
+// WARNING: ExtraSettings applies to every target in the project, including
+// SwiftPM resource bundles — only PRODUCT_BUNDLE_IDENTIFIER is safe there;
+// PRODUCT_NAME and INFOPLIST_KEY_CFBundleDisplayName cause "Multiple
+// commands produce" failures. Use DevMacOSPostprocess for product/display-name
+// differences.
 func (h *Host) XcodebuildFiltered(opts XcodebuildOptions) (XcodebuildResult, error) {
 	action := opts.Action
 	if action == "" {
@@ -229,8 +227,7 @@ func (h *Host) XcodebuildFiltered(opts XcodebuildOptions) (XcodebuildResult, err
 // when the failure looks like a signed-out Xcode AND h.Stdin is an
 // interactive terminal and the operator pressed Return (anything but
 // n/no/q/quit). A non-interactive run (CI, an agent) gets the explanation
-// and no wait — a prompt nobody can answer is a hang, not a pause. Ports
-// admin_lib/apple.py's _offer_xcode_sign_in.
+// and no wait — a prompt nobody can answer is a hang, not a pause.
 func (h *Host) offerXcodeSignIn(buildLogText string) bool {
 	if !XcodeIsSignedOut(buildLogText) {
 		return false

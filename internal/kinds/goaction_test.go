@@ -29,8 +29,7 @@ func TestGoInvalidModeRejectedAtBuildTime(t *testing.T) {
 }
 
 // TestGoDefaultModeIsBuild proves an action with no `run` defaults to mode
-// "build" rather than erroring — matching admin_lib/interp.py::_make_go's
-// `(cmd.run or "build").strip()`.
+// "build" rather than erroring.
 //
 // MUTATION EVIDENCE: replace makeGoKind's `if mode == "" { mode = "build" }`
 // default with a hard error on empty mode, and this test fails: makeGoKind
@@ -48,9 +47,7 @@ func TestGoDefaultModeIsBuild(t *testing.T) {
 //
 // binary comes from the manifest-level [go] table (m.Go), not an inline
 // action key — admin-3rgp.43 gives makeGoKind that table via the Factory's
-// new *manifest.Manifest parameter, matching admin_lib/interp.py::_make_go's
-// ns.get("_GO_CONFIG") read exactly (Python never had a per-action override
-// either).
+// new *manifest.Manifest parameter. There is no per-action override.
 //
 // MUTATION EVIDENCE: change makeGoKind's `archetypeConfigTable(m, "go")` to
 // `archetypeConfigTable(nil, "go")` (ignore the passed-in manifest), and this
@@ -77,10 +74,10 @@ func TestGoBuildRunsRealGoBuild(t *testing.T) {
 }
 
 // TestGoInlineBinaryKeyIsIgnored proves the [go] table, not an action's own
-// inline "binary" key, is what makeGoKind reads — the parity fix this ticket
-// makes (an earlier draft of makeGoKind read action["binary"] as a stopgap
-// before Factory carried the Manifest; admin-3rgp.43 replaces it, matching
-// Python's _make_go which has no such override at all).
+// inline "binary" key, is what makeGoKind reads — the fix this ticket makes
+// (an earlier draft of makeGoKind read action["binary"] as a stopgap before
+// Factory carried the Manifest; admin-3rgp.43 replaces it, and there is no
+// per-action override).
 func TestGoInlineBinaryKeyIsIgnored(t *testing.T) {
 	haveGo(t)
 	dir := t.TempDir()

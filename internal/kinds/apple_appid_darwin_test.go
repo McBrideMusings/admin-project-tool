@@ -52,8 +52,7 @@ func TestParseAppIDArgsMultipleCapabilities(t *testing.T) {
 func TestParseAppIDArgsDanglingFlagIsIgnored(t *testing.T) {
 	// A trailing --capability/--name with no value following isn't a
 	// recognized flag occurrence (i+1 < len(args) fails), so it falls
-	// through to the default case and is treated as a positional token —
-	// matching the Python original's identical index-bounds check.
+	// through to the default case and is treated as a positional token.
 	wanted, name, ids := parseAppIDArgs([]string{"--capability"})
 	if len(wanted) != 0 {
 		t.Errorf("wanted = %v, want none for a dangling --capability", wanted)

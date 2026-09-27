@@ -9,9 +9,9 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
 
-// ShouldActivate is the pure decision admin_lib/interp.py's _enter_frame
-// makes before ever touching frame.activate(): footer, when present,
-// overrides the URL list in both directions (true pins a footer for an
+// ShouldActivate is the pure decision made before ever touching
+// frame.activate(): footer, when present, overrides the URL list in both
+// directions (true pins a footer for an
 // action with nothing to link — the elapsed-time rule and the log path are
 // worth having on their own; false suppresses one the URLs would have
 // raised). hasFooter=false (the key was absent from the manifest) means the
@@ -34,17 +34,17 @@ func ShouldActivate(resolvedURLCount int, hasFooter, footerVal bool) bool {
 //  1. An entry naming a key of the manifest's top-level [urls] table
 //     resolves to that entry, label and all — so an action reuses what the
 //     project already declared instead of restating the string. This
-//     REPLACES any label the entry itself carried, matching
-//     admin_lib/frame.py's resolve_urls exactly (a custom label on an entry
-//     that also names a project URL is discarded in favour of the name).
+//     REPLACES any label the entry itself carried: a custom label on an
+//     entry that also names a project URL is discarded in favour of the
+//     name.
 //  2. ${VAR} is expanded — manifest.ResolveComputed first (derived vars
 //     like ${LAN_IP} are not environment variables, and ResolveEnv alone
 //     would leave a stale literal if a caller ever swaps it for something
 //     that doesn't also know about ComputedVars), then manifest.ResolveEnv
 //     for everything else.
 //
-// An entry that resolves to an empty URL is dropped, matching Python's
-// trailing `if url` filter. Returns the first ResolveEnv error verbatim —
+// An entry that resolves to an empty URL is dropped. Returns the first
+// ResolveEnv error verbatim —
 // same "library returns the error, caller decides" shape ResolveEnv itself
 // documents.
 func ResolveURLs(raw []any, m *manifest.Manifest) ([]URLEntry, error) {
@@ -125,9 +125,9 @@ func walkActionAndTargets(act manifest.Action, fn func(target string, tbl map[st
 // "://" substring) nor a key of projectURLs — the manifest's top-level
 // [urls] table. Without this a typo ("local" when the table calls it
 // "dev-cf") would silently become a literal, painting a footer row that
-// goes nowhere. Meant to run at `admin check` / resolve time, mirroring
-// admin_lib/frame.py's validate_url_refs; walks both an action's own `urls`
-// and every inline target subtable's, and — unlike a fail-fast raise —
+// goes nowhere. Meant to run at `admin check` / resolve time; walks both an
+// action's own `urls` and every inline target subtable's, and — unlike a
+// fail-fast raise —
 // collects every bad entry across every action and target into one *Error
 // so `admin check` can report all of them in one pass, not just the first.
 func ValidateURLRefs(actions map[string]manifest.Action, projectURLs map[string]string) error {
@@ -198,11 +198,10 @@ func validateURLEntries(actionName, target string, raw any, known map[string]str
 }
 
 // ValidateFooterRefs rejects a `footer` value, on an action or any of its
-// inline target subtables, that is present but not a plain bool — the Go
-// port of admin_lib/validate.py::_validate_footer, run at `admin check`
-// time over the whole manifest rather than per-action at parse time.
-// Collects every bad `footer` across every action and target, mirroring
-// ValidateURLRefs's "report everything" shape.
+// inline target subtables, that is present but not a plain bool — run at
+// `admin check` time over the whole manifest. Collects every bad `footer`
+// across every action and target, mirroring ValidateURLRefs's "report
+// everything" shape.
 func ValidateFooterRefs(actions map[string]manifest.Action) error {
 	names := make([]string, 0, len(actions))
 	for n := range actions {

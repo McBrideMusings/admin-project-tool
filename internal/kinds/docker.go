@@ -11,14 +11,11 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/reload"
 )
 
-// makeDockerReloadLoop is kind="docker-reload-loop"'s factory — the Go port
-// of admin_lib/interp.py::_make_docker_reload_loop. `run` is an arbitrary
-// shell command (not necessarily Docker-specific — the kind name is
-// historical) handed straight to internal/reload.RunWithReload.
+// makeDockerReloadLoop is kind="docker-reload-loop"'s factory. `run` is an
+// arbitrary shell command (not necessarily Docker-specific — the kind name
+// is historical) handed straight to internal/reload.RunWithReload.
 //
-// Python's factory also builds a column formatter from the project's
-// `[output]` table (admin_lib/log_columns.make_column_formatter) before
-// passing it to run_with_reload; this does the same via
+// This builds a column formatter from the project's `[output]` table via
 // internal/logcolumns.MakeColumnFormatter("docker", ...), reading the
 // manifest's [output] table exactly the way every other kind reads its own
 // settings table. reload.Options.Formatter is therefore non-nil whenever a
@@ -35,9 +32,7 @@ func makeDockerReloadLoop(name string, action manifest.Action, m *manifest.Manif
 		h := newHost(m)
 		h.Info("reload loop: " + run)
 		// A fresh formatter per invocation (not built once at factory time,
-		// shared across every future call) — matching Python's
-		// _make_docker_reload_loop, which calls make_column_formatter inside
-		// its inner _fn rather than outside it, so each `admin dev` run gets
+		// shared across every future call), so each `admin dev` run gets
 		// its own header print.
 		formatter := logcolumns.MakeColumnFormatter("docker", archetypeConfigTable(m, "output"))
 		rc := reload.RunWithReload(run, name, reload.Options{
@@ -55,11 +50,8 @@ func makeDockerReloadLoop(name string, action manifest.Action, m *manifest.Manif
 	}, nil
 }
 
-// makeServerReload is kind="server-reload"'s factory — the Go port of
-// admin_lib/interp.py::_make_server_reload, which calls
-// admin_lib/docker.py's reload_running_targets. args[0], when present, is
-// the target-name substring filter Python's `args[0] if args else None`
-// passes through unchanged.
+// makeServerReload is kind="server-reload"'s factory. args[0], when
+// present, is the target-name substring filter passed through unchanged.
 func makeServerReload(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	return func(args []string) error {
 		filter := ""
@@ -74,9 +66,7 @@ func makeServerReload(name string, action manifest.Action, m *manifest.Manifest,
 	}, nil
 }
 
-// makeDockerDev is kind="docker-dev"'s factory — the Go port of
-// admin_lib/interp.py::_make_docker_dev, which calls
-// admin_lib/docker.py's docker_dev_from_config. The `[docker_dev]` manifest
+// makeDockerDev is kind="docker-dev"'s factory. The `[docker_dev]` manifest
 // table (m.Settings["docker_dev"]) is the whole body; the action itself carries no
 // per-invocation keys, matching Kinds["docker-dev"].Configless.
 func makeDockerDev(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
@@ -126,9 +116,9 @@ func makeDockerDev(name string, action manifest.Action, m *manifest.Manifest, su
 
 // asMapSlice reads a []any-of-map[string]any config value (TOML's shape for
 // an array of tables) as []map[string]any. A non-list, or a list containing
-// a non-table entry, yields nil — the same "just skip it" leniency Python's
-// `cfg.get("ports") or ()` loop has for a malformed entry, since manifest
-// shape validation is admin-3rgp.8's job, not a kind factory's.
+// a non-table entry, yields nil — a malformed entry is simply skipped,
+// since manifest shape validation is admin-3rgp.8's job, not a kind
+// factory's.
 func asMapSlice(v any) []map[string]any {
 	list, ok := v.([]any)
 	if !ok {
@@ -159,9 +149,8 @@ func cfgNumberString(m map[string]any, key string) (string, bool) {
 }
 
 // makeBindMountDirs pre-creates every bind-mount host dir that opted into
-// `mkdir` (the Python default is true), skipping absolute paths — those
-// belong to system state, not project state. Mirrors
-// admin_lib/docker.py::docker_dev_from_config's pre-loop.
+// `mkdir` (the default is true), skipping absolute paths — those
+// belong to system state, not project state.
 func makeBindMountDirs(cfg map[string]any) error {
 	for _, m := range asMapSlice(cfg["bind_mounts"]) {
 		host := cfgString(m, "host", "")

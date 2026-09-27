@@ -125,8 +125,7 @@ func actionStringList(a manifest.Action, key string) ([]string, bool) {
 }
 
 // actionBool reads a bool-valued key off a raw manifest.Action. present is
-// false both when the key is absent and when it holds a non-bool value —
-// mirrors admin_lib's cmd.meta.get("footer") returning None either way; a
+// false both when the key is absent and when it holds a non-bool value; a
 // caller that needs to tell "absent" from "wrong type" apart validates the
 // manifest separately (admin-3rgp.8's job, not this ticket's).
 func actionBool(a manifest.Action, key string) (val bool, present bool) {
@@ -159,8 +158,7 @@ func orDefault(s, def string) string {
 }
 
 // shellQuote wraps s in single quotes for safe inclusion in a /bin/sh -c
-// command line, escaping any single quote it contains — the same
-// shlex.quote job the Python interpreter's kind factories lean on for
+// command line, escaping any single quote it contains — used for
 // shell-passthrough argument forwarding and kind="go"'s -o path.
 func shellQuote(s string) string {
 	if s == "" {

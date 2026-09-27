@@ -35,8 +35,8 @@ var cmdCmd = &cobra.Command{
 }
 
 // commandDesc looks up name's Desc the way kinds.resolveCommand does
-// (custom shadows archetype-provided — admin_lib/archetypes.py::resolve's
-// rule) — that resolver is unexported to this package, and the picker only
+// (custom shadows archetype-provided) — that resolver is unexported to this
+// package, and the picker only
 // needs the description, not the whole dispatch machinery resolveCommand
 // carries.
 func commandDesc(m *manifest.Manifest, name string) string {

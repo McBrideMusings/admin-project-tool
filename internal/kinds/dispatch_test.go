@@ -44,6 +44,30 @@ func TestRunCommandRunsStepsInOrder(t *testing.T) {
 	}
 }
 
+// TestRunCommandAppliesEnv: a command's `env` table reaches every step,
+// ${VAR} expanded.
+func TestRunCommandAppliesEnv(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("CMD_ENV_BASE", "base")
+	t.Setenv("CMD_ENV_PROBE", "")
+
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"probe": {Steps: []string{"show"}, Env: map[string]string{"CMD_ENV_PROBE": "${CMD_ENV_BASE}-x"}},
+		},
+		Actions: map[string]manifest.Action{
+			"show": {"kind": "shell", "run": `printf %s "$CMD_ENV_PROBE" > env.txt`},
+		},
+	}
+	if err := RunCommandInline(m, newDispatchTestRegistry(), "probe", nil); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if got := readFile(t, dir, "env.txt"); got != "base-x" {
+		t.Fatalf("step saw CMD_ENV_PROBE = %q, want %q", got, "base-x")
+	}
+}
+
 // TestRunCommandStopsAtFirstFailure proves the second half of the same
 // acceptance criterion: a failing step prevents any step after it from
 // running.
@@ -141,8 +165,7 @@ func TestRunCommandCustomShadowsOverride(t *testing.T) {
 }
 
 // TestRunActionDefaultsToShellKind proves an action with no `kind` key
-// defaults to "shell", matching admin_lib/validate.py's
-// `data.get("kind", "shell")`.
+// defaults to "shell".
 func TestRunActionDefaultsToShellKind(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -676,9 +699,8 @@ func TestNestedCommandWritesOneLogFile(t *testing.T) {
 }
 
 // TestNestedLogFalseDoesNotSilenceOuter is the second half of admin-rc82.1:
-// Python's _make_step_runner is a bare `pass` for `log = false`, so a nested
-// command declaring it must not switch logging off for the outer command
-// still running.
+// `log = false` names no context, so a nested command declaring it must
+// not switch logging off for the outer command still running.
 //
 // MUTATION EVIDENCE: restore `ctx.SetEnabled(false)` to nameCommandLog's
 // log-false branch and this fails — "after-hop" never reaches the file.

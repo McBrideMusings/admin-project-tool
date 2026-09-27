@@ -14,13 +14,12 @@ import (
 
 // multiTargetReserved are the top-level keys on a kind="multi-target" action
 // that are never themselves a target name — everything else whose value is
-// a table is an inline target subtable (admin_lib/validate.py's
-// inline_targets: "keys whose value is a dict and not a reserved action
-// key"). "urls"/"footer" joined this set with admin-3rgp.11 and "requires"
-// with admin-3rgp.10 — still narrower than Python's full VALID_ACTION_KEYS,
-// because "keys" (admin-3rgp.18) hasn't landed yet and so stays usable as an
-// ordinary map value on an action without being misidentified as a target
-// until that ticket claims it too.
+// a table is an inline target subtable: keys whose value is a dict and not
+// a reserved action key. "urls"/"footer" joined this set with admin-3rgp.11
+// and "requires" with admin-3rgp.10 — still narrower than the full set of
+// valid action keys, because "keys" (admin-3rgp.18) hasn't landed yet and so
+// stays usable as an ordinary map value on an action without being
+// misidentified as a target until that ticket claims it too.
 // "requires" is listed even though its value (a list, per guards.RequiresOf)
 // already keeps it out of the map[string]any inline scan below — belt and
 // suspenders against a malformed manifest that puts a table there instead.
@@ -35,7 +34,9 @@ var multiTargetReserved = map[string]bool{
 // given, inherit the parent's default" — the same None-vs-[]-vs-list
 // tri-state the pinned-footer urls/footer design (project CLAUDE.md) uses
 // for target_urls/target_footer. detach/detachSet is the identical
-// tri-state for ADR-0020's per-target `detach` override.
+// tri-state for ADR-0020's per-target `detach` override. env is set in the
+// process environment before the target runs, whether it runs a command or
+// delegates; pty and watch apply to a `run` target only, as on kind="shell".
 type multiTargetEntry struct {
 	run         string
 	action      string
@@ -43,13 +44,16 @@ type multiTargetEntry struct {
 	requiresSet bool
 	detach      bool
 	detachSet   bool
+	env         map[string]string
+	pty         bool
+	watch       string
 }
 
 // targetFrameMeta is one target's own urls/footer declaration, captured at
-// build time from its inline subtable — the per-target half of
-// admin_lib/interp.py::_make_multi_target's resolved_target_urls/
-// resolved_target_footer. hasURLs/hasFooter distinguish "declared, even as
-// an empty list / false" from "absent, inherit the parent" — a target with
+// build time from its inline subtable — the per-target half of the
+// multi-target urls/footer resolution. hasURLs/hasFooter distinguish
+// "declared, even as an empty list / false" from "absent, inherit the
+// parent" — a target with
 // urls = [] deliberately opts OUT of an inherited footer, which is not the
 // same thing as never mentioning urls at all.
 type targetFrameMeta struct {
@@ -181,9 +185,8 @@ func TargetDescription(m *manifest.Manifest, action manifest.Action, key string)
 	return summary
 }
 
-// makeMultiTarget is kind="multi-target"'s factory — the Go port of
-// admin_lib/interp.py::_make_multi_target, with BOTH per-target inheritance
-// mechanisms:
+// makeMultiTarget is kind="multi-target"'s factory, with BOTH per-target
+// inheritance mechanisms:
 //   - urls/footer (admin-3rgp.11): parent default, child override, child
 //     opt-out with an empty list or an explicit `footer = false`.
 //   - requires (admin-3rgp.10): an inline target subtable may carry its own
@@ -194,7 +197,7 @@ func TargetDescription(m *manifest.Manifest, action manifest.Action, key string)
 // hasURLs/hasFooter, multiTargetEntry's requiresSet) distinguishing "declared,
 // even as empty" from "absent, inherit the parent".
 //
-// Both target shapes Python supports are ported: inline subtables
+// Both target shapes are supported: inline subtables
 // ([actions.dev.cf] run = "...") and the flat `targets` table (name = "..."
 // or name = "@other-action" for delegation) — the two are mutually
 // exclusive, matching validate_action's "cannot mix targets with inline
@@ -267,6 +270,38 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 						"action %q: target %q: detach must be a boolean", name, k)
 				}
 				entry.detach, entry.detachSet = b, true
+			}
+			if ev, present := tbl["env"]; present {
+				envTbl, ok := ev.(map[string]any)
+				if !ok {
+					return nil, fmt.Errorf(
+						"action %q: target %q: env must be a table of strings", name, k)
+				}
+				entry.env = make(map[string]string, len(envTbl))
+				for ek, v := range envTbl {
+					s, ok := v.(string)
+					if !ok {
+						return nil, fmt.Errorf(
+							"action %q: target %q: env.%s must be a string", name, k, ek)
+					}
+					entry.env[ek] = s
+				}
+			}
+			if pv, present := tbl["pty"]; present {
+				b, ok := pv.(bool)
+				if !ok {
+					return nil, fmt.Errorf(
+						"action %q: target %q: pty must be a boolean", name, k)
+				}
+				entry.pty = b
+			}
+			if wv, present := tbl["watch"]; present {
+				w, ok := wv.(string)
+				if !ok {
+					return nil, fmt.Errorf(
+						"action %q: target %q: watch must be a string", name, k)
+				}
+				entry.watch = w
 			}
 			targets[k] = entry
 			frameMeta[k] = targetFrameMetaOf(action, k)
@@ -350,6 +385,10 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 		f := enterFrame(h, fmt.Sprintf("%s:%s", name, picked), urlsForTarget, hasFooterForTarget, footerForTarget, m)
 		defer frame.Deactivate(f)
 
+		if err := applyEnv(t.env); err != nil {
+			return fmt.Errorf("action %q: target %q: %w", name, picked, err)
+		}
+
 		if t.action != "" {
 			if surf == nil {
 				return fmt.Errorf(
@@ -370,13 +409,20 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 			return fmt.Errorf("action %q: target %q: %s", name, picked, emptyCmdErr)
 		}
 		h.Info(fmt.Sprintf("running [%s:%s]: %s", name, picked, run))
-		res, err := h.RunCmd(run, luahost.RunCmdOptions{CaptureLog: true})
+		runCmd := h.RunCmd
+		if t.pty {
+			runCmd = h.RunCmdPTY
+		}
+		res, err := runCmd(run, luahost.RunCmdOptions{CaptureLog: true})
 		if err != nil {
 			return fmt.Errorf("action %q: %w", name, err)
 		}
 		if !res.Ok {
 			h.Err(name + " failed")
 			return fmt.Errorf("action %q failed", name)
+		}
+		if t.watch != "" {
+			runWatcher(h, t.watch, res.Output)
 		}
 		h.Ok(name + " complete")
 		return nil

@@ -1,4 +1,4 @@
-// process.go is the Go port of admin_lib/ports_nuke.py's process-listing and
+// process.go implements process-listing and
 // scoping primitives: enumerate every visible process, find one's cwd and
 // controlling-terminal ancestry, and decide whether a process belongs to a
 // given project. nuke.go and precheck.go build the actual cleanup/precheck
@@ -18,8 +18,7 @@ import (
 	"time"
 )
 
-// Proc is one visible process — the Go port of the dict
-// admin_lib/ports_nuke.py::list_processes yields.
+// Proc is one visible process.
 type Proc struct {
 	PID     int
 	Argv    []string
@@ -28,10 +27,9 @@ type Proc struct {
 	Cwd     string // "" means unknown; the ps fallback can't report it.
 }
 
-// ListProcesses returns every visible process except this one — the Go port
-// of admin_lib/ports_nuke.py::list_processes: a /proc walk when /proc exists
-// (Linux), a `ps` fallback otherwise (macOS/BSD). Order is not significant
-// to any caller.
+// ListProcesses returns every visible process except this one, via a /proc
+// walk when /proc exists (Linux), a `ps` fallback otherwise (macOS/BSD).
+// Order is not significant to any caller.
 func ListProcesses() []Proc {
 	if info, err := os.Stat("/proc"); err == nil && info.IsDir() {
 		return listProcessesProc()
@@ -113,10 +111,10 @@ func listProcessesPS() []Proc {
 	return procs
 }
 
-// PidCwd returns pid's working directory, or "" when it can't be determined
-// — the Go port of admin_lib/ports_nuke.py::_pid_cwd. /proc first (Linux);
-// per-pid `lsof -d cwd` otherwise (macOS/BSD), scoped to one fd so it can't
-// hang the way a full lsof scan can on a wedged network mount.
+// PidCwd returns pid's working directory, or "" when it can't be determined.
+// /proc first (Linux); per-pid `lsof -d cwd` otherwise (macOS/BSD), scoped
+// to one fd so it can't hang the way a full lsof scan can on a wedged
+// network mount.
 func PidCwd(pid int, timeout time.Duration) string {
 	if cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid)); err == nil {
 		return cwd
@@ -139,9 +137,8 @@ func PidCwd(pid int, timeout time.Duration) string {
 	return ""
 }
 
-// cwdInRoot reports whether cwd is projectRoot or a directory beneath it —
-// the Go port of admin_lib/ports_nuke.py::_cwd_in_root. An empty cwd (the
-// caller couldn't resolve it) is never inside the root.
+// cwdInRoot reports whether cwd is projectRoot or a directory beneath it. An
+// empty cwd (the caller couldn't resolve it) is never inside the root.
 func cwdInRoot(cwd, projectRoot string) bool {
 	if cwd == "" {
 		return false
@@ -150,8 +147,7 @@ func cwdInRoot(cwd, projectRoot string) bool {
 }
 
 // pidPpidMap returns {pid: ppid} for every visible process via one
-// `ps -Ao pid=,ppid=` call — the Go port of
-// admin_lib/ports_nuke.py::_pid_ppid_map.
+// `ps -Ao pid=,ppid=` call.
 func pidPpidMap() map[int]int {
 	psPath, err := exec.LookPath("ps")
 	if err != nil {
@@ -177,13 +173,12 @@ func pidPpidMap() map[int]int {
 	return m
 }
 
-// ChildPIDs returns every descendant of pid, deepest first — the Go port of
-// admin_lib/ports_nuke.py::child_pids. Deepest-first so a caller killing the
-// list in order reaps grandchildren before the parent that would otherwise
-// reparent them to init. Children of one parent are visited in sorted-pid
-// order, for deterministic output; a real process tree can't cycle, so a
-// depth guard (matching Python's `depth > 20`) is the only defense needed
-// against a bogus `ps` snapshot.
+// ChildPIDs returns every descendant of pid, deepest first, so a caller
+// killing the list in order reaps grandchildren before the parent that
+// would otherwise reparent them to init. Children of one parent are
+// visited in sorted-pid order, for deterministic output; a real process
+// tree can't cycle, so a depth guard (`depth > 20`) is the only defense
+// needed against a bogus `ps` snapshot.
 func ChildPIDs(pid int) []int {
 	ppidMap := pidPpidMap()
 	tree := map[int][]int{}
@@ -213,8 +208,7 @@ func ChildPIDs(pid int) []int {
 }
 
 // absPath is filepath.Abs with the error swallowed — every caller here
-// already has a best-effort fallback (use the input unchanged), matching
-// Python's bare os.path.abspath (which never raises for a string input).
+// already has a best-effort fallback (use the input unchanged).
 func absPath(p string) string {
 	if abs, err := filepath.Abs(p); err == nil {
 		return abs

@@ -7,8 +7,7 @@ import (
 )
 
 // TestParseDevMountsSplitsNameEqualsPath proves DEV_MOUNTS's "name=path,
-// name2=path2" shape parses into individual mounts, matching
-// admin_lib/web_dev.py::parse_dev_mounts.
+// name2=path2" shape parses into individual mounts.
 func TestParseDevMountsSplitsNameEqualsPath(t *testing.T) {
 	h := testHost(t)
 	mounts, ok := parseDevMounts(h, "media=/mnt/media, books=/mnt/books")
@@ -34,9 +33,8 @@ func TestParseDevMountsRejectsMissingEquals(t *testing.T) {
 	}
 }
 
-// TestParseDevMountsRejectsDotName proves "." and ".." are rejected as mount
-// names — admin_lib/web_dev.py::parse_dev_mounts' `name in (".", "..")`
-// guard.
+// TestParseDevMountsRejectsDotName proves "." and ".." are rejected as
+// mount names.
 func TestParseDevMountsRejectsDotName(t *testing.T) {
 	h := testHost(t)
 	if _, ok := parseDevMounts(h, "..=/somewhere"); ok {
@@ -45,8 +43,7 @@ func TestParseDevMountsRejectsDotName(t *testing.T) {
 }
 
 // TestParseDevMountsEmptyStringIsNoMounts proves an empty DEV_MOUNTS value
-// parses to zero mounts (not an error) — matching Python's
-// `for entry in (raw or "").split(","): ... if not entry: continue`.
+// parses to zero mounts (not an error).
 func TestParseDevMountsEmptyStringIsNoMounts(t *testing.T) {
 	h := testHost(t)
 	mounts, ok := parseDevMounts(h, "")
@@ -56,8 +53,8 @@ func TestParseDevMountsEmptyStringIsNoMounts(t *testing.T) {
 }
 
 // TestSetupDevMountsRefusesMissingTarget proves a mount whose target
-// directory doesn't exist refuses to start — matching
-// admin_lib/web_dev.py::setup_dev_mounts' "targets unavailable" guard.
+// directory doesn't exist refuses to start — setupDevMounts' "targets
+// unavailable" guard.
 func TestSetupDevMountsRefusesMissingTarget(t *testing.T) {
 	h := testHost(t)
 	dataDir := t.TempDir()
@@ -93,11 +90,11 @@ func TestSetupDevMountsCreatesSymlink(t *testing.T) {
 }
 
 // TestSetupDevMountsPrunesStaleSymlink proves a symlink under dataDir whose
-// name is no longer in the (non-empty) mount list gets removed — matching
-// admin_lib/web_dev.py::setup_dev_mounts' prune loop. The prune loop only
-// runs at all when `mounts` is non-empty in both Python and this port (an
-// empty/nil mount list returns success immediately, before ever reaching
-// the loop) — this test's `keep` mount is what gets past that early return.
+// name is no longer in the (non-empty) mount list gets removed —
+// setupDevMounts' prune loop. The prune loop only runs at all when
+// `mounts` is non-empty (an empty/nil mount list returns success
+// immediately, before ever reaching the loop) — this test's `keep` mount is
+// what gets past that early return.
 //
 // MUTATION EVIDENCE: remove the prune loop entirely and this test fails —
 // the stale symlink would still be present after setupDevMounts returns.
@@ -144,8 +141,8 @@ func TestSetupDevMountsRefusesToClobberARealFile(t *testing.T) {
 }
 
 // TestBuildViteDevOptionsMapsCoreFields proves buildViteDevOptions maps the
-// [vite_dev] table's scalar fields onto viteDevOptions, matching
-// admin_lib/web_dev.py::vite_dev_from_config's straight passthrough fields.
+// [vite_dev] table's scalar fields onto viteDevOptions as a straight
+// passthrough.
 func TestBuildViteDevOptionsMapsCoreFields(t *testing.T) {
 	root := t.TempDir()
 	cfg := map[string]any{
@@ -166,9 +163,7 @@ func TestBuildViteDevOptionsMapsCoreFields(t *testing.T) {
 }
 
 // TestBuildViteDevOptionsRejectsMultipleDataRoots proves two
-// data_subdirs entries both claiming is_data_root=true is a config error —
-// matching admin_lib/web_dev.py::vite_dev_from_config's
-// `len(data_roots) > 1` check.
+// data_subdirs entries both claiming is_data_root=true is a config error.
 //
 // MUTATION EVIDENCE: change `dataRootCount > 1` to `dataRootCount > 2` and
 // this test fails — buildViteDevOptions would return no error for two
@@ -214,7 +209,7 @@ func TestBuildViteDevOptionsExportsSubdirEnv(t *testing.T) {
 }
 
 // TestBuildViteDevOptionsEmptyConfigIsAnError proves an empty [vite_dev]
-// table is refused, matching Python's `if not cfg: err(...); return 1`.
+// table is refused.
 func TestBuildViteDevOptionsEmptyConfigIsAnError(t *testing.T) {
 	if _, err := buildViteDevOptions(t.TempDir(), nil); err == nil {
 		t.Fatal("buildViteDevOptions(nil) err = nil, want an error")

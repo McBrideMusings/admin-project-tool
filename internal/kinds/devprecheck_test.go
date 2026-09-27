@@ -21,8 +21,7 @@ func TestMakeDevPrecheckWithNoLiveSessionSucceeds(t *testing.T) {
 }
 
 // TestMakeDevPrecheckAbortsOnADeclaredRunningContainer proves the
-// container-check half surfaces as a Runner error, matching
-// admin_lib/ports_nuke.py::dev_precheck's container-abort branch.
+// container-check half surfaces as a Runner error.
 func TestMakeDevPrecheckAbortsOnADeclaredRunningContainer(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)

@@ -23,18 +23,16 @@ import (
 )
 
 // installBridgeSink routes log-bridge lines through opts' formatter and
-// frame.Write — the Go port of admin_lib/keybindings.py::_install_bridge_
-// sink. Without a sink the bridge writes to os.Stdout directly: unstamped,
-// uncolored, and — under a pinned footer — painting over the footer rows.
+// frame.Write. Without a sink the bridge writes to os.Stdout directly:
+// unstamped, uncolored, and — under a pinned footer — painting over the
+// footer rows.
 //
 // Bridge lines get their OWN LogFormatter, built fresh with ReuseTimestamp
 // true, rather than the caller's own Formatter (hasFormatter only gates
 // whether to format at all) — only bridge lines carry a timestamp worth
 // keeping (the browser's own clock, up to a second stale from the
 // userscript's batching); a subprocess's own stamp is normally now() and
-// not worth preserving. This matches Python exactly: _install_bridge_sink
-// checks only `formatter is None`, then always builds
-// `make_formatter(reuse_timestamp=True)` itself.
+// not worth preserving.
 func installBridgeSink(b *logbridge.Bridge, w io.Writer, hasFormatter bool) {
 	if !hasFormatter {
 		b.SetSink(func(line string) { frame.Write(w, line) })
@@ -48,9 +46,9 @@ func installBridgeSink(b *logbridge.Bridge, w io.Writer, hasFormatter bool) {
 
 // signalByName resolves a signal name (with or without the "SIG" prefix,
 // case-insensitive — "TERM" and "SIGTERM" both work) to a syscall.Signal.
-// The Go standard library has no name->signal registry the way Python's
-// signal.Signals enum does, so this is a small hand-built table covering
-// the signals a pid_file-targeted keybinding would plausibly send.
+// The Go standard library has no name->signal registry, so this is a small
+// hand-built table covering the signals a pid_file-targeted keybinding
+// would plausibly send.
 var namedSignals = map[string]syscall.Signal{
 	"HUP": syscall.SIGHUP, "INT": syscall.SIGINT, "QUIT": syscall.SIGQUIT,
 	"KILL": syscall.SIGKILL, "TERM": syscall.SIGTERM,
@@ -66,10 +64,9 @@ func signalByName(name string) (syscall.Signal, bool) {
 	return sig, ok
 }
 
-// sendSignal reads a PID from pidFile and signals it — the Go port of
-// admin_lib/keybindings.py::_send_signal. A stale/missing PID file, an
-// unknown signal name, or a process that's already gone is warned about,
-// never fatal to the wrapped process's own run.
+// sendSignal reads a PID from pidFile and signals it. A stale/missing PID
+// file, an unknown signal name, or a process that's already gone is warned
+// about, never fatal to the wrapped process's own run.
 func sendSignal(sigName, pidFile string, opts Options) {
 	sig, ok := signalByName(sigName)
 	if !ok {
@@ -106,11 +103,10 @@ func sendSignal(sigName, pidFile string, opts Options) {
 }
 
 // runInline fires a shell snippet without blocking the wrapped process,
-// inheriting the real process stdout/stderr — the Go port of
-// admin_lib/keybindings.py::_run_inline, which lets a Popen's output go
-// straight to admin's own stdout rather than through the pump/footer (the
-// binding is meant for a fire-and-forget side effect, not something whose
-// output needs to interleave cleanly with the wrapped process's own).
+// inheriting the real process stdout/stderr, so its output goes straight to
+// admin's own stdout rather than through the pump/footer (the binding is
+// meant for a fire-and-forget side effect, not something whose output needs
+// to interleave cleanly with the wrapped process's own).
 func runInline(snippet string, opts Options) {
 	c := exec.Command("/bin/sh", "-c", snippet)
 	c.Stdout = os.Stdout
@@ -122,8 +118,7 @@ func runInline(snippet string, opts Options) {
 	}
 }
 
-// dispatchBinding fires exactly one of a KeyBinding's three target shapes —
-// the Go port of admin_lib/keybindings.py::_dispatch_binding.
+// dispatchBinding fires exactly one of a KeyBinding's three target shapes.
 // validate.ParseKeys already guarantees exactly one of Run/Action/Signal is
 // set, so the order checked here doesn't matter.
 func dispatchBinding(b validate.KeyBinding, opts Options) {
@@ -192,13 +187,11 @@ func waitLoop(c *exec.Cmd, sigCh <-chan os.Signal, keysCh <-chan byte, exitCh <-
 // on its own or is torn down by Ctrl-C/Ctrl-D/SIGINT/SIGTERM — dispatching
 // any recognized keystroke to its binding along the way instead of
 // restarting the wrapped process (that restart-on-key shape is
-// internal/reload.RunWithReload's job, a different kind entirely). The Go
-// port of admin_lib/keybindings.py::run_with_keybindings.
+// internal/reload.RunWithReload's job, a different kind entirely).
 //
 // Returns the wrapped process's exit code, or 130 on Ctrl-C/SIGINT
-// (matching the shell convention Python's own KeyboardInterrupt branch
-// returns) or 0 on SIGTERM (a clean shutdown, no "Stopped." banner —
-// mirrors Python's _on_sigterm raising SystemExit(0)).
+// (the shell convention for a keyboard interrupt) or 0 on SIGTERM (a clean
+// shutdown, no "Stopped." banner).
 func Run(cmdline string, keys map[string]validate.KeyBinding, opts Options) (int, error) {
 	stdout := opts.Stdout
 	if stdout == nil {

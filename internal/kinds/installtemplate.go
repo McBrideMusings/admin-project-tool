@@ -11,13 +11,11 @@ import (
 
 // unraidTemplatesDir is where Unraid's Docker GUI scans for user-defined
 // container templates — files matching "my-*.xml" there show up under the
-// "Add Container" picker on the host's webui. Mirrors
-// admin_lib/unraid.py's _UNRAID_TEMPLATES_DIR.
+// "Add Container" picker on the host's webui.
 const unraidTemplatesDir = "/boot/config/plugins/dockerMan/templates-user"
 
 // slugFromAppImage strips a registry prefix and ":tag" from the APP_IMAGE
-// env var to get a bare slug — "ghcr.io/me/my-app:latest" → "my-app". The
-// Go port of admin_lib/unraid.py's _slug_from_app_image.
+// env var to get a bare slug — "ghcr.io/me/my-app:latest" → "my-app".
 func slugFromAppImage() string {
 	image := strings.TrimSpace(os.Getenv("APP_IMAGE"))
 	if image == "" {
@@ -45,9 +43,7 @@ func InstallTemplateSrc(m *manifest.Manifest) string {
 	return src
 }
 
-// makeInstallTemplate is kind="install-template"'s factory — the Go port of
-// admin_lib/interp.py::_make_install_template, which calls
-// admin_lib/unraid.py's install_docker_template_from_config. Reads the
+// makeInstallTemplate is kind="install-template"'s factory. Reads the
 // `[install_template]` manifest table for `src`/`name` (both optional) and
 // UNRAID_HOST (required)/UNRAID_USER (default "root") from the environment —
 // no host or user literal ever belongs in a tracked manifest.

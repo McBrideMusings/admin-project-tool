@@ -1,5 +1,5 @@
-// Package guards is the Go port of admin_lib/guards.py — the single home
-// for guard handling across the whole pipeline. A guard is a named
+// Package guards is the single home for guard handling across the whole
+// pipeline. A guard is a named
 // precondition referenced from a `requires` list on an action or a
 // multi-target target. Before the action's run fires, each named guard is
 // invoked in order (fail-fast); on failure the caller reports the guard's
@@ -16,8 +16,7 @@
 //     shell expression) and `fail` (a static message) — parsed by
 //     manifest.Parse into manifest.Manifest.Guards.
 //
-// This package owns every guard-specific step the pipeline needs, mirroring
-// admin_lib/guards.py's phase hooks:
+// This package owns every guard-specific step the pipeline needs:
 //
 //   - manifest.Parse (via manifest.parseGuardTables) validates `[guards.<name>]`
 //     definitions at parse time — this package's ValidateRequires does not
@@ -33,9 +32,8 @@
 //   - RunGlobalPreflight(command) — process-wide checks that run before any
 //     command regardless of `requires` (deps_fresh.go).
 //
-// Known bugs in the Python original that this port deliberately does NOT
-// carry forward (both filed: admin-c8lc, admin-d03k) — see gitPushedGuard's
-// doc comment for what changed and why.
+// Two bugs fixed in git-pushed (admin-c8lc, admin-d03k) — see
+// gitPushedGuard's doc comment for what changed and why.
 package guards
 
 import (
@@ -51,13 +49,11 @@ import (
 
 // Func is a registered guard's implementation: no arguments, returns
 // (ok, message). On success: (true, ""). On failure: (false, "<actionable
-// message>") — conventionally prefixed with the guard's own name, matching
-// admin_lib/guards.py::register_guard's contract.
+// message>") — conventionally prefixed with the guard's own name.
 type Func func() (bool, string)
 
 // Builtin is the set of guard names implemented in Go rather than in a
-// manifest's [guards.<name>] table — the Go port of
-// admin_lib/guards.py::GUARDS_BUILTIN. manifest.parseGuardTables already
+// manifest's [guards.<name>] table. manifest.parseGuardTables already
 // rejects a TOML guard using one of these names; this is the same set
 // re-exported so ValidateRequires and the interpreter don't hard-code a
 // second copy.
@@ -91,10 +87,9 @@ func RegisterGuard(name string, fn Func) {
 }
 
 // registerShellGuard registers a guard backed by a `/bin/sh -c <run>`
-// invocation — the Go port of admin_lib/guards.py::register_shell_guard.
-// cwd inherits from the process (the interpreter cd's to the project root
-// at boot, so guards run there too, matching admin_lib's own contract). On
-// non-zero exit, the captured output is prepended to the `fail` message —
+// invocation. cwd inherits from the process (the interpreter cd's to the
+// project root at boot, so guards run there too). On non-zero exit, the
+// captured output is prepended to the `fail` message —
 // gives context (e.g. a `git status` dump) in front of the actionable
 // instruction.
 func registerShellGuard(name, run, fail string) {
@@ -135,11 +130,11 @@ func Reset() {
 	registerBuiltin("deps-fresh", func() (bool, string) { return depsFreshCheck("") })
 }
 
-// RunRequires runs a `requires` list, fail-fast: the Go port of
-// admin_lib/guards.py::run_requires. Returns nil on all-pass, or an error
-// carrying the first failing guard's diagnostic (an unknown name counts as
-// a failure — ValidateRequires should already have caught it at resolve
-// time, so reaching this is itself a bug worth surfacing loudly).
+// RunRequires runs a `requires` list, fail-fast. Returns nil on all-pass,
+// or an error carrying the first failing guard's diagnostic (an unknown
+// name counts as a failure — ValidateRequires should already have caught
+// it at resolve time, so reaching this is itself a bug worth surfacing
+// loudly).
 func RunRequires(names []string) error {
 	for _, name := range names {
 		registryMu.Lock()
@@ -188,9 +183,9 @@ func RequiresOf(action manifest.Action) ([]string, error) {
 // ValidateRequires audits every action's `requires` (and, for a
 // kind="multi-target" action, every inline target's own `requires`
 // override) against the known guard set — a built-in name or a key in
-// guardDefs. The Go port of admin_lib/guards.py::validate_requires, called
-// from internal/archetype.Resolve (the resolve phase) after archetype
-// merging. Reports every unknown reference it finds, sorted by action name,
+// guardDefs. Called from internal/archetype.Resolve (the resolve phase)
+// after archetype merging. Reports every unknown reference it finds,
+// sorted by action name,
 // rather than stopping at the first — a merged manifest is small enough
 // that surfacing every typo in one pass beats a fix-one-rerun loop.
 func ValidateRequires(m *manifest.Manifest) error {

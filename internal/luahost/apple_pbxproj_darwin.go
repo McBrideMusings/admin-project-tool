@@ -2,20 +2,20 @@
 
 package luahost
 
-// Ports admin_lib/apple.py's _detect_project_path / _read_pbxproj /
-// _xcode_target_settings / _xcode_setting — the "pbxproj parsing" area
+// Implements project path detection, pbxproj parsing, and target/
+// configuration build-setting lookup — the "pbxproj parsing" area
 // admin-3rgp.38's NOTES named as remaining. docs/architecture/lua-host-api.md
 // previously deferred this whole area as "project-specific convention-
 // following, not a general host capability" — true of the higher layer
-// (_compose_dev_settings and the dev/prod bundle-suffix scheme, still not
-// bound here), but the raw parse and the target/configuration lookup
-// underneath it are a general capability: "read what Xcode actually wrote
-// into a project's buildSettings" has nothing project-specific about it.
+// (the dev/prod bundle-suffix scheme, still not bound here), but the raw
+// parse and the target/configuration lookup underneath it are a general
+// capability: "read what Xcode actually wrote into a project's
+// buildSettings" has nothing project-specific about it.
 //
-// Every function here degrades the same way the Python original did on any
-// resolution failure — an empty table / empty string / false, never a raised
-// error — because .xcconfig values and $(VAR) substitutions come back as
-// literals or are absent entirely, and a caller must already tolerate that.
+// Every function here degrades the same way on any resolution failure — an
+// empty table / empty string / false, never a raised error — because
+// .xcconfig values and $(VAR) substitutions come back as literals or are
+// absent entirely, and a caller must already tolerate that.
 
 import (
 	"encoding/json"
@@ -29,12 +29,10 @@ import (
 
 // DetectProjectPath returns explicit if non-empty, else the first
 // *.xcworkspace or *.xcodeproj found in the process's current directory.
-// Returns "" (not an error) when nothing is found — mirrors the Python
-// original's two outcomes (an explicit path always wins; cwd-globbing is a
-// convenience, not a guarantee), except the original called sys.exit(1) on
-// failure — a Lua host function raising the process down is wrong for a
-// primitive other bindings compose with, so the caller decides what an
-// empty result means.
+// Returns "" (not an error) when nothing is found: an explicit path always
+// wins, cwd-globbing is a convenience, not a guarantee, and a Lua host
+// function raising the process down is wrong for a primitive other
+// bindings compose with, so the caller decides what an empty result means.
 func DetectProjectPath(explicit string) (string, error) {
 	if explicit != "" {
 		return explicit, nil
@@ -69,8 +67,7 @@ func resetPBXProjCache() {
 // into a map via `plutil -convert json -o -`, caching per projectPath so one
 // admin invocation parses at most once. Returns {} on any failure — missing
 // file, a workspace with no obvious sibling .xcodeproj, a plutil error, bad
-// JSON — so callers fall back to manifest-supplied values exactly as the
-// Python original's callers already must.
+// JSON — so callers fall back to manifest-supplied values.
 func ReadPBXProj(projectPath string) map[string]any {
 	pbxprojCacheMu.Lock()
 	if cached, ok := pbxprojCache[projectPath]; ok {
@@ -134,8 +131,8 @@ func isFile(path string) bool {
 
 // XcodeTargetSettings returns the buildSettings map for the PBXNativeTarget
 // named scheme at configuration (falling back to the target's first build
-// configuration when configuration isn't found, matching the Python
-// original), or {} on any resolution failure.
+// configuration when configuration isn't found), or {} on any resolution
+// failure.
 func XcodeTargetSettings(projectPath, scheme, configuration string) map[string]any {
 	if scheme == "" {
 		return map[string]any{}
@@ -194,8 +191,8 @@ func XcodeTargetSettings(projectPath, scheme, configuration string) map[string]a
 
 // xcodeVarRefRe matches a single $(KEY) build-setting reference — the form
 // PRODUCT_BUNDLE_IDENTIFIER takes in a project that follows the dev/prod
-// bundle-suffix convention (docs/architecture in admin_lib/apple.py's
-// _compose_dev_settings): "com.foo.app$(ADMIN_DEV_BUNDLE_SUFFIX)".
+// bundle-suffix convention (docs/architecture):
+// "com.foo.app$(ADMIN_DEV_BUNDLE_SUFFIX)".
 var xcodeVarRefRe = regexp.MustCompile(`\$\(([A-Za-z_][A-Za-z0-9_]*)\)`)
 
 // expandXcodeValue resolves every $(KEY) reference in val by substituting
@@ -211,14 +208,14 @@ var xcodeVarRefRe = regexp.MustCompile(`\$\(([A-Za-z_][A-Za-z0-9_]*)\)`)
 // evaluator refuses to expand a cycle further). A value with no "$(" at all
 // is returned unchanged.
 //
-// This is deliberately more capable than admin_lib/apple.py's
-// _xcode_setting, which only rejects a value that *starts* with "$" — a
-// value with an embedded, unresolved "$(...)" elsewhere in the string (e.g.
-// after a literal prefix) passed straight through in the Python original.
-// That is the exact bug observed live: an uncomposed bundle id containing a
-// literal "$(...)" token reaching a `log stream` predicate. Treating any
-// unresolved reference — not just a leading one — as "value absent" is what
-// makes the caller fall back to composing the id instead of copying it.
+// This deliberately rejects a value with an embedded, unresolved "$(...)"
+// anywhere in the string, not just one that *starts* with "$" — a value
+// with an embedded reference elsewhere (e.g. after a literal prefix) that
+// passed straight through was the exact bug observed live: an uncomposed
+// bundle id containing a literal "$(...)" token reaching a `log stream`
+// predicate. Treating any unresolved reference — not just a leading one —
+// as "value absent" is what makes the caller fall back to composing the id
+// instead of copying it.
 func expandXcodeValue(settings map[string]any, val string, visited map[string]bool) (string, bool) {
 	if !strings.Contains(val, "$(") {
 		return val, true

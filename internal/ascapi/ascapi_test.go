@@ -93,8 +93,7 @@ func TestRequestSurfacesMissingCredentials(t *testing.T) {
 
 // --- full round-trip tests, real ES256 signing, fake transport -------------
 
-// roundTripFunc adapts a function to http.RoundTripper — the Go analogue of
-// the Python tests' `opener` fake, which fed `admin_lib.appstoreconnect`
+// roundTripFunc adapts a function to http.RoundTripper, feeding requests
 // canned JSON without a real network call.
 type roundTripFunc func(*http.Request) (*http.Response, error)
 

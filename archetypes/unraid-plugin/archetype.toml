@@ -35,9 +35,9 @@ desc = "Build plugin (no-op by default)"
 kind = "lua"
 desc = "Push plugin source to Unraid USB"
 run = '''
--- Go port (admin-3rgp.37) of admin_lib/remote.py::deploy_files's rsync call
--- as used by the unraid-plugin archetype's "deploy" action (the plain
--- Unraid-USB rsync push, not the [deploy]-table mirror-directory shape).
+-- Pushes plugin source via rsync (admin-3rgp.37), as used by the
+-- unraid-plugin archetype's "deploy" action (the plain Unraid-USB rsync
+-- push, not the [deploy]-table mirror-directory shape).
 local al = (env("ADMIN_LOCAL") or ""):lower()
 local is_local = (al == "1" or al == "true" or al == "yes")
 local user = env("UNRAID_USER") or "root"
@@ -54,8 +54,8 @@ end
 kind = "lua"
 desc = "Register/install the plugin on Unraid"
 run = '''
--- Go port (admin-3rgp.37) of admin_lib/remote.py::ssh_cmd as used by the
--- unraid-plugin archetype's "register" action.
+-- Runs the install over ssh (admin-3rgp.37), as used by the unraid-plugin
+-- archetype's "register" action.
 local al = (env("ADMIN_LOCAL") or ""):lower()
 local is_local = (al == "1" or al == "true" or al == "yes")
 local user = env("UNRAID_USER") or "root"
@@ -72,8 +72,8 @@ end
 kind = "lua"
 desc = "Uninstall the plugin from Unraid"
 run = '''
--- Go port (admin-3rgp.37) of admin_lib/remote.py::ssh_cmd as used by the
--- unraid-plugin archetype's "uninstall" action.
+-- Runs the removal over ssh (admin-3rgp.37), as used by the unraid-plugin
+-- archetype's "uninstall" action.
 local al = (env("ADMIN_LOCAL") or ""):lower()
 local is_local = (al == "1" or al == "true" or al == "yes")
 local user = env("UNRAID_USER") or "root"

@@ -9,10 +9,10 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 )
 
-// Watcher is the Go port of admin_lib/watch.py::Watcher — a kind="shell"
-// action opts in with `watch = "<kind>"`, and after the action's command
-// succeeds, the named Watcher scans its captured output for remote job IDs
-// and blocks until each one finishes.
+// Watcher is the interface a kind="shell" action opts into with
+// `watch = "<kind>"`; after the action's command succeeds, the named
+// Watcher scans its captured output for remote job IDs and blocks until
+// each one finishes.
 type Watcher interface {
 	// Extract pulls job/run IDs out of the action's captured stdout+stderr,
 	// in first-seen order with duplicates removed.
@@ -21,20 +21,20 @@ type Watcher interface {
 	Watch(h *luahost.Host, ids []string)
 }
 
-// watchRegistry is the Go port of admin_lib/watch.py's module-level
-// _REGISTRY: a name -> Watcher map, seeded at init with the built-in kinds.
+// watchRegistry is a name -> Watcher map, seeded at init with the built-in
+// kinds.
 var watchRegistry = map[string]Watcher{}
 
-// registerWatcher is the Go port of admin_lib/watch.py::register_watcher.
-// Kept as a real function (rather than inlining the map write) so a future
-// project-specific watcher has the same one-call registration seam Python
-// has via a package-level call before dispatch.
+// registerWatcher registers w under kind. Kept as a real function (rather
+// than inlining the map write) so a future project-specific watcher has
+// the same one-call registration seam via a package-level call before
+// dispatch.
 func registerWatcher(kind string, w Watcher) {
 	watchRegistry[kind] = w
 }
 
-// runWatcher is the Go port of admin_lib/watch.py::run_watcher: look up kind
-// in the registry, extract ids from output, and watch each one. An unknown
+// runWatcher looks up kind in the registry, extracts ids from output, and
+// watches each one. An unknown
 // kind warns and returns rather than failing the action — the action's own
 // command already succeeded by the time this runs, and a bad `watch` value
 // in the manifest should not turn a successful run into a failed one.
@@ -51,18 +51,16 @@ func runWatcher(h *luahost.Host, kind, output string) {
 	w.Watch(h, ids)
 }
 
-// runURLRe is the Go port of admin_lib/watch.py::_GithubActionWatcher's
-// _RUN_URL_RE — matched against a GitHub Actions run URL such as
+// runURLRe matches against a GitHub Actions run URL such as
 // https://github.com/<org>/<repo>/actions/runs/1234567890.
 var runURLRe = regexp.MustCompile(`actions/runs/(\d+)`)
 
-// githubActionWatcher is the Go port of
-// admin_lib/watch.py::_GithubActionWatcher: extract run IDs from
-// actions/runs/<id> URLs, then block on `gh run watch <id>` for each.
+// githubActionWatcher extracts run IDs from actions/runs/<id> URLs, then
+// blocks on `gh run watch <id>` for each.
 type githubActionWatcher struct{}
 
-// Extract is the Go port of _GithubActionWatcher.extract, including Python's
-// dict.fromkeys dedup-preserving-order behavior.
+// Extract pulls run IDs out of output, deduplicating while preserving
+// first-seen order.
 func (githubActionWatcher) Extract(output string) []string {
 	matches := runURLRe.FindAllStringSubmatch(output, -1)
 	seen := make(map[string]bool, len(matches))
@@ -78,9 +76,8 @@ func (githubActionWatcher) Extract(output string) []string {
 	return ids
 }
 
-// Watch is the Go port of _GithubActionWatcher.watch: `gh run watch <id>`
-// per id, in order, inheriting this process's stdout/stderr the same way
-// Python's subprocess.call does with no stdout/stderr redirection.
+// Watch runs `gh run watch <id>` per id, in order, inheriting this
+// process's stdout/stderr with no redirection.
 func (githubActionWatcher) Watch(h *luahost.Host, ids []string) {
 	for _, id := range ids {
 		h.Info("tracking GitHub Action run " + id)

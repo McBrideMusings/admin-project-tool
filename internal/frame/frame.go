@@ -4,11 +4,10 @@
 // the log path and each URL are clickable. The action's own output scrolls
 // in the rows above it via a DECSTBM scroll region.
 //
-// This is the Go port of admin_lib/frame.py. Only one frame is active at a
-// time (one process runs one dev loop, the same assumption
-// internal/luahost's reload machinery makes) — Activate/Deactivate/Write
-// are the package-level surface every caller goes through, mirroring
-// admin_lib/frame.py's module-level _active/activate/deactivate/write.
+// Only one frame is active at a time (one process runs one dev loop, the
+// same assumption internal/luahost's reload machinery makes) —
+// Activate/Deactivate/Write are the package-level surface every caller
+// goes through.
 package frame
 
 import (
@@ -47,8 +46,7 @@ type Frame struct {
 
 	// Rows/Cols are the terminal's size. Exported so a test can override
 	// them after construction (New reads the real size, which a test
-	// harness rarely wants), matching admin_lib/frame.py's tests setting
-	// f.rows/f.cols directly.
+	// harness rarely wants).
 	Rows, Cols int
 
 	w         io.Writer
@@ -198,9 +196,9 @@ func (f *Frame) watchWinch(winch <-chan struct{}) {
 }
 
 // reflow re-reads the terminal size and re-issues the scroll region and
-// footer for it — the resize response admin_lib/frame.py's _on_winch makes.
-// Callers must hold mu. Independent of any real signal so a test can call
-// it directly after mutating Rows/Cols.
+// footer for it — the resize response to a SIGWINCH. Callers must hold mu.
+// Independent of any real signal so a test can call it directly after
+// mutating Rows/Cols.
 func (f *Frame) reflow() {
 	if !f.active {
 		return
@@ -412,8 +410,7 @@ func Write(w io.Writer, text string) {
 // frame's scroll region, not the full screen. Without this a child that
 // positions its own cursor absolutely (wrangler, vite, metro) believes it
 // owns rows the footer is using and paints over it. No-op when no frame is
-// active; best-effort like admin_lib/frame.py's apply_winsize (an ioctl
-// failure is swallowed, never surfaced).
+// active; best-effort — an ioctl failure is swallowed, never surfaced.
 func ApplyWinsize(fd uintptr) {
 	mu.Lock()
 	f := active

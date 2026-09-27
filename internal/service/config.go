@@ -1,8 +1,7 @@
 // Package service manages an always-on user service driven by the `[launchd]`
 // table in admin.toml — macOS launchd locally, Linux systemd --user locally,
-// or either one on a remote host over SSH. The Go port of admin_lib/launchd.py
-// (deleted in 71451f2 as "never had a kind factory"; kind="launchd" is that
-// factory, and this is the restored implementation behind it).
+// or either one on a remote host over SSH. kind="launchd" is the factory this
+// package sits behind.
 //
 // Any project shipping a long-running process the developer wants alive at
 // login declares `[launchd]` and wires a `service` command; the plist/unit is

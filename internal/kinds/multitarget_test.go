@@ -33,6 +33,37 @@ func TestMultiTargetInlineSubtableDispatchesNamedTarget(t *testing.T) {
 	assertFileMissing(t, dir, "lan.txt")
 }
 
+// TestMultiTargetTargetEnvAndWatch: an inline target's own `env` reaches its
+// run, and a malformed pty/watch/env is refused at build time.
+func TestMultiTargetTargetEnvAndWatch(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("TARGET_ENV_PROBE", "")
+
+	action := manifest.Action{
+		"kind": "multi-target",
+		"dev":  map[string]any{"run": `printf %s "$TARGET_ENV_PROBE" > env.txt`, "env": map[string]any{"TARGET_ENV_PROBE": "dev-hosts"}},
+		"live": map[string]any{"run": "true"},
+	}
+	runner, err := makeMultiTarget("logs", action, nil, nil)
+	if err != nil {
+		t.Fatalf("makeMultiTarget: %v", err)
+	}
+	if err := runner([]string{"dev"}); err != nil {
+		t.Fatalf("runner([dev]) = %v, want nil", err)
+	}
+	if got := readFile(t, dir, "env.txt"); got != "dev-hosts" {
+		t.Fatalf("target saw TARGET_ENV_PROBE = %q, want %q", got, "dev-hosts")
+	}
+
+	for key, bad := range map[string]any{"env": "not-a-table", "pty": "yes", "watch": true} {
+		broken := manifest.Action{"kind": "multi-target", "dev": map[string]any{"run": "true", key: bad}}
+		if _, err := makeMultiTarget("logs", broken, nil, nil); err == nil {
+			t.Errorf("target %s = %#v: want a build-time error, got nil", key, bad)
+		}
+	}
+}
+
 // TestMultiTargetFlatTableStringShape proves the flat `targets = {name =
 // "shell"}` form (the other shape validate_action supports) also dispatches.
 func TestMultiTargetFlatTableStringShape(t *testing.T) {
@@ -55,8 +86,7 @@ func TestMultiTargetFlatTableStringShape(t *testing.T) {
 }
 
 // TestMultiTargetOnlyTargetAutoPicks proves a single-target action needs no
-// argument at all — matching admin_lib/apple.py's only_target announce-and-
-// pick behaviour.
+// argument at all — it announces and picks the only target automatically.
 func TestMultiTargetOnlyTargetAutoPicks(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

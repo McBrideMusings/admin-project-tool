@@ -5,11 +5,9 @@ import (
 	"time"
 )
 
-// KillResult reports what happened to one pid during an escalating kill —
-// the piece admin_lib/ports.py::_kill_pids never returned (it only returned
-// a bool for "did everything die"), needed here because the report is part
-// of the acceptance criteria: "killing a held port reports which processes
-// were killed."
+// KillResult reports what happened to one pid during an escalating kill,
+// needed here because the report is part of the acceptance criteria:
+// "killing a held port reports which processes were killed."
 type KillResult struct {
 	PID       int
 	Signal    string // "TERM" or "KILL" — the strongest signal that was sent
@@ -18,12 +16,9 @@ type KillResult struct {
 }
 
 // KillPIDs sends SIGTERM to every pid, polls for up to timeout for them to
-// exit, then SIGKILLs any survivor — the Go port of
-// admin_lib/ports.py::_kill_pids, extended to report per-pid outcome instead
-// of Python's single "did everything die" bool. A pid that is already gone,
-// or one this process has no permission to signal, is treated the same way
-// os.kill's error handling does in Python: the send is a best-effort no-op,
-// never a hard failure.
+// exit, then SIGKILLs any survivor, reporting a per-pid outcome. A pid that
+// is already gone, or one this process has no permission to signal, is
+// treated as a best-effort no-op, never a hard failure.
 func KillPIDs(pids []int, timeout time.Duration) []KillResult {
 	results := make(map[int]*KillResult, len(pids))
 	order := make([]int, 0, len(pids))
@@ -65,10 +60,9 @@ func KillPIDs(pids []int, timeout time.Duration) []KillResult {
 	return out
 }
 
-// pidAlive reports whether pid is still running, via signal 0 — the Go port
-// of admin_lib/ports.py::_pid_alive. A permission error (the pid exists but
-// belongs to another user) is reported as alive, matching Python's
-// treatment: killing it may still fail, but it hasn't exited.
+// pidAlive reports whether pid is still running, via signal 0. A permission
+// error (the pid exists but belongs to another user) is reported as alive:
+// killing it may still fail, but it hasn't exited.
 func pidAlive(pid int) bool {
 	err := syscall.Kill(pid, 0)
 	if err == nil {
@@ -81,8 +75,7 @@ func pidAlive(pid int) bool {
 }
 
 // AnyAlive reports whether any result in results is still alive after the
-// sweep — the convenience Python callers get implicitly from _kill_pids'
-// bool return.
+// sweep.
 func AnyAlive(results []KillResult) bool {
 	for _, r := range results {
 		if r.Alive {

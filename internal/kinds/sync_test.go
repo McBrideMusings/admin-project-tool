@@ -26,8 +26,8 @@ func TestSyncCopiesFiles(t *testing.T) {
 }
 
 // TestSyncDeletesExtraneousDestFiles proves the local branch mirrors the
-// source (Python's delete=True default): a file that exists only in dest,
-// with no counterpart in src, is removed by the sync.
+// source (delete=True default): a file that exists only in dest, with no
+// counterpart in src, is removed by the sync.
 //
 // MUTATION EVIDENCE: comment out makeSync/runSync's pruneExtraneous call,
 // and this test fails — stale.txt survives the sync and
@@ -72,15 +72,14 @@ func TestSyncExcludesArePreserved(t *testing.T) {
 }
 
 // TestSyncMissingRunIsRejected proves kind="sync" requires 'run' (the
-// destination), matching admin_lib/validate.py's "sync kind requires 'run'".
+// destination).
 func TestSyncMissingRunIsRejected(t *testing.T) {
 	if _, err := makeSync("bad", manifest.Action{}, nil, nil); err == nil {
 		t.Fatal("makeSync with no 'run' should error")
 	}
 }
 
-// TestIsRemoteDest proves the user@host:/path detection matches
-// admin_lib/core.py::sync's is_remote check exactly.
+// TestIsRemoteDest proves the user@host:/path detection.
 func TestIsRemoteDest(t *testing.T) {
 	cases := map[string]bool{
 		"deploy@example.com:/var/www": true,
@@ -95,8 +94,7 @@ func TestIsRemoteDest(t *testing.T) {
 	}
 }
 
-// TestSyncDefaultSrcIsDist proves a `src`-less action defaults to "dist/",
-// matching admin_lib/interp.py::_make_sync.
+// TestSyncDefaultSrcIsDist proves a `src`-less action defaults to "dist/".
 func TestSyncDefaultSrcIsDist(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)

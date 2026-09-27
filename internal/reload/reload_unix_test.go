@@ -37,7 +37,7 @@ func (f *fakeReporter) Err(msg string) {
 
 // TestSignalAllNoPIDFiles proves SignalAll reports "no running targets"
 // (not "no live targets") when the prefix matches nothing at all — the two
-// distinct Python error messages this ports.
+// distinct error messages SignalAll produces.
 func TestSignalAllNoPIDFiles(t *testing.T) {
 	prefix := filepath.Join(t.TempDir(), "admin-run")
 	r := &fakeReporter{}
@@ -141,7 +141,7 @@ func WritePIDFileWithPID(path string, pid int) error {
 
 // TestRunWithReloadFastExitGivesUp proves a command that exits immediately,
 // every time, is retried up to maxFastExitAttempts and then gives up
-// returning that exit code — admin_lib/reload.py's fast-exit-retry loop.
+// returning that exit code.
 func TestRunWithReloadFastExitGivesUp(t *testing.T) {
 	r := &fakeReporter{}
 	rc := RunWithReload("exit 7", "test-fastexit", Options{
@@ -164,8 +164,7 @@ func TestRunWithReloadFastExitGivesUp(t *testing.T) {
 // TestRunWithReloadSigusr1Reloads proves a SIGUSR1 delivered to this process
 // while RunWithReload is running a long-lived child restarts it — the whole
 // point of this package. Ends the loop with SIGTERM (expecting exit code 0,
-// not 130 — Python's SIGTERM handler is a clean SystemExit(0), distinct from
-// SIGINT's 130).
+// not 130 — SIGTERM is a clean shutdown, distinct from SIGINT's 130).
 func TestRunWithReloadSigusr1Reloads(t *testing.T) {
 	var mu sync.Mutex
 	var infos []string

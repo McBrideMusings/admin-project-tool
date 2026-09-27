@@ -1,9 +1,8 @@
 // interactiveshell.go implements kind="interactive-shell" and
-// kind="bridge-listen" — the Go port of admin_lib/interp.py's
-// _make_interactive_shell and _make_bridge_listen. Both dispatch through
-// internal/keybindings.Run, which owns the subprocess loop, the shared
-// pump, and the log bridge lifecycle; this file's job is purely the
-// manifest-to-Options translation each kind needs.
+// kind="bridge-listen". Both dispatch through internal/keybindings.Run,
+// which owns the subprocess loop, the shared pump, and the log bridge
+// lifecycle; this file's job is purely the manifest-to-Options translation
+// each kind needs.
 package kinds
 
 import (
@@ -19,8 +18,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
 
-// actionKeys reads and validates the raw `keys` table off action, matching
-// admin_lib/archetypes.py's `if "keys" in data: parse_keys(...)` — an
+// actionKeys reads and validates the raw `keys` table off action. An
 // absent key is not an error and yields a nil map (no bindings declared).
 func actionKeys(action manifest.Action, name string) (map[string]validate.KeyBinding, error) {
 	raw, present := action["keys"]
@@ -35,11 +33,9 @@ func actionKeys(action manifest.Action, name string) (map[string]validate.KeyBin
 }
 
 // buildLogBridgeConfig reads m's [log_bridge] table into a *logbridge.Config,
-// resolving each host through manifest.ResolveEnv — the Go port of
-// admin_lib/interp.py's boot-time `configure_log_bridge` call, which does
-// the same `resolve_env(h) for h in hosts`. Returns nil when the table is
-// absent or declares no hosts, matching log_bridge_enabled()'s "opt-in"
-// semantics: no [log_bridge] table means no listener, ever.
+// resolving each host through manifest.ResolveEnv. Returns nil when the
+// table is absent or declares no hosts — no [log_bridge] table means no
+// listener, ever.
 func buildLogBridgeConfig(m *manifest.Manifest) *logbridge.Config {
 	if m == nil || len(m.LogBridge) == 0 {
 		return nil
@@ -84,12 +80,11 @@ func toInt(v any) (int, bool) {
 	}
 }
 
-// makeInteractiveShell is kind="interactive-shell"'s factory — the Go port
-// of admin_lib/interp.py::_make_interactive_shell. It stays Transient
-// (internal/kinds/catalog.go): its whole job is reading the user's own
-// keystrokes to drive live-reload from the terminal they're sitting at, so
-// routing it into a herdr pane would silently disconnect it from the
-// keyboard it exists to read.
+// makeInteractiveShell is kind="interactive-shell"'s factory. It stays
+// Transient (internal/kinds/catalog.go): its whole job is reading the
+// user's own keystrokes to drive live-reload from the terminal they're
+// sitting at, so routing it into a herdr pane would silently disconnect it
+// from the keyboard it exists to read.
 func makeInteractiveShell(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {
 	run, _ := actionString(action, "run")
 	if run == "" {
@@ -143,9 +138,9 @@ func makeInteractiveShell(name string, action manifest.Action, m *manifest.Manif
 	}, nil
 }
 
-// bridgePark mirrors admin_lib/interp.py's _BRIDGE_PARK: the shell command
-// bridge-listen wraps is irrelevant beyond "must not exit" — the log
-// bridge's HTTP listener is the whole point, not the parked shell.
+// bridgePark: the shell command bridge-listen wraps is irrelevant beyond
+// "must not exit" — the log bridge's HTTP listener is the whole point, not
+// the parked shell.
 const bridgePark = "tail -f /dev/null"
 
 // scopeLogBridgeHosts resolves hosts (a raw `hosts` string off a bridge-
@@ -189,9 +184,8 @@ func scopeActionBridge(h *luahost.Host, name, hosts string) (restore func(), err
 	}, nil
 }
 
-// makeBridgeListen is kind="bridge-listen"'s factory — the Go port of
-// admin_lib/interp.py::_make_bridge_listen. `hosts` on the action narrows
-// what THIS listener advertises (via ADMIN_LOG_BRIDGE_HOSTS, read by
+// makeBridgeListen is kind="bridge-listen"'s factory. `hosts` on the action
+// narrows what THIS listener advertises (via ADMIN_LOG_BRIDGE_HOSTS, read by
 // internal/logbridge.Start), so `logs live` and `logs dev` can run side by
 // side with the userscript routing each page to the right one.
 func makeBridgeListen(name string, action manifest.Action, m *manifest.Manifest, surf *Surface) (Runner, error) {

@@ -186,8 +186,8 @@ func TestSendSignalUnknownNameCallsErr(t *testing.T) {
 }
 
 // TestSendSignalMissingPidFileWarns proves a nonexistent pid_file warns
-// rather than erroring — matches admin_lib/keybindings.py::_send_signal's
-// own "stale/missing PID file -> warn + no-op" contract.
+// rather than erroring — sendSignal's "stale/missing PID file -> warn +
+// no-op" contract.
 func TestSendSignalMissingPidFileWarns(t *testing.T) {
 	warns := &collector{}
 	sendSignal("TERM", filepath.Join(t.TempDir(), "nope.pid"), Options{Warn: warns.add})

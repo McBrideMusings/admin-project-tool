@@ -49,9 +49,8 @@ func runPrune(ctx context.Context, kind pruneKind, dryRun, yes bool) error {
 
 // mergedPRHeads is the head-branch set of PRs GitHub has merged, for the
 // squash/rebase case git's own --merged check can't see. Empty (never an
-// error) when there is no GitHub origin or the gh lookup fails — the same
-// "empty map when gh absent" fallback admin_lib/ghwt used, so a repo with no
-// gh CLI still classifies correctly against git alone, just more
+// error) when there is no GitHub origin or the gh lookup fails, so a repo
+// with no gh CLI still classifies correctly against git alone, just more
 // conservatively.
 func mergedPRHeads(ctx context.Context, nwo string) map[string]bool {
 	out := map[string]bool{}

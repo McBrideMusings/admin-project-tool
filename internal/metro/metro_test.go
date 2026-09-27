@@ -34,8 +34,7 @@ func fakeMetroServer(t *testing.T, port int) *httptest.Server {
 }
 
 // TestRunningTrueWhenStatusBodyMatches proves Running checks the exact
-// packager-status body, not just a 200 — the Go port of
-// admin_lib/metro.py::metro_running.
+// packager-status body, not just a 200.
 //
 // MUTATION EVIDENCE: change Running to just check `err == nil` (any
 // response counts) and TestRunningFalseForWrongBody below fails instead —
@@ -81,8 +80,7 @@ func TestRunningFalseWhenNothingListens(t *testing.T) {
 }
 
 // TestEnsureSkipsStartWhenAlreadyRunning proves Ensure is a no-op (started
-// = false, err = nil) when Metro is already answering the port — matching
-// admin_lib/metro.py::ensure_metro's `if metro_running(port): return False`.
+// = false, err = nil) when Metro is already answering the port.
 //
 // MUTATION EVIDENCE: remove the `if Running(port) { return false, nil }`
 // early return and this test fails — Ensure would try to `npx react-native
@@ -105,9 +103,8 @@ func TestEnsureSkipsStartWhenAlreadyRunning(t *testing.T) {
 }
 
 // TestStopRemovesStalePidFileWhenNothingRunning proves Stop cleans up a
-// stale pid file when the port isn't answering, matching
-// admin_lib/metro.py::stop_metro's "nothing on the port; drop any stale
-// record" branch.
+// stale pid file when the port isn't answering — the "nothing on the port;
+// drop any stale record" branch.
 func TestStopRemovesStalePidFileWhenNothingRunning(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "metro.pid")
 	if err := os.WriteFile(pidFile, []byte("99999999"), 0o644); err != nil {
@@ -122,8 +119,7 @@ func TestStopRemovesStalePidFileWhenNothingRunning(t *testing.T) {
 }
 
 // TestStopReturnsFalseWithoutAPidFile proves Stop refuses to kill a bundler
-// it can't attribute to a recorded pid — "admin did not start it" in
-// Python's error message.
+// it can't attribute to a recorded pid.
 func TestStopReturnsFalseWithoutAPidFile(t *testing.T) {
 	srv := fakeMetroServer(t, 18083)
 	defer srv.Close()

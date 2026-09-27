@@ -58,9 +58,8 @@ func resolveProjectManifest(ctx context.Context, dir string) (m *manifest.Manife
 	// resolved manifest frozen inside the binary (internal/compiledinfo) —
 	// that is the whole point of ADR-0006: the artifact runs standalone on a
 	// machine with no ~/.admin and no admin.toml beside it. dir is ignored
-	// entirely in that case, the same way the Python compiled zipapp ignores
-	// cwd and uses argv[0]'s directory as project_root
-	// (admin_lib/compile.py's _MAIN).
+	// entirely in that case — the compiled artifact uses argv[0]'s directory
+	// as project_root, never cwd.
 	if compiledinfo.Embedded() {
 		return loadEmbeddedManifest()
 	}
@@ -108,7 +107,7 @@ func resolveProjectManifestFromDisk(ctx context.Context, dir string) (m *manifes
 	// Before Load, not after: archetype.Resolve eagerly resolves env-bearing
 	// config (validate_url_refs, [log_bridge].hosts), so .env has to be in the
 	// environment already or those ${VAR:-default} refs fall back to their
-	// defaults. Same ordering as admin_lib/interp.py::interpret.
+	// defaults.
 	start = timing.Start()
 	manifest.LoadDotenv(dir)
 	project, err := manifest.Load(dir)
@@ -147,9 +146,7 @@ func resolveProjectManifestFromDisk(ctx context.Context, dir string) (m *manifes
 
 // loadEmbeddedManifest decodes the manifest compiledinfo carries and points
 // its Root at the running executable's own directory — argv[0]'s absolute
-// path, not a symlink-resolved one, matching
-// admin_lib/compile.py's `os.path.dirname(os.path.abspath(sys.argv[0]))` —
-// so every action's `run` string executes relative to wherever this compiled
+// path, not a symlink-resolved one — so every action's `run` string executes relative to wherever this compiled
 // ./admin was actually placed, never the directory admin compile happened to
 // run in.
 func loadEmbeddedManifest() (*manifest.Manifest, bool, error) {

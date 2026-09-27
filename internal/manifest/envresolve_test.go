@@ -34,10 +34,9 @@ func TestResolveEnvErrorsOnUnresolvedRequired(t *testing.T) {
 }
 
 // TestResolveEnvExplicitValueWinsOverComputed proves an explicit environment
-// value beats a ComputedVars entry of the same name — "an explicit
+// value beats a ComputedVars entry of the same name — an explicit
 // environment value still wins, so a project can pin one when the automatic
-// answer is wrong" (docs/architecture reference, ported from
-// admin_lib/core.py::resolve_env's own comment).
+// answer is wrong.
 //
 // MUTATION EVIDENCE: swap the os.LookupEnv branch and the ComputedVars
 // branch's priority (check ComputedVars first), and this test fails — it
@@ -220,9 +219,8 @@ func TestResolveComputedSubstitutesLANIP(t *testing.T) {
 }
 
 // TestResolveEnvExplicitLANIPWinsOverComputed proves that an explicit LAN_IP
-// environment variable beats the computed value — "a project can pin one when
-// the automatic answer is wrong" (the design docs, ported from
-// admin_lib/core.py).
+// environment variable beats the computed value — a project can pin one when
+// the automatic answer is wrong.
 //
 // MUTATION EVIDENCE: swap the os.LookupEnv branch and the ComputedVars branch
 // (check ComputedVars first), and this test fails — it would see "computed"

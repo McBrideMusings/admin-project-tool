@@ -1,8 +1,8 @@
 // Package logcolumns renders a log stream under a fixed column header —
 // Timestamp / Level / Message columns, aligned, printed once as a header row
 // before the first data line — instead of the default HH:MM:SS.mmm-stamped
-// passthrough every other pump gets. It is the Go port of
-// admin_lib/log_columns.py, driven by a project's admin.toml [output] table.
+// passthrough every other pump gets. Driven by a project's admin.toml
+// [output] table.
 //
 // Apple os_log's native "log stream" layout is a special case handled here
 // too (AppleColumnFormatter): it passes preamble lines through untouched,
@@ -75,8 +75,7 @@ var DefaultColumns = map[string][]Column{
 }
 
 // levelRe finds a severity-level word in a data line's message so it can be
-// shown in the Level column — the Go port of admin_lib/log_columns.py's
-// _LEVEL_RE.
+// shown in the Level column.
 var levelRe = regexp.MustCompile(`(?i)\b(ERROR|ERR|FATAL|CRIT|WARN|WARNING|INFO|DEBUG|TRACE)\b`)
 
 // parseColumnSpec parses 'Name:width', 'Name:*' (fill remaining), or
@@ -99,8 +98,8 @@ func parseColumnSpec(spec string) (Column, error) {
 }
 
 // padTrunc renders val in exactly width characters: truncated if longer,
-// space-padded on the right if shorter. Operates on runes (not bytes) to
-// match Python's character-based string slicing.
+// space-padded on the right if shorter. Operates on runes (not bytes) so
+// width counts characters, not UTF-8 bytes.
 func padTrunc(val string, width int) string {
 	r := []rune(val)
 	if len(r) > width {
@@ -134,8 +133,7 @@ type ColumnFormatter struct {
 }
 
 // NewColumnFormatter returns a ColumnFormatter for columns, with color
-// resolved from whether stdout is a terminal (matching Python's
-// sys.stdout.isatty() check in ColumnFormatter.__init__).
+// resolved from whether stdout is a terminal.
 func NewColumnFormatter(columns []Column) *ColumnFormatter {
 	return &ColumnFormatter{Columns: columns, HeaderSep: "  ", useColor: isTerminalStdout()}
 }
@@ -258,10 +256,10 @@ func (a *AppleColumnFormatter) reformatAppleLine(line string) string {
 }
 
 // extractNativeFields slices line at the fixed native column positions
-// (appleOSLogNative), by rune (not byte) to match Python's character-based
-// string slicing. A line shorter than a fixed-width column's start position
-// yields "" for that column and every one after it, matching Python's
-// out-of-range slice (which also returns "" rather than raising).
+// (appleOSLogNative), by rune (not byte) so positions count characters, not
+// UTF-8 bytes. A line shorter than a fixed-width column's start position
+// yields "" for that column and every one after it, rather than panicking on
+// an out-of-range slice.
 func extractNativeFields(line string) map[string]string {
 	fields := map[string]string{}
 	r := []rune(line)
@@ -296,8 +294,7 @@ func extractNativeFields(line string) map[string]string {
 // not a formatter constructor's).
 //
 // A new instance is returned on every call, so a kind factory that rebuilds
-// its formatter on each stream restart (matching Python's "new instance per
-// rebuild" comment on ColumnFormatter) gets a header re-print each time.
+// its formatter on each stream restart gets a header re-print each time.
 func MakeColumnFormatter(source string, config map[string]any) func(string) string {
 	var override map[string]any
 	if tbl, ok := config[source].(map[string]any); ok {

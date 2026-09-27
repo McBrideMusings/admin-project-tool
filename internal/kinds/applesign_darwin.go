@@ -2,12 +2,11 @@
 
 package kinds
 
-// The dev/prod bundle-suffix convention layer — the Go port of
-// admin_lib/apple.py's _compose_sign_settings, _entitlements_paths,
-// _target_needs_provisioning_profile and _compose_dev_settings. This was the
-// one piece of admin-3rgp.12 apple_darwin.go's package doc comment named as
-// deliberately not ported; its absence was observed live as an unexpanded
-// "$(...)" xcconfig substitution reaching a real `log stream` predicate (see
+// The dev/prod bundle-suffix convention layer —
+// appleComposeSignSettings, appleEntitlementsPaths,
+// appleTargetNeedsProvisioningProfile and appleComposeDevSettings. Its
+// absence was once observed live as an unexpanded "$(...)" xcconfig
+// substitution reaching a real `log stream` predicate (see
 // internal/luahost/apple_pbxproj_darwin.go's expandXcodeValue, which is the
 // other half of that fix — resolving a substitution when the pbxproj itself
 // can answer it).
@@ -15,8 +14,8 @@ package kinds
 // Built on the existing primitives rather than a second bundle-composition
 // path: appleBundle (apple_darwin.go) is still the one place that decides a
 // target's bundle id, dev or prod. This file only composes the xcodebuild
-// -setting overrides layered on top: code signing (_compose_sign_settings)
-// and, for a dev build, ADMIN_DEV_BUNDLE_SUFFIX (_compose_dev_settings) so
+// -setting overrides layered on top: code signing (appleComposeSignSettings)
+// and, for a dev build, ADMIN_DEV_BUNDLE_SUFFIX (appleComposeDevSettings) so
 // each target's own pbxproj-declared
 // "com.foo.app$(ADMIN_DEV_BUNDLE_SUFFIX)" convention actually resolves at
 // build time instead of building on the prod identity unnoticed.
@@ -33,16 +32,14 @@ import (
 // appleEntitlementsPaths returns every entitlements file this project might
 // sign with, as absolute paths — sourced from the Xcode project (via
 // CODE_SIGN_ENTITLEMENTS on each configured scheme's target) rather than the
-// manifest, matching admin_lib/apple.py's _entitlements_paths: admin.toml has
-// no entitlements key, and adding one would be a second place to keep the
-// answer correct.
+// manifest: admin.toml has no entitlements key, and adding one would be a
+// second place to keep the answer correct.
 //
 // CODE_SIGN_ENTITLEMENTS is relative to SRCROOT — the directory holding the
 // .xcodeproj/.xcworkspace — NOT the project root. h.ProjectRoot is used only
 // when project is empty (no .xcodeproj/.xcworkspace could be detected at
 // all); resolving against the project root instead of SRCROOT silently
-// produces a nonexistent path for any project nested a level down, exactly
-// the incident the Python docstring for this function names.
+// produces a nonexistent path for any project nested a level down.
 func appleEntitlementsPaths(cfg map[string]any, h *luahost.Host, project string) []string {
 	srcroot := h.ProjectRoot
 	if project != "" {
@@ -80,7 +77,7 @@ func appleEntitlementsPaths(cfg map[string]any, h *luahost.Host, project string)
 
 // appleTargetNeedsProvisioningProfile reports whether this target cannot be
 // signed and installed without a real, creatable-or-refreshable provisioning
-// profile. Ports admin_lib/apple.py's _target_needs_provisioning_profile.
+// profile.
 //
 // Every iOS/tvOS device install needs one unconditionally, so platform in
 // ("ios", "tv") short-circuits to true. For mac, the entitlements files the
@@ -120,8 +117,7 @@ func appleTargetNeedsProvisioningProfile(cfg map[string]any, h *luahost.Host, pr
 // sign_identity is present with no explicit code_sign_identity, a dynamic
 // identity resolved from the keychain (luahost.ResolveSigningIdentity) so a
 // dev build gets a stable signature (TCC grants persist across rebuilds)
-// without a hardcoded hash in the manifest. Ports
-// admin_lib/apple.py's _compose_sign_settings.
+// without a hardcoded hash in the manifest.
 //
 // platform is "ios" | "tv" | "mac" — device platforms always need a
 // provisioning profile (see appleTargetNeedsProvisioningProfile), which
@@ -211,8 +207,7 @@ func appleComposeSignSettings(cfg map[string]any, h *luahost.Host, project, plat
 
 // appleComposeDevSettings combines appleComposeSignSettings with
 // ADMIN_DEV_BUNDLE_SUFFIX (appended last so it wins), for a dev build only —
-// build/deploy pass appleComposeSignSettings alone. Ports
-// admin_lib/apple.py's _compose_dev_settings.
+// build/deploy pass appleComposeSignSettings alone.
 //
 // Never emits PRODUCT_BUNDLE_IDENTIFIER itself: a setting passed through
 // XcodebuildOptions.ExtraSettings applies to every target in the project

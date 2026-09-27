@@ -144,13 +144,12 @@ else
   cmd = apple.test_cmd
 end
 
--- NOTE: the Python original ran an apple test_cmd through a per-checkout
--- xcodebuild file lock (run_locked_xcode) so it never races an in-flight
--- build/dev/deploy's own xcodebuild invocation. That lock is internal to
--- apple.xcodebuild's Go implementation and is not exposed for an arbitrary
--- shell command a body supplies — a body-visible lock is a follow-up, not
--- implemented here; a test_cmd that itself calls xcodebuild can still race
--- another xcodebuild in progress.
+-- NOTE: apple.xcodebuild's Go implementation runs a per-checkout xcodebuild
+-- file lock (run_locked_xcode) internally, so an apple test_cmd never races
+-- an in-flight build/dev/deploy's own xcodebuild invocation. That lock is
+-- not exposed for an arbitrary shell command a body supplies — a
+-- body-visible lock is a follow-up, not implemented here; a test_cmd that
+-- itself calls xcodebuild can still race another xcodebuild in progress.
 info("running: " .. cmd)
 local success = run_cmd(cmd)
 if not success then
@@ -281,11 +280,10 @@ end
 kind = "lua"
 desc = "Icons: regenerate | swap-dev | restore"
 run = '''
--- NOTE (admin-3rgp.37): a simplified port of admin_lib/apple.py's icon
--- pipeline. [apple.icons].sizes is now required explicitly — the Python
--- original auto-detected sizes from existing committed PNGs (or a fresh
--- catalog's Contents.json), which needs an image-dimension-reading
--- capability this pass does not add. Also not ported: the separate
+-- NOTE (admin-3rgp.37): a simplified icon pipeline. [apple.icons].sizes is
+-- required explicitly — auto-detecting sizes from existing committed PNGs
+-- (or a fresh catalog's Contents.json) needs an image-dimension-reading
+-- capability this pass does not add. Also not implemented: the separate
 -- always-committed *-dev asset catalog (mac_dev_asset_dir/ios_dev_asset_dir),
 -- the Icon Composer .icon bundle path, and self-healing a stranded dev
 -- banner left by an interrupted process (register_cleanup / auto-restore).

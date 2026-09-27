@@ -28,7 +28,7 @@ import (
 // archetype that was removed disappears from the deployment too, and running
 // Deploy twice in a row is idempotent rather than an accumulating overlay —
 // matching install.sh's existing `rm -rf $DEST_DIR/archetypes && cp -R` for
-// the Python archetype directory it deploys today.
+// the archetype directory it deploys today.
 func Deploy(sourceDir, destDir string) ([]string, error) {
 	entries, err := os.ReadDir(sourceDir)
 	if err != nil {

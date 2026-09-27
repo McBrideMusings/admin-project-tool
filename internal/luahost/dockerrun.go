@@ -5,22 +5,19 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// registerDockerRun binds internal/dockerrun (admin-3rgp.37's pure Go port of
-// admin_lib/docker.py's cfg<->argv renderers and drift/mask helpers) into the
-// `dockerrun` global table. The docker archetype's run-args, deploy, and diff
-// actions all call through this table rather than each carrying its own copy
-// of the field-table renderer — issue #388's own lesson (the cfg->argv and
-// inspect->argv directions drifted apart once already because each was
-// hand-written separately) applies just as much to "two Lua bodies
-// implementing the same direction" as it did to the original two Python
-// functions.
+// registerDockerRun binds internal/dockerrun's cfg<->argv renderers and
+// drift/mask helpers into the `dockerrun` global table. The docker
+// archetype's run-args, deploy, and diff actions all call through this
+// table rather than each carrying its own copy of the field-table renderer
+// — issue #388's lesson (the cfg->argv and inspect->argv directions drifted
+// apart once already because each was hand-written separately) applies
+// just as much to two Lua bodies implementing the same direction.
 func (h *Host) registerDockerRun(L *lua.LState) {
 	tbl := L.NewTable()
 
 	// dockerrun.build_args_from_cfg(cfg[, env_vars[, env_file_vars]]) -> argv
 	// env_vars/env_file_vars: an optional {NAME=VALUE} table. Omitting
-	// env_vars means "read the admin process's own environment" (matches
-	// admin_lib's env_vars=None -> os.environ default).
+	// env_vars means "read the admin process's own environment".
 	tbl.RawSetString("build_args_from_cfg", L.NewFunction(func(L *lua.LState) int {
 		cfg, _ := fromLuaValue(L.CheckTable(1)).(map[string]any)
 		envVars := optionalStringMap(L, 2)

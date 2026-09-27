@@ -47,9 +47,8 @@ func TestEnvVarsExpandAtResolveTime(t *testing.T) {
 }
 
 // A custom label on an entry that ALSO names a project [urls] row is
-// discarded in favour of the row's own name — matches
-// admin_lib/frame.py::resolve_urls exactly (it reassigns both label and url
-// together once a project match is found).
+// discarded in favour of the row's own name — ResolveURLs reassigns both
+// label and url together once a project match is found.
 func TestAProjectURLMatchOverridesACustomLabel(t *testing.T) {
 	m := &manifest.Manifest{Urls: map[string]string{"local": "http://localhost:8787"}}
 	got, err := ResolveURLs([]any{map[string]any{"label": "My Custom Label", "url": "local"}}, m)

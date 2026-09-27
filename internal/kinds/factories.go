@@ -21,18 +21,13 @@ func notImplemented(kind string) Factory {
 }
 
 // registerBuiltins binds every declared kind's factory into r. Kinds are
-// listed one at a time, explicitly — mirroring admin_lib/interp.py's own
-// register_factory block — rather than looped over the Kinds catalog:
+// listed one at a time, explicitly, rather than looped over the Kinds
+// catalog:
 // looping would make invariant 2 ("a declared kind with no registered
 // factory fails at startup") vacuously true and unfalsifiable, since every
 // declared kind would always end up registered by construction.
 //
-// Every declared kind now has a real factory — no stub registrations remain.
-// They arrived in stages: the eight transient kinds with admin-3rgp.35 (the
-// set ADR-0010 settles on — nine minus the deleted python/python-script, plus
-// lua), then docker and remote (.13), node and web (.14), ports and process
-// cleanup (.15), interactive-shell and bridge-listen (.18), workflow (.24),
-// and apple (.12).
+// Every declared kind has a real factory — there are no stub registrations.
 func registerBuiltins(r *Registry) {
 	r.MustRegister("shell", makeShell)
 	r.MustRegister("shell-passthrough", makeShellPassthrough)

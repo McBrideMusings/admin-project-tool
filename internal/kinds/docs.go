@@ -8,13 +8,11 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// makeDocs is kind="docs"'s factory — the Go port of
-// admin_lib/interp.py::_make_docs. Reads the manifest's [docs] table (dir,
+// makeDocs is kind="docs"'s factory. Reads the manifest's [docs] table (dir,
 // script) and runs "<bun|npm> run <script>" in dir, picking bun/npm via the
 // same pkgRunner lockfile check as kind="npm" — scoped to dir here, unlike
 // makeNpm's cwd-only check, since a docs site can be a bun workspace nested
-// inside an otherwise-npm project (or vice versa), matching Python's
-// _pkg_runner(dirpath) call.
+// inside an otherwise-npm project (or vice versa).
 func makeDocs(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	cfg := archetypeConfigTable(m, "docs")
 	dirpath, _ := cfg["dir"].(string)

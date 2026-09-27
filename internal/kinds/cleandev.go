@@ -11,10 +11,9 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// directorySize is the Go port of admin_lib/cleanup.py::directory_size.
-// Symlinks count as the size of the link itself, matching `du` without
-// `-L`; an unreadable child during the walk contributes 0 rather than
-// aborting the whole sweep.
+// directorySize sums a directory's contents. Symlinks count as the size of
+// the link itself, matching `du` without `-L`; an unreadable child during
+// the walk contributes 0 rather than aborting the whole sweep.
 func directorySize(path string) int64 {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -37,8 +36,7 @@ func directorySize(path string) int64 {
 	return total
 }
 
-// formatBytes is the Go port of admin_lib/cleanup.py::format_bytes — a
-// short, 1024-based human-readable byte count.
+// formatBytes renders a short, 1024-based human-readable byte count.
 func formatBytes(n int64) string {
 	f := float64(n)
 	for _, unit := range []string{"B", "KB", "MB", "GB", "TB"} {
@@ -50,10 +48,9 @@ func formatBytes(n int64) string {
 	return fmt.Sprintf("%.1fPB", f)
 }
 
-// nukePath is the Go port of admin_lib/cleanup.py::nuke_path: remove a
-// file/dir/symlink, logging its size first, returning bytes freed. A
-// missing path is a silent no-op; a removal failure is warned and
-// swallowed, matching Python's "one stuck file shouldn't abort the sweep".
+// nukePath removes a file/dir/symlink, logging its size first, returning
+// bytes freed. A missing path is a silent no-op; a removal failure is
+// warned and swallowed — one stuck file shouldn't abort the sweep.
 func nukePath(h *luahost.Host, path, label string) int64 {
 	fi, err := os.Lstat(path)
 	if err != nil {
@@ -83,9 +80,8 @@ type cleanPathEntry struct {
 	Label string
 }
 
-// cleanPaths is the Go port of admin_lib/cleanup.py::clean_paths: nukes each
-// entry, skipping empty paths and duplicates (by absolute path), and sums
-// bytes freed.
+// cleanPaths nukes each entry, skipping empty paths and duplicates (by
+// absolute path), and sums bytes freed.
 func cleanPaths(h *luahost.Host, entries []cleanPathEntry) int64 {
 	seen := map[string]bool{}
 	var total int64
@@ -106,14 +102,13 @@ func cleanPaths(h *luahost.Host, entries []cleanPathEntry) int64 {
 	return total
 }
 
-// dbQuickCheck is the Go port of admin_lib/cleanup.py::db_quick_check —
-// `PRAGMA quick_check` on a SQLite DB, via the `sqlite3` CLI rather than a
-// Go SQLite driver: this repo already leans on platform tools it doesn't
-// vendor a binding for (ditto, lsof), and shelling out here avoids adding a
-// cgo or pure-Go SQLite dependency for one PRAGMA. If `sqlite3` isn't on
-// PATH, that reads as "unreadable" — the same fail-closed status Python
-// returns for a corrupt-DB open — so a missing CLI can never be
-// misread as "healthy" and silently drop a good database.
+// dbQuickCheck runs `PRAGMA quick_check` on a SQLite DB, via the `sqlite3`
+// CLI rather than a Go SQLite driver: this repo already leans on platform
+// tools it doesn't vendor a binding for (ditto, lsof), and shelling out here
+// avoids adding a cgo or pure-Go SQLite dependency for one PRAGMA. If
+// `sqlite3` isn't on PATH, that reads as "unreadable" — the same
+// fail-closed status a corrupt-DB open returns — so a missing CLI can never
+// be misread as "healthy" and silently drop a good database.
 func dbQuickCheck(dbPath string) (healthy bool, status string) {
 	if dbPath == "" {
 		return false, "missing"
@@ -139,9 +134,8 @@ func dbQuickCheck(dbPath string) (healthy bool, status string) {
 	return false, "CORRUPT: " + result
 }
 
-// cleanWithDB is the Go port of admin_lib/cleanup.py::clean_with_db: always
-// clean `paths`; drop the SQLite DB (plus its -shm/-wal companions) only
-// when `force` is set or the quick-check fails.
+// cleanWithDB always cleans `paths`; it drops the SQLite DB (plus its
+// -shm/-wal companions) only when `force` is set or the quick-check fails.
 func cleanWithDB(h *luahost.Host, paths []cleanPathEntry, dbPath string, force bool) int64 {
 	h.Info("clearing caches and transcode outputs:")
 	freed := cleanPaths(h, paths)
@@ -173,10 +167,8 @@ func fileExists(path string) bool {
 }
 
 // resolvedPathEntry resolves one `[clean_dev].paths[]` entry — {env=,
-// default=, label=} or {path=, label=} — into an absolute path, matching
-// admin_lib/cleanup.py::clean_dev_from_config's inline loop. An entry that
-// resolves to an empty base is dropped, same as Python's `if not base:
-// continue`.
+// default=, label=} or {path=, label=} — into an absolute path. An entry
+// that resolves to an empty base is dropped.
 func resolvedPathEntry(raw any) (cleanPathEntry, bool) {
 	entry, ok := raw.(map[string]any)
 	if !ok {
@@ -203,8 +195,7 @@ func resolvedPathEntry(raw any) (cleanPathEntry, bool) {
 }
 
 // resolvedDBPath resolves `[clean_dev].db` — {path=} or {env=, default=,
-// file=} — into an absolute path, matching
-// admin_lib/cleanup.py::clean_dev_from_config's db-path branch.
+// file=} — into an absolute path.
 func resolvedDBPath(db map[string]any) string {
 	if p, ok := db["path"].(string); ok {
 		return manifest.ResolveComputed(p)
@@ -231,9 +222,7 @@ func resolvedDBPath(db map[string]any) string {
 	return filepath.Join(base, file)
 }
 
-// cleanDevFromConfig is the Go port of
-// admin_lib/cleanup.py::clean_dev_from_config: reads the [clean_dev] table
-// and calls cleanWithDB.
+// cleanDevFromConfig reads the [clean_dev] table and calls cleanWithDB.
 func cleanDevFromConfig(h *luahost.Host, cfg map[string]any, force bool) int64 {
 	if len(cfg) == 0 {
 		return 0
@@ -248,10 +237,9 @@ func cleanDevFromConfig(h *luahost.Host, cfg map[string]any, force bool) int64 {
 	return cleanWithDB(h, paths, dbPath, force)
 }
 
-// makeCleanDev is kind="clean-dev"'s factory — the Go port of
-// admin_lib/interp.py::_make_clean_dev. `--force`/`--db` on the command line
-// force-drops the DB regardless of its health, matching Python's args
-// check. `pre_kill` (admin-tlhw.3) names whatever command or action the
+// makeCleanDev is kind="clean-dev"'s factory. `--force`/`--db` on the
+// command line force-drops the DB regardless of its health. `pre_kill`
+// (admin-tlhw.3) names whatever command or action the
 // project wants run before cleaning — absent means no hook fires; the
 // project is what decides a hook called "kill" exists at all, never this
 // factory.

@@ -8,8 +8,8 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// TestParseFixtureSizeParsesUnits proves parseFixtureSize matches
-// admin_lib/fixtures.py::parse_size's 1024-based unit parsing.
+// TestParseFixtureSizeParsesUnits proves parseFixtureSize's 1024-based unit
+// parsing.
 //
 // MUTATION EVIDENCE: change the GB multiplier from 1024^3 to 1000^3 and
 // this test fails — "1GB" would parse to 1000000000 instead of 1073741824.
@@ -33,9 +33,8 @@ func TestParseFixtureSizeParsesUnits(t *testing.T) {
 	}
 }
 
-// TestIterFixtureFilesExpandsCount proves the count expansion — the Go port
-// of admin_lib/fixtures.py::_iter_files' numbered-copy behaviour, zero-padded
-// to at least 2 digits.
+// TestIterFixtureFilesExpandsCount proves the count expansion: numbered
+// copies, zero-padded to at least 2 digits.
 //
 // MUTATION EVIDENCE: change the zero-pad width formula from `len(strconv.Itoa(count))`
 // (with the `if width < 2 { width = 2 }` floor) to a fixed width of 1, and
@@ -68,8 +67,7 @@ func TestIterFixtureFilesExpandsCount(t *testing.T) {
 // TestMakeFixturesGenerateThenResetRoundTrips is the end-to-end acceptance
 // test for both kinds together: generate writes real files with the
 // declared sizes under baseline, and reset restores a working copy that
-// matches — the Go port of admin_lib/fixtures.py's generate_tree +
-// restore_tree pairing.
+// matches.
 func TestMakeFixturesGenerateThenResetRoundTrips(t *testing.T) {
 	root := t.TempDir()
 	baseline := filepath.Join(root, "data", "baseline")
@@ -131,7 +129,7 @@ func TestMakeFixturesGenerateThenResetRoundTrips(t *testing.T) {
 
 // TestMakeFixturesGenerateRefusesNonEmptyBaselineWithoutForce proves the
 // safety guard: re-running generate against a populated baseline without
-// --force must fail, matching admin_lib/fixtures.py::generate_tree.
+// --force must fail.
 //
 // MUTATION EVIDENCE: change the `len(entries) > 0 && !force` guard to
 // `false` (never refuse) and this test fails — the second generate call

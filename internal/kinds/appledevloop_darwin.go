@@ -2,9 +2,9 @@
 
 package kinds
 
-// Continuous Apple dev-loop supervision — the Go port of
-// admin_lib/apple.py's dev_loop_macos / dev_loop_simulator / dev_loop_device
-// (called through dev_mac/dev_ios/dev_tv/dev_device), composing:
+// Continuous Apple dev-loop supervision — appleDevMac/appleDevSimulator/
+// appleDevDevice, called through dev_mac/dev_ios/dev_tv/dev_device,
+// composing:
 //
 //   - internal/reload's CALLER-OWNED shape (SetupReload/PollForReload/
 //     IsRebuildRequested/ClearRebuildRequest) for the "rebuild the whole
@@ -19,17 +19,16 @@ package kinds
 //     devicectl invocation of its own beyond the new console/log-stream
 //     starters in apple_console_darwin.go.
 //
-// See apple_darwin.go's package doc comment for what is deliberately not
-// ported (App Store Connect device registration). The dev/prod bundle-suffix
-// convention layer (applesign_darwin.go's appleComposeDevSettings) IS wired
-// into every build call below, and so are the dev-icon-swap hooks and the
-// iOS/tvOS display-name patch (appleiconhooks_darwin.go's
+// See apple_darwin.go's package doc comment for App Store Connect device
+// registration. The dev/prod bundle-suffix convention layer
+// (applesign_darwin.go's appleComposeDevSettings) is wired into every build
+// call below, and so are the dev-icon-swap hooks and the iOS/tvOS
+// display-name patch (appleiconhooks_darwin.go's
 // appleBuildIconHooks/applePatchDisplayName), around appleDevSimulator's
 // and appleDevDevice's build/install steps. appleDevMac has no icon-swap
-// story of its own (it was never in scope for that porting pass) but does
-// get its own dev-rename/re-sign postprocessing and dev-aware process
-// checks — see the mac_dev_rename handling and appleMacDevIsRunning/
-// appleMacDevKill calls below.
+// story of its own but does get its own dev-rename/re-sign postprocessing
+// and dev-aware process checks — see the mac_dev_rename handling and
+// appleMacDevIsRunning/appleMacDevKill calls below.
 
 import (
 	"fmt"
@@ -43,9 +42,8 @@ import (
 )
 
 // appleDevPIDFile is the single dev-loop PID file every Apple dev verb
-// shares — matching admin_lib/apple.py's shared default
-// pid_file="/tmp/admin-run.pid" (one dev loop at a time; server-reload's
-// SignalAll and `admin kill` both look for exactly this path).
+// shares (one dev loop at a time; server-reload's SignalAll and
+// `admin kill` both look for exactly this path).
 var appleDevPIDFile = reload.PIDPrefix + ".pid"
 
 const reloadPollInterval = 300 * time.Millisecond
@@ -77,13 +75,11 @@ func appleDevMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 		return err
 	}
 
-	// Dev-aware process checks (ported from Python's
-	// _make_mac_dev_running_check/_make_mac_dev_kill): once mac_dev_rename
-	// renames the built app to "<process>Dev.app", the generic
-	// pgrep/pkill -x process check can no longer tell dev and prod apart.
-	// Built once, outside the loop — the dev pattern depends only on cfg
-	// and f.install, not on loop state, matching how Python builds
-	// is_running_fn/kill_fn once outside dev_loop_macos's own while loop.
+	// Dev-aware process checks (appleMacDevIsRunning/appleMacDevKill): once
+	// mac_dev_rename renames the built app to "<process>Dev.app", the
+	// generic pgrep/pkill -x process check can no longer tell dev and prod
+	// apart. Built once, outside the loop — the dev pattern depends only on
+	// cfg and f.install, not on loop state.
 	isDevRunning := appleMacDevIsRunning(cfg, process, f.install)
 	killDev := appleMacDevKill(h, cfg, process, f.install)
 
@@ -133,9 +129,8 @@ func appleDevMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 		// Two independent things can happen to the built app before launch:
 		// it can be renamed to the dev name (mac_dev_rename, default true),
 		// and it can be installed to a fixed path (--install). Rename FIRST,
-		// then install what came out — matching Python's dev_mac() composing
-		// pre_launch as `_installer(_rename(built_app))`. Renaming after the
-		// install copy would rename the wrong (already-copied) path.
+		// then install what came out. Renaming after the install copy would
+		// rename the wrong (already-copied) path.
 		if cfgBool(cfg, "mac_dev_rename", true) {
 			product := appleResolveMacDevProductName(cfg, process)
 			display := appleResolveDevDisplayName(cfg, "mac", process)
@@ -550,10 +545,10 @@ func runOpen(args []string) error {
 }
 
 // appleResolveDevSignIdentity resolves the identity DevMacOSPostprocess
-// re-signs the renamed dev .app with, mirroring Python's dev_mac():
-// `(resolve_signing_identity(cfg) if "sign_identity" in cfg else None) or
-// "-"`. Re-signing with the same stable identity the build used (rather
-// than falling through to an ad-hoc re-sign) is what lets TCC grants
+// re-signs the renamed dev .app with: the configured sign_identity when
+// "sign_identity" is present in cfg, else "-" (ad-hoc). Re-signing with the
+// same stable identity the build used (rather than falling through to an
+// ad-hoc re-sign) is what lets TCC grants
 // survive the rename; "-" (ad-hoc) is the unchanged default when no
 // sign_identity is configured. Follows the same
 // present-key-then-luahost.ResolveSigningIdentity shape
