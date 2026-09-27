@@ -82,11 +82,14 @@ func beadsModel(t *testing.T) Model {
 
 // frameOn renders m through the headless renderer, driving it with keys
 // first (["right"] lands on the Beads tab; append "g" to toggle tree mode),
-// and returns the ANSI-stripped output.
+// and returns the ANSI-stripped output. Settle is only a backstop — Frame
+// returns once the fake bd's detect and list have landed — so it is sized
+// for a machine running every package's tests at once, where two sh forks
+// can take longer than any sub-second guess.
 func frameOn(t *testing.T, m Model, keys ...string) string {
 	t.Helper()
 	ctx := context.Background()
-	out := Frame(ctx, m, FrameOptions{Width: 140, Height: 30, Settle: 500 * time.Millisecond, Keys: keys})
+	out := Frame(ctx, m, FrameOptions{Width: 140, Height: 30, Settle: 30 * time.Second, Keys: keys})
 	return stripANSI(out)
 }
 

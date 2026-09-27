@@ -1302,7 +1302,10 @@ func (m Model) killCurrentWork() (tea.Model, tea.Cmd) {
 // finishing) shows up without needing a keypress — see Init's own comment.
 type workTickMsg struct{}
 
-func workTickCmd() tea.Cmd {
+func (m Model) workTickCmd() tea.Cmd {
+	if m.headless {
+		return nil
+	}
 	return tea.Tick(time.Second, func(time.Time) tea.Msg { return workTickMsg{} })
 }
 

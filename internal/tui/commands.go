@@ -400,8 +400,12 @@ type beadsTickMsg struct{}
 // beadsReprobeMsg re-runs the `bd where` probe after one timed out.
 type beadsReprobeMsg struct{}
 
-// beadsReprobeCmd schedules the next `bd where` probe one beadsInterval out.
-func beadsReprobeCmd() tea.Cmd {
+// beadsReprobeCmd schedules the next `bd where` probe one beadsInterval out
+// (none for a headless frame).
+func (m Model) beadsReprobeCmd() tea.Cmd {
+	if m.headless {
+		return nil
+	}
 	return tea.Tick(beadsInterval, func(time.Time) tea.Msg { return beadsReprobeMsg{} })
 }
 
@@ -458,8 +462,11 @@ func recordUsageCmd(nwo, invocation string) tea.Cmd {
 	}
 }
 
-// beadsTickCmd schedules the next beads read.
-func beadsTickCmd() tea.Cmd {
+// beadsTickCmd schedules the next beads read (none for a headless frame).
+func (m Model) beadsTickCmd() tea.Cmd {
+	if m.headless {
+		return nil
+	}
 	return tea.Tick(beadsInterval, func(time.Time) tea.Msg { return beadsTickMsg{} })
 }
 

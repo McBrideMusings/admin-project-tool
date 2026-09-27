@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -79,5 +80,30 @@ func TestDrainBackstopBoundsAStuckCommand(t *testing.T) {
 	}
 	if elapsed > backstop+500*time.Millisecond {
 		t.Errorf("drain took %s to honor a %s backstop", elapsed, backstop)
+	}
+}
+
+// TestFrameOfARealInitReturnsOnQuiescence pins admin-3rgp.78: a headless
+// frame of a real Init — file watcher, sync poll, beads poll and all — must
+// return once the loads land, not sit out its Settle backstop. Each of those
+// is a command that never delivers inside a frame, so left armed they kept
+// the pump in flight forever: every Frame paid its full Settle, a test that
+// asked for 500ms raced two `bd` subprocesses against it, and the watcher's
+// per-directory descriptors piled up across the package until fork failed
+// with "too many open files".
+func TestFrameOfARealInitReturnsOnQuiescence(t *testing.T) {
+	putFakeBdOnPath(t, fakeBdScript)
+	m := beadsModel(t)
+
+	const settle = 30 * time.Second
+	start := time.Now()
+	out := stripANSI(Frame(context.Background(), m, FrameOptions{Width: 140, Height: 30, Settle: settle, Keys: []string{"right"}}))
+	elapsed := time.Since(start)
+
+	if elapsed > settle/2 {
+		t.Fatalf("Frame took %s against a %s backstop; a recurring command is keeping the pump in flight", elapsed, settle)
+	}
+	if !strings.Contains(out, "Waiting on a person") {
+		t.Errorf("Frame returned before the beads list landed, got:\n%s", out)
 	}
 }

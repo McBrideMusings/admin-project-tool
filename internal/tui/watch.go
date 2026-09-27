@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"os"
 	"strings"
 	"time"
@@ -30,8 +29,13 @@ type fsChangedMsg struct{}
 // startWatchCmd builds an fsnotify watcher over the directories that hold tracked
 // files and starts a goroutine that coalesces event bursts into one signal per
 // quiet period. Any failure yields a nil channel — the dashboard still works, it
-// just won't live-update (the r key remains the manual refresh).
-func startWatchCmd(ctx context.Context) tea.Cmd {
+// just won't live-update (the r key remains the manual refresh). A headless
+// frame never repaints, so it starts no watcher at all.
+func (m Model) startWatchCmd() tea.Cmd {
+	if m.headless {
+		return nil
+	}
+	ctx := m.ctx
 	return func() tea.Msg {
 		dirs, err := git.TrackedDirs(ctx)
 		if err != nil || len(dirs) == 0 {

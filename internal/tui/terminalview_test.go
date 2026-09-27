@@ -141,7 +141,7 @@ func registerFakePTYEntry(t *testing.T, cmdName string, ring *livework.Ring, rec
 }
 
 // newAttachablePump builds a Model over a real fixture admin.toml, runs it
-// through Init and settles it — exactly what Frame does — and returns the
+// through Init and settles it — Frame's own loadedPump — and returns the
 // pump so a test can interleave a raw Ring.Write between keypresses, which
 // Frame's own fixed Keys sequence has no hook for.
 func newAttachablePump(t *testing.T, dir string, width, height int) *pump {
@@ -151,10 +151,7 @@ func newAttachablePump(t *testing.T, dir string, width, height int) *pump {
 	m := New(ctx, dir, "owner/repo", "main", "main")
 	m.herdr = false
 
-	p := &pump{msgs: make(chan tea.Msg, 64), model: m}
-	p.apply(tea.WindowSizeMsg{Width: width, Height: height})
-	p.run(p.model.Init())
-	p.drain(2 * time.Second)
+	p := loadedPump(m, FrameOptions{Width: width, Height: height, Settle: 2 * time.Second})
 	// admin-70hb: a fresh session opens with focus on the tab bar, and `a`
 	// (attach) is a row-scoped key that no-ops from there. Every caller of
 	// this helper immediately presses `a` against the first Work-tab row, so
@@ -634,10 +631,7 @@ func TestAttachedViewSwitchesToDifferentEntry(t *testing.T) {
 	t.Cleanup(cancel)
 	m := New(ctx, dir, "owner/repo", "main", "main")
 	m.herdr = false
-	p := &pump{msgs: make(chan tea.Msg, 64), model: m}
-	p.apply(tea.WindowSizeMsg{Width: 100, Height: 24})
-	p.run(p.model.Init())
-	p.drain(2 * time.Second)
+	p := loadedPump(m, FrameOptions{Width: 100, Height: 24, Settle: 2 * time.Second})
 	p.apply(keyMsg("down"))
 	p.drain(150 * time.Millisecond)
 

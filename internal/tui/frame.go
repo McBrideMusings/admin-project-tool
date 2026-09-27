@@ -20,9 +20,10 @@ type FrameOptions struct {
 	Keys []string
 	// Settle is a backstop, not the normal wait: drain returns as soon as no
 	// command is in flight, and Settle only bounds how long a genuinely stuck
-	// command (one that never delivers) can hold up the frame. The dashboard's
-	// own first paint is instant off local git, so quiescence is ordinarily
-	// reached in microseconds; Settle exists for the pathological case.
+	// command (one that never delivers) can hold up the frame. A headless model
+	// starts no watcher and arms no poll (see Model.headless), so quiescence
+	// arrives as soon as the real loads land; Settle exists for the
+	// pathological case.
 	Settle time.Duration
 }
 
@@ -35,7 +36,8 @@ type FrameOptions struct {
 // Settle rather than by a keypress, and anything still in flight when that runs
 // out simply is not in the frame (the header's `⟳ syncing` says so, exactly as it
 // would on screen). Cancel ctx after this returns to wind down whatever was
-// abandoned — the file watcher and the sync poll both outlive the frame.
+// abandoned. Nothing long-lived is started: a headless model has no file
+// watcher and no recurring poll, since a frame is never repainted.
 func Frame(ctx context.Context, m Model, opts FrameOptions) string {
 	if opts.Width <= 0 {
 		opts.Width = 120
@@ -100,6 +102,7 @@ func Frames(ctx context.Context, m Model, opts FrameOptions, seqs [][]string) []
 // waits (bounded by opts.Settle) for them to land — the shared start of Frame,
 // Frames and ShowRows.
 func loadedPump(m Model, opts FrameOptions) *pump {
+	m.headless = true
 	p := &pump{msgs: make(chan tea.Msg, 64), model: m}
 	p.apply(tea.WindowSizeMsg{Width: opts.Width, Height: opts.Height})
 	p.run(p.model.Init())

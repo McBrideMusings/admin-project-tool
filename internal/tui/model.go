@@ -275,6 +275,15 @@ type Model struct {
 	fsReloading, fsStale bool
 	fsWatcher            *fsnotify.Watcher // owned so it can be closed on quit; nil if off
 
+	// headless is set by the headless renderer (loadedPump) for a one-shot
+	// frame with no terminal and no later repaint. It turns off everything
+	// that only exists to keep a long-lived dashboard current — the file
+	// watcher and the sync/beads/work polls — because each is a command that
+	// never delivers within a frame: left on, the pump never goes quiescent
+	// and every frame waits out its full Settle backstop, and the watcher's
+	// per-directory descriptors are never closed.
+	headless bool
+
 	filtering bool
 	filter    string
 	naming    bool // "w" on the Local tab: typing a name for a new worktree branch
@@ -695,8 +704,8 @@ func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def),
 		loadCacheCmd(m.nwo),
-		startWatchCmd(m.ctx),
-		syncTickCmd(),
+		m.startWatchCmd(),
+		m.syncTickCmd(),
 		loadConfigCmd(m.ctx, m.manifestDir()),
 	}
 	if m.hasTracker("beads") {
@@ -713,7 +722,7 @@ func (m Model) Init() tea.Cmd {
 		// hears from otherwise — livework.Default has no notification of
 		// its own. This tick is the Work tab's only wake source for that,
 		// mirroring beadsTickCmd's own reason for existing.
-		cmds = append(cmds, workTickCmd())
+		cmds = append(cmds, m.workTickCmd())
 	}
 	return tea.Batch(cmds...)
 }
@@ -727,8 +736,11 @@ type syncTickMsg struct{}
 
 // syncTickCmd schedules the next poll one data.PollInterval out. It re-arms
 // itself on every fire (see the syncTickMsg case in Update), so the poll runs for
-// the life of the process.
-func syncTickCmd() tea.Cmd {
+// the life of the process — or not at all for a headless frame.
+func (m Model) syncTickCmd() tea.Cmd {
+	if m.headless {
+		return nil
+	}
 	return tea.Tick(data.PollInterval, func(time.Time) tea.Msg { return syncTickMsg{} })
 }
 
@@ -1375,14 +1387,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// refresh reads a workspace whose prefix is still unknown.
 			m.hasBeads = false
 			m.beadsErr = beadsTimeoutText("where")
-			cmds = append(cmds, beadsReprobeCmd())
+			cmds = append(cmds, m.beadsReprobeCmd())
 		case msg.err != nil:
 			m.beadsErr = msg.err.Error()
 		case !msg.present:
 			m.beadsErr = `tracker = "beads" is declared, but no beads workspace was found here`
 		}
 		if m.hasBeads && m.beadsErr == "" {
-			cmds = append(cmds, m.pollBeadsCmd(), beadsTickCmd())
+			cmds = append(cmds, m.pollBeadsCmd(), m.beadsTickCmd())
 		}
 		cmds = append(cmds, m.launchSyncCmd())
 		m.clampCursor()
@@ -1426,7 +1438,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.hasBeads {
 			return m, nil
 		}
-		return m, tea.Batch(m.pollBeadsCmd(), beadsTickCmd())
+		return m, tea.Batch(m.pollBeadsCmd(), m.beadsTickCmd())
 
 	case cacheDataMsg:
 		if msg.ok {
@@ -1482,7 +1494,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// occurrence.
 			if !m.workTicking && m.manifestOK {
 				m.workTicking = true
-				reloadCmds = append(reloadCmds, workTickCmd())
+				reloadCmds = append(reloadCmds, m.workTickCmd())
 			}
 			if m.hasTracker("beads") && !m.beadsProbed && !m.beadsProbing {
 				m.beadsProbing = true
@@ -1518,7 +1530,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// behind the Repo tab and the PR list behind the PRs tab go stale at the
 		// same rate whether or not you are looking at them. Re-arm unconditionally
 		// so the next tick still comes even when this one found a sync in flight.
-		return m, tea.Batch(m.startSyncCmd(false), syncTickCmd())
+		return m, tea.Batch(m.startSyncCmd(false), m.syncTickCmd())
 
 	case issueRowMsg:
 		m.fetchDone()
@@ -1672,10 +1684,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			delete(m.pendingAttach, msg.name)
 			if e := m.liveEntryForCommand(msg.name); e != nil {
 				am, acmd := m.attachEntry(e)
-				return am, tea.Batch(acmd, workTickCmd(), record)
+				return am, tea.Batch(acmd, m.workTickCmd(), record)
 			}
 		}
-		return m, tea.Batch(workTickCmd(), record)
+		return m, tea.Batch(m.workTickCmd(), record)
 
 	case workflowResolvedMsg:
 		m.workflowResolved(msg)
@@ -1693,7 +1705,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// here, never from View, so starting either stays a side effect and
 		// rendering stays pure.
 		m.refreshDetailProbes()
-		return m, tea.Batch(workTickCmd(), pollAgentStatusCmd(), pollPaneStatusCmd(m.cfgMerged.Terminal.Status))
+		return m, tea.Batch(m.workTickCmd(), pollAgentStatusCmd(), pollPaneStatusCmd(m.cfgMerged.Terminal.Status))
 
 	case agentStatusMsg:
 		// applyAgentStatuses is the only writer of the herdr-derived state
