@@ -233,7 +233,13 @@ func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx
 	if !lipgloss.HasDarkBackground() {
 		screen.SetDefaultBackgroundColor(color.White)
 	}
-	go func() { _, _ = io.Copy(ptmx, screen) }()
+	// replied closes when the reply copy returns. Emulator.Read checks an
+	// unlocked closed flag that Close writes, so screen.Close must wait on it.
+	replied := make(chan struct{})
+	go func() {
+		defer close(replied)
+		_, _ = io.Copy(ptmx, screen)
+	}()
 
 	e := &livework.Entry{
 		ID:     entryID,
@@ -304,7 +310,11 @@ func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx
 	// exact hang that failed Verify.
 	go func() {
 		_, copyErr := io.Copy(io.MultiWriter(e.Output, screen), ptmx)
-		// Ends the reply copy above; the grid stays readable after Close.
+		// Closing the reply pipe's write end ends the reply copy's read with
+		// EOF without touching the emulator's closed flag; only once that copy
+		// has returned is Close safe. The grid stays readable after Close.
+		_ = screen.InputPipe().(io.Closer).Close()
+		<-replied
 		_ = screen.Close()
 		// On Linux the master read returns EIO (not io.EOF) once the last
 		// slave closes — that is normal end-of-output, not a failure, so it
