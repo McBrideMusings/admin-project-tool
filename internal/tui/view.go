@@ -678,7 +678,11 @@ func (m Model) nameCandLines(width int) []string {
 // separate from keymap() itself so the six row-kind branches below stay a
 // one-line call each.
 func builtinPairs(k keymap.RowKind) [][2]string {
-	bindings := keymap.Builtins(k)
+	return pairsOf(keymap.Builtins(k))
+}
+
+// pairsOf renders bindings as footer (display, label) pairs.
+func pairsOf(bindings []keymap.Binding) [][2]string {
 	pairs := make([][2]string, len(bindings))
 	for i, b := range bindings {
 		pairs[i] = [2]string{b.Display, b.Label}
@@ -799,41 +803,45 @@ func (m Model) viewKeymap() [][2]string {
 }
 
 // rowPairs is builtinPairs(k) with the cursor row's [keys.<kind>] bindings
-// (ADR-0018, admin-l6kb.4) merged over it, so the footer advertises exactly
-// what rowKeyDispatch would do for the key under the cursor right now. A
-// bound key that shadows a built-in pair replaces that pair's label in
-// place — position, and so the keybar() first-pair/last-two invariants,
-// are untouched; a bound key with no built-in pair for this row kind is
-// appended after every built-in, ahead of the trailing `←→ tab` keymap()
-// appends on top. keybar()'s drop loop protects `q quit` by name (not just
-// by position) for exactly this reason: appended row bindings can land
-// between it and the trailing tab pair.
+// merged over it — withRowKeys over k's built-in table.
+func (m Model) rowPairs(k keymap.RowKind) [][2]string {
+	return m.withRowKeys(k, keymap.Builtins(k))
+}
+
+// withRowKeys renders bindings as footer pairs with the cursor row's
+// [keys.<kind>] bindings (ADR-0018, admin-l6kb.4) merged over them, so the
+// footer advertises exactly what rowKeyDispatch would do for the key under
+// the cursor right now. A bound key that shadows one of bindings replaces
+// that pair's label in place — position, and so the keybar() first-pair/
+// last-two invariants, are untouched; a bound key with no pair in bindings
+// is appended after every one of them, ahead of the trailing `←→ tab`
+// keymap() appends on top. keybar()'s drop loop protects `q quit` by name
+// (not just by position) for exactly this reason: appended row bindings can
+// land between it and the trailing tab pair.
 //
 // The len(m.rowKeys)==0 fast exit is what keeps a project with no [keys]
 // table on today's path with no extra cost per frame: m.currentRow() below
 // rebuilds visibleRows(), so it must never run when there is nothing to
 // merge. Gating on the cursor's actual row kind (rowKindOf), not just the
-// kind k passed in, is what restores builtin labels the moment the cursor
-// leaves a bound row kind — including onto a header/non-selectable row or
-// a Work tab row, which rowKindOf already reports as unbindable.
-func (m Model) rowPairs(k keymap.RowKind) [][2]string {
+// kind k passed in, is what restores the plain labels the moment the cursor
+// leaves a bound row kind — including onto a header/non-selectable row.
+func (m Model) withRowKeys(k keymap.RowKind, bindings []keymap.Binding) [][2]string {
 	if len(m.rowKeys) == 0 || !m.manifestOK || m.manifest == nil {
-		return builtinPairs(k)
+		return pairsOf(bindings)
 	}
 	r, ok := m.currentRow()
 	if !ok {
-		return builtinPairs(k)
+		return pairsOf(bindings)
 	}
 	kind, ok := rowKindOf(r)
 	if !ok || kind != k {
-		return builtinPairs(k)
+		return pairsOf(bindings)
 	}
 	binds := m.rowKeys[kind]
 	if len(binds) == 0 {
-		return builtinPairs(k)
+		return pairsOf(bindings)
 	}
 
-	bindings := keymap.Builtins(k)
 	pairs := make([][2]string, len(bindings))
 	consumed := make(map[string]bool, len(binds))
 	for i, b := range bindings {

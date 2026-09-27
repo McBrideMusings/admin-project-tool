@@ -49,12 +49,17 @@ func buildRowKeys(m *manifest.Manifest) map[keymap.RowKind]map[string]string {
 }
 
 // rowKindOf maps a rowItem to the keymap.RowKind a [keys.<kind>] table
-// could bind against, and reports false for every row the Work tab owns
-// itself (rowCommand/rowCommandTarget/rowWorker) and every non-selectable
-// row (header/rule/text/center) — none of those are in keymap.Bindable, so
-// none of them can collide with a project's own key bindings.
+// could bind against, and reports false for every non-selectable row
+// (header/rule/text/center) — none of those are in keymap.Bindable, so none
+// of them can collide with a project's own key bindings.
 func rowKindOf(r rowItem) (keymap.RowKind, bool) {
 	switch r.kind {
+	case rowCommand:
+		return keymap.Command, r.work != nil
+	case rowCommandTarget:
+		return keymap.CommandTarget, r.work != nil
+	case rowWorker:
+		return keymap.Worker, r.work != nil && r.work.worker != nil
 	case rowBead:
 		return keymap.Bead, true
 	case rowIssue:
@@ -81,9 +86,19 @@ func rowEnv(r rowItem, kind keymap.RowKind) []string {
 	return kinds.RowEnv(string(kind), rowID(r, kind), r.url)
 }
 
-// rowID picks the row's own identity field for ADMIN_ROW_ID, per kind.
+// rowID picks the row's own identity field for ADMIN_ROW_ID, per kind. A
+// Work row's id is the live-work id its command's run is keyed on
+// (kinds.multiTargetLiveID): the command name, "<command>:<target>" for a
+// target row, or the worker's own entry id — the id a reload loop records
+// as its owner (internal/reload.Record.Live).
 func rowID(r rowItem, kind keymap.RowKind) string {
 	switch kind {
+	case keymap.Command:
+		return r.work.cmdName
+	case keymap.CommandTarget:
+		return kinds.TargetLiveKey(r.work.cmdName, r.work.targetKey)
+	case keymap.Worker:
+		return r.work.worker.ID
 	case keymap.Bead:
 		return r.beadID
 	case keymap.Issue:

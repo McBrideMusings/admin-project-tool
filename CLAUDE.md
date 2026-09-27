@@ -181,7 +181,7 @@ detach = true
 
 ## Row-scoped key bindings
 
-A project can bind keys to commands at the row level by declaring `[keys.<row-kind>]` tables mapping keys to command names — one table per bindable row kind (`bead`, `issue`, `branch`, `pr`, `commit`, `stash`). A bound key invokes the named command with the row's data passed as environment variables (`ADMIN_ROW_KIND`, `ADMIN_ROW_ID`, `ADMIN_ROW_URL`); the command's `desc` becomes the key's label in the row footer, replacing the built-in binding. This repo dogfoods the feature for implementing work:
+A project can bind keys to commands at the row level by declaring `[keys.<row-kind>]` tables mapping keys to command names — one table per bindable row kind (`bead`, `issue`, `branch`, `pr`, `commit`, `stash`, and the Work tab's `command`, `commandTarget`, `worker`). A bound key invokes the named command with the row's data passed as environment variables (`ADMIN_ROW_KIND`, `ADMIN_ROW_ID`, `ADMIN_ROW_URL`); the command's `desc` becomes the key's label in the row footer, replacing the built-in binding. This repo dogfoods the feature for implementing work:
 
 ```toml
 [commands.implement]
@@ -199,7 +199,23 @@ enter = "implement"
 
 The resulting Beads footer shows `↵ Dispatch an agent over the selected bead(s) (ADR-0018 dogfood)` — the command's description auto-fills the key label so the footer advertises what the binding does.
 
-Three validation rules govern bindings (`internal/validate/keys.go`, `RowKeys`): reserved keys are rejected (`keymap.Reserved` — q, ctrl+c, esc, tab, shift+tab, the arrows, j, k, 1-4, /); the Work tab's own row kinds (`command`, `commandTarget`, `worker` — `keymap.NotBindable`) are not bindable and get a dedicated error naming them; shadowing a built-in is allowed and reported — `admin check` prints e.g. `keys.bead.d shadows the bead detail overlay` and still exits 0 (shadows come back on a separate return value, never in the error).
+On a Work row, `ADMIN_ROW_ID` is the live-work id the row's run is keyed on: the command name, `<command>:<target>` for a target row, or the worker's entry id. That is also what a reload loop records as its owner, so a key bound to a `kind = "server-reload"` command reloads only that row's loop:
+
+```toml
+[commands.reload]
+desc  = "reload this loop"
+steps = ["reload"]
+
+[actions.reload]
+kind = "server-reload"
+
+[keys.command]
+r = "reload"
+```
+
+Every reload loop (`reload.RunWithReload` and `reload.SetupReload`) writes a JSON record to `/tmp/admin-run-<target>-<pid>.pid` holding its pid, target, project root, and owning live id — set once per process by `internal/kinds`' `runSteps` via `reload.SetOwner`. `server-reload` signals only loops whose root is its own project: all of them with no argument, those whose target contains `args[0]`, or, from a Work-row binding, those `reload.MatchRow` matches (the row's live id, or any of a command row's targets).
+
+Three validation rules govern bindings (`internal/validate/keys.go`, `RowKeys`): reserved keys are rejected (`keymap.Reserved` — q, ctrl+c, esc, tab, shift+tab, the arrows, j, k, 1-4, /); an unknown row kind is rejected with the list of bindable ones; shadowing a built-in is allowed and reported — `admin check` prints e.g. `keys.bead.d shadows the bead detail overlay` and still exits 0 (shadows come back on a separate return value, never in the error).
 
 Dispatch (`internal/tui/rowkeys.go`, `rowKeyDispatch`) is consulted before the built-in switch in `Model.handleKey`; a miss (no table, no row, unbindable kind, unbound key) returns ok=false and the built-in switch runs exactly as today; a hit dispatches the named command through `dispatchCommandCmd` — the same path a Commands-tab row uses — with the row's environment variables; if that command already has a live non-worker entry the dashboard attaches to it rather than re-running it (admin-c2zl).
 

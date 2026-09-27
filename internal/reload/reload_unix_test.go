@@ -4,7 +4,6 @@ package reload
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -35,79 +34,100 @@ func (f *fakeReporter) Err(msg string) {
 	f.errs = append(f.errs, msg)
 }
 
-// TestSignalAllNoPIDFiles proves SignalAll reports "no running targets"
-// (not "no live targets") when the prefix matches nothing at all — the two
-// distinct error messages SignalAll produces.
-func TestSignalAllNoPIDFiles(t *testing.T) {
+// TestSignalNoPIDFiles proves Signal reports "no running targets" (not "no
+// live targets") when the prefix matches nothing at all — the two distinct
+// error messages Signal produces.
+func TestSignalNoPIDFiles(t *testing.T) {
 	prefix := filepath.Join(t.TempDir(), "admin-run")
 	r := &fakeReporter{}
-	sent, err := SignalAll(prefix, "", r)
+	sent, err := Signal(prefix, MatchTarget("", ""), r)
 	if sent != 0 || err == nil {
-		t.Fatalf("SignalAll() = (%d, %v), want (0, non-nil)", sent, err)
+		t.Fatalf("Signal() = (%d, %v), want (0, non-nil)", sent, err)
 	}
 	if len(r.errs) != 1 || r.errs[0] != "No running targets found (no PID files)" {
 		t.Errorf("Err() calls = %v, want exactly the no-PID-files message", r.errs)
 	}
 }
 
-// TestSignalAllRemovesStalePIDFile proves a PID file naming a dead process
-// is removed and reported as "no live targets found", distinct from the
+// TestSignalRemovesStalePIDFile proves a record naming a dead process is
+// removed and reported as "no live targets found", distinct from the
 // no-PID-files case.
-func TestSignalAllRemovesStalePIDFile(t *testing.T) {
+func TestSignalRemovesStalePIDFile(t *testing.T) {
 	deadPID := spawnAndReap(t)
 
-	dir := t.TempDir()
-	prefix := filepath.Join(dir, "admin-run")
-	pidFile := prefix + "-web.pid"
-	if err := WritePIDFileWithPID(pidFile, deadPID); err != nil {
-		t.Fatalf("WritePIDFileWithPID: %v", err)
+	prefix := filepath.Join(t.TempDir(), "admin-run")
+	pidFile := prefix + "-web-1.pid"
+	if err := writeRecordFile(pidFile, Record{PID: deadPID, Target: "web"}); err != nil {
+		t.Fatalf("writeRecordFile: %v", err)
 	}
 
 	r := &fakeReporter{}
-	sent, err := SignalAll(prefix, "", r)
+	sent, err := Signal(prefix, MatchTarget("", ""), r)
 	if sent != 0 || err == nil {
-		t.Fatalf("SignalAll() = (%d, %v), want (0, non-nil)", sent, err)
+		t.Fatalf("Signal() = (%d, %v), want (0, non-nil)", sent, err)
 	}
 	if _, statErr := os.Stat(pidFile); statErr == nil {
 		t.Error("stale pid file should have been removed")
 	}
 }
 
-// TestSignalAllFiltersBySubstring proves the target filter matches by
-// substring, not exact equality — filter "eb" must still match a target
-// named "web".
-//
-// MUTATION EVIDENCE: change SignalAll's `strings.Contains(targetName,
-// filter)` to `targetName == filter` and this test fails: "eb" != "web", so
-// the web target is skipped and sent stays 0 instead of 1 — verified by
-// hand-editing reload_unix.go to that shape, re-running (got
-// "SignalAll() = (0, no live targets found), want sent=1, err=nil"), then
-// reverting.
-func TestSignalAllFiltersBySubstring(t *testing.T) {
+// catchSIGUSR1 keeps a SIGUSR1 sent to the test process from terminating it.
+func catchSIGUSR1(t *testing.T) {
+	t.Helper()
 	sigCh := make(chan os.Signal, 4)
 	signal.Notify(sigCh, syscall.SIGUSR1)
-	defer signal.Stop(sigCh)
+	t.Cleanup(func() { signal.Stop(sigCh) })
 	go func() {
 		for range sigCh {
 		}
 	}()
+}
 
-	dir := t.TempDir()
-	prefix := filepath.Join(dir, "admin-run")
-	if err := WritePIDFileWithPID(prefix+"-web.pid", os.Getpid()); err != nil {
-		t.Fatalf("write web pid file: %v", err)
-	}
-	if err := WritePIDFileWithPID(prefix+"-worker.pid", os.Getpid()); err != nil {
-		t.Fatalf("write worker pid file: %v", err)
+// TestSignalFiltersBySubstring proves the target filter matches by
+// substring, not exact equality — filter "eb" must still match a target
+// named "web".
+//
+// MUTATION EVIDENCE: change MatchTarget's strings.Contains to equality and
+// "eb" no longer matches "web", so sent stays 0 instead of 1.
+func TestSignalFiltersBySubstring(t *testing.T) {
+	catchSIGUSR1(t)
+	prefix := filepath.Join(t.TempDir(), "admin-run")
+	for _, target := range []string{"web", "worker"} {
+		if err := writeRecordFile(prefix+"-"+target+"-1.pid", Record{PID: os.Getpid(), Target: target, Root: "/proj"}); err != nil {
+			t.Fatalf("write %s record: %v", target, err)
+		}
 	}
 
 	r := &fakeReporter{}
-	sent, err := SignalAll(prefix, "eb", r)
+	sent, err := Signal(prefix, MatchTarget("/proj", "eb"), r)
 	if sent != 1 || err != nil {
-		t.Fatalf("SignalAll() = (%d, %v), want sent=1, err=nil", sent, err)
+		t.Fatalf("Signal() = (%d, %v), want sent=1, err=nil", sent, err)
 	}
-	if _, statErr := os.Stat(prefix + "-worker.pid"); statErr != nil {
+	if _, statErr := os.Stat(prefix + "-worker-1.pid"); statErr != nil {
 		t.Error("the non-matching worker pid file should have been left alone")
+	}
+}
+
+// TestSignalMatchRowSkipsOtherProjects proves a row-targeted reload signals
+// only the loop its own project and command started, when another project
+// runs a loop under the same target and command name.
+func TestSignalMatchRowSkipsOtherProjects(t *testing.T) {
+	catchSIGUSR1(t)
+	prefix := filepath.Join(t.TempDir(), "admin-run")
+	recs := map[string]Record{
+		"-dev-1.pid": {PID: os.Getpid(), Target: "dev", Root: "/a", Live: "dev"},
+		"-dev-2.pid": {PID: os.Getpid(), Target: "dev", Root: "/b", Live: "dev"},
+	}
+	for suffix, rec := range recs {
+		if err := writeRecordFile(prefix+suffix, rec); err != nil {
+			t.Fatalf("writeRecordFile: %v", err)
+		}
+	}
+
+	r := &fakeReporter{}
+	sent, err := Signal(prefix, MatchRow("/a", "dev"), r)
+	if sent != 1 || err != nil {
+		t.Fatalf("Signal() = (%d, %v), want sent=1, err=nil", sent, err)
 	}
 }
 
@@ -125,18 +145,6 @@ func spawnAndReap(t *testing.T) int {
 		t.Fatalf("spawnAndReap wait: %v", err)
 	}
 	return pid
-}
-
-// WritePIDFileWithPID is WritePIDFile for an arbitrary PID rather than the
-// current process's own — test-only, since SignalAll needs to observe both
-// a live PID (the test process itself) and a definitely-dead one.
-func WritePIDFileWithPID(path string, pid int) error {
-	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-	}
-	return os.WriteFile(path, []byte(fmt.Sprintf("%d", pid)), 0o644)
 }
 
 // TestRunWithReloadFastExitGivesUp proves a command that exits immediately,

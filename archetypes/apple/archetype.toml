@@ -394,23 +394,8 @@ end
 '''
 
 [actions.reload]
-kind = "shell"
+kind = "server-reload"
 desc = "Signal a running dev action to rebuild and relaunch"
-run = '''
-pid_file="/tmp/admin-run.pid"
-if [ ! -f "$pid_file" ]; then
-  echo "no admin dev process found (no PID file at $pid_file)" >&2
-  exit 1
-fi
-pid=$(cat "$pid_file")
-if ! kill -0 "$pid" 2>/dev/null; then
-  echo "PID $pid is not running (stale PID file)" >&2
-  rm -f "$pid_file"
-  exit 1
-fi
-kill -USR1 "$pid"
-echo "reload signal sent to PID $pid"
-'''
 
 [actions.appid]
 kind = "apple"

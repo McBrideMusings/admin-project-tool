@@ -158,15 +158,58 @@ func TestRowKeyDispatchNoKeysTableIsAlwaysAMiss(t *testing.T) {
 	}
 }
 
-// TestRowKindOfWorkTabRowsAreUnbindable proves the AC's "a key bound for a
-// row kind does nothing on the Work tab's own rows (command,
-// commandTarget, worker)": none of the three map to a keymap.RowKind, so
-// rowKeyDispatch can never look one up in the first place, regardless of
-// what a [keys] table declares.
-func TestRowKindOfWorkTabRowsAreUnbindable(t *testing.T) {
-	for _, kind := range []rowKind{rowCommand, rowCommandTarget, rowWorker} {
-		if _, ok := rowKindOf(rowItem{kind: kind}); ok {
-			t.Errorf("rowKindOf(%v) = ok, want unbindable (Work tab's own rows)", kind)
+// TestRowKeyDispatchOnWorkCommandRow proves a [keys.command] binding on the
+// Work tab dispatches its command with the command row's live-work id as
+// ADMIN_ROW_ID — the id a reload loop records as its owner — and that the
+// footer advertises it with the bound command's desc.
+func TestRowKeyDispatchOnWorkCommandRow(t *testing.T) {
+	freshLivework(t)
+	gotEnv := stubStartHostedRun(t)
+
+	m := twoCommandModel()
+	m.manifest.Custom["reload"] = manifest.Command{Desc: "reload", Steps: []string{"reload"}}
+	m.manifest.Actions["reload"] = manifest.Action{"kind": "server-reload"}
+	m.rowKeys = map[keymap.RowKind]map[string]string{keymap.Command: {"r": "reload"}}
+	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("build"))
+
+	want := [][2]string{{"↑↓", "move"}, {"↵", "dispatch"}, {"c", "collapse"}, {"q/esc", "quit"}, {"r", "reload"}}
+	if got := m.workFooterPairs(); !pairsEqual(got, want) {
+		t.Errorf("footer pairs = %v, want %v", got, want)
+	}
+
+	_, cmd, ok := m.rowKeyDispatch("r")
+	if !ok || cmd == nil {
+		t.Fatalf("rowKeyDispatch(\"r\") on a bound command row = (ok=%v, cmd=%v), want a dispatch", ok, cmd)
+	}
+	if started, isStart := cmd().(workDispatchStartedMsg); !isStart || started.name != "reload" {
+		t.Fatalf("dispatch Cmd produced %#v, want workDispatchStartedMsg for reload", started)
+	}
+	for _, kv := range []string{"ADMIN_ROW_KIND=command", "ADMIN_ROW_ID=build"} {
+		if !containsEnv(*gotEnv, kv) {
+			t.Errorf("env %v missing %s", *gotEnv, kv)
+		}
+	}
+}
+
+// TestRowIDWorkRowsAreLiveIDs proves each Work row kind's ADMIN_ROW_ID is the
+// id its run is keyed on: the command name, "<command>:<target>", or the
+// worker's entry id.
+func TestRowIDWorkRowsAreLiveIDs(t *testing.T) {
+	cases := []struct {
+		r    rowItem
+		kind keymap.RowKind
+		want string
+	}{
+		{rowItem{kind: rowCommand, work: &workRowData{cmdName: "dev"}}, keymap.Command, "dev"},
+		{rowItem{kind: rowCommandTarget, work: &workRowData{cmdName: "dev", targetKey: "web"}}, keymap.CommandTarget, "dev:web"},
+		{rowItem{kind: rowWorker, work: &workRowData{worker: &livework.Entry{ID: "agent-7"}}}, keymap.Worker, "agent-7"},
+	}
+	for _, c := range cases {
+		if got, ok := rowKindOf(c.r); !ok || got != c.kind {
+			t.Errorf("rowKindOf(%v) = (%q, %v), want (%q, true)", c.r.kind, got, ok, c.kind)
+		}
+		if got := rowID(c.r, c.kind); got != c.want {
+			t.Errorf("rowID(%v) = %q, want %q", c.r.kind, got, c.want)
 		}
 	}
 }

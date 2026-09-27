@@ -1022,30 +1022,26 @@ q = "implement"
 	}
 }
 
-// TestRunCheckRowKeysNonBindableRowKindFails is the ticket's fourth
-// acceptance criterion: a row kind that is not bindable — command,
-// commandTarget, worker, or an unknown word — fails check, and the message
-// lists the kinds that are.
+// TestRunCheckRowKeysNonBindableRowKindFails: a row kind that is not
+// bindable fails check, and the message lists the kinds that are.
 func TestRunCheckRowKeysNonBindableRowKindFails(t *testing.T) {
-	for _, kind := range []string{"command", "commandTarget", "worker", "nonsense"} {
-		dir := writeCheckManifest(t, `project_name = "checktest"
+	dir := writeCheckManifest(t, `project_name = "checktest"
 
 [commands.custom.implement]
 desc  = "implement it"
 steps = ["noop"]
 
-[keys.`+kind+`]
+[keys.nonsense]
 o = "implement"
 `)
-		err, _ := runCheckCapturingStderr(t, dir)
-		if err == nil {
-			t.Fatalf("[keys.%s]: runCheck = nil, want an error", kind)
-		}
-		msg := err.Error()
-		for _, want := range []string{"bead", "issue", "branch", "pr", "commit", "stash"} {
-			if !strings.Contains(msg, want) {
-				t.Fatalf("[keys.%s]: error %q does not list bindable kind %q", kind, msg, want)
-			}
+	err, _ := runCheckCapturingStderr(t, dir)
+	if err == nil {
+		t.Fatal("[keys.nonsense]: runCheck = nil, want an error")
+	}
+	msg := err.Error()
+	for _, want := range []string{"bead", "issue", "branch", "pr", "commit", "stash", "command", "commandTarget", "worker"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error %q does not list bindable kind %q", msg, want)
 		}
 	}
 }

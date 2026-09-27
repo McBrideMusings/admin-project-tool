@@ -3,49 +3,147 @@ package reload
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
-// TestPIDFileRoundTrip proves WritePIDFile writes the current process's PID
-// and readPIDFile parses it back out, then CleanupPIDFile removes the file.
-func TestPIDFileRoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "nested", "admin-run-test.pid")
+// resetOwner clears SetOwner's first-call-wins state around a test.
+func resetOwner(t *testing.T) {
+	t.Helper()
+	ownerMu.Lock()
+	ownerRoot, ownerLive = "", ""
+	ownerMu.Unlock()
+	t.Cleanup(func() {
+		ownerMu.Lock()
+		ownerRoot, ownerLive = "", ""
+		ownerMu.Unlock()
+	})
+}
 
-	if err := WritePIDFile(path); err != nil {
-		t.Fatalf("WritePIDFile: %v", err)
-	}
+// TestRecordRoundTrip proves writeRecord writes this process's PID, the
+// target, and the owner set by SetOwner, and readRecord parses them back;
+// removeRecord then deletes the file.
+func TestRecordRoundTrip(t *testing.T) {
+	resetOwner(t)
+	SetOwner("/proj", "dev:web")
+	prefix := filepath.Join(t.TempDir(), "nested", "admin-run")
 
-	pid, err := readPIDFile(path)
+	path, err := writeRecord(prefix, "dev", "/ignored")
 	if err != nil {
-		t.Fatalf("readPIDFile: %v", err)
+		t.Fatalf("writeRecord: %v", err)
 	}
-	if pid != os.Getpid() {
-		t.Errorf("readPIDFile() = %d, want current pid %d", pid, os.Getpid())
+	rec, err := readRecord(path)
+	if err != nil {
+		t.Fatalf("readRecord: %v", err)
+	}
+	want := Record{PID: os.Getpid(), Target: "dev", Root: "/proj", Live: "dev:web"}
+	if rec != want {
+		t.Errorf("readRecord() = %+v, want %+v", rec, want)
 	}
 
-	CleanupPIDFile(path)
-	if _, err := readPIDFile(path); err == nil {
-		t.Error("expected readPIDFile to fail after CleanupPIDFile removed the file")
+	removeRecord(path)
+	if _, err := readRecord(path); err == nil {
+		t.Error("expected readRecord to fail after removeRecord deleted the file")
 	}
 }
 
-// TestReadPIDFileRejectsGarbage proves a malformed PID file (not a bare
-// integer) is reported as an error rather than silently parsed as 0.
-//
-// MUTATION EVIDENCE: replace readPIDFile's `if err != nil { return 0,
-// fmt.Errorf(...) }` after strconv.Atoi with an unconditional `_ = err`
-// (always treat the parse as successful) and this test fails with:
-// "expected an error for a non-numeric pid file, got pid=0" — verified by
-// hand-editing reload.go to that shape and re-running go test, then
-// reverting.
-func TestReadPIDFileRejectsGarbage(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "bad.pid")
-	if err := os.WriteFile(path, []byte("not-a-pid"), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+// TestRecordRootFallsBackToDir proves a loop started with no SetOwner (a
+// kind called outside runSteps) still records its project, from its own
+// working directory.
+func TestRecordRootFallsBackToDir(t *testing.T) {
+	resetOwner(t)
+	path, err := writeRecord(filepath.Join(t.TempDir(), "admin-run"), "dev", "/from-dir")
+	if err != nil {
+		t.Fatalf("writeRecord: %v", err)
 	}
-	pid, err := readPIDFile(path)
-	if err == nil {
-		t.Fatalf("expected an error for a non-numeric pid file, got pid=%d", pid)
+	rec, err := readRecord(path)
+	if err != nil {
+		t.Fatalf("readRecord: %v", err)
+	}
+	if rec.Root != "/from-dir" || rec.Live != "" {
+		t.Errorf("readRecord() = %+v, want Root=/from-dir and no Live", rec)
+	}
+}
+
+// TestSetOwnerFirstCallWins proves a nested command's runSteps cannot
+// re-attribute the loop to itself.
+func TestSetOwnerFirstCallWins(t *testing.T) {
+	resetOwner(t)
+	SetOwner("/proj", "dev")
+	SetOwner("/proj", "nested")
+	if root, live := owner(); root != "/proj" || live != "dev" {
+		t.Errorf("owner() = (%q, %q), want (/proj, dev)", root, live)
+	}
+}
+
+// TestRecordPathCarriesPID proves two loops on the same target name get two
+// files — the collision a bare "<prefix>-<target>.pid" had.
+func TestRecordPathCarriesPID(t *testing.T) {
+	resetOwner(t)
+	prefix := filepath.Join(t.TempDir(), "admin-run")
+	path, err := writeRecord(prefix, "dev", "")
+	if err != nil {
+		t.Fatalf("writeRecord: %v", err)
+	}
+	if want := prefix + "-dev-" + strconv.Itoa(os.Getpid()) + ".pid"; path != want {
+		t.Errorf("writeRecord path = %q, want %q", path, want)
+	}
+}
+
+// TestReadRecordRejectsGarbage proves a malformed PID file — the bare-integer
+// shape an older binary wrote, or no pid at all — is an error rather than a
+// record with PID 0.
+func TestReadRecordRejectsGarbage(t *testing.T) {
+	dir := t.TempDir()
+	for name, body := range map[string]string{"bare": "1234", "nopid": `{"target":"dev"}`} {
+		path := filepath.Join(dir, name+".pid")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+		if rec, err := readRecord(path); err == nil {
+			t.Errorf("%s: expected an error, got %+v", name, rec)
+		}
+	}
+}
+
+// TestMatchRow proves a command row matches its own loop and its targets'
+// loops, and nothing from another project or another command.
+func TestMatchRow(t *testing.T) {
+	match := MatchRow("/proj", "dev")
+	cases := []struct {
+		rec  Record
+		want bool
+	}{
+		{Record{Root: "/proj", Live: "dev"}, true},
+		{Record{Root: "/proj", Live: "dev:web"}, true},
+		{Record{Root: "/other", Live: "dev"}, false},
+		{Record{Root: "/proj", Live: "devtools"}, false},
+		{Record{Root: "/proj", Live: ""}, false},
+	}
+	for _, c := range cases {
+		if got := match(c.rec); got != c.want {
+			t.Errorf("MatchRow(/proj, dev)(%+v) = %v, want %v", c.rec, got, c.want)
+		}
+	}
+}
+
+// TestMatchTargetStaysInItsProject proves `admin reload [filter]` never
+// reaches another project's loop, filter or not.
+func TestMatchTargetStaysInItsProject(t *testing.T) {
+	cases := []struct {
+		filter string
+		rec    Record
+		want   bool
+	}{
+		{"", Record{Root: "/proj", Target: "dev"}, true},
+		{"", Record{Root: "/other", Target: "dev"}, false},
+		{"ev", Record{Root: "/proj", Target: "dev"}, true},
+		{"web", Record{Root: "/proj", Target: "dev"}, false},
+	}
+	for _, c := range cases {
+		if got := MatchTarget("/proj", c.filter)(c.rec); got != c.want {
+			t.Errorf("MatchTarget(/proj, %q)(%+v) = %v, want %v", c.filter, c.rec, got, c.want)
+		}
 	}
 }
 

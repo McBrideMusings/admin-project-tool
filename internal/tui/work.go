@@ -15,6 +15,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/archetype"
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
+	"github.com/McBrideMusings/admin-project-tool/internal/keymap"
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
@@ -1247,7 +1248,9 @@ func entryIsLive(e *livework.Entry) bool {
 	}
 }
 
-// workFooterPairs is the Work tab's viewKeymap() branch, computed from the
+// workFooterPairs is the Work tab's viewKeymap() branch, drawn from the Work
+// row kind's keymap.Builtins table with the cursor row's [keys.<kind>]
+// bindings merged over it (withRowKeys), and computed from the
 // SAME row-state resolution currentLiveEntry()'s callers already use — so the
 // footer can never advertise an action the key does not take (admin-3rgp.
 // 72.12's whole point: one dispatch point resolves the row's state, both the
@@ -1269,25 +1272,40 @@ func entryIsLive(e *livework.Entry) bool {
 // the frames don't show them, and the footer's job is to say only what the
 // current row can actually do.
 func (m Model) workFooterPairs() [][2]string {
-	move := [2]string{"↑↓", "move"}
-	quit := [2]string{"q/esc", "quit"}
-	collapse := [2]string{"c", "collapse"}
+	kind, enter, kill := keymap.Command, "dispatch", false
+	if r, ok := m.currentRow(); ok && r.work != nil {
+		if k, bindable := rowKindOf(r); bindable {
+			kind = k
+		}
+		switch resolveRowAction(r.kind, r.work) {
+		case actionAttach:
+			enter, kill = "attach", true
+		case actionTranscript:
+			enter = "transcript"
+		}
+	}
+	collapse := "collapse"
 	if m.workCollapsed {
-		collapse = [2]string{"c", "expand"}
+		collapse = "expand"
 	}
-	idle := [][2]string{move, {"↵", "dispatch"}, collapse, quit}
 
-	r, ok := m.currentRow()
-	if !ok || r.work == nil {
-		return idle
+	var shown []keymap.Binding
+	for _, b := range keymap.Builtins(kind) {
+		switch b.Key {
+		case "enter":
+			b.Label = enter
+		case "a":
+			continue
+		case "x":
+			if !kill {
+				continue
+			}
+		case "c":
+			b.Label = collapse
+		}
+		shown = append(shown, b)
 	}
-	switch resolveRowAction(r.kind, r.work) {
-	case actionAttach:
-		return [][2]string{move, {"↵", "attach"}, {"x", "kill"}, collapse, quit}
-	case actionTranscript:
-		return [][2]string{move, {"↵", "transcript"}, collapse, quit}
-	}
-	return idle
+	return m.withRowKeys(kind, shown)
 }
 
 func (m Model) killCurrentWork() (tea.Model, tea.Cmd) {

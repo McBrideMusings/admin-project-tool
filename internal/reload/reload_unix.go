@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -38,13 +37,15 @@ func IsRebuildRequested() bool { return rebuildRequested.Load() }
 func ClearRebuildRequest() { rebuildRequested.Store(false) }
 
 // SetupReload registers a SIGUSR1 handler that sets the shared rebuild flag,
-// and writes pidFile. For the CALLER-OWNED loop shape (a build-install-launch
-// cycle that re-runs itself, not a single child process this package
-// restarts) — admin-3rgp.12's Apple dev loops are the intended adopter. The
-// returned cleanup func stops the signal watch and removes pidFile; call it
-// in a defer.
-func SetupReload(pidFile string) (cleanup func(), err error) {
-	if err := WritePIDFile(pidFile); err != nil {
+// and writes this process's PID record under target. For the CALLER-OWNED
+// loop shape (a build-install-launch cycle that re-runs itself, not a single
+// child process this package restarts) — admin-3rgp.12's Apple dev loops are
+// the intended adopter. dir is the loop's working directory, the record's
+// Root when SetOwner never ran. The returned cleanup func stops the signal
+// watch and removes the record; call it in a defer.
+func SetupReload(target, dir string) (cleanup func(), err error) {
+	pidFile, err := writeRecord(PIDPrefix, target, dir)
+	if err != nil {
 		return func() {}, err
 	}
 	ch := make(chan os.Signal, 4)
@@ -60,7 +61,7 @@ func SetupReload(pidFile string) (cleanup func(), err error) {
 		signal.Stop(ch)
 		close(ch)
 		<-stopped
-		CleanupPIDFile(pidFile)
+		removeRecord(pidFile)
 	}
 	return cleanup, nil
 }
@@ -270,11 +271,11 @@ const maxFastExitAttempts = 3
 // Returns the child's exit code, or 130 on a user-initiated Ctrl-C/SIGINT
 // (the shell convention for a SIGINT-terminated process).
 func RunWithReload(cmd, target string, opts Options) int {
-	pidFile := fmt.Sprintf("%s-%s.pid", PIDPrefix, target)
-	if err := WritePIDFile(pidFile); err != nil && opts.Warn != nil {
+	pidFile, err := writeRecord(PIDPrefix, target, opts.Dir)
+	if err != nil && opts.Warn != nil {
 		opts.Warn("could not write pid file " + pidFile + ": " + err.Error())
 	}
-	defer CleanupPIDFile(pidFile)
+	defer removeRecord(pidFile)
 
 	sigCh := make(chan os.Signal, 4)
 	signal.Notify(sigCh, syscall.SIGUSR1, syscall.SIGINT, syscall.SIGTERM)
@@ -486,14 +487,14 @@ func StartKeyReader() (keys <-chan byte, restore func()) {
 	return startKeyReader()
 }
 
-// SignalAll sends SIGUSR1 to every admin-managed dev target whose PID file
-// matches prefix (or the subset whose target name contains filter, when
-// filter is non-empty). Stale PID files (parse failure, or a process that is
-// no longer running) are removed. Returns the number of signals actually
-// delivered; a zero count is always accompanied by a non-nil error naming
-// why (no PID files at all, vs. none matched/alive) so a caller (the
-// server-reload kind) can tell the two apart.
-func SignalAll(prefix, filter string, r Reporter) (int, error) {
+// Signal sends SIGUSR1 to every admin-managed dev loop whose PID record under
+// prefix satisfies match (MatchTarget, MatchRow). Stale records (parse
+// failure, or a process that is no longer running) are removed whether or
+// not they match. Returns the number of signals actually delivered; a zero
+// count is always accompanied by a non-nil error naming why (no PID files at
+// all, vs. none matched/alive) so a caller (the server-reload kind) can tell
+// the two apart.
+func Signal(prefix string, match func(Record) bool, r Reporter) (int, error) {
 	files, _ := globPIDFiles(prefix)
 	if len(files) == 0 {
 		if r != nil {
@@ -502,36 +503,33 @@ func SignalAll(prefix, filter string, r Reporter) (int, error) {
 		return 0, fmt.Errorf("no running targets found (no PID files)")
 	}
 
-	base := baseName(prefix)
 	sent := 0
 	for _, pidfile := range files {
-		targetName := strings.TrimSuffix(strings.TrimPrefix(baseName(pidfile), base+"-"), ".pid")
-		if filter != "" && !strings.Contains(targetName, filter) {
-			continue
-		}
-
-		pid, err := readPIDFile(pidfile)
+		rec, err := readRecord(pidfile)
 		if err != nil {
 			if r != nil {
 				r.Warn("Cannot read " + pidfile + " — removing stale file")
 			}
-			CleanupPIDFile(pidfile)
+			removeRecord(pidfile)
 			continue
 		}
 
-		if err := syscall.Kill(pid, 0); err != nil {
+		if err := syscall.Kill(rec.PID, 0); err != nil {
 			if r != nil {
-				r.Warn(fmt.Sprintf("PID %d (%s) is not running — removing stale file", pid, targetName))
+				r.Warn(fmt.Sprintf("PID %d (%s) is not running — removing stale file", rec.PID, rec.Target))
 			}
-			CleanupPIDFile(pidfile)
+			removeRecord(pidfile)
 			continue
 		}
 
-		if err := syscall.Kill(pid, syscall.SIGUSR1); err != nil {
+		if !match(rec) {
+			continue
+		}
+		if err := syscall.Kill(rec.PID, syscall.SIGUSR1); err != nil {
 			continue
 		}
 		if r != nil {
-			r.Ok(fmt.Sprintf("Reload signal sent to %s (PID %d)", targetName, pid))
+			r.Ok(fmt.Sprintf("Reload signal sent to %s (PID %d)", rec.Target, rec.PID))
 		}
 		sent++
 	}

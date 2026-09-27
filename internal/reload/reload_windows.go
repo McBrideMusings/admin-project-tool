@@ -9,11 +9,8 @@ import (
 )
 
 // errUnsupported is returned by every reload primitive that depends on
-// SIGUSR1 (SetupReload, RunWithReload, SignalAll, PollForReload) — that
-// signal does not exist on Windows. WritePIDFile/CleanupPIDFile are still
-// available (they're plain file I/O), so a future Windows-aware caller can
-// still see the same PID-file trail a Unix run would leave, just without
-// anything able to signal a rebuild into it.
+// SIGUSR1 (SetupReload, RunWithReload, Signal, PollForReload) — that
+// signal does not exist on Windows.
 var errUnsupported = errors.New("reload: SIGUSR1-based reload is not supported on Windows")
 
 // IsRebuildRequested is always false on Windows — there is no signal path
@@ -24,7 +21,7 @@ func IsRebuildRequested() bool { return false }
 func ClearRebuildRequest() {}
 
 // SetupReload always fails on Windows.
-func SetupReload(pidFile string) (cleanup func(), err error) {
+func SetupReload(target, dir string) (cleanup func(), err error) {
 	return func() {}, errUnsupported
 }
 
@@ -52,8 +49,8 @@ func RunWithReload(cmd, target string, opts Options) int {
 	return 1
 }
 
-// SignalAll always fails on Windows.
-func SignalAll(prefix, filter string, r Reporter) (int, error) {
+// Signal always fails on Windows.
+func Signal(prefix string, match func(Record) bool, r Reporter) (int, error) {
 	if r != nil {
 		r.Err(errUnsupported.Error())
 	}

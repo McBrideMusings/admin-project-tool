@@ -9,7 +9,7 @@
 //     child's output and, on reload, tears the child down and relaunches it.
 //     kind="docker-dev" and kind="docker-reload-loop" use this shape.
 //
-//   - SetupReload(pidFile) + IsRebuildRequested()/ClearRebuildRequest() — the
+//   - SetupReload(target) + IsRebuildRequested()/ClearRebuildRequest() — the
 //     CALLER owns the loop. For a build-install-launch cycle (the Apple dev
 //     loops admin-3rgp.12 ports) where "reload" means running the whole cycle
 //     again, not restarting one child.
@@ -19,21 +19,23 @@
 // shapes live in this one package instead, so a future caller never has to
 // choose between adopting this package and writing a second copy of its own.
 //
-// `admin logs`/`admin kill` and the `server-reload` kind find a running dev
-// loop through the PID files this package writes under PIDPrefix.
+// The `server-reload` kind finds a running dev loop through the PID records
+// both shapes write under PIDPrefix (Signal).
 package reload
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"sync"
 )
 
-// PIDPrefix is the base path for every PID file this package writes. A per-target
-// loop's PID file is "<PIDPrefix>-<target>.pid"; SetupReload's caller-owned
-// shape defaults to the bare "<PIDPrefix>.pid".
+// PIDPrefix is the base path for every PID record this package writes: one
+// file per running loop, "<PIDPrefix>-<target>-<pid>.pid". The pid in the
+// name keeps two projects that both run a `dev` target from overwriting each
+// other's record.
 const PIDPrefix = "/tmp/admin-run"
 
 // Reporter is the small slice of luahost.Host's output surface this package
@@ -47,33 +49,91 @@ type Reporter interface {
 	Err(msg string)
 }
 
-// WritePIDFile writes the current process's PID to path, creating parent
-// directories as needed.
-func WritePIDFile(path string) error {
+// Record is what one PID file holds: the loop's process, the target name it
+// was started under, and which project and dashboard row it belongs to.
+//
+// Root is the project root. Live is the live-work id the dashboard keys the
+// dispatching command's row on (internal/kinds.multiTargetLiveID) — the
+// command name, or "<command>:<target>" — so a Work-row key binding can
+// signal exactly the loop behind that row. Both come from SetOwner; Root
+// falls back to the loop's own working directory when no owner was set.
+type Record struct {
+	PID    int    `json:"pid"`
+	Target string `json:"target"`
+	Root   string `json:"root,omitempty"`
+	Live   string `json:"live,omitempty"`
+}
+
+var (
+	ownerMu   sync.Mutex
+	ownerRoot string
+	ownerLive string
+)
+
+// SetOwner records which project and command this process is running, for
+// every PID record it writes afterwards. The first call wins: a command's
+// steps can dispatch further commands (`@`-refs), and the loop belongs to
+// the command that was actually invoked, not a nested one.
+func SetOwner(root, live string) {
+	ownerMu.Lock()
+	defer ownerMu.Unlock()
+	if ownerRoot != "" || ownerLive != "" {
+		return
+	}
+	ownerRoot, ownerLive = root, live
+}
+
+func owner() (root, live string) {
+	ownerMu.Lock()
+	defer ownerMu.Unlock()
+	return ownerRoot, ownerLive
+}
+
+// writeRecord writes this process's Record for target under prefix and
+// returns the path, for the caller to remove on exit. dir is the loop's
+// working directory, used as Root when SetOwner never ran.
+func writeRecord(prefix, target, dir string) (string, error) {
+	root, live := owner()
+	if root == "" {
+		root = dir
+	}
+	rec := Record{PID: os.Getpid(), Target: target, Root: root, Live: live}
+	path := fmt.Sprintf("%s-%s-%d.pid", prefix, target, rec.PID)
+	return path, writeRecordFile(path, rec)
+}
+
+func writeRecordFile(path string, rec Record) error {
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
 	}
-	return os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0o644)
+	return os.WriteFile(path, data, 0o644)
 }
 
-// CleanupPIDFile removes path if it exists — best-effort, errors swallowed.
-func CleanupPIDFile(path string) {
+// removeRecord removes path if it exists — best-effort, errors swallowed.
+func removeRecord(path string) {
 	_ = os.Remove(path)
 }
 
-// readPIDFile reads and parses the integer PID stored at path.
-func readPIDFile(path string) (int, error) {
+// readRecord reads and parses the Record stored at path.
+func readRecord(path string) (Record, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return 0, err
+		return Record{}, err
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil {
-		return 0, fmt.Errorf("malformed pid file %s: %w", path, err)
+	var rec Record
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return Record{}, fmt.Errorf("malformed pid file %s: %w", path, err)
 	}
-	return pid, nil
+	if rec.PID <= 0 {
+		return Record{}, fmt.Errorf("malformed pid file %s: no pid", path)
+	}
+	return rec, nil
 }
 
 // globPIDFiles returns every "<prefix>-*.pid" path.
@@ -81,8 +141,23 @@ func globPIDFiles(prefix string) ([]string, error) {
 	return filepath.Glob(prefix + "-*.pid")
 }
 
-// baseName returns path's final path element — filepath.Base, named locally
-// so reload_unix.go's target-name derivation reads plainly.
-func baseName(path string) string {
-	return filepath.Base(path)
+// MatchTarget matches the loops of the project at root whose target name
+// contains filter — all of that project's loops when filter is empty. It is
+// `admin reload [filter]`'s rule.
+func MatchTarget(root, filter string) func(Record) bool {
+	return func(rec Record) bool {
+		return rec.Root == root && strings.Contains(rec.Target, filter)
+	}
+}
+
+// MatchRow matches the loops behind one dashboard row: the project at root,
+// and either the row's own live id or, for a command row, any of its
+// targets' ("<live>:<target>").
+func MatchRow(root, live string) func(Record) bool {
+	return func(rec Record) bool {
+		if rec.Root != root {
+			return false
+		}
+		return rec.Live == live || strings.HasPrefix(rec.Live, live+":")
+	}
 }

@@ -110,24 +110,14 @@ func RowKeys(raw any, commands map[string]bool) (bindings []RowBinding, shadows 
 }
 
 // notBindableMessage builds the "not a bindable row kind" error for a
-// [keys.<word>] table name that isn't one of keymap.Bindable — naming the
-// Work tab's own rows specifically when that's what was written, per
-// acceptance criteria that the message lists the bindable kinds either way.
+// [keys.<word>] table name that isn't one of keymap.Bindable, listing the
+// kinds that are.
 func notBindableMessage(word string) string {
 	names := make([]string, len(keymap.Bindable))
 	for i, k := range keymap.Bindable {
 		names[i] = string(k)
 	}
-	list := strings.Join(names, ", ")
-
-	for _, workRow := range keymap.NotBindable {
-		if word == workRow {
-			return fmt.Sprintf(
-				"keys.%s: %q is one of the Work tab's own rows (command, commandTarget, worker) — its Enter already means \"run this command\" / \"attach to this worker\" and can't be rebound. Bindable row kinds: %s",
-				word, word, list)
-		}
-	}
-	return fmt.Sprintf("keys.%s: %q is not a bindable row kind. Bindable row kinds: %s", word, word, list)
+	return fmt.Sprintf("keys.%s: %q is not a bindable row kind. Bindable row kinds: %s", word, word, strings.Join(names, ", "))
 }
 
 // builtinLabels indexes keymap.Builtins(kind) by Key for shadow lookup,

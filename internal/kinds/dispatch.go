@@ -16,6 +16,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/guards"
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/reload"
 )
 
 // pureRoutingKeys are the action-only fields ADR-0003
@@ -408,6 +409,14 @@ func runSteps(m *manifest.Manifest, r *Registry, name string, args []string) err
 		return fmt.Errorf("command %q has no steps", name)
 	}
 	nameCommandLog(m, name, cmd)
+	// A reload loop any step starts records which dashboard row it belongs
+	// to — the same id the dashboard keys this command's live entry on — so a
+	// Work-row key bound to kind="server-reload" signals only this run.
+	liveID := name
+	if action, ok := m.Actions[cmd.Steps[0]]; ok {
+		liveID = multiTargetLiveID(name, action, args)
+	}
+	reload.SetOwner(projectRoot(m), liveID)
 	if err := applyEnv(cmd.Env); err != nil {
 		return fmt.Errorf("command %q: %w", name, err)
 	}

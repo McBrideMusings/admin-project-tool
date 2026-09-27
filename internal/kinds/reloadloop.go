@@ -18,9 +18,8 @@ import (
 // back to kind="interactive-shell", which can only be killed and re-run. That
 // is the gap this kind closes.
 //
-// `target` names the pid file RunWithReload writes
-// (/tmp/admin-run-<target>.pid), which is what `admin reload <target>`
-// signals; it defaults to the action's own name.
+// `target` is the name RunWithReload records the loop under, which is what
+// `admin reload <target>` matches; it defaults to the action's own name.
 func makeReloadLoop(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	run, ok := actionString(action, "run")
 	if !ok || run == "" {

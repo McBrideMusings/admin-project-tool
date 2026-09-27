@@ -1,6 +1,7 @@
 // Package keymap holds the built-in key -> label bindings for every
-// bindable row kind (bead, issue, branch, PR, commit, stash), keyed by
-// RowKind rather than by TUI tab/pane. It is a leaf package (imports no
+// bindable row kind (bead, issue, branch, PR, commit, stash, and the Work
+// tab's command, commandTarget and worker rows), keyed by RowKind rather
+// than by TUI tab/pane. It is a leaf package (imports no
 // other internal package) so both consumers can depend on it without
 // creating a cycle:
 //
@@ -17,9 +18,13 @@
 // the footer would silently make `admin check` report a shadow that no
 // longer exists (or miss one that does).
 //
-// The tables here are transcribed verbatim from Model.keymap() and must stay
-// byte-identical to it: internal/tui/model_test.go and
-// internal/tui/design_parity_test.go assert the footer's exact contents.
+// The six tracker tables here are transcribed verbatim from Model.keymap()
+// and must stay byte-identical to it: internal/tui/model_test.go and
+// internal/tui/design_parity_test.go assert the footer's exact contents. The
+// Work tab's footer changes with the row's state (idle, live, finished), so
+// its three tables list every key that footer can show under any state plus
+// `a attach`, which works without being advertised; internal/tui's
+// workFooterPairs draws its pairs from them.
 //
 // This package also owns Reserved, the always-on global key set a
 // [keys.<row-kind>] table may never bind — read by internal/validate (admin
@@ -30,10 +35,9 @@
 // copy — a switch statement cannot read a set.
 package keymap
 
-// RowKind identifies one of the six row kinds a manifest's [keys.<kind>]
-// table may bind — the tab/pane pairs of internal/tui that show a list of
-// real items, as opposed to the Work tab's own rows (command, commandTarget,
-// worker) or the Config tab (nothing to bind at all).
+// RowKind identifies one of the row kinds a manifest's [keys.<kind>] table
+// may bind — every list of internal/tui that shows real items. The Config
+// tab has nothing to bind.
 type RowKind string
 
 const (
@@ -43,17 +47,16 @@ const (
 	PR     RowKind = "pr"
 	Commit RowKind = "commit"
 	Stash  RowKind = "stash"
+	// Command, CommandTarget and Worker are the Work tab's rows: a declared
+	// command, one target of a multi-target command, and an agent worker.
+	Command       RowKind = "command"
+	CommandTarget RowKind = "commandTarget"
+	Worker        RowKind = "worker"
 )
 
 // Bindable lists every RowKind a manifest may bind, in a stable order used
 // to build "the kinds that are" error text.
-var Bindable = []RowKind{Bead, Issue, Branch, PR, Commit, Stash}
-
-// NotBindable names the Work tab's own row kinds — command, commandTarget,
-// worker. Their Enter key already means "run this command" / "attach to
-// this worker", so a manifest may not rebind them; internal/validate uses
-// this to give those three words a more specific error than "unknown kind".
-var NotBindable = []string{"command", "commandTarget", "worker"}
+var Bindable = []RowKind{Bead, Issue, Branch, PR, Commit, Stash, Command, CommandTarget, Worker}
 
 // Reserved is the always-on global key set — navigation and escape a config
 // file cannot take away. It is the single source of truth for both readers
@@ -154,6 +157,22 @@ var builtins = map[RowKind][]Binding{
 		{Key: "/", Display: "/", Label: "filter"},
 		{Key: "r", Display: "r", Label: "refresh"},
 	},
+	Command:       workBuiltins("dispatch"),
+	CommandTarget: workBuiltins("dispatch"),
+	Worker:        workBuiltins("attach"),
+}
+
+// workBuiltins is a Work row kind's table. enter is the label ↵ shows on an
+// idle row of that kind; internal/tui's workFooterPairs relabels it by state.
+func workBuiltins(enter string) []Binding {
+	return []Binding{
+		{Key: "", Display: "↑↓", Label: "move"},
+		{Key: "enter", Display: "↵", Label: enter},
+		{Key: "a", Display: "a", Label: "attach"},
+		{Key: "x", Display: "x", Label: "kill"},
+		{Key: "c", Display: "c", Label: "collapse"},
+		{Key: "q", Display: "q/esc", Label: "quit"},
+	}
 }
 
 // Builtins returns the built-in key/label pairs for a row kind, in the same
@@ -165,8 +184,7 @@ func Builtins(k RowKind) []Binding {
 
 // Kind looks up a row-kind word (as it would appear as a [keys.<word>]
 // table name in admin.toml) against the bindable set. ok is false for any
-// word not in Bindable, including the Work tab's own row kinds in
-// NotBindable and any unrecognized word.
+// word not in Bindable.
 func Kind(name string) (RowKind, bool) {
 	k := RowKind(name)
 	for _, b := range Bindable {

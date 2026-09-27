@@ -50,16 +50,26 @@ func makeDockerReloadLoop(name string, action manifest.Action, m *manifest.Manif
 	}, nil
 }
 
-// makeServerReload is kind="server-reload"'s factory. args[0], when
-// present, is the target-name substring filter passed through unchanged.
+// makeServerReload is kind="server-reload"'s factory. It signals loops this
+// project started, never another project's; which of them, first match wins:
+//
+//   - args[0], when present: every loop whose target name contains it.
+//   - dispatched from a Work-tab row key binding (ADMIN_ROW_KIND is command,
+//     commandTarget or worker): only the loops that row's run started
+//     (reload.MatchRow on ADMIN_ROW_ID) — none, for an agent worker.
+//   - otherwise: every loop.
 func makeServerReload(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {
 	return func(args []string) error {
-		filter := ""
-		if len(args) > 0 {
-			filter = args[0]
+		root := projectRoot(m)
+		match := reload.MatchTarget(root, "")
+		switch rowKind := os.Getenv("ADMIN_ROW_KIND"); {
+		case len(args) > 0:
+			match = reload.MatchTarget(root, args[0])
+		case rowKind == "command" || rowKind == "commandTarget" || rowKind == "worker":
+			match = reload.MatchRow(root, os.Getenv("ADMIN_ROW_ID"))
 		}
 		h := newHost(m)
-		if _, err := reload.SignalAll(reload.PIDPrefix, filter, h); err != nil {
+		if _, err := reload.Signal(reload.PIDPrefix, match, h); err != nil {
 			return fmt.Errorf("action %q: %w", name, err)
 		}
 		return nil

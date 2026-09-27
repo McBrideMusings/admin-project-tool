@@ -41,10 +41,9 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/reload"
 )
 
-// appleDevPIDFile is the single dev-loop PID file every Apple dev verb
-// shares (one dev loop at a time; server-reload's SignalAll and
-// `admin kill` both look for exactly this path).
-var appleDevPIDFile = reload.PIDPrefix + ".pid"
+// appleDevTarget is the reload target name every Apple dev verb records its
+// PID under, so `admin reload apple` (kind="server-reload") reaches it.
+const appleDevTarget = "apple"
 
 const reloadPollInterval = 300 * time.Millisecond
 
@@ -83,7 +82,7 @@ func appleDevMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 	isDevRunning := appleMacDevIsRunning(cfg, process, f.install)
 	killDev := appleMacDevKill(h, cfg, process, f.install)
 
-	cleanup, err := reload.SetupReload(appleDevPIDFile)
+	cleanup, err := reload.SetupReload(appleDevTarget, h.ProjectRoot)
 	if err != nil {
 		return err
 	}
@@ -252,7 +251,7 @@ func appleDevSimulator(cfg map[string]any, h *luahost.Host, platform string, f a
 	iconPre, iconPost := appleBuildIconHooks(cfg, h)
 	devDisplayName := appleResolveDevDisplayName(cfg, platform, process)
 
-	cleanup, err := reload.SetupReload(appleDevPIDFile)
+	cleanup, err := reload.SetupReload(appleDevTarget, h.ProjectRoot)
 	if err != nil {
 		return err
 	}
@@ -447,7 +446,7 @@ func appleDevDevice(cfg map[string]any, h *luahost.Host, platform string, f appl
 	iconPre, iconPost := appleBuildIconHooks(cfg, h)
 	devDisplayName := appleResolveDevDisplayName(cfg, platform, process)
 
-	cleanup, err := reload.SetupReload(appleDevPIDFile)
+	cleanup, err := reload.SetupReload(appleDevTarget, h.ProjectRoot)
 	if err != nil {
 		return err
 	}

@@ -2347,11 +2347,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m.deleteBranchUnderCursor()
 		}
-		// The Work tab's kill, moved off k (admin-3rgp.72.12) — x is free here:
-		// it isn't in keymap.Reserved and tabWork's row kinds are in
-		// keymap.NotBindable, so no manifest [keys.*] binding can collide with
-		// it. killCurrentWork is already a no-op with no live row under the
-		// cursor.
+		// The Work tab's kill, moved off k (admin-3rgp.72.12). A manifest
+		// [keys.command]/[keys.worker] binding for x shadows it (reported by
+		// admin check). killCurrentWork is already a no-op with no live row
+		// under the cursor.
 		if m.active == tabWork {
 			return m.killCurrentWork()
 		}

@@ -75,21 +75,37 @@ func TestRowKeys(t *testing.T) {
 		}
 	})
 
-	t.Run("non-bindable work-tab kind fails and lists bindable kinds", func(t *testing.T) {
-		for _, kind := range []string{"command", "commandTarget", "worker", "nonsense"} {
-			raw := map[string]any{
-				kind: map[string]any{"o": "implement"},
+	t.Run("unknown kind fails and lists bindable kinds", func(t *testing.T) {
+		raw := map[string]any{
+			"nonsense": map[string]any{"o": "implement"},
+		}
+		_, _, err := RowKeys(raw, commands)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		msg := err.Error()
+		for _, want := range []string{"bead", "issue", "branch", "pr", "commit", "stash", "command", "commandTarget", "worker"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("message %q missing bindable kind %q", msg, want)
 			}
-			_, _, err := RowKeys(raw, commands)
-			if err == nil {
-				t.Fatalf("%s: expected error", kind)
-			}
-			msg := err.Error()
-			for _, want := range []string{"bead", "issue", "branch", "pr", "commit", "stash"} {
-				if !strings.Contains(msg, want) {
-					t.Errorf("%s: message %q missing bindable kind %q", kind, msg, want)
-				}
-			}
+		}
+	})
+
+	t.Run("work-tab kinds bind, and shadowing kill is reported", func(t *testing.T) {
+		raw := map[string]any{
+			"command":       map[string]any{"r": "implement"},
+			"commandTarget": map[string]any{"r": "implement"},
+			"worker":        map[string]any{"x": "implement"},
+		}
+		bindings, shadows, err := RowKeys(raw, commands)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(bindings) != 3 {
+			t.Fatalf("bindings = %+v, want 3", bindings)
+		}
+		if len(shadows) != 1 || shadows[0] != "keys.worker.x shadows the kill" {
+			t.Errorf("shadows = %v, want only keys.worker.x shadowing kill", shadows)
 		}
 	})
 

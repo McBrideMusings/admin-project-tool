@@ -3,7 +3,7 @@ package keymap
 import "testing"
 
 func TestBindable(t *testing.T) {
-	want := []RowKind{Bead, Issue, Branch, PR, Commit, Stash}
+	want := []RowKind{Bead, Issue, Branch, PR, Commit, Stash, Command, CommandTarget, Worker}
 	if len(Bindable) != len(want) {
 		t.Fatalf("Bindable = %v, want %v", Bindable, want)
 	}
@@ -21,7 +21,7 @@ func TestKind(t *testing.T) {
 			t.Errorf("Kind(%q) = (%q, %v), want (%q, true)", k, got, ok, k)
 		}
 	}
-	for _, bad := range append([]string{"unknown", "", "Bead"}, NotBindable...) {
+	for _, bad := range []string{"unknown", "", "Bead", "Command"} {
 		if _, ok := Kind(bad); ok {
 			t.Errorf("Kind(%q) unexpectedly ok", bad)
 		}
@@ -57,6 +57,15 @@ func TestBuiltins(t *testing.T) {
 		}},
 		{Stash, []string{
 			"↑↓:move", "↵:details", "⇥:pane", "/:filter", "r:refresh",
+		}},
+		{Command, []string{
+			"↑↓:move", "↵:dispatch", "a:attach", "x:kill", "c:collapse", "q/esc:quit",
+		}},
+		{CommandTarget, []string{
+			"↑↓:move", "↵:dispatch", "a:attach", "x:kill", "c:collapse", "q/esc:quit",
+		}},
+		{Worker, []string{
+			"↑↓:move", "↵:attach", "a:attach", "x:kill", "c:collapse", "q/esc:quit",
 		}},
 	}
 	for _, c := range cases {

@@ -67,7 +67,7 @@ A key declared in `admin.toml`'s `[keys.<row-kind>]` table, naming a **Command**
 _Avoid_: hotkey, keymap, shortcut, override
 
 **Row kind**:
-What a selectable dashboard row *is* — `bead`, `issue`, `branch`, `pr`, `commit`, `stash`. The axis a **Binding** is scoped to, and the value a bound command reads as `ADMIN_ROW_KIND`. The Work tab's own rows (`command`, `commandTarget`, `worker`) are row kinds too but are not bindable: their Enter already means "run this command" / "attach to this worker".
+What a selectable dashboard row *is* — `bead`, `issue`, `branch`, `pr`, `commit`, `stash`, and the Work tab's `command`, `commandTarget`, `worker`. The axis a **Binding** is scoped to, and the value a bound command reads as `ADMIN_ROW_KIND`.
 _Avoid_: row type, item type, entity
 
 ### Architecture
