@@ -11,7 +11,7 @@ The normalized state parsed from a project's `admin.toml` — project metadata, 
 _Avoid_: config, settings
 
 **Archetype**:
-A partial manifest (commands, actions, modules, URLs) bundled per project type — `hugo`, `apple`, `docker`, `rust-tauri`, etc. Lives in `archetypes/<name>.py`. Multiple archetypes can be listed in one manifest and are merged in order.
+A partial manifest (commands, actions, modules, URLs) bundled per project type — `hugo`, `apple`, `docker`, `rust-tauri`, etc. Lives in `archetypes/<name>/archetype.toml`. Multiple archetypes can be listed in one manifest and are merged in order.
 _Avoid_: template, preset, profile
 
 **Detector**:
@@ -19,7 +19,7 @@ A file-layout heuristic that scans a project root and proposes which archetypes 
 _Avoid_: probe, sniffer
 
 **Command**:
-A TUI menu entry. Routing only — may contain `desc` and `steps` (a list of action names) and nothing else. The generator errors if a command carries `kind`, `run`, or `targets`.
+A TUI menu entry. Routing only — may contain `desc` and `steps` (a list of action names) and nothing else. `admin check` errors if a command carries `kind`, `run`, or `targets`.
 _Avoid_: task, target (overloaded), recipe
 
 **Action**:

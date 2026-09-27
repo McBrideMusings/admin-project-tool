@@ -160,7 +160,7 @@ if [[ "$SNAP_SHA" == *+dirty ]]; then
     assert_contains "reports up to date" "dirty" "$out"
 else
     assert_contains "reports up to date" "already up to date" "$out"
-    assert_not_contains "does not say installing" "installing" "$out"
+    assert_not_contains "does not say updating" "updating" "$out"
 fi
 rm -rf "$T"
 
