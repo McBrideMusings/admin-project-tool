@@ -96,7 +96,7 @@ func runWorkflowQuery(name string, action manifest.Action, m *manifest.Manifest,
 	// cmd/prune.go does — a repo with no configured origin (or a beads-only
 	// query) must not fail before ResolveQuery even gets to decide whether
 	// it needs nwo at all.
-	nwo, _ := git.OriginNWO(context.Background())
+	nwo, _ := git.OriginNWO(context.Background(), repoRoot)
 
 	targets, err := resolveWorkflowQuery(context.Background(), repoRoot, tracker, nwo, target.Query)
 	if err != nil {

@@ -34,11 +34,11 @@ type Plan struct {
 	PRNum    int // >0 when Branch is a PR's head branch; 0 otherwise
 }
 
-// BranchInput resolves input against nwo ("owner/repo", the current repo's
-// origin). A URL naming a different repo is an error rather than a branch named
+// BranchInput resolves input against the repo at dir and nwo ("owner/repo", that
+// repo's origin). A URL naming a different repo is an error rather than a branch named
 // after a URL. Numbers and issue/PR URLs cost one gh lookup, so callers on a UI
 // goroutine must run this off it.
-func BranchInput(ctx context.Context, nwo, input string) (Plan, error) {
+func BranchInput(ctx context.Context, dir, nwo, input string) (Plan, error) {
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return Plan{}, errors.New("input must not be empty")
@@ -70,9 +70,9 @@ func BranchInput(ctx context.Context, nwo, input string) (Plan, error) {
 		return numberPlan(ctx, nwo, r.Number)
 	default: // KindText
 		switch {
-		case git.BranchExistsLocal(ctx, input):
+		case git.BranchExistsLocal(ctx, dir, input):
 			return Plan{Branch: input, Existing: true, Summary: fmt.Sprintf("Branch %q (local)", input)}, nil
-		case git.BranchExistsRemote(ctx, input):
+		case git.BranchExistsRemote(ctx, dir, input):
 			return Plan{Branch: input, Existing: true, Summary: fmt.Sprintf("Branch %q (on origin)", input)}, nil
 		}
 		// A bead's id is ordinary text — nothing about its shape tells it apart from
@@ -87,7 +87,7 @@ func BranchInput(ctx context.Context, nwo, input string) (Plan, error) {
 		// is what lets a caller report it against the input the user typed,
 		// instead of git failing with an opaque status deep in the create path.
 		// This is where a pasted URL git can't spell as a ref lands.
-		if !git.ValidBranchName(ctx, input) {
+		if !git.ValidBranchName(ctx, dir, input) {
 			return Plan{}, fmt.Errorf("invalid branch name %q", input)
 		}
 		return Plan{Branch: input, Existing: false, Summary: fmt.Sprintf("New branch %q", input)}, nil

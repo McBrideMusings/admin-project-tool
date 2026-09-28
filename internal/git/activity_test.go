@@ -29,14 +29,13 @@ func TestBranchActivitySeparatesEmptyFromMerged(t *testing.T) {
 	gitT(t, dir, "switch", "-q", "main")
 	gitT(t, dir, "merge", "-q", "--no-ff", "-m", "merge", "did-work")
 
-	t.Chdir(dir)
-	branches, err := LocalBranches(context.Background(), "main", nil)
+	branches, err := LocalBranches(context.Background(), dir, "main", nil)
 	if err != nil {
 		t.Fatalf("LocalBranches: %v", err)
 	}
 
 	// Both are equally "merged" to git, which is the whole problem.
-	merged, err := MergedIntoDefault(context.Background(), "main")
+	merged, err := MergedIntoDefault(context.Background(), dir, "main")
 	if err != nil {
 		t.Fatalf("MergedIntoDefault: %v", err)
 	}
@@ -44,7 +43,7 @@ func TestBranchActivitySeparatesEmptyFromMerged(t *testing.T) {
 		t.Fatalf("precondition: expected both branches merged into main, got %v", merged)
 	}
 
-	act := BranchActivity(context.Background(), branches)
+	act := BranchActivity(context.Background(), dir, branches)
 	if !act["fresh-empty"].NeverCommitted {
 		t.Error("a branch created and never committed to did not report NeverCommitted — it would read as merged work")
 	}
@@ -70,12 +69,11 @@ func TestCheckingOutAnEmptyBranchLeavesItsReflogAlone(t *testing.T) {
 	gitT(t, dir, "switch", "-q", "main")
 	gitT(t, dir, "switch", "-q", "empty")
 
-	t.Chdir(dir)
-	branches, err := LocalBranches(context.Background(), "empty", nil)
+	branches, err := LocalBranches(context.Background(), dir, "empty", nil)
 	if err != nil {
 		t.Fatalf("LocalBranches: %v", err)
 	}
-	if !BranchActivity(context.Background(), branches)["empty"].NeverCommitted {
+	if !BranchActivity(context.Background(), dir, branches)["empty"].NeverCommitted {
 		t.Error("checking a branch out counted as work on it; NeverCommitted must survive checkouts")
 	}
 }
@@ -110,12 +108,11 @@ func TestReusedBranchNameReadsEmpty(t *testing.T) {
 		zero + " " + zero + " prior <prior@example.com> 1700000100 -0500\tcommit: work that has since been deleted\n"
 	writeFile(t, log, stale+string(raw))
 
-	t.Chdir(dir)
-	branches, err := LocalBranches(context.Background(), "reused", nil)
+	branches, err := LocalBranches(context.Background(), dir, "reused", nil)
 	if err != nil {
 		t.Fatalf("LocalBranches: %v", err)
 	}
-	act := BranchActivity(context.Background(), branches)
+	act := BranchActivity(context.Background(), dir, branches)
 	if !act["reused"].NeverCommitted {
 		t.Error("a branch created under a name whose old reflog entries survived did not report NeverCommitted — the stale segment disqualified the name")
 	}
@@ -140,12 +137,11 @@ func TestBranchStartedAtExistingWorkIsNotEmpty(t *testing.T) {
 	gitT(t, dir, "switch", "-q", "main")
 	gitT(t, dir, "switch", "-q", "-c", "forked-at-work", "work")
 
-	t.Chdir(dir)
-	branches, err := LocalBranches(context.Background(), "forked-at-work", nil)
+	branches, err := LocalBranches(context.Background(), dir, "forked-at-work", nil)
 	if err != nil {
 		t.Fatalf("LocalBranches: %v", err)
 	}
-	if BranchActivity(context.Background(), branches)["forked-at-work"].NeverCommitted {
+	if BranchActivity(context.Background(), dir, branches)["forked-at-work"].NeverCommitted {
 		t.Error("a branch created at an unmerged commit reported NeverCommitted — its reflog holds only a creation entry, so the commit count is what must catch it")
 	}
 }
@@ -162,7 +158,6 @@ func TestWorktreeTouchedSeesGitActivity(t *testing.T) {
 
 	wt := filepath.Join(t.TempDir(), "wt")
 	gitT(t, dir, "worktree", "add", "-q", "-b", "wt-branch", wt)
-	t.Chdir(dir)
 
 	touched := WorktreeTouched(context.Background(), wt)
 	if touched.IsZero() {

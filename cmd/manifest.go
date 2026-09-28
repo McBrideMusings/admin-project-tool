@@ -116,13 +116,10 @@ func resolveProjectManifestFromDisk(ctx context.Context, dir string) (m *manifes
 		return nil, true, err
 	}
 	start = timing.Start()
-	// RepoRootFor(dir), not RepoRoot(ctx): the latter resolves the *process's*
-	// cwd, which is wrong whenever dir is a -w target outside the invoking
-	// shell's own repo (internal/worktree.Resolve's tier 1 explicitly allows
-	// an existing directory in a different repo entirely). Archetype merge
-	// must be keyed off the target, the same way effectiveRepoRoot in
-	// cmd/root.go re-targets RepoRoot for the bare-dashboard case.
-	repoRoot, _ := git.RepoRootFor(ctx, dir)
+	// Keyed off dir, which is a -w target when one was given — possibly outside
+	// the invoking shell's own repo (internal/worktree.Resolve's tier 1
+	// explicitly allows an existing directory in a different repo entirely).
+	repoRoot, _ := git.RepoRoot(ctx, dir)
 	sp, err := archetype.SearchPathFor(repoRoot)
 	if err != nil {
 		return nil, true, fmt.Errorf("could not resolve the installed archetypes directory: %w", err)

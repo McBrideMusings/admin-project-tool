@@ -59,8 +59,7 @@ func TestWorktreeHoldsBranchDuringRebase(t *testing.T) {
 		t.Fatalf("expected git to refuse the delete on worktree grounds, got:\n%s", out)
 	}
 
-	t.Chdir(dir)
-	wts, err := Worktrees(context.Background())
+	wts, err := Worktrees(context.Background(), dir)
 	if err != nil {
 		t.Fatalf("Worktrees: %v", err)
 	}
@@ -96,8 +95,7 @@ func TestWorktreeDetachedAtCommitHoldsNoBranch(t *testing.T) {
 	wtPath := filepath.Join(dir, "wt")
 	gitT(t, dir, "worktree", "add", "-q", "--detach", wtPath, "HEAD")
 
-	t.Chdir(dir)
-	wts, err := Worktrees(context.Background())
+	wts, err := Worktrees(context.Background(), dir)
 	if err != nil {
 		t.Fatalf("Worktrees: %v", err)
 	}
@@ -142,8 +140,7 @@ func TestWorktreeReportsConflictedMergeOp(t *testing.T) {
 		t.Fatalf("precondition failed: conflicted merge detached HEAD, so this test proves nothing\n%s", raw)
 	}
 
-	t.Chdir(dir)
-	wts, err := Worktrees(context.Background())
+	wts, err := Worktrees(context.Background(), dir)
 	if err != nil {
 		t.Fatalf("Worktrees: %v", err)
 	}
@@ -339,24 +336,23 @@ func TestFetchPRHeadSameRepoDefersToDWIM(t *testing.T) {
 	gitT(t, dir, "checkout", "-q", "main")
 	gitT(t, dir, "branch", "-D", "pr-branch")
 
-	t.Chdir(dir)
 	ctx := context.Background()
-	if BranchExistsLocal(ctx, "pr-branch") {
+	if BranchExistsLocal(ctx, dir, "pr-branch") {
 		t.Fatal("precondition failed: pr-branch already local")
 	}
-	if !BranchExistsRemote(ctx, "pr-branch") {
+	if !BranchExistsRemote(ctx, dir, "pr-branch") {
 		t.Fatal("precondition failed: origin/pr-branch missing")
 	}
 
-	if err := FetchPRHead(ctx, 99, "pr-branch"); err != nil {
+	if err := FetchPRHead(ctx, dir, 99, "pr-branch"); err != nil {
 		t.Fatalf("FetchPRHead: %v", err)
 	}
-	if BranchExistsLocal(ctx, "pr-branch") {
+	if BranchExistsLocal(ctx, dir, "pr-branch") {
 		t.Fatal("FetchPRHead created the local branch itself, pre-empting AddExisting's DWIM")
 	}
 
 	wt := filepath.Join(t.TempDir(), "wt")
-	if err := AddExisting(ctx, wt, "pr-branch"); err != nil {
+	if err := AddExisting(ctx, dir, wt, "pr-branch"); err != nil {
 		t.Fatalf("AddExisting: %v", err)
 	}
 
@@ -395,21 +391,20 @@ func TestFetchPRHeadForkSetsUpstreamToPullRef(t *testing.T) {
 	gitT(t, fork, "remote", "add", "origin", origin)
 	gitT(t, fork, "push", "-q", "origin", "HEAD:refs/pull/42/head")
 
-	t.Chdir(dir)
 	ctx := context.Background()
-	if BranchExistsRemote(ctx, "pr-fork") {
+	if BranchExistsRemote(ctx, dir, "pr-fork") {
 		t.Fatal("precondition failed: origin/pr-fork should not exist")
 	}
 
-	if err := FetchPRHead(ctx, 42, "pr-fork"); err != nil {
+	if err := FetchPRHead(ctx, dir, 42, "pr-fork"); err != nil {
 		t.Fatalf("FetchPRHead: %v", err)
 	}
-	if !BranchExistsLocal(ctx, "pr-fork") {
+	if !BranchExistsLocal(ctx, dir, "pr-fork") {
 		t.Fatal("FetchPRHead did not create the local branch")
 	}
 
 	wt := filepath.Join(t.TempDir(), "wt")
-	if err := AddExisting(ctx, wt, "pr-fork"); err != nil {
+	if err := AddExisting(ctx, dir, wt, "pr-fork"); err != nil {
 		t.Fatalf("AddExisting: %v", err)
 	}
 
@@ -451,9 +446,8 @@ func TestAddNewBranchLeavesNoUpstream(t *testing.T) {
 	gitT(t, dir, "remote", "add", "origin", origin)
 	gitT(t, dir, "push", "-q", "-u", "origin", "main")
 
-	t.Chdir(dir)
 	wt := filepath.Join(t.TempDir(), "wt")
-	if err := AddNewBranch(context.Background(), wt, "feat-x", "origin/main"); err != nil {
+	if err := AddNewBranch(context.Background(), dir, wt, "feat-x", "origin/main"); err != nil {
 		t.Fatalf("AddNewBranch: %v", err)
 	}
 

@@ -45,9 +45,9 @@ type Activity struct {
 // leaves `.git/logs/refs/heads/<name>` on disk for the next branch of that name to
 // append to. Reading the creation *segment* handles the recreated name; the commit
 // count is a second, cheaper-to-trust confirmation that nothing landed.
-func BranchActivity(ctx context.Context, branches []BranchInfo) map[string]Activity {
+func BranchActivity(ctx context.Context, dir string, branches []BranchInfo) map[string]Activity {
 	out := map[string]Activity{}
-	common, err := runner(ctx, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	common, err := runner(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil || common == "" {
 		return out
 	}
@@ -70,12 +70,12 @@ func BranchActivity(ctx context.Context, branches []BranchInfo) map[string]Activ
 	}
 	// No default branch means there is no fork ref to count against; the reflog
 	// segment stands alone rather than disqualifying every branch in the repo.
-	base := OriginBase(ctx)
+	base := OriginBase(ctx, dir)
 	if base == "" {
 		return out
 	}
 	for _, name := range candidates {
-		if !zeroAhead(ctx, base, name) {
+		if !zeroAhead(ctx, dir, base, name) {
 			a := out[name]
 			a.NeverCommitted = false
 			out[name] = a
@@ -87,8 +87,8 @@ func BranchActivity(ctx context.Context, branches []BranchInfo) map[string]Activ
 // zeroAhead reports whether branch holds no commit that base does not already
 // have. An unreadable count is not a yes: the caller uses this to confirm a branch
 // is empty, and a branch that cannot be confirmed empty must not be called empty.
-func zeroAhead(ctx context.Context, base, branch string) bool {
-	out, err := runner(ctx, "rev-list", "--count", base+".."+branch)
+func zeroAhead(ctx context.Context, dir, base, branch string) bool {
+	out, err := runner(ctx, dir, "rev-list", "--count", base+".."+branch)
 	if err != nil {
 		return false
 	}
@@ -153,7 +153,7 @@ func WorktreeTouched(ctx context.Context, path string) time.Time {
 	if fi, err := os.Stat(path); err == nil {
 		newest = fi.ModTime()
 	}
-	gitDir, err := runner(ctx, "-C", path, "rev-parse", "--absolute-git-dir")
+	gitDir, err := runner(ctx, path, "rev-parse", "--absolute-git-dir")
 	if err != nil || gitDir == "" {
 		return newest
 	}

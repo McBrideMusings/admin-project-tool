@@ -368,7 +368,7 @@ func TestDispatchOneFailsLoudlyWhenWorktreeVanished(t *testing.T) {
 		t.Fatalf("config.Load: %v", err)
 	}
 	drv, _ := selectDriver()
-	res := dispatchOne("sweep", "a", cfg.Terminal, drv, Target{Name: "vanish-me"}, wt)
+	res := dispatchOne(repoRoot, "sweep", "a", cfg.Terminal, drv, Target{Name: "vanish-me"}, wt)
 
 	if res.Err == nil {
 		t.Fatal("expected an error for a worktree removed before dispatch, got nil")

@@ -28,10 +28,9 @@ func TestClassifyDeadFullyPushedIsDead(t *testing.T) {
 	commitOn(t, dir, "on-origin")
 	gitT(t, dir, "push", "-q", "-u", "origin", "on-origin")
 	gitT(t, dir, "switch", "-q", "main")
-	t.Chdir(dir)
 	ctx := context.Background()
 
-	branches, err := LocalBranches(ctx, "main", nil)
+	branches, err := LocalBranches(ctx, dir, "main", nil)
 	if err != nil {
 		t.Fatalf("LocalBranches: %v", err)
 	}
@@ -45,7 +44,7 @@ func TestClassifyDeadFullyPushedIsDead(t *testing.T) {
 		t.Fatalf("expected exactly one candidate, got %d", len(cand))
 	}
 
-	dead, survivors := ClassifyDead(ctx, cand, "main", nil)
+	dead, survivors := ClassifyDead(ctx, dir, cand, "main", nil)
 	if len(dead) != 1 || dead[0].Reason != "on origin" {
 		t.Fatalf("dead = %+v, want one branch reasoned \"on origin\"", dead)
 	}
@@ -58,10 +57,9 @@ func TestClassifyDeadUnpushedCommitsSurvive(t *testing.T) {
 	dir := setupOriginRepo(t)
 	commitOn(t, dir, "never-pushed")
 	gitT(t, dir, "switch", "-q", "main")
-	t.Chdir(dir)
 	ctx := context.Background()
 
-	branches, err := LocalBranches(ctx, "main", nil)
+	branches, err := LocalBranches(ctx, dir, "main", nil)
 	if err != nil {
 		t.Fatalf("LocalBranches: %v", err)
 	}
@@ -72,7 +70,7 @@ func TestClassifyDeadUnpushedCommitsSurvive(t *testing.T) {
 		}
 	}
 
-	dead, survivors := ClassifyDead(ctx, cand, "main", nil)
+	dead, survivors := ClassifyDead(ctx, dir, cand, "main", nil)
 	if len(dead) != 0 {
 		t.Fatalf("dead = %+v, want none — a branch with unpushed commits must never be offered", dead)
 	}
@@ -89,10 +87,9 @@ func TestClassifyDeadMergedPRWithNoFurtherCommitsIsDead(t *testing.T) {
 	commitOn(t, dir, "squash-merged")
 	gitT(t, dir, "push", "-q", "-u", "origin", "squash-merged")
 	gitT(t, dir, "switch", "-q", "main")
-	t.Chdir(dir)
 	ctx := context.Background()
 
-	branches, err := LocalBranches(ctx, "main", nil)
+	branches, err := LocalBranches(ctx, dir, "main", nil)
 	if err != nil {
 		t.Fatalf("LocalBranches: %v", err)
 	}
@@ -103,7 +100,7 @@ func TestClassifyDeadMergedPRWithNoFurtherCommitsIsDead(t *testing.T) {
 		}
 	}
 
-	dead, _ := ClassifyDead(ctx, cand, "main", map[string]bool{"squash-merged": true})
+	dead, _ := ClassifyDead(ctx, dir, cand, "main", map[string]bool{"squash-merged": true})
 	if len(dead) != 1 {
 		t.Fatalf("dead = %+v, want the PR-merged branch", dead)
 	}
@@ -125,10 +122,9 @@ func TestClassifyDeadMergedPRButStillAheadSurvives(t *testing.T) {
 	gitT(t, dir, "add", "-A")
 	gitT(t, dir, "commit", "-qm", "more work after the PR merged")
 	gitT(t, dir, "switch", "-q", "main")
-	t.Chdir(dir)
 	ctx := context.Background()
 
-	branches, err := LocalBranches(ctx, "main", nil)
+	branches, err := LocalBranches(ctx, dir, "main", nil)
 	if err != nil {
 		t.Fatalf("LocalBranches: %v", err)
 	}
@@ -139,7 +135,7 @@ func TestClassifyDeadMergedPRButStillAheadSurvives(t *testing.T) {
 		}
 	}
 
-	dead, survivors := ClassifyDead(ctx, cand, "main", map[string]bool{"reused-name": true})
+	dead, survivors := ClassifyDead(ctx, dir, cand, "main", map[string]bool{"reused-name": true})
 	if len(dead) != 0 {
 		t.Fatalf("dead = %+v, want none — the branch is ahead of the PR that merged", dead)
 	}
@@ -169,10 +165,9 @@ func TestClassifyDeadRemoteGoneWithExtraLocalWorkSurvives(t *testing.T) {
 	gitT(t, dir, "add", "-A")
 	gitT(t, dir, "commit", "-qm", "local work after the remote was deleted")
 	gitT(t, dir, "switch", "-q", "main")
-	t.Chdir(dir)
 	ctx := context.Background()
 
-	branches, err := LocalBranches(ctx, "main", nil)
+	branches, err := LocalBranches(ctx, dir, "main", nil)
 	if err != nil {
 		t.Fatalf("LocalBranches: %v", err)
 	}
@@ -186,7 +181,7 @@ func TestClassifyDeadRemoteGoneWithExtraLocalWorkSurvives(t *testing.T) {
 		t.Fatalf("expected exactly one candidate, got %d", len(cand))
 	}
 
-	dead, survivors := ClassifyDead(ctx, cand, "main", nil)
+	dead, survivors := ClassifyDead(ctx, dir, cand, "main", nil)
 	if len(dead) != 0 {
 		t.Fatalf("dead = %+v, want none — a commit past the deleted upstream lives nowhere else", dead)
 	}
@@ -210,10 +205,9 @@ func TestClassifyDeadRemoteGoneIsDead(t *testing.T) {
 	gitT(t, dir, "push", "-q", "origin", "main")
 	gitT(t, dir, "push", "-q", "origin", "--delete", "deleted-upstream")
 	gitT(t, dir, "fetch", "-q", "--prune", "origin")
-	t.Chdir(dir)
 	ctx := context.Background()
 
-	branches, err := LocalBranches(ctx, "main", nil)
+	branches, err := LocalBranches(ctx, dir, "main", nil)
 	if err != nil {
 		t.Fatalf("LocalBranches: %v", err)
 	}
@@ -224,7 +218,7 @@ func TestClassifyDeadRemoteGoneIsDead(t *testing.T) {
 		}
 	}
 
-	dead, _ := ClassifyDead(ctx, cand, "main", nil)
+	dead, _ := ClassifyDead(ctx, dir, cand, "main", nil)
 	if len(dead) != 1 || dead[0].Reason != "remote gone" {
 		t.Fatalf("dead = %+v, want one branch reasoned \"remote gone\"", dead)
 	}
@@ -234,9 +228,8 @@ func TestHasCommitsNotOnOriginFalseWhenFullyPushed(t *testing.T) {
 	dir := setupOriginRepo(t)
 	commitOn(t, dir, "pushed")
 	gitT(t, dir, "push", "-q", "-u", "origin", "pushed")
-	t.Chdir(dir)
 
-	if HasCommitsNotOnOrigin(context.Background(), "pushed") {
+	if HasCommitsNotOnOrigin(context.Background(), dir, "pushed") {
 		t.Fatal("HasCommitsNotOnOrigin = true for a fully pushed branch, want false")
 	}
 }
@@ -244,9 +237,8 @@ func TestHasCommitsNotOnOriginFalseWhenFullyPushed(t *testing.T) {
 func TestHasCommitsNotOnOriginTrueWhenNeverPushed(t *testing.T) {
 	dir := setupOriginRepo(t)
 	commitOn(t, dir, "local-only")
-	t.Chdir(dir)
 
-	if !HasCommitsNotOnOrigin(context.Background(), "local-only") {
+	if !HasCommitsNotOnOrigin(context.Background(), dir, "local-only") {
 		t.Fatal("HasCommitsNotOnOrigin = false for a never-pushed branch, want true")
 	}
 }

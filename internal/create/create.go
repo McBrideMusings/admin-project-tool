@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -56,7 +55,7 @@ func Worktree(ctx context.Context, repoRoot, branch string) (Result, error) {
 	// .worktrees/) — opening that worktree is the whole job. Keying idempotency on
 	// the branch, not our computed path, is what stops "add another worktree for a
 	// branch that already has one" from hard-failing (git exit 128).
-	if wts, err := git.Worktrees(ctx); err == nil {
+	if wts, err := git.Worktrees(ctx, repoRoot); err == nil {
 		for _, w := range wts {
 			if w.Branch == branch {
 				return Result{Path: w.Path, Branch: branch}, nil
@@ -68,7 +67,7 @@ func Worktree(ctx context.Context, repoRoot, branch string) (Result, error) {
 		// no-op — return its path so the caller just cd's in (populate already
 		// ran when it was first made). Only a dir that ISN'T a worktree is a
 		// real problem worth failing on.
-		if IsRegisteredWorktree(ctx, path) {
+		if IsRegisteredWorktree(ctx, repoRoot, path) {
 			return Result{Path: path, Branch: branch}, nil
 		}
 		// Worktree paths are keyed on the repo's basename, so two checkouts with
@@ -92,20 +91,20 @@ func Worktree(ctx context.Context, repoRoot, branch string) (Result, error) {
 	// over one that already exists on origin. Checking existence here makes every
 	// such case a plain checkout instead.
 	switch {
-	case git.BranchExistsLocal(ctx, branch):
-		if err := git.AddExisting(ctx, path, branch); err != nil {
+	case git.BranchExistsLocal(ctx, repoRoot, branch):
+		if err := git.AddExisting(ctx, repoRoot, path, branch); err != nil {
 			return Result{}, err
 		}
-	case git.BranchExistsRemote(ctx, branch):
+	case git.BranchExistsRemote(ctx, repoRoot, branch):
 		// On origin but not local yet — fetch it, then attach.
-		if err := git.FetchBranch(ctx, branch); err != nil {
+		if err := git.FetchBranch(ctx, repoRoot, branch); err != nil {
 			return Result{}, fmt.Errorf("failed to fetch branch %q from origin: %w", branch, err)
 		}
-		if err := git.AddExisting(ctx, path, branch); err != nil {
+		if err := git.AddExisting(ctx, repoRoot, path, branch); err != nil {
 			return Result{}, err
 		}
 	default:
-		if err := git.AddNewBranch(ctx, path, branch, git.OriginBase(ctx)); err != nil {
+		if err := git.AddNewBranch(ctx, repoRoot, path, branch, git.OriginBase(ctx, repoRoot)); err != nil {
 			return Result{}, err
 		}
 	}
@@ -117,8 +116,8 @@ func Worktree(ctx context.Context, repoRoot, branch string) (Result, error) {
 	return res, nil
 }
 
-// IsRegisteredWorktree reports whether path is a worktree git already knows
-// about. Compares resolved paths so a symlinked repo root (e.g. /Users vs
+// IsRegisteredWorktree reports whether path is a worktree of the repo at
+// repoRoot. Compares resolved paths so a symlinked repo root (e.g. /Users vs
 // /private on macOS) still matches.
 //
 // Exported for admin-3rgp.25's dispatch machinery: a worktree this package
@@ -127,8 +126,8 @@ func Worktree(ctx context.Context, repoRoot, branch string) (Result, error) {
 // and the dispatcher must re-check this exact fact — "is this still a real
 // worktree" — immediately before starting, rather than trusting the path it
 // got back from Worktree minutes or hours earlier.
-func IsRegisteredWorktree(ctx context.Context, path string) bool {
-	wts, err := git.Worktrees(ctx)
+func IsRegisteredWorktree(ctx context.Context, repoRoot, path string) bool {
+	wts, err := git.Worktrees(ctx, repoRoot)
 	if err != nil {
 		return false
 	}
@@ -148,37 +147,19 @@ func IsRegisteredWorktree(ctx context.Context, path string) bool {
 // its working dir, so a plain directory under a worktree root that itself sits
 // inside some repo would otherwise report that ancestor. Only a path that is its
 // own top-level is a worktree; anything else is just a directory.
-//
-// This talks to git directly rather than through internal/git because every
-// helper there runs in the process's cwd, and the whole question here is about a
-// checkout somewhere else.
 func worktreeOwner(ctx context.Context, path string) string {
-	top, err := gitIn(ctx, path, "rev-parse", "--show-toplevel")
+	top, err := git.TopLevel(ctx, path)
 	if err != nil || top == "" || !git.SamePath(top, path) {
 		return ""
 	}
 	// `worktree list` always lists the main worktree first, so its first entry is
 	// the repo the checkout belongs to — including when path is that main
 	// worktree itself.
-	out, err := gitIn(ctx, path, "worktree", "list", "--porcelain")
-	if err != nil {
+	wts, err := git.Worktrees(ctx, path)
+	if err != nil || len(wts) == 0 {
 		return top
 	}
-	for line := range strings.SplitSeq(out, "\n") {
-		if owner, ok := strings.CutPrefix(strings.TrimSpace(line), "worktree "); ok {
-			return owner
-		}
-	}
-	return top
-}
-
-// gitIn runs a read-only git command with dir as its working directory and
-// returns trimmed stdout.
-func gitIn(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	return strings.TrimSpace(string(out)), err
+	return wts[0].Path
 }
 
 func sanitizeDir(branch string) string {

@@ -65,7 +65,6 @@ func setupRepo(t *testing.T) (clone, origin string) {
 	gitT(t, base, "clone", "-q", origin, clone)
 
 	t.Setenv("WORKTREE_ROOT", filepath.Join(base, "wt"))
-	t.Chdir(clone)
 	return clone, origin
 }
 
@@ -89,9 +88,9 @@ func assertWorktreeOnBranch(t *testing.T, path, branch string) {
 	}
 }
 
-func countWorktreesFor(t *testing.T, ctx context.Context, branch string) int {
+func countWorktreesFor(t *testing.T, ctx context.Context, repoRoot, branch string) int {
 	t.Helper()
-	wts, err := git.Worktrees(ctx)
+	wts, err := git.Worktrees(ctx, repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +123,7 @@ func TestWorktreeNewBranchIsIdempotent(t *testing.T) {
 	if resolve(res2.Path) != resolve(res.Path) {
 		t.Errorf("idempotent path = %q, want %q", res2.Path, res.Path)
 	}
-	if n := countWorktreesFor(t, ctx, "feat-new"); n != 1 {
+	if n := countWorktreesFor(t, ctx, clone, "feat-new"); n != 1 {
 		t.Errorf("worktrees for feat-new = %d, want 1", n)
 	}
 }
@@ -158,7 +157,7 @@ func TestWorktreeBranchAlreadyInAnotherWorktree(t *testing.T) {
 	if resolve(res.Path) != resolve(other) {
 		t.Errorf("path = %q, want existing worktree %q", res.Path, other)
 	}
-	if n := countWorktreesFor(t, ctx, "dup-feat"); n != 1 {
+	if n := countWorktreesFor(t, ctx, clone, "dup-feat"); n != 1 {
 		t.Errorf("worktrees for dup-feat = %d, want 1", n)
 	}
 }
@@ -194,7 +193,6 @@ func TestWorktreePathTakenByAnotherRepo(t *testing.T) {
 	t.Setenv("WORKTREE_ROOT", root)
 	ctx := context.Background()
 
-	t.Chdir(cloneA)
 	res, err := Worktree(ctx, cloneA, "shared-name")
 	if err != nil {
 		t.Fatalf("repo A create: %v", err)
@@ -204,7 +202,6 @@ func TestWorktreePathTakenByAnotherRepo(t *testing.T) {
 		t.Fatalf("repo A path = %q, want %q", res.Path, want)
 	}
 
-	t.Chdir(cloneB)
 	if _, err := Worktree(ctx, cloneB, "shared-name"); err == nil {
 		t.Fatal("repo B create succeeded, want collision error")
 	} else {
@@ -319,10 +316,10 @@ func TestWorktreeRemoteOnlyBranch(t *testing.T) {
 	gitT(t, origin, "branch", "remote-feat", "main")
 	gitT(t, clone, "fetch", "-q", "origin")
 
-	if git.BranchExistsLocal(ctx, "remote-feat") {
+	if git.BranchExistsLocal(ctx, clone, "remote-feat") {
 		t.Fatal("precondition: remote-feat should not be a local branch")
 	}
-	if !git.BranchExistsRemote(ctx, "remote-feat") {
+	if !git.BranchExistsRemote(ctx, clone, "remote-feat") {
 		t.Fatal("precondition: remote-feat should be a remote-tracking branch")
 	}
 

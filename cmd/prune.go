@@ -30,21 +30,25 @@ const mergedPRLimit = 200
 // set; internal/git.ClassifyDead is the one place either verb decides what
 // counts as safe to drop, so the two commands can never disagree about it.
 func runPrune(ctx context.Context, kind pruneKind, dryRun, yes bool) error {
-	repoRoot, err := git.RepoRoot(ctx)
+	dir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	repoRoot, err := git.RepoRoot(ctx, dir)
 	if err != nil {
 		return err
 	}
 	// Never mutates origin — only refreshes/prunes the local remote-tracking
 	// refs so "gone" and "fully pushed" are judged against current origin.
-	git.FetchPrune(ctx)
+	git.FetchPrune(ctx, dir)
 
-	nwo, _ := git.OriginNWO(ctx)
+	nwo, _ := git.OriginNWO(ctx, dir)
 	merged := mergedPRHeads(ctx, nwo)
 
 	if kind == pruneWorktrees {
-		return pruneDeadWorktrees(ctx, repoRoot, merged, dryRun, yes)
+		return pruneDeadWorktrees(ctx, dir, repoRoot, merged, dryRun, yes)
 	}
-	return pruneDeadBranches(ctx, merged, dryRun, yes)
+	return pruneDeadBranches(ctx, dir, merged, dryRun, yes)
 }
 
 // mergedPRHeads is the head-branch set of PRs GitHub has merged, for the
@@ -70,11 +74,11 @@ func mergedPRHeads(ctx context.Context, nwo string) map[string]bool {
 // pruneDeadBranches implements `admin branch --prune`: local branches with no
 // worktree of their own, excluding the branch currently checked out and the
 // default branch, classified and offered for deletion.
-func pruneDeadBranches(ctx context.Context, merged map[string]bool, dryRun, yes bool) error {
-	def := git.DefaultBranch(ctx)
-	current := git.CurrentBranch(ctx)
+func pruneDeadBranches(ctx context.Context, dir string, merged map[string]bool, dryRun, yes bool) error {
+	def := git.DefaultBranch(ctx, dir)
+	current := git.CurrentBranch(ctx, dir)
 
-	wts, err := git.Worktrees(ctx)
+	wts, err := git.Worktrees(ctx, dir)
 	if err != nil {
 		return err
 	}
@@ -85,7 +89,7 @@ func pruneDeadBranches(ctx context.Context, merged map[string]bool, dryRun, yes 
 		}
 	}
 
-	all, err := git.LocalBranches(ctx, current, nil)
+	all, err := git.LocalBranches(ctx, dir, current, nil)
 	if err != nil {
 		return err
 	}
@@ -97,7 +101,7 @@ func pruneDeadBranches(ctx context.Context, merged map[string]bool, dryRun, yes 
 		candidates = append(candidates, b)
 	}
 
-	dead, _ := git.ClassifyDead(ctx, candidates, def, merged)
+	dead, _ := git.ClassifyDead(ctx, dir, candidates, def, merged)
 	if len(dead) == 0 {
 		fmt.Fprintln(os.Stderr, "no dead branches to prune")
 		return nil
@@ -115,7 +119,7 @@ func pruneDeadBranches(ctx context.Context, merged map[string]bool, dryRun, yes 
 	}
 	var failed int
 	for _, d := range dead {
-		if err := git.DeleteBranch(ctx, d.Name, true); err != nil {
+		if err := git.DeleteBranch(ctx, dir, d.Name, true); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s: %v\n", d.Name, err)
 			failed++
 			continue
@@ -131,14 +135,14 @@ func pruneDeadBranches(ctx context.Context, merged map[string]bool, dryRun, yes 
 // pruneDeadWorktrees implements `admin worktree --prune`: worktrees (skipping
 // the main tree and anything with uncommitted changes) whose branch classifies
 // dead, removed along with that branch.
-func pruneDeadWorktrees(ctx context.Context, repoRoot string, merged map[string]bool, dryRun, yes bool) error {
-	wts, err := git.Worktrees(ctx)
+func pruneDeadWorktrees(ctx context.Context, dir, repoRoot string, merged map[string]bool, dryRun, yes bool) error {
+	wts, err := git.Worktrees(ctx, dir)
 	if err != nil {
 		return err
 	}
-	def := git.DefaultBranch(ctx)
-	current := git.CurrentBranch(ctx)
-	all, err := git.LocalBranches(ctx, current, nil)
+	def := git.DefaultBranch(ctx, dir)
+	current := git.CurrentBranch(ctx, dir)
+	all, err := git.LocalBranches(ctx, dir, current, nil)
 	if err != nil {
 		return err
 	}
@@ -158,7 +162,7 @@ func pruneDeadWorktrees(ctx context.Context, repoRoot string, merged map[string]
 		if !ok {
 			continue
 		}
-		dead, _ := git.ClassifyDead(ctx, []git.BranchInfo{bi}, def, merged)
+		dead, _ := git.ClassifyDead(ctx, dir, []git.BranchInfo{bi}, def, merged)
 		if len(dead) == 0 {
 			continue
 		}
@@ -189,12 +193,12 @@ func pruneDeadWorktrees(ctx context.Context, repoRoot string, merged map[string]
 	}
 	var failed int
 	for _, v := range victims {
-		if err := git.RemoveWorktree(ctx, v.path, false); err != nil {
+		if err := git.RemoveWorktree(ctx, dir, v.path, false); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s: %v\n", v.path, err)
 			failed++
 			continue
 		}
-		if err := git.DeleteBranch(ctx, v.branch, true); err != nil {
+		if err := git.DeleteBranch(ctx, dir, v.branch, true); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s: %v\n", v.branch, err)
 			failed++
 			continue

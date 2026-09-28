@@ -21,21 +21,20 @@ func TestHasUnpushedCommitsFailsSafe(t *testing.T) {
 	commitOn(t, dir, "local-only")
 
 	ctx := context.Background()
-	t.Chdir(dir)
 
 	bi := BranchInfo{Name: "local-only"}
-	if !HasUnpushedCommits(ctx, bi, "main") {
+	if !HasUnpushedCommits(ctx, dir, bi, "main") {
 		t.Error("a branch with commits beyond main reported nothing unpushed")
 	}
 
 	// A default branch that does not exist makes the rev-list fail. That is the
 	// unreadable case, and it must not read as clean.
-	if !HasUnpushedCommits(ctx, bi, "no-such-branch") {
+	if !HasUnpushedCommits(ctx, dir, bi, "no-such-branch") {
 		t.Error("an unreadable count reported nothing unpushed; a sweep could take the branch")
 	}
 
 	// CountAheadOf reports the same failure to any other caller.
-	if _, ok := CountAheadOf(ctx, "no-such-branch", "local-only"); ok {
+	if _, ok := CountAheadOf(ctx, dir, "no-such-branch", "local-only"); ok {
 		t.Error("CountAheadOf reported ok on a ref that does not exist")
 	}
 }

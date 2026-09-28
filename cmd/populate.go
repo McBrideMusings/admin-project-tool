@@ -41,7 +41,11 @@ func init() {
 }
 
 func runPopulate(ctx context.Context, all bool) error {
-	repoRoot, err := git.RepoRoot(ctx)
+	dir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	repoRoot, err := git.RepoRoot(ctx, dir)
 	if err != nil {
 		return err
 	}
@@ -61,7 +65,7 @@ func runPopulate(ctx context.Context, all bool) error {
 		return nil
 	}
 
-	targets, err := populateTargets(ctx, repoRoot, all)
+	targets, err := populateTargets(ctx, dir, repoRoot, all)
 	if err != nil {
 		return err
 	}
@@ -75,12 +79,12 @@ func runPopulate(ctx context.Context, all bool) error {
 	return nil
 }
 
-// populateTargets lists the worktrees to populate. The primary repo is never a
-// target: it is where the files come from, so populating it would point a file
-// at itself.
-func populateTargets(ctx context.Context, repoRoot string, all bool) ([]string, error) {
+// populateTargets lists the worktrees to populate: the one containing dir, or
+// with all, every worktree of repoRoot. The primary repo is never a target: it
+// is where the files come from, so populating it would point a file at itself.
+func populateTargets(ctx context.Context, dir, repoRoot string, all bool) ([]string, error) {
 	if !all {
-		top, err := git.TopLevel(ctx)
+		top, err := git.TopLevel(ctx, dir)
 		if err != nil {
 			return nil, err
 		}
@@ -90,7 +94,7 @@ func populateTargets(ctx context.Context, repoRoot string, all bool) ([]string, 
 		return []string{top}, nil
 	}
 
-	wts, err := git.Worktrees(ctx)
+	wts, err := git.Worktrees(ctx, repoRoot)
 	if err != nil {
 		return nil, err
 	}

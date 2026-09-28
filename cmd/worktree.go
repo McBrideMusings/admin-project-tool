@@ -57,7 +57,7 @@ func init() {
 }
 
 func runWorktree(ctx context.Context, input string, skipConfirm bool) error {
-	repoRoot, err := git.RepoRoot(ctx)
+	repoRoot, err := cwdRepoRoot(ctx)
 	if err != nil {
 		return err
 	}
@@ -66,9 +66,9 @@ func runWorktree(ctx context.Context, input string, skipConfirm bool) error {
 	// git and works in a repo with no remote at all. Resolution reports the
 	// GitHub-shaped inputs as unsupported when nwo is empty, so failing this early
 	// would refuse to make a worktree in a local repo over a lookup it never needs.
-	nwo, _ := git.OriginNWO(ctx)
+	nwo, _ := git.OriginNWO(ctx, repoRoot)
 
-	plan, err := resolve.BranchInput(ctx, nwo, input)
+	plan, err := resolve.BranchInput(ctx, repoRoot, nwo, input)
 	if err != nil {
 		return err
 	}
@@ -78,13 +78,13 @@ func runWorktree(ctx context.Context, input string, skipConfirm bool) error {
 	fmt.Fprintf(os.Stderr, "  Branch:   %s\n", plan.Branch)
 	if plan.Existing {
 		fmt.Fprintln(os.Stderr, "  Action:   check out existing branch")
-	} else if def := git.DefaultBranch(ctx); def != "" {
+	} else if def := git.DefaultBranch(ctx, repoRoot); def != "" {
 		// DefaultBranch falls back to a local main/master when there is no
 		// origin/HEAD, so the name alone doesn't say the fork point is on a remote.
 		// Printing "origin/main" in a repo with no origin names a ref that doesn't
 		// exist, and the branch would in fact fork from the local one.
 		from := def
-		if git.BranchExistsRemote(ctx, def) {
+		if git.BranchExistsRemote(ctx, repoRoot, def) {
 			from = "origin/" + def
 		}
 		fmt.Fprintf(os.Stderr, "  From:     %s\n", from)
@@ -101,7 +101,7 @@ func runWorktree(ctx context.Context, input string, skipConfirm bool) error {
 	// A PR head lives on the contributor's fork when the PR came from one, so it
 	// has to be fetched into a local branch before the worktree can attach to it.
 	if plan.PRNum > 0 {
-		if err := git.FetchPRHead(ctx, plan.PRNum, plan.Branch); err != nil {
+		if err := git.FetchPRHead(ctx, repoRoot, plan.PRNum, plan.Branch); err != nil {
 			return err
 		}
 	}

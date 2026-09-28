@@ -692,7 +692,7 @@ func (m Model) runDelete(targets []cleanupTarget, force bool) (tea.Model, tea.Cm
 		m.deleteResults[i] = deleteResult{target: t, status: stPending}
 	}
 	m.deleteResults[0].status = stRunning
-	return m, deleteStepCmd(m.ctx, targets, 0, force)
+	return m, deleteStepCmd(m.ctx, m.checkoutDir(), targets, 0, force)
 }
 
 // blockedTargets are the finished items refused over unresolved conflicts — what
@@ -751,8 +751,8 @@ func (m Model) advanceDelete(msg deleteStepMsg) (tea.Model, tea.Cmd) {
 	if next < len(m.deleteTargets) {
 		m.deleteIdx = next
 		m.deleteResults[next].status = stRunning
-		return m, deleteStepCmd(m.ctx, m.deleteTargets, next, m.deleteForce)
+		return m, deleteStepCmd(m.ctx, m.checkoutDir(), m.deleteTargets, next, m.deleteForce)
 	}
 	m.deleteDone = true
-	return m, loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def)
+	return m, loadLocalCmd(m.ctx, m.repoRoot, m.checkoutDir(), m.current, m.def)
 }

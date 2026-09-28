@@ -35,8 +35,7 @@ func TestRepoRootSubmoduleWorktree(t *testing.T) {
 	wt := filepath.Join(base, "subwt")
 	gitT(t, sub, "worktree", "add", "-q", "--detach", wt, "HEAD")
 
-	t.Chdir(wt)
-	got, err := RepoRoot(context.Background())
+	got, err := RepoRoot(context.Background(), wt)
 	if err != nil {
 		t.Fatalf("RepoRoot: %v", err)
 	}
@@ -60,8 +59,7 @@ func TestRepoRootOrdinaryWorktree(t *testing.T) {
 	wt := filepath.Join(base, "wt")
 	gitT(t, primary, "worktree", "add", "-q", "--detach", wt, "HEAD")
 
-	t.Chdir(wt)
-	got, err := RepoRoot(context.Background())
+	got, err := RepoRoot(context.Background(), wt)
 	if err != nil {
 		t.Fatalf("RepoRoot: %v", err)
 	}

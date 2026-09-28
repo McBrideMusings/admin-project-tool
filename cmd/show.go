@@ -53,9 +53,10 @@ func runShow(ctx context.Context, tab string, settle time.Duration) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel() // winds down the watcher and the sync poll the load started
 
-	nwo, _ := git.OriginNWO(ctx)
-	model := tui.New(ctx, repoRoot, nwo, git.CurrentBranch(ctx), git.DefaultBranch(ctx),
-		tui.WithManifestRoot(dashboardManifestRoot()))
+	checkout := dashboardCheckout(ctx, repoRoot)
+	nwo, _ := git.OriginNWO(ctx, checkout)
+	model := tui.New(ctx, repoRoot, nwo, git.CurrentBranch(ctx, checkout), git.DefaultBranch(ctx, checkout),
+		tui.WithManifestRoot(dashboardManifestRoot()), tui.WithCheckout(checkout))
 	rows, err := tui.ShowRows(model, tab, tui.FrameOptions{Settle: settle})
 	if err != nil {
 		return fmt.Errorf("show: %w", err)

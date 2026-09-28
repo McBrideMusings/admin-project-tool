@@ -18,8 +18,8 @@ const errOut = "\x00err"
 // a read whose stdout is parsed, or a mutation whose progress streams to the
 // terminal. A command that swapped seams would keep its argv and change what the
 // dashboard does with the output, so the flag is part of the record. The working
-// directory is part of the argv itself — a directory-scoped git call carries it
-// as `-C <dir>`, and everything else runs in the process's own cwd.
+// directory is recorded as the `-C <dir>` the real seams put in front of the
+// argv, so a call that ran in the wrong directory fails the same comparison.
 type call struct {
 	args     []string
 	mutating bool
@@ -33,8 +33,13 @@ type recorder struct {
 	out   []string // stdout for call i; calls past the end get ""
 }
 
-func (r *recorder) run(_ context.Context, args ...string) (string, error) {
-	r.calls = append(r.calls, call{args: append([]string(nil), args...)})
+// withDir is the argv the real seams run: `-C dir` in front of args.
+func withDir(dir string, args []string) []string {
+	return append([]string{"-C", dir}, args...)
+}
+
+func (r *recorder) run(_ context.Context, dir string, args ...string) (string, error) {
+	r.calls = append(r.calls, call{args: withDir(dir, args)})
 	if i := len(r.calls) - 1; i < len(r.out) {
 		if r.out[i] == errOut {
 			return "", errors.New("recorder: canned failure")
@@ -44,13 +49,18 @@ func (r *recorder) run(_ context.Context, args ...string) (string, error) {
 	return "", nil
 }
 
-func (r *recorder) mutate(_ context.Context, args ...string) error {
-	r.calls = append(r.calls, call{args: append([]string(nil), args...), mutating: true})
+func (r *recorder) mutate(_ context.Context, dir string, args ...string) error {
+	r.calls = append(r.calls, call{args: withDir(dir, args), mutating: true})
 	return nil
 }
 
-func rd(args ...string) call  { return call{args: args} }
-func mut(args ...string) call { return call{args: args, mutating: true} }
+// rd and mut are a read and a mutation run in /repo, the directory every table
+// entry below hands the function under test unless it names another.
+func rd(args ...string) call  { return call{args: withDir("/repo", args)} }
+func mut(args ...string) call { return call{args: withDir("/repo", args), mutating: true} }
+
+// rdIn is rd for a call that runs somewhere other than /repo.
+func rdIn(dir string, args ...string) call { return call{args: withDir(dir, args)} }
 
 // TestCommandArgv pins the argv of every exported command in this package.
 // #18 was a missing `--repo` on `gh pr list --state merged` in the sibling
@@ -71,13 +81,13 @@ func TestCommandArgv(t *testing.T) {
 		{
 			name: "TopLevel",
 			out:  []string{"/repo"},
-			call: func(ctx context.Context) { TopLevel(ctx) },
+			call: func(ctx context.Context) { TopLevel(ctx, "/repo") },
 			want: []call{rd("rev-parse", "--show-toplevel")},
 		},
 		{
 			name: "RepoRoot compares the worktree's git dir against the common one",
 			out:  []string{"/repo", "/repo/.git", "/repo/.git"},
-			call: func(ctx context.Context) { RepoRoot(ctx) },
+			call: func(ctx context.Context) { RepoRoot(ctx, "/repo") },
 			want: []call{
 				rd("rev-parse", "--show-toplevel"),
 				rd("rev-parse", "--path-format=absolute", "--git-dir"),
@@ -85,97 +95,98 @@ func TestCommandArgv(t *testing.T) {
 			},
 		},
 		{
-			name: "RepoRootFor prefixes every rev-parse with -C dir",
-			out:  []string{"/repo", "/repo/.git", "/repo/.git"},
-			call: func(ctx context.Context) { RepoRootFor(ctx, "/dir") },
+			name: "RepoRoot from a linked worktree reads core.worktree from the common dir",
+			out:  []string{"/wt", "/repo/.git/worktrees/wt", "/repo/.git"},
+			call: func(ctx context.Context) { RepoRoot(ctx, "/wt") },
 			want: []call{
-				rd("-C", "/dir", "rev-parse", "--show-toplevel"),
-				rd("-C", "/dir", "rev-parse", "--path-format=absolute", "--git-dir"),
-				rd("-C", "/dir", "rev-parse", "--path-format=absolute", "--git-common-dir"),
+				rdIn("/wt", "rev-parse", "--show-toplevel"),
+				rdIn("/wt", "rev-parse", "--path-format=absolute", "--git-dir"),
+				rdIn("/wt", "rev-parse", "--path-format=absolute", "--git-common-dir"),
+				rdIn("/repo/.git", "config", "--file", "/repo/.git/config", "--get", "core.worktree"),
 			},
 		},
 		{
 			name: "CurrentBranch",
 			out:  []string{"feat/x"},
-			call: func(ctx context.Context) { CurrentBranch(ctx) },
+			call: func(ctx context.Context) { CurrentBranch(ctx, "/repo") },
 			want: []call{rd("rev-parse", "--abbrev-ref", "HEAD")},
 		},
 		{
 			name: "OriginNWO",
 			out:  []string{"git@github.com:o/r.git"},
-			call: func(ctx context.Context) { OriginNWO(ctx) },
+			call: func(ctx context.Context) { OriginNWO(ctx, "/repo") },
 			want: []call{rd("remote", "get-url", "origin")},
 		},
 		{
 			name: "DefaultBranch",
 			out:  []string{"refs/remotes/origin/main"},
-			call: func(ctx context.Context) { DefaultBranch(ctx) },
+			call: func(ctx context.Context) { DefaultBranch(ctx, "/repo") },
 			want: []call{rd("symbolic-ref", "refs/remotes/origin/HEAD")},
 		},
 		{
 			name: "ValidBranchName defers to git's own rules",
-			call: func(ctx context.Context) { ValidBranchName(ctx, "feat/x") },
+			call: func(ctx context.Context) { ValidBranchName(ctx, "/repo", "feat/x") },
 			want: []call{rd("check-ref-format", "--branch", "feat/x")},
 		},
 		{
 			name: "BranchExistsLocal",
-			call: func(ctx context.Context) { BranchExistsLocal(ctx, "feat/x") },
+			call: func(ctx context.Context) { BranchExistsLocal(ctx, "/repo", "feat/x") },
 			want: []call{rd("show-ref", "--verify", "--quiet", "refs/heads/feat/x")},
 		},
 		{
 			name: "BranchExistsRemote",
-			call: func(ctx context.Context) { BranchExistsRemote(ctx, "feat/x") },
+			call: func(ctx context.Context) { BranchExistsRemote(ctx, "/repo", "feat/x") },
 			want: []call{rd("show-ref", "--verify", "--quiet", "refs/remotes/origin/feat/x")},
 		},
 		{
 			name: "WorkingStatus reads the worktree it was handed, not the cwd",
 			call: func(ctx context.Context) { WorkingStatus(ctx, "/wt") },
-			want: []call{rd("-C", "/wt", "status", "--porcelain")},
+			want: []call{rdIn("/wt", "status", "--porcelain")},
 		},
 		{
 			name: "AheadBehind counts both sides in one rev-list",
 			out:  []string{"2\t3"},
-			call: func(ctx context.Context) { AheadBehind(ctx, "feat/x", "origin/feat/x") },
+			call: func(ctx context.Context) { AheadBehind(ctx, "/repo", "feat/x", "origin/feat/x") },
 			want: []call{rd("rev-list", "--left-right", "--count", "feat/x...origin/feat/x")},
 		},
 		{
 			name: "FirstAuthor skips merges and reads the earliest commit",
 			out:  []string{"a@b"},
-			call: func(ctx context.Context) { FirstAuthor(ctx, "feat/x", "main") },
+			call: func(ctx context.Context) { FirstAuthor(ctx, "/repo", "feat/x", "main") },
 			want: []call{rd("log", "--no-merges", "--reverse", "--format=%ae", "main..feat/x")},
 		},
 		{
 			name: "BranchNote",
-			call: func(ctx context.Context) { BranchNote(ctx, "feat/x") },
+			call: func(ctx context.Context) { BranchNote(ctx, "/repo", "feat/x") },
 			want: []call{rd("config", "--get", "branch.feat/x.description")},
 		},
 		{
 			name: "SetBranchNote writes the description",
-			call: func(ctx context.Context) { SetBranchNote(ctx, "feat/x", "why") },
+			call: func(ctx context.Context) { SetBranchNote(ctx, "/repo", "feat/x", "why") },
 			want: []call{rd("config", "branch.feat/x.description", "why")},
 		},
 		{
 			name: "SetBranchNote unsets on an empty note",
-			call: func(ctx context.Context) { SetBranchNote(ctx, "feat/x", "  ") },
+			call: func(ctx context.Context) { SetBranchNote(ctx, "/repo", "feat/x", "  ") },
 			want: []call{rd("config", "--unset", "branch.feat/x.description")},
 		},
 		{
 			name: "LastSubject",
 			out:  []string{"fix: x"},
-			call: func(ctx context.Context) { LastSubject(ctx, "feat/x", "main") },
+			call: func(ctx context.Context) { LastSubject(ctx, "/repo", "feat/x", "main") },
 			want: []call{rd("log", "-1", "--no-merges", "--format=%s", "main..feat/x")},
 		},
 		{
 			name: "CountAheadOf",
 			out:  []string{"4"},
-			call: func(ctx context.Context) { CountAheadOf(ctx, "main", "feat/x") },
+			call: func(ctx context.Context) { CountAheadOf(ctx, "/repo", "main", "feat/x") },
 			want: []call{rd("rev-list", "--count", "main..feat/x")},
 		},
 		{
 			name: "HasUnpushedCommits measures a remoteless branch against the default",
 			out:  []string{"1"},
 			call: func(ctx context.Context) {
-				HasUnpushedCommits(ctx, BranchInfo{Name: "feat/x"}, "main")
+				HasUnpushedCommits(ctx, "/repo", BranchInfo{Name: "feat/x"}, "main")
 			},
 			want: []call{rd("rev-list", "--count", "main..feat/x")},
 		},
@@ -186,7 +197,7 @@ func TestCommandArgv(t *testing.T) {
 				"feat/x",
 				"0\t0",
 			},
-			call: func(ctx context.Context) { LocalBranches(ctx, "main", nil) },
+			call: func(ctx context.Context) { LocalBranches(ctx, "/repo", "main", nil) },
 			want: []call{
 				rd("for-each-ref", "--sort=-committerdate",
 					"--format=%(refname:short)%09%(committerdate:relative)%09%(upstream:short)%09%(upstream:track)%09%(objectname)",
@@ -197,80 +208,80 @@ func TestCommandArgv(t *testing.T) {
 		},
 		{
 			name: "RecentCommits",
-			call: func(ctx context.Context) { RecentCommits(ctx, 5) },
+			call: func(ctx context.Context) { RecentCommits(ctx, "/repo", 5) },
 			want: []call{rd("log", "-n", "5", "--format=%h%x09%s%x09%cr")},
 		},
 		{
 			name: "Stashes",
-			call: func(ctx context.Context) { Stashes(ctx) },
+			call: func(ctx context.Context) { Stashes(ctx, "/repo") },
 			want: []call{rd("stash", "list", "--format=%gd%x09%gs")},
 		},
 		{
 			name: "FetchPrune drops remote-tracking refs whose branch is gone",
-			call: func(ctx context.Context) { FetchPrune(ctx) },
+			call: func(ctx context.Context) { FetchPrune(ctx, "/repo") },
 			want: []call{rd("fetch", "--prune", "origin")},
 		},
 		{
 			name: "MergedIntoDefault checks against origin's default branch",
 			out:  []string{"feat/x"},
-			call: func(ctx context.Context) { MergedIntoDefault(ctx, "main") },
+			call: func(ctx context.Context) { MergedIntoDefault(ctx, "/repo", "main") },
 			want: []call{rd("branch", "--merged", "origin/main", "--format=%(refname:short)")},
 		},
 		{
 			name: "Checkout",
-			call: func(ctx context.Context) { Checkout(ctx, "feat/x") },
+			call: func(ctx context.Context) { Checkout(ctx, "/repo", "feat/x") },
 			want: []call{mut("checkout", "feat/x")},
 		},
 		{
 			name: "CheckoutNewBranch forks from an explicit base",
-			call: func(ctx context.Context) { CheckoutNewBranch(ctx, "feat/x", "origin/main") },
+			call: func(ctx context.Context) { CheckoutNewBranch(ctx, "/repo", "feat/x", "origin/main") },
 			want: []call{mut("checkout", "-b", "feat/x", "origin/main")},
 		},
 		{
 			name: "CheckoutNewBranch omits the base when it has none",
-			call: func(ctx context.Context) { CheckoutNewBranch(ctx, "feat/x", "") },
+			call: func(ctx context.Context) { CheckoutNewBranch(ctx, "/repo", "feat/x", "") },
 			want: []call{mut("checkout", "-b", "feat/x")},
 		},
 		{
 			name: "HasCommitsNotOnOrigin",
 			out:  []string{"deadbeef"},
-			call: func(ctx context.Context) { HasCommitsNotOnOrigin(ctx, "feat/x") },
+			call: func(ctx context.Context) { HasCommitsNotOnOrigin(ctx, "/repo", "feat/x") },
 			want: []call{rd("rev-list", "refs/heads/feat/x", "--not", "--remotes=origin")},
 		},
 		{
 			name: "Pull is fast-forward only",
-			call: func(ctx context.Context) { Pull(ctx) },
+			call: func(ctx context.Context) { Pull(ctx, "/repo") },
 			want: []call{mut("pull", "--ff-only")},
 		},
 		{
 			name: "DeleteBranch keeps git's merged check",
-			call: func(ctx context.Context) { DeleteBranch(ctx, "feat/x", false) },
+			call: func(ctx context.Context) { DeleteBranch(ctx, "/repo", "feat/x", false) },
 			want: []call{rd("branch", "-d", "feat/x")},
 		},
 		{
 			name: "DeleteBranch force skips it",
-			call: func(ctx context.Context) { DeleteBranch(ctx, "feat/x", true) },
+			call: func(ctx context.Context) { DeleteBranch(ctx, "/repo", "feat/x", true) },
 			want: []call{rd("branch", "-D", "feat/x")},
 		},
 		{
 			name: "AddNewBranch forks from an explicit base without tracking it",
-			call: func(ctx context.Context) { AddNewBranch(ctx, "/wt", "feat/x", "origin/main") },
+			call: func(ctx context.Context) { AddNewBranch(ctx, "/repo", "/wt", "feat/x", "origin/main") },
 			want: []call{mut("worktree", "add", "--no-track", "-b", "feat/x", "/wt", "origin/main")},
 		},
 		{
 			name: "AddNewBranch omits the base when it has none",
-			call: func(ctx context.Context) { AddNewBranch(ctx, "/wt", "feat/x", "") },
+			call: func(ctx context.Context) { AddNewBranch(ctx, "/repo", "/wt", "feat/x", "") },
 			want: []call{mut("worktree", "add", "--no-track", "-b", "feat/x", "/wt")},
 		},
 		{
 			name: "AddExisting",
-			call: func(ctx context.Context) { AddExisting(ctx, "/wt", "feat/x") },
+			call: func(ctx context.Context) { AddExisting(ctx, "/repo", "/wt", "feat/x") },
 			want: []call{mut("worktree", "add", "/wt", "feat/x")},
 		},
 		{
 			name: "OriginBase refreshes the default branch before forking from it",
 			out:  []string{"refs/remotes/origin/main"},
-			call: func(ctx context.Context) { OriginBase(ctx) },
+			call: func(ctx context.Context) { OriginBase(ctx, "/repo") },
 			want: []call{
 				rd("symbolic-ref", "refs/remotes/origin/HEAD"),
 				rd("fetch", "origin", "main"),
@@ -279,40 +290,40 @@ func TestCommandArgv(t *testing.T) {
 		},
 		{
 			name: "FetchBranch",
-			call: func(ctx context.Context) { FetchBranch(ctx, "feat/x") },
+			call: func(ctx context.Context) { FetchBranch(ctx, "/repo", "feat/x") },
 			want: []call{mut("fetch", "origin", "feat/x")},
 		},
 		{
 			name: "RemoveWorktree",
-			call: func(ctx context.Context) { RemoveWorktree(ctx, "/wt", false) },
+			call: func(ctx context.Context) { RemoveWorktree(ctx, "/repo", "/wt", false) },
 			want: []call{rd("worktree", "remove", "/wt")},
 		},
 		{
 			name: "RemoveWorktree force discards a dirty tree",
-			call: func(ctx context.Context) { RemoveWorktree(ctx, "/wt", true) },
+			call: func(ctx context.Context) { RemoveWorktree(ctx, "/repo", "/wt", true) },
 			want: []call{rd("worktree", "remove", "/wt", "--force")},
 		},
 		{
 			name: "StashWorktree includes untracked files",
 			call: func(ctx context.Context) { StashWorktree(ctx, "/wt") },
-			want: []call{rd("-C", "/wt", "stash", "push", "-u",
+			want: []call{rdIn("/wt", "stash", "push", "-u",
 				"-m", "repo: auto-stash before worktree removal")},
 		},
 		{
 			name: "PruneWorktrees",
-			call: func(ctx context.Context) { PruneWorktrees(ctx) },
+			call: func(ctx context.Context) { PruneWorktrees(ctx, "/repo") },
 			want: []call{rd("worktree", "prune")},
 		},
 		{
 			name: "FetchPRHead does nothing when origin already has the branch",
 			out:  []string{""}, // show-ref succeeds: origin/pr-7 exists
-			call: func(ctx context.Context) { FetchPRHead(ctx, 7, "pr-7") },
+			call: func(ctx context.Context) { FetchPRHead(ctx, "/repo", 7, "pr-7") },
 			want: []call{rd("show-ref", "--verify", "--quiet", "refs/remotes/origin/pr-7")},
 		},
 		{
 			name: "FetchPRHead fetches a fork PR's head and points upstream at the pull ref",
 			out:  []string{errOut}, // show-ref fails: no origin/pr-7
-			call: func(ctx context.Context) { FetchPRHead(ctx, 7, "pr-7") },
+			call: func(ctx context.Context) { FetchPRHead(ctx, "/repo", 7, "pr-7") },
 			want: []call{
 				rd("show-ref", "--verify", "--quiet", "refs/remotes/origin/pr-7"),
 				mut("fetch", "origin", "refs/pull/7/head:pr-7"),
@@ -324,38 +335,28 @@ func TestCommandArgv(t *testing.T) {
 			name: "BranchActivity locates the reflogs in the common git dir",
 			out:  []string{"/repo/.git"},
 			call: func(ctx context.Context) {
-				BranchActivity(ctx, []BranchInfo{{Name: "feat/x"}})
+				BranchActivity(ctx, "/repo", []BranchInfo{{Name: "feat/x"}})
 			},
 			want: []call{rd("rev-parse", "--path-format=absolute", "--git-common-dir")},
 		},
 		{
 			name: "WorktreeTouched asks the worktree for its own git dir",
 			call: func(ctx context.Context) { WorktreeTouched(ctx, "/wt") },
-			want: []call{rd("-C", "/wt", "rev-parse", "--absolute-git-dir")},
+			want: []call{rdIn("/wt", "rev-parse", "--absolute-git-dir")},
 		},
 		{
 			name: "TrackedDirs lists tracked files NUL-separated under the top level",
 			out:  []string{"/repo"},
-			call: func(ctx context.Context) { TrackedDirs(ctx) },
+			call: func(ctx context.Context) { TrackedDirs(ctx, "/repo/sub") },
 			want: []call{
-				rd("rev-parse", "--show-toplevel"),
-				rd("-C", "/repo", "ls-files", "-z"),
+				rdIn("/repo/sub", "rev-parse", "--show-toplevel"),
+				rd("ls-files", "-z"),
 			},
 		},
 		{
 			name: "Worktrees",
-			call: func(ctx context.Context) { Worktrees(ctx) },
+			call: func(ctx context.Context) { Worktrees(ctx, "/repo") },
 			want: []call{rd("worktree", "list", "--porcelain")},
-		},
-		{
-			name: "WorktreesFor with an empty dir behaves exactly like Worktrees",
-			call: func(ctx context.Context) { WorktreesFor(ctx, "") },
-			want: []call{rd("worktree", "list", "--porcelain")},
-		},
-		{
-			name: "WorktreesFor with a dir prepends -C",
-			call: func(ctx context.Context) { WorktreesFor(ctx, "/repo") },
-			want: []call{rd("-C", "/repo", "worktree", "list", "--porcelain")},
 		},
 	}
 
@@ -418,7 +419,6 @@ var coveredCommands = map[string]bool{
 	"RecentCommits":         true,
 	"RemoveWorktree":        true,
 	"RepoRoot":              true,
-	"RepoRootFor":           true,
 	"SetBranchNote":         true,
 	"StashWorktree":         true,
 	"Stashes":               true,
@@ -428,7 +428,19 @@ var coveredCommands = map[string]bool{
 	"WorkingStatus":         true,
 	"WorktreeTouched":       true,
 	"Worktrees":             true,
-	"WorktreesFor":          true,
+}
+
+// TestEmptyDirIsRefused pins the seams' refusal of an empty directory. `git -C
+// ""` leaves the cwd unchanged, so without the refusal a caller that forgot its
+// dir would silently read whatever checkout the process stands in.
+func TestEmptyDirIsRefused(t *testing.T) {
+	ctx := context.Background()
+	if _, err := runGit(ctx, "", "rev-parse", "--show-toplevel"); !errors.Is(err, ErrNoDir) {
+		t.Errorf("runGit with an empty dir: err = %v, want ErrNoDir", err)
+	}
+	if err := runGitMutating(ctx, "", "status"); !errors.Is(err, ErrNoDir) {
+		t.Errorf("runGitMutating with an empty dir: err = %v, want ErrNoDir", err)
+	}
 }
 
 func TestArgvCoverage(t *testing.T) {

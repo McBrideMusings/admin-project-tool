@@ -17,8 +17,8 @@ import (
 // HasUnpushedCommits: a broken read must never claim a branch is provably empty
 // of local-only work, which is what would let ClassifyDead treat it as safe to
 // drop.
-func HasCommitsNotOnOrigin(ctx context.Context, branch string) bool {
-	out, err := runner(ctx, "rev-list", "refs/heads/"+branch, "--not", "--remotes=origin")
+func HasCommitsNotOnOrigin(ctx context.Context, dir, branch string) bool {
+	out, err := runner(ctx, dir, "rev-list", "refs/heads/"+branch, "--not", "--remotes=origin")
 	if err != nil {
 		return true
 	}
@@ -56,13 +56,13 @@ type DeadBranch struct {
 //  5. Origin has a counterpart and this branch is not ahead of it: dead,
 //     "on origin" — every local commit already lives there.
 //  6. Otherwise: survivor.
-func ClassifyDead(ctx context.Context, candidates []BranchInfo, def string, mergedPRs map[string]bool) (dead []DeadBranch, survivors []BranchInfo) {
-	merged, _ := MergedIntoDefault(ctx, def)
+func ClassifyDead(ctx context.Context, dir string, candidates []BranchInfo, def string, mergedPRs map[string]bool) (dead []DeadBranch, survivors []BranchInfo) {
+	merged, _ := MergedIntoDefault(ctx, dir, def)
 	gone, fullyPushed := UpstreamState(candidates)
 	for _, b := range candidates {
 		ahead := b.HasRemote && b.Ahead > 0
 		switch {
-		case HasCommitsNotOnOrigin(ctx, b.Name) && !mergedPRs[b.Name]:
+		case HasCommitsNotOnOrigin(ctx, dir, b.Name) && !mergedPRs[b.Name]:
 			survivors = append(survivors, b)
 		case gone[b.Name]:
 			dead = append(dead, DeadBranch{Name: b.Name, Reason: "remote gone"})

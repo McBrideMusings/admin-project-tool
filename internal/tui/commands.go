@@ -117,17 +117,20 @@ type actionMsg struct {
 }
 
 // loadLocalCmd gathers all git-only state for the Local and Cleanup views.
-func loadLocalCmd(ctx context.Context, repoRoot, current, def string) tea.Cmd {
+// repoRoot is the main checkout, whose working status the Local view shows.
+// checkout is the one the dashboard was opened in (Model.checkoutDir), and
+// every other read runs there — so the commit list follows its HEAD.
+func loadLocalCmd(ctx context.Context, repoRoot, checkout, current, def string) tea.Cmd {
 	return func() tea.Msg {
 		var d localData
-		wts, err := git.Worktrees(ctx)
+		wts, err := git.Worktrees(ctx, checkout)
 		if err != nil {
 			d.err = err
 			return localDataMsg{d}
 		}
 		d.wts = wts
 		byBranch := git.ByBranch(wts, repoRoot)
-		if d.branches, err = git.LocalBranches(ctx, current, byBranch); err != nil {
+		if d.branches, err = git.LocalBranches(ctx, checkout, current, byBranch); err != nil {
 			d.err = err
 			return localDataMsg{d}
 		}
@@ -136,8 +139,8 @@ func loadLocalCmd(ctx context.Context, repoRoot, current, def string) tea.Cmd {
 		// sized for the old flat layout (10) left most of a tall box blank. 40 is
 		// comfortably more than the tallest realistic pane can show at once; the box
 		// scrolls past whatever it can't display.
-		d.commits, _ = git.RecentCommits(ctx, 40)
-		d.stashes, _ = git.Stashes(ctx)
+		d.commits, _ = git.RecentCommits(ctx, checkout, 40)
+		d.stashes, _ = git.Stashes(ctx, checkout)
 
 		// Safety signals for the Cleanup view: a worktree with uncommitted
 		// changes, or a branch with unpushed commits, must never land in a
@@ -169,7 +172,7 @@ func loadLocalCmd(ctx context.Context, repoRoot, current, def string) tea.Cmd {
 		d.branchNote = map[string]string{}
 		d.lastSubject = map[string]string{}
 		d.aheadDefault = map[string]int{}
-		perBranchGitLoad(ctx, d.branches, def, &d)
+		perBranchGitLoad(ctx, checkout, d.branches, def, &d)
 
 		// Classification signals: every git-visible reason a branch might be
 		// finished with, gathered per branch in one pass over this one snapshot so
@@ -182,8 +185,8 @@ func loadLocalCmd(ctx context.Context, repoRoot, current, def string) tea.Cmd {
 		// deletable without losing commits long before it is safe to destroy the
 		// workspace around it, and these are what tell the two apart.
 		gone, fullyPushed := git.UpstreamState(d.branches)
-		mergedLocal, _ := git.MergedIntoDefault(ctx, def)
-		activity := git.BranchActivity(ctx, d.branches)
+		mergedLocal, _ := git.MergedIntoDefault(ctx, checkout, def)
+		activity := git.BranchActivity(ctx, checkout, d.branches)
 		d.signals = map[string]gitSignals{}
 		d.touched = map[string]time.Time{}
 		for _, br := range d.branches {
@@ -207,7 +210,7 @@ func loadLocalCmd(ctx context.Context, repoRoot, current, def string) tea.Cmd {
 				// those are `gone`, a proof, and counting them here as well would let a
 				// proof's own evidence vote a second time in the tier below it.
 				neverPushed: !br.HasRemote && !br.UpstreamGone,
-				behind:      behindDefault(ctx, br, def),
+				behind:      behindDefault(ctx, checkout, br, def),
 			}
 			if !act.LastTouched.IsZero() {
 				d.touched[br.Name] = act.LastTouched
@@ -248,7 +251,7 @@ func loadLocalCmd(ctx context.Context, repoRoot, current, def string) tea.Cmd {
 // was N sequential passes of 5 git subprocess spawns each — the ownership and
 // purpose rungs this pass feeds were the difference between a first paint bounded
 // by 1 spawn per branch and one bounded by 5.
-func perBranchGitLoad(ctx context.Context, branches []git.BranchInfo, def string, d *localData) {
+func perBranchGitLoad(ctx context.Context, dir string, branches []git.BranchInfo, def string, d *localData) {
 	const maxConcurrent = 8
 	sem := make(chan struct{}, maxConcurrent)
 	var wg sync.WaitGroup
@@ -261,11 +264,11 @@ func perBranchGitLoad(ctx context.Context, branches []git.BranchInfo, def string
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			unsafe := git.HasUnpushedCommits(ctx, br, def)
-			firstAuthor := git.FirstAuthor(ctx, br.Name, def)
-			ahead, aheadOK := git.CountAheadOf(ctx, def, br.Name)
-			note := git.BranchNote(ctx, br.Name)
-			subject := git.LastSubject(ctx, br.Name, def)
+			unsafe := git.HasUnpushedCommits(ctx, dir, br, def)
+			firstAuthor := git.FirstAuthor(ctx, dir, br.Name, def)
+			ahead, aheadOK := git.CountAheadOf(ctx, dir, def, br.Name)
+			note := git.BranchNote(ctx, dir, br.Name)
+			subject := git.LastSubject(ctx, dir, br.Name, def)
 
 			mu.Lock()
 			d.branchUnsafe[br.Name] = unsafe
@@ -294,11 +297,11 @@ func perBranchGitLoad(ctx context.Context, branches []git.BranchInfo, def string
 // A branch that IS the default, or a repo with no default, has nothing to be
 // behind. An unreadable count returns 0 and so weighs as no evidence — never as
 // maximally behind.
-func behindDefault(ctx context.Context, br git.BranchInfo, def string) int {
+func behindDefault(ctx context.Context, dir string, br git.BranchInfo, def string) int {
 	if def == "" || def == br.Name {
 		return 0
 	}
-	if _, behind, ok := git.AheadBehind(ctx, br.Name, def); ok {
+	if _, behind, ok := git.AheadBehind(ctx, dir, br.Name, def); ok {
 		return behind
 	}
 	return 0
@@ -334,13 +337,13 @@ func loadCacheCmd(nwo string) tea.Cmd {
 // as alive for as long as the dashboard stayed open. The two run concurrently:
 // neither needs the other's answer, and one waiting on the other would only make
 // the spinner spin longer.
-func syncCmd(ctx context.Context, nwo string, withIssues bool) tea.Cmd {
+func syncCmd(ctx context.Context, dir, nwo string, withIssues bool) tea.Cmd {
 	return func() tea.Msg {
 		var r data.Remote
 		var wg sync.WaitGroup
 		wg.Add(2)
 		go func() { defer wg.Done(); r = fetchAllFn(ctx, nwo, mergedPRLimit, withIssues) }()
-		go func() { defer wg.Done(); fetchPruneFn(ctx) }()
+		go func() { defer wg.Done(); fetchPruneFn(ctx, dir) }()
 		wg.Wait()
 		return syncDoneMsg{r: r}
 	}
@@ -470,22 +473,23 @@ func (m Model) beadsTickCmd() tea.Cmd {
 	return tea.Tick(beadsInterval, func(time.Time) tea.Msg { return beadsTickMsg{} })
 }
 
-// pullCmd runs git pull and reports the outcome.
-func pullCmd(ctx context.Context, repoRoot string) tea.Cmd {
+// pullCmd runs git pull in the checkout at dir and reports the outcome.
+func pullCmd(ctx context.Context, dir string) tea.Cmd {
 	return func() tea.Msg {
 		// Quiet: the dashboard owns the screen, so git progress must be captured,
 		// not streamed to stderr where the TUI renders.
-		if err := git.Pull(git.WithQuiet(ctx)); err != nil {
+		if err := git.Pull(git.WithQuiet(ctx), dir); err != nil {
 			return actionMsg{text: "pull failed", err: err}
 		}
 		return actionMsg{text: "pulled", color: cGreen}
 	}
 }
 
-// checkoutInPlaceCmd switches the repo's branch in place (no worktree, no cd).
-func checkoutInPlaceCmd(ctx context.Context, branch string) tea.Cmd {
+// checkoutInPlaceCmd switches the checkout at dir to branch in place (no
+// worktree, no cd).
+func checkoutInPlaceCmd(ctx context.Context, dir, branch string) tea.Cmd {
 	return func() tea.Msg {
-		if err := git.Checkout(git.WithQuiet(ctx), branch); err != nil {
+		if err := git.Checkout(git.WithQuiet(ctx), dir, branch); err != nil {
 			return actionMsg{text: "checkout failed", err: err}
 		}
 		return actionMsg{text: "checked out " + branch, color: cGreen}
@@ -505,9 +509,9 @@ type nameResolvedMsg struct {
 // It has to be a command rather than an inline call in the key handler: a number
 // or an issue/PR URL costs a gh lookup, which would freeze the dashboard mid-key
 // for as long as the network takes.
-func resolveNameCmd(ctx context.Context, nwo, input string) tea.Cmd {
+func resolveNameCmd(ctx context.Context, dir, nwo, input string) tea.Cmd {
 	return func() tea.Msg {
-		plan, err := resolve.BranchInput(ctx, nwo, input)
+		plan, err := resolve.BranchInput(ctx, dir, nwo, input)
 		return nameResolvedMsg{plan: plan, err: err}
 	}
 }
@@ -541,7 +545,7 @@ func worktreeCmd(ctx context.Context, repoRoot string, req worktreeReq) tea.Cmd 
 			}
 			path = res.Path
 		case "pr":
-			if err := git.FetchPRHead(ctx, req.prNum, req.branch); err != nil {
+			if err := git.FetchPRHead(ctx, repoRoot, req.prNum, req.branch); err != nil {
 				return actionMsg{text: "fetch PR failed", err: err}
 			}
 			res, err := create.Worktree(ctx, repoRoot, req.branch)
@@ -581,7 +585,7 @@ type deleteStepMsg struct {
 // means "delete without the auto-stash, knowing the conflicted files are gone" —
 // the deliberate second act that stands in for the recovery this one case cannot
 // have. It is never set on a first run.
-func deleteStepCmd(ctx context.Context, targets []cleanupTarget, i int, force bool) tea.Cmd {
+func deleteStepCmd(ctx context.Context, dir string, targets []cleanupTarget, i int, force bool) tea.Cmd {
 	return func() tea.Msg {
 		t := targets[i]
 		var err error
@@ -621,13 +625,13 @@ func deleteStepCmd(ctx context.Context, targets []cleanupTarget, i int, force bo
 			// dirty, or holding a paused operation. Selecting one is the
 			// deliberate act quarantine exists to require, so honour it with --force;
 			// without it the delete can only ever fail.
-			if err = removeWorktreeFn(ctx, t.path, t.quarantined); err == nil {
-				err = git.DeleteBranch(ctx, t.branch, true)
+			if err = removeWorktreeFn(ctx, dir, t.path, t.quarantined); err == nil {
+				err = git.DeleteBranch(ctx, dir, t.branch, true)
 			}
 		case cleanupBranch:
-			err = git.DeleteBranch(ctx, t.branch, true)
+			err = git.DeleteBranch(ctx, dir, t.branch, true)
 		case cleanupPrune:
-			err = git.PruneWorktrees(ctx)
+			err = git.PruneWorktrees(ctx, dir)
 		}
 		return deleteStepMsg{idx: i, err: err, stashRef: stashRef}
 	}

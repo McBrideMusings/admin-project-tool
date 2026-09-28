@@ -54,13 +54,11 @@ func TestPruneDeadBranchesExcludesCurrentAndDefault(t *testing.T) {
 	gitCT(t, dir, "commit", "-qm", "work")
 	gitCT(t, dir, "push", "-q", "-u", "origin", "current-work")
 
-	t.Chdir(dir)
-
 	var buf bytes.Buffer
 	old := os.Stderr
 	r, w, _ := os.Pipe()
 	os.Stderr = w
-	err := pruneDeadBranches(context.Background(), map[string]bool{}, true /* dryRun */, false)
+	err := pruneDeadBranches(context.Background(), dir, map[string]bool{}, true /* dryRun */, false)
 	w.Close()
 	os.Stderr = old
 	buf.ReadFrom(r)

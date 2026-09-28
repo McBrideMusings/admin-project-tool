@@ -27,7 +27,7 @@ func UseStaticRemote(r data.Remote) (restore func()) {
 	prevLoad, prevFetch, prevPrune := loadRemoteFn, fetchAllFn, fetchPruneFn
 	loadRemoteFn = func(string) (data.Remote, bool) { return r, true }
 	fetchAllFn = func(context.Context, string, int, bool) data.Remote { return r }
-	fetchPruneFn = func(context.Context) {}
+	fetchPruneFn = func(context.Context, string) {}
 	return func() {
 		loadRemoteFn, fetchAllFn, fetchPruneFn = prevLoad, prevFetch, prevPrune
 	}

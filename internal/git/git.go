@@ -32,20 +32,37 @@ func isQuiet(ctx context.Context) bool {
 	return q
 }
 
+// ErrNoDir is returned by every command in this package when it is handed an
+// empty directory. `git -C ""` leaves the cwd unchanged, so an empty dir would
+// silently read whatever checkout the process happens to be standing in.
+var ErrNoDir = errors.New("git: no directory given")
+
 // runner and mutator are the two seams every git command in this package goes
 // through — the reads that capture stdout, and the mutations that stream their
 // progress. They exist so a test can record the argv a call builds: a `-d` that
 // became `-D`, a dropped `--no-ff` or a changed `for-each-ref` format is
 // otherwise invisible, since the arguments never leave the process in a form
-// anything can read. A command's working directory is part of its argv here as
-// `-C <dir>`, so recording the argv records the directory too. See argv_test.go.
+// anything can read. Every command takes the directory it runs in, and the seam
+// passes it as `-C <dir>`: no command in this package reads the process cwd.
+// See argv_test.go.
 var (
 	runner  = runGit
 	mutator = runGitMutating
 )
 
-func runGit(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+// gitCmd builds `git -C dir args...`, refusing an empty dir.
+func gitCmd(ctx context.Context, dir string, args ...string) (*exec.Cmd, error) {
+	if dir == "" {
+		return nil, ErrNoDir
+	}
+	return exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...), nil
+}
+
+func runGit(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd, err := gitCmd(ctx, dir, args...)
+	if err != nil {
+		return "", err
+	}
 	cmd.Env = readOnlyGitEnv()
 	out, err := cmd.Output()
 	if err != nil {
@@ -140,8 +157,12 @@ func readOnlyGitEnv() []string {
 // should.
 // runGitMutating builds a mutating git command from argv the same way runGit
 // builds a read, so both seams record the same shape.
-func runGitMutating(ctx context.Context, args ...string) error {
-	return runMutating(ctx, exec.CommandContext(ctx, "git", args...))
+func runGitMutating(ctx context.Context, dir string, args ...string) error {
+	cmd, err := gitCmd(ctx, dir, args...)
+	if err != nil {
+		return err
+	}
+	return runMutating(ctx, cmd)
 }
 
 func runMutating(ctx context.Context, cmd *exec.Cmd) error {
@@ -162,42 +183,28 @@ func runMutating(ctx context.Context, cmd *exec.Cmd) error {
 	return cmd.Run()
 }
 
-// TopLevel returns the absolute path of the current worktree's top-level dir.
-func TopLevel(ctx context.Context) (string, error) {
-	top, err := runner(ctx, "rev-parse", "--show-toplevel")
+// TopLevel returns the absolute path of the top-level dir of the worktree
+// containing dir.
+func TopLevel(ctx context.Context, dir string) (string, error) {
+	top, err := runner(ctx, dir, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", ErrNotInRepo
 	}
 	return top, nil
 }
 
-// RepoRoot returns the main repo's top-level directory, resolving correctly even
-// when the cwd is inside a linked worktree.
-func RepoRoot(ctx context.Context) (string, error) {
-	return RepoRootFor(ctx, "")
-}
-
-// RepoRootFor is RepoRoot for a directory other than the process's own cwd —
-// dir == "" runs in the process cwd exactly as RepoRoot. Needed by any
-// caller (the TUI's view.toml cascade, admin-y5lc.1) that resolves a repo
-// root for a directory it was merely handed, not the one it happens to be
-// running in.
-func RepoRootFor(ctx context.Context, dir string) (string, error) {
-	args := func(a ...string) []string {
-		if dir == "" {
-			return a
-		}
-		return append([]string{"-C", dir}, a...)
-	}
-	top, err := runner(ctx, args("rev-parse", "--show-toplevel")...)
+// RepoRoot returns the main repo's top-level directory for the repo containing
+// dir, resolving correctly even when dir is inside a linked worktree.
+func RepoRoot(ctx context.Context, dir string) (string, error) {
+	top, err := runner(ctx, dir, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", ErrNotInRepo
 	}
-	gitDir, err := runner(ctx, args("rev-parse", "--path-format=absolute", "--git-dir")...)
+	gitDir, err := runner(ctx, dir, "rev-parse", "--path-format=absolute", "--git-dir")
 	if err != nil {
 		return top, nil
 	}
-	commonDir, err := runner(ctx, args("rev-parse", "--path-format=absolute", "--git-common-dir")...)
+	commonDir, err := runner(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return top, nil
 	}
@@ -221,7 +228,7 @@ func RepoRootFor(ctx context.Context, dir string) (string, error) {
 // the test for that case. It is stored relative to the common dir
 // (../../../skills), so resolve it from there.
 func primaryWorktreeOf(ctx context.Context, commonDir string) string {
-	wt, err := runner(ctx, "config", "--file", filepath.Join(commonDir, "config"), "--get", "core.worktree")
+	wt, err := runner(ctx, commonDir, "config", "--file", filepath.Join(commonDir, "config"), "--get", "core.worktree")
 	if err != nil || wt == "" {
 		return filepath.Dir(commonDir)
 	}
@@ -231,9 +238,9 @@ func primaryWorktreeOf(ctx context.Context, commonDir string) string {
 	return filepath.Clean(wt)
 }
 
-// CurrentBranch returns the checked-out branch at the cwd, or "" if detached.
-func CurrentBranch(ctx context.Context) string {
-	out, err := runner(ctx, "rev-parse", "--abbrev-ref", "HEAD")
+// CurrentBranch returns the checked-out branch at dir, or "" if detached.
+func CurrentBranch(ctx context.Context, dir string) string {
+	out, err := runner(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return ""
 	}
@@ -244,8 +251,8 @@ func CurrentBranch(ctx context.Context) string {
 }
 
 // OriginNWO returns "owner/repo" parsed from the origin remote URL.
-func OriginNWO(ctx context.Context) (string, error) {
-	url, err := runner(ctx, "remote", "get-url", "origin")
+func OriginNWO(ctx context.Context, dir string) (string, error) {
+	url, err := runner(ctx, dir, "remote", "get-url", "origin")
 	if err != nil {
 		return "", errors.New("could not determine origin remote URL")
 	}
@@ -261,8 +268,8 @@ func OriginNWO(ctx context.Context) (string, error) {
 }
 
 // DefaultBranch returns the repo's default branch name.
-func DefaultBranch(ctx context.Context) string {
-	out, err := runner(ctx, "symbolic-ref", "refs/remotes/origin/HEAD")
+func DefaultBranch(ctx context.Context, dir string) string {
+	out, err := runner(ctx, dir, "symbolic-ref", "refs/remotes/origin/HEAD")
 	if err == nil {
 		parts := strings.Split(strings.TrimSpace(out), "/")
 		if len(parts) >= 2 {
@@ -270,7 +277,7 @@ func DefaultBranch(ctx context.Context) string {
 		}
 	}
 	for _, name := range []string{"main", "master", "develop"} {
-		if BranchExistsLocal(ctx, name) {
+		if BranchExistsLocal(ctx, dir, name) {
 			return name
 		}
 	}
@@ -280,24 +287,24 @@ func DefaultBranch(ctx context.Context) string {
 // ValidBranchName reports whether name is a syntactically valid git branch name,
 // deferring to `git check-ref-format --branch` so the rules match git's own (a
 // leading dash, whitespace, `~^:?*[`, `..`, a trailing `.lock`, etc. all fail).
-func ValidBranchName(ctx context.Context, name string) bool {
-	_, err := runner(ctx, "check-ref-format", "--branch", name)
+func ValidBranchName(ctx context.Context, dir, name string) bool {
+	_, err := runner(ctx, dir, "check-ref-format", "--branch", name)
 	return err == nil
 }
 
 // BranchExistsLocal reports whether refs/heads/<branch> exists.
-func BranchExistsLocal(ctx context.Context, branch string) bool {
-	_, err := runner(ctx, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+func BranchExistsLocal(ctx context.Context, dir, branch string) bool {
+	_, err := runner(ctx, dir, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
 	return err == nil
 }
 
 // BranchExistsRemote reports whether refs/remotes/origin/<branch> exists.
-func BranchExistsRemote(ctx context.Context, branch string) bool {
-	_, err := runner(ctx, "show-ref", "--verify", "--quiet", "refs/remotes/origin/"+branch)
+func BranchExistsRemote(ctx context.Context, dir, branch string) bool {
+	_, err := runner(ctx, dir, "show-ref", "--verify", "--quiet", "refs/remotes/origin/"+branch)
 	return err == nil
 }
 
-// Status summarizes the working tree at the cwd. Conflicted counts paths git
+// Status summarizes the working tree at a path. Conflicted counts paths git
 // records as unmerged, and is kept apart from Staged/Unstaged (which a conflicted
 // path also increments) because it is the one count that says a git command
 // touching the index will be refused outright rather than merely have work to do.
@@ -314,7 +321,7 @@ func (s Status) Clean() bool { return s.Staged == 0 && s.Unstaged == 0 && s.Untr
 // WorkingStatus parses `git status --porcelain` at path into staged/unstaged/
 // untracked/conflicted counts.
 func WorkingStatus(ctx context.Context, path string) (Status, error) {
-	out, err := runner(ctx, "-C", path, "status", "--porcelain")
+	out, err := runner(ctx, path, "status", "--porcelain")
 	if err != nil {
 		return Status{}, err
 	}
@@ -352,8 +359,8 @@ func unmerged(x, y byte) bool {
 // explicit ref rather than @{upstream} because a branch's counterpart on origin is
 // often not its configured upstream — a branch pushed without -u has no upstream
 // at all, yet origin/<name> holds its work all the same.
-func AheadBehind(ctx context.Context, branch, base string) (ahead, behind int, ok bool) {
-	out, err := runner(ctx, "rev-list", "--left-right", "--count", branch+"..."+base)
+func AheadBehind(ctx context.Context, dir, branch, base string) (ahead, behind int, ok bool) {
+	out, err := runner(ctx, dir, "rev-list", "--left-right", "--count", branch+"..."+base)
 	if err != nil {
 		return 0, 0, false
 	}
@@ -378,11 +385,11 @@ func AheadBehind(ctx context.Context, branch, base string) (ahead, behind int, o
 // Merges are skipped for the same reason — the merge commit is authored by
 // whoever ran the merge, not by whoever wrote the work. Returns "" when the branch
 // adds no non-merge commit of its own (nothing to attribute) or the read fails.
-func FirstAuthor(ctx context.Context, branch, base string) string {
+func FirstAuthor(ctx context.Context, dir, branch, base string) string {
 	if base == "" || base == branch {
 		return ""
 	}
-	out, err := runner(ctx, "log", "--no-merges", "--reverse", "--format=%ae", base+".."+branch)
+	out, err := runner(ctx, dir, "log", "--no-merges", "--reverse", "--format=%ae", base+".."+branch)
 	if err != nil {
 		return ""
 	}
@@ -399,8 +406,8 @@ func FirstAuthor(ctx context.Context, branch, base string) string {
 // branch for", so the dashboard reads it rather than inventing a sidecar file:
 // nothing to sync, nothing to gitignore, and it survives every operation except
 // deleting the branch. Empty when unset.
-func BranchNote(ctx context.Context, branch string) string {
-	out, err := runner(ctx, "config", "--get", "branch."+branch+".description")
+func BranchNote(ctx context.Context, dir, branch string) string {
+	out, err := runner(ctx, dir, "config", "--get", "branch."+branch+".description")
 	if err != nil {
 		return ""
 	}
@@ -408,10 +415,10 @@ func BranchNote(ctx context.Context, branch string) string {
 }
 
 // SetBranchNote writes a branch's description, or clears it when note is empty.
-func SetBranchNote(ctx context.Context, branch, note string) error {
+func SetBranchNote(ctx context.Context, dir, branch, note string) error {
 	key := "branch." + branch + ".description"
 	if strings.TrimSpace(note) == "" {
-		_, err := runner(ctx, "config", "--unset", key)
+		_, err := runner(ctx, dir, "config", "--unset", key)
 		if isUnsetMissingKey(err) {
 			// The caller asked for "no note", and a key that was never set means that
 			// is already the state — not a failure to report.
@@ -419,7 +426,7 @@ func SetBranchNote(ctx context.Context, branch, note string) error {
 		}
 		return err
 	}
-	_, err := runner(ctx, "config", key, note)
+	_, err := runner(ctx, dir, "config", key, note)
 	return err
 }
 
@@ -440,11 +447,11 @@ func isUnsetMissingKey(err error) bool {
 // base — the bottom rung of the purpose ladder. Merges are excluded because a
 // merge subject describes the branch's upkeep ("Merge origin/main into x") rather
 // than its reason for existing.
-func LastSubject(ctx context.Context, branch, base string) string {
+func LastSubject(ctx context.Context, dir, branch, base string) string {
 	if base == "" || base == branch {
 		return ""
 	}
-	out, err := runner(ctx, "log", "-1", "--no-merges", "--format=%s", base+".."+branch)
+	out, err := runner(ctx, dir, "log", "-1", "--no-merges", "--format=%s", base+".."+branch)
 	if err != nil {
 		return ""
 	}
@@ -454,8 +461,8 @@ func LastSubject(ctx context.Context, branch, base string) string {
 // CountAheadOf returns how many commits branch is ahead of base (base..branch).
 // ok is false when the count could not be read at all, which callers must not
 // treat as zero — see HasUnpushedCommits.
-func CountAheadOf(ctx context.Context, base, branch string) (n int, ok bool) {
-	out, err := runner(ctx, "rev-list", "--count", base+".."+branch)
+func CountAheadOf(ctx context.Context, dir, base, branch string) (n int, ok bool) {
+	out, err := runner(ctx, dir, "rev-list", "--count", base+".."+branch)
 	if err != nil {
 		return 0, false
 	}
@@ -478,14 +485,14 @@ func CountAheadOf(ctx context.Context, base, branch string) (n int, ok bool) {
 // a transient git error hand a branch full of local-only commits to a sweep. Same
 // fail-safe as an unreadable worktree status (see wtState.unread): the direction
 // that costs a wasted keystroke is always preferred over the one that costs work.
-func HasUnpushedCommits(ctx context.Context, bi BranchInfo, def string) bool {
+func HasUnpushedCommits(ctx context.Context, dir string, bi BranchInfo, def string) bool {
 	if bi.HasRemote {
 		return bi.Ahead > 0
 	}
 	if def == "" || def == bi.Name {
 		return false
 	}
-	n, ok := CountAheadOf(ctx, def, bi.Name)
+	n, ok := CountAheadOf(ctx, dir, def, bi.Name)
 	return !ok || n > 0
 }
 
@@ -515,8 +522,8 @@ type BranchInfo struct {
 // remote-tracking refs. A local branch's relationship to origin is judged against
 // this rather than against its upstream config: `git switch -c x && git push
 // origin x` leaves no upstream configured at all, yet origin/x holds the work.
-func remoteBranchNames(ctx context.Context) map[string]bool {
-	out, err := runner(ctx, "for-each-ref", "--format=%(refname:strip=3)", "refs/remotes/origin/")
+func remoteBranchNames(ctx context.Context, dir string) map[string]bool {
+	out, err := runner(ctx, dir, "for-each-ref", "--format=%(refname:strip=3)", "refs/remotes/origin/")
 	if err != nil {
 		return map[string]bool{}
 	}
@@ -531,13 +538,13 @@ func remoteBranchNames(ctx context.Context) map[string]bool {
 
 // LocalBranches lists local branches with ahead/behind and last-commit dates.
 // worktreeByBranch maps branch name -> worktree path for annotation.
-func LocalBranches(ctx context.Context, current string, worktreeByBranch map[string]string) ([]BranchInfo, error) {
+func LocalBranches(ctx context.Context, dir, current string, worktreeByBranch map[string]string) ([]BranchInfo, error) {
 	const fmtStr = "%(refname:short)%09%(committerdate:relative)%09%(upstream:short)%09%(upstream:track)%09%(objectname)"
-	out, err := runner(ctx, "for-each-ref", "--sort=-committerdate", "--format="+fmtStr, "refs/heads/")
+	out, err := runner(ctx, dir, "for-each-ref", "--sort=-committerdate", "--format="+fmtStr, "refs/heads/")
 	if err != nil {
 		return nil, err
 	}
-	onRemote := remoteBranchNames(ctx)
+	onRemote := remoteBranchNames(ctx, dir)
 	var branches []BranchInfo
 	for line := range strings.SplitSeq(out, "\n") {
 		if strings.TrimSpace(line) == "" {
@@ -573,7 +580,7 @@ func LocalBranches(ctx context.Context, current string, worktreeByBranch map[str
 		}
 		if base != "" {
 			bi.HasRemote = true
-			if a, b, ok := AheadBehind(ctx, name, base); ok {
+			if a, b, ok := AheadBehind(ctx, dir, name, base); ok {
 				bi.Ahead, bi.Behind = a, b
 			}
 		}
@@ -592,9 +599,9 @@ type Commit struct {
 	When    string // relative
 }
 
-// RecentCommits returns the last n commits on the current HEAD.
-func RecentCommits(ctx context.Context, n int) ([]Commit, error) {
-	out, err := runner(ctx, "log", "-n", strconv.Itoa(n), "--format=%h%x09%s%x09%cr")
+// RecentCommits returns the last n commits on dir's HEAD.
+func RecentCommits(ctx context.Context, dir string, n int) ([]Commit, error) {
+	out, err := runner(ctx, dir, "log", "-n", strconv.Itoa(n), "--format=%h%x09%s%x09%cr")
 	if err != nil {
 		return nil, err
 	}
@@ -623,8 +630,8 @@ type Stash struct {
 }
 
 // Stashes returns the stash list.
-func Stashes(ctx context.Context) ([]Stash, error) {
-	out, err := runner(ctx, "stash", "list", "--format=%gd%x09%gs")
+func Stashes(ctx context.Context, dir string) ([]Stash, error) {
+	out, err := runner(ctx, dir, "stash", "list", "--format=%gd%x09%gs")
 	if err != nil {
 		return nil, err
 	}
@@ -676,8 +683,8 @@ func UpstreamState(branches []BranchInfo) (gone, fullyPushed map[string]bool) {
 // remote since the last fetch still reads as alive. It never mutates the remote or
 // any local branch — only refs/remotes. Errors are swallowed: no origin or no
 // network just means classifying against the refs already known.
-func FetchPrune(ctx context.Context) {
-	_, _ = runner(ctx, "fetch", "--prune", "origin")
+func FetchPrune(ctx context.Context, dir string) {
+	_, _ = runner(ctx, dir, "fetch", "--prune", "origin")
 }
 
 // MergedIntoDefault returns the local branches whose commits are all reachable
@@ -686,14 +693,14 @@ func FetchPrune(ctx context.Context) {
 // neither of which shows up in the merged-PR list. Checked against
 // origin/<default> so a stale local default branch can't hide a merge, falling
 // back to the local ref when the remote-tracking one is unavailable.
-func MergedIntoDefault(ctx context.Context, def string) (map[string]bool, error) {
+func MergedIntoDefault(ctx context.Context, dir, def string) (map[string]bool, error) {
 	merged := map[string]bool{}
 	if def == "" {
 		return merged, nil
 	}
-	out, err := runner(ctx, "branch", "--merged", "origin/"+def, "--format=%(refname:short)")
+	out, err := runner(ctx, dir, "branch", "--merged", "origin/"+def, "--format=%(refname:short)")
 	if err != nil {
-		out, err = runner(ctx, "branch", "--merged", def, "--format=%(refname:short)")
+		out, err = runner(ctx, dir, "branch", "--merged", def, "--format=%(refname:short)")
 	}
 	if err != nil {
 		return merged, err
@@ -708,69 +715,71 @@ func MergedIntoDefault(ctx context.Context, def string) (map[string]bool, error)
 
 // --- mutations ---
 
-// Checkout switches the cwd repo to branch. Used when the branch is not in a worktree.
-func Checkout(ctx context.Context, branch string) error {
-	return mutator(ctx, "checkout", branch)
+// Checkout switches the checkout at dir to branch. Used when the branch is not
+// in a worktree.
+func Checkout(ctx context.Context, dir, branch string) error {
+	return mutator(ctx, dir, "checkout", branch)
 }
 
-// CheckoutNewBranch creates branch in the cwd repo and switches to it, forked
-// from base (or, when base is "", from HEAD). Unlike AddNewBranch this is the
-// in-place counterpart: no worktree, just `git checkout -b`.
-func CheckoutNewBranch(ctx context.Context, branch, base string) error {
+// CheckoutNewBranch creates branch in the checkout at dir and switches to it,
+// forked from base (or, when base is "", from HEAD). Unlike AddNewBranch this is
+// the in-place counterpart: no worktree, just `git checkout -b`.
+func CheckoutNewBranch(ctx context.Context, dir, branch, base string) error {
 	args := []string{"checkout", "-b", branch}
 	if base != "" {
 		args = append(args, base)
 	}
-	return mutator(ctx, args...)
+	return mutator(ctx, dir, args...)
 }
 
-// CheckoutOrCreate creates/checks out branch in the cwd repo — no worktree —
-// and reports which it did. Attachment is derived from git's own state, never
-// guessed by a caller: already on it is a no-op; existing locally is a plain
-// switch; existing only on origin is fetched then switched (auto-tracking);
-// existing nowhere forks a new branch from OriginBase (origin/<default>, or
-// HEAD when there is no default to fork from).
-func CheckoutOrCreate(ctx context.Context, branch string) (action string, err error) {
-	if CurrentBranch(ctx) == branch {
+// CheckoutOrCreate creates/checks out branch in the checkout at dir — no
+// worktree — and reports which it did. Attachment is derived from git's own
+// state, never guessed by a caller: already on it is a no-op; existing locally
+// is a plain switch; existing only on origin is fetched then switched
+// (auto-tracking); existing nowhere forks a new branch from OriginBase
+// (origin/<default>, or HEAD when there is no default to fork from).
+func CheckoutOrCreate(ctx context.Context, dir, branch string) (action string, err error) {
+	if CurrentBranch(ctx, dir) == branch {
 		return "already on", nil
 	}
-	if BranchExistsLocal(ctx, branch) {
-		if err := Checkout(ctx, branch); err != nil {
+	if BranchExistsLocal(ctx, dir, branch) {
+		if err := Checkout(ctx, dir, branch); err != nil {
 			return "", err
 		}
 		return "switched to", nil
 	}
-	if BranchExistsRemote(ctx, branch) {
-		if err := FetchBranch(ctx, branch); err != nil {
+	if BranchExistsRemote(ctx, dir, branch) {
+		if err := FetchBranch(ctx, dir, branch); err != nil {
 			return "", err
 		}
-		if err := Checkout(ctx, branch); err != nil {
+		if err := Checkout(ctx, dir, branch); err != nil {
 			return "", err
 		}
 		return "checked out", nil
 	}
-	if err := CheckoutNewBranch(ctx, branch, OriginBase(ctx)); err != nil {
+	if err := CheckoutNewBranch(ctx, dir, branch, OriginBase(ctx, dir)); err != nil {
 		return "", err
 	}
 	return "created", nil
 }
 
-// Pull runs `git pull --ff-only` in the cwd repo. A dashboard keypress must never
-// silently author a merge commit or rewrite local commits, and without an explicit
-// strategy git refuses outright ("Need to specify how to reconcile divergent
-// branches") whenever pull.rebase is unset — which is the default. Fast-forward or
-// fail, and the failure names a real divergence instead of a missing config.
-func Pull(ctx context.Context) error {
-	return mutator(ctx, "pull", "--ff-only")
+// Pull runs `git pull --ff-only` in the checkout at dir. A dashboard keypress
+// must never silently author a merge commit or rewrite local commits, and
+// without an explicit strategy git refuses outright ("Need to specify how to
+// reconcile divergent branches") whenever pull.rebase is unset — which is the
+// default. Fast-forward or fail, and the failure names a real divergence
+// instead of a missing config.
+func Pull(ctx context.Context, dir string) error {
+	return mutator(ctx, dir, "pull", "--ff-only")
 }
 
 // DeleteBranch deletes a local branch. force uses -D (skip merged check).
-func DeleteBranch(ctx context.Context, branch string, force bool) error {
+func DeleteBranch(ctx context.Context, dir, branch string, force bool) error {
 	flag := "-d"
 	if force {
 		flag = "-D"
 	}
-	_, err := runner(ctx, "branch", flag, branch)
+	_, err := runner(ctx, dir, "branch", flag, branch)
 	return err
 }
 
@@ -784,33 +793,33 @@ func DeleteBranch(ctx context.Context, branch string, force bool) error {
 // aim at main and `git status` would report ahead/behind against main instead
 // of against the branch's own remote. A new branch has no upstream until it is
 // first pushed with -u, which is the correct state to leave it in.
-func AddNewBranch(ctx context.Context, path, branch, base string) error {
+func AddNewBranch(ctx context.Context, dir, path, branch, base string) error {
 	args := []string{"worktree", "add", "--no-track", "-b", branch, path}
 	if base != "" {
 		args = append(args, base)
 	}
-	return mutator(ctx, args...)
+	return mutator(ctx, dir, args...)
 }
 
 // AddExisting checks out an existing branch (local, or a remote-tracking branch
 // git will DWIM into a local one) into a new worktree at path.
-func AddExisting(ctx context.Context, path, branch string) error {
-	return mutator(ctx, "worktree", "add", path, branch)
+func AddExisting(ctx context.Context, dir, path, branch string) error {
+	return mutator(ctx, dir, "worktree", "add", path, branch)
 }
 
 // OriginBase returns the ref new branches should fork from: it fetches the
 // default branch from origin (best effort) and returns "origin/<default>" when
 // that remote-tracking ref exists, falling back to the local default branch
 // name, or "" when there is no default branch at all (git then uses HEAD).
-func OriginBase(ctx context.Context) string {
-	def := DefaultBranch(ctx)
+func OriginBase(ctx context.Context, dir string) string {
+	def := DefaultBranch(ctx, dir)
 	if def == "" {
 		return ""
 	}
 	// Best effort: refresh origin/<default> so we fork from current origin, not a
 	// stale snapshot. Offline or no-origin repos just fork from what's known.
-	_, _ = runner(ctx, "fetch", "origin", def)
-	if BranchExistsRemote(ctx, def) {
+	_, _ = runner(ctx, dir, "fetch", "origin", def)
+	if BranchExistsRemote(ctx, dir, def) {
 		return "origin/" + def
 	}
 	return def
@@ -818,17 +827,18 @@ func OriginBase(ctx context.Context) string {
 
 // FetchBranch fetches a single branch from origin so a remote-only branch can be
 // checked out into a worktree.
-func FetchBranch(ctx context.Context, branch string) error {
-	return mutator(ctx, "fetch", "origin", branch)
+func FetchBranch(ctx context.Context, dir, branch string) error {
+	return mutator(ctx, dir, "fetch", "origin", branch)
 }
 
-// RemoveWorktree removes the worktree at path. force discards a dirty tree.
-func RemoveWorktree(ctx context.Context, path string, force bool) error {
+// RemoveWorktree removes the worktree at path from the repo at dir. force
+// discards a dirty tree.
+func RemoveWorktree(ctx context.Context, dir, path string, force bool) error {
 	args := []string{"worktree", "remove", path}
 	if force {
 		args = append(args, "--force")
 	}
-	_, err := runner(ctx, args...)
+	_, err := runner(ctx, dir, args...)
 	return err
 }
 
@@ -844,14 +854,14 @@ func RemoveWorktree(ctx context.Context, path string, force bool) error {
 // call in the codebase whose error was the raw multi-line output, which the row
 // then clipped to its first word.
 func StashWorktree(ctx context.Context, path string) error {
-	_, err := runner(ctx, "-C", path, "stash", "push", "-u",
+	_, err := runner(ctx, path, "stash", "push", "-u",
 		"-m", "repo: auto-stash before worktree removal")
 	return err
 }
 
 // PruneWorktrees removes administrative metadata for worktrees whose dirs are gone.
-func PruneWorktrees(ctx context.Context) error {
-	_, err := runner(ctx, "worktree", "prune")
+func PruneWorktrees(ctx context.Context, dir string) error {
+	_, err := runner(ctx, dir, "worktree", "prune")
 	return err
 }
 
@@ -865,16 +875,16 @@ func PruneWorktrees(ctx context.Context) error {
 // the branch's upstream at refs/pull/<N>/head, so `git pull` keeps following
 // the PR instead of freezing at whatever commit this fetch happened to catch.
 // Safe to call when the local branch already exists.
-func FetchPRHead(ctx context.Context, prNum int, branch string) error {
-	if BranchExistsRemote(ctx, branch) {
+func FetchPRHead(ctx context.Context, dir string, prNum int, branch string) error {
+	if BranchExistsRemote(ctx, dir, branch) {
 		return nil
 	}
 	pullRef := "refs/pull/" + strconv.Itoa(prNum) + "/head"
-	if err := mutator(ctx, "fetch", "origin", pullRef+":"+branch); err != nil && !BranchExistsLocal(ctx, branch) {
+	if err := mutator(ctx, dir, "fetch", "origin", pullRef+":"+branch); err != nil && !BranchExistsLocal(ctx, dir, branch) {
 		return err
 	}
-	if err := mutator(ctx, "config", "branch."+branch+".remote", "origin"); err != nil {
+	if err := mutator(ctx, dir, "config", "branch."+branch+".remote", "origin"); err != nil {
 		return err
 	}
-	return mutator(ctx, "config", "branch."+branch+".merge", pullRef)
+	return mutator(ctx, dir, "config", "branch."+branch+".merge", pullRef)
 }

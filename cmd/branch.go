@@ -60,15 +60,19 @@ func init() {
 // current working tree — no worktree. Contrast runWorktree (cmd/worktree.go),
 // which resolves the same input set into a separate worktree.
 func runBranchCheckout(ctx context.Context, input string) error {
-	if _, err := git.RepoRoot(ctx); err != nil {
+	dir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	if _, err := git.RepoRoot(ctx, dir); err != nil {
 		return err
 	}
 	// A missing or non-GitHub origin is not fatal here. Only an issue/PR number or
 	// a GitHub URL needs the repo's name-with-owner; a typed branch name is pure
 	// git and works in a repo with no remote at all.
-	nwo, _ := git.OriginNWO(ctx)
+	nwo, _ := git.OriginNWO(ctx, dir)
 
-	plan, err := resolve.BranchInput(ctx, nwo, input)
+	plan, err := resolve.BranchInput(ctx, dir, nwo, input)
 	if err != nil {
 		return err
 	}
@@ -76,12 +80,12 @@ func runBranchCheckout(ctx context.Context, input string) error {
 	// A PR head lives on the contributor's fork when the PR came from one, so it
 	// has to be fetched into a local branch before it can be checked out here.
 	if plan.PRNum > 0 {
-		if err := git.FetchPRHead(ctx, plan.PRNum, plan.Branch); err != nil {
+		if err := git.FetchPRHead(ctx, dir, plan.PRNum, plan.Branch); err != nil {
 			return err
 		}
 	}
 
-	action, err := git.CheckoutOrCreate(ctx, plan.Branch)
+	action, err := git.CheckoutOrCreate(ctx, dir, plan.Branch)
 	if err != nil {
 		return err
 	}

@@ -19,7 +19,7 @@ import (
 
 // startWorktreePicker opens the picker over the repo's worktrees — m.local.wts,
 // the same list the Cleanup pane and the Branches pane's worktree column
-// already read, loaded once by loadLocalCmd's own `git.Worktrees(ctx)` call
+// already read, loaded once by loadLocalCmd's own `git.Worktrees` call
 // rather than shelling out to git again here: a key handler runs
 // synchronously inside Update, and a picker opening is not worth a second
 // blocking subprocess call when the answer is already on the model. A repo

@@ -67,7 +67,10 @@ func TestShowRowsRejectsUnknownAndAbsentTab(t *testing.T) {
 
 // TestShowRowsRepoListsBranches runs ShowRows against a real git repo: the Repo
 // tab's rows must hold the branches it draws, not the empty list a model that
-// never received its local load would give.
+// never received its local load would give. The test process stays in its own
+// cwd — this package's directory inside the admin-project-tool checkout — so
+// rows holding exactly the fixture's two branches also prove the load read the
+// repo New was handed rather than the process cwd.
 func TestShowRowsRepoListsBranches(t *testing.T) {
 	dir := t.TempDir()
 	for _, args := range [][]string{
@@ -79,7 +82,6 @@ func TestShowRowsRepoListsBranches(t *testing.T) {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
-	t.Chdir(dir)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -94,8 +96,8 @@ func TestShowRowsRepoListsBranches(t *testing.T) {
 			names[r.Branch] = true
 		}
 	}
-	if !names["main"] || !names["topic"] {
-		t.Errorf("repo rows hold branches %v, want main and topic", names)
+	if len(names) != 2 || !names["main"] || !names["topic"] {
+		t.Errorf("repo rows hold branches %v, want exactly main and topic", names)
 	}
 }
 

@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/archetype"
-	"github.com/McBrideMusings/admin-project-tool/internal/git"
 )
 
 // archetypesCmd groups the archetype deployment path (admin-3rgp.29): the
@@ -65,7 +64,7 @@ func init() {
 
 func runArchetypesDeploy(ctx context.Context, source, dest string) error {
 	if source == "" {
-		repoRoot, err := git.RepoRoot(ctx)
+		repoRoot, err := cwdRepoRoot(ctx)
 		if err != nil {
 			return fmt.Errorf("no --source given and %w — pass --source explicitly outside a git repo", err)
 		}
@@ -98,7 +97,7 @@ func runArchetypesList(ctx context.Context) error {
 	// A repo is optional here — listing archetypes is useful even outside one,
 	// and repoRoot simply contributes nothing when there isn't one (List()
 	// treats a missing search-path directory as empty, never an error).
-	repoRoot, _ := git.RepoRoot(ctx)
+	repoRoot, _ := cwdRepoRoot(ctx)
 
 	sp, err := archetype.SearchPathFor(repoRoot)
 	if err != nil {

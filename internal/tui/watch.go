@@ -35,9 +35,9 @@ func (m Model) startWatchCmd() tea.Cmd {
 	if m.headless {
 		return nil
 	}
-	ctx := m.ctx
+	ctx, dir := m.ctx, m.checkoutDir()
 	return func() tea.Msg {
-		dirs, err := git.TrackedDirs(ctx)
+		dirs, err := git.TrackedDirs(ctx, dir)
 		if err != nil || len(dirs) == 0 {
 			return watcherReadyMsg{}
 		}

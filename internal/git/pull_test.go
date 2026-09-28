@@ -39,8 +39,7 @@ func TestPullDivergedFailsWithoutReconcileHint(t *testing.T) {
 	gitT(t, dir, "add", "-A")
 	gitT(t, dir, "commit", "-qm", "mine")
 
-	t.Chdir(dir)
-	err := Pull(WithQuiet(context.Background()))
+	err := Pull(WithQuiet(context.Background()), dir)
 	if err == nil {
 		t.Fatal("Pull on diverged branches: want error, got nil (a merge commit was authored)")
 	}
@@ -115,8 +114,7 @@ func TestPullFastForwards(t *testing.T) {
 	gitT(t, other, "commit", "-qm", "theirs")
 	gitT(t, other, "push", "-q", "origin", "main")
 
-	t.Chdir(dir)
-	if err := Pull(WithQuiet(context.Background())); err != nil {
+	if err := Pull(WithQuiet(context.Background()), dir); err != nil {
 		t.Fatalf("Pull with a clean fast-forward available: %v", err)
 	}
 }

@@ -139,7 +139,7 @@ func Load(ctx context.Context, projectDir string) State {
 	levels := make([]rawFile, 0, 3)
 	levels = append(levels, readLevel(filepath.Join(projectDir, ".admin", Filename)))
 
-	if root, err := git.RepoRootFor(ctx, projectDir); err == nil && root != "" {
+	if root, err := git.RepoRoot(ctx, projectDir); err == nil && root != "" {
 		if filepath.Clean(root) != filepath.Clean(projectDir) {
 			levels = append(levels, readLevel(filepath.Join(root, ".admin", Filename)))
 		}

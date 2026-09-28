@@ -11,6 +11,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"time"
@@ -78,11 +79,22 @@ func axisManifest(name, trackerLine string, usesPRs bool) string {
 	return head + commonManifestTail
 }
 
-// writeFixtureManifest writes admin.toml (and, for the beads axis, an empty
-// .beads/ marker directory) into dir.
+// writeFixtureManifest makes dir a git repo with one commit on main, then
+// writes admin.toml (and, for the beads axis, an empty .beads/ marker
+// directory) into it. The Repo tab reads branches, commits and worktrees from
+// the repo root the dashboard is handed, so a fixture that is not a repo draws
+// an error there instead of the Branches pane.
 func writeFixtureManifest(dir, manifestBody string, beads bool) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		panic(err)
+	}
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main"},
+		{"-c", "user.name=fixture", "-c", "user.email=fixture@fixture", "commit", "-q", "--allow-empty", "-m", "fixture"},
+	} {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			panic(fmt.Sprintf("git %v: %v\n%s", args, err, out))
+		}
 	}
 	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(manifestBody), 0o644); err != nil {
 		panic(err)

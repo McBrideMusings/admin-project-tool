@@ -197,7 +197,7 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 		go func(i int, t Target, wt create.Result) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			results[i] = dispatchOne(actionName, agentKind, cfg.Terminal, drv, t, wt)
+			results[i] = dispatchOne(repoRoot, actionName, agentKind, cfg.Terminal, drv, t, wt)
 		}(i, t, worktrees[i])
 	}
 	wg.Wait()
@@ -212,8 +212,8 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 // mirroring internal/kinds/pane.go's recordLiveWork for the single-pane
 // LongRunning case, but keyed on the pane this dispatch itself opened
 // rather than one launchCommand opened for it.
-func dispatchOne(actionName, agentKind string, t config.Terminal, drv agent.Driver, tgt Target, wt create.Result) TargetResult {
-	if !create.IsRegisteredWorktree(context.Background(), wt.Path) {
+func dispatchOne(repoRoot, actionName, agentKind string, t config.Terminal, drv agent.Driver, tgt Target, wt create.Result) TargetResult {
+	if !create.IsRegisteredWorktree(context.Background(), repoRoot, wt.Path) {
 		return TargetResult{
 			Target:       tgt.Name,
 			WorktreePath: wt.Path,

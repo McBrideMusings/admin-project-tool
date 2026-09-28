@@ -92,17 +92,28 @@ func startDir() (string, error) {
 	return os.Getwd()
 }
 
-// effectiveRepoRoot is git.RepoRoot, re-targeted at worktreeTarget the same
-// way startDir re-targets os.Getwd(): RepoRootFor resolves the *main*
-// worktree of whatever repo target lives in, exactly what RepoRoot itself
-// does for the process's own cwd (see internal/git/git.go), so `admin -w
+// effectiveRepoRoot is git.RepoRoot of startDir: the *main* worktree of
+// whatever repo startDir lives in (see internal/git/git.go), so `admin -w
 // <target>` with no further args opens the dashboard against the target's
 // repo rather than the invoking shell's.
 func effectiveRepoRoot(ctx context.Context) (string, error) {
-	if worktreeTarget != nil {
-		return git.RepoRootFor(ctx, worktreeTarget.Path)
+	dir, err := startDir()
+	if err != nil {
+		return "", err
 	}
-	return git.RepoRoot(ctx)
+	return git.RepoRoot(ctx, dir)
+}
+
+// cwdRepoRoot is git.RepoRoot of the process's own working directory. The
+// tool verbs that act on the invoking shell's repo (branch, worktree,
+// populate, archetypes) read this, not effectiveRepoRoot: -w re-targets the
+// manifest and the dashboard, not them.
+func cwdRepoRoot(ctx context.Context) (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return git.RepoRoot(ctx, cwd)
 }
 
 // stripWorktreeFlag removes a -w/--worktree flag and its value from args
@@ -161,7 +172,7 @@ func resolveWorktreeFlag(ctx context.Context, value string) error {
 		t.Path = abs
 	}
 	worktreeTarget = &t
-	if primary, perr := git.RepoRoot(ctx); perr == nil {
+	if primary, perr := git.RepoRoot(ctx, cwd); perr == nil {
 		worktreePrimaryRoot = primary
 	}
 	return nil
@@ -599,6 +610,21 @@ func dashboardManifestRoot() string {
 	return ""
 }
 
+// dashboardCheckout is the top level of the checkout startDir sits in — the
+// directory the dashboard's git commands run in (tui.WithCheckout). It is
+// repoRoot itself unless startDir is inside a linked worktree.
+func dashboardCheckout(ctx context.Context, repoRoot string) string {
+	dir, err := startDir()
+	if err != nil {
+		return repoRoot
+	}
+	top, err := git.TopLevel(ctx, dir)
+	if err != nil {
+		return repoRoot
+	}
+	return top
+}
+
 // runDumpFrame prints one frame of the dashboard to stdout and exits. Unlike the
 // dashboard path this writes the UI to stdout on purpose: the frame *is* the
 // output, there is no cd sentinel to keep it clear of, and the repo() shell
@@ -615,9 +641,10 @@ func runDumpFrame(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel() // winds down the watcher and the merged tick the frame abandoned
 
-	nwo, _ := git.OriginNWO(ctx)
-	model := tui.New(ctx, repoRoot, nwo, git.CurrentBranch(ctx), git.DefaultBranch(ctx),
-		tui.WithManifestRoot(dashboardManifestRoot()))
+	checkout := dashboardCheckout(ctx, repoRoot)
+	nwo, _ := git.OriginNWO(ctx, checkout)
+	model := tui.New(ctx, repoRoot, nwo, git.CurrentBranch(ctx, checkout), git.DefaultBranch(ctx, checkout),
+		tui.WithManifestRoot(dashboardManifestRoot()), tui.WithCheckout(checkout))
 	frame := tui.Frame(ctx, model, tui.FrameOptions{
 		Width:  dumpWidth,
 		Height: dumpHeight,
@@ -644,9 +671,10 @@ func runDashboard(ctx context.Context) error {
 	timing.Phase("git repo root", start)
 
 	start = timing.Start()
-	nwo, _ := git.OriginNWO(ctx)
-	current := git.CurrentBranch(ctx)
-	def := git.DefaultBranch(ctx)
+	checkout := dashboardCheckout(ctx, repoRoot)
+	nwo, _ := git.OriginNWO(ctx, checkout)
+	current := git.CurrentBranch(ctx, checkout)
+	def := git.DefaultBranch(ctx, checkout)
 	timing.Phase("git branch context", start)
 
 	// lipgloss decides how many colors to use by probing its renderer's writer.
@@ -670,7 +698,8 @@ func runDashboard(ctx context.Context) error {
 	renderer.SetHasDarkBackground(colorfgbgDarkBackground(os.Getenv("COLORFGBG")))
 
 	start = timing.Start()
-	model := tui.New(ctx, repoRoot, nwo, current, def, tui.WithManifestRoot(dashboardManifestRoot()))
+	model := tui.New(ctx, repoRoot, nwo, current, def,
+		tui.WithManifestRoot(dashboardManifestRoot()), tui.WithCheckout(checkout))
 	timing.Phase("tui.New", start)
 
 	// Render to stderr so stdout carries only the cd sentinel — the repo() shell
@@ -703,7 +732,7 @@ func runPending(ctx context.Context, repoRoot string, p *tui.PendingAction) erro
 		reportPopulate(res)
 		emitCD(repoRoot, res.Path)
 	case "pr-checkout-cd":
-		if err := git.FetchPRHead(ctx, p.PRNum, p.Branch); err != nil {
+		if err := git.FetchPRHead(ctx, p.RepoRoot, p.PRNum, p.Branch); err != nil {
 			return err
 		}
 		res, err := create.Worktree(ctx, p.RepoRoot, p.Branch)

@@ -62,9 +62,8 @@ func branchLabel(w git.Worktree) string {
 // worktree list without shelling out — see resolve_test.go.
 type listFunc func(ctx context.Context, dir string) ([]git.Worktree, error)
 
-// Resolve resolves target against the worktrees of the repo containing dir
-// (dir == "" means the process's own working directory), in four tiers,
-// stopping at the first that produces any match at all:
+// Resolve resolves target against the worktrees of the repo containing dir, in
+// four tiers, stopping at the first that produces any match at all:
 //
 //  1. target names an existing directory (absolute, or relative to dir) —
 //     resolves directly, whether or not it belongs to this repo's worktree
@@ -77,7 +76,7 @@ type listFunc func(ctx context.Context, dir string) ([]git.Worktree, error)
 // Two or more matches at the tier that decided it, or none at all across
 // every tier, is an error: *AmbiguousError or *NotFoundError respectively.
 func Resolve(ctx context.Context, dir, target string) (Target, error) {
-	return resolveWith(ctx, dir, target, git.WorktreesFor)
+	return resolveWith(ctx, dir, target, git.Worktrees)
 }
 
 func resolveWith(ctx context.Context, dir, target string, list listFunc) (Target, error) {
@@ -124,7 +123,7 @@ func resolveWith(ctx context.Context, dir, target string, list listFunc) (Target
 // reporting — an unmatched directory is still a valid resolution.
 func resolveExistingDir(ctx context.Context, dir, target string, list listFunc) (Target, bool) {
 	candidate := target
-	if !filepath.IsAbs(candidate) && dir != "" {
+	if !filepath.IsAbs(candidate) {
 		candidate = filepath.Join(dir, candidate)
 	}
 	st, err := os.Stat(candidate)

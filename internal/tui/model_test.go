@@ -1033,12 +1033,12 @@ func TestBranchDeleteForcesAPausedRebase(t *testing.T) {
 	// And the removal it dispatches actually forces.
 	var gotForce, called bool
 	restore := removeWorktreeFn
-	removeWorktreeFn = func(_ context.Context, _ string, force bool) error {
+	removeWorktreeFn = func(_ context.Context, _, _ string, force bool) error {
 		called, gotForce = true, force
 		return errStubbed
 	}
 	defer func() { removeWorktreeFn = restore }()
-	deleteStepCmd(context.Background(), m.confirmTargets, 0, false)()
+	deleteStepCmd(context.Background(), t.TempDir(), m.confirmTargets, 0, false)()
 	if !called || !gotForce {
 		t.Errorf("removal called=%v force=%v, want called with force", called, gotForce)
 	}
@@ -1179,7 +1179,7 @@ func TestQuarantinedWorktreeDeletesWithForce(t *testing.T) {
 	var gotForce, called bool
 	restore := removeWorktreeFn
 	// Return an error so the step stops here and never runs a real `git branch -D`.
-	removeWorktreeFn = func(_ context.Context, _ string, force bool) error {
+	removeWorktreeFn = func(_ context.Context, _, _ string, force bool) error {
 		called, gotForce = true, force
 		return errStubbed
 	}
@@ -1189,7 +1189,7 @@ func TestQuarantinedWorktreeDeletesWithForce(t *testing.T) {
 		id: "wt:/repo/.worktrees/x", kind: cleanupWorktree,
 		branch: "x", path: "/repo/.worktrees/x", quarantined: true,
 	}}
-	deleteStepCmd(context.Background(), targets, 0, false)()
+	deleteStepCmd(context.Background(), t.TempDir(), targets, 0, false)()
 	if !called {
 		t.Fatal("worktree removal never ran")
 	}
@@ -1212,7 +1212,7 @@ func TestForcedDirtyWorktreeStashesBeforeRemoval(t *testing.T) {
 
 	restoreRemove := removeWorktreeFn
 	// Error out so the step stops here and never runs a real `git branch -D`.
-	removeWorktreeFn = func(_ context.Context, path string, _ bool) error {
+	removeWorktreeFn = func(_ context.Context, _, path string, _ bool) error {
 		order = append(order, "remove:"+path)
 		return errStubbed
 	}
@@ -1222,7 +1222,7 @@ func TestForcedDirtyWorktreeStashesBeforeRemoval(t *testing.T) {
 		id: "wt:/repo/.worktrees/x", kind: cleanupWorktree,
 		branch: "x", path: "/repo/.worktrees/x", dirty: true, quarantined: true,
 	}}
-	msg, ok := deleteStepCmd(context.Background(), targets, 0, false)().(deleteStepMsg)
+	msg, ok := deleteStepCmd(context.Background(), t.TempDir(), targets, 0, false)().(deleteStepMsg)
 	if !ok {
 		t.Fatal("expected a deleteStepMsg")
 	}
@@ -1248,11 +1248,11 @@ func TestCleanAndUnpushedWorktreeSkipAutoStash(t *testing.T) {
 	defer func() { stashWorktreeFn = restoreStash }()
 
 	restoreRemove := removeWorktreeFn
-	removeWorktreeFn = func(_ context.Context, _ string, _ bool) error { return errStubbed }
+	removeWorktreeFn = func(_ context.Context, _, _ string, _ bool) error { return errStubbed }
 	defer func() { removeWorktreeFn = restoreRemove }()
 
 	clean := []cleanupTarget{{kind: cleanupWorktree, branch: "x", path: "/repo/.worktrees/x"}}
-	deleteStepCmd(context.Background(), clean, 0, false)()
+	deleteStepCmd(context.Background(), t.TempDir(), clean, 0, false)()
 	if stashed {
 		t.Error("clean worktree auto-stashed; there was nothing uncommitted to save")
 	}
@@ -1262,7 +1262,7 @@ func TestCleanAndUnpushedWorktreeSkipAutoStash(t *testing.T) {
 		kind: cleanupWorktree, branch: "x", path: "/repo/.worktrees/x",
 		unpushed: true, quarantined: true,
 	}}
-	deleteStepCmd(context.Background(), unpushed, 0, false)()
+	deleteStepCmd(context.Background(), t.TempDir(), unpushed, 0, false)()
 	if stashed {
 		t.Error("unpushed-only worktree auto-stashed; the reflog already covers its commits")
 	}
@@ -1277,17 +1277,17 @@ func TestBatchStashRefsAccountForLaterStashes(t *testing.T) {
 	defer func() { stashWorktreeFn = restoreStash }()
 
 	restoreRemove := removeWorktreeFn
-	removeWorktreeFn = func(_ context.Context, _ string, _ bool) error { return errStubbed }
+	removeWorktreeFn = func(_ context.Context, _, _ string, _ bool) error { return errStubbed }
 	defer func() { removeWorktreeFn = restoreRemove }()
 
 	targets := []cleanupTarget{
 		{kind: cleanupWorktree, branch: "a", path: "/w/a", dirty: true, quarantined: true},
 		{kind: cleanupWorktree, branch: "b", path: "/w/b", dirty: true, quarantined: true},
 	}
-	if msg := deleteStepCmd(context.Background(), targets, 0, false)().(deleteStepMsg); msg.stashRef != "stash@{1}" {
+	if msg := deleteStepCmd(context.Background(), t.TempDir(), targets, 0, false)().(deleteStepMsg); msg.stashRef != "stash@{1}" {
 		t.Errorf("first-deleted stashRef = %q, want stash@{1} (the second delete stashes on top)", msg.stashRef)
 	}
-	if msg := deleteStepCmd(context.Background(), targets, 1, false)().(deleteStepMsg); msg.stashRef != "stash@{0}" {
+	if msg := deleteStepCmd(context.Background(), t.TempDir(), targets, 1, false)().(deleteStepMsg); msg.stashRef != "stash@{0}" {
 		t.Errorf("last-deleted stashRef = %q, want stash@{0} (newest stash)", msg.stashRef)
 	}
 }
@@ -1308,7 +1308,7 @@ func TestConflictedWorktreeRefusesRatherThanFailingAtTheStash(t *testing.T) {
 	defer func() { stashWorktreeFn = restoreStash }()
 
 	restoreRemove := removeWorktreeFn
-	removeWorktreeFn = func(_ context.Context, _ string, _ bool) error {
+	removeWorktreeFn = func(_ context.Context, _, _ string, _ bool) error {
 		removed = true
 		return errStubbed
 	}
@@ -1318,7 +1318,7 @@ func TestConflictedWorktreeRefusesRatherThanFailingAtTheStash(t *testing.T) {
 		kind: cleanupWorktree, branch: "x", path: "/repo/.worktrees/x",
 		op: "merge", dirty: true, conflicts: 1, quarantined: true,
 	}}
-	msg, ok := deleteStepCmd(context.Background(), targets, 0, false)().(deleteStepMsg)
+	msg, ok := deleteStepCmd(context.Background(), t.TempDir(), targets, 0, false)().(deleteStepMsg)
 	if !ok {
 		t.Fatal("expected a deleteStepMsg")
 	}
@@ -1353,7 +1353,7 @@ func TestUnreadableWorktreeStatusRefusesToo(t *testing.T) {
 	defer func() { stashWorktreeFn = restoreStash }()
 
 	restoreRemove := removeWorktreeFn
-	removeWorktreeFn = func(_ context.Context, _ string, _ bool) error { return errStubbed }
+	removeWorktreeFn = func(_ context.Context, _, _ string, _ bool) error { return errStubbed }
 	defer func() { removeWorktreeFn = restoreRemove }()
 
 	var tgt cleanupTarget
@@ -1364,7 +1364,7 @@ func TestUnreadableWorktreeStatusRefusesToo(t *testing.T) {
 		t.Fatalf("fixture conflicts = %d, want 0 — the point is a zero that means unknown", tgt.conflicts)
 	}
 
-	msg := deleteStepCmd(context.Background(), []cleanupTarget{tgt}, 0, false)().(deleteStepMsg)
+	msg := deleteStepCmd(context.Background(), t.TempDir(), []cleanupTarget{tgt}, 0, false)().(deleteStepMsg)
 	if stashed {
 		t.Error("unreadable worktree attempted a stash nothing knows would succeed")
 	}
@@ -1409,7 +1409,7 @@ func TestForcedConflictedWorktreeRemovesWithoutStashing(t *testing.T) {
 	defer func() { stashWorktreeFn = restoreStash }()
 
 	restoreRemove := removeWorktreeFn
-	removeWorktreeFn = func(_ context.Context, _ string, force bool) error {
+	removeWorktreeFn = func(_ context.Context, _, _ string, force bool) error {
 		removed, gotForce = true, force
 		return errStubbed
 	}
@@ -1419,7 +1419,7 @@ func TestForcedConflictedWorktreeRemovesWithoutStashing(t *testing.T) {
 		kind: cleanupWorktree, branch: "x", path: "/repo/.worktrees/x",
 		op: "rebase", dirty: true, conflicts: 2, quarantined: true,
 	}}
-	msg := deleteStepCmd(context.Background(), targets, 0, true)().(deleteStepMsg)
+	msg := deleteStepCmd(context.Background(), t.TempDir(), targets, 0, true)().(deleteStepMsg)
 	if stashed {
 		t.Error("forced delete still tried to stash an unmerged index")
 	}
@@ -1508,7 +1508,7 @@ func TestForceRetryTakesOnlyBlockedItems(t *testing.T) {
 	}
 
 	restoreRemove := removeWorktreeFn
-	removeWorktreeFn = func(_ context.Context, _ string, _ bool) error { return errStubbed }
+	removeWorktreeFn = func(_ context.Context, _, _ string, _ bool) error { return errStubbed }
 	defer func() { removeWorktreeFn = restoreRemove }()
 
 	next, _ := m.forceBlocked()
@@ -2145,6 +2145,9 @@ func TestNamePromptBeadSearch(t *testing.T) {
 	base.hasBeads, base.haveBeads = true, true
 	base.beads = beads
 	base.active, base.pane = tabLocal, paneBranches
+	// resolveNameCmd asks git whether the typed name is a legal ref, in the
+	// checkout; seededModel's /repo does not exist, so give it a real directory.
+	base.checkout = t.TempDir()
 
 	open := func() Model {
 		updated, _ := base.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})

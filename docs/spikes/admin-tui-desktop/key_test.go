@@ -169,6 +169,9 @@ func TestTabPressNeverBlocks(t *testing.T) {
 	frameMu.Unlock()
 	Blocking = false
 	defer func() { Blocking = false }()
+	// Building the fixture repos (git init + commit, once per process) is test
+	// setup, not a load a tab press waits on — do it before the clock starts.
+	trackerRepo("beads")
 
 	for _, screen := range []string{"repo", "issues", "tracker-graph", "config"} {
 		start := time.Now()

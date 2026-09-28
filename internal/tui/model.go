@@ -422,6 +422,13 @@ type Model struct {
 	// so the Work tab lists exactly the commands `admin <name>` would run here.
 	// Empty means "fall back to repoRoot" — see manifestDir.
 	manifestRoot string
+	// checkout is the top level of the checkout the dashboard was opened in,
+	// which differs from repoRoot inside a linked worktree for the same reason
+	// manifestRoot does. Every git read and write runs there except the main
+	// checkout's own working status: the current branch, its commit list, pull
+	// and checkout all belong to the checkout the user is standing in. Empty
+	// means "fall back to repoRoot" — see checkoutDir.
+	checkout string
 	// manifestStamp is admin.toml's mtime+size as of the last loadManifest
 	// call — the gate fsChangedMsg checks before reloading, so a save
 	// anywhere else in the repo (a source file, a build artifact) doesn't
@@ -558,7 +565,7 @@ type Model struct {
 	swCursor  int
 
 	// Worktree-target picker overlay (admin-76tv, worktreepicker.go): `T`
-	// lists the repo's worktrees (git.WorktreesFor(m.repoRoot)) so the user
+	// lists the repo's worktrees (git.Worktrees(m.repoRoot)) so the user
 	// can point the dashboard at one of them; enter switches wtTarget/
 	// wtTargetBranch and reloads the manifest from there. wtTarget is ""
 	// until a pick is made, which is what headerLine treats as "nothing to
@@ -599,6 +606,15 @@ func (m Model) manifestDir() string {
 	return m.repoRoot
 }
 
+// checkoutDir is the directory the dashboard's git commands run in — see the
+// checkout field.
+func (m Model) checkoutDir() string {
+	if m.checkout != "" {
+		return m.checkout
+	}
+	return m.repoRoot
+}
+
 // Option adjusts a Model at construction. Options are applied before the
 // manifest is loaded, so one may change where that load reads from.
 type Option func(*Model)
@@ -610,6 +626,17 @@ func WithManifestRoot(dir string) Option {
 	return func(m *Model) {
 		if dir != "" {
 			m.manifestRoot = dir
+		}
+	}
+}
+
+// WithCheckout runs the dashboard's git commands in dir instead of repoRoot —
+// the top level of the checkout the process was opened in. An empty dir is
+// ignored.
+func WithCheckout(dir string) Option {
+	return func(m *Model) {
+		if dir != "" {
+			m.checkout = dir
 		}
 	}
 }
@@ -702,7 +729,7 @@ func (m Model) Init() tea.Cmd {
 	// calling it again on a second Init in the same process is harmless.
 	installTerminalOpener()
 	cmds := []tea.Cmd{
-		loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def),
+		loadLocalCmd(m.ctx, m.repoRoot, m.checkoutDir(), m.current, m.def),
 		loadCacheCmd(m.nwo),
 		m.startWatchCmd(),
 		m.syncTickCmd(),
@@ -1151,7 +1178,7 @@ func (m *Model) startSyncCmd(force bool) tea.Cmd {
 	}
 	m.syncing = true
 	m.inflight++
-	return syncCmd(m.ctx, m.nwo, withIssues)
+	return syncCmd(m.ctx, m.checkoutDir(), m.nwo, withIssues)
 }
 
 // launchSyncCmd fires the one-time launch sync, but only once local git has
@@ -1181,7 +1208,7 @@ func (m *Model) refreshAllCmd() tea.Cmd {
 	// considered keeps the local reload below from firing a second sync.
 	m.synced = true
 	return tea.Batch(
-		loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def),
+		loadLocalCmd(m.ctx, m.repoRoot, m.checkoutDir(), m.current, m.def),
 		m.startSyncCmd(true),
 	)
 }
@@ -1363,7 +1390,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.fsReloading = false
 		if m.fsStale {
 			m.fsStale, m.fsReloading = false, true
-			return m, tea.Batch(m.launchSyncCmd(), loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def))
+			return m, tea.Batch(m.launchSyncCmd(), loadLocalCmd(m.ctx, m.repoRoot, m.checkoutDir(), m.current, m.def))
 		}
 		return m, m.launchSyncCmd()
 
@@ -1506,7 +1533,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fsStale = true
 		} else {
 			m.fsReloading = true
-			reloadCmds = append(reloadCmds, loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def))
+			reloadCmds = append(reloadCmds, loadLocalCmd(m.ctx, m.repoRoot, m.checkoutDir(), m.current, m.def))
 		}
 		return m, tea.Batch(reloadCmds...)
 
@@ -1523,7 +1550,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampCursor()
 		// The sync pruned remote-tracking refs, so "gone" and "on origin" need
 		// recomputing — re-read local git rather than trying to patch the maps.
-		return m, loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def)
+		return m, loadLocalCmd(m.ctx, m.repoRoot, m.checkoutDir(), m.current, m.def)
 
 	case syncTickMsg:
 		// The poll. It fires regardless of which tab is on screen — the merged set
@@ -1649,7 +1676,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setStatus(msg.text, fg)
 		}
 		// refresh local state after any mutation
-		return m, loadLocalCmd(m.ctx, m.repoRoot, m.current, m.def)
+		return m, loadLocalCmd(m.ctx, m.repoRoot, m.checkoutDir(), m.current, m.def)
 
 	case settingsMsg:
 		m.identity = msg.id
@@ -2067,7 +2094,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// nameResolvedMsg — which either creates or reports the failure inline.
 			m.resolving = true
 			m.nameErr = ""
-			return m, resolveNameCmd(m.ctx, m.nwo, name)
+			return m, resolveNameCmd(m.ctx, m.checkoutDir(), m.nwo, name)
 		case tea.KeyBackspace:
 			if len(m.nameBuf) > 0 {
 				m.nameBuf = m.nameBuf[:len(m.nameBuf)-1]
@@ -2247,7 +2274,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "p":
 		if m.active == tabLocal && m.pane == paneBranches {
 			m.setStatus("pulling…", cDim)
-			return m, pullCmd(m.ctx, m.repoRoot)
+			return m, pullCmd(m.ctx, m.checkoutDir())
 		}
 	case "s":
 		if m.active == tabBeads || m.active == tabIssues {
@@ -2409,7 +2436,7 @@ func (m Model) activate() (tea.Model, tea.Cmd) {
 			}
 			return m.quitWith(&PendingAction{Kind: "cd", Path: r.wtPath})
 		}
-		return m, checkoutInPlaceCmd(m.ctx, r.branch)
+		return m, checkoutInPlaceCmd(m.ctx, m.checkoutDir(), r.branch)
 	case rowCommit:
 		return m, copyClipboardCmd(r.label, "copied "+r.label+" to clipboard")
 	case rowStash:

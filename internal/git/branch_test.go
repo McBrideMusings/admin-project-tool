@@ -56,9 +56,8 @@ func TestBranchRemoteStateWithoutUpstreamConfig(t *testing.T) {
 	gitT(t, dir, "fetch", "-q", "--prune", "origin")
 
 	gitT(t, dir, "switch", "-q", "main")
-	t.Chdir(dir)
 
-	branches, err := LocalBranches(context.Background(), "main", nil)
+	branches, err := LocalBranches(context.Background(), dir, "main", nil)
 	if err != nil {
 		t.Fatalf("LocalBranches: %v", err)
 	}
@@ -109,13 +108,13 @@ func TestBranchRemoteStateWithoutUpstreamConfig(t *testing.T) {
 
 	// The unsafe check has to follow the same reading of "on origin", or a branch
 	// pushed without -u gets quarantined as holding unsaved work it does not hold.
-	if HasUnpushedCommits(context.Background(), byName["untracked-pushed"], "main") {
+	if HasUnpushedCommits(context.Background(), dir, byName["untracked-pushed"], "main") {
 		t.Error("a branch fully pushed without -u read as having unpushed commits")
 	}
-	if !HasUnpushedCommits(context.Background(), byName["untracked-ahead"], "main") {
+	if !HasUnpushedCommits(context.Background(), dir, byName["untracked-ahead"], "main") {
 		t.Error("a branch with a local-only commit read as fully pushed")
 	}
-	if !HasUnpushedCommits(context.Background(), byName["local-only"], "main") {
+	if !HasUnpushedCommits(context.Background(), dir, byName["local-only"], "main") {
 		t.Error("a never-pushed branch read as having no unpushed commits")
 	}
 }
@@ -145,9 +144,8 @@ func TestGoneNeedsOriginToHaveNothing(t *testing.T) {
 	gitT(t, dir, "push", "-q", "origin", "revived")
 	gitT(t, dir, "fetch", "-q", "--prune", "origin")
 	gitT(t, dir, "switch", "-q", "main")
-	t.Chdir(dir)
 
-	branches, err := LocalBranches(context.Background(), "main", nil)
+	branches, err := LocalBranches(context.Background(), dir, "main", nil)
 	if err != nil {
 		t.Fatalf("LocalBranches: %v", err)
 	}
