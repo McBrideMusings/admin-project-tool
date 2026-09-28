@@ -187,6 +187,33 @@ func TestFixtureTreesProposeExpectedArchetypes(t *testing.T) {
 		}
 	})
 
+	t.Run("react-native app's ios project is not apple", func(t *testing.T) {
+		root := writeFixture(t, map[string]string{
+			"package.json": `{"dependencies": {"react-native": "0.74.0"}}`,
+		}, "ios/App.xcworkspace", "ios/App.xcodeproj", "android")
+		res := Run(root)
+		assertArchetypes(t, res.Archetypes, []string{"react-native"})
+		if _, ok := res.Tables["apple"]; ok {
+			t.Fatal("RN app's ios project should not seed apple.project_path")
+		}
+	})
+
+	t.Run("xcode project outside an RN native dir stays apple", func(t *testing.T) {
+		root := writeFixture(t, map[string]string{
+			"tools/package.json": `{"devDependencies": {"react-native": "0.74.0"}}`,
+		}, "tools/mac/MacApp.xcodeproj")
+		res := Run(root)
+		assertArchetypes(t, res.Archetypes, []string{"apple"})
+	})
+
+	t.Run("RN package.json above the project root is not consulted", func(t *testing.T) {
+		parent := writeFixture(t, map[string]string{
+			"package.json": `{"dependencies": {"react-native": "0.74.0"}}`,
+		}, "ios/MacApp.xcodeproj")
+		res := Run(filepath.Join(parent, "ios"))
+		assertArchetypes(t, res.Archetypes, []string{"apple"})
+	})
+
 	t.Run("apple project vendored under Pods is ignored", func(t *testing.T) {
 		root := writeFixture(t, nil, "Pods/Pods.xcodeproj")
 		res := Run(root)

@@ -103,7 +103,7 @@ func detectApple(root string) *Match {
 			matches := sortedGlob(pattern)
 			var filtered []string
 			for _, m := range matches {
-				if searchable(m, root, appleVendored) {
+				if searchable(m, root, appleVendored) && !ownedByReactNative(m, root) {
 					filtered = append(filtered, m)
 				}
 			}
@@ -124,6 +124,24 @@ func detectApple(root string) *Match {
 		}
 	}
 	return nil
+}
+
+// rnNativeDirs are the dirs an RN app keeps its Xcode project in: ios/, and
+// macos/ for react-native-macos.
+var rnNativeDirs = map[string]bool{"ios": true, "macos": true}
+
+// ownedByReactNative reports whether an Xcode project (an absolute path under
+// root) sits in the native dir of a React Native app —
+// <app_dir>/ios/App.xcodeproj beside <app_dir>/package.json, with app_dir
+// inside root. That project is the RN app's, built through Metro by the
+// react-native archetype, not a native app for apple to drive.
+func ownedByReactNative(xcodeProject, root string) bool {
+	parts := strings.Split(toRelPosix(xcodeProject, root), "/")
+	if len(parts) < 2 || !rnNativeDirs[parts[len(parts)-2]] {
+		return false
+	}
+	appDir := filepath.Join(root, filepath.Join(parts[:len(parts)-2]...))
+	return isRNPackage(filepath.Join(appDir, "package.json"))
 }
 
 // ---------------------------------------------------------------------------

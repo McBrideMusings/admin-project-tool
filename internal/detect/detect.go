@@ -43,9 +43,9 @@ var Order = []string{
 	"apple",
 	// After apple so that react-native wins the dev command if both match:
 	// later archetypes win on command-name conflicts. The two rarely collide —
-	// apple only matches an .xcodeproj/.xcworkspace at the project root, while
-	// an RN app keeps its workspace down in <app_dir>/ios/ — but a repo with a
-	// native Mac app at the root and an RN client in a subdir matches both.
+	// apple skips an Xcode project in an RN app's own native dir
+	// (<app_dir>/ios/), which belongs to react-native — but a repo with a
+	// native Mac app beside an RN client in a subdir matches both.
 	"react-native",
 	// The game engines come after every general-purpose stack so their
 	// build/dev/test/clean win over a Dockerfile or wrangler.toml that rides

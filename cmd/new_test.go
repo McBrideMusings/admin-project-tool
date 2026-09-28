@@ -61,9 +61,11 @@ func TestRunNewWritesDetectorTables(t *testing.T) {
 	}
 }
 
-// TestRunNewDetectsGameEngines proves the game-engine detectors run through
-// the real verb instead of falling back to simple (admin-x6tn).
-func TestRunNewDetectsGameEngines(t *testing.T) {
+// TestRunNewProposesOneArchetype proves each layout reaches the real verb as
+// exactly its own archetype: the game-engine detectors run instead of
+// falling back to simple (admin-x6tn), and a React Native app's ios/ project
+// does not also propose apple (admin-fctn).
+func TestRunNewProposesOneArchetype(t *testing.T) {
 	archetypes, err := filepath.Abs("../archetypes")
 	if err != nil {
 		t.Fatal(err)
@@ -86,6 +88,15 @@ func TestRunNewDetectsGameEngines(t *testing.T) {
 			name:  "raylib-game",
 			files: map[string]string{"CMakeLists.txt": "project(MyGame)\ntarget_link_libraries(MyGame raylib)\n"},
 			want:  "raylib-game",
+		},
+		{
+			name: "react-native",
+			files: map[string]string{
+				"package.json":                                 `{"dependencies":{"react-native":"0.76"}}`,
+				"ios/App.xcodeproj/project.pbxproj":            "// stub\n",
+				"ios/App.xcworkspace/contents.xcworkspacedata": "<Workspace/>\n",
+			},
+			want: "react-native",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
