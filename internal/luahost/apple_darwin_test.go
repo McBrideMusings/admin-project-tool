@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // --- Pure string/log logic --------------------------------------------
@@ -149,38 +148,7 @@ func setEnv(t *testing.T, vars map[string]string) func() {
 	}
 }
 
-// --- FindApp / CleanDerivedData -----------------------------------------
-
-func TestFindAppReturnsNewestMatch(t *testing.T) {
-	dir := t.TempDir()
-	older := filepath.Join(dir, "Old.app")
-	newer := filepath.Join(dir, "New.app")
-	if err := os.Mkdir(older, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(10 * time.Millisecond)
-	if err := os.Mkdir(newer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := FindApp(filepath.Join(dir, "*.app"))
-	if err != nil {
-		t.Fatalf("FindApp: %v", err)
-	}
-	if got != newer {
-		t.Errorf("FindApp = %q, want %q (the newer of the two)", got, newer)
-	}
-}
-
-func TestFindAppNoMatchesReturnsEmpty(t *testing.T) {
-	got, err := FindApp(filepath.Join(t.TempDir(), "*.app"))
-	if err != nil {
-		t.Fatalf("FindApp: %v", err)
-	}
-	if got != "" {
-		t.Errorf("expected empty string for no matches, got %q", got)
-	}
-}
+// --- CleanDerivedData ----------------------------------------------------
 
 func TestCleanDerivedDataRemovesOnlyMatchingProject(t *testing.T) {
 	root := t.TempDir()

@@ -196,11 +196,29 @@ func appleDerivedDataName(cfg map[string]any, project string) string {
 	return base
 }
 
-// appleDerivedGlob builds the DerivedData glob for the built .app. FindApp
-// expands the leading "~" itself.
-func appleDerivedGlob(derivedName, config, sdkSuffix, productName string) string {
-	return fmt.Sprintf("~/Library/Developer/Xcode/DerivedData/%s-*/Build/Products/%s%s/%s.app",
-		derivedName, config, sdkSuffix, productName)
+// appleTargetBuildDir is luahost.TargetBuildDir, a var so a test can stand in
+// for xcodebuild.
+var appleTargetBuildDir = luahost.TargetBuildDir
+
+// appleBuiltApp returns <productName>.app inside the TARGET_BUILD_DIR xcodebuild
+// reports for opts — the directory this build wrote into. It never globs
+// DerivedData: Xcode keys DerivedData by the project's absolute path, so every
+// git worktree that built the scheme leaves its own <name>-* directory, and the
+// newest of those is often a sibling worktree's app. An app missing from
+// TARGET_BUILD_DIR is an error, not a reason to look elsewhere.
+func appleBuiltApp(opts luahost.XcodebuildOptions, productName string) (string, error) {
+	dir, err := appleTargetBuildDir(opts)
+	if err != nil {
+		return "", err
+	}
+	if dir == "" {
+		return "", fmt.Errorf("xcodebuild reported no TARGET_BUILD_DIR for %s/%s (%s)", opts.Scheme, opts.Config, opts.Destination)
+	}
+	appPath := filepath.Join(dir, productName+".app")
+	if fi, err := os.Stat(appPath); err != nil || !fi.IsDir() {
+		return "", fmt.Errorf("no app at %s", appPath)
+	}
+	return appPath, nil
 }
 
 // appleDevEnv reads [apple] dev_env — environment variables delivered to the
@@ -337,7 +355,6 @@ func appleDeployMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 	if installPath == "" {
 		installPath = "/Applications/" + process + ".app"
 	}
-	derivedName := appleDerivedDataName(cfg, project)
 
 	h.Info("Killing any running " + process + "...")
 	_ = exec.Command("pkill", "-x", process).Run()
@@ -360,21 +377,21 @@ func appleDeployMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 		appPath = exported
 	} else {
 		h.Info(fmt.Sprintf("Building %s (%s)...", scheme, config))
-		res, err := h.XcodebuildFiltered(luahost.XcodebuildOptions{
+		opts := luahost.XcodebuildOptions{
 			Project: project, Scheme: scheme, Config: config,
 			Destination: "platform=macOS", Action: appleBuildAction(f.clean),
 			ExtraSettings: appleComposeSignSettings(cfg, h, project, "mac"),
-		})
+		}
+		res, err := h.XcodebuildFiltered(opts)
 		if err != nil {
 			return err
 		}
 		if !res.Ok {
 			return fmt.Errorf("build failed")
 		}
-		appPath, _ = luahost.FindApp(appleDerivedGlob(derivedName, config, "", process))
-	}
-	if appPath == "" {
-		return fmt.Errorf("could not find built app")
+		if appPath, err = appleBuiltApp(opts, process); err != nil {
+			return fmt.Errorf("BUILD SUCCEEDED but %w", err)
+		}
 	}
 
 	// Notarize BEFORE copying into place, so what lands in installPath is the
@@ -441,7 +458,6 @@ func appleDeployDevice(cfg map[string]any, h *luahost.Host, platform string, f a
 	config := cfgString(cfg, platform+"_deploy_config", "Release")
 	process := appleProcess(project, cfg, platform, scheme)
 	bundleID := appleBundle(project, cfg, platform, false)
-	derivedName := appleDerivedDataName(cfg, project)
 	sdk := appleDeviceSDK[platform]
 
 	deviceType := cfgString(cfg, platform+"_device_type", "")
@@ -456,11 +472,12 @@ func appleDeployDevice(cfg map[string]any, h *luahost.Host, platform string, f a
 	appleEnsureDeviceRegistered(h, udid, deviceName)
 
 	h.Info(fmt.Sprintf("Building %s for device (%s)...", scheme, config))
-	res, err := h.XcodebuildFiltered(luahost.XcodebuildOptions{
+	opts := luahost.XcodebuildOptions{
 		Project: project, Scheme: scheme, Config: config,
 		Destination: sdk.destination, Action: appleBuildAction(f.clean),
 		ExtraSettings: appleComposeSignSettings(cfg, h, project, platform),
-	})
+	}
+	res, err := h.XcodebuildFiltered(opts)
 	if err != nil {
 		return err
 	}
@@ -471,9 +488,9 @@ func appleDeployDevice(cfg map[string]any, h *luahost.Host, platform string, f a
 		return fmt.Errorf("build failed")
 	}
 
-	appPath, _ := luahost.FindApp(appleDerivedGlob(derivedName, config, sdk.sdkSuffix, process))
-	if appPath == "" {
-		return fmt.Errorf("could not find built app")
+	appPath, err := appleBuiltApp(opts, process)
+	if err != nil {
+		return fmt.Errorf("BUILD SUCCEEDED but %w", err)
 	}
 
 	h.Info("Installing to device " + deviceName + "...")

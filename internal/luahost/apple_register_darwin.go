@@ -77,20 +77,6 @@ func (h *Host) registerApple(L *lua.LState) {
 		return 1
 	})
 
-	set("find_app", func(L *lua.LState) int {
-		path, err := FindApp(L.CheckString(1))
-		if err != nil {
-			L.RaiseError("apple.find_app: %v", err)
-			return 0
-		}
-		if path == "" {
-			L.Push(lua.LNil)
-			return 1
-		}
-		L.Push(lua.LString(path))
-		return 1
-	})
-
 	set("install_app", func(L *lua.LState) int {
 		opts := L.OptTable(2, L.NewTable())
 		src, err := macapp.Resolve(L.CheckString(1))

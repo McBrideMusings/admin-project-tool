@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 )
@@ -71,11 +72,67 @@ func TestAppleDerivedDataNameFallsBackToProjectBasename(t *testing.T) {
 	}
 }
 
-func TestAppleDerivedGlobShape(t *testing.T) {
-	got := appleDerivedGlob("Foo", "Debug", "-iphonesimulator", "Bar")
-	want := "~/Library/Developer/Xcode/DerivedData/Foo-*/Build/Products/Debug-iphonesimulator/Bar.app"
-	if got != want {
-		t.Errorf("appleDerivedGlob = %q, want %q", got, want)
+// plantDerivedApp creates DerivedData/<dd>/Build/Products/Release/Bar.app
+// under root and returns its Build/Products/Release directory.
+func plantDerivedApp(t *testing.T, root, dd string, mtime time.Time) string {
+	t.Helper()
+	dir := filepath.Join(root, dd, "Build", "Products", "Release")
+	app := filepath.Join(dir, "Bar.app")
+	if err := os.MkdirAll(app, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(app, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func stubTargetBuildDir(t *testing.T, dir string) {
+	t.Helper()
+	prev := appleTargetBuildDir
+	appleTargetBuildDir = func(luahost.XcodebuildOptions) (string, error) { return dir, nil }
+	t.Cleanup(func() { appleTargetBuildDir = prev })
+}
+
+// Two worktrees of one project each leave a Foo-* DerivedData directory. The
+// sibling's app is newer; the build's own TARGET_BUILD_DIR must still win.
+func TestAppleBuiltAppReadsTargetBuildDirNotNewestDerivedData(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+	ours := plantDerivedApp(t, root, "Foo-ours", now.Add(-time.Hour))
+	plantDerivedApp(t, root, "Foo-sibling", now)
+	stubTargetBuildDir(t, ours)
+
+	got, err := appleBuiltApp(luahost.XcodebuildOptions{Scheme: "Foo", Config: "Release"}, "Bar")
+	if err != nil {
+		t.Fatalf("appleBuiltApp: %v", err)
+	}
+	if want := filepath.Join(ours, "Bar.app"); got != want {
+		t.Errorf("appleBuiltApp = %q, want %q", got, want)
+	}
+}
+
+// No fallback: an app missing from TARGET_BUILD_DIR is an error even when a
+// sibling DerivedData directory holds one.
+func TestAppleBuiltAppRefusesWhenAppMissingFromTargetBuildDir(t *testing.T) {
+	root := t.TempDir()
+	plantDerivedApp(t, root, "Foo-sibling", time.Now())
+	ours := filepath.Join(root, "Foo-ours", "Build", "Products", "Release")
+	if err := os.MkdirAll(ours, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stubTargetBuildDir(t, ours)
+
+	got, err := appleBuiltApp(luahost.XcodebuildOptions{Scheme: "Foo", Config: "Release"}, "Bar")
+	if err == nil {
+		t.Fatalf("appleBuiltApp = %q, want an error", got)
+	}
+}
+
+func TestAppleBuiltAppRefusesWithoutTargetBuildDir(t *testing.T) {
+	stubTargetBuildDir(t, "")
+	if got, err := appleBuiltApp(luahost.XcodebuildOptions{Scheme: "Foo", Config: "Release"}, "Bar"); err == nil {
+		t.Fatalf("appleBuiltApp = %q, want an error", got)
 	}
 }
 

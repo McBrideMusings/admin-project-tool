@@ -311,36 +311,6 @@ func expandUser(path string) string {
 	return path
 }
 
-// --- App bundle discovery ---------------------------------------------------
-
-// FindApp globs pattern (after expanding a leading ~) and returns the
-// newest match by mtime, or "" if nothing matched.
-func FindApp(pattern string) (string, error) {
-	matches, err := filepath.Glob(expandUser(pattern))
-	if err != nil {
-		return "", err
-	}
-	if len(matches) == 0 {
-		return "", nil
-	}
-	best := matches[0]
-	bestMTime := mtimeOrZero(best)
-	for _, m := range matches[1:] {
-		if mt := mtimeOrZero(m); mt.After(bestMTime) {
-			best, bestMTime = m, mt
-		}
-	}
-	return best, nil
-}
-
-func mtimeOrZero(path string) time.Time {
-	info, err := os.Stat(path)
-	if err != nil {
-		return time.Time{}
-	}
-	return info.ModTime()
-}
-
 // derivedDataRoot is where CleanDerivedData looks for a project's
 // DerivedData directories — a var, not a literal, so a test can point it at
 // a temp directory instead of the real

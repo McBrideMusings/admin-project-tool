@@ -33,7 +33,6 @@ package kinds
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
@@ -94,11 +93,12 @@ func appleDevMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 		killDev()
 
 		h.Info("Building...")
-		res, err := h.XcodebuildFiltered(luahost.XcodebuildOptions{
+		opts := luahost.XcodebuildOptions{
 			Project: project, Scheme: scheme, Config: config,
 			Destination: "platform=macOS", Action: appleBuildAction(f.clean),
 			ExtraSettings: extraSettings,
-		})
+		}
+		res, err := h.XcodebuildFiltered(opts)
 		if err != nil {
 			return err
 		}
@@ -111,18 +111,10 @@ func appleDevMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 			return fmt.Errorf("build failed")
 		}
 
-		buildDir, _ := luahost.TargetBuildDir(luahost.XcodebuildOptions{
-			Project: project, Scheme: scheme, Config: config, Destination: "platform=macOS",
-			ExtraSettings: extraSettings,
-		})
-		if buildDir == "" {
-			h.Err("BUILD SUCCEEDED but xcodebuild reported no TARGET_BUILD_DIR")
-			return fmt.Errorf("no TARGET_BUILD_DIR for %s/%s", scheme, config)
-		}
-		appPath := filepath.Join(buildDir, process+".app")
-		if fi, err := os.Stat(appPath); err != nil || !fi.IsDir() {
-			h.Err("BUILD SUCCEEDED but no app at " + appPath)
-			return fmt.Errorf("app not found at %s", appPath)
+		appPath, err := appleBuiltApp(opts, process)
+		if err != nil {
+			h.Err("BUILD SUCCEEDED but " + err.Error())
+			return err
 		}
 
 		// Two independent things can happen to the built app before launch:
@@ -234,8 +226,6 @@ func appleDevSimulator(cfg map[string]any, h *luahost.Host, platform string, f a
 		return err
 	}
 	sdk := appleSimSDK[platform]
-	derivedName := appleDerivedDataName(cfg, project)
-	appPattern := appleDerivedGlob(derivedName, config, sdk.sdkSuffix, process)
 	launchArgs := f.launchArgs
 	if len(launchArgs) == 0 {
 		launchArgs = cfgStrings(cfg, "launch_args")
@@ -290,29 +280,32 @@ func appleDevSimulator(cfg map[string]any, h *luahost.Host, platform string, f a
 		destination = fmt.Sprintf("platform=%s,id=%s", sdk.destinationLabel, simID)
 	}
 
+	opts := luahost.XcodebuildOptions{
+		Project: project, Scheme: scheme, Config: config,
+		Destination: destination, Action: appleBuildAction(f.clean),
+		ExtraSettings: extraSettings,
+	}
+	// An app a previous run left at this build's own TARGET_BUILD_DIR may carry
+	// a bundle ID other than the configured one; terminate that one first.
+	launchBundle := bundleID
+	if prior, err := appleBuiltApp(opts, process); err == nil {
+		if b := luahost.AppBundleIdentifier(prior); b != "" {
+			launchBundle = b
+		}
+	}
+	if launchBundle == "" {
+		launchBundle = subsystem
+	}
+
 	for {
 		reload.ClearRebuildRequest()
-		existingApp, _ := luahost.FindApp(appPattern)
-		launchBundle := bundleID
-		if existingApp != "" {
-			if b := luahost.AppBundleIdentifier(existingApp); b != "" {
-				launchBundle = b
-			}
-		}
-		if launchBundle == "" {
-			launchBundle = subsystem
-		}
 		luahost.TerminateSimApp(simID, launchBundle)
 
 		if err := iconPre(); err != nil {
 			return err
 		}
 		h.Info("Building for simulator...")
-		res, err := h.XcodebuildFiltered(luahost.XcodebuildOptions{
-			Project: project, Scheme: scheme, Config: config,
-			Destination: destination, Action: appleBuildAction(f.clean),
-			ExtraSettings: extraSettings,
-		})
+		res, err := h.XcodebuildFiltered(opts)
 		if perr := iconPost(); perr != nil {
 			h.Warn("could not restore icons: " + perr.Error())
 		}
@@ -328,10 +321,10 @@ func appleDevSimulator(cfg map[string]any, h *luahost.Host, platform string, f a
 			return fmt.Errorf("build failed")
 		}
 
-		appPath, _ := luahost.FindApp(appPattern)
-		if appPath == "" {
-			h.Err("Could not find built app")
-			return fmt.Errorf("no app matching %s", appPattern)
+		appPath, err := appleBuiltApp(opts, process)
+		if err != nil {
+			h.Err("BUILD SUCCEEDED but " + err.Error())
+			return err
 		}
 
 		launchBundle = luahost.AppBundleIdentifier(appPath)
@@ -348,7 +341,6 @@ func appleDevSimulator(cfg map[string]any, h *luahost.Host, platform string, f a
 		if expected != "" && launchBundle != expected {
 			h.Warn(fmt.Sprintf("Built app has bundle ID %q, expected %q", launchBundle, expected))
 			h.Warn("Path: " + appPath)
-			h.Warn("Stale DerivedData from another project may be interfering.")
 		}
 
 		if err := applePatchDisplayName(appPath, devDisplayName); err != nil {
@@ -419,8 +411,6 @@ func appleDevDevice(cfg map[string]any, h *luahost.Host, platform string, f appl
 	config := cfgString(cfg, platform+"_build_config", "Debug")
 	process := appleProcess(project, cfg, platform, scheme)
 	bundleID := appleBundle(project, cfg, platform, true)
-	derivedName := appleDerivedDataName(cfg, project)
-	appPattern := appleDerivedGlob(derivedName, config, sdk.sdkSuffix, process)
 
 	deviceType := cfgString(cfg, platform+"_device_type", "")
 	deviceID, deviceName, udid, warnLines, err := h.FindConnectedDevice(platform, deviceType)
@@ -462,11 +452,12 @@ func appleDevDevice(cfg map[string]any, h *luahost.Host, platform string, f appl
 			return err
 		}
 		h.Info(fmt.Sprintf("Building for device (%s)...", deviceName))
-		res, err := h.XcodebuildFiltered(luahost.XcodebuildOptions{
+		opts := luahost.XcodebuildOptions{
 			Project: project, Scheme: scheme, Config: config,
 			Destination: sdk.destination, Action: appleBuildAction(f.clean),
 			ExtraSettings: extraSettings,
-		})
+		}
+		res, err := h.XcodebuildFiltered(opts)
 		if perr := iconPost(); perr != nil {
 			h.Warn("could not restore icons: " + perr.Error())
 		}
@@ -482,10 +473,10 @@ func appleDevDevice(cfg map[string]any, h *luahost.Host, platform string, f appl
 			return fmt.Errorf("build failed")
 		}
 
-		appPath, _ := luahost.FindApp(appPattern)
-		if appPath == "" {
-			h.Err("Could not find built app")
-			return fmt.Errorf("no app matching %s", appPattern)
+		appPath, err := appleBuiltApp(opts, process)
+		if err != nil {
+			h.Err("BUILD SUCCEEDED but " + err.Error())
+			return err
 		}
 		if b := luahost.AppBundleIdentifier(appPath); b != "" {
 			launchBundle = b
