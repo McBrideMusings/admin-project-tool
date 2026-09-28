@@ -167,13 +167,17 @@ func Load(ctx context.Context, projectDir string) State {
 
 // SaveWorkCollapsed writes work.collapsed into projectDir's own
 // .admin/view.toml — see saveKey.
-func SaveWorkCollapsed(projectDir string, v bool) error { return saveKey(projectDir, "work", "collapsed", v) }
+func SaveWorkCollapsed(projectDir string, v bool) error {
+	return saveKey(projectDir, "work", "collapsed", v)
+}
 
 // SaveBeadTree writes beads.tree into projectDir's own .admin/view.toml.
 func SaveBeadTree(projectDir string, v string) error { return saveKey(projectDir, "beads", "tree", v) }
 
 // SaveTrackSort writes tracker.sort into projectDir's own .admin/view.toml.
-func SaveTrackSort(projectDir string, v string) error { return saveKey(projectDir, "tracker", "sort", v) }
+func SaveTrackSort(projectDir string, v string) error {
+	return saveKey(projectDir, "tracker", "sort", v)
+}
 
 // SaveMinesOnly writes branches.mine_only into projectDir's own
 // .admin/view.toml.
