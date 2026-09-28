@@ -316,6 +316,19 @@ func TestConfigureAppliesLoggingTable(t *testing.T) {
 	}
 }
 
+// TestConfigureKeepsAbsoluteLogDir proves an absolute [logging] dir is used as
+// written, not re-rooted under the project.
+func TestConfigureKeepsAbsoluteLogDir(t *testing.T) {
+	root := t.TempDir()
+	abs := filepath.Join(t.TempDir(), "admin-logs")
+	c := NewLogContext(root)
+	c.Stderr = &bytes.Buffer{}
+	c.Configure(root, map[string]any{"dir": abs})
+	if c.LogDir != abs {
+		t.Fatalf("LogDir = %q, want %q", c.LogDir, abs)
+	}
+}
+
 // TestConfigureDisablesLogging proves `[logging] enabled = false` blocks
 // SetLogContext entirely.
 func TestConfigureDisablesLogging(t *testing.T) {

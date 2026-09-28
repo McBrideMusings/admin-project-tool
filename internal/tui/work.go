@@ -18,6 +18,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/keymap"
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
+	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/viewstate"
 )
@@ -333,17 +334,11 @@ func (m Model) commandSteps(c manifest.Command) []workStepInfo {
 	return out
 }
 
-// commandLogDir is the log directory a command's log file lands under —
-// <repoRoot>/tmp by default, overridden by the manifest's `[logging] dir`,
-// mirroring luahost.LogContext.Configure's own resolution (dispatch.go's
-// nameCommandLog is what actually configures the process context this way
-// at run time; this is the Work tab's read-only mirror of that same rule).
+// commandLogDir is the log directory a command's log file lands under — the
+// same luahost.ResolveLogDir rule dispatch.go's nameCommandLog configures the
+// process context with at run time.
 func commandLogDir(repoRoot string, m *manifest.Manifest) string {
-	dir := "tmp"
-	if d, ok := m.Logging["dir"].(string); ok && d != "" {
-		dir = d
-	}
-	return filepath.Join(repoRoot, dir)
+	return luahost.ResolveLogDir(repoRoot, m.Logging)
 }
 
 // logStemTimestamp extracts the "<stem>.<TIMESTAMP>.log" suffix's timestamp

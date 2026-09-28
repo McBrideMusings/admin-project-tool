@@ -209,14 +209,11 @@ func (c *LogContext) Configure(projectRoot string, logging map[string]any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.ProjectRoot = projectRoot
-	c.LogDir = filepath.Join(projectRoot, "tmp")
+	c.LogDir = ResolveLogDir(projectRoot, logging)
 	c.enabled = true
 	c.retainDefault = 5
 	if logging == nil {
 		return
-	}
-	if d, ok := logging["dir"].(string); ok && d != "" {
-		c.LogDir = filepath.Join(projectRoot, d)
 	}
 	if e, ok := logging["enabled"].(bool); ok {
 		c.enabled = e
@@ -224,6 +221,20 @@ func (c *LogContext) Configure(projectRoot string, logging map[string]any) {
 	if r, ok := asConfigInt(logging["retain"]); ok {
 		c.retainDefault = r
 	}
+}
+
+// ResolveLogDir is where a project's run logs land: `[logging] dir` from the
+// manifest, "tmp" when unset. A relative dir is under projectRoot; an absolute
+// one is used as written (filepath.Join would re-root it under projectRoot).
+func ResolveLogDir(projectRoot string, logging map[string]any) string {
+	dir := "tmp"
+	if d, ok := logging["dir"].(string); ok && d != "" {
+		dir = d
+	}
+	if filepath.IsAbs(dir) {
+		return filepath.Clean(dir)
+	}
+	return filepath.Join(projectRoot, dir)
 }
 
 func asConfigInt(v any) (int, bool) {
