@@ -618,12 +618,14 @@ func contains(s, substr string) bool {
 func TestDumpRoundTripsThroughParse(t *testing.T) {
 	s := Starter{
 		ProjectName: "widget\tapp \"quoted\" \\backslash\\ \a\v",
-		PythonMin:   "3.11",
 		Archetypes:  []string{"react-native", "hugo"},
 		Modules:     []string{"web"},
 		Urls: map[string]string{
 			"local": "http://localhost:8080",
 			"weird": "value\nwith\nnewlines",
+		},
+		Tables: map[string]map[string]string{
+			"react_native": {"app_dir": "apps/mobile"},
 		},
 	}
 
@@ -644,5 +646,8 @@ func TestDumpRoundTripsThroughParse(t *testing.T) {
 		if got := m.Urls[label]; got != want {
 			t.Errorf("Urls[%q] = %q, want %q", label, got, want)
 		}
+	}
+	if got := m.Settings["react_native"]["app_dir"]; got != "apps/mobile" {
+		t.Errorf(`Settings["react_native"]["app_dir"] = %v, want "apps/mobile"`, got)
 	}
 }

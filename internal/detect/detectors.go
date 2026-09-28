@@ -116,8 +116,8 @@ func detectApple(root string) *Match {
 			if rel != filepath.Base(match) {
 				// Only hint project_path when nested — a root-level project
 				// is what _detect_project_path already finds on its own.
-				out.Tables = map[string]any{
-					"apple": map[string]any{"project_path": rel},
+				out.Tables = map[string]map[string]string{
+					"apple": map[string]string{"project_path": rel},
 				}
 			}
 			return out
@@ -184,8 +184,8 @@ func detectReactNative(root string) *Match {
 		}
 		return &Match{
 			Archetypes: []string{"react-native"},
-			Tables: map[string]any{
-				"react_native": map[string]any{"app_dir": rel},
+			Tables: map[string]map[string]string{
+				"react_native": map[string]string{"app_dir": rel},
 			},
 		}
 	}
@@ -361,8 +361,8 @@ func detectDocs(root string) *Match {
 	if declaresDocsScript(filepath.Join(root, "docs", "package.json")) {
 		return &Match{
 			Archetypes: []string{"docs"},
-			Tables: map[string]any{
-				"docs": map[string]any{"dir": "docs"},
+			Tables: map[string]map[string]string{
+				"docs": map[string]string{"dir": "docs"},
 			},
 		}
 	}
@@ -414,8 +414,8 @@ func detectRaylibGame(root string) *Match {
 
 	out := &Match{Archetypes: []string{"raylib-game"}}
 	if m := raylibProjectRe.FindStringSubmatch(text); m != nil {
-		out.Tables = map[string]any{
-			"raylib": map[string]any{"binary": m[1]},
+		out.Tables = map[string]map[string]string{
+			"raylib": map[string]string{"binary": m[1]},
 		}
 	}
 	return out

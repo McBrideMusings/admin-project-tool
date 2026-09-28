@@ -20,7 +20,7 @@ type Match struct {
 	HasProjectName bool // distinguish "not set" from "set to empty string"
 	// Tables holds every other key a detector returns, passed through as a
 	// manifest table verbatim — e.g. Tables["apple"] = map[string]any{"project_path": "ios/App.xcodeproj"}.
-	Tables map[string]any
+	Tables map[string]map[string]string
 }
 
 // Detector inspects root and returns a Match, or nil if the stack doesn't
@@ -85,7 +85,7 @@ type Result struct {
 	Archetypes  []string
 	URLs        map[string]string
 	ProjectName string
-	Tables      map[string]any
+	Tables      map[string]map[string]string
 	// Detector is "+".join(matched detector names) in Order, or "fallback"
 	// when nothing in Order matched and Archetypes was substituted with
 	// ["simple"].
@@ -97,10 +97,10 @@ type Result struct {
 // tables/urls/project_name they contributed, and the list of detector names
 // that matched, in Order. A project matching nothing returns a zero-length
 // Archetypes slice and a zero-length matched slice — never an error.
-func Propose(root string) (archetypes []string, urls map[string]string, projectName string, tables map[string]any, matched []string) {
+func Propose(root string) (archetypes []string, urls map[string]string, projectName string, tables map[string]map[string]string, matched []string) {
 	archetypes = []string{}
 	urls = map[string]string{}
-	tables = map[string]any{}
+	tables = map[string]map[string]string{}
 	matched = []string{}
 
 	for _, name := range Order {

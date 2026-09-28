@@ -147,7 +147,7 @@ func TestFixtureTreesProposeExpectedArchetypes(t *testing.T) {
 			t.Fatal("expected raylib-game match")
 		}
 		assertArchetypes(t, m.Archetypes, []string{"raylib-game"})
-		raylib, _ := m.Tables["raylib"].(map[string]any)
+		raylib := m.Tables["raylib"]
 		if raylib["binary"] != "MyGame" {
 			t.Fatalf("binary = %v, want MyGame", raylib["binary"])
 		}
@@ -183,7 +183,7 @@ func TestFixtureTreesProposeExpectedArchetypes(t *testing.T) {
 		root := writeFixture(t, nil, "ios/MyApp.xcodeproj")
 		res := Run(root)
 		assertArchetypes(t, res.Archetypes, []string{"apple"})
-		apple, ok := res.Tables["apple"].(map[string]any)
+		apple, ok := res.Tables["apple"]
 		if !ok {
 			t.Fatal("expected apple table with project_path")
 		}
@@ -204,7 +204,7 @@ func TestFixtureTreesProposeExpectedArchetypes(t *testing.T) {
 		}, "apps/mobile/ios", "apps/mobile/android")
 		res := Run(root)
 		assertArchetypes(t, res.Archetypes, []string{"react-native"})
-		rn, ok := res.Tables["react_native"].(map[string]any)
+		rn, ok := res.Tables["react_native"]
 		if !ok {
 			t.Fatal("expected react_native table")
 		}
@@ -246,7 +246,7 @@ func TestFixtureTreesProposeExpectedArchetypes(t *testing.T) {
 		})
 		res := Run(root)
 		assertArchetypes(t, res.Archetypes, []string{"docs"})
-		docs, ok := res.Tables["docs"].(map[string]any)
+		docs, ok := res.Tables["docs"]
 		if !ok || docs["dir"] != "docs" {
 			t.Fatalf("docs table = %v", res.Tables["docs"])
 		}

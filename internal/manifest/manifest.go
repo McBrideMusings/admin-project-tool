@@ -627,24 +627,26 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 // against it. It is deliberately not the full Manifest struct above — a
 // starter manifest never has commands, guards, or any of the other tables a
 // hand-edited admin.toml grows over time — so Dump only needs to serialize
-// the five fields `admin new` ever populates.
+// the fields `admin new` ever populates.
 type Starter struct {
 	ProjectName string
-	PythonMin   string
 	Archetypes  []string
 	Modules     []string
 	Urls        map[string]string
+	// Tables is detect.Result.Tables verbatim: one settings table per name,
+	// each a map of string keys (e.g. "react_native" -> {"app_dir": "."}).
+	Tables map[string]map[string]string
 }
 
 // Dump serializes a Starter to admin.toml text, scoped to only the fields a
-// starter manifest carries (project_name, python_min, archetypes, modules,
-// urls) rather than the full multi-table dump `admin compile` grows into.
-// Stdlib has no TOML writer, so this is a hand-rolled minimal emitter for
-// exactly this shape, not a general-purpose serializer.
+// starter manifest carries (project_name, archetypes, modules, urls, and one
+// level of scalar-valued settings tables) rather than the full multi-table
+// dump `admin compile` grows into. Stdlib has no TOML writer, so this is a
+// hand-rolled minimal emitter for exactly this shape, not a general-purpose
+// serializer.
 func Dump(s Starter) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "project_name = %s\n", tomlQuote(s.ProjectName))
-	fmt.Fprintf(&b, "python_min   = %s\n", tomlQuote(s.PythonMin))
 	fmt.Fprintf(&b, "archetypes = %s\n", tomlStringList(s.Archetypes))
 	if len(s.Modules) > 0 {
 		fmt.Fprintf(&b, "modules = %s\n", tomlStringList(s.Modules))
@@ -655,6 +657,15 @@ func Dump(s Starter) string {
 		b.WriteString("[urls]\n")
 		for _, label := range sortedKeys(s.Urls) {
 			fmt.Fprintf(&b, "%s = %s\n", label, tomlQuote(s.Urls[label]))
+		}
+		b.WriteString("\n")
+	}
+
+	for _, name := range sortedKeys(s.Tables) {
+		tbl := s.Tables[name]
+		fmt.Fprintf(&b, "[%s]\n", name)
+		for _, key := range sortedKeys(tbl) {
+			fmt.Fprintf(&b, "%s = %s\n", key, tomlQuote(tbl[key]))
 		}
 		b.WriteString("\n")
 	}
