@@ -378,8 +378,7 @@ func detectSimple(root string) *Match {
 }
 
 // ---------------------------------------------------------------------------
-// forge-engine — has a detector and a matching archetype directory, but is
-// deliberately NOT in Order (see the comment above Order in detect.go).
+// forge-engine
 // ---------------------------------------------------------------------------
 
 func detectForgeEngine(root string) *Match {
@@ -390,7 +389,7 @@ func detectForgeEngine(root string) *Match {
 }
 
 // ---------------------------------------------------------------------------
-// raylib-game — also not in Order (DETECTOR_ORDER never lists it either).
+// raylib-game
 // ---------------------------------------------------------------------------
 
 var raylibProjectRe = regexp.MustCompile(`(?im)^\s*project\s*\(\s*([A-Za-z0-9_.-]+)`)

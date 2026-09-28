@@ -31,12 +31,6 @@ type Detector func(root string) *Match
 // Order is the run order: it is not alphabetical and later entries win
 // merge conflicts. "simple" is last and is handled as a fallback by Run
 // rather than run in the loop.
-//
-// forge-engine has a detector (detectForgeEngine, registered in Registry)
-// and a matching archetype directory, but is deliberately absent from
-// Order, so it never runs. The detector<->order relationship is
-// one-directional — every name in Order must have a detector file, but a
-// detector file need not be in Order.
 var Order = []string{
 	"hugo",
 	"go-cli",
@@ -53,6 +47,12 @@ var Order = []string{
 	// an RN app keeps its workspace down in <app_dir>/ios/ — but a repo with a
 	// native Mac app at the root and an RN client in a subdir matches both.
 	"react-native",
+	// The game engines come after every general-purpose stack so their
+	// build/dev/test/clean win over a Dockerfile or wrangler.toml that rides
+	// along in the same repo. The two never both match: detectRaylibGame
+	// declines the forge engine repo itself.
+	"raylib-game",
+	"forge-engine",
 	// Orthogonal to every archetype above — a docs site rides along with
 	// whatever the project actually is, so it contributes no competing
 	// command names.
@@ -60,8 +60,7 @@ var Order = []string{
 	"simple",
 }
 
-// Registry holds every detector by name, including forge-engine, which is
-// present here but absent from Order (see the comment above Order).
+// Registry holds every detector by name.
 var Registry = map[string]Detector{
 	"hugo":               detectHugo,
 	"go-cli":             detectGoCLI,
@@ -75,8 +74,8 @@ var Registry = map[string]Detector{
 	"react-native":       detectReactNative,
 	"docs":               detectDocs,
 	"simple":             detectSimple,
-	"forge-engine":       detectForgeEngine, // not in Order — see comment above Order
-	"raylib-game":        detectRaylibGame,  // not in Order
+	"raylib-game":        detectRaylibGame,
+	"forge-engine":       detectForgeEngine,
 }
 
 // Result is the merged outcome of a detection run: the union of every

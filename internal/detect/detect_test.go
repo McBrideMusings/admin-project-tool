@@ -151,23 +151,18 @@ func TestFixtureTreesProposeExpectedArchetypes(t *testing.T) {
 		if raylib["binary"] != "MyGame" {
 			t.Fatalf("binary = %v, want MyGame", raylib["binary"])
 		}
-		// Not in Order — a raylib project alone falls back to simple via Run.
 		res := Run(root)
-		assertArchetypes(t, res.Archetypes, []string{"simple"})
+		assertArchetypes(t, res.Archetypes, []string{"raylib-game"})
 	})
 
-	t.Run("forge-engine detector matches but never runs via Run", func(t *testing.T) {
+	t.Run("forge-engine", func(t *testing.T) {
 		root := writeFixture(t, map[string]string{
 			"engine/build.zig": "// build\n",
+			"CMakeLists.txt":   "project(Forge)\ntarget_link_libraries(Forge raylib)\n",
 		}, "sample-games")
-		m := detectForgeEngine(root)
-		if m == nil {
-			t.Fatal("expected forge-engine detector match")
-		}
-		assertArchetypes(t, m.Archetypes, []string{"forge-engine"})
-		// Not in Order, so a full run falls back to simple.
+		// The engine repo also builds raylib, but raylib-game declines it.
 		res := Run(root)
-		assertArchetypes(t, res.Archetypes, []string{"simple"})
+		assertArchetypes(t, res.Archetypes, []string{"forge-engine"})
 	})
 
 	t.Run("apple project at root", func(t *testing.T) {
