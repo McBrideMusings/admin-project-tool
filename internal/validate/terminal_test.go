@@ -96,3 +96,15 @@ func TestTerminalReadIsALegalStringKey(t *testing.T) {
 		t.Fatalf("Terminal with non-string read = %v, want an error naming terminal.read", err)
 	}
 }
+
+func TestTerminalDetachMustBeBool(t *testing.T) {
+	ok := map[string]any{"spawn": "s", "attach": "a", "kill": "k", "detach": true}
+	if err := Terminal(ok); err != nil {
+		t.Fatalf("Terminal with detach = true = %v, want nil", err)
+	}
+	bad := map[string]any{"spawn": "s", "attach": "a", "kill": "k", "detach": "true"}
+	err := Terminal(bad)
+	if err == nil || !strings.Contains(err.Error(), "terminal.detach") {
+		t.Fatalf("Terminal with detach = \"true\" = %v, want an error naming terminal.detach", err)
+	}
+}

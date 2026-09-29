@@ -94,11 +94,19 @@ func resolveTargetDetach(parentVal, parentPresent bool, targetVal, targetPresent
 // as an unknown inline key. That's not a second silent failure: the Runner
 // performs its own `targets[picked]` lookup and returns "unknown target"
 // when it actually runs, whichever surface it lands on.
-func dispatchDetach(action manifest.Action, args []string) (detach, resolvable bool) {
+//
+// terminalDefault is [terminal].detach, the base of the chain: an action
+// (or a multi-target's parent) that doesn't declare `detach` reads it, and
+// an action's or target's own declaration — true or false — beats it. A
+// flat action is therefore always resolvable: with no declaration of its
+// own it resolves to terminalDefault, not to "unresolvable".
+func dispatchDetach(action manifest.Action, args []string, terminalDefault bool) (detach, resolvable bool) {
 	kind, _ := actionString(action, "kind")
 	if kind != "multi-target" {
-		val, present := actionDetach(action)
-		return val, present
+		if val, present := actionDetach(action); present {
+			return val, true
+		}
+		return terminalDefault, true
 	}
 
 	picked, _ := splitTargetArg(args)
@@ -111,6 +119,9 @@ func dispatchDetach(action manifest.Action, args []string) (detach, resolvable b
 	}
 
 	parentVal, parentPresent := actionDetach(action)
+	if !parentPresent {
+		parentVal, parentPresent = terminalDefault, true
+	}
 	targetVal, targetPresent := targetDetachOf(action, picked)
 	return resolveTargetDetach(parentVal, parentPresent, targetVal, targetPresent), true
 }

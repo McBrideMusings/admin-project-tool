@@ -359,8 +359,8 @@ func launchCommand(m *manifest.Manifest, name string, args []string, env []strin
 	}
 
 	if action, ok := m.Actions[cmd.Steps[0]]; ok {
-		if detach, ok := dispatchDetach(action, args); ok && detach {
-			cfg, _ := config.FromManifest(m)
+		cfg, _ := config.FromManifest(m)
+		if detach, ok := dispatchDetach(action, args, cfg.Terminal.Detach); ok && detach {
 			if cfg.Terminal.Spawn != "" {
 				ctx := launchCtxFrom(name, env)
 				root := projectRoot(m)

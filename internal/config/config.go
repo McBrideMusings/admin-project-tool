@@ -91,6 +91,11 @@ type Terminal struct {
 	// set; optional. Empty means the Work tab's band has no output to show
 	// for a launcher-dispatched worker.
 	Read string `toml:"read"`
+	// Detach is the project-wide default for an action's own `detach`: the
+	// base of the terminal -> action -> target chain internal/kinds.
+	// dispatchDetach resolves. Absent and false are the same base (an
+	// action's own detach = true still detaches), so a plain bool suffices.
+	Detach bool `toml:"detach"`
 }
 
 // Config is the decoded [identity]/[worktrees]/[[populate]]/[beads]/
@@ -274,6 +279,9 @@ func decodeTerminal(raw map[string]any) Terminal {
 	}
 	if v, ok := raw["read"].(string); ok {
 		t.Read = v
+	}
+	if v, ok := raw["detach"].(bool); ok {
+		t.Detach = v
 	}
 	return t
 }

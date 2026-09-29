@@ -431,3 +431,90 @@ func TestDetachedEntryKillRunsLauncherKillWithHandle(t *testing.T) {
 		t.Errorf("killed.txt = %q, want the spawned handle %q", got, "fake-handle-1")
 	}
 }
+
+// -- [terminal].detach as the base of the chain ----------------------------
+
+// TestDispatchDetachTerminalDefault covers the four resolutions the bead
+// names: the terminal default applies when nothing more specific speaks, an
+// action's own detach = false beats a true default, a target's detach =
+// false beats an inherited true, and a false default with an action's
+// detach = true still detaches.
+func TestDispatchDetachTerminalDefault(t *testing.T) {
+	multi := func(parent map[string]any, target map[string]any) manifest.Action {
+		a := manifest.Action{"kind": "multi-target", "playtest": target}
+		for k, v := range parent {
+			a[k] = v
+		}
+		return a
+	}
+	cases := []struct {
+		name     string
+		action   manifest.Action
+		terminal bool
+		want     bool
+	}{
+		{"terminal true, action silent", manifest.Action{"kind": "shell"}, true, true},
+		{"terminal false, action silent", manifest.Action{"kind": "shell"}, false, false},
+		{"action false beats terminal true", manifest.Action{"kind": "shell", "detach": false}, true, false},
+		{"terminal false, action true", manifest.Action{"kind": "shell", "detach": true}, false, true},
+		{"multi-target parent inherits terminal true", multi(nil, map[string]any{"run": "true"}), true, true},
+		{"target false beats inherited terminal true", multi(nil, map[string]any{"run": "true", "detach": false}), true, false},
+		{"target false beats parent true", multi(map[string]any{"detach": true}, map[string]any{"run": "true", "detach": false}), true, false},
+		{"target true beats terminal false", multi(nil, map[string]any{"run": "true", "detach": true}), false, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, resolvable := dispatchDetach(c.action, []string{"playtest"}, c.terminal)
+			if !resolvable || got != c.want {
+				t.Errorf("dispatchDetach = (%v, %v), want (%v, true)", got, resolvable, c.want)
+			}
+		})
+	}
+}
+
+// TestRunCommandDashboardProducerTerminalDetachDefault runs the whole
+// dispatch: [terminal].detach = true with an action that declares no
+// `detach` reaches the launcher, and the same manifest with the action's own
+// detach = false runs on the producer's default surface.
+func TestRunCommandDashboardProducerTerminalDetachDefault(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+	terminal := withFakeTerminal(t, "fake-handle-td", logPath)
+	terminal["detach"] = true
+
+	build := func(action manifest.Action) *manifest.Manifest {
+		return &manifest.Manifest{
+			Terminal: terminal,
+			Custom:   map[string]manifest.Command{"dev": {Steps: []string{"td-step"}}},
+			Actions:  map[string]manifest.Action{"td-step": action},
+		}
+	}
+
+	launched := false
+	if err := RunCommand(build(manifest.Action{"kind": "vite-dev"}), registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if launched {
+		t.Error("[terminal].detach = true with a silent action must reach the launcher, not the producer's default surface")
+	}
+	logged, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want a `spawn` call", string(logged))
+	}
+
+	launched = false
+	if err := os.Remove(logPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunCommand(build(manifest.Action{"kind": "vite-dev", "detach": false}), registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(&launched)); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	if !launched {
+		t.Error("an action's detach = false must beat [terminal].detach = true")
+	}
+	if logged, err := os.ReadFile(logPath); err == nil && strings.Contains(string(logged), "spawn") {
+		t.Errorf("terminal log = %q, want no `spawn` call", string(logged))
+	}
+}

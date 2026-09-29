@@ -7,11 +7,11 @@ import (
 )
 
 // TerminalKeys are the only keys a [terminal] table (ADR-0020) accepts.
-var TerminalKeys = []string{"spawn", "attach", "kill", "status", "read"}
+var TerminalKeys = []string{"spawn", "attach", "kill", "status", "read", "detach"}
 
 // terminalKeySet is TerminalKeys as a membership set.
 var terminalKeySet = map[string]bool{
-	"spawn": true, "attach": true, "kill": true, "status": true, "read": true,
+	"spawn": true, "attach": true, "kill": true, "status": true, "read": true, "detach": true,
 }
 
 // terminalRequired are the keys that must all be present together — a
@@ -20,7 +20,8 @@ var terminalKeySet = map[string]bool{
 var terminalRequired = []string{"spawn", "attach", "kill"}
 
 // Terminal validates the resolved manifest's raw top-level [terminal] table
-// (ADR-0020's spawn/attach/kill/status launcher contract). raw is whatever
+// (ADR-0020's spawn/attach/kill/status/read launcher contract, plus the
+// boolean project-wide `detach` default; every other key is a string). raw is whatever
 // TOML decoded manifest.Manifest.Terminal into — nil/absent (no [terminal]
 // table at all) is not an error, since declaring a launcher is opt-in.
 //
@@ -59,6 +60,13 @@ func Terminal(raw any) *Error {
 			continue
 		}
 		v := rawMap[key]
+		if key == "detach" {
+			if _, isBool := v.(bool); !isBool {
+				problems = append(problems, fmt.Sprintf(
+					"terminal.detach: must be a boolean (got %#v)", v))
+			}
+			continue
+		}
 		s, isStr := v.(string)
 		if !isStr {
 			problems = append(problems, fmt.Sprintf(
