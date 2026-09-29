@@ -87,6 +87,10 @@ type Terminal struct {
 	Attach string `toml:"attach"`
 	Kill   string `toml:"kill"`
 	Status string `toml:"status"`
+	// Read prints the pane's current text on stdout, run with ADMIN_HANDLE
+	// set; optional. Empty means the Work tab's band has no output to show
+	// for a launcher-dispatched worker.
+	Read string `toml:"read"`
 }
 
 // Config is the decoded [identity]/[worktrees]/[[populate]]/[beads]/
@@ -267,6 +271,9 @@ func decodeTerminal(raw map[string]any) Terminal {
 	}
 	if v, ok := raw["status"].(string); ok {
 		t.Status = v
+	}
+	if v, ok := raw["read"].(string); ok {
+		t.Read = v
 	}
 	return t
 }

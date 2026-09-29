@@ -469,8 +469,11 @@ func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 		out = append(out, faintStyle.Render(strings.Repeat("╌", w)))
 		avail := maxi(h-2-len(fields), 1)
 		var tail []string
-		if live.Output != nil {
+		switch {
+		case live.Output != nil:
 			tail = ringTailLines(live.Output, maxi(w-1, 1))
+		case live.Via != "":
+			tail = snapshotTailLines(live.ID, maxi(w-1, 1))
 		}
 		out = append(out, bandTail(tail, avail, w)...)
 	}
@@ -779,6 +782,28 @@ func ringTailLines(r *livework.Ring, w int) []string {
 	}
 	return lines
 }
+
+// snapshotTailLines is the band's text for a launcher-dispatched entry: the
+// last pane snapshot [terminal].read produced, or — when none has arrived,
+// which is every entry of a launcher declaring no read command — the
+// attach hint.
+func snapshotTailLines(id string, w int) []string {
+	snap, _ := livework.Default.Snapshot(id)
+	raw := logformat.AnsiEscapeRe.ReplaceAllString(snap, "")
+	raw = strings.TrimRight(strings.ReplaceAll(raw, "\r\n", "\n"), "\n \t")
+	if raw == "" {
+		return []string{truncR(noLocalOutput, maxi(w, 1))}
+	}
+	lines := strings.Split(raw, "\n")
+	for i, l := range lines {
+		lines[i] = truncR(strings.TrimRight(l, "\r"), maxi(w, 1))
+	}
+	return lines
+}
+
+// noLocalOutput is the band's text for a launcher-dispatched entry with no
+// pane snapshot.
+const noLocalOutput = "no local output - attach to see the real session"
 
 // urlRow renders one configured url as "<dot> label  url", truncated to fit
 // w. A bare-string entry resolves to Label == URL (frame.ResolveURLs's own

@@ -14,3 +14,4 @@ name = "herdr"
 spawn  = 'id=$(herdr pane split --current --direction right --cwd "$ADMIN_CWD" --no-focus | jq -r .result.pane.pane_id) && herdr pane run "$id" "$ADMIN_CMD" >/dev/null && echo "$id"'
 attach = 'herdr focus "$ADMIN_HANDLE"'
 kill   = 'herdr pane close "$ADMIN_HANDLE"'
+read   = 'herdr pane read "$ADMIN_HANDLE" --lines 40'

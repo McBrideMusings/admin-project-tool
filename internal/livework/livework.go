@@ -158,6 +158,13 @@ type Entry struct {
 	// producer hasn't reported one.
 	Activity string
 
+	// Snapshot is the last text a launcher's [terminal].read printed for
+	// Handle: the pane's current last lines, replaced whole on every refresh
+	// (never appended to). Empty until the first read succeeds, and always
+	// empty for a hosted-pty entry, whose bytes are in Output. Read it
+	// through Registry.Snapshot — SetSnapshot writes it under r.mu.
+	Snapshot string
+
 	// Worker is non-nil for an agent worker and nil for a long-running
 	// process — see WorkerInfo's doc comment.
 	Worker *WorkerInfo
@@ -322,6 +329,27 @@ func (r *Registry) SetActivity(id, activity string) {
 		return
 	}
 	e.Activity = activity
+}
+
+// SetSnapshot replaces the entry for id's pane snapshot, if present.
+func (r *Registry) SetSnapshot(id, snapshot string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if e, ok := r.entries[id]; ok {
+		e.Snapshot = snapshot
+	}
+}
+
+// Snapshot returns the entry for id's pane snapshot, safe for concurrent use
+// with SetSnapshot.
+func (r *Registry) Snapshot(id string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.entries[id]
+	if !ok {
+		return "", false
+	}
+	return e.Snapshot, true
 }
 
 // List returns every entry, oldest-added first. The returned slice is a

@@ -7,11 +7,11 @@ import (
 )
 
 // TerminalKeys are the only keys a [terminal] table (ADR-0020) accepts.
-var TerminalKeys = []string{"spawn", "attach", "kill", "status"}
+var TerminalKeys = []string{"spawn", "attach", "kill", "status", "read"}
 
 // terminalKeySet is TerminalKeys as a membership set.
 var terminalKeySet = map[string]bool{
-	"spawn": true, "attach": true, "kill": true, "status": true,
+	"spawn": true, "attach": true, "kill": true, "status": true, "read": true,
 }
 
 // terminalRequired are the keys that must all be present together — a

@@ -79,10 +79,9 @@ func TestRenderWorkBandRuleSeparatesFieldsFromTail(t *testing.T) {
 }
 
 // TestRenderWorkBandEmptyTailWithoutLiveRing is the negative case: a worker
-// with no Output ring (nil — e.g. dispatched through a [terminal] launcher
-// rather than hosted in-process, admin-spjp.6's known capability gap)
-// renders an empty tail: every row below the field block blank, still
-// exactly h lines.
+// with no Output ring and no pane snapshot (dispatched through a [terminal]
+// launcher that declares no read command) shows the attach hint as its last
+// row, everything else below the field block blank, still exactly h lines.
 func TestRenderWorkBandEmptyTailWithoutLiveRing(t *testing.T) {
 	freshLivework(t)
 	e := &livework.Entry{
@@ -98,10 +97,13 @@ func TestRenderWorkBandEmptyTailWithoutLiveRing(t *testing.T) {
 	if len(out) != h {
 		t.Fatalf("renderWorkBand produced %d lines, want exactly %d", len(out), h)
 	}
-	for i := 1 + 5; i < h; i++ {
+	for i := 1 + 5; i < h-1; i++ {
 		if strings.TrimSpace(out[i]) != "" {
 			t.Errorf("row %d with no live ring = %q, want blank", i, out[i])
 		}
+	}
+	if got := strings.TrimSpace(out[h-1]); got != noLocalOutput {
+		t.Errorf("last row = %q, want %q", got, noLocalOutput)
 	}
 }
 

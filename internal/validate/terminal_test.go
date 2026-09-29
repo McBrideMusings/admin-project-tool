@@ -84,3 +84,15 @@ func TestTerminalAbsentTablePasses(t *testing.T) {
 		t.Fatalf("Terminal(empty map) = %v, want nil", err)
 	}
 }
+
+func TestTerminalReadIsALegalStringKey(t *testing.T) {
+	base := map[string]any{"spawn": "s", "attach": "a", "kill": "k", "read": "herdr pane read x"}
+	if err := Terminal(base); err != nil {
+		t.Fatalf("Terminal with read = %v, want nil", err)
+	}
+	base["read"] = 3
+	err := Terminal(base)
+	if err == nil || !strings.Contains(err.Error(), "terminal.read") {
+		t.Fatalf("Terminal with non-string read = %v, want an error naming terminal.read", err)
+	}
+}

@@ -18,11 +18,13 @@ package kinds
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
@@ -242,6 +244,16 @@ func runLauncherShell(run, handle string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// ReadLauncherPane runs a [terminal].read command with ADMIN_HANDLE set to
+// handle and returns its stdout: the pane's current text. ctx bounds the run.
+func ReadLauncherPane(ctx context.Context, run, handle string) (string, error) {
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", run)
+	cmd.Env = append(os.Environ(), "ADMIN_HANDLE="+handle)
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	return string(out), err
 }
 
 // recordLiveWork adds a running entry for a successfully-dispatched

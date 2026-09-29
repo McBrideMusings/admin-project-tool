@@ -1732,13 +1732,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// here, never from View, so starting either stays a side effect and
 		// rendering stays pure.
 		m.refreshDetailProbes()
-		return m, tea.Batch(m.workTickCmd(), pollAgentStatusCmd(), pollPaneStatusCmd(m.cfgMerged.Terminal.Status))
+		return m, tea.Batch(m.workTickCmd(), pollAgentStatusCmd(), pollPaneStatusCmd(m.cfgMerged.Terminal.Status), m.pollPaneTailCmd(m.cfgMerged.Terminal.Read))
 
 	case agentStatusMsg:
 		// applyAgentStatuses is the only writer of the herdr-derived state
 		// transition; the next workTickMsg's repaint picks it up through the
 		// existing livework.Default.State(e.ID) reads workview.go already makes.
 		applyAgentStatuses(msg)
+		return m, nil
+
+	case paneTailMsg:
+		applyPaneTail(msg)
 		return m, nil
 
 	case paneStatusMsg:
