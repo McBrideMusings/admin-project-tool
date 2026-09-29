@@ -722,3 +722,34 @@ func TestRunCommandDashboardProducerRejectsActionKeysOnCommand(t *testing.T) {
 		t.Error("none of these should ever reach Launch — every one is rejected before dispatch")
 	}
 }
+
+// TestLauncherSpawnReceivesProjectRootNotInvocationDir guards ADMIN_CWD: a
+// detached command dispatched while the process cwd sits below the project
+// root (admin found its manifest by walking up) must hand the launcher the
+// root, per ADR-0020, never the subdirectory admin was typed in.
+func TestLauncherSpawnReceivesProjectRootNotInvocationDir(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
+	root := t.TempDir()
+	deeper := filepath.Join(root, "sub", "deeper")
+	if err := os.MkdirAll(deeper, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(deeper)
+	cwdPath := filepath.Join(t.TempDir(), "admin-cwd")
+	terminal := map[string]any{
+		"spawn": fmt.Sprintf(`printf "%%s" "$ADMIN_CWD" > %s; echo fake-handle-cwd`, shellQuote(cwdPath)),
+	}
+
+	m := longRunningManifestNamed(terminal, "cwd-dev-server")
+	m.Root = root
+	if err := RunCommand(m, registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(new(bool))); err != nil {
+		t.Fatalf("RunCommand = %v, want nil", err)
+	}
+	got, err := os.ReadFile(cwdPath)
+	if err != nil {
+		t.Fatalf("reading recorded ADMIN_CWD: %v", err)
+	}
+	if string(got) != root {
+		t.Errorf("ADMIN_CWD = %q, want the project root %q (process cwd was %q)", got, root, deeper)
+	}
+}
