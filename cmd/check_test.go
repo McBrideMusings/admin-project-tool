@@ -1125,7 +1125,7 @@ func TestRunCheckAcceptsAWellFormedTerminalTable(t *testing.T) {
 
 [terminal]
 spawn  = 'id=$(herdr pane split --current --cwd "$ADMIN_CWD" --no-focus) && herdr pane run "$id" "$ADMIN_CMD" && echo "$id"'
-attach = 'herdr focus "$ADMIN_HANDLE"'
+attach = 'p=$(herdr pane get "$ADMIN_HANDLE") && herdr workspace focus "$(printf %s "$p" | jq -r .result.pane.workspace_id)" >/dev/null && herdr tab focus "$(printf %s "$p" | jq -r .result.pane.tab_id)" >/dev/null'
 kill   = 'herdr pane close "$ADMIN_HANDLE"'
 status = 'herdr agent get "$ADMIN_HANDLE"'
 `)
