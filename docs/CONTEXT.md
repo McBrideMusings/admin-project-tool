@@ -114,7 +114,7 @@ _Avoid_: build (reserved for project-level build commands), freeze, bundle
 ### Live work and supervision
 
 **Live work**:
-Everything this repo started that is still alive — a `detach = true` action dispatched through the project's declared `[terminal]` launcher (ADR-0020), and an agent worker dispatched into a git worktree. The two share one registry (`internal/livework`) because that phrase is what they have in common, not because their fields match.
+Everything this repo started that is still alive — a `locale = "window"` action dispatched through the project's declared `[terminal]` launcher (ADR-0020), and an agent worker dispatched into a git worktree. The two share one registry (`internal/livework`) because that phrase is what they have in common, not because their fields match.
 _Avoid_: jobs, processes (a worker is neither)
 
 **Entry**:

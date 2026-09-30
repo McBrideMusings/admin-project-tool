@@ -974,7 +974,7 @@ var startHostedRun = kinds.StartHostedPTY
 // tea.Exec dispatch it replaces, this is an ordinary asynchronous tea.Cmd.
 // It routes through kinds.RunCommand with a dashboard CommandProducer —
 // admin-ysxr.4's collapsed entry point — rather than calling StartHostedPTY
-// directly, so a command whose first step declares `detach = true` against
+// directly, so a command whose first step declares `locale = "window"` against
 // a declared [terminal] dispatches through that launcher instead: the
 // dashboard is never the right process to host a run the project itself
 // asked to detach. Producer.Launch is exactly the old unconditional call:
@@ -1114,7 +1114,7 @@ func (m Model) startDispatch(name string, args ...string) (tea.Model, tea.Cmd) {
 // liveEntryForCommand resolves the livework.Entry now backing name, once its
 // dispatch has registered one — the workDispatchStartedMsg handler's queued-
 // attach path uses this rather than re-deriving the registry ID
-// (multiTargetLiveID per detach.go/hostedpty.go) itself, reusing
+// (multiTargetLiveID per locale.go/hostedpty.go) itself, reusing
 // commandRowItem's/targetRows' own lookups via the same workRows() scan
 // every other row-driven action already does.
 //

@@ -7,11 +7,11 @@ import (
 )
 
 // TerminalKeys are the only keys a [terminal] table (ADR-0020) accepts.
-var TerminalKeys = []string{"spawn", "attach", "kill", "status", "read", "detach"}
+var TerminalKeys = []string{"spawn", "attach", "kill", "status", "read", "locale"}
 
 // terminalKeySet is TerminalKeys as a membership set.
 var terminalKeySet = map[string]bool{
-	"spawn": true, "attach": true, "kill": true, "status": true, "read": true, "detach": true,
+	"spawn": true, "attach": true, "kill": true, "status": true, "read": true, "locale": true,
 }
 
 // terminalRequired are the keys that must all be present together — a
@@ -21,13 +21,13 @@ var terminalRequired = []string{"spawn", "attach", "kill"}
 
 // Terminal validates the resolved manifest's raw top-level [terminal] table
 // (ADR-0020's spawn/attach/kill/status/read launcher contract, plus the
-// boolean project-wide `detach` default; every other key is a string). raw is whatever
+// project-wide `locale` default, "window" or "hosted"; every other key is a string). raw is whatever
 // TOML decoded manifest.Manifest.Terminal into — nil/absent (no [terminal]
 // table at all) is not an error, since declaring a launcher is opt-in.
 //
 // Every problem found is collected into one joined *Error (never returned at
 // the first), matching RowKeys' collect-then-join style: an unknown key
-// names the four legal keys, a non-string or empty-string value under a
+// names the legal keys, a non-string or empty-string value under a
 // legal key is reported, and — only once the table is otherwise well-formed
 // enough to check — a [terminal] table missing one of spawn/attach/kill
 // while declaring at least one of them reports the missing key by name.
@@ -60,10 +60,9 @@ func Terminal(raw any) *Error {
 			continue
 		}
 		v := rawMap[key]
-		if key == "detach" {
-			if _, isBool := v.(bool); !isBool {
-				problems = append(problems, fmt.Sprintf(
-					"terminal.detach: must be a boolean (got %#v)", v))
+		if key == "locale" {
+			if why := CheckLocale(v); why != "" {
+				problems = append(problems, "terminal.locale: "+why)
 			}
 			continue
 		}
@@ -79,8 +78,21 @@ func Terminal(raw any) *Error {
 		}
 	}
 
+	// A launcher is only needed once something asks for one: a launcher key
+	// declared, or locale = "window". locale = "hosted" alone names the
+	// dashboard's own pty and needs no spawn command.
+	needsLauncher := rawMap["locale"] == LocaleWindow
+	for _, k := range TerminalKeys {
+		if _, present := rawMap[k]; present && k != "locale" {
+			needsLauncher = true
+		}
+	}
+
 	var missing []string
 	for _, req := range terminalRequired {
+		if !needsLauncher {
+			break
+		}
 		if _, present := rawMap[req]; !present {
 			missing = append(missing, req)
 		}

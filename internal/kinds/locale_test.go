@@ -1,7 +1,7 @@
-// detach_test.go covers `detach = true`'s dashboard-producer-only contract
-// (restored by admin-wwrg, withdrawing admin-m6m8's producer-independent
+// locale_test.go covers `locale = "window"`'s dashboard-producer-only
+// contract (restored by admin-wwrg, withdrawing admin-m6m8's producer-independent
 // one): RunAction (every step, plain CLI or already-launched) never consults
-// `detach` and never reaches the project's [terminal] launcher (ADR-0020);
+// `locale` and never reaches the project's [terminal] launcher (ADR-0020);
 // RunCommand's top-level dispatch consults it through launchCommand for its
 // required dashboard CommandProducer — the CLI's shape now calls
 // RunCommandInline instead of reaching RunCommand at all, and runs inline
@@ -19,13 +19,13 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// detachManifest is the shared fixture for the acceptance tests: one
+// localeManifest is the shared fixture for the acceptance tests: one
 // detached action whose `run` would leave a real, checkable side effect
 // (ran.txt) if it executed inline — so "did the launcher intercept it" and
 // "did it run inline" are both directly observable. The "dev" command lets a
 // producer-path test dispatch through RunCommand; launchCommand keys the
 // live entry on that command name.
-func detachManifest(terminal map[string]any) *manifest.Manifest {
+func localeManifest(terminal map[string]any) *manifest.Manifest {
 	return &manifest.Manifest{
 		Terminal: terminal,
 		Custom: map[string]manifest.Command{
@@ -35,18 +35,18 @@ func detachManifest(terminal map[string]any) *manifest.Manifest {
 			"dev-server": {
 				"kind":   "shell",
 				"run":    "touch ran.txt",
-				"detach": true,
+				"locale": "window",
 			},
 		},
 	}
 }
 
-// TestRunActionCLIDetachRunsInlineNeverReachesLauncher proves RunAction
+// TestRunActionCLILocaleRunsInlineNeverReachesLauncher proves RunAction
 // itself — every step's own dispatch, whichever surface the enclosing
 // command landed on — runs a detached action inline and never reaches the
 // launcher, even with a spawnable [terminal] declared. The launcher decision
 // is made once, in launchCommand, before any step runs.
-func TestRunActionCLIDetachRunsInlineNeverReachesLauncher(t *testing.T) {
+func TestRunActionCLILocaleRunsInlineNeverReachesLauncher(t *testing.T) {
 	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -57,7 +57,7 @@ func TestRunActionCLIDetachRunsInlineNeverReachesLauncher(t *testing.T) {
 	r.MustRegister("shell", makeShell)
 
 	logPath := filepath.Join(dir, "terminal-calls.log")
-	m := detachManifest(withFakeTerminal(t, "fake-handle-1", logPath))
+	m := localeManifest(withFakeTerminal(t, "fake-handle-1", logPath))
 
 	stderr := captureStderr(t, func() {
 		if err := RunAction(m, r, "dev-server", nil); err != nil {
@@ -77,11 +77,11 @@ func TestRunActionCLIDetachRunsInlineNeverReachesLauncher(t *testing.T) {
 	}
 }
 
-// TestRunCommandDashboardProducerDetachDispatchesThroughLauncher is the
+// TestRunCommandDashboardProducerLocaleDispatchesThroughLauncher is the
 // producer-path twin: the identical detached action, dispatched through
 // RunCommand with a non-nil CommandProducer, still reaches the launcher and
 // never falls back to the producer's own default surface.
-func TestRunCommandDashboardProducerDetachDispatchesThroughLauncher(t *testing.T) {
+func TestRunCommandDashboardProducerLocaleDispatchesThroughLauncher(t *testing.T) {
 	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -92,7 +92,7 @@ func TestRunCommandDashboardProducerDetachDispatchesThroughLauncher(t *testing.T
 	r := NewRegistry()
 	r.MustRegister("shell", makeShell)
 
-	m := detachManifest(map[string]any{"spawn": "echo fake-handle-1"})
+	m := localeManifest(map[string]any{"spawn": "echo fake-handle-1", "attach": "true", "kill": "true"})
 
 	if err := RunCommand(m, r, "dev", nil, dashboardProducer(&launched)); err != nil {
 		t.Fatalf("RunCommand = %v, want nil", err)
@@ -119,8 +119,8 @@ func TestRunCommandDashboardProducerDetachDispatchesThroughLauncher(t *testing.T
 
 // TestRunCommandInlineNeverReachesLauncher proves RunCommandInline — the
 // `admin cmd` picker's own entry point — never reaches the launcher for a
-// detach=true command, even with a spawnable [terminal] declared, the same
-// guarantee TestRunActionCLIDetachRunsInlineNeverReachesLauncher proves for
+// locale="window" command, even with a spawnable [terminal] declared, the same
+// guarantee TestRunActionCLILocaleRunsInlineNeverReachesLauncher proves for
 // RunAction. Unlike RunCommand, this must hold with no dependence on
 // inReentry() or a CommandProducer at all.
 func TestRunCommandInlineNeverReachesLauncher(t *testing.T) {
@@ -134,7 +134,7 @@ func TestRunCommandInlineNeverReachesLauncher(t *testing.T) {
 	r.MustRegister("shell", makeShell)
 
 	logPath := filepath.Join(dir, "terminal-calls.log")
-	m := detachManifest(withFakeTerminal(t, "fake-handle-1", logPath))
+	m := localeManifest(withFakeTerminal(t, "fake-handle-1", logPath))
 
 	if err := RunCommandInline(m, r, "dev", nil); err != nil {
 		t.Fatalf("RunCommandInline = %v, want nil", err)
@@ -162,7 +162,7 @@ func TestRunActionNoTerminalRunsInline(t *testing.T) {
 	r := NewRegistry()
 	r.MustRegister("shell", makeShell)
 
-	m := detachManifest(nil)
+	m := localeManifest(nil)
 
 	if err := RunAction(m, r, "dev-server", nil); err != nil {
 		t.Fatalf("RunAction = %v, want nil", err)
@@ -176,10 +176,10 @@ func TestRunActionNoTerminalRunsInline(t *testing.T) {
 	}
 }
 
-// TestRunActionDetachAbsentRunsInline proves an action with no `detach` key
+// TestRunActionLocaleAbsentRunsInline proves an action with no `locale` key
 // at all is unaffected by a declared [terminal] — irrelevant to a CLI
-// dispatch either way, since `detach` is never consulted on this path.
-func TestRunActionDetachAbsentRunsInline(t *testing.T) {
+// dispatch either way, since `locale` is never consulted on this path.
+func TestRunActionLocaleAbsentRunsInline(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -198,77 +198,82 @@ func TestRunActionDetachAbsentRunsInline(t *testing.T) {
 	assertFileExists(t, dir, "ran.txt")
 }
 
-// -- ValidateDetach ---------------------------------------------------------
-
-func TestValidateDetachAcceptsBool(t *testing.T) {
-	actions := map[string]manifest.Action{
-		"dev": {"kind": "shell", "run": "true", "detach": true},
+// localeOf maps the present/value pairs the fixtures in hosted_test.go
+// were written with onto the two words a manifest can write.
+func localeOf(window bool) string {
+	if window {
+		return "window"
 	}
-	if err := ValidateDetach(actions); err != nil {
-		t.Errorf("ValidateDetach() = %v, want nil", err)
-	}
+	return "hosted"
 }
 
-func TestValidateDetachRejectsNonBoolOnAction(t *testing.T) {
-	actions := map[string]manifest.Action{
-		"dev": {"kind": "shell", "run": "true", "detach": "true"},
-	}
-	err := ValidateDetach(actions)
-	if err == nil || !strings.Contains(err.Error(), "detach must be a boolean") {
-		t.Errorf("ValidateDetach() = %v, want a 'detach must be a boolean' error", err)
-	}
-	if err != nil && !strings.Contains(err.Error(), `"dev"`) {
-		t.Errorf("error = %v, want it to name the action", err)
-	}
-}
+// -- ValidateLocale ---------------------------------------------------------
 
-func TestValidateDetachRejectsNonBoolOnTarget(t *testing.T) {
+func TestValidateLocaleAcceptsWindowAndHosted(t *testing.T) {
 	actions := map[string]manifest.Action{
-		"dev": {
+		"dev": {"kind": "shell", "run": "true", "locale": "window"},
+		"ci": {
 			"kind": "multi-target",
-			"cf":   map[string]any{"run": "true", "detach": "yes"},
+			"cf":   map[string]any{"run": "true", "locale": "hosted"},
 		},
 	}
-	err := ValidateDetach(actions)
-	if err == nil || !strings.Contains(err.Error(), "detach must be a boolean") {
-		t.Errorf("ValidateDetach() = %v, want a 'detach must be a boolean' error", err)
-	}
-	if err != nil && !strings.Contains(err.Error(), `"cf"`) {
-		t.Errorf("error = %v, want it to name the target", err)
+	if err := ValidateLocale(actions); err != nil {
+		t.Errorf("ValidateLocale() = %v, want nil", err)
 	}
 }
 
-// -- resolveTargetDetach inheritance -----------------------------------------
-
-func TestResolveTargetDetachInheritance(t *testing.T) {
+func TestValidateLocaleRejectsBadValuesNamingActionAndTarget(t *testing.T) {
 	cases := []struct {
-		name                     string
-		parentVal, parentPresent bool
-		targetVal, targetPresent bool
-		want                     bool
+		name    string
+		actions map[string]manifest.Action
+		want    []string
 	}{
-		{"nothing declared anywhere", false, false, false, false, false},
-		{"parent true, target silent inherits", true, true, false, false, true},
-		{"parent true, target overrides false", true, true, false, true, false},
-		{"parent absent, target true", false, false, true, true, true},
-		{"parent false, target true overrides", false, true, true, true, true},
+		{"non-string on an action",
+			map[string]manifest.Action{"dev": {"kind": "shell", "run": "true", "locale": true}},
+			[]string{`action "dev"`, `must be "window" or "hosted"`}},
+		{"inline is not a value",
+			map[string]manifest.Action{"dev": {"kind": "shell", "run": "true", "locale": "inline"}},
+			[]string{`action "dev"`, "a plain shell always runs inline"}},
+		{"unknown word on a target",
+			map[string]manifest.Action{"dev": {"kind": "multi-target", "cf": map[string]any{"run": "true", "locale": "pane"}}},
+			[]string{`action "dev"`, `target "cf"`, `"pane" is unknown`}},
+		{"detach is not a key on an action",
+			map[string]manifest.Action{"dev": {"kind": "shell", "run": "true", "detach": true}},
+			[]string{`action "dev"`, "detach is not a key"}},
+		{"detach is not a key on a target",
+			map[string]manifest.Action{"dev": {"kind": "multi-target", "cf": map[string]any{"run": "true", "detach": true}}},
+			[]string{`target "cf"`, "detach is not a key"}},
+		{"a workflow's agents run in windows",
+			map[string]manifest.Action{"impl": {"kind": "workflow", "locale": "hosted"}},
+			[]string{`action "impl"`, `locale must be "window"`}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := resolveTargetDetach(c.parentVal, c.parentPresent, c.targetVal, c.targetPresent)
-			if got != c.want {
-				t.Errorf("resolveTargetDetach(%v, %v, %v, %v) = %v, want %v",
-					c.parentVal, c.parentPresent, c.targetVal, c.targetPresent, got, c.want)
+			err := ValidateLocale(c.actions)
+			if err == nil {
+				t.Fatal("ValidateLocale() = nil, want an error")
+			}
+			for _, w := range c.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("error = %v, want it to contain %q", err, w)
+				}
 			}
 		})
 	}
 }
 
-// TestMultiTargetPerTargetDetachRunsInlineFromCLI proves the multi-target
+func TestValidateLocaleAcceptsWindowOnAWorkflow(t *testing.T) {
+	actions := map[string]manifest.Action{"impl": {"kind": "workflow", "locale": "window"}}
+	if err := ValidateLocale(actions); err != nil {
+		t.Errorf("ValidateLocale() = %v, want nil", err)
+	}
+}
+
+// TestMultiTargetPerTargetLocaleRunsInlineFromCLI proves the multi-target
 // factory's Runner no longer has a launcher branch of its own at all: a
-// picked target's own `detach = true` override is never consulted from a
+// picked target's own `locale = "window"` override is never consulted from a
 // plain-CLI dispatch (RunAction), whatever the parent action's default is.
-func TestMultiTargetPerTargetDetachRunsInlineFromCLI(t *testing.T) {
+func TestMultiTargetPerTargetLocaleRunsInlineFromCLI(t *testing.T) {
 	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -285,8 +290,8 @@ func TestMultiTargetPerTargetDetachRunsInlineFromCLI(t *testing.T) {
 		Actions: map[string]manifest.Action{
 			"dev": {
 				"kind":   "multi-target",
-				"detach": false,
-				"cf":     map[string]any{"run": "touch cf-ran.txt", "detach": true},
+				"locale": "hosted",
+				"cf":     map[string]any{"run": "touch cf-ran.txt", "locale": "window"},
 				"local":  map[string]any{"run": "touch local-ran.txt"},
 			},
 		},
@@ -305,11 +310,11 @@ func TestMultiTargetPerTargetDetachRunsInlineFromCLI(t *testing.T) {
 	}
 }
 
-// TestMultiTargetPerTargetDetachDashboardProducerDispatchesThroughLauncher is
+// TestMultiTargetPerTargetLocaleDashboardProducerDispatchesThroughLauncher is
 // the producer-path twin: the identical per-target override, dispatched
 // through RunCommand with a non-nil CommandProducer, still reaches the
-// launcher via launchCommand's own dispatchDetach resolution.
-func TestMultiTargetPerTargetDetachDashboardProducerDispatchesThroughLauncher(t *testing.T) {
+// launcher via launchCommand's own dispatchLocale resolution.
+func TestMultiTargetPerTargetLocaleDashboardProducerDispatchesThroughLauncher(t *testing.T) {
 	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -322,15 +327,15 @@ func TestMultiTargetPerTargetDetachDashboardProducerDispatchesThroughLauncher(t 
 	r.MustRegister("shell", makeShell)
 
 	m := &manifest.Manifest{
-		Terminal: map[string]any{"spawn": "echo fake-handle-2"},
+		Terminal: map[string]any{"spawn": "echo fake-handle-2", "attach": "true", "kill": "true"},
 		Custom: map[string]manifest.Command{
 			"dev": {Steps: []string{"pick"}},
 		},
 		Actions: map[string]manifest.Action{
 			"pick": {
 				"kind":   "multi-target",
-				"detach": false,
-				"cf":     map[string]any{"run": "touch cf-ran.txt", "detach": true},
+				"locale": "hosted",
+				"cf":     map[string]any{"run": "touch cf-ran.txt", "locale": "window"},
 				"local":  map[string]any{"run": "touch local-ran.txt"},
 			},
 		},
@@ -359,14 +364,14 @@ func TestMultiTargetPerTargetDetachDashboardProducerDispatchesThroughLauncher(t 
 	}
 }
 
-// TestDetachedEntryAttachRunsLauncherAttachWithHandle is admin-ysxr.3's
+// TestWindowEntryAttachRunsLauncherAttachWithHandle is admin-ysxr.3's
 // acceptance criterion: pressing attach on a launcher-dispatched row runs
 // that launcher's attach command with ADMIN_HANDLE set to the handle spawn
 // printed. The fake launcher's attach writes ADMIN_HANDLE to a file rather
 // than actually attaching to anything, so the observable proof is that
 // file's content. Dispatched through a dashboard CommandProducer here, but a
 // nil (CLI) producer reaches the identical launcher entry.
-func TestDetachedEntryAttachRunsLauncherAttachWithHandle(t *testing.T) {
+func TestWindowEntryAttachRunsLauncherAttachWithHandle(t *testing.T) {
 	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -374,7 +379,7 @@ func TestDetachedEntryAttachRunsLauncherAttachWithHandle(t *testing.T) {
 	r := NewRegistry()
 	r.MustRegister("shell", makeShell)
 
-	m := detachManifest(map[string]any{
+	m := localeManifest(map[string]any{
 		"spawn":  "echo fake-handle-1",
 		"attach": `echo "$ADMIN_HANDLE" > attached.txt`,
 		"kill":   `echo "$ADMIN_HANDLE" > killed.txt`,
@@ -397,11 +402,11 @@ func TestDetachedEntryAttachRunsLauncherAttachWithHandle(t *testing.T) {
 	}
 }
 
-// TestDetachedEntryKillRunsLauncherKillWithHandle proves killing a
+// TestWindowEntryKillRunsLauncherKillWithHandle proves killing a
 // launcher-dispatched row runs the launcher's kill command, also with
 // ADMIN_HANDLE set to the spawned handle. Reached through the producer path,
-// for the same reason TestDetachedEntryAttachRunsLauncherAttachWithHandle is.
-func TestDetachedEntryKillRunsLauncherKillWithHandle(t *testing.T) {
+// for the same reason TestWindowEntryAttachRunsLauncherAttachWithHandle is.
+func TestWindowEntryKillRunsLauncherKillWithHandle(t *testing.T) {
 	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -409,7 +414,7 @@ func TestDetachedEntryKillRunsLauncherKillWithHandle(t *testing.T) {
 	r := NewRegistry()
 	r.MustRegister("shell", makeShell)
 
-	m := detachManifest(map[string]any{
+	m := localeManifest(map[string]any{
 		"spawn":  "echo fake-handle-1",
 		"attach": `echo "$ADMIN_HANDLE" > attached.txt`,
 		"kill":   `echo "$ADMIN_HANDLE" > killed.txt`,
@@ -432,14 +437,14 @@ func TestDetachedEntryKillRunsLauncherKillWithHandle(t *testing.T) {
 	}
 }
 
-// -- [terminal].detach as the base of the chain ----------------------------
+// -- [terminal].locale as the base of the chain ----------------------------
 
-// TestDispatchDetachTerminalDefault covers the four resolutions the bead
-// names: the terminal default applies when nothing more specific speaks, an
-// action's own detach = false beats a true default, a target's detach =
-// false beats an inherited true, and a false default with an action's
-// detach = true still detaches.
-func TestDispatchDetachTerminalDefault(t *testing.T) {
+// TestDispatchLocaleChain covers the resolutions the chain names: the
+// terminal default applies when nothing more specific speaks, an action's own
+// locale beats it, and a target's own locale beats the action's and the
+// terminal's. A workflow action always resolves to hosted, whatever else is
+// declared, because the action itself never runs in a window.
+func TestDispatchLocaleChain(t *testing.T) {
 	multi := func(parent map[string]any, target map[string]any) manifest.Action {
 		a := manifest.Action{"kind": "multi-target", "playtest": target}
 		for k, v := range parent {
@@ -450,39 +455,41 @@ func TestDispatchDetachTerminalDefault(t *testing.T) {
 	cases := []struct {
 		name     string
 		action   manifest.Action
-		terminal bool
-		want     bool
+		terminal string
+		want     string
 	}{
-		{"terminal true, action silent", manifest.Action{"kind": "shell"}, true, true},
-		{"terminal false, action silent", manifest.Action{"kind": "shell"}, false, false},
-		{"action false beats terminal true", manifest.Action{"kind": "shell", "detach": false}, true, false},
-		{"terminal false, action true", manifest.Action{"kind": "shell", "detach": true}, false, true},
-		{"multi-target parent inherits terminal true", multi(nil, map[string]any{"run": "true"}), true, true},
-		{"target false beats inherited terminal true", multi(nil, map[string]any{"run": "true", "detach": false}), true, false},
-		{"target false beats parent true", multi(map[string]any{"detach": true}, map[string]any{"run": "true", "detach": false}), true, false},
-		{"target true beats terminal false", multi(nil, map[string]any{"run": "true", "detach": true}), false, true},
+		{"nothing declared anywhere", manifest.Action{"kind": "shell"}, "", ""},
+		{"terminal window, action silent", manifest.Action{"kind": "shell"}, "window", "window"},
+		{"terminal hosted, action silent", manifest.Action{"kind": "shell"}, "hosted", "hosted"},
+		{"action hosted beats terminal window", manifest.Action{"kind": "shell", "locale": "hosted"}, "window", "hosted"},
+		{"terminal hosted, action window", manifest.Action{"kind": "shell", "locale": "window"}, "hosted", "window"},
+		{"multi-target parent inherits terminal window", multi(nil, map[string]any{"run": "true"}), "window", "window"},
+		{"target hosted beats inherited terminal window", multi(nil, map[string]any{"run": "true", "locale": "hosted"}), "window", "hosted"},
+		{"target hosted beats parent window", multi(map[string]any{"locale": "window"}, map[string]any{"run": "true", "locale": "hosted"}), "window", "hosted"},
+		{"target window beats terminal hosted", multi(nil, map[string]any{"run": "true", "locale": "window"}), "hosted", "window"},
+		{"workflow is hosted even under a window default", manifest.Action{"kind": "workflow", "locale": "window"}, "window", "hosted"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, resolvable := dispatchDetach(c.action, []string{"playtest"}, c.terminal)
+			got, resolvable := dispatchLocale(c.action, []string{"playtest"}, c.terminal)
 			if !resolvable || got != c.want {
-				t.Errorf("dispatchDetach = (%v, %v), want (%v, true)", got, resolvable, c.want)
+				t.Errorf("dispatchLocale = (%q, %v), want (%q, true)", got, resolvable, c.want)
 			}
 		})
 	}
 }
 
-// TestRunCommandDashboardProducerTerminalDetachDefault runs the whole
-// dispatch: [terminal].detach = true with an action that declares no
-// `detach` reaches the launcher, and the same manifest with the action's own
-// detach = false runs on the producer's default surface.
-func TestRunCommandDashboardProducerTerminalDetachDefault(t *testing.T) {
+// TestRunCommandDashboardProducerTerminalLocaleDefault runs the whole
+// dispatch: [terminal].locale = "window" with an action that declares no
+// `locale` reaches the launcher, and the same manifest with the action's own
+// locale = "hosted" runs on the producer's default surface.
+func TestRunCommandDashboardProducerTerminalLocaleDefault(t *testing.T) {
 	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
 	logPath := filepath.Join(dir, "terminal-calls.log")
 	terminal := withFakeTerminal(t, "fake-handle-td", logPath)
-	terminal["detach"] = true
+	terminal["locale"] = "window"
 
 	build := func(action manifest.Action) *manifest.Manifest {
 		return &manifest.Manifest{
@@ -497,7 +504,7 @@ func TestRunCommandDashboardProducerTerminalDetachDefault(t *testing.T) {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 	if launched {
-		t.Error("[terminal].detach = true with a silent action must reach the launcher, not the producer's default surface")
+		t.Error("[terminal].locale = window with a silent action must reach the launcher, not the producer's default surface")
 	}
 	logged, _ := os.ReadFile(logPath)
 	if !strings.Contains(string(logged), "spawn") {
@@ -508,13 +515,62 @@ func TestRunCommandDashboardProducerTerminalDetachDefault(t *testing.T) {
 	if err := os.Remove(logPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := RunCommand(build(manifest.Action{"kind": "vite-dev", "detach": false}), registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(&launched)); err != nil {
+	if err := RunCommand(build(manifest.Action{"kind": "vite-dev", "locale": "hosted"}), registryRecordingInline(new(bool)), "dev", nil, dashboardProducer(&launched)); err != nil {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 	if !launched {
-		t.Error("an action's detach = false must beat [terminal].detach = true")
+		t.Error("an action's locale = hosted must beat [terminal].locale = window")
 	}
 	if logged, err := os.ReadFile(logPath); err == nil && strings.Contains(string(logged), "spawn") {
 		t.Errorf("terminal log = %q, want no `spawn` call", string(logged))
+	}
+}
+
+// TestRunCommandDashboardProducerRejectsRetiredDetachKey proves a leftover
+// `detach` — on an action, or in [terminal] — stops the dashboard dispatch
+// with an error instead of silently running the command hosted: nothing
+// launches, nothing runs, and the producer's own surface is never reached.
+func TestRunCommandDashboardProducerRejectsRetiredDetachKey(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
+	dir := t.TempDir()
+	t.Chdir(dir)
+	logPath := filepath.Join(dir, "terminal-calls.log")
+
+	cases := []struct {
+		name     string
+		terminal func() map[string]any
+		action   manifest.Action
+		want     string
+	}{
+		{"detach on the action", func() map[string]any { return withFakeTerminal(t, "h", logPath) },
+			manifest.Action{"kind": "shell", "run": "touch ran.txt", "detach": true}, "detach is not a key"},
+		{"detach in [terminal]", func() map[string]any {
+			term := withFakeTerminal(t, "h", logPath)
+			term["detach"] = true
+			return term
+		}, manifest.Action{"kind": "shell", "run": "touch ran.txt"}, "unknown key"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			launched := false
+			r := NewRegistry()
+			r.MustRegister("shell", makeShell)
+			m := &manifest.Manifest{
+				Terminal: c.terminal(),
+				Custom:   map[string]manifest.Command{"dev": {Steps: []string{"dev-step"}}},
+				Actions:  map[string]manifest.Action{"dev-step": c.action},
+			}
+			err := RunCommand(m, r, "dev", nil, dashboardProducer(&launched))
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("RunCommand = %v, want an error containing %q", err, c.want)
+			}
+			if launched {
+				t.Error("the producer's default surface must not run a command whose manifest was rejected")
+			}
+			assertFileMissing(t, dir, "ran.txt")
+			if logged, err := os.ReadFile(logPath); err == nil && len(logged) > 0 {
+				t.Errorf("terminal log = %q, want empty — nothing may spawn", string(logged))
+			}
+		})
 	}
 }

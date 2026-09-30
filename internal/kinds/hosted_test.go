@@ -1,11 +1,11 @@
 // hosted_test.go covers the command-dispatch entry point: RunCommand takes a
-// required *CommandProducer, and `detach` is dashboard-producer-only
+// required *CommandProducer, and `locale` is dashboard-producer-only
 // (restored by admin-wwrg, withdrawing admin-m6m8's producer-independent
 // contract). The plain CLI dispatches through RunCommandInline instead,
 // which always runs inline and never touches the project's declared
-// [terminal] launcher, whatever the first step's `detach` says. A
+// [terminal] launcher, whatever the first step's `locale` says. A
 // CommandProducer (the dashboard, which cannot host the run itself)
-// resolves `detach`: it reaches the launcher for a detached first step and
+// resolves `locale`: it reaches the launcher for a detached first step and
 // falls back to its own default surface (Launch) when no launcher dispatch
 // happens. The tests below exercise both halves: the same manifest, the
 // same fake [terminal] launcher, the same detached step, dispatched through
@@ -24,8 +24,8 @@ import (
 )
 
 // longRunningManifest is the shared fixture for the paired entry-point
-// tests: one command whose single step is an action carrying `detach =
-// true` (ADR-0020) plus a declared [terminal] table, so the routing
+// tests: one command whose single step is an action carrying `locale =
+// "window"` (ADR-0020) plus a declared [terminal] table, so the routing
 // decision under test is genuine rather than a stub kind invented for the
 // test. terminal is the raw table this fixture's manifest.Manifest.Terminal
 // carries — built by withFakeTerminal in each test, since the log path it
@@ -49,7 +49,7 @@ func longRunningManifestNamed(terminal map[string]any, step string) *manifest.Ma
 			"dev": {Steps: []string{step}},
 		},
 		Actions: map[string]manifest.Action{
-			step: {"kind": "vite-dev", "detach": true},
+			step: {"kind": "vite-dev", "locale": "window"},
 		},
 	}
 }
@@ -82,12 +82,12 @@ func dashboardProducer(launched *bool) *CommandProducer {
 	}
 }
 
-// TestRunCommandInlinePlainCLIDetachRunsInlineNeverReachesLauncher is the CLI
+// TestRunCommandInlinePlainCLILocaleRunsInlineNeverReachesLauncher is the CLI
 // half of the pair: a plain-CLI dispatch, which now always goes through
 // RunCommandInline (admin-wwrg), with a declared [terminal] and a detached
-// first step must run inline and never reach the launcher — `detach` is
+// first step must run inline and never reach the launcher — `locale` is
 // dashboard-producer-only.
-func TestRunCommandInlinePlainCLIDetachRunsInlineNeverReachesLauncher(t *testing.T) {
+func TestRunCommandInlinePlainCLILocaleRunsInlineNeverReachesLauncher(t *testing.T) {
 	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -100,7 +100,7 @@ func TestRunCommandInlinePlainCLIDetachRunsInlineNeverReachesLauncher(t *testing
 		t.Fatalf("RunCommandInline = %v, want nil", err)
 	}
 	if !inlineRan {
-		t.Error("RunCommandInline must run inline, even with a declared [terminal] and detach=true")
+		t.Error("RunCommandInline must run inline, even with a declared [terminal] and locale=window")
 	}
 	logged, err := os.ReadFile(logPath)
 	if err == nil && len(logged) > 0 {
@@ -185,22 +185,22 @@ func TestRunCommandDashboardProducerNoTerminalFallsBackToLaunch(t *testing.T) {
 // multiTargetDashboardManifestNamed builds a manifest whose single command
 // step is a kind="multi-target" action with one inline target "playtest" —
 // the admin-ysxr.4 regression fixture: launchCommand must resolve the
-// picked target's own `detach` override, not just the parent action's
+// picked target's own `locale` override, not just the parent action's
 // default, before deciding whether to reach the launcher or fall back to
 // the producer's own default surface. parentPresent/parentVal control the
-// action's own top-level `detach`; targetPresent/targetVal control the
-// "playtest" target's own inline `detach`. step is parameterized for the
+// action's own top-level `locale`; targetPresent/targetVal control the
+// "playtest" target's own inline `locale`. step is parameterized for the
 // same reason longRunningManifestNamed's is — livework.Default is a shared
 // registry a completed launcher dispatch grows, so two tests reusing the
 // same step name would collide.
 func multiTargetDashboardManifestNamed(terminal map[string]any, step string, parentPresent, parentVal, targetPresent, targetVal bool) *manifest.Manifest {
 	action := manifest.Action{"kind": "multi-target"}
 	if parentPresent {
-		action["detach"] = parentVal
+		action["locale"] = localeOf(parentVal)
 	}
 	target := map[string]any{"run": "true"}
 	if targetPresent {
-		target["detach"] = targetVal
+		target["locale"] = localeOf(targetVal)
 	}
 	action["playtest"] = target
 	return &manifest.Manifest{
@@ -214,13 +214,13 @@ func multiTargetDashboardManifestNamed(terminal map[string]any, step string, par
 	}
 }
 
-// TestRunCommandDashboardProducerMultiTargetOverridesParentDetachFalse is
+// TestRunCommandDashboardProducerMultiTargetOverridesParentLocaleHosted is
 // the first of the two admin-ysxr.4 regression failures: a multi-target
-// parent declares `detach = true` as its default, but the dispatched target
-// ("playtest") explicitly opts out with `detach = false`. Before the fix,
-// launchCommand read only the parent's own actionDetach and reached the
+// parent declares `locale = "window"` as its default, but the dispatched target
+// ("playtest") explicitly opts out with `locale = "hosted"`. Before the fix,
+// launchCommand read only the parent's own actionLocale and reached the
 // launcher regardless — silently ignoring the target's explicit opt-out.
-func TestRunCommandDashboardProducerMultiTargetOverridesParentDetachFalse(t *testing.T) {
+func TestRunCommandDashboardProducerMultiTargetOverridesParentLocaleHosted(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	logPath := filepath.Join(dir, "terminal-calls.log")
@@ -232,23 +232,23 @@ func TestRunCommandDashboardProducerMultiTargetOverridesParentDetachFalse(t *tes
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 	if !launched {
-		t.Error("target detach=false must override the parent's detach=true default and run on the producer's own default surface")
+		t.Error("target locale=hosted must override the parent's locale=window default and run on the producer's own default surface")
 	}
 	logged, err := os.ReadFile(logPath)
 	if err != nil && !os.IsNotExist(err) {
 		t.Fatalf("reading terminal log: %v", err)
 	}
 	if strings.Contains(string(logged), "spawn") {
-		t.Errorf("terminal log = %q, want no `spawn` call — the target opted out of detach", string(logged))
+		t.Errorf("terminal log = %q, want no `spawn` call — the target opted out of locale", string(logged))
 	}
 }
 
-// TestRunCommandDashboardProducerMultiTargetOverridesParentDetachTrue is the
-// inverse regression: no parent-level `detach` (falls back to false), but
-// the dispatched target sets `detach = true`. Before the fix, launchCommand
-// saw the parent's absent/false detach and fell through to p.Launch, never
+// TestRunCommandDashboardProducerMultiTargetOverridesParentLocaleWindow is the
+// inverse regression: no parent-level `locale` (falls back to false), but
+// the dispatched target sets `locale = "window"`. Before the fix, launchCommand
+// saw the parent's absent/false locale and fell through to p.Launch, never
 // reaching the launcher the target asked for.
-func TestRunCommandDashboardProducerMultiTargetOverridesParentDetachTrue(t *testing.T) {
+func TestRunCommandDashboardProducerMultiTargetOverridesParentLocaleWindow(t *testing.T) {
 	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -262,14 +262,14 @@ func TestRunCommandDashboardProducerMultiTargetOverridesParentDetachTrue(t *test
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 	if launched {
-		t.Error("target detach=true must override the parent's absent/false default and reach the launcher, not the producer's own default surface")
+		t.Error("target locale=window must override the parent's absent/false default and reach the launcher, not the producer's own default surface")
 	}
 	logged, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("reading terminal log: %v", err)
 	}
 	if !strings.Contains(string(logged), "spawn") {
-		t.Errorf("terminal log = %q, want a `spawn` call — the target opted into detach", string(logged))
+		t.Errorf("terminal log = %q, want a `spawn` call — the target opted into locale", string(logged))
 	}
 	entries := livework.Default.List()
 	found := false
@@ -288,31 +288,31 @@ func TestRunCommandDashboardProducerMultiTargetOverridesParentDetachTrue(t *test
 
 // inlineTargetSpec describes one inline target subtable for
 // multiTargetManifestInline: name is the target key, present/val control
-// whether that target declares its own `detach` override.
+// whether that target declares its own `locale` override.
 type inlineTargetSpec struct {
 	name           string
 	present, value bool
 }
 
 // multiTargetManifestInline builds a kind="multi-target" action with N
-// inline target subtables (admin-ysxr.4 round 3: dispatchDetach's
+// inline target subtables (admin-ysxr.4 round 3: dispatchLocale's
 // sole-target auto-pick, mirroring TargetKeys/makeMultiTarget's own
 // `order`, needs fixtures with exactly one AND with more than one inline
 // target — multiTargetDashboardManifestNamed above is pinned to exactly
 // one target named "playtest" and stays untouched for round 2's tests, so
 // this is a sibling rather than a rewrite). Each target's run command is
 // always "true"; parentPresent/parentVal set the parent action's own
-// top-level `detach`. step is parameterized for the same livework.Default
+// top-level `locale`. step is parameterized for the same livework.Default
 // collision reason every fixture here documents.
 func multiTargetManifestInline(terminal map[string]any, step string, parentPresent, parentVal bool, targets ...inlineTargetSpec) *manifest.Manifest {
 	action := manifest.Action{"kind": "multi-target"}
 	if parentPresent {
-		action["detach"] = parentVal
+		action["locale"] = localeOf(parentVal)
 	}
 	for _, ts := range targets {
 		tbl := map[string]any{"run": "true"}
 		if ts.present {
-			tbl["detach"] = ts.value
+			tbl["locale"] = localeOf(ts.value)
 		}
 		action[ts.name] = tbl
 	}
@@ -329,17 +329,17 @@ func multiTargetManifestInline(terminal map[string]any, step string, parentPrese
 
 // multiTargetManifestFlat builds a kind="multi-target" action whose targets
 // live in a flat `targets` table (t1..tN, each "true" as a shell command)
-// rather than inline subtables — the other shape dispatchDetach's
+// rather than inline subtables — the other shape dispatchLocale's
 // sole-target auto-pick must resolve (admin-ysxr.4 round 3): TargetKeys
 // enumerates a flat table exactly like an inline one when there are no
 // inline subtables to prefer, so a single-entry flat table auto-picks the
-// same way. A flat entry can never carry its own `detach` override (only
-// an inline subtable can, per targetDetachOf), so there is no per-target
+// same way. A flat entry can never carry its own `locale` override (only
+// an inline subtable can, per targetLocaleOf), so there is no per-target
 // override to parameterize here — only the count and the parent default.
 func multiTargetManifestFlat(terminal map[string]any, step string, parentPresent, parentVal bool, n int) *manifest.Manifest {
 	action := manifest.Action{"kind": "multi-target"}
 	if parentPresent {
-		action["detach"] = parentVal
+		action["locale"] = localeOf(parentVal)
 	}
 	flat := map[string]any{}
 	for i := 1; i <= n; i++ {
@@ -358,11 +358,11 @@ func multiTargetManifestFlat(terminal map[string]any, step string, parentPresent
 }
 
 // TestRunCommandDashboardProducerMultiTargetNoTargetArgFallsBackToLaunch is
-// the case dispatchDetach still cannot resolve: a multi-target command with
+// the case dispatchLocale still cannot resolve: a multi-target command with
 // MORE THAN ONE target, dispatched with no target argument. The picked
 // target isn't known until the Runner itself runs and raises a picker, so
 // launchCommand must not guess — it falls back to the producer's own
-// default surface exactly as an absent `detach` would, however the
+// default surface exactly as an absent `locale` would, however the
 // parent's own default is set. (Round 3: this fixture used to build only
 // ONE inline target, which is the shape the Runner's own auto-pick DOES
 // resolve deterministically — see
@@ -398,8 +398,8 @@ func TestRunCommandDashboardProducerMultiTargetNoTargetArgFallsBackToLaunch(t *t
 // is admin-ysxr.4 round 3's actual defect: a multi-target action declaring
 // exactly ONE inline target is auto-picked by the Runner itself
 // (multitarget.go's `if len(order) == 1` branch) even with no target
-// argument, so its effective detach IS knowable up front. Before the fix,
-// dispatchDetach treated every empty-picked dispatch as unresolvable and
+// argument, so its effective locale IS knowable up front. Before the fix,
+// dispatchLocale treated every empty-picked dispatch as unresolvable and
 // fell through to p.Launch regardless.
 func TestRunCommandDashboardProducerMultiTargetSoleInlineTargetAutoPicksLauncher(t *testing.T) {
 	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
@@ -423,7 +423,7 @@ func TestRunCommandDashboardProducerMultiTargetSoleInlineTargetAutoPicksLauncher
 		t.Fatalf("reading terminal log: %v", err)
 	}
 	if !strings.Contains(string(logged), "spawn") {
-		t.Errorf("terminal log = %q, want a `spawn` call — the sole target's detach is knowable up front", string(logged))
+		t.Errorf("terminal log = %q, want a `spawn` call — the sole target's locale is knowable up front", string(logged))
 	}
 	entries := livework.Default.List()
 	found := false
@@ -442,9 +442,9 @@ func TestRunCommandDashboardProducerMultiTargetSoleInlineTargetAutoPicksLauncher
 
 // TestRunCommandDashboardProducerMultiTargetSoleInlineTargetOverrideFalseFallsBackToLaunch
 // is the auto-pick's target-override half: the sole target explicitly opts
-// out with `detach = false`, overriding the parent's `detach = true`
+// out with `locale = "hosted"`, overriding the parent's `locale = "window"`
 // default — the auto-pick must still honour that override, not blanket-
-// detach because there is only one target to choose from.
+// locale because there is only one target to choose from.
 func TestRunCommandDashboardProducerMultiTargetSoleInlineTargetOverrideFalseFallsBackToLaunch(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -458,14 +458,14 @@ func TestRunCommandDashboardProducerMultiTargetSoleInlineTargetOverrideFalseFall
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 	if !launched {
-		t.Error("the sole target's own detach=false must override the parent's detach=true default even under auto-pick")
+		t.Error("the sole target's own locale=hosted must override the parent's locale=window default even under auto-pick")
 	}
 	logged, err := os.ReadFile(logPath)
 	if err != nil && !os.IsNotExist(err) {
 		t.Fatalf("reading terminal log: %v", err)
 	}
 	if strings.Contains(string(logged), "spawn") {
-		t.Errorf("terminal log = %q, want no `spawn` call — the sole target opted out of detach", string(logged))
+		t.Errorf("terminal log = %q, want no `spawn` call — the sole target opted out of locale", string(logged))
 	}
 }
 
@@ -473,7 +473,7 @@ func TestRunCommandDashboardProducerMultiTargetSoleInlineTargetOverrideFalseFall
 // is the flat-`targets`-table twin of the inline auto-pick test: TargetKeys
 // enumerates a flat table's keys exactly like an inline table's when there
 // are no inline subtables, so a single-entry flat table is resolvable the
-// same way and inherits the parent's `detach` (a flat entry can never
+// same way and inherits the parent's `locale` (a flat entry can never
 // declare its own override).
 func TestRunCommandDashboardProducerMultiTargetFlatSingleTargetAutoPicksLauncher(t *testing.T) {
 	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
@@ -496,7 +496,7 @@ func TestRunCommandDashboardProducerMultiTargetFlatSingleTargetAutoPicksLauncher
 		t.Fatalf("reading terminal log: %v", err)
 	}
 	if !strings.Contains(string(logged), "spawn") {
-		t.Errorf("terminal log = %q, want a `spawn` call — the sole flat target's detach is knowable up front", string(logged))
+		t.Errorf("terminal log = %q, want a `spawn` call — the sole flat target's locale is knowable up front", string(logged))
 	}
 	entries := livework.Default.List()
 	found := false
@@ -515,7 +515,7 @@ func TestRunCommandDashboardProducerMultiTargetFlatSingleTargetAutoPicksLauncher
 
 // TestRunCommandDashboardProducerMultiTargetFlatTwoTargetsFallsBackToLaunch
 // is the flat-table twin of the two-target unresolvable case: with more
-// than one entry the Runner itself must raise the picker, so dispatchDetach
+// than one entry the Runner itself must raise the picker, so dispatchLocale
 // stays unresolvable and launchCommand falls back to p.Launch.
 func TestRunCommandDashboardProducerMultiTargetFlatTwoTargetsFallsBackToLaunch(t *testing.T) {
 	dir := t.TempDir()
@@ -617,13 +617,13 @@ func TestRunCommandInReentryNestedDelegationStaysInline(t *testing.T) {
 	}
 }
 
-// TestRunCommandInReentryMultiTargetDetachStaysInline is the multi-target
+// TestRunCommandInReentryMultiTargetLocaleStaysInline is the multi-target
 // twin of the ordering-hazard test above: a multi-target TARGET itself
-// (not a delegated action) carrying `detach = true` must run inline once
+// (not a delegated action) carrying `locale = "window"` must run inline once
 // already inReentry — makeMultiTarget's Runner has no launcher branch of its
-// own at all, so a target's `detach` is only ever consulted once, up front,
+// own at all, so a target's `locale` is only ever consulted once, up front,
 // by launchCommand, and inReentry short-circuits RunCommand before that.
-func TestRunCommandInReentryMultiTargetDetachStaysInline(t *testing.T) {
+func TestRunCommandInReentryMultiTargetLocaleStaysInline(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	logPath := filepath.Join(dir, "terminal-calls.log")
@@ -637,7 +637,7 @@ func TestRunCommandInReentryMultiTargetDetachStaysInline(t *testing.T) {
 		Actions: map[string]manifest.Action{
 			"pick": {
 				"kind":   "multi-target",
-				"server": map[string]any{"run": "touch ran.txt", "detach": true},
+				"server": map[string]any{"run": "touch ran.txt", "locale": "window"},
 			},
 		},
 	}
@@ -737,7 +737,9 @@ func TestLauncherSpawnReceivesProjectRootNotInvocationDir(t *testing.T) {
 	t.Chdir(deeper)
 	cwdPath := filepath.Join(t.TempDir(), "admin-cwd")
 	terminal := map[string]any{
-		"spawn": fmt.Sprintf(`printf "%%s" "$ADMIN_CWD" > %s; echo fake-handle-cwd`, shellQuote(cwdPath)),
+		"spawn":  fmt.Sprintf(`printf "%%s" "$ADMIN_CWD" > %s; echo fake-handle-cwd`, shellQuote(cwdPath)),
+		"attach": "true",
+		"kill":   "true",
 	}
 
 	m := longRunningManifestNamed(terminal, "cwd-dev-server")

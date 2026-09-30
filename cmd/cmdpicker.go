@@ -19,7 +19,7 @@ import (
 // kinds.RunCommandInline — never kinds.RunCommand, which `admin <name>`
 // uses. A human sitting at this picker is already watching the terminal it
 // runs in, so a picked command always runs right there, ignoring its own
-// `detach` declaration entirely; `admin <name>` typed directly keeps
+// `locale` declaration entirely; `admin <name>` typed directly keeps
 // dispatching through the project's declared [terminal] launcher exactly as
 // before. It is registered on rootCmd in cmd/root.go's init(), which is what
 // makes dispatchArgs' loop over rootCmd.Commands() match `admin cmd` before

@@ -26,7 +26,7 @@ import "sort"
 //
 // Whether a kind's dispatch reaches its own terminal instead of running
 // inline is no longer a property of the kind at all — ADR-0020 moved that
-// to a per-action `detach` flag (internal/kinds/detach.go), which any kind
+// to a per-action `locale` key (internal/kinds/locale.go), which any kind
 // may declare and which the tool never assumes for a project that didn't
 // ask.
 type Kind struct {
@@ -54,7 +54,7 @@ type Kind struct {
 //
 // Whether an action carrying a given kind dispatches through a project's
 // [terminal] launcher is no longer a catalog property (ADR-0020): a project
-// declares `detach = true` on whichever actions it wants dispatched that
+// declares `locale = "window"` on whichever actions it wants dispatched that
 // way — a dev-loop kind is a common case, not a reserved one, and nothing
 // here assumes it.
 var Kinds = map[string]Kind{
@@ -106,8 +106,9 @@ var Kinds = map[string]Kind{
 	// workflow (admin-3rgp.24): "run this same thing over many targets",
 	// declared via `over` rather than a `run` string, so Configless: true —
 	// the same reason clean-dev/vite-dev/docs/etc. above are. A workflow
-	// action must never carry `detach = true` itself (admin-spjp.2's fix,
-	// still true under ADR-0020): its Runner (internal/kinds/workflowcli.go)
+	// action itself never runs in a window (admin-spjp.2's fix, still true under
+	// ADR-0020; dispatchLocale resolves a workflow to hosted whatever it
+	// declares): its Runner (internal/kinds/workflowcli.go)
 	// has to run in the terminal the user typed into, because it prints the
 	// resolved target set and reads a yes/no confirmation from that
 	// terminal's stdin before it dispatches anything — dispatching the

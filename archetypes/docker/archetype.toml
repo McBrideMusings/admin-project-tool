@@ -1078,7 +1078,7 @@ if not run_cmd("tail -n 0 -f " .. shq(path)) then error("logs: tail -f failed") 
 kind = "docker-reload-loop"
 run = "docker build -t ${APP_IMAGE} . && docker run --rm ${APP_IMAGE}"
 desc = "Build+run with reload loop (press r or SIGUSR1 to rebuild)"
-detach = true
+locale = "window"
 
 [actions.run-args]
 kind = "lua"

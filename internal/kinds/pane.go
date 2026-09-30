@@ -1,5 +1,5 @@
-// pane.go is admin-ysxr.2's launcher-dispatch mechanism: how a `detach =
-// true` action's dispatch reaches the project's own [terminal] launcher
+// pane.go is admin-ysxr.2's launcher-dispatch mechanism: how a `locale =
+// "window"` action's dispatch reaches the project's own [terminal] launcher
 // (ADR-0020), and admin-ysxr.4's re-entry signal that replaces the old
 // argv-sentinel (reentryDetachedMarker) guard. The launcher's spawn command
 // runs the SAME binary re-invoked against a hidden re-entry verb —
@@ -162,7 +162,7 @@ func RowEnv(kind, id, url string) []string {
 	return env
 }
 
-// dispatchToLauncher is the detach half launchCommand — its only caller,
+// dispatchToLauncher is the window half launchCommand — its only caller,
 // reached identically for a plain-CLI dispatch and a dashboard dispatch —
 // reaches: it shells out to the project's declared t.Spawn command with the
 // ADR-0020 ADMIN_* context in its environment, and returns the trimmed
