@@ -24,7 +24,7 @@ import (
 // already keeps it out of the map[string]any inline scan below — belt and
 // suspenders against a malformed manifest that puts a table there instead.
 var multiTargetReserved = map[string]bool{
-	"kind": true, "desc": true, "targets": true, "urls": true, "footer": true, "requires": true, "detach": true,
+	"kind": true, "desc": true, "targets": true, "urls": true, "footer": true, "requires": true, "locale": true,
 }
 
 // multiTargetEntry is one resolved target: either a shell command to run
@@ -33,17 +33,14 @@ var multiTargetReserved = map[string]bool{
 // (including an empty list — the explicit opt-out) from "no override was
 // given, inherit the parent's default" — the same None-vs-[]-vs-list
 // tri-state the pinned-footer urls/footer design (project CLAUDE.md) uses
-// for target_urls/target_footer. detach/detachSet is the identical
-// tri-state for ADR-0020's per-target `detach` override. env is set in the
-// process environment before the target runs, whether it runs a command or
-// delegates; pty and watch apply to a `run` target only, as on kind="shell".
+// for target_urls/target_footer. env is set in the process environment
+// before the target runs, whether it runs a command or delegates; pty and
+// watch apply to a `run` target only, as on kind="shell".
 type multiTargetEntry struct {
 	run         string
 	action      string
 	requires    []string
 	requiresSet bool
-	detach      bool
-	detachSet   bool
 	env         map[string]string
 	pty         bool
 	watch       string
@@ -263,14 +260,6 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 				}
 				entry.requires, entry.requiresSet = reqs, true
 			}
-			if dv, present := tbl["detach"]; present {
-				b, ok := dv.(bool)
-				if !ok {
-					return nil, fmt.Errorf(
-						"action %q: target %q: detach must be a boolean", name, k)
-				}
-				entry.detach, entry.detachSet = b, true
-			}
 			if ev, present := tbl["env"]; present {
 				envTbl, ok := ev.(map[string]any)
 				if !ok {
@@ -433,10 +422,10 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 // package recognizes: args[0] names the target unless it looks like a flag
 // (starts with '-'), in which case no target was named at all and every arg
 // is passed through as rest. This is the canonical definition — the Runner
-// above and dispatch.go's dispatchDetach (which must know which target a
+// above and dispatch.go's dispatchLocale (which must know which target a
 // launcher decision resolves against before the Runner ever runs) both call
 // it, so "which arg names the target" cannot drift into two answers the way
-// the detach resolution itself once did (admin-ysxr.4).
+// the locale resolution itself once did (admin-ysxr.4).
 func splitTargetArg(args []string) (picked string, rest []string) {
 	rest = args
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {

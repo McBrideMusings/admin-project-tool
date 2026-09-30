@@ -17,6 +17,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/reload"
+	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
 
 // pureRoutingKeys are the action-only fields ADR-0003
@@ -234,10 +235,10 @@ func RunAction(m *manifest.Manifest, r *Registry, name string, args []string) er
 }
 
 // CommandProducer distinguishes a command dispatch whose producer cannot
-// host the run itself from one that can. `detach` is dashboard-producer-only
+// host the run itself from one that can. `locale` is dashboard-producer-only
 // (restored by admin-wwrg, withdrawing admin-m6m8's producer-independent
 // contract): a dispatch through RunCommand consults the command's own
-// launcher/detach declaration, in launchCommand, and either dispatches
+// launcher/locale declaration, in launchCommand, and either dispatches
 // through the project's declared [terminal] launcher or falls back to
 // Launch (the dashboard's hosted pty). See RunCommand's own doc comment.
 //
@@ -247,7 +248,7 @@ func RunAction(m *manifest.Manifest, r *Registry, name string, args []string) er
 type CommandProducer struct {
 	// Launch runs name (with args) on the producer's own default surface —
 	// StartHostedPTY for the dashboard — when the command's first step
-	// declares no `detach`, or the manifest declares no [terminal] launcher.
+	// declares no `locale`, or the manifest declares no [terminal] launcher.
 	Launch func(m *manifest.Manifest, name string, args []string) error
 	// Env carries extra KEY=VALUE pairs the producer would have handed its
 	// own launcher — a row-scoped key binding's ADMIN_ROW_KIND/ADMIN_ROW_ID/
@@ -268,19 +269,19 @@ type CommandProducer struct {
 // Two cases, checked in this order:
 //
 //  1. inReentry() — every step runs inline through runSteps/RunAction, and
-//     `detach` is never consulted. This is __run-command's own re-entry
+//     `locale` is never consulted. This is __run-command's own re-entry
 //     (cmd/root.go), reached after MarkReentry(): a process already inside a
 //     launched dispatch must never reach a second launcher, however many
 //     levels of delegation separate it from the dispatch that opened that
 //     run.
 //  2. Otherwise — the dashboard. p is required. launchCommand resolves the
-//     command's own launcher/detach declaration once, up front, and either
+//     command's own launcher/locale declaration once, up front, and either
 //     dispatches to the project's declared [terminal] launcher or falls
 //     back to p.Launch (the hosted pty).
 //
 // RunCommandInline is this function's other entry point, and is what every
 // CLI caller (cmd/root.go's manifest-command RunE and its __run-command
-// re-entry verb) actually calls: it never consults `detach` regardless of
+// re-entry verb) actually calls: it never consults `locale` regardless of
 // reentry — see its own doc comment. Its behavior is now identical to case
 // 1 above; it remains a separate function because `admin cmd`'s picker
 // (cmd/cmdpicker.go) calls it directly with no CommandProducer in scope at
@@ -294,17 +295,17 @@ func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string, p
 
 // RunCommandInline runs name's steps directly through runSteps, the same
 // body RunCommand's inReentry() branch already uses — skipping
-// launchCommand's launcher/detach resolution entirely, regardless of
+// launchCommand's launcher/locale resolution entirely, regardless of
 // reentry state or any CommandProducer. Every other RunCommand caller keeps
-// consulting the command's own `detach` declaration; this one never does.
+// consulting the command's own `locale` declaration; this one never does.
 //
 // It exists for cmd/cmdpicker.go's `admin cmd` picker: a human sitting at an
 // interactive arrow-key picker, in a terminal they are already watching,
 // expects the picked command's output to appear right there, never in a
 // new pane elsewhere. `admin <name>` typed directly now calls
-// RunCommandInline too (admin-wwrg — detach is dashboard-producer-only), so
+// RunCommandInline too (admin-wwrg — locale is dashboard-producer-only), so
 // this is no longer a special case relative to the plain CLI: both skip
-// launchCommand's launcher/detach resolution entirely.
+// launchCommand's launcher/locale resolution entirely.
 func RunCommandInline(m *manifest.Manifest, r *Registry, name string, args []string) error {
 	return runSteps(m, r, name, args)
 }
@@ -328,24 +329,24 @@ func RunCommandInline(m *manifest.Manifest, r *Registry, name string, args []str
 // The launcher decision looks only at the command's FIRST step's action,
 // looked up by cmd.Steps[0], the same way StartHostedPTY finds it. The
 // recorded live-work entry is keyed by the command itself,
-// multiTargetLiveID(name, action, args) (detach.go): the bare command name,
+// multiTargetLiveID(name, action, args) (locale.go): the bare command name,
 // or "<command>:<picked target>" for a genuine multi-target menu dispatched
 // with a resolvable target — so only the command that was run, or its
 // picked target, shows the entry; another command sharing one of its steps
 // never does. `a` (attach) looks entries up the same way.
 //
 // When that first step is itself kind="multi-target", its own top-level
-// `detach` is only the default a picked target inherits — the effective
-// value belongs to the picked target, and dispatchDetach (detach.go)
+// `locale` is only the default a picked target inherits — the effective
+// value belongs to the picked target, and dispatchLocale (locale.go)
 // resolves parent-default-plus-target-override the same way
 // multitarget.go's own Runner does, from args[0] (splitTargetArg). A
 // multi-target command dispatched with no target argument can't have its
-// effective detach known up front in general — the Runner itself raises
+// effective locale known up front in general — the Runner itself raises
 // the target picker once it runs — unless the action declares exactly one
-// target, which the Runner auto-picks deterministically; dispatchDetach
-// resolves that case the same way. Otherwise dispatchDetach reports the
+// target, which the Runner auto-picks deterministically; dispatchLocale
+// resolves that case the same way. Otherwise dispatchLocale reports the
 // dispatch as unresolvable and this function falls through to fallback,
-// same as `detach` being absent.
+// same as `locale` being absent.
 func launchCommand(m *manifest.Manifest, name string, args []string, env []string, fallback func() error) error {
 	cmd, ok := resolveCommand(m, name)
 	if !ok {
@@ -359,8 +360,17 @@ func launchCommand(m *manifest.Manifest, name string, args []string, env []strin
 	}
 
 	if action, ok := m.Actions[cmd.Steps[0]]; ok {
+		// A leftover `locale`, or a locale outside the vocabulary, must stop the
+		// dispatch: dispatchLocale below reads only `locale`, so ignoring one
+		// would silently run a window action on the hosted pty.
+		if err := ValidateLocale(map[string]manifest.Action{cmd.Steps[0]: action}); err != nil {
+			return fmt.Errorf("command %q: %w", name, err)
+		}
+		if err := validate.Terminal(m.Terminal); err != nil {
+			return fmt.Errorf("command %q: %w", name, err)
+		}
 		cfg, _ := config.FromManifest(m)
-		if detach, ok := dispatchDetach(action, args, cfg.Terminal.Detach); ok && detach {
+		if locale, ok := dispatchLocale(action, args, cfg.Terminal.Locale); ok && locale == validate.LocaleWindow {
 			if cfg.Terminal.Spawn != "" {
 				ctx := launchCtxFrom(name, env)
 				root := projectRoot(m)
@@ -384,7 +394,7 @@ func launchCommand(m *manifest.Manifest, name string, args []string, env []strin
 // runSteps is the body an inline run shares with itself for every step —
 // reached from RunCommand directly when already inReentry, and from
 // launchCommand's fallback when the CLI dispatches a command that carries no
-// `detach` (or has nowhere to send it): the global preflight —
+// `locale` (or has nowhere to send it): the global preflight —
 // guards.RunGlobalPreflight, the always-on deps-fresh check ADR-0005
 // requires before every command, skipped when the command itself declares
 // `preflight = false` (admin-tlhw.3 — no name is hardcoded here) and

@@ -97,21 +97,46 @@ func TestTerminalReadIsALegalStringKey(t *testing.T) {
 	}
 }
 
-func TestTerminalDetachAloneStillRequiresLauncherKeys(t *testing.T) {
-	err := Terminal(map[string]any{"detach": true})
+func TestTerminalWindowLocaleAloneStillRequiresLauncherKeys(t *testing.T) {
+	err := Terminal(map[string]any{"locale": "window"})
 	if err == nil || !strings.Contains(err.Error(), "spawn, attach and kill are required together") {
-		t.Fatalf("Terminal with only detach = %v, want the required-together error", err)
+		t.Fatalf("Terminal with only locale = window = %v, want the required-together error", err)
 	}
 }
 
-func TestTerminalDetachMustBeBool(t *testing.T) {
-	ok := map[string]any{"spawn": "s", "attach": "a", "kill": "k", "detach": true}
-	if err := Terminal(ok); err != nil {
-		t.Fatalf("Terminal with detach = true = %v, want nil", err)
+func TestTerminalHostedLocaleAloneNeedsNoLauncher(t *testing.T) {
+	if err := Terminal(map[string]any{"locale": "hosted"}); err != nil {
+		t.Fatalf("Terminal with only locale = hosted = %v, want nil", err)
 	}
-	bad := map[string]any{"spawn": "s", "attach": "a", "kill": "k", "detach": "true"}
-	err := Terminal(bad)
-	if err == nil || !strings.Contains(err.Error(), "terminal.detach") {
-		t.Fatalf("Terminal with detach = \"true\" = %v, want an error naming terminal.detach", err)
+}
+
+func TestTerminalLocaleMustBeWindowOrHosted(t *testing.T) {
+	launcher := func(locale any) map[string]any {
+		return map[string]any{"spawn": "s", "attach": "a", "kill": "k", "locale": locale}
+	}
+	for _, ok := range []string{"window", "hosted"} {
+		if err := Terminal(launcher(ok)); err != nil {
+			t.Fatalf("Terminal with locale = %q = %v, want nil", ok, err)
+		}
+	}
+	for _, bad := range []any{"inline", "pane", true} {
+		err := Terminal(launcher(bad))
+		if err == nil || !strings.Contains(err.Error(), "terminal.locale") {
+			t.Fatalf("Terminal with locale = %#v = %v, want an error naming terminal.locale", bad, err)
+		}
+	}
+}
+
+func TestTerminalHostedLocaleWithAnyLauncherKeyStillRequiresAllThree(t *testing.T) {
+	err := Terminal(map[string]any{"locale": "hosted", "status": "s"})
+	if err == nil || !strings.Contains(err.Error(), "spawn, attach and kill are required together") {
+		t.Fatalf("Terminal with locale = hosted and status = %v, want the required-together error", err)
+	}
+}
+
+func TestTerminalDetachIsAnUnknownKey(t *testing.T) {
+	err := Terminal(map[string]any{"spawn": "s", "attach": "a", "kill": "k", "detach": true})
+	if err == nil || !strings.Contains(err.Error(), `unknown key "detach"`) {
+		t.Fatalf("Terminal with detach = %v, want an unknown-key error", err)
 	}
 }

@@ -6,7 +6,7 @@
 // (ADR-0020), and __run-command in place of __run-action. Both re-entry verbs call kinds.RunCommand/RunAction with
 // kinds.MarkReentry() set first (cmd/root.go), so __run-command's whole step
 // loop runs inline (RunAction, via runSteps) in the pty child regardless of
-// what any step's own `detach` declares — StartHostedPTY IS the built-in
+// what any step's own `locale` declares — StartHostedPTY IS the built-in
 // launcher a
 // dashboard dispatch reaches when the manifest names none, so nothing it
 // starts can itself reach a second one. Running the whole step loop in a

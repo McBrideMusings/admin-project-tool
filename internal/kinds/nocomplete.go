@@ -10,10 +10,10 @@ import (
 // ValidateNoComplete rejects a non-bool `no_complete` on an action's own top
 // level — TOML has no truthy strings, so `no_complete = "true"` is a typo
 // worth reporting rather than silently treating as unset (admin check's job,
-// alongside kinds.ValidateDetach, kinds.ValidateWorkflows and
+// alongside kinds.ValidateLocale, kinds.ValidateWorkflows and
 // validate.Terminal). Reports every offending action, not just the first.
 //
-// Unlike ValidateDetach, this never descends into a multi-target action's
+// Unlike ValidateLocale, this never descends into a multi-target action's
 // inline target subtables: `no_complete` suppresses the single
 // `h.Ok(name + " complete")` line a flat action prints on success, and a
 // multi-target dispatch has no such line of its own to suppress.

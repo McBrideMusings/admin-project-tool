@@ -444,8 +444,8 @@ var runActionCmd = &cobra.Command{
 
 // runCommandCmd is admin-3rgp.61's hidden re-entry point: what the pty child
 // a dashboard-hosted command dispatches into actually runs, and (as of
-// admin-ysxr.4) what a detached Command's launcher dispatch re-enters into
-// as well. It calls kinds.RunCommandInline — detach is dashboard-producer-only
+// admin-ysxr.4) what a window-locale Command's launcher dispatch re-enters into
+// as well. It calls kinds.RunCommandInline — `locale` is dashboard-producer-only
 // again (admin-wwrg), so this re-entry point never consults it either way.
 // kinds.MarkReentry() below is kept regardless: nested dispatch reached from
 // inside this run (a multi-target target's `action = "other"` hop, or any

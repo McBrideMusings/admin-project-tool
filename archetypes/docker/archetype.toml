@@ -1070,7 +1070,7 @@ desc = "Render deploy/unraid-template.xml's ${VAR} placeholders from the environ
 kind = "docker-reload-loop"
 run = "docker build -t ${APP_IMAGE} . && docker run --rm ${APP_IMAGE}"
 desc = "Build+run with reload loop (press r or SIGUSR1 to rebuild)"
-detach = true
+locale = "window"
 
 [actions.run-args]
 kind = "lua"

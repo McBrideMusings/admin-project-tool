@@ -318,7 +318,7 @@ func TestValidateWorkflowsReportsEveryOffender(t *testing.T) {
 
 // TestWorkflowKindIsDeclaredConfigless proves the catalog entry's shape:
 // Configless (its body is `over`, not `run`) and not ConsumesTargets. A
-// workflow action must never carry `detach = true` (admin-spjp.2's fix,
+// workflow action must never carry `locale = "window"` (admin-spjp.2's fix,
 // still true under ADR-0020 — see catalog.go's comment on the "workflow"
 // entry), but that is a manifest-authoring rule, not a catalog property, so
 // there is nothing left on Kind itself to assert here.

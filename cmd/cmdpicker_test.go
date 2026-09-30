@@ -257,14 +257,14 @@ func TestHandlePickOutcomeUnavailableDoesNotClearScreen(t *testing.T) {
 	}
 }
 
-// TestHandlePickOutcomeChosenDetachCommandRunsInlineNeverDispatches is
+// TestHandlePickOutcomeChosenLocaleCommandRunsInlineNeverDispatches is
 // admin-cmd-never-dispatch's picker-level proof (acceptance criterion 3): a
-// picked command whose action declares detach=true, with a spawnable
+// picked command whose action declares locale="window", with a spawnable
 // [terminal] configured, still runs on this process's own terminal — the
 // marker file is written — and never invokes the fake launcher, unlike
 // `admin <name>` typed directly (kinds.RunCommand), which would dispatch
 // through it.
-func TestHandlePickOutcomeChosenDetachCommandRunsInlineNeverDispatches(t *testing.T) {
+func TestHandlePickOutcomeChosenLocaleCommandRunsInlineNeverDispatches(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "terminal-calls.log")
 	body := `project_name = "fixture"
@@ -279,7 +279,7 @@ steps = ["write-marker"]
 [actions.write-marker]
 kind   = "shell"
 run    = "touch marker.txt"
-detach = true
+locale = "window"
 `
 	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write admin.toml: %v", err)
@@ -297,7 +297,7 @@ detach = true
 		t.Fatalf("handlePickOutcome(PickChosen) = %v, want nil", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "marker.txt")); err != nil {
-		t.Fatalf("stat marker.txt: %v (a detach=true picked command must still run inline)", err)
+		t.Fatalf("stat marker.txt: %v (a locale=window picked command must still run inline)", err)
 	}
 	if logged, err := os.ReadFile(logPath); err == nil && len(logged) > 0 {
 		t.Errorf("terminal log = %q, want empty — admin cmd must never dispatch a picked command through the launcher", string(logged))

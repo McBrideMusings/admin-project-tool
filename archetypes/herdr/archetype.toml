@@ -1,4 +1,4 @@
-# herdr: opt in to dispatching detached actions, Work-tab workers, and
+# herdr: opt in to dispatching window-locale actions, Work-tab workers, and
 # kind="workflow" targets into real herdr panes instead of the dashboard's
 # built-in hosted pty (ADR-0020). Declaring [terminal] is the whole of what
 # this archetype does — the tool has no herdr-specific knowledge of its own;
