@@ -309,7 +309,7 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 			ww, whereStyled = 0, ""
 		}
 		actW := maxi(width-used-ww, 4)
-		activity, _ := livework.Default.Activity(e.ID)
+		activity, _ := livework.Default.Line(e.ID)
 		act := padEnd(truncR(activity, actW), actW)
 		return marker + name + state + elapsed + faintStyle.Render(act) + whereStyled
 	}
@@ -334,7 +334,7 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 			st, _ := livework.Default.State(wd.live.ID)
 			state := renderCommandState(st)
 			elapsed := faintStyle.Render(padEnd(elapsedStr(time.Since(wd.live.StartedAt)), wElapsed))
-			activity, _ := livework.Default.Activity(wd.live.ID)
+			activity, _ := livework.Default.Line(wd.live.ID)
 			act := padEnd(truncR(activity, rest), rest)
 			return marker + name + state + elapsed + faintStyle.Render(act)
 		}
@@ -391,7 +391,7 @@ func renderTargetRow(wd *workRowData, focused bool, rest int) string {
 		st, _ := livework.Default.State(wd.live.ID)
 		state := renderCommandState(st)
 		elapsed := faintStyle.Render(padEnd(elapsedStr(time.Since(wd.live.StartedAt)), wElapsed))
-		activity, _ := livework.Default.Activity(wd.live.ID)
+		activity, _ := livework.Default.Line(wd.live.ID)
 		act := padEnd(truncR(activity, rest), rest)
 		return faintStyle.Render(connector) + name + state + elapsed + faintStyle.Render(act)
 	}
@@ -666,7 +666,7 @@ func bandFieldsWorker(e *livework.Entry, w int) []string {
 	if e.Worker != nil {
 		branch, worktree = e.Worker.Branch, e.Worker.Worktree
 	}
-	activity, _ := livework.Default.Activity(e.ID)
+	activity, _ := livework.Default.Line(e.ID)
 	logPath, _ := livework.Default.LogPath(e.ID)
 	return padRows([]string{
 		" " + faintStyle.Render(padEnd("log", 9)) + faintStyle.Render(fitPath(logPath, lw)),

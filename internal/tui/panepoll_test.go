@@ -9,50 +9,9 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 )
-
-// TestRunPaneStatusExitCode exercises the real /bin/sh exec path (not the
-// paneStatusFn seam): a nonzero exit is the "gone" signal, a zero exit means
-// alive, and neither case produces an err — err is reserved for a query
-// that couldn't run to completion at all.
-func TestRunPaneStatusExitCode(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	gone, err := runPaneStatus(ctx, "exit 1", "handle")
-	if err != nil {
-		t.Fatalf("runPaneStatus(exit 1) err = %v, want nil", err)
-	}
-	if !gone {
-		t.Error("runPaneStatus(exit 1) gone = false, want true")
-	}
-
-	gone, err = runPaneStatus(ctx, "exit 0", "handle")
-	if err != nil {
-		t.Fatalf("runPaneStatus(exit 0) err = %v, want nil", err)
-	}
-	if gone {
-		t.Error("runPaneStatus(exit 0) gone = true, want false")
-	}
-}
-
-// TestRunPaneStatusPassesHandleEnv proves ADMIN_HANDLE reaches the command,
-// exactly the env shape ADR-0020's attach/kill contract already uses.
-func TestRunPaneStatusPassesHandleEnv(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	gone, err := runPaneStatus(ctx, `test "$ADMIN_HANDLE" = "pane-42"`, "pane-42")
-	if err != nil {
-		t.Fatalf("runPaneStatus err = %v, want nil", err)
-	}
-	if gone {
-		t.Error("runPaneStatus gone = true, want false (handle matched, command exited 0)")
-	}
-}
 
 // stubPaneStatus swaps paneStatusFn for a fixed response and returns a
 // restore func for t.Cleanup, matching agentpoll_test.go's stubAgentStatus.

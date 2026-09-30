@@ -1737,7 +1737,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// here, never from View, so starting either stays a side effect and
 		// rendering stays pure.
 		m.refreshDetailProbes()
-		return m, tea.Batch(m.workTickCmd(), pollAgentStatusCmd(), pollPaneStatusCmd(m.cfgMerged.Terminal.Status), m.pollPaneTailCmd(m.cfgMerged.Terminal.Read))
+		return m, tea.Batch(m.workTickCmd(), pollAgentStatusCmd(), pollPaneStatusCmd(m.cfgMerged.Terminal.Status), reapWorkersCmd(m.repoRoot, m.cfgMerged.Terminal), m.pollPaneTailCmd(m.cfgMerged.Terminal.Read))
 
 	case agentStatusMsg:
 		// applyAgentStatuses is the only writer of the herdr-derived state

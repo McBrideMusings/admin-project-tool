@@ -28,14 +28,13 @@ package tui
 
 import (
 	"context"
-	"errors"
-	"os/exec"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 )
 
@@ -45,29 +44,8 @@ import (
 const paneStatusTimeout = 2 * time.Second
 
 // paneStatusFn is the test seam for pollPaneStatusCmd's per-entry query,
-// bound to runPaneStatus by default.
-var paneStatusFn = runPaneStatus
-
-// runPaneStatus shells statusCmd with ADMIN_HANDLE=handle set — the same env
-// shape ADR-0020's attach/kill contract already uses. A nonzero exit (herdr's
-// own "pane_not_found" exit code for `herdr pane get`, or whatever a
-// different launcher's status command signals not-found with) reports
-// gone=true. Any other failure — the query timed out, or the shell itself
-// couldn't run — is reported as err instead, since it says nothing definite
-// about the pane and must never resurrect or kill an entry on its own.
-func runPaneStatus(ctx context.Context, statusCmd, handle string) (gone bool, err error) {
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", statusCmd)
-	cmd.Env = append(cmd.Environ(), "ADMIN_HANDLE="+handle)
-	runErr := cmd.Run()
-	if runErr == nil {
-		return false, nil
-	}
-	var exitErr *exec.ExitError
-	if errors.As(runErr, &exitErr) {
-		return true, nil
-	}
-	return false, runErr
-}
+// bound to kinds.PaneGone by default.
+var paneStatusFn = kinds.PaneGone
 
 // paneStatusResult is one entry's liveness-check outcome.
 type paneStatusResult struct {
@@ -102,7 +80,10 @@ func pollPaneStatusCmd(statusCmd string) tea.Cmd {
 
 		var targets []*livework.Entry
 		for _, e := range livework.Default.List() {
-			if e.Via != "terminal" {
+			// A worker's vanished pane is reap.go's business: a finished
+			// worker's work may still be on disk, so its row must not flip to
+			// exited and drop out of the reap.
+			if e.Via != "terminal" || e.Worker != nil {
 				continue
 			}
 			st, ok := livework.Default.State(e.ID)

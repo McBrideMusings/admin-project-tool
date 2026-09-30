@@ -66,6 +66,11 @@ type WorkerInfo struct {
 	Branch string
 	// Worktree is the worktree's checkout path.
 	Worktree string
+	// Target is the workflow target id the worker was dispatched for — the
+	// value its done predicate sees as ADMIN_TARGET.
+	Target string
+	// Done is the workflow action's done predicate, "" when it declares none.
+	Done string
 }
 
 // Ops holds the real, producer-supplied implementations of an entry's
@@ -157,6 +162,12 @@ type Entry struct {
 	// acceptance criterion's "current-activity line". Empty means the
 	// producer hasn't reported one.
 	Activity string
+
+	// Note is why the entry is not progressing the way its owner expects —
+	// a finished worker the reaper declined to delete. Empty when there is
+	// nothing to say. Read it through Registry.Line; SetNote writes it under
+	// r.mu.
+	Note string
 
 	// Snapshot is the last text a launcher's [terminal].read printed for
 	// Handle: the pane's current last lines, replaced whole on every refresh
@@ -333,6 +344,30 @@ func (r *Registry) SetActivity(id, activity string) {
 		return
 	}
 	e.Activity = activity
+}
+
+// SetNote replaces the entry for id's note, if present. "" clears it.
+func (r *Registry) SetNote(id, note string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if e, ok := r.entries[id]; ok {
+		e.Note = note
+	}
+}
+
+// Line returns the one line a row shows beside the entry: its Note when it
+// has one, else its Activity.
+func (r *Registry) Line(id string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.entries[id]
+	if !ok {
+		return "", false
+	}
+	if e.Note != "" {
+		return e.Note, true
+	}
+	return e.Activity, true
 }
 
 // SetSnapshot replaces the entry for id's pane snapshot, if present.

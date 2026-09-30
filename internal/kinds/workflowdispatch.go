@@ -26,9 +26,8 @@
 //     ReleaseWorkerSlot frees it, so a finished-but-unlanded worker still
 //     counts against the ceiling.
 //
-// It never deletes a worktree, before, during, or after dispatch. Per this
-// ticket's scope (and the project CLAUDE.md's "a worker cannot remove its
-// own worktree"), retirement is entirely someone else's job.
+// It never deletes a worktree, before, during, or after dispatch; retiring a
+// finished worker is reap.go's job, run from the dashboard tick.
 package kinds
 
 import (
@@ -247,7 +246,7 @@ func dispatchOne(repoRoot, actionName string, t config.Terminal, tgt Target, wt 
 		Kind:   "workflow",
 		Handle: handle,
 		Via:    "terminal",
-		Worker: &livework.WorkerInfo{Branch: wt.Branch, Worktree: wt.Path},
+		Worker: &livework.WorkerInfo{Branch: wt.Branch, Worktree: wt.Path, Target: tgt.Name, Done: tgt.Done},
 	}
 	e.Ops = livework.Ops{
 		Attach: func() error { return runLauncherShell(t.Attach, e.Handle) },
