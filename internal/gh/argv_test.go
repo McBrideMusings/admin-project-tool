@@ -95,7 +95,7 @@ func TestCommandArgv(t *testing.T) {
 				"--repo", "o/r",
 				"--state", "merged",
 				"--limit", "30",
-				"--json", "headRefName,headRefOid,author,closingIssuesReferences",
+				"--json", "headRefName,headRefOid,author,closingIssuesReferences,mergedAt",
 			}},
 		},
 		{

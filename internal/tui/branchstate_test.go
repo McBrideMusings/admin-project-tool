@@ -272,3 +272,52 @@ func TestEvidenceThresholdCombinations(t *testing.T) {
 		})
 	}
 }
+
+// TestMergedPRFoundUnderUpstreamName pins that a branch pushed under a different
+// remote name (`git push -u origin HEAD:feat/x`) matches the merged PR by its
+// upstream name, and that the tip comparison runs against that entry.
+func TestMergedPRFoundUnderUpstreamName(t *testing.T) {
+	m := seededModel()
+	m.local.signals = map[string]gitSignals{
+		"castling-affordance": {ahead: true, upstream: "feat/castling-affordance"},
+		"reused":              {ahead: true, upstream: "feat/reused"},
+	}
+	m.local.tips = map[string]string{"castling-affordance": "aaa", "reused": "zzz"}
+	m.remote.MergedHeads = map[string]string{
+		"feat/castling-affordance": "aaa",
+		"feat/reused":              "old",
+	}
+	if got := m.deadReason("castling-affordance"); got != "merged" {
+		t.Errorf("deadReason = %q, want merged", got)
+	}
+	if got := m.deadReason("reused"); got != "" {
+		t.Errorf("a reused upstream name with a different tip and local commits = %q, want live", got)
+	}
+}
+
+// TestMergedHeadPrefersTheTipMatchingEntry pins which entry mergedHead returns when
+// the local name and the upstream name both have a merged PR.
+func TestMergedHeadPrefersTheTipMatchingEntry(t *testing.T) {
+	m := seededModel()
+	m.local.tips = map[string]string{"b": "tip"}
+	for _, tc := range []struct {
+		name     string
+		heads    map[string]string
+		upstream string
+		want     string
+		wantOK   bool
+	}{
+		{"upstream tip matches", map[string]string{"b": "other", "u": "tip"}, "u", "tip", true},
+		{"local tip matches", map[string]string{"b": "tip", "u": "other"}, "u", "tip", true},
+		{"neither matches: local wins", map[string]string{"b": "x", "u": "y"}, "u", "x", true},
+		{"local blank, upstream matches", map[string]string{"b": "", "u": "tip"}, "u", "tip", true},
+		{"upstream same as local", map[string]string{"b": "x"}, "b", "x", true},
+		{"no entry", map[string]string{}, "u", "", false},
+	} {
+		m.remote.MergedHeads = tc.heads
+		got, ok := m.mergedHead("b", tc.upstream)
+		if got != tc.want || ok != tc.wantOK {
+			t.Errorf("%s: mergedHead = (%q, %v), want (%q, %v)", tc.name, got, ok, tc.want, tc.wantOK)
+		}
+	}
+}

@@ -164,3 +164,15 @@ func TestClosedHeadsAccumulate(t *testing.T) {
 		t.Errorf("closed heads did not accumulate: %v", got.ClosedHeads)
 	}
 }
+
+// TestIndexMergedKeepsNewestMergePerHead pins that when two merged PRs share a head
+// name, the newer merge (listed first) keeps its OID and author.
+func TestIndexMergedKeepsNewestMergePerHead(t *testing.T) {
+	heads, authors, _ := indexMerged([]gh.MergedPR{
+		{HeadBranch: "refactor/x", HeadOID: "dfaf2b6f", Author: "new"},
+		{HeadBranch: "refactor/x", HeadOID: "4352055d", Author: "old"},
+	})
+	if heads["refactor/x"] != "dfaf2b6f" || authors["refactor/x"] != "new" {
+		t.Errorf("got oid %q author %q, want dfaf2b6f / new", heads["refactor/x"], authors["refactor/x"])
+	}
+}

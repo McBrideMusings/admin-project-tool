@@ -181,7 +181,7 @@ type MergedPR struct {
 	HeadOID string
 }
 
-// MergedPRs returns the most recent merged PRs (up to limit), each with its head
+// MergedPRs returns the most recent merged PRs (up to limit), newest merge first, each with its head
 // branch, author, and closing-issue numbers. Catches squash/rebase merges that
 // git's own --merged check misses because the branch commits never land on the
 // default branch.
@@ -191,13 +191,14 @@ type MergedPR struct {
 // in a fork that resolves to upstream, and the answer describes a different repo's
 // merged PRs than the one the dashboard is showing.
 func MergedPRs(ctx context.Context, nwo string, limit int) ([]MergedPR, error) {
-	out, err := runner(ctx, "pr", "list", "--repo", nwo, "--state", "merged", "--limit", strconv.Itoa(limit), "--json", "headRefName,headRefOid,author,closingIssuesReferences")
+	out, err := runner(ctx, "pr", "list", "--repo", nwo, "--state", "merged", "--limit", strconv.Itoa(limit), "--json", "headRefName,headRefOid,author,closingIssuesReferences,mergedAt")
 	if err != nil {
 		return nil, err
 	}
 	var raw []struct {
 		HeadRefName string `json:"headRefName"`
 		HeadRefOid  string `json:"headRefOid"`
+		MergedAt    string `json:"mergedAt"`
 		Author      struct {
 			Login string `json:"login"`
 		} `json:"author"`
@@ -208,6 +209,9 @@ func MergedPRs(ctx context.Context, nwo string, limit int) ([]MergedPR, error) {
 	if err := json.Unmarshal([]byte(out), &raw); err != nil {
 		return nil, err
 	}
+	// gh lists by creation date; a PR created earlier can merge later, so order by
+	// merge time (RFC 3339 sorts lexically) to make "first row" mean "newest merge".
+	sort.SliceStable(raw, func(i, j int) bool { return raw[i].MergedAt > raw[j].MergedAt })
 	prs := make([]MergedPR, 0, len(raw))
 	for _, r := range raw {
 		pr := MergedPR{HeadBranch: r.HeadRefName, Author: r.Author.Login, HeadOID: r.HeadRefOid}

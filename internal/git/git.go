@@ -516,6 +516,11 @@ type BranchInfo struct {
 	// GitHub records the head commit it merged, and a name reused after that merge
 	// points somewhere else. See branchSignals.mergedTip.
 	Tip string
+	// Upstream is the configured upstream's branch name with the remote stripped
+	// ("feat/x" for origin/feat/x); empty when none is configured. A branch pushed
+	// as `git push -u origin HEAD:feat/x` carries a different name on the remote
+	// than locally, and GitHub knows its PR only by the remote name.
+	Upstream string
 }
 
 // remoteBranchNames is the set of branch names origin currently has, read from the
@@ -562,6 +567,9 @@ func LocalBranches(ctx context.Context, dir, current string, worktreeByBranch ma
 		var upstream string
 		if len(cols) > 2 {
 			upstream = strings.TrimSpace(cols[2])
+		}
+		if _, name, ok := strings.Cut(upstream, "/"); ok {
+			bi.Upstream = name
 		}
 		if len(cols) > 3 {
 			bi.UpstreamGone = strings.Contains(cols[3], "gone")
