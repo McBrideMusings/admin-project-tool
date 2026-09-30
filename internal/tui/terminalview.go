@@ -175,14 +175,32 @@ func (m Model) terminalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // encodeKey turns a Bubble Tea key event into the bytes a real terminal
-// would have sent the child on the same keypress. Bubble Tea's control-key
-// KeyTypes (KeyCtrlA..KeyCtrlZ, KeyTab, KeyEnter, KeyBackspace, and every
-// other C0 control) are literally the control byte's numeric value — see
-// bubbletea's key.go — so casting the type through is exact, not a lookup
-// table. Only the cursor keys need their own CSI sequences; nothing else
-// vt's emulator would need to interpret arrives from this dashboard's own
-// key events (no function keys, no paste bracketing) at this level.
+// would have sent the child on the same keypress. Alt on a plain byte or
+// rune prefixes ESC, as a terminal sends Meta; Alt on a CSI key uses the
+// xterm modifier form (\x1b[1;3A, \x1b[3;3~), since a doubled ESC would read
+// to the child as a bare Esc followed by stray bytes.
 func encodeKey(msg tea.KeyMsg) []byte {
+	b := encodeKeyType(msg)
+	if !msg.Alt || len(b) == 0 {
+		return b
+	}
+	if len(b) > 2 && b[0] == 0x1b && b[1] == '[' {
+		body, final := string(b[2:len(b)-1]), b[len(b)-1]
+		if body == "" {
+			body = "1"
+		}
+		return []byte("\x1b[" + body + ";3" + string(final))
+	}
+	return append([]byte{0x1b}, b...)
+}
+
+// encodeKeyType is encodeKey without the Alt modifier. Bubble Tea's
+// control-key KeyTypes (KeyCtrlA..KeyCtrlZ, KeyTab, KeyEnter, KeyBackspace,
+// and every other C0 control) are literally the control byte's numeric
+// value — see bubbletea's key.go — so casting the type through is exact, not
+// a lookup table. Cursor and editing keys need their own CSI sequences;
+// function keys and paste bracketing never arrive from this dashboard.
+func encodeKeyType(msg tea.KeyMsg) []byte {
 	switch msg.Type {
 	case tea.KeyRunes:
 		if len(msg.Runes) == 0 {
@@ -199,6 +217,16 @@ func encodeKey(msg tea.KeyMsg) []byte {
 		return []byte("\x1b[C")
 	case tea.KeyLeft:
 		return []byte("\x1b[D")
+	case tea.KeyDelete:
+		return []byte("\x1b[3~")
+	case tea.KeyHome:
+		return []byte("\x1b[H")
+	case tea.KeyEnd:
+		return []byte("\x1b[F")
+	case tea.KeyPgUp:
+		return []byte("\x1b[5~")
+	case tea.KeyPgDown:
+		return []byte("\x1b[6~")
 	}
 	if msg.Type >= 0 && msg.Type <= 127 {
 		return []byte{byte(msg.Type)}

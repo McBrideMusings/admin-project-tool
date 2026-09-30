@@ -691,3 +691,30 @@ func TestAttachedViewSwitchesToDifferentEntry(t *testing.T) {
 		t.Errorf("second attach's breadcrumb does not name termfixture-second: %q", out)
 	}
 }
+
+func TestEncodeKey(t *testing.T) {
+	cases := []struct {
+		name string
+		msg  tea.KeyMsg
+		want string
+	}{
+		{"delete", tea.KeyMsg{Type: tea.KeyDelete}, "\x1b[3~"},
+		{"home", tea.KeyMsg{Type: tea.KeyHome}, "\x1b[H"},
+		{"end", tea.KeyMsg{Type: tea.KeyEnd}, "\x1b[F"},
+		{"pgup", tea.KeyMsg{Type: tea.KeyPgUp}, "\x1b[5~"},
+		{"pgdown", tea.KeyMsg{Type: tea.KeyPgDown}, "\x1b[6~"},
+		{"alt+b", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}, Alt: true}, "\x1bb"},
+		{"up", tea.KeyMsg{Type: tea.KeyUp}, "\x1b[A"},
+		{"alt+up", tea.KeyMsg{Type: tea.KeyUp, Alt: true}, "\x1b[1;3A"},
+		{"alt+delete", tea.KeyMsg{Type: tea.KeyDelete, Alt: true}, "\x1b[3;3~"},
+		{"alt+home", tea.KeyMsg{Type: tea.KeyHome, Alt: true}, "\x1b[1;3H"},
+		{"alt+enter", tea.KeyMsg{Type: tea.KeyEnter, Alt: true}, "\x1b\r"},
+		{"ctrl+c", tea.KeyMsg{Type: tea.KeyCtrlC}, "\x03"},
+		{"plain b", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}, "b"},
+	}
+	for _, c := range cases {
+		if got := string(encodeKey(c.msg)); got != c.want {
+			t.Errorf("%s: encodeKey = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
