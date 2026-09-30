@@ -318,10 +318,12 @@ func (m Model) mergedHead(branch, upstream string) (oid string, ok bool) {
 	if ok && oid != "" && oid == tip {
 		return oid, true
 	}
-	if upstream != "" && upstream != branch {
-		if uo, uok := m.remote.MergedHeads[upstream]; uok && (!ok || (uo != "" && uo == tip)) {
-			return uo, true
-		}
+	if upstream == "" || upstream == branch {
+		return oid, ok
+	}
+	uo, uok := m.remote.MergedHeads[upstream]
+	if uok && (!ok || (uo != "" && uo == tip)) {
+		return uo, true
 	}
 	return oid, ok
 }

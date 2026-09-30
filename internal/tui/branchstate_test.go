@@ -294,3 +294,30 @@ func TestMergedPRFoundUnderUpstreamName(t *testing.T) {
 		t.Errorf("a reused upstream name with a different tip and local commits = %q, want live", got)
 	}
 }
+
+// TestMergedHeadPrefersTheTipMatchingEntry pins which entry mergedHead returns when
+// the local name and the upstream name both have a merged PR.
+func TestMergedHeadPrefersTheTipMatchingEntry(t *testing.T) {
+	m := seededModel()
+	m.local.tips = map[string]string{"b": "tip"}
+	for _, tc := range []struct {
+		name     string
+		heads    map[string]string
+		upstream string
+		want     string
+		wantOK   bool
+	}{
+		{"upstream tip matches", map[string]string{"b": "other", "u": "tip"}, "u", "tip", true},
+		{"local tip matches", map[string]string{"b": "tip", "u": "other"}, "u", "tip", true},
+		{"neither matches: local wins", map[string]string{"b": "x", "u": "y"}, "u", "x", true},
+		{"local blank, upstream matches", map[string]string{"b": "", "u": "tip"}, "u", "tip", true},
+		{"upstream same as local", map[string]string{"b": "x"}, "b", "x", true},
+		{"no entry", map[string]string{}, "u", "", false},
+	} {
+		m.remote.MergedHeads = tc.heads
+		got, ok := m.mergedHead("b", tc.upstream)
+		if got != tc.want || ok != tc.wantOK {
+			t.Errorf("%s: mergedHead = (%q, %v), want (%q, %v)", tc.name, got, ok, tc.want, tc.wantOK)
+		}
+	}
+}
