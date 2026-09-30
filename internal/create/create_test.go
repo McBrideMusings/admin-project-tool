@@ -329,3 +329,11 @@ func TestWorktreeRemoteOnlyBranch(t *testing.T) {
 	}
 	assertWorktreeOnBranch(t, res.Path, "remote-feat")
 }
+
+func TestWorktreeSurfacesConfigLoadError(t *testing.T) {
+	clone, _ := setupRepo(t)
+	writeFile(t, filepath.Join(clone, "admin.toml"), "[terminal]\nspawn = \"true\"\n")
+	if _, err := Worktree(context.Background(), clone, "feat-x"); err == nil {
+		t.Fatal("Worktree with a spawn-only [terminal]: want the config error, got nil")
+	}
+}

@@ -34,6 +34,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/agent"
 	_ "github.com/McBrideMusings/admin-project-tool/internal/agent/herdr" // registers the herdr Driver
@@ -304,12 +305,24 @@ func dispatchOne(repoRoot, actionName, agentKind string, t config.Terminal, drv 
 	// finished, so the settled status has to be re-checked to tell
 	// "waiting on input" apart from "still working"/"done" without
 	// attaching.
-	if info, infoErr := drv.Info(context.Background(), handle); infoErr == nil && info.Status == agent.StatusBlocked {
+	if info, infoErr := infoWithin(drv, handle, agentInfoTimeout); infoErr == nil && info.Status == agent.StatusBlocked {
 		livework.Default.SetState(id, livework.StateWaiting, nil)
 	} else {
 		livework.Default.SetState(id, livework.StateExited, nil)
 	}
 	return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Handle: handle}
+}
+
+// agentInfoTimeout bounds the settle check's Info call, the same 2s the Work
+// tab's poller gives a single herdr query, so a wedged herdr cannot hold
+// dispatchOne forever.
+const agentInfoTimeout = 2 * time.Second
+
+// infoWithin runs drv.Info under a deadline of d.
+func infoWithin(drv agent.Driver, handle string, d time.Duration) (agent.Info, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	return drv.Info(ctx, handle)
 }
 
 // workerLiveID derives a window-locale worker's live-work ID from the

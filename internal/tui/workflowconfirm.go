@@ -76,10 +76,11 @@ func resolveWorkflowCmd(repoRoot, tracker, nwo, name string, action manifest.Act
 		if err == nil {
 			cfg, cfgErr := config.Load(repoRoot)
 			if cfgErr != nil {
-				cfg = config.Config{}
+				msg.err = fmt.Errorf("loading config: %w", cfgErr)
+			} else {
+				msg.agent, msg.agentOK = kinds.ResolveAgent(action, cfg)
+				msg.ceiling = kinds.Ceiling(cfg)
 			}
-			msg.agent, msg.agentOK = kinds.ResolveAgent(action, cfg)
-			msg.ceiling = kinds.Ceiling(cfg)
 		}
 		return msg
 	}

@@ -258,8 +258,10 @@ func ReadLauncherPane(ctx context.Context, run, handle string) (string, error) {
 
 // recordLiveWork adds a running entry for a successfully-dispatched
 // detached action or command to the process-wide live-work registry, keyed
-// on id.
-func recordLiveWork(id, kind, handle string, t config.Terminal) {
+// on id. When the registry rejects the entry (a live duplicate), it closes the
+// pane through the launcher's kill so no pane stays open unregistered, and
+// returns the rejection.
+func recordLiveWork(id, kind, handle string, t config.Terminal) error {
 	e := &livework.Entry{
 		ID:     id,
 		Name:   id,
@@ -278,6 +280,10 @@ func recordLiveWork(id, kind, handle string, t config.Terminal) {
 		},
 	}
 	if err := livework.Default.Add(e); err != nil {
-		log.Printf("recordLiveWork: %v", err)
+		if killErr := runLauncherShell(t.Kill, handle); killErr != nil {
+			log.Printf("recordLiveWork: closing pane %s: %v", handle, killErr)
+		}
+		return err
 	}
+	return nil
 }

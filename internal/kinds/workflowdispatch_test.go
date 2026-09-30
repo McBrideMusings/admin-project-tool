@@ -798,3 +798,45 @@ func TestDispatchOnePromptFailureMarksEntryFailed(t *testing.T) {
 		t.Errorf("state = %q, want failed", st)
 	}
 }
+
+type blockingInfoDriver struct{ agent.Driver }
+
+func (blockingInfoDriver) Info(ctx context.Context, _ string) (agent.Info, error) {
+	<-ctx.Done()
+	return agent.Info{}, ctx.Err()
+}
+
+func TestInfoWithinReturnsWhenDriverBlocks(t *testing.T) {
+	done := make(chan error, 1)
+	go func() {
+		_, err := infoWithin(blockingInfoDriver{}, "h", 20*time.Millisecond)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("err = %v, want DeadlineExceeded", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("infoWithin did not return for a driver blocking on ctx")
+	}
+}
+
+func TestRecordLiveWorkClosesPaneWhenRegistryRejects(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "killed")
+	term := config.Terminal{Kill: `echo "$ADMIN_HANDLE" > ` + marker}
+	id := "record-dup-" + t.Name()
+	if err := recordLiveWork(id, "shell", "pane-1", term); err != nil {
+		t.Fatalf("first record: %v", err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("kill ran for the accepted entry")
+	}
+	if err := recordLiveWork(id, "shell", "pane-2", term); err == nil {
+		t.Fatal("second record of a live id: want rejection")
+	}
+	got, err := os.ReadFile(marker)
+	if err != nil || strings.TrimSpace(string(got)) != "pane-2" {
+		t.Fatalf("kill marker = %q, %v; want pane-2", got, err)
+	}
+}

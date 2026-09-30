@@ -40,12 +40,12 @@ func Worktree(ctx context.Context, repoRoot, branch string) (Result, error) {
 		return Result{}, fmt.Errorf("invalid branch name %q", branch)
 	}
 	// Load resolves repoRoot's admin.toml (merged with its declared
-	// archetypes) once for both the worktree root and populate. A parse
-	// error yields a zero Config, which forces the env-or-default root and
-	// skips populate — the same fallback both paths used before.
-	cfg, cfgErr := config.Load(repoRoot)
-	if cfgErr != nil {
-		cfg = config.Config{}
+	// archetypes) once for both the worktree root and populate. A manifest
+	// that fails to load stops the call: a zero Config would silently drop
+	// WORKTREE_ROOT and populate.
+	cfg, err := config.Load(repoRoot)
+	if err != nil {
+		return Result{}, fmt.Errorf("loading config: %w", err)
 	}
 	root := config.WorktreeRoot(cfg)
 	path := filepath.Join(root, filepath.Base(repoRoot), dir)

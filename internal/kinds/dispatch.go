@@ -366,10 +366,10 @@ func launchCommand(m *manifest.Manifest, name string, args []string, env []strin
 		if err := ValidateLocale(map[string]manifest.Action{cmd.Steps[0]: action}); err != nil {
 			return fmt.Errorf("command %q: %w", name, err)
 		}
-		if err := validate.Terminal(m.Terminal); err != nil {
+		cfg, err := config.FromManifest(m)
+		if err != nil {
 			return fmt.Errorf("command %q: %w", name, err)
 		}
-		cfg, _ := config.FromManifest(m)
 		if locale, ok := dispatchLocale(action, args, cfg.Terminal.Locale); ok && locale == validate.LocaleWindow {
 			if cfg.Terminal.Spawn != "" {
 				ctx := launchCtxFrom(name, env)
@@ -378,13 +378,19 @@ func launchCommand(m *manifest.Manifest, name string, args []string, env []strin
 				if err == nil {
 					kind, _ := actionString(action, "kind")
 					liveID := multiTargetLiveID(name, action, args)
-					recordLiveWork(liveID, kind, handle, cfg.Terminal)
-					return nil
+					if err := recordLiveWork(liveID, kind, handle, cfg.Terminal); err != nil {
+						// The pane is closed and unregistered; run on the default
+						// surface rather than leave a command running nowhere.
+						fmt.Fprintf(os.Stderr, "warning: command %q: %v, running on the default surface\n", name, err)
+					} else {
+						return nil
+					}
+				} else {
+					// A launcher IS configured but spawning through it failed —
+					// degrade to the caller's own default surface with one
+					// warning line, rather than aborting the command outright.
+					fmt.Fprintf(os.Stderr, "warning: command %q: launcher spawn failed, running on the default surface: %v\n", name, err)
 				}
-				// A launcher IS configured but spawning through it failed —
-				// degrade to the caller's own default surface with one
-				// warning line, rather than aborting the command outright.
-				fmt.Fprintf(os.Stderr, "warning: command %q: launcher spawn failed, running on the default surface: %v\n", name, err)
 			}
 		}
 	}
