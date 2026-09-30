@@ -189,9 +189,10 @@ func applyAgentStatuses(msg agentStatusMsg) {
 		case agent.StatusWorking:
 			livework.Default.SetState(r.id, livework.StateRunning, nil)
 			// idle, done, unknown, or any other word: leave the row alone —
-			// dispatchOne owns the terminal transition (StateExited/StateFailed),
-			// and an agent genuinely idle between prompts must not be
-			// downgraded mid-run.
+			// dispatchOne owns the terminal transition (StateExited/StateFailed)
+			// for a prompted target; a blank-prompt target has none, so it stays
+			// running until killed. An agent genuinely idle between prompts must
+			// not be downgraded mid-run.
 		}
 	}
 }
