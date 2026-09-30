@@ -99,7 +99,7 @@ func TestInfoDecodesResultAgent(t *testing.T) {
 	stubRun(t, []byte(`{"result":{"agent":{
 		"agent":"claude",
 		"agent_status":"working",
-		"agent_session":"sess-1",
+		"agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"sess-1"},
 		"workspace_id":"ws-1",
 		"tab_id":"tab-1",
 		"pane_id":"pane-1",

@@ -123,9 +123,11 @@ func (d *Driver) InfoContext(ctx context.Context, handle string) (agent.Info, er
 	var resp struct {
 		Result struct {
 			Agent struct {
-				Agent                 string `json:"agent"`
-				AgentStatus           string `json:"agent_status"`
-				AgentSession          string `json:"agent_session"`
+				Agent        string `json:"agent"`
+				AgentStatus  string `json:"agent_status"`
+				AgentSession struct {
+					Value string `json:"value"`
+				} `json:"agent_session"`
 				WorkspaceID           string `json:"workspace_id"`
 				TabID                 string `json:"tab_id"`
 				PaneID                string `json:"pane_id"`
@@ -144,17 +146,17 @@ func (d *Driver) InfoContext(ctx context.Context, handle string) (agent.Info, er
 		status = agent.StatusUnknown
 	}
 	var session *agent.SessionRef
-	if a.WorkspaceID != "" || a.TabID != "" || a.PaneID != "" || a.AgentSession != "" {
+	if a.WorkspaceID != "" || a.TabID != "" || a.PaneID != "" || a.AgentSession.Value != "" {
 		session = &agent.SessionRef{
 			Workspace: a.WorkspaceID,
 			Tab:       a.TabID,
 			Pane:      a.PaneID,
-			Session:   a.AgentSession,
+			Session:   a.AgentSession.Value,
 		}
 	}
 	return agent.Info{
 		Kind:     a.Agent,
-		Name:     a.AgentSession,
+		Name:     a.AgentSession.Value,
 		Status:   status,
 		Session:  session,
 		CWD:      a.CWD,
