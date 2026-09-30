@@ -30,6 +30,10 @@ steps = ["logs"]
 [commands.logs.env]
 ADMIN_LOCAL = "${DEPLOY_LOCAL:-false}"
 
+[commands.install-template]
+desc = "Render deploy/unraid-template.xml's ${VAR} placeholders and install it into the Unraid Docker GUI's template list"
+steps = ["install-template"]
+
 [commands.reload]
 desc = "Build+run with reload loop (press r or SIGUSR1 to rebuild)"
 steps = ["reload"]
