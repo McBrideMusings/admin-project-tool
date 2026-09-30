@@ -4,7 +4,7 @@
 // (config, [terminal]) from "what is inside it" (this package). The socket
 // API at crate::session::active_api_socket_path() is the obvious second
 // driver — it would kill agentpoll's poll — and is deliberately not built
-// here; see docs/adr/0021-agent-interaction-is-code-terminals-are-config.md.
+// here; see docs/adr/0021-a-workflow-launch-is-a-manifest-string.md.
 package herdr
 
 import (
