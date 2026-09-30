@@ -45,7 +45,6 @@ root = "/tmp/worktrees"
 columns = ["id", "title"]
 
 [workflow]
-agent = "claude"
 ceiling = 4
 
 [[populate]]
@@ -65,7 +64,7 @@ pattern = ".claude/skills/*"
 	if len(cfg.Beads.Columns) != 2 || cfg.Beads.Columns[0] != "id" {
 		t.Errorf("beads.columns = %v", cfg.Beads.Columns)
 	}
-	if cfg.Workflow.Agent != "claude" || cfg.Workflow.Ceiling != 4 {
+	if cfg.Workflow.Ceiling != 4 {
 		t.Errorf("workflow = %+v", cfg.Workflow)
 	}
 	if len(cfg.Populate) != 2 {
@@ -89,7 +88,7 @@ func TestLoadMergesThroughArchetypes(t *testing.T) {
 	if err := os.MkdirAll(archDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	archBody := "[workflow]\nagent = \"archetype-agent\"\nceiling = 2\n\n" +
+	archBody := "[workflow]\nceiling = 2\n\n" +
 		"[[populate]]\npattern = \".env\"\nmode = \"copy\"\n"
 	if err := os.WriteFile(filepath.Join(archDir, "archetype.toml"), []byte(archBody), 0o644); err != nil {
 		t.Fatal(err)
@@ -100,7 +99,7 @@ func TestLoadMergesThroughArchetypes(t *testing.T) {
 archetypes = ["base"]
 
 [workflow]
-agent = "project-agent"
+ceiling = 5
 
 [[populate]]
 pattern = "admin.toml"
@@ -110,11 +109,8 @@ mode = "copy"
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Workflow.Agent != "project-agent" {
-		t.Errorf("workflow.agent = %q, want the project's override to win", cfg.Workflow.Agent)
-	}
-	if cfg.Workflow.Ceiling != 2 {
-		t.Errorf("workflow.ceiling = %d, want the archetype's value carried through", cfg.Workflow.Ceiling)
+	if cfg.Workflow.Ceiling != 5 {
+		t.Errorf("workflow.ceiling = %d, want the project's override to win", cfg.Workflow.Ceiling)
 	}
 	patterns := map[string]bool{}
 	for _, e := range cfg.Populate {

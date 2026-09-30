@@ -316,10 +316,12 @@ func TestRunCheckAcceptsBothWorkflowTargetSources(t *testing.T) {
 [actions.retire-merged]
 kind = "workflow"
 over = "selection"
+run = "retire $ADMIN_TARGET"
 
 [actions.review-waiting]
 kind = "workflow"
 over.query = "label:review-me"
+run = "review $ADMIN_TARGET"
 `
 	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(toml), 0o644); err != nil {
 		t.Fatal(err)
@@ -1159,8 +1161,8 @@ kill  = 'herdr pane close "$ADMIN_HANDLE"'
 // repo's own untracked admin.toml (see CLAUDE.md's "admin.toml is NOT
 // committed" section) — nothing else makes it travel with the commit. This
 // writes the exact shape admin-7wy5 adds to that file: [commands.implement]
-// routing to a kind="workflow" action with over="selection" and agent=
-// "claude" set on the action itself (not [workflow].agent), plus
+// routing to a kind="workflow" action with over="selection" and run/done
+// set on the action itself, plus
 // [keys.bead] enter = "implement" — and asserts the whole thing passes
 // `admin check`, with the expected enter-shadow line reported on stderr but
 // never contributing to the exit code (validate/keys.go's shadow contract,
@@ -1179,7 +1181,8 @@ priority = 60
 kind  = "workflow"
 desc  = "Dispatch a claude agent over the selected bead(s)"
 over  = "selection"
-agent = "claude"
+run   = "claude '/implement $ADMIN_TARGET afk'"
+done  = 'bd show "$ADMIN_TARGET" --json | jq -e ".[0].status == \"closed\""'
 
 [keys.bead]
 enter = "implement"
@@ -1214,8 +1217,8 @@ enter = "implement"
 		t.Fatalf("checkRowKeys shadows = %v, want one naming keys.bead.enter", shadows)
 	}
 
-	// The action itself resolves to a selection-sourced workflow with its
-	// own agent, matching kinds.ResolveAgent's precedence rule.
+	// The action itself resolves to a selection-sourced workflow carrying its
+	// own run string.
 	target, err := kinds.ParseWorkflowOver("implement", m.Actions["implement"])
 	if err != nil {
 		t.Fatalf("ParseWorkflowOver(implement) = %v, want nil", err)
@@ -1223,8 +1226,40 @@ enter = "implement"
 	if target.Source != kinds.WorkflowSourceSelection {
 		t.Fatalf("implement: Source = %v, want WorkflowSourceSelection", target.Source)
 	}
-	if agent, _ := m.Actions["implement"]["agent"].(string); agent != "claude" {
-		t.Fatalf("implement action's agent = %q, want \"claude\"", agent)
+	if run := kinds.ActionRun(m.Actions["implement"]); !strings.Contains(run, "/implement $ADMIN_TARGET afk") {
+		t.Fatalf("implement action's run = %q, want the authored command", run)
+	}
+}
+
+// TestRunCheckRejectsWorkflowWithoutRun: a workflow action declaring no run
+// fails check, naming the action.
+func TestRunCheckRejectsWorkflowWithoutRun(t *testing.T) {
+	dir := writeCheckManifest(t, `project_name = "checktest"
+
+[actions.implement]
+kind = "workflow"
+over = "selection"
+`)
+	err, _ := runCheckCapturingStderr(t, dir)
+	if err == nil || !strings.Contains(err.Error(), `action "implement"`) || !strings.Contains(err.Error(), "'run'") {
+		t.Fatalf("runCheck = %v, want an error naming the action and 'run'", err)
+	}
+}
+
+// TestRunCheckRejectsRemovedWorkflowAgentKey: agent on a workflow action is
+// rejected, naming the key.
+func TestRunCheckRejectsRemovedWorkflowAgentKey(t *testing.T) {
+	dir := writeCheckManifest(t, `project_name = "checktest"
+
+[actions.implement]
+kind  = "workflow"
+over  = "selection"
+run   = "claude"
+agent = "claude"
+`)
+	err, _ := runCheckCapturingStderr(t, dir)
+	if err == nil || !strings.Contains(err.Error(), "'agent' is not a workflow key") {
+		t.Fatalf("runCheck = %v, want an error naming the agent key", err)
 	}
 }
 

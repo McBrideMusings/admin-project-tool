@@ -24,7 +24,6 @@ import (
 	"strings"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
-	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
 
 // WorkflowSource is a workflow action's declared target source — the value
@@ -213,20 +212,7 @@ func ValidateWorkflows(actions map[string]manifest.Action) error {
 		if _, err := ParseWorkflowOver(name, action); err != nil {
 			problems = append(problems, err.Error())
 		}
-		if v, present := action["mode"]; present {
-			if m, _ := v.(string); m != ModeInteractive && m != ModePrint {
-				problems = append(problems, fmt.Sprintf(
-					"action %q: mode must be %q or %q (got %#v)", name, ModeInteractive, ModePrint, v))
-			}
-		}
-		if _, present := action["mode"]; present && actionLocale(action) == validate.LocaleWindow {
-			problems = append(problems, fmt.Sprintf(
-				"action %q: mode applies to locale = %q workers only", name, validate.LocaleHosted))
-		}
-		if a, present := actionString(action, "agent"); present && a != "claude" && actionLocale(action) == validate.LocaleHosted {
-			problems = append(problems, fmt.Sprintf(
-				"action %q: locale = %q runs the claude command line only (agent is %q)", name, validate.LocaleHosted, a))
-		}
+		problems = append(problems, validateWorkflowLaunch(name, action)...)
 	}
 	if len(problems) == 0 {
 		return nil
@@ -236,6 +222,35 @@ func ValidateWorkflows(actions map[string]manifest.Action) error {
 		msg += "\n" + p
 	}
 	return fmt.Errorf("%s", msg)
+}
+
+// removedWorkflowKeys are the keys a workflow action used to accept to name
+// an agent and its prompt. The user authors the launch command in `run`
+// now, so each is rejected by name rather than silently ignored.
+var removedWorkflowKeys = []string{"agent", "mode", "prompt"}
+
+// validateWorkflowLaunch checks one workflow action's launch keys: `run` is
+// required and non-empty, `done` is optional but non-empty when present, and
+// the removed agent/mode/prompt keys are errors.
+func validateWorkflowLaunch(name string, action manifest.Action) []string {
+	var problems []string
+	if r, _ := action["run"].(string); strings.TrimSpace(r) == "" {
+		problems = append(problems, fmt.Sprintf(
+			`action %q: kind="workflow" needs a non-empty 'run' — the shell command each worker's pane executes, with ADMIN_TARGET set to the target id`, name))
+	}
+	if raw, present := action["done"]; present {
+		if d, ok := raw.(string); !ok || strings.TrimSpace(d) == "" {
+			problems = append(problems, fmt.Sprintf(
+				`action %q: 'done' must be a non-empty shell predicate string`, name))
+		}
+	}
+	for _, k := range removedWorkflowKeys {
+		if _, present := action[k]; present {
+			problems = append(problems, fmt.Sprintf(
+				"action %q: '%s' is not a workflow key — write the launch command in 'run'", name, k))
+		}
+	}
+	return problems
 }
 
 // makeWorkflow is kind="workflow"'s factory. It validates `over` up front —

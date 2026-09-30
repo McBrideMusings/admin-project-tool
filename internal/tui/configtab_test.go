@@ -92,9 +92,9 @@ func TestConfigTableLinesReportsOrigin(t *testing.T) {
 	if strings.Contains(joined, "config.toml") || strings.Contains(joined, "global config") || strings.Contains(joined, "local config") {
 		t.Errorf("configTableRows named a dotfile origin: %q", joined)
 	}
-	// Nothing declared the default agent anywhere.
-	if !strings.Contains(joined, "default agent") {
-		t.Errorf("configTableRows missing the \"default agent\" row entirely: %q", joined)
+	// Nothing declared the ceiling anywhere.
+	if !strings.Contains(joined, "concurrency ceiling") {
+		t.Errorf("configTableRows missing the \"concurrency ceiling\" row entirely: %q", joined)
 	}
 }
 

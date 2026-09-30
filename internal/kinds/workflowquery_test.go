@@ -8,6 +8,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/bd"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
+	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
 // stubBeads swaps listBeads for the duration of one test, matching the
@@ -37,16 +38,13 @@ func stubGitHubIssues(t *testing.T, issues []gh.IssueItem, err error) {
 func TestResolveQueryGitHubLabelResolvesToOpenIssues(t *testing.T) {
 	stubGitHubIssues(t, []gh.IssueItem{{Number: 12}, {Number: 34}}, nil)
 
-	targets, err := ResolveQuery(context.Background(), "/repo", "github", "o/r", "label:review-me")
+	targets, err := ResolveQuery(context.Background(), nil, "/repo", "github", "o/r", "label:review-me")
 	if err != nil {
 		t.Fatalf("ResolveQuery: %v", err)
 	}
 	got := map[string]bool{}
 	for _, tg := range targets {
 		got[tg.Name] = true
-		if !strings.Contains(tg.Prompt, tg.Name) {
-			t.Errorf("target %q's prompt %q does not name it", tg.Name, tg.Prompt)
-		}
 	}
 	if len(got) != 2 || !got["12"] || !got["34"] {
 		t.Fatalf("want targets 12 and 34, got %+v", targets)
@@ -60,7 +58,7 @@ func TestResolveQueryGitHubLabelResolvesToOpenIssues(t *testing.T) {
 func TestResolveQueryGitHubReadyErrorsNamingTheTracker(t *testing.T) {
 	stubGitHubIssues(t, nil, errors.New("listGitHubIssues must not be called for \"ready\""))
 
-	_, err := ResolveQuery(context.Background(), "/repo", "github", "o/r", "ready")
+	_, err := ResolveQuery(context.Background(), nil, "/repo", "github", "o/r", "ready")
 	if err == nil {
 		t.Fatal("want an error for \"ready\" on a github tracker, got nil")
 	}
@@ -78,7 +76,7 @@ func TestResolveQueryGitHubReadyErrorsNamingTheTracker(t *testing.T) {
 func TestResolveQueryGitHubEmptyLabelIsAnError(t *testing.T) {
 	stubGitHubIssues(t, nil, errors.New("listGitHubIssues must not be called for an empty label"))
 
-	_, err := ResolveQuery(context.Background(), "/repo", "github", "o/r", "label:")
+	_, err := ResolveQuery(context.Background(), nil, "/repo", "github", "o/r", "label:")
 	if err == nil {
 		t.Fatal("want an error for an empty label name, got nil")
 	}
@@ -89,7 +87,7 @@ func TestResolveQueryGitHubEmptyLabelIsAnError(t *testing.T) {
 func TestResolveQueryGitHubUnknownFormIsAnError(t *testing.T) {
 	stubGitHubIssues(t, nil, errors.New("listGitHubIssues must not be called"))
 
-	_, err := ResolveQuery(context.Background(), "/repo", "github", "o/r", "everything")
+	_, err := ResolveQuery(context.Background(), nil, "/repo", "github", "o/r", "everything")
 	if err == nil {
 		t.Fatal("want an error for an unrecognized query form, got nil")
 	}
@@ -136,7 +134,7 @@ func TestClassifyQuery(t *testing.T) {
 func TestResolveQueryGitHubNoMatchIsNotAnError(t *testing.T) {
 	stubGitHubIssues(t, []gh.IssueItem{}, nil)
 
-	targets, err := ResolveQuery(context.Background(), "/repo", "github", "o/r", "label:nothing-matches-this")
+	targets, err := ResolveQuery(context.Background(), nil, "/repo", "github", "o/r", "label:nothing-matches-this")
 	if err != nil {
 		t.Fatalf("want nil error, got %v", err)
 	}
@@ -152,7 +150,7 @@ func TestResolveQueryGitHubNoMatchIsNotAnError(t *testing.T) {
 // beads nor github (nor undeclared) errors by name rather than silently
 // falling back to a resolver it was never configured for.
 func TestResolveQueryUnknownTrackerIsAnError(t *testing.T) {
-	_, err := ResolveQuery(context.Background(), "/repo", "jira", "", "label:x")
+	_, err := ResolveQuery(context.Background(), nil, "/repo", "jira", "", "label:x")
 	if err == nil {
 		t.Fatal("want an error for an unsupported tracker, got nil")
 	}
@@ -169,7 +167,7 @@ func TestResolveQueryReadyExcludesBlocked(t *testing.T) {
 		{ID: "a-2", Blockers: []string{"a-1"}},
 	}, nil)
 
-	targets, err := ResolveQuery(context.Background(), "/repo", "beads", "", "ready")
+	targets, err := ResolveQuery(context.Background(), nil, "/repo", "beads", "", "ready")
 	if err != nil {
 		t.Fatalf("ResolveQuery: %v", err)
 	}
@@ -188,7 +186,7 @@ func TestResolveQueryLabelFiltersByLabel(t *testing.T) {
 		{ID: "a-3", Labels: []string{"review-me", "other"}},
 	}, nil)
 
-	targets, err := ResolveQuery(context.Background(), "/repo", "beads", "", "label:review-me")
+	targets, err := ResolveQuery(context.Background(), nil, "/repo", "beads", "", "label:review-me")
 	if err != nil {
 		t.Fatalf("ResolveQuery: %v", err)
 	}
@@ -206,7 +204,7 @@ func TestResolveQueryLabelFiltersByLabel(t *testing.T) {
 func TestResolveQueryEmptyLabelIsAnError(t *testing.T) {
 	stubBeads(t, []bd.Bead{{ID: "a-1", Labels: []string{"x"}}}, nil)
 
-	_, err := ResolveQuery(context.Background(), "/repo", "beads", "", "label:")
+	_, err := ResolveQuery(context.Background(), nil, "/repo", "beads", "", "label:")
 	if err == nil {
 		t.Fatal("want an error for an empty label name, got nil")
 	}
@@ -219,7 +217,7 @@ func TestResolveQueryEmptyLabelIsAnError(t *testing.T) {
 func TestResolveQueryNoMatchIsNotAnError(t *testing.T) {
 	stubBeads(t, []bd.Bead{{ID: "a-1", Labels: []string{"other"}}}, nil)
 
-	targets, err := ResolveQuery(context.Background(), "/repo", "beads", "", "label:nothing-matches-this")
+	targets, err := ResolveQuery(context.Background(), nil, "/repo", "beads", "", "label:nothing-matches-this")
 	if err != nil {
 		t.Fatalf("want nil error, got %v", err)
 	}
@@ -234,7 +232,7 @@ func TestResolveQueryNoMatchIsNotAnError(t *testing.T) {
 func TestResolveQueryUnknownFormIsAnError(t *testing.T) {
 	stubBeads(t, []bd.Bead{{ID: "a-1"}}, nil)
 
-	_, err := ResolveQuery(context.Background(), "/repo", "beads", "", "everything")
+	_, err := ResolveQuery(context.Background(), nil, "/repo", "beads", "", "everything")
 	if err == nil {
 		t.Fatal("want an error for an unrecognized query form, got nil")
 	}
@@ -250,19 +248,19 @@ func TestResolveQueryUnknownFormIsAnError(t *testing.T) {
 func TestResolveQueryTrackerErrorPropagates(t *testing.T) {
 	stubBeads(t, nil, errors.New("no beads workspace"))
 
-	_, err := ResolveQuery(context.Background(), "/repo", "beads", "", "ready")
+	_, err := ResolveQuery(context.Background(), nil, "/repo", "beads", "", "ready")
 	if err == nil {
 		t.Fatal("want the tracker error propagated, got nil")
 	}
 }
 
-// TestResolveQueryTargetsCarryAnImplementPrompt proves every resolved target
-// gets a real, runnable prompt — the same "/implement <id>" shape this
-// project's own swarm tooling already uses for one worktree, one issue.
-func TestResolveQueryTargetsCarryAnImplementPrompt(t *testing.T) {
+// TestResolveQueryTargetsCarryTheActionsRunAndDone proves every resolved
+// target carries the workflow action's own run and done strings, unformatted.
+func TestResolveQueryTargetsCarryTheActionsRunAndDone(t *testing.T) {
 	stubBeads(t, []bd.Bead{{ID: "proj-42"}}, nil)
+	action := manifest.Action{"kind": "workflow", "run": "go-run $ADMIN_TARGET", "done": "is-done"}
 
-	targets, err := ResolveQuery(context.Background(), "/repo", "beads", "", "ready")
+	targets, err := ResolveQuery(context.Background(), action, "/repo", "beads", "", "ready")
 	if err != nil {
 		t.Fatalf("ResolveQuery: %v", err)
 	}
@@ -272,7 +270,7 @@ func TestResolveQueryTargetsCarryAnImplementPrompt(t *testing.T) {
 	if targets[0].Name != "proj-42" {
 		t.Fatalf("want target named proj-42, got %q", targets[0].Name)
 	}
-	if !strings.Contains(targets[0].Prompt, "proj-42") {
-		t.Fatalf("want the prompt to name the bead, got %q", targets[0].Prompt)
+	if targets[0].Run != "go-run $ADMIN_TARGET" || targets[0].Done != "is-done" {
+		t.Fatalf("want the action's run and done, got %+v", targets[0])
 	}
 }

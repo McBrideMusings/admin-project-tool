@@ -494,7 +494,6 @@ root = "~/.worktrees"
 columns = ["id", "title"]
 
 [workflow]
-agent   = "claude"
 ceiling = 3
 
 [terminal]
@@ -519,8 +518,8 @@ pattern = ".claude/skills/*"
 	if m.Beads["columns"] == nil {
 		t.Error("Beads[columns] not parsed")
 	}
-	if m.Workflow["agent"] != "claude" {
-		t.Errorf("Workflow[agent] = %v", m.Workflow["agent"])
+	if m.Workflow["ceiling"] != int64(3) {
+		t.Errorf("Workflow[ceiling] = %v", m.Workflow["ceiling"])
 	}
 	if m.Terminal["spawn"] != "spawn cmd" {
 		t.Errorf("Terminal[spawn] = %v, want \"spawn cmd\"", m.Terminal["spawn"])

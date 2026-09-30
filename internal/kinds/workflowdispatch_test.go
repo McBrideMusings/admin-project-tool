@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/McBrideMusings/admin-project-tool/internal/agent"
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/create"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
@@ -83,54 +82,22 @@ func setupWorkflowRepo(t *testing.T, configTOML string) (repoRoot string) {
 	return repoRoot
 }
 
-// fakeDriver is the test double for internal/agent.Driver: each method
-// defers to a caller-supplied func when set, else a harmless default (Start/
-// Prompt succeed doing nothing, Info reports idle).
-type fakeDriver struct {
-	startFn  func(handle, kind string, args []string) error
-	promptFn func(handle, text string, until []agent.Status) error
-	infoFn   func(handle string) (agent.Info, error)
+// workflowAction is the smallest valid workflow action: a run string.
+func workflowAction() manifest.Action {
+	return manifest.Action{"kind": "workflow", "run": "work-on $ADMIN_TARGET"}
 }
 
-func (f *fakeDriver) Start(handle, kind string, args []string) error {
-	if f.startFn == nil {
-		return nil
-	}
-	return f.startFn(handle, kind, args)
-}
-
-func (f *fakeDriver) Prompt(handle, text string, until []agent.Status) error {
-	if f.promptFn == nil {
-		return nil
-	}
-	return f.promptFn(handle, text, until)
-}
-
-func (f *fakeDriver) Info(_ context.Context, handle string) (agent.Info, error) {
-	if f.infoFn == nil {
-		return agent.Info{Status: agent.StatusIdle}, nil
-	}
-	return f.infoFn(handle)
-}
-
-// stubAgent replaces spawnPane and selectDriver for the duration of the
-// test — spawn stands in for the [terminal] launcher's pane-opening step,
-// start/prompt back the fakeDriver selectDriver hands back — restoring the
-// real implementations on cleanup, the same save-swap-restore-on-Cleanup
-// pattern the rest of this package uses for its other package-var seams
-// (selfExecutable, removeWorktreeFn).
-func stubAgent(t *testing.T,
-	spawn func(cwd string) (string, error),
-	start func(handle, kind string, args []string) error,
-	prompt func(handle, text string, until []agent.Status) error,
-) *fakeDriver {
+// stubSpawn replaces spawnPane for the duration of the test — spawn stands in
+// for the [terminal] launcher's pane-opening step — restoring the real
+// implementation on cleanup, the same save-swap-restore-on-Cleanup pattern
+// the rest of this package uses for its other package-var seams.
+func stubSpawn(t *testing.T, spawn func(cmdLine, cwd string, ctx launchCtx) (string, error)) {
 	t.Helper()
-	origSpawn, origSelect := spawnPane, selectDriver
-	spawnPane = func(cwd string, ctx launchCtx, term config.Terminal) (string, error) { return spawn(cwd) }
-	fd := &fakeDriver{startFn: start, promptFn: prompt}
-	selectDriver = func() (agent.Driver, bool) { return fd, true }
-	t.Cleanup(func() { spawnPane, selectDriver = origSpawn, origSelect })
-	return fd
+	origSpawn := spawnPane
+	spawnPane = func(cmdLine, cwd string, ctx launchCtx, term config.Terminal) (string, error) {
+		return spawn(cmdLine, cwd, ctx)
+	}
+	t.Cleanup(func() { spawnPane = origSpawn })
 }
 
 // -- tests ------------------------------------------------------------------
@@ -139,23 +106,19 @@ func stubAgent(t *testing.T,
 // acceptance criterion: dispatching over N targets creates N worktrees,
 // each seeded with the configured populate files.
 func TestDispatchTargetsCreatesWorktreesSeededWithPopulate(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"default-agent\"\n\n"+
-		terminalTOML+"\n[[populate]]\npattern = \".env\"\nmode = \"copy\"\n")
+	repoRoot := setupWorkflowRepo(t, terminalTOML+"\n[[populate]]\npattern = \".env\"\nmode = \"copy\"\n")
 	if err := os.WriteFile(filepath.Join(repoRoot, ".env"), []byte("SECRET=1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	var paneN int32
-	stubAgent(t,
-		func(cwd string) (string, error) {
-			n := atomic.AddInt32(&paneN, 1)
-			return fmt.Sprintf("pane-%d", n), nil
-		},
-		nil, nil,
-	)
+	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) {
+		n := atomic.AddInt32(&paneN, 1)
+		return fmt.Sprintf("pane-%d", n), nil
+	})
 
-	targets := []Target{{Name: "t1"}, {Name: "t2"}, {Name: "t3"}}
-	results := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, targets, SurfaceDashboard)
+	targets := []Target{{Name: "t1", Run: "x"}, {Name: "t2", Run: "x"}, {Name: "t3", Run: "x"}}
+	results := DispatchTargets(repoRoot, "sweep", workflowAction(), targets, SurfaceDashboard)
 
 	if len(results) != 3 {
 		t.Fatalf("got %d results, want 3", len(results))
@@ -179,37 +142,37 @@ func TestDispatchTargetsCreatesWorktreesSeededWithPopulate(t *testing.T) {
 	}
 }
 
-// TestDispatchTargetsNoAgentConfiguredFailsEveryTargetWithoutTouchingGit is
-// the "no agent, no guessing" case: with neither the action nor the config
-// naming one, every target fails, naming the missing configuration — and
-// nothing is created, since failing before doing any work beats creating N
-// worktrees for a dispatch that was never going to run anything.
-func TestDispatchTargetsNoAgentConfiguredFailsEveryTargetWithoutTouchingGit(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, "")
+// TestDispatchTargetsNoRunFailsEveryTargetWithoutTouchingGit is the "no run,
+// no guessing" case: a target carrying no run command fails, naming the
+// missing key — and nothing is created, since failing before doing any work
+// beats creating N worktrees for a dispatch that was never going to run
+// anything.
+func TestDispatchTargetsNoRunFailsEveryTargetWithoutTouchingGit(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
 	wtRoot := filepath.Join(filepath.Dir(repoRoot), "wt")
 
-	results := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"},
+	results := DispatchTargets(repoRoot, "sweep", workflowAction(),
 		[]Target{{Name: "t1"}, {Name: "t2"}}, SurfaceDashboard)
 
 	for _, r := range results {
-		if r.Err == nil || !strings.Contains(r.Err.Error(), "no agent configured") {
-			t.Errorf("target %q: err = %v, want a 'no agent configured' error", r.Target, r.Err)
+		if r.Err == nil || !strings.Contains(r.Err.Error(), "no run command") {
+			t.Errorf("target %q: err = %v, want a 'no run command' error", r.Target, r.Err)
 		}
 	}
 	if _, err := os.Stat(wtRoot); !os.IsNotExist(err) {
-		t.Errorf("a worktree root was created (%v) for a dispatch with no agent configured", err)
+		t.Errorf("a worktree root was created (%v) for a dispatch with no run command", err)
 	}
 }
 
 // TestDispatchTargetsNoTerminalConfiguredFailsEveryTargetNamingIt is the
-// launcher-side counterpart: an agent is configured but no [terminal]
+// launcher-side counterpart: a run is configured but no [terminal]
 // launcher is declared, so every target fails naming that specifically
 // (rather than a generic dispatch error), and nothing is created.
 func TestDispatchTargetsNoTerminalConfiguredFailsEveryTargetNamingIt(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n")
+	repoRoot := setupWorkflowRepo(t, "")
 	wtRoot := filepath.Join(filepath.Dir(repoRoot), "wt")
 
-	results := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}}, SurfaceDashboard)
+	results := DispatchTargets(repoRoot, "sweep", workflowAction(), []Target{{Name: "t1", Run: "x"}}, SurfaceDashboard)
 
 	for _, r := range results {
 		if r.Err == nil || !strings.Contains(r.Err.Error(), "[terminal]") {
@@ -218,43 +181,6 @@ func TestDispatchTargetsNoTerminalConfiguredFailsEveryTargetNamingIt(t *testing.
 	}
 	if _, err := os.Stat(wtRoot); !os.IsNotExist(err) {
 		t.Errorf("a worktree root was created (%v) for a dispatch with no [terminal] launcher", err)
-	}
-}
-
-// TestDispatchTargetsAgentOverrideWinsOverDefault is the acceptance
-// criterion "a per-workflow agent override is used in preference to the
-// default": the action names its own agent, and the project config names a
-// different one.
-//
-// MUTATION EVIDENCE (actually run, then reverted): swapping ResolveAgent's
-// two branches so cfg.Workflow.Agent is checked before the action's own
-// key produced this real failure:
-//
-//	agent kind = "config-default-agent", want action-override-agent
-func TestDispatchTargetsAgentOverrideWinsOverDefault(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"config-default-agent\"\n\n"+terminalTOML)
-
-	var gotKind string
-	var mu sync.Mutex
-	stubAgent(t,
-		func(cwd string) (string, error) { return "pane-1", nil },
-		func(handle, kind string, args []string) error {
-			mu.Lock()
-			gotKind = kind
-			mu.Unlock()
-			return nil
-		},
-		nil,
-	)
-
-	action := manifest.Action{"kind": "workflow", "agent": "action-override-agent"}
-	results := DispatchTargets(repoRoot, "sweep", action, []Target{{Name: "t1"}}, SurfaceDashboard)
-
-	if results[0].Err != nil {
-		t.Fatalf("unexpected error: %v", results[0].Err)
-	}
-	if gotKind != "action-override-agent" {
-		t.Errorf("agent kind = %q, want action-override-agent", gotKind)
 	}
 }
 
@@ -269,39 +195,32 @@ func TestDispatchTargetsAgentOverrideWinsOverDefault(t *testing.T) {
 //
 //	observed max concurrency = 5, want <= 2 (ceiling)
 func TestDispatchTargetsCeilingLimitsConcurrency(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\nceiling = 2\n\n"+terminalTOML)
+	repoRoot := setupWorkflowRepo(t, "[workflow]\nceiling = 2\n\n"+terminalTOML)
 
 	var current, max int32
 	release := make(chan struct{})
 	var paneN int32
-	stubAgent(t,
-		func(cwd string) (string, error) {
-			n := atomic.AddInt32(&paneN, 1)
-			return fmt.Sprintf("pane-%d", n), nil
-		},
-		nil,
-		func(handle, text string, until []agent.Status) error {
-			n := atomic.AddInt32(&current, 1)
-			for {
-				old := atomic.LoadInt32(&max)
-				if n <= old || atomic.CompareAndSwapInt32(&max, old, n) {
-					break
-				}
+	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) {
+		n := atomic.AddInt32(&current, 1)
+		for {
+			old := atomic.LoadInt32(&max)
+			if n <= old || atomic.CompareAndSwapInt32(&max, old, n) {
+				break
 			}
-			<-release
-			atomic.AddInt32(&current, -1)
-			return nil
-		},
-	)
+		}
+		<-release
+		atomic.AddInt32(&current, -1)
+		return fmt.Sprintf("pane-%d", atomic.AddInt32(&paneN, 1)), nil
+	})
 
 	targets := make([]Target, 5)
 	for i := range targets {
-		targets[i] = Target{Name: fmt.Sprintf("t%d", i), Prompt: "go"}
+		targets[i] = Target{Name: fmt.Sprintf("t%d", i), Run: "x"}
 	}
 
 	done := make(chan []TargetResult, 1)
 	go func() {
-		done <- DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, targets, SurfaceDashboard)
+		done <- DispatchTargets(repoRoot, "sweep", workflowAction(), targets, SurfaceDashboard)
 	}()
 
 	// Let the ceiling's worth of targets actually start and block, then give
@@ -330,8 +249,7 @@ func TestDispatchTargetsCeilingLimitsConcurrency(t *testing.T) {
 // item 2: a worktree created earlier can be removed by something outside
 // this dispatch (a sweeper, a person) before its turn to run arrives.
 // dispatchOne must fail that target loudly rather than silently recreating
-// the worktree at a base nobody chose, and must never spawn a pane or start
-// an agent at all once the worktree is gone.
+// the worktree at a base nobody chose, and must never spawn a pane at all once the worktree is gone.
 //
 // MUTATION EVIDENCE (actually run, then reverted): short-circuiting the
 // `if !create.IsRegisteredWorktree(...)` guard in dispatchOne (`if false &&
@@ -339,7 +257,7 @@ func TestDispatchTargetsCeilingLimitsConcurrency(t *testing.T) {
 //
 //	expected an error for a worktree removed before dispatch, got nil
 func TestDispatchOneFailsLoudlyWhenWorktreeVanished(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+terminalTOML)
+	repoRoot := setupWorkflowRepo(t, ""+terminalTOML)
 	ctx := context.Background()
 
 	wt, err := create.Worktree(ctx, repoRoot, "vanish-me")
@@ -359,18 +277,14 @@ func TestDispatchOneFailsLoudlyWhenWorktreeVanished(t *testing.T) {
 	}
 	wfGitT(t, repoRoot, "worktree", "remove", "--force", resolved)
 
-	agentStarted := false
-	stubAgent(t,
-		func(cwd string) (string, error) { agentStarted = true; return "pane-1", nil },
-		nil, nil,
-	)
+	spawned := false
+	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) { spawned = true; return "pane-1", nil })
 
 	cfg, err := config.Load(repoRoot)
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
-	drv, _ := selectDriver()
-	res := dispatchOne(repoRoot, "sweep", "a", cfg.Terminal, drv, Target{Name: "vanish-me"}, wt)
+	res := dispatchOne(repoRoot, "sweep", cfg.Terminal, Target{Name: "vanish-me", Run: "x"}, wt)
 
 	if res.Err == nil {
 		t.Fatal("expected an error for a worktree removed before dispatch, got nil")
@@ -378,7 +292,7 @@ func TestDispatchOneFailsLoudlyWhenWorktreeVanished(t *testing.T) {
 	if !strings.Contains(res.Err.Error(), "no longer exists") {
 		t.Errorf("error = %v, want it to say the worktree no longer exists", res.Err)
 	}
-	if agentStarted {
+	if spawned {
 		t.Error("spawnPane was called for a worktree that no longer exists")
 	}
 	if _, err := os.Stat(wt.Path); err == nil {
@@ -386,56 +300,71 @@ func TestDispatchOneFailsLoudlyWhenWorktreeVanished(t *testing.T) {
 	}
 }
 
-// TestDispatchTargetsRecordsLiveWorkWithPaneHandle is the acceptance
-// criterion "each running target appears in the live registry with its
-// pane handle": the registry entry exists (keyed by the launcher handle)
-// while the agent's blocking prompt/wait step is still in flight, not only
-// after DispatchTargets has returned for every target.
+// TestDispatchTargetsSpawnsRunWithTargetEnv is the launch contract: the
+// launcher receives the target's run string as ADMIN_CMD, the target id as
+// ADMIN_TARGET and the target's own worktree as ADMIN_CWD.
+func TestDispatchTargetsSpawnsRunWithTargetEnv(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	var gotCmd, gotTarget, gotCwd string
+	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) {
+		gotCmd, gotTarget, gotCwd = cmdLine, ctx.Target, cwd
+		return "pane-1", nil
+	})
+
+	action := manifest.Action{"kind": "workflow", "run": "claude '/implement $ADMIN_TARGET afk'"}
+	res := DispatchTargets(repoRoot, "implement", action, []Target{NewTarget(action, "proj-1")}, SurfaceDashboard)
+
+	if res[0].Err != nil {
+		t.Fatal(res[0].Err)
+	}
+	if gotCmd != "claude '/implement $ADMIN_TARGET afk'" {
+		t.Errorf("ADMIN_CMD = %q, want the action's run string", gotCmd)
+	}
+	if gotTarget != "proj-1" {
+		t.Errorf("ADMIN_TARGET = %q, want proj-1", gotTarget)
+	}
+	if gotCwd != res[0].WorktreePath {
+		t.Errorf("ADMIN_CWD = %q, want the target's worktree %q", gotCwd, res[0].WorktreePath)
+	}
+}
+
+// TestSpawnLauncherExportsAdminTarget runs the real launcher shell and reads
+// back the environment [terminal].spawn sees.
+func TestSpawnLauncherExportsAdminTarget(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "env")
+	term := config.Terminal{Spawn: `printf '%s|%s|%s' "$ADMIN_CMD" "$ADMIN_TARGET" "$ADMIN_CWD" > ` + out + `; echo h1`}
+	lc := launchCtx{Label: "implement", Target: "proj-7"}
+
+	handle, err := spawnLauncher("do-it", "/wt/proj-7", lc, term)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(out)
+	if handle != "h1" || string(got) != "do-it|proj-7|/wt/proj-7" {
+		t.Errorf("handle = %q, env = %q; want h1 and do-it|proj-7|/wt/proj-7", handle, got)
+	}
+}
+
+// TestDispatchTargetsRecordsLiveWorkWithPaneHandle: each dispatched target
+// appears in the live registry, running, with its pane handle.
 func TestDispatchTargetsRecordsLiveWorkWithPaneHandle(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+terminalTOML)
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) { return "pane-live-1", nil })
 
-	seenRunning := make(chan struct{}, 1)
-	release := make(chan struct{})
-	stubAgent(t,
-		func(cwd string) (string, error) { return "pane-live-1", nil },
-		nil,
-		func(handle, text string, until []agent.Status) error {
-			select {
-			case seenRunning <- struct{}{}:
-			default:
-			}
-			<-release
-			return nil
-		},
-	)
+	res := DispatchTargets(repoRoot, "sweep", workflowAction(), []Target{{Name: "t1", Run: "x"}}, SurfaceDashboard)
+	if res[0].Err != nil {
+		t.Fatal(res[0].Err)
+	}
 
-	done := make(chan []TargetResult, 1)
-	go func() {
-		done <- DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1", Prompt: "go"}}, SurfaceDashboard)
-	}()
-
-	<-seenRunning
-	// Keyed on the derived agent session name, not the launcher handle.
 	entry, ok := livework.Default.Get(workerLiveID("sweep", "t1"))
 	if !ok {
-		t.Fatal("live-work entry not present while the target's agent is still running")
+		t.Fatal("live-work entry not present after dispatch")
 	}
 	if entry.Handle != "pane-live-1" {
 		t.Errorf("entry.Handle = %q, want pane-live-1", entry.Handle)
 	}
 	if entry.State != livework.StateRunning {
-		t.Errorf("entry.State = %q, want running while the target is in flight", entry.State)
-	}
-	close(release)
-	<-done
-}
-
-// stubAgentInfo sets fd.infoFn to a fixed status word for the duration of
-// the test, matching the old stubAgentStatus's shape (a herdr status word
-// in, an agent.Info with that status out).
-func stubAgentInfo(fd *fakeDriver, status string) {
-	fd.infoFn = func(handle string) (agent.Info, error) {
-		return agent.Info{Status: agent.Status(status)}, nil
+		t.Errorf("entry.State = %q, want running", entry.State)
 	}
 }
 
@@ -444,14 +373,10 @@ func stubAgentInfo(fd *fakeDriver, status string) {
 // agent worker has a branch and a worktree" — and that Attach/Kill
 // are both wired, not left nil.
 func TestDispatchOneRecordsWorkerInfo(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+terminalTOML)
-	fd := stubAgent(t,
-		func(cwd string) (string, error) { return "pane-info-1", nil },
-		nil, nil,
-	)
-	stubAgentInfo(fd, "idle")
+	repoRoot := setupWorkflowRepo(t, ""+terminalTOML)
+	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) { return "pane-info-1", nil })
 
-	res := DispatchTargets(repoRoot, "review", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}}, SurfaceDashboard)
+	res := DispatchTargets(repoRoot, "review", workflowAction(), []Target{{Name: "t1", Run: "x"}}, SurfaceDashboard)
 	if res[0].Err != nil {
 		t.Fatalf("DispatchTargets: %v", res[0].Err)
 	}
@@ -471,108 +396,6 @@ func TestDispatchOneRecordsWorkerInfo(t *testing.T) {
 	}
 	if entry.Ops.Attach == nil || entry.Ops.Kill == nil {
 		t.Errorf("entry.Ops = %+v, want Attach/Kill both wired", entry.Ops)
-	}
-}
-
-// TestDispatchOneReportsWaitingWhenAgentBlocked proves the acceptance
-// criterion "an entry waiting for input is distinguishable from one still
-// working without attaching": when the agent's settled status is
-// "blocked" (herdr's own word for an approval/question prompt),
-// dispatchOne records StateWaiting, not StateExited — Prompt returning with
-// no error is not by itself proof the target finished.
-//
-// MUTATION EVIDENCE (actually run, then reverted): replacing the
-// `info.Status == agent.StatusBlocked` check in dispatchOne with a
-// nonsense status produced this real failure:
-//
-//	entry.State = "exited", want "waiting" for a blocked agent
-func TestDispatchOneReportsWaitingWhenAgentBlocked(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+terminalTOML)
-	fd := stubAgent(t,
-		func(cwd string) (string, error) { return "pane-wait-1", nil },
-		nil, nil, // settles with no error, like a blocked agent
-	)
-	stubAgentInfo(fd, "blocked")
-
-	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1", Prompt: "go"}}, SurfaceDashboard)
-	if res[0].Err != nil {
-		t.Fatalf("DispatchTargets: %v", res[0].Err)
-	}
-
-	entry, ok := livework.Default.Get(workerLiveID("sweep", "t1"))
-	if !ok {
-		t.Fatal("live-work entry not found")
-	}
-	if entry.State != livework.StateWaiting {
-		t.Errorf("entry.State = %q, want %q for a blocked agent", entry.State, livework.StateWaiting)
-	}
-}
-
-// TestDispatchOneReportsExitedWhenAgentIdle proves the other half: a target
-// that settles idle (actually finished) is recorded StateExited, not
-// StateWaiting.
-func TestDispatchOneReportsExitedWhenAgentIdle(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+terminalTOML)
-	fd := stubAgent(t,
-		func(cwd string) (string, error) { return "pane-idle-1", nil },
-		nil, nil,
-	)
-	stubAgentInfo(fd, "idle")
-
-	res := DispatchTargets(repoRoot, "sweep2", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1", Prompt: "go"}}, SurfaceDashboard)
-	if res[0].Err != nil {
-		t.Fatalf("DispatchTargets: %v", res[0].Err)
-	}
-
-	entry, ok := livework.Default.Get(workerLiveID("sweep2", "t1"))
-	if !ok {
-		t.Fatal("live-work entry not found")
-	}
-	if entry.State != livework.StateExited {
-		t.Errorf("entry.State = %q, want %q for an idle agent", entry.State, livework.StateExited)
-	}
-}
-
-// TestDispatchTargetsDogfoodActionAgentWithNoWorkflowDefault is admin-7wy5's
-// acceptance criterion 4: dispatch the exact action shape this repo's own
-// admin.toml declares — kind="workflow", over="selection", agent="claude"
-// set on the action, with NO [workflow].agent configured anywhere in the
-// project — through DispatchTargets under stubAgent, and prove the
-// resolved agent kind is "claude" with no real herdr pane touched (stubbed
-// spawnPane/selectDriver never call a real [terminal] launcher or herdr
-// CLI, matching the ticket's fourth acceptance criterion in words:
-// "Dispatch is exercised against a stubbed agent, not a real herdr pane, in
-// tests").
-func TestDispatchTargetsDogfoodActionAgentWithNoWorkflowDefault(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, terminalTOML) // no [workflow] table at all
-
-	var gotKind string
-	var mu sync.Mutex
-	stubAgent(t,
-		func(cwd string) (string, error) { return "pane-dogfood-1", nil },
-		func(handle, kind string, args []string) error {
-			mu.Lock()
-			gotKind = kind
-			mu.Unlock()
-			return nil
-		},
-		nil,
-	)
-
-	action := manifest.Action{"kind": "workflow", "over": "selection", "agent": "claude"}
-	results := DispatchTargets(repoRoot, "implement", action, []Target{{Name: "proj-1"}}, SurfaceDashboard)
-
-	if results[0].Err != nil {
-		t.Fatalf("unexpected error: %v", results[0].Err)
-	}
-	mu.Lock()
-	got := gotKind
-	mu.Unlock()
-	if got != "claude" {
-		t.Errorf("agent kind = %q, want claude", got)
-	}
-	if results[0].Handle != "pane-dogfood-1" {
-		t.Errorf("Handle = %q, want the handle the stub returned (proof only the stub ran)", results[0].Handle)
 	}
 }
 
@@ -598,19 +421,18 @@ func killedHandles(t *testing.T, killLog string) []string {
 // whose names share their first 32 sanitized characters must be two live-work
 // entries, each with its own pane handle.
 func TestDispatchTargetsTargetsDifferingAfterChar32GetOwnEntries(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+terminalTOML)
+	repoRoot := setupWorkflowRepo(t, ""+terminalTOML)
 	var mu sync.Mutex
 	n := 0
-	stubAgent(t,
-		func(cwd string) (string, error) {
-			mu.Lock()
-			defer mu.Unlock()
-			n++
-			return fmt.Sprintf("pane-%d", n), nil
-		}, nil, nil)
+	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		n++
+		return fmt.Sprintf("pane-%d", n), nil
+	})
 
-	targets := []Target{{Name: "admin-3rgp-79-fix-login-timeout-a", Prompt: "go"}, {Name: "admin-3rgp-79-fix-login-timeout-b", Prompt: "go"}}
-	results := DispatchTargets(repoRoot, "implement", manifest.Action{"kind": "workflow"}, targets, SurfaceDashboard)
+	targets := []Target{{Name: "admin-3rgp-79-fix-login-timeout-a", Run: "x"}, {Name: "admin-3rgp-79-fix-login-timeout-b", Run: "x"}}
+	results := DispatchTargets(repoRoot, "implement", workflowAction(), targets, SurfaceDashboard)
 
 	for _, r := range results {
 		if r.Err != nil {
@@ -634,39 +456,18 @@ func TestDispatchTargetsTargetsDifferingAfterChar32GetOwnEntries(t *testing.T) {
 	}
 }
 
-// TestDispatchOneBlankPromptLeavesAgentRunning: with nothing to prompt there
-// is nothing to settle, so the entry stays running and the driver is never
-// asked for the agent's status.
-func TestDispatchOneBlankPromptLeavesAgentRunning(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+terminalTOML)
-	fd := stubAgent(t, func(cwd string) (string, error) { return "pane-blank", nil }, nil, nil)
-	fd.infoFn = func(handle string) (agent.Info, error) {
-		t.Error("drv.Info called for a blank prompt")
-		return agent.Info{Status: agent.StatusIdle}, nil
-	}
-
-	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1", Prompt: "  "}}, SurfaceDashboard)
-
-	if res[0].Err != nil {
-		t.Fatal(res[0].Err)
-	}
-	if st, _ := livework.Default.State(workerLiveID("sweep", "t1")); st != livework.StateRunning {
-		t.Errorf("state = %q, want running", st)
-	}
-}
-
 // TestDispatchTargetsBrokenManifestReportsParseError: a manifest that does not
-// parse fails every target with that error, not "no agent configured".
+// parse fails every target with that error, not "no run command".
 func TestDispatchTargetsBrokenManifestReportsParseError(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, "[workflow\nagent = \"a\"\n")
+	repoRoot := setupWorkflowRepo(t, "[workflow\nceiling = 1\n")
 
-	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}, {Name: "t2"}}, SurfaceDashboard)
+	res := DispatchTargets(repoRoot, "sweep", workflowAction(), []Target{{Name: "t1", Run: "x"}, {Name: "t2", Run: "x"}}, SurfaceDashboard)
 
 	for _, r := range res {
 		if r.Err == nil || !strings.Contains(r.Err.Error(), "loading config") {
 			t.Errorf("target %q: err = %v, want a 'loading config' error", r.Target, r.Err)
 		}
-		if r.Err != nil && strings.Contains(r.Err.Error(), "no agent configured") {
+		if r.Err != nil && strings.Contains(r.Err.Error(), "no run command") {
 			t.Errorf("target %q: parse error was replaced by %v", r.Target, r.Err)
 		}
 	}
@@ -675,11 +476,11 @@ func TestDispatchTargetsBrokenManifestReportsParseError(t *testing.T) {
 // TestDispatchTargetsSpawnOnlyTerminalRefusesToDispatch: a [terminal] with
 // spawn but no attach/kill would open panes nothing can close.
 func TestDispatchTargetsSpawnOnlyTerminalRefusesToDispatch(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n[terminal]\nspawn = \"true\"\n")
+	repoRoot := setupWorkflowRepo(t, "[terminal]\nspawn = \"true\"\n")
 	spawned := false
-	stubAgent(t, func(cwd string) (string, error) { spawned = true; return "pane-x", nil }, nil, nil)
+	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) { spawned = true; return "pane-x", nil })
 
-	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}}, SurfaceDashboard)
+	res := DispatchTargets(repoRoot, "sweep", workflowAction(), []Target{{Name: "t1", Run: "x"}}, SurfaceDashboard)
 
 	if res[0].Err == nil || !strings.Contains(res[0].Err.Error(), "attach") || !strings.Contains(res[0].Err.Error(), "kill") {
 		t.Errorf("err = %v, want it to name the missing attach and kill", res[0].Err)
@@ -689,42 +490,17 @@ func TestDispatchTargetsSpawnOnlyTerminalRefusesToDispatch(t *testing.T) {
 	}
 }
 
-// TestDispatchOneStartFailureClosesPane: drv.Start failing after the pane
-// opened must run the launcher's kill with that pane's handle.
-func TestDispatchOneStartFailureClosesPane(t *testing.T) {
-	killLog := filepath.Join(t.TempDir(), "kills")
-	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+killLogTerminal(killLog))
-	stubAgent(t,
-		func(cwd string) (string, error) { return "pane-start", nil },
-		func(handle, kind string, args []string) error { return errors.New("start boom") }, nil)
-
-	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1", Prompt: "go"}}, SurfaceDashboard)
-
-	if res[0].Err == nil || !strings.Contains(res[0].Err.Error(), "start boom") {
-		t.Fatalf("err = %v, want the start failure", res[0].Err)
-	}
-	if res[0].Handle != "pane-start" {
-		t.Errorf("Handle = %q, want pane-start", res[0].Handle)
-	}
-	if got := killedHandles(t, killLog); len(got) != 1 || got[0] != "pane-start" {
-		t.Errorf("killed panes = %v, want [pane-start]", got)
-	}
-	if _, ok := livework.Default.Get(workerLiveID("sweep", "t1")); ok {
-		t.Error("a failed start left a live-work entry")
-	}
-}
-
 // TestDispatchOneDuplicateLiveEntryClosesPane: Registry.Add refusing a live
 // duplicate must close the pane this dispatch opened, and keep the original.
 func TestDispatchOneDuplicateLiveEntryClosesPane(t *testing.T) {
 	killLog := filepath.Join(t.TempDir(), "kills")
-	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+killLogTerminal(killLog))
-	stubAgent(t, func(cwd string) (string, error) { return "pane-new", nil }, nil, nil)
+	repoRoot := setupWorkflowRepo(t, ""+killLogTerminal(killLog))
+	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) { return "pane-new", nil })
 	if err := livework.Default.Add(&livework.Entry{ID: workerLiveID("sweep", "t1"), Handle: "pane-old"}); err != nil {
 		t.Fatal(err)
 	}
 
-	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1", Prompt: "go"}}, SurfaceDashboard)
+	res := DispatchTargets(repoRoot, "sweep", workflowAction(), []Target{{Name: "t1", Run: "x"}}, SurfaceDashboard)
 
 	if res[0].Err == nil {
 		t.Fatal("dispatch over a live duplicate succeeded")
@@ -737,32 +513,14 @@ func TestDispatchOneDuplicateLiveEntryClosesPane(t *testing.T) {
 	}
 }
 
-// TestDispatchTargetsNoDriverFailsEveryTarget: selectDriver reporting false
-// fails the target before any worktree or pane exists.
-func TestDispatchTargetsNoDriverFailsEveryTarget(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+terminalTOML)
-	orig := selectDriver
-	selectDriver = func() (agent.Driver, bool) { return nil, false }
-	t.Cleanup(func() { selectDriver = orig })
-
-	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}}, SurfaceDashboard)
-
-	if res[0].Err == nil || !strings.Contains(res[0].Err.Error(), "no agent driver") {
-		t.Errorf("err = %v, want 'no agent driver available'", res[0].Err)
-	}
-	if res[0].WorktreePath != "" {
-		t.Errorf("a worktree was created (%s) with no driver", res[0].WorktreePath)
-	}
-}
-
 // TestDispatchOneSpawnFailureReportsNoHandle: a launcher that cannot open a
 // pane leaves no handle, no entry and nothing to kill.
 func TestDispatchOneSpawnFailureReportsNoHandle(t *testing.T) {
 	killLog := filepath.Join(t.TempDir(), "kills")
-	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+killLogTerminal(killLog))
-	stubAgent(t, func(cwd string) (string, error) { return "", errors.New("spawn boom") }, nil, nil)
+	repoRoot := setupWorkflowRepo(t, ""+killLogTerminal(killLog))
+	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) { return "", errors.New("spawn boom") })
 
-	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}}, SurfaceDashboard)
+	res := DispatchTargets(repoRoot, "sweep", workflowAction(), []Target{{Name: "t1", Run: "x"}}, SurfaceDashboard)
 
 	if res[0].Err == nil || !strings.Contains(res[0].Err.Error(), "spawn boom") {
 		t.Fatalf("err = %v, want the spawn failure", res[0].Err)
@@ -775,50 +533,6 @@ func TestDispatchOneSpawnFailureReportsNoHandle(t *testing.T) {
 	}
 	if n := len(livework.Default.List()); n != 0 {
 		t.Errorf("registry holds %d entries, want 0", n)
-	}
-}
-
-// TestDispatchOnePromptFailureMarksEntryFailed: drv.Prompt failing leaves the
-// entry registered in StateFailed with the pane handle reported.
-func TestDispatchOnePromptFailureMarksEntryFailed(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+terminalTOML)
-	stubAgent(t,
-		func(cwd string) (string, error) { return "pane-prompt", nil }, nil,
-		func(handle, text string, until []agent.Status) error { return errors.New("prompt boom") })
-
-	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1", Prompt: "go"}}, SurfaceDashboard)
-
-	if res[0].Err == nil || !strings.Contains(res[0].Err.Error(), "prompt boom") {
-		t.Fatalf("err = %v, want the prompt failure", res[0].Err)
-	}
-	if res[0].Handle != "pane-prompt" {
-		t.Errorf("Handle = %q, want pane-prompt", res[0].Handle)
-	}
-	if st, _ := livework.Default.State(workerLiveID("sweep", "t1")); st != livework.StateFailed {
-		t.Errorf("state = %q, want failed", st)
-	}
-}
-
-type blockingInfoDriver struct{ agent.Driver }
-
-func (blockingInfoDriver) Info(ctx context.Context, _ string) (agent.Info, error) {
-	<-ctx.Done()
-	return agent.Info{}, ctx.Err()
-}
-
-func TestInfoWithinReturnsWhenDriverBlocks(t *testing.T) {
-	done := make(chan error, 1)
-	go func() {
-		_, err := infoWithin(blockingInfoDriver{}, "h", 20*time.Millisecond)
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("err = %v, want DeadlineExceeded", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("infoWithin did not return for a driver blocking on ctx")
 	}
 }
 

@@ -286,7 +286,7 @@ var WorktreesKeys = map[string]bool{"root": true}
 var BeadsKeys = map[string]bool{"columns": true}
 
 // WorkflowKeys are the keys accepted by the [workflow] table.
-var WorkflowKeys = map[string]bool{"agent": true, "ceiling": true}
+var WorkflowKeys = map[string]bool{"ceiling": true}
 
 // PopulateEntryKeys are the keys accepted by each [[populate]] entry.
 var PopulateEntryKeys = map[string]bool{"pattern": true, "mode": true}

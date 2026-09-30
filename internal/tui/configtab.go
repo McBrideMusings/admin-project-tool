@@ -135,9 +135,6 @@ func (m Model) configTableRows() []rowItem {
 	out = append(out, m.worktreeRootRow())
 	out = append(out, m.populateRows(m.cfgMerged.Populate, m.keyOrigin["populate"])...)
 
-	agent := declared{value: m.cfgMerged.Workflow.Agent, origin: m.keyOrigin["workflow"]}
-	out = append(out, renderConfigRow("default agent", agent, "not declared"))
-
 	ceiling := declared{origin: m.keyOrigin["workflow"]}
 	if m.cfgMerged.Workflow.Ceiling > 0 {
 		ceiling.value = strconv.Itoa(m.cfgMerged.Workflow.Ceiling)

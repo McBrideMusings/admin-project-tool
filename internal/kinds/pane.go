@@ -89,6 +89,9 @@ type launchCtx struct {
 	RowKind string
 	RowID   string
 	RowURL  string
+	// Target is the workflow target id a worker's run string sees as
+	// ADMIN_TARGET; empty for every other dispatch.
+	Target string
 }
 
 // launchCtxFromEnv builds a launchCtx for label from the process's own
@@ -135,6 +138,9 @@ func (c launchCtx) env(cmdLine, wd string) []string {
 		"ADMIN_CMD=" + cmdLine,
 		"ADMIN_LABEL=" + c.Label,
 		"ADMIN_CWD=" + wd,
+	}
+	if c.Target != "" {
+		out = append(out, "ADMIN_TARGET="+c.Target)
 	}
 	out = append(out, RowEnv(c.RowKind, c.RowID, c.RowURL)...)
 	return out

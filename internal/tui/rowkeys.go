@@ -16,7 +16,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/keymap"
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
@@ -216,7 +215,7 @@ func (m Model) commandNamed(name string) (manifest.Command, bool) {
 // to the cursor-row path below, matching ADR-0018's
 // selection-wins-with-cursor-fallback rule.
 func (m Model) rowKeyWorkflow(name string, c manifest.Command, r rowItem, kind keymap.RowKind) (tea.Model, tea.Cmd) {
-	if targets := m.trackerTargets(); len(targets) > 0 {
+	if targets := m.trackerTargets(nil); len(targets) > 0 {
 		return m.pickWorkflow(workCmdRow{name: name, cmd: c})
 	}
 
@@ -233,20 +232,9 @@ func (m Model) rowKeyWorkflow(name string, c manifest.Command, r rowItem, kind k
 		m.setStatus(name+": no id on this row to dispatch over", cRed)
 		return m, nil
 	}
-	targets := []kinds.Target{{Name: id, Prompt: kinds.ImplementPrompt(id)}}
-
-	cfg, err := config.Load(m.repoRoot)
-	if err != nil {
-		cfg = config.Config{}
-	}
-	// agent/ceiling are not otherwise needed here — DispatchTargets
-	// re-resolves both itself. ResolveAgent runs purely as the pre-flight
-	// that turns a misconfiguration into a red status line before anything
-	// is dispatched, since there is no overlay on this path to report it as
-	// a field.
-	if _, agentOK := kinds.ResolveAgent(action, cfg); !agentOK {
-		m.setStatus(fmt.Sprintf(
-			"no agent configured — set 'agent' on %q or [workflow].agent in admin.toml", name), cRed)
+	targets := []kinds.Target{kinds.NewTarget(action, id)}
+	if targets[0].Run == "" {
+		m.setStatus(fmt.Sprintf("no run command — set 'run' on %q", name), cRed)
 		return m, nil
 	}
 

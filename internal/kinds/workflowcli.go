@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
@@ -98,7 +99,7 @@ func runWorkflowQuery(name string, action manifest.Action, m *manifest.Manifest,
 	// it needs nwo at all.
 	nwo, _ := git.OriginNWO(context.Background(), repoRoot)
 
-	targets, err := resolveWorkflowQuery(context.Background(), repoRoot, tracker, nwo, target.Query)
+	targets, err := resolveWorkflowQuery(context.Background(), action, repoRoot, tracker, nwo, target.Query)
 	if err != nil {
 		return err
 	}
@@ -111,16 +112,14 @@ func runWorkflowQuery(name string, action manifest.Action, m *manifest.Manifest,
 	if cfgErr != nil {
 		return fmt.Errorf("loading config: %w", cfgErr)
 	}
-	agent, agentOK := ResolveAgent(action, cfg)
-	if !agentOK {
-		return fmt.Errorf(
-			"action %q: kind=\"workflow\" has no agent configured — set 'agent' on the action "+
-				"or [workflow].agent in admin.toml", name)
+	run := ActionRun(action)
+	if strings.TrimSpace(run) == "" {
+		return fmt.Errorf("action %q: kind=\"workflow\" has no run command — set 'run' on the action", name)
 	}
 	ceiling := Ceiling(cfg)
 
 	fmt.Fprintf(os.Stderr, "query   %s\n", target.Query)
-	fmt.Fprintf(os.Stderr, "agent   %s\n", agent)
+	fmt.Fprintf(os.Stderr, "run     %s\n", run)
 	fmt.Fprintf(os.Stderr, "ceiling %d at once\n", ceiling)
 	fmt.Fprintf(os.Stderr, "%d target(s):\n", len(targets))
 	for _, t := range targets {

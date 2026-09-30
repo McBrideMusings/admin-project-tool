@@ -4,10 +4,9 @@
 // path — worktree creation, the concurrency ceiling and result collection all
 // stay in DispatchTargets; only "how one target's agent runs" differs.
 //
-// The agent is the real command line, not a herdr agent session: interactive
-// `claude [prompt]` by default, `claude -p <prompt>` when the action says
-// `mode = "print"`. There is no pane and no Driver, so a hosted worker needs
-// neither a [terminal] launcher nor herdr.
+// The worker is the action's own `run` string under /bin/sh with ADMIN_TARGET
+// set. There is no pane, so a hosted worker needs neither a [terminal]
+// launcher nor herdr.
 //
 // Where it runs depends on who called DispatchTargets:
 //
@@ -23,7 +22,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/create"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
@@ -42,18 +40,6 @@ const (
 	SurfaceDashboard
 )
 
-// Workflow agent modes: how a hosted claude worker runs.
-const (
-	ModeInteractive = "interactive"
-	ModePrint       = "print"
-)
-
-// workflowMode reads the action's `mode` key: "" when absent.
-func workflowMode(action manifest.Action) string {
-	m, _ := actionString(action, "mode")
-	return m
-}
-
 // workerLocale is where a workflow's workers run: the action's own `locale`,
 // else [terminal].locale, else "window" — the launcher, which is what a
 // workflow did before `hosted` was a choice.
@@ -64,38 +50,26 @@ func workerLocale(action manifest.Action, term string) string {
 	return validate.LocaleWindow
 }
 
-// agentArgv builds the command line of one hosted worker. Only claude has a
-// known command line; any other agent kind is an error rather than a guess.
-func agentArgv(kind, mode, prompt string) ([]string, error) {
-	if kind != "claude" {
-		return nil, fmt.Errorf(
-			"agent %q cannot run hosted — locale = %q runs the claude command line only", kind, validate.LocaleHosted)
-	}
-	prompt = strings.TrimSpace(prompt)
-	switch mode {
-	case "", ModeInteractive:
-		if prompt == "" {
-			return []string{"claude"}, nil
-		}
-		return []string{"claude", prompt}, nil
-	case ModePrint:
-		if prompt == "" {
-			return nil, fmt.Errorf("mode = %q runs claude -p, which needs a prompt and this target has none", ModePrint)
-		}
-		return []string{"claude", "-p", prompt}, nil
-	default:
-		return nil, fmt.Errorf("mode %q is not %q or %q", mode, ModeInteractive, ModePrint)
-	}
+// hostedRunArgv is the command line of one hosted worker: the action's run
+// string under /bin/sh, the same interpreter the launcher's pane gives it.
+func hostedRunArgv(run string) []string {
+	return []string{"/bin/sh", "-c", run}
 }
 
-// hostedAgentArgv, startHostedAgent and runInlineAgent are the seams tests
-// swap so a hosted dispatch runs a stand-in command instead of claude.
+// targetEnv is the environment a worker's run string sees beyond the parent's
+// own: the target id, as ADMIN_TARGET.
+func targetEnv(tgt Target) []string {
+	return []string{"ADMIN_TARGET=" + tgt.Name}
+}
+
+// startHostedAgent and runInlineAgent are the seams tests swap so a hosted
+// dispatch runs a stand-in command instead of the manifest's run string.
 var (
-	hostedAgentArgv  = agentArgv
 	startHostedAgent = StartHostedAgent
-	runInlineAgent   = func(argv []string, dir string) error {
+	runInlineAgent   = func(argv []string, dir string, env []string) error {
 		c := exec.Command(argv[0], argv[1:]...)
 		c.Dir = dir
+		c.Env = append(os.Environ(), env...)
 		c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 		return c.Run()
 	}
@@ -118,30 +92,26 @@ func worktreeGone(repoRoot string, tgt Target, wt create.Result) error {
 // agent's process has exited, which is when DispatchTargets frees its slot.
 // The live-work entry (dashboard surface) is keyed "<action>:<target>" on the
 // full target name — the hosted-command entry shape, with no view of its own.
-func hostedOne(repoRoot, actionName, agentKind, mode string, surface DispatchSurface, tgt Target, wt create.Result) TargetResult {
+func hostedOne(repoRoot, actionName string, surface DispatchSurface, tgt Target, wt create.Result) TargetResult {
 	res := TargetResult{Target: tgt.Name, WorktreePath: wt.Path}
 	if err := worktreeGone(repoRoot, tgt, wt); err != nil {
 		res.Err = err
 		return res
 	}
-	argv, err := hostedAgentArgv(agentKind, mode, tgt.Prompt)
-	if err != nil {
-		res.Err = err
-		return res
-	}
+	argv := hostedRunArgv(tgt.Run)
 	if surface == SurfaceShell {
-		if err := runInlineAgent(argv, wt.Path); err != nil {
-			res.Err = fmt.Errorf("agent %q: %w", agentKind, err)
+		if err := runInlineAgent(argv, wt.Path, targetEnv(tgt)); err != nil {
+			res.Err = fmt.Errorf("run %q: %w", tgt.Run, err)
 		}
 		return res
 	}
-	exit, err := startHostedAgent(TargetLiveKey(actionName, tgt.Name), argv, wt.Path, 0, 0)
+	exit, err := startHostedAgent(TargetLiveKey(actionName, tgt.Name), argv, wt.Path, targetEnv(tgt), 0, 0)
 	if err != nil {
-		res.Err = fmt.Errorf("starting agent %q: %w", agentKind, err)
+		res.Err = fmt.Errorf("starting run %q: %w", tgt.Run, err)
 		return res
 	}
 	if err := <-exit; err != nil {
-		res.Err = fmt.Errorf("agent %q: %w", agentKind, err)
+		res.Err = fmt.Errorf("run %q: %w", tgt.Run, err)
 	}
 	return res
 }

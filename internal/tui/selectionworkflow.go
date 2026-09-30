@@ -47,6 +47,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
+	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
 // activeSelection returns whichever map IS the selection right now — the
@@ -84,7 +85,7 @@ func (m Model) trackerSelectMode() bool {
 // trackerRowID is the id a selectable tracker row toggles and dispatches
 // under: a bead's own id, or a GitHub issue or PR number as a bare string
 // (the same form ResolveQuery already gives a resolved bead's Target.Name —
-// see kinds.ImplementPrompt) — the same identity fields rowID already uses
+// see kinds.NewTarget) — the same identity fields rowID already uses
 // for keymap.Bead/keymap.Issue/keymap.PR, so a selection id and an
 // ADMIN_ROW_ID for the same row can never disagree. Empty for any other row
 // kind, which toggleTrackerSelection treats as nothing to toggle. A branch
@@ -142,27 +143,27 @@ func (m *Model) toggleTrackerSelection() {
 // Order follows that underlying data's own order, which is what keeps this
 // deterministic without a second, selection-order structure to maintain
 // alongside the map.
-func (m Model) trackerTargets() []kinds.Target {
+func (m Model) trackerTargets(action manifest.Action) []kinds.Target {
 	var targets []kinds.Target
 	switch m.active {
 	case tabBeads:
 		for _, b := range m.beads {
 			if m.trackerSelected[b.ID] {
-				targets = append(targets, kinds.Target{Name: b.ID, Prompt: kinds.ImplementPrompt(b.ID)})
+				targets = append(targets, kinds.NewTarget(action, b.ID))
 			}
 		}
 	case tabIssues:
 		for _, it := range m.remote.Issues {
 			id := strconv.Itoa(it.Number)
 			if m.trackerSelected[id] {
-				targets = append(targets, kinds.Target{Name: id, Prompt: kinds.ImplementPrompt(id)})
+				targets = append(targets, kinds.NewTarget(action, id))
 			}
 		}
 	case tabPRs:
 		for _, pr := range m.remote.PRs {
 			id := strconv.Itoa(pr.Number)
 			if m.trackerSelected[id] {
-				targets = append(targets, kinds.Target{Name: id, Prompt: kinds.ImplementPrompt(id)})
+				targets = append(targets, kinds.NewTarget(action, id))
 			}
 		}
 	case tabLocal:
@@ -171,7 +172,7 @@ func (m Model) trackerTargets() []kinds.Target {
 		}
 		for _, b := range m.local.branches {
 			if m.selected[b.Name] {
-				targets = append(targets, kinds.Target{Name: b.Name, Prompt: kinds.ImplementPrompt(b.Name)})
+				targets = append(targets, kinds.NewTarget(action, b.Name))
 			}
 		}
 	}
@@ -243,7 +244,7 @@ func (m Model) pickWorkflow(cr workCmdRow) (tea.Model, tea.Cmd) {
 		m.setStatus(cr.name+": not a workflow", cRed)
 		return m, nil
 	}
-	targets := m.trackerTargets()
+	targets := m.trackerTargets(action)
 
 	m.wfResolving = false
 	m.wfOpen = true
@@ -257,8 +258,7 @@ func (m Model) pickWorkflow(cr workCmdRow) (tea.Model, tea.Cmd) {
 	if err != nil {
 		cfg = config.Config{}
 	}
-	agent, agentOK := kinds.ResolveAgent(action, cfg)
-	m.wfAgent = agent
+	m.wfRun = kinds.ActionRun(action)
 	m.wfCeiling = kinds.Ceiling(cfg)
 	switch {
 	case len(targets) == 0:
@@ -269,8 +269,8 @@ func (m Model) pickWorkflow(cr workCmdRow) (tea.Model, tea.Cmd) {
 		// m.remote.Issues in between. Same "nothing to confirm" message
 		// workflowResolved gives an empty query match.
 		m.wfErr = "selection matched nothing"
-	case !agentOK:
-		m.wfErr = fmt.Sprintf("no agent configured — set 'agent' on %q or [workflow].agent in admin.toml", cr.name)
+	case m.wfRun == "":
+		m.wfErr = fmt.Sprintf("no run command — set 'run' on %q", cr.name)
 	default:
 		m.wfErr = ""
 	}

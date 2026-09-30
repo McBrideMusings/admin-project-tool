@@ -14,19 +14,8 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// stubHostedArgv swaps the hosted worker's command line for sh running script,
-// with the target's prompt as $1, so a real pty runs a stand-in for claude.
-func stubHostedArgv(t *testing.T, script string) {
-	t.Helper()
-	orig := hostedAgentArgv
-	hostedAgentArgv = func(kind, mode, prompt string) ([]string, error) {
-		return []string{"sh", "-c", script, "sh", prompt}, nil
-	}
-	t.Cleanup(func() { hostedAgentArgv = orig })
-}
-
 func hostedAction(extra map[string]any) manifest.Action {
-	a := manifest.Action{"kind": "workflow", "agent": "claude", "locale": "hosted"}
+	a := manifest.Action{"kind": "workflow", "run": "true", "locale": "hosted"}
 	for k, v := range extra {
 		a[k] = v
 	}
@@ -42,12 +31,12 @@ func TestHostedWorkersRunOnDashboardPtyOneSlotAtATime(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, "[workflow]\nceiling = 1\n")
 	out := filepath.Join(t.TempDir(), "out.log")
 	t.Setenv("HOSTED_OUT", out)
-	stubHostedArgv(t, `{ echo "start-$1"; pwd; stty size; sleep 0.4; echo "end-$1"; } >> "$HOSTED_OUT"`)
+	run := `{ echo "start-$ADMIN_TARGET"; pwd; stty size; sleep 0.4; echo "end-$ADMIN_TARGET"; } >> "$HOSTED_OUT"`
 
 	done := make(chan []TargetResult, 1)
 	go func() {
 		done <- DispatchTargets(repoRoot, "hostedseq", hostedAction(nil),
-			[]Target{{Name: "a", Prompt: "a"}, {Name: "b", Prompt: "b"}}, SurfaceDashboard)
+			[]Target{{Name: "a", Run: run}, {Name: "b", Run: run}}, SurfaceDashboard)
 	}()
 
 	deadline := time.Now().Add(10 * time.Second)
@@ -101,10 +90,9 @@ func TestHostedWorkersRunOnDashboardPtyOneSlotAtATime(t *testing.T) {
 
 func TestHostedWorkerNonzeroExitFailsTheTarget(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, "")
-	stubHostedArgv(t, "exit 3")
-	res := DispatchTargets(repoRoot, "hostedfail", hostedAction(nil), []Target{{Name: "t1", Prompt: "x"}}, SurfaceDashboard)
+	res := DispatchTargets(repoRoot, "hostedfail", hostedAction(nil), []Target{{Name: "t1", Run: "exit 3"}}, SurfaceDashboard)
 	if res[0].Err == nil || !strings.Contains(res[0].Err.Error(), "exit status 3") {
-		t.Fatalf("Err = %v, want the agent's exit status", res[0].Err)
+		t.Fatalf("Err = %v, want the run's exit status", res[0].Err)
 	}
 	if st, _ := livework.Default.State("hostedfail:t1"); st != livework.StateFailed {
 		t.Errorf("state = %q, want failed", st)
@@ -119,13 +107,13 @@ func TestHostedShellSurfaceRunsInlineOneAtATime(t *testing.T) {
 	var running int
 	var calls []string
 	orig := runInlineAgent
-	runInlineAgent = func(argv []string, dir string) error {
+	runInlineAgent = func(argv []string, dir string, env []string) error {
 		mu.Lock()
 		running++
 		if running > 1 {
 			t.Error("two inline agents ran at once")
 		}
-		calls = append(calls, fmt.Sprintf("%s @ %s", strings.Join(argv, " "), filepath.Base(dir)))
+		calls = append(calls, fmt.Sprintf("%s [%s] @ %s", argv[len(argv)-1], strings.Join(env, " "), filepath.Base(dir)))
 		mu.Unlock()
 		time.Sleep(50 * time.Millisecond)
 		mu.Lock()
@@ -135,16 +123,16 @@ func TestHostedShellSurfaceRunsInlineOneAtATime(t *testing.T) {
 	}
 	t.Cleanup(func() { runInlineAgent = orig })
 
-	res := DispatchTargets(repoRoot, "hostedshell", hostedAction(map[string]any{"mode": "print"}),
-		[]Target{{Name: "a", Prompt: "do a"}, {Name: "b", Prompt: "do b"}}, SurfaceShell)
+	res := DispatchTargets(repoRoot, "hostedshell", hostedAction(nil),
+		[]Target{{Name: "a", Run: "do a"}, {Name: "b", Run: "do b"}}, SurfaceShell)
 	for _, r := range res {
 		if r.Err != nil {
 			t.Fatalf("target %q: %v", r.Target, r.Err)
 		}
 	}
 	want := []string{
-		"claude -p do a @ " + filepath.Base(res[0].WorktreePath),
-		"claude -p do b @ " + filepath.Base(res[1].WorktreePath),
+		"do a [ADMIN_TARGET=a] @ " + filepath.Base(res[0].WorktreePath),
+		"do b [ADMIN_TARGET=b] @ " + filepath.Base(res[1].WorktreePath),
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Errorf("inline calls = %q, want %q", calls, want)
@@ -154,71 +142,13 @@ func TestHostedShellSurfaceRunsInlineOneAtATime(t *testing.T) {
 	}
 }
 
-func TestHostedRejectsWhatItCannotRun(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, "")
-	res := DispatchTargets(repoRoot, "hostedcodex", hostedAction(map[string]any{"agent": "codex"}),
-		[]Target{{Name: "t1"}}, SurfaceShell)
-	if res[0].Err == nil || !strings.Contains(res[0].Err.Error(), `"codex" cannot run hosted`) {
-		t.Errorf("non-claude agent: Err = %v", res[0].Err)
-	}
-
-	res = DispatchTargets(repoRoot, "modewindow",
-		manifest.Action{"kind": "workflow", "agent": "claude", "mode": "print"}, []Target{{Name: "t1"}}, SurfaceDashboard)
-	if res[0].Err == nil || !strings.Contains(res[0].Err.Error(), "mode applies to locale") {
-		t.Errorf("mode on a window workflow: Err = %v", res[0].Err)
-	}
-}
-
-func TestAgentArgv(t *testing.T) {
-	cases := []struct {
-		mode, prompt string
-		want         []string
-		wantErr      string
-	}{
-		{"", "fix it", []string{"claude", "fix it"}, ""},
-		{"interactive", "", []string{"claude"}, ""},
-		{"print", "fix it", []string{"claude", "-p", "fix it"}, ""},
-		{"print", "  ", nil, "needs a prompt"},
-		{"batch", "x", nil, `mode "batch"`},
-	}
-	for _, c := range cases {
-		got, err := agentArgv("claude", c.mode, c.prompt)
-		if c.wantErr != "" {
-			if err == nil || !strings.Contains(err.Error(), c.wantErr) {
-				t.Errorf("mode %q prompt %q: err = %v, want %q", c.mode, c.prompt, err, c.wantErr)
-			}
-			continue
-		}
-		if err != nil || !reflect.DeepEqual(got, c.want) {
-			t.Errorf("mode %q prompt %q: got %q, %v want %q", c.mode, c.prompt, got, err, c.want)
-		}
-	}
-}
-
-func TestValidateWorkflowsChecksModeAndHostedAgent(t *testing.T) {
-	ok := map[string]manifest.Action{"w": {"kind": "workflow", "over": "selection", "locale": "hosted", "mode": "print", "agent": "claude"}}
-	if err := ValidateWorkflows(ok); err != nil {
-		t.Errorf("valid hosted workflow: %v", err)
-	}
-	bad := map[string]manifest.Action{
-		"m": {"kind": "workflow", "over": "selection", "mode": "batch"},
-		"a": {"kind": "workflow", "over": "selection", "locale": "hosted", "agent": "codex"},
-	}
-	err := ValidateWorkflows(bad)
-	if err == nil || !strings.Contains(err.Error(), `mode must be "interactive" or "print"`) ||
-		!strings.Contains(err.Error(), "runs the claude command line only") {
-		t.Errorf("ValidateWorkflows = %v, want both problems", err)
-	}
-}
-
 // TestHostedWorkerKilledFailsTheTarget: a worker killed from the dashboard is
 // not reported as a finished target.
 func TestHostedWorkerKilledFailsTheTarget(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, "")
-	stubHostedArgv(t, "sleep 30")
 	done := make(chan []TargetResult, 1)
 	go func() {
-		done <- DispatchTargets(repoRoot, "hostedkill", hostedAction(nil), []Target{{Name: "t1"}}, SurfaceDashboard)
+		done <- DispatchTargets(repoRoot, "hostedkill", hostedAction(nil), []Target{{Name: "t1", Run: "sleep 30"}}, SurfaceDashboard)
 	}()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
@@ -237,5 +167,26 @@ func TestHostedWorkerKilledFailsTheTarget(t *testing.T) {
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("DispatchTargets never returned after Kill")
+	}
+}
+
+func TestValidateWorkflowsChecksRunDoneAndRemovedKeys(t *testing.T) {
+	ok := map[string]manifest.Action{"w": {"kind": "workflow", "over": "selection", "run": "go $ADMIN_TARGET", "done": "true"}}
+	if err := ValidateWorkflows(ok); err != nil {
+		t.Errorf("valid workflow: %v", err)
+	}
+	noRun := map[string]manifest.Action{"nr": {"kind": "workflow", "over": "selection"}}
+	if err := ValidateWorkflows(noRun); err == nil || !strings.Contains(err.Error(), `action "nr"`) || !strings.Contains(err.Error(), "'run'") {
+		t.Errorf("no run: ValidateWorkflows = %v, want an error naming the action and run", err)
+	}
+	blankDone := map[string]manifest.Action{"bd": {"kind": "workflow", "over": "selection", "run": "x", "done": "  "}}
+	if err := ValidateWorkflows(blankDone); err == nil || !strings.Contains(err.Error(), "'done'") {
+		t.Errorf("blank done: ValidateWorkflows = %v", err)
+	}
+	for _, key := range []string{"agent", "mode", "prompt"} {
+		old := map[string]manifest.Action{"o": {"kind": "workflow", "over": "selection", "run": "x", key: "v"}}
+		if err := ValidateWorkflows(old); err == nil || !strings.Contains(err.Error(), "'"+key+"' is not a workflow key") {
+			t.Errorf("key %s: ValidateWorkflows = %v, want it named", key, err)
+		}
 	}
 }

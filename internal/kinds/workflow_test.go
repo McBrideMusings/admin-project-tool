@@ -243,10 +243,11 @@ func TestValidateWorkflowsIgnoresOtherKinds(t *testing.T) {
 // selection-sourced and one query-sourced workflow both pass.
 func TestValidateWorkflowsAcceptsBothSources(t *testing.T) {
 	actions := map[string]manifest.Action{
-		"retire-merged": {"kind": "workflow", "over": "selection"},
+		"retire-merged": {"kind": "workflow", "over": "selection", "run": "retire $ADMIN_TARGET"},
 		"review-waiting": {
 			"kind": "workflow",
 			"over": map[string]any{"query": "label:review-me"},
+			"run":  "review $ADMIN_TARGET",
 		},
 	}
 	if err := ValidateWorkflows(actions); err != nil {

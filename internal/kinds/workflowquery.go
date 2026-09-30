@@ -43,6 +43,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/bd"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
+	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
 // listBeads is the seam resolveBeadsQuery reads its tracker state through,
@@ -94,9 +95,9 @@ func ClassifyQuery(query string) (QueryForm, string) {
 }
 
 // ResolveQuery resolves query against repoRoot's configured tracker and
-// returns the []Target a confirmed dispatch would run over. It never
-// dispatches anything itself — internal/tui's confirm overlay is the only
-// caller, and it is responsible for showing the returned set to the user
+// returns the []Target a confirmed dispatch would run over, each carrying the
+// workflow action's run and done. It never dispatches anything itself —
+// internal/tui's confirm overlay is the only caller, and it is responsible for showing the returned set to the user
 // before ever handing it to DispatchTargets (the epic's "a query matching
 // nine things must not be able to start nine agents without the set having
 // been seen").
@@ -104,12 +105,12 @@ func ClassifyQuery(query string) (QueryForm, string) {
 // tracker and nwo come from the caller, which already has both (internal/tui
 // resolves the action's tracker via WorkflowTarget.ResolveTracker and reads
 // m.nwo) — ResolveQuery has no manifest of its own to read them from.
-func ResolveQuery(ctx context.Context, repoRoot, tracker, nwo, query string) ([]Target, error) {
+func ResolveQuery(ctx context.Context, action manifest.Action, repoRoot, tracker, nwo, query string) ([]Target, error) {
 	switch tracker {
 	case "", "beads":
-		return resolveBeadsQuery(ctx, repoRoot, query)
+		return resolveBeadsQuery(ctx, action, repoRoot, query)
 	case "github":
-		return resolveGitHubQuery(ctx, nwo, tracker, query)
+		return resolveGitHubQuery(ctx, action, nwo, tracker, query)
 	default:
 		return nil, fmt.Errorf("query %q: tracker %q has no query resolver", query, tracker)
 	}
@@ -134,7 +135,7 @@ func ResolveQuery(ctx context.Context, repoRoot, tracker, nwo, query string) ([]
 // dispatch nothing — this ticket's own acceptance criterion. Only a
 // malformed query string or an unreadable tracker (no bd workspace, a
 // schema bd.List can't read) come back as err.
-func resolveBeadsQuery(ctx context.Context, repoRoot, query string) ([]Target, error) {
+func resolveBeadsQuery(ctx context.Context, action manifest.Action, repoRoot, query string) ([]Target, error) {
 	beads, err := listBeads(ctx, repoRoot)
 	if err != nil {
 		return nil, fmt.Errorf("resolving query %q: %w", query, err)
@@ -166,7 +167,7 @@ func resolveBeadsQuery(ctx context.Context, repoRoot, query string) ([]Target, e
 
 	targets := make([]Target, len(matched))
 	for i, b := range matched {
-		targets[i] = Target{Name: b.ID, Prompt: ImplementPrompt(b.ID)}
+		targets[i] = NewTarget(action, b.ID)
 	}
 	return targets, nil
 }
@@ -180,7 +181,7 @@ func resolveBeadsQuery(ctx context.Context, repoRoot, query string) ([]Target, e
 //
 // A query resolving to zero issues is NOT an error, matching
 // resolveBeadsQuery: it comes back as an empty, non-nil slice.
-func resolveGitHubQuery(ctx context.Context, nwo, tracker, query string) ([]Target, error) {
+func resolveGitHubQuery(ctx context.Context, action manifest.Action, nwo, tracker, query string) ([]Target, error) {
 	form, label := ClassifyQuery(query)
 
 	switch form {
@@ -198,25 +199,13 @@ func resolveGitHubQuery(ctx context.Context, nwo, tracker, query string) ([]Targ
 		targets := make([]Target, len(issues))
 		for i, it := range issues {
 			id := strconv.Itoa(it.Number)
-			targets[i] = Target{Name: id, Prompt: ImplementPrompt(id)}
+			targets[i] = NewTarget(action, id)
 		}
 		return targets, nil
 	default:
 		return nil, fmt.Errorf(
 			`query %q: unrecognized — tracker %q supports only %s`, query, tracker, GitHubQueryForms)
 	}
-}
-
-// ImplementPrompt is the one prompt shape every issue-driven Workflow target
-// gets, whichever invocation path built it: the same "one worktree, one
-// /implement pass" this dashboard's own dispatch machinery and the project's
-// swarm tooling already use for every tracked-item agent run. ResolveQuery
-// (query-sourced) and internal/tui's selection-sourced picker (admin-3rgp.27)
-// both call this rather than each formatting their own — a bare id is the
-// only input either has, so there is nothing invocation-path-specific left
-// to vary.
-func ImplementPrompt(id string) string {
-	return fmt.Sprintf("/implement %s continuous", id)
 }
 
 func hasLabel(labels []string, name string) bool {

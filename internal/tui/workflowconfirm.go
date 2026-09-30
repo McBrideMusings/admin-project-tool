@@ -31,9 +31,9 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// workflowResolvedMsg carries a query's resolution back to Update. agent/
-// agentOK/ceiling are resolved alongside the targets (not deferred to
-// dispatch time) so the confirm screen shows the same agent and ceiling
+// workflowResolvedMsg carries a query's resolution back to Update. run/
+// ceiling are resolved alongside the targets (not deferred to
+// dispatch time) so the confirm screen shows the same run command and ceiling
 // DispatchTargets will actually use — reading config.Load fresh here rather
 // than trusting a possibly-stale m.cfgMerged, matching what DispatchTargets
 // itself does.
@@ -43,8 +43,7 @@ type workflowResolvedMsg struct {
 	query   string
 	targets []kinds.Target
 	err     error
-	agent   string
-	agentOK bool
+	run     string
 	ceiling int
 }
 
@@ -71,14 +70,14 @@ var runResolveQuery = kinds.ResolveQuery
 // merged with its archetypes), also a read.
 func resolveWorkflowCmd(repoRoot, tracker, nwo, name string, action manifest.Action, query string) tea.Cmd {
 	return func() tea.Msg {
-		targets, err := runResolveQuery(context.Background(), repoRoot, tracker, nwo, query)
+		targets, err := runResolveQuery(context.Background(), action, repoRoot, tracker, nwo, query)
 		msg := workflowResolvedMsg{name: name, action: action, query: query, targets: targets, err: err}
 		if err == nil {
 			cfg, cfgErr := config.Load(repoRoot)
 			if cfgErr != nil {
 				msg.err = fmt.Errorf("loading config: %w", cfgErr)
 			} else {
-				msg.agent, msg.agentOK = kinds.ResolveAgent(action, cfg)
+				msg.run = kinds.ActionRun(action)
 				msg.ceiling = kinds.Ceiling(cfg)
 			}
 		}
@@ -140,7 +139,7 @@ func (m Model) startWorkflowConfirm(wd *workRowData) (tea.Model, tea.Cmd) {
 	m.wfQuery = wd.workflow.Query
 	m.wfTargets = nil
 	m.wfErr = ""
-	m.wfAgent = ""
+	m.wfRun = ""
 	m.wfCeiling = 0
 	m.setStatus("resolving "+wd.workflow.Query+"…", cDim)
 	return m, resolveWorkflowCmd(m.repoRoot, tracker, m.nwo, wd.cmdName, wd.workflowAction, wd.workflow.Query)
@@ -157,19 +156,18 @@ func (m *Model) workflowResolved(msg workflowResolvedMsg) {
 	m.wfResolving = false
 	m.wfOpen = true
 	m.wfTargets = msg.targets
-	m.wfAgent, m.wfCeiling = msg.agent, msg.ceiling
+	m.wfRun, m.wfCeiling = msg.run, msg.ceiling
 	switch {
 	case msg.err != nil:
 		m.wfErr = msg.err.Error()
 	case len(msg.targets) == 0:
 		m.wfErr = fmt.Sprintf("query %q matched nothing", msg.query)
-	case !msg.agentOK:
+	case msg.run == "":
 		// Same "fail loud, don't guess" contract DispatchTargets itself
-		// enforces (ResolveAgent's ok==false path) — surfaced here instead of
-		// only at dispatch time so an unconfigured agent doesn't waste the
-		// user's confirmation on a set that would immediately fail dispatch.
-		m.wfErr = fmt.Sprintf(
-			"no agent configured — set 'agent' on %q or [workflow].agent in admin.toml", msg.name)
+		// enforces — surfaced here instead of only at dispatch time so a
+		// missing run command doesn't waste the user's confirmation on a set
+		// that would immediately fail dispatch.
+		m.wfErr = fmt.Sprintf("no run command — set 'run' on %q", msg.name)
 	default:
 		m.wfErr = ""
 	}
@@ -285,11 +283,11 @@ func (m Model) workflowConfirmContent() (title, badge string, lines [][]seg) {
 		srcLabel = " over    "
 	}
 	lines = append(lines, []seg{{t: srcLabel, fg: cFaint}, {t: m.wfQuery, fg: cFg}})
-	agent := m.wfAgent
-	if agent == "" {
-		agent = "(none)"
+	run := m.wfRun
+	if run == "" {
+		run = "(none)"
 	}
-	lines = append(lines, []seg{{t: " agent   ", fg: cFaint}, {t: agent, fg: cFg}})
+	lines = append(lines, []seg{{t: " run     ", fg: cFaint}, {t: run, fg: cFg}})
 	lines = append(lines, []seg{{t: " ceiling ", fg: cFaint}, {t: fmt.Sprintf("%d at once", m.wfCeiling), fg: cFg}})
 	lines = append(lines, []seg{{t: ""}})
 	for _, tgt := range m.wfTargets {

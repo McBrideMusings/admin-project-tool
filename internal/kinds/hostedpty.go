@@ -195,13 +195,13 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 // dispatch learns its concurrency slot is free. The live-work entry is the
 // same hosted-pty shape StartHostedPTY records — Via and Worker empty, so the
 // dashboard treats it as dying with itself — keyed on id.
-func StartHostedAgent(id string, argv []string, dir string, rows, cols int) (<-chan error, error) {
+func StartHostedAgent(id string, argv []string, dir string, env []string, rows, cols int) (<-chan error, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("agent %q: empty command line", id)
 	}
 	c := exec.Command(argv[0], argv[1:]...)
 	c.Dir = dir
-	c.Env = hostedChildEnv()
+	c.Env = append(hostedChildEnv(), env...)
 	return startHostedChild(id, id, c, rows, cols, nil)
 }
 

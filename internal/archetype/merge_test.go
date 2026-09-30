@@ -561,7 +561,6 @@ root = "/archetype/worktrees"
 columns = ["id", "title"]
 
 [workflow]
-agent   = "archetype-agent"
 ceiling = 2
 `, false)
 	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
@@ -571,7 +570,7 @@ project_name = "widget"
 archetypes   = ["base"]
 
 [workflow]
-agent = "project-agent"
+ceiling = 5
 `)
 
 	merged, _, err := Resolve(project, sp)
@@ -581,11 +580,8 @@ agent = "project-agent"
 	if merged.Worktrees["root"] != "/archetype/worktrees" {
 		t.Errorf("Worktrees[root] = %v, want the archetype's value to survive untouched", merged.Worktrees["root"])
 	}
-	if merged.Workflow["agent"] != "project-agent" {
-		t.Errorf("Workflow[agent] = %v, want the project's value to win", merged.Workflow["agent"])
-	}
-	if merged.Workflow["ceiling"] != int64(2) {
-		t.Errorf("Workflow[ceiling] = %v (%T), want the archetype's ceiling to survive untouched", merged.Workflow["ceiling"], merged.Workflow["ceiling"])
+	if merged.Workflow["ceiling"] != int64(5) {
+		t.Errorf("Workflow[ceiling] = %v (%T), want the project's value to win", merged.Workflow["ceiling"], merged.Workflow["ceiling"])
 	}
 	cols, ok := merged.Beads["columns"].([]any)
 	if !ok || len(cols) != 2 {

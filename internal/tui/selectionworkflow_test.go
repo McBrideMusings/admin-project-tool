@@ -43,7 +43,7 @@ func selectionWorkflowManifest() *manifest.Manifest {
 		},
 		Actions: map[string]manifest.Action{
 			"retire": {"kind": "workflow", "over": map[string]any{"query": "label:stale"}},
-			"review": {"kind": "workflow", "over": "selection"},
+			"review": {"kind": "workflow", "over": "selection", "run": "claude $ADMIN_TARGET"},
 			"build":  {"kind": "shell"},
 		},
 	}
@@ -283,8 +283,7 @@ func TestWorkflowPickerKeyEscCancelsWithoutOpeningConfirm(t *testing.T) {
 // TestPickWorkflowFromBeadsBuildsTargetsAndOpensConfirm is the ticket's core
 // path end to end: two selected beads, a chosen selection-sourced workflow,
 // and the confirm overlay opening with exactly those two targets, each
-// carrying the same /implement prompt ResolveQuery would have built for a
-// query-sourced dispatch of the same beads.
+// carrying the action's run string.
 func TestPickWorkflowFromBeadsBuildsTargetsAndOpensConfirm(t *testing.T) {
 	m := workTestModel(selectionWorkflowManifest())
 	m.active = tabBeads
@@ -315,8 +314,8 @@ func TestPickWorkflowFromBeadsBuildsTargetsAndOpensConfirm(t *testing.T) {
 	if rm.wfTargets[0].Name != "proj-1" || rm.wfTargets[1].Name != "proj-3" {
 		t.Errorf("wfTargets = %v, want [proj-1, proj-3] in m.beads' own order", rm.wfTargets)
 	}
-	if rm.wfTargets[0].Prompt != kinds.ImplementPrompt("proj-1") {
-		t.Errorf("target prompt = %q, want the same shape ResolveQuery builds", rm.wfTargets[0].Prompt)
+	if rm.wfTargets[0].Run != "claude $ADMIN_TARGET" {
+		t.Errorf("target run = %q, want the action's run string", rm.wfTargets[0].Run)
 	}
 }
 
@@ -442,12 +441,12 @@ func TestTrackerTargetsOverBranchesPaneReadsLocalBranches(t *testing.T) {
 		selected:  map[string]bool{"feature-1": true},
 		minesOnly: true, // hides feature-1 from branchRows(); trackerTargets must not care
 	}
-	got := m.trackerTargets()
+	got := m.trackerTargets(manifest.Action{"run": "r $ADMIN_TARGET"})
 	if len(got) != 1 || got[0].Name != "feature-1" {
 		t.Fatalf("trackerTargets() = %v, want exactly [feature-1]", got)
 	}
-	if got[0].Prompt != kinds.ImplementPrompt("feature-1") {
-		t.Errorf("target prompt = %q, want the same shape ResolveQuery builds", got[0].Prompt)
+	if got[0].Run != "r $ADMIN_TARGET" {
+		t.Errorf("target run = %q, want the action's run string", got[0].Run)
 	}
 }
 
@@ -459,7 +458,7 @@ func TestTrackerTargetsOverPRsReadsRemotePRs(t *testing.T) {
 		remote:          data.Remote{PRs: []gh.OpenPR{{Number: 7}, {Number: 9}}},
 		trackerSelected: map[string]bool{"9": true},
 	}
-	got := m.trackerTargets()
+	got := m.trackerTargets(nil)
 	if len(got) != 1 || got[0].Name != "9" {
 		t.Fatalf("trackerTargets() = %v, want exactly [9]", got)
 	}
@@ -477,7 +476,7 @@ func TestTrackerTargetsStaleBeadsSelectionCannotHijackBranches(t *testing.T) {
 		selected:        map[string]bool{},
 		trackerSelected: map[string]bool{"proj-1": true},
 	}
-	if got := m.trackerTargets(); len(got) != 0 {
+	if got := m.trackerTargets(nil); len(got) != 0 {
 		t.Errorf("trackerTargets() = %v with an empty branch selection, want none — a stale Beads pick hijacked it", got)
 	}
 }
@@ -580,7 +579,7 @@ func newBranchesPaneModel() Model {
 	m.haveData = true
 	m.manifest = &manifest.Manifest{
 		Custom:  map[string]manifest.Command{"review-branch": {Desc: "review a picked branch", Steps: []string{"review"}}},
-		Actions: map[string]manifest.Action{"review": {"kind": "workflow", "over": "selection", "agent": "claude"}},
+		Actions: map[string]manifest.Action{"review": {"kind": "workflow", "over": "selection", "run": "claude $ADMIN_TARGET"}},
 	}
 	m.manifestOK = true
 	return m

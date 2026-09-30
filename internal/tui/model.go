@@ -533,7 +533,7 @@ type Model struct {
 	wfQuery     string
 	wfTargets   []kinds.Target
 	wfErr       string
-	wfAgent     string
+	wfRun       string
 	wfCeiling   int
 	// wfFromSelection distinguishes a confirm overlay opened from the tracker
 	// picker below from one opened by a query-sourced Work-tab row: only the

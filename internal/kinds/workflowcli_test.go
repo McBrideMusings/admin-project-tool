@@ -44,7 +44,7 @@ func withWorkflowCLISeams(t *testing.T, targets []Target, resolveErr error, conf
 	calls := 0
 	var got []Target
 
-	resolveWorkflowQuery = func(_ context.Context, _, _, _, _ string) ([]Target, error) {
+	resolveWorkflowQuery = func(_ context.Context, _ manifest.Action, _, _, _, _ string) ([]Target, error) {
 		return targets, resolveErr
 	}
 	confirmDispatch = func(string) bool {
@@ -69,17 +69,17 @@ func withWorkflowCLISeams(t *testing.T, targets []Target, resolveErr error, conf
 
 func queryAction() manifest.Action {
 	return manifest.Action{
-		"kind":  "workflow",
-		"over":  map[string]any{"query": "label:review-me"},
-		"agent": "claude",
+		"kind": "workflow",
+		"over": map[string]any{"query": "label:review-me"},
+		"run":  "claude-run $ADMIN_TARGET",
 	}
 }
 
 // TestWorkflowCLIQueryPrintsResolvedSetAndConfirms proves a query-sourced
-// run prints the resolved query, agent, ceiling and every target name to
+// run prints the resolved query, run command, ceiling and every target name to
 // stderr before asking to confirm.
 func TestWorkflowCLIQueryPrintsResolvedSetAndConfirms(t *testing.T) {
-	targets := []Target{{Name: "admin-1", Prompt: "p1"}, {Name: "admin-2", Prompt: "p2"}}
+	targets := []Target{{Name: "admin-1"}, {Name: "admin-2"}}
 	confirmCalled, dispatchCalls, _ := withWorkflowCLISeams(t, targets, nil, true)
 	t.Chdir(t.TempDir())
 
@@ -98,7 +98,7 @@ func TestWorkflowCLIQueryPrintsResolvedSetAndConfirms(t *testing.T) {
 	if *dispatchCalls != 1 {
 		t.Errorf("dispatchWorkflowTargets called %d times, want 1", *dispatchCalls)
 	}
-	for _, want := range []string{"label:review-me", "claude", "admin-1", "admin-2"} {
+	for _, want := range []string{"label:review-me", "claude-run", "admin-1", "admin-2"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr = %q, want it to contain %q", stderr, want)
 		}
@@ -108,7 +108,7 @@ func TestWorkflowCLIQueryPrintsResolvedSetAndConfirms(t *testing.T) {
 // TestWorkflowCLIDeclineDispatchesNothing proves declining the confirmation
 // dispatches nothing and returns nil.
 func TestWorkflowCLIDeclineDispatchesNothing(t *testing.T) {
-	targets := []Target{{Name: "admin-1", Prompt: "p1"}}
+	targets := []Target{{Name: "admin-1"}}
 	_, dispatchCalls, _ := withWorkflowCLISeams(t, targets, nil, false)
 	t.Chdir(t.TempDir())
 
@@ -131,7 +131,7 @@ func TestWorkflowCLIDeclineDispatchesNothing(t *testing.T) {
 // dispatchWorkflowTargets (kinds.DispatchTargets in production) — the same
 // path internal/tui's confirm overlay uses.
 func TestWorkflowCLIAcceptDispatchesThroughDispatchTargets(t *testing.T) {
-	targets := []Target{{Name: "admin-1", Prompt: "p1"}, {Name: "admin-2", Prompt: "p2"}}
+	targets := []Target{{Name: "admin-1"}, {Name: "admin-2"}}
 	_, dispatchCalls, dispatched := withWorkflowCLISeams(t, targets, nil, true)
 	t.Chdir(t.TempDir())
 
@@ -152,13 +152,13 @@ func TestWorkflowCLIAcceptDispatchesThroughDispatchTargets(t *testing.T) {
 	}
 }
 
-// TestWorkflowCLIUnconfiguredAgentErrorsBeforeConfirming proves an
-// unconfigured agent fails loudly before the confirm seam is ever touched —
+// TestWorkflowCLIMissingRunErrorsBeforeConfirming proves a
+// missing run command fails loudly before the confirm seam is ever touched —
 // the same "fail loud, don't waste a confirmation on a set that would
 // immediately fail dispatch" contract internal/tui/workflowconfirm.go's
 // workflowResolved already enforces.
-func TestWorkflowCLIUnconfiguredAgentErrorsBeforeConfirming(t *testing.T) {
-	targets := []Target{{Name: "admin-1", Prompt: "p1"}}
+func TestWorkflowCLIMissingRunErrorsBeforeConfirming(t *testing.T) {
+	targets := []Target{{Name: "admin-1"}}
 	confirmCalled, dispatchCalls, _ := withWorkflowCLISeams(t, targets, nil, true)
 	t.Chdir(t.TempDir())
 
@@ -169,13 +169,13 @@ func TestWorkflowCLIUnconfiguredAgentErrorsBeforeConfirming(t *testing.T) {
 		return runWorkflowCLI("review-waiting", action, nil, wt, nil)
 	})
 	if err == nil {
-		t.Fatal("expected an error for a workflow with no agent configured")
+		t.Fatal("expected an error for a workflow with no run command")
 	}
-	if !strings.Contains(err.Error(), "agent") {
-		t.Fatalf("error %q does not mention the missing agent", err.Error())
+	if !strings.Contains(err.Error(), "run") {
+		t.Fatalf("error %q does not mention the missing run", err.Error())
 	}
 	if *confirmCalled {
-		t.Error("confirmDispatch was called despite no agent being configured")
+		t.Error("confirmDispatch was called despite no run command being configured")
 	}
 	if *dispatchCalls != 0 {
 		t.Errorf("dispatchWorkflowTargets called %d times, want 0", *dispatchCalls)

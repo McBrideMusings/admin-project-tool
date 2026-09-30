@@ -15,7 +15,9 @@ import (
 func stubResolveQuery(t *testing.T, targets []kinds.Target, err error) {
 	t.Helper()
 	orig := runResolveQuery
-	runResolveQuery = func(context.Context, string, string, string, string) ([]kinds.Target, error) { return targets, err }
+	runResolveQuery = func(context.Context, manifest.Action, string, string, string, string) ([]kinds.Target, error) {
+		return targets, err
+	}
 	t.Cleanup(func() { runResolveQuery = orig })
 }
 
@@ -106,7 +108,7 @@ func TestWorkflowResolvedOpensOverlayWithTargets(t *testing.T) {
 	m := &Model{wfResolving: true, wfName: "retire-merged"}
 	targets := []kinds.Target{{Name: "a-1"}, {Name: "a-2"}}
 	m.workflowResolved(workflowResolvedMsg{
-		name: "retire-merged", targets: targets, agent: "claude", agentOK: true, ceiling: 3,
+		name: "retire-merged", targets: targets, run: "claude $ADMIN_TARGET", ceiling: 3,
 	})
 
 	if m.wfResolving {
@@ -201,7 +203,7 @@ func TestWorkflowConfirmKeyCancelDispatchesNothing(t *testing.T) {
 // runDispatchWorkflow precisely m.wfTargets, no more, no less, and the
 // overlay closes.
 func TestWorkflowConfirmKeyConfirmDispatchesExactSet(t *testing.T) {
-	targets := []kinds.Target{{Name: "a-1", Prompt: "/implement a-1 continuous"}, {Name: "a-2", Prompt: "/implement a-2 continuous"}}
+	targets := []kinds.Target{{Name: "a-1", Run: "r a-1"}, {Name: "a-2", Run: "r a-2"}}
 	got := stubDispatchWorkflow(t, []kinds.TargetResult{{Target: "a-1"}, {Target: "a-2"}})
 	m := &Model{
 		wfOpen: true, wfName: "retire-merged", repoRoot: "/repo",
@@ -260,7 +262,7 @@ func TestWorkflowConfirmKeySwallowsEverythingWhileResolving(t *testing.T) {
 func TestRenderWorkflowConfirmBodyShowsTheResolvedSet(t *testing.T) {
 	m := Model{
 		wfOpen: true, wfName: "retire-merged", wfQuery: "label:stale",
-		wfAgent: "claude", wfCeiling: 3,
+		wfRun: "claude $ADMIN_TARGET", wfCeiling: 3,
 		wfTargets: []kinds.Target{{Name: "a-1"}, {Name: "a-2"}},
 	}
 	lines := m.renderWorkflowConfirmBody(80, 24)

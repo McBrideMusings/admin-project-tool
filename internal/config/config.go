@@ -53,14 +53,10 @@ type Beads struct {
 }
 
 // Workflow configures dispatching a kind="workflow" action's targets
-// (admin-3rgp.25): which herdr agent kind a target runs when its own action
-// declares no `agent` override, and how many targets run at once when the
-// action declares no ceiling of its own. Empty/zero mean "unset" — the
-// dispatcher's own DefaultCeiling and a required, explicitly-set agent are
-// what actually apply, not a value invented here.
+// (admin-3rgp.25): how many targets run at once. Zero means "unset" — the
+// dispatcher's own DefaultCeiling applies.
 type Workflow struct {
-	Agent   string `toml:"agent"`
-	Ceiling int    `toml:"ceiling"`
+	Ceiling int `toml:"ceiling"`
 }
 
 // Terminal configures the ADR-0020 launcher contract: how a dispatched
@@ -204,9 +200,6 @@ func decodeBeads(raw map[string]any) Beads {
 
 func decodeWorkflow(raw map[string]any) Workflow {
 	var w Workflow
-	if v, ok := raw["agent"].(string); ok {
-		w.Agent = v
-	}
 	if v, ok := raw["ceiling"]; ok {
 		w.Ceiling = toInt(v)
 	}

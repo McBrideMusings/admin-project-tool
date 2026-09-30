@@ -247,10 +247,10 @@ func TestRowIDStashCutsRefFromTheCombinedLabel(t *testing.T) {
 // the immediate-dispatch path never depends on this machine's own
 // ~/.config/repo/config.toml — plus a plain shell command ("build") to
 // prove a non-workflow binding is unaffected.
-func rowKeyWorkflowManifest(agent string) *manifest.Manifest {
+func rowKeyWorkflowManifest(run string) *manifest.Manifest {
 	action := manifest.Action{"kind": "workflow", "over": "selection"}
-	if agent != "" {
-		action["agent"] = agent
+	if run != "" {
+		action["run"] = run
 	}
 	return &manifest.Manifest{
 		Custom: map[string]manifest.Command{
@@ -349,12 +349,12 @@ func TestRowKeyDispatchWorkflowSelectionOpensConfirmOverlay(t *testing.T) {
 	}
 }
 
-// TestRowKeyDispatchWorkflowNoAgentReportsRedStatus proves the immediate
-// path's misconfiguration handling: with no agent configured on the action
-// (and no [workflow].agent to fall back on), the immediate (cursor-row)
+// TestRowKeyDispatchWorkflowNoRunReportsRedStatus proves the immediate
+// path's misconfiguration handling: with no run configured on the action
+// the immediate (cursor-row)
 // path reports a red status line and dispatches nothing — the field the
 // confirm overlay would have shown has nowhere else to go on this path.
-func TestRowKeyDispatchWorkflowNoAgentReportsRedStatus(t *testing.T) {
+func TestRowKeyDispatchWorkflowNoRunReportsRedStatus(t *testing.T) {
 	dispatched := false
 	orig := runDispatchWorkflow
 	runDispatchWorkflow = func(repoRoot, name string, action manifest.Action, targets []kinds.Target, _ kinds.DispatchSurface) []kinds.TargetResult {
@@ -377,17 +377,17 @@ func TestRowKeyDispatchWorkflowNoAgentReportsRedStatus(t *testing.T) {
 		t.Fatal("rowKeyDispatch(\"enter\") on a workflow-bound bead row = miss, want hit")
 	}
 	if cmd != nil {
-		t.Errorf("rowKeyDispatch returned a non-nil cmd with no agent configured, want nil")
+		t.Errorf("rowKeyDispatch returned a non-nil cmd with no run configured, want nil")
 	}
 	rm := mm.(Model)
 	if rm.statusFg != cRed {
 		t.Errorf("statusFg = %v, want cRed", rm.statusFg)
 	}
-	if !strings.Contains(rm.status, "no agent configured") {
-		t.Errorf("status = %q, want it to say no agent is configured", rm.status)
+	if !strings.Contains(rm.status, "no run command") {
+		t.Errorf("status = %q, want it to say no run is configured", rm.status)
 	}
 	if dispatched {
-		t.Error("runDispatchWorkflow was called with no agent configured, want nothing dispatched")
+		t.Error("runDispatchWorkflow was called with no run configured, want nothing dispatched")
 	}
 }
 
@@ -502,7 +502,7 @@ func dogfoodImplementManifest() *manifest.Manifest {
 			"implement": {Desc: "Dispatch an agent over the selected bead(s) (ADR-0018 dogfood)", Steps: []string{"implement"}},
 		},
 		Actions: map[string]manifest.Action{
-			"implement": {"kind": "workflow", "over": "selection", "agent": "claude"},
+			"implement": {"kind": "workflow", "over": "selection", "run": "claude $ADMIN_TARGET"},
 		},
 	}
 }
