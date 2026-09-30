@@ -103,7 +103,7 @@ var runDispatchWorkflow = kinds.DispatchTargets
 // target registers into as it starts.
 func dispatchWorkflowCmd(repoRoot, name string, action manifest.Action, targets []kinds.Target) tea.Cmd {
 	return func() tea.Msg {
-		results := runDispatchWorkflow(repoRoot, name, action, targets)
+		results := runDispatchWorkflow(repoRoot, name, action, targets, kinds.SurfaceDashboard)
 		return workflowDispatchDoneMsg{name: name, results: results}
 	}
 }

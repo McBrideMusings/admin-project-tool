@@ -27,7 +27,7 @@ func stubDispatchWorkflow(t *testing.T, results []kinds.TargetResult) *[]kinds.T
 	t.Helper()
 	var got []kinds.Target
 	orig := runDispatchWorkflow
-	runDispatchWorkflow = func(repoRoot, name string, action manifest.Action, targets []kinds.Target) []kinds.TargetResult {
+	runDispatchWorkflow = func(repoRoot, name string, action manifest.Action, targets []kinds.Target, _ kinds.DispatchSurface) []kinds.TargetResult {
 		got = targets
 		return results
 	}

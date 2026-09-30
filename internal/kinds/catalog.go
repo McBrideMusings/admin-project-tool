@@ -114,11 +114,12 @@ var Kinds = map[string]Kind{
 	// terminal's stdin before it dispatches anything — dispatching the
 	// workflow action itself through a launcher would hand off before the
 	// Runner is ever built, the exact silent no-op admin-spjp.2 fixed (the
-	// Runner never even ran). The fan-out into panes still happens, just one
-	// level down: DispatchTargets (workflowdispatch.go) opens its own pane
-	// per target through the project's declared [terminal] launcher
-	// (ADR-0020) once the set is confirmed, which is a per-target pane, not
-	// one dispatch for the workflow action as a whole.
+	// Runner never even ran). The fan-out still happens, just one level down:
+	// DispatchTargets (workflowdispatch.go) runs each target once the set is
+	// confirmed — in its own pane through the project's declared [terminal]
+	// launcher (ADR-0020), or on a hosted pty when the workflow says
+	// locale = "hosted" — which is a per-target run, not one dispatch for
+	// the workflow action as a whole.
 	// ConsumesTargets stays false: that field means "reads the action's
 	// `targets` table" (multi-target's shape), and a workflow's targets come
 	// from `over` (a row selection or a resolved query), never a declared

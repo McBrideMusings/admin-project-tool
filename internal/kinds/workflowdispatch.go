@@ -40,6 +40,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/create"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
 
 // DefaultCeiling applies when neither the workflow action nor the project
@@ -117,7 +118,10 @@ func Ceiling(cfg config.Config) int {
 // DispatchTargets creates (or reuses) a worktree per target under repoRoot,
 // seeded with the configured populate files, and runs the resolved agent
 // in each — no more than Ceiling(cfg) running at once, the remainder
-// queued and started as slots free. actionName and action identify the
+// queued and started as slots free. Workers run in launcher windows unless
+// the action (or [terminal]) says locale = "hosted" — see workflowhosted.go,
+// where surface decides whether a hosted worker gets a dashboard pty or the
+// caller's own terminal. actionName and action identify the
 // workflow action that named these targets, used for the agent override
 // (ResolveAgent) and the live-registry entry's Name/Kind.
 //
@@ -128,8 +132,14 @@ func Ceiling(cfg config.Config) int {
 // arrives, and dispatchOne's create.IsRegisteredWorktree check is what
 // catches it having been removed out from under this dispatch in that
 // window.
-func DispatchTargets(repoRoot, actionName string, action manifest.Action, targets []Target) []TargetResult {
+func DispatchTargets(repoRoot, actionName string, action manifest.Action, targets []Target, surface DispatchSurface) []TargetResult {
 	results := make([]TargetResult, len(targets))
+	failAll := func(err error) []TargetResult {
+		for i, t := range targets {
+			results[i] = TargetResult{Target: t.Name, Err: err}
+		}
+		return results
+	}
 
 	cfg, err := config.Load(repoRoot)
 	if err != nil {
@@ -137,34 +147,38 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 	}
 	agentKind, ok := ResolveAgent(action, cfg)
 	if !ok {
-		missing := fmt.Errorf(
+		return failAll(fmt.Errorf(
 			"action %q: kind=\"workflow\" has no agent configured — set 'agent' on the action "+
-				"or [workflow].agent in admin.toml", actionName)
-		for i, t := range targets {
-			results[i] = TargetResult{Target: t.Name, Err: missing}
-		}
-		return results
+				"or [workflow].agent in admin.toml", actionName))
 	}
-	if cfg.Terminal.Spawn == "" {
-		missing := fmt.Errorf(
-			"action %q: kind=\"workflow\" dispatch requires a [terminal] launcher — "+
-				"declare spawn/attach/kill in admin.toml (ADR-0020)", actionName)
-		for i, t := range targets {
-			results[i] = TargetResult{Target: t.Name, Err: missing}
-		}
-		return results
-	}
-	drv, ok := selectDriver()
-	if !ok {
-		missing := fmt.Errorf(
-			"action %q: no agent driver available — is the configured launcher's underlying "+
-				"tool (e.g. herdr) reachable?", actionName)
-		for i, t := range targets {
-			results[i] = TargetResult{Target: t.Name, Err: missing}
-		}
-		return results
-	}
+	hosted := workerLocale(action, cfg.Terminal.Locale) == validate.LocaleHosted
+	mode := workflowMode(action)
+	var drv agent.Driver
 	ceiling := Ceiling(cfg)
+	if hosted {
+		if surface == SurfaceShell {
+			// Inline agents share one terminal, so they run one at a time.
+			ceiling = 1
+		}
+	} else {
+		if mode != "" {
+			return failAll(fmt.Errorf(
+				"action %q: mode applies to locale = %q workers only — set locale = %q or drop mode",
+				actionName, validate.LocaleHosted, validate.LocaleHosted))
+		}
+		if cfg.Terminal.Spawn == "" {
+			return failAll(fmt.Errorf(
+				"action %q: kind=\"workflow\" dispatch requires a [terminal] launcher — "+
+					"declare spawn/attach/kill in admin.toml (ADR-0020), or set locale = %q to run the agents hosted",
+				actionName, validate.LocaleHosted))
+		}
+		drv, ok = selectDriver()
+		if !ok {
+			return failAll(fmt.Errorf(
+				"action %q: no agent driver available — is the configured launcher's underlying "+
+					"tool (e.g. herdr) reachable?", actionName))
+		}
+	}
 
 	// Phase 1: create every target's worktree up front, seeded with the
 	// configured populate files (create.Worktree does both — the
@@ -197,7 +211,11 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 		go func(i int, t Target, wt create.Result) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			results[i] = dispatchOne(repoRoot, actionName, agentKind, cfg.Terminal, drv, t, wt)
+			if hosted {
+				results[i] = hostedOne(repoRoot, actionName, agentKind, mode, surface, t, wt)
+			} else {
+				results[i] = dispatchOne(repoRoot, actionName, agentKind, cfg.Terminal, drv, t, wt)
+			}
 		}(i, t, worktrees[i])
 	}
 	wg.Wait()
@@ -213,15 +231,8 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 // LongRunning case, but keyed on the pane this dispatch itself opened
 // rather than one launchCommand opened for it.
 func dispatchOne(repoRoot, actionName, agentKind string, t config.Terminal, drv agent.Driver, tgt Target, wt create.Result) TargetResult {
-	if !create.IsRegisteredWorktree(context.Background(), repoRoot, wt.Path) {
-		return TargetResult{
-			Target:       tgt.Name,
-			WorktreePath: wt.Path,
-			Err: fmt.Errorf(
-				"worktree %s for target %q no longer exists — not recreating it at a base "+
-					"nobody chose; something removed it after it was created and before its "+
-					"turn to dispatch", wt.Path, tgt.Name),
-		}
+	if err := worktreeGone(repoRoot, tgt, wt); err != nil {
+		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Err: err}
 	}
 
 	agentName := agentSessionName(actionName, tgt.Name)

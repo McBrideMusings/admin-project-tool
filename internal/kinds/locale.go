@@ -56,9 +56,8 @@ func firstLocale(levels ...string) string {
 // A workflow action always resolves to hosted here: the action itself runs on
 // the dashboard's own surface, because its Runner prints the resolved target
 // set and reads a yes/no from that terminal's stdin before dispatching
-// anything. Its workers always run through the launcher
-// (workflowdispatch.go's DispatchTargets requires [terminal].spawn), so
-// ValidateLocale accepts only "window" on it.
+// anything. Its workers take the workflow's own `locale` instead
+// (workflowdispatch.go's DispatchTargets): a window launcher, or a hosted pty.
 //
 // For any other kind except "multi-target" this is the action's own locale,
 // else terminalDefault — there is no target to resolve.
@@ -182,14 +181,13 @@ func ValidateLocale(actions map[string]manifest.Action) error {
 	var problems []string
 	for _, name := range names {
 		action := actions[name]
-		kind, _ := actionString(action, "kind")
-		problems = append(problems, localeProblems(fmt.Sprintf("action %q", name), action, kind == "workflow")...)
+		problems = append(problems, localeProblems(fmt.Sprintf("action %q", name), action)...)
 		for _, key := range sortedStringKeys(action) {
 			tbl, ok := action[key].(map[string]any)
 			if !ok || multiTargetReserved[key] {
 				continue
 			}
-			problems = append(problems, localeProblems(fmt.Sprintf("action %q: target %q", name, key), tbl, false)...)
+			problems = append(problems, localeProblems(fmt.Sprintf("action %q: target %q", name, key), tbl)...)
 		}
 	}
 	if len(problems) == 0 {
@@ -204,7 +202,7 @@ func ValidateLocale(actions map[string]manifest.Action) error {
 
 // localeProblems checks one table (an action or an inline target) for a
 // `locale` outside the vocabulary and for the retired `detach` key.
-func localeProblems(where string, tbl map[string]any, workflow bool) []string {
+func localeProblems(where string, tbl map[string]any) []string {
 	var out []string
 	if _, present := tbl["detach"]; present {
 		out = append(out, fmt.Sprintf(
@@ -215,12 +213,7 @@ func localeProblems(where string, tbl map[string]any, workflow bool) []string {
 		return out
 	}
 	if why := validate.CheckLocale(v); why != "" {
-		return append(out, fmt.Sprintf("%s: locale %s", where, why))
-	}
-	if workflow && v != validate.LocaleWindow {
-		out = append(out, fmt.Sprintf(
-			"%s: a workflow action runs its agents in windows, so locale must be %q (got %q)",
-			where, validate.LocaleWindow, v))
+		out = append(out, fmt.Sprintf("%s: locale %s", where, why))
 	}
 	return out
 }

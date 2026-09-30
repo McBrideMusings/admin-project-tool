@@ -357,7 +357,7 @@ func TestRowKeyDispatchWorkflowSelectionOpensConfirmOverlay(t *testing.T) {
 func TestRowKeyDispatchWorkflowNoAgentReportsRedStatus(t *testing.T) {
 	dispatched := false
 	orig := runDispatchWorkflow
-	runDispatchWorkflow = func(repoRoot, name string, action manifest.Action, targets []kinds.Target) []kinds.TargetResult {
+	runDispatchWorkflow = func(repoRoot, name string, action manifest.Action, targets []kinds.Target, _ kinds.DispatchSurface) []kinds.TargetResult {
 		dispatched = true
 		return nil
 	}

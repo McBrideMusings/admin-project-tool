@@ -153,7 +153,7 @@ func TestDispatchTargetsCreatesWorktreesSeededWithPopulate(t *testing.T) {
 	)
 
 	targets := []Target{{Name: "t1"}, {Name: "t2"}, {Name: "t3"}}
-	results := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, targets)
+	results := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, targets, SurfaceDashboard)
 
 	if len(results) != 3 {
 		t.Fatalf("got %d results, want 3", len(results))
@@ -187,7 +187,7 @@ func TestDispatchTargetsNoAgentConfiguredFailsEveryTargetWithoutTouchingGit(t *t
 	wtRoot := filepath.Join(filepath.Dir(repoRoot), "wt")
 
 	results := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"},
-		[]Target{{Name: "t1"}, {Name: "t2"}})
+		[]Target{{Name: "t1"}, {Name: "t2"}}, SurfaceDashboard)
 
 	for _, r := range results {
 		if r.Err == nil || !strings.Contains(r.Err.Error(), "no agent configured") {
@@ -207,7 +207,7 @@ func TestDispatchTargetsNoTerminalConfiguredFailsEveryTargetNamingIt(t *testing.
 	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n")
 	wtRoot := filepath.Join(filepath.Dir(repoRoot), "wt")
 
-	results := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}})
+	results := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}}, SurfaceDashboard)
 
 	for _, r := range results {
 		if r.Err == nil || !strings.Contains(r.Err.Error(), "[terminal]") {
@@ -246,7 +246,7 @@ func TestDispatchTargetsAgentOverrideWinsOverDefault(t *testing.T) {
 	)
 
 	action := manifest.Action{"kind": "workflow", "agent": "action-override-agent"}
-	results := DispatchTargets(repoRoot, "sweep", action, []Target{{Name: "t1"}})
+	results := DispatchTargets(repoRoot, "sweep", action, []Target{{Name: "t1"}}, SurfaceDashboard)
 
 	if results[0].Err != nil {
 		t.Fatalf("unexpected error: %v", results[0].Err)
@@ -299,7 +299,7 @@ func TestDispatchTargetsCeilingLimitsConcurrency(t *testing.T) {
 
 	done := make(chan []TargetResult, 1)
 	go func() {
-		done <- DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, targets)
+		done <- DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, targets, SurfaceDashboard)
 	}()
 
 	// Let the ceiling's worth of targets actually start and block, then give
@@ -409,7 +409,7 @@ func TestDispatchTargetsRecordsLiveWorkWithPaneHandle(t *testing.T) {
 
 	done := make(chan []TargetResult, 1)
 	go func() {
-		done <- DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1", Prompt: "go"}})
+		done <- DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1", Prompt: "go"}}, SurfaceDashboard)
 	}()
 
 	<-seenRunning
@@ -449,7 +449,7 @@ func TestDispatchOneRecordsWorkerInfo(t *testing.T) {
 	)
 	stubAgentInfo(fd, "idle")
 
-	res := DispatchTargets(repoRoot, "review", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}})
+	res := DispatchTargets(repoRoot, "review", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}}, SurfaceDashboard)
 	if res[0].Err != nil {
 		t.Fatalf("DispatchTargets: %v", res[0].Err)
 	}
@@ -492,7 +492,7 @@ func TestDispatchOneReportsWaitingWhenAgentBlocked(t *testing.T) {
 	)
 	stubAgentInfo(fd, "blocked")
 
-	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}})
+	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}}, SurfaceDashboard)
 	if res[0].Err != nil {
 		t.Fatalf("DispatchTargets: %v", res[0].Err)
 	}
@@ -517,7 +517,7 @@ func TestDispatchOneReportsExitedWhenAgentIdle(t *testing.T) {
 	)
 	stubAgentInfo(fd, "idle")
 
-	res := DispatchTargets(repoRoot, "sweep2", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}})
+	res := DispatchTargets(repoRoot, "sweep2", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}}, SurfaceDashboard)
 	if res[0].Err != nil {
 		t.Fatalf("DispatchTargets: %v", res[0].Err)
 	}
@@ -558,7 +558,7 @@ func TestDispatchTargetsDogfoodActionAgentWithNoWorkflowDefault(t *testing.T) {
 	)
 
 	action := manifest.Action{"kind": "workflow", "over": "selection", "agent": "claude"}
-	results := DispatchTargets(repoRoot, "implement", action, []Target{{Name: "proj-1"}})
+	results := DispatchTargets(repoRoot, "implement", action, []Target{{Name: "proj-1"}}, SurfaceDashboard)
 
 	if results[0].Err != nil {
 		t.Fatalf("unexpected error: %v", results[0].Err)

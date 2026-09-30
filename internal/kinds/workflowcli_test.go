@@ -51,7 +51,7 @@ func withWorkflowCLISeams(t *testing.T, targets []Target, resolveErr error, conf
 		called = true
 		return confirmResult
 	}
-	dispatchWorkflowTargets = func(_ string, _ string, _ manifest.Action, ts []Target) []TargetResult {
+	dispatchWorkflowTargets = func(_ string, _ string, _ manifest.Action, ts []Target, _ DispatchSurface) []TargetResult {
 		calls++
 		got = ts
 		results := make([]TargetResult, len(ts))

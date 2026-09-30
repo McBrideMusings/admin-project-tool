@@ -243,9 +243,9 @@ func TestValidateLocaleRejectsBadValuesNamingActionAndTarget(t *testing.T) {
 		{"detach is not a key on a target",
 			map[string]manifest.Action{"dev": {"kind": "multi-target", "cf": map[string]any{"run": "true", "detach": true}}},
 			[]string{`target "cf"`, "detach is not a key"}},
-		{"a workflow's agents run in windows",
-			map[string]manifest.Action{"impl": {"kind": "workflow", "locale": "hosted"}},
-			[]string{`action "impl"`, `locale must be "window"`}},
+		{"a workflow still rejects an unknown word",
+			map[string]manifest.Action{"impl": {"kind": "workflow", "locale": "pane"}},
+			[]string{`action "impl"`, `"pane" is unknown`}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -262,10 +262,12 @@ func TestValidateLocaleRejectsBadValuesNamingActionAndTarget(t *testing.T) {
 	}
 }
 
-func TestValidateLocaleAcceptsWindowOnAWorkflow(t *testing.T) {
-	actions := map[string]manifest.Action{"impl": {"kind": "workflow", "locale": "window"}}
-	if err := ValidateLocale(actions); err != nil {
-		t.Errorf("ValidateLocale() = %v, want nil", err)
+func TestValidateLocaleAcceptsWindowAndHostedOnAWorkflow(t *testing.T) {
+	for _, loc := range []string{"window", "hosted"} {
+		actions := map[string]manifest.Action{"impl": {"kind": "workflow", "locale": loc}}
+		if err := ValidateLocale(actions); err != nil {
+			t.Errorf("locale %q: ValidateLocale() = %v, want nil", loc, err)
+		}
 	}
 }
 

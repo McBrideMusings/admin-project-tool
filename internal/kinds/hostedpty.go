@@ -18,6 +18,7 @@ package kinds
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"image/color"
 	"io"
@@ -93,6 +94,11 @@ const (
 	HostedColorProfileEnv   = "ADMIN_HOSTED_COLOR_PROFILE"
 	HostedDarkBackgroundEnv = "ADMIN_HOSTED_DARK_BG"
 )
+
+// ErrHostedKilled is what a hosted child's exit channel yields after its
+// entry's Ops.Kill, so a workflow dispatch does not count a killed worker as
+// a finished one.
+var ErrHostedKilled = errors.New("killed")
 
 // killProcessGroup signals SIGKILL to the whole process group led by c's
 // child, not just the direct child — a dispatched Command routinely spawns
@@ -170,13 +176,49 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 	}
 	c := exec.Command(selfExecutable(), hostedReentryArgs(name, args)...)
 	c.ExtraFiles = []*os.File{announceW}
-	c.Env = append(os.Environ(),
+	c.Env = append(hostedChildEnv(), luahost.LogAnnounceFDEnv+"=3")
+	c.Env = append(c.Env, env...)
+	_, err = startHostedChild(liveID, name, c, rows, cols, announceR)
+	// The child holds its own copy of the write end; closing ours is what
+	// lets readLogAnnounce see EOF once the child's copies are gone.
+	_ = announceW.Close()
+	if err != nil {
+		_ = announceR.Close()
+	}
+	return err
+}
+
+// StartHostedAgent runs argv, a workflow agent's command line, on a pty the
+// dashboard owns, in dir (the target's worktree), and returns as soon as the
+// child is spawned. The returned channel receives the child's exit error (nil for a clean exit, ErrHostedKilled
+// after a Kill) and is then closed, which is how a workflow
+// dispatch learns its concurrency slot is free. The live-work entry is the
+// same hosted-pty shape StartHostedPTY records — Via and Worker empty, so the
+// dashboard treats it as dying with itself — keyed on id.
+func StartHostedAgent(id string, argv []string, dir string, rows, cols int) (<-chan error, error) {
+	if len(argv) == 0 {
+		return nil, fmt.Errorf("agent %q: empty command line", id)
+	}
+	c := exec.Command(argv[0], argv[1:]...)
+	c.Dir = dir
+	c.Env = hostedChildEnv()
+	return startHostedChild(id, id, c, rows, cols, nil)
+}
+
+// hostedChildEnv is the dashboard's own environment plus the two resolved
+// color facts and the no-frame marker every hosted child gets.
+func hostedChildEnv() []string {
+	return append(os.Environ(),
 		HostedColorProfileEnv+"="+strconv.Itoa(int(lipgloss.ColorProfile())),
 		HostedDarkBackgroundEnv+"="+strconv.FormatBool(lipgloss.HasDarkBackground()),
 		HostedNoFrameEnv+"=1",
-		luahost.LogAnnounceFDEnv+"=3",
 	)
-	c.Env = append(c.Env, env...)
+}
+
+// startHostedChild starts c on a fresh pty sized rows x cols (80x24 when
+// either is <= 0) and hands it to recordHostedPTYWork under liveID. announce
+// is the read end of the child's log-path pipe, nil when the child has none.
+func startHostedChild(liveID, name string, c *exec.Cmd, rows, cols int, announce *os.File) (<-chan error, error) {
 	// Setsid (pty.StartWithSize sets this unconditionally on the SysProcAttr
 	// it allocates when nil, so pinning it here is behaviour-neutral) makes
 	// the child both a session leader and its own process-group leader
@@ -186,29 +228,27 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 	// forkAndExecInChild runs setsid() before setpgid(0,0), and setpgid on a
 	// session leader returns EPERM, which would fail every hosted dispatch.
 	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	ptmx, err := pty.Start(c)
-	// The child holds its own copy of the write end; closing ours is what
-	// lets readLogAnnounce see EOF once the child's copies are gone.
-	_ = announceW.Close()
-	if err != nil {
-		_ = announceR.Close()
-		return fmt.Errorf("command %q: starting hosted pty: %w", name, err)
-	}
 	if rows <= 0 || cols <= 0 {
 		rows, cols = 24, 80
 	}
-	frame.SetWinsize(ptmx.Fd(), rows, cols)
-
-	recordHostedPTYWork(liveID, name, rows, cols, c, ptmx, announceR)
-	return nil
+	ptmx, err := pty.StartWithSize(c, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
+	if err != nil {
+		return nil, fmt.Errorf("command %q: starting hosted pty: %w", name, err)
+	}
+	return recordHostedPTYWork(liveID, name, rows, cols, c, ptmx, announce), nil
 }
 
 // recordHostedPTYWork adds a running hosted-pty entry (Via left empty) for
 // a successfully-spawned hosted dispatch, and waits for the child to exit
 // in a goroutine so the entry can flip to exited/failed the same way
 // recordLiveWork's launcher-backed entry does — the only visible
-// difference to a caller is whether Via is empty. announce is the read end of the child's log-path pipe.
-func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx, announce *os.File) {
+// difference to a caller is whether Via is empty. announce is the read end of
+// the child's log-path pipe, nil for a child with none. The returned channel
+// receives the child's exit error (ErrHostedKilled after a Kill) once its final state
+// is recorded, then closes; when the entry cannot be registered the child is killed and it closes
+// after reaping the child.
+func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx, announce *os.File) <-chan error {
+	exit := make(chan error, 1)
 	// killed is set by Ops.Kill before it closes ptmx, so the wait goroutine
 	// below knows the resulting "signal: killed" c.Wait() error is expected
 	// and must not overwrite the StateExited Kill already set. exited is set
@@ -296,10 +336,24 @@ func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx
 	}
 	if err := livework.Default.Add(e); err != nil {
 		log.Printf("recordHostedPTYWork: %v", err)
-		_ = announce.Close()
-		return
+		if announce != nil {
+			_ = announce.Close()
+		}
+		// Nothing would read the pty or reap the child, so stop it here.
+		if err := killProcessGroup(c); err != nil {
+			_ = c.Process.Kill()
+		}
+		_ = ptmx.Close()
+		go func() {
+			_ = c.Wait()
+			exit <- fmt.Errorf("command %q: %w", name, err)
+			close(exit)
+		}()
+		return exit
 	}
-	go readLogAnnounce(e.ID, announce)
+	if announce != nil {
+		go readLogAnnounce(e.ID, announce)
+	}
 
 	// Ordering is load-bearing (admin-3rgp.61's Cause A): the pty's output
 	// queue only drains when something reads the master, and on macOS the
@@ -309,6 +363,7 @@ func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx
 	// early truncates the child's tail output; never draining at all is the
 	// exact hang that failed Verify.
 	go func() {
+		defer close(exit)
 		_, copyErr := io.Copy(io.MultiWriter(e.Output, screen), ptmx)
 		// Closing the reply pipe's write end ends the reply copy's read with
 		// EOF without touching the emulator's closed flag; only once that copy
@@ -326,6 +381,7 @@ func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx
 		_ = ptmx.Close()
 		exited.Store(true)
 		if killed.Load() {
+			exit <- ErrHostedKilled
 			return
 		}
 		if waitErr != nil {
@@ -333,5 +389,7 @@ func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx
 		} else {
 			livework.Default.SetState(e.ID, livework.StateExited, nil)
 		}
+		exit <- waitErr
 	}()
+	return exit
 }

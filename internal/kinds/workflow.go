@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
 
 // WorkflowSource is a workflow action's declared target source — the value
@@ -211,6 +212,20 @@ func ValidateWorkflows(actions map[string]manifest.Action) error {
 		}
 		if _, err := ParseWorkflowOver(name, action); err != nil {
 			problems = append(problems, err.Error())
+		}
+		if v, present := action["mode"]; present {
+			if m, _ := v.(string); m != ModeInteractive && m != ModePrint {
+				problems = append(problems, fmt.Sprintf(
+					"action %q: mode must be %q or %q (got %#v)", name, ModeInteractive, ModePrint, v))
+			}
+		}
+		if _, present := action["mode"]; present && actionLocale(action) == validate.LocaleWindow {
+			problems = append(problems, fmt.Sprintf(
+				"action %q: mode applies to locale = %q workers only", name, validate.LocaleHosted))
+		}
+		if a, present := actionString(action, "agent"); present && a != "claude" && actionLocale(action) == validate.LocaleHosted {
+			problems = append(problems, fmt.Sprintf(
+				"action %q: locale = %q runs the claude command line only (agent is %q)", name, validate.LocaleHosted, a))
 		}
 	}
 	if len(problems) == 0 {

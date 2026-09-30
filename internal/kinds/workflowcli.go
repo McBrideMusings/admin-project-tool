@@ -132,7 +132,7 @@ func runWorkflowQuery(name string, action manifest.Action, m *manifest.Manifest,
 		return nil
 	}
 
-	results := dispatchWorkflowTargets(repoRoot, name, action, targets)
+	results := dispatchWorkflowTargets(repoRoot, name, action, targets, SurfaceShell)
 	ok, failed := 0, 0
 	var firstErr error
 	for _, r := range results {
