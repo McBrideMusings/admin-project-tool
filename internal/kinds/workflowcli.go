@@ -109,7 +109,7 @@ func runWorkflowQuery(name string, action manifest.Action, m *manifest.Manifest,
 
 	cfg, cfgErr := config.Load(repoRoot)
 	if cfgErr != nil {
-		cfg = config.Config{}
+		return fmt.Errorf("loading config: %w", cfgErr)
 	}
 	agent, agentOK := ResolveAgent(action, cfg)
 	if !agentOK {

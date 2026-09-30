@@ -16,6 +16,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/archetype"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/timing"
+	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
 
 // Mode is how a populate entry brings a file into a new worktree.
@@ -64,10 +65,9 @@ type Workflow struct {
 
 // Terminal configures the ADR-0020 launcher contract: how a dispatched
 // action gets its own terminal instead of the dashboard's hosted pty. Spawn,
-// Attach and Kill are required together (validated by internal/validate.
-// Terminal); Status is optional. Empty means no launcher is declared, and
-// nothing dispatches through this table yet (admin-ysxr.1 is parse+validate
-// only).
+// Attach and Kill are required together (internal/validate.Terminal, run by
+// FromManifest, so every Load enforces it); Status and Read are optional.
+// Empty means no launcher is declared, and dispatch runs on the hosted pty.
 type Terminal struct {
 	Spawn  string `toml:"spawn"`
 	Attach string `toml:"attach"`
@@ -138,6 +138,9 @@ func Load(repoRoot string) (Config, error) {
 func FromManifest(m *manifest.Manifest) (Config, error) {
 	if m == nil {
 		return Config{}, nil
+	}
+	if err := validate.Terminal(m.Terminal); err != nil {
+		return Config{}, err
 	}
 	start := timing.Start()
 	cfg := Config{

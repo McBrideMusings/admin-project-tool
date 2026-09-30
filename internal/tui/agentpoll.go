@@ -96,7 +96,7 @@ type agentStatusMsg struct {
 // agentHandleFor returns the launcher handle to poll for e, or "" when e has
 // none. dispatchOne (internal/kinds/workflowdispatch.go) is the only
 // producer of a launcher-addressed entry today: it keys the entry's ID on
-// agentSessionName but its Handle on the launcher's own opaque address, sets
+// the sanitized action-target name but its Handle on the launcher's own opaque address, sets
 // Kind to "workflow", and always carries a non-nil Worker alongside a
 // non-empty Via ("terminal"). A hosted-pty entry (kinds/hostedpty.go) leaves
 // Via empty and Worker nil, so it never matches and is skipped without a

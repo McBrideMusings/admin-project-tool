@@ -380,3 +380,22 @@ func TestRingConcurrentWriteAndRead(t *testing.T) {
 		t.Errorf("Len() = %d, want <= 256 (the ring's limit)", got)
 	}
 }
+
+// TestAddRejectsLiveDuplicateID: a second Add under the ID of an entry still
+// running or waiting fails and leaves the first entry in place.
+func TestAddRejectsLiveDuplicateID(t *testing.T) {
+	r := NewRegistry()
+	if err := r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-A"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Add(&Entry{ID: "a", Name: "two", Handle: "pane-B"}); err == nil {
+		t.Fatal("Add over a running entry returned nil")
+	}
+	r.SetState("a", StateWaiting, nil)
+	if err := r.Add(&Entry{ID: "a", Name: "two", Handle: "pane-B"}); err == nil {
+		t.Fatal("Add over a waiting entry returned nil")
+	}
+	if entries := r.List(); len(entries) != 1 || entries[0].Handle != "pane-A" {
+		t.Errorf("List() = %+v, want the original pane-A entry only", entries)
+	}
+}

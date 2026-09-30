@@ -6,7 +6,8 @@ import (
 	"strings"
 )
 
-// TerminalKeys are the only keys a [terminal] table (ADR-0020) accepts.
+// TerminalKeys are the only keys a [terminal] table (ADR-0020) accepts: the
+// launcher verbs spawn, attach, kill, status and read, and the locale default.
 var TerminalKeys = []string{"spawn", "attach", "kill", "status", "read", "locale"}
 
 // terminalKeySet is TerminalKeys as a membership set.

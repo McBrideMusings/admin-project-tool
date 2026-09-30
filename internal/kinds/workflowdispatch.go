@@ -30,6 +30,7 @@ package kinds
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -143,7 +144,7 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 
 	cfg, err := config.Load(repoRoot)
 	if err != nil {
-		cfg = config.Config{}
+		return failAll(fmt.Errorf("loading config: %w", err))
 	}
 	agentKind, ok := ResolveAgent(action, cfg)
 	if !ok {
@@ -235,7 +236,7 @@ func dispatchOne(repoRoot, actionName, agentKind string, t config.Terminal, drv 
 		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Err: err}
 	}
 
-	agentName := agentSessionName(actionName, tgt.Name)
+	id := workerLiveID(actionName, tgt.Name)
 
 	// spawnPane opens the pane with an EMPTY ADMIN_CMD, ADMIN_CWD set to
 	// this target's own worktree — the pane lands at an interactive shell
@@ -244,8 +245,17 @@ func dispatchOne(repoRoot, actionName, agentKind string, t config.Terminal, drv 
 	if err != nil {
 		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Err: fmt.Errorf("opening pane: %w", err)}
 	}
+	// Once the pane exists, every failure below must close it: nothing has
+	// registered it yet, so nothing else would.
+	closePane := func(cause error) error {
+		if killErr := runLauncherShell(t.Kill, handle); killErr != nil {
+			return errors.Join(cause, fmt.Errorf("closing pane %s: %w", handle, killErr))
+		}
+		return cause
+	}
 	if err := drv.Start(handle, agentKind, nil); err != nil {
-		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Handle: handle, Err: fmt.Errorf("starting agent %q: %w", agentKind, err)}
+		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Handle: handle,
+			Err: closePane(fmt.Errorf("starting agent %q: %w", agentKind, err))}
 	}
 
 	// Registered as soon as a real pane exists to key it on and BEFORE the
@@ -254,9 +264,11 @@ func dispatchOne(repoRoot, actionName, agentKind string, t config.Terminal, drv 
 	// means a reader of the registry mid-dispatch, not only after every
 	// target has finished.
 	//
-	// Keyed on agentName, not the handle.
+	// Keyed on the full sanitized action-target name, not the handle and not
+	// the 32-character herdr agent name: two targets that differ only after
+	// character 32 must stay two entries.
 	e := &livework.Entry{
-		ID:     agentName,
+		ID:     id,
 		Name:   actionName,
 		Kind:   "workflow",
 		Handle: handle,
@@ -274,14 +286,17 @@ func dispatchOne(repoRoot, actionName, agentKind string, t config.Terminal, drv 
 		},
 	}
 	if err := livework.Default.Add(e); err != nil {
-		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Handle: handle, Err: err}
+		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Handle: handle, Err: closePane(err)}
 	}
 
-	if strings.TrimSpace(tgt.Prompt) != "" {
-		if err := drv.Prompt(handle, tgt.Prompt, []agent.Status{agent.StatusIdle, agent.StatusDone, agent.StatusBlocked}); err != nil {
-			livework.Default.SetState(agentName, livework.StateFailed, err)
-			return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Handle: handle, Err: err}
-		}
+	// A blank prompt means the agent was started with nothing to do: it stays
+	// running for a person to drive, and there is no settle to wait for.
+	if strings.TrimSpace(tgt.Prompt) == "" {
+		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Handle: handle}
+	}
+	if err := drv.Prompt(handle, tgt.Prompt, []agent.Status{agent.StatusIdle, agent.StatusDone, agent.StatusBlocked}); err != nil {
+		livework.Default.SetState(id, livework.StateFailed, err)
+		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Handle: handle, Err: err}
 	}
 
 	// Prompt settles on idle, done, OR blocked — an agent waiting on an
@@ -290,41 +305,17 @@ func dispatchOne(repoRoot, actionName, agentKind string, t config.Terminal, drv 
 	// "waiting on input" apart from "still working"/"done" without
 	// attaching.
 	if info, infoErr := drv.Info(handle); infoErr == nil && info.Status == agent.StatusBlocked {
-		livework.Default.SetState(agentName, livework.StateWaiting, nil)
+		livework.Default.SetState(id, livework.StateWaiting, nil)
 	} else {
-		livework.Default.SetState(agentName, livework.StateExited, nil)
+		livework.Default.SetState(id, livework.StateExited, nil)
 	}
 	return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Handle: handle}
 }
 
-// agentSessionName derives a herdr agent name from the workflow action and
-// target: `herdr agent start` requires a name matching
-// [a-z][a-z0-9_-]{0,31}, unique among live agents, so this lowercases and
-// strips everything else out rather than passing a target name (an issue
-// title, a branch with slashes) straight through.
-func agentSessionName(actionName, target string) string {
-	raw := actionName + "-" + target
-	var b strings.Builder
-	for _, r := range strings.ToLower(raw) {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_', r == '-':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('-')
-		}
-	}
-	name := strings.Trim(b.String(), "-")
-	if name == "" {
-		name = "workflow"
-	}
-	if len(name) > 32 {
-		name = name[:32]
-	}
-	if name[0] < 'a' || name[0] > 'z' {
-		name = "w-" + name
-		if len(name) > 32 {
-			name = name[:32]
-		}
-	}
-	return name
+// workerLiveID derives a window-locale worker's live-work ID from the
+// workflow action and target: the sanitized "<action>-<target>", uncapped.
+// herdr's own 32-character agent name is derived separately from the pane
+// handle (internal/agent/herdr), so nothing here needs to fit it.
+func workerLiveID(actionName, target string) string {
+	return agent.SanitizeName(actionName+"-"+target, "workflow", "w-", 0)
 }

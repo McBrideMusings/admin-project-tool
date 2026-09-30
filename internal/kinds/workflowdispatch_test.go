@@ -2,6 +2,7 @@ package kinds
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -51,6 +52,9 @@ const terminalTOML = "[terminal]\nspawn = \"true\"\nattach = \"true\"\nkill = \"
 // HOME here would no longer buy that isolation.
 func setupWorkflowRepo(t *testing.T, configTOML string) (repoRoot string) {
 	t.Helper()
+	// Every test dispatches under reused action/target names ("sweep", "t1"),
+	// and Registry.Add refuses a live duplicate: each test gets its own registry.
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
 	base := t.TempDir()
 	t.Setenv("WORKTREE_ROOT", filepath.Join(base, "wt"))
 
@@ -414,7 +418,7 @@ func TestDispatchTargetsRecordsLiveWorkWithPaneHandle(t *testing.T) {
 
 	<-seenRunning
 	// Keyed on the derived agent session name, not the launcher handle.
-	entry, ok := livework.Default.Get(agentSessionName("sweep", "t1"))
+	entry, ok := livework.Default.Get(workerLiveID("sweep", "t1"))
 	if !ok {
 		t.Fatal("live-work entry not present while the target's agent is still running")
 	}
@@ -454,7 +458,7 @@ func TestDispatchOneRecordsWorkerInfo(t *testing.T) {
 		t.Fatalf("DispatchTargets: %v", res[0].Err)
 	}
 
-	entry, ok := livework.Default.Get(agentSessionName("review", "t1"))
+	entry, ok := livework.Default.Get(workerLiveID("review", "t1"))
 	if !ok {
 		t.Fatal("live-work entry not found")
 	}
@@ -492,12 +496,12 @@ func TestDispatchOneReportsWaitingWhenAgentBlocked(t *testing.T) {
 	)
 	stubAgentInfo(fd, "blocked")
 
-	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}}, SurfaceDashboard)
+	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1", Prompt: "go"}}, SurfaceDashboard)
 	if res[0].Err != nil {
 		t.Fatalf("DispatchTargets: %v", res[0].Err)
 	}
 
-	entry, ok := livework.Default.Get(agentSessionName("sweep", "t1"))
+	entry, ok := livework.Default.Get(workerLiveID("sweep", "t1"))
 	if !ok {
 		t.Fatal("live-work entry not found")
 	}
@@ -517,12 +521,12 @@ func TestDispatchOneReportsExitedWhenAgentIdle(t *testing.T) {
 	)
 	stubAgentInfo(fd, "idle")
 
-	res := DispatchTargets(repoRoot, "sweep2", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}}, SurfaceDashboard)
+	res := DispatchTargets(repoRoot, "sweep2", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1", Prompt: "go"}}, SurfaceDashboard)
 	if res[0].Err != nil {
 		t.Fatalf("DispatchTargets: %v", res[0].Err)
 	}
 
-	entry, ok := livework.Default.Get(agentSessionName("sweep2", "t1"))
+	entry, ok := livework.Default.Get(workerLiveID("sweep2", "t1"))
 	if !ok {
 		t.Fatal("live-work entry not found")
 	}
@@ -571,5 +575,228 @@ func TestDispatchTargetsDogfoodActionAgentWithNoWorkflowDefault(t *testing.T) {
 	}
 	if results[0].Handle != "pane-dogfood-1" {
 		t.Errorf("Handle = %q, want the handle the stub returned (proof only the stub ran)", results[0].Handle)
+	}
+}
+
+// killLogTerminal is a [terminal] table whose kill appends the pane handle to
+// a file, so a test can see which panes DispatchTargets closed.
+func killLogTerminal(killLog string) string {
+	return "[terminal]\nspawn = \"true\"\nattach = \"true\"\nkill = \"echo $ADMIN_HANDLE >> " + killLog + "\"\n"
+}
+
+func killedHandles(t *testing.T, killLog string) []string {
+	t.Helper()
+	b, err := os.ReadFile(killLog)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Fields(string(b))
+}
+
+// TestDispatchTargetsTargetsDifferingAfterChar32GetOwnEntries: two targets
+// whose names share their first 32 sanitized characters must be two live-work
+// entries, each with its own pane handle.
+func TestDispatchTargetsTargetsDifferingAfterChar32GetOwnEntries(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+terminalTOML)
+	var mu sync.Mutex
+	n := 0
+	stubAgent(t,
+		func(cwd string) (string, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			n++
+			return fmt.Sprintf("pane-%d", n), nil
+		}, nil, nil)
+
+	targets := []Target{{Name: "admin-3rgp-79-fix-login-timeout-a", Prompt: "go"}, {Name: "admin-3rgp-79-fix-login-timeout-b", Prompt: "go"}}
+	results := DispatchTargets(repoRoot, "implement", manifest.Action{"kind": "workflow"}, targets, SurfaceDashboard)
+
+	for _, r := range results {
+		if r.Err != nil {
+			t.Fatalf("target %q: %v", r.Target, r.Err)
+		}
+	}
+	if got := len(livework.Default.List()); got != 2 {
+		t.Fatalf("registry holds %d entries, want 2", got)
+	}
+	for _, tg := range targets {
+		e, ok := livework.Default.Get(workerLiveID("implement", tg.Name))
+		if !ok {
+			t.Fatalf("no entry for %q", tg.Name)
+		}
+		if e.Handle == "" {
+			t.Errorf("entry for %q has no handle", tg.Name)
+		}
+	}
+	if a, b := workerLiveID("implement", targets[0].Name), workerLiveID("implement", targets[1].Name); a == b {
+		t.Errorf("both targets map to ID %q", a)
+	}
+}
+
+// TestDispatchOneBlankPromptLeavesAgentRunning: with nothing to prompt there
+// is nothing to settle, so the entry stays running and the driver is never
+// asked for the agent's status.
+func TestDispatchOneBlankPromptLeavesAgentRunning(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+terminalTOML)
+	fd := stubAgent(t, func(cwd string) (string, error) { return "pane-blank", nil }, nil, nil)
+	fd.infoFn = func(handle string) (agent.Info, error) {
+		t.Error("drv.Info called for a blank prompt")
+		return agent.Info{Status: agent.StatusIdle}, nil
+	}
+
+	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1", Prompt: "  "}}, SurfaceDashboard)
+
+	if res[0].Err != nil {
+		t.Fatal(res[0].Err)
+	}
+	if st, _ := livework.Default.State(workerLiveID("sweep", "t1")); st != livework.StateRunning {
+		t.Errorf("state = %q, want running", st)
+	}
+}
+
+// TestDispatchTargetsBrokenManifestReportsParseError: a manifest that does not
+// parse fails every target with that error, not "no agent configured".
+func TestDispatchTargetsBrokenManifestReportsParseError(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, "[workflow\nagent = \"a\"\n")
+
+	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}, {Name: "t2"}}, SurfaceDashboard)
+
+	for _, r := range res {
+		if r.Err == nil || !strings.Contains(r.Err.Error(), "loading config") {
+			t.Errorf("target %q: err = %v, want a 'loading config' error", r.Target, r.Err)
+		}
+		if r.Err != nil && strings.Contains(r.Err.Error(), "no agent configured") {
+			t.Errorf("target %q: parse error was replaced by %v", r.Target, r.Err)
+		}
+	}
+}
+
+// TestDispatchTargetsSpawnOnlyTerminalRefusesToDispatch: a [terminal] with
+// spawn but no attach/kill would open panes nothing can close.
+func TestDispatchTargetsSpawnOnlyTerminalRefusesToDispatch(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n[terminal]\nspawn = \"true\"\n")
+	spawned := false
+	stubAgent(t, func(cwd string) (string, error) { spawned = true; return "pane-x", nil }, nil, nil)
+
+	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}}, SurfaceDashboard)
+
+	if res[0].Err == nil || !strings.Contains(res[0].Err.Error(), "attach") || !strings.Contains(res[0].Err.Error(), "kill") {
+		t.Errorf("err = %v, want it to name the missing attach and kill", res[0].Err)
+	}
+	if spawned {
+		t.Error("a pane was opened despite the incomplete [terminal]")
+	}
+}
+
+// TestDispatchOneStartFailureClosesPane: drv.Start failing after the pane
+// opened must run the launcher's kill with that pane's handle.
+func TestDispatchOneStartFailureClosesPane(t *testing.T) {
+	killLog := filepath.Join(t.TempDir(), "kills")
+	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+killLogTerminal(killLog))
+	stubAgent(t,
+		func(cwd string) (string, error) { return "pane-start", nil },
+		func(handle, kind string, args []string) error { return errors.New("start boom") }, nil)
+
+	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1", Prompt: "go"}}, SurfaceDashboard)
+
+	if res[0].Err == nil || !strings.Contains(res[0].Err.Error(), "start boom") {
+		t.Fatalf("err = %v, want the start failure", res[0].Err)
+	}
+	if res[0].Handle != "pane-start" {
+		t.Errorf("Handle = %q, want pane-start", res[0].Handle)
+	}
+	if got := killedHandles(t, killLog); len(got) != 1 || got[0] != "pane-start" {
+		t.Errorf("killed panes = %v, want [pane-start]", got)
+	}
+	if _, ok := livework.Default.Get(workerLiveID("sweep", "t1")); ok {
+		t.Error("a failed start left a live-work entry")
+	}
+}
+
+// TestDispatchOneDuplicateLiveEntryClosesPane: Registry.Add refusing a live
+// duplicate must close the pane this dispatch opened, and keep the original.
+func TestDispatchOneDuplicateLiveEntryClosesPane(t *testing.T) {
+	killLog := filepath.Join(t.TempDir(), "kills")
+	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+killLogTerminal(killLog))
+	stubAgent(t, func(cwd string) (string, error) { return "pane-new", nil }, nil, nil)
+	if err := livework.Default.Add(&livework.Entry{ID: workerLiveID("sweep", "t1"), Handle: "pane-old"}); err != nil {
+		t.Fatal(err)
+	}
+
+	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1", Prompt: "go"}}, SurfaceDashboard)
+
+	if res[0].Err == nil {
+		t.Fatal("dispatch over a live duplicate succeeded")
+	}
+	if got := killedHandles(t, killLog); len(got) != 1 || got[0] != "pane-new" {
+		t.Errorf("killed panes = %v, want [pane-new]", got)
+	}
+	if e, _ := livework.Default.Get(workerLiveID("sweep", "t1")); e == nil || e.Handle != "pane-old" {
+		t.Errorf("original entry = %+v, want it untouched", e)
+	}
+}
+
+// TestDispatchTargetsNoDriverFailsEveryTarget: selectDriver reporting false
+// fails the target before any worktree or pane exists.
+func TestDispatchTargetsNoDriverFailsEveryTarget(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+terminalTOML)
+	orig := selectDriver
+	selectDriver = func() (agent.Driver, bool) { return nil, false }
+	t.Cleanup(func() { selectDriver = orig })
+
+	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}}, SurfaceDashboard)
+
+	if res[0].Err == nil || !strings.Contains(res[0].Err.Error(), "no agent driver") {
+		t.Errorf("err = %v, want 'no agent driver available'", res[0].Err)
+	}
+	if res[0].WorktreePath != "" {
+		t.Errorf("a worktree was created (%s) with no driver", res[0].WorktreePath)
+	}
+}
+
+// TestDispatchOneSpawnFailureReportsNoHandle: a launcher that cannot open a
+// pane leaves no handle, no entry and nothing to kill.
+func TestDispatchOneSpawnFailureReportsNoHandle(t *testing.T) {
+	killLog := filepath.Join(t.TempDir(), "kills")
+	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+killLogTerminal(killLog))
+	stubAgent(t, func(cwd string) (string, error) { return "", errors.New("spawn boom") }, nil, nil)
+
+	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1"}}, SurfaceDashboard)
+
+	if res[0].Err == nil || !strings.Contains(res[0].Err.Error(), "spawn boom") {
+		t.Fatalf("err = %v, want the spawn failure", res[0].Err)
+	}
+	if res[0].Handle != "" {
+		t.Errorf("Handle = %q, want empty", res[0].Handle)
+	}
+	if got := killedHandles(t, killLog); len(got) != 0 {
+		t.Errorf("killed panes = %v, want none", got)
+	}
+	if n := len(livework.Default.List()); n != 0 {
+		t.Errorf("registry holds %d entries, want 0", n)
+	}
+}
+
+// TestDispatchOnePromptFailureMarksEntryFailed: drv.Prompt failing leaves the
+// entry registered in StateFailed with the pane handle reported.
+func TestDispatchOnePromptFailureMarksEntryFailed(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, "[workflow]\nagent = \"a\"\n\n"+terminalTOML)
+	stubAgent(t,
+		func(cwd string) (string, error) { return "pane-prompt", nil }, nil,
+		func(handle, text string, until []agent.Status) error { return errors.New("prompt boom") })
+
+	res := DispatchTargets(repoRoot, "sweep", manifest.Action{"kind": "workflow"}, []Target{{Name: "t1", Prompt: "go"}}, SurfaceDashboard)
+
+	if res[0].Err == nil || !strings.Contains(res[0].Err.Error(), "prompt boom") {
+		t.Fatalf("err = %v, want the prompt failure", res[0].Err)
+	}
+	if res[0].Handle != "pane-prompt" {
+		t.Errorf("Handle = %q, want pane-prompt", res[0].Handle)
+	}
+	if st, _ := livework.Default.State(workerLiveID("sweep", "t1")); st != livework.StateFailed {
+		t.Errorf("state = %q, want failed", st)
 	}
 }

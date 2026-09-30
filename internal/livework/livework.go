@@ -214,12 +214,14 @@ func (r *Registry) SetTerminalOpener(open func(handle string) error) {
 }
 
 // Add records e, defaulting StartedAt to now and State to StateRunning when
-// the caller left them zero. Re-adding an existing ID overwrites that
-// entry's fields but keeps its original position in List's order, so a
-// re-dispatch under the same ID stays on the same row.
+// the caller left them zero. Re-adding the ID of an entry that has finished
+// (exited or failed) overwrites that entry's fields but keeps its original
+// position in List's order, so a re-dispatch under the same ID stays on the
+// same row.
 //
 // Add rejects e and stores nothing when e carries an empty Handle — an
-// entry must address something.
+// entry must address something — or when an entry with the same ID is still
+// running or waiting: overwriting it would orphan that entry's pane.
 func (r *Registry) Add(e *Entry) error {
 	if e.Handle == "" {
 		return fmt.Errorf("live-work: entry %q must carry a Handle", e.ID)
@@ -232,8 +234,10 @@ func (r *Registry) Add(e *Entry) error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, exists := r.entries[e.ID]; !exists {
+	if old, exists := r.entries[e.ID]; !exists {
 		r.order = append(r.order, e.ID)
+	} else if old.State != StateExited && old.State != StateFailed {
+		return fmt.Errorf("live-work: entry %q is already %s (handle %s)", e.ID, old.State, old.Handle)
 	}
 	r.entries[e.ID] = e
 	return nil

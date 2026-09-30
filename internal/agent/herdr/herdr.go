@@ -48,36 +48,13 @@ func New() *Driver { return &Driver{} }
 
 // agentName derives a herdr agent name from an opaque launcher handle:
 // `herdr agent start` requires a name matching [a-z][a-z0-9_-]{0,31}, so
-// this lowercases and strips everything else out of the handle rather than
-// passing it straight through — the same sanitization rule
-// internal/kinds.agentSessionName applies to a workflow target's own name.
+// agent.SanitizeName lowercases it, strips everything else out and caps it
+// at 32 characters rather than passing the handle straight through.
 // Identity everywhere AFTER start is the handle itself (resolve_agent_target
 // tries a pane id first, then falls back to a name), so this derived name
 // only has to be valid and non-colliding at start time, not memorable.
 func agentName(handle string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(handle) {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_', r == '-':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('-')
-		}
-	}
-	name := strings.Trim(b.String(), "-")
-	if name == "" {
-		name = "agent"
-	}
-	if len(name) > 32 {
-		name = name[:32]
-	}
-	if name[0] < 'a' || name[0] > 'z' {
-		name = "a-" + name
-		if len(name) > 32 {
-			name = name[:32]
-		}
-	}
-	return name
+	return agent.SanitizeName(handle, "agent", "a-", 32)
 }
 
 // Start runs `herdr agent start <name> --kind <kind> --pane <handle> [--
