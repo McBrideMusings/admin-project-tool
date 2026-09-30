@@ -62,6 +62,10 @@ type gitSignals struct {
 	mergedLocal bool // reachable from origin/<default> (git branch --merged)
 	empty       bool // no commit has ever landed on it
 	ahead       bool // holds commits origin has never seen
+	// upstream is the branch's configured upstream name with the remote stripped,
+	// or "" — the name GitHub knows this branch's PR by when it was pushed under a
+	// different name than the local one.
+	upstream string
 
 	// Circumstantial evidence — none of these proves anything alone; they are
 	// weighed together by weighEvidence when no proof fires.
@@ -287,9 +291,10 @@ func classifyBranch(sig branchSignals) branchState {
 // whenever the dashboard is launched from one, so the main working tree's branch
 // has to be looked up.
 func (m Model) branchState(branch string) branchState {
-	mergedOID, mergedPR := m.remote.MergedHeads[branch]
+	sig := m.local.signals[branch]
+	mergedOID, mergedPR := m.mergedHead(branch, sig.upstream)
 	return classifyBranch(branchSignals{
-		gitSignals: m.local.signals[branch],
+		gitSignals: sig,
 		protected:  branch == m.def || branch == m.mainTreeBranch(),
 		mergedPR:   mergedPR,
 		// An empty OID on either side is never a match: a PR fetched before this
@@ -300,6 +305,25 @@ func (m Model) branchState(branch string) branchState {
 		closedPR:       m.remote.ClosedHeads[branch],
 		openPR:         m.hasOpenPR(branch),
 	})
+}
+
+// mergedHead finds the merged PR for a branch by its local name and by its
+// upstream name, since a branch pushed as `HEAD:other-name` is known to GitHub only
+// by the latter. When both names have a merged PR, the one whose head is this
+// branch's tip wins, so the tip comparison runs against the entry that describes
+// this branch; otherwise the local name's entry is used.
+func (m Model) mergedHead(branch, upstream string) (oid string, ok bool) {
+	tip := m.local.tips[branch]
+	oid, ok = m.remote.MergedHeads[branch]
+	if ok && oid != "" && oid == tip {
+		return oid, true
+	}
+	if upstream != "" && upstream != branch {
+		if uo, uok := m.remote.MergedHeads[upstream]; uok && (!ok || (uo != "" && uo == tip)) {
+			return uo, true
+		}
+	}
+	return oid, ok
 }
 
 // hasOpenPR reports whether an open PR in the repo has this branch as its head.

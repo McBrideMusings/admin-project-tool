@@ -272,3 +272,25 @@ func TestEvidenceThresholdCombinations(t *testing.T) {
 		})
 	}
 }
+
+// TestMergedPRFoundUnderUpstreamName pins that a branch pushed under a different
+// remote name (`git push -u origin HEAD:feat/x`) matches the merged PR by its
+// upstream name, and that the tip comparison runs against that entry.
+func TestMergedPRFoundUnderUpstreamName(t *testing.T) {
+	m := seededModel()
+	m.local.signals = map[string]gitSignals{
+		"castling-affordance": {ahead: true, upstream: "feat/castling-affordance"},
+		"reused":              {ahead: true, upstream: "feat/reused"},
+	}
+	m.local.tips = map[string]string{"castling-affordance": "aaa", "reused": "zzz"}
+	m.remote.MergedHeads = map[string]string{
+		"feat/castling-affordance": "aaa",
+		"feat/reused":              "old",
+	}
+	if got := m.deadReason("castling-affordance"); got != "merged" {
+		t.Errorf("deadReason = %q, want merged", got)
+	}
+	if got := m.deadReason("reused"); got != "" {
+		t.Errorf("a reused upstream name with a different tip and local commits = %q, want live", got)
+	}
+}

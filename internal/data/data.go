@@ -487,6 +487,26 @@ func FetchIssue(ctx context.Context, nwo string, number int) (item gh.IssueItem,
 	return item, ok, nil
 }
 
+// indexMerged builds the merged-head, author and by-issue indexes from PRs listed
+// newest merge first. The first row seen for a head name is kept: an older PR that
+// reused the name must not overwrite the newer merge's OID.
+func indexMerged(prs []gh.MergedPR) (heads, authors map[string]string, byIssue map[int][]MergedPRRef) {
+	heads = map[string]string{}
+	authors = map[string]string{}
+	byIssue = map[int][]MergedPRRef{}
+	for _, pr := range prs {
+		if _, seen := heads[pr.HeadBranch]; pr.HeadBranch != "" && !seen {
+			heads[pr.HeadBranch] = pr.HeadOID
+			authors[pr.HeadBranch] = pr.Author
+		}
+		ref := MergedPRRef{Author: pr.Author, HeadBranch: pr.HeadBranch}
+		for _, iss := range pr.Issues {
+			byIssue[iss] = append(byIssue[iss], ref)
+		}
+	}
+	return heads, authors, byIssue
+}
+
 // fetchMerged asks GitHub which recent PRs merged and records both the head-branch
 // set (MergedHeads) and the by-issue index (MergedByIssue) from one query. This is
 // the only signal that sees squash merges — whose commits never land on the default
@@ -499,19 +519,7 @@ func fetchMerged(ctx context.Context, nwo string, limit int) Remote {
 	if err != nil {
 		return Remote{MergedFetchError: err.Error()}
 	}
-	heads := map[string]string{}
-	authors := map[string]string{}
-	byIssue := map[int][]MergedPRRef{}
-	for _, pr := range prs {
-		if pr.HeadBranch != "" {
-			heads[pr.HeadBranch] = pr.HeadOID
-			authors[pr.HeadBranch] = pr.Author
-		}
-		ref := MergedPRRef{Author: pr.Author, HeadBranch: pr.HeadBranch}
-		for _, iss := range pr.Issues {
-			byIssue[iss] = append(byIssue[iss], ref)
-		}
-	}
+	heads, authors, byIssue := indexMerged(prs)
 	// The closed-unmerged set is best-effort: it feeds circumstantial evidence, not
 	// a proof, so failing to read it should cost that one signal's weight and
 	// nothing else. Failing the whole merged section over it would blank the squash-

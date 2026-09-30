@@ -195,6 +195,7 @@ func loadLocalCmd(ctx context.Context, repoRoot, checkout, current, def string) 
 				gone:        gone[br.Name],
 				fullyPushed: fullyPushed[br.Name],
 				mergedLocal: mergedLocal[br.Name],
+				upstream:    br.Upstream,
 				empty:       act.NeverCommitted,
 				// "Holds commits origin has never seen" — which is what branchUnsafe
 				// already measures, for both shapes. BranchInfo.Ahead alone was wrong
