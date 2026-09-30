@@ -1,6 +1,7 @@
 package kinds
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -124,5 +125,59 @@ func TestMakeInstallTemplateUsesConfiguredName(t *testing.T) {
 func TestUnraidTemplatesDirIsAbsolute(t *testing.T) {
 	if !filepath.IsAbs(unraidTemplatesDir) {
 		t.Errorf("unraidTemplatesDir = %q, want an absolute path", unraidTemplatesDir)
+	}
+}
+
+// TestRenderTemplateExpandsPlaceholders proves a ${VAR} becomes its value and
+// a ${VAR:-default} falls back when unset, with surrounding text untouched.
+func TestRenderTemplateExpandsPlaceholders(t *testing.T) {
+	t.Setenv("TPL_HOST", "10.9.8.7")
+	t.Setenv("TPL_UNSET", "")
+	os.Unsetenv("TPL_UNSET")
+
+	got, err := renderTemplate(`<Config>${TPL_HOST}:9091</Config><Config>${TPL_UNSET:-fallback}</Config>`)
+	if err != nil {
+		t.Fatalf("renderTemplate: %v", err)
+	}
+	want := `<Config>10.9.8.7:9091</Config><Config>fallback</Config>`
+	if got != want {
+		t.Fatalf("renderTemplate = %q, want %q", got, want)
+	}
+}
+
+// TestRenderTemplateNamesUnsetVariables proves an unset variable with no
+// default fails and the error names it, so no literal ${VAR} is ever shipped.
+func TestRenderTemplateNamesUnsetVariables(t *testing.T) {
+	t.Setenv("TPL_SET", "x")
+	os.Unsetenv("TPL_MISSING_A")
+	os.Unsetenv("TPL_MISSING_B")
+
+	_, err := renderTemplate(`${TPL_SET} ${TPL_MISSING_A} ${TPL_MISSING_B} ${TPL_MISSING_A}`)
+	if err == nil {
+		t.Fatal("renderTemplate with unset variables should error")
+	}
+	if !strings.Contains(err.Error(), "TPL_MISSING_A, TPL_MISSING_B") || strings.Contains(err.Error(), "TPL_SET") {
+		t.Fatalf("error = %q, want it to name exactly TPL_MISSING_A and TPL_MISSING_B once each", err)
+	}
+}
+
+// TestInstallTemplateUnsetVariableFailsBeforeCopy proves the action stops with
+// the variable named before any copy is attempted (the host "myserver" is
+// unreachable, so reaching scp would give a different error).
+func TestInstallTemplateUnsetVariableFailsBeforeCopy(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeFile(t, dir, "deploy/unraid-template.xml", "<Container>${TPL_NOPE}</Container>")
+	os.Unsetenv("TPL_NOPE")
+	t.Setenv("UNRAID_HOST", "myserver")
+	t.Setenv("APP_IMAGE", "ghcr.io/me/my-app:latest")
+
+	runner, err := makeInstallTemplate("install-template", manifest.Action{}, nil, nil)
+	if err != nil {
+		t.Fatalf("makeInstallTemplate: %v", err)
+	}
+	err = runner(nil)
+	if err == nil || !strings.Contains(err.Error(), "TPL_NOPE") {
+		t.Fatalf("runner() error = %v, want one naming TPL_NOPE", err)
 	}
 }

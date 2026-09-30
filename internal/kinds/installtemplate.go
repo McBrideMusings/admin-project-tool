@@ -3,8 +3,10 @@ package kinds
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/dockerrun"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/remotehost"
 )
@@ -41,6 +43,32 @@ func InstallTemplateSrc(m *manifest.Manifest) string {
 		src = "deploy/unraid-template.xml"
 	}
 	return src
+}
+
+// templateRefRe matches a ${NAME} or ${NAME:-default} reference and captures
+// the name and whether a default was given.
+var templateRefRe = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(:-)?`)
+
+// renderTemplate expands every ${VAR} / ${VAR:-default} reference in text from
+// the process environment, so the tracked template carries placeholders and
+// the copy installed on the Unraid host carries real values. A reference with
+// no value and no default is an error naming each such variable; a literal
+// ${VAR} must never reach the host, where Docker rejects it.
+func renderTemplate(text string) (string, error) {
+	out, ok := dockerrun.ExpandEnvRefs(text, nil)
+	if ok {
+		return out, nil
+	}
+	var missing []string
+	seen := map[string]bool{}
+	for _, m := range templateRefRe.FindAllStringSubmatch(text, -1) {
+		name, hasDefault := m[1], m[2] != ""
+		if _, set := os.LookupEnv(name); !set && !hasDefault && !seen[name] {
+			seen[name] = true
+			missing = append(missing, name)
+		}
+	}
+	return "", fmt.Errorf("unset variables: %s", strings.Join(missing, ", "))
 }
 
 // makeInstallTemplate is kind="install-template"'s factory. Reads the
@@ -82,10 +110,33 @@ func makeInstallTemplate(name string, action manifest.Action, m *manifest.Manife
 			user = "root"
 		}
 
+		raw, err := os.ReadFile(src)
+		if err != nil {
+			h.Err("install-template: " + err.Error())
+			return fmt.Errorf("action %q: %w", name, err)
+		}
+		rendered, err := renderTemplate(string(raw))
+		if err != nil {
+			h.Err("install-template: " + src + ": " + err.Error())
+			return fmt.Errorf("action %q: %s: %w", name, src, err)
+		}
+		tmp, err := os.CreateTemp("", "my-"+templateName+"-*.xml")
+		if err != nil {
+			return fmt.Errorf("action %q: %w", name, err)
+		}
+		defer os.Remove(tmp.Name())
+		if _, err := tmp.WriteString(rendered); err != nil {
+			tmp.Close()
+			return fmt.Errorf("action %q: %w", name, err)
+		}
+		if err := tmp.Close(); err != nil {
+			return fmt.Errorf("action %q: %w", name, err)
+		}
+
 		dst := unraidTemplatesDir + "/my-" + templateName + ".xml"
 		fullHost := user + "@" + host
 		h.Info("Installing template: " + src + " → " + fullHost + ":" + dst)
-		if err := remotehost.ScpTo(h, src, fullHost, dst); err != nil {
+		if err := remotehost.ScpTo(h, tmp.Name(), fullHost, dst); err != nil {
 			return fmt.Errorf("action %q: %w", name, err)
 		}
 		h.Ok("Template installed. Open the Unraid Docker GUI → Add Container → Template = my-" + templateName)

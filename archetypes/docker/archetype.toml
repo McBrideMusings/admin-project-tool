@@ -399,26 +399,14 @@ if on_host then
 end
 
 if not dry_run then
-  -- ensure_docker_template: sync the Unraid GUI template every deploy,
-  -- non-fatal.
+  -- ensure_docker_template: install the Unraid GUI template every deploy,
+  -- non-fatal. The install-template action renders the ${VAR} placeholders
+  -- from the environment before it copies the file.
   local tsrc = template_cfg.src or "deploy/unraid-template.xml"
-  if fs.read(tsrc) then
-    local tname = template_cfg.name
-    if not tname or tname == "" then
-      tname = dockerrun.default_container_name(image or "")
-    end
-    local thost = env("UNRAID_HOST") or ""
-    if tname == "" then
-      warn("ensure-template: cannot determine template name — set APP_IMAGE or [install_template].name")
-    elseif thost ~= "" then
-      local tuser = env("UNRAID_USER") or "root"
-      local tdst = "/boot/config/plugins/dockerMan/templates-user/my-" .. tname .. ".xml"
-      info("Syncing Unraid template → " .. tuser .. "@" .. thost .. ":" .. tdst)
-      if run_cmd("scp " .. shq(tsrc) .. " " .. shq(tuser .. "@" .. thost .. ":" .. tdst)) then
-        ok("Template synced as my-" .. tname .. ".xml in Unraid Docker GUI")
-      else
-        warn("Template sync failed (non-fatal) — run: admin install-template")
-      end
+  if fs.read(tsrc) and (env("UNRAID_HOST") or "") ~= "" then
+    local installed, why = pcall(run_action, "install-template")
+    if not installed then
+      warn("Template install failed (non-fatal) — " .. tostring(why))
     end
   end
 
@@ -1073,6 +1061,10 @@ end
 if not follow then return end
 if not run_cmd("tail -n 0 -f " .. shq(path)) then error("logs: tail -f failed") end
 '''
+
+[actions.install-template]
+kind = "install-template"
+desc = "Render deploy/unraid-template.xml's ${VAR} placeholders from the environment and install it into the Unraid Docker GUI's template list"
 
 [actions.reload]
 kind = "docker-reload-loop"
