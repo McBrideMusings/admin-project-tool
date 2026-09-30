@@ -184,64 +184,131 @@ func TestDispatchTargetsNoTerminalConfiguredFailsEveryTargetNamingIt(t *testing.
 	}
 }
 
-// TestDispatchTargetsCeilingLimitsConcurrency is the acceptance criterion
-// "no more than the ceiling run at once; the remainder queue and start as
-// slots free": 5 targets under a ceiling of 2 never have more than 2
-// running agents at the same instant, and all 5 eventually complete.
+// TestDispatchTargetsWorkerHoldsSlotUntilReleased: a window worker keeps its
+// ceiling slot after its spawn returns, so with a ceiling of 2 the third
+// target does not spawn until one of the first two is released.
 //
-// MUTATION EVIDENCE (actually run, then reverted): changing
-// `sem := make(chan struct{}, ceiling)` to `make(chan struct{}, len(targets))`
-// (defeating the ceiling) produced this real failure:
+// MUTATION EVIDENCE (actually run, then reverted): freeing the slot as soon
+// as dispatchOne returns spawned all three at once:
 //
-//	observed max concurrency = 5, want <= 2 (ceiling)
-func TestDispatchTargetsCeilingLimitsConcurrency(t *testing.T) {
+//	spawned before any release = 3, want 2 (ceiling)
+func TestDispatchTargetsWorkerHoldsSlotUntilReleased(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, "[workflow]\nceiling = 2\n\n"+terminalTOML)
 
-	var current, max int32
-	release := make(chan struct{})
-	var paneN int32
+	var spawned int32
 	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) {
-		n := atomic.AddInt32(&current, 1)
-		for {
-			old := atomic.LoadInt32(&max)
-			if n <= old || atomic.CompareAndSwapInt32(&max, old, n) {
-				break
-			}
-		}
-		<-release
-		atomic.AddInt32(&current, -1)
-		return fmt.Sprintf("pane-%d", atomic.AddInt32(&paneN, 1)), nil
+		return fmt.Sprintf("pane-%d", atomic.AddInt32(&spawned, 1)), nil
 	})
 
-	targets := make([]Target, 5)
-	for i := range targets {
-		targets[i] = Target{Name: fmt.Sprintf("t%d", i), Run: "x"}
-	}
-
+	targets := []Target{{Name: "t0", Run: "x"}, {Name: "t1", Run: "x"}, {Name: "t2", Run: "x"}}
 	done := make(chan []TargetResult, 1)
 	go func() {
 		done <- DispatchTargets(repoRoot, "sweep", workflowAction(), targets, SurfaceDashboard)
 	}()
 
-	// Let the ceiling's worth of targets actually start and block, then give
-	// a defeated ceiling time to over-admit before releasing everything —
-	// under the real ceiling the other 3 goroutines are parked on the
-	// semaphore send and cannot advance no matter how long this waits, so
-	// the extra time only matters for making a mutated (uncapped) sem
-	// observably wrong rather than racing to check before it over-admits.
-	for atomic.LoadInt32(&current) < 1 {
+	for atomic.LoadInt32(&spawned) < 2 {
+		time.Sleep(time.Millisecond)
 	}
 	time.Sleep(100 * time.Millisecond)
-	close(release)
+	if got := atomic.LoadInt32(&spawned); got != 2 {
+		t.Fatalf("spawned before any release = %d, want 2 (ceiling)", got)
+	}
+	select {
+	case <-done:
+		t.Fatal("DispatchTargets returned while a target was still queued behind held slots")
+	default:
+	}
 
+	ReleaseWorkerSlot(workerLiveID("sweep", "t0"))
 	results := <-done
 	for _, r := range results {
 		if r.Err != nil {
 			t.Errorf("target %q: unexpected error: %v", r.Target, r.Err)
 		}
 	}
-	if got := atomic.LoadInt32(&max); got > 2 {
-		t.Errorf("observed max concurrency = %d, want <= 2 (ceiling)", got)
+	if got := atomic.LoadInt32(&spawned); got != 3 {
+		t.Errorf("spawned after release = %d, want 3", got)
+	}
+}
+
+// TestKillFreesWorkerSlot: killing a worker through its live-work entry frees
+// the slot it holds, so a queued target starts under a ceiling of 1.
+func TestKillFreesWorkerSlot(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, "[workflow]\nceiling = 1\n\n"+terminalTOML)
+	var spawned int32
+	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) {
+		return fmt.Sprintf("pane-%d", atomic.AddInt32(&spawned, 1)), nil
+	})
+
+	done := make(chan []TargetResult, 1)
+	go func() {
+		done <- DispatchTargets(repoRoot, "kill", workflowAction(),
+			[]Target{{Name: "t0", Run: "x"}, {Name: "t1", Run: "x"}}, SurfaceDashboard)
+	}()
+	for atomic.LoadInt32(&spawned) < 1 {
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if got := atomic.LoadInt32(&spawned); got != 1 {
+		t.Fatalf("spawned with the only slot held = %d, want 1", got)
+	}
+
+	entry, ok := livework.Default.Get(workerLiveID("kill", "t0"))
+	if !ok {
+		t.Fatal("t0 not in the live registry")
+	}
+	if err := entry.Ops.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	results := <-done
+	for _, r := range results {
+		if r.Err != nil {
+			t.Errorf("target %q: %v", r.Target, r.Err)
+		}
+	}
+}
+
+// TestRegistryFailureFreesSlot: a worker whose live-work entry cannot be added
+// (its id is already running) closes its pane and frees its slot.
+func TestRegistryFailureFreesSlot(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, "[workflow]\nceiling = 1\n\n"+terminalTOML)
+	err := livework.Default.Add(&livework.Entry{
+		ID: workerLiveID("dup", "t0"), Name: "dup", Kind: "workflow", Handle: "existing", Via: "terminal",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) { return "pane-x", nil })
+
+	results := DispatchTargets(repoRoot, "dup", workflowAction(),
+		[]Target{{Name: "t0", Run: "x"}, {Name: "t1", Run: "x"}}, SurfaceDashboard)
+	if results[0].Err == nil {
+		t.Error("t0: want the duplicate-entry error")
+	}
+	if results[1].Err != nil {
+		t.Errorf("t1: %v", results[1].Err)
+	}
+}
+
+// TestDispatchTargetsSpawnFailureFreesSlot: a target whose spawn fails holds
+// nothing, so the next target still starts under a ceiling of 1.
+func TestDispatchTargetsSpawnFailureFreesSlot(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, "[workflow]\nceiling = 1\n\n"+terminalTOML)
+	var n int32
+	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) {
+		if atomic.AddInt32(&n, 1) == 1 {
+			return "", errors.New("no pane")
+		}
+		return "pane-2", nil
+	})
+
+	results := DispatchTargets(repoRoot, "sweep", workflowAction(),
+		[]Target{{Name: "t0", Run: "x"}, {Name: "t1", Run: "x"}}, SurfaceDashboard)
+	if results[0].Err == nil {
+		t.Error("t0: want the spawn error on the result")
+	}
+	if results[1].Err != nil {
+		t.Errorf("t1: %v", results[1].Err)
 	}
 }
 
@@ -284,7 +351,7 @@ func TestDispatchOneFailsLoudlyWhenWorktreeVanished(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
-	res := dispatchOne(repoRoot, "sweep", cfg.Terminal, Target{Name: "vanish-me", Run: "x"}, wt)
+	res := dispatchOne(repoRoot, "sweep", cfg.Terminal, Target{Name: "vanish-me", Run: "x"}, wt, func() {})
 
 	if res.Err == nil {
 		t.Fatal("expected an error for a worktree removed before dispatch, got nil")

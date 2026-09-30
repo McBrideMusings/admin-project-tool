@@ -45,44 +45,6 @@ type Driver struct{}
 // value so a future test can hold one without touching the registry.
 func New() *Driver { return &Driver{} }
 
-// agentName derives a herdr agent name from an opaque launcher handle:
-// `herdr agent start` requires a name matching [a-z][a-z0-9_-]{0,31}, so
-// agent.SanitizeName lowercases it, strips everything else out and caps it
-// at 32 characters rather than passing the handle straight through.
-// Identity everywhere AFTER start is the handle itself (resolve_agent_target
-// tries a pane id first, then falls back to a name), so this derived name
-// only has to be valid and non-colliding at start time, not memorable.
-func agentName(handle string) string {
-	return agent.SanitizeName(handle, "agent", "a-", 32)
-}
-
-// Start runs `herdr agent start <name> --kind <kind> --pane <handle> [--
-// <args...>]`. handle must already be a pane sitting at an interactive
-// shell prompt.
-func (d *Driver) Start(handle, kind string, args []string) error {
-	argv := []string{"agent", "start", agentName(handle), "--kind", kind, "--pane", handle}
-	if len(args) > 0 {
-		argv = append(argv, "--")
-		argv = append(argv, args...)
-	}
-	_, err := run(context.Background(), argv...)
-	return err
-}
-
-// Prompt runs `herdr agent prompt <handle> <text> --wait [--until <s>]...`.
-// --until is repeatable and requires --wait; an empty until list sends bare
-// --wait, which settles on herdr's own default state set. resolve_agent_
-// target tries a pane id first, so handle (not the derived agent name) is
-// what addresses the running session from here on.
-func (d *Driver) Prompt(handle, text string, until []agent.Status) error {
-	argv := []string{"agent", "prompt", handle, text, "--wait"}
-	for _, s := range until {
-		argv = append(argv, "--until", string(s))
-	}
-	_, err := run(context.Background(), argv...)
-	return err
-}
-
 // Info runs `herdr agent get <handle>` bound to ctx and returns the two
 // fields callers read: the status word and the stripped terminal title.
 func (d *Driver) Info(ctx context.Context, handle string) (agent.Info, error) {

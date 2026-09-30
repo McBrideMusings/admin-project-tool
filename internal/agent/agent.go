@@ -1,9 +1,9 @@
 // Package agent is the ADR-0021 half of the launcher split: WHERE an agent
 // lives (a pane, a window) is [terminal] configuration, resolved through
 // internal/kinds/pane.go's launcher dispatch (ADR-0020); WHAT IS INSIDE that
-// pane and how to talk to it — starting an agent, prompting it, reading its
-// output, asking its status — is this package, compiled-in Go rather than a
-// project's shell strings.
+// pane — asking its status — is this package, compiled-in Go rather than a
+// project's shell strings. What the pane runs is the action's own `run` string,
+// handed to [terminal].spawn as ADMIN_CMD.
 //
 // A Driver is keyed on the opaque launcher handle [terminal].spawn returns,
 // with no new admin.toml markup: the same handle a project's own spawn line
@@ -41,22 +41,11 @@ type Info struct {
 	Activity string
 }
 
-// Driver is WHAT IS INSIDE a handle and how to talk to it: starting an
-// agent of a given kind, prompting it and waiting for it to settle, and
-// asking its current status. handle is always the
-// opaque address a [terminal].spawn line printed — a Driver never opens,
-// closes or focuses one itself; that is [terminal]'s attach/kill, which
-// stays in config (ADR-0021's "no overlap" rule).
+// Driver is WHAT IS INSIDE a handle: it reports the agent's current status.
+// handle is always the opaque address a [terminal].spawn line printed — a
+// Driver never opens, closes or focuses one itself; that is [terminal]'s
+// attach/kill, which stays in config (ADR-0021's "no overlap" rule).
 type Driver interface {
-	// Start begins running an agent of kind inside the pane/window at
-	// handle, with any extra args passed through to the underlying tool.
-	// The pane must already be sitting at an interactive shell prompt —
-	// [terminal].spawn with an empty ADMIN_CMD is exactly that.
-	Start(handle, kind string, args []string) error
-	// Prompt sends text to the agent running at handle and blocks until it
-	// settles into one of the given states (or the underlying tool's own
-	// default settle set, when until is empty).
-	Prompt(handle, text string, until []Status) error
 	// Info reports what is currently running at handle, bounded by ctx so a
 	// wedged underlying tool cannot hang the caller.
 	Info(ctx context.Context, handle string) (Info, error)

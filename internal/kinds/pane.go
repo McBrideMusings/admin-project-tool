@@ -196,9 +196,8 @@ func dispatchToLauncher(verb, name string, args []string, ctx launchCtx, t confi
 
 // spawnLauncher is the exec half of dispatchToLauncher, factored out so a
 // caller that isn't re-entering this same binary — a workflow target
-// (internal/kinds/workflowdispatch.go), which spawns a pane with an EMPTY
-// ADMIN_CMD so it sits at an interactive shell prompt (exactly what `herdr
-// agent start` requires) and ADMIN_CWD set to the worktree, not the
+// (internal/kinds/workflowdispatch.go), which spawns a pane whose ADMIN_CMD is
+// the action's run string and whose ADMIN_CWD is the worktree, not the
 // process's own os.Getwd() — can reach the project's declared [terminal]
 // launcher without going through the re-entry command-line construction
 // dispatchToLauncher's callers need.

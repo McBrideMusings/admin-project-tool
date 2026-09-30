@@ -21,7 +21,10 @@
 //     (ADR-0021), no more than the ceiling at once, the rest queued and
 //     started as slots free;
 //   - recording every running target in internal/livework with its
-//     launcher handle before DispatchTargets returns for it.
+//     launcher handle before DispatchTargets returns for it;
+//   - holding a window worker's ceiling slot from its spawn until
+//     ReleaseWorkerSlot frees it, so a finished-but-unlanded worker still
+//     counts against the ceiling.
 //
 // It never deletes a worktree, before, during, or after dispatch. Per this
 // ticket's scope (and the project CLAUDE.md's "a worker cannot remove its
@@ -182,13 +185,20 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 		}
 		wg.Add(1)
 		sem <- struct{}{}
+		release := sync.OnceFunc(func() { <-sem })
 		go func(i int, t Target, wt create.Result) {
 			defer wg.Done()
-			defer func() { <-sem }()
 			if hosted {
+				defer release()
 				results[i] = hostedOne(repoRoot, actionName, surface, t, wt)
-			} else {
-				results[i] = dispatchOne(repoRoot, actionName, cfg.Terminal, t, wt)
+				return
+			}
+			// A window worker keeps its slot after the spawn returns:
+			// dispatchOne hands release to ReleaseWorkerSlot once the worker
+			// is registered, and this frees it on any failure.
+			results[i] = dispatchOne(repoRoot, actionName, cfg.Terminal, t, wt, release)
+			if results[i].Err != nil {
+				release()
 			}
 		}(i, t, worktrees[i])
 	}
@@ -200,11 +210,14 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 // re-verifies wt is still a real worktree (never recreating one that
 // isn't), opens a pane through the project's [terminal] launcher whose
 // command is the run string, and records the running target in the
-// live-work registry with its launcher handle before returning — mirroring
+// live-work registry with its launcher handle before returning. release frees
+// the target's ceiling slot: on success dispatchOne parks it under the
+// worker's live id for ReleaseWorkerSlot, so the slot lasts as long as the
+// worker; on error the caller calls it. The registry entry mirrors
 // internal/kinds/pane.go's recordLiveWork for the single-pane LongRunning
-// case, but keyed on the pane this dispatch itself opened rather than one
+// case, but is keyed on the pane this dispatch itself opened rather than one
 // launchCommand opened for it.
-func dispatchOne(repoRoot, actionName string, t config.Terminal, tgt Target, wt create.Result) TargetResult {
+func dispatchOne(repoRoot, actionName string, t config.Terminal, tgt Target, wt create.Result, release func()) TargetResult {
 	if err := worktreeGone(repoRoot, tgt, wt); err != nil {
 		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Err: err}
 	}
@@ -243,13 +256,48 @@ func dispatchOne(repoRoot, actionName string, t config.Terminal, tgt Target, wt 
 				return err
 			}
 			livework.Default.SetState(e.ID, livework.StateExited, nil)
+			ReleaseWorkerSlot(e.ID)
 			return nil
 		},
 	}
 	if err := livework.Default.Add(e); err != nil {
 		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Handle: handle, Err: closePane(err)}
 	}
+	holdWorkerSlot(id, release)
 	return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Handle: handle}
+}
+
+// workerSlots maps a window worker's live id to the function that frees its
+// ceiling slot. An entry exists from the worker's spawn until
+// ReleaseWorkerSlot runs.
+var (
+	workerSlotsMu sync.Mutex
+	workerSlots   = map[string]func(){}
+)
+
+func holdWorkerSlot(id string, release func()) {
+	workerSlotsMu.Lock()
+	old := workerSlots[id]
+	workerSlots[id] = release
+	workerSlotsMu.Unlock()
+	// A re-dispatch of an id whose earlier worker exited unreleased: that
+	// worker's slot is free now, so return it rather than lose it.
+	if old != nil {
+		old()
+	}
+}
+
+// ReleaseWorkerSlot frees the ceiling slot the window worker with live id
+// holds, letting a queued target start. It is a no-op for an id that holds
+// none or whose slot is already free.
+func ReleaseWorkerSlot(id string) {
+	workerSlotsMu.Lock()
+	release := workerSlots[id]
+	delete(workerSlots, id)
+	workerSlotsMu.Unlock()
+	if release != nil {
+		release()
+	}
 }
 
 // workerLiveID derives a window-locale worker's live-work ID from the

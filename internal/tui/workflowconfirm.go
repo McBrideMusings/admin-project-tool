@@ -14,7 +14,7 @@
 //     closes the overlay having dispatched nothing.
 //
 // DispatchTargets itself already registers each target into
-// internal/livework as soon as its agent starts (internal/kinds/
+// internal/livework as soon as its pane spawns (internal/kinds/
 // workflowdispatch.go), so once confirmed, targets show up as Worker rows on
 // this same Work tab via the existing workTickCmd repaint — this file never
 // polls or renders their progress itself.
@@ -95,9 +95,9 @@ var runDispatchWorkflow = kinds.DispatchTargets
 
 // dispatchWorkflowCmd runs targets via runDispatchWorkflow in the
 // background. The real implementation (kinds.DispatchTargets) blocks its own
-// caller until every target has settled (each dispatchOne's runAgent wait is
-// what frees the target's concurrency-ceiling slot — see
-// workflowdispatch.go), which can be a long time for a real agent run;
+// caller until every target has spawned (a window worker holds its
+// concurrency-ceiling slot until kinds.ReleaseWorkerSlot frees it — see
+// workflowdispatch.go), which can be a long time when targets outnumber the ceiling;
 // running it as a tea.Cmd is what keeps that wait off the UI goroutine; the
 // dashboard keeps repainting from workTickCmd and the live registry each
 // target registers into as it starts.
