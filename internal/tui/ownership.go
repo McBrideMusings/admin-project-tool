@@ -3,7 +3,7 @@ package tui
 import (
 	"strings"
 
-	"github.com/McBrideMusings/admin-project-tool/internal/config"
+	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 )
 
@@ -14,7 +14,7 @@ import (
 // neither answers "is this branch mine", because a branch you keep up to date with
 // the default branch carries your address in its history whatever its origin, and
 // a branch you created from an agent run carries an address you may not recognise.
-// So the answer is assembled from two rungs over a CONFIGURED identity, and when
+// So the answer is assembled from two rungs over the GitHub account `gh api user` reports, and when
 // neither rung fires the answer is "unknown" — never a guess.
 //
 //  1. The author of the branch's pull request, if it has one. GitHub already
@@ -47,7 +47,7 @@ type ownership struct {
 // ownerOf resolves one branch. prAuthor is the login of the branch's PR ("" when
 // it has none) and firstAuthor is the email from git.FirstAuthor ("" when the
 // branch adds no non-merge commit of its own).
-func ownerOf(id config.Identity, prAuthor, firstAuthor string) ownership {
+func ownerOf(id data.Identity, prAuthor, firstAuthor string) ownership {
 	// The display name prefers the commit address over the GitHub login: the column
 	// exists to name the person the way you already refer to them, and "darren" is
 	// that name where "agrippanux" is an account.

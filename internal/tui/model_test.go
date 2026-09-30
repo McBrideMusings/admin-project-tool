@@ -14,7 +14,6 @@ import (
 	"github.com/muesli/termenv"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/bd"
-	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
@@ -495,7 +494,7 @@ func TestBranchRowsNeverHoistOnSecMain(t *testing.T) {
 func TestBranchRowGutterCollapsesOutsideSelectMode(t *testing.T) {
 	const w = 90
 	m := seededModel()
-	m.identity = config.Identity{Login: "me", Emails: []string{"me@example.com"}}
+	m.identity = data.Identity{Login: "me", Email: "me@example.com"}
 	m.local.branches = []git.BranchInfo{
 		{Name: "main", Current: false, LastCommit: "1 hour ago"},
 		{Name: "mine", HasRemote: true, LastCommit: "2 days ago"},
@@ -611,7 +610,7 @@ func TestBranchRowSelectModeGrowsTheGutter(t *testing.T) {
 // overwrites the box border and the panel beside it.
 func TestBranchRowNeverOverflowsAnyWidth(t *testing.T) {
 	m := seededModel()
-	m.identity = config.Identity{Login: "me", Emails: []string{"me@example.com"}}
+	m.identity = data.Identity{Login: "me", Email: "me@example.com"}
 	// Swept both outside and inside select mode — the gutter's width changes
 	// between the two, and that is exactly where the row and its width math
 	// (gutterWidth) could disagree and overflow.

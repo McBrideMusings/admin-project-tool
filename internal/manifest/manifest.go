@@ -173,7 +173,7 @@ type Manifest struct {
 
 	// Settings holds every top-level admin.toml table that isn't one of the
 	// structural or dedicated-decode keys parsed elsewhere in this function
-	// (commands, actions, urls, guards, keys, identity, worktrees, beads,
+	// (commands, actions, urls, guards, keys, worktrees, beads,
 	// workflow, terminal, ...), keyed by its admin.toml name — apple, go,
 	// docker_dev, and any name a project invents for itself alike. A kind
 	// reads its own table by name (kinds.ArchetypeConfigTable(m, "apple")) or
@@ -189,8 +189,8 @@ type Manifest struct {
 	LogBridge map[string]any
 	Worktree  map[string]any
 
-	// Identity, Worktrees, Beads, Workflow and Terminal are the config.Config
-	// tables (internal/config): who "you" are, where worktrees are created,
+	// Worktrees, Beads, Workflow and Terminal are the config.Config
+	// tables (internal/config): where worktrees are created,
 	// the Beads tab's columns, the workflow dispatcher's default agent and
 	// concurrency ceiling, and the ADR-0020 terminal launcher contract. Kept
 	// raw here for the same reason as the archetype-specific tables above —
@@ -199,7 +199,6 @@ type Manifest struct {
 	// for the dashboard rather than one kind's fragment, per the
 	// retire-the-config-tiers decision: there is no other file these can
 	// live in.
-	Identity  map[string]any
 	Worktrees map[string]any
 	Beads     map[string]any
 	Workflow  map[string]any
@@ -239,8 +238,8 @@ var knownTopLevelKeys = map[string]bool{
 	"vite_dev": true, "docker_dev": true, "docker_run": true, "docker_build": true, "deploy": true,
 	"install_template": true, "fixtures": true, "log_bridge": true, "guards": true, "docs": true,
 	"go": true, "go_dist": true, "raylib": true, "worktree": true, "launchd": true, "electron": true,
-	"keys":     true,
-	"identity": true, "worktrees": true, "beads": true, "workflow": true, "populate": true,
+	"keys":      true,
+	"worktrees": true, "beads": true, "workflow": true, "populate": true,
 	"terminal": true,
 	// Obsolete under interpreter mode (ADR-0006); tolerated silently.
 	"generator_commit": true,
@@ -248,7 +247,7 @@ var knownTopLevelKeys = map[string]bool{
 
 // nonSettingsTopLevelKeys lists every top-level admin.toml key that parse
 // handles structurally or through one of the dedicated-decode fields
-// (Logging, LogBridge, Worktree, Keys, Identity, Worktrees, Beads, Workflow,
+// (Logging, LogBridge, Worktree, Keys, Worktrees, Beads, Workflow,
 // Terminal — each has a consumer outside this package that reads the typed
 // field directly) or the specially-validated [deploy] table above. Anything
 // NOT in this set is, by construction, a settings table: parse's final pass
@@ -274,15 +273,11 @@ var nonSettingsTopLevelKeys = map[string]bool{
 	"log_bridge":       true,
 	"worktree":         true,
 	"keys":             true,
-	"identity":         true,
 	"worktrees":        true,
 	"beads":            true,
 	"workflow":         true,
 	"terminal":         true,
 }
-
-// IdentityKeys are the keys accepted by the [identity] table.
-var IdentityKeys = map[string]bool{"login": true, "emails": true}
 
 // WorktreesKeys are the keys accepted by the [worktrees] table.
 var WorktreesKeys = map[string]bool{"root": true}
@@ -510,7 +505,6 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 		{"log_bridge", &m.LogBridge},
 		{"worktree", &m.Worktree},
 		{"keys", &m.Keys},
-		{"identity", &m.Identity},
 		{"worktrees", &m.Worktrees},
 		{"beads", &m.Beads},
 		{"workflow", &m.Workflow},
@@ -528,7 +522,6 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 		keys  map[string]bool
 		name  string
 	}{
-		{m.Identity, IdentityKeys, "[identity]"},
 		{m.Worktrees, WorktreesKeys, "[worktrees]"},
 		{m.Beads, BeadsKeys, "[beads]"},
 		{m.Workflow, WorkflowKeys, "[workflow]"},
@@ -932,7 +925,7 @@ func table(data map[string]any, key, source string) (map[string]any, error) {
 // "'[deploy]' has unknown key(s): ..." shape the [deploy] table already uses
 // (manifest.go's own parse, above) — the same rejection every other
 // admin.toml table gets, which is what lets `admin check` reject an unknown
-// [identity]/[worktrees]/[beads]/[workflow] key exactly like any other.
+// [worktrees]/[beads]/[workflow] key exactly like any other.
 func checkUnknownKeys(t map[string]any, allowed map[string]bool, name, source string) error {
 	if len(t) == 0 {
 		return nil

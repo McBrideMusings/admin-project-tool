@@ -8,7 +8,7 @@
 // Every value here comes from the SAME source: repoRoot's admin.toml,
 // merged with its declared archetypes exactly like a command or action. The
 // scalar keys (`tracker`, `uses_pull_requests`) and the five config tables
-// ([identity], [worktrees], [[populate]], [beads], [workflow]) are shown in
+// ([worktrees], [[populate]], [beads], [workflow]) are shown in
 // separate sections purely for readability — they share one origin
 // mechanism, computeOrigins in work.go, which this tab reuses rather than
 // inventing a second one.
@@ -118,7 +118,7 @@ func (m Model) manifestConfigRows() []rowItem {
 	}
 }
 
-// configTableRows renders the five config.Config tables — identity,
+// configTableRows renders the config.Config tables —
 // worktree root, populate patterns, the default workflow agent and its
 // concurrency ceiling — resolved from m.cfgMerged, with each row's origin
 // coming from m.keyOrigin (admin.toml itself, or the contributing
@@ -131,25 +131,6 @@ func (m Model) configTableRows() []rowItem {
 	}
 
 	var out []rowItem
-
-	identityOrigin := m.keyOrigin["identity"]
-
-	login := declared{value: m.cfgMerged.Identity.Login, origin: identityOrigin}
-	out = append(out, renderConfigRow("login", login, "not declared"))
-
-	emails := declared{}
-	if len(m.cfgMerged.Identity.Emails) > 0 {
-		origin := identityOrigin
-		if origin == "" {
-			origin = "defaulted"
-		}
-		labeled := make([]string, len(m.cfgMerged.Identity.Emails))
-		for i, e := range m.cfgMerged.Identity.Emails {
-			labeled[i] = e + " (" + origin + ")"
-		}
-		emails.value = strings.Join(labeled, ", ")
-	}
-	out = append(out, renderConfigRow("emails", emails, "not declared"))
 
 	out = append(out, m.worktreeRootRow())
 	out = append(out, m.populateRows(m.cfgMerged.Populate, m.keyOrigin["populate"])...)

@@ -1519,3 +1519,29 @@ func run(ctx context.Context, args ...string) (string, error) {
 	}
 	return string(out), nil
 }
+
+// User is the authenticated GitHub account as `gh api user` reports it.
+// Email is the account's public email and is empty when the account has none.
+type User struct {
+	Login string `json:"login"`
+	Email string `json:"email"`
+	ID    int64  `json:"id"`
+}
+
+// Viewer returns the account `gh` is signed in as on host. `gh api user` needs
+// no scope beyond a plain login; the full address list (`user/emails`) needs
+// `gh auth refresh -s user` and is deliberately not used.
+func Viewer(ctx context.Context, host string) (User, error) {
+	out, err := runner(ctx, "api", "--hostname", host, "user")
+	if err != nil {
+		return User{}, err
+	}
+	var u User
+	if err := json.Unmarshal([]byte(out), &u); err != nil {
+		return User{}, fmt.Errorf("decode gh api user: %w", err)
+	}
+	if u.Login == "" || u.ID == 0 {
+		return User{}, fmt.Errorf("gh api user returned no login or id")
+	}
+	return u, nil
+}

@@ -8,25 +8,6 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/archetype"
 )
 
-// TestIdentityMatching pins the comparisons. Case-insensitive because git records
-// the case a commit was authored with and the same person's address comes back
-// capitalised differently from different machines.
-func TestIdentityMatching(t *testing.T) {
-	id := Identity{Login: "McBrideMusings", Emails: []string{"pierce@example.com"}}
-	if !id.Owns("PIERCE@Example.com") {
-		t.Error("an address differing only in case did not match")
-	}
-	if !id.IsMe("mcbridemusings") {
-		t.Error("a login differing only in case did not match")
-	}
-	if id.Owns("") || id.IsMe("") {
-		t.Error("an empty value matched — unknown and mine are different facts")
-	}
-	if (Identity{}).Known() {
-		t.Error("an empty identity reported itself as usable")
-	}
-}
-
 // writeManifest writes a minimal admin.toml (project_name plus whatever body
 // the test wants) into dir and returns dir, for Load to resolve.
 func writeManifest(t *testing.T, dir, body string) string {
@@ -47,20 +28,16 @@ func TestLoadNoManifestReturnsZeroConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load(no manifest) = %v, want nil error", err)
 	}
-	if cfg.Identity.Known() || len(cfg.Populate) > 0 {
+	if len(cfg.Populate) > 0 {
 		t.Errorf("Load(no manifest) = %+v, want a zero Config", cfg)
 	}
 }
 
-// TestLoadDecodesIdentityWorktreesBeadsWorkflowPopulate is the core
+// TestLoadDecodesWorktreesBeadsWorkflowPopulate is the core
 // admin.toml-is-the-only-configuration-file behavior: every one of the five
 // tables resolves from the manifest with no other file involved.
-func TestLoadDecodesIdentityWorktreesBeadsWorkflowPopulate(t *testing.T) {
+func TestLoadDecodesWorktreesBeadsWorkflowPopulate(t *testing.T) {
 	dir := writeManifest(t, t.TempDir(), `
-[identity]
-login = "pierce"
-emails = ["pierce@example.com", "pierce@work.example"]
-
 [worktrees]
 root = "/tmp/worktrees"
 
@@ -81,9 +58,6 @@ pattern = ".claude/skills/*"
 	cfg, err := Load(dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Identity.Login != "pierce" || !cfg.Identity.Owns("pierce@work.example") {
-		t.Errorf("identity = %+v", cfg.Identity)
 	}
 	if cfg.Worktrees.Root != "/tmp/worktrees" {
 		t.Errorf("worktrees.root = %q", cfg.Worktrees.Root)

@@ -70,7 +70,7 @@ func TestManifestConfigLinesUsesArchetypeOrigin(t *testing.T) {
 	}
 }
 
-// TestConfigTableLinesReportsOrigin exercises the identity/worktree half of
+// TestConfigTableLinesReportsOrigin exercises the worktree half of
 // the tab: a value's origin names admin.toml or the declaring archetype —
 // the acceptance criterion "never a dotfile" — never a hardcoded file path.
 func TestConfigTableLinesReportsOrigin(t *testing.T) {
@@ -78,14 +78,13 @@ func TestConfigTableLinesReportsOrigin(t *testing.T) {
 	m := Model{
 		repoRoot: dir,
 		cfgMerged: config.Config{
-			Identity:  config.Identity{Login: "pierce"},
 			Worktrees: config.Worktrees{Root: "/tmp/wt"},
 		},
-		keyOrigin: map[string]string{"identity": "(manifest)", "worktrees": "some-archetype"},
+		keyOrigin: map[string]string{"worktrees": "some-archetype"},
 	}
 	joined := rowsText(m.configTableRows())
-	if !strings.Contains(joined, "pierce") || !strings.Contains(joined, "(manifest)") {
-		t.Errorf("configTableRows(login) = %q, want \"pierce\" attributed to (manifest)", joined)
+	if strings.Contains(joined, "login") || strings.Contains(joined, "emails") {
+		t.Errorf("configTableRows still shows identity rows: %q", joined)
 	}
 	if !strings.Contains(joined, "/tmp/wt") || !strings.Contains(joined, "some-archetype") {
 		t.Errorf("configTableRows(worktree root) = %q, want \"/tmp/wt\" attributed to its archetype", joined)

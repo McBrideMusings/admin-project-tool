@@ -314,10 +314,25 @@ func behindDefault(ctx context.Context, dir string, br git.BranchInfo, def strin
 // this package or its own tests overrides them, so the real program's
 // behaviour is unchanged.
 var (
-	loadRemoteFn = data.Load
-	fetchAllFn   = data.FetchAll
-	fetchPruneFn = git.FetchPrune
+	loadRemoteFn    = data.Load
+	fetchAllFn      = data.FetchAll
+	fetchPruneFn    = git.FetchPrune
+	fetchIdentityFn = data.FetchIdentity
 )
+
+// identityMsg carries who `gh` says you are (data.FetchIdentity). id is the zero
+// Identity when nothing is cached and gh failed, which leaves ownership unknown.
+type identityMsg struct{ id data.Identity }
+
+// fetchIdentityCmd resolves the signed-in GitHub account: the host's cached
+// identity while it is within data.TTL, otherwise one `gh api user`. A failure
+// is not surfaced: the zero identity it yields leaves ownership unknown.
+func fetchIdentityCmd(ctx context.Context) tea.Cmd {
+	return func() tea.Msg {
+		id, _ := fetchIdentityFn(ctx, data.DefaultHost)
+		return identityMsg{id: id}
+	}
+}
 
 // loadCacheCmd reads the on-disk cache so the views render instantly.
 func loadCacheCmd(nwo string) tea.Cmd {

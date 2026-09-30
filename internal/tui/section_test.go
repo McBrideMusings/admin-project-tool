@@ -5,12 +5,12 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/McBrideMusings/admin-project-tool/internal/config"
+	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 )
 
-var me = config.Identity{Login: "pierce", Emails: []string{"pierce@example.com"}}
+var me = data.Identity{Login: "pierce", Email: "pierce@example.com"}
 
 // TestOwnershipUsesFirstCommitNotAnyCommit pins the rung that decides "yours" for a
 // branch with no PR. Merging the default branch into a long-lived branch writes
@@ -100,7 +100,7 @@ func TestUnattributedButHeldIsYours(t *testing.T) {
 // yours, and the pane must say Unsorted rather than quietly calling it someone
 // else's.
 func TestIdentityIsRequiredForOwnership(t *testing.T) {
-	got := ownerOf(config.Identity{}, "pierce", "pierce@example.com")
+	got := ownerOf(data.Identity{}, "pierce", "pierce@example.com")
 	if got.mine {
 		t.Error("ownership resolved with no identity configured")
 	}
@@ -428,5 +428,43 @@ func TestPurposeSublineStopsAtTheStateColumn(t *testing.T) {
 					w, r.name, got, end)
 			}
 		}
+	}
+}
+
+// TestOwnerOfGHDerivedIdentity pins ownership over an identity as `gh api user`
+// reports it: the PR-author rung matches the login, and the first-commit rung
+// matches both the public email and the noreply address built from id and login.
+func TestOwnerOfGHDerivedIdentity(t *testing.T) {
+	id := data.Identity{Login: "Octocat", Email: "pierce@example.com", ID: 4242}
+	noreply := "4242+octocat@users.noreply.github.com"
+
+	for _, first := range []string{"pierce@example.com", noreply} {
+		if got := ownerOf(id, "", first); !got.mine || got.via != "first commit" {
+			t.Errorf("ownerOf(first=%q) = %+v, want mine via first commit", first, got)
+		}
+	}
+	if got := ownerOf(id, "octocat", "chris@example.com"); !got.mine || got.via != "pr author" {
+		t.Errorf("ownerOf(pr author = my login) = %+v, want mine via pr author", got)
+	}
+	if got := ownerOf(id, "", "99+chris@users.noreply.github.com"); got.mine || got.unknown {
+		t.Errorf("ownerOf(someone else's noreply) = %+v, want theirs", got)
+	}
+	if got := ownerOf(data.Identity{}, "pierce", "pierce@example.com"); got.mine {
+		t.Errorf("ownerOf with no identity claimed a branch: %+v", got)
+	}
+}
+
+// TestIdentityMsgReplacesAndClearsIdentity pins that the fetch result is applied
+// as-is: a later failure (the zero identity) returns ownership to unknown instead
+// of keeping the previous account.
+func TestIdentityMsgReplacesAndClearsIdentity(t *testing.T) {
+	m := seededModel()
+	got, _ := m.Update(identityMsg{id: data.Identity{Login: "pierce", ID: 1}})
+	if !got.(Model).identity.Known() {
+		t.Fatal("a fetched identity was not applied")
+	}
+	got, _ = got.(Model).Update(identityMsg{})
+	if got.(Model).identity.Known() {
+		t.Error("a failed fetch left the old identity in force")
 	}
 }

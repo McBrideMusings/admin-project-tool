@@ -142,13 +142,18 @@ func Load(nwo string) (Remote, bool) {
 // save writes state to the cache via a temp file + rename so a reader never sees
 // a partially-written file. Errors are ignored — the cache is best-effort.
 func save(nwo string, r Remote) {
-	path := cachePath(nwo)
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return
-	}
 	b, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
+		return
+	}
+	writeAtomic(cachePath(nwo), b)
+}
+
+// writeAtomic writes b to path via a temp file + rename, creating its directory.
+// Errors are ignored — every cache here is best-effort.
+func writeAtomic(path string, b []byte) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return
 	}
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")

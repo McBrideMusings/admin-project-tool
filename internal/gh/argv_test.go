@@ -81,6 +81,12 @@ func TestCommandArgv(t *testing.T) {
 			}},
 		},
 		{
+			name: "Viewer",
+			out:  []string{`{"login":"p","email":null,"id":7}`},
+			call: func(ctx context.Context) { Viewer(ctx, "github.com") },
+			want: [][]string{{"api", "--hostname", "github.com", "user"}},
+		},
+		{
 			name: "MergedPRs",
 			out:  []string{"[]"},
 			call: func(ctx context.Context) { MergedPRs(ctx, "o/r", 30) },
@@ -261,6 +267,7 @@ var coveredCommands = map[string]bool{
 	"IssuePRStatuses":   true,
 	"IssueByNumber":     true,
 	"OpenIssuesByLabel": true,
+	"Viewer":            true,
 }
 
 func TestArgvCoverage(t *testing.T) {

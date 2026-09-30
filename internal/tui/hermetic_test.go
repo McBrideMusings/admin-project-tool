@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/archetype"
+	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/viewstate"
 )
@@ -31,7 +33,12 @@ func TestMain(m *testing.M) {
 	}
 	restoreArchetypes := archetype.UseInstalledDir(dir)
 	restoreViewState := viewstate.UseGlobalPath(filepath.Join(dir, "unused-global-view.toml"))
+	// Identity is `gh api user` cached under the real user cache dir; a test that
+	// runs Init's commands must neither call gh nor write that cache.
+	prevFetchIdentity := fetchIdentityFn
+	fetchIdentityFn = func(context.Context, string) (data.Identity, error) { return data.Identity{}, nil }
 	code := m.Run()
+	fetchIdentityFn = prevFetchIdentity
 	restoreViewState()
 	restoreArchetypes()
 	os.RemoveAll(dir)

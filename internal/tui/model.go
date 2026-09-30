@@ -355,12 +355,12 @@ type Model struct {
 
 	closedIssues bool // Issues view: show closed too (toggle) — reserved
 
-	// identity is who "you" are — the [identity] table of repoRoot's admin.toml,
-	// merged with its declared archetypes. It decides which branches the Branches
-	// pane treats as your work; see ownership.go. Zero until settingsMsg lands,
-	// which only means the first frame files every branch as Unsorted rather than
-	// mis-filing any of them.
-	identity config.Identity
+	// identity is who "you" are — the GitHub account `gh api user` reports,
+	// cached per host (data.FetchIdentity). It decides which branches the
+	// Branches pane treats as your work; see ownership.go. Zero until the cache
+	// read or the first fetch lands, which only means the first frame files every
+	// attributed branch as Unsorted rather than mis-filing any of them.
+	identity data.Identity
 	// minesOnly (G) narrows the Branches pane to your work. Clean Up is exempt —
 	// see branchRows. Persisted to view.toml's branches.mine_only (admin-y5lc.1):
 	// New() loads it through viewstate's cascade and every `G` press saves it
@@ -506,12 +506,12 @@ type Model struct {
 	workOpenCmd string
 
 	// Config tab (admin-3rgp.21): the resolved config.Config — repoRoot's
-	// admin.toml [identity]/[worktrees]/[[populate]]/[beads]/[workflow]
+	// admin.toml [worktrees]/[[populate]]/[beads]/[workflow]
 	// tables, merged with its declared archetypes. Each field's origin
 	// (admin.toml itself, or the contributing archetype) comes from
 	// keyOrigin, the same mechanism the manifest-declared keys use — see
 	// work.go's computeOrigins. Loaded once at launch by loadConfigCmd; zero
-	// until settingsMsg lands, same as identity above.
+	// until settingsMsg lands, zero like identity is.
 	cfgMerged config.Config
 	cfgErr    string
 
@@ -734,6 +734,7 @@ func (m Model) Init() tea.Cmd {
 		m.startWatchCmd(),
 		m.syncTickCmd(),
 		loadConfigCmd(m.ctx, m.manifestDir()),
+		fetchIdentityCmd(m.ctx),
 	}
 	if m.hasTracker("beads") {
 		// The `bd where` probe only runs for a repo that declared "beads"
@@ -1476,6 +1477,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampCursor()
 		return m, nil
 
+	case identityMsg:
+		// The zero identity (gh failed, nothing fresh cached) is applied too:
+		// ownership goes back to unknown rather than keeping a stale account.
+		m.identity = msg.id
+		return m, nil
+
 	case watcherReadyMsg:
 		m.fsWatcher = msg.w
 		m.fsCh = msg.ch
@@ -1557,7 +1564,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// behind the Repo tab and the PR list behind the PRs tab go stale at the
 		// same rate whether or not you are looking at them. Re-arm unconditionally
 		// so the next tick still comes even when this one found a sync in flight.
-		return m, tea.Batch(m.startSyncCmd(false), m.syncTickCmd())
+		return m, tea.Batch(m.startSyncCmd(false), m.syncTickCmd(), fetchIdentityCmd(m.ctx))
 
 	case issueRowMsg:
 		m.fetchDone()
@@ -1679,7 +1686,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, loadLocalCmd(m.ctx, m.repoRoot, m.checkoutDir(), m.current, m.def)
 
 	case settingsMsg:
-		m.identity = msg.id
 		m.beadCols = msg.beads.Columns
 		m.cfgMerged, m.cfgErr = msg.cfg, msg.loadErr
 		return m, nil
@@ -2315,7 +2321,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					// Narrowing to "yours" with nothing defining yours would empty the pane and
 					// look like a repo with no work in it. Say which it is.
 					m.minesOnly = false
-					m.setStatus("no [identity] configured — nothing is known to be yours", cYellow)
+					m.setStatus("your GitHub account is not known yet — nothing is known to be yours", cYellow)
 					break
 				}
 				m.setStatus("showing your branches (Clean Up still shows everything)", cDim)

@@ -6,9 +6,7 @@ name = "base"
 # old global ~/.config/repo/config.toml tier. No project needs
 # `archetypes = ["base"]`; that is the point.
 #
-# Only [[populate]] lives here. Identity (login, emails) is personal account
-# data and this file is tracked, so it is deliberately never merged from here
-# — each project declares its own [identity] by hand.
+# Only [[populate]] lives here.
 
 # Gitignored files brought from the primary repo into each new worktree.
 # mode = "symlink" (default) points at the primary repo's file; mode = "copy"

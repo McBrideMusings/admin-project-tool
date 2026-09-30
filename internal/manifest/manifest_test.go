@@ -487,10 +487,6 @@ func TestParseConfigTables(t *testing.T) {
 	dir := writeManifest(t, `
 project_name = "widget-app"
 
-[identity]
-login  = "pierce"
-emails = ["pierce@example.com"]
-
 [worktrees]
 root = "~/.worktrees"
 
@@ -516,9 +512,6 @@ pattern = ".claude/skills/*"
 	m, err := Load(dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
-	}
-	if m.Identity["login"] != "pierce" {
-		t.Errorf("Identity[login] = %v, want \"pierce\"", m.Identity["login"])
 	}
 	if m.Worktrees["root"] != "~/.worktrees" {
 		t.Errorf("Worktrees[root] = %v", m.Worktrees["root"])
@@ -548,7 +541,7 @@ pattern = ".claude/skills/*"
 
 // TestParseConfigTablesRejectUnknownKeys is the acceptance criterion "admin
 // check ... rejects an unknown one in the same way it rejects any other": an
-// unrecognized key inside [identity]/[worktrees]/[beads]/[workflow] or a
+// unrecognized key inside [worktrees]/[beads]/[workflow] or a
 // [[populate]] entry fails the same way an unknown [deploy] key already does.
 func TestParseConfigTablesRejectUnknownKeys(t *testing.T) {
 	cases := []struct {
@@ -556,7 +549,6 @@ func TestParseConfigTablesRejectUnknownKeys(t *testing.T) {
 		toml       string
 		wantSubstr string
 	}{
-		{"identity", "project_name = \"x\"\n[identity]\nnickname = \"p\"\n", "'[identity]' has unknown key(s): nickname"},
 		{"worktrees", "project_name = \"x\"\n[worktrees]\npath = \"/tmp\"\n", "'[worktrees]' has unknown key(s): path"},
 		{"beads", "project_name = \"x\"\n[beads]\nrows = 5\n", "'[beads]' has unknown key(s): rows"},
 		{"workflow", "project_name = \"x\"\n[workflow]\nlimit = 5\n", "'[workflow]' has unknown key(s): limit"},
@@ -586,10 +578,10 @@ func TestParseNoConfigTablesDeclaredIsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(m.Identity) != 0 || len(m.Worktrees) != 0 || len(m.Beads) != 0 || len(m.Workflow) != 0 || len(m.Terminal) != 0 || len(m.Populate) != 0 {
+	if len(m.Worktrees) != 0 || len(m.Beads) != 0 || len(m.Workflow) != 0 || len(m.Terminal) != 0 || len(m.Populate) != 0 {
 		t.Errorf("a manifest declaring none of the six config tables parsed non-empty: "+
-			"identity=%v worktrees=%v beads=%v workflow=%v terminal=%v populate=%v",
-			m.Identity, m.Worktrees, m.Beads, m.Workflow, m.Terminal, m.Populate)
+			"worktrees=%v beads=%v workflow=%v terminal=%v populate=%v",
+			m.Worktrees, m.Beads, m.Workflow, m.Terminal, m.Populate)
 	}
 }
 

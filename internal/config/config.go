@@ -1,9 +1,9 @@
-// Package config is the typed view over the six admin.toml tables that
-// configure the dashboard rather than any one command: [identity],
+// Package config is the typed view over the five admin.toml tables that
+// configure the dashboard rather than any one command:
 // [worktrees], [[populate]], [beads], [workflow] and [terminal]. It holds no
 // file-reading logic of its own — Load resolves a project's manifest
 // (internal/manifest + internal/archetype, merged through archetypes exactly
-// like every other admin.toml key) and decodes those six tables into the
+// like every other admin.toml key) and decodes those five tables into the
 // typed shapes below. There are no built-in defaults for populate — with
 // none declared, populate does nothing.
 package config
@@ -40,20 +40,6 @@ type Entry struct {
 // tools that honor the same root. Empty means the built-in default.
 type Worktrees struct {
 	Root string `toml:"root"`
-}
-
-// Identity is who "you" are, which decides whether a branch is your work or a
-// co-contributor's. It is configuration rather than inference because the thing it
-// settles is not answerable from the repository: a commit authored under a second
-// email — a work address, another machine, an agent run — looks exactly like
-// somebody else's commit, and only the person reading the dashboard knows which.
-//
-// Login is the GitHub account, matched against a PR's author. Emails are the git
-// author addresses that count as yours, matched against the first commit a branch
-// added. Both are declared in the project's admin.toml [identity] table.
-type Identity struct {
-	Login  string   `toml:"login"`
-	Emails []string `toml:"emails"`
 }
 
 // Beads configures the Beads tab. Columns names the columns the pane renders and
@@ -98,42 +84,15 @@ type Terminal struct {
 	Detach bool `toml:"detach"`
 }
 
-// Config is the decoded [identity]/[worktrees]/[[populate]]/[beads]/
+// Config is the decoded [worktrees]/[[populate]]/[beads]/
 // [workflow]/[terminal] tables of a resolved (archetype-merged) manifest.
 type Config struct {
 	Populate  []Entry   `toml:"populate"`
 	Worktrees Worktrees `toml:"worktrees"`
-	Identity  Identity  `toml:"identity"`
 	Beads     Beads     `toml:"beads"`
 	Workflow  Workflow  `toml:"workflow"`
 	Terminal  Terminal  `toml:"terminal"`
 }
-
-// Owns reports whether a git author email is one of yours. Comparison is
-// case-insensitive: git preserves the case a commit was authored with, and the
-// same person's address turns up capitalized differently across machines.
-func (id Identity) Owns(email string) bool {
-	email = strings.ToLower(strings.TrimSpace(email))
-	if email == "" {
-		return false
-	}
-	for _, e := range id.Emails {
-		if strings.ToLower(strings.TrimSpace(e)) == email {
-			return true
-		}
-	}
-	return false
-}
-
-// IsMe reports whether a GitHub login is yours. Empty never matches: an unknown
-// login and your login are different facts, and treating a missing one as a match
-// would hand you every branch whose PR author could not be read.
-func (id Identity) IsMe(login string) bool {
-	return id.Login != "" && strings.EqualFold(strings.TrimSpace(login), id.Login)
-}
-
-// Known reports whether the identity has enough to answer ownership at all.
-func (id Identity) Known() bool { return id.Login != "" || len(id.Emails) > 0 }
 
 // DefaultWorktreeRoot is where worktrees land when nothing overrides it.
 const DefaultWorktreeRoot = "~/.worktrees"
@@ -141,7 +100,7 @@ const DefaultWorktreeRoot = "~/.worktrees"
 // Load resolves repoRoot's admin.toml against its declared archetypes — the
 // same resolution every other manifest-driven feature uses (see
 // internal/tui/work.go's loadWorkManifest, which this mirrors) — and decodes
-// the six config tables from the merged result.
+// the five config tables from the merged result.
 //
 // A repoRoot with no admin.toml still resolves, against an empty project
 // manifest. The base archetype carries the machine-wide populate patterns, and
@@ -172,7 +131,7 @@ func Load(repoRoot string) (Config, error) {
 	return FromManifest(merged)
 }
 
-// FromManifest decodes the six config tables from an already-resolved
+// FromManifest decodes the five config tables from an already-resolved
 // manifest. Exported so a caller that already holds a resolved manifest (the
 // TUI's Work tab, which loads and merges one at New for its own purposes)
 // can build a Config from it without a second parse+resolve pass.
@@ -184,7 +143,6 @@ func FromManifest(m *manifest.Manifest) (Config, error) {
 	cfg := Config{
 		Populate:  decodePopulate(m.Populate),
 		Worktrees: decodeWorktrees(m.Worktrees),
-		Identity:  decodeIdentity(m.Identity),
 		Beads:     decodeBeads(m.Beads),
 		Workflow:  decodeWorkflow(m.Workflow),
 		Terminal:  decodeTerminal(m.Terminal),
@@ -218,23 +176,12 @@ func expandHome(p string) string {
 	return p
 }
 
-// decodeIdentity, decodeWorktrees, decodeBeads, decodeWorkflow and
+// decodeWorktrees, decodeBeads, decodeWorkflow and
 // decodePopulate pull the typed fields out of a manifest's raw
 // map[string]any tables. internal/manifest keeps these tables untyped (ADR-
 // 0009: the manifest references, the archetype implements) and
 // internal/manifest.parse already rejects any key outside each table's known
 // set, so decoding here only needs to handle the keys that survived parsing.
-
-func decodeIdentity(raw map[string]any) Identity {
-	var id Identity
-	if v, ok := raw["login"].(string); ok {
-		id.Login = v
-	}
-	if v, ok := raw["emails"]; ok {
-		id.Emails = toStringList(v)
-	}
-	return id
-}
 
 func decodeWorktrees(raw map[string]any) Worktrees {
 	var w Worktrees

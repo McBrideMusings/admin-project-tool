@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/bd"
-	"github.com/McBrideMusings/admin-project-tool/internal/config"
+	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 )
@@ -97,7 +97,7 @@ func TestStashRowsFormFixedColumns(t *testing.T) {
 func TestNullStateRendersBlankCell(t *testing.T) {
 	const w = 90
 	m := seededModel()
-	m.identity = config.Identity{Login: "me", Emails: []string{"me@example.com"}}
+	m.identity = data.Identity{Login: "me", Email: "me@example.com"}
 	m.local.branches = []git.BranchInfo{
 		{Name: "commitless", LastCommit: "1 second ago"},                            // null state: no commits
 		{Name: "old-merged", HasRemote: true, Ahead: 0, LastCommit: "3 months ago"}, // merged
@@ -836,7 +836,7 @@ func TestCleanUpRowsDropTheirPurposeSubline(t *testing.T) {
 func TestCleanUpSectionHoistsConstantColumns(t *testing.T) {
 	const w = 100
 	m := seededModel()
-	m.identity = config.Identity{Login: "me", Emails: []string{"me@example.com"}}
+	m.identity = data.Identity{Login: "me", Email: "me@example.com"}
 	m.local.branches = []git.BranchInfo{
 		{Name: "alpha-done", HasRemote: true, LastCommit: "10 days ago"},
 		{Name: "beta-done", HasRemote: true, LastCommit: "20 days ago"},

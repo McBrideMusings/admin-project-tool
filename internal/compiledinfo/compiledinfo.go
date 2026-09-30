@@ -35,7 +35,7 @@ var (
 
 // Concrete types encoding/gob needs registered because manifest.Manifest
 // stores them behind `any`/interface fields (Raw, Actions' Action values,
-// Settings, Keys, Identity, Worktrees, Beads, Workflow, Terminal, Populate)
+// Settings, Keys, Worktrees, Beads, Workflow, Terminal, Populate)
 // — the shapes github.com/BurntSushi/toml.Decode produces when it decodes a
 // TOML table into map[string]any: inline tables as map[string]any, arrays as
 // []any, and Action itself (a named map[string]any) for the [actions.X]

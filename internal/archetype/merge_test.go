@@ -548,15 +548,12 @@ archetypes   = ["a", "b"]
 
 // TestConfigTablesMergeProjectWinsOverArchetype is the "merged through
 // archetypes like every other manifest key" acceptance criterion for
-// [identity]/[worktrees]/[beads]/[workflow]: an archetype may declare
+// [worktrees]/[beads]/[workflow]: an archetype may declare
 // defaults, but the project's own admin.toml wins on any key it also
 // declares, and a key only the archetype declares survives untouched.
 func TestConfigTablesMergeProjectWinsOverArchetype(t *testing.T) {
 	root := t.TempDir()
 	writeArchetypeDir(t, root, "base", `
-[identity]
-login = "archetype-login"
-
 [worktrees]
 root = "/archetype/worktrees"
 
@@ -573,9 +570,6 @@ ceiling = 2
 project_name = "widget"
 archetypes   = ["base"]
 
-[identity]
-login = "project-login"
-
 [workflow]
 agent = "project-agent"
 `)
@@ -583,9 +577,6 @@ agent = "project-agent"
 	merged, _, err := Resolve(project, sp)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
-	}
-	if merged.Identity["login"] != "project-login" {
-		t.Errorf("Identity[login] = %v, want the project's value to win", merged.Identity["login"])
 	}
 	if merged.Worktrees["root"] != "/archetype/worktrees" {
 		t.Errorf("Worktrees[root] = %v, want the archetype's value to survive untouched", merged.Worktrees["root"])

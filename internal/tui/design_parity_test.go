@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
-	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
@@ -64,7 +63,7 @@ func protoModel() Model {
 			"bounty-durable-payouts": "refactor(bounty): split the payout table",
 		},
 	}
-	m.identity = config.Identity{Login: "pierce", Emails: []string{"pierce@example.com"}}
+	m.identity = data.Identity{Login: "pierce", Email: "pierce@example.com"}
 	m.manifest = &manifest.Manifest{
 		Trackers: []string{"github"}, HasTracker: true,
 		UsesPullRequests: true, HasUsesPullRequests: true,

@@ -155,7 +155,7 @@ func loadWorkManifest(repoRoot string) (project, merged *manifest.Manifest, sp a
 //
 // keys does the same job for the handful of scalar top-level manifest keys
 // the Config tab renders (admin-3rgp.21: "tracker", "uses_pull_requests",
-// plus "identity", "worktrees", "beads", "workflow" and "populate" per the
+// plus "worktrees", "beads", "workflow" and "populate" per the
 // retire-the-config-tiers decision) — named by manifest.go's own key string,
 // mapping to the archetype that last declared it or "(manifest)". A key
 // absent from the map was never declared anywhere, which the Config tab
@@ -216,9 +216,6 @@ func applyOrigin(m *manifest.Manifest, label string, cmds, actions, keys map[str
 	}
 	if m.HasUsesPullRequests {
 		keys["uses_pull_requests"] = label
-	}
-	if len(m.Identity) > 0 {
-		keys["identity"] = label
 	}
 	if len(m.Worktrees) > 0 {
 		keys["worktrees"] = label
