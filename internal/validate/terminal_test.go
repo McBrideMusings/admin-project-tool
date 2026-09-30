@@ -97,6 +97,13 @@ func TestTerminalReadIsALegalStringKey(t *testing.T) {
 	}
 }
 
+func TestTerminalDetachAloneStillRequiresLauncherKeys(t *testing.T) {
+	err := Terminal(map[string]any{"detach": true})
+	if err == nil || !strings.Contains(err.Error(), "spawn, attach and kill are required together") {
+		t.Fatalf("Terminal with only detach = %v, want the required-together error", err)
+	}
+}
+
 func TestTerminalDetachMustBeBool(t *testing.T) {
 	ok := map[string]any{"spawn": "s", "attach": "a", "kill": "k", "detach": true}
 	if err := Terminal(ok); err != nil {
