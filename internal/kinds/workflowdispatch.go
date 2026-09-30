@@ -304,7 +304,7 @@ func dispatchOne(repoRoot, actionName, agentKind string, t config.Terminal, drv 
 	// finished, so the settled status has to be re-checked to tell
 	// "waiting on input" apart from "still working"/"done" without
 	// attaching.
-	if info, infoErr := drv.Info(handle); infoErr == nil && info.Status == agent.StatusBlocked {
+	if info, infoErr := drv.Info(context.Background(), handle); infoErr == nil && info.Status == agent.StatusBlocked {
 		livework.Default.SetState(id, livework.StateWaiting, nil)
 	} else {
 		livework.Default.SetState(id, livework.StateExited, nil)

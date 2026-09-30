@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/agent"
@@ -84,38 +83,9 @@ func (d *Driver) Prompt(handle, text string, until []agent.Status) error {
 	return err
 }
 
-// Read runs `herdr agent read <handle> --lines N` and returns the CLI's
-// result.read.text.
-func (d *Driver) Read(handle string, lines int) (string, error) {
-	out, err := run(context.Background(), "agent", "read", handle, "--lines", strconv.Itoa(lines))
-	if err != nil {
-		return "", err
-	}
-	var resp struct {
-		Result struct {
-			Read struct {
-				Text string `json:"text"`
-			} `json:"read"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(out, &resp); err != nil {
-		return "", err
-	}
-	return resp.Result.Read.Text, nil
-}
-
-// Info runs `herdr agent get <handle>` with no deadline of its own — callers
-// that need one should use InfoContext.
-func (d *Driver) Info(handle string) (agent.Info, error) {
-	return d.InfoContext(context.Background(), handle)
-}
-
-// InfoContext is Info bound to ctx — an escape hatch beyond the 4-method
-// Driver interface for a caller (internal/tui/agentpoll.go) that must bound
-// each query with a timeout rather than risk a wedged herdr hanging
-// forever. Callers reach it via a type assertion against the concrete
-// Driver rather than a 5th interface method.
-func (d *Driver) InfoContext(ctx context.Context, handle string) (agent.Info, error) {
+// Info runs `herdr agent get <handle>` bound to ctx and returns the two
+// fields callers read: the status word and the stripped terminal title.
+func (d *Driver) Info(ctx context.Context, handle string) (agent.Info, error) {
 	out, err := run(ctx, "agent", "get", handle)
 	if err != nil {
 		return agent.Info{}, err
@@ -123,16 +93,7 @@ func (d *Driver) InfoContext(ctx context.Context, handle string) (agent.Info, er
 	var resp struct {
 		Result struct {
 			Agent struct {
-				Agent        string `json:"agent"`
-				AgentStatus  string `json:"agent_status"`
-				AgentSession struct {
-					Value string `json:"value"`
-				} `json:"agent_session"`
-				WorkspaceID           string `json:"workspace_id"`
-				TabID                 string `json:"tab_id"`
-				PaneID                string `json:"pane_id"`
-				CWD                   string `json:"cwd"`
-				InteractiveReady      bool   `json:"interactive_ready"`
+				AgentStatus           string `json:"agent_status"`
 				TerminalTitleStripped string `json:"terminal_title_stripped"`
 			} `json:"agent"`
 		} `json:"result"`
@@ -145,22 +106,8 @@ func (d *Driver) InfoContext(ctx context.Context, handle string) (agent.Info, er
 	if status == "" {
 		status = agent.StatusUnknown
 	}
-	var session *agent.SessionRef
-	if a.WorkspaceID != "" || a.TabID != "" || a.PaneID != "" || a.AgentSession.Value != "" {
-		session = &agent.SessionRef{
-			Workspace: a.WorkspaceID,
-			Tab:       a.TabID,
-			Pane:      a.PaneID,
-			Session:   a.AgentSession.Value,
-		}
-	}
 	return agent.Info{
-		Kind:     a.Agent,
-		Name:     a.AgentSession.Value,
 		Status:   status,
-		Session:  session,
-		CWD:      a.CWD,
 		Activity: strings.TrimSpace(a.TerminalTitleStripped),
-		Ready:    a.InteractiveReady,
 	}, nil
 }

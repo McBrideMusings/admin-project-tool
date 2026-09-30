@@ -106,9 +106,7 @@ func (f *fakeDriver) Prompt(handle, text string, until []agent.Status) error {
 	return f.promptFn(handle, text, until)
 }
 
-func (f *fakeDriver) Read(handle string, lines int) (string, error) { return "", nil }
-
-func (f *fakeDriver) Info(handle string) (agent.Info, error) {
+func (f *fakeDriver) Info(_ context.Context, handle string) (agent.Info, error) {
 	if f.infoFn == nil {
 		return agent.Info{Status: agent.StatusIdle}, nil
 	}

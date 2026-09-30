@@ -93,7 +93,6 @@ func termTickCmd() tea.Cmd {
 func (m Model) openTerminal(e *livework.Entry) Model {
 	m.termAttached = true
 	m.termEntryID = e.ID
-	m.termPTYID = e.Handle
 	rows, cols := m.termRegion()
 	m.termRows, m.termCols = rows, cols
 	if e.Ops.Resize != nil {
@@ -107,7 +106,6 @@ func (m Model) openTerminal(e *livework.Entry) Model {
 func (m Model) detachTerminal() Model {
 	m.termAttached = false
 	m.termEntryID = ""
-	m.termPTYID = ""
 	m.termRows, m.termCols = 0, 0
 	return m
 }

@@ -1,6 +1,5 @@
 // agentpoll.go is the Work tab's per-tick agent status poller
-// (admin-spjp.3): internal/agent.Driver.Info (or its InfoContext escape
-// hatch, when the resolved Driver implements one — ADR-0021) is called once
+// (admin-spjp.3): internal/agent.Driver.Info (ADR-0021) is called once
 // per live agent per tick, purely to tell "blocked on a prompt" apart from
 // "finished" and to carry the agent's own activity title into
 // livework.Entry.Activity (admin-spjp.4). Nothing polls while an agent is
@@ -49,27 +48,15 @@ const agentPollTimeout = 2 * time.Second
 // (remoteseam.go) and urlProber.probe.
 var agentStatusFn = queryAgentInfo
 
-// infoContexter is implemented by a Driver that can bound its Info query
-// with a context — the herdr Driver does. queryAgentInfo type-asserts for
-// it rather than widening internal/agent.Driver's 4-method interface with a
-// 5th method that only this one caller (a poller that must bound each query
-// at agentPollTimeout) needs.
-type infoContexter interface {
-	InfoContext(ctx context.Context, handle string) (agent.Info, error)
-}
-
 // queryAgentInfo resolves the compiled-in agent.Driver (lazily, per call —
 // there is no persistent connection to hold onto) and asks it about handle,
-// bounding the query with ctx when the resolved Driver supports it.
+// bounding the query with ctx.
 func queryAgentInfo(ctx context.Context, handle string) (agent.Info, error) {
 	drv, ok := agent.Select()
 	if !ok {
 		return agent.Info{}, errNoAgentDriver
 	}
-	if ic, ok := drv.(infoContexter); ok {
-		return ic.InfoContext(ctx, handle)
-	}
-	return drv.Info(handle)
+	return drv.Info(ctx, handle)
 }
 
 // agentPollInflight makes an overlapping tick a no-op: if the previous poll

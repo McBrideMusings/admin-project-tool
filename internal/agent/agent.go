@@ -16,6 +16,8 @@
 // exactly one (internal/agent/herdr).
 package agent
 
+import "context"
+
 // Status is one of a small closed set of words a Driver reports for the
 // agent living at a handle — herdr's own status vocabulary (agent_status),
 // which every Driver implementation is expected to normalize onto.
@@ -29,45 +31,19 @@ const (
 	StatusUnknown Status = "unknown"
 )
 
-// SessionRef is the underlying tool's own addressing of the session living
-// at a handle — workspace/tab/pane/session ids, whatever the tool exposes.
-// Nil when a Driver has nothing structured to report (or the query failed
-// to decode one); callers must not assume any field is populated.
-type SessionRef struct {
-	Workspace string
-	Tab       string
-	Pane      string
-	Session   string
-}
-
 // Info is one Driver.Info reply: what is running at a handle right now.
 type Info struct {
-	// Kind is the agent kind reported back (e.g. "claude") — may differ in
-	// case/spelling from what Start was called with, since it reflects
-	// what the underlying tool itself recorded.
-	Kind string
-	// Name is the underlying tool's own name/identifier for the agent
-	// session, distinct from the launcher handle.
-	Name string
 	// Status is the agent's current lifecycle state.
 	Status Status
-	// Session carries the underlying tool's own addressing, when it has
-	// one to report.
-	Session *SessionRef
-	// CWD is the working directory the agent is running in, when known.
-	CWD string
 	// Activity is a one-line human-readable description of what the agent
 	// is doing right now (e.g. a stripped terminal title) — empty when the
 	// underlying tool has nothing to report.
 	Activity string
-	// Ready reports whether the underlying tool considers the agent
-	// interactive-ready (its own "interactive_ready" concept).
-	Ready bool
 }
 
 // Driver is WHAT IS INSIDE a handle and how to talk to it: starting an
-// agent of a given kind, prompting it and waiting for it to settle, reading
-// its recent output, and asking its current status. handle is always the
+// agent of a given kind, prompting it and waiting for it to settle, and
+// asking its current status. handle is always the
 // opaque address a [terminal].spawn line printed — a Driver never opens,
 // closes or focuses one itself; that is [terminal]'s attach/kill, which
 // stays in config (ADR-0021's "no overlap" rule).
@@ -81,11 +57,9 @@ type Driver interface {
 	// settles into one of the given states (or the underlying tool's own
 	// default settle set, when until is empty).
 	Prompt(handle, text string, until []Status) error
-	// Read returns the agent's most recent output at handle, bounded to
-	// the given number of lines.
-	Read(handle string, lines int) (string, error)
-	// Info reports what is currently running at handle.
-	Info(handle string) (Info, error)
+	// Info reports what is currently running at handle, bounded by ctx so a
+	// wedged underlying tool cannot hang the caller.
+	Info(ctx context.Context, handle string) (Info, error)
 }
 
 // registration is one registered Driver plus its availability check.

@@ -591,7 +591,6 @@ type Model struct {
 	// all zeroed together by detachTerminal.
 	termAttached bool
 	termEntryID  string
-	termPTYID    string
 	termRows     int
 	termCols     int
 }
