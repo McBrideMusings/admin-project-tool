@@ -98,7 +98,8 @@ func PaneGone(ctx context.Context, statusCmd, handle string) (gone bool, err err
 // no [terminal].status to ask. note is non-empty when the predicate could not
 // give an answer at all (it timed out or would not start), so the row says
 // why it is not progressing instead of looking merely unfinished.
-func workerFinished(ctx context.Context, w *livework.WorkerInfo, handle string, t config.Terminal) (finished bool, note string) {
+func workerFinished(ctx context.Context, e *livework.Entry, t config.Terminal) (finished bool, note string) {
+	w, handle := e.Worker, e.Handle
 	if w.Done != "" {
 		ctx, cancel := context.WithTimeout(ctx, doneTimeout)
 		defer cancel()
@@ -119,7 +120,7 @@ func workerFinished(ctx context.Context, w *livework.WorkerInfo, handle string, 
 		}
 		return false, ""
 	}
-	if t.Status == "" {
+	if t.Status == "" || e.Via != "terminal" {
 		return false, ""
 	}
 	ctx, cancel := context.WithTimeout(ctx, doneTimeout)
@@ -193,7 +194,7 @@ func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t confi
 	if st, ok := livework.Default.State(e.ID); !ok || (st != livework.StateRunning && st != livework.StateWaiting) {
 		return false
 	}
-	finished, note := workerFinished(ctx, w, e.Handle, t)
+	finished, note := workerFinished(ctx, e, t)
 	if !finished {
 		if note == "" && w.Done != "" && t.Status != "" && e.Via == "terminal" {
 			// A worker that declares done is finished only when done passes;
@@ -256,7 +257,11 @@ func closeFinishedWorker(ctx context.Context, e *livework.Entry, t config.Termin
 			return fmt.Errorf("hosted worker %s has no kill", e.ID)
 		}
 		reapKilled.Store(e.ID, true)
-		return e.Ops.Kill()
+		if err := e.Ops.Kill(); err != nil {
+			reapKilled.Delete(e.ID)
+			return err
+		}
+		return nil
 	}
 	return closeFinishedPane(ctx, e.Handle, t)
 }

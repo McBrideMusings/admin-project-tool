@@ -92,8 +92,8 @@ func worktreeGone(repoRoot string, tgt Target, wt create.Result) error {
 
 // hostedOne runs one target's worker as a hosted worker and returns once the
 // worker's process has exited, which is when DispatchTargets frees its slot.
-// The live-work entry (dashboard surface) is keyed "<action>:<target>" on the
-// full target name — the hosted-command entry shape, with no view of its own.
+// The live-work entry (dashboard surface) is a worker entry on a hosted pty,
+// keyed workerLiveID like a window worker's.
 func hostedOne(repoRoot, actionName string, surface DispatchSurface, tgt Target, wt create.Result) TargetResult {
 	res := TargetResult{Target: tgt.Name, WorktreePath: wt.Path}
 	if err := worktreeGone(repoRoot, tgt, wt); err != nil {
