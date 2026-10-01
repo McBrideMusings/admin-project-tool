@@ -228,7 +228,10 @@ func dispatchOne(repoRoot, actionName, group string, index int, t config.Termina
 	lc.Target = tgt.Name
 	lc.Group = group
 	lc.Index = index
-	handle, err := spawnPane(tgt.Run, wt.Path, lc, t)
+	// The launcher types ADMIN_CMD into the pane's own shell, which never saw
+	// the spawn process's ADMIN_TARGET, so the run string's $ADMIN_TARGET
+	// would expand to nothing. Exporting it first puts it in that shell.
+	handle, err := spawnPane("export ADMIN_TARGET="+shellQuote(tgt.Name)+"; "+tgt.Run, wt.Path, lc, t)
 	if err != nil {
 		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Err: fmt.Errorf("opening pane: %w", err)}
 	}

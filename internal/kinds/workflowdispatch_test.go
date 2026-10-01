@@ -445,8 +445,8 @@ func TestDispatchTargetsSpawnsRunWithTargetEnv(t *testing.T) {
 	if res[0].Err != nil {
 		t.Fatal(res[0].Err)
 	}
-	if gotCmd != "claude '/implement $ADMIN_TARGET afk'" {
-		t.Errorf("ADMIN_CMD = %q, want the action's run string", gotCmd)
+	if want := "export ADMIN_TARGET=proj-1; claude '/implement $ADMIN_TARGET afk'"; gotCmd != want {
+		t.Errorf("ADMIN_CMD = %q, want %q: the run string behind an export of its target", gotCmd, want)
 	}
 	if gotTarget != "proj-1" {
 		t.Errorf("ADMIN_TARGET = %q, want proj-1", gotTarget)
