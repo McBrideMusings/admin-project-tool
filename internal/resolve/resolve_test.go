@@ -2,6 +2,8 @@ package resolve
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -73,5 +75,36 @@ func TestBranchInputWithoutGitHubOrigin(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "GitHub") {
 		t.Fatalf("error should say the repo has no GitHub origin, got %q", err)
+	}
+}
+
+// A bead id is looked up in the dir BranchInput was given, not in the process's
+// cwd. The fake bd answers only when it runs inside that dir, so a lookup from
+// anywhere else sees no workspace.
+func TestBranchInputReadsBeadsFromDir(t *testing.T) {
+	repo, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	script := `#!/bin/sh
+[ "$(pwd -P)" = "$BEAD_REPO" ] || exit 1
+case "$1" in
+where) echo '{"path":"x","schema_version":1}' ;;
+list) echo '[{"id":"zz-1","title":"Fix thing","status":"open"}]' ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "bd"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BEAD_REPO", repo)
+
+	plan, err := BranchInput(context.Background(), repo, "", "zz-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "zz-1-fix-thing"; plan.Branch != want {
+		t.Fatalf("branch = %q, want %q", plan.Branch, want)
 	}
 }

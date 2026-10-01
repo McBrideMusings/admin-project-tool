@@ -79,7 +79,7 @@ func BranchInput(ctx context.Context, dir, nwo, input string) (Plan, error) {
 		// a branch name — so it can only be recognized by asking the workspace
 		// whether that id exists. The lookup runs after the branch checks so an
 		// existing branch always wins, and only in a repo that has beads at all.
-		if p, ok := beadPlan(ctx, input); ok {
+		if p, ok := beadPlan(ctx, dir, input); ok {
 			return p, nil
 		}
 		// Text that names no existing branch is about to become one, so it has to
@@ -98,11 +98,11 @@ func BranchInput(ctx context.Context, dir, nwo, input string) (Plan, error) {
 // "bd-4f2-add-password-reset" the same way an issue number builds one on
 // "42-add-password-reset". ok is false in a repo with no beads workspace, or when
 // no bead carries that id — both of which leave the input to be a new branch name.
-func beadPlan(ctx context.Context, input string) (Plan, bool) {
-	if _, err := bd.Detect(ctx, ""); err != nil {
+func beadPlan(ctx context.Context, dir, input string) (Plan, bool) {
+	if _, err := bd.Detect(ctx, dir); err != nil {
 		return Plan{}, false
 	}
-	beads, err := bd.List(ctx, "")
+	beads, err := bd.List(ctx, dir)
 	if err != nil {
 		return Plan{}, false
 	}
