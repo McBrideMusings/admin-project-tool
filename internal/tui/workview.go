@@ -47,6 +47,11 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 			padHits([]hitTarget{{kind: hitNone}}, height)
 	}
 
+	// The rows come from the live registry and the filter on every frame, so a
+	// frame can see fewer rows than the cursor last had; the next key press
+	// re-clamps the stored cursor, this frame only has to not index past them.
+	cursor = clampi(0, cursor, len(rows)-1)
+
 	lw := maxi(width-2, 20)
 
 	left := make([]string, len(rows))

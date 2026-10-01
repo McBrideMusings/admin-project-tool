@@ -92,3 +92,11 @@ func TestScreenTailLinesKeepsWordRows(t *testing.T) {
 		t.Errorf("screenTailLines = %q, want %q", got, want)
 	}
 }
+
+// A frame that sees fewer Work rows than the stored cursor (a filter typed
+// while the cursor sits low) draws the last row instead of panicking.
+func TestRenderWorkBodyCursorPastRows(t *testing.T) {
+	m := launcherBandModel(t)
+	m.cursor[m.active] = 999
+	m.renderWorkBody(80, 24)
+}
