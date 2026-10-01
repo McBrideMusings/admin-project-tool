@@ -54,11 +54,11 @@ func TestRenderWorkBandTailsLiveRingBottomAligned(t *testing.T) {
 	}
 }
 
-// TestRenderWorkBandRuleSeparatesFieldsFromTail proves the open band draws
-// the attached view's dashed rule on the row right after the fixed field
-// slot — here a command's log row and one url row, padded to fieldRowsH —
-// with the tail below it.
-func TestRenderWorkBandRuleSeparatesFieldsFromTail(t *testing.T) {
+// TestRenderWorkBandNoRuleBetweenFieldsAndTail proves the open band draws no
+// rule between the fixed field slot and the tail, matching
+// commands-running.txt and swarm.txt: the tail starts on the row right after
+// the slot and ends on the band's last row.
+func TestRenderWorkBandNoRuleBetweenFieldsAndTail(t *testing.T) {
 	freshLivework(t)
 	ring := livework.NewRing(4096)
 	ring.Write([]byte("tail line\n"))
@@ -71,8 +71,10 @@ func TestRenderWorkBandRuleSeparatesFieldsFromTail(t *testing.T) {
 	if !strings.Contains(out[1], "log") || !strings.Contains(out[2], "url") {
 		t.Fatalf("rows 1-2 = %q, want the log and url field rows", out[1:3])
 	}
-	if got := strings.TrimSpace(stripANSI(out[1+fieldRowsH])); got != strings.Repeat("╌", 60) {
-		t.Errorf("row %d = %q, want a full-width dashed rule", 1+fieldRowsH, got)
+	for i, l := range out {
+		if strings.Contains(l, "╌") {
+			t.Errorf("row %d = %q, want no dashed rule", i, l)
+		}
 	}
 	if strings.TrimSpace(out[11]) != "tail line" {
 		t.Errorf("last row = %q, want the tail", out[11])
@@ -164,7 +166,7 @@ func TestRenderWorkBandCommandTailsLiveRing(t *testing.T) {
 
 // TestRenderWorkBandNoURLsKeepsFieldSlot: a running command with no
 // configured urls still occupies the whole fieldRowsH slot (log row, then
-// blank rows), so the dashed rule and the tail sit in the same rows as for a
+// blank rows), so the tail sits in the same rows as for a
 // command with urls and nothing under the block moves.
 func TestRenderWorkBandNoURLsKeepsFieldSlot(t *testing.T) {
 	freshLivework(t)
@@ -190,8 +192,8 @@ func TestRenderWorkBandNoURLsKeepsFieldSlot(t *testing.T) {
 			t.Errorf("row %d = %q, want a blank slot row", i, out[i])
 		}
 	}
-	if !strings.Contains(out[1+fieldRowsH], "╌") || strings.TrimSpace(out[2+fieldRowsH]) == "" {
-		t.Errorf("rows %d-%d = %q, want the dashed rule then tail content", 1+fieldRowsH, 2+fieldRowsH, out[1+fieldRowsH:3+fieldRowsH])
+	if strings.TrimSpace(out[1+fieldRowsH]) != "line" {
+		t.Errorf("row %d = %q, want tail content right after the slot", 1+fieldRowsH, out[1+fieldRowsH])
 	}
 }
 

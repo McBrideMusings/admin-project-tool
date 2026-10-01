@@ -469,10 +469,7 @@ func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 
 	if live != nil {
 		out = append(out, slotRows(bandFields(live, wd, w), w)...)
-		// The same dashed rule the attached view draws between its field
-		// rows and the output (terminalview.go's renderTerminalBody).
-		out = append(out, faintStyle.Render(strings.Repeat("╌", w)))
-		avail := maxi(h-2-fieldRowsH, 1)
+		avail := maxi(h-1-fieldRowsH, 1)
 		var tail []string
 		switch {
 		case live.Output != nil:
