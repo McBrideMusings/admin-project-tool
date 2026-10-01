@@ -644,7 +644,7 @@ func runDumpFrame(ctx context.Context) error {
 	checkout := dashboardCheckout(ctx, repoRoot)
 	nwo, _ := git.OriginNWO(ctx, checkout)
 	model := tui.New(ctx, repoRoot, nwo, git.CurrentBranch(ctx, checkout), git.DefaultBranch(ctx, checkout),
-		tui.WithManifestRoot(dashboardManifestRoot()), tui.WithCheckout(checkout))
+		tui.WithManifestRoot(dashboardManifestRoot()), tui.WithCheckout(checkout), remoteOption(ctx, checkout, nwo))
 	frame := tui.Frame(ctx, model, tui.FrameOptions{
 		Width:  dumpWidth,
 		Height: dumpHeight,
@@ -699,7 +699,7 @@ func runDashboard(ctx context.Context) error {
 
 	start = timing.Start()
 	model := tui.New(ctx, repoRoot, nwo, current, def,
-		tui.WithManifestRoot(dashboardManifestRoot()), tui.WithCheckout(checkout))
+		tui.WithManifestRoot(dashboardManifestRoot()), tui.WithCheckout(checkout), remoteOption(ctx, checkout, nwo))
 	timing.Phase("tui.New", start)
 
 	// Render to stderr so stdout carries only the cd sentinel — the repo() shell

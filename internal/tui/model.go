@@ -160,8 +160,12 @@ type Model struct {
 	ctx      context.Context
 	repoRoot string
 	nwo      string
-	current  string
-	def      string
+	// remoteHost and remoteAddr describe a non-GitHub origin (see WithRemote);
+	// both are empty when origin is GitHub, absent, or a local path.
+	remoteHost string
+	remoteAddr string
+	current    string
+	def        string
 
 	width, height int
 
@@ -613,6 +617,15 @@ func WithCheckout(dir string) Option {
 		if dir != "" {
 			m.checkout = dir
 		}
+	}
+}
+
+// WithRemote names the machine a non-GitHub origin points at, so the header can
+// show that a remote exists. addr is what the host resolves to, when that
+// differs from the name. An empty host shows nothing.
+func WithRemote(host, addr string) Option {
+	return func(m *Model) {
+		m.remoteHost, m.remoteAddr = host, addr
 	}
 }
 

@@ -56,7 +56,7 @@ func runShow(ctx context.Context, tab string, settle time.Duration) error {
 	checkout := dashboardCheckout(ctx, repoRoot)
 	nwo, _ := git.OriginNWO(ctx, checkout)
 	model := tui.New(ctx, repoRoot, nwo, git.CurrentBranch(ctx, checkout), git.DefaultBranch(ctx, checkout),
-		tui.WithManifestRoot(dashboardManifestRoot()), tui.WithCheckout(checkout))
+		tui.WithManifestRoot(dashboardManifestRoot()), tui.WithCheckout(checkout), remoteOption(ctx, checkout, nwo))
 	rows, err := tui.ShowRows(model, tab, tui.FrameOptions{Settle: settle})
 	if err != nil {
 		return fmt.Errorf("show: %w", err)

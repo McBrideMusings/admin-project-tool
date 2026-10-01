@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -328,9 +329,11 @@ func (m Model) headerLine(width int) string {
 	if branch == "" {
 		branch = "(detached)"
 	}
+	// The header always names the repo: owner/repo when origin is GitHub, the
+	// checkout directory's name otherwise (no origin, or one that is not GitHub).
 	nwo := m.nwo
 	if nwo == "" {
-		nwo = "(no remote)"
+		nwo = filepath.Base(m.repoRoot)
 	}
 	// Both names in the header are OSC-8 hyperlinks when origin is GitHub: the repo
 	// to its GitHub page, the current branch to its branch page — the latter only
@@ -341,6 +344,13 @@ func (m Model) headerLine(width int) string {
 	}
 	left := []seg{
 		{t: nwo, fg: cFg, link: repoURL(m.nwo)}, {t: "  " + branchGlyph(), fg: cDim}, branchSeg,
+	}
+	if m.nwo == "" && m.remoteHost != "" {
+		label := "⇄ " + m.remoteHost
+		if m.remoteAddr != "" {
+			label += " (" + m.remoteAddr + ")"
+		}
+		left = append(left, seg{t: "  " + label, fg: cDim})
 	}
 	// The picked worktree target (admin-76tv, `T`), when one has been picked
 	// — absent otherwise, so a dashboard nobody has retargeted looks exactly

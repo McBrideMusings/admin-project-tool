@@ -118,6 +118,13 @@ func TestCommandArgv(t *testing.T) {
 			want: []call{rd("remote", "get-url", "origin")},
 		},
 		{
+			// A local-path origin has no host, so the ssh lookup never runs.
+			name: "OriginRemote",
+			out:  []string{"/srv/git/r.git"},
+			call: func(ctx context.Context) { OriginRemote(ctx, "/repo") },
+			want: []call{rd("remote", "get-url", "origin")},
+		},
+		{
 			name: "DefaultBranch",
 			out:  []string{"refs/remotes/origin/main"},
 			call: func(ctx context.Context) { DefaultBranch(ctx, "/repo") },
@@ -419,6 +426,7 @@ var coveredCommands = map[string]bool{
 	"MergedIntoDefault":     true,
 	"OriginBase":            true,
 	"OriginNWO":             true,
+	"OriginRemote":          true,
 	"PruneWorktrees":        true,
 	"Pull":                  true,
 	"RecentCommits":         true,
