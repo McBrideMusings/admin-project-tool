@@ -51,6 +51,38 @@ func TestSelectionDragThenFinish(t *testing.T) {
 	}
 }
 
+func TestExtendToEdgePushesTowardTheLastMotionDirection(t *testing.T) {
+	cases := []struct {
+		name             string
+		anchor, m1, m2   cell // press, then two motions
+		maxRow           int
+		wantRow, wantCol int
+	}{
+		{"down", cell{1, 3}, cell{2, 3}, cell{4, 3}, 39, 39, 3},
+		{"up", cell{20, 3}, cell{19, 3}, cell{17, 3}, 39, 0, 3},
+		{"right", cell{5, 3}, cell{5, 6}, cell{5, 9}, 39, 5, colEdge},
+		{"left", cell{5, 20}, cell{5, 17}, cell{5, 12}, 39, 5, 0},
+		{"diagonal", cell{1, 3}, cell{2, 5}, cell{4, 8}, 39, 39, colEdge},
+		{"no motion since anchor", cell{5, 5}, cell{5, 5}, cell{5, 5}, 39, 5, 5},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := anchorAt(c.anchor.row, c.anchor.col)
+			s.drag(c.m1.row, c.m1.col)
+			s.drag(c.m2.row, c.m2.col)
+			s.extendToEdge(c.maxRow)
+			if s.cursor.row != c.wantRow || s.cursor.col != c.wantCol {
+				t.Errorf("extendToEdge -> cursor %v, want {%d %d}", s.cursor, c.wantRow, c.wantCol)
+			}
+			// The anchor is where the drag actually started; only the
+			// cursor end should move.
+			if s.anchor != c.anchor {
+				t.Errorf("extendToEdge moved the anchor to %v, want it to stay at %v", s.anchor, c.anchor)
+			}
+		})
+	}
+}
+
 func TestSelectionContainsMultiLine(t *testing.T) {
 	s := anchorAt(2, 5)
 	s.drag(4, 10)
@@ -295,15 +327,22 @@ func TestSwitchTabClearsInProgressSelection(t *testing.T) {
 	}
 }
 
-// TestSelWatchdogClearsAGestureThatNeverGotAReleaseEvent pins the fix for the
-// drag-to-copy freeze/stuck-highlight bug: cell-motion mouse reporting stops
-// emitting events entirely once the cursor leaves the terminal's grid, so a
-// drag that walks off-window gets no more motion and no eventual release —
-// nothing in the input stream ever tells the app the gesture ended. The
-// watchdog is the only thing that can end it.
-func TestSelWatchdogClearsAGestureThatNeverGotAReleaseEvent(t *testing.T) {
+// TestSelWatchdogFinishesAGestureThatNeverGotAReleaseEvent pins the fix for
+// the drag-to-copy freeze/stuck-highlight bug: cell-motion mouse reporting
+// stops emitting events entirely once the cursor leaves the terminal's grid,
+// so a drag that walks off-window gets no more motion and no eventual
+// release — nothing in the input stream ever tells the app the gesture
+// ended. The watchdog is the only thing that can end it, and it ends it the
+// way a real release would: sel drops back to its zero value and the
+// covered text reaches pbcopy.
+func TestSelWatchdogFinishesAGestureThatNeverGotAReleaseEvent(t *testing.T) {
 	m := seededModel()
 	m.active = tabLocal
+
+	var gotText string
+	old := pbcopy
+	pbcopy = func(text string) error { gotText = text; return nil }
+	defer func() { pbcopy = old }()
 
 	next, _ := m.Update(tea.MouseMsg{Y: 5, X: 5, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	m = next.(Model)
@@ -322,6 +361,9 @@ func TestSelWatchdogClearsAGestureThatNeverGotAReleaseEvent(t *testing.T) {
 
 	if m.sel.inProgress() {
 		t.Errorf("selection still in progress after its watchdog fired: %+v", m.sel)
+	}
+	if gotText == "" {
+		t.Error("watchdog resolved the gesture but never called pbcopy")
 	}
 }
 
@@ -351,6 +393,62 @@ func TestSelWatchdogIgnoresAStaleGenAndLeavesALiveSelectionAlone(t *testing.T) {
 
 	if !m.sel.active() {
 		t.Error("a stale watchdog cleared a selection that is still being actively dragged")
+	}
+}
+
+// TestSelWatchdogExtendsToTheFrameEdgeInTheLastDragDirection covers the part
+// of the self-heal that goes beyond just not losing the gesture: since the
+// real cursor position when the drag walked off-window is unknowable, the
+// watchdog's best guess is "wherever the last motion sample was heading",
+// pushed all the way to that edge of the frame — not just wherever the last
+// reported cell happened to be.
+func TestSelWatchdogExtendsToTheFrameEdgeInTheLastDragDirection(t *testing.T) {
+	m := seededModel()
+	m.active = tabLocal
+	lines, _ := m.frameRaw()
+	lastRow := len(lines) - 1
+	if lastRow < 2 {
+		t.Fatal("fixture frame too short for this test")
+	}
+
+	var gotText string
+	old := pbcopy
+	pbcopy = func(text string) error { gotText = text; return nil }
+	defer func() { pbcopy = old }()
+
+	// Drag starts at row 1 col 0 and its last two motion samples move both
+	// down and right (row 1 -> row 2, col 0 -> col 3), heading toward the
+	// bottom-right corner of the frame.
+	next, _ := m.Update(tea.MouseMsg{Y: 1, X: 0, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = next.(Model)
+	next, _ = m.Update(tea.MouseMsg{Y: 2, X: 3, Action: tea.MouseActionMotion})
+	m = next.(Model)
+	gen := m.selGen
+
+	next, _ = m.Update(selWatchdogMsg{gen: gen})
+	m = next.(Model)
+
+	if gotText == "" {
+		t.Fatal("watchdog never resolved the gesture; nothing was copied")
+	}
+	// The expected final reach — anchor where the drag started, cursor pinned
+	// to the frame's last row at the far-right sentinel column — is asserted
+	// directly against extractSelection rather than against extendToEdge, so
+	// this stays a check on where the gesture actually landed rather than a
+	// restatement of extendToEdge's own logic. Extracted against a fresh,
+	// untouched model rather than the mutated m above: the real gesture's
+	// copy already set the "copied to clipboard" status, which changes the
+	// rendered frame (an extra status/keybar line) and would otherwise shift
+	// what row lastRow lands on out from under this comparison.
+	fresh := seededModel()
+	fresh.active = tabLocal
+	want := fresh.extractSelection(selection{
+		anchor: cell{row: 1, col: 0},
+		cursor: cell{row: lastRow, col: colEdge},
+		phase:  selDragging,
+	})
+	if gotText != want {
+		t.Errorf("copied text stopped at the last reported row instead of extending to the frame's bottom edge (row %d)\ngot:  %q\nwant: %q", lastRow, gotText, want)
 	}
 }
 
