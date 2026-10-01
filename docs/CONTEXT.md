@@ -67,7 +67,7 @@ A key declared in `admin.toml`'s `[keys.<row-kind>]` table, naming a **Command**
 _Avoid_: hotkey, keymap, shortcut, override
 
 **Row kind**:
-What a selectable dashboard row *is* — `bead`, `issue`, `branch`, `pr`, `commit`, `stash`, and the Work tab's `command`, `commandTarget`, `worker`. The axis a **Binding** is scoped to, and the value a bound command reads as `ADMIN_ROW_KIND`.
+What a selectable dashboard row *is* — `bead`, `issue`, `branch`, `pr`, `commit`, `stash`, the Commands tab's `command` and `commandTarget`, and the Workers tab's `worker`. The axis a **Binding** is scoped to, and the value a bound command reads as `ADMIN_ROW_KIND`.
 _Avoid_: row type, item type, entity
 
 ### Architecture
@@ -125,8 +125,8 @@ _Avoid_: row (that is the Work tab's rendering of an Entry, not the Entry)
 An agent running in its own git worktree on its own branch — the half of live work that is an agent rather than a process. An Entry is a Worker only when it carries worker info (`Entry.Worker != nil`); a dev server never is. Unchanged by the Work-tab palette redesign (spike/work-tab-redesign) — `Stuck` and every other Worker-only concept still means agent, specifically.
 _Avoid_: agent (herdr's word for the thing inside the pane), job
 
-**Workers** (section):
-The Work tab's list of everything currently live — every Entry, hosted command or genuine Worker alike, one section, one cursor. Distinct from the type above on purpose: a hosted command (`docs`, `test`) sits in this section too, told apart from a real Worker only by its row's own badge (`hosted` cyan vs. a pane id in magenta), never by which list it's in. "Call all of them workers" (pierce, spike/work-tab-redesign) — the display noun is deliberately broader than the type.
+**Workers** (tab):
+The tab that lists every Worker from any surface — a command's agent, a bead, an issue, a PR — as one flat list with one cursor and a live tail of the row under the cursor. It lists agent Workers only: a hosted command (`docs`, `test`) is an Entry but never a row here, and belongs to the Commands tab. Shares attach, kill and the bottom band with the Commands tab.
 
 **MRU strip**:
 The Work tab palette's 5 most-recently-run fully-resolved commands (`deploy grafana`, `dev cf` — never a bare parent like `deploy`), most-recent-first, no frequency weighting. Backed by a small per-repo JSON file at `os.UserCacheDir()/work-usage/<safe-nwo>.json`, matching `internal/data/data.go`'s existing cache-path convention. Empty or partial on a fresh project — never seeded with a guess.
