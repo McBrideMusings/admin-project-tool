@@ -49,3 +49,17 @@ admin -w redux-c38.5          # open the dashboard on that worktree instead
 ```
 
 `<target>` resolves against `git worktree list` in this order, stopping at the first tier that matches: an existing directory path, a worktree's directory name, its branch name, then a substring of either (case-insensitive). Two or more matches at the deciding tier, or no match at all, exits non-zero and lists every candidate rather than guessing. Everything the command runs — the manifest lookup, the working directory, the log directory, `${VAR}` resolution — then behaves as though `admin` had been invoked from inside that worktree. If the target has no `admin.toml` of its own (worktrees never get one, since `admin.toml` is never committed), it borrows the primary checkout's manifest but still executes inside the target worktree. See `docs/guide/worktree-target.md` for the full four-tier resolution and the dashboard's `T` picker.
+
+### The `[terminal]` launcher
+
+A project can name the launcher a window-locale action is dispatched into (`[terminal]` with `spawn`, `attach` and `kill`). `spawn` runs as a shell command with these variables set:
+
+| Variable | Value |
+|---|---|
+| `ADMIN_CMD` | the command line the new pane runs |
+| `ADMIN_LABEL` | the action's label |
+| `ADMIN_CWD` | the directory the pane starts in |
+| `ADMIN_GROUP` | workflow dispatch only: one id for every target of a dispatch (command name plus start time), different between dispatches |
+| `ADMIN_INDEX` | workflow dispatch only: the target's position in the dispatch, from 0 |
+
+The tool only supplies `ADMIN_GROUP` and `ADMIN_INDEX`. Putting one dispatch's workers in one workspace or tab is the spawn script's job: the first call with a given group creates it, later calls find it.

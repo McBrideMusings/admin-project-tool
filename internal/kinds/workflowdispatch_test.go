@@ -147,6 +147,67 @@ func TestDispatchTargetsCreatesWorktreesSeededWithPopulate(t *testing.T) {
 // missing key — and nothing is created, since failing before doing any work
 // beats creating N worktrees for a dispatch that was never going to run
 // anything.
+// TestDispatchTargetsSpawnGetsSharedGroupAndIndex: one dispatch of three
+// targets spawns three times with one ADMIN_GROUP and ADMIN_INDEX 0, 1, 2; a
+// second dispatch gets a different group.
+func TestDispatchTargetsSpawnGetsSharedGroupAndIndex(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	var mu sync.Mutex
+	var envs [][]string
+	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		envs = append(envs, ctx.env(cmdLine, cwd))
+		return fmt.Sprintf("pane-%d", len(envs)), nil
+	})
+	has := func(env []string, kv string) bool {
+		for _, e := range env {
+			if e == kv {
+				return true
+			}
+		}
+		return false
+	}
+	group := func(env []string) string {
+		for _, e := range env {
+			if g, ok := strings.CutPrefix(e, "ADMIN_GROUP="); ok {
+				return g
+			}
+		}
+		return ""
+	}
+
+	targets := []Target{{Name: "g1", Run: "x"}, {Name: "g2", Run: "x"}, {Name: "g3", Run: "x"}}
+	DispatchTargets(repoRoot, "sweep", workflowAction(), targets, SurfaceDashboard)
+	if len(envs) != 3 {
+		t.Fatalf("spawn called %d times, want 3", len(envs))
+	}
+	g := group(envs[0])
+	if g == "" {
+		t.Fatal("ADMIN_GROUP missing from spawn env")
+	}
+	seen := map[int]bool{}
+	for _, env := range envs {
+		if group(env) != g {
+			t.Errorf("ADMIN_GROUP = %q, want %q for every target", group(env), g)
+		}
+		for i := 0; i < 3; i++ {
+			if has(env, fmt.Sprintf("ADMIN_INDEX=%d", i)) {
+				seen[i] = true
+			}
+		}
+	}
+	if len(seen) != 3 {
+		t.Errorf("ADMIN_INDEX values seen = %v, want 0, 1, 2", seen)
+	}
+
+	envs = nil
+	DispatchTargets(repoRoot, "sweep", workflowAction(), []Target{{Name: "g4", Run: "x"}}, SurfaceDashboard)
+	if len(envs) != 1 || group(envs[0]) == g {
+		t.Errorf("second dispatch group = %v, want one differing from %q", envs, g)
+	}
+}
+
 func TestDispatchTargetsNoRunFailsEveryTargetWithoutTouchingGit(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, terminalTOML)
 	wtRoot := filepath.Join(filepath.Dir(repoRoot), "wt")
@@ -351,7 +412,7 @@ func TestDispatchOneFailsLoudlyWhenWorktreeVanished(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
-	res := dispatchOne(repoRoot, "sweep", cfg.Terminal, Target{Name: "vanish-me", Run: "x"}, wt, func() {})
+	res := dispatchOne(repoRoot, "sweep", "sweep-g", 0, cfg.Terminal, Target{Name: "vanish-me", Run: "x"}, wt, func() {})
 
 	if res.Err == nil {
 		t.Fatal("expected an error for a worktree removed before dispatch, got nil")

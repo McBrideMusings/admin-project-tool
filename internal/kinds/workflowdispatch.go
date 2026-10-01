@@ -35,6 +35,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/agent"
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
@@ -160,6 +161,7 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 	// acceptance criterion "dispatching over N targets creates N
 	// worktrees, each seeded with the populate files").
 	ctx := context.Background()
+	group := actionName + "-" + time.Now().Format("20060102T150405.000000000")
 	worktrees := make([]create.Result, len(targets))
 	for i, t := range targets {
 		res, err := create.Worktree(ctx, repoRoot, t.Name)
@@ -193,7 +195,7 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 			// A window worker keeps its slot after the spawn returns:
 			// dispatchOne hands release to ReleaseWorkerSlot once the worker
 			// is registered, and this frees it on any failure.
-			results[i] = dispatchOne(repoRoot, actionName, cfg.Terminal, t, wt, release)
+			results[i] = dispatchOne(repoRoot, actionName, group, i, cfg.Terminal, t, wt, release)
 			if results[i].Err != nil {
 				release()
 			}
@@ -207,14 +209,15 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 // re-verifies wt is still a real worktree (never recreating one that
 // isn't), opens a pane through the project's [terminal] launcher whose
 // command is the run string, and records the running target in the
-// live-work registry with its launcher handle before returning. release frees
+// live-work registry with its launcher handle before returning. group and
+// index are the dispatch's shared id and the target's position in it. release frees
 // the target's ceiling slot: on success dispatchOne parks it under the
 // worker's live id for ReleaseWorkerSlot, so the slot lasts as long as the
 // worker; on error the caller calls it. The registry entry mirrors
 // internal/kinds/pane.go's recordLiveWork for the single-pane LongRunning
 // case, but is keyed on the pane this dispatch itself opened rather than one
 // launchCommand opened for it.
-func dispatchOne(repoRoot, actionName string, t config.Terminal, tgt Target, wt create.Result, release func()) TargetResult {
+func dispatchOne(repoRoot, actionName, group string, index int, t config.Terminal, tgt Target, wt create.Result, release func()) TargetResult {
 	if err := worktreeGone(repoRoot, tgt, wt); err != nil {
 		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Err: err}
 	}
@@ -223,6 +226,8 @@ func dispatchOne(repoRoot, actionName string, t config.Terminal, tgt Target, wt 
 
 	lc := launchCtxFromEnv(actionName)
 	lc.Target = tgt.Name
+	lc.Group = group
+	lc.Index = index
 	handle, err := spawnPane(tgt.Run, wt.Path, lc, t)
 	if err != nil {
 		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Err: fmt.Errorf("opening pane: %w", err)}

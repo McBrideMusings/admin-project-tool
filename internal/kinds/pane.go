@@ -23,6 +23,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,6 +93,11 @@ type launchCtx struct {
 	// Target is the workflow target id a worker's run string sees as
 	// ADMIN_TARGET; empty for every other dispatch.
 	Target string
+	// Group is the id shared by every target of one workflow dispatch, and
+	// Index the target's position in it from 0; ADMIN_GROUP/ADMIN_INDEX carry
+	// them to spawn. Group is empty for every other dispatch, which sets neither.
+	Group string
+	Index int
 }
 
 // launchCtxFromEnv builds a launchCtx for label from the process's own
@@ -141,6 +147,9 @@ func (c launchCtx) env(cmdLine, wd string) []string {
 	}
 	if c.Target != "" {
 		out = append(out, "ADMIN_TARGET="+c.Target)
+	}
+	if c.Group != "" {
+		out = append(out, "ADMIN_GROUP="+c.Group, "ADMIN_INDEX="+strconv.Itoa(c.Index))
 	}
 	out = append(out, RowEnv(c.RowKind, c.RowID, c.RowURL)...)
 	return out
