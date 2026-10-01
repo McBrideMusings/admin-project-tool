@@ -475,7 +475,7 @@ func TestIdentityMsgReplacesAndClearsIdentity(t *testing.T) {
 // resolving to nothing.
 func TestRenderLocalPanelsFillsBodyHeight(t *testing.T) {
 	for _, stashes := range []bool{false, true} {
-		for height := 3; height <= 12; height++ {
+		for height := 1; height <= 12; height++ {
 			m := seededModel()
 			m.historyStashes = stashes
 			lines, hits := m.renderLocalPanels(80, height)

@@ -389,6 +389,7 @@ func (b boxPanel) topBorder() string { return b.titleRule("┌─", "┐") }
 // what a pane with nothing to list renders instead of a box: the borders are
 // there to enclose rows, and with no rows the chrome is the whole box. The title
 // and badge stay, so an empty pane still says what it is and that it holds zero.
+// It is also what render draws for a box one row tall.
 func (b boxPanel) renderRule() string { return b.titleRule("──", "─") }
 
 // render returns exactly height lines for the box.
@@ -411,15 +412,20 @@ func (b boxPanel) innerRow(i int) (li int, hint bool) {
 }
 
 func (b boxPanel) render() []string {
+	// Two borders need two rows. A shorter box collapses to the rule (one row) or
+	// to nothing, so the caller's height budget holds.
+	switch {
+	case b.height <= 0:
+		return nil
+	case b.height == 1:
+		return []string{b.renderRule()}
+	}
 	bc := b.borderColor()
 	innerW := b.width - 2
 	if innerW < 0 {
 		innerW = 0
 	}
 	innerH := b.height - 2
-	if innerH < 0 {
-		innerH = 0
-	}
 	border := renderSegs([]seg{{t: "│", fg: bc}}, nil)
 	out := make([]string, 0, b.height)
 	out = append(out, b.topBorder())
