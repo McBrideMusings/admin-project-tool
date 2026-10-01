@@ -142,11 +142,6 @@ func TestDispatchTargetsCreatesWorktreesSeededWithPopulate(t *testing.T) {
 	}
 }
 
-// TestDispatchTargetsNoRunFailsEveryTargetWithoutTouchingGit is the "no run,
-// no guessing" case: a target carrying no run command fails, naming the
-// missing key — and nothing is created, since failing before doing any work
-// beats creating N worktrees for a dispatch that was never going to run
-// anything.
 // TestDispatchTargetsSpawnGetsSharedGroupAndIndex: one dispatch of three
 // targets spawns three times with one ADMIN_GROUP and ADMIN_INDEX 0, 1, 2; a
 // second dispatch gets a different group.
@@ -208,6 +203,11 @@ func TestDispatchTargetsSpawnGetsSharedGroupAndIndex(t *testing.T) {
 	}
 }
 
+// TestDispatchTargetsNoRunFailsEveryTargetWithoutTouchingGit is the "no run,
+// no guessing" case: a target carrying no run command fails, naming the
+// missing key — and nothing is created, since failing before doing any work
+// beats creating N worktrees for a dispatch that was never going to run
+// anything.
 func TestDispatchTargetsNoRunFailsEveryTargetWithoutTouchingGit(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, terminalTOML)
 	wtRoot := filepath.Join(filepath.Dir(repoRoot), "wt")

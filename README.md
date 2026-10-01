@@ -59,7 +59,7 @@ A project can name the launcher a window-locale action is dispatched into (`[ter
 | `ADMIN_CMD` | the command line the new pane runs |
 | `ADMIN_LABEL` | the action's label |
 | `ADMIN_CWD` | the directory the pane starts in |
-| `ADMIN_GROUP` | workflow dispatch only: one id for every target of a dispatch (command name plus start time), different between dispatches |
+| `ADMIN_GROUP` | workflow dispatch only: one id for every target of a dispatch (the workflow action's name plus start time), different between dispatches |
 | `ADMIN_INDEX` | workflow dispatch only: the target's position in the dispatch, from 0 |
 
-The tool only supplies `ADMIN_GROUP` and `ADMIN_INDEX`. Putting one dispatch's workers in one workspace or tab is the spawn script's job: the first call with a given group creates it, later calls find it.
+The tool only supplies `ADMIN_GROUP` and `ADMIN_INDEX`. Putting one dispatch's workers in one workspace or tab is the spawn script's job: the first call with a given group creates it, later calls find it. Spawns can run concurrently (up to the workflow ceiling), so `ADMIN_INDEX=0` is not guaranteed to run first; the script must take a lock around "find or create".

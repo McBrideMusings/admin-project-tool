@@ -210,8 +210,8 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 // isn't), opens a pane through the project's [terminal] launcher whose
 // command is the run string, and records the running target in the
 // live-work registry with its launcher handle before returning. group and
-// index are the dispatch's shared id and the target's position in it. release frees
-// the target's ceiling slot: on success dispatchOne parks it under the
+// index are the dispatch's shared id and the target's position in it.
+// release frees the target's ceiling slot: on success dispatchOne parks it under the
 // worker's live id for ReleaseWorkerSlot, so the slot lasts as long as the
 // worker; on error the caller calls it. The registry entry mirrors
 // internal/kinds/pane.go's recordLiveWork for the single-pane LongRunning
