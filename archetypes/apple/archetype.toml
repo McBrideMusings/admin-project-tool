@@ -323,6 +323,10 @@ local function do_regenerate()
     err("[apple.icons].sizes required (e.g. [16, 32, 128, 256, 512, 1024])")
     error("[apple.icons].sizes required")
   end
+  if not (icons_cfg.glyph_text or icons_cfg.glyph_svg) then
+    err("[apple.icons] needs glyph_text or glyph_svg")
+    error("[apple.icons] needs glyph_text or glyph_svg")
+  end
   local kwargs = generate_kwargs()
   local any_success = false
   for label, dir in pairs(dirs) do
@@ -346,8 +350,10 @@ local function do_regenerate()
   end
 end
 
-local sub = args[1] or "regenerate"
-if sub == "regenerate" then
+local sub = args[1]
+if not sub then
+  info("usage: admin icons [regenerate|swap-dev|restore]")
+elseif sub == "regenerate" then
   do_regenerate()
 elseif sub == "swap-dev" then
   -- tv is banded here as well as mac/ios: without it a dev build installs on
