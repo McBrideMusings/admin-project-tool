@@ -496,7 +496,7 @@ func TestBeadRowsFormFixedColumns(t *testing.T) {
 	}
 	// "owner" is not in the default set — a solo workspace spends nine cells on
 	// one name — so the fixture asks for it, which is what the column exists for.
-	m.beadCols = []string{"priority", "type", "glyph", "title", "unblocks", "labels", "owner", "id", "age"}
+	m.beadCols = []string{"id", "priority", "type", "glyph", "title", "unblocks", "labels", "owner", "age"}
 	human, ready, inProgress, blocked := groupBeads(m.beads)
 	l := beadLayoutFor(m.beadCols, cols, m.beadCtx(false), human, ready, inProgress, blocked)
 	wID, wType := l.widths[l.indexOf("id")], l.widths[l.indexOf("type")]
@@ -514,11 +514,11 @@ func TestBeadRowsFormFixedColumns(t *testing.T) {
 	// The lead (cursor) cell is prepended by renderRow, and the widths are
 	// budgeted for it, so the line has to be composed with it here too — without
 	// it every left-anchored column sits one cell early.
-	prioAt := 2
+	idAt := 2
+	prioAt := idAt + wID + 2
 	typeAt := prioAt + 2 + 2
 	ageAt := cols - beadAgeW
-	idAt := ageAt - 2 - wID
-	assigneeAt := idAt - 2 - wOwner
+	assigneeAt := ageAt - 2 - wOwner
 	labelAt := assigneeAt - 2 - wLabel
 	unblocksAt := labelAt - 2 - wUnblocks
 
@@ -998,7 +998,7 @@ func TestBeadTreeKeepsFixedColumns(t *testing.T) {
 		{ID: "bdtest-isd", Title: "Wire reset email", Status: "open", Type: "task", Priority: 1, Blockers: []string{"bdtest-qt0"}},
 		{ID: "bdtest-63h", Title: "Docs for reset", Status: "open", Type: "task", Priority: 2, Assignee: "alice", Blockers: []string{"bdtest-qt0", "bdtest-isd"}},
 	}
-	m.beadCols = []string{"priority", "type", "glyph", "title", "labels", "owner", "id", "age"}
+	m.beadCols = []string{"id", "priority", "type", "glyph", "title", "labels", "owner", "age"}
 	l := beadLayoutFor(m.beadCols, cols, m.beadCtx(true), m.beads)
 	wID, wType := l.widths[l.indexOf("id")], l.widths[l.indexOf("type")]
 	wGlyph := l.widths[l.indexOf("glyph")]
@@ -1007,13 +1007,13 @@ func TestBeadTreeKeepsFixedColumns(t *testing.T) {
 		t.Fatalf("tree mode has no status glyph column: %d cells", wGlyph)
 	}
 
-	prioAt := 2
+	idAt := 2
+	prioAt := idAt + wID + 2
 	typeAt := prioAt + 2 + 2
 	glyphAt := typeAt + wType + 2
 	titleAt := glyphAt + wGlyph + 2
 	ageAt := cols - beadAgeW
-	idAt := ageAt - 2 - wID
-	assigneeAt := idAt - 2 - wOwner
+	assigneeAt := ageAt - 2 - wOwner
 	labelAt := assigneeAt - 2 - wLabel
 
 	want := map[string]struct{ id, prio, typ, glyph, title, labels, assignee string }{
@@ -1163,16 +1163,16 @@ func TestNameCandidateRowsFormFixedColumns(t *testing.T) {
 	m.nameCands = m.beads
 	m.nameSel = 1
 
-	names := []string{"priority", "type", "title", "id"}
+	names := []string{"id", "priority", "type", "title"}
 	l := beadLayoutFor(names, cols, m.beadCtx(false), m.nameCands)
 	wID, wType := l.widths[l.indexOf("id")], l.widths[l.indexOf("type")]
 
 	// The lead (cursor/highlight) cell is prepended the same way renderRow
 	// prepends it for every other list pane — without it every left-anchored
 	// column would sit one cell early.
-	prioAt := 2
+	idAt := 2
+	prioAt := idAt + wID + 2
 	typeAt := prioAt + 2 + 2
-	idAt := cols - wID
 
 	want := map[string]struct{ id, prio, typ string }{
 		"bdtest-38t": {"38t", "P0", "bug"},

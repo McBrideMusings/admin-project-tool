@@ -53,7 +53,7 @@ type beadColumn struct {
 // "labels" and "unblocks" are absent for the same reason as the title's width: the
 // row gives the title every cell it can, and the strip under the list
 // (beadstrip.go) shows those three for the bead under the cursor.
-var DefaultBeadColumns = []string{"priority", "glyph", "title", "id", "age"}
+var DefaultBeadColumns = []string{"id", "priority", "glyph", "title", "age"}
 
 // beadColumnByName is every column the pane knows how to draw. A name outside
 // this map is configuration naming something that does not exist, which is
@@ -61,7 +61,7 @@ var DefaultBeadColumns = []string{"priority", "glyph", "title", "id", "age"}
 // the pane.
 var beadColumnByName = map[string]beadColumn{
 	"id": {
-		name: "id", side: beadRight,
+		name: "id", side: beadLeft,
 		width: func(b bd.Bead, c beadCtx) int { return vlen(shortBeadID(b.ID, c.prefix)) },
 		cell: func(b bd.Bead, w int, c beadCtx) []seg {
 			return []seg{{t: padEnd(shortBeadID(b.ID, c.prefix), w), fg: cCyan}}

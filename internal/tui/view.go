@@ -650,7 +650,7 @@ func (m Model) footer(width int) string {
 }
 
 // nameCandLines renders the new-worktree prompt's bead search as extra footer
-// rows: priority / type / title / id, in the same fixed-width columns the Beads
+// rows: id / priority / type / title, in the same fixed-width columns the Beads
 // pane draws, so the search list reads as a table like every other list in this
 // repo (see CLAUDE.md, "Row layout: every list pane is a table"). Reusing
 // beadLayoutFor rather than hand-rolling padding means these columns can never
@@ -663,7 +663,7 @@ func (m Model) nameCandLines(width int) []string {
 	if len(m.nameCands) == 0 {
 		return nil
 	}
-	l := beadLayoutFor([]string{"priority", "type", "title", "id"}, width, m.beadCtx(false), m.nameCands)
+	l := beadLayoutFor([]string{"id", "priority", "type", "title"}, width, m.beadCtx(false), m.nameCands)
 	lines := make([]string, len(m.nameCands))
 	for i, b := range m.nameCands {
 		left, right := l.row(beadNode{b: b}, width)
