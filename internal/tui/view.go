@@ -22,7 +22,7 @@ type hitKind int
 const (
 	hitNone   hitKind = iota // nothing here: chrome, a border, a blank fill
 	hitTabBar                // the tab-bar line; see hitTarget.tabs
-	hitRow                   // a pane row; see hitTarget.pane/row (and .pane2/row2)
+	hitRow                   // a pane row; see hitTarget.pane/row
 )
 
 // tabHit is one visible tab's horizontal cell range on the tab-bar line —
@@ -42,21 +42,13 @@ type tabHit struct {
 // when the line has content but nothing selectable: a border, a blank fill, a
 // section heading, a "N more" hint.
 //
-// Two shapes need more than that single target:
-//   - the tab bar line, where which tab a click hits depends on x, not just
-//     y — it carries tabs instead of pane/row (kind hitTabBar);
-//   - a Local-tab body line, where Branches sits left of Commits/Stashes at
-//     the same y — split is set, and x < splitX resolves to pane/row while
-//     x >= splitX resolves to pane2/row2.
+// One shape needs more than that single target: the tab bar line, where which
+// tab a click hits depends on x, not just y — it carries tabs instead of
+// pane/row (kind hitTabBar).
 type hitTarget struct {
 	kind hitKind
 	pane localPane
 	row  int
-
-	split  bool
-	splitX int
-	pane2  localPane
-	row2   int
 
 	tabs []tabHit
 }

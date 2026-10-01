@@ -69,7 +69,7 @@ func seededModel() Model {
 func TestLocalViewRenders(t *testing.T) {
 	m := seededModel()
 	out := m.View()
-	for _, want := range []string{"owner/repo", "feature", "Branches", "old-merged", "Recent commits", "Stashes"} {
+	for _, want := range []string{"owner/repo", "feature", "Branches", "old-merged", "Commits", "Stashes"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("Local view missing %q\n%s", want, out)
 		}
@@ -599,8 +599,16 @@ func TestBranchRowSelectModeGrowsTheGutter(t *testing.T) {
 	offLayout := m.branchRowLayout(r, w, plan)
 	m.selected = map[string]bool{"other": true}
 	onLayout := m.branchRowLayout(r, w, plan)
-	if offLayout.nameW-onLayout.nameW != brSelectW {
-		t.Errorf("select mode changed nameW by %d cells, want brSelectW=%d", offLayout.nameW-onLayout.nameW, brSelectW)
+	// The flexible region is the name plus, when the section draws it inline, the
+	// purpose column and the gap before it.
+	flex := func(l branchRowLayout) int {
+		if l.purposeW > 0 {
+			return l.nameW + 1 + l.purposeW
+		}
+		return l.nameW
+	}
+	if flex(offLayout)-flex(onLayout) != brSelectW {
+		t.Errorf("select mode changed the flexible width by %d cells, want brSelectW=%d", flex(offLayout)-flex(onLayout), brSelectW)
 	}
 }
 
@@ -2413,45 +2421,115 @@ func TestRowNamesLinkToGitHub(t *testing.T) {
 	}
 }
 
-// Focus is only worth a keypress where a row key can act. A pane with no
-// selectable rows — Stashes on a repo with no stashes, which collapses to a
-// single rule, or paneCleanup, which draws nothing at all — is stepped over in
-// both directions.
+// Focus is only worth a keypress where a row key can act. The strip shows one
+// of Commits and Stashes at a time, so ⇥ steps over the hidden one, and over the
+// shown one when it has no rows.
 func TestTabSkipsPanesWithNoRows(t *testing.T) {
 	m := seededModel()
 
-	// With a stash, Stashes is a stop in both directions.
-	m.pane = paneBranches
-	if got := m.nextVisiblePane(paneCommits, 1); got != paneStashes {
-		t.Errorf("with stashes: ⇥ from Commits = %v, want paneStashes", got)
-	}
-	if got := m.nextVisiblePane(paneBranches, -1); got != paneStashes {
-		t.Errorf("with stashes: ⇧⇥ from Branches = %v, want paneStashes", got)
-	}
-
-	// Drop the stashes and it stops being one.
-	m.local.stashes = nil
+	// Commits is showing: ⇥ alternates Branches and Commits, never Stashes.
 	if got := m.nextVisiblePane(paneBranches, 1); got != paneCommits {
-		t.Errorf("no stashes: ⇥ from Branches = %v, want paneCommits", got)
+		t.Errorf("⇥ from Branches = %v, want paneCommits", got)
 	}
 	if got := m.nextVisiblePane(paneCommits, 1); got != paneBranches {
-		t.Errorf("no stashes: ⇥ from Commits = %v, want paneBranches", got)
+		t.Errorf("⇥ from Commits = %v, want paneBranches (Stashes is hidden)", got)
 	}
 	if got := m.nextVisiblePane(paneBranches, -1); got != paneCommits {
-		t.Errorf("no stashes: ⇧⇥ from Branches = %v, want paneCommits", got)
-	}
-	if got := m.nextVisiblePane(paneCommits, -1); got != paneBranches {
-		t.Errorf("no stashes: ⇧⇥ from Commits = %v, want paneBranches", got)
+		t.Errorf("⇧⇥ from Branches = %v, want paneCommits", got)
 	}
 
-	// Every other pane empty: the step terminates on the pane already focused
-	// rather than walking forever.
-	m.local.commits = nil
+	// Switch the strip and the roles swap.
+	m.historyStashes = true
+	if got := m.nextVisiblePane(paneBranches, 1); got != paneStashes {
+		t.Errorf("strip on Stashes: ⇥ from Branches = %v, want paneStashes", got)
+	}
+	if got := m.nextVisiblePane(paneStashes, 1); got != paneBranches {
+		t.Errorf("strip on Stashes: ⇥ from Stashes = %v, want paneBranches", got)
+	}
+
+	// The shown list is empty: nothing in the strip to focus.
+	m.local.stashes = nil
 	if got := m.nextVisiblePane(paneBranches, 1); got != paneBranches {
-		t.Errorf("only Branches has rows: ⇥ = %v, want paneBranches", got)
+		t.Errorf("empty Stashes shown: ⇥ from Branches = %v, want paneBranches", got)
 	}
 	if got := m.nextVisiblePane(paneBranches, -1); got != paneBranches {
-		t.Errorf("only Branches has rows: ⇧⇥ = %v, want paneBranches", got)
+		t.Errorf("empty Stashes shown: ⇧⇥ from Branches = %v, want paneBranches", got)
+	}
+}
+
+// `c` switches the strip between Commits and Stashes, and carries focus with it
+// when the cursor was in the strip.
+func TestCSwitchesTheHistoryStrip(t *testing.T) {
+	m := seededModel()
+	m.active = tabLocal
+	m.pane = paneCommits
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = next.(Model)
+	if !m.historyStashes || m.pane != paneStashes {
+		t.Fatalf("after c: historyStashes=%v pane=%v, want Stashes shown and focused", m.historyStashes, m.pane)
+	}
+	if out := stripANSI(m.View()); !strings.Contains(out, "stash@{0}") || !strings.Contains(out, "[Stashes ") {
+		t.Errorf("after c the strip does not show the stashes\n%s", out)
+	}
+
+	// With focus on Branches, c switches the list and leaves focus alone.
+	m.pane = paneBranches
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = next.(Model)
+	if m.historyStashes || m.pane != paneBranches {
+		t.Errorf("c from Branches: historyStashes=%v pane=%v, want Commits shown, focus unmoved", m.historyStashes, m.pane)
+	}
+}
+
+// The strip's placeholder line for an empty list is not a row: clicking it must
+// not focus the empty pane, where no row key could act.
+func TestClickOnEmptyStripPlaceholderIsNoOp(t *testing.T) {
+	m := seededModel()
+	m.active = tabLocal
+	m.local.stashes = nil
+	m.historyStashes = true
+	lines, hits := m.frame()
+	y := -1
+	for i, l := range lines {
+		if strings.Contains(l, "no stashes") {
+			y = i
+		}
+	}
+	if y == -1 {
+		t.Fatal("placeholder line not found in the rendered frame")
+	}
+	if hits[y].row != -1 {
+		t.Fatalf("hit on the placeholder = %+v, want row -1", hits[y])
+	}
+	before := m.pane
+	next, _ := m.Update(tea.MouseMsg{Y: y, X: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = next.(Model)
+	if m.pane != before {
+		t.Errorf("clicking the placeholder moved focus from %v to %v", before, m.pane)
+	}
+}
+
+// Switching onto an empty list from the strip cannot leave focus on it.
+func TestToggleOntoEmptyListHandsFocusToBranches(t *testing.T) {
+	m := seededModel()
+	m.active = tabLocal
+	m.local.stashes = nil
+	m.pane = paneCommits
+	m.toggleHistory()
+	if !m.historyStashes || m.pane != paneBranches {
+		t.Errorf("after toggling onto empty Stashes: historyStashes=%v pane=%v, want Stashes shown and focus on Branches", m.historyStashes, m.pane)
+	}
+}
+
+// historyStripH bounds: a third of the body, never under 3 rows, never over
+// historyStripMaxH, and none at all only where the body is too short for any box.
+func TestHistoryStripHeight(t *testing.T) {
+	for _, c := range []struct{ body, want int }{
+		{3, 0}, {4, 0}, {5, 0}, {6, 3}, {8, 3}, {12, 4}, {27, 9}, {25, 8}, {60, historyStripMaxH},
+	} {
+		if got := historyStripH(c.body); got != c.want {
+			t.Errorf("historyStripH(%d) = %d, want %d", c.body, got, c.want)
+		}
 	}
 }
 

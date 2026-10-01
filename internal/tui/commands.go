@@ -135,10 +135,8 @@ func loadLocalCmd(ctx context.Context, repoRoot, checkout, current, def string) 
 			return localDataMsg{d}
 		}
 		d.status, _ = git.WorkingStatus(ctx, repoRoot)
-		// The commits box now takes three quarters of the rail's height, so a fetch
-		// sized for the old flat layout (10) left most of a tall box blank. 40 is
-		// comfortably more than the tallest realistic pane can show at once; the box
-		// scrolls past whatever it can't display.
+		// The commits strip is at most historyStripMaxH rows tall and scrolls, so 40
+		// is more than it shows at once and enough to scroll through.
 		d.commits, _ = git.RecentCommits(ctx, checkout, 40)
 		d.stashes, _ = git.Stashes(ctx, checkout)
 

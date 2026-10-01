@@ -213,7 +213,9 @@ func (m Model) branchPaneLines(rows []paneRow, byName map[string]git.BranchInfo,
 		}
 		itemLine[i] = len(lines)
 		lines = append(lines, m.brPanelLine(r, byName[r.name], w, plan))
-		if r.sec.showsPurpose() {
+		// A section wide enough to draw the purpose as a column on the row itself
+		// (branchRowLayout.purposeW) has no second line to draw.
+		if r.sec.showsPurpose() && m.branchRowLayout(r, w, plan).purposeW == 0 {
 			if sub := m.brSubLine(r, w, plan); sub != nil {
 				lines = append(lines, sub)
 			}

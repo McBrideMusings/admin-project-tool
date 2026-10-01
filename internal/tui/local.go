@@ -130,6 +130,9 @@ func stateCell(r paneRow) string {
 type branchRowLayout struct {
 	keep  map[string]bool
 	nameW int
+	// purposeW is the inline purpose column's width, or 0 when the purpose is
+	// drawn on the row's second line instead.
+	purposeW int
 }
 
 // branchRowLayout mirrors brPanelLine's own right-column budgeting exactly:
@@ -175,7 +178,17 @@ func (m Model) branchRowLayout(r paneRow, w int, plan columnPlan) branchRowLayou
 	// gutter(g) plus 1 for the separator composeLR always inserts between the name
 	// and the right-hand columns — flexWidth's `fixed` has to include that forced
 	// gap or the row comes out exactly one cell wider than w.
-	return branchRowLayout{keep: keep, nameW: flexWidth(w, g+1, rightW, 8)}
+	nameW := flexWidth(w, g+1, rightW, 8)
+	// With room for a readable name AND a readable purpose, the purpose is a column
+	// on this row and its second line goes away. The split is per layout, and the
+	// layout is per section plan, so every row of a section decides the same way.
+	// Below that threshold the name keeps the whole flexible width and the purpose
+	// stays on its own line, as before.
+	if r.sec.showsPurpose() && nameW >= brNameMinW+1+brPurposeMinW {
+		name := min(brNameMaxW, nameW-1-brPurposeMinW)
+		return branchRowLayout{keep: keep, nameW: name, purposeW: nameW - name - 1}
+	}
+	return branchRowLayout{keep: keep, nameW: nameW}
 }
 
 // stateColumnEnd is the cell offset, from the left edge of the row, where the
@@ -304,6 +317,12 @@ func (m Model) brPanelLine(r paneRow, b git.BranchInfo, w int, plan columnPlan) 
 		nameColor = cSlate
 	}
 	nameSeg := seg{t: truncR(r.name, nameW), fg: nameColor}
+	namePad := 0
+	if layout.purposeW > 0 {
+		// The padding that aligns the purpose column is its own unlinked segment, so
+		// the name's hyperlink covers the name and not the blank cells after it.
+		namePad = nameW - vlen(nameSeg.t)
+	}
 	// Struck through means finished, and only a proof earns it — a row in Clean Up
 	// with nothing held. A held row keeps its normal weight: it is deletable in the
 	// same breath as it is holding work you have not saved, and dimming it is how
@@ -319,6 +338,9 @@ func (m Model) brPanelLine(r paneRow, b git.BranchInfo, w int, plan columnPlan) 
 		nameSeg.link = branchURL(m.nwo, b.Name)
 	}
 	left := append(m.gutterSegs(r, b), nameSeg)
+	if layout.purposeW > 0 {
+		left = append(left, seg{t: padN(namePad + 1)}, rowCell(r.purpose.text, layout.purposeW, purposeColor(r.purpose.src)))
+	}
 	return composeLR(left, right, w)
 }
 
@@ -457,10 +479,9 @@ func (m Model) stPanelLine(s git.Stash, w int) []seg {
 	return composeLR(left, nil, w)
 }
 
-// renderLocalPanels renders the Repo tab's dual-panel layout in exactly height
-// lines, alongside which pane/row each line hits. Branches sits left of
-// Commits/Stashes at the same y, so every body line's hitTarget is split at
-// the column the two columns are joined on (see localSplitHit).
+// renderLocalPanels renders the Repo tab in exactly height lines, alongside
+// which pane/row each line hits: Branches across the full width, with a
+// Commits/Stashes strip beneath it.
 func (m Model) renderLocalPanels(width, height int) ([]string, []hitTarget) {
 	if !m.haveLocal {
 		lines := []string{"  " + mutedStyle.Render("loading…")}
@@ -483,28 +504,16 @@ func (m Model) renderLocalPanels(width, height int) ([]string, []hitTarget) {
 		}
 	}
 
-	// The rail is a fixed width, not a share of the terminal. Recent commits and
-	// Stashes are read-only reference — every keybinding the footer advertises acts
-	// on Branches — so the rail takes what a short sha, a readable subject and an
-	// age need and nothing more. Splitting by percentage gave the rail half the
-	// screen at 200 cells, where the extra cells bought a longer commit subject
-	// while branch names on the left truncated.
-	rightW := min(railW, (width-1)*railMaxPct/100)
-	if width-1-rightW < brMinW {
-		rightW = width - 1 - brMinW
-	}
-	if rightW < 10 {
-		rightW = 10
-	}
-	leftW := width - 1 - rightW
-	if leftW < 1 {
-		leftW = 1
-	}
+	// Branches owns the full width: every column of the row, and the purpose, fit
+	// on one line. Commits and Stashes are read-only reference under it, one at a
+	// time behind a toggle, in a strip a third of the body tall at most.
+	stripH := historyStripH(height)
+	branchH := height - stripH
 
-	// Branches panel (left, full height). The cursor indexes rows, not lines — a row
-	// is one or two lines and headings are lines nothing can land on — so itemLine
-	// carries the mapping and every caller keeps addressing branches by position.
-	bInnerW := leftW - 2
+	// The cursor indexes rows, not lines — a row is one or two lines and headings
+	// are lines nothing can land on — so itemLine carries the mapping and every
+	// caller keeps addressing branches by position.
+	bInnerW := width - 2
 	byName := map[string]git.BranchInfo{}
 	for _, b := range m.local.branches {
 		byName[b.Name] = b
@@ -529,82 +538,14 @@ func (m Model) renderLocalPanels(width, height int) ([]string, []hitTarget) {
 	}
 	branchBox := boxPanel{
 		title: "Branches", badge: badge,
-		width: leftW, height: height, focused: m.focus == focusBody && m.pane == paneBranches,
-		lines: bLines, active: bActive, scroll: clampScroll(0, len(bLines), height-2, bActive),
+		width: width, height: branchH, focused: m.focus == focusBody && m.pane == paneBranches,
+		lines: bLines, active: bActive, scroll: clampScroll(0, len(bLines), branchH-2, bActive),
 		footer: footer,
 	}
+	out := branchBox.render()
 
-	// The rail is a 3:1 split, commits over stashes, and the ratio does not move
-	// with how many rows either pane holds — a dashboard is something you glance at
-	// the same place every time, and a proportion that tracks content is one you
-	// have to re-find. The single exception is a stash count of zero, which is not
-	// "fewer rows" but no pane to size: see below. Cleanup no longer has its own box
-	// on this column — every deletable branch is marked in the Branches list already
-	// and ⇧X is named on its bottom border — so this split is the whole rail rather
-	// than three boxes competing.
-	avail := height
-	stashesH := avail / 4
-	switch {
-	case len(stashes) == 0:
-		// A stash pane with no stashes is eight blank lines behind two borders. The
-		// borders are there to enclose rows; with no rows the box is nothing but its
-		// own chrome, so it collapses to one named rule and the rail's height goes to
-		// the pane that has something to show. The line stays rather than the pane
-		// disappearing, so an empty stash list still reads as a fact.
-		stashesH = 1
-	case stashesH < 3:
-		// A box needs ≥3 rows (two borders + ≥1 content) to exist at all. Below that,
-		// fold the space into commits rather than draw a box that can't hold anything.
-		stashesH = 0
-	}
-	commitsH := avail - stashesH
-	// Commits is the pane that always has content, so it is the one that must stay
-	// drawable: on a terminal too short for both, the rail is entirely commits.
-	if commitsH < 3 {
-		commitsH, stashesH = avail, 0
-	}
-	rInnerW := rightW - 2
-	cLines := make([][]seg, len(commits))
-	for i, c := range commits {
-		cLines[i] = m.cmPanelLine(c, rInnerW)
-	}
-	cCur := clampi(0, m.paneCursor[paneCommits], len(commits)-1)
-	cActive := -1
-	if len(commits) > 0 {
-		cActive = cCur
-	}
-	commitsBox := boxPanel{
-		title: "Recent commits", badge: strconv.Itoa(len(commits)), width: rightW, height: commitsH,
-		focused: m.focus == focusBody && m.pane == paneCommits, lines: cLines, active: cActive,
-		scroll: clampScroll(0, len(cLines), commitsH-2, cActive),
-	}
-	sLines := make([][]seg, len(stashes))
-	for i, s := range stashes {
-		sLines[i] = m.stPanelLine(s, rInnerW)
-	}
-	sCur := clampi(0, m.paneCursor[paneStashes], len(stashes)-1)
-	sActive := -1
-	if len(stashes) > 0 {
-		sActive = sCur
-	}
-	stashesBox := boxPanel{
-		title: "Stashes", badge: strconv.Itoa(len(stashes)), width: rightW, height: stashesH,
-		focused: m.focus == focusBody && m.pane == paneStashes, lines: sLines, active: sActive,
-		scroll: clampScroll(0, len(sLines), stashesH-2, sActive),
-	}
-
-	left := branchBox.render()
-	right := commitsBox.render()
-	switch {
-	case stashesH == 1:
-		right = append(right, stashesBox.renderRule())
-	case stashesH >= 3:
-		right = append(right, stashesBox.render()...)
-	}
-
-	// itemLine maps a branch row to the line it landed on; the hit map needs the
-	// inverse — a line back to the row it renders — so it can answer what a
-	// click on that line hits.
+	// lineToRow is the inverse of itemLine — a line back to the row it renders — so
+	// the hit map can answer what a click on that line hits.
 	lineToRow := make([]int, len(bLines))
 	for i := range lineToRow {
 		lineToRow[i] = -1
@@ -612,60 +553,115 @@ func (m Model) renderLocalPanels(width, height int) ([]string, []hitTarget) {
 	for row, li := range itemLine {
 		lineToRow[li] = row
 	}
-	hits := make([]hitTarget, height)
-	for r := 0; r < height; r++ {
-		hits[r] = localBodyHit(r, leftW, height, commitsH, stashesH, branchBox, commitsBox, stashesBox, lineToRow)
-	}
-
-	return zipColumns(left, right, height), hits
-}
-
-// localBodyHit resolves one row r (0 ≤ r < bodyH) of renderLocalPanels' merged
-// output into what it hits: Branches to the left of leftW, Commits/Stashes to
-// the right. It reads the same boxPanel.innerRow each box's own render() drew
-// from, so the hit map can never drift from what was actually drawn — a
-// changed layout only ever changes what render() computes, and this reads
-// that computation rather than repeating it.
-func localBodyHit(r, leftW, bodyH, commitsH, stashesH int, branchBox, commitsBox, stashesBox boxPanel, lineToRow []int) hitTarget {
-	h := hitTarget{
-		kind: hitRow, split: true, splitX: leftW,
-		pane: paneBranches, row: -1,
-		pane2: paneCommits, row2: -1,
-	}
-
-	if r != 0 && r != bodyH-1 {
-		if li, hint := branchBox.innerRow(r - 1); !hint && li >= 0 && li < len(lineToRow) {
-			h.row = lineToRow[li]
-		}
-	}
-
-	switch {
-	case r < commitsH:
-		h.pane2 = paneCommits
-		if r != 0 && r != commitsH-1 {
-			if li, hint := commitsBox.innerRow(r - 1); !hint && li >= 0 {
-				h.row2 = li
+	hits := make([]hitTarget, 0, height)
+	for r := 0; r < branchH; r++ {
+		h := hitTarget{kind: hitRow, pane: paneBranches, row: -1}
+		if r != 0 && r != branchH-1 {
+			if li, hint := branchBox.innerRow(r - 1); !hint && li >= 0 && li < len(lineToRow) {
+				h.row = lineToRow[li]
 			}
 		}
-	case stashesH >= 3:
-		idx := r - commitsH
-		h.pane2 = paneStashes
-		if idx != 0 && idx != stashesH-1 {
-			if li, hint := stashesBox.innerRow(idx - 1); !hint && li >= 0 {
-				h.row2 = li
-			}
-		}
-	default:
-		// stashesH == 1 is the collapsed "no stashes" rule (no rows exist to
-		// select there) and stashesH == 0 can't reach this branch, since that
-		// only happens when commitsH == bodyH and r < commitsH already matched
-		// above. Either way there is nothing selectable on the right here.
-		h.pane2 = paneStashes
+		hits = append(hits, h)
 	}
-	return h
+
+	if stripH > 0 {
+		strip := m.historyStrip(width, stripH, commits, stashes)
+		out = append(out, strip.render()...)
+		for r := 0; r < stripH; r++ {
+			h := hitTarget{kind: hitRow, pane: m.historyPane(), row: -1}
+			// An empty list draws one placeholder line, which is not a row.
+			if r != 0 && r != stripH-1 && m.paneCount(m.historyPane()) > 0 {
+				if li, hint := strip.innerRow(r - 1); !hint && li >= 0 {
+					h.row = li
+				}
+			}
+			hits = append(hits, h)
+		}
+	}
+	return out, hits
 }
 
-// clampi clamps v to [lo, hi]; if hi < lo it returns lo.
+// historyPane is the pane the bottom strip is showing: Commits unless the toggle
+// has switched it to Stashes.
+func (m Model) historyPane() localPane {
+	if m.historyStashes {
+		return paneStashes
+	}
+	return paneCommits
+}
+
+// paneShown reports whether a pane is on screen. Branches always is; of Commits
+// and Stashes only the one the strip toggle points at is, so focus never lands on
+// the hidden one.
+func (m Model) paneShown(p localPane) bool {
+	switch p {
+	case paneBranches:
+		return true
+	case paneCommits, paneStashes:
+		return p == m.historyPane()
+	}
+	return false
+}
+
+// stripMinBody is the shortest body that fits the strip under a drawable
+// Branches box: 3 rows each, since a 1-row box still draws both borders.
+const stripMinBody = 6
+
+// historyStripH is the strip's height, borders included, for a body of the given
+// height: a third of it, at least 3 (a box needs two borders and a row) and at
+// most historyStripMaxH. A body under stripMinBody rows draws Branches alone.
+// paneShown does not know the body height, so the strip has to exist at every
+// height a focusable pane can be on.
+func historyStripH(body int) int {
+	if body < stripMinBody {
+		return 0
+	}
+	return clampi(3, body/3, historyStripMaxH)
+}
+
+// historyStrip is the box under Branches. Its title is the toggle itself: both
+// names and counts, the one on screen in brackets, so which list this is and what
+// `c` will switch to are readable without remembering the last keypress.
+func (m Model) historyStrip(width, height int, commits []git.Commit, stashes []git.Stash) boxPanel {
+	inner := width - 2
+	pane := m.historyPane()
+	var lines [][]seg
+	var n int
+	if pane == paneStashes {
+		n = len(stashes)
+		for _, s := range stashes {
+			lines = append(lines, m.stPanelLine(s, inner))
+		}
+		if n == 0 {
+			lines = [][]seg{{{t: " no stashes", fg: cFaint}}}
+		}
+	} else {
+		n = len(commits)
+		for _, c := range commits {
+			lines = append(lines, m.cmPanelLine(c, inner))
+		}
+		if n == 0 {
+			lines = [][]seg{{{t: " no commits", fg: cFaint}}}
+		}
+	}
+	active := -1
+	if n > 0 {
+		active = clampi(0, m.paneCursor[pane], n-1)
+	}
+	label := func(name string, count int, on bool) string {
+		if on {
+			return "[" + name + " " + strconv.Itoa(count) + "]"
+		}
+		return name + " " + strconv.Itoa(count)
+	}
+	title := label("Commits", len(commits), pane == paneCommits) + "  " + label("Stashes", len(stashes), pane == paneStashes)
+	return boxPanel{
+		title: title, badge: "c switch", width: width, height: height,
+		focused: m.focus == focusBody && m.pane == pane,
+		lines:   lines, active: active, scroll: clampScroll(0, len(lines), height-2, active),
+	}
+}
+
 // maxi is the larger of two ints, for width budgets that must never go negative.
 func maxi(a, b int) int {
 	if a > b {
@@ -709,7 +705,7 @@ func (m Model) nextVisiblePane(p localPane, dir int) localPane {
 	n := p
 	for i := 0; i < int(numPanes); i++ {
 		n = localPane((int(n) + dir + int(numPanes)) % int(numPanes))
-		if m.paneCount(n) > 0 {
+		if m.paneCount(n) > 0 && m.paneShown(n) {
 			return n
 		}
 	}

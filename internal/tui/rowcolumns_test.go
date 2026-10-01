@@ -819,8 +819,61 @@ func TestCleanUpRowsDropTheirPurposeSubline(t *testing.T) {
 	if featureLine == -1 {
 		t.Fatal("feature row not found")
 	}
-	if !strings.Contains(segsText(lines[featureLine+1]), "↳") {
-		t.Errorf("feature's line after its row is %q, want a purpose subline", segsText(lines[featureLine+1]))
+	// At this width the purpose may sit on the row itself (the inline column) or on
+	// the line after it; either way it must be drawn once.
+	row, next := segsText(lines[featureLine]), segsText(lines[featureLine+1])
+	if !strings.Contains(row, "the thing I'm actually working on") && !strings.Contains(next, "↳") {
+		t.Errorf("feature's purpose is on neither its row %q nor a subline %q", row, next)
+	}
+}
+
+// TestWidePaneDrawsPurposeOnTheRow pins the inline purpose column: where the
+// pane is wide enough for a readable name and a readable purpose, the purpose is
+// a column on the branch's own row and the row has no second line; at the width
+// where it is not, the second line is back. Neither width may draw both.
+func TestWidePaneDrawsPurposeOnTheRow(t *testing.T) {
+	const note = "the thing I'm actually working on"
+	m := seededModel()
+	m.local.branchNote = map[string]string{"feature": note}
+
+	rows := m.branchRows()
+	byName := map[string]git.BranchInfo{}
+	for _, b := range m.local.branches {
+		byName[b.Name] = b
+	}
+	counts := map[section]int{}
+	for _, r := range rows {
+		counts[r.sec]++
+	}
+	featureRow := func(w int) (row, next string) {
+		lines, itemLine := m.branchPaneLines(rows, byName, counts, w)
+		for i, r := range rows {
+			if r.name == "feature" {
+				row = segsText(lines[itemLine[i]])
+				if itemLine[i]+1 < len(lines) {
+					next = segsText(lines[itemLine[i]+1])
+				}
+				return row, next
+			}
+		}
+		t.Fatal("feature row not found")
+		return "", ""
+	}
+
+	row, next := featureRow(200)
+	if !strings.Contains(row, note) {
+		t.Errorf("at 200 columns feature's own row lacks its purpose: %q", row)
+	}
+	if strings.Contains(next, "↳") {
+		t.Errorf("at 200 columns feature still draws a purpose subline: %q", next)
+	}
+
+	row, next = featureRow(40)
+	if strings.Contains(row, note) {
+		t.Errorf("at 40 columns feature's row carries the purpose inline: %q", row)
+	}
+	if !strings.Contains(next, "↳") {
+		t.Errorf("at 40 columns feature lost its purpose subline: %q", next)
 	}
 }
 

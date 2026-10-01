@@ -99,7 +99,7 @@ func TestRepoTabLayout(t *testing.T) {
 	m := protoModel()
 	out := stripANSI(m.View())
 	mustContainAll(t, "Repo tab", out,
-		"┌─ Branches ", "┌─ Recent commits ", "┌─ Stashes ", "└─",
+		"┌─ Branches ", "┌─ [Commits ", "Stashes ", "└─",
 		// Ahead and behind each sit in their own sub-column, so they are checked
 		// separately rather than as one adjacent pair.
 		// The pane groups by what to do next, so the headings and the ownership
@@ -108,7 +108,7 @@ func TestRepoTabLayout(t *testing.T) {
 		// state glyph renders ◇ for all of them — ownership is carried by color
 		// alone (invisible to stripANSI), not by a distinct shape.
 		"⇅ next action", "◆", "main", "Continue Working", "Reviewing", "◇ ", "19m",
-		"  Repo ", "PRs 2", "stash@{0}",
+		"  Repo ", "PRs 2",
 		// The footer no longer advertises `space select` — the key still works,
 		// it just isn't a hint the Branches pane spends footer width on.
 		"↑↓ move", "↵ checkout", "⇥ pane", "←→ tab",
@@ -189,29 +189,13 @@ func TestEveryLineWithinWidth(t *testing.T) {
 	}
 }
 
-// TestEmptyStashesCollapsesToOneLine pins the collapse: with no stashes the pane
-// is a single named rule, not a box wrapped around eight blank lines, and the
-// height it gives up goes to Recent commits.
-func TestEmptyStashesCollapsesToOneLine(t *testing.T) {
+// TestEmptyStashesSaysSo pins what the strip draws when Stashes is the list on
+// screen and there are none: the toggle still names it with a zero, and one line
+// says it is empty rather than leaving a box of blank rows.
+func TestEmptyStashesSaysSo(t *testing.T) {
 	m := protoModel()
 	m.local.stashes = nil
+	m.historyStashes = true
 	out := stripANSI(m.View())
-	if strings.Contains(out, "┌─ Stashes ") {
-		t.Errorf("empty Stashes still drew a box\n%s", out)
-	}
-	if !strings.Contains(out, "── Stashes ") {
-		t.Errorf("empty Stashes did not draw its rule\n%s", out)
-	}
-	// One line for the rule, and every other rail line belongs to Recent commits.
-	rail := 0
-	for _, ln := range strings.Split(out, "\n") {
-		if strings.Contains(ln, "── Stashes ") {
-			rail++
-		}
-	}
-	if rail != 1 {
-		t.Errorf("Stashes rule drew %d lines, want 1\n%s", rail, out)
-	}
-	// The collapse must not cost the rail its commits box.
-	mustContainAll(t, "collapsed rail", out, "┌─ Recent commits ")
+	mustContainAll(t, "empty stashes", out, "[Stashes 0]", "no stashes", "Commits 1")
 }

@@ -57,9 +57,9 @@ all. This is why the prototype's tracker tweak swaps *repo* rather than a settin
 
 | Tab / pane | Keys |
 |---|---|
-| Repo · Branches | `↑↓` move · `↵` checkout · `⌥↵`/`W` worktree · `w` new · `space` select · `x` delete · `p` pull · `⇥` pane · `/` filter · `r` refresh · `←→` tab |
-| Repo · Commits | `↑↓` move · `↵` copy sha · `o` open ↗ · `⇥` pane · `/` filter · `r` refresh · `←→` tab |
-| Repo · Stashes | `↑↓` move · `↵` details · `⇥` pane · `/` filter · `r` refresh · `←→` tab |
+| Repo · Branches | `↑↓` move · `↵` checkout · `⌥↵`/`W` worktree · `w` new · `space` select · `x` delete · `p` pull · `⇥` pane · `c` history · `/` filter · `r` refresh · `←→` tab |
+| Repo · Commits | `↑↓` move · `↵` copy sha · `o` open ↗ · `⇥` pane · `c` stashes · `/` filter · `r` refresh · `←→` tab |
+| Repo · Stashes | `↑↓` move · `↵` details · `⇥` pane · `c` commits · `/` filter · `r` refresh · `←→` tab |
 | PRs | `↑↓` move · `↵` checkout · `o` open · `i` issue · `/` filter · `r` refresh row · `⇧R` refresh all · `q` quit · `←→` tab |
 | Issues | `↑↓` move · `↵` start work · `o` open · `/` filter · `r` refresh row · `⇧R` refresh all · `q` quit · `←→` tab |
 | Beads | `↑↓` move · `↵` start work · **`d` detail** · **`g` tree** · `/` filter · `r` refresh · `q` quit · `←→` tab |
@@ -72,8 +72,10 @@ Global: `q`/`ctrl+c` quit · `1`–`4` tab by index · `tab`/`shift+tab` pane ·
 
 - **Repo** (`local.go:16`): `paneBranches`, `paneCommits`, `paneStashes`, `paneCleanup` — `⇥`
   cycles, but **two of the four are not views**:
-  - `nextVisiblePane` (`local.go:708`) skips any pane with no selectable rows, so **Stashes is
-    unreachable on a repo with no stashes** — `⇥` walks straight past it.
+  - Commits and Stashes share one strip under the full-width Branches pane, and `c` flips which
+    of the two is drawn. `nextVisiblePane` (`local.go:700`) skips any pane with no selectable rows
+    and any pane the toggle hides, so **Stashes is unreachable on a repo with no stashes**, and
+    `⇥` never lands on the hidden one of the pair.
   - **`paneCleanup` draws nothing of its own at all** (`local.go:701`): every deletable branch
     is marked in place in the Branches list, `x` deletes the row under the cursor, and `⇧X`
     sweeps every ready row from any pane. It is a mode of the Branches list, not a pane with a

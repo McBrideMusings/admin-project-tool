@@ -257,20 +257,18 @@ const (
 	// so select mode adds brSelectW cells to the row's left edge and takes them
 	// back out of the name column — never a separate width computation.
 	brSelectW = 4
-	// brMinW is the narrowest the Branches panel is allowed to get before the rail
-	// gives up width to it. Below this a branch name has no room left after the
-	// gutter and the status columns.
-	brMinW = 28
-	// railW is the width of the right-hand rail — Recent commits over Stashes. It
-	// is a constant rather than a share of the terminal because the rail is
-	// read-only reference and Branches carries every keybinding the footer
-	// advertises: 8 for a short sha, 2 gap, 26 of commit subject, 2 gap, brAgeW for
-	// the age, plus the box's own two border cells.
-	railW = 44
-	// railMaxPct caps the rail on a narrow terminal, where a constant wider than
-	// half the screen would leave the pane that owns every keybinding smaller than
-	// the reference column beside it.
-	railMaxPct = 40
+	// brNameMaxW and brPurposeMinW size the inline purpose column. When the pane is
+	// wide enough that the name column can keep brNameMinW cells and the purpose
+	// still gets brPurposeMinW, purpose is a column on the branch's own row; below
+	// that it stays on the second line, where the name has the whole width.
+	brNameMaxW    = 28
+	brNameMinW    = 20
+	brPurposeMinW = 24
+
+	// historyStripMaxH is the tallest the Commits/Stashes strip gets under
+	// Branches, borders included. It is also capped at a third of the body, so the
+	// strip never takes more than a third of what Branches needs.
+	historyStripMaxH = 9
 
 	// Columns of the sectioned Branches row. The name column takes whatever is
 	// left, so everything right of it sits at the same offset on every line at any
@@ -471,24 +469,6 @@ func (b boxPanel) bottomBorder(innerW int) string {
 	segs = append(segs, b.footer...)
 	segs = append(segs, seg{t: " ", fg: bc}, seg{t: "─", fg: bc}, seg{t: "┘", fg: bc})
 	return renderSegs(segs, nil)
-}
-
-// zipColumns lays two rendered columns side by side into exactly height rows,
-// joining each left/right line with a single space. Either column may be shorter
-// than height; missing lines render blank.
-func zipColumns(left, right []string, height int) []string {
-	rows := make([]string, height)
-	for r := 0; r < height; r++ {
-		l, ri := "", ""
-		if r < len(left) {
-			l = left[r]
-		}
-		if r < len(right) {
-			ri = right[r]
-		}
-		rows[r] = l + " " + ri
-	}
-	return rows
 }
 
 // clampScroll returns a scroll top that keeps active visible within innerH rows.

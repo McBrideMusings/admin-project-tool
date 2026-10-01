@@ -50,13 +50,13 @@ func TestBuiltins(t *testing.T) {
 		}},
 		{Branch, []string{
 			"↑↓:move", "↵:checkout", "⌥↵/W:worktree", "w:new", "x:delete",
-			"p:pull", "⇥:pane", "/:filter", "r:refresh",
+			"p:pull", "⇥:pane", "c:history", "/:filter", "r:refresh",
 		}},
 		{Commit, []string{
-			"↑↓:move", "↵:copy sha", "⇥:pane", "/:filter", "r:refresh",
+			"↑↓:move", "↵:copy sha", "⇥:pane", "c:stashes", "/:filter", "r:refresh",
 		}},
 		{Stash, []string{
-			"↑↓:move", "↵:details", "⇥:pane", "/:filter", "r:refresh",
+			"↑↓:move", "↵:details", "⇥:pane", "c:commits", "/:filter", "r:refresh",
 		}},
 		{Command, []string{
 			"↑↓:move", "↵:dispatch", "a:attach", "x:kill", "c:collapse", "q/esc:quit",

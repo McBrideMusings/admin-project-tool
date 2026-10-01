@@ -176,9 +176,9 @@ func TestClickResolvesToRenderedRow(t *testing.T) {
 	}
 }
 
-// TestClickResolvesToRenderedLocalRow is the same guarantee on the Local tab's
-// split body: the line old-merged actually drew on resolves, on its left
-// (Branches) side, to old-merged's own row in branchRows().
+// TestClickResolvesToRenderedLocalRow is the same guarantee on the Local tab:
+// the line old-merged actually drew on resolves to old-merged's own row in
+// branchRows().
 func TestClickResolvesToRenderedLocalRow(t *testing.T) {
 	m := seededModel()
 	m.active = tabLocal
@@ -194,11 +194,8 @@ func TestClickResolvesToRenderedLocalRow(t *testing.T) {
 		t.Fatal("old-merged not found in the rendered frame")
 	}
 	h := hits[y]
-	if h.kind != hitRow || !h.split {
-		t.Fatalf("hit at old-merged's line is %+v, want a split Local-tab row", h)
-	}
-	if h.pane != paneBranches || h.row < 0 {
-		t.Fatalf("hit's left side is %+v, want Branches with a resolved row", h)
+	if h.kind != hitRow || h.pane != paneBranches || h.row < 0 {
+		t.Fatalf("hit at old-merged's line is %+v, want a Branches row with a resolved row index", h)
 	}
 	rows := m.branchRows()
 	if rows[h.row].name != "old-merged" {
@@ -253,10 +250,10 @@ func TestClickToActMovesThenActivatesOnSecondClick(t *testing.T) {
 		t.Fatal("commit row not found in the rendered frame")
 	}
 	h := hits[y]
-	if !h.split || h.pane2 != paneCommits || h.row2 != 0 {
-		t.Fatalf("hit at the commit row is %+v, want Commits row 0 on its right side", h)
+	if h.pane != paneCommits || h.row != 0 {
+		t.Fatalf("hit at the commit row is %+v, want Commits row 0", h)
 	}
-	x := h.splitX + 3 // past the gap and the box's own left border
+	x := 3 // past the box's own left border
 
 	next, cmd := m.Update(tea.MouseMsg{Y: y, X: x, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	m = next.(Model)
@@ -275,40 +272,6 @@ func TestClickToActMovesThenActivatesOnSecondClick(t *testing.T) {
 	m = next.(Model)
 	if cmd == nil {
 		t.Error("a second click on the row already under the cursor did not activate it")
-	}
-}
-
-// TestClickOnLocalGutterColumnIsNoOp pins the one-cell gap zipColumns joins
-// Branches to Commits/Stashes with: a click exactly on it must move nothing,
-// not fall through to whichever pane happens to sit on its right.
-func TestClickOnLocalGutterColumnIsNoOp(t *testing.T) {
-	m := seededModel()
-	m.active = tabLocal
-	_, hits := m.frame()
-	y := -1
-	var h hitTarget
-	for i, hh := range hits {
-		// Pick a row with a real row on its right side (row2 >= 0) — the case
-		// the bug actually mismisclicked into; a border/blank right side would
-		// pass the test whether or not the split resolved correctly.
-		if hh.kind == hitRow && hh.split && hh.row2 >= 0 {
-			y, h = i, hh
-			break
-		}
-	}
-	if y == -1 {
-		t.Fatal("no split Local-tab row with a resolvable right-side row found in the rendered frame")
-	}
-	beforePane, beforeCursor := m.pane, m.paneCursor
-
-	next, _ := m.Update(tea.MouseMsg{Y: y, X: h.splitX, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
-	m = next.(Model)
-	next, _ = m.Update(tea.MouseMsg{Y: y, X: h.splitX, Action: tea.MouseActionRelease})
-	m = next.(Model)
-
-	if m.pane != beforePane || m.paneCursor != beforeCursor {
-		t.Errorf("click at the gutter column x=%d moved focus (pane=%v cursor=%v), want no-op",
-			h.splitX, m.pane, m.paneCursor)
 	}
 }
 

@@ -173,6 +173,10 @@ type Model struct {
 	// Repo (local) tab: lazygit-style panes with independent cursors.
 	pane       localPane
 	paneCursor [numPanes]int
+	// historyStashes is which list the strip under Branches shows: false is
+	// Commits, true is Stashes. The strip shows one at a time, so the hidden list's
+	// pane is never focusable (paneShown).
+	historyStashes bool
 
 	local  localData
 	remote data.Remote
@@ -1264,7 +1268,9 @@ func (m Model) bodyRowCount() int {
 	case tabLocal:
 		n := 0
 		for p := localPane(0); p < numPanes; p++ {
-			n += m.paneCount(p)
+			if m.paneShown(p) {
+				n += m.paneCount(p)
+			}
 		}
 		return n
 	default:
@@ -1302,6 +1308,20 @@ func (m *Model) enterBody() {
 		return
 	}
 	m.focus = focusBody
+	m.clampCursor()
+}
+
+// toggleHistory switches the strip under Branches between Commits and Stashes.
+// Focus follows it when it was on the strip, so the key a user pressed with the
+// cursor in Commits leaves the cursor in Stashes, not on a pane that just vanished
+// — unless the list it switched to is empty, which has no row to focus, and then
+// clampCursor hands focus to Branches.
+func (m *Model) toggleHistory() {
+	onStrip := m.pane == m.historyPane()
+	m.historyStashes = !m.historyStashes
+	if onStrip {
+		m.pane = m.historyPane()
+	}
 	m.clampCursor()
 }
 
@@ -1900,14 +1920,7 @@ func (m Model) click(y, x int) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case hitRow:
-		pane, row := h.pane, h.row
-		// x == splitX is zipColumns' own single-space joiner between the two
-		// boxes — neither pane's content — so it falls through to h.row, which
-		// is -1 on that column and makes clickRow a no-op.
-		if h.split && x > h.splitX {
-			pane, row = h.pane2, h.row2
-		}
-		return m.clickRow(pane, row)
+		return m.clickRow(h.pane, h.row)
 	}
 	return m, nil
 }
@@ -2224,8 +2237,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Cursor-following collapse toggle (admin-4zz9): Work-tab only, a
 		// no-op everywhere else — every other tab already uses "c" for
 		// nothing, so there is nothing to preserve there.
-		if m.active == tabWork {
+		//
+		// On the Repo tab it switches the strip under Branches between Commits and
+		// Stashes.
+		switch m.active {
+		case tabWork:
 			m.toggleWorkCollapse()
+		case tabLocal:
+			m.toggleHistory()
 		}
 	case "/":
 		m.filtering = true
