@@ -794,7 +794,19 @@ func screenTailLines(screen *vt.SafeEmulator, w int) []string {
 	rows, cols := screen.Height(), screen.Width()
 	var lines []string
 	for y := 0; y < rows; y++ {
-		l := strings.TrimRight(logformat.AnsiEscapeRe.ReplaceAllString(renderEmuLine(screen, y, cols), ""), " \t")
+		var b strings.Builder
+		for x := 0; x < cols; x++ {
+			c := screen.CellAt(x, y)
+			switch {
+			case c != nil && c.Width == 0:
+				// A wide rune's continuation cell.
+			case c == nil || c.Content == "":
+				b.WriteByte(' ')
+			default:
+				b.WriteString(c.Content)
+			}
+		}
+		l := strings.TrimRight(b.String(), " \t")
 		if strings.IndexFunc(l, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) < 0 {
 			continue
 		}
