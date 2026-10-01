@@ -91,7 +91,7 @@ func TestReserved(t *testing.T) {
 	want := []string{
 		"q", "ctrl+c", "esc", "tab", "shift+tab",
 		"up", "down", "left", "right",
-		"j", "k", "1", "2", "3", "4", "/",
+		"j", "k", "1", "2", "3", "4", "5", "6", "7", "/",
 	}
 	if len(Reserved) != len(want) {
 		t.Fatalf("len(Reserved) = %d, want %d (%v)", len(Reserved), len(want), want)

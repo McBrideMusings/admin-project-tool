@@ -5,6 +5,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -296,7 +297,7 @@ func TestKeybarFollowsFocus(t *testing.T) {
 	foundKill, foundAttach := false, false
 	seen := map[string]bool{}
 	for _, p := range tabsPairs {
-		if p[0] == "1-4" && p[1] == "jump" {
+		if p[0] == fmt.Sprintf("1-%d", len(m.visibleTabs())) && p[1] == "jump" {
 			foundJump = true
 		}
 		if p[1] == "kill" {
@@ -311,7 +312,7 @@ func TestKeybarFollowsFocus(t *testing.T) {
 		seen[p[0]] = true
 	}
 	if !foundJump {
-		t.Errorf("tab-bar keymap = %v, want a 1-4/jump pair", tabsPairs)
+		t.Errorf("tab-bar keymap = %v, want a 1-N/jump pair", tabsPairs)
 	}
 	// admin-3rgp.72.12: currentRow() reports no current row at all while
 	// focus is on the tab bar (m.focus == focusTabs, checked first thing in
@@ -375,5 +376,27 @@ func TestKeybarFollowsFocus(t *testing.T) {
 	}
 	if !foundEnterRowKind {
 		t.Errorf("body keymap = %v, want a ↵ pair", bodyPairs)
+	}
+}
+
+// TestDigitKeysReachEveryDrawnTab: a manifest project with GitHub and Beads
+// trackers draws seven tabs, and each of 1-7 selects the tab at that position.
+func TestDigitKeysReachEveryDrawnTab(t *testing.T) {
+	m := workFocusModel()
+	m.manifest.HasTracker = true
+	m.manifest.Trackers = []string{"github", "beads"}
+	m.manifest.HasUsesPullRequests = true
+	m.manifest.UsesPullRequests = true
+	want := []tab{tabWork, tabWorkers, tabLocal, tabPRs, tabIssues, tabBeads, tabConfig}
+	got := m.visibleTabs()
+	if len(got) != len(want) {
+		t.Fatalf("visibleTabs = %v, want %v", got, want)
+	}
+	for i, w := range want {
+		next, _ := m.handleKey(keyMsg(fmt.Sprint(i + 1)))
+		m = next.(Model)
+		if m.active != w {
+			t.Errorf("key %d landed on %v, want %v", i+1, m.active, w)
+		}
 	}
 }

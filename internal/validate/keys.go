@@ -84,7 +84,7 @@ func RowKeys(raw any, commands map[string]bool) (bindings []RowBinding, shadows 
 
 			if keymap.Reserved[key] {
 				problems = append(problems, fmt.Sprintf(
-					"%s: key %q is reserved — navigation and escape (q, ctrl+c, esc, tab, shift+tab, the arrow keys, j, k, 1-4, /) cannot be rebound",
+					"%s: key %q is reserved — navigation and escape (q, ctrl+c, esc, tab, shift+tab, the arrow keys, j, k, 1-7, /) cannot be rebound",
 					lead, key))
 				continue
 			}

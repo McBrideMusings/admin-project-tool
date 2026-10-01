@@ -705,8 +705,9 @@ func (m Model) keymap() [][2]string {
 		// replacing the row-scoped keys outright (admin-wuz9.1). Previously
 		// (admin-70hb, AC9) this branch returned a hardcoded 3-key nav slice
 		// instead, hiding the tab's real hotkeys until focus left the bar.
-		if !hasKey(pairs, "1-4") {
-			pairs = append(pairs, [2]string{"1-4", "jump"})
+		jump := fmt.Sprintf("1-%d", len(m.visibleTabs()))
+		if !hasKey(pairs, jump) {
+			pairs = append(pairs, [2]string{jump, "jump"})
 		}
 		if m.bodyRowCount() > 0 && !hasKey(pairs, "↓") {
 			pairs = append(pairs, [2]string{"↓", "body"})

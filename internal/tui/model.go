@@ -2200,7 +2200,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.active == tabLocal {
 			m.pane = m.nextVisiblePane(m.pane, -1)
 		}
-	case "1", "2", "3", "4":
+	case "1", "2", "3", "4", "5", "6", "7":
 		// The digits number the tabs in the order they are drawn, so `3` is the
 		// third tab on screen — Beads in a beads repo, Issues in a GitHub one.
 		n, _ := strconv.Atoi(msg.String())

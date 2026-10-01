@@ -70,7 +70,8 @@ var Bindable = []RowKind{Bead, Issue, Branch, PR, Commit, Stash, Command, Comman
 var Reserved = map[string]bool{
 	"q": true, "ctrl+c": true, "esc": true, "tab": true, "shift+tab": true,
 	"up": true, "down": true, "left": true, "right": true,
-	"j": true, "k": true, "1": true, "2": true, "3": true, "4": true, "/": true,
+	"j": true, "k": true, "1": true, "2": true, "3": true, "4": true,
+	"5": true, "6": true, "7": true, "/": true,
 }
 
 // Binding is one built-in key/label pair for a row kind's footer.
