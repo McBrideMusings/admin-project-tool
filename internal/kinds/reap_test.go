@@ -281,6 +281,21 @@ func TestReapWorkerDiedBeforeDone(t *testing.T) {
 	}
 }
 
+// A hosted worker has no launcher pane, so [terminal].status says nothing
+// about it and must not put a pane-closed reason on its row.
+func TestReapWorkerHostedIgnoresPaneStatus(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	addOrigin(t, repoRoot)
+	e := dispatchWorker(t, repoRoot, "false")
+	e.Via = ""
+	if ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true", Status: "false"}) {
+		t.Fatal("reaped a worker whose done never passed")
+	}
+	if note, _ := livework.Default.Line(e.ID); strings.Contains(note, "pane closed") {
+		t.Errorf("row line = %q, want no pane-closed reason for a hosted worker", note)
+	}
+}
+
 // A reap whose worktree removal failed retries on the next tick without
 // running kill on the already-closed pane again.
 func TestReapWorkerRetryDoesNotKillTwice(t *testing.T) {

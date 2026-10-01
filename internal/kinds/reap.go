@@ -190,7 +190,7 @@ func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t confi
 	}
 	finished, note := workerFinished(ctx, w, e.Handle, t)
 	if !finished {
-		if note == "" && w.Done != "" && t.Status != "" {
+		if note == "" && w.Done != "" && t.Status != "" && e.Via == "terminal" {
 			// A worker that declares done is finished only when done passes;
 			// a pane that has gone without it is a worker that died. Leave
 			// the row for a person to inspect and kill.
