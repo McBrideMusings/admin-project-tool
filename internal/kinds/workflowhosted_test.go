@@ -145,6 +145,75 @@ func TestHostedShellSurfaceRunsInlineOneAtATime(t *testing.T) {
 	}
 }
 
+// TestHostedDispatchHonoursCeiling: five hosted targets under a ceiling of 2
+// start two workers, hold the other three until a process exits, and never
+// have more than two running at once.
+func TestHostedDispatchHonoursCeiling(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, "[workflow]\nceiling = 2\n")
+
+	var mu sync.Mutex
+	var running, peak, started int
+	exits := make(chan chan error, 5)
+	orig := startHostedWorker
+	startHostedWorker = func(id string, argv []string, dir string, env []string, rows, cols int) (<-chan error, error) {
+		exit := make(chan error, 1)
+		mu.Lock()
+		running++
+		started++
+		if running > peak {
+			peak = running
+		}
+		mu.Unlock()
+		exits <- exit
+		return exit, nil
+	}
+	t.Cleanup(func() { startHostedWorker = orig })
+
+	targets := make([]Target, 5)
+	for i := range targets {
+		targets[i] = Target{Name: fmt.Sprintf("t%d", i), Run: "x"}
+	}
+	done := make(chan []TargetResult, 1)
+	go func() { done <- DispatchTargets(repoRoot, "hostedceil", hostedAction(nil), targets, SurfaceDashboard) }()
+
+	finish := func() {
+		exit := <-exits
+		mu.Lock()
+		running--
+		mu.Unlock()
+		exit <- nil
+	}
+	startedNow := func() int { mu.Lock(); defer mu.Unlock(); return started }
+
+	deadline := time.Now().Add(30 * time.Second)
+	for startedNow() < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if got := startedNow(); got != 2 {
+		t.Fatalf("started before any worker exited = %d, want 2 (ceiling)", got)
+	}
+	for range targets {
+		finish()
+	}
+
+	select {
+	case results := <-done:
+		for _, r := range results {
+			if r.Err != nil {
+				t.Errorf("target %q: %v", r.Target, r.Err)
+			}
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("DispatchTargets never returned")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if started != 5 || peak != 2 {
+		t.Errorf("started = %d, peak concurrent = %d, want 5 and 2", started, peak)
+	}
+}
+
 // TestHostedWorkerKilledFailsTheTarget: a worker killed from the dashboard is
 // not reported as a finished target.
 func TestHostedWorkerKilledFailsTheTarget(t *testing.T) {
