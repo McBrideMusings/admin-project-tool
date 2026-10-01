@@ -1794,7 +1794,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	switch msg.Action {
 	case tea.MouseActionPress:
-		if msg.Button != tea.MouseButtonLeft {
+		switch msg.Button {
+		case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
+			return m.handleWheel(msg.Y, msg.Button == tea.MouseButtonWheelDown)
+		case tea.MouseButtonLeft:
+		default:
 			return m, nil
 		}
 		m.sel = anchorAt(msg.Y, msg.X)
