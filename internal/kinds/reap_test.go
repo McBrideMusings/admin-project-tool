@@ -307,3 +307,123 @@ func TestReapWorkerRetryDoesNotKillTwice(t *testing.T) {
 		t.Errorf("kill ran %d times, want 1", n)
 	}
 }
+
+// Ignored files (.env, build output) block a reap: removing the worktree
+// would delete them even though git status calls the tree clean.
+func TestReapWorkerKeepsIgnoredFiles(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	addOrigin(t, repoRoot)
+	excludes := filepath.Join(t.TempDir(), "ignore")
+	if err := os.WriteFile(excludes, []byte(".env\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wfGitT(t, repoRoot, "config", "core.excludesFile", excludes)
+	e := dispatchWorker(t, repoRoot, "true")
+	if err := os.WriteFile(filepath.Join(e.Worker.Worktree, ".env"), []byte("K=1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
+		t.Fatal("reaped a worktree holding an ignored .env")
+	}
+	if _, err := os.Stat(filepath.Join(e.Worker.Worktree, ".env")); err != nil {
+		t.Errorf(".env gone: %v", err)
+	}
+	if note, _ := livework.Default.Line(e.ID); !strings.Contains(note, "ignored files") {
+		t.Errorf("row line = %q, want it to name ignored files", note)
+	}
+}
+
+// A branch landed on the remote reads as merged once the reaper fetches,
+// though the local origin/main was stale.
+func TestReapWorkerFetchesOriginMain(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	addOrigin(t, repoRoot)
+	e := dispatchWorker(t, repoRoot, "true")
+	w := e.Worker
+	if err := os.WriteFile(filepath.Join(w.Worktree, "work.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wfGitT(t, w.Worktree, "add", "-A")
+	wfGitT(t, w.Worktree, "commit", "-qm", "work")
+	// Land it on the remote only: local origin/main does not move.
+	wfGitT(t, w.Worktree, "push", "-q", "origin", w.Branch+":main")
+	// The push refreshed the tracking ref; put it back to the stale value.
+	wfGitT(t, repoRoot, "update-ref", "refs/remotes/origin/main", "main")
+
+	if !ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
+		note, _ := livework.Default.Line(e.ID)
+		t.Fatalf("did not reap a branch already on origin/main; row line = %q", note)
+	}
+}
+
+// With no origin the row says origin/main is missing, not that the branch has
+// unmerged commits.
+func TestReapWorkerNoOriginSaysSo(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	e := dispatchWorker(t, repoRoot, "true")
+	if ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
+		t.Fatal("reaped with no origin/main to compare against")
+	}
+	if note, _ := livework.Default.Line(e.ID); !strings.Contains(note, "does not exist") {
+		t.Errorf("row line = %q, want it to say origin/main does not exist", note)
+	}
+}
+
+// A done predicate that times out shows why on the row; one that merely exits
+// nonzero (not finished yet) shows nothing.
+func TestReapWorkerReportsDoneTimeout(t *testing.T) {
+	prev := doneTimeout
+	doneTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { doneTimeout = prev })
+
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	addOrigin(t, repoRoot)
+	e := dispatchWorker(t, repoRoot, "sleep 5")
+	ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"})
+	if note, _ := livework.Default.Line(e.ID); !strings.Contains(note, "timed out") {
+		t.Errorf("row line = %q, want the timeout reason", note)
+	}
+}
+
+// Killing a worker whose pane already closed still exits the row and frees its
+// ceiling slot.
+func TestKillWorkerWithGonePaneReleasesSlot(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, "[terminal]\nspawn = \"true\"\nattach = \"true\"\nkill = \"false\"\nstatus = \"false\"\n")
+	e := dispatchWorker(t, repoRoot, "false")
+	released := make(chan struct{})
+	holdWorkerSlot(e.ID, func() { close(released) })
+	if err := e.Ops.Kill(); err != nil {
+		t.Fatalf("Kill on a gone pane: %v", err)
+	}
+	select {
+	case <-released:
+	default:
+		t.Error("slot not released")
+	}
+	if st, _ := livework.Default.State(e.ID); st != livework.StateExited {
+		t.Errorf("state = %s, want exited", st)
+	}
+}
+
+// An ignored path the primary checkout also has (a seeded copy) does not
+// block a reap.
+func TestReapWorkerIgnoresSeededIgnoredFiles(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	addOrigin(t, repoRoot)
+	excludes := filepath.Join(t.TempDir(), "ignore")
+	if err := os.WriteFile(excludes, []byte(".env\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wfGitT(t, repoRoot, "config", "core.excludesFile", excludes)
+	if err := os.WriteFile(filepath.Join(repoRoot, ".env"), []byte("K=1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := dispatchWorker(t, repoRoot, "true")
+	if err := os.WriteFile(filepath.Join(e.Worker.Worktree, ".env"), []byte("K=1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
+		note, _ := livework.Default.Line(e.ID)
+		t.Fatalf("did not reap; row line = %q", note)
+	}
+}

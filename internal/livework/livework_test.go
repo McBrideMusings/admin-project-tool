@@ -399,3 +399,23 @@ func TestAddRejectsLiveDuplicateID(t *testing.T) {
 		t.Errorf("List() = %+v, want the original pane-A entry only", entries)
 	}
 }
+
+// A note and an activity both show; neither hides the other.
+func TestLineJoinsNoteAndActivity(t *testing.T) {
+	r := NewRegistry()
+	if err := r.Add(&Entry{ID: "a", Name: "a", Handle: "h"}); err != nil {
+		t.Fatal(err)
+	}
+	r.SetActivity("a", "writing x.go")
+	if got, _ := r.Line("a"); got != "writing x.go" {
+		t.Errorf("activity only: %q", got)
+	}
+	r.SetNote("a", "finished, not removed")
+	if got, _ := r.Line("a"); got != "finished, not removed · writing x.go" {
+		t.Errorf("both: %q", got)
+	}
+	r.SetActivity("a", "")
+	if got, _ := r.Line("a"); got != "finished, not removed" {
+		t.Errorf("note only: %q", got)
+	}
+}

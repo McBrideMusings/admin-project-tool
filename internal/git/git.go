@@ -313,6 +313,10 @@ type Status struct {
 	Unstaged   int
 	Untracked  int
 	Conflicted int
+	// IgnoredPaths lists the paths git ignores, relative to the worktree
+	// root (a wholly ignored directory appears once, with a trailing slash).
+	// Only WorkingStatusIgnored fills it.
+	IgnoredPaths []string
 }
 
 // Clean reports whether the working tree has no changes at all.
@@ -321,7 +325,19 @@ func (s Status) Clean() bool { return s.Staged == 0 && s.Unstaged == 0 && s.Untr
 // WorkingStatus parses `git status --porcelain` at path into staged/unstaged/
 // untracked/conflicted counts.
 func WorkingStatus(ctx context.Context, path string) (Status, error) {
-	out, err := runner(ctx, path, "status", "--porcelain")
+	return workingStatus(ctx, path, "--porcelain")
+}
+
+// WorkingStatusIgnored is WorkingStatus that also lists ignored paths. It
+// lists every ignored file or directory (node_modules, build output, .env),
+// so it is slower than WorkingStatus; use it only where a deletion must not
+// take ignored files with it.
+func WorkingStatusIgnored(ctx context.Context, path string) (Status, error) {
+	return workingStatus(ctx, path, "--porcelain", "--ignored")
+}
+
+func workingStatus(ctx context.Context, path string, flags ...string) (Status, error) {
+	out, err := runner(ctx, path, append([]string{"status"}, flags...)...)
 	if err != nil {
 		return Status{}, err
 	}
@@ -331,6 +347,10 @@ func WorkingStatus(ctx context.Context, path string) (Status, error) {
 			continue
 		}
 		x, y := line[0], line[1]
+		if x == '!' && y == '!' {
+			s.IgnoredPaths = append(s.IgnoredPaths, strings.TrimSpace(line[2:]))
+			continue
+		}
 		if x == '?' && y == '?' {
 			s.Untracked++
 			continue

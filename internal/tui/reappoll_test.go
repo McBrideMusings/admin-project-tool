@@ -73,3 +73,36 @@ func TestPaneStatusLeavesWorkersToTheReaper(t *testing.T) {
 		t.Errorf("pane status queried %d times for a worker, want 0", got)
 	}
 }
+
+// One worker's slow reap does not stop the tick from reaping the others.
+func TestReapWorkersCmdSkipsOnlyBusyWorker(t *testing.T) {
+	freshLivework(t)
+	for _, id := range []string{"slow", "fast"} {
+		e := &livework.Entry{
+			ID: id, Name: id, Kind: "workflow", Handle: "pane-" + id, Via: "terminal",
+			Worker: &livework.WorkerInfo{Branch: "b", Worktree: "/wt"},
+		}
+		if err := livework.Default.Add(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reapInflight.Store("slow", true)
+	t.Cleanup(func() { reapInflight.Delete("slow") })
+
+	var mu sync.Mutex
+	var reaped []string
+	prev := reapWorkerFn
+	reapWorkerFn = func(_ context.Context, _ string, e *livework.Entry, _ config.Terminal) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		reaped = append(reaped, e.ID)
+		return false
+	}
+	t.Cleanup(func() { reapWorkerFn = prev })
+
+	reapWorkersCmd("/repo", config.Terminal{})()
+
+	if len(reaped) != 1 || reaped[0] != "fast" {
+		t.Errorf("reaped = %v, want [fast]", reaped)
+	}
+}

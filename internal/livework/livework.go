@@ -355,8 +355,9 @@ func (r *Registry) SetNote(id, note string) {
 	}
 }
 
-// Line returns the one line a row shows beside the entry: its Note when it
-// has one, else its Activity.
+// Line returns the one line a row shows beside the entry: its Note and its
+// Activity, joined when both are set so a note never hides what the entry is
+// doing.
 func (r *Registry) Line(id string) (string, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -364,10 +365,13 @@ func (r *Registry) Line(id string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	if e.Note != "" {
+	switch {
+	case e.Note == "":
+		return e.Activity, true
+	case e.Activity == "":
 		return e.Note, true
 	}
-	return e.Activity, true
+	return e.Note + " · " + e.Activity, true
 }
 
 // SetSnapshot replaces the entry for id's pane snapshot, if present.

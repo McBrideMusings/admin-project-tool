@@ -144,6 +144,11 @@ func TestCommandArgv(t *testing.T) {
 			want: []call{rdIn("/wt", "status", "--porcelain")},
 		},
 		{
+			name: "WorkingStatusIgnored asks git for ignored paths too",
+			call: func(ctx context.Context) { WorkingStatusIgnored(ctx, "/wt") },
+			want: []call{rdIn("/wt", "status", "--porcelain", "--ignored")},
+		},
+		{
 			name: "AheadBehind counts both sides in one rev-list",
 			out:  []string{"2\t3"},
 			call: func(ctx context.Context) { AheadBehind(ctx, "/repo", "feat/x", "origin/feat/x") },
@@ -426,6 +431,7 @@ var coveredCommands = map[string]bool{
 	"TrackedDirs":           true,
 	"ValidBranchName":       true,
 	"WorkingStatus":         true,
+	"WorkingStatusIgnored":  true,
 	"WorktreeTouched":       true,
 	"Worktrees":             true,
 }

@@ -249,7 +249,11 @@ func dispatchOne(repoRoot, actionName string, t config.Terminal, tgt Target, wt 
 	e.Ops = livework.Ops{
 		Attach: func() error { return runLauncherShell(t.Attach, e.Handle) },
 		Kill: func() error {
-			if err := runLauncherShell(t.Kill, e.Handle); err != nil {
+			// A pane that already closed makes kill fail; closing it was the
+			// goal, so the row still exits and frees its slot.
+			ctx, cancel := context.WithTimeout(context.Background(), doneTimeout)
+			defer cancel()
+			if err := closeFinishedPane(ctx, e.Handle, t); err != nil {
 				return err
 			}
 			livework.Default.SetState(e.ID, livework.StateExited, nil)
