@@ -177,9 +177,13 @@ func (m *Model) workflowResolved(msg workflowResolvedMsg) {
 // status line.
 func (m *Model) workflowDispatchDone(msg workflowDispatchDoneMsg) {
 	ok, failed := 0, 0
+	var first error
 	for _, r := range msg.results {
 		if r.Err != nil {
 			failed++
+			if first == nil {
+				first = fmt.Errorf("%s: %w", r.Target, r.Err)
+			}
 		} else {
 			ok++
 		}
@@ -187,7 +191,7 @@ func (m *Model) workflowDispatchDone(msg workflowDispatchDoneMsg) {
 	if failed == 0 {
 		m.setStatus(fmt.Sprintf("%s: %d target(s) finished", msg.name, ok), cGreen)
 	} else {
-		m.setStatus(fmt.Sprintf("%s: %d finished, %d failed", msg.name, ok, failed), cRed)
+		m.setStatus(fmt.Sprintf("%s: %d finished, %d failed — %v", msg.name, ok, failed, first), cRed)
 	}
 }
 

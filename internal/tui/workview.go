@@ -783,11 +783,19 @@ func ringTailLines(r *livework.Ring, w int) []string {
 	if raw == "" {
 		return nil
 	}
-	lines := strings.Split(raw, "\n")
-	for i, l := range lines {
-		lines[i] = truncR(strings.TrimRight(l, "\r"), maxi(w, 1))
+	var lines []string
+	for _, l := range strings.Split(raw, "\n") {
+		if l = strings.TrimRight(l, "\r"); hasWords(l) {
+			lines = append(lines, truncR(l, maxi(w, 1)))
+		}
 	}
 	return lines
+}
+
+// hasWords reports whether l holds a letter or digit, so blank rows and rows
+// that are only rules or box lines can be left out of a band's text.
+func hasWords(l string) bool {
+	return strings.IndexFunc(l, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) >= 0
 }
 
 // screenTailLines is the band's text for a hosted entry: the rows of its
@@ -812,7 +820,7 @@ func screenTailLines(screen *vt.SafeEmulator, w int) []string {
 			}
 		}
 		l := strings.TrimRight(b.String(), " \t")
-		if strings.IndexFunc(l, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) < 0 {
+		if !hasWords(l) {
 			continue
 		}
 		lines = append(lines, truncR(l, maxi(w, 1)))
@@ -831,9 +839,11 @@ func snapshotTailLines(id string, w int) []string {
 	if raw == "" {
 		return []string{truncR(noLocalOutput, maxi(w, 1))}
 	}
-	lines := strings.Split(raw, "\n")
-	for i, l := range lines {
-		lines[i] = truncR(strings.TrimRight(l, "\r"), maxi(w, 1))
+	var lines []string
+	for _, l := range strings.Split(raw, "\n") {
+		if l = strings.TrimRight(l, "\r"); hasWords(l) {
+			lines = append(lines, truncR(l, maxi(w, 1)))
+		}
 	}
 	return lines
 }
