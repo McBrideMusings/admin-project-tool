@@ -57,7 +57,7 @@ func (m Model) handleWheel(y int, down bool) (tea.Model, tea.Cmd) {
 // same set handleKey returns early for before it reaches ↑/↓. The list under
 // any of them must not move.
 func (m Model) wheelCaptured() bool {
-	return m.quitOpen || m.confirming || m.swOpen || m.wtPickerOpen ||
+	return m.quitOpen || m.confirming || m.wtPickerOpen ||
 		m.wfResolving || m.wfOpen || m.errOpen || m.deleting ||
 		m.naming || m.filtering
 }
