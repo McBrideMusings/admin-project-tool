@@ -202,7 +202,7 @@ func (m Model) renderBodyHits(width, bodyHeight int) ([]string, []hitTarget) {
 		hits = noneHits(len(content))
 	case m.termAttached:
 		content, hits = m.renderTerminalBody(width, contentH)
-	case m.active == tabWork:
+	case m.onWorkSurface():
 		content, hits = m.renderWorkBody(width, contentH)
 	case m.active == tabLocal:
 		content, hits = m.renderLocalPanels(width, contentH)
@@ -403,7 +403,7 @@ func (m Model) headerLine(width int) string {
 func (m Model) freshnessSeg() seg {
 	var at time.Time
 	switch m.active {
-	case tabWork:
+	case tabWork, tabWorkers:
 		// The manifest and the live-work registry are both read fresh on every
 		// frame — no fetch, no cache, exactly like Beads below.
 		return seg{t: "live", fg: cFaint}
@@ -462,6 +462,8 @@ func (m Model) tabCount(t tab) int {
 	switch t {
 	case tabWork:
 		return m.workRowCount()
+	case tabWorkers:
+		return len(liveWorkers())
 	case tabPRs:
 		return len(m.remote.PRs)
 	case tabIssues:
@@ -782,7 +784,7 @@ func (m Model) viewKeymap() [][2]string {
 		}
 	}
 	switch m.active {
-	case tabWork:
+	case tabWork, tabWorkers:
 		return m.workFooterPairs()
 	case tabPRs:
 		return m.rowPairs(keymap.PR)

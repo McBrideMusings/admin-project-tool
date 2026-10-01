@@ -213,6 +213,7 @@ func TestWhereColumnFrameAtMultipleWidths(t *testing.T) {
 
 		out := Frame(ctx, m, FrameOptions{
 			Width: width, Height: 30,
+			Keys:   []string{"2"},
 			Settle: 200 * time.Millisecond,
 		})
 		plain := stripANSI(out)

@@ -1,6 +1,6 @@
-// workworkers_test.go covers admin-3rgp.72.16: Workers is its own section
-// under the Commands list, rendered on the same column grid, under one
-// combined cursor that walks Commands then Workers as a single ordered list.
+// workworkers_test.go covers the Workers tab (admin-3rgp.72.16, split from the
+// Commands tab by admin-spjp.9): one flat list of every live worker, rendered
+// on the same column grid as a command row, under its own cursor.
 // See docs/spikes/admin-tui-desktop/swarm.txt and commands.txt, the reference
 // frames this ticket is graded against.
 package tui
@@ -10,13 +10,15 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// workersFixtureModel builds a Model with 5 flat commands and 3 live workers
+// workersFixtureModel builds a Model on the Workers tab with 3 live workers
 // (running/waiting/failed, matching swarm.txt's own fixture) — enough rows
-// to exercise the combined cursor without needing to scroll.
+// to exercise the cursor without needing to scroll.
 func workersFixtureModel(t *testing.T) (Model, []rowItem) {
 	t.Helper()
 	freshLivework(t)
@@ -51,7 +53,8 @@ func workersFixtureModel(t *testing.T) (Model, []rowItem) {
 	mm := workTestModel(m)
 	mm.focus = focusBody
 	mm.width, mm.height = 96, 25
-	return mm, mm.workRows()
+	mm.active = tabWorkers
+	return mm, mm.workerRows()
 }
 
 // firstSelectable/lastSelectable are the fixture's first and last selectable
@@ -76,104 +79,39 @@ func lastSelectable(rows []rowItem) int {
 	return last
 }
 
-func selectableCommandCount(rows []rowItem) int {
-	n := 0
-	for _, r := range rows {
-		if r.selectable() && r.kind != rowWorker {
-			n++
-		}
-	}
-	return n
-}
-
-// TestNDownsFromTopLandsOnFirstWorkerRow is AC1: N presses of ↓ (N = the
-// selectable-Commands count) from the top of Commands lands on the first
-// Workers row, and the band's block changes at exactly that step.
-func TestNDownsFromTopLandsOnFirstWorkerRow(t *testing.T) {
+// TestDownMovesBetweenWorkerRows: ↓ steps through the worker rows in order and
+// the band's content changes with the row.
+func TestDownMovesBetweenWorkerRows(t *testing.T) {
 	mm, rows := workersFixtureModel(t)
-	n := selectableCommandCount(rows)
-	firstWorker := -1
-	for i, r := range rows {
-		if r.kind == rowWorker {
-			firstWorker = i
-			break
-		}
-	}
-	if firstWorker < 0 {
-		t.Fatal("fixture produced no worker row")
-	}
-
-	mm.cursor[tabWork] = firstSelectable(rows)
-	for i := 0; i < n-1; i++ {
-		mm.moveCursor(1)
-		if rows[mm.cursor[tabWork]].kind == rowWorker {
-			t.Fatalf("moveCursor landed on a worker row after only %d of %d downs (index %d)", i+1, n, mm.cursor[tabWork])
-		}
-	}
-	// The N-th down is the transition: band content just before it must be a
-	// command's, and right after it must be the worker's.
-	before := mm.renderWorkBand(rows[mm.cursor[tabWork]], 90, 12)
+	mm.cursor[tabWorkers] = firstSelectable(rows)
+	first := mm.cursor[tabWorkers]
+	before := mm.renderWorkBand(rows[first], 90, 12)
 	mm.moveCursor(1)
-	if got := mm.cursor[tabWork]; got != firstWorker {
-		t.Fatalf("N=%d downs from the top landed on row %d (%+v), want %d (the first Workers row)", n, got, rows[got], firstWorker)
+	if got := mm.cursor[tabWorkers]; got != first+1 {
+		t.Fatalf("↓ from the first worker landed on row %d, want %d", got, first+1)
 	}
-	after := mm.renderWorkBand(rows[mm.cursor[tabWork]], 90, 12)
+	after := mm.renderWorkBand(rows[mm.cursor[tabWorkers]], 90, 12)
 	if strings.Join(before, "\n") == strings.Join(after, "\n") {
-		t.Errorf("band content did not change at the Commands->Workers transition")
+		t.Errorf("band content did not change between the first and second worker")
 	}
 }
 
-// TestNoCrossSectionMarker is AC2: no Commands row shows the cursor marker
-// while the cursor is in Workers, and vice versa.
-func TestNoCrossSectionMarker(t *testing.T) {
-	mm, rows := workersFixtureModel(t)
-
-	firstWorker := -1
-	for i, r := range rows {
-		if r.kind == rowWorker {
-			firstWorker = i
-			break
-		}
-	}
-	mm.cursor[tabWork] = firstWorker
-	lines, _ := mm.renderWorkBody(96, 25)
-	for i, r := range rows {
-		if r.kind != rowCommand || r.work == nil || len(r.work.targets) > 0 {
-			continue
-		}
-		if i < len(lines) && strings.Contains(stripANSI(lines[i]), "◆") {
-			t.Errorf("Commands row %d carries the current-cursor marker while the cursor is on a worker row: %q", i, stripANSI(lines[i]))
-		}
-	}
-
-	mm.cursor[tabWork] = firstSelectable(rows)
-	lines, _ = mm.renderWorkBody(96, 25)
-	for i, r := range rows {
-		if r.kind != rowWorker {
-			continue
-		}
-		if i < len(lines) && strings.Contains(stripANSI(lines[i]), "◆") {
-			t.Errorf("Worker row %d carries the current-cursor marker while the cursor is on a Commands row: %q", i, stripANSI(lines[i]))
-		}
-	}
-}
-
-// TestUpFromTopWrapsToLastWorkerRow is AC3.
+// TestUpFromTopWrapsToLastWorkerRow: ↑ from the first worker wraps to the last.
 func TestUpFromTopWrapsToLastWorkerRow(t *testing.T) {
 	mm, rows := workersFixtureModel(t)
 	last := lastSelectable(rows)
 	if rows[last].kind != rowWorker {
 		t.Fatalf("fixture's last selectable row is %+v, want a worker row", rows[last])
 	}
-	mm.cursor[tabWork] = firstSelectable(rows)
+	mm.cursor[tabWorkers] = firstSelectable(rows)
 	mm.moveCursor(-1)
-	if got := mm.cursor[tabWork]; got != last {
+	if got := mm.cursor[tabWorkers]; got != last {
 		t.Errorf("up from the top row landed on %d (%+v), want %d, the last Workers row", got, rows[got], last)
 	}
 }
 
-// TestScrolledListNamesItsSection is AC4: a scrolled combined list's first
-// visible row names the section (Commands or Workers) the window is inside —
+// TestScrolledListNamesItsSection: a scrolled Workers list's first visible row
+// names the section the window is inside, with the more-marker —
 // docs/spikes/admin-tui-desktop/swarm.txt:4's "Commands   ↑ 49 more".
 func TestScrolledListNamesItsSection(t *testing.T) {
 	freshLivework(t)
@@ -198,18 +136,16 @@ func TestScrolledListNamesItsSection(t *testing.T) {
 	mm := workTestModel(m)
 	mm.focus = focusBody
 	mm.width, mm.height = 96, 25
-	rows := mm.workRows()
+	mm.active = tabWorkers
+	rows := mm.workerRows()
 
-	// Cursor on the last row scrolls the window down into the Workers
-	// section, so the pinned first row must name "Workers", not "Commands".
-	mm.cursor[tabWork] = lastSelectable(rows)
+	// Cursor on the last row scrolls the window down, so the pinned first row
+	// must still name "Workers".
+	mm.cursor[tabWorkers] = lastSelectable(rows)
 	lines, _ := mm.renderWorkBody(96, 25)
 	first := stripANSI(lines[0])
 	if !strings.Contains(first, "Workers") || !strings.Contains(first, "more") {
 		t.Errorf("scrolled-into-Workers first line = %q, want it to name Workers and show the more-marker", first)
-	}
-	if strings.Contains(first, "Commands") {
-		t.Errorf("scrolled-into-Workers first line = %q, must not still say Commands", first)
 	}
 }
 
@@ -237,13 +173,13 @@ func TestWorkersEmptyStateVerbatim(t *testing.T) {
 	})
 	want := "no workers running — dispatch a bead from the tracker tab"
 	found := false
-	for _, r := range mm.workRows() {
+	for _, r := range mm.workerRows() {
 		if r.kind == rowText && r.label == want {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("workRows() did not contain the verbatim empty-Workers line %q", want)
+		t.Errorf("workerRows() did not contain the verbatim empty-Workers line %q", want)
 	}
 }
 
@@ -293,5 +229,55 @@ func TestWorkerRowDropsWhereColumnWhenNarrow(t *testing.T) {
 	line := stripANSI(mm.renderWorkRow(row, false, 40))
 	if strings.Contains(line, "pane 3") {
 		t.Errorf("narrow worker row still shows the where-column: %q", line)
+	}
+}
+
+// TestAttachKeyAttachesFromWorkersTab: `a` on the Workers tab reaches the
+// worker's Ops.Attach, the same call the Commands tab's `a` makes.
+func TestAttachKeyAttachesFromWorkersTab(t *testing.T) {
+	mm, rows := workersFixtureModel(t)
+	attached := false
+	e, ok := livework.Default.Get("admin-3rgp.36")
+	if !ok {
+		t.Fatal("fixture worker missing from the registry")
+	}
+	e.Ops.Attach = func() error { attached = true; return nil }
+	for i, r := range rows {
+		if r.kind == rowWorker && r.work.worker.ID == "admin-3rgp.36" {
+			mm.cursor[tabWorkers] = i
+		}
+	}
+	mm.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if !attached {
+		t.Error("a on the Workers tab did not invoke Ops.Attach")
+	}
+}
+
+// TestTabBarDrawsCommandsThenWorkers: a project with a manifest draws two tabs
+// where the one Work tab used to be, and the Workers badge counts live workers.
+func TestTabBarDrawsCommandsThenWorkers(t *testing.T) {
+	mm, _ := workersFixtureModel(t)
+	tabs := mm.visibleTabs()
+	if len(tabs) < 2 || tabs[0] != tabWork || tabs[1] != tabWorkers {
+		t.Fatalf("visibleTabs = %v, want Commands then Workers first", tabs)
+	}
+	if tabDisplay(tabWork) != "Commands" || tabDisplay(tabWorkers) != "Workers" {
+		t.Errorf("labels = %q, %q", tabDisplay(tabWork), tabDisplay(tabWorkers))
+	}
+	if got := mm.tabCount(tabWorkers); got != 3 {
+		t.Errorf("Workers badge = %d, want 3", got)
+	}
+}
+
+// TestAttachedWorkerShowsItsFieldBlock: the attached view's field block finds a
+// worker through the Workers rows, so it carries the worker's branch row
+// rather than falling back to the log path alone.
+func TestAttachedWorkerShowsItsFieldBlock(t *testing.T) {
+	mm, _ := workersFixtureModel(t)
+	mm.termAttached = true
+	mm.termEntryID = "admin-3rgp.36"
+	got := stripANSI(strings.Join(mm.termFields(90), "\n"))
+	if !strings.Contains(got, "b1") {
+		t.Errorf("attached worker field block lacks its branch %q: %q", "b1", got)
 	}
 }

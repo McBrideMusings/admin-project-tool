@@ -815,25 +815,42 @@ func (m Model) workRows() []rowItem {
 	var rows []rowItem
 	rows = append(rows, headerRow("Commands", seg{t: "  " + strconv.Itoa(invocations)}))
 	rows = append(rows, cmdList...)
+	return rows
+}
 
+// workerRows is the Workers tab's row list: every live agent worker, from any
+// surface (a command's agents, a bead, issue or PR binding), in the registry's
+// own insertion order so the list never reorders itself as entries change
+// state. A worker never appears on the Commands tab. The rows are the same
+// rowWorker rows the band, attach and kill already resolve.
+func (m Model) workerRows() []rowItem {
+	if !m.manifestOK {
+		return nil
+	}
 	workers := liveWorkers()
-	rows = append(rows, blankRow(), headerRow("Workers", seg{t: "  " + strconv.Itoa(len(workers))}))
+	rows := []rowItem{headerRow("Workers", seg{t: "  " + strconv.Itoa(len(workers))})}
 	if len(workers) == 0 {
-		rows = append(rows, rowItem{kind: rowText, label: "no workers running — dispatch a bead from the tracker tab"})
-	} else {
-		for _, e := range workers {
-			label := e.Name
-			if activity, _ := livework.Default.Line(e.ID); activity != "" {
-				label = e.Name + " " + activity
-			}
-			rows = append(rows, rowItem{
-				kind:  rowWorker,
-				label: label,
-				work:  &workRowData{worker: e},
-			})
+		return append(rows, rowItem{kind: rowText, label: "no workers running — dispatch a bead from the tracker tab"})
+	}
+	for _, e := range workers {
+		label := e.Name
+		if activity, _ := livework.Default.Line(e.ID); activity != "" {
+			label = e.Name + " " + activity
 		}
+		rows = append(rows, rowItem{
+			kind:  rowWorker,
+			label: label,
+			work:  &workRowData{worker: e},
+		})
 	}
 	return rows
+}
+
+// onWorkSurface reports whether the active tab is Commands or Workers — the two
+// tabs that share the live band, attach (`a`, enter), kill (`x`) and the
+// pane-tail poll.
+func (m Model) onWorkSurface() bool {
+	return m.active == tabWork || m.active == tabWorkers
 }
 
 // ownerCmdName is the command a row belongs to, for collapse purposes: a
@@ -920,9 +937,9 @@ func (m *Model) toggleWorkCollapse() {
 	m.clampCursor()
 }
 
-// workRowCount is the tab bar's badge count for Work — every resolved
+// workRowCount is the tab bar's badge count for Commands — every resolved
 // invocation (a flat command, or one entry per target of a multi-target
-// command) plus every live worker, matching how the PRs/Issues/Beads badges
+// command), matching how the PRs/Issues/Beads badges
 // count what exists rather than what's currently painted. It totals
 // commandInvocationCount over declaredCommands() directly rather than
 // counting rendered rows, so the number is the same in collapsed and
@@ -937,7 +954,7 @@ func (m Model) workRowCount() int {
 	for _, cr := range m.declaredCommands() {
 		n += m.commandInvocationCount(cr)
 	}
-	return n + len(liveWorkers())
+	return n
 }
 
 // workDispatchStartedMsg carries a hosted dispatch's START outcome back to
@@ -1265,6 +1282,9 @@ func entryIsLive(e *livework.Entry) bool {
 // current row can actually do.
 func (m Model) workFooterPairs() [][2]string {
 	kind, enter, kill := keymap.Command, "dispatch", false
+	if m.active == tabWorkers {
+		kind = keymap.Worker
+	}
 	if r, ok := m.currentRow(); ok && r.work != nil {
 		if k, bindable := rowKindOf(r); bindable {
 			kind = k
@@ -1293,6 +1313,9 @@ func (m Model) workFooterPairs() [][2]string {
 				continue
 			}
 		case "c":
+			if m.active == tabWorkers {
+				continue
+			}
 			b.Label = collapse
 		}
 		shown = append(shown, b)

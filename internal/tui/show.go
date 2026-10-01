@@ -16,7 +16,8 @@ var showTabs = []struct {
 	name string
 	tab  tab
 }{
-	{"work", tabWork},
+	{"commands", tabWork},
+	{"workers", tabWorkers},
 	{"repo", tabLocal},
 	{"prs", tabPRs},
 	{"issues", tabIssues},

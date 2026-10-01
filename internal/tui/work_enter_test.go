@@ -184,8 +184,8 @@ func TestActivateWorkerRowAttaches(t *testing.T) {
 	}
 
 	m := workTestModel(&manifest.Manifest{})
-	m.active = tabWork
-	rows := m.workRows()
+	m.active = tabWorkers
+	rows := m.workerRows()
 	idx := -1
 	for i, r := range rows {
 		if r.kind == rowWorker && r.work.worker.ID == worker.ID {
@@ -195,7 +195,7 @@ func TestActivateWorkerRowAttaches(t *testing.T) {
 	if idx < 0 {
 		t.Fatalf("no row found for the fixture worker %q in %v", worker.ID, rows)
 	}
-	m.cursor[tabWork] = idx
+	m.cursor[tabWorkers] = idx
 
 	_, cmd := m.activate()
 	if !attached {
@@ -270,7 +270,7 @@ func TestFrameDuringHostedRunShowsTheDashboard(t *testing.T) {
 	if !strings.Contains(out, cmdName) {
 		t.Errorf("frame taken during the run lost the command list: %q", out)
 	}
-	if !strings.Contains(out, "Work") {
+	if !strings.Contains(out, "Commands") {
 		t.Errorf("frame taken during the run lost the dashboard's own tab bar: %q", out)
 	}
 }
