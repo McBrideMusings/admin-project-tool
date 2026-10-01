@@ -19,18 +19,20 @@ func TestReapDecision(t *testing.T) {
 	tests := []struct {
 		name                    string
 		finished, clean, merged bool
+		workerOnly              []string
 		wantReap                bool
 		wantReason              string
 	}{
-		{"finished clean merged reaps", true, true, true, true, ""},
-		{"finished dirty stays", true, false, true, false, "uncommitted"},
-		{"finished unmerged stays", true, true, false, false, "origin/main"},
-		{"not finished says nothing", false, true, true, false, ""},
-		{"not finished dirty says nothing", false, false, false, false, ""},
+		{"finished clean merged reaps", true, true, true, nil, true, ""},
+		{"finished dirty stays", true, false, true, nil, false, "uncommitted"},
+		{"worker-only ignored names up to 3", true, false, true, []string{"a/.env", "b/dist/", "c/out/", "d/x/"}, false, "a/.env, b/dist/, c/out/ (+1 more)"},
+		{"finished unmerged stays", true, true, false, nil, false, "origin/main"},
+		{"not finished says nothing", false, true, true, nil, false, ""},
+		{"not finished dirty says nothing", false, false, false, nil, false, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reap, reason := ReapDecision(tt.finished, tt.clean, tt.merged)
+			reap, reason := ReapDecision(tt.finished, tt.clean, tt.merged, tt.workerOnly)
 			if reap != tt.wantReap {
 				t.Errorf("reap = %v, want %v", reap, tt.wantReap)
 			}
@@ -343,8 +345,8 @@ func TestReapWorkerKeepsIgnoredFiles(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(e.Worker.Worktree, ".env")); err != nil {
 		t.Errorf(".env gone: %v", err)
 	}
-	if note, _ := livework.Default.Line(e.ID); !strings.Contains(note, "ignored files") {
-		t.Errorf("row line = %q, want it to name ignored files", note)
+	if note, _ := livework.Default.Line(e.ID); !strings.Contains(note, ".env") {
+		t.Errorf("row line = %q, want it to name the ignored path", note)
 	}
 }
 
@@ -437,6 +439,89 @@ func TestReapWorkerIgnoresSeededIgnoredFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(e.Worker.Worktree, ".env"), []byte("K=1"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if !ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
+		note, _ := livework.Default.Line(e.ID)
+		t.Fatalf("did not reap; row line = %q", note)
+	}
+}
+
+// A dependency install directory the primary checkout lacks (a package that
+// arrived after the primary last installed) is regenerable, so it does not
+// block a reap.
+func TestReapWorkerIgnoresWorkerOnlyNodeModules(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	addOrigin(t, repoRoot)
+	excludes := filepath.Join(t.TempDir(), "ignore")
+	if err := os.WriteFile(excludes, []byte("node_modules/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wfGitT(t, repoRoot, "config", "core.excludesFile", excludes)
+	e := dispatchWorker(t, repoRoot, "true")
+	nm := filepath.Join(e.Worker.Worktree, "node_modules")
+	if err := os.MkdirAll(nm, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nm, "pkg.js"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
+		note, _ := livework.Default.Line(e.ID)
+		t.Fatalf("did not reap; row line = %q", note)
+	}
+}
+
+// A worker whose worktree a person removed by hand has no directory to run
+// done in; a merged branch makes it finished and reapable.
+func TestReapWorkerWorktreeRemovedByHand(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	addOrigin(t, repoRoot)
+	e := dispatchWorker(t, repoRoot, "true")
+	if err := os.RemoveAll(e.Worker.Worktree); err != nil {
+		t.Fatal(err)
+	}
+	if !ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
+		note, _ := livework.Default.Line(e.ID)
+		t.Fatalf("did not reap; row line = %q", note)
+	}
+	if st, _ := livework.Default.State(e.ID); st != livework.StateExited {
+		t.Errorf("state = %s, want exited", st)
+	}
+}
+
+// Same, but the branch still holds unmerged commits: the work stays, and the
+// row says the worktree is gone instead of a chdir error.
+func TestReapWorkerWorktreeGoneBranchUnmerged(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	addOrigin(t, repoRoot)
+	e := dispatchWorker(t, repoRoot, "true")
+	w := e.Worker
+	if err := os.WriteFile(filepath.Join(w.Worktree, "work.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wfGitT(t, w.Worktree, "add", "-A")
+	wfGitT(t, w.Worktree, "commit", "-qm", "work")
+	if err := os.RemoveAll(w.Worktree); err != nil {
+		t.Fatal(err)
+	}
+	if ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
+		t.Fatal("reaped a worker whose branch holds unmerged commits")
+	}
+	note, _ := livework.Default.Line(e.ID)
+	if !strings.Contains(note, "worktree is gone") {
+		t.Errorf("row line = %q, want it to say the worktree is gone", note)
+	}
+	if !branchExists(t, repoRoot, w.Branch) {
+		t.Errorf("branch %s deleted though it holds unmerged work", w.Branch)
+	}
+}
+
+// Worktree and branch both removed by hand: nothing is left to lose.
+func TestReapWorkerWorktreeAndBranchGone(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	addOrigin(t, repoRoot)
+	e := dispatchWorker(t, repoRoot, "true")
+	wfGitT(t, repoRoot, "worktree", "remove", "--force", e.Worker.Worktree)
+	wfGitT(t, repoRoot, "branch", "-D", e.Worker.Branch)
 	if !ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
 		note, _ := livework.Default.Line(e.ID)
 		t.Fatalf("did not reap; row line = %q", note)
