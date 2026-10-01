@@ -49,8 +49,11 @@ type beadColumn struct {
 
 // DefaultBeadColumns is the pane as it ships. "owner" is absent: bd fills it from
 // the `owner` field, which on a solo workspace is the same name on every row.
-// Anyone sharing a workspace puts it back through [beads] columns.
-var DefaultBeadColumns = []string{"id", "priority", "type", "glyph", "title", "unblocks", "labels", "age"}
+// Anyone sharing a workspace puts it back through [beads] columns. "type",
+// "labels" and "unblocks" are absent for the same reason as the title's width: the
+// row gives the title every cell it can, and the strip under the list
+// (beadstrip.go) shows those three for the bead under the cursor.
+var DefaultBeadColumns = []string{"priority", "glyph", "title", "id", "age"}
 
 // beadColumnByName is every column the pane knows how to draw. A name outside
 // this map is configuration naming something that does not exist, which is
@@ -58,7 +61,7 @@ var DefaultBeadColumns = []string{"id", "priority", "type", "glyph", "title", "u
 // the pane.
 var beadColumnByName = map[string]beadColumn{
 	"id": {
-		name: "id", side: beadLeft,
+		name: "id", side: beadRight,
 		width: func(b bd.Bead, c beadCtx) int { return vlen(shortBeadID(b.ID, c.prefix)) },
 		cell: func(b bd.Bead, w int, c beadCtx) []seg {
 			return []seg{{t: padEnd(shortBeadID(b.ID, c.prefix), w), fg: cCyan}}

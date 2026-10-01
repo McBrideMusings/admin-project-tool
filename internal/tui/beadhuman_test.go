@@ -100,7 +100,7 @@ func TestBeadsPaneSurfacesHumanRowsFlat(t *testing.T) {
 	putFakeBdOnPath(t, fakeBdScript)
 	m := beadsModel(t)
 
-	out := frameOn(t, m, "right")
+	out := frameOn(t, m, "right", "down")
 
 	if !strings.Contains(out, "Needs you") {
 		t.Fatalf("expected a \"Needs you\" section heading, got:\n%s", out)
@@ -117,7 +117,7 @@ func TestBeadsPaneSurfacesHumanRowsFlat(t *testing.T) {
 		t.Errorf("expected the plain bead's title to render unchanged, got:\n%s", out)
 	}
 	if !strings.Contains(out, "human") {
-		t.Errorf("expected the \"human\" label to still render in the labels column, got:\n%s", out)
+		t.Errorf("expected the \"human\" label in the strip under the list, which describes the bead under the cursor, got:\n%s", out)
 	}
 }
 
