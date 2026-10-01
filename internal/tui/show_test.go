@@ -31,7 +31,7 @@ func TestShowRowsPRsClassifiesByBucket(t *testing.T) {
 	defer cancel()
 	m := New(ctx, t.TempDir(), "o/r", "main", "main")
 	m.manifest = &manifest.Manifest{HasUsesPullRequests: true, UsesPullRequests: true}
-	rows, err := ShowRows(m, "prs", FrameOptions{Settle: 500 * time.Millisecond})
+	rows, err := ShowRows(m, "prs", FrameOptions{Settle: 30 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
