@@ -219,11 +219,11 @@ func (m Model) beadSection(beads []bd.Bead, cols int, l beadLayout) []rowItem {
 	return rows
 }
 
-// beadStatusGlyph is the one cell tree mode spends on status. Without the
-// section headers a bead someone has their hands on looks like any other row;
-// the marker is the whole of what "In progress" used to say. A human bead
-// outranks in_progress: a bead blocked on you is the more urgent fact, and
-// tree mode has only one cell to spend on either.
+// beadStatusGlyph is the one cell every list mode spends on status. Tree mode
+// has no section headers, so the marker is the whole of what "In progress"
+// said there; flat mode repeats its headings on the row so a row read alone
+// says the same. A human bead outranks in_progress: a bead blocked on you is
+// the more urgent fact, and the row has only one cell to spend on either.
 func beadStatusGlyph(b bd.Bead) string {
 	switch {
 	case beadNeedsHuman(b):

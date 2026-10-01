@@ -84,14 +84,9 @@ var beadColumnByName = map[string]beadColumn{
 	},
 	"glyph": {
 		name: "glyph", side: beadLeft,
-		// One cell, and only in tree mode: the flat list says "in progress" with a
-		// section heading, so the marker would be repeating what the heading said.
-		width: func(_ bd.Bead, c beadCtx) int {
-			if c.tree {
-				return 1
-			}
-			return 0
-		},
+		// One cell in every list mode, so a row reads the same whichever shape
+		// `g` has cycled to.
+		width: func(bd.Bead, beadCtx) int { return 1 },
 		cell: func(b bd.Bead, w int, _ beadCtx) []seg {
 			return []seg{{t: padEnd(beadStatusGlyph(b), w), fg: beadGlyphColor(b)}}
 		},

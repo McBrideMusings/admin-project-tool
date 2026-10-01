@@ -1301,3 +1301,32 @@ func TestSuppressedBranchGlyphKeepsTheColumns(t *testing.T) {
 		}
 	}
 }
+
+// TestBeadGlyphDrawsInFlatMode: the status glyph column is one cell in every
+// list mode, so an in-progress bead carries its marker in the flat list too.
+func TestBeadGlyphDrawsInFlatMode(t *testing.T) {
+	m := seededModel()
+	m.width = 140
+	m.haveBeads = true
+	m.hasBeads = true
+	m.beadPrefix = "bdtest"
+	m.beads = []bd.Bead{
+		{ID: "bdtest-1xn", Title: "Bump deps", Status: "in_progress", Type: "chore", Priority: 2},
+		{ID: "bdtest-qt0", Title: "Add reset", Status: "open", Type: "feature", Priority: 1, Labels: []string{"human"}},
+	}
+	m.beadCols = []string{"id", "glyph", "title"}
+	var got []string
+	for _, r := range m.beadRows() {
+		if r.kind != rowBead {
+			continue
+		}
+		var line string
+		for _, s := range r.leftSegs {
+			line += s.t
+		}
+		got = append(got, line)
+	}
+	if len(got) != 2 || !strings.Contains(got[0], "?") || !strings.Contains(got[1], "▶") {
+		t.Fatalf("flat rows lack glyphs: %q", got)
+	}
+}
