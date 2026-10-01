@@ -268,7 +268,7 @@ func (m Model) attachBreadcrumb(width int) string {
 // termFields is the attached view's field block: the same rows the docked
 // band shows under its title for this entry — a command's log path and one
 // row per configured url, or a worker's five rows. It finds them by matching
-// the attached entry to its Work row, with collapse off so a hidden target
+// the attached entry to its Commands or Workers row, with collapse off so a hidden target
 // row still counts. An entry with no row falls back to its log path alone.
 func (m Model) termFields(width int) []string {
 	if !m.termAttached {
@@ -276,7 +276,7 @@ func (m Model) termFields(width int) []string {
 	}
 	all := m
 	all.workCollapsed = false
-	for _, r := range all.workRows() {
+	for _, r := range append(all.workRows(), all.workerRows()...) {
 		e := bandEntry(r)
 		if e == nil || e.ID != m.termEntryID {
 			continue

@@ -299,10 +299,11 @@ func TestRunningCommandLightsOnlyItsOwnRow(t *testing.T) {
 	}
 }
 
-// TestWorkRowsOneListOneCursor is the ticket's own central claim: commands
-// and workers share one list under one cursor, in a stable order, and the
-// cursor can move across the boundary between them.
-func TestWorkRowsOneListOneCursor(t *testing.T) {
+// TestWorkerAppearsOnlyInWorkersTab is admin-spjp.9's acceptance check: a
+// genuine agent worker (Worker != nil, the row a bead binding or a workflow
+// target produces) lands in the Workers tab's rows and in none of the
+// Commands tab's.
+func TestWorkerAppearsOnlyInWorkersTab(t *testing.T) {
 	freshLivework(t)
 	m := &manifest.Manifest{
 		Custom: map[string]manifest.Command{
@@ -311,12 +312,7 @@ func TestWorkRowsOneListOneCursor(t *testing.T) {
 		Actions: map[string]manifest.Action{"build": {"kind": "shell"}},
 	}
 	mm := workTestModel(m)
-	mm.active = tabWork
 
-	// A genuine agent worker has no command behind it and must still land in
-	// the same list, after every command — this is the row a workflow target
-	// produces (internal/livework's own doc comment), so use a unique,
-	// test-scoped ID that no other test in this package can collide with.
 	worker := &livework.Entry{
 		ID: "test-work-rows-worker", Name: "test-work-rows-worker",
 		State: livework.StateWaiting, Activity: "needs input", Handle: "pane-worker", Via: "terminal",
@@ -326,39 +322,22 @@ func TestWorkRowsOneListOneCursor(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	rows := mm.workRows()
-	var kinds []rowKind
-	for _, r := range rows {
-		kinds = append(kinds, r.kind)
+	for _, r := range mm.workRows() {
+		if r.kind == rowWorker {
+			t.Errorf("Commands tab holds a worker row: %+v", r)
+		}
 	}
-	// Commands section header, the one command, Workers section header
-	// (blank spacer optional), the worker row.
-	foundCmd, foundWorker := -1, -1
-	for i, r := range rows {
-		if r.kind == rowCommand {
-			foundCmd = i
+	found := 0
+	for _, r := range mm.workerRows() {
+		if r.kind == rowCommand || r.kind == rowCommandTarget {
+			t.Errorf("Workers tab holds a command row: %+v", r)
 		}
 		if r.kind == rowWorker && r.work.worker.ID == worker.ID {
-			foundWorker = i
+			found++
 		}
 	}
-	if foundCmd < 0 {
-		t.Fatalf("no command row in %v", kinds)
-	}
-	if foundWorker < 0 {
-		t.Fatalf("no worker row in %v", kinds)
-	}
-	if foundWorker < foundCmd {
-		t.Errorf("worker row (%d) came before the command row (%d) — commands must come first", foundWorker, foundCmd)
-	}
-
-	// One cursor traverses both: moving down from the command row must reach
-	// the worker row without any special-casing at the boundary.
-	mm.cursor[tabWork] = foundCmd
-	mm.moveCursor(1)
-	r, ok := mm.currentRow()
-	if !ok || r.kind != rowWorker {
-		t.Errorf("moving down from the last command did not land on the worker row")
+	if found != 1 {
+		t.Errorf("Workers tab holds the worker %d times, want exactly 1", found)
 	}
 }
 
@@ -621,7 +600,7 @@ func TestWorkRowsWorkersHeaderAlwaysPresent(t *testing.T) {
 	}
 	mm := workTestModel(m)
 
-	rows := mm.workRows()
+	rows := mm.workerRows()
 	headerIdx := -1
 	for i, r := range rows {
 		if r.kind == rowHeader && r.label == "Workers" {
@@ -629,7 +608,7 @@ func TestWorkRowsWorkersHeaderAlwaysPresent(t *testing.T) {
 		}
 	}
 	if headerIdx < 0 {
-		t.Fatalf("no Workers header in workRows: %+v", rows)
+		t.Fatalf("no Workers header in workerRows: %+v", rows)
 	}
 	if headerIdx+1 >= len(rows) {
 		t.Fatalf("Workers header has no row after it")
@@ -649,7 +628,7 @@ func TestWorkRowsWorkersHeaderAlwaysPresent(t *testing.T) {
 
 // TestWorkRowsWorkersHeaderStaysPutAcrossDispatch is AC 3: the Workers
 // header sits at a fixed offset from the Commands section (built before the
-// workers branch in workRows), so dispatching a new worker cannot move it —
+// workers branch in workerRows), so dispatching a new worker cannot move it —
 // the empty-state line and the worker rows are alternatives at the same
 // slot, never a reason for the header itself to shift.
 func TestWorkRowsWorkersHeaderStaysPutAcrossDispatch(t *testing.T) {
@@ -662,7 +641,7 @@ func TestWorkRowsWorkersHeaderStaysPutAcrossDispatch(t *testing.T) {
 	}
 	mm := workTestModel(m)
 
-	before := mm.workRows()
+	before := mm.workerRows()
 	headerBefore := -1
 	for i, r := range before {
 		if r.kind == rowHeader && r.label == "Workers" {
@@ -682,7 +661,7 @@ func TestWorkRowsWorkersHeaderStaysPutAcrossDispatch(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	after := mm.workRows()
+	after := mm.workerRows()
 	headerAfter, workerIdx := -1, -1
 	for i, r := range after {
 		if r.kind == rowHeader && r.label == "Workers" {
@@ -696,7 +675,7 @@ func TestWorkRowsWorkersHeaderStaysPutAcrossDispatch(t *testing.T) {
 		t.Errorf("Workers header moved from %d to %d when a worker was added", headerBefore, headerAfter)
 	}
 	if workerIdx < 0 {
-		t.Fatalf("dispatched worker's row not found in workRows")
+		t.Fatalf("dispatched worker's row not found in workerRows")
 	}
 	if after[headerAfter+1].kind != rowWorker {
 		t.Errorf("row directly after the Workers header = %+v, want a rowWorker now that one is live", after[headerAfter+1])
@@ -728,14 +707,10 @@ func TestWorkRowsNoCommandsStillLegible(t *testing.T) {
 			t.Errorf("found a rowCenter row, want the whole-view fallback deleted: %+v", r)
 		}
 	}
-	foundWorkersHeader := false
 	for _, r := range rows {
 		if r.kind == rowHeader && r.label == "Workers" {
-			foundWorkersHeader = true
+			t.Errorf("Commands tab carries a Workers header: %+v", r)
 		}
-	}
-	if !foundWorkersHeader {
-		t.Errorf("no Workers header for a manifest with no commands")
 	}
 }
 
@@ -758,7 +733,7 @@ func TestWorkRowsWorkerLabelHasNoTrailingSpaceWhenActivityEmpty(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	rows := mm.workRows()
+	rows := mm.workerRows()
 	found := false
 	for _, r := range rows {
 		if r.kind == rowWorker && r.work.worker.ID == worker.ID {

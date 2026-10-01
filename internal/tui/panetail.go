@@ -37,7 +37,7 @@ type paneTailMsg struct {
 // paneTailTarget is the launcher-dispatched live entry under the Work tab's
 // cursor, or nil when the cursor is elsewhere or on a row with no such entry.
 func (m Model) paneTailTarget() *livework.Entry {
-	if m.active != tabWork {
+	if !m.onWorkSurface() {
 		return nil
 	}
 	rows := m.visibleRows()

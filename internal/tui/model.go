@@ -30,12 +30,15 @@ import (
 
 type tab int
 
-// tabWork is drawn first, and only when the project has an admin.toml
-// (Model.manifestOK) — admin-3rgp.20's "a repo with no manifest has no Work
-// tab at all, absent not disabled." Every other tab is unconditional or
+// tabWork (drawn as "Commands") and tabWorkers are drawn first, and only when
+// the project has an admin.toml (Model.manifestOK) — admin-3rgp.20's "a repo
+// with no manifest has no Work tab at all, absent not disabled." Commands lists
+// the manifest's commands; Workers lists every live agent worker, whichever
+// surface started it (admin-spjp.9). Every other tab is unconditional or
 // derived from remote/beads state exactly as before this ticket.
 const (
 	tabWork tab = iota
+	tabWorkers
 	tabLocal
 	tabPRs
 	tabIssues
@@ -44,7 +47,7 @@ const (
 	numTabs
 )
 
-var tabNames = [numTabs]string{"Work", "Local", "PRs", "Issues", "Beads", "Config"}
+var tabNames = [numTabs]string{"Commands", "Workers", "Local", "PRs", "Issues", "Beads", "Config"}
 
 // focusZone is the one thing on screen that owns the keyboard's left/right and
 // up/down meaning: either the tab bar (nothing selected, arrows step tabs) or
@@ -830,7 +833,7 @@ func (m Model) selectMode() bool {
 func (m Model) visibleTabs() []tab {
 	var tabs []tab
 	if m.manifestOK {
-		tabs = append(tabs, tabWork)
+		tabs = append(tabs, tabWork, tabWorkers)
 	}
 	tabs = append(tabs, tabLocal)
 	if m.nwo != "" && m.wantsPRs() {
@@ -864,6 +867,8 @@ func (m Model) rows() []rowItem {
 	switch m.active {
 	case tabWork:
 		return m.workRows()
+	case tabWorkers:
+		return m.workerRows()
 	case tabPRs:
 		return m.prRows()
 	case tabIssues:
@@ -2254,7 +2259,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.moveCursor(-1)
 	case "a":
-		if m.active == tabWork {
+		if m.onWorkSurface() {
 			return m.attachCurrentWork()
 		}
 	case "c":
@@ -2279,7 +2284,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// registry and the resolved manifest, neither of which a refresh
 		// fetches, so `r` there would spend a network sync to redraw the same
 		// rows. `R` still syncs everything from any tab.
-		if m.active == tabWork {
+		if m.onWorkSurface() {
 			return m, nil
 		}
 		// The Beads tab has no per-row refresh: re-reading the whole workspace is
@@ -2430,7 +2435,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// [keys.command]/[keys.worker] binding for x shadows it (reported by
 		// admin check). killCurrentWork is already a no-op with no live row
 		// under the cursor.
-		if m.active == tabWork {
+		if m.onWorkSurface() {
 			return m.killCurrentWork()
 		}
 	case "X":
