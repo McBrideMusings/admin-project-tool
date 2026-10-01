@@ -192,6 +192,11 @@ func SaveMinesOnly(projectDir string, v bool) error {
 // file + rename so a crash mid-write can't leave a half-written view.toml
 // behind.
 func saveKey(projectDir, table, key string, value any) error {
+	// An empty projectDir means no persistence: joining "" would resolve
+	// .admin/ against the process cwd and write view.toml there.
+	if projectDir == "" {
+		return nil
+	}
 	dir := filepath.Join(projectDir, ".admin")
 	path := filepath.Join(dir, Filename)
 

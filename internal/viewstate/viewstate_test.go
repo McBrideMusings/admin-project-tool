@@ -35,6 +35,17 @@ func writeTOML(t *testing.T, path, content string) {
 	}
 }
 
+func TestSaveWithEmptyProjectDirWritesNothing(t *testing.T) {
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	if err := SaveWorkCollapsed("", true); err != nil {
+		t.Fatalf("SaveWorkCollapsed(\"\") = %v, want nil", err)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, ".admin")); !os.IsNotExist(err) {
+		t.Fatalf(".admin created in cwd for an empty project dir (stat err = %v)", err)
+	}
+}
+
 // useEmptyGlobal points GlobalPath at a path with nothing written to it, so
 // level 3 always falls through to defaults — the shape almost every test
 // below wants unless it's specifically exercising level 3.
