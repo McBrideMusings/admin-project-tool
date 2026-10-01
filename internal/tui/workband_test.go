@@ -86,8 +86,8 @@ func TestBandTitleFourStates(t *testing.T) {
 		if !strings.Contains(title, "not running") {
 			t.Errorf("idle title = %q, want \"not running\"", title)
 		}
-		if strings.Count(title, "running") != 1 {
-			t.Errorf("idle title with an empty registry = %q, want \"running\" exactly once", title)
+		if !strings.Contains(title, "nothing running") {
+			t.Errorf("idle title with an empty registry = %q, want \"nothing running\" on the right", title)
 		}
 	})
 
@@ -169,16 +169,10 @@ func TestFieldBlockSizedToContent(t *testing.T) {
 	}
 }
 
-// TestRenderWorkBandOverflowingFieldsStillFillsExactlyH is a content-sized
-// field block's own edge case: a command with enough configured urls that
-// the field block ALONE (1 log row + 20 url rows) runs past the band's own
-// height h — an inherent geometry limit a content-sized block accepts (a
-// fixed-height terminal cannot show more rows than it has), not a
-// regression this diff introduces. renderWorkBand's own contract — exactly
-// h lines, whatever r is — still has to hold: the trailing `out[:h]` is
-// what keeps this from ever returning a ragged slice, and it must still
-// show the field block's OWN first rows (log, then urls in order) rather
-// than garbling the output.
+// TestRenderWorkBandOverflowingFieldsStillFillsExactlyH: a command with more
+// configured urls than the fieldRowsH slot holds is clipped to the slot —
+// log, then urls in order — and renderWorkBand still returns exactly h
+// lines.
 func TestRenderWorkBandOverflowingFieldsStillFillsExactlyH(t *testing.T) {
 	freshLivework(t)
 	urls := make([]frame.URLEntry, 20)
@@ -199,20 +193,19 @@ func TestRenderWorkBandOverflowingFieldsStillFillsExactlyH(t *testing.T) {
 	if !strings.Contains(out[1], "log") {
 		t.Errorf("row 1 = %q, want the log field row", out[1])
 	}
-	if !strings.Contains(out[h-1], "u7") {
-		t.Errorf("last visible row = %q, want the field block's own rows in order (log, u0..u7), not garbled or reordered", out[h-1])
+	if !strings.Contains(out[fieldRowsH], "u3") {
+		t.Errorf("last slot row = %q, want the field block's own rows in order (log, u0..u3), not garbled or reordered", out[fieldRowsH])
 	}
 }
 
-// TestBandIdleIsTitleOnly: an idle row's band is its title rule — the name
-// and "not running" — and nothing else. Every row beneath it is blank: no
-// kind, desc, last run, last log, url or query field, and no placeholder.
-func TestBandIdleIsTitleOnly(t *testing.T) {
+// TestBandIdleShowsFieldSlot: an idle row's band is its title rule, the
+// kind/desc/last run/last log/query slot and the "output appears here" hint
+// on the band's last row (commands.txt).
+func TestBandIdleShowsFieldSlot(t *testing.T) {
 	freshLivework(t)
 	mm := workTestModel(nil)
 	row := rowItem{kind: rowCommand, work: &workRowData{
 		cmdName: "build", cmdDesc: "build it", cmdKind: "workflow", targetKey: "fast", logPath: "/x/build.log",
-		urls:     []frame.URLEntry{{Label: "local", URL: "http://localhost:9"}},
 		workflow: &kinds.WorkflowTarget{Source: kinds.WorkflowSourceQuery, Query: "status:closed"},
 	}}
 	const h = 12
@@ -224,10 +217,13 @@ func TestBandIdleIsTitleOnly(t *testing.T) {
 	if !strings.Contains(title, "build fast") || !strings.Contains(title, "not running") {
 		t.Errorf("idle title = %q, want the name and \"not running\"", title)
 	}
-	for i, l := range out[1:] {
-		if s := strings.TrimSpace(stripANSI(l)); s != "" {
-			t.Errorf("idle band row %d = %q, want blank", i+1, s)
+	for i, want := range []string{"kind", "desc", "last run", "last log", "query"} {
+		if got := stripANSI(out[1+i]); !strings.HasPrefix(strings.TrimSpace(got), want) {
+			t.Errorf("idle band row %d = %q, want the %q field", 1+i, got, want)
 		}
+	}
+	if got := strings.TrimSpace(stripANSI(out[h-1])); got != "output appears here while it runs" {
+		t.Errorf("last row = %q, want the output hint", got)
 	}
 }
 

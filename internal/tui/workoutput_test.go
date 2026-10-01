@@ -45,9 +45,9 @@ func TestRenderWorkBandTailsLiveRingBottomAligned(t *testing.T) {
 		t.Fatalf("tail not bottom-aligned against the band's floor, rows h-3..h-1 = %q", out[h-3:])
 	}
 	// The field block occupies exactly 1 (title) + 5 (a worker's own
-	// log/branch/worktree/session/now rows) above the tail; everything
-	// between it and the tail must be blank.
-	for i := 1 + 5; i < h-3; i++ {
+	// log/branch/worktree/session/now rows) and the dashed rule one more;
+	// everything between the rule and the tail must be blank.
+	for i := 1 + fieldRowsH + 1; i < h-3; i++ {
 		if strings.TrimSpace(out[i]) != "" {
 			t.Errorf("row %d between the field block and the tail = %q, want blank (the bottom-align gap)", i, out[i])
 		}
@@ -55,8 +55,9 @@ func TestRenderWorkBandTailsLiveRingBottomAligned(t *testing.T) {
 }
 
 // TestRenderWorkBandRuleSeparatesFieldsFromTail proves the open band draws
-// the attached view's dashed rule on the row right after its field rows —
-// here a command's log row and one url row — with the tail below it.
+// the attached view's dashed rule on the row right after the fixed field
+// slot — here a command's log row and one url row, padded to fieldRowsH —
+// with the tail below it.
 func TestRenderWorkBandRuleSeparatesFieldsFromTail(t *testing.T) {
 	freshLivework(t)
 	ring := livework.NewRing(4096)
@@ -70,8 +71,8 @@ func TestRenderWorkBandRuleSeparatesFieldsFromTail(t *testing.T) {
 	if !strings.Contains(out[1], "log") || !strings.Contains(out[2], "url") {
 		t.Fatalf("rows 1-2 = %q, want the log and url field rows", out[1:3])
 	}
-	if got := strings.TrimSpace(stripANSI(out[3])); got != strings.Repeat("╌", 60) {
-		t.Errorf("row 3 = %q, want a full-width dashed rule", got)
+	if got := strings.TrimSpace(stripANSI(out[1+fieldRowsH])); got != strings.Repeat("╌", 60) {
+		t.Errorf("row %d = %q, want a full-width dashed rule", 1+fieldRowsH, got)
 	}
 	if strings.TrimSpace(out[11]) != "tail line" {
 		t.Errorf("last row = %q, want the tail", out[11])
@@ -97,7 +98,7 @@ func TestRenderWorkBandEmptyTailWithoutLiveRing(t *testing.T) {
 	if len(out) != h {
 		t.Fatalf("renderWorkBand produced %d lines, want exactly %d", len(out), h)
 	}
-	for i := 1 + 5; i < h-1; i++ {
+	for i := 1 + fieldRowsH + 1; i < h-1; i++ {
 		if strings.TrimSpace(out[i]) != "" {
 			t.Errorf("row %d with no live ring = %q, want blank", i, out[i])
 		}
@@ -161,11 +162,11 @@ func TestRenderWorkBandCommandTailsLiveRing(t *testing.T) {
 	}
 }
 
-// TestRenderWorkBandNoURLsTailGetsFullSpareHeight is admin-dky7's own
-// acceptance criterion: a running command with no configured urls has a
-// one-row field block (log only, no padding), so the tail gets h-2 rows —
-// h minus the title row minus that single field row.
-func TestRenderWorkBandNoURLsTailGetsFullSpareHeight(t *testing.T) {
+// TestRenderWorkBandNoURLsKeepsFieldSlot: a running command with no
+// configured urls still occupies the whole fieldRowsH slot (log row, then
+// blank rows), so the dashed rule and the tail sit in the same rows as for a
+// command with urls and nothing under the block moves.
+func TestRenderWorkBandNoURLsKeepsFieldSlot(t *testing.T) {
 	freshLivework(t)
 	ring := livework.NewRing(4096)
 	for i := 0; i < 30; i++ {
@@ -176,21 +177,21 @@ func TestRenderWorkBandNoURLsTailGetsFullSpareHeight(t *testing.T) {
 		live: &livework.Entry{ID: "dev-no-urls", StartedAt: time.Now(), Output: ring},
 	}
 
-	mm := workTestModel(nil)
-	row := rowItem{kind: rowCommand, work: wd}
 	const h = 20
-	out := mm.renderWorkBand(row, 60, h)
+	out := workTestModel(nil).renderWorkBand(rowItem{kind: rowCommand, work: wd}, 60, h)
 	if len(out) != h {
 		t.Fatalf("renderWorkBand produced %d lines, want exactly %d", len(out), h)
 	}
-	// Row 0 is the title, row 1 is the sole "log" field row; every row from
-	// 2 onward is tail — h-2 rows of it — so row 2 itself must already carry
-	// tail content rather than a blank field-block gap.
-	if strings.TrimSpace(stripANSI(out[1])) == "" || !strings.Contains(out[1], "log") {
+	if !strings.Contains(out[1], "log") {
 		t.Fatalf("row 1 = %q, want the sole log field row", out[1])
 	}
-	if strings.TrimSpace(out[2]) == "" {
-		t.Errorf("row 2 (first tail row, h-2 available) = %q, want tail content, not a leftover fixed-slot gap", out[2])
+	for i := 2; i <= fieldRowsH; i++ {
+		if strings.TrimSpace(out[i]) != "" {
+			t.Errorf("row %d = %q, want a blank slot row", i, out[i])
+		}
+	}
+	if !strings.Contains(out[1+fieldRowsH], "╌") || strings.TrimSpace(out[2+fieldRowsH]) == "" {
+		t.Errorf("rows %d-%d = %q, want the dashed rule then tail content", 1+fieldRowsH, 2+fieldRowsH, out[1+fieldRowsH:3+fieldRowsH])
 	}
 }
 

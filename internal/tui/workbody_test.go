@@ -137,22 +137,16 @@ func TestWorkBodyBandRulesAreEdgeToEdge(t *testing.T) {
 	}
 }
 
-// TestWorkBodyBandCollapsesUnlessLive proves the band is only its title rule,
-// on the body's last row, for a row that is not going — exited, failed, or
-// never started — and opens to bandH rows for a running one.
-func TestWorkBodyBandCollapsesUnlessLive(t *testing.T) {
+// TestWorkBodyBandStaysOpen proves the band is bandH rows at the bottom of
+// the body whatever state the cursor row is in: running, waiting, exited or
+// failed.
+func TestWorkBodyBandStaysOpen(t *testing.T) {
 	const w, h = 96, 30
-	for _, tc := range []struct {
-		state     livework.State
-		wantTitle int
-	}{
-		{livework.StateRunning, h - bandH(h)},
-		{livework.StateWaiting, h - bandH(h)},
-		{livework.StateExited, h - 1},
-		{livework.StateFailed, h - 1},
+	for _, state := range []livework.State{
+		livework.StateRunning, livework.StateWaiting, livework.StateExited, livework.StateFailed,
 	} {
 		mm := buildRunningWorkModelAt(t, w, h)
-		livework.Default.SetState("command-test", tc.state, nil)
+		livework.Default.SetState("command-test", state, nil)
 
 		out, _ := mm.renderWorkBody(w, h)
 		titleIdx := -1
@@ -162,11 +156,8 @@ func TestWorkBodyBandCollapsesUnlessLive(t *testing.T) {
 				break
 			}
 		}
-		if titleIdx != tc.wantTitle {
-			t.Errorf("%s: band title at row %d, want %d", tc.state, titleIdx, tc.wantTitle)
-		}
-		if tc.wantTitle == h-1 && strings.Contains(strings.Join(out, "\n"), "test_b ... ok") {
-			t.Errorf("%s: collapsed band still shows output", tc.state)
+		if want := h - bandH(h); titleIdx != want {
+			t.Errorf("%s: band title at row %d, want %d", state, titleIdx, want)
 		}
 	}
 }

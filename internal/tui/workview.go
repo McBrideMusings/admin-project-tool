@@ -5,6 +5,7 @@
 package tui
 
 import (
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -18,19 +19,27 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/logformat"
 )
 
-// bandH is the open band's row count: fixed for a given body height,
-// whatever the row list holds, so an open band always sits in the same rows
-// at the bottom of the body.
+// bandH is the band's row count: fixed for a given body height, whatever the
+// row list holds or the cursor row's state, so the band always sits in the
+// same rows at the bottom of the body.
 func bandH(h int) int {
 	return maxi(mini(13, h/2), mini(9, h-1))
 }
 
+// fieldRowsH is the fixed height of the band's field block for every row
+// kind: a live command's log+url, a live worker's log+branch+worktree+
+// session+now, or an idle entry's kind+desc+last run+last log (+query).
+// Five is the tallest. The block is padded or clipped to exactly this by
+// slotRows, so moving the cursor between rows in different states never moves
+// a row of the band (docs/spikes/admin-tui-desktop/README.md, "The band's
+// field block is a fixed slot").
+const fieldRowsH = 5
+
 // renderWorkBody lays out the Work tab: one layout at every geometry — the
 // row list fills the body width, and the live band spans that same full
-// width beneath it, pinned to the bottom: bandH rows while the cursor row is
-// live (see bandOpen), its title rule alone otherwise. The list gives up
-// HEIGHT to the band and never width; a short list leaves blank rows between
-// itself and the band.
+// width beneath it, pinned to the bottom: always bandH rows, whatever state
+// the cursor row is in. The list gives up HEIGHT to the band and never width;
+// a short list leaves blank rows between itself and the band.
 // Ported from the design prototype's workBody/renderPaletteScreen
 // (docs/spikes/admin-tui-desktop/variants.go); the prototype's own two-
 // orientation switch (a side-by-side split on a wide terminal, a stacked
@@ -97,15 +106,12 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		}
 	}
 
-	// The band takes bandH rows at the bottom while the cursor row is live,
-	// and collapses to its title rule otherwise; the list gets the rest,
-	// padded with blank rows when its own rows don't fill them.
-	bandRows := 1
-	if bandOpen(bandEntry(rows[cursor])) {
-		bandRows = bandH(height)
-	}
-	listH := maxi(height-bandRows, 1)
-	bh := maxi(height-listH, 1)
+	// The band always takes bandH rows at the bottom, whatever the cursor row's
+	// state; the list gets the rest, padded with blank rows when its own rows
+	// don't fill them.
+	bh := bandH(height)
+	listH := maxi(height-bh, 1)
+	bh = maxi(height-listH, 1)
 
 	listLines := left
 	hitLines := hits
@@ -429,10 +435,9 @@ func renderTargetRow(wd *workRowData, focused bool, rest int) string {
 
 // renderWorkBand is the Work tab's full-width live band (admin-3rgp.72.6): a
 // title rule naming whatever the combined cursor sits on plus a count of
-// everything else running (bandTitle), then — for a live row only — a
-// content-sized field block (bandFieldsCommand / bandFieldsWorker) and the
-// row's own live output tail filling the rest. An idle row shows the title
-// alone: its name and "not running" are all it has to say.
+// everything else running (bandTitle), a fixed fieldRowsH-row field block
+// chosen by the row's own state (bandIdle / bandFieldsCommand /
+// bandFieldsWorker), then the row's own live output tail filling the rest.
 // Ported from the design prototype's renderWorkBody band half (docs/spikes/
 // admin-tui-desktop/variants.go:1533-1588) — the row-list half of that
 // function stays in Model.renderWorkBody above, unchanged; this replaces
@@ -440,16 +445,10 @@ func renderTargetRow(wd *workRowData, focused bool, rest int) string {
 // workerDetail/detailHeader/appendLiveTail/outputRule) entirely.
 //
 // Contract: given the body width w and the band's own height h, returns
-// exactly h lines, whatever row r is. The field block is sized to its own
-// content: a command's block is one log row plus one row per configured url,
-// and a worker's is always its five real rows (log, branch, worktree,
-// session, now); neither is padded to a fixed slot, so the tail's available
-// height is computed from the field block's ACTUAL length each time, not a
-// shared constant. A command with more configured urls than
-// h-2 has rows for still returns exactly h lines (the trailing out[:h] below
-// keeps that contract) but shows only the field block's own leading rows —
-// an inherent geometry limit of a finite terminal, not something this
-// function can grow past.
+// exactly h lines, whatever row r is. The field block is a fixed fieldRowsH
+// slot for every row kind (live command, live worker, idle entry), so
+// moving the cursor between rows in different states never moves a row of
+// the band beneath it; a block taller than the slot is clipped to it.
 func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 	wd := r.work
 	if wd == nil {
@@ -469,12 +468,11 @@ func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 	out = append(out, bandTitle(w, live, name))
 
 	if live != nil {
-		fields := bandFields(live, wd, w)
-		out = append(out, fields...)
+		out = append(out, slotRows(bandFields(live, wd, w), w)...)
 		// The same dashed rule the attached view draws between its field
 		// rows and the output (terminalview.go's renderTerminalBody).
 		out = append(out, faintStyle.Render(strings.Repeat("╌", w)))
-		avail := maxi(h-2-len(fields), 1)
+		avail := maxi(h-2-fieldRowsH, 1)
 		var tail []string
 		switch {
 		case live.Output != nil:
@@ -483,6 +481,10 @@ func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 			tail = snapshotTailLines(live.ID, maxi(w-1, 1))
 		}
 		out = append(out, bandTail(tail, avail, w)...)
+	} else {
+		out = append(out, bandIdle(wd, w)...)
+		out = append(out, blankRows(w, maxi(h-1-fieldRowsH-1, 0))...)
+		out = append(out, padEnd(" "+faintStyle.Render("output appears here while it runs"), w))
 	}
 
 	for i, l := range out {
@@ -517,32 +519,17 @@ func bandEntry(r rowItem) *livework.Entry {
 	return r.work.live
 }
 
-// bandOpen reports whether the band opens to its full bandH height for e:
-// only while e is still going. A row with no entry, or one that exited or
-// failed, collapses the band to its title rule.
-func bandOpen(e *livework.Entry) bool {
-	if e == nil {
-		return false
-	}
-	state, _ := livework.Default.State(e.ID)
-	switch state {
-	case livework.StateRunning, livework.StateStarting, livework.StateWaiting:
-		return true
-	}
-	return false
-}
-
 // othersRunning is the live band title's right side: how much is live that
 // is NOT the row being previewed, read from the exact same
 // livework.Default.List() the row list itself reads (work.go's byName/
 // liveWorkers), so the row list and this count can never disagree about
 // what is running. Ported from the design prototype (docs/spikes/
-// admin-tui-desktop/variants.go:1400-1437). An empty registry returns ""
-// — the idle title's own "not running" already says it.
+// admin-tui-desktop/variants.go:1400-1437). An empty registry returns
+// "nothing running" (commands-empty.txt).
 func othersRunning(selID string) string {
 	entries := livework.Default.List()
 	if len(entries) == 0 {
-		return ""
+		return "nothing running"
 	}
 	cmds, workers := 0, 0
 	for _, e := range entries {
@@ -624,14 +611,28 @@ func bandTitle(w int, live *livework.Entry, name string) string {
 	return faintStyle.Render("── ") + titleStyled + faintStyle.Render(" "+strings.Repeat("─", fill)+suffix+" ──")
 }
 
-// padRows pads every row of a field block to w, without changing how many
-// rows there are — the field block is sized to its own content, so nothing
-// pads or clips it to a shared fixed height.
+// padRows pads every row of a field block to w without changing how many
+// rows there are: the attached view (terminalview.go's termFields) sizes its
+// field block to its content, and the docked band slots the same rows into
+// fieldRowsH through slotRows.
 func padRows(out []string, w int) []string {
 	for i, l := range out {
 		out[i] = padEnd(l, w)
 	}
 	return out
+}
+
+// slotRows pads (or clips) a field block to exactly fieldRowsH rows, each
+// already padded to w, so a block that would otherwise grow or shrink with
+// what it has to say never moves a row of the band beneath it.
+func slotRows(out []string, w int) []string {
+	for i, l := range out {
+		out[i] = padEnd(l, w)
+	}
+	for len(out) < fieldRowsH {
+		out = append(out, padEnd("", w))
+	}
+	return out[:fieldRowsH]
 }
 
 // blankRows returns n rows, each padded to w — used to fill the band below
@@ -643,6 +644,40 @@ func blankRows(w, n int) []string {
 		out = append(out, padEnd("", w))
 	}
 	return out
+}
+
+// bandIdle is the band's field block while the cursor sits on a command that
+// has no live entry: kind, description, last run and last log, plus the query
+// a query-sourced workflow will dispatch over. A never-run command reads
+// "never" and "—". "last run" is the resolved log file's mtime. A target
+// row's kind is the literal "target" (commands.txt), not its parent's.
+func bandIdle(wd *workRowData, w int) []string {
+	lw := maxi(w-11, 8)
+	kind := wd.cmdKind
+	if kind == "multi-target" {
+		kind = "multi-tgt"
+	}
+	if wd.targetKey != "" {
+		kind = "target"
+	}
+	lastRun := "never"
+	logCell := faintStyle.Render("—")
+	if wd.logPath != "" {
+		logCell = faintStyle.Render(fitPath(wd.logPath, lw))
+		if fi, err := os.Stat(wd.logPath); err == nil {
+			lastRun = humanizeAge(time.Since(fi.ModTime()))
+		}
+	}
+	rows := []string{
+		" " + faintStyle.Render(padEnd("kind", 9)) + truncR(kind, lw),
+		" " + faintStyle.Render(padEnd("desc", 9)) + truncR(wd.cmdDesc, lw),
+		" " + faintStyle.Render(padEnd("last run", 9)) + faintStyle.Render(lastRun),
+		" " + faintStyle.Render(padEnd("last log", 9)) + logCell,
+	}
+	if wd.workflow != nil {
+		rows = append(rows, " "+faintStyle.Render(padEnd("query", 9))+truncR(wd.workflow.Query, lw))
+	}
+	return slotRows(rows, w)
 }
 
 // bandFieldsCommand is the band's field block for a live (running) command:
