@@ -112,6 +112,31 @@ func TestWorkBodyOneLayoutAtEveryGeometry(t *testing.T) {
 	}
 }
 
+// TestWorkBodyBandRulesAreEdgeToEdge pins commands-running.txt:16 and :28's
+// column: the band's title rule starts at column 0 and runs to the last
+// column, the same span as the footer rule beneath it, instead of sitting one
+// cell inside each edge.
+func TestWorkBodyBandRulesAreEdgeToEdge(t *testing.T) {
+	for _, geo := range []struct{ w, h int }{{80, 24}, {96, 30}, {178, 46}} {
+		mm := buildRunningWorkModelAt(t, geo.w, geo.h)
+		out, _ := mm.renderWorkBody(geo.w, geo.h)
+
+		title := ""
+		for _, l := range out {
+			if p := stripANSI(l); strings.HasPrefix(p, "──") && strings.HasSuffix(p, "──") {
+				title = p
+				break
+			}
+		}
+		if title == "" {
+			t.Fatalf("%dx%d: no band title rule starting and ending in \"──\" at the screen edges:\n%s", geo.w, geo.h, strings.Join(out, "\n"))
+		}
+		if got := vlen(title); got != geo.w {
+			t.Errorf("%dx%d: band title rule is %d cells wide, want %d", geo.w, geo.h, got, geo.w)
+		}
+	}
+}
+
 // TestWorkBodyBandCollapsesUnlessLive proves the band is only its title rule,
 // on the body's last row, for a row that is not going — exited, failed, or
 // never started — and opens to bandH rows for a running one.
