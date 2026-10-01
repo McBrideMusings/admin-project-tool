@@ -9,6 +9,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
+	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 )
 
 // These tests pin the remaining list panes as tables, the same way
@@ -1328,5 +1329,54 @@ func TestBeadGlyphDrawsInFlatMode(t *testing.T) {
 	}
 	if len(got) != 2 || !strings.Contains(got[0], "?") || !strings.Contains(got[1], "▶") {
 		t.Fatalf("flat rows lack glyphs: %q", got)
+	}
+}
+
+// TestWorkerMarksItsBeadAndIssueRow: a target with a live worker carries the
+// worker glyph, outranking the status glyph its row would otherwise draw.
+func TestWorkerMarksItsBeadAndIssueRow(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
+	for _, target := range []string{"bdtest-1xn", "7"} {
+		if err := livework.Default.Add(&livework.Entry{
+			ID: "w-" + target, Name: "implement", Kind: "workflow", Handle: "p-" + target,
+			Worker: &livework.WorkerInfo{Target: target},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := seededModel()
+	m.width = 140
+	m.haveBeads = true
+	m.hasBeads = true
+	m.beadPrefix = "bdtest"
+	m.beads = []bd.Bead{
+		{ID: "bdtest-1xn", Title: "Bump deps", Status: "in_progress", Type: "chore", Priority: 2},
+		{ID: "bdtest-qt0", Title: "Add reset", Status: "in_progress", Type: "feature", Priority: 1},
+	}
+	m.beadCols = []string{"id", "glyph", "title"}
+	var got []string
+	for _, r := range m.beadRows() {
+		if r.kind != rowBead {
+			continue
+		}
+		var line string
+		for _, s := range r.leftSegs {
+			line += s.t
+		}
+		got = append(got, line)
+	}
+	if len(got) != 2 || !strings.Contains(got[0], "◈") {
+		t.Fatalf("worker row lacks ◈: %q", got)
+	}
+	if strings.Contains(got[0], "▶") || !strings.Contains(got[1], "▶") {
+		t.Fatalf("worker glyph must replace ▶ on its own row only: %q", got)
+	}
+
+	g, status := m.issueStatus(gh.IssueItem{Number: 7}, true)
+	if g.t != "◈" || len(status) != 1 || status[0].t != "worker running" {
+		t.Fatalf("issue row = %q %q, want ◈ and \"worker running\"", g.t, status[0].t)
+	}
+	if g, _ := m.issueStatus(gh.IssueItem{Number: 8}, true); g.t == "◈" {
+		t.Fatalf("an issue with no worker drew the worker glyph")
 	}
 }

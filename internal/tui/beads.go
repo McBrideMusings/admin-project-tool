@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/bd"
+	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/slug"
 )
 
@@ -157,7 +158,7 @@ func (m Model) beadFamilyTreeRows(cols int) []rowItem {
 // are a whole-graph fact, so they are derived here from the full fetch — the
 // section a bead lands in must not change how much work it frees.
 func (m Model) beadCtx(tree bool) beadCtx {
-	return beadCtx{prefix: m.beadPrefix, tree: tree, unblocks: bd.Unblocks(m.beads)}
+	return beadCtx{prefix: m.beadPrefix, tree: tree, unblocks: bd.Unblocks(m.beads), workers: livework.Default.WorkerStates()}
 }
 
 // beadHumanLabel is bd's own HITL (human-in-the-loop) marker — the one bare

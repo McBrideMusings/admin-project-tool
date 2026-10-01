@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/bd"
+	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 )
 
 // beadSide says which of the row's two clusters a column belongs to, since
@@ -30,6 +31,9 @@ type beadCtx struct {
 	prefix   string
 	tree     bool
 	unblocks map[string]int
+	// workers is the live-work state of every target with a worker, keyed by
+	// the bead id the worker was dispatched over.
+	workers map[string]livework.State
 }
 
 // beadColumn is one column of the Beads pane: how wide it wants to be for a given
@@ -87,7 +91,12 @@ var beadColumnByName = map[string]beadColumn{
 		// One cell in every list mode, so a row reads the same whichever shape
 		// `g` has cycled to.
 		width: func(bd.Bead, beadCtx) int { return 1 },
-		cell: func(b bd.Bead, w int, _ beadCtx) []seg {
+		cell: func(b bd.Bead, w int, c beadCtx) []seg {
+			if st, ok := c.workers[b.ID]; ok {
+				g := workerRowGlyph(st)
+				g.t = padEnd(g.t, w)
+				return []seg{g}
+			}
 			return []seg{{t: padEnd(beadStatusGlyph(b), w), fg: beadGlyphColor(b)}}
 		},
 	},

@@ -564,3 +564,30 @@ func wantState(wantNote string) livework.State {
 	}
 	return livework.StateFinished
 }
+
+// TestDispatchRefusesATargetWithALiveWorker: a second dispatch over a target
+// that already has a live worker opens no pane and says which worker holds it.
+func TestDispatchRefusesATargetWithALiveWorker(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
+	spawns := 0
+	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) {
+		spawns++
+		return "pane-1", nil
+	})
+	targets := []Target{{Name: "t0", Run: "x"}}
+	if res := DispatchTargets(repoRoot, "reap", workflowAction(), targets, SurfaceDashboard); res[0].Err != nil {
+		t.Fatal(res[0].Err)
+	}
+	res := DispatchTargets(repoRoot, "reap", workflowAction(), targets, SurfaceDashboard)
+	if res[0].Err == nil || !strings.Contains(res[0].Err.Error(), "already has a worker (running)") {
+		t.Fatalf("second dispatch err = %v, want the live-worker refusal", res[0].Err)
+	}
+	if spawns != 1 {
+		t.Fatalf("spawned %d panes, want 1", spawns)
+	}
+	livework.Default.SetState(workerLiveID("reap", "t0"), livework.StateExited, nil)
+	if res := DispatchTargets(repoRoot, "reap", workflowAction(), targets, SurfaceDashboard); res[0].Err != nil {
+		t.Fatalf("redispatch after the worker exited: %v", res[0].Err)
+	}
+}

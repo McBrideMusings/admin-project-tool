@@ -147,6 +147,17 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 			return failAll(err)
 		}
 	}
+	// One live worker per target. Refusing here, before any worktree or pane
+	// exists, stops a dispatch started after a worker is registered. Two
+	// dispatches racing inside the window before either registers are still
+	// caught by livework.Registry.Add, but only after their pane opens.
+	live := livework.Default.WorkerStates()
+	for i, t := range targets {
+		if st, ok := live[t.Name]; ok {
+			results[i] = TargetResult{Target: t.Name, Err: fmt.Errorf(
+				"%s already has a worker (%s) — attach to it instead of dispatching a second", t.Name, st)}
+		}
+	}
 	hosted := workerLocale(action, cfg.Terminal.Locale) == validate.LocaleHosted
 	ceiling := Ceiling(cfg)
 	if hosted {
@@ -173,6 +184,9 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 	group := actionName + "-" + time.Now().Format("20060102T150405.000000000")
 	worktrees := make([]create.Result, len(targets))
 	for i, t := range targets {
+		if results[i].Err != nil {
+			continue // already refused: this target has a live worker
+		}
 		res, err := createWorktree(ctx, repoRoot, t.Name)
 		if err != nil {
 			results[i] = TargetResult{Target: t.Name, Err: fmt.Errorf("creating worktree: %w", err)}

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
+	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/slug"
 )
 
@@ -177,6 +178,10 @@ func (m Model) issueSection(items []gh.IssueItem, showStage bool, cols, numW, st
 // stage (mine/unassigned groups) or the @handle badge (someone-else group).
 func (m Model) issueStatus(it gh.IssueItem, showStage bool) (glyph seg, statusSegs []seg) {
 	glyph = seg{t: " "}
+	if st, ok := livework.Default.WorkerStates()[strconv.Itoa(it.Number)]; ok {
+		g := workerRowGlyph(st)
+		return g, []seg{{t: "worker " + string(st), fg: g.fg}}
+	}
 	if !showStage {
 		if a := otherAssignee(it.Assignees, m.remote.ViewerLogin); a != "" {
 			statusSegs = []seg{{t: "@" + a, fg: cMag}}

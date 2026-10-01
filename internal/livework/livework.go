@@ -420,6 +420,27 @@ func (r *Registry) List() []*Entry {
 	return out
 }
 
+// WorkerStates maps each target that has a live worker to that worker's state:
+// running, waiting or finished — a worker whose pane is still up and whose
+// worktree is still there. An exited or failed worker is not live, so its
+// target is absent and may be dispatched again. When one target somehow holds
+// two live workers (two actions over the same id), the one added first wins.
+func (r *Registry) WorkerStates() map[string]State {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := map[string]State{}
+	for _, id := range r.order {
+		e := r.entries[id]
+		if e.Worker == nil || !e.State.Reapable() {
+			continue
+		}
+		if _, seen := out[e.Worker.Target]; !seen {
+			out[e.Worker.Target] = e.State
+		}
+	}
+	return out
+}
+
 // lookup is Attach/Kill's shared "find the entry or say why not"
 // step.
 func (r *Registry) lookup(id string) (*Entry, error) {
