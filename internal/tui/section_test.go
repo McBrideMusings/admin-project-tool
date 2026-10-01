@@ -468,3 +468,23 @@ func TestIdentityMsgReplacesAndClearsIdentity(t *testing.T) {
 		t.Error("a failed fetch left the old identity in force")
 	}
 }
+
+// TestRenderLocalPanelsFillsBodyHeight pins that the Repo tab draws exactly as many
+// lines, and as many hit targets, as the body is tall, with either history list
+// showing. A body a line too tall or short shifts the footer or leaves a click
+// resolving to nothing.
+func TestRenderLocalPanelsFillsBodyHeight(t *testing.T) {
+	for _, stashes := range []bool{false, true} {
+		for height := 3; height <= 12; height++ {
+			m := seededModel()
+			m.historyStashes = stashes
+			lines, hits := m.renderLocalPanels(80, height)
+			if len(lines) != height {
+				t.Errorf("stashes=%v height=%d: rendered %d lines", stashes, height, len(lines))
+			}
+			if len(hits) != height {
+				t.Errorf("stashes=%v height=%d: built %d hit targets", stashes, height, len(hits))
+			}
+		}
+	}
+}
