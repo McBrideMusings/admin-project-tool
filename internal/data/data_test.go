@@ -154,13 +154,13 @@ func TestApplyToKeepsCachedRowsWhenASectionFails(t *testing.T) {
 // closed three hundred PRs ago is still closed, and the abandoned branch it names
 // must not read as live again once it slides out of the fetch window.
 func TestClosedHeadsAccumulate(t *testing.T) {
-	got := Remote{ClosedHeads: map[string]bool{"declined-long-ago": true}}
+	got := Remote{ClosedHeads: map[string]string{"declined-long-ago": "aaa111"}}
 	next := Remote{
-		ClosedHeads:     map[string]bool{"declined-today": true},
+		ClosedHeads:     map[string]string{"declined-today": "bbb222"},
 		MergedFetchedAt: time.Unix(300, 0),
 	}
 	next.ApplyTo(&got)
-	if !got.ClosedHeads["declined-long-ago"] || !got.ClosedHeads["declined-today"] {
+	if got.ClosedHeads["declined-long-ago"] != "aaa111" || got.ClosedHeads["declined-today"] != "bbb222" {
 		t.Errorf("closed heads did not accumulate: %v", got.ClosedHeads)
 	}
 }

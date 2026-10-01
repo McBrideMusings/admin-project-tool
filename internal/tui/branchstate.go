@@ -109,11 +109,20 @@ type branchSignals struct {
 	mergedTipMatch bool
 	superseded     bool // this branch's issue has someone else's PR (open or merged), from a different head (GitHub, not git)
 	// closedPR is set when a PR with this branch as its head was closed WITHOUT
-	// merging (GitHub, not git). Circumstantial, not a proof: the commits are still
-	// only here, and a PR is sometimes closed to be reopened from the same branch.
-	// But it is the one signal where a human has explicitly said "not this" about
-	// exactly these commits, which is why it weighs heaviest.
+	// merging (GitHub, not git). On its own it is circumstantial, not a proof: a PR
+	// is sometimes closed to be reopened from the same branch, or the branch may
+	// have gained commits since. But it is the one signal where a human has
+	// explicitly said "not this" about exactly these commits, which is why it
+	// weighs heaviest — and when closedTipMatch also holds it becomes a proof: see
+	// closedTipMatch.
 	closedPR bool
+	// closedTipMatch is whether the local ref points at the exact commit GitHub had
+	// as the closed PR's head. GitHub keeps a closed PR's commits at
+	// refs/pull/N/head, so when the local tip equals that head, deleting the local
+	// ref loses nothing — the commits are still reachable there. A branch that
+	// gained commits after the close has a different tip, closedTipMatch is false,
+	// and closedPR stays circumstantial. Mirrors mergedTipMatch.
+	closedTipMatch bool
 	// openPR is set when an OPEN PR has this branch as its head. It is not evidence
 	// of anything — it is a veto. A branch under review is live work no matter how
 	// long it has sat or how far behind it has fallen, and waiting on a reviewer is
@@ -232,6 +241,14 @@ func compactDays(d time.Duration) string {
 //     waiting period — unlike an empty branch, which only goes stale on
 //     the clock. Gated on not-ahead, same as "merged": a branch with
 //     unpushed commits is still live work whatever anyone else did.
+//   - "closed"    — a PR with this branch as its head was closed WITHOUT merging, and
+//     the local tip is the exact commit that PR's head pointed at. GitHub
+//     keeps a closed PR's commits at refs/pull/N/head, so deleting the
+//     local ref loses nothing; a branch that gained commits after the
+//     close has a different tip and stays live (circumstantial only).
+//     Checked before "on origin"/"merged (local)" so a pushed branch
+//     whose PR was closed unmerged is not shadowed by the weaker "on
+//     origin" reading.
 //   - "on origin" — origin has this branch and the local ref is not ahead of it, so
 //     every local commit already exists on origin. Judged against
 //     origin/<name> when no upstream is configured, so a branch pushed
@@ -257,6 +274,8 @@ func classifyBranch(sig branchSignals) branchState {
 		st.reason = "merged"
 	case sig.superseded && !sig.ahead:
 		st.reason = "superseded"
+	case sig.closedPR && sig.closedTipMatch:
+		st.reason = "closed"
 	case sig.empty:
 		st.reason = "empty"
 	case sig.mergedLocal:
@@ -293,6 +312,7 @@ func classifyBranch(sig branchSignals) branchState {
 func (m Model) branchState(branch string) branchState {
 	sig := m.local.signals[branch]
 	mergedOID, mergedPR := m.mergedHead(branch, sig.upstream)
+	closedOID, closedPR := m.remote.ClosedHeads[branch]
 	return classifyBranch(branchSignals{
 		gitSignals: sig,
 		protected:  branch == m.def || branch == m.mainTreeBranch(),
@@ -302,7 +322,9 @@ func (m Model) branchState(branch string) branchState {
 		// the not-ahead gate rather than pass on two blanks comparing equal.
 		mergedTipMatch: mergedOID != "" && mergedOID == m.local.tips[branch],
 		superseded:     m.supersededBy(branch),
-		closedPR:       m.remote.ClosedHeads[branch],
+		closedPR:       closedPR,
+		// Same empty-OID guard as mergedTipMatch, for the same reason.
+		closedTipMatch: closedOID != "" && closedOID == m.local.tips[branch],
 		openPR:         m.hasOpenPR(branch),
 	})
 }

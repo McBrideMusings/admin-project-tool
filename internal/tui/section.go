@@ -247,8 +247,9 @@ func stateWord(r paneRow, landed string) string {
 // recoverable. The distinction decides two things: whether a branch belongs in
 // Clean Up at all, and whether being touched recently is allowed to hold it.
 //
-//   - merged / remote deleted / superseded — somebody landed or replaced this. The
-//     branch is leftovers, and touching it an hour ago does not make it less so.
+//   - merged / remote deleted / superseded / closed — somebody landed, replaced, or
+//     explicitly declined this. The branch is leftovers, and touching it an hour
+//     ago does not make it less so.
 //   - on origin — the commits are backed up, which says the branch is *safe* to
 //     delete, not that it is finished. This is the ordinary state of live work
 //     you have pushed, so filing it as cleanup would offer to delete the branch you
@@ -258,7 +259,7 @@ func stateWord(r paneRow, landed string) string {
 //     is the one proof that keeps the activity hold.
 func finishedProof(reason string) bool {
 	switch reason {
-	case "merged", "remote deleted", "superseded":
+	case "merged", "remote deleted", "superseded", "closed":
 		return true
 	}
 	return false

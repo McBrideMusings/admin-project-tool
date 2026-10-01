@@ -224,9 +224,15 @@ func MergedPRs(ctx context.Context, nwo string, limit int) ([]MergedPR, error) {
 }
 
 // ClosedPRHeads returns the head-branch names of the most recent PRs (up to
-// limit) that were closed WITHOUT merging. It is the counterpart to MergedPRs:
-// that set says work landed, this one says a human looked at these commits and
-// declined them.
+// limit) that were closed WITHOUT merging, mapped to the commit GitHub had as
+// that PR's head. It is the counterpart to MergedPRs: that set says work
+// landed, this one says a human looked at these commits and declined them.
+//
+// The OID is what lets the classifier tell a branch that still sits exactly
+// where the closed PR left it (deleting the local ref loses nothing — GitHub
+// keeps the commits at refs/pull/N/head) from one that has since moved on
+// (still just a discarded PR, weighed as circumstantial evidence). See
+// branchSignals.closedTipMatch.
 //
 // `gh pr list --state closed` returns merged PRs too — GitHub models a merge as a
 // close — so the query is narrowed with `is:unmerged` and the mergedAt check is
@@ -239,22 +245,23 @@ func MergedPRs(ctx context.Context, nwo string, limit int) ([]MergedPR, error) {
 // declined and the classifier would weigh "abandoned" over work that shipped.
 //
 // nwo pins the query with --repo, for the same reason as MergedPRs.
-func ClosedPRHeads(ctx context.Context, nwo string, limit int) (map[string]bool, error) {
-	out, err := runner(ctx, "pr", "list", "--repo", nwo, "--state", "closed", "--search", "is:unmerged", "--limit", strconv.Itoa(limit), "--json", "headRefName,mergedAt")
+func ClosedPRHeads(ctx context.Context, nwo string, limit int) (map[string]string, error) {
+	out, err := runner(ctx, "pr", "list", "--repo", nwo, "--state", "closed", "--search", "is:unmerged", "--limit", strconv.Itoa(limit), "--json", "headRefName,headRefOid,mergedAt")
 	if err != nil {
 		return nil, err
 	}
 	var raw []struct {
 		HeadRefName string  `json:"headRefName"`
+		HeadRefOid  string  `json:"headRefOid"`
 		MergedAt    *string `json:"mergedAt"`
 	}
 	if err := json.Unmarshal([]byte(out), &raw); err != nil {
 		return nil, err
 	}
-	heads := map[string]bool{}
+	heads := map[string]string{}
 	for _, r := range raw {
 		if r.MergedAt == nil && r.HeadRefName != "" {
-			heads[r.HeadRefName] = true
+			heads[r.HeadRefName] = r.HeadRefOid
 		}
 	}
 	return heads, nil
