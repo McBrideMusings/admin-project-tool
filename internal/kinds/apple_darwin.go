@@ -72,6 +72,14 @@ var appleDeviceSDK = map[string]struct {
 // implementation.
 func runAppleVerb(verb, action string, cfg map[string]any, args []string, m *manifest.Manifest) error {
 	h := newHost(m)
+	// Before any verb, not just the dev ones: the chip is committed source
+	// compiled into every configuration, so a production build must see the
+	// same bytes a dev build does. Doing it here rather than in each verb is
+	// what makes "delete the file" futile — there is no apple verb that
+	// bypasses it. See appledevchip.go.
+	if err := materializeDevChip(cfg, h); err != nil {
+		return err
+	}
 	f := parseAppleFlags(args)
 	switch verb {
 	case "build_mac":
