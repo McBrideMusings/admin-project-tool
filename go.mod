@@ -1,6 +1,6 @@
 module github.com/McBrideMusings/admin-project-tool
 
-go 1.24.2
+go 1.25.14
 
 require (
 	github.com/BurntSushi/toml v1.6.0
@@ -17,8 +17,8 @@ require (
 	github.com/muesli/termenv v0.16.0
 	github.com/spf13/cobra v1.10.2
 	github.com/yuin/gopher-lua v1.1.2
-	golang.org/x/image v0.36.0
-	golang.org/x/sys v0.41.0
+	golang.org/x/image v0.45.0
+	golang.org/x/sys v0.47.0
 )
 
 require (
@@ -39,6 +39,6 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 )
