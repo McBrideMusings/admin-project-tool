@@ -178,7 +178,7 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 	c.ExtraFiles = []*os.File{announceW}
 	c.Env = append(hostedChildEnv(), luahost.LogAnnounceFDEnv+"=3")
 	c.Env = append(c.Env, env...)
-	_, err = startHostedChild(liveID, name, c, rows, cols, announceR)
+	_, err = startHostedChild(liveID, name, c, rows, cols, announceR, nil)
 	// The child holds its own copy of the write end; closing ours is what
 	// lets readLogAnnounce see EOF once the child's copies are gone.
 	_ = announceW.Close()
@@ -195,14 +195,14 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 // dispatch learns its concurrency slot is free. The live-work entry is the
 // same hosted-pty shape StartHostedPTY records — Via and Worker empty, so the
 // dashboard treats it as dying with itself — keyed on id.
-func StartHostedWorker(id string, argv []string, dir string, env []string, rows, cols int) (<-chan error, error) {
+func StartHostedWorker(id string, argv []string, dir string, env []string, rows, cols int, worker *livework.WorkerInfo) (<-chan error, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("worker %q: empty command line", id)
 	}
 	c := exec.Command(argv[0], argv[1:]...)
 	c.Dir = dir
 	c.Env = append(hostedChildEnv(), env...)
-	return startHostedChild(id, id, c, rows, cols, nil)
+	return startHostedChild(id, id, c, rows, cols, nil, worker)
 }
 
 // hostedChildEnv is the dashboard's own environment plus the two resolved
@@ -218,7 +218,7 @@ func hostedChildEnv() []string {
 // startHostedChild starts c on a fresh pty sized rows x cols (80x24 when
 // either is <= 0) and hands it to recordHostedPTYWork under liveID. announce
 // is the read end of the child's log-path pipe, nil when the child has none.
-func startHostedChild(liveID, name string, c *exec.Cmd, rows, cols int, announce *os.File) (<-chan error, error) {
+func startHostedChild(liveID, name string, c *exec.Cmd, rows, cols int, announce *os.File, worker *livework.WorkerInfo) (<-chan error, error) {
 	// Setsid (pty.StartWithSize sets this unconditionally on the SysProcAttr
 	// it allocates when nil, so pinning it here is behaviour-neutral) makes
 	// the child both a session leader and its own process-group leader
@@ -235,7 +235,7 @@ func startHostedChild(liveID, name string, c *exec.Cmd, rows, cols int, announce
 	if err != nil {
 		return nil, fmt.Errorf("command %q: starting hosted pty: %w", name, err)
 	}
-	return recordHostedPTYWork(liveID, name, rows, cols, c, ptmx, announce), nil
+	return recordHostedPTYWork(liveID, name, rows, cols, c, ptmx, announce, worker), nil
 }
 
 // recordHostedPTYWork adds a running hosted-pty entry (Via left empty) for
@@ -247,7 +247,7 @@ func startHostedChild(liveID, name string, c *exec.Cmd, rows, cols int, announce
 // receives the child's exit error (ErrHostedKilled after a Kill) once its final state
 // is recorded, then closes; when the entry cannot be registered the child is killed and it closes
 // after reaping the child.
-func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx, announce *os.File) <-chan error {
+func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx, announce *os.File, worker *livework.WorkerInfo) <-chan error {
 	exit := make(chan error, 1)
 	// killed is set by Ops.Kill before it closes ptmx, so the wait goroutine
 	// below knows the resulting "signal: killed" c.Wait() error is expected
@@ -288,6 +288,14 @@ func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx
 		Handle: ptmx.Name(),
 		Output: livework.NewRing(0),
 		Screen: screen,
+		Worker: worker,
+	}
+	if worker != nil {
+		// A worker's own terminal title (claude sets one) is its row's
+		// activity line, the same field a window worker's herdr title fills.
+		screen.SetCallbacks(vt.Callbacks{Title: func(t string) {
+			livework.Default.SetActivity(entryID, t)
+		}})
 	}
 	e.Ops = livework.Ops{
 		Kill: func() error {

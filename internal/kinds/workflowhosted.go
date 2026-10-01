@@ -24,6 +24,7 @@ import (
 	"os/exec"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/create"
+	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
@@ -105,7 +106,8 @@ func hostedOne(repoRoot, actionName string, surface DispatchSurface, tgt Target,
 		}
 		return res
 	}
-	exit, err := startHostedWorker(TargetLiveKey(actionName, tgt.Name), argv, wt.Path, targetEnv(tgt), 0, 0)
+	worker := &livework.WorkerInfo{Branch: wt.Branch, Worktree: wt.Path, Target: tgt.Name, Done: tgt.Done}
+	exit, err := startHostedWorker(workerLiveID(actionName, tgt.Name), argv, wt.Path, targetEnv(tgt), 0, 0, worker)
 	if err != nil {
 		res.Err = fmt.Errorf("starting worker: %w", err)
 		return res

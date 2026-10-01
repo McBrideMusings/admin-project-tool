@@ -178,7 +178,7 @@ var panesClosed sync.Map
 // ReapWorker retires e when its worker has finished and its work is safe to
 // delete, reporting whether it did. When the worker finished but the work is
 // not safe, everything stays in place and the reason lands on the entry's
-// Note. Only a window worker is ever reaped: an entry without WorkerInfo, or
+// Note. Only a worker is ever reaped: an entry without WorkerInfo, or
 // not running or waiting, is left alone.
 func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t config.Terminal) bool {
 	w := e.Worker
@@ -214,7 +214,7 @@ func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t confi
 		return false
 	}
 	if _, closed := panesClosed.Load(e.ID); !closed {
-		if err := closeFinishedPane(ctx, e.Handle, t); err != nil {
+		if err := closeFinishedWorker(ctx, e, t); err != nil {
 			livework.Default.SetNote(e.ID, "finished, not removed: "+err.Error())
 			return false
 		}
@@ -240,6 +240,19 @@ func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t confi
 	livework.Default.SetState(e.ID, livework.StateExited, nil)
 	ReleaseWorkerSlot(e.ID)
 	return true
+}
+
+// closeFinishedWorker stops a finished worker's session: the launcher's kill
+// for a window worker, the entry's own Kill for a hosted one, whose pty has no
+// launcher behind it.
+func closeFinishedWorker(ctx context.Context, e *livework.Entry, t config.Terminal) error {
+	if e.Via != "terminal" {
+		if e.Ops.Kill == nil {
+			return fmt.Errorf("hosted worker %s has no kill", e.ID)
+		}
+		return e.Ops.Kill()
+	}
+	return closeFinishedPane(ctx, e.Handle, t)
 }
 
 // closeFinishedPane runs [terminal].kill on handle. A pane that is already

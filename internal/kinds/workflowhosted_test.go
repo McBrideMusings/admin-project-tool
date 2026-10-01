@@ -1,6 +1,7 @@
 package kinds
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
@@ -25,7 +27,7 @@ func hostedAction(extra map[string]any) manifest.Action {
 // TestHostedWorkersRunOnDashboardPtyOneSlotAtATime is admin-spjp.5's
 // acceptance check: with no [terminal] and no agent driver at all, a hosted
 // dashboard dispatch runs each worker on a pty in its own worktree at 24x80,
-// records it as a hosted-command entry (Via empty, id <action>:<target>), and
+// records it as a worker entry on a hosted pty (Via empty, id <action>-<target>), and
 // frees the ceiling-1 slot only when the first process has exited.
 func TestHostedWorkersRunOnDashboardPtyOneSlotAtATime(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, "[workflow]\nceiling = 1\n")
@@ -42,20 +44,20 @@ func TestHostedWorkersRunOnDashboardPtyOneSlotAtATime(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	var e *livework.Entry
 	for time.Now().Before(deadline) {
-		if got, ok := livework.Default.Get("hostedseq:a"); ok {
+		if got, ok := livework.Default.Get("hostedseq-a"); ok {
 			e = got
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	if e == nil {
-		t.Fatal("no live-work entry hostedseq:a while the first worker runs")
+		t.Fatal("no live-work entry hostedseq-a while the first worker runs")
 	}
-	if e.Kind != "hosted-pty" || e.Via != "" || e.Worker != nil || e.Ops.Write == nil || e.Ops.Resize == nil {
-		t.Errorf("entry = kind %q via %q worker %v write %v, want the hosted-command shape",
+	if e.Kind != "hosted-pty" || e.Via != "" || e.Worker == nil || e.Ops.Write == nil || e.Ops.Resize == nil {
+		t.Errorf("entry = kind %q via %q worker %v write %v, want a hosted pty carrying WorkerInfo",
 			e.Kind, e.Via, e.Worker, e.Ops.Write != nil)
 	}
-	if _, ok := livework.Default.Get("hostedseq:b"); ok {
+	if _, ok := livework.Default.Get("hostedseq-b"); ok {
 		t.Error("second worker was registered while the first still held the only slot")
 	}
 
@@ -83,8 +85,8 @@ func TestHostedWorkersRunOnDashboardPtyOneSlotAtATime(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("DispatchTargets never returned")
 	}
-	if st, _ := livework.Default.State("hostedseq:a"); st != livework.StateExited {
-		t.Errorf("hostedseq:a state = %q, want exited", st)
+	if st, _ := livework.Default.State("hostedseq-a"); st != livework.StateExited {
+		t.Errorf("hostedseq-a state = %q, want exited", st)
 	}
 }
 
@@ -97,7 +99,7 @@ func TestHostedWorkerNonzeroExitFailsTheTarget(t *testing.T) {
 	if strings.Contains(res[0].Err.Error(), "exit 3") {
 		t.Errorf("Err = %v, echoes the run string", res[0].Err)
 	}
-	if st, _ := livework.Default.State("hostedfail:t1"); st != livework.StateFailed {
+	if st, _ := livework.Default.State("hostedfail-t1"); st != livework.StateFailed {
 		t.Errorf("state = %q, want failed", st)
 	}
 }
@@ -155,7 +157,7 @@ func TestHostedDispatchHonoursCeiling(t *testing.T) {
 	var running, peak, started int
 	exits := make(chan chan error, 5)
 	orig := startHostedWorker
-	startHostedWorker = func(id string, argv []string, dir string, env []string, rows, cols int) (<-chan error, error) {
+	startHostedWorker = func(id string, argv []string, dir string, env []string, rows, cols int, _ *livework.WorkerInfo) (<-chan error, error) {
 		exit := make(chan error, 1)
 		mu.Lock()
 		running++
@@ -224,12 +226,12 @@ func TestHostedWorkerKilledFailsTheTarget(t *testing.T) {
 	}()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, ok := livework.Default.Get("hostedkill:t1"); ok {
+		if _, ok := livework.Default.Get("hostedkill-t1"); ok {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if err := livework.Default.Kill("hostedkill:t1"); err != nil {
+	if err := livework.Default.Kill("hostedkill-t1"); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -260,5 +262,37 @@ func TestValidateWorkflowsChecksRunDoneAndRemovedKeys(t *testing.T) {
 		if err := ValidateWorkflows(old); err == nil || !strings.Contains(err.Error(), "'"+key+"' is not a workflow key") {
 			t.Errorf("key %s: ValidateWorkflows = %v, want it named", key, err)
 		}
+	}
+}
+
+// TestReapWorkerStopsHostedWorker: a hosted worker whose done predicate passes
+// is reaped like a window worker, its pty killed through the entry's own Kill
+// instead of a launcher, and the dispatch returns.
+func TestReapWorkerStopsHostedWorker(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, "")
+	addOrigin(t, repoRoot)
+	action := hostedAction(nil)
+	targets := []Target{{Name: "h0", Run: "sleep 30", Done: "true"}}
+
+	done := make(chan []TargetResult, 1)
+	go func() { done <- DispatchTargets(repoRoot, "hostedreap", action, targets, SurfaceDashboard) }()
+
+	var e *livework.Entry
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline) && e == nil; time.Sleep(10 * time.Millisecond) {
+		e, _ = livework.Default.Get("hostedreap-h0")
+	}
+	if e == nil {
+		t.Fatal("no live-work entry hostedreap-h0")
+	}
+	if !ReapWorker(context.Background(), repoRoot, e, config.Terminal{}) {
+		t.Fatalf("ReapWorker did not reap a finished hosted worker (note %q)", e.Note)
+	}
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("hosted worker still running after its reap")
+	}
+	if _, err := os.Stat(e.Worker.Worktree); err == nil {
+		t.Error("worktree still on disk after the reap")
 	}
 }

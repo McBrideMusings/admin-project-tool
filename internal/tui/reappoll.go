@@ -30,12 +30,12 @@ var reapInflight sync.Map
 // reapWorkerFn is the test seam for the per-worker reap.
 var reapWorkerFn = kinds.ReapWorker
 
-// reapWorkersCmd reaps every running-or-waiting window worker once.
+// reapWorkersCmd reaps every running-or-waiting worker once.
 func reapWorkersCmd(repoRoot string, t config.Terminal) tea.Cmd {
 	return func() tea.Msg {
 		var workers []*livework.Entry
 		for _, e := range livework.Default.List() {
-			if e.Worker == nil || e.Via != "terminal" {
+			if e.Worker == nil {
 				continue
 			}
 			if st, ok := livework.Default.State(e.ID); ok && (st == livework.StateRunning || st == livework.StateWaiting) {
