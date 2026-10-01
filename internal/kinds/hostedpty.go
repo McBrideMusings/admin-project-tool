@@ -188,16 +188,16 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 	return err
 }
 
-// StartHostedAgent runs argv, a workflow agent's command line, on a pty the
+// StartHostedWorker runs argv, a workflow worker's command line, on a pty the
 // dashboard owns, in dir (the target's worktree), and returns as soon as the
 // child is spawned. The returned channel receives the child's exit error (nil for a clean exit, ErrHostedKilled
 // after a Kill) and is then closed, which is how a workflow
 // dispatch learns its concurrency slot is free. The live-work entry is the
 // same hosted-pty shape StartHostedPTY records — Via and Worker empty, so the
 // dashboard treats it as dying with itself — keyed on id.
-func StartHostedAgent(id string, argv []string, dir string, env []string, rows, cols int) (<-chan error, error) {
+func StartHostedWorker(id string, argv []string, dir string, env []string, rows, cols int) (<-chan error, error) {
 	if len(argv) == 0 {
-		return nil, fmt.Errorf("agent %q: empty command line", id)
+		return nil, fmt.Errorf("worker %q: empty command line", id)
 	}
 	c := exec.Command(argv[0], argv[1:]...)
 	c.Dir = dir

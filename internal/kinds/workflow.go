@@ -229,14 +229,25 @@ func ValidateWorkflows(actions map[string]manifest.Action) error {
 // now, so each is rejected by name rather than silently ignored.
 var removedWorkflowKeys = []string{"agent", "mode", "prompt"}
 
+// RequireRun is the one check that a workflow action has a launch command: nil
+// when run holds something, else an error naming the action. Every place that
+// reads a workflow's run string — manifest validation, the CLI, dispatch, the
+// dashboard's confirm overlays — asks it rather than comparing to "" itself.
+func RequireRun(name, run string) error {
+	if strings.TrimSpace(run) == "" {
+		return fmt.Errorf(`action %q: kind="workflow" has no run command — set 'run' on the action`, name)
+	}
+	return nil
+}
+
 // validateWorkflowLaunch checks one workflow action's launch keys: `run` is
 // required and non-empty, `done` is optional but non-empty when present, and
 // the removed agent/mode/prompt keys are errors.
 func validateWorkflowLaunch(name string, action manifest.Action) []string {
 	var problems []string
-	if r, _ := action["run"].(string); strings.TrimSpace(r) == "" {
-		problems = append(problems, fmt.Sprintf(
-			`action %q: kind="workflow" needs a non-empty 'run' — the shell command each worker's pane executes, with ADMIN_TARGET set to the target id`, name))
+	r, _ := action["run"].(string)
+	if err := RequireRun(name, r); err != nil {
+		problems = append(problems, err.Error())
 	}
 	if raw, present := action["done"]; present {
 		if d, ok := raw.(string); !ok || strings.TrimSpace(d) == "" {

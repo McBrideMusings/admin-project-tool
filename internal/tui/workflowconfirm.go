@@ -157,17 +157,17 @@ func (m *Model) workflowResolved(msg workflowResolvedMsg) {
 	m.wfOpen = true
 	m.wfTargets = msg.targets
 	m.wfRun, m.wfCeiling = msg.run, msg.ceiling
+	runErr := kinds.RequireRun(msg.name, msg.run)
 	switch {
 	case msg.err != nil:
 		m.wfErr = msg.err.Error()
 	case len(msg.targets) == 0:
 		m.wfErr = fmt.Sprintf("query %q matched nothing", msg.query)
-	case msg.run == "":
-		// Same "fail loud, don't guess" contract DispatchTargets itself
-		// enforces — surfaced here instead of only at dispatch time so a
-		// missing run command doesn't waste the user's confirmation on a set
-		// that would immediately fail dispatch.
-		m.wfErr = fmt.Sprintf("no run command — set 'run' on %q", msg.name)
+	case runErr != nil:
+		// Surfaced here instead of only at dispatch time so a missing run
+		// command doesn't waste the user's confirmation on a set that would
+		// immediately fail dispatch.
+		m.wfErr = runErr.Error()
 	default:
 		m.wfErr = ""
 	}

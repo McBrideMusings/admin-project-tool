@@ -2,7 +2,7 @@
 // when a workflow's workers are declared `locale = "hosted"` instead of run
 // in a launcher window. It is dispatchOne's sibling, not a second dispatch
 // path — worktree creation, the concurrency ceiling and result collection all
-// stay in DispatchTargets; only "how one target's agent runs" differs.
+// stay in DispatchTargets; only "how one target's worker runs" differs.
 //
 // The worker is the action's own `run` string under /bin/sh with ADMIN_TARGET
 // set. There is no pane, so a hosted worker needs neither a [terminal]
@@ -10,11 +10,11 @@
 //
 // Where it runs depends on who called DispatchTargets:
 //
-//   - SurfaceDashboard: on a pty the dashboard owns (StartHostedAgent), 24x80
+//   - SurfaceDashboard: on a pty the dashboard owns (StartHostedWorker), 24x80
 //     until the dashboard attaches and resizes it. The worker's ceiling slot
 //     frees when its process exits.
 //   - SurfaceShell: inline, one target at a time (the ceiling is 1), each
-//     agent inheriting the terminal until it exits.
+//     worker inheriting the terminal until it exits.
 package kinds
 
 import (
@@ -62,11 +62,11 @@ func targetEnv(tgt Target) []string {
 	return []string{"ADMIN_TARGET=" + tgt.Name}
 }
 
-// startHostedAgent and runInlineAgent are the seams tests swap so a hosted
+// startHostedWorker and runInlineWorker are the seams tests swap so a hosted
 // dispatch runs a stand-in command instead of the manifest's run string.
 var (
-	startHostedAgent = StartHostedAgent
-	runInlineAgent   = func(argv []string, dir string, env []string) error {
+	startHostedWorker = StartHostedWorker
+	runInlineWorker   = func(argv []string, dir string, env []string) error {
 		c := exec.Command(argv[0], argv[1:]...)
 		c.Dir = dir
 		c.Env = append(os.Environ(), env...)
@@ -88,8 +88,8 @@ func worktreeGone(repoRoot string, tgt Target, wt create.Result) error {
 			"turn to dispatch", wt.Path, tgt.Name)
 }
 
-// hostedOne runs one target's agent as a hosted worker and returns once the
-// agent's process has exited, which is when DispatchTargets frees its slot.
+// hostedOne runs one target's worker as a hosted worker and returns once the
+// worker's process has exited, which is when DispatchTargets frees its slot.
 // The live-work entry (dashboard surface) is keyed "<action>:<target>" on the
 // full target name — the hosted-command entry shape, with no view of its own.
 func hostedOne(repoRoot, actionName string, surface DispatchSurface, tgt Target, wt create.Result) TargetResult {
@@ -100,18 +100,18 @@ func hostedOne(repoRoot, actionName string, surface DispatchSurface, tgt Target,
 	}
 	argv := hostedRunArgv(tgt.Run)
 	if surface == SurfaceShell {
-		if err := runInlineAgent(argv, wt.Path, targetEnv(tgt)); err != nil {
-			res.Err = fmt.Errorf("run %q: %w", tgt.Run, err)
+		if err := runInlineWorker(argv, wt.Path, targetEnv(tgt)); err != nil {
+			res.Err = fmt.Errorf("worker: %w", err)
 		}
 		return res
 	}
-	exit, err := startHostedAgent(TargetLiveKey(actionName, tgt.Name), argv, wt.Path, targetEnv(tgt), 0, 0)
+	exit, err := startHostedWorker(TargetLiveKey(actionName, tgt.Name), argv, wt.Path, targetEnv(tgt), 0, 0)
 	if err != nil {
-		res.Err = fmt.Errorf("starting run %q: %w", tgt.Run, err)
+		res.Err = fmt.Errorf("starting worker: %w", err)
 		return res
 	}
 	if err := <-exit; err != nil {
-		res.Err = fmt.Errorf("run %q: %w", tgt.Run, err)
+		res.Err = fmt.Errorf("worker: %w", err)
 	}
 	return res
 }

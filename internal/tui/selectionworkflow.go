@@ -260,6 +260,7 @@ func (m Model) pickWorkflow(cr workCmdRow) (tea.Model, tea.Cmd) {
 	}
 	m.wfRun = kinds.ActionRun(action)
 	m.wfCeiling = kinds.Ceiling(cfg)
+	runErr := kinds.RequireRun(cr.name, m.wfRun)
 	switch {
 	case len(targets) == 0:
 		// Can't happen through startWorkflowPicker (it refuses an empty
@@ -269,8 +270,8 @@ func (m Model) pickWorkflow(cr workCmdRow) (tea.Model, tea.Cmd) {
 		// m.remote.Issues in between. Same "nothing to confirm" message
 		// workflowResolved gives an empty query match.
 		m.wfErr = "selection matched nothing"
-	case m.wfRun == "":
-		m.wfErr = fmt.Sprintf("no run command — set 'run' on %q", cr.name)
+	case runErr != nil:
+		m.wfErr = runErr.Error()
 	default:
 		m.wfErr = ""
 	}

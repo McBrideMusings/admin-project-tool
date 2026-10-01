@@ -34,7 +34,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/agent"
@@ -138,9 +137,8 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 		return failAll(fmt.Errorf("loading config: %w", err))
 	}
 	for _, t := range targets {
-		if strings.TrimSpace(t.Run) == "" {
-			return failAll(fmt.Errorf(
-				"action %q: kind=\"workflow\" has no run command — set 'run' on the action", actionName))
+		if err := RequireRun(actionName, t.Run); err != nil {
+			return failAll(err)
 		}
 	}
 	hosted := workerLocale(action, cfg.Terminal.Locale) == validate.LocaleHosted

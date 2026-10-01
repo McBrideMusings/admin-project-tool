@@ -233,8 +233,8 @@ func (m Model) rowKeyWorkflow(name string, c manifest.Command, r rowItem, kind k
 		return m, nil
 	}
 	targets := []kinds.Target{kinds.NewTarget(action, id)}
-	if targets[0].Run == "" {
-		m.setStatus(fmt.Sprintf("no run command — set 'run' on %q", name), cRed)
+	if err := kinds.RequireRun(name, targets[0].Run); err != nil {
+		m.setStatus(err.Error(), cRed)
 		return m, nil
 	}
 

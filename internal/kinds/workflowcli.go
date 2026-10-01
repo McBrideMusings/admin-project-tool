@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
@@ -113,8 +112,8 @@ func runWorkflowQuery(name string, action manifest.Action, m *manifest.Manifest,
 		return fmt.Errorf("loading config: %w", cfgErr)
 	}
 	run := ActionRun(action)
-	if strings.TrimSpace(run) == "" {
-		return fmt.Errorf("action %q: kind=\"workflow\" has no run command — set 'run' on the action", name)
+	if err := RequireRun(name, run); err != nil {
+		return err
 	}
 	ceiling := Ceiling(cfg)
 

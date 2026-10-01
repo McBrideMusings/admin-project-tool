@@ -94,6 +94,9 @@ func TestHostedWorkerNonzeroExitFailsTheTarget(t *testing.T) {
 	if res[0].Err == nil || !strings.Contains(res[0].Err.Error(), "exit status 3") {
 		t.Fatalf("Err = %v, want the run's exit status", res[0].Err)
 	}
+	if strings.Contains(res[0].Err.Error(), "exit 3") {
+		t.Errorf("Err = %v, echoes the run string", res[0].Err)
+	}
 	if st, _ := livework.Default.State("hostedfail:t1"); st != livework.StateFailed {
 		t.Errorf("state = %q, want failed", st)
 	}
@@ -106,8 +109,8 @@ func TestHostedShellSurfaceRunsInlineOneAtATime(t *testing.T) {
 	var mu sync.Mutex
 	var running int
 	var calls []string
-	orig := runInlineAgent
-	runInlineAgent = func(argv []string, dir string, env []string) error {
+	orig := runInlineWorker
+	runInlineWorker = func(argv []string, dir string, env []string) error {
 		mu.Lock()
 		running++
 		if running > 1 {
@@ -121,7 +124,7 @@ func TestHostedShellSurfaceRunsInlineOneAtATime(t *testing.T) {
 		mu.Unlock()
 		return nil
 	}
-	t.Cleanup(func() { runInlineAgent = orig })
+	t.Cleanup(func() { runInlineWorker = orig })
 
 	res := DispatchTargets(repoRoot, "hostedshell", hostedAction(nil),
 		[]Target{{Name: "a", Run: "do a"}, {Name: "b", Run: "do b"}}, SurfaceShell)
