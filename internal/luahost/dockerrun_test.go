@@ -28,6 +28,24 @@ info(table.concat(args, " "))
 	}
 }
 
+func TestDockerRunContainerNamePrefersDeclared(t *testing.T) {
+	h, out, _ := newTestHost(t)
+	cfg := map[string]any{
+		"docker_run": map[string]any{"container_name": "rpg-toolkit-selfhost"},
+	}
+	err := h.Exec(`
+info("declared=" .. dockerrun.container_name(config.docker_run, "ghcr.io/me/rpg-toolkit:latest"))
+info("derived=" .. dockerrun.container_name({}, "ghcr.io/me/rpg-toolkit:latest"))
+`, cfg)
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "declared=rpg-toolkit-selfhost") || !strings.Contains(got, "derived=rpg-toolkit") || strings.Contains(got, "derived=rpg-toolkit-selfhost") {
+		t.Fatalf("container_name output = %q, want declared name then derived name", got)
+	}
+}
+
 // TestDockerRunComputeDriftRoundTrip proves the deploy/diff actions' actual
 // call shape — build args from an inspect blob, then diff them against a
 // declared/target argv list — works through the Lua binding, not just the

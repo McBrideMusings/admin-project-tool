@@ -215,15 +215,22 @@ func TestNormalizeMemBytes(t *testing.T) {
 	}
 }
 
-func TestDefaultContainerName(t *testing.T) {
-	cases := map[string]string{
-		"myapp:latest":          "myapp",
-		"registry.io/org/myapp": "myapp",
-		"myapp":                 "myapp",
+func TestContainerName(t *testing.T) {
+	declared := map[string]any{"container_name": "rpg-toolkit-selfhost"}
+	cases := []struct {
+		cfg   map[string]any
+		image string
+		want  string
+	}{
+		{nil, "myapp:latest", "myapp"},
+		{nil, "registry.io/org/myapp", "myapp"},
+		{map[string]any{}, "myapp", "myapp"},
+		{map[string]any{"container_name": "  "}, "myapp:1", "myapp"},
+		{declared, "ghcr.io/me/rpg-toolkit:latest", "rpg-toolkit-selfhost"},
 	}
-	for in, want := range cases {
-		if got := DefaultContainerName(in); got != want {
-			t.Errorf("DefaultContainerName(%q) = %q, want %q", in, got, want)
+	for _, c := range cases {
+		if got := ContainerName(c.cfg, c.image); got != c.want {
+			t.Errorf("ContainerName(%v, %q) = %q, want %q", c.cfg, c.image, got, c.want)
 		}
 	}
 }

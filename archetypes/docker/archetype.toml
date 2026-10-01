@@ -433,7 +433,7 @@ if not dry_run then
 end
 
 -- ---- remote_recreate_container ----
-local container = dockerrun.default_container_name(image or "")
+local container = dockerrun.container_name(run_cfg, image or "")
 local location = local_deploy and "locally" or ("on " .. host)
 
 info("Inspecting existing container '" .. container .. "' " .. location .. "...")
@@ -700,7 +700,7 @@ local host = user .. "@" .. (env("UNRAID_HOST") or "")
 local image = env("APP_IMAGE")
 local local_deploy = is_local_host(host)
 local location = local_deploy and "locally" or ("on " .. host)
-local container = dockerrun.default_container_name(image or "")
+local container = dockerrun.container_name(run_cfg, image or "")
 
 info("Fetching current inspect for '" .. container .. "' " .. location .. "...")
 local inspect_shell = "docker inspect " .. shq(container)
@@ -965,8 +965,7 @@ if target == "live" then
   local image = env("APP_IMAGE") or ""
   local user = env("UNRAID_USER") or "root"
   local host = user .. "@" .. (env("UNRAID_HOST") or "")
-  local base = image:match("^[^:]*")
-  local container = base:match("[^/]+$") or base
+  local container = dockerrun.container_name(config.docker_run or {}, image)
   local t = tail
   if t == nil then t = since and "all" or 200 end
   local flags = {}

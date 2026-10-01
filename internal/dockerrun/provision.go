@@ -103,9 +103,18 @@ func HealthCheckShell(cfg map[string]any, envVars map[string]string, warn Warner
 		`[ "$code" = "` + strconv.Itoa(expect) + `" ] && exit 0; sleep ` + strconv.Itoa(interval) + "; done; exit 1"
 }
 
-// DefaultContainerName derives a sensible default container name from an
-// image reference.
-func DefaultContainerName(image string) string {
+// ContainerName is the name deploy, diff and logs address the container by:
+// [docker_run].container_name when declared, else the name derived from the
+// image reference. cfg is the [docker_run] table (nil-safe).
+func ContainerName(cfg map[string]any, image string) string {
+	if name := strings.TrimSpace(getString(cfg, "container_name")); name != "" {
+		return name
+	}
+	return defaultContainerName(image)
+}
+
+// defaultContainerName derives a container name from an image reference.
+func defaultContainerName(image string) string {
 	if idx := strings.Index(image, ":"); idx >= 0 {
 		image = image[:idx]
 	}

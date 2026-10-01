@@ -95,9 +95,11 @@ func (h *Host) registerDockerRun(L *lua.LState) {
 		return 1
 	}))
 
-	// dockerrun.default_container_name(image) -> string
-	tbl.RawSetString("default_container_name", L.NewFunction(func(L *lua.LState) int {
-		L.Push(lua.LString(dockerrun.DefaultContainerName(L.CheckString(1))))
+	// dockerrun.container_name(run_cfg, image) -> string
+	// [docker_run].container_name when declared, else derived from image.
+	tbl.RawSetString("container_name", L.NewFunction(func(L *lua.LState) int {
+		cfg, _ := fromLuaValue(L.CheckTable(1)).(map[string]any)
+		L.Push(lua.LString(dockerrun.ContainerName(cfg, L.CheckString(2))))
 		return 1
 	}))
 
