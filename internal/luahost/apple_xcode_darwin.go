@@ -26,6 +26,9 @@ type XcodebuildOptions struct {
 	// Action is the xcodebuild verb ("build", "test", …); defaults to
 	// "build" when empty. Unused by TargetBuildDir.
 	Action string
+	// Product is the product name TargetBuildDir should locate; "" takes the
+	// first target's directory. Unused by XcodebuildFiltered.
+	Product string
 	// ExtraSettings is appended verbatim (already-composed KEY=value pairs,
 	// e.g. from a future dev/prod bundle-suffix settings composer) — this
 	// function does not interpret it.
@@ -82,13 +85,51 @@ func TargetBuildDir(opts XcodebuildOptions) (string, error) {
 	if err != nil {
 		return "", nil // a non-zero exit is treated as "no result", not an error
 	}
+	return pickTargetBuildDir(out, opts.Product), nil
+}
+
+// pickTargetBuildDir reads TARGET_BUILD_DIR out of -showBuildSettings output,
+// which holds one "Build settings for action …" block per target in the
+// scheme. With a product, it returns the dir of the block whose PRODUCT_NAME is
+// product or whose FULL_PRODUCT_NAME is product.app (falling back to the first
+// block's dir when none matches, so the caller's own existence check decides).
+// With no product, or no match, it returns the first block's dir; "" when no
+// block carries one.
+func pickTargetBuildDir(out, product string) string {
+	type block struct{ dir, name, fullName string }
+	var blocks []block
 	for _, line := range strings.Split(out, "\n") {
-		key, value, found := strings.Cut(strings.TrimSpace(line), " = ")
-		if found && key == "TARGET_BUILD_DIR" {
-			return strings.TrimSpace(value), nil
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Build settings for action") || len(blocks) == 0 {
+			blocks = append(blocks, block{})
+		}
+		key, value, found := strings.Cut(line, " = ")
+		if !found {
+			continue
+		}
+		b := &blocks[len(blocks)-1]
+		switch key {
+		case "TARGET_BUILD_DIR":
+			b.dir = strings.TrimSpace(value)
+		case "PRODUCT_NAME":
+			b.name = strings.TrimSpace(value)
+		case "FULL_PRODUCT_NAME":
+			b.fullName = strings.TrimSpace(value)
 		}
 	}
-	return "", nil
+	first := ""
+	for _, b := range blocks {
+		if b.dir == "" {
+			continue
+		}
+		if first == "" {
+			first = b.dir
+		}
+		if product != "" && (b.name == product || b.fullName == product+".app") {
+			return b.dir
+		}
+	}
+	return first
 }
 
 // XcodebuildResult is what XcodebuildFiltered reports.

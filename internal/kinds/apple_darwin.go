@@ -207,6 +207,7 @@ var appleTargetBuildDir = luahost.TargetBuildDir
 // newest of those is often a sibling worktree's app. An app missing from
 // TARGET_BUILD_DIR is an error, not a reason to look elsewhere.
 func appleBuiltApp(opts luahost.XcodebuildOptions, productName string) (string, error) {
+	opts.Product = productName
 	dir, err := appleTargetBuildDir(opts)
 	if err != nil {
 		return "", err

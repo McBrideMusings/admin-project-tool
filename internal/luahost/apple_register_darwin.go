@@ -497,6 +497,7 @@ func xcodebuildOptionsFromTable(t *lua.LTable) XcodebuildOptions {
 		Config:        str("config"),
 		Destination:   str("destination"),
 		Action:        str("action"),
+		Product:       str("product"),
 		ExtraSettings: str("extra_settings"),
 	}
 	if b, ok := t.RawGetString("allow_provisioning").(lua.LBool); ok {

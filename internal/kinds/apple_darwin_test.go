@@ -112,6 +112,23 @@ func TestAppleBuiltAppReadsTargetBuildDirNotNewestDerivedData(t *testing.T) {
 	}
 }
 
+// The product name reaches the xcodebuild query, so a scheme with several
+// targets resolves the app target's TARGET_BUILD_DIR, not the first target's.
+func TestAppleBuiltAppPassesProductToTargetBuildDir(t *testing.T) {
+	ours := plantDerivedApp(t, t.TempDir(), "Foo-ours", time.Now())
+	var seen string
+	prev := appleTargetBuildDir
+	appleTargetBuildDir = func(o luahost.XcodebuildOptions) (string, error) { seen = o.Product; return ours, nil }
+	t.Cleanup(func() { appleTargetBuildDir = prev })
+
+	if _, err := appleBuiltApp(luahost.XcodebuildOptions{Scheme: "Foo", Config: "Release"}, "Bar"); err != nil {
+		t.Fatalf("appleBuiltApp: %v", err)
+	}
+	if seen != "Bar" {
+		t.Errorf("TargetBuildDir got Product %q, want %q", seen, "Bar")
+	}
+}
+
 // No fallback: an app missing from TARGET_BUILD_DIR is an error even when a
 // sibling DerivedData directory holds one.
 func TestAppleBuiltAppRefusesWhenAppMissingFromTargetBuildDir(t *testing.T) {
