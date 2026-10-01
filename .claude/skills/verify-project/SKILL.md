@@ -84,12 +84,6 @@ go test ./internal/tui/...              # the dashboard's own package, ~40s
 go test ./...                           # everything, ~3-4 min
 ```
 
-`go test ./...` also runs `docs/spikes/admin-tui-desktop` — a spike package with its own
-`key_test.go` that fails independently of `internal/tui` (its fixture opens on
-`commands-palette` instead of the tab it expects). That failure is pre-existing and
-unrelated to any change confined to `internal/tui`/`internal/bd`; confirm with
-`git diff --stat HEAD -- docs/spikes/` before assuming a change broke it.
-
 There is no interactive driver for the dashboard's live TUI reachable without a real
 terminal and a screenshot, so a behavioral change to `internal/tui` is proven by:
 
