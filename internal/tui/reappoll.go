@@ -38,7 +38,7 @@ func reapWorkersCmd(repoRoot string, t config.Terminal) tea.Cmd {
 			if e.Worker == nil {
 				continue
 			}
-			if st, ok := livework.Default.State(e.ID); ok && (st == livework.StateRunning || st == livework.StateWaiting) {
+			if st, ok := livework.Default.State(e.ID); ok && st.Reapable() {
 				workers = append(workers, e)
 			}
 		}

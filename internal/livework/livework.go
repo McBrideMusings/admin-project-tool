@@ -44,6 +44,12 @@ const (
 	StateWaiting State = "waiting"
 	StateExited  State = "exited"
 	StateFailed  State = "failed"
+	// StateFinished marks a worker whose work is over but whose reap was
+	// refused (a worktree holding files only the worker has, a branch ahead
+	// of its base). The pane and worktree are still there, so the entry is
+	// live: it can be attached, killed and reaped again. Only the reaper sets
+	// it, and sets it back to StateRunning if the work stops being finished.
+	StateFinished State = "finished"
 	// StateStarting is the pre-registration, pre-handle phase between a
 	// dispatch keypress and the entry that eventually records it — Add
 	// rejects an entry with an empty Handle, and a pending dispatch has no
@@ -54,6 +60,12 @@ const (
 	// that window, without inventing a second, TUI-local enum.
 	StateStarting State = "starting"
 )
+
+// Reapable reports whether a worker in state s is still the reaper's to
+// judge: running, waiting, or finished and awaiting a safe removal.
+func (s State) Reapable() bool {
+	return s == StateRunning || s == StateWaiting || s == StateFinished
+}
 
 // WorkerInfo is present only on an entry for an agent worker — a workflow
 // target running in its own git worktree — and nil for a long-running

@@ -149,8 +149,8 @@ func TestReapWorker(t *testing.T) {
 			if !branchExists(t, repoRoot, w.Branch) {
 				t.Errorf("branch %s deleted though the worker was not reaped", w.Branch)
 			}
-			if st != livework.StateRunning {
-				t.Errorf("state = %s, want running", st)
+			if want := wantState(tt.wantNote); st != want {
+				t.Errorf("state = %s, want %s", st, want)
 			}
 			if !strings.Contains(note, tt.wantNote) {
 				t.Errorf("row line = %q, want it to contain %q", note, tt.wantNote)
@@ -447,7 +447,8 @@ func TestReapWorkerIgnoresSeededIgnoredFiles(t *testing.T) {
 
 // A dependency install directory the primary checkout lacks (a package that
 // arrived after the primary last installed) is regenerable, so it does not
-// block a reap.
+// block a reap, including one nested under a directory git would otherwise
+// report as a single ignored path.
 func TestReapWorkerIgnoresWorkerOnlyNodeModules(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, terminalTOML)
 	addOrigin(t, repoRoot)
@@ -457,7 +458,7 @@ func TestReapWorkerIgnoresWorkerOnlyNodeModules(t *testing.T) {
 	}
 	wfGitT(t, repoRoot, "config", "core.excludesFile", excludes)
 	e := dispatchWorker(t, repoRoot, "true")
-	nm := filepath.Join(e.Worker.Worktree, "node_modules")
+	nm := filepath.Join(e.Worker.Worktree, "packages", "x", "node_modules")
 	if err := os.MkdirAll(nm, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -526,4 +527,40 @@ func TestReapWorkerWorktreeAndBranchGone(t *testing.T) {
 		note, _ := livework.Default.Line(e.ID)
 		t.Fatalf("did not reap; row line = %q", note)
 	}
+}
+
+// A finished worker whose reap is refused reads finished, not running, and
+// goes back to running if its done predicate stops passing.
+func TestReapWorkerBlockedReadsFinished(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	addOrigin(t, repoRoot)
+	excludes := filepath.Join(t.TempDir(), "ignore")
+	if err := os.WriteFile(excludes, []byte(".env\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wfGitT(t, repoRoot, "config", "core.excludesFile", excludes)
+	e := dispatchWorker(t, repoRoot, "true")
+	if err := os.WriteFile(filepath.Join(e.Worker.Worktree, ".env"), []byte("K=1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
+		t.Fatal("reaped a worktree holding an ignored .env")
+	}
+	if st, _ := livework.Default.State(e.ID); st != livework.StateFinished {
+		t.Fatalf("state = %q, want finished", st)
+	}
+	e.Worker.Done = "false"
+	ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"})
+	if st, _ := livework.Default.State(e.ID); st != livework.StateRunning {
+		t.Fatalf("state = %q after done stopped passing, want running", st)
+	}
+}
+
+// wantState is the state a not-reaped worker shows: finished when the reaper
+// held it back with a reason, running when it never finished.
+func wantState(wantNote string) livework.State {
+	if wantNote == "" {
+		return livework.StateRunning
+	}
+	return livework.StateFinished
 }

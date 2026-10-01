@@ -50,7 +50,7 @@ func (m Model) paneTailTarget() *livework.Entry {
 		return nil
 	}
 	st, ok := livework.Default.State(e.ID)
-	if !ok || (st != livework.StateRunning && st != livework.StateWaiting) {
+	if !ok || !st.Reapable() {
 		return nil
 	}
 	return e

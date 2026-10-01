@@ -334,7 +334,7 @@ func WorkingStatus(ctx context.Context, path string) (Status, error) {
 // so it is slower than WorkingStatus; use it only where a deletion must not
 // take ignored files with it.
 func WorkingStatusIgnored(ctx context.Context, path string) (Status, error) {
-	return workingStatus(ctx, path, "--porcelain", "--ignored")
+	return workingStatus(ctx, path, "--porcelain", "--ignored=matching")
 }
 
 func workingStatus(ctx context.Context, path string, flags ...string) (Status, error) {

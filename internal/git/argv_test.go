@@ -153,7 +153,7 @@ func TestCommandArgv(t *testing.T) {
 		{
 			name: "WorkingStatusIgnored asks git for ignored paths too",
 			call: func(ctx context.Context) { WorkingStatusIgnored(ctx, "/wt") },
-			want: []call{rdIn("/wt", "status", "--porcelain", "--ignored")},
+			want: []call{rdIn("/wt", "status", "--porcelain", "--ignored=matching")},
 		},
 		{
 			name: "AheadBehind counts both sides in one rev-list",

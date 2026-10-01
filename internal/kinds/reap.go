@@ -233,11 +233,15 @@ func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t confi
 	if w == nil {
 		return false
 	}
-	if st, ok := livework.Default.State(e.ID); !ok || (st != livework.StateRunning && st != livework.StateWaiting) {
+	st, ok := livework.Default.State(e.ID)
+	if !ok || !st.Reapable() {
 		return false
 	}
 	finished, note := workerFinished(ctx, e, t)
 	if !finished {
+		if st == livework.StateFinished {
+			livework.Default.SetState(e.ID, livework.StateRunning, nil)
+		}
 		if note == "" && w.Done != "" && t.Status != "" && e.Via == "terminal" {
 			// A worker that declares done is finished only when done passes;
 			// a pane that has gone without it is a worker that died. Leave
@@ -253,7 +257,7 @@ func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t confi
 	}
 	clean, merged, baseKnown, workerOnly := workerSafety(ctx, repoRoot, w)
 	if !baseKnown {
-		livework.Default.SetNote(e.ID, "finished, not removed: "+reapBase+" does not exist (no origin remote, or never fetched)")
+		holdFinished(e.ID, "finished, not removed: "+reapBase+" does not exist (no origin remote, or never fetched)")
 		return false
 	}
 	reap, reason := ReapDecision(true, clean, merged, workerOnly)
@@ -261,12 +265,12 @@ func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t confi
 		reason = "finished, not removed: worktree is gone and branch has commits not on " + reapBase
 	}
 	if !reap {
-		livework.Default.SetNote(e.ID, reason)
+		holdFinished(e.ID, reason)
 		return false
 	}
 	if _, closed := panesClosed.Load(e.ID); !closed {
 		if err := closeFinishedWorker(ctx, e, t); err != nil {
-			livework.Default.SetNote(e.ID, "finished, not removed: "+err.Error())
+			holdFinished(e.ID, "finished, not removed: "+err.Error())
 			return false
 		}
 		// A later tick retrying a failed worktree or branch removal must not
@@ -277,12 +281,12 @@ func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t confi
 		// A directory removed without `git worktree remove` stays registered
 		// and keeps git from deleting its branch.
 		if err := git.PruneWorktrees(ctx, repoRoot); err != nil {
-			livework.Default.SetNote(e.ID, "finished, not removed: worktree: "+err.Error())
+			holdFinished(e.ID, "finished, not removed: worktree: "+err.Error())
 			return false
 		}
 	} else {
 		if err := git.RemoveWorktree(ctx, repoRoot, w.Worktree, false); err != nil {
-			livework.Default.SetNote(e.ID, "finished, not removed: worktree: "+err.Error())
+			holdFinished(e.ID, "finished, not removed: worktree: "+err.Error())
 			return false
 		}
 	}
@@ -292,7 +296,7 @@ func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t confi
 	if !git.BranchExistsLocal(ctx, repoRoot, w.Branch) {
 		// Already deleted by hand.
 	} else if err := git.DeleteBranch(ctx, repoRoot, w.Branch, true); err != nil {
-		livework.Default.SetNote(e.ID, "finished, not removed: branch: "+err.Error())
+		holdFinished(e.ID, "finished, not removed: branch: "+err.Error())
 		return false
 	}
 	panesClosed.Delete(e.ID)
@@ -335,4 +339,12 @@ func closeFinishedPane(ctx context.Context, handle string, t config.Terminal) er
 		}
 	}
 	return fmt.Errorf("closing pane %s: %w", handle, killErr)
+}
+
+// holdFinished records why a finished worker was not removed. The worker's
+// work is over, so the row says finished rather than running, and it stays
+// reapable so a later tick retries once the cause clears.
+func holdFinished(id, note string) {
+	livework.Default.SetNote(id, note)
+	livework.Default.SetState(id, livework.StateFinished, nil)
 }
