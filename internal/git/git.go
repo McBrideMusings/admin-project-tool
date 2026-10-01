@@ -27,7 +27,8 @@ func WithQuiet(ctx context.Context) context.Context {
 	return context.WithValue(ctx, quietKey{}, true)
 }
 
-func isQuiet(ctx context.Context) bool {
+// IsQuiet reports whether ctx was marked by WithQuiet.
+func IsQuiet(ctx context.Context) bool {
 	q, _ := ctx.Value(quietKey{}).(bool)
 	return q
 }
@@ -166,7 +167,7 @@ func runGitMutating(ctx context.Context, dir string, args ...string) error {
 }
 
 func runMutating(ctx context.Context, cmd *exec.Cmd) error {
-	if isQuiet(ctx) {
+	if IsQuiet(ctx) {
 		var buf bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &buf, &buf
 		if err := cmd.Run(); err != nil {

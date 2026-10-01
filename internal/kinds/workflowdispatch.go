@@ -40,6 +40,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/agent"
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/create"
+	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/validate"
@@ -96,6 +97,10 @@ type TargetResult struct {
 var spawnPane = func(cmdLine, cwd string, ctx launchCtx, t config.Terminal) (string, error) {
 	return spawnLauncher(cmdLine, cwd, ctx, t)
 }
+
+// createWorktree is DispatchTargets's worktree-creating step, swapped out in
+// tests to observe the context it is handed.
+var createWorktree = create.Worktree
 
 // Ceiling returns the workflow's concurrency ceiling: the project
 // configuration's [workflow].ceiling when positive, else DefaultCeiling.
@@ -161,10 +166,14 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 	// acceptance criterion "dispatching over N targets creates N
 	// worktrees, each seeded with the populate files").
 	ctx := context.Background()
+	if surface == SurfaceDashboard {
+		// Bubble Tea owns the terminal; git's progress lines would scroll it.
+		ctx = git.WithQuiet(ctx)
+	}
 	group := actionName + "-" + time.Now().Format("20060102T150405.000000000")
 	worktrees := make([]create.Result, len(targets))
 	for i, t := range targets {
-		res, err := create.Worktree(ctx, repoRoot, t.Name)
+		res, err := createWorktree(ctx, repoRoot, t.Name)
 		if err != nil {
 			results[i] = TargetResult{Target: t.Name, Err: fmt.Errorf("creating worktree: %w", err)}
 			continue

@@ -15,6 +15,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/create"
+	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
@@ -139,6 +140,39 @@ func TestDispatchTargetsCreatesWorktreesSeededWithPopulate(t *testing.T) {
 		if string(body) != "SECRET=1\n" {
 			t.Errorf("target %q: .env content = %q", r.Target, body)
 		}
+	}
+}
+
+// TestDispatchTargetsQuietOnlyOnDashboard: the dashboard's Bubble Tea screen
+// must not receive git's progress lines, so a dashboard dispatch creates its
+// worktrees under a quiet context; a plain shell keeps streaming them.
+func TestDispatchTargetsQuietOnlyOnDashboard(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		surface DispatchSurface
+		want    bool
+	}{
+		{"dashboard", SurfaceDashboard, true},
+		{"shell", SurfaceShell, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoRoot := setupWorkflowRepo(t, terminalTOML)
+			stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) { return "pane", nil })
+
+			var quiet atomic.Bool
+			orig := createWorktree
+			createWorktree = func(ctx context.Context, root, branch string) (create.Result, error) {
+				quiet.Store(git.IsQuiet(ctx))
+				return orig(ctx, root, branch)
+			}
+			t.Cleanup(func() { createWorktree = orig })
+
+			DispatchTargets(repoRoot, "sweep", workflowAction(), []Target{{Name: "t1", Run: "x"}}, tc.surface)
+
+			if got := quiet.Load(); got != tc.want {
+				t.Errorf("create.Worktree ctx quiet = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
