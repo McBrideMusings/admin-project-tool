@@ -33,7 +33,7 @@ func stubGitHubIssues(t *testing.T, issues []gh.IssueItem, err error) {
 
 // TestResolveQueryGitHubLabelResolvesToOpenIssues proves label:<name> on a
 // github-tracked project resolves to one Target per matching issue, keyed by
-// the bare issue number — the id form internal/tui/selectionworkflow.go's
+// the bare issue number — the id form internal/tui's old tracker dispatch
 // trackerRowID/trackerTargets already dispatch GitHub issues under.
 func TestResolveQueryGitHubLabelResolvesToOpenIssues(t *testing.T) {
 	stubGitHubIssues(t, []gh.IssueItem{{Number: 12}, {Number: 34}}, nil)

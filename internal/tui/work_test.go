@@ -95,7 +95,7 @@ func TestDeclaredCommandsDropsHidden(t *testing.T) {
 }
 
 // TestDeclaredCommandsFiltersWorkflowBySource is the epic's own rule: "a
-// query-sourced workflow appears in the list; a selection-sourced one does
+// query-sourced workflow appears in the list; a row-sourced one does
 // not" — kinds.WorkflowTarget.AppearsInCommandList is the single source of
 // truth and this proves the Work tab actually consults it.
 func TestDeclaredCommandsFiltersWorkflowBySource(t *testing.T) {
@@ -106,7 +106,7 @@ func TestDeclaredCommandsFiltersWorkflowBySource(t *testing.T) {
 		},
 		Actions: map[string]manifest.Action{
 			"retire": {"kind": "workflow", "over": map[string]any{"query": "label:stale"}},
-			"review": {"kind": "workflow", "over": "selection"},
+			"review": {"kind": "workflow", "over": "row"},
 		},
 	}
 	mm := workTestModel(m)
@@ -119,7 +119,7 @@ func TestDeclaredCommandsFiltersWorkflowBySource(t *testing.T) {
 		t.Errorf("query-sourced workflow command was dropped, want it kept")
 	}
 	if names["review-branch"] {
-		t.Errorf("selection-sourced workflow command was kept, want it dropped")
+		t.Errorf("row-sourced workflow command was kept, want it dropped")
 	}
 }
 

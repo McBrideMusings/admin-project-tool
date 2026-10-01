@@ -5,8 +5,9 @@
 // come from via its `over` key — that declaration is the whole reason this
 // file exists, per the epic's settled decision:
 //
-//	over = "selection" is row-only; over = { query = ... } appears in the
-//	Commands tab and runs bare after confirming the resolved set.
+//	over = "row" is row-only (it runs over the one row a key is pressed on);
+//	over = { query = ... } appears in the Commands tab and runs bare after
+//	confirming the resolved set.
 //
 // Actually RUNNING a workflow from the bare CLI is workflowcli.go
 // (admin-spjp.2) — makeWorkflow below validates `over` at factory-build time
@@ -39,12 +40,12 @@ const (
 	// nil error.
 	WorkflowSourceNone WorkflowSource = iota
 
-	// WorkflowSourceSelection is `over = "selection"`: row-only. The user
-	// picks targets on a row in the dashboard; the workflow does not run
-	// bare because with no selection there is nothing to act on, and for
+	// WorkflowSourceRow is `over = "row"`: row-only. A [keys.<row-kind>]
+	// binding runs it over the one row under the cursor; the workflow does
+	// not run bare because with no row there is nothing to act on, and for
 	// that reason it must never appear in the Commands tab (a command that
 	// cannot say what it will act on should not be offered).
-	WorkflowSourceSelection
+	WorkflowSourceRow
 
 	// WorkflowSourceQuery is `over = { query = "..." }`: the tool resolves
 	// its own targets from Query. It appears in the Commands tab as a
@@ -58,8 +59,8 @@ const (
 
 func (s WorkflowSource) String() string {
 	switch s {
-	case WorkflowSourceSelection:
-		return "selection"
+	case WorkflowSourceRow:
+		return "row"
 	case WorkflowSourceQuery:
 		return "query"
 	default:
@@ -86,7 +87,7 @@ type WorkflowTarget struct {
 // AppearsInCommandList reports whether a workflow with this target source
 // should be offered in the Commands tab — the epic's rule that a
 // query-sourced Workflow appears in the Command list while a
-// selection-sourced one does not, in one place so the later TUI
+// row-sourced one does not, in one place so the later TUI
 // ticket (admin-3rgp.20/.26) has a single source of truth to consult rather
 // than re-deriving the rule from WorkflowSource itself.
 func (t WorkflowTarget) AppearsInCommandList() bool {
@@ -143,11 +144,11 @@ func joinOrNone(list []string) string {
 // ParseWorkflowOver reads and validates action's `over` key — the Go home
 // for every rule this ticket's acceptance criteria name:
 //
-//   - `over = "selection"` parses to WorkflowSourceSelection.
+//   - `over = "row"` parses to WorkflowSourceRow.
 //   - `over = { query = "..." }` (a non-empty string) parses to
 //     WorkflowSourceQuery, carrying Query.
 //   - anything else — no `over` key at all, a string that isn't
-//     "selection", a table with no (or an empty/non-string) `query` — is a
+//     "row" (`"selection"`, the removed multi-row source, included), a table with no (or an empty/non-string) `query` — is a
 //     manifest error naming both the action and the missing/malformed key,
 //     matching the project CLAUDE.md's "a malformed over... is a manifest
 //     error naming the key and the rule, not a runtime surprise."
@@ -157,16 +158,20 @@ func ParseWorkflowOver(name string, action manifest.Action) (WorkflowTarget, err
 	raw, present := action["over"]
 	if !present {
 		return WorkflowTarget{}, fmt.Errorf(
-			`action %q: kind="workflow" needs 'over' — "selection" (row-only, never in the Command list) `+
+			`action %q: kind="workflow" needs 'over' — "row" (row-only, never in the Command list) `+
 				`or { query = "..." } (appears in the Command list and can run bare)`, name)
 	}
 	switch v := raw.(type) {
 	case string:
+		if v == "row" {
+			return WorkflowTarget{Source: WorkflowSourceRow}, nil
+		}
 		if v == "selection" {
-			return WorkflowTarget{Source: WorkflowSourceSelection}, nil
+			return WorkflowTarget{}, fmt.Errorf(
+				`action %q: over = "selection" is no longer supported — a key runs a workflow over the row under the cursor only; write over = "row"`, name)
 		}
 		return WorkflowTarget{}, fmt.Errorf(
-			`action %q: 'over' as a string must be exactly "selection" (got %q) — `+
+			`action %q: 'over' as a string must be exactly "row" (got %q) — `+
 				`a query source needs a table: over = { query = "..." }`, name, v)
 	case map[string]any:
 		q, ok := v["query"].(string)
@@ -186,7 +191,7 @@ func ParseWorkflowOver(name string, action manifest.Action) (WorkflowTarget, err
 		return WorkflowTarget{Source: WorkflowSourceQuery, Query: q, Tracker: tracker}, nil
 	default:
 		return WorkflowTarget{}, fmt.Errorf(
-			`action %q: 'over' must be "selection" or a table with 'query' (got %#v)`, name, raw)
+			`action %q: 'over' must be "row" or a table with 'query' (got %#v)`, name, raw)
 	}
 }
 
@@ -268,7 +273,7 @@ func validateWorkflowLaunch(name string, action manifest.Action) []string {
 // the same "malformed config fails at build time, not at Runner-invocation
 // time" contract every other kind factory in this package follows — and
 // then returns a Runner that delegates to runWorkflowCLI (workflowcli.go),
-// the bare-CLI invocation path: a selection-sourced workflow fails loudly
+// the bare-CLI invocation path: a row-sourced workflow fails loudly
 // naming the row gesture that does have targets to act on, a query-sourced
 // one resolves, confirms, and dispatches through kinds.DispatchTargets.
 func makeWorkflow(name string, action manifest.Action, m *manifest.Manifest, _ *Surface) (Runner, error) {

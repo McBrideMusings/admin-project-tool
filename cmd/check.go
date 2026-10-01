@@ -454,7 +454,7 @@ func checkQueryWorkflowTracker(m *manifest.Manifest) error {
 func queryTrackerProblem(query, tracker string) string {
 	if tracker != "github" {
 		return fmt.Sprintf(
-			"there is no query resolver for tracker %q; use over = \"selection\" instead or switch tracker to \"beads\"",
+			"there is no query resolver for tracker %q; use over = \"row\" instead or switch tracker to \"beads\"",
 			tracker)
 	}
 	switch form, _ := kinds.ClassifyQuery(query); form {

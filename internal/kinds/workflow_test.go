@@ -10,18 +10,18 @@ import (
 // -- ParseWorkflowOver --------------------------------------------------
 
 // TestParseWorkflowOverSelection is the ticket's first acceptance
-// criterion: a selection-sourced workflow parses.
+// criterion: a row-sourced workflow parses.
 func TestParseWorkflowOverSelection(t *testing.T) {
-	action := manifest.Action{"kind": "workflow", "over": "selection"}
+	action := manifest.Action{"kind": "workflow", "over": "row"}
 	target, err := ParseWorkflowOver("retire-merged", action)
 	if err != nil {
 		t.Fatalf("ParseWorkflowOver = %v, want nil", err)
 	}
-	if target.Source != WorkflowSourceSelection {
-		t.Fatalf("Source = %v, want WorkflowSourceSelection", target.Source)
+	if target.Source != WorkflowSourceRow {
+		t.Fatalf("Source = %v, want WorkflowSourceRow", target.Source)
 	}
 	if target.AppearsInCommandList() {
-		t.Fatal("a selection-sourced workflow must NOT appear in the Command list")
+		t.Fatal("a row-sourced workflow must NOT appear in the Command list")
 	}
 }
 
@@ -53,7 +53,7 @@ func TestParseWorkflowOverQuery(t *testing.T) {
 // a nil `any` matches neither `string` nor `map[string]any`), this test
 // failed with:
 //
-//	action "no-over": 'over' must be "selection" or a table with 'query' (got <nil>)
+//	action "no-over": 'over' must be "row" or a table with 'query' (got <nil>)
 //
 // — which still errors (the test only checks for an error and for "over" in
 // the message) but no longer names the key as MISSING versus malformed,
@@ -62,7 +62,7 @@ func TestParseWorkflowOverQuery(t *testing.T) {
 // actually discriminates the two paths, and it failed under the mutation
 // with:
 //
-//	error "action \"no-over\": 'over' must be \"selection\" or a table with 'query' (got <nil>)" does not mention "needs 'over'"
+//	error "action \"no-over\": 'over' must be \"row\" or a table with 'query' (got <nil>)" does not mention "needs 'over'"
 //
 // (reverted after confirming the failure).
 func TestParseWorkflowOverMissingNamesTheKey(t *testing.T) {
@@ -83,7 +83,7 @@ func TestParseWorkflowOverMissingNamesTheKey(t *testing.T) {
 }
 
 // TestParseWorkflowOverRejectsBadString proves an `over` string other than
-// "selection" is rejected rather than silently treated as one source or the
+// "row" is rejected rather than silently treated as one source or the
 // other.
 func TestParseWorkflowOverRejectsBadString(t *testing.T) {
 	action := manifest.Action{"kind": "workflow", "over": "everything"}
@@ -91,8 +91,21 @@ func TestParseWorkflowOverRejectsBadString(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for over = \"everything\"")
 	}
-	if !strings.Contains(err.Error(), `"selection"`) {
+	if !strings.Contains(err.Error(), `"row"`) {
 		t.Fatalf("error %q does not explain the valid string value", err.Error())
+	}
+}
+
+// TestParseWorkflowOverRejectsRemovedSelection proves the removed multi-row
+// source fails with a message that names the replacement.
+func TestParseWorkflowOverRejectsRemovedSelection(t *testing.T) {
+	action := manifest.Action{"kind": "workflow", "over": "selection"}
+	_, err := ParseWorkflowOver("old", action)
+	if err == nil {
+		t.Fatal(`expected an error for over = "selection"`)
+	}
+	if !strings.Contains(err.Error(), "no longer supported") || !strings.Contains(err.Error(), `over = "row"`) {
+		t.Fatalf("error %q does not say selection was removed and name over = \"row\"", err.Error())
 	}
 }
 
@@ -240,10 +253,10 @@ func TestValidateWorkflowsIgnoresOtherKinds(t *testing.T) {
 }
 
 // TestValidateWorkflowsAcceptsBothSources proves a manifest with one
-// selection-sourced and one query-sourced workflow both pass.
+// row-sourced and one query-sourced workflow both pass.
 func TestValidateWorkflowsAcceptsBothSources(t *testing.T) {
 	actions := map[string]manifest.Action{
-		"retire-merged": {"kind": "workflow", "over": "selection", "run": "retire $ADMIN_TARGET"},
+		"retire-merged": {"kind": "workflow", "over": "row", "run": "retire $ADMIN_TARGET"},
 		"review-waiting": {
 			"kind": "workflow",
 			"over": map[string]any{"query": "label:review-me"},
@@ -347,26 +360,26 @@ func TestMakeWorkflowRejectsMalformedOverAtBuildTime(t *testing.T) {
 	}
 }
 
-// TestMakeWorkflowSelectionRunnerNamesRowGesture proves a selection-sourced
+// TestMakeWorkflowRowRunnerNamesRowGesture proves a row-sourced
 // workflow's real Runner (not a stub — admin-spjp.2 wired makeWorkflow to
 // runWorkflowCLI) fails loudly naming both the action and the row gesture
-// that does have targets to act on, since there is no selection outside the
+// that does have targets to act on, since there is no row outside the
 // dashboard.
-func TestMakeWorkflowSelectionRunnerNamesRowGesture(t *testing.T) {
-	action := manifest.Action{"kind": "workflow", "over": "selection"}
+func TestMakeWorkflowRowRunnerNamesRowGesture(t *testing.T) {
+	action := manifest.Action{"kind": "workflow", "over": "row"}
 	run, err := makeWorkflow("retire-merged", action, nil, nil)
 	if err != nil {
 		t.Fatalf("makeWorkflow = %v, want nil", err)
 	}
 	err = run(nil)
 	if err == nil {
-		t.Fatal("expected the selection-sourced Runner to error")
+		t.Fatal("expected the row-sourced Runner to error")
 	}
 	if !strings.Contains(err.Error(), "retire-merged") {
 		t.Fatalf("error %q does not name the action", err.Error())
 	}
-	if !strings.Contains(err.Error(), "space") || !strings.Contains(err.Error(), "w") {
-		t.Fatalf("error %q does not name the row gesture (space to select, w to pick)", err.Error())
+	if !strings.Contains(err.Error(), "cursor") || !strings.Contains(err.Error(), "[keys.") {
+		t.Fatalf("error %q does not name the row gesture (cursor on a row, bound key)", err.Error())
 	}
 }
 
