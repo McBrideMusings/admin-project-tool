@@ -130,7 +130,7 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		}
 	}
 
-	detail := m.renderWorkBand(rows[cursor], lw, maxi(bh, 1))
+	detail := m.renderWorkBand(rows[cursor], width, maxi(bh, 1))
 
 	out := make([]string, 0, height)
 	outHits := make([]hitTarget, 0, height)
@@ -147,11 +147,11 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		if i < len(detail) {
 			d = detail[i]
 		}
-		// padEnd's outer call is the trailing one-column margin: lw
-		// (=width-2) already leaves that column blank after the leading
-		// space, this just makes the blank explicit rather than relying on
-		// whatever painted the row before.
-		out = append(out, padEnd(" "+padEnd(d, lw), width))
+		// The band is edge to edge, like the footer rule under it: its title
+		// rule, dashed rule and tail lines carry their own one-column margin
+		// where they want one (bandFields*, bandTail), so no outer inset is
+		// added here (docs/spikes/admin-tui-desktop/commands-running.txt:16).
+		out = append(out, padEnd(d, width))
 		outHits = append(outHits, hitTarget{kind: hitNone})
 	}
 	return pad(out, height), padHits(outHits, height)
