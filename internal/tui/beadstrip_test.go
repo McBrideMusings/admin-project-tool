@@ -53,7 +53,30 @@ func TestBeadStripShowsTheWholeTitleAndTheDroppedColumns(t *testing.T) {
 	m.beads[0].Labels = []string{"area:infra", "human"}
 	rows := rowsOfKind(m.beadRows(), rowBead)
 	row := segsText(composeLR(rows[0].leftSegs, rows[0].rightSegs, cols))
-	if strings.Contains(row, "area:infra") || strings.Contains(row, " task ") {
-		t.Errorf("row still draws type or labels, which belong to the strip: %q", row)
+	if strings.Contains(row, "area:infra") || strings.Contains(row, "human") {
+		t.Errorf("row draws the raw labels; the strip has those, the row shows the short form: %q", row)
+	}
+	if !strings.Contains(row, "task") || !strings.Contains(row, "infra") {
+		t.Errorf("row is missing the type word or the short label: %q", row)
+	}
+}
+
+func TestShortBeadLabels(t *testing.T) {
+	for _, c := range []struct {
+		labels []string
+		w      int
+		want   string
+	}{
+		{[]string{"area:tui", "area:work"}, 18, "tui, work"},
+		{[]string{"area:infra", "human"}, 18, "infra"},
+		{[]string{"human"}, 18, ""},
+		{[]string{"area:data", "area:reliability"}, 18, "data, reliability"},
+		{[]string{"area:data", "area:reliability"}, 10, "data +1"},
+		{[]string{"area:reliability"}, 6, "relia…"},
+		{nil, 18, ""},
+	} {
+		if got := shortBeadLabels(c.labels, c.w); got != c.want {
+			t.Errorf("shortBeadLabels(%v, %d) = %q, want %q", c.labels, c.w, got, c.want)
+		}
 	}
 }

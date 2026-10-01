@@ -49,11 +49,10 @@ type beadColumn struct {
 
 // DefaultBeadColumns is the pane as it ships. "owner" is absent: bd fills it from
 // the `owner` field, which on a solo workspace is the same name on every row.
-// Anyone sharing a workspace puts it back through [beads] columns. "type",
-// "labels" and "unblocks" are absent for the same reason as the title's width: the
-// row gives the title every cell it can, and the strip under the list
-// (beadstrip.go) shows those three for the bead under the cursor.
-var DefaultBeadColumns = []string{"id", "priority", "glyph", "title", "age"}
+// Anyone sharing a workspace puts it back through [beads] columns. "unblocks" is
+// absent too; the strip under the list (beadstrip.go) shows it for the bead under
+// the cursor.
+var DefaultBeadColumns = []string{"id", "priority", "type", "glyph", "title", "labels", "age"}
 
 // beadColumnByName is every column the pane knows how to draw. A name outside
 // this map is configuration naming something that does not exist, which is
@@ -100,9 +99,13 @@ var beadColumnByName = map[string]beadColumn{
 	"title": {name: "title", side: beadLeft},
 	"labels": {
 		name: "labels", side: beadRight,
-		width: func(b bd.Bead, _ beadCtx) int { return vlen(strings.Join(b.Labels, ", ")) },
+		// Capped at beadLabelsMaxW so the column costs the title a fixed amount
+		// however many labels a bead carries; the strip under the list has the rest.
+		width: func(b bd.Bead, _ beadCtx) int {
+			return min(vlen(shortBeadLabels(b.Labels, 1<<30)), beadLabelsMaxW)
+		},
 		cell: func(b bd.Bead, w int, _ beadCtx) []seg {
-			return []seg{{t: padEnd(truncR(strings.Join(b.Labels, ", "), w), w), fg: cDim}}
+			return []seg{{t: padEnd(shortBeadLabels(b.Labels, w), w), fg: cDim}}
 		},
 	},
 	"unblocks": {
@@ -133,6 +136,37 @@ var beadColumnByName = map[string]beadColumn{
 			return padStart(seg{t: compactSince(b.Updated), fg: cDim}, w)
 		},
 	},
+}
+
+// beadLabelsMaxW is the widest the labels column gets.
+const beadLabelsMaxW = 18
+
+// shortBeadLabels is a bead's labels as the row shows them: the "area:" prefix
+// dropped, and "human" left out because the status glyph and the Needs-you
+// section already say it. Labels that do not fit w end in " +N" for the N cut,
+// and a single label wider than w is truncated.
+func shortBeadLabels(labels []string, w int) string {
+	var parts []string
+	for _, l := range labels {
+		l = strings.TrimPrefix(l, "area:")
+		if l == "" || l == beadHumanLabel {
+			continue
+		}
+		parts = append(parts, l)
+	}
+	for k := len(parts); k >= 1; k-- {
+		s := strings.Join(parts[:k], ", ")
+		if k < len(parts) {
+			s += " +" + strconv.Itoa(len(parts)-k)
+		}
+		if vlen(s) <= w {
+			return s
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return truncR(parts[0], w)
 }
 
 // beadGlyphColor tints the glyph column's one cell: a human bead gets the

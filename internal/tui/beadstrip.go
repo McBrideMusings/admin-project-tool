@@ -16,10 +16,9 @@ const beadStripRows = 4
 // keeps the space.
 const beadStripMinBody = 14
 
-// beadStrip is what the list rows no longer carry for the bead under the cursor:
-// its whole title and its type, labels, status, unblocks and age. The row gives
-// the title every cell the id and age leave, and this strip is where a title too
-// long for the row is read in full.
+// beadStrip is what a list row cannot fit for the bead under the cursor: its
+// whole title, its full labels, and its status and unblocks. A row cuts a long
+// title and shortens the labels; this strip is where both are read in full.
 func (m Model) beadStrip(width int) []string {
 	lines := make([]string, 0, beadStripRows)
 	lines = append(lines, m.ruleLine(width))
