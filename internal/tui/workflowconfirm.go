@@ -113,17 +113,17 @@ func dispatchWorkflowCmd(repoRoot, name string, action manifest.Action, targets 
 // and wd.workflowAction are only ever set together (see work.go's
 // commandRowItem).
 //
-// declaredCommands already excludes a selection-sourced workflow from the
+// declaredCommands already excludes a row-sourced workflow from the
 // Work tab entirely (WorkflowTarget.AppearsInCommandList), so wd.workflow
 // here should always be query-sourced — but this is the one place a bare
-// enter could turn a selection-sourced workflow into a query dispatch with
+// enter could turn a row-sourced workflow into a query dispatch with
 // an empty query if that filter were ever bypassed, so the source is
 // checked again rather than trusted, and a non-query source is refused
 // outright (no resolution, no overlay, nothing dispatched) instead of
 // resolving an empty string.
 func (m Model) startWorkflowConfirm(wd *workRowData) (tea.Model, tea.Cmd) {
 	if wd.workflow.Source != kinds.WorkflowSourceQuery {
-		m.setStatus(wd.cmdName+" is selection-sourced — it cannot run bare", cYellow)
+		m.setStatus(wd.cmdName+" is row-sourced — it cannot run bare", cYellow)
 		return m, nil
 	}
 	tracker, err := wd.workflow.ResolveTracker(wd.cmdName, m.trackers())
@@ -133,7 +133,6 @@ func (m Model) startWorkflowConfirm(wd *workRowData) (tea.Model, tea.Cmd) {
 	}
 	m.wfResolving = true
 	m.wfOpen = false
-	m.wfFromSelection = false
 	m.wfName = wd.cmdName
 	m.wfAction = wd.workflowAction
 	m.wfQuery = wd.workflow.Query
@@ -210,24 +209,10 @@ func (m Model) workflowConfirmKey(key string) (tea.Model, tea.Cmd) {
 	if canDispatch && (key == "enter" || key == "y" || key == "Y") {
 		name, action, targets := m.wfName, m.wfAction, m.wfTargets
 		m.wfOpen = false
-		if m.wfFromSelection {
-			// admin-3rgp.27 (admin-4pps: whichever map is active): only a
-			// selection-sourced dispatch owns the active selection — a
-			// query-sourced one (wfFromSelection false) never touched it and
-			// must leave it alone. Cleared only once dispatch is actually
-			// confirmed, not when the picker merely opened this overlay, so
-			// backing out with esc/n leaves the selection intact for a second
-			// try at a different workflow. The overlay can only be reached
-			// from the tab/pane it was opened on — keys route to it while
-			// it's up — so reading the active tab here is safe.
-			m.clearActiveSelection()
-			m.wfFromSelection = false
-		}
 		m.setStatus(fmt.Sprintf("dispatching %s over %d target(s)…", name, len(targets)), cCyan)
 		return m, dispatchWorkflowCmd(m.repoRoot, name, action, targets)
 	}
 	m.wfOpen = false
-	m.wfFromSelection = false
 	m.setStatus("cancelled", cDim)
 	return m, nil
 }
@@ -279,14 +264,7 @@ func (m Model) workflowConfirmContent() (title, badge string, lines [][]seg) {
 		}
 	}
 
-	// The label names what wfQuery actually holds: a real query string for a
-	// query-sourced workflow, or admin-3rgp.27's own "N selected row(s)" for
-	// a picker-originated one — "query" would misdescribe the latter.
-	srcLabel := " query   "
-	if m.wfFromSelection {
-		srcLabel = " over    "
-	}
-	lines = append(lines, []seg{{t: srcLabel, fg: cFaint}, {t: m.wfQuery, fg: cFg}})
+	lines = append(lines, []seg{{t: " query   ", fg: cFaint}, {t: m.wfQuery, fg: cFg}})
 	run := m.wfRun
 	if run == "" {
 		run = "(none)"

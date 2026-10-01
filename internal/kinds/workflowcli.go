@@ -5,8 +5,7 @@
 // query into targets and DispatchTargets (workflowdispatch.go) runs them —
 // the same two calls the TUI confirm overlay makes. This file only decides
 // what a bare CLI run does before and around those two calls: refuse a
-// selection-sourced workflow outright (there is no row here to have
-// selected), and for a query-sourced one, print what the overlay would have
+// row-sourced workflow outright (there is no row here to run over), and for a query-sourced one, print what the overlay would have
 // shown — the resolved set, the agent, the ceiling — and read a
 // confirmation from the terminal's own stdin before dispatching anything.
 //
@@ -46,13 +45,13 @@ var resolveWorkflowQuery = ResolveQuery
 var dispatchWorkflowTargets = DispatchTargets
 
 // runWorkflowCLI is makeWorkflow's Runner body: dispatch on target.Source,
-// since a selection-sourced and a query-sourced workflow need entirely
+// since a row-sourced and a query-sourced workflow need entirely
 // different handling from the bare CLI. args is accepted only to match the
 // Runner signature — a workflow reads no arguments of its own.
 func runWorkflowCLI(name string, action manifest.Action, m *manifest.Manifest, target WorkflowTarget, _ []string) error {
 	switch target.Source {
-	case WorkflowSourceSelection:
-		return runWorkflowSelection(name)
+	case WorkflowSourceRow:
+		return runWorkflowRow(name)
 	case WorkflowSourceQuery:
 		return runWorkflowQuery(name, action, m, target)
 	default:
@@ -63,15 +62,14 @@ func runWorkflowCLI(name string, action manifest.Action, m *manifest.Manifest, t
 	}
 }
 
-// runWorkflowSelection is the selection-sourced case: there is no selection
-// outside the dashboard, so this fails loudly and names the gesture that
-// does have one, rather than running over nothing or guessing.
-func runWorkflowSelection(name string) error {
+// runWorkflowRow is the row-sourced case: there is no row outside the
+// dashboard, so this fails loudly and names the gesture that does have one,
+// rather than running over nothing or guessing.
+func runWorkflowRow(name string) error {
 	return fmt.Errorf(
-		"action %q: kind=\"workflow\" with over = \"selection\" is row-only — it has no targets to "+
+		"action %q: kind=\"workflow\" with over = \"row\" is row-only — it has no targets to "+
 			"run over from the bare command line. Open the dashboard (run `admin` with no arguments), "+
-			"go to the Beads/Issues/PRs tab, press space to select one or more rows, then press w "+
-			"to pick this workflow", name)
+			"put the cursor on a row and press the key bound to this workflow under [keys.<row-kind>]", name)
 }
 
 // runWorkflowQuery is the query-sourced case: resolve, print what would be

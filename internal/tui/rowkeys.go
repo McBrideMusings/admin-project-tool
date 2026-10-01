@@ -162,7 +162,7 @@ func (m Model) rowKeyDispatch(key string) (tea.Model, tea.Cmd, bool) {
 		return m, nil, false
 	}
 	c, found := m.commandNamed(name)
-	if found && m.isSelectionWorkflow(c) {
+	if found && m.isRowWorkflow(c) {
 		mm, cmd := m.rowKeyWorkflow(name, c, r, kind)
 		return mm, cmd, true
 	}
@@ -199,29 +199,13 @@ func (m Model) commandNamed(name string) (manifest.Command, bool) {
 }
 
 // rowKeyWorkflow is rowKeyDispatch's branch for a binding that resolves to
-// a single-step kind="workflow" action with over="selection" (ADR-0018):
-// a nonempty tracker selection hands off to the same picker→confirm path
-// space-then-w already uses (pickWorkflow), so the overlay itself never
-// changes; an empty selection dispatches immediately over just the row
-// under the cursor, with no overlay, reporting the outcome on the status
-// line instead.
-//
-// Branching on len(m.trackerTargets()) > 0 rather than
-// m.trackerSelectMode() is deliberate: trackerTargets reads only the
-// ACTIVE tab/pane's own selection map and data (activeSelection,
-// selectionworkflow.go), so a stale selection left over from a different
-// tab — the Beads tab's trackerSelected while an `enter` lands on a
-// Branches row, say — cannot hijack it: that case correctly falls through
-// to the cursor-row path below, matching ADR-0018's
-// selection-wins-with-cursor-fallback rule.
+// a single-step kind="workflow" action with over="row" (ADR-0018): it
+// dispatches immediately over just the row under the cursor, with no overlay,
+// reporting the outcome on the status line instead.
 func (m Model) rowKeyWorkflow(name string, c manifest.Command, r rowItem, kind keymap.RowKind) (tea.Model, tea.Cmd) {
-	if targets := m.trackerTargets(nil); len(targets) > 0 {
-		return m.pickWorkflow(workCmdRow{name: name, cmd: c})
-	}
-
 	action, ok := m.soleAction(c)
 	if !ok {
-		// Defensive: isSelectionWorkflow already proved c is a single-step
+		// Defensive: isRowWorkflow already proved c is a single-step
 		// kind="workflow" action, so this can't happen outside a bug
 		// changing that filter without updating this assumption.
 		m.setStatus(name+": not a workflow", cRed)

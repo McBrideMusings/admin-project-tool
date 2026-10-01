@@ -38,14 +38,14 @@ func TestBuiltins(t *testing.T) {
 	}{
 		{Bead, []string{
 			"↑↓:move", "↵:start work", "d:detail", "g:tree", "s:sort",
-			"w:workflow", "/:filter", "r:refresh", "q:quit",
+			"/:filter", "r:refresh", "q:quit",
 		}},
 		{Issue, []string{
-			"↑↓:move", "↵:start work", "s:sort", "w:workflow",
+			"↑↓:move", "↵:start work", "s:sort",
 			"/:filter", "r:refresh row", "⇧R:refresh all", "q:quit",
 		}},
 		{PR, []string{
-			"↑↓:move", "↵:checkout", "i:issue", "w:workflow", "/:filter",
+			"↑↓:move", "↵:checkout", "i:issue", "/:filter",
 			"r:refresh row", "⇧R:refresh all", "q:quit",
 		}},
 		{Branch, []string{

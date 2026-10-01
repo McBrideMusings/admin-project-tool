@@ -14,21 +14,21 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
-// TestWorkflowCLISelectionNamesRowGesture proves the selection-sourced path
+// TestWorkflowCLIRowNamesRowGesture proves the row-sourced path
 // (runWorkflowCLI, not just makeWorkflow's build-time check) fails naming
 // the action and the row gesture — this is the acceptance criterion at the
 // Runner-invocation level, in case anything ever bypasses makeWorkflow's own
 // wiring.
-func TestWorkflowCLISelectionNamesRowGesture(t *testing.T) {
-	action := manifest.Action{"kind": "workflow", "over": "selection"}
-	err := runWorkflowCLI("retire-merged", action, nil, WorkflowTarget{Source: WorkflowSourceSelection}, nil)
+func TestWorkflowCLIRowNamesRowGesture(t *testing.T) {
+	action := manifest.Action{"kind": "workflow", "over": "row"}
+	err := runWorkflowCLI("retire-merged", action, nil, WorkflowTarget{Source: WorkflowSourceRow}, nil)
 	if err == nil {
-		t.Fatal("expected an error for a selection-sourced workflow run from the bare CLI")
+		t.Fatal("expected an error for a row-sourced workflow run from the bare CLI")
 	}
 	if !strings.Contains(err.Error(), "retire-merged") {
 		t.Fatalf("error %q does not name the action", err.Error())
 	}
-	if !strings.Contains(err.Error(), "space") || !strings.Contains(err.Error(), "dashboard") {
+	if !strings.Contains(err.Error(), "cursor") || !strings.Contains(err.Error(), "dashboard") {
 		t.Fatalf("error %q does not name the row gesture", err.Error())
 	}
 }

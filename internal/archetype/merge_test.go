@@ -117,7 +117,7 @@ func TestWorkflowActionMergesFromArchetypesLikeAnyAction(t *testing.T) {
 	writeArchetypeDir(t, root, "wf", `
 [actions.retire-merged]
 kind = "workflow"
-over = "selection"
+over = "row"
 `, false)
 	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
 
@@ -131,7 +131,7 @@ over.query = "label:merged"
 
 [actions.review-waiting]
 kind = "workflow"
-over = "selection"
+over = "row"
 `)
 
 	merged, _, err := Resolve(project, sp)
@@ -151,8 +151,8 @@ over = "selection"
 
 	// An action the project alone declares (no archetype contributed it)
 	// merges through untouched.
-	if got := merged.Actions["review-waiting"]["over"]; got != "selection" {
-		t.Fatalf("Actions[review-waiting][over] = %v, want %q", got, "selection")
+	if got := merged.Actions["review-waiting"]["over"]; got != "row" {
+		t.Fatalf("Actions[review-waiting][over] = %v, want %q", got, "row")
 	}
 }
 

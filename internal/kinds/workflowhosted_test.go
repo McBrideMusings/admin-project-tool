@@ -245,20 +245,20 @@ func TestHostedWorkerKilledFailsTheTarget(t *testing.T) {
 }
 
 func TestValidateWorkflowsChecksRunDoneAndRemovedKeys(t *testing.T) {
-	ok := map[string]manifest.Action{"w": {"kind": "workflow", "over": "selection", "run": "go $ADMIN_TARGET", "done": "true"}}
+	ok := map[string]manifest.Action{"w": {"kind": "workflow", "over": "row", "run": "go $ADMIN_TARGET", "done": "true"}}
 	if err := ValidateWorkflows(ok); err != nil {
 		t.Errorf("valid workflow: %v", err)
 	}
-	noRun := map[string]manifest.Action{"nr": {"kind": "workflow", "over": "selection"}}
+	noRun := map[string]manifest.Action{"nr": {"kind": "workflow", "over": "row"}}
 	if err := ValidateWorkflows(noRun); err == nil || !strings.Contains(err.Error(), `action "nr"`) || !strings.Contains(err.Error(), "'run'") {
 		t.Errorf("no run: ValidateWorkflows = %v, want an error naming the action and run", err)
 	}
-	blankDone := map[string]manifest.Action{"bd": {"kind": "workflow", "over": "selection", "run": "x", "done": "  "}}
+	blankDone := map[string]manifest.Action{"bd": {"kind": "workflow", "over": "row", "run": "x", "done": "  "}}
 	if err := ValidateWorkflows(blankDone); err == nil || !strings.Contains(err.Error(), "'done'") {
 		t.Errorf("blank done: ValidateWorkflows = %v", err)
 	}
 	for _, key := range []string{"agent", "mode", "prompt"} {
-		old := map[string]manifest.Action{"o": {"kind": "workflow", "over": "selection", "run": "x", key: "v"}}
+		old := map[string]manifest.Action{"o": {"kind": "workflow", "over": "row", "run": "x", key: "v"}}
 		if err := ValidateWorkflows(old); err == nil || !strings.Contains(err.Error(), "'"+key+"' is not a workflow key") {
 			t.Errorf("key %s: ValidateWorkflows = %v, want it named", key, err)
 		}

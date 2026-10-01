@@ -272,7 +272,7 @@ func TestCheckUnknownKindsReportsMultipleUnknownKinds(t *testing.T) {
 
 // TestRunCheckRejectsAWorkflowWithNoTargetSource is admin-3rgp.24's
 // acceptance criterion at the `admin check` level: a workflow declaring
-// neither `over = "selection"` nor `over = { query = ... }` fails check,
+// neither `over = "row"` nor `over = { query = ... }` fails check,
 // naming the missing key — caught here rather than surfacing only at
 // dispatch.
 func TestRunCheckRejectsAWorkflowWithNoTargetSource(t *testing.T) {
@@ -306,7 +306,39 @@ kind = "workflow"
 	}
 }
 
-// TestRunCheckAcceptsBothWorkflowTargetSources proves a selection-sourced
+// TestRunCheckRejectsRemovedSelectionSource proves a manifest still saying
+// `over = "selection"` fails check with a message that names the removed
+// value and its replacement.
+func TestRunCheckRejectsRemovedSelectionSource(t *testing.T) {
+	dir := t.TempDir()
+	toml := `project_name = "checktest"
+
+[commands.custom.implement]
+desc = "implement"
+steps = ["implement"]
+
+[actions.implement]
+kind = "workflow"
+over = "selection"
+run = "go $ADMIN_TARGET"
+`
+	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, ok, err := resolveProjectManifest(context.Background(), dir)
+	if err != nil || !ok {
+		t.Fatalf("resolveProjectManifest = ok %v, err %v", ok, err)
+	}
+	err = kinds.ValidateWorkflows(m.Actions)
+	if err == nil {
+		t.Fatal("kinds.ValidateWorkflows = nil, want an error for over = \"selection\"")
+	}
+	if got := err.Error(); !strings.Contains(got, "implement") || !strings.Contains(got, "no longer supported") {
+		t.Fatalf("error %q does not name the action and say selection was removed", got)
+	}
+}
+
+// TestRunCheckAcceptsBothWorkflowTargetSources proves a row-sourced
 // and a query-sourced workflow both pass `admin check` and parse to the
 // right source.
 func TestRunCheckAcceptsBothWorkflowTargetSources(t *testing.T) {
@@ -315,7 +347,7 @@ func TestRunCheckAcceptsBothWorkflowTargetSources(t *testing.T) {
 
 [actions.retire-merged]
 kind = "workflow"
-over = "selection"
+over = "row"
 run = "retire $ADMIN_TARGET"
 
 [actions.review-waiting]
@@ -341,8 +373,8 @@ run = "review $ADMIN_TARGET"
 	if err != nil {
 		t.Fatalf("ParseWorkflowOver(retire-merged) = %v, want nil", err)
 	}
-	if selTarget.Source != kinds.WorkflowSourceSelection || selTarget.AppearsInCommandList() {
-		t.Fatalf("retire-merged: got %+v, want selection-sourced and absent from the Command list", selTarget)
+	if selTarget.Source != kinds.WorkflowSourceRow || selTarget.AppearsInCommandList() {
+		t.Fatalf("retire-merged: got %+v, want row-sourced and absent from the Command list", selTarget)
 	}
 
 	qTarget, err := kinds.ParseWorkflowOver("review-waiting", m.Actions["review-waiting"])
@@ -385,19 +417,19 @@ func TestCheckQueryWorkflowTrackerBeadsPasses(t *testing.T) {
 	}
 }
 
-// TestCheckQueryWorkflowTrackerSelectionSourcedPasses proves a
-// selection-sourced workflow is never flagged, whatever the tracker: it
+// TestCheckQueryWorkflowTrackerRowSourcedPasses proves a
+// row-sourced workflow is never flagged, whatever the tracker: it
 // never resolves a query at all.
-func TestCheckQueryWorkflowTrackerSelectionSourcedPasses(t *testing.T) {
+func TestCheckQueryWorkflowTrackerRowSourcedPasses(t *testing.T) {
 	m := &manifest.Manifest{
 		Trackers:   []string{"github"},
 		HasTracker: true,
 		Actions: map[string]manifest.Action{
-			"retire-merged": {"kind": "workflow", "over": "selection"},
+			"retire-merged": {"kind": "workflow", "over": "row"},
 		},
 	}
 	if err := checkQueryWorkflowTracker(m); err != nil {
-		t.Fatalf("checkQueryWorkflowTracker = %v, want nil (selection-sourced)", err)
+		t.Fatalf("checkQueryWorkflowTracker = %v, want nil (row-sourced)", err)
 	}
 }
 
@@ -1161,7 +1193,7 @@ kill  = 'herdr pane close "$ADMIN_HANDLE"'
 // repo's own untracked admin.toml (see CLAUDE.md's "admin.toml is NOT
 // committed" section) — nothing else makes it travel with the commit. This
 // writes the exact shape admin-7wy5 adds to that file: [commands.implement]
-// routing to a kind="workflow" action with over="selection" and run/done
+// routing to a kind="workflow" action with over="row" and run/done
 // set on the action itself, plus
 // [keys.bead] enter = "implement" — and asserts the whole thing passes
 // `admin check`, with the expected enter-shadow line reported on stderr but
@@ -1180,7 +1212,7 @@ priority = 60
 [actions.implement]
 kind  = "workflow"
 desc  = "Dispatch a claude agent over the selected bead(s)"
-over  = "selection"
+over = "row"
 run   = "claude '/implement $ADMIN_TARGET afk'"
 done  = 'bd show "$ADMIN_TARGET" --json | jq -e ".[0].status == \"closed\""'
 
@@ -1217,14 +1249,14 @@ enter = "implement"
 		t.Fatalf("checkRowKeys shadows = %v, want one naming keys.bead.enter", shadows)
 	}
 
-	// The action itself resolves to a selection-sourced workflow carrying its
+	// The action itself resolves to a row-sourced workflow carrying its
 	// own run string.
 	target, err := kinds.ParseWorkflowOver("implement", m.Actions["implement"])
 	if err != nil {
 		t.Fatalf("ParseWorkflowOver(implement) = %v, want nil", err)
 	}
-	if target.Source != kinds.WorkflowSourceSelection {
-		t.Fatalf("implement: Source = %v, want WorkflowSourceSelection", target.Source)
+	if target.Source != kinds.WorkflowSourceRow {
+		t.Fatalf("implement: Source = %v, want WorkflowSourceRow", target.Source)
 	}
 	if run := kinds.ActionRun(m.Actions["implement"]); !strings.Contains(run, "/implement $ADMIN_TARGET afk") {
 		t.Fatalf("implement action's run = %q, want the authored command", run)
@@ -1238,7 +1270,7 @@ func TestRunCheckRejectsWorkflowWithoutRun(t *testing.T) {
 
 [actions.implement]
 kind = "workflow"
-over = "selection"
+over = "row"
 `)
 	err, _ := runCheckCapturingStderr(t, dir)
 	if err == nil || !strings.Contains(err.Error(), `action "implement"`) || !strings.Contains(err.Error(), "'run'") {
@@ -1253,7 +1285,7 @@ func TestRunCheckRejectsRemovedWorkflowAgentKey(t *testing.T) {
 
 [actions.implement]
 kind  = "workflow"
-over  = "selection"
+over = "row"
 run   = "claude"
 agent = "claude"
 `)

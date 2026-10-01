@@ -191,9 +191,6 @@ func (m Model) renderBodyHits(width, bodyHeight int) ([]string, []hitTarget) {
 	case m.confirming || m.deleting:
 		content = m.renderModalBody(width, contentH)
 		hits = noneHits(len(content))
-	case m.swOpen:
-		content = m.renderWorkflowPickerBody(width, contentH)
-		hits = noneHits(len(content))
 	case m.wtPickerOpen:
 		content = m.renderWorktreePickerBody(width, contentH)
 		hits = noneHits(len(content))
@@ -361,15 +358,6 @@ func (m Model) headerLine(width int) string {
 	}
 	var right []seg
 	switch {
-	case m.trackerSelectMode() && (m.active == tabBeads || m.active == tabIssues || m.active == tabPRs):
-		// The count is the whole visibility contract for admin-3rgp.27's
-		// acceptance criterion "the count is visible": the per-row checkmark
-		// says WHICH rows, this says HOW MANY, and it takes priority over the
-		// header's usual sync/freshness readout because it's the more
-		// actionable fact while a selection is in progress. The Branches pane
-		// is deliberately excluded here — it has its own selection-count
-		// chrome already.
-		right = []seg{{t: fmt.Sprintf("%d selected", len(m.activeSelection())), fg: cGreen}}
 	case m.creating:
 		right = []seg{{t: "⟳ " + m.createLabel, fg: cCyan}}
 	case m.isRefreshing():
@@ -570,19 +558,6 @@ func (m Model) renderRow(r rowItem, selected bool, width int) string {
 	// background only appear when focus is actually in the body.
 	current := selected && m.focus == focusBody
 	left := []seg{leadSeg(current)}
-	// The tracker multi-select checkbox (admin-3rgp.27, admin-4pps): a fixed
-	// two-column glyph on every rowBead/rowIssue/rowPR row once mode is on,
-	// so a row's title starts at the same column whether that row is picked
-	// or not — the same "the checkbox is always drawn, blank when it doesn't
-	// apply" contract gutterSegs already keeps for the Branches pane's own
-	// checkbox (branch rows draw theirs there, not here).
-	if (r.kind == rowBead || r.kind == rowIssue || r.kind == rowPR) && m.trackerSelectMode() {
-		mark := seg{t: "  "}
-		if m.activeSelection()[trackerRowID(r)] {
-			mark = seg{t: "✓ ", fg: cGreen}
-		}
-		left = append(left, mark)
-	}
 	left = append(left, r.leftSegs...)
 	line := composeLR(left, r.rightSegs, width)
 	if selected {
@@ -780,7 +755,7 @@ func (m Model) viewKeymap() [][2]string {
 		case paneStashes:
 			return m.rowPairs(keymap.Stash)
 		default:
-			return m.branchPairs()
+			return m.rowPairs(keymap.Branch)
 		}
 	}
 	switch m.active {
@@ -866,46 +841,6 @@ func (m Model) withRowKeys(k keymap.RowKind, bindings []keymap.Binding) [][2]str
 	return pairs
 }
 
-// branchPairs is rowPairs(keymap.Branch) with the built-in `w new` pair
-// relabelled to `w workflow` whenever the Branches pane's own selection
-// (m.selected) is nonempty — admin-4pps: space-then-w now runs a workflow
-// over the selected branches instead of only opening the new-worktree
-// prompt, so a footer that still says "new" while `w` would open the
-// workflow picker is a lie (ADR-0018: "the footer shows the effective
-// binding"). m.selectMode() is the exact predicate handleKey's own `w` case
-// branches on (model.go), so the label and the behavior can never diverge.
-//
-// A manifest [keys.branch] binding for "w" wins over the relabel — rowPairs
-// already resolved that binding's own label onto the pair, and that is the
-// effective one, not the dynamic "workflow" guess. The gate mirrors
-// rowPairs' own: a bound "w" only counts when the cursor is actually on a
-// branch row (m.rowKeys[keymap.Branch]["w"] plus rowKindOf(r) == Branch).
-//
-// The returned slice is always a copy — never the shared backing array
-// builtinPairs/rowPairs handed back — so relabeling in place here can never
-// mutate a slice another caller still holds.
-func (m Model) branchPairs() [][2]string {
-	pairs := m.rowPairs(keymap.Branch)
-	if !m.selectMode() {
-		return pairs
-	}
-	if r, ok := m.currentRow(); ok {
-		if kind, ok := rowKindOf(r); ok && kind == keymap.Branch {
-			if len(m.rowKeys) > 0 && m.manifestOK && m.manifest != nil && m.rowKeys[keymap.Branch]["w"] != "" {
-				return pairs
-			}
-		}
-	}
-	out := make([][2]string, len(pairs))
-	copy(out, pairs)
-	for i, p := range out {
-		if p[0] == "w" {
-			out[i] = [2]string{"w", "workflow"}
-		}
-	}
-	return out
-}
-
 // bindingLabel resolves a bound command's footer label: its description, or
 // the command's own name when it has none — the same Custom-then-Overrides
 // lookup order work.go's collectCommands uses. Nil-manifest safe, though
@@ -947,8 +882,7 @@ func keyDisplay(key string) string {
 // one binding every view shares, and every tab but the Branches pane's own puts
 // `q quit` directly ahead of it. That made adding a key to any pane a way to
 // delete the tab hint from the footer — and, once a keymap grew past what fit
-// at a real terminal width (admin-3rgp.27 adding `space`/`w` to the Beads and
-// Issues tabs is exactly this), a way to delete `quit` itself, silently,
+// at a real terminal width, a way to delete `quit` itself, silently,
 // before any other pair. Pairs are dropped from the middle backwards instead,
 // protecting four things throughout: the first pair (movement), the last two
 // pairs (`←→ tab`, which every view shares, and whatever sits ahead of it),

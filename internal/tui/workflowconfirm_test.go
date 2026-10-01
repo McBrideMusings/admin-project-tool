@@ -82,23 +82,23 @@ func TestActivateCommandOnQueryWorkflowResolvesFirst(t *testing.T) {
 }
 
 // TestActivateCommandRefusesSelectionSourcedWorkflow proves a
-// selection-sourced workflow can never become bare-runnable through this
+// row-sourced workflow can never become bare-runnable through this
 // path — the epic's "over = selection is row-only" — even if it somehow
 // reached activateCommand despite declaredCommands already excluding it from
 // the Work tab list.
 func TestActivateCommandRefusesSelectionSourcedWorkflow(t *testing.T) {
 	mm := workTestModel(nil)
-	target := kinds.WorkflowTarget{Source: kinds.WorkflowSourceSelection}
-	wd := &workRowData{cmdName: "review-branch", workflow: &target, workflowAction: manifest.Action{"kind": "workflow", "over": "selection"}}
+	target := kinds.WorkflowTarget{Source: kinds.WorkflowSourceRow}
+	wd := &workRowData{cmdName: "review-branch", workflow: &target, workflowAction: manifest.Action{"kind": "workflow", "over": "row"}}
 
 	got, cmd := mm.activateCommand(wd)
 	m := got.(Model)
 
 	if cmd != nil {
-		t.Errorf("activateCommand returned a cmd for a selection-sourced workflow, want nil")
+		t.Errorf("activateCommand returned a cmd for a row-sourced workflow, want nil")
 	}
 	if m.wfResolving || m.wfOpen {
-		t.Errorf("wfResolving/wfOpen set for a selection-sourced workflow: resolving=%v open=%v", m.wfResolving, m.wfOpen)
+		t.Errorf("wfResolving/wfOpen set for a row-sourced workflow: resolving=%v open=%v", m.wfResolving, m.wfOpen)
 	}
 }
 

@@ -313,11 +313,7 @@ type Model struct {
 	// whole batch together instead of just the one row under the cursor. This is
 	// what lets a mixed pick (some proven, some merely eyeballed) go through one
 	// confirm, which neither `x` alone (one row) nor `⇧X` (every proven-ready row,
-	// no exceptions) can express. `w` with a nonempty selection instead runs a
-	// selection-sourced Workflow over it (selectionworkflow.go's activeSelection),
-	// same as trackerSelected below does for the other three tabs — ADR-0018's one
-	// selection semantic, backed by two maps because Clean Up needs branch names
-	// to survive untouched.
+	// no exceptions) can express.
 	// The selection is the whole of select mode's state: there is no separate
 	// latch, so the pane cannot be in select mode with nothing selected.
 	selected map[string]bool
@@ -543,34 +539,6 @@ type Model struct {
 	wfErr       string
 	wfRun       string
 	wfCeiling   int
-	// wfFromSelection distinguishes a confirm overlay opened from the tracker
-	// picker below from one opened by a query-sourced Work-tab row: only the
-	// former should clear trackerSelected once dispatch actually fires (see
-	// selectionworkflow.go's dispatchTrackerSelection), and wfQuery alone
-	// can't tell the two apart — a selection-sourced workflow still names a
-	// real action, it just never had a query to resolve.
-	wfFromSelection bool
-
-	// trackerSelected is the Beads/Issues/PRs tabs' shared multi-select for a
-	// selection-sourced Workflow (admin-3rgp.27 and admin-4pps,
-	// selectionworkflow.go): every selected row's tracker id (a bead id, or a
-	// GitHub issue/PR number as a string), keyed the same "map length is the
-	// mode" way `selected` above keys branch names. It stays a separate map
-	// from `selected` rather than overloading branch-name keys with tracker
-	// ids that could theoretically collide with one; activeSelection() is
-	// what makes the two read as one semantic (ADR-0018) — it picks this map
-	// or `selected` by which tab/pane is active, so a stale selection on one
-	// tab can never be read as the selection on another.
-	trackerSelected map[string]bool
-
-	// Workflow picker overlay: `w` with a nonempty trackerSelected opens it,
-	// listing every selection-sourced Workflow (selectionWorkflows) so the
-	// user picks which one runs over the selection; enter on a candidate
-	// hands off into the very same confirm overlay above (wfOpen etc.) — see
-	// selectionworkflow.go's own doc comment for the full three-step flow.
-	swOpen    bool
-	swOptions []workCmdRow
-	swCursor  int
 
 	// Worktree-target picker overlay (admin-76tv, worktreepicker.go): `T`
 	// lists the repo's worktrees (git.Worktrees(m.repoRoot)) so the user
@@ -670,7 +638,6 @@ func New(ctx context.Context, repoRoot, nwo, current, def string, opts ...Option
 		active:          tabLocal,
 		herdr:           shim.Available(),
 		selected:        map[string]bool{},
-		trackerSelected: map[string]bool{},
 		pendingDispatch: map[string]bool{},
 		pendingAttach:   map[string]bool{},
 		pendingTarget:   map[string]string{},
@@ -2026,15 +1993,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// The workflow-picker overlay (admin-3rgp.27) owns the keyboard while the
-	// user is choosing which selection-sourced Workflow to run over the
-	// tracker selection — see selectionworkflow.go. It always closes into
-	// either the confirm overlay below or nothing, so it sits directly ahead
-	// of that check.
-	if m.swOpen {
-		return m.workflowPickerKey(msg.String())
-	}
-
 	// The worktree-target picker overlay (admin-76tv) owns the keyboard the
 	// same way the workflow picker above does — a plain list, nothing to
 	// resolve, so it sits right beside it rather than behind any state the
@@ -2382,19 +2340,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "w":
 		if m.active == tabLocal && m.pane == paneBranches {
-			// Overloaded, same as `x`: a nonempty selection takes priority and
-			// opens the workflow picker; with nothing selected `w` keeps its
-			// original meaning, the new-named-worktree prompt.
-			if m.selectMode() {
-				return m.startWorkflowPicker()
-			}
 			m.naming = true
 			m.nameBuf = ""
 			m.nameCands = nil
 			m.nameSel = -1
-		}
-		if m.active == tabBeads || m.active == tabIssues || m.active == tabPRs {
-			return m.startWorkflowPicker()
 		}
 	case "enter":
 		if m.focus == focusTabs {
@@ -2410,15 +2359,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.worktreeCurrentBranch()
 		}
 	case " ":
-		// toggleTrackerSelection routes to toggleBranchSelection itself on the
-		// Branches pane (ADR-0018: one selection semantic, the active tab/pane
-		// picks which map), so a single call covers every selectable row kind.
 		// Select mode is the selection, so a refused toggle changes nothing: on
 		// the protected main row or a branch checked out elsewhere, `space`
 		// leaves the pane exactly as it found it.
-		if m.active == tabLocal && m.pane == paneBranches ||
-			m.active == tabBeads || m.active == tabIssues || m.active == tabPRs {
-			m.toggleTrackerSelection()
+		if m.active == tabLocal && m.pane == paneBranches {
+			m.toggleBranchSelection()
 		}
 	case "x":
 		// With a selection, x takes the whole batch — a mixed pick (some proven

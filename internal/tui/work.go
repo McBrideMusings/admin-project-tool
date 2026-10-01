@@ -36,7 +36,7 @@ type workRowData struct {
 	cmdArchetype string
 	steps        []workStepInfo
 	// workflow is non-nil only for a query-sourced kind="workflow" command
-	// (a selection-sourced one never reaches this list at all — see
+	// (a row-sourced one never reaches this list at all — see
 	// declaredCommands). workflowAction is that same step's raw action body
 	// — kept alongside workflow because admin-3rgp.26's resolve/confirm/
 	// dispatch chain (workflowconfirm.go) needs the whole action, not just
@@ -409,7 +409,7 @@ type workCmdRow struct {
 // should read), otherwise every command grouped by its own `group` then
 // `priority` then name, ascending, matching what those fields already mean
 // on manifest.Command. hide_commands is dropped, and a workflow whose `over`
-// is "selection" never appears here at all — WorkflowTarget.
+// is "row" never appears here at all — WorkflowTarget.
 // AppearsInCommandList (internal/kinds/workflow.go) is the single source of
 // truth for that rule, applied by workTabInclude below.
 func (m Model) declaredCommands() []workCmdRow {
@@ -417,7 +417,7 @@ func (m Model) declaredCommands() []workCmdRow {
 }
 
 // workTabInclude is declaredCommands' filter: every command except a
-// selection-sourced kind="workflow" one, which never appears in the Work
+// row-sourced kind="workflow" one, which never appears in the Work
 // tab's command list — see AppearsInCommandList's own doc comment for why.
 func (m Model) workTabInclude(c manifest.Command) bool {
 	if a, ok := m.soleAction(c); ok && actionKind(a) == "workflow" {
@@ -428,25 +428,16 @@ func (m Model) workTabInclude(c manifest.Command) bool {
 	return true
 }
 
-// selectionWorkflows is the picker's own candidate list (admin-3rgp.27,
-// selectionworkflow.go): every declared command that IS a selection-sourced
-// kind="workflow" action — workTabInclude's exact complement — in the same
-// stable order declaredCommands uses, so a command lists in the same
-// relative place whichever of the two lists it belongs to.
-func (m Model) selectionWorkflows() []workCmdRow {
-	return m.collectCommands(m.isSelectionWorkflow)
-}
-
-// isSelectionWorkflow reports whether c is a kind="workflow" action whose
-// `over` is "selection" — the one predicate selectionWorkflows needs beyond
-// what soleAction/actionKind/ParseWorkflowOver already give declaredCommands.
-func (m Model) isSelectionWorkflow(c manifest.Command) bool {
+// isRowWorkflow reports whether c is a kind="workflow" action whose `over`
+// is "row" — the one predicate rowKeyDispatch needs beyond what
+// soleAction/actionKind/ParseWorkflowOver already give declaredCommands.
+func (m Model) isRowWorkflow(c manifest.Command) bool {
 	a, ok := m.soleAction(c)
 	if !ok || actionKind(a) != "workflow" {
 		return false
 	}
 	target, err := kinds.ParseWorkflowOver(c.Steps[0], a)
-	return err == nil && target.Source == kinds.WorkflowSourceSelection
+	return err == nil && target.Source == kinds.WorkflowSourceRow
 }
 
 // collectCommands walks every declared command (manifest order when set,

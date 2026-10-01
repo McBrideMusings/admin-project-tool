@@ -101,7 +101,6 @@ var builtins = map[RowKind][]Binding{
 		{Key: "d", Display: "d", Label: "detail"},
 		{Key: "g", Display: "g", Label: "tree"},
 		{Key: "s", Display: "s", Label: "sort"},
-		{Key: "w", Display: "w", Label: "workflow"},
 		{Key: "/", Display: "/", Label: "filter"},
 		{Key: "r", Display: "r", Label: "refresh"},
 		{Key: "q", Display: "q", Label: "quit"},
@@ -110,7 +109,6 @@ var builtins = map[RowKind][]Binding{
 		{Key: "", Display: "↑↓", Label: "move"},
 		{Key: "enter", Display: "↵", Label: "start work"},
 		{Key: "s", Display: "s", Label: "sort"},
-		{Key: "w", Display: "w", Label: "workflow"},
 		{Key: "/", Display: "/", Label: "filter"},
 		{Key: "r", Display: "r", Label: "refresh row"},
 		{Key: "shift+r", Display: "⇧R", Label: "refresh all"},
@@ -120,7 +118,6 @@ var builtins = map[RowKind][]Binding{
 		{Key: "", Display: "↑↓", Label: "move"},
 		{Key: "enter", Display: "↵", Label: "checkout"},
 		{Key: "i", Display: "i", Label: "issue"},
-		{Key: "w", Display: "w", Label: "workflow"},
 		{Key: "/", Display: "/", Label: "filter"},
 		{Key: "r", Display: "r", Label: "refresh row"},
 		{Key: "shift+r", Display: "⇧R", Label: "refresh all"},
@@ -130,12 +127,6 @@ var builtins = map[RowKind][]Binding{
 		{Key: "", Display: "↑↓", Label: "move"},
 		{Key: "enter", Display: "↵", Label: "checkout"},
 		{Key: "", Display: "⌥↵/W", Label: "worktree"},
-		// "new" is the label with no branch selected. internal/tui's
-		// branchPairs (view.go) relabels this pair to "workflow" on the fly
-		// whenever the Branches pane's own selection is nonempty — `w` then
-		// runs a workflow over the selected branches instead of opening the
-		// new-worktree prompt (admin-4pps). This table stays the empty-
-		// selection truth; it is not the whole story for what `w` does.
 		{Key: "w", Display: "w", Label: "new"},
 		{Key: "x", Display: "x", Label: "delete"},
 		{Key: "p", Display: "p", Label: "pull"},
