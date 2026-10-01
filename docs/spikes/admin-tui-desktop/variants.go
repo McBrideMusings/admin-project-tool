@@ -128,10 +128,13 @@ type repoSrc struct{ root, nwo, branch string }
 // before admin-3rgp.20 landed and not renumbered here, since admin-3rgp.31
 // retires this whole prototype next).
 const (
-	keyRepo    = "2"
-	keyTracker = "3"
-	keyConfig  = "4"
+	keyRepo    = "3"
+	keyTracker = "4"
 )
+
+// The digit keys stop at 4 and Config is the fifth tab, so it is reached by
+// stepping right from the tracker tab.
+var keyConfig = []string{keyTracker, "right"}
 
 // embedded maps a screen to the keys that reach it in repo-dash. A screen absent
 // here is one the prototype draws itself.
@@ -150,8 +153,8 @@ var embedded = map[string][]string{
 	"tracker-tree":     {keyTracker, "g"},
 	"tracker-filter":   {keyTracker, "/"},
 
-	"config":       {keyConfig},
-	"config-local": {keyConfig, "tab"},
+	"config":       keyConfig,
+	"config-local": append(append([]string{}, keyConfig...), "tab"),
 }
 
 var (
