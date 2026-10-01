@@ -8,8 +8,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/vt"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
@@ -779,6 +781,24 @@ func ringTailLines(r *livework.Ring, w int) []string {
 	lines := strings.Split(raw, "\n")
 	for i, l := range lines {
 		lines[i] = truncR(strings.TrimRight(l, "\r"), maxi(w, 1))
+	}
+	return lines
+}
+
+// screenTailLines is the band's text for a hosted entry: the rows of its
+// terminal screen that carry words, top to bottom, as plain text. A full-screen
+// child (an agent session) repaints in place, so its raw byte stream ends in
+// cursor moves and blanks; the screen grid is what a person reads. Rows that
+// are empty or only rules and box lines are dropped.
+func screenTailLines(screen *vt.SafeEmulator, w int) []string {
+	rows, cols := screen.Height(), screen.Width()
+	var lines []string
+	for y := 0; y < rows; y++ {
+		l := strings.TrimRight(logformat.AnsiEscapeRe.ReplaceAllString(renderEmuLine(screen, y, cols), ""), " \t")
+		if strings.IndexFunc(l, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) < 0 {
+			continue
+		}
+		lines = append(lines, truncR(l, maxi(w, 1)))
 	}
 	return lines
 }

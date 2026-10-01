@@ -288,7 +288,10 @@ func TestReapWorkerStopsHostedWorker(t *testing.T) {
 		t.Fatalf("ReapWorker did not reap a finished hosted worker (note %q)", e.Note)
 	}
 	select {
-	case <-done:
+	case res := <-done:
+		if res[0].Err != nil {
+			t.Errorf("a reaped worker reported %v, want a finished target", res[0].Err)
+		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("hosted worker still running after its reap")
 	}

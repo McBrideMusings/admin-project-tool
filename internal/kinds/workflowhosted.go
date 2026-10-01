@@ -19,6 +19,7 @@ package kinds
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -106,13 +107,18 @@ func hostedOne(repoRoot, actionName string, surface DispatchSurface, tgt Target,
 		}
 		return res
 	}
+	id := workerLiveID(actionName, tgt.Name)
 	worker := &livework.WorkerInfo{Branch: wt.Branch, Worktree: wt.Path, Target: tgt.Name, Done: tgt.Done}
-	exit, err := startHostedWorker(workerLiveID(actionName, tgt.Name), argv, wt.Path, targetEnv(tgt), 0, 0, worker)
+	exit, err := startHostedWorker(id, argv, wt.Path, targetEnv(tgt), 0, 0, worker)
 	if err != nil {
 		res.Err = fmt.Errorf("starting worker: %w", err)
 		return res
 	}
-	if err := <-exit; err != nil {
+	err = <-exit
+	if _, reaped := reapKilled.LoadAndDelete(id); reaped && errors.Is(err, ErrHostedKilled) {
+		err = nil
+	}
+	if err != nil {
 		res.Err = fmt.Errorf("worker: %w", err)
 	}
 	return res

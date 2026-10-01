@@ -5,9 +5,12 @@ package tui
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/x/vt"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
@@ -75,5 +78,17 @@ func TestBandWithoutReadKeepsAttachHint(t *testing.T) {
 	}
 	if !strings.Contains(renderedBand(mm), "no local output - attach to see the real session") {
 		t.Errorf("band lacks the fallback:\n%s", renderedBand(mm))
+	}
+}
+
+// A hosted agent session repaints in place, so the band reads its screen grid
+// and skips blank and rule-only rows.
+func TestScreenTailLinesKeepsWordRows(t *testing.T) {
+	screen := vt.NewSafeEmulator(40, 8)
+	_, _ = screen.Write([]byte("editing local.go\r\n\r\n────────\r\nrunning tests\r\n"))
+	got := screenTailLines(screen, 40)
+	want := []string{"editing local.go", "running tests"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("screenTailLines = %q, want %q", got, want)
 	}
 }

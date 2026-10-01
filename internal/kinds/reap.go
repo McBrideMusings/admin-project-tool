@@ -172,6 +172,11 @@ func hasWorkerOnlyIgnored(repoRoot string, paths []string) bool {
 	return false
 }
 
+// reapKilled holds the live ids of hosted workers the reaper stopped because
+// they had finished, so their dispatch reports a finished target rather than
+// the killed one a person's x key makes.
+var reapKilled sync.Map
+
 // panesClosed holds the live ids whose pane a reap has already closed.
 var panesClosed sync.Map
 
@@ -250,6 +255,7 @@ func closeFinishedWorker(ctx context.Context, e *livework.Entry, t config.Termin
 		if e.Ops.Kill == nil {
 			return fmt.Errorf("hosted worker %s has no kill", e.ID)
 		}
+		reapKilled.Store(e.ID, true)
 		return e.Ops.Kill()
 	}
 	return closeFinishedPane(ctx, e.Handle, t)
