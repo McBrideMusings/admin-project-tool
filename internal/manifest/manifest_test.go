@@ -26,11 +26,14 @@ modules      = ["core", "docker"]
 order        = ["build", "", "deploy", "---", "test"]
 exclude_modules = ["extra"]
 hide_commands   = ["secret"]
-hide_urls       = ["internal"]
 
-[urls]
-local = "http://localhost:8787"
-lan   = "http://${LAN_IP}:8787"
+[status.local]
+kind = "http"
+url  = "http://localhost:8787"
+
+[status.lan]
+kind = "http"
+url  = "http://${LAN_IP}:8787"
 
 [commands.build]
 desc     = "Build the project"
@@ -93,11 +96,11 @@ dest = "/srv/app"
 	if !equalSlices(m.Order, wantOrder) {
 		t.Errorf("Order = %v, want %v", m.Order, wantOrder)
 	}
-	if m.Urls["local"] != "http://localhost:8787" {
-		t.Errorf("Urls[local] = %q", m.Urls["local"])
+	if m.Status["local"].URL != "http://localhost:8787" {
+		t.Errorf("Status[local].URL = %q", m.Status["local"].URL)
 	}
-	if m.Urls["lan"] != "http://${LAN_IP}:8787" {
-		t.Errorf("Urls[lan] = %q, want raw ${LAN_IP} preserved", m.Urls["lan"])
+	if m.Status["lan"].URL != "http://${LAN_IP}:8787" {
+		t.Errorf("Status[lan].URL = %q, want raw ${LAN_IP} preserved", m.Status["lan"].URL)
 	}
 
 	build, ok := m.Overrides["build"]
@@ -218,8 +221,9 @@ func TestParsePreservesEnvPlaceholders(t *testing.T) {
 	dir := writeManifest(t, `
 project_name = "envtest"
 
-[urls]
-lan = "http://${LAN_IP}:9000"
+[status.lan]
+kind = "http"
+url  = "http://${LAN_IP}:9000"
 
 [actions.build]
 kind = "multi-target"
@@ -237,8 +241,8 @@ dev = "${LOG_DIR}/app.log"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if m.Urls["lan"] != "http://${LAN_IP}:9000" {
-		t.Errorf("Urls[lan] = %q, want ${LAN_IP} preserved", m.Urls["lan"])
+	if m.Status["lan"].URL != "http://${LAN_IP}:9000" {
+		t.Errorf("Status[lan].URL = %q, want ${LAN_IP} preserved", m.Status["lan"].URL)
 	}
 
 	build := m.Actions["build"]
@@ -611,10 +615,6 @@ func TestDumpRoundTripsThroughParse(t *testing.T) {
 		ProjectName: "widget\tapp \"quoted\" \\backslash\\ \a\v",
 		Archetypes:  []string{"react-native", "hugo"},
 		Modules:     []string{"web"},
-		Urls: map[string]string{
-			"local": "http://localhost:8080",
-			"weird": "value\nwith\nnewlines",
-		},
 		Tables: map[string]map[string]string{
 			"react_native": {"app_dir": "apps/mobile"},
 		},
@@ -632,11 +632,6 @@ func TestDumpRoundTripsThroughParse(t *testing.T) {
 	}
 	if !equalSlices(m.Archetypes, s.Archetypes) {
 		t.Errorf("Archetypes = %v, want %v", m.Archetypes, s.Archetypes)
-	}
-	for label, want := range s.Urls {
-		if got := m.Urls[label]; got != want {
-			t.Errorf("Urls[%q] = %q, want %q", label, got, want)
-		}
 	}
 	if got := m.Settings["react_native"]["app_dir"]; got != "apps/mobile" {
 		t.Errorf(`Settings["react_native"]["app_dir"] = %v, want "apps/mobile"`, got)

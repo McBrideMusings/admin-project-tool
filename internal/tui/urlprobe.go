@@ -1,5 +1,5 @@
 // urlprobe.go is the Work-tab detail pane's reachability check (admin-1azz):
-// a package-level, non-blocking cache over kinds.CheckURL (mutex-guarded on
+// a package-level, non-blocking cache over status.CheckURL (mutex-guarded on
 // urlProber.probe rather than a package var, so a leaked goroutine's probe
 // function can never race a test's swap) so a hung host never stalls a
 // repaint. Status is a pure map read; Refresh is the only thing that starts
@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
+	"github.com/McBrideMusings/admin-project-tool/internal/status"
 )
 
 // probeState is a url's last-known reachability, as read back by the
@@ -34,8 +34,8 @@ const probeTTL = 5 * time.Second
 // singleton shape internal/livework.Default uses for the same reason: one
 // process, one shared source of truth, read from render and written from
 // background goroutines.
-// probe is urlProber's test seam, bound to kinds.CheckURL by default so the
-// dashboard reuses the exact same HTTP check print-urls already makes rather
+// probe is urlProber's test seam, bound to status.CheckURL by default so the
+// dashboard reuses the exact same HTTP check the [status] http kind makes rather
 // than a second one. A test swaps it via setProbe to force a fixed result,
 // or to block forever and prove Refresh never holds up a repaint waiting on
 // it. It is read and written only under mu — Refresh captures it into a
@@ -57,7 +57,7 @@ func newURLProber() *urlProber {
 		state:    map[string]probeState{},
 		inflight: map[string]bool{},
 		at:       map[string]time.Time{},
-		probe:    kinds.CheckURL,
+		probe:    status.CheckURL,
 	}
 }
 

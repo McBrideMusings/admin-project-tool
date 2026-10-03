@@ -15,7 +15,6 @@ package detect
 // A detector returns nil when the project doesn't match its stack.
 type Match struct {
 	Archetypes     []string
-	URLs           map[string]string
 	ProjectName    string
 	HasProjectName bool // distinguish "not set" from "set to empty string"
 	// Tables holds every other key a detector returns, passed through as a
@@ -82,7 +81,6 @@ var Registry = map[string]Detector{
 // matched detector's contribution, plus provenance in Detector.
 type Result struct {
 	Archetypes  []string
-	URLs        map[string]string
 	ProjectName string
 	Tables      map[string]map[string]string
 	// Detector is "+".join(matched detector names) in Order, or "fallback"
@@ -93,12 +91,11 @@ type Result struct {
 
 // Propose runs every detector in Order (skipping "simple") against root and
 // returns the raw, pre-fallback union: the archetypes actually matched, the
-// tables/urls/project_name they contributed, and the list of detector names
+// tables/project_name they contributed, and the list of detector names
 // that matched, in Order. A project matching nothing returns a zero-length
 // Archetypes slice and a zero-length matched slice — never an error.
-func Propose(root string) (archetypes []string, urls map[string]string, projectName string, tables map[string]map[string]string, matched []string) {
+func Propose(root string) (archetypes []string, projectName string, tables map[string]map[string]string, matched []string) {
 	archetypes = []string{}
-	urls = map[string]string{}
 	tables = map[string]map[string]string{}
 	matched = []string{}
 
@@ -120,9 +117,6 @@ func Propose(root string) (archetypes []string, urls map[string]string, projectN
 				archetypes = append(archetypes, a)
 			}
 		}
-		for k, v := range m.URLs {
-			urls[k] = v
-		}
 		// project_name merges based on presence, not truthiness. Later
 		// detectors can explicitly clear it by setting HasProjectName=true
 		// with ProjectName="".
@@ -133,7 +127,7 @@ func Propose(root string) (archetypes []string, urls map[string]string, projectN
 			tables[k] = v
 		}
 	}
-	return archetypes, urls, projectName, tables, matched
+	return archetypes, projectName, tables, matched
 }
 
 // Run performs a full detection pass, applying the "simple" fallback when
@@ -142,7 +136,7 @@ func Propose(root string) (archetypes []string, urls map[string]string, projectN
 // "fallback"), satisfying "empty proposal, not an error" while Propose
 // exposes the true empty set beforehand.
 func Run(root string) Result {
-	archetypes, urls, projectName, tables, matched := Propose(root)
+	archetypes, projectName, tables, matched := Propose(root)
 
 	if len(archetypes) == 0 {
 		archetypes = []string{"simple"}
@@ -153,9 +147,6 @@ func Run(root string) Result {
 		Archetypes: archetypes,
 		Tables:     tables,
 		Detector:   joinPlus(matched),
-	}
-	if len(urls) > 0 {
-		out.URLs = urls
 	}
 	if projectName != "" {
 		out.ProjectName = projectName

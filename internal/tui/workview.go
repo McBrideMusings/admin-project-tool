@@ -51,9 +51,21 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 	rows := m.visibleRows()
 	cursor := m.cursor[m.active]
 
+	// The Status strip is pinned above the scrolling list, whatever the filter
+	// leaves in it, and takes rows from the list and band's share while
+	// leaving the list at least three.
+	var strip []string
+	var stripHits []hitTarget
+	if m.manifest != nil {
+		strip, stripHits = statusStrip(m.manifest.Status, width, height-bandH(height)-3)
+	}
+	fullHeight := height
+	height -= len(strip)
+
 	if len(rows) == 0 {
-		return pad([]string{"  " + mutedStyle.Render("(nothing here)")}, height),
-			padHits([]hitTarget{{kind: hitNone}}, height)
+		out := append(strip, "  "+mutedStyle.Render("(nothing here)"))
+		outHits := append(stripHits, hitTarget{kind: hitNone})
+		return pad(out, fullHeight), padHits(outHits, fullHeight)
 	}
 
 	// The rows come from the live registry and the filter on every frame, so a
@@ -160,7 +172,9 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		out = append(out, padEnd(d, width))
 		outHits = append(outHits, hitTarget{kind: hitNone})
 	}
-	return pad(out, height), padHits(outHits, height)
+	out = append(strip, out...)
+	outHits = append(stripHits, outHits...)
+	return pad(out, fullHeight), padHits(outHits, fullHeight)
 }
 
 // sectionHeaderAt is which section a scrolled window starting at row i is

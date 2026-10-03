@@ -841,3 +841,53 @@ archetypes   = ["custom"]
 		t.Errorf("merge log = %v, want a line naming base overridden by custom", log)
 	}
 }
+
+// A project's [status.prod] replaces an archetype's [status.prod] whole: the
+// archetype's headers and every do not leak into the project's entry, and the
+// collision is logged like any other named merge.
+func TestProjectStatusReplacesArchetypeStatusWhole(t *testing.T) {
+	root := t.TempDir()
+	writeArchetypeDir(t, root, "a", `
+[status.prod]
+kind    = "json"
+url     = "http://archetype/api"
+headers = { X-From = "archetype" }
+every   = "30s"
+pull    = { n = "length(@)" }
+show    = "{n}"
+
+[status.dev]
+kind = "http"
+url  = "http://localhost:1"
+`, false)
+	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
+	project := projectManifest(t, `
+project_name = "widget"
+archetypes   = ["a"]
+
+[status.prod]
+kind = "http"
+url  = "http://project"
+`)
+
+	merged, log, err := Resolve(project, sp)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	prod := merged.Status["prod"]
+	if prod.Kind != "http" || prod.URL != "http://project" || len(prod.Headers) != 0 || prod.Every != 0 {
+		t.Errorf("Status[prod] = %+v, want the project's entry alone", prod)
+	}
+	if merged.Status["dev"].URL != "http://localhost:1" {
+		t.Errorf("Status[dev] = %+v, want the archetype's entry kept", merged.Status["dev"])
+	}
+	found := false
+	for _, line := range log {
+		if strings.Contains(line, "status 'prod'") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("merge log = %v, want a line naming the 'prod' status collision", log)
+	}
+}

@@ -10,7 +10,7 @@ import (
 // a frame — the render-side sibling of enterFrame, reused by the Work tab's
 // detail pane so it can show the same rows the footer would without a
 // second resolver. It runs the identical two-step pipeline enterFrame's
-// caller feeds it (frame.ResolveURLs: the [urls] table, then
+// caller feeds it (frame.ResolveURLs: a named [status] entry's url, then
 // ResolveComputed then ResolveEnv) and, for a non-empty target, the exact
 // per-target inheritance resolveTargetFrame applies at dispatch time (an
 // absent override inherits the action's own list, an explicit list

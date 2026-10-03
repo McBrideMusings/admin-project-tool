@@ -31,12 +31,13 @@ func ShouldActivate(resolvedURLCount int, hasFooter, footerVal bool) bool {
 // a string or a {label=, url=} table) into resolved URLEntry rows, in two
 // steps per entry:
 //
-//  1. An entry naming a key of the manifest's top-level [urls] table
-//     resolves to that entry, label and all — so an action reuses what the
-//     project already declared instead of restating the string. This
-//     REPLACES any label the entry itself carried: a custom label on an
-//     entry that also names a project URL is discarded in favour of the
-//     name.
+//  1. An entry naming a [status.<label>] entry that has a url (kind http
+//     or json) resolves to that url under that label — so an action reuses
+//     what the project already declared instead of restating the string.
+//     This REPLACES any label the entry itself carried: a custom label on an
+//     entry that also names a status entry is discarded in favour of the
+//     name. A command entry has no url and cannot be named here
+//     (ValidateURLRefs rejects it).
 //  2. ${VAR} is expanded — manifest.ResolveComputed first (derived vars
 //     like ${LAN_IP} are not environment variables, and ResolveEnv alone
 //     would leave a stale literal if a caller ever swaps it for something
@@ -55,8 +56,8 @@ func ResolveURLs(raw []any, m *manifest.Manifest) ([]URLEntry, error) {
 			return nil, err
 		}
 		if m != nil {
-			if projectURL, ok := m.Urls[rawURL]; ok {
-				label, rawURL = rawURL, projectURL
+			if spec, ok := m.Status[rawURL]; ok && spec.URL != "" {
+				label, rawURL = rawURL, spec.URL
 			}
 		}
 		resolved := manifest.ResolveComputed(rawURL)
@@ -122,15 +123,15 @@ func walkActionAndTargets(act manifest.Action, fn func(target string, tbl map[st
 }
 
 // ValidateURLRefs rejects a `urls` entry that is neither a real URL (a
-// "://" substring) nor a key of projectURLs — the manifest's top-level
-// [urls] table. Without this a typo ("local" when the table calls it
+// "://" substring) nor the name of a [status.<label>] entry with a url.
+// Without this a typo ("local" when the table calls it
 // "dev-cf") would silently become a literal, painting a footer row that
 // goes nowhere. Meant to run at `admin check` / resolve time; walks both an
 // action's own `urls` and every inline target subtable's, and — unlike a
 // fail-fast raise —
 // collects every bad entry across every action and target into one *Error
 // so `admin check` can report all of them in one pass, not just the first.
-func ValidateURLRefs(actions map[string]manifest.Action, projectURLs map[string]string) error {
+func ValidateURLRefs(actions map[string]manifest.Action, status map[string]manifest.StatusSpec) error {
 	names := make([]string, 0, len(actions))
 	for n := range actions {
 		names = append(names, n)
@@ -140,7 +141,7 @@ func ValidateURLRefs(actions map[string]manifest.Action, projectURLs map[string]
 	var problems []string
 	for _, name := range names {
 		walkActionAndTargets(actions[name], func(target string, tbl map[string]any) {
-			problems = append(problems, validateURLEntries(name, target, tbl["urls"], projectURLs)...)
+			problems = append(problems, validateURLEntries(name, target, tbl["urls"], status)...)
 		})
 	}
 	if len(problems) == 0 {
@@ -152,7 +153,7 @@ func ValidateURLRefs(actions map[string]manifest.Action, projectURLs map[string]
 // validateURLEntries returns one message per bad entry in raw (nil/empty
 // when raw is absent or every entry is fine), rather than stopping at the
 // first — so a urls list with several typos is reported all at once.
-func validateURLEntries(actionName, target string, raw any, known map[string]string) []string {
+func validateURLEntries(actionName, target string, raw any, status map[string]manifest.StatusSpec) []string {
 	if raw == nil {
 		return nil
 	}
@@ -174,24 +175,22 @@ func validateURLEntries(actionName, target string, raw any, known map[string]str
 		if strings.Contains(u, "://") {
 			continue
 		}
-		if _, ok := known[u]; ok {
+		spec, named := status[u]
+		if named && spec.URL != "" {
 			continue
 		}
 		where := fmt.Sprintf("action %q", actionName)
 		if target != "" {
 			where += fmt.Sprintf(" target %q", target)
 		}
-		hint := "no [urls] table is defined"
-		if len(known) > 0 {
-			names := make([]string, 0, len(known))
-			for k := range known {
-				names = append(names, k)
-			}
-			sort.Strings(names)
-			hint = fmt.Sprintf("known [urls] names: %v", names)
+		hint := "no [status] entries are defined"
+		if named {
+			hint = fmt.Sprintf("[status.%s] is a %s entry with no url", u, spec.Kind)
+		} else if names := urlStatusNames(status); len(names) > 0 {
+			hint = fmt.Sprintf("known [status] names with a url: %v", names)
 		}
 		out = append(out, fmt.Sprintf(
-			"%s: urls entry %q is not a URL and does not name an entry in the project's [urls] table — %s",
+			"%s: urls entry %q is not a URL and does not name a [status.<label>] entry with a url — %s",
 			where, u, hint))
 	}
 	return out
@@ -229,4 +228,17 @@ func ValidateFooterRefs(actions map[string]manifest.Action) error {
 		return nil
 	}
 	return validate.Errorf("%s", strings.Join(problems, "\n"))
+}
+
+// urlStatusNames is the sorted labels of every status entry a `urls` list can
+// name: the http and json kinds, which carry a url.
+func urlStatusNames(status map[string]manifest.StatusSpec) []string {
+	var names []string
+	for label, spec := range status {
+		if spec.URL != "" {
+			names = append(names, label)
+		}
+	}
+	sort.Strings(names)
+	return names
 }

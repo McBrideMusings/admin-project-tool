@@ -676,8 +676,9 @@ func TestRunCheckReportsEveryDistinctProblem(t *testing.T) {
 	dir := t.TempDir()
 	toml := `project_name = "checktest"
 
-[urls]
-local = "http://localhost:8787"
+[status.local]
+kind = "http"
+url  = "http://localhost:8787"
 
 [commands.custom.deploy]
 desc = "deploy it"
@@ -714,7 +715,7 @@ footer = "true"
 	if err := checkCommandRouting(m); err != nil {
 		problems = append(problems, err)
 	}
-	if err := frame.ValidateURLRefs(m.Actions, m.Urls); err != nil {
+	if err := frame.ValidateURLRefs(m.Actions, m.Status); err != nil {
 		problems = append(problems, err)
 	}
 	if err := frame.ValidateFooterRefs(m.Actions); err != nil {
@@ -729,7 +730,7 @@ footer = "true"
 	for _, want := range []string{
 		"worktree", "ADR-0011",
 		"deploy", "kind, run", "ADR-0003",
-		"nowhere", "does not name an entry",
+		"nowhere", "does not name a [status.<label>] entry",
 		"'footer' must be true or false",
 	} {
 		if !strings.Contains(got, want) {
@@ -744,8 +745,9 @@ func TestRunCheckOnAValidManifestPasses(t *testing.T) {
 	dir := t.TempDir()
 	toml := `project_name = "checktest"
 
-[urls]
-local = "http://localhost:8787"
+[status.local]
+kind = "http"
+url  = "http://localhost:8787"
 
 [commands.custom.deploy]
 desc = "deploy it"
@@ -774,7 +776,7 @@ footer = true
 	if err := checkCommandRouting(m); err != nil {
 		t.Fatalf("checkCommandRouting = %v, want nil", err)
 	}
-	if err := frame.ValidateURLRefs(m.Actions, m.Urls); err != nil {
+	if err := frame.ValidateURLRefs(m.Actions, m.Status); err != nil {
 		t.Fatalf("frame.ValidateURLRefs = %v, want nil", err)
 	}
 	if err := frame.ValidateFooterRefs(m.Actions); err != nil {
@@ -1394,5 +1396,45 @@ run = "true"
 	err, _ := runCheckCapturingStderr(t, dir)
 	if err != nil {
 		t.Fatalf("runCheck = %v, want nil — preflight = false is a valid declaration", err)
+	}
+}
+
+// checkStatus reports a pull expression that does not compile and a show
+// placeholder no pull entry produces, every one in a single pass.
+func TestCheckStatusReportsBadExpressionAndUnknownPlaceholder(t *testing.T) {
+	dir := t.TempDir()
+	toml := `project_name = "checktest"
+
+[status.jobs]
+kind = "json"
+url  = "http://localhost:1/api"
+pull = { n = "length([?status==" }
+show = "{n} and {missing}"
+
+[status.ok]
+kind = "json"
+url  = "http://localhost:1/api"
+pull = { n = "length(@)" }
+show = "{n}"
+`
+	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, ok, err := resolveProjectManifest(context.Background(), dir)
+	if err != nil || !ok {
+		t.Fatalf("resolveProjectManifest = %v, %v", ok, err)
+	}
+	err = checkStatus(m)
+	if err == nil {
+		t.Fatal("checkStatus = nil, want errors")
+	}
+	got := err.Error()
+	for _, want := range []string{"[status.jobs] pull.n", "{missing}"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("error %q does not mention %q", got, want)
+		}
+	}
+	if strings.Contains(got, "[status.ok]") {
+		t.Errorf("error %q blames the valid entry", got)
 	}
 }

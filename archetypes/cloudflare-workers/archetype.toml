@@ -1,9 +1,13 @@
 name = "cloudflare-workers"
 modules = ["core"]
 
-[urls]
-dev = "http://localhost:8787"
-prod = "${PROD_URL:-http://localhost:8787}"
+[status.dev]
+kind = "http"
+url  = "http://localhost:8787"
+
+[status.prod]
+kind = "http"
+url  = "${PROD_URL:-http://localhost:8787}"
 
 [commands.dev]
 desc = "Run the Worker locally (wrangler dev)"

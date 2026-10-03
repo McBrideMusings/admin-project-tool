@@ -28,9 +28,13 @@ project_name = "Portfolio"
 
 archetypes = ["hugo"]          # zero or more; merged in listed order
 
-[urls]
-dev  = "http://localhost:1313"
-prod = "https://pierce.dev"
+[status.dev]
+kind = "http"
+url  = "http://localhost:1313"
+
+[status.prod]
+kind = "http"
+url  = "https://pierce.dev"
 
 [commands]                      # override or add commands (desc + steps only)
 # Override: archetype provided `build`; we change its description.
@@ -104,6 +108,34 @@ always did.)
 **Command/Action split:** `[commands]` entries are thin routing layers — they may only have `desc` and `steps` (a list of action names). All actual work (shell strings, Lua bodies, multi-target dispatch) lives in `[actions]`. Commands are the TUI menu entries; actions are the implementation. `internal/validate` (ADR-0003) errors with a clear message if a `[commands]` entry contains `kind`, `run`, or `targets`.
 
 Every key is optional except `project_name` and `archetypes` (may be empty list).
+
+### `[status.<label>]` — live readouts
+
+One table for every live readout the dashboard and `print-status` show: a URL's reachability, a count pulled from a remote API, the first line of a shell command. `kind` picks a built-in checker (`internal/status`); the entry only configures it, so no project reimplements a URL check.
+
+```toml
+[status.prod]                        # kind "http": up when the URL answers 2xx/3xx
+kind = "http"
+url  = "${PROD_URL}"
+
+[status.jobs]                        # kind "json": GET, decode, pull values, fill a template
+kind    = "json"
+url     = "${PROD_URL}/api/queue"
+headers = { Authorization = "Bearer ${PROD_TOKEN}" }   # optional; ${VAR} resolves when the check runs
+every   = "15s"                      # refresh interval; default 5s for http, 15s otherwise
+pull = { running = "length([?status=='transcoding'])", failed = "length([?status=='failed'])" }
+show = "{running} running · {failed} failed"
+
+[status.disk]                        # kind "command": first non-empty stdout line
+kind = "command"
+run  = "df -h / | awk 'NR==2 {print $4 \" free\"}'"
+```
+
+`pull` values are [JMESPath](https://jmespath.org) expressions evaluated against the response body. A null result shows as `-`, a whole number drops its `.0`, anything else that is not a string shows as compact JSON. `show` fills `{name}` from `pull`; `admin check` rejects an expression that does not compile and a `{name}` no `pull` entry produces. Each request or command is cut off after 5 seconds. A failed check shows its reason and a hollow red dot, never the previous value.
+
+`${VAR}` in `url`, `headers` and `run` resolves each time the check runs, so a token never lands in the manifest; `admin env` lists the variables an entry references. The `http` kind checks the URL itself, not a `/health` path under it.
+
+Where it shows: the Work tab's Status section lists every entry (dot, label, readout), refreshed on each entry's own interval; an action of kind `print-status` prints them once. An action's `urls = ["prod"]` can name an entry that has a `url` to pin it in the footer and the Work band. Archetypes declare entries, and a project's `[status.prod]` replaces an archetype's `[status.prod]` whole.
 
 ## Archetype Catalog
 
@@ -300,8 +332,9 @@ ssh_user = "${UNRAID_USER:-root}"
 [commands.custom]
 deploy-staging = { run = "rsync -a ./dist ${STAGING_HOST}:/srv/app", desc = "Deploy to staging" }
 
-[urls]
-prod = "${PROD_URL:-https://example.com}"
+[status.prod]
+kind = "http"
+url  = "${PROD_URL:-https://example.com}"
 ```
 
 **Resolution rules:**

@@ -739,6 +739,11 @@ func (m Model) Init() tea.Cmd {
 		cmds = append(cmds, detectBeadsCmd(m.ctx, m.repoRoot))
 	}
 	if m.manifestOK {
+		// Start the [status] checks at launch so the first frame is not a
+		// second of empty readouts; later refreshes ride workTickMsg.
+		if m.manifest != nil {
+			statusProbes.Refresh(m.manifest.Status, m.manifest.Root)
+		}
 		// A herdr pane or agent worker changes state (running → waiting →
 		// failed, a new Activity line) from goroutines this process never
 		// hears from otherwise — livework.Default has no notification of
