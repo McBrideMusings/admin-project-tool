@@ -43,7 +43,7 @@ func TestBandShowsLiveLogElapsedAndURLs(t *testing.T) {
 	stubProbe(t, func(string) bool { return true })
 
 	m := &manifest.Manifest{
-		Urls: map[string]string{"api": "http://example.com/api"},
+		Status: map[string]manifest.StatusSpec{"api": {Kind: "http", URL: "http://example.com/api"}},
 		Custom: map[string]manifest.Command{
 			"dev": {Desc: "start dev server", Steps: []string{"dev"}},
 		},
@@ -73,16 +73,16 @@ func TestBandShowsLiveLogElapsedAndURLs(t *testing.T) {
 		t.Errorf("band fields missing live log path:\n%s", fields)
 	}
 	if !strings.Contains(fields, "api") || !strings.Contains(fields, "http://example.com/api") {
-		t.Errorf("band fields missing the resolved [urls]-keyed row:\n%s", fields)
+		t.Errorf("band fields missing the resolved [status]-keyed row:\n%s", fields)
 	}
 }
 
-// TestFrameURLsBareVsKeyedLabel proves the [urls]-keyed entry renders its
+// TestFrameURLsBareVsKeyedLabel proves the [status]-keyed entry renders its
 // key as the label and a bare URL renders as itself — both through the same
 // kinds.FrameURLs path commandRowItem calls.
 func TestFrameURLsBareVsKeyedLabel(t *testing.T) {
 	m := &manifest.Manifest{
-		Urls:   map[string]string{"web": "http://example.com"},
+		Status: map[string]manifest.StatusSpec{"web": {Kind: "http", URL: "http://example.com"}},
 		Custom: map[string]manifest.Command{"serve": {Desc: "serve", Steps: []string{"serve"}}},
 		Actions: map[string]manifest.Action{
 			"serve": {"kind": "shell", "run": "run-serve", "urls": []any{"web", "http://raw.example.com"}},

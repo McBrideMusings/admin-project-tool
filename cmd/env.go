@@ -20,7 +20,7 @@ var envVerbose bool
 var envCmd = &cobra.Command{
 	Use:   "env",
 	Short: "List every environment variable admin.toml references and its state",
-	Long: `List every ${VAR} admin.toml references — in action bodies, [urls], [logs]
+	Long: `List every ${VAR} admin.toml references — in action bodies, [status], [logs]
 and the config tables — with its state: set (its value, masked when the name
 looks like a credential), default (unset, the reference supplies a default),
 EMPTY (set to "" and required — ADR-0013 treats that as unset) or UNSET

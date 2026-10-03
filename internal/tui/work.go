@@ -1347,6 +1347,9 @@ func (m Model) workTickCmd() tea.Cmd {
 // from Update (workTickMsg and workDispatchStartedMsg), never from View —
 // starting a probe is a side effect, and rendering must stay pure.
 func (m Model) refreshDetailProbes() {
+	if m.manifestOK && m.manifest != nil {
+		statusProbes.Refresh(m.manifest.Status, m.manifest.Root)
+	}
 	r, ok := m.currentRow()
 	if !ok || r.work == nil || r.work.live == nil || len(r.work.urls) == 0 {
 		return

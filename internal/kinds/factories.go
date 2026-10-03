@@ -47,7 +47,7 @@ func registerBuiltins(r *Registry) {
 	r.MustRegister("apple", makeApple)
 	r.MustRegister("clean-dev", makeCleanDev)
 	r.MustRegister("vite-dev", makeViteDev)
-	r.MustRegister("print-urls", makePrintURLs)
+	r.MustRegister("print-status", makePrintStatus)
 	r.MustRegister("docs", makeDocs)
 	r.MustRegister("docker-reload-loop", makeDockerReloadLoop)
 	r.MustRegister("docker-dev", makeDockerDev)

@@ -8,7 +8,7 @@ import (
 )
 
 func TestAnEntryNamingAProjectURLResolvesToIt(t *testing.T) {
-	m := &manifest.Manifest{Urls: map[string]string{"local": "http://localhost:8787"}}
+	m := &manifest.Manifest{Status: map[string]manifest.StatusSpec{"local": {Kind: "http", URL: "http://localhost:8787"}}}
 	got, err := ResolveURLs([]any{map[string]any{"label": "local", "url": "local"}}, m)
 	if err != nil {
 		t.Fatal(err)
@@ -20,7 +20,7 @@ func TestAnEntryNamingAProjectURLResolvesToIt(t *testing.T) {
 }
 
 func TestAnEntryThatNamesNothingIsUsedAsALiteralURL(t *testing.T) {
-	m := &manifest.Manifest{Urls: map[string]string{"local": "http://localhost:8787"}}
+	m := &manifest.Manifest{Status: map[string]manifest.StatusSpec{"local": {Kind: "http", URL: "http://localhost:8787"}}}
 	got, err := ResolveURLs([]any{"http://127.0.0.1:9999"}, m)
 	if err != nil {
 		t.Fatal(err)
@@ -33,7 +33,7 @@ func TestAnEntryThatNamesNothingIsUsedAsALiteralURL(t *testing.T) {
 
 func TestEnvVarsExpandAtResolveTime(t *testing.T) {
 	t.Setenv("FRAME_TEST_PORT", "4321")
-	m := &manifest.Manifest{Urls: map[string]string{}}
+	m := &manifest.Manifest{Status: map[string]manifest.StatusSpec{}}
 	got, err := ResolveURLs([]any{
 		map[string]any{"label": "Dev", "url": "http://localhost:${FRAME_TEST_PORT}"},
 	}, m)
@@ -46,11 +46,11 @@ func TestEnvVarsExpandAtResolveTime(t *testing.T) {
 	}
 }
 
-// A custom label on an entry that ALSO names a project [urls] row is
+// A custom label on an entry that ALSO names a [status] entry is
 // discarded in favour of the row's own name — ResolveURLs reassigns both
 // label and url together once a project match is found.
 func TestAProjectURLMatchOverridesACustomLabel(t *testing.T) {
-	m := &manifest.Manifest{Urls: map[string]string{"local": "http://localhost:8787"}}
+	m := &manifest.Manifest{Status: map[string]manifest.StatusSpec{"local": {Kind: "http", URL: "http://localhost:8787"}}}
 	got, err := ResolveURLs([]any{map[string]any{"label": "My Custom Label", "url": "local"}}, m)
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ func TestAProjectURLMatchOverridesACustomLabel(t *testing.T) {
 }
 
 func TestResolveURLsPropagatesAnUnresolvedRequiredVarError(t *testing.T) {
-	m := &manifest.Manifest{Urls: map[string]string{}}
+	m := &manifest.Manifest{Status: map[string]manifest.StatusSpec{}}
 	_, err := ResolveURLs([]any{"http://localhost:${FRAME_TEST_TOTALLY_UNSET_VAR}"}, m)
 	if err == nil {
 		t.Fatal("expected an error for an unresolved required var")
@@ -83,20 +83,20 @@ func equalEntries(a, b []URLEntry) bool {
 
 // -- ValidateURLRefs --------------------------------------------------------
 
-func TestAnEntryNamingARowOfTheURLsTablePasses(t *testing.T) {
+func TestAnEntryNamingAStatusEntryWithAURLPasses(t *testing.T) {
 	actions := map[string]manifest.Action{
 		"dev": {"run": "true", "urls": []any{"dev-cf"}},
 	}
-	if err := ValidateURLRefs(actions, map[string]string{"dev-cf": "http://localhost:8787"}); err != nil {
+	if err := ValidateURLRefs(actions, map[string]manifest.StatusSpec{"dev-cf": {Kind: "http", URL: "http://localhost:8787"}}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestALiteralURLPassesEvenWithNoURLsTable(t *testing.T) {
+func TestALiteralURLPassesEvenWithNoStatusTable(t *testing.T) {
 	actions := map[string]manifest.Action{
 		"dev": {"run": "true", "urls": []any{"http://localhost:3000"}},
 	}
-	if err := ValidateURLRefs(actions, map[string]string{}); err != nil {
+	if err := ValidateURLRefs(actions, map[string]manifest.StatusSpec{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -105,7 +105,7 @@ func TestANameThatMatchesNothingIsAnErrorNotALiteral(t *testing.T) {
 	actions := map[string]manifest.Action{
 		"dev": {"run": "true", "urls": []any{"local"}},
 	}
-	err := ValidateURLRefs(actions, map[string]string{"dev-cf": "http://localhost:8787"})
+	err := ValidateURLRefs(actions, map[string]manifest.StatusSpec{"dev-cf": {Kind: "http", URL: "http://localhost:8787"}})
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -121,7 +121,7 @@ func TestTheErrorNamesTheTargetTheBadEntryIsOn(t *testing.T) {
 			"cf":   map[string]any{"run": "true", "urls": []any{"lan"}},
 		},
 	}
-	err := ValidateURLRefs(actions, map[string]string{"dev-cf": "http://x"})
+	err := ValidateURLRefs(actions, map[string]manifest.StatusSpec{"dev-cf": {Kind: "http", URL: "http://x"}})
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -134,7 +134,7 @@ func TestValidateURLRefsRejectsANonListURLsValue(t *testing.T) {
 	actions := map[string]manifest.Action{
 		"dev": {"run": "true", "urls": "http://localhost:8787"},
 	}
-	err := ValidateURLRefs(actions, map[string]string{})
+	err := ValidateURLRefs(actions, map[string]manifest.StatusSpec{})
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -153,7 +153,7 @@ func TestValidateURLRefsRejectsANonListURLsValue(t *testing.T) {
 // failed with:
 //
 //	error "action \"a\": urls entry \"nowhere-a\" is not a URL and does not
-//	name an entry in the project's [urls] table — no [urls] table is
+//	name a [status.<label>] entry with a url — no [status] entries are
 //	defined" is missing action "b"'s bad entry (nowhere-b)
 //
 // (reverted after confirming the failure).
@@ -162,7 +162,7 @@ func TestValidateURLRefsReportsEveryBadEntryNotJustTheFirst(t *testing.T) {
 		"a": {"run": "true", "urls": []any{"nowhere-a"}},
 		"b": {"run": "true", "urls": []any{"nowhere-b"}},
 	}
-	err := ValidateURLRefs(actions, map[string]string{})
+	err := ValidateURLRefs(actions, map[string]manifest.StatusSpec{})
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -215,5 +215,17 @@ func TestValidateFooterRefsNamesTheTargetTheBadEntryIsOn(t *testing.T) {
 	}
 	if got := err.Error(); !strings.Contains(got, `target "cf"`) {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// A command-kind status entry has no url, so a urls list cannot name it: the
+// error says why instead of listing it as a known name.
+func TestAnEntryNamingACommandStatusEntryIsRejected(t *testing.T) {
+	actions := map[string]manifest.Action{
+		"dev": {"run": "true", "urls": []any{"jobs"}},
+	}
+	err := ValidateURLRefs(actions, map[string]manifest.StatusSpec{"jobs": {Kind: "command", Run: "echo 3"}})
+	if err == nil || !strings.Contains(err.Error(), "command entry with no url") {
+		t.Fatalf("got %v", err)
 	}
 }

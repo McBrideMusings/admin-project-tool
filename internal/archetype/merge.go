@@ -12,12 +12,12 @@ import (
 // contributed it — so a later collision can name what it overrode ("command
 // 'build' from 'archetype a' overridden by archetype 'b'").
 type origins struct {
-	urls, overrides, custom, actions, logs, guards map[string]string
+	status, overrides, custom, actions, logs, guards map[string]string
 }
 
 func newOrigins() *origins {
 	return &origins{
-		urls:      map[string]string{},
+		status:    map[string]string{},
 		overrides: map[string]string{},
 		custom:    map[string]string{},
 		actions:   map[string]string{},
@@ -52,7 +52,7 @@ func Resolve(project *manifest.Manifest, sp SearchPath) (*manifest.Manifest, []s
 		// every action's working directory is taken from.
 		Root: project.Root,
 
-		Urls:      map[string]string{},
+		Status:    map[string]manifest.StatusSpec{},
 		Overrides: map[string]manifest.Command{},
 		Custom:    map[string]manifest.Command{},
 		Actions:   map[string]manifest.Action{},
@@ -148,7 +148,6 @@ func merge(dst, src *manifest.Manifest, srcLabel string, isManifest bool, log *[
 	dst.Modules = mergeStringSet(dst.Modules, src.Modules)
 	dst.ExcludeModules = mergeStringSet(dst.ExcludeModules, src.ExcludeModules)
 	dst.HideCommands = mergeStringSet(dst.HideCommands, src.HideCommands)
-	dst.HideUrls = mergeStringSet(dst.HideUrls, src.HideUrls)
 
 	// A non-empty Order REPLACES dst's outright: the last archetype/manifest
 	// to declare an order wins rather than being appended to.
@@ -156,7 +155,7 @@ func merge(dst, src *manifest.Manifest, srcLabel string, isManifest bool, log *[
 		dst.Order = append([]string(nil), src.Order...)
 	}
 
-	mergeMap(dst.Urls, src.Urls, srcLabel, "url", o.urls, log)
+	mergeMap(dst.Status, src.Status, srcLabel, "status", o.status, log)
 	if isManifest {
 		if err := mergeCommandOverrides(dst.Overrides, src.Overrides, srcLabel, o.overrides, log); err != nil {
 			return err
@@ -199,7 +198,7 @@ func merge(dst, src *manifest.Manifest, srcLabel string, isManifest bool, log *[
 
 // mergeStringSet appends src's entries onto dst, de-duplicated, preserving
 // dst's existing order and then src's — the "append" merge for
-// Modules/ExcludeModules/HideCommands/HideUrls/Unknown.
+// Modules/ExcludeModules/HideCommands/Unknown.
 func mergeStringSet(dst, src []string) []string {
 	seen := make(map[string]bool, len(dst)+len(src))
 	out := make([]string, 0, len(dst)+len(src))
@@ -221,7 +220,7 @@ func mergeStringSet(dst, src []string) []string {
 // mergeTable shallow-merges src's keys into dst, src winning on conflict —
 // the per-key merge every ~22 archetype-specific config table uses. Unlike
 // mergeMap, a collision here is not logged: these tables are configuration
-// fragments (e.g. [apple] scheme/bundle_id), not named commands/actions/urls
+// fragments (e.g. [apple] scheme/bundle_id), not named commands/actions/status entries
 // worth surfacing individually.
 func mergeTable(dst, src map[string]any) {
 	for k, v := range src {

@@ -89,7 +89,7 @@ var Kinds = map[string]Kind{
 	"apple":              {Name: "apple"},
 	"clean-dev":          {Name: "clean-dev", Configless: true},
 	"vite-dev":           {Name: "vite-dev", Configless: true},
-	"print-urls":         {Name: "print-urls", Configless: true},
+	"print-status":       {Name: "print-status", Configless: true},
 	"docs":               {Name: "docs", Configless: true},
 	"docker-reload-loop": {Name: "docker-reload-loop", Modules: []string{"docker"}},
 	"docker-dev":         {Name: "docker-dev", Configless: true, Modules: []string{"docker"}},

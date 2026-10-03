@@ -306,7 +306,7 @@ func TestNoMatchYieldsFallbackNotError(t *testing.T) {
 		"README.md": "just a readme\n",
 	})
 
-	archetypes, _, _, _, matched := Propose(root)
+	archetypes, _, _, matched := Propose(root)
 	if len(archetypes) != 0 {
 		t.Fatalf("Propose archetypes = %v, want empty", archetypes)
 	}
@@ -358,7 +358,7 @@ func TestLaterDetectorClearingProjectNameWins(t *testing.T) {
 
 	// Both Propose and Run should reflect the second detector clearing the name.
 	root := t.TempDir()
-	_, _, projectName, _, _ := Propose(root)
+	_, projectName, _, _ := Propose(root)
 	if projectName != "" {
 		t.Fatalf("Propose projectName = %q, want empty after clearing", projectName)
 	}

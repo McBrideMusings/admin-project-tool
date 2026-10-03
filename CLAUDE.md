@@ -95,9 +95,13 @@ A framed action runs inside a DECSTBM scroll region: its output scrolls in the t
 **The trade:** lines scrolled out of a *partial* scroll region do not enter the terminal's scrollback. That is acceptable only because a framed action is already writing the same output to `LOG_FILE`, timestamped and ANSI-stripped — history moves from scrollback into a file rather than being lost. `admin logs` reads it back.
 
 ```toml
-[urls]                                     # the existing project-level table
-local = "http://localhost:8787"
-lan   = "http://${LAN_IP}:8787"
+[status.local]                             # the project-level status entries
+kind = "http"
+url  = "http://localhost:8787"
+
+[status.lan]
+kind = "http"
+url  = "http://${LAN_IP}:8787"
 
 [actions.dev]
 kind = "multi-target"
@@ -116,7 +120,7 @@ footer = false                             # ...and opt out of the footer entire
 run = "bun run dev:playtest"               # nothing local to link, footer defaults on anyway: status rule + log path
 ```
 
-An entry naming a key of the top-level `[urls]` table resolves to that entry, label and all. Anything else must be a real URL (contain `://`) — `internal/frame.ValidateURLRefs`, called from `internal/archetype`'s `Resolve`, rejects an entry that is neither, so `admin check` catches `urls = ["local"]` when the table calls that row `dev-cf` instead of painting a footer row that goes nowhere. `${VAR}` is expanded at dispatch time through `internal/frame.ResolveURLs`, so both derived vars (`${LAN_IP}`) and plain env vars work. A bare-string URL labels itself and prints in one column instead of two. Per-target inheritance works exactly like `requires`: a target's resolved URL list holds `nil` for "inherit the parent" and a slice (including empty) for "replace it". The per-target `footer` key inherits the same way, as the tri-state `hasFooter`/`footerVal` pair `internal/frame.ShouldActivate` takes — `hasFooter=false` means "the key was absent" — and an absent target key that reaches the parent's own absent `footer` hands the decision back to the resolved URL list.
+An entry naming a `[status.<label>]` entry that has a `url` (kind `http` or `json`) resolves to that url under that label. A `command` entry has no url and cannot be named. Anything else must be a real URL (contain `://`) — `internal/frame.ValidateURLRefs`, called from `internal/archetype`'s `Resolve`, rejects an entry that is neither, so `admin check` catches `urls = ["local"]` when the entry is called `dev-cf` instead of painting a footer row that goes nowhere. `${VAR}` is expanded at dispatch time through `internal/frame.ResolveURLs`, so both derived vars (`${LAN_IP}`) and plain env vars work. A bare-string URL labels itself and prints in one column instead of two. Per-target inheritance works exactly like `requires`: a target's resolved URL list holds `nil` for "inherit the parent" and a slice (including empty) for "replace it". The per-target `footer` key inherits the same way, as the tri-state `hasFooter`/`footerVal` pair `internal/frame.ShouldActivate` takes — `hasFooter=false` means "the key was absent" — and an absent target key that reaches the parent's own absent `footer` hands the decision back to the resolved URL list.
 
 A target that delegates (`action = "dev-cf"`) is framed by the *picked target*, not the action it hands off to — the footer goes up before the branch in `internal/kinds/multitarget.go`'s `makeMultiTarget`. `enterFrame` returns the frame it started (or `nil`) and `frame.Deactivate(f)` only tears down that exact frame, so an inner action declaring its own `urls` — whose activation is declined because one is already up — cannot strip the outer footer while the outer action is still running.
 

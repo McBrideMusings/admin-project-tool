@@ -151,9 +151,10 @@ type Manifest struct {
 	Order          []string
 	ExcludeModules []string
 	HideCommands   []string
-	HideUrls       []string
 
-	Urls map[string]string
+	// Status is the [status.<label>] tables: one live readout per label, each a
+	// built-in checker (internal/status) configured by its fields.
+	Status map[string]StatusSpec
 
 	Overrides map[string]Command // [commands.X] entries (minus "custom")
 	Custom    map[string]Command // [commands.custom.X] entries
@@ -228,12 +229,12 @@ var KnownTrackers = []string{"beads", "github"}
 // knownTopLevelKeys is every top-level admin.toml key the parser recognizes.
 var knownTopLevelKeys = map[string]bool{
 	"project_name": true, "python_min": true, "tracker": true, "uses_pull_requests": true,
-	"archetypes": true, "modules": true, "urls": true,
+	"archetypes": true, "modules": true, "status": true,
 	"commands": true, "actions": true, "order": true, "logs": true, "apple": true, "react_native": true,
 	// An archetype.toml may name itself (internal/archetype reads the
 	// directory name as canonical and only tolerates this key).
 	"name":   true,
-	"server": true, "output": true, "exclude_modules": true, "hide_commands": true, "hide_urls": true,
+	"server": true, "output": true, "exclude_modules": true, "hide_commands": true,
 	"inline": true, "logging": true, "dev_kill": true, "dev_precheck": true, "clean_dev": true,
 	"vite_dev": true, "docker_dev": true, "docker_run": true, "docker_build": true, "deploy": true,
 	"install_template": true, "fixtures": true, "log_bridge": true, "guards": true, "docs": true,
@@ -258,12 +259,11 @@ var knownTopLevelKeys = map[string]bool{
 // table and have it be readable without editing this list.
 var nonSettingsTopLevelKeys = map[string]bool{
 	"project_name": true, "python_min": true, "tracker": true, "uses_pull_requests": true,
-	"archetypes": true, "modules": true, "urls": true,
+	"archetypes": true, "modules": true, "status": true,
 	"commands": true, "actions": true, "order": true, "logs": true,
 	"name":             true,
 	"exclude_modules":  true,
 	"hide_commands":    true,
-	"hide_urls":        true,
 	"inline":           true,
 	"guards":           true,
 	"populate":         true,
@@ -413,7 +413,7 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 		return nil, err
 	}
 
-	if m.Urls, err = parseUrls(data, source); err != nil {
+	if m.Status, err = parseStatus(data, source); err != nil {
 		return nil, err
 	}
 
@@ -599,9 +599,6 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 	if m.HideCommands, err = stringSlice(data, "hide_commands", source); err != nil {
 		return nil, err
 	}
-	if m.HideUrls, err = stringSlice(data, "hide_urls", source); err != nil {
-		return nil, err
-	}
 
 	var unknown []string
 	for k := range data {
@@ -625,14 +622,13 @@ type Starter struct {
 	ProjectName string
 	Archetypes  []string
 	Modules     []string
-	Urls        map[string]string
 	// Tables is detect.Result.Tables verbatim: one settings table per name,
 	// each a map of string keys (e.g. "react_native" -> {"app_dir": "."}).
 	Tables map[string]map[string]string
 }
 
 // Dump serializes a Starter to admin.toml text, scoped to only the fields a
-// starter manifest carries (project_name, archetypes, modules, urls, and one
+// starter manifest carries (project_name, archetypes, modules, and one
 // level of scalar-valued settings tables) rather than the full multi-table
 // dump `admin compile` grows into. Stdlib has no TOML writer, so this is a
 // hand-rolled minimal emitter for exactly this shape, not a general-purpose
@@ -645,14 +641,6 @@ func Dump(s Starter) string {
 		fmt.Fprintf(&b, "modules = %s\n", tomlStringList(s.Modules))
 	}
 	b.WriteString("\n")
-
-	if len(s.Urls) > 0 {
-		b.WriteString("[urls]\n")
-		for _, label := range sortedKeys(s.Urls) {
-			fmt.Fprintf(&b, "%s = %s\n", label, tomlQuote(s.Urls[label]))
-		}
-		b.WriteString("\n")
-	}
 
 	for _, name := range sortedKeys(s.Tables) {
 		tbl := s.Tables[name]
@@ -1026,22 +1014,6 @@ func truthy(v any) bool {
 	default:
 		return true
 	}
-}
-
-func parseUrls(data map[string]any, source string) (map[string]string, error) {
-	v, present := data["urls"]
-	if !present || v == nil {
-		return map[string]string{}, nil
-	}
-	m, ok := v.(map[string]any)
-	if !ok {
-		return nil, errf("%s: 'urls' must be a table", source)
-	}
-	out := make(map[string]string, len(m))
-	for k, val := range m {
-		out[k] = stringify(val)
-	}
-	return out, nil
 }
 
 func asStringList(v any) ([]string, bool) {

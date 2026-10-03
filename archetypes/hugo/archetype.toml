@@ -1,8 +1,9 @@
 name = "hugo"
 modules = ["core"]
 
-[urls]
-dev = "http://localhost:1313"
+[status.dev]
+kind = "http"
+url  = "http://localhost:1313"
 
 [commands.build]
 desc = "Build production site"

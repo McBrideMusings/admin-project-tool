@@ -67,7 +67,6 @@ func runNew(cmd *cobra.Command, args []string) error {
 	starter := manifest.Starter{
 		ProjectName: projectName,
 		Archetypes:  result.Archetypes,
-		Urls:        result.URLs,
 		Tables:      result.Tables,
 	}
 	if err := os.WriteFile(manifestPath, []byte(manifest.Dump(starter)), 0o644); err != nil {

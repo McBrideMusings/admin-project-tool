@@ -14,6 +14,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/status"
 	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
 
@@ -72,7 +73,10 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	if err := checkAbsoluteRunPaths(cmd.Context(), m); err != nil {
 		problems = append(problems, validate.Wrap(err))
 	}
-	if err := frame.ValidateURLRefs(m.Actions, m.Urls); err != nil {
+	if err := frame.ValidateURLRefs(m.Actions, m.Status); err != nil {
+		problems = append(problems, validate.Wrap(err))
+	}
+	if err := checkStatus(m); err != nil {
 		problems = append(problems, validate.Wrap(err))
 	}
 	if err := frame.ValidateFooterRefs(m.Actions); err != nil {
@@ -540,4 +544,26 @@ func rawKeys(raw map[string]any) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// checkStatus reports every [status.<label>] mistake that can be found
+// without running a checker: a pull expression that does not compile, or a
+// {name} in show that no pull entry produces. Kind and field shape are
+// already enforced when the manifest parses.
+func checkStatus(m *manifest.Manifest) error {
+	labels := make([]string, 0, len(m.Status))
+	for label := range m.Status {
+		labels = append(labels, label)
+	}
+	sort.Strings(labels)
+	var msgs []string
+	for _, label := range labels {
+		for _, err := range status.Validate(label, m.Status[label]) {
+			msgs = append(msgs, err.Error())
+		}
+	}
+	if len(msgs) == 0 {
+		return nil
+	}
+	return validate.Errorf("%s", strings.Join(msgs, "\n"))
 }

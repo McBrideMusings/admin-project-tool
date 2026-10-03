@@ -139,7 +139,7 @@ func configEnvRefs(m *manifest.Manifest) []*envRef {
 
 // projectEnvRefs scans everything the manifest can reference an environment
 // variable from: action bodies (including an http action's body and each
-// multi-target target), [urls], [logs], and the config tables.
+// multi-target target), [status], [logs], and the config tables.
 func projectEnvRefs(m *manifest.Manifest) []*envRef {
 	var s envRefSet
 	for _, name := range sortedActionNames(m.Actions) {
@@ -161,13 +161,24 @@ func projectEnvRefs(m *manifest.Manifest) []*envRef {
 			}
 		}
 	}
-	urlKeys := make([]string, 0, len(m.Urls))
-	for k := range m.Urls {
-		urlKeys = append(urlKeys, k)
+	statusLabels := make([]string, 0, len(m.Status))
+	for k := range m.Status {
+		statusLabels = append(statusLabels, k)
 	}
-	sort.Strings(urlKeys)
-	for _, k := range urlKeys {
-		s.scanString(m.Urls[k], "url:"+k)
+	sort.Strings(statusLabels)
+	for _, k := range statusLabels {
+		spec := m.Status[k]
+		origin := "status:" + k
+		s.scanString(spec.URL, origin)
+		s.scanString(spec.Run, origin)
+		headerNames := make([]string, 0, len(spec.Headers))
+		for h := range spec.Headers {
+			headerNames = append(headerNames, h)
+		}
+		sort.Strings(headerNames)
+		for _, h := range headerNames {
+			s.scanString(spec.Headers[h], origin)
+		}
 	}
 	logNames := make([]string, 0, len(m.Logs))
 	for k := range m.Logs {

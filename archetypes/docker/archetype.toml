@@ -2,8 +2,9 @@ name = "docker"
 modules = ["core", "docker", "remote", "log_format", "log_columns", "unraid"]
 order = ["build", "deploy", "---", "logs", "diff", "open"]
 
-[urls]
-prod = "${PROD_URL:-http://localhost}"
+[status.prod]
+kind = "http"
+url  = "${PROD_URL:-http://localhost}"
 
 [commands.build]
 desc = "Build the Docker image — locally for linux/amd64, or on the target when [docker_build].on_host"
@@ -1114,6 +1115,6 @@ kind = "shell"
 run = "open ${PROD_URL:-http://localhost}"
 desc = "Open the deployed app URL"
 
-[actions.print-urls]
-kind = "print-urls"
-desc = "Print registered URLs and their health status"
+[actions.print-status]
+kind = "print-status"
+desc = "Print every [status] entry's current readout"
