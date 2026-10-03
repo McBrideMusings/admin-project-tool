@@ -51,13 +51,14 @@ alternatives are deleted, and the frames depict the answer:
 
 | Question | Answer |
 | --- | --- |
-| Flat command list or a palette? | **The list.** A palette was tried here and removed: it made every command a thing you have to remember the name of before you can reach it, and the Commands surface is where you go precisely when you do not. The list is a section like Running and Workers, under the same cursor. |
+| Flat command list or a palette? | **The list.** A palette was tried here and removed: it made every command a thing you have to remember the name of before you can reach it, and the Commands surface is where you go precisely when you do not. The list is the Commands tab, the way the Workers tab lists workers. |
 | Where does live output go? | **A full-width band pinned under the list**, always on, for whatever the cursor is on. The `off / auto-tail / split-pane / inline-peek` axis is gone. |
 | Side-by-side or stacked? | **Neither.** The band is full width at every geometry, so the list gives up height and never width. The `w/2.3` orientation switch is gone. |
 | Can the cursor land on a multi-target parent? | **No.** It is a group: it holds targets and runs nothing itself, so it carries no marker — the marker column is what promises `↵` will run the row. |
 | What does `↵` do? | **The row's one primary action, following its state:** attach while it runs, dispatch while it does not, open the transcript of a worker that has finished. |
 | Where is kill bound? | **`x`.** `k` is cursor-up everywhere in this dashboard, so a footer advertising `k kill` was a collision. |
-| Are workers commands? | **No.** Separate section, own state words, own fields (branch, worktree, session), own verbs. |
+| Are workers commands? | **No.** Separate tab — Commands and Workers are the first two tabs, each with its count — with its own state words, own fields (branch, worktree, session), own verbs. |
+| Does a row say its kind? | **No.** A row is marker, name, then state and elapsed while it runs, or its description while it does not. The kind is one field in the band, for the row under the cursor. |
 | Does a running command get a second row? | **No.** It is the row it always was, wearing its state in the columns the grid already reserves. A Running section under its own heading said the same thing twice. |
 
 Two rules everything on the Work tab obeys:

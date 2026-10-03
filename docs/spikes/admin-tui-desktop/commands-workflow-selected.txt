@@ -1,25 +1,25 @@
  beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
-  Work 12    Repo    Beads 227    Config                                                        
+  Commands 47     Workers 3     Repo     Beads 227     Config                                   
                                                                                                 
- Commands  47                                                                                   
-   deploy          multi-tgt        Deploy a service to production                              
- ◆ ├ analytics-eng                  cd apps && bunx wrangler deploy --target analytics-eng      
- ◇ ├ chat-moderati…                 cd apps && bunx wrangler deploy --target chat-moderation    
- ◇ ├ hand-reports-…                 cd apps && bunx wrangler deploy --target hand-reports-dra…  
- ◇ ├ ios                            cd apps && bunx wrangler deploy --target ios                
- ◇ ├ ios-device                     cd apps && bunx wrangler deploy --target ios-device         
- ◇ ├ mainframe                      cd apps && bunx wrangler deploy --target mainframe          
- ◇ ├ name-check                     cd apps && bunx wrangler deploy --target name-check         
- ◇ └ tournament-pr…                 cd apps && bunx wrangler deploy --target tournament-proce…  
-   dev             multi-tgt        Run a local dev server                                      
- ◇ ├ cf            ● running 4m12s  vitepress dev · localhost:5173                              
+ Commands   ↑ 35 more                                                                           
+ ◇ ├ job           cd apps && bunx wrangler test --target job                                   
+ ◇ ├ rehearse      cd apps && bunx wrangler test --target rehearse                              
+ ◇ ├ shards        cd apps && bunx wrangler test --target shards                                
+ ◇ └ workflows     cd apps && bunx wrangler test --target workflows                             
+   retire-merged   Remove worktrees whose branch is merged                                      
+ ◆ ├ fix-detector… dispatch claude over fix-detector-parity-skip                                
+ ◇ ├ go-transient… dispatch claude over go-transient-kind-factories                             
+ ◇ ├ docs-adr-lua  dispatch claude over docs-adr-lua                                            
+ ◇ └ launchd-env-… dispatch claude over launchd-env-file                                        
+   grafana         Grafana alert rules (export / diff / deploy)                                 
+ ◇ ├ deploy        cd apps && bunx wrangler grafana --target deploy                             
    ↓ more                                                                                       
-── deploy analytics-eng  not running ──────────────────────────── also 2 commands · 3 workers ──
+── retire-merged fix-detector-parity-skip  not running ────────── also 2 commands · 3 workers ──
  kind     target                                                                                
- desc     Deploy a service to production                                                        
+ desc     Remove worktrees whose branch is merged                                               
  last run never                                                                                 
  last log —                                                                                     
-                                                                                                
+ query    status:closed label:worktree                                                          
                                                                                                 
                                                                                                 
                                                                                                 
@@ -27,4 +27,4 @@
                                                                                                 
  output appears here while it runs                                                              
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ dispatch · q/esc quit                                                              
+ ↑↓ move · ↵ dispatch · c collapse · q/esc quit · o config · ←→ tab                             

@@ -1,16 +1,13 @@
  beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
-  Work 12    Repo    Beads 227    Config                                                        
+  Commands 47     Workers 3     Repo     Beads 227     Config                                   
                                                                                                 
  MANIFEST                                                                             admin.toml
   tracker               beads  ((manifest))                                                     
   uses pull requests    false  ((manifest))                                                     
                                                                                                 
  IDENTITY & WORKTREES                                                                 admin.toml
-  login                 not declared                                                            
-  emails                not declared                                                            
   worktree root         /fixtures/worktrees  ((manifest))  absent                               
   populate patterns     none declared                                                           
-  default agent         not declared                                                            
   concurrency ceiling   not declared — dispatcher default applies                               
                                                                                                 
  KEY FILES                                                                                      
@@ -26,5 +23,8 @@
                                                                                                 
                                                                                                 
                                                                                                 
+                                                                                                
+                                                                                                
+                                                                                                
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ body · q quit · 1-4 jump · ↓ body · o config · ←→ tab                              
+ ↑↓ move · ↵ body · q quit · 1-5 jump · ↓ body · o config · ←→ tab                              

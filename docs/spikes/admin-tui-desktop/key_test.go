@@ -27,6 +27,8 @@ func send(m model, k string) model {
 	switch k {
 	case "tab":
 		msg = tea.KeyMsg{Type: tea.KeyTab}
+	case "shift+tab":
+		msg = tea.KeyMsg{Type: tea.KeyShiftTab}
 	case "down":
 		msg = tea.KeyMsg{Type: tea.KeyDown}
 	case "up":
@@ -42,9 +44,9 @@ func send(m model, k string) model {
 	return out.(model)
 }
 
-// TestArrowsMoveTheCursor drives the combined cursor: the Commands rows first,
-// then the live sections. The band must follow it — there is no second
-// selector, so a cursor the band ignores is the bug this pins.
+// TestArrowsMoveTheCursor drives the cursor down the Commands tab, then over to
+// the Workers tab. The band must follow it — there is no second selector, so a
+// cursor the band ignores is the bug this pins.
 func TestArrowsMoveTheCursor(t *testing.T) {
 	resetCursor()
 	m := newModel()
@@ -63,14 +65,12 @@ func TestArrowsMoveTheCursor(t *testing.T) {
 	if !markedRowHas(Strip(m.View()), cmds[1].label()) {
 		t.Errorf("one down did not land on %q", cmds[1].label())
 	}
-	// Past the Commands rows, the cursor enters the live sections and the band
-	// switches from an entry's detail to a live row's own fields.
-	for i := 0; i < len(cmds); i++ {
-		m = send(m, "down")
-	}
+	// On the Workers tab the band switches from an entry's detail to a live
+	// row's own fields.
+	m = send(m, "tab")
 	v := Strip(m.View())
 	if !strings.Contains(v, "log      /") {
-		t.Errorf("the band did not follow the cursor into the live sections:\n%s", v)
+		t.Errorf("the band did not follow the cursor onto the Workers tab:\n%s", v)
 	}
 }
 
@@ -80,13 +80,10 @@ func TestUpWrapsBackwards(t *testing.T) {
 	defer resetLiveRows()
 	m := newModel()
 	m.w, m.h = 120, 40
-	m = send(m, "up") // from the first Commands row, wrap to the last live row
-	last := liveSectionRows(false)
-	if len(last) == 0 {
-		t.Fatal("no live rows to wrap onto")
-	}
-	if !markedRowHas(Strip(m.View()), last[len(last)-1].id) {
-		t.Errorf("up from the first Commands row did not wrap onto the last live row %q", last[len(last)-1].id)
+	m = send(m, "up") // from the first Commands row, wrap to the last one
+	cmds := selectableCommands()
+	if !markedRowHas(Strip(m.View()), cmds[len(cmds)-1].label()) {
+		t.Errorf("up from the first Commands row did not wrap onto the last one %q", cmds[len(cmds)-1].label())
 	}
 }
 
@@ -94,8 +91,12 @@ func TestTabSwitchesTabs(t *testing.T) {
 	m := newModel()
 	m.w, m.h = 120, 40
 	m = send(m, "tab")
+	if got := m.state().Get("screen"); got != "swarm" {
+		t.Fatalf("after tab, screen = %q, want swarm (the Workers tab)", got)
+	}
+	m = send(m, "tab")
 	if got := m.state().Get("screen"); got != "repo" {
-		t.Fatalf("after tab, screen = %q, want repo", got)
+		t.Fatalf("after two tabs, screen = %q, want repo", got)
 	}
 	// The Repo tab is repo-dash's own frame, loaded off the render path, so a
 	// cold render returns a placeholder by design. Take the blocking path to
@@ -110,6 +111,7 @@ func TestTabSwitchesTabs(t *testing.T) {
 func TestEnterOpensTheDispatchSheet(t *testing.T) {
 	m := newModel()
 	m.w, m.h = 120, 40
+	m = send(m, "tab") // workers
 	m = send(m, "tab") // repo
 	m = send(m, "tab") // issues
 	if got := m.state().Get("screen"); got != "issues" {
@@ -183,9 +185,9 @@ func TestTabPressNeverBlocks(t *testing.T) {
 }
 
 // TestFixtureTabSetsAreWhatTheDigitKeysAssume pins the exact tab bar each
-// fixture draws. keyRepo/keyTracker/keyConfig (variants.go) hardcode "2"/"3"/
-// "4" on the assumption that every fixture draws Work · Repo · <one tracker
-// tab> · Config in that order — if a fixture manifest ever grew a second
+// fixture draws. keyRepo/keyTracker/keyConfig (variants.go) hardcode "3"/"4"/
+// "4 then →" on the assumption that every fixture draws Commands · Workers ·
+// Repo · <one tracker tab> · Config in that order — if a fixture manifest ever grew a second
 // tracker signal (both a tracker key and uses_pull_requests = true, say), the
 // digit keys would silently index the wrong tab. This renders repo-dash's own
 // Model directly (not the prototype's fake tabBar()) so it asserts on the
@@ -208,7 +210,7 @@ func TestFixtureTabSetsAreWhatTheDigitKeysAssume(t *testing.T) {
 		cancel()
 
 		tabRow := tabBarLine(out)
-		for _, want := range []string{"Work", "Repo", c.want, "Config"} {
+		for _, want := range []string{"Commands", "Workers", "Repo", c.want, "Config"} {
 			if !strings.Contains(tabRow, want) {
 				t.Errorf("%s: tab bar %q missing %q", c.axis, tabRow, want)
 			}
@@ -230,15 +232,10 @@ func TestDispatchRendersATail(t *testing.T) {
 	resetLiveRows()
 	defer resetLiveRows()
 
-	e := commandEntry{parent: "dev", target: "cf", run: "bun run dev:cf"}
+	e := commandEntry{parent: "lint", run: "bash lint.sh"}
 	dispatchCommand(e)
 
-	var got *liveRow
-	for i := range liveRows {
-		if liveRows[i].cmd == "" && liveRows[i].id == e.resolved() {
-			got = &liveRows[i]
-		}
-	}
+	got := liveForEntry(e, false)
 	if got == nil {
 		t.Fatalf("dispatchCommand did not append a live row for %q", e.resolved())
 	}
@@ -304,7 +301,7 @@ func TestBandDoesNotShift(t *testing.T) {
 
 	// And the rule itself lands on the same line whatever the cursor is on.
 	want := -1
-	for _, screen := range []string{"commands-palette", "running", "swarm"} {
+	for _, screen := range []string{"commands", "running", "swarm"} {
 		resetCursor()
 		out := Strip(render(State{Values: map[string]string{"screen": screen}, W: 120, H: 40}))
 		lines := strings.Split(out, "\n")
@@ -361,11 +358,9 @@ func TestEnterAttachesToTheRowUnderTheCursor(t *testing.T) {
 
 	m := newModel()
 	m.w, m.h = 120, 40
-	// Walk onto the first live row, past every Commands row.
-	for i := 0; i < len(selectableCommands()); i++ {
-		m = send(m, "down")
-	}
-	want := cursorLive()
+	// Over to the Workers tab, onto its first row.
+	m = send(m, "tab")
+	want := cursorLive(m.state().Get("screen"))
 	if want == nil {
 		t.Fatal("cursor did not land on a live row")
 	}
@@ -376,11 +371,11 @@ func TestEnterAttachesToTheRowUnderTheCursor(t *testing.T) {
 	if v := Strip(m.View()); !strings.Contains(v, want.id) {
 		t.Errorf("the hosted view does not show the attached row %q:\n%s", want.id, v)
 	}
-	// Detaching returns to the list and forgets what it was attached to, so the
-	// next attach renders its own row rather than the previous one.
+	// Detaching returns to the row's own tab and forgets what it was attached
+	// to, so the next attach renders its own row rather than the previous one.
 	m = send(m, "esc")
-	if got := m.state().Get("screen"); got != "commands" {
-		t.Fatalf("esc from hosted went to %q, want commands", got)
+	if got := m.state().Get("screen"); got != "swarm" {
+		t.Fatalf("esc from hosted went to %q, want swarm (the Workers tab)", got)
 	}
 	if attachedRow != nil {
 		t.Error("detaching left attachedRow set")
@@ -402,9 +397,7 @@ func TestAttachingToASecondRowShowsThatRow(t *testing.T) {
 
 	m := newModel()
 	m.w, m.h = 120, 40
-	for i := 0; i < len(selectableCommands()); i++ {
-		m = send(m, "down")
-	}
+	m = send(m, "tab")
 	m = send(m, "enter")
 	if v := Strip(m.View()); !strings.Contains(v, first.id) {
 		t.Fatalf("first attach did not show %q", first.id)
@@ -464,6 +457,77 @@ func TestAttachedOutputReachesTheFloor(t *testing.T) {
 		// those is the child's newest output line.
 		if last := lines[len(lines)-3]; strings.TrimSpace(last) == "" {
 			t.Errorf("%dx%d: attached output does not reach the floor, bottom row is blank", g.w, g.h)
+		}
+	}
+}
+
+// TestEachTabKeepsItsOwnCursor: the real dashboard keeps one cursor per tab
+// (Model.cursor), so a row picked on Commands is still picked after a trip to
+// Workers and back, and moving on Workers never moves the Commands cursor.
+func TestEachTabKeepsItsOwnCursor(t *testing.T) {
+	resetCursor()
+	resetLiveRows()
+	defer func() { resetCursor(); resetLiveRows() }()
+
+	m := newModel()
+	m.w, m.h = 120, 40
+	cmds := selectableCommands()
+	m = send(m, "down")
+	m = send(m, "down")
+	m = send(m, "tab")
+	workers := liveSectionRows(false)
+	if !markedRowHas(Strip(m.View()), workers[0].id) {
+		t.Fatalf("arriving on Workers did not start on its first row %q", workers[0].id)
+	}
+	m = send(m, "down")
+	m = send(m, "shift+tab")
+	if !markedRowHas(Strip(m.View()), cmds[2].label()) {
+		t.Errorf("back on Commands the cursor is not on %q, where it was left", cmds[2].label())
+	}
+	m = send(m, "tab")
+	if !markedRowHas(Strip(m.View()), workers[1].id) {
+		t.Errorf("back on Workers the cursor is not on %q, where it was left", workers[1].id)
+	}
+}
+
+// TestFinishedWorkerOffersTranscript: ↵ on a failed worker opens its
+// transcript and there is nothing to kill (resolveRowAction, entryIsLive), so
+// the footer must not advertise attach or x kill on swarm's failed row.
+func TestFinishedWorkerOffersTranscript(t *testing.T) {
+	resetCursor()
+	resetLiveRows()
+	defer func() { resetCursor(); resetLiveRows() }()
+
+	lines := strings.Split(Strip(render(State{Values: map[string]string{"screen": "swarm"}, W: 96, H: 30})), "\n")
+	footer := lines[len(lines)-1]
+	if !strings.Contains(footer, "↵ transcript") || strings.Contains(footer, "x kill") {
+		t.Errorf("failed worker's footer = %q, want ↵ transcript and no x kill", footer)
+	}
+	lines = strings.Split(Strip(render(State{Values: map[string]string{"screen": "running"}, W: 96, H: 30})), "\n")
+	if footer := lines[len(lines)-1]; !strings.Contains(footer, "↵ attach · x kill") {
+		t.Errorf("waiting worker's footer = %q, want ↵ attach · x kill", footer)
+	}
+}
+
+// TestGroupChangeDrawsASpacer: one blank row where the command group changes,
+// as internal/tui/work.go's workRows draws it, and the cursor never lands on it.
+func TestGroupChangeDrawsASpacer(t *testing.T) {
+	spacers := 0
+	for i, e := range commandRows() {
+		if !e.spacer {
+			continue
+		}
+		spacers++
+		if next := commandRows()[i+1]; next.parent != "lint" {
+			t.Errorf("spacer sits before %q, want before lint (the second group)", next.parent)
+		}
+	}
+	if spacers != 1 {
+		t.Errorf("commandRows has %d spacers, want 1", spacers)
+	}
+	for _, e := range selectableCommands() {
+		if e.spacer {
+			t.Error("selectableCommands includes a spacer")
 		}
 	}
 }

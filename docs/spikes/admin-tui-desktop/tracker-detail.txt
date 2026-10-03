@@ -1,5 +1,5 @@
  beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
-  Work 12    Repo    Beads 227    Config                                                        
+  Commands 47     Workers 3     Repo     Beads 227     Config                                   
                                                                                                 
    tracker = "beads" is declared, but no beads workspace was found here                         
                                                                                                 
@@ -27,4 +27,4 @@
                                                                                                 
                                                                                                 
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ start work · d detail · g tree · s sort · w workflow · q quit · o config · ←→ tab  
+ ↑↓ move · ↵ start work · d detail · g tree · s sort · / filter · q quit · o config · ←→ tab    

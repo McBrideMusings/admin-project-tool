@@ -113,27 +113,24 @@ var Variants = []Variant{{
 
 type repoSrc struct{ root, nwo, branch string }
 
-// Digit keys index the drawn tabs (model.go:349 — a tab renumbered by
-// admin-3rgp.20, which gave every project with an admin.toml a real Work
-// tab ahead of Repo). Every screen below that doesn't override the
-// `tracker` axis renders against trackerRepo("beads") (fixtures.go), a
-// temp-dir repo this prototype builds itself rather than one of three live
-// checkouts on the developer's machine (admin-p55x) — so its four real drawn
-// tabs are 1 Work, 2 Repo, 3 the tracker (Beads here), 4 Config. Each of the
-// three fixtures is built to draw exactly that four-tab shape (fixtures.go's
-// axisManifest), which is what keeps these constants safe to hardcode: they
-// index a tab SET the fixture guarantees, not one inferred from a repo that
-// could change shape under the prototype. Everything past the tab is the
-// same key a person presses — see INVENTORY.md for the full map (written
-// before admin-3rgp.20 landed and not renumbered here, since admin-3rgp.31
-// retires this whole prototype next).
+// Digit keys index the drawn tabs (internal/tui/model.go's switchTabAt). Every
+// screen below that doesn't override the `tracker` axis renders against
+// trackerRepo("beads") (fixtures.go), a temp-dir repo this prototype builds
+// itself rather than one of three live checkouts on the developer's machine
+// (admin-p55x) — so its five real drawn tabs are 1 Commands, 2 Workers, 3 Repo,
+// 4 the tracker (Beads here), 5 Config. Each of the three fixtures is built to
+// draw exactly that five-tab shape (fixtures.go's axisManifest), which is what
+// keeps these constants safe to hardcode: they index a tab SET the fixture
+// guarantees, not one inferred from a repo that could change shape under the
+// prototype. Everything past the tab is the same key a person presses — see
+// INVENTORY.md for the full map.
 const (
 	keyRepo    = "3"
 	keyTracker = "4"
 )
 
-// The digit keys stop at 4 and Config is the fifth tab, so it is reached by
-// stepping right from the tracker tab.
+// Config is reached by stepping right from the tracker tab rather than by its
+// digit, so this path does not depend on how many digits the footer offers.
 var keyConfig = []string{keyTracker, "right"}
 
 // embedded maps a screen to the keys that reach it in repo-dash. A screen absent
@@ -286,57 +283,62 @@ type screenSpec struct {
 	hostedEmpty bool
 }
 
-// cmdSel indices below are row positions in workRows()'s always-expanded
-// list: 0 build, 1-4 build's four targets (mac/ios/tv/server), 5 check,
-// 6 deploy, 7 docs, 8 logs, 9 retire-merged, 10 test, 11-13 the three
-// workers. Submenus no longer collapse, so unlike before this change these
-// numbers don't shift depending on what's expanded — they're just each
-// screen's row, once.
-var screens = map[string]screenSpec{
-	// liveSel is the combined cursor's position in the live sections (commands
-	// first, then workers); -1 leaves the selection up in the palette box,
-	// which is where an idle screen starts.
-	"commands-workflow-selected": {tab: 0, liveSel: -1},
-	"running":                    {tab: 0, liveSel: 1, running: true}, // admin test — hosted, waiting
-	"repo":                       {tab: 1},
-	"issues":                     {tab: 2},
-	"issues-selected":            {tab: 2},
-	"dispatch-sheet":             {tab: 2, sheet: true},
-	"swarm":                      {tab: 0, liveSel: 2}, // admin-3rgp.36 — worker, running
-	"config":                     {tab: 3},
-	"no-manifest":                {tab: 1, noMan: true},
+// The tabs, in the order the real dashboard draws them (internal/tui/model.go's
+// tabNames): Commands and Workers first, then the three embedded tabs.
+const (
+	tabCommands = iota
+	tabWorkers
+	tabRepo
+	tabTracker
+	tabConfig
+)
 
-	// Hosted-process surfaces (admin-3rgp.61/.63). Appended after the ten named
-	// reference frames so no existing frame filename shifts.
-	"hosted":       {tab: 0, liveSel: 1, hosted: true},
-	"hosted-empty": {tab: 0, liveSel: 1, hosted: true, hostedEmpty: true},
-	"hosted-quit":  {tab: 0, liveSel: 1, sheet: true, running: true},
+// cmdSel seeds the Commands tab's cursor by its index in selectableCommands(), stored +1
+// so the zero value means "unset". liveSel is a Workers-tab row by its index in
+// liveSectionRows(); -1 leaves the cursor on the Commands tab's first row.
+var screens = map[string]screenSpec{
+	// 34 is retire-merged's first target in selectableCommands() order, +1.
+	"commands-workflow-selected": {tab: tabCommands, liveSel: -1, cmdSel: 34},
+	"running":                    {tab: tabWorkers, liveSel: 1, running: true}, // admin-3rgp.7 — worker, waiting
+	"repo":                       {tab: tabRepo},
+	"issues":                     {tab: tabTracker},
+	"issues-selected":            {tab: tabTracker},
+	"dispatch-sheet":             {tab: tabTracker, sheet: true},
+	"swarm":                      {tab: tabWorkers, liveSel: 2}, // admin-3rgp.33 — worker, failed
+	"config":                     {tab: tabConfig},
+	"no-manifest":                {tab: tabRepo, noMan: true},
+
+	// Hosted-process surfaces (admin-3rgp.61/.63). liveSel here indexes
+	// liveRows, the row the attached view shows (attachedFor).
+	"hosted":       {tab: tabWorkers, liveSel: 1, hosted: true},
+	"hosted-empty": {tab: tabWorkers, liveSel: 1, hosted: true, hostedEmpty: true},
+	"hosted-quit":  {tab: tabCommands, liveSel: -1, sheet: true, running: true},
 
 	// The Commands surface — see the block above render() for the fixture and
 	// the interaction. Both render through renderWorkBody, never hostedBody.
-	"commands": {tab: 0, liveSel: -1},
+	"commands": {tab: tabCommands, liveSel: -1},
 	// The cursor on a command that IS running: the row carries its own state
 	// word and the band previews the running process, not a description of it.
 	// 9 is "dev cf" in selectableCommands() order, stored +1.
-	"commands-running": {tab: 0, liveSel: -1, cmdSel: 9},
-	"commands-empty":   {tab: 0, liveSel: -1},
+	"commands-running": {tab: tabCommands, liveSel: -1, cmdSel: 9},
+	"commands-empty":   {tab: tabCommands, liveSel: -1},
 
 	// The embedded modes. tab drives only the prototype's own tab bar and
 	// footer; the body comes from repo-dash via the key sequence in `embedded`.
-	"repo-commits":      {tab: 1},
-	"repo-filter":       {tab: 1},
-	"repo-new-worktree": {tab: 1},
-	"tracker-detail":    {tab: 2},
-	"tracker-graph":     {tab: 2},
-	"tracker-blocking":  {tab: 2},
-	"tracker-tree":      {tab: 2},
-	"tracker-filter":    {tab: 2},
-	"config-local":      {tab: 3},
+	"repo-commits":      {tab: tabRepo},
+	"repo-filter":       {tab: tabRepo},
+	"repo-new-worktree": {tab: tabRepo},
+	"tracker-detail":    {tab: tabTracker},
+	"tracker-graph":     {tab: tabTracker},
+	"tracker-blocking":  {tab: tabTracker},
+	"tracker-tree":      {tab: tabTracker},
+	"tracker-filter":    {tab: tabTracker},
+	"config-local":      {tab: tabConfig},
 }
 
 var selDelta int
 
-var workTabs = []string{"commands", "repo", "issues", "config"}
+var workTabs = []string{"commands", "swarm", "repo", "issues", "config"}
 
 func onKey(key string, s State, set func(axis, value string)) bool {
 	cur := s.Get("screen")
@@ -359,7 +361,7 @@ func onKey(key string, s State, set func(axis, value string)) bool {
 	// on the hosted pty view (its footer promises typing goes to the process)
 	// or under an overlay.
 	if key == "p" {
-		if sp := screens[cur]; sp.tab == 0 && !sp.hosted && !sp.sheet {
+		if sp := screens[cur]; sp.tab <= tabWorkers && !sp.hosted && !sp.sheet {
 			set("screen", "commands")
 			return true
 		}
@@ -376,10 +378,12 @@ func onKey(key string, s State, set func(axis, value string)) bool {
 	case "tab", "right", "l":
 		set("screen", workTabs[(idx+1)%len(workTabs)])
 		selDelta = 0
+		enterTab(workTabs[(idx+1)%len(workTabs)])
 		return true
 	case "shift+tab", "left", "h":
 		set("screen", workTabs[(idx-1+len(workTabs))%len(workTabs)])
 		selDelta = 0
+		enterTab(workTabs[(idx-1+len(workTabs))%len(workTabs)])
 		return true
 	case "down", "j":
 		selDelta++
@@ -409,8 +413,13 @@ func onKey(key string, s State, set func(axis, value string)) bool {
 		case "dispatch-sheet":
 			set("screen", "issues")
 		case "hosted", "hosted-empty":
+			// Detach returns to the tab the attached row lives on.
+			back := "commands"
+			if attachedRow != nil && isWorkerRow(attachedRow) {
+				back = "swarm"
+			}
 			attachedRow = nil
-			set("screen", "commands")
+			set("screen", back)
 		case "hosted-quit":
 			set("screen", "commands")
 		default:
@@ -777,10 +786,12 @@ func tailLines(tail []string, n, w int) []string {
 // commandEntry is one FULLY RESOLVED invocation — what actually gets
 // dispatched. "deploy grafana" is an entry; "deploy" alone (the parent,
 // ambiguous among 8 targets) never is, which is why a parent row carries
-// group=true and no marker.
+// group=true and no marker. A spacer is the blank row between two command
+// groups: no name, no marker, never under the cursor.
 type commandEntry struct {
 	parent, target, run string
 	group               bool
+	spacer              bool
 	last                bool
 }
 
@@ -823,10 +834,13 @@ func parentOf(name string) commandParent {
 
 // commandRows is the Commands section in draw order: each parent heading (a
 // group row, unselectable) followed by its targets, and a flat command as a
-// single selectable row of its own.
+// single selectable row of its own, with a spacer wherever the group changes.
 func commandRows() []commandEntry {
 	var out []commandEntry
-	for _, p := range commandParents {
+	for i, p := range commandParents {
+		if i > 0 && p.group != commandParents[i-1].group {
+			out = append(out, commandEntry{spacer: true})
+		}
 		if len(p.targets) == 0 {
 			out = append(out, commandEntry{parent: p.name, run: "bash " + p.name + ".sh"})
 			continue
@@ -856,6 +870,11 @@ type commandParent struct {
 	// parent the fixture carries, since a selection-sourced workflow never
 	// reaches the Commands tab at all (WorkflowTarget.AppearsInCommandList).
 	query string
+	// group is the manifest's command group. The real list draws one blank
+	// row wherever the group changes (internal/tui/work.go's workRows); the
+	// fixture's second group (lint, fmt, clean) puts that spacer at the foot
+	// of the Commands list, below every dumped frame's window.
+	group int
 }
 
 var commandParents = []commandParent{
@@ -881,9 +900,9 @@ var commandParents = []commandParent{
 		targets: []string{"deploy", "diff", "export"}},
 	{name: "xplay-trail", kind: "multi-target", desc: "Trail xplay transfers live (preview|staging|prod, or raw <flags>)",
 		targets: []string{"preview", "prod", "raw", "staging"}},
-	{name: "lint", kind: "shell", desc: "Lint and auto-fix all apps and packages"},
-	{name: "fmt", kind: "shell", desc: "Format all files"},
-	{name: "clean", kind: "shell", desc: "Remove build artifacts"},
+	{name: "lint", kind: "shell", desc: "Lint and auto-fix all apps and packages", group: 1},
+	{name: "fmt", kind: "shell", desc: "Format all files", group: 1},
+	{name: "clean", kind: "shell", desc: "Remove build artifacts", group: 1},
 }
 
 // commandEntries is commandParents flattened to the resolved shape fuzzy
@@ -911,44 +930,67 @@ var commandEntries = func() []commandEntry {
 }()
 
 var (
-	cmdCursor int
-	// cmdCursorMoved lets a screen's declared liveSel seed the combined cursor
-	// without freezing it: until ↑↓ is actually pressed the seed wins, after
-	// that the cursor is the user's. Reset clears it, so every dumped frame
-	// renders its own screen's seed rather than the previous frame's.
-	cmdCursorMoved bool
-	cmdStatus      string
+	// cursorAt is each list tab's own cursor, indexed by tabCommands and
+	// tabWorkers, as the real Model.cursor is per tab: leaving a tab and coming
+	// back finds the cursor where it was left.
+	cursorAt [tabWorkers + 1]int
+	// cursorMoved lets a screen's declared cmdSel/liveSel seed its tab's cursor
+	// without freezing it: until the cursor is moved or the tab is entered by
+	// ←→, the seed wins, after that the cursor is the user's. Reset clears it,
+	// so every dumped frame renders its own screen's seed rather than the
+	// previous frame's.
+	cursorMoved [tabWorkers + 1]bool
+	cmdStatus   string
 	// attachedRow is which live row the hosted view is showing. Set by ↵/a,
 	// cleared on detach, so attaching to a different row actually changes what
 	// that view renders.
 	attachedRow *liveRow
 )
 
-// isWorkTab is every Work-tab list screen — the Commands surface and the
-// live-cursor screens alike. Keying off the name prefix missed running/swarm,
-// so ↵ on a live row fell through to onKey's own switch and the two disagreed
-// about what attach meant.
+// isWorkTab is every Commands- or Workers-tab list screen, whichever row the
+// cursor sits on. Keying off the name prefix missed running/swarm, so ↵ on a
+// live row fell through to onKey's own switch and the two disagreed about what
+// attach meant.
 func isWorkTab(screen string) bool {
 	sp, ok := screens[screen]
-	return ok && sp.tab == 0 && !sp.hosted && !sp.sheet
+	return ok && sp.tab <= tabWorkers && !sp.hosted && !sp.sheet
 }
 
-func resetCursor() { cmdCursor, cmdCursorMoved, cmdStatus, attachedRow = 0, false, "", nil }
+func onWorkersTab(screen string) bool { return screens[screen].tab == tabWorkers }
 
-// dispatchCommand is Enter on a Commands row: materialize it as a live row so
-// there is something to attach to, kill or trail. cmd is left "" on purpose so
-// it renders in Workers, the same shape a hosted command already has.
+func resetCursor() {
+	cursorAt, cursorMoved = [tabWorkers + 1]int{}, [tabWorkers + 1]bool{}
+	cmdStatus, attachedRow = "", nil
+}
+
+// enterTab is arriving on a screen by ←→. A screen's own seed is for its
+// dumped frame; a person arriving on a list tab for the first time starts on
+// its top row, and on any later visit finds the row they left.
+func enterTab(screen string) {
+	if t := screens[screen].tab; t <= tabWorkers && !cursorMoved[t] {
+		cursorAt[t], cursorMoved[t] = 0, true
+	}
+}
+
+// isLive is entryIsLive (internal/tui/work.go): a failed or exited row is
+// still listed, but ↵ no longer attaches to it and x has nothing to kill.
+func isLive(lr *liveRow) bool {
+	return lr != nil && lr.state != "failed" && lr.state != "exited"
+}
+
+// dispatchCommand is Enter on an idle Commands row: materialize it as a live
+// row so there is something to attach to or kill. It runs on its own row in
+// the Commands list, the same as dev cf and test gate in the seed.
 func dispatchCommand(e commandEntry) {
-	r := e.resolved()
-	cmdStatus = "dispatched: " + r
-	for i := range liveRows {
-		if liveRows[i].cmd == "" && liveRows[i].id == r {
-			return // already running — dispatching again just re-selects it
-		}
+	cmdStatus = "dispatched: " + e.resolved()
+	if liveForEntry(e, false) != nil {
+		return // already running — ↵ attaches instead, see activate
 	}
 	liveRows = append(liveRows, liveRow{
-		state: "running", id: r, doing: "starting…", hosted: true, lastCmd: e.run,
-		hasRing: true, tail: []string{
+		state: "running", id: e.resolved(), doing: "starting…", cmd: e.parent, target: e.target,
+		hosted: true, elapsed: "0s", lastCmd: e.run, hasRing: true,
+		logPath: root + "/.admin/logs/" + strings.ReplaceAll(e.resolved(), " ", "-") + ".log",
+		tail: []string{
 			"$ " + e.run,
 			"",
 			"14:22:58 starting…",
@@ -956,24 +998,10 @@ func dispatchCommand(e commandEntry) {
 	})
 }
 
-// paletteWorkerRows is the Workers section's own data, addressable by
-// index for combined cursor math — the same filter renderWorkersColumn
-// uses, returned as pointers so killLiveRow can remove exactly the one
-// selected.
-func paletteWorkerRows() []*liveRow {
-	var out []*liveRow
-	for i := range liveRows {
-		if liveRows[i].cmd == "" {
-			out = append(out, &liveRows[i])
-		}
-	}
-	return out
-}
-
 func killLiveRow(id string) {
 	out := liveRows[:0]
 	for _, lr := range liveRows {
-		if lr.cmd == "" && lr.id == id {
+		if lr.id == id {
 			continue
 		}
 		out = append(out, lr)
@@ -997,49 +1025,57 @@ func liveForEntry(e commandEntry, empty bool) *liveRow {
 }
 
 // selectableCommands is every Commands row the cursor can land on, in draw
-// order. A group row holds targets and runs nothing itself, so it is not here.
+// order. A group row holds targets and runs nothing itself, and a spacer is
+// not a row at all, so neither is here.
 func selectableCommands() []commandEntry {
 	var out []commandEntry
 	for _, e := range commandRows() {
-		if !e.group {
+		if !e.group && !e.spacer {
 			out = append(out, e)
 		}
 	}
 	return out
 }
 
-// moveCursor walks ONE combined list: the Commands rows first, then the live
-// sections in the order liveSectionRows draws them.
-func moveCursor(delta int) {
-	total := len(selectableCommands()) + len(liveSectionRows(false))
-	if total > 0 {
-		cmdCursor = (combinedCursor("", false) + delta + total) % total
+// tabRowCount is how many rows the cursor can land on in this tab's list.
+func tabRowCount(cur string) int {
+	if onWorkersTab(cur) {
+		return len(liveSectionRows(false))
 	}
-	cmdCursorMoved = true
+	return len(selectableCommands())
 }
 
-// combinedCursor is the one cursor every Work-tab screen shares. A screen's
-// liveSel seeds it until ↑↓ moves it.
-func combinedCursor(cur string, empty bool) int {
-	if cmdCursorMoved {
-		return cmdCursor
+// moveCursor walks the active tab's own list. Each tab has its own cursor, as
+// in the real dashboard (Model.cursor is per tab).
+func moveCursor(cur string, delta int) {
+	if total := tabRowCount(cur); total > 0 {
+		t := screens[cur].tab
+		cursorAt[t], cursorMoved[t] = (tabCursor(cur, false)+delta+total)%total, true
 	}
+}
+
+// tabCursor is the cursor on this screen's tab. A screen's cmdSel or liveSel
+// seeds it until ↑↓ moves it.
+func tabCursor(cur string, empty bool) int {
 	sp, ok := screens[cur]
-	if ok && sp.cmdSel > 0 {
-		return sp.cmdSel - 1 // stored +1 so the zero value means "unset"
-	}
-	if !ok || sp.liveSel < 0 {
-		return cmdCursor
-	}
-	total := len(selectableCommands()) + len(liveSectionRows(empty))
-	if total == 0 {
+	if !ok || sp.tab > tabWorkers {
 		return 0
 	}
-	return (len(selectableCommands()) + sp.liveSel) % total
+	if cursorMoved[sp.tab] {
+		return cursorAt[sp.tab]
+	}
+	if onWorkersTab(cur) {
+		if n := len(liveSectionRows(empty)); n > 0 && sp.liveSel >= 0 {
+			return sp.liveSel % n
+		}
+		return 0
+	}
+	if sp.cmdSel > 0 {
+		return sp.cmdSel - 1 // stored +1 so the zero value means "unset"
+	}
+	return 0
 }
 
-// activate is Enter: dispatch if the cursor is on a Commands row, attach if it
-// is on a live row. One key, and what it means follows the row's state.
 // attachedFor is which row the hosted view renders: whatever ↵ attached to
 // while driving, or — for a dumped frame, where nothing has been pressed — the
 // screen's own declared liveSel, so hosted.txt stays a picture of one specific
@@ -1048,80 +1084,100 @@ func attachedFor(screen string) *liveRow {
 	if attachedRow != nil {
 		return attachedRow
 	}
-	var rows []*liveRow
-	for i := range liveRows {
-		rows = append(rows, &liveRows[i])
-	}
-	if sp, ok := screens[screen]; ok && sp.liveSel >= 0 && sp.liveSel < len(rows) {
-		return rows[sp.liveSel]
+	if sp, ok := screens[screen]; ok && sp.liveSel >= 0 && sp.liveSel < len(liveRows) {
+		return &liveRows[sp.liveSel]
 	}
 	return nil
 }
 
-// cursorLive is the live row the combined cursor is on, whether it got there
-// through the Commands list (a command that is running) or through the live
-// sections. nil means the cursor is on something idle.
-func cursorLive() *liveRow {
-	cmds := selectableCommands()
-	if cmdCursor < len(cmds) {
-		return liveForEntry(cmds[cmdCursor], false)
+// cursorLive is the live row the cursor is on: a running command on the
+// Commands tab, or a worker on the Workers tab. nil means the cursor is on
+// something idle.
+func cursorLive(cur string) *liveRow {
+	i := tabCursor(cur, false)
+	if onWorkersTab(cur) {
+		if rows := liveSectionRows(false); i < len(rows) {
+			return rows[i]
+		}
+		return nil
 	}
-	rows := liveSectionRows(false)
-	if i := cmdCursor - len(cmds); i >= 0 && i < len(rows) {
-		return rows[i]
+	if cmds := selectableCommands(); i < len(cmds) {
+		return liveForEntry(cmds[i], false)
 	}
 	return nil
 }
 
-// activate is ↵, and what it does follows the row's state: attach if the row
-// is running, dispatch if it is not. Attaching sets attachedRow and switches
-// to the hosted view — the prototype has to actually go there, or ↵ on a
-// running row is a footer promising something the prototype does not do.
-func activate(set func(axis, value string)) {
-	if lr := cursorLive(); lr != nil {
+// rowAction is what ↵ does on the cursor row, resolveRowAction's answer
+// (internal/tui/work.go): attach while the row's process is live, dispatch an
+// idle or finished command, open the transcript of a finished worker.
+func rowAction(lr *liveRow, onWorkers bool) string {
+	switch {
+	case isLive(lr):
+		return "attach"
+	case onWorkers && lr != nil:
+		return "transcript"
+	}
+	return "dispatch"
+}
+
+// activate is ↵, and what it does follows the row's state (rowAction).
+// Attaching sets attachedRow and switches to the hosted view — the prototype
+// has to actually go there, or ↵ on a running row is a footer promising
+// something the prototype does not do. The prototype has no transcript view,
+// so that action only says what it would open.
+func activate(cur string, set func(axis, value string)) {
+	lr := cursorLive(cur)
+	switch rowAction(lr, onWorkersTab(cur)) {
+	case "attach":
 		attachedRow = lr
 		set("screen", "hosted")
-		return
-	}
-	cmds := selectableCommands()
-	if cmdCursor < len(cmds) {
-		dispatchCommand(cmds[cmdCursor])
+	case "transcript":
+		cmdStatus = "transcript: " + lr.id
+	default:
+		if cmds := selectableCommands(); !onWorkersTab(cur) {
+			if i := tabCursor(cur, false); i < len(cmds) {
+				dispatchCommand(cmds[i])
+			}
+		}
 	}
 }
 
 // killSelected is `x` on a live row. Kill is x, never k — k is cursor-up
-// everywhere in this dashboard.
-func killSelected() {
-	cmds := selectableCommands()
-	wr := paletteWorkerRows()
-	if idx := cmdCursor - len(cmds); idx >= 0 && idx < len(wr) {
-		killLiveRow(wr[idx].id)
-		if cmdCursor > 0 {
-			cmdCursor--
-		}
+// everywhere in this dashboard. A failed or exited row has nothing to kill.
+func killSelected(cur string) {
+	lr := cursorLive(cur)
+	if !isLive(lr) {
+		return
 	}
+	i := tabCursor(cur, false)
+	killLiveRow(lr.id)
+	if onWorkersTab(cur) && i > 0 {
+		i--
+	}
+	t := screens[cur].tab
+	cursorAt[t], cursorMoved[t] = i, true
 }
 
 func onWorkTabKey(key string, cur string, set func(axis, value string)) bool {
 	switch key {
 	case "down", "j":
-		moveCursor(1)
+		moveCursor(cur, 1)
 		return true
-	case "up":
-		moveCursor(-1)
+	case "up", "k":
+		moveCursor(cur, -1)
 		return true
 	case "enter":
-		activate(set)
+		activate(cur, set)
 		return true
 	case "a":
 		// `a` is attach and nothing else, so it is a no-op on an idle row
 		// rather than a second key that starts things.
-		if cursorLive() != nil {
-			activate(set)
+		if isLive(cursorLive(cur)) {
+			activate(cur, set)
 		}
 		return true
 	case "x":
-		killSelected()
+		killSelected(cur)
 		return true
 	}
 	return false
@@ -1134,44 +1190,46 @@ func plural(n int) string {
 	return "s"
 }
 
-// commandRowLine is one row of the Commands section. A multi-target parent
-// renders with NO marker — it is a heading over its targets and runs nothing
-// itself, so the cursor cannot land on it and nothing here promises ↵ will run
-// it. The names still start in the same column, so the tree stays aligned.
-func commandRowLine(e commandEntry, sel bool, w int, empty bool) string {
-	// Every row is the same grid: marker, name, then the state+elapsed columns,
-	// then one free column. What fills the last two is what differs — a running
-	// row spends them on state and activity, an idle one on kind and desc, a
-	// target on its run line.
-	rest := maxInt(w-wMarker-wName-wState-wElapsed-1, 6)
+// commandRowLine is one row of the Commands section, on the same grid
+// internal/tui/workview.go's renderWorkRow draws. lw is the row's width after
+// its one leading column. A multi-target parent renders with NO marker — it is
+// a heading over its targets and runs nothing itself, so the cursor cannot land
+// on it and nothing here promises ↵ will run it. The names still start in the
+// same column, so the tree stays aligned.
+func commandRowLine(e commandEntry, sel bool, lw int, empty bool) string {
+	// A running row spends the columns after the name on state, elapsed and
+	// activity. An idle row has none of those to show, so its description (a
+	// target's run line) starts right after the name and takes their cells.
+	rest := maxInt(lw-wMarker-wName-wState-wElapsed, 6)
+	idle := maxInt(lw-wMarker-wName, 6)
 
+	if e.spacer {
+		return Pad("", lw+1)
+	}
 	if e.group {
 		p := parentOf(e.parent)
-		// Two leading spaces where a runnable row has "◇ ": the marker column is
+		// Two blank cells where a runnable row has "◇ ": the marker column is
 		// what says the cursor can be here, and a group runs nothing itself.
-		// Pad(p.name, wName-1) before the outer Pad(_, wName) reserves one
-		// blank cell: a name that exactly fills wName would otherwise run
-		// straight into the kind column (admin-3rgp.72.19).
-		return Pad("   "+bo.Render(Pad(Pad(p.name, wName-1), wName))+
-			dim.Render(Pad(kindLabel(p.kind), wState+wElapsed)+trunc(p.desc, rest)), w)
+		// The name truncates one cell short of wName so a full-width name never
+		// runs straight into its description (admin-3rgp.72.19).
+		return Pad("   "+bo.Render(Pad(trunc(p.name, wName-1), wName))+dim.Render(trunc(p.desc, idle)), lw+1)
 	}
 
-	// Target rows already get a blank column after the key — the state+
-	// elapsed columns sit between the key and the run line — so only a flat
-	// command's own name (no connector, e.target == "") needs the reserved
-	// cell that keeps its truncation mark off the kind column
-	// (admin-3rgp.72.19).
-	nameW := wName - VW(Strip(e.connector()))
-	truncW := nameW
-	if e.target == "" {
-		truncW--
-	}
-	marker, name := dim.Render("◇ "), Pad(trunc(e.label(), truncW), nameW)
+	marker := dim.Render("◇ ")
 	if sel {
 		marker = cy.Render("◆ ")
-		name = cy.Render(name)
 	}
-	head := " " + marker + e.connector() + name
+	var name string
+	if e.target != "" {
+		key := Pad(trunc(e.target, wName-3), wName-2)
+		if sel {
+			key = cy.Render(key)
+		}
+		name = e.connector() + key
+	} else {
+		name = Pad(trunc(e.parent, wName-1), wName)
+	}
+	head := " " + marker + name
 
 	// A running command says so HERE, on its own row, in the columns the grid
 	// already reserves. There is no separate Running section: a command that is
@@ -1180,18 +1238,17 @@ func commandRowLine(e commandEntry, sel bool, w int, empty bool) string {
 		return Pad(head+
 			liveStyle[lr.state].Render(Pad(liveGlyph(lr)+" "+lr.state, wState))+
 			dim.Render(Pad(lr.elapsed, wElapsed))+
-			dim.Render(trunc(lr.doing, rest)), w)
+			dim.Render(trunc(lr.doing, rest)), lw+1)
 	}
-	// A target says what it will run; a flat command says its kind and what it
-	// is for, because it has no parent heading above it carrying that already.
+	// A target says what it will run; a flat command says what it is for.
 	if e.target != "" {
-		return Pad(head+dim.Render(Pad("", wState+wElapsed)+trunc(e.run, rest)), w)
+		return Pad(head+dim.Render(trunc(e.run, idle)), lw+1)
 	}
-	p := parentOf(e.parent)
-	return Pad(head+dim.Render(Pad(kindLabel(p.kind), wState+wElapsed)+trunc(p.desc, rest)), w)
+	return Pad(head+dim.Render(trunc(parentOf(e.parent).desc, idle)), lw+1)
 }
 
-// kindLabel abbreviates the one kind whose name does not fit the column.
+// kindLabel abbreviates the one kind whose name does not fit the band's kind
+// field.
 func kindLabel(k string) string {
 	if k == "multi-target" {
 		return "multi-tgt"
@@ -1199,15 +1256,14 @@ func kindLabel(k string) string {
 	return k
 }
 
-// commandSections is the Commands list above the live sections: every declared
-// command, groups and their targets, under the same cursor the live rows use.
-// selIdx is the cursor's own 0-based position among the SELECTABLE rows, -1
-// once the selection has moved down into the live sections.
+// commandSections is the Commands tab's list: every declared command, groups
+// and their targets. selIdx is the cursor's own 0-based position among the
+// SELECTABLE rows.
 func commandSections(w, selIdx int, empty bool) []string {
 	out := []string{Pad(" "+bo.Render("Commands")+dim.Render("  "+itoa(len(commandEntries))), w)}
 	sel := 0
 	for _, e := range commandRows() {
-		if e.group {
+		if e.group || e.spacer {
 			out = append(out, commandRowLine(e, false, w, empty))
 			continue
 		}
@@ -1377,22 +1433,14 @@ func liveRowLine(lr *liveRow, sel bool, w int) string {
 	return Pad(" "+marker+name+state+elapsed+dim.Render(Pad(trunc(lr.doing, actW), actW))+where, w)
 }
 
-// liveSections is the Running and Workers sections under the palette box: two
-// labelled groups under one cursor, commands first. They are separate sections
-// because a worker is not a command — it is a Claude session running mostly
-// autonomously in its own worktree, with its own state, its own current
-// activity and a real terminal session you can attach to.
-//
-// selIdx is the combined cursor's own 0-based position within these sections,
-// -1 while the selection is still up in the box.
-// liveSections is the Workers section under the Commands list. There is no
-// Running section: a running COMMAND is its own row in the list above, wearing
-// its state, so a second row for it under a different heading said the same
-// thing twice. A worker is not a command — its own section, its own state
-// words, its own fields — so it keeps one.
+// liveSections is the Workers tab's list. A worker is not a command — it is a
+// Claude session running mostly autonomously in its own worktree, with its own
+// state words, its own fields and a real terminal session you can attach to —
+// so it has its own tab, and never appears on the Commands tab. selIdx is the
+// cursor's 0-based position among the workers.
 func liveSections(w, selIdx int, empty bool) []string {
 	rows := liveSectionRows(empty)
-	out := []string{Pad("", w), Pad(" "+bo.Render("Workers")+dim.Render("  "+itoa(len(rows))), w)}
+	out := []string{Pad(" "+bo.Render("Workers")+dim.Render("  "+itoa(len(rows))), w)}
 	if len(rows) == 0 {
 		return append(out, Pad(" "+dim.Render("no workers running — dispatch a bead from the tracker tab"), w))
 	}
@@ -1402,12 +1450,9 @@ func liveSections(w, selIdx int, empty bool) []string {
 	return out
 }
 
-// liveSectionRows is every live row in the order the sections draw them:
-// commands, then workers. One order, used by the sections, the cursor and the
-// band's own "also running" count, so the three can never disagree.
-// liveSectionRows is every row the Workers section draws. Live COMMANDS are not
+// liveSectionRows is every row the Workers tab draws. Live COMMANDS are not
 // here — they render in the Commands list on their own row — so this is the one
-// order the section, the cursor and the band's "also running" count all read.
+// order the tab, the cursor and the band's "also running" count all read.
 func liveSectionRows(empty bool) []*liveRow {
 	if empty {
 		return nil
@@ -1562,18 +1607,14 @@ func bandIdle(e *commandEntry, w int) []string {
 	return slotRows(rows, w)
 }
 
-// renderWorkBody is the whole Work tab: the palette box and the live sections
+// renderWorkBody is the Commands or Workers tab body: that tab's list
 // scrolling in the top region, then the band. One layout at every geometry.
-func renderWorkBody(w, h int, cmdSelIdx int, selEntry *commandEntry, selWorker *liveRow, workerSelIdx int, empty bool) []string {
-	fullW := maxInt(w-2, 20)
+// list is the tab's rows, already built at workBodyWidth(w).
+func renderWorkBody(w, h int, list []string, selEntry *commandEntry, selWorker *liveRow, empty bool) []string {
+	fullW := workBodyWidth(w)
 	bh := bandH(h)
 	listH := maxInt(h-bh, 1)
 
-	// Commands and the live sections are one scrolling list under one cursor.
-	// The window is taken over the whole thing rather than per section, so a
-	// long command list scrolls its own rows off rather than pushing Workers
-	// out of the body entirely.
-	list := append(commandSections(fullW, cmdSelIdx, empty), liveSections(fullW, workerSelIdx, empty)...)
 	if len(list) > listH {
 		start, end := scrollWindow(len(list), markedIdx(list), listH)
 		win := append([]string{}, list[start:end]...)
@@ -1647,6 +1688,10 @@ func insetRows(rows []string, w int) []string {
 	return out
 }
 
+// workBodyWidth is the width a Commands or Workers row is built at — the real
+// dashboard's lw (internal/tui/workview.go's renderWorkBody).
+func workBodyWidth(w int) int { return maxInt(w-2, 20) }
+
 func prefixRows(rows []string, w int) []string {
 	out := make([]string, len(rows))
 	for i, r := range rows {
@@ -1685,7 +1730,7 @@ func render(s State) string {
 	// switch tabs from inside a process's own terminal (every keystroke belongs
 	// to the child), so a row of tabs there advertises navigation that does not
 	// work. The breadcrumb spends that row saying what you are attached to.
-	second := tabBar(sp, w, s.Get("tracker"))
+	second := tabBar(sp, w, s.Get("tracker"), empty)
 	if sp.hosted {
 		second = attachCrumb(attachedFor(name), w)
 	}
@@ -1700,47 +1745,52 @@ func render(s State) string {
 		rows = append(rows, body[:h-3]...)
 	} else {
 		var body []string
-		onLive := false
+		action := "dispatch"
 		switch {
 		case sp.hosted:
 			body = hostedBody(w, h-5, sp.hostedEmpty, attachedFor(name))
 		default:
-			// Every Work-tab screen is the same body: the Commands list and the
-			// live sections above, the band below. What differs is only where
-			// the combined cursor sits — the screen axis names that, it does
-			// not name a second layout.
-			cmds := selectableCommands()
-			cursor := combinedCursor(name, empty)
-			inCmds := cursor < len(cmds)
-			rowsLive := liveSectionRows(empty)
-			cmdSel, liveSel := -1, -1
+			// The Commands and Workers tabs are the same body: the tab's list
+			// above, the band below. What differs is the list and where the
+			// cursor sits — the screen axis names that, not a second layout.
+			cursor := tabCursor(name, empty)
+			fullW := workBodyWidth(w)
+			var list []string
 			var selLive *liveRow
 			var selEntry *commandEntry
-			switch {
-			case inCmds && len(cmds) > 0:
-				cmdSel = cursor
-				selEntry = &cmds[cursor]
-				// A Commands row for a command that is RUNNING previews the
-				// running thing, not a description of it. The band follows the
-				// row's state, the same rule ↵ follows.
-				if lr := liveForEntry(cmds[cursor], empty); lr != nil {
-					selLive, selEntry = lr, nil
+			if onWorkersTab(name) {
+				rowsLive := liveSectionRows(empty)
+				if cursor >= len(rowsLive) {
+					cursor = 0
 				}
-			case cursor-len(cmds) < len(rowsLive):
-				liveSel = cursor - len(cmds)
-				selLive = rowsLive[liveSel]
-			case len(cmds) > 0:
-				cmdSel = 0
-				selEntry = &cmds[0]
+				if cursor < len(rowsLive) {
+					selLive = rowsLive[cursor]
+				}
+				list = liveSections(fullW, cursor, empty)
+			} else {
+				cmds := selectableCommands()
+				if cursor >= len(cmds) {
+					cursor = 0
+				}
+				if len(cmds) > 0 {
+					selEntry = &cmds[cursor]
+					// A Commands row for a command that is RUNNING previews the
+					// running thing, not a description of it. The band follows
+					// the row's state, the same rule ↵ follows.
+					if lr := liveForEntry(cmds[cursor], empty); lr != nil {
+						selLive, selEntry = lr, nil
+					}
+				}
+				list = commandSections(fullW, cursor, empty)
 			}
-			onLive = selLive != nil
-			body = renderWorkBody(w, h-5, cmdSel, selEntry, selLive, liveSel, empty)
+			action = rowAction(selLive, onWorkersTab(name))
+			body = renderWorkBody(w, h-5, list, selEntry, selLive, empty)
 		}
 		for len(body) < h-5 {
 			body = append(body, "")
 		}
 		rows = append(rows, body[:h-5]...)
-		rows = append(rows, dim.Render(strings.Repeat("─", w)), Pad(" "+dim.Render(keys(name, sp, onLive)), w))
+		rows = append(rows, dim.Render(strings.Repeat("─", w)), Pad(" "+dim.Render(keys(sp, action)), w))
 	}
 	if sp.sheet {
 		if sp.running {
@@ -1779,7 +1829,10 @@ func header(w, h int, src repoSrc) string {
 	return " " + l + strings.Repeat(" ", gap) + r
 }
 
-func tabBar(sp screenSpec, w int, tracker string) string {
+// tabBar is the real dashboard's tab row (internal/tui/view.go's tabBarSegs):
+// Commands and Workers first, each with its count, then Repo, the tracker tab
+// and Config, three spaces apart.
+func tabBar(sp screenSpec, w int, tracker string, empty bool) string {
 	trackerTab := "Beads 227"
 	switch tracker {
 	case "github":
@@ -1787,22 +1840,29 @@ func tabBar(sp screenSpec, w int, tracker string) string {
 	case "prs":
 		trackerTab = "PRs 5"
 	}
-	defs := []string{"Work 12", "Repo", trackerTab, "Config"}
+	defs := []string{
+		"Commands " + itoa(len(commandEntries)),
+		"Workers " + itoa(len(liveSectionRows(empty))),
+		"Repo", trackerTab, "Config",
+	}
 	active := sp.tab
 	if sp.noMan {
-		defs = defs[1:]
-		active--
+		// No manifest, no commands and no workers: both tabs go.
+		defs = defs[tabRepo:]
+		active -= tabRepo
 	}
 	var b strings.Builder
 	b.WriteString(" ")
 	for i, t := range defs {
+		if i > 0 {
+			b.WriteString("   ")
+		}
 		label := " " + t + " "
 		if i == active {
 			b.WriteString(pill.Render(label))
 		} else {
 			b.WriteString(dim.Render(label))
 		}
-		b.WriteString("  ")
 	}
 	return Pad(b.String(), w)
 }
@@ -1889,16 +1949,24 @@ func placeBox(rows, box []string, w, h, bw int) []string {
 	return rows
 }
 
-// keys is the footer, and on the Work tab it follows what the cursor is on —
-// ↵ is the row's one primary action and its verb changes with the row's state:
-// attach while it runs, dispatch while it does not. Kill is `x`: `k` is cursor-up
-// everywhere in this dashboard, so a footer advertising "k kill" was a collision.
-func keys(name string, sp screenSpec, onLive bool) string {
-	if sp.tab == 0 && !sp.hosted && !sp.sheet {
-		if onLive {
-			return "↑↓ move · ↵ attach · x kill · q/esc quit"
+// keys is the footer, the real dashboard's for the same row
+// (internal/tui/work.go's workFooterPairs, then view.go's keymap appending
+// `o config` and `←→ tab`). On the Commands and Workers tabs it follows what
+// the cursor is on — ↵ is the row's one primary action and its verb changes
+// with the row's state (rowAction): attach while it runs, dispatch while it
+// does not, transcript on a finished worker. Kill is `x`, shown only on a live
+// row: `k` is cursor-up everywhere in this dashboard. `c collapse` folds the
+// Commands tab's targets, so the Workers tab does not offer it.
+func keys(sp screenSpec, action string) string {
+	if sp.tab <= tabWorkers && !sp.hosted && !sp.sheet {
+		k := "↑↓ move · ↵ " + action
+		if action == "attach" {
+			k += " · x kill"
 		}
-		return "↑↓ move · ↵ dispatch · q/esc quit"
+		if sp.tab == tabCommands {
+			k += " · c collapse"
+		}
+		return k + " · q/esc quit · o config · ←→ tab"
 	}
 	switch {
 	case sp.sheet && sp.running:
@@ -1907,10 +1975,6 @@ func keys(name string, sp screenSpec, onLive bool) string {
 		return "⏎ dispatch · e edit · esc cancel"
 	case sp.hosted:
 		return "esc detach · typing goes to the process"
-	case sp.tab == 1:
-		return "↑↓ move · ↵ checkout · ⌥↵/W worktree · p pull · ←→ tab"
-	case sp.tab == 2:
-		return "↑↓ move · ↵ start work · o open · / filter · ←→ tab"
 	}
 	return "↑↓ move · ←→ tab · q quit"
 }

@@ -1,19 +1,19 @@
  beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
-  Work 12    Repo    Beads 227    Config                                                        
-                                                                                                
- Commands   ↑ 49 more                                                                           
- ◇ ├ preview                        cd apps && bunx wrangler xplay-trail --target preview       
- ◇ ├ prod                           cd apps && bunx wrangler xplay-trail --target prod          
- ◇ ├ raw                            cd apps && bunx wrangler xplay-trail --target raw           
- ◇ └ staging                        cd apps && bunx wrangler xplay-trail --target staging       
- ◇ lint            shell            Lint and auto-fix all apps and packages                     
- ◇ fmt             shell            Format all files                                            
- ◇ clean           shell            Remove build artifacts                                      
+  Commands 47     Workers 3     Repo     Beads 227     Config                                   
                                                                                                 
  Workers  3                                                                                     
  ◇ admin-3rgp.36   ◈ running 18m    writing internal/lua/host.go                        pane 3  
  ◆ admin-3rgp.7    ◐ waiting 6m     needs input: root command name                      pane 4  
  ◇ admin-3rgp.33   ✗ failed  2m     go test ./internal/detect FAIL                      pane 5  
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
 ── ◐ admin-3rgp.7  waiting  6m ────────────────────────────────── also 2 commands · 2 workers ──
  log      /Users/dev/admin-project-tool/.admin/logs/worker-admin-3rgp.7.log                     
  branch   feat/admin-3rgp.7-root-command                                                        
@@ -27,4 +27,4 @@
                                                                                                 
    needs input: root command name                                                               
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ attach · x kill · q/esc quit                                                       
+ ↑↓ move · ↵ attach · x kill · q/esc quit · o config · ←→ tab                                   

@@ -1,30 +1,30 @@
  beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
-  Work 12    Repo    Beads 227    Config                                                        
+  Commands 47     Workers 3     Repo     Beads 227     Config                                   
                                                                                                 
- Commands   ↑ 49 more                                                                           
- ◇ ├ preview                        cd apps && bunx wrangler xplay-trail --target preview       
- ◇ ├ prod                           cd apps && bunx wrangler xplay-trail --target prod          
- ◇ ├ raw                            cd apps && bunx wrangler xplay-trail --target raw           
- ◇ └ staging                        cd apps && bunx wrangler xplay-trail --target staging       
- ◇ lint            shell            Lint and auto-fix all apps and packages                     
- ◇ fmt             shell            Format all files                                            
- ◇ clean         ┌────────────────────────────────────────────────────────────┐                 
-                 │  Quit — 2 processes still running                          │                 
- Workers  3      │                                                            │                 
- ◇ admin-3rgp.36 │    running  dev       vitepress dev · localhost:5173       │         pane 3  
- ◆ admin-3rgp.7  │    waiting  test      Enter a number, or q to cancel:      │         pane 4  
- ◇ admin-3rgp.33 │                                                            │         pane 5  
-── ◐ admin-3rgp.7│    Workers keep running — they have their own panes.       │ds · 2 workers ──
- log      /Users/│                                                            │                 
- branch   feat/ad│    ⏎ kill them and quit     esc cancel                     │                 
- worktree /Users/└────────────────────────────────────────────────────────────┘                 
- session  pane 4 · detached, outlives admin                                                     
- now      needs input: root command name                                                        
+ Commands  47                                                                                   
+   deploy          Deploy a service to production                                               
+ ◆ ├ analytics-eng cd apps && bunx wrangler deploy --target analytics-eng                       
+ ◇ ├ chat-moderat… cd apps && bunx wrangler deploy --target chat-moderation                     
+ ◇ ├ hand-reports… cd apps && bunx wrangler deploy --target hand-reports-drain                  
+ ◇ ├ ios           cd apps && bunx wrangler deploy --target ios                                 
+ ◇ ├ ios-device    cd apps && bunx wrangler deploy --target ios-device                          
+ ◇ ├ mainframe   ┌────────────────────────────────────────────────────────────┐                 
+ ◇ ├ name-check  │  Quit — 2 processes still running                          │                 
+ ◇ └ tournament-p│                                                            │r                
+   dev           │    running  dev       vitepress dev · localhost:5173       │                 
+ ◇ ├ cf          │    waiting  test      Enter a number, or q to cancel:      │                 
+   ↓ more        │                                                            │                 
+── deploy analyti│    Workers keep running — they have their own panes.       │ds · 3 workers ──
+ kind     target │                                                            │                 
+ desc     Deploy │    ⏎ kill them and quit     esc cancel                     │                 
+ last run never  └────────────────────────────────────────────────────────────┘                 
+ last log —                                                                                     
                                                                                                 
-   what should the root command be called? this                                                 
-   decides the CLI verb ("admin <name>") and the                                                
-   dashboard's header line.                                                                     
                                                                                                 
-   needs input: root command name                                                               
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+ output appears here while it runs                                                              
 ────────────────────────────────────────────────────────────────────────────────────────────────
  ⏎ kill them and quit · esc cancel                                                              

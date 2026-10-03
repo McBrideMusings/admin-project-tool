@@ -1,17 +1,17 @@
  beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
-  Work 12    Repo    Beads 227    Config                                                        
+  Commands 47     Workers 3     Repo     Beads 227     Config                                   
                                                                                                 
  Commands  47                                                                                   
-   deploy          multi-tgt        Deploy a service to production                              
- ◆ ├ analytics-eng                  cd apps && bunx wrangler deploy --target analytics-eng      
- ◇ ├ chat-moderati…                 cd apps && bunx wrangler deploy --target chat-moderation    
- ◇ ├ hand-reports-…                 cd apps && bunx wrangler deploy --target hand-reports-dra…  
- ◇ ├ ios                            cd apps && bunx wrangler deploy --target ios                
- ◇ ├ ios-device                     cd apps && bunx wrangler deploy --target ios-device         
- ◇ ├ mainframe                      cd apps && bunx wrangler deploy --target mainframe          
- ◇ ├ name-check                     cd apps && bunx wrangler deploy --target name-check         
- ◇ └ tournament-pr…                 cd apps && bunx wrangler deploy --target tournament-proce…  
-   dev             multi-tgt        Run a local dev server                                      
+   deploy          Deploy a service to production                                               
+ ◆ ├ analytics-eng cd apps && bunx wrangler deploy --target analytics-eng                       
+ ◇ ├ chat-moderat… cd apps && bunx wrangler deploy --target chat-moderation                     
+ ◇ ├ hand-reports… cd apps && bunx wrangler deploy --target hand-reports-drain                  
+ ◇ ├ ios           cd apps && bunx wrangler deploy --target ios                                 
+ ◇ ├ ios-device    cd apps && bunx wrangler deploy --target ios-device                          
+ ◇ ├ mainframe     cd apps && bunx wrangler deploy --target mainframe                           
+ ◇ ├ name-check    cd apps && bunx wrangler deploy --target name-check                          
+ ◇ └ tournament-p… cd apps && bunx wrangler deploy --target tournament-processor                
+   dev             Run a local dev server                                                       
  ◇ ├ cf            ● running 4m12s  vitepress dev · localhost:5173                              
    ↓ more                                                                                       
 ── deploy analytics-eng  not running ──────────────────────────── also 2 commands · 3 workers ──
@@ -27,4 +27,4 @@
                                                                                                 
  output appears here while it runs                                                              
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ dispatch · q/esc quit                                                              
+ ↑↓ move · ↵ dispatch · c collapse · q/esc quit · o config · ←→ tab                             

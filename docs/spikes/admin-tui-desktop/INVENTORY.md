@@ -5,40 +5,43 @@ be able to reach all of it — a mode the prototype cannot show is a mode the me
 drop.
 
 **Read `README.md` first: this directory is the design source of truth, not an expiring spike.**
-The Work-tab rows below describe the design the app is being brought to; every other row
+The Commands and Workers rows below describe the design the app is being brought to; every other row
 describes what the app draws today, rendered through `internal/tui.Frame`.
 
-Read from the source, not from memory: tabs at `model.go:27`, visibility at `model.go:352`,
-keymap at `view.go:591`, footer states at `view.go:500`, overlay tabs at `beadoverlay.go:24`,
+Read from the source, not from memory: tabs at `model.go`'s `tabNames`, visibility at its
+`visibleTabs`, the tab row at `view.go`'s `tabBarSegs`, keymap at its `keymap`, footer states at `view.go:500`, overlay tabs at `beadoverlay.go:24`,
 local panes at `local.go:16`.
 
-## The Work tab
+## The Commands and Workers tabs
 
-One surface, one band. Commands and Workers are two sections under one cursor, and the band
-under them previews whatever that cursor is on. There is no Running section: a running command
-is its own row in the Commands list, wearing its state.
+Two tabs, one layout: the tab's list above, a full-width band below previewing whatever the
+tab's cursor is on. Commands lists every declared command, its targets under it, with a blank
+row wherever the manifest's command group changes; Workers lists every live agent worker. There
+is no Running section: a running command is its own row in the Commands list, wearing its state.
+No row carries a kind column — the kind is a band field.
 
 | Frame | What it shows |
 | --- | --- |
-| `commands.txt` | The Commands list, the live sections, the band on the selected entry |
+| `commands.txt` | The Commands list, the band on the selected entry |
 | `commands-running.txt` | The cursor on a command that IS running — the row carries its state, the band previews its output |
 | `commands-empty.txt` | Nothing running and no workers |
 | `commands-workflow-selected.txt` | A workflow entry selected — targets are tracker items, so `↵` dispatches an agent |
-| `running.txt` | The cursor on a live worker; the band shows its log, urls and tail |
-| `swarm.txt` | The cursor on a live worker; the band shows log, branch, worktree, session, now, tail |
+| `running.txt` | The Workers tab, cursor on a waiting worker; the band shows log, branch, worktree, session, now, tail |
+| `swarm.txt` | The Workers tab, cursor on a failed worker; the same band fields |
 | `hosted.txt` / `hosted-empty.txt` | Attached to a hosted pty — full width, the child's own screen. No tab bar: that row carries the attach breadcrumb and the absolute log path instead |
 | `hosted-quit.txt` | The quit confirm over live children |
 | `dispatch-sheet.txt` | Dispatching from the tracker tab |
 | `no-manifest.txt` | A repo with no `admin.toml` |
 
-**Work-tab keys.** `↑↓`/`jk` move the one combined cursor (Commands, then Workers) · `↵` the row's primary action, following its state · `x` kill · `a` attach ·
-`p` back to the Commands surface · `←→`/`⇥` switch tabs · `q`/`esc` quit, or detach while
-attached. A multi-target parent is a group row: no marker, and the cursor skips over it.
+**Commands/Workers keys.** `↑↓`/`jk` move the tab's cursor · `↵` the row's primary action, following its state · `x` kill (shown on a running row) · `a` attach ·
+`c` collapse targets (Commands only) · `o` config · `←→` switch tabs · `q`/`esc` quit, or detach while attached. A multi-target parent is a
+group row: no marker, and the cursor skips over it.
 
 ## Tabs
 
-`tabNames = {"Local", "PRs", "Issues", "Beads", "Config"}` — Local draws as **Repo**
-(`view.go:389`). Digit keys `1`–`4` index the *drawn* list, not this one.
+`tabNames = {"Commands", "Workers", "Local", "PRs", "Issues", "Beads", "Config"}` — Local draws
+as **Repo**. Commands and Workers are drawn only when the repo has an `admin.toml`. Digit keys
+index the *drawn* list, not this one.
 
 **Which tabs are drawn is derived, never configured** (`visibleTabs`, `model.go:352`):
 
