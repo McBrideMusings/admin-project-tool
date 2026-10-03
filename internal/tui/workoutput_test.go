@@ -224,6 +224,42 @@ func TestRingTailLinesNoBlankRowBetweenLines(t *testing.T) {
 	}
 }
 
+// TestRingTailLinesNoControlBytes feeds the band the line a docker build of
+// ffmpeg printed — make's "INSTALL\t<file>" behind buildkit's "#34 493.7"
+// prefix — plus a progress line redrawn with bare "\r" and a stray
+// backspace. A tab measures zero cells but the terminal jumps to the next
+// tab stop, so the row painted wider than its width and wrapped, scrolling
+// the dashboard and leaving the line drawn over the header. Every rendered
+// line must be plain printable text no wider than w.
+func TestRingTailLinesNoControlBytes(t *testing.T) {
+	r := livework.NewRing(4096)
+	r.Write([]byte("#34 493.7 INSTALL\tlibavfilter/libavfilter.a\r\n" +
+		"pull 10%\rpull 55%\rpull 100%\r\n" +
+		"abc\bd\r\n"))
+
+	const w = 30
+	lines := ringTailLines(r, w)
+	want := []string{
+		"#34 493.7 INSTALL       libav…",
+		"pull 100%",
+		"abd",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("ringTailLines = %q, want %q", lines, want)
+	}
+	for i, l := range lines {
+		if l != want[i] {
+			t.Errorf("line %d = %q, want %q", i, l, want[i])
+		}
+		if strings.IndexFunc(l, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+			t.Errorf("line %d = %q carries a control byte", i, l)
+		}
+		if vlen(l) > w {
+			t.Errorf("line %d = %q is %d cells, wider than %d", i, l, vlen(l), w)
+		}
+	}
+}
+
 // TestRenderWorkBandNoBlankRowBetweenTailLines is the same defect proven
 // through the full band assembly (renderWorkBand), not just ringTailLines in
 // isolation — the shape a real live band actually renders.
