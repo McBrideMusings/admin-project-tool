@@ -6,6 +6,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -351,6 +352,12 @@ type Model struct {
 	errTitle  string // the action that failed, e.g. "pull failed"
 	errDetail string // git's full output, headline included
 	errOpen   bool   // the overlay is up
+
+	// syncFailedAt is when the last sync that came back with a failed section
+	// finished — printed beside the header's "sync failed" so a failure from
+	// twenty minutes ago is not mistaken for one that just happened. The failed
+	// sections themselves live on m.remote (data.Remote.FetchErrors).
+	syncFailedAt time.Time
 
 	// herdr mode: when running inside a herdr pane, enter on a worktree action
 	// creates/opens it inline (opening a focused herdr workspace) and the
@@ -1076,6 +1083,52 @@ func (m *Model) stashErrDetail(title string, err error) {
 	}
 }
 
+// settleSyncFailure updates what the dashboard says about the sync once a
+// result lands. A failure puts its first error on the status line and every
+// error, verbatim, in the `e` overlay beside the sync log's path — the same
+// one-slot rule action failures follow, newest failure wins. Two guards keep a
+// failure that simply persists from clobbering anything: an unchanged set of
+// errors is not announced again on every poll, and an open overlay is never
+// swapped out from under the reader. A clean sync withdraws whatever the sync
+// itself put up, leaving an action's error alone.
+func (m *Model) settleSyncFailure(prev, failed []data.SectionError, at time.Time) {
+	if len(failed) == 0 {
+		// Recognised by its own text, so whatever an action wrote since stays put.
+		if strings.HasPrefix(m.errTitle, syncErrTitle) {
+			m.errTitle, m.errDetail, m.errOpen = "", "", false
+		}
+		if strings.HasPrefix(m.status, syncErrStatus) {
+			m.status, m.statusFg, m.statusHint = "", nil, ""
+		}
+		return
+	}
+	m.syncFailedAt = at
+	if slices.Equal(prev, failed) || m.errOpen {
+		return
+	}
+	var b strings.Builder
+	for _, f := range failed {
+		fmt.Fprintf(&b, "%s: %s\n\n", f.Section, f.Err)
+	}
+	b.WriteString("log: " + data.SyncLogPath())
+	m.errTitle = syncErrTitle + at.Format("3:04:05pm")
+	m.errDetail = b.String()
+	m.setStatus(syncErrStatus+failed[0].Section+": "+oneLine(failed[0].Err), cRed)
+	m.statusHint = "e for detail"
+}
+
+// syncErrTitle / syncErrStatus open the `e` title and the status line a sync
+// failure writes — how settleSyncFailure tells its own text from an action's.
+const (
+	syncErrTitle  = "sync failed at "
+	syncErrStatus = "sync failed: "
+)
+
+// oneLine folds a multi-line error onto one line for a row that has only one.
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
 // resetCursors sends every cursor back to the top — used when the filter changes.
 // The clamp then snaps the active tab's cursor onto the first selectable row.
 func (m *Model) resetCursors() {
@@ -1556,7 +1609,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ApplyTo overlays each section that came back clean and leaves a failed
 		// one's cached rows and stamp alone, so one timed-out `gh` call empties
 		// nothing on screen.
+		prevFailed := m.remote.FetchErrors()
 		msg.r.ApplyTo(&m.remote)
+		m.settleSyncFailure(prevFailed, msg.r.FetchErrors(), msg.at)
 		m.haveData = true
 		m.settleActiveTab()
 		m.clampCursor()

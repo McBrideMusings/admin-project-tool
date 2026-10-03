@@ -372,11 +372,13 @@ func (m Model) headerLine(width int) string {
 		right = []seg{{t: "⟳ " + m.createLabel, fg: cCyan}}
 	case m.isRefreshing():
 		right = []seg{{t: "⟳ syncing", fg: cDim}}
-	case m.remote.PRsFetchError != "" || m.remote.IssuesFetchError != "" || m.remote.MergedFetchError != "":
+	case len(m.remote.FetchErrors()) > 0:
 		// Any section of the one sync failing is the sync failing. Persists until
 		// the next successful one clears it — otherwise a section silently keeps
-		// showing data older than the header's age label admits.
-		right = []seg{{t: "⚠ sync failed", fg: cRed}}
+		// showing data older than the header's age label admits. Names the failed
+		// sections and when, so a stale failure reads as stale; the error text
+		// itself is behind `e` (reportSyncFailure).
+		right = []seg{{t: m.syncFailedLabel(), fg: cRed}}
 	case m.active == tabBeads || m.active == tabIssues:
 		// The active sort order, named so it's readable without opening
 		// anything (admin-wihc). Freshness still shows alongside it — the
@@ -390,6 +392,20 @@ func (m Model) headerLine(width int) string {
 		right = []seg{m.freshnessSeg()}
 	}
 	return renderSegs(composeLR(left, right, width), nil)
+}
+
+// syncFailedLabel is the header's failure text: "⚠ sync failed · PRs, merged ·
+// 2:03pm". The time is absent when no failure was seen this session.
+func (m Model) syncFailedLabel() string {
+	var names []string
+	for _, f := range m.remote.FetchErrors() {
+		names = append(names, f.Section)
+	}
+	label := "⚠ sync failed · " + strings.Join(names, ", ")
+	if !m.syncFailedAt.IsZero() {
+		label += " · " + m.syncFailedAt.Format("3:04pm")
+	}
+	return label
 }
 
 // freshnessSeg is the header's right-side cache indicator: the age of the data

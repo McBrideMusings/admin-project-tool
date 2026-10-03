@@ -710,10 +710,12 @@ func UpstreamState(branches []BranchInfo) (gone, fullyPushed map[string]bool) {
 // branch is gone. Without it "upstream gone" and "fully pushed to origin" are
 // judged against whatever refs happen to be in .git, so a branch deleted on the
 // remote since the last fetch still reads as alive. It never mutates the remote or
-// any local branch — only refs/remotes. Errors are swallowed: no origin or no
-// network just means classifying against the refs already known.
-func FetchPrune(ctx context.Context, dir string) {
-	_, _ = runner(ctx, dir, "fetch", "--prune", "origin")
+// any local branch — only refs/remotes. A failure is returned for a caller that
+// logs it, and is otherwise safe to ignore: no origin or no network just means
+// classifying against the refs already known.
+func FetchPrune(ctx context.Context, dir string) error {
+	_, err := runner(ctx, dir, "fetch", "--prune", "origin")
+	return err
 }
 
 // MergedIntoDefault returns the local branches whose commits are all reachable

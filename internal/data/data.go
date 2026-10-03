@@ -6,6 +6,8 @@ package data
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -309,6 +311,14 @@ func mergeSave(nwo string, apply func(*Remote)) {
 	})
 }
 
+// fetchPRsFn, fetchIssuesFn and fetchMergedFn are the three section fetches
+// FetchAll runs — vars so a test can fail one without a `gh` round trip.
+var (
+	fetchPRsFn    = fetchPRs
+	fetchIssuesFn = fetchIssues
+	fetchMergedFn = fetchMerged
+)
+
 // FetchAll queries every remote section the dashboard shows — open PRs, open
 // issues, and the merged-PR set — in one go, and writes all three into the cache
 // under a single lock. This is the dashboard's only whole-repo fetch: the three
@@ -331,14 +341,30 @@ func FetchAll(ctx context.Context, nwo string, mergedLimit int, withIssues bool)
 	if nwo == "" {
 		return Remote{}
 	}
+	LogSync(nwo, "start", 0, fmt.Sprintf("issues=%t merged_limit=%d", withIssues, mergedLimit), nil)
 	var prs, issues, merged Remote
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); prs = fetchPRs(ctx, nwo) }()
-	go func() { defer wg.Done(); merged = fetchMerged(ctx, nwo, mergedLimit) }()
+	go func() {
+		defer wg.Done()
+		start := time.Now()
+		prs = fetchPRsFn(ctx, nwo)
+		LogSync(nwo, "prs", time.Since(start), fmt.Sprintf("n=%d", len(prs.PRs)), errOf(prs.PRsFetchError))
+	}()
+	go func() {
+		defer wg.Done()
+		start := time.Now()
+		merged = fetchMergedFn(ctx, nwo, mergedLimit)
+		LogSync(nwo, "merged", time.Since(start), fmt.Sprintf("heads=%d closed=%d", len(merged.MergedHeads), len(merged.ClosedHeads)), errOf(merged.MergedFetchError))
+	}()
 	if withIssues {
 		wg.Add(1)
-		go func() { defer wg.Done(); issues = fetchIssues(ctx, nwo) }()
+		go func() {
+			defer wg.Done()
+			start := time.Now()
+			issues = fetchIssuesFn(ctx, nwo)
+			LogSync(nwo, "issues", time.Since(start), fmt.Sprintf("n=%d", len(issues.Issues)), errOf(issues.IssuesFetchError))
+		}()
 	}
 	wg.Wait()
 
@@ -352,6 +378,39 @@ func FetchAll(ctx context.Context, nwo string, mergedLimit int, withIssues bool)
 
 	mergeSave(nwo, func(c *Remote) { r.ApplyTo(c) })
 	return r
+}
+
+// errOf turns a section's stored error text back into an error for LogSync —
+// nil when the section succeeded.
+func errOf(msg string) error {
+	if msg == "" {
+		return nil
+	}
+	return errors.New(msg)
+}
+
+// SectionError is one section of a sync that failed: the section's name as the
+// header prints it and the error text verbatim.
+type SectionError struct {
+	Section string
+	Err     string
+}
+
+// FetchErrors lists the sections whose last fetch failed, in a fixed order
+// (PRs, issues, merged) so the header reads the same on every render. Empty
+// when nothing failed.
+func (r Remote) FetchErrors() []SectionError {
+	var out []SectionError
+	for _, s := range []SectionError{
+		{"PRs", r.PRsFetchError},
+		{"issues", r.IssuesFetchError},
+		{"merged", r.MergedFetchError},
+	} {
+		if s.Err != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // fetchPRs queries every open PR in the repo in one paginated call. Mergeable

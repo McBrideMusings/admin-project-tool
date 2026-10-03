@@ -33,12 +33,15 @@ func TestMain(m *testing.M) {
 	}
 	restoreArchetypes := archetype.UseInstalledDir(dir)
 	restoreViewState := viewstate.UseGlobalPath(filepath.Join(dir, "unused-global-view.toml"))
+	// Tests that reach syncCmd log every sync; that log is the user's real one.
+	restoreSyncLog := data.UseSyncLogPath(filepath.Join(dir, "sync.log"))
 	// Identity is `gh api user` cached under the real user cache dir; a test that
 	// runs Init's commands must neither call gh nor write that cache.
 	prevFetchIdentity := fetchIdentityFn
 	fetchIdentityFn = func(context.Context, string) (data.Identity, error) { return data.Identity{}, nil }
 	code := m.Run()
 	fetchIdentityFn = prevFetchIdentity
+	restoreSyncLog()
 	restoreViewState()
 	restoreArchetypes()
 	os.RemoveAll(dir)

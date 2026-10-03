@@ -89,8 +89,13 @@ type cacheDataMsg struct {
 // that came back, and the fact that remote-tracking refs have been pruned. The
 // model applies the sections through data.Remote.ApplyTo (which leaves a failed
 // section's cached rows alone) and re-reads local git, since the prune moved the
-// refs that decide whether a branch is "gone" or "on origin".
-type syncDoneMsg struct{ r data.Remote }
+// refs that decide whether a branch is "gone" or "on origin". at is when the
+// sync finished, which the header prints beside a failure so an old one reads
+// as old.
+type syncDoneMsg struct {
+	r  data.Remote
+	at time.Time
+}
 
 // issueRowMsg / openPRRowMsg carry the result of a row-scoped `r` refresh — one
 // targeted GraphQL call for a single row, applied in place onto the cached list
@@ -351,15 +356,32 @@ func loadCacheCmd(nwo string) tea.Cmd {
 // as alive for as long as the dashboard stayed open. The two run concurrently:
 // neither needs the other's answer, and one waiting on the other would only make
 // the spinner spin longer.
+//
+// A failed prune is logged (data.LogSync) and goes no further: a checkout with
+// no origin fails it on every sync, so it cannot be what turns the header red.
 func syncCmd(ctx context.Context, dir, nwo string, withIssues bool) tea.Cmd {
 	return func() tea.Msg {
 		var r data.Remote
 		var wg sync.WaitGroup
 		wg.Add(2)
 		go func() { defer wg.Done(); r = fetchAllFn(ctx, nwo, mergedPRLimit, withIssues) }()
-		go func() { defer wg.Done(); fetchPruneFn(ctx, dir) }()
+		go func() {
+			defer wg.Done()
+			start := time.Now()
+			err := fetchPruneFn(ctx, dir)
+			// The log keeps git's whole output; CmdError.Error() is only its headline.
+			var ce *git.CmdError
+			if errors.As(err, &ce) && ce.Output != "" {
+				err = errors.New(ce.Output)
+			}
+			repo := nwo
+			if repo == "" {
+				repo = dir
+			}
+			data.LogSync(repo, "prune", time.Since(start), "", err)
+		}()
 		wg.Wait()
-		return syncDoneMsg{r: r}
+		return syncDoneMsg{r: r, at: time.Now()}
 	}
 }
 

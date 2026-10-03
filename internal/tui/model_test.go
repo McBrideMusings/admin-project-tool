@@ -1792,6 +1792,111 @@ func TestSyncDoneKeepsCachedSetOnFailure(t *testing.T) {
 	}
 }
 
+// TestSyncFailureSaysWhatFailed pins that a failed sync names its failed
+// sections and time in the header, puts the first error on the status line, and
+// keeps every error verbatim behind `e` — and that a clean sync takes the header
+// back.
+func TestSyncFailureSaysWhatFailed(t *testing.T) {
+	m := seededModel()
+	at := time.Date(2026, 10, 2, 14, 3, 7, 0, time.Local)
+	updated, _ := m.Update(syncDoneMsg{r: data.Remote{
+		PRsFetchError:    "exit status 1: HTTP 502\nbad gateway",
+		MergedFetchError: "context deadline exceeded",
+	}, at: at})
+	m = updated.(Model)
+
+	if h := stripANSI(m.headerLine(200)); !strings.Contains(h, "⚠ sync failed · PRs, merged · 2:03pm") {
+		t.Errorf("header does not name the failed sections and time: %q", h)
+	}
+	if want := "sync failed: PRs: exit status 1: HTTP 502 bad gateway"; m.status != want {
+		t.Errorf("status = %q, want %q", m.status, want)
+	}
+
+	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	m = next.(Model)
+	if !m.errOpen {
+		t.Fatal("`e` did not open the sync error detail")
+	}
+	for _, want := range []string{"PRs: exit status 1: HTTP 502\nbad gateway", "merged: context deadline exceeded", "log: " + data.SyncLogPath()} {
+		if !strings.Contains(m.errDetail, want) {
+			t.Errorf("detail is missing %q:\n%s", want, m.errDetail)
+		}
+	}
+
+	updated, _ = m.Update(syncDoneMsg{r: data.Remote{
+		PRsFetchedAt: time.Now(), MergedFetchedAt: time.Now(),
+	}, at: time.Now()})
+	m = updated.(Model)
+	if h := stripANSI(m.headerLine(200)); strings.Contains(h, "sync failed") {
+		t.Errorf("a clean sync left the failure in the header: %q", h)
+	}
+	if m.errDetail != "" || m.errOpen || m.status != "" {
+		t.Errorf("a clean sync left the failure behind `e` or on the status line: open=%v status=%q detail=%q", m.errOpen, m.status, m.errDetail)
+	}
+}
+
+// TestPersistingSyncFailureDoesNotClobber pins the two guards on a failure that
+// simply persists across polls: an action's error stashed since the first
+// announcement stays behind `e`, and an open overlay stays open on what it shows.
+// A clean sync then withdraws nothing it did not put up.
+func TestPersistingSyncFailureDoesNotClobber(t *testing.T) {
+	m := seededModel()
+	failing := syncDoneMsg{r: data.Remote{PRsFetchError: "HTTP 502"}, at: time.Now()}
+	updated, _ := m.Update(failing)
+	m = updated.(Model)
+
+	updated, _ = m.Update(actionMsg{text: "checkout failed", err: checkoutRefusal()})
+	m = updated.(Model)
+	actionDetail := m.errDetail
+	updated, _ = m.Update(failing)
+	m = updated.(Model)
+	if m.errDetail != actionDetail {
+		t.Errorf("an unchanged sync failure replaced the action's detail:\n%s", m.errDetail)
+	}
+
+	m.errOpen = true
+	updated, _ = m.Update(syncDoneMsg{r: data.Remote{PRsFetchError: "HTTP 503"}, at: time.Now()})
+	m = updated.(Model)
+	if !m.errOpen || m.errDetail != actionDetail {
+		t.Errorf("a new sync failure swapped the open overlay: open=%v\n%s", m.errOpen, m.errDetail)
+	}
+
+	updated, _ = m.Update(syncDoneMsg{r: data.Remote{PRsFetchedAt: time.Now()}, at: time.Now()})
+	m = updated.(Model)
+	if m.errDetail != actionDetail {
+		t.Errorf("a clean sync withdrew an action's detail:\n%s", m.errDetail)
+	}
+}
+
+// TestSyncLogsPruneFailureWithGitsWholeOutput pins the prune half of the sync:
+// its failure reaches the log with git's whole output, not CmdError's headline.
+func TestSyncLogsPruneFailureWithGitsWholeOutput(t *testing.T) {
+	prevFetch, prevPrune := fetchAllFn, fetchPruneFn
+	t.Cleanup(func() { fetchAllFn, fetchPruneFn = prevFetch, prevPrune })
+	fetchAllFn = func(context.Context, string, int, bool) data.Remote { return data.Remote{} }
+	fetchPruneFn = func(context.Context, string) error {
+		return &git.CmdError{Err: errors.New("exit status 128"), Headline: "fatal: unable to access", Output: "fatal: unable to access\nhint: check your network"}
+	}
+
+	syncCmd(context.Background(), "/repo", "owner/prune-probe", false)()
+
+	b, err := os.ReadFile(data.SyncLogPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `sync owner/prune-probe prune FAIL`
+	wantErr := `err="fatal: unable to access\nhint: check your network"`
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.Contains(line, want) {
+			if !strings.Contains(line, wantErr) {
+				t.Errorf("prune line lost git's output: %q", line)
+			}
+			return
+		}
+	}
+	t.Errorf("no %q line in the sync log:\n%s", want, b)
+}
+
 // TestRowRefreshDroppedAfterSync pins the generation guard: a row-scoped refresh
 // that comes back after a whole-repo sync has landed is older news than what is
 // already on screen, so it must be dropped instead of applied.
