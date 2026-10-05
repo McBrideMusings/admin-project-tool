@@ -1,11 +1,11 @@
  beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
- attached  ·  ◐ admin-3rgp.7  ·  waiting  ·  6m    /Users/…/.admin/logs/worker-admin-3rgp.7.log 
-                                                                                                
+ attached  ·  ◐ admin-3rgp.7  ·  waiting  ·  6m                                                 
+ log      /Users/dev/admin-project-tool/.admin/logs/worker-admin-3rgp.7.log                     
+ branch   feat/admin-3rgp.7-root-command                                                        
+ worktree /Users/dev/.worktrees/admin-project-tool/admin-3rgp.7                                 
+ session  pane 4 · detached, outlives admin                                                     
+ now      needs input: root command name                                                        
 ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                                                                                                
-                                                                                                
-                                                                                                
-                                                                                                
                                                                                                 
                                                                                                 
                                                                                                 

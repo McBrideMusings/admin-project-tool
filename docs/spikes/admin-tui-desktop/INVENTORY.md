@@ -28,7 +28,7 @@ No row carries a kind column — the kind is a band field.
 | `commands-workflow-selected.txt` | A workflow entry selected — targets are tracker items, so `↵` dispatches an agent |
 | `running.txt` | The Workers tab, cursor on a waiting worker; the band shows log, branch, worktree, session, now, tail |
 | `swarm.txt` | The Workers tab, cursor on a failed worker; the same band fields |
-| `hosted.txt` / `hosted-empty.txt` | Attached to a hosted pty — full width, the child's own screen. No tab bar: that row carries the attach breadcrumb and the absolute log path instead |
+| `hosted.txt` / `hosted-empty.txt` | Attached to a hosted pty — full width, the child's own screen. No tab bar: that row carries the attach breadcrumb instead, and the band's own field rows (log, urls or the worker's five) sit directly under it |
 | `hosted-quit.txt` | The quit confirm over live children |
 | `dispatch-sheet.txt` | Dispatching from the tracker tab |
 | `no-manifest.txt` | A repo with no `admin.toml` |

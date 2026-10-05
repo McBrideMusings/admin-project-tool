@@ -686,20 +686,17 @@ func outLine(l string, w int) string {
 // point of view the pty IS its terminal — that is what keeps one footer
 // implementation instead of two.
 // attachCrumb is the row the tab bar gives up while attached: what you are
-// attached to, and the absolute log path, on one line. The path lives HERE
-// rather than in a footer under the output — a child's output is what scrolls,
-// so anything pinned beneath it either floats in dead space when the output is
-// short or gets pushed off when it is long. At the top it is neither.
+// attached to, and nothing else. The log path does not share this row — at 80
+// columns the identity leaves it about 21 cells, which cuts a log file's name
+// to "command-test:counter…" with no directory, date or extension. It gets the
+// "log" row under the crumb instead (hostedBody), with the full width.
 func attachCrumb(lr *liveRow, w int) string {
 	if lr == nil {
 		return Pad(" "+dim.Render("attached"), w)
 	}
-	left := " " + cy.Render("attached") + dim.Render("  ·  ") +
-		liveStyle[lr.state].Render(liveGlyph(lr)) + " " + bo.Render(lr.id) +
-		dim.Render("  ·  "+lr.state+"  ·  "+lr.elapsed)
-	right := dim.Render(fitPath(lr.logPath, maxInt(w-VW(Strip(left))-3, 20))) + " "
-	gap := maxInt(w-VW(Strip(left))-VW(Strip(right)), 1)
-	return Pad(left+strings.Repeat(" ", gap)+right, w)
+	return Pad(" "+cy.Render("attached")+dim.Render("  ·  ")+
+		liveStyle[lr.state].Render(liveGlyph(lr))+" "+bo.Render(lr.id)+
+		dim.Render("  ·  "+lr.state+"  ·  "+lr.elapsed), w)
 }
 
 func hostedBody(w, h int, empty bool, lr *liveRow) []string {
@@ -707,11 +704,17 @@ func hostedBody(w, h int, empty bool, lr *liveRow) []string {
 	// has to agree — so it is read off the row actually attached to, not written
 	// out here. Attaching to a different row has to show that row or the view is
 	// a picture of one process wearing another's name.
-	// Identity and log path are on the breadcrumb row above (attachCrumb), so
-	// this is the rule and then the child's own screen, nothing else. Whatever
-	// the process is doing right now is the last line of its output — printing
-	// it again in a header said the same thing twice.
-	out := []string{dim.Render(strings.Repeat("╌", w))}
+	// Identity is on the breadcrumb row above (attachCrumb). Under it go the
+	// same field rows the docked band shows for this row (fieldRows) — log and
+	// urls for a command, the five worker rows for a worker — at the top rather
+	// than under the output: a child's output is what scrolls, so anything
+	// pinned beneath it either floats in dead space when the output is short or
+	// gets pushed off when it is long. Then the rule and the child's own screen.
+	var out []string
+	if lr != nil {
+		out = append(out, fieldRows(lr, w)...)
+	}
+	out = append(out, dim.Render(strings.Repeat("╌", w)))
 	if empty {
 		return append(out, "", " "+dim.Render("waiting for output…"))
 	}
@@ -1541,19 +1544,27 @@ func bandTitle(w int, sel *liveRow, idle string, empty bool) string {
 	return dim.Render("── ") + title + dim.Render(" "+strings.Repeat("─", fill)+suffix+" ──")
 }
 
-// bandFields is the field block for a live row. Name, state and elapsed are NOT
-// here — the title rule above already said them once.
+// bandFields is the field block for a live row, held to the band's fixed slot.
+// Name, state and elapsed are NOT here — the title rule above already said them
+// once.
 func bandFields(lr *liveRow, w int) []string {
+	return slotRows(fieldRows(lr, w), w)
+}
+
+// fieldRows is bandFields sized to its own content. The attached view
+// (hostedBody) draws these same rows under its breadcrumb, so the band and the
+// attached view cannot disagree about what a row's fields are.
+func fieldRows(lr *liveRow, w int) []string {
 	lw := maxInt(w-11, 8)
 	out := []string{" " + dim.Render("log      ") + dim.Render(fitPath(lr.logPath, lw))}
 	if !isWorkerRow(lr) {
-		// A command with no url gets no url row. The slot is fixed height, so
-		// the space is held either way — printing "url —" spends a row saying
-		// a field is absent, which the blank row already says.
+		// A command with no url gets no url row. In the band the slot is fixed
+		// height, so the space is held either way — printing "url —" spends a
+		// row saying a field is absent, which the blank row already says.
 		for _, u := range lr.urls {
 			out = append(out, " "+dim.Render("url      ")+cy.Render(trunc(u, lw)))
 		}
-		return slotRows(out, w)
+		return padRows(out, w)
 	}
 	out = append(out,
 		" "+dim.Render("branch   ")+cy.Render(trunc(lr.branch, lw)),
@@ -1562,7 +1573,15 @@ func bandFields(lr *liveRow, w int) []string {
 	// whereLabel already carries its own gloss ("· detached, outlives admin"), so
 	// appending a second one printed the same fact twice on one row.
 	out = append(out, " "+dim.Render("session  ")+trunc(whereLabel(lr), lw))
-	return slotRows(append(out, " "+dim.Render("now      ")+trunc(lr.doing, lw)), w)
+	return padRows(append(out, " "+dim.Render("now      ")+trunc(lr.doing, lw)), w)
+}
+
+// padRows pads every row to w without changing how many rows there are.
+func padRows(out []string, w int) []string {
+	for i, l := range out {
+		out[i] = Pad(l, w)
+	}
+	return out
 }
 
 // bandIdle is the band while the cursor sits on something that is NOT running:
@@ -1730,11 +1749,13 @@ func render(s State) string {
 	// switch tabs from inside a process's own terminal (every keystroke belongs
 	// to the child), so a row of tabs there advertises navigation that does not
 	// work. The breadcrumb spends that row saying what you are attached to.
-	second := tabBar(sp, w, s.Get("tracker"), empty)
+	// The crumb has no blank row under it: the field rows hostedBody draws
+	// first belong to it, so they sit directly beneath.
+	rows := []string{header(w, h-5, src), tabBar(sp, w, s.Get("tracker"), empty), ""}
 	if sp.hosted {
-		second = attachCrumb(attachedFor(name), w)
+		rows = rows[:1]
+		rows = append(rows, attachCrumb(attachedFor(name), w))
 	}
-	rows := []string{header(w, h-5, src), second, ""}
 	if _, ok := embedded[name]; ok {
 		// repo-dash draws its own rule and footer for these — including the
 		// modal footers, which are the mode.
@@ -1748,7 +1769,7 @@ func render(s State) string {
 		action := "dispatch"
 		switch {
 		case sp.hosted:
-			body = hostedBody(w, h-5, sp.hostedEmpty, attachedFor(name))
+			body = hostedBody(w, h-2-len(rows), sp.hostedEmpty, attachedFor(name))
 		default:
 			// The Commands and Workers tabs are the same body: the tab's list
 			// above, the band below. What differs is the list and where the
@@ -1786,10 +1807,11 @@ func render(s State) string {
 			action = rowAction(selLive, onWorkersTab(name))
 			body = renderWorkBody(w, h-5, list, selEntry, selLive, empty)
 		}
-		for len(body) < h-5 {
+		bodyH := h - 2 - len(rows) // rule + keys footer below
+		for len(body) < bodyH {
 			body = append(body, "")
 		}
-		rows = append(rows, body[:h-5]...)
+		rows = append(rows, body[:bodyH]...)
 		rows = append(rows, dim.Render(strings.Repeat("─", w)), Pad(" "+dim.Render(keys(sp, action)), w))
 	}
 	if sp.sheet {

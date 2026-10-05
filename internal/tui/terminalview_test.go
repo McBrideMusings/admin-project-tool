@@ -496,9 +496,9 @@ func TestAttachedViewDrawsNoTabBar(t *testing.T) {
 	}
 }
 
-// TestAttachedViewLogPathOnBreadcrumbOnly is the ticket's second acceptance
-// criterion: the absolute log path is on the breadcrumb row and nowhere
-// beneath the output.
+// TestAttachedViewLogPathAndURLRowsUnderBreadcrumb: the breadcrumb row
+// carries identity only, and the log and url rows the docked band shows sit
+// directly under it, above the dashed rule — never beneath the output.
 func TestAttachedViewLogPathAndURLRowsUnderBreadcrumb(t *testing.T) {
 	cmdName := "termfixture-logpath"
 	dir := t.TempDir()

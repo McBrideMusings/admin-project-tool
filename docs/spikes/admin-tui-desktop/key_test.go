@@ -414,7 +414,8 @@ func TestAttachingToASecondRowShowsThatRow(t *testing.T) {
 // TestAttachedViewHasNoTabBar pins what the attached view gives that row up
 // for. Every keystroke belongs to the child while attached, so the tabs cannot
 // be switched from there — drawing them advertises navigation that does not
-// work. The row carries the attach breadcrumb and the log path instead.
+// work. The row carries the attach breadcrumb instead, and the log path sits
+// on the row directly under it.
 func TestAttachedViewHasNoTabBar(t *testing.T) {
 	resetCursor()
 	resetLiveRows()
@@ -432,11 +433,16 @@ func TestAttachedViewHasNoTabBar(t *testing.T) {
 		if !strings.Contains(lines[1], "attached") {
 			t.Errorf("%dx%d: attached view's second row is not the breadcrumb:\n%s", g.w, g.h, lines[1])
 		}
-		// The log path is on that row, not in a footer under the output: a
-		// child's output scrolls, so anything pinned beneath it either floats
-		// in dead space or gets pushed off.
-		if !strings.Contains(lines[1], ".log") {
-			t.Errorf("%dx%d: the log path is not on the breadcrumb row:\n%s", g.w, g.h, lines[1])
+		// The log path is on its own row under the breadcrumb, not in a footer
+		// under the output: a child's output scrolls, so anything pinned
+		// beneath it either floats in dead space or gets pushed off. Not on the
+		// breadcrumb row either — at 80 columns the identity leaves the path
+		// too few cells to keep its directory, date and extension.
+		if strings.Contains(lines[1], ".log") {
+			t.Errorf("%dx%d: the log path shares the breadcrumb row:\n%s", g.w, g.h, lines[1])
+		}
+		if !strings.HasPrefix(strings.TrimSpace(lines[2]), "log") || !strings.HasSuffix(strings.TrimSpace(lines[2]), ".log") {
+			t.Errorf("%dx%d: the row under the breadcrumb is not the whole log path:\n%s", g.w, g.h, lines[2])
 		}
 	}
 }
