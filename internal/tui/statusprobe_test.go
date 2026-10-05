@@ -88,11 +88,12 @@ func TestStatusRowsAbsentWithoutEntries(t *testing.T) {
 
 // The strip takes its rows from the list, never the band: the band's title
 // rule sits on the same body row with [status] entries as without them
-// (docs/spikes/admin-tui-desktop/commands-status.txt against commands.txt).
+// (docs/spikes/admin-tui-desktop/commands-status.txt against commands.txt),
+// including when more entries are declared than the strip can show.
 func TestStatusStripLeavesTheBandInPlace(t *testing.T) {
 	stubStatus(t, func(manifest.StatusSpec, string) status.Result { return status.Result{} })
 	freshLivework(t)
-	titleRow := func(st map[string]manifest.StatusSpec) int {
+	titleRow := func(st map[string]manifest.StatusSpec, h int) int {
 		m := &manifest.Manifest{
 			Status:  st,
 			Custom:  map[string]manifest.Command{"dev": {Desc: "start dev server", Steps: []string{"dev"}}},
@@ -100,7 +101,7 @@ func TestStatusStripLeavesTheBandInPlace(t *testing.T) {
 		}
 		mm := workTestModel(m)
 		mm.cursor[mm.active] = 1 // the "dev" row, under the Commands header
-		lines, _ := mm.renderWorkBody(96, 25)
+		lines, _ := mm.renderWorkBody(96, h)
 		for i, l := range lines {
 			if strings.HasPrefix(stripANSI(l), "── ") {
 				return i
@@ -109,13 +110,21 @@ func TestStatusStripLeavesTheBandInPlace(t *testing.T) {
 		t.Fatalf("no band title rule in:\n%s", strings.Join(lines, "\n"))
 		return -1
 	}
-	bare := titleRow(nil)
-	withStrip := titleRow(map[string]manifest.StatusSpec{
-		"a": {Kind: manifest.StatusHTTP, URL: "http://x"},
-		"b": {Kind: manifest.StatusHTTP, URL: "http://y"},
-	})
-	if bare != 13 || withStrip != 13 {
-		t.Errorf("band title row = %d without [status], %d with it; want 13 for both (25 rows, band 12)", bare, withStrip)
+	entries := func(n int) map[string]manifest.StatusSpec {
+		st := map[string]manifest.StatusSpec{}
+		for i := range n {
+			st[string(rune('a'+i))] = manifest.StatusSpec{Kind: manifest.StatusHTTP, URL: "http://x"}
+		}
+		return st
+	}
+	// Body heights for 26-32 terminal rows (5 rows of chrome) and the band
+	// title's body row the spike draws at each: terminal rows 15/16/17/18.
+	for _, tc := range []struct{ h, want int }{{21, 11}, {23, 12}, {25, 13}, {27, 14}} {
+		for _, n := range []int{0, 2, 12} {
+			if got := titleRow(entries(n), tc.h); got != tc.want {
+				t.Errorf("body %d rows, %d [status] entries: band title row = %d, want %d", tc.h, n, got, tc.want)
+			}
+		}
 	}
 }
 
