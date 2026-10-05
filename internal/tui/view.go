@@ -109,12 +109,22 @@ func (m Model) frameRaw() (lines []string, hits []hitTarget) {
 		topHits[1] = m.tabBarHit()
 	}
 	body, bodyHits := m.renderBodyHits(width, bodyHeight)
-	body = m.spliceStatusToast(body)
+	if m.quitOpen {
+		// The confirm owns the keyboard and the mouse while it is up, and the
+		// rule under it stays bare, as in the design frame.
+		topHits = noneHits(len(topHits))
+		bodyHits = noneHits(len(bodyHits))
+	} else {
+		body = m.spliceStatusToast(body)
+	}
 
 	lines = make([]string, 0, height)
 	lines = append(lines, top...)
 	lines = append(lines, body...)
 	lines = append(lines, footerLines...)
+	if m.quitOpen {
+		lines = m.overlayQuitConfirm(lines, width)
+	}
 
 	hits = make([]hitTarget, 0, height)
 	hits = append(hits, topHits...)
@@ -180,9 +190,6 @@ func (m Model) renderBodyHits(width, bodyHeight int) ([]string, []hitTarget) {
 	var content []string
 	var hits []hitTarget
 	switch {
-	case m.quitOpen:
-		content = m.renderQuitConfirmBody(width, contentH)
-		hits = noneHits(len(content))
 	case m.errOpen:
 		content = m.renderErrDetailBody(width, contentH)
 		hits = noneHits(len(content))
@@ -698,6 +705,14 @@ func pairsOf(bindings []keymap.Binding) [][2]string {
 // branch, and both sit at the end of the help line after the view-specific
 // keys.
 func (m Model) keymap() [][2]string {
+	if m.quitOpen {
+		// The quit confirm takes every key (quitConfirmKey): enter kills and
+		// quits, anything else cancels. The list's keys do nothing under it.
+		return [][2]string{
+			{"⏎", "kill them and quit"},
+			{"esc", "cancel"},
+		}
+	}
 	if m.termAttached {
 		// No shared keys: the terminal view takes the whole tab. Every
 		// keystroke belongs to the child process, `o` included — including

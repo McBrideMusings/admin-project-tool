@@ -7,6 +7,7 @@ package tui
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -196,11 +197,12 @@ func TestQuitConfirmKeyOtherCancelsWithoutKilling(t *testing.T) {
 
 // TestFrameShowsQuitConfirmOverHostedProcess is the acceptance criterion's
 // required headless-frame assertion: a frame taken after pressing "q" with a
-// hosted process running must show the confirm and the process's name.
+// hosted process running must show the confirm, the process's name in the
+// Work band's spaced form, and a footer naming only the confirm's own keys.
 func TestFrameShowsQuitConfirmOverHostedProcess(t *testing.T) {
 	freshLivework(t)
 	e := &livework.Entry{
-		ID: "quitconfirm-frame-entry", Name: "frame-hosted-fixture",
+		ID: "frame-fixture:cf", Name: "frame-fixture:cf", Activity: "vitepress dev · localhost:5173",
 		Handle: "pty-frame-entry", State: livework.StateRunning,
 		Ops: livework.Ops{Kill: func() error { return nil }},
 	}
@@ -222,7 +224,69 @@ func TestFrameShowsQuitConfirmOverHostedProcess(t *testing.T) {
 	if !strings.Contains(out, "Quit") {
 		t.Errorf("frame after q with a hosted process running lost the quit-confirm title: %q", out)
 	}
-	if !strings.Contains(out, "frame-hosted-fixture") {
-		t.Errorf("frame after q with a hosted process running is missing the process name: %q", out)
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "running  frame-fixture cf  vitepress dev") {
+		t.Errorf("frame after q is missing the process row (state, spaced name, activity): %q", plain)
 	}
+	lines := strings.Split(plain, "\n")
+	if got, want := strings.TrimRight(lines[len(lines)-1], " "), " ⏎ kill them and quit · esc cancel"; got != want {
+		t.Errorf("footer under the quit confirm = %q, want %q", got, want)
+	}
+}
+
+// TestQuitConfirmMatchesDesignFrame compares the confirm box cell for cell
+// with the committed design frame (docs/spikes/admin-tui-desktop/
+// hosted-quit.txt, 96x30), fed the same two hosted processes the spike
+// lists, and checks the 80x24 placement follows the same centering.
+func TestQuitConfirmMatchesDesignFrame(t *testing.T) {
+	raw, err := os.ReadFile("../../docs/spikes/admin-tui-desktop/hosted-quit.txt")
+	if err != nil {
+		t.Fatalf("read design frame: %v", err)
+	}
+	design := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+
+	freshLivework(t)
+	for _, e := range []*livework.Entry{
+		{ID: "dev", Name: "dev", Handle: "pty-dev", State: livework.StateRunning, Activity: "vitepress dev · localhost:5173"},
+		{ID: "test", Name: "test", Handle: "pty-test", State: livework.StateWaiting, Activity: "Enter a number, or q to cancel:"},
+	} {
+		e.Ops = livework.Ops{Kill: func() error { return nil }}
+		if err := livework.Default.Add(e); err != nil {
+			t.Fatalf("Add: %v", err)
+		}
+	}
+
+	const boxW, boxH = 62, 10
+	for _, geo := range []struct{ w, h, top, left int }{
+		{96, 30, 10, 17},
+		{80, 24, 7, 9},
+	} {
+		ctx, cancel := context.WithCancel(context.Background())
+		m := New(ctx, t.TempDir(), "owner/repo", "main", "main")
+		m.herdr = false
+		out := stripANSI(Frame(ctx, m, FrameOptions{
+			Width: geo.w, Height: geo.h, Keys: []string{"q"}, Settle: 200 * time.Millisecond,
+		}))
+		cancel()
+		lines := strings.Split(out, "\n")
+		if len(lines) != geo.h {
+			t.Fatalf("%dx%d: frame has %d rows, want %d", geo.w, geo.h, len(lines), geo.h)
+		}
+		for i := 0; i < boxH; i++ {
+			got := cells(lines[geo.top+i], geo.left, geo.left+boxW)
+			want := cells(design[10+i], 17, 17+boxW)
+			if got != want {
+				t.Errorf("%dx%d box row %d = %q, want %q", geo.w, geo.h, i, got, want)
+			}
+		}
+	}
+}
+
+// cells returns the runes in columns [a, b) of a plain line, space-padded.
+func cells(s string, a, b int) string {
+	r := []rune(s)
+	for len(r) < b {
+		r = append(r, ' ')
+	}
+	return string(r[a:b])
 }

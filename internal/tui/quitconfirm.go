@@ -13,13 +13,17 @@
 // Shape mirrors workflowconfirm.go: a snapshot taken when the confirm opens
 // (quitHosted) so accepting kills exactly what was shown even if the
 // registry changes under it, one key handler (quitConfirmKey) that owns the
-// keyboard while the overlay is up, and one body renderer reusing boxPanel.
+// keyboard while the overlay is up, and one renderer (overlayQuitConfirm)
+// drawing the box over the finished frame.
 package tui
 
 import (
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 )
@@ -59,7 +63,6 @@ func (m Model) requestQuit() (tea.Model, tea.Cmd) {
 	}
 	m.quitOpen = true
 	m.quitHosted = hosted
-	m.setStatus(fmt.Sprintf("%d hosted process(es) still running", len(hosted)), cYellow)
 	return m, nil
 }
 
@@ -95,42 +98,62 @@ func (m Model) quitConfirmKey(key string) (tea.Model, tea.Cmd) {
 	}
 }
 
-// renderQuitConfirmBody draws the overlay as a centered box, reusing the
-// same boxPanel the workflow-confirm and delete-confirm overlays already
-// draw with (panel.go) — no new chrome, just this overlay's own content.
-func (m Model) renderQuitConfirmBody(width, height int) []string {
-	title, badge, lines := m.quitConfirmContent()
+// quitBoxInner is the confirm box's inner width — the design frame's
+// (docs/spikes/admin-tui-desktop/variants.go's overlayQuit), narrowed only
+// when the terminal cannot fit it.
+const quitBoxInner = 60
 
-	boxW := clampi(30, width-8, 76)
-	if boxW > width {
-		boxW = width
+// overlayQuitConfirm draws the confirm box over the finished frame, so the
+// list and band stay visible around it, the way the design frame
+// (docs/spikes/admin-tui-desktop/hosted-quit.txt) places it: centered on the
+// whole screen, never over the top three rows (header, tabs, separator) or
+// the bottom two (rule, keybar). The splice is cell-based (ansi.Cut), so the
+// rows under the box keep their own colors either side of it.
+func (m Model) overlayQuitConfirm(lines []string, width int) []string {
+	bw := clampi(1, quitBoxInner, width-2)
+	box := m.quitConfirmBox(bw)
+	top := (len(lines) - len(box)) / 2
+	left := maxi((width-bw-2)/2, 0)
+	for i, l := range box {
+		y := top + i
+		if y < 3 || y >= len(lines)-2 {
+			continue
+		}
+		base := lines[y]
+		if gap := width - ansi.StringWidth(base); gap > 0 {
+			base += padN(gap)
+		}
+		lines[y] = ansi.Cut(base, 0, left) + l + ansi.Cut(base, left+bw+2, width)
 	}
-	boxH := clampi(3, len(lines)+2, height)
-
-	footer := []seg{{t: "enter kill & quit", fg: cRed}, {t: "   esc cancel", fg: cFaint}}
-
-	box := boxPanel{
-		title: title, badge: badge, width: boxW, height: boxH, focused: true,
-		lines: lines, active: -1, footer: footer,
-	}
-	rendered := box.render()
-
-	lp := padN(clampi(0, (width-boxW)/2, width))
-	top := clampi(0, (height-boxH)/2, height)
-	out := make([]string, height)
-	for i := top; i < height && i-top < len(rendered); i++ {
-		out[i] = lp + rendered[i-top]
-	}
-	return out
+	return lines
 }
 
-// quitConfirmContent builds the overlay's title, badge, and body lines from
-// the snapshot taken when the overlay opened. The state color mirrors
-// stateColor's own switch (workview.go) — that helper isn't reused directly
-// because renderWorkerState/renderCommandState return an already-ANSI-styled
-// string, and nesting that inside a seg's own fg style would double-apply
-// color rather than let boxPanel's segment renderer own it.
-func (m Model) quitConfirmContent() (title, badge string, lines [][]seg) {
+// quitConfirmBox renders the box rows at inner width bw from the snapshot
+// taken when the confirm opened: a title counting what will die, one row per
+// hosted process (state, command, what it is doing), the reminder that
+// workers survive, and the two actions.
+func (m Model) quitConfirmBox(bw int) []string {
+	n := len(m.quitHosted)
+	noun := "processes"
+	if n == 1 {
+		noun = "process"
+	}
+
+	// The command column fits the longest name, never narrower than the
+	// design's 10 cells, so the activity column lines up across rows.
+	nameW := 10
+	for _, e := range m.quitHosted {
+		nameW = maxi(nameW, vlen(quitRowName(e))+2)
+	}
+
+	faint := lipgloss.NewStyle().Foreground(cFaint)
+	row := func(s string) string {
+		return faint.Render("│") + padEnd(ansi.Truncate(s, bw, ""), bw) + faint.Render("│")
+	}
+	box := []string{faint.Render("┌" + strings.Repeat("─", bw) + "┐")}
+	box = append(box,
+		row("  "+lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("Quit — %d %s still running", n, noun))),
+		row(""))
 	for _, e := range m.quitHosted {
 		st, _ := livework.Default.State(e.ID)
 		stateColor := cDim
@@ -140,14 +163,27 @@ func (m Model) quitConfirmContent() (title, badge string, lines [][]seg) {
 		case livework.StateWaiting:
 			stateColor = cYellow
 		}
-		lines = append(lines, []seg{
-			{t: " • ", fg: cFaint},
-			{t: e.Name, fg: cGreen},
-			{t: "  "},
-			{t: string(st), fg: stateColor},
-		})
+		line := "    " + lipgloss.NewStyle().Foreground(stateColor).Render(padEnd(string(st), 9)) +
+			padEnd(quitRowName(e), nameW)
+		if act, _ := livework.Default.Activity(e.ID); act != "" {
+			// The design leaves 5 cells spare after a 32-cell activity at
+			// the 10-cell command column (variants.go's overlayQuit: bw-28).
+			line += mutedStyle.Render(truncR(act, maxi(bw-18-nameW, 1)))
+		}
+		box = append(box, row(line))
 	}
-	badge = fmt.Sprintf("%d hosted", len(m.quitHosted))
-	title = fmt.Sprintf("Quit — %d hosted process(es) still running?", len(m.quitHosted))
-	return title, badge, lines
+	box = append(box,
+		row(""),
+		row("    "+mutedStyle.Render("Workers keep running — they have their own panes.")),
+		row(""),
+		row("    "+lipgloss.NewStyle().Foreground(cRed).Render("⏎ kill them and quit")+"     "+mutedStyle.Render("esc cancel")),
+		faint.Render("└"+strings.Repeat("─", bw)+"┘"))
+	return box
+}
+
+// quitRowName is a process row's name in the Work band's spaced form
+// ("command-test counter"), not the live-work id's "<command>:<target>"
+// (internal/kinds.TargetLiveKey).
+func quitRowName(e *livework.Entry) string {
+	return strings.Replace(e.ID, ":", " ", 1)
 }
