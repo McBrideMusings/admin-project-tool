@@ -23,7 +23,9 @@ No row carries a kind column — the kind is a band field.
 | Frame | What it shows |
 | --- | --- |
 | `commands.txt` | The Commands list, the band on the selected entry |
-| `commands-running.txt` | The cursor on a command that IS running — the row carries its state, the band previews its output |
+| `commands-running.txt` | The cursor on a command that IS running — the row carries its state, the band previews its output; each url row leads with the dashboard's reachability dot |
+| `commands-status.txt` | `commands.txt` for a project declaring `[status]` entries — the Status strip (dot, label, readout) pinned above the list, its rows taken from the list, never the band |
+| `commands-running-status.txt` | `commands-running.txt` for the same project — a url the `urls` list named by its `[status]` entry reads `● local  http://…` |
 | `commands-empty.txt` | Nothing running and no workers |
 | `commands-workflow-selected.txt` | A workflow entry selected — targets are tracker items, so `↵` dispatches an agent |
 | `running.txt` | The Workers tab, cursor on a waiting worker; the band shows log, branch, worktree, session, now, tail |

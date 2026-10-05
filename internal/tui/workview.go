@@ -51,8 +51,9 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 	cursor := m.cursor[m.active]
 
 	// The Status strip is pinned above the scrolling list, whatever the filter
-	// leaves in it, and takes rows from the list and band's share while
-	// leaving the list at least three.
+	// leaves in it, and takes its rows from the list alone while leaving the
+	// list at least three — the band keeps bandH(fullHeight) either way
+	// (docs/spikes/admin-tui-desktop/commands-status.txt).
 	var strip []string
 	var stripHits []hitTarget
 	if m.manifest != nil {
@@ -117,10 +118,10 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		}
 	}
 
-	// The band always takes bandH rows at the bottom, whatever the cursor row's
-	// state; the list gets the rest, padded with blank rows when its own rows
-	// don't fill them.
-	bh := bandH(height)
+	// The band always takes bandH rows of the whole body at the bottom,
+	// whatever the cursor row's state or the strip above; the list gets the
+	// rest, padded with blank rows when its own rows don't fill them.
+	bh := bandH(fullHeight)
 	listH := maxi(height-bh, 1)
 	bh = maxi(height-listH, 1)
 

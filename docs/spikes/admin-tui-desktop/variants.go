@@ -49,6 +49,8 @@ var Axes = []Axis{
 		// stateName() keys dumps by value, not position — it only changes
 		// the launch default and the ⌥s cycle order.
 		"commands", "commands-running", "commands-empty",
+		// The same two screens for a project declaring [status] entries.
+		"commands-status", "commands-running-status",
 		// The Work tab's live states, then the rest of the reference frames.
 		"commands-workflow-selected", "repo", "issues", "issues-selected",
 		"dispatch-sheet", "swarm", "config", "running", "no-manifest",
@@ -281,6 +283,10 @@ type screenSpec struct {
 	// log line to "14:22:09 [INFO] test: ======…", which is unreadable.
 	hosted      bool
 	hostedEmpty bool
+	// status draws the project as one declaring [status] entries
+	// (statusFixture): the Status strip above the list, and the band's url
+	// row naming the entry its url came from.
+	status bool
 }
 
 // The tabs, in the order the real dashboard draws them (internal/tui/model.go's
@@ -322,6 +328,9 @@ var screens = map[string]screenSpec{
 	// 9 is "dev cf" in selectableCommands() order, stored +1.
 	"commands-running": {tab: tabCommands, liveSel: -1, cmdSel: 9},
 	"commands-empty":   {tab: tabCommands, liveSel: -1},
+	// commands and commands-running for a project declaring [status] entries.
+	"commands-status":         {tab: tabCommands, liveSel: -1, status: true},
+	"commands-running-status": {tab: tabCommands, liveSel: -1, cmdSel: 9, status: true},
 
 	// The embedded modes. tab drives only the prototype's own tab bar and
 	// footer; the body comes from repo-dash via the key sequence in `embedded`.
@@ -1351,6 +1360,82 @@ const fieldRowsH = 5
 // says less than the row it is previewing already does. The list keeps the rest.
 func bandH(h int) int { return maxInt(minInt(13, h/2), minInt(9, h-1)) }
 
+// statusEntry is one [status.<label>] readout as the dashboard last saw it:
+// state is "up", "down" or "" (no readout yet), text is what the checker
+// returned. url is set for an http/json entry, the one kind a `urls` list
+// can name.
+type statusEntry struct{ label, url, state, text string }
+
+// statusFixture is the [status] table of a project that declares one: an
+// http entry the running dev server answers, a json entry reading a value
+// out of production, and a command entry whose check is failing.
+var statusFixture = []statusEntry{
+	{label: "local", url: "http://localhost:5173", state: "up", text: "up"},
+	{label: "prod", state: "up", text: "v2.3.1 · 4 queued"},
+	{label: "queue", state: "down", text: "timed out"},
+}
+
+// statusShown is whether the screen being rendered declares statusFixture.
+// fieldRows reads it to label a url that names a [status] entry; render sets
+// it before drawing.
+var statusShown bool
+
+func statusDot(state string) string {
+	switch state {
+	case "up":
+		return gr.Render("●")
+	case "down":
+		return rd.Render("○")
+	}
+	return dim.Render("·")
+}
+
+// statusStrip is the Status section: the [status] readouts pinned above the
+// tab's list, where they never scroll away with the cursor. It takes its rows
+// from the list and never from the band — the band is bandH(h) with or
+// without it — and at most max of them, the header plus as many entries as
+// fit with a "↓ N more status" row for the rest. Nothing when max cannot hold
+// the header and one entry.
+func statusStrip(w, max int) []string {
+	if len(statusFixture) == 0 || max < 2 {
+		return nil
+	}
+	lw := 0
+	for _, e := range statusFixture {
+		lw = maxInt(lw, len(e.label))
+	}
+	out := []string{Pad(" "+bo.Render("Status")+dim.Render("  "+itoa(len(statusFixture))), w)}
+	for i, e := range statusFixture {
+		if len(statusFixture)+1 > max && i == max-2 {
+			out = append(out, Pad(" "+dim.Render("  ↓ "+itoa(len(statusFixture)-i)+" more status"), w))
+			break
+		}
+		text := e.text
+		if e.state == "down" {
+			text = rd.Render(text)
+		}
+		out = append(out, Pad("  "+statusDot(e.state)+"  "+Pad(e.label, lw)+"  "+text, w))
+	}
+	return out
+}
+
+// urlCell is a running command's url row: the reachability dot the dashboard
+// probes for it, then the url — named by its [status] entry when the `urls`
+// list referenced one, bare otherwise. The fixture's urls all answer.
+func urlCell(u string, w int) string {
+	dot := statusDot("up") + " "
+	rest := maxInt(w-2, 4)
+	if statusShown {
+		for _, e := range statusFixture {
+			if e.url == u {
+				label := trunc(e.label, maxInt(rest/3, 4))
+				return dot + bo.Render(label) + "  " + cy.Render(trunc(u, maxInt(rest-VW(label)-2, 4)))
+			}
+		}
+	}
+	return dot + cy.Render(trunc(u, rest))
+}
+
 func minInt(a, b int) int {
 	if a < b {
 		return a
@@ -1562,7 +1647,7 @@ func fieldRows(lr *liveRow, w int) []string {
 		// height, so the space is held either way — printing "url —" spends a
 		// row saying a field is absent, which the blank row already says.
 		for _, u := range lr.urls {
-			out = append(out, " "+dim.Render("url      ")+cy.Render(trunc(u, lw)))
+			out = append(out, " "+dim.Render("url      ")+urlCell(u, lw))
 		}
 		return padRows(out, w)
 	}
@@ -1628,11 +1713,12 @@ func bandIdle(e *commandEntry, w int) []string {
 
 // renderWorkBody is the Commands or Workers tab body: that tab's list
 // scrolling in the top region, then the band. One layout at every geometry.
-// list is the tab's rows, already built at workBodyWidth(w).
-func renderWorkBody(w, h int, list []string, selEntry *commandEntry, selWorker *liveRow, empty bool) []string {
+// list is the tab's rows, already built at workBodyWidth(w); strip is the
+// Status section pinned above it, whose rows come out of the list's share.
+func renderWorkBody(w, h int, strip, list []string, selEntry *commandEntry, selWorker *liveRow, empty bool) []string {
 	fullW := workBodyWidth(w)
 	bh := bandH(h)
-	listH := maxInt(h-bh, 1)
+	listH := maxInt(h-bh-len(strip), 1)
 
 	if len(list) > listH {
 		start, end := scrollWindow(len(list), markedIdx(list), listH)
@@ -1654,6 +1740,9 @@ func renderWorkBody(w, h int, list []string, selEntry *commandEntry, selWorker *
 	// here — a second one put the whole list one column right of the band's
 	// rules and fields beneath it.
 	out := make([]string, 0, h)
+	for _, l := range strip {
+		out = append(out, Pad(l, w))
+	}
 	for i := 0; i < listH; i++ {
 		out = append(out, Pad(at(list, i), w))
 	}
@@ -1732,6 +1821,7 @@ func render(s State) string {
 		name = "commands"
 	}
 	sp := screens[name]
+	statusShown = sp.status
 	// The empty screen depicts a project with nothing running and no workers.
 	// The data axis says the same thing but is NoDump, so without the name check
 	// the dumped frame was byte-identical to the populated one.
@@ -1805,7 +1895,13 @@ func render(s State) string {
 				list = commandSections(fullW, cursor, empty)
 			}
 			action = rowAction(selLive, onWorkersTab(name))
-			body = renderWorkBody(w, h-5, list, selEntry, selLive, empty)
+			var strip []string
+			if sp.status {
+				// The list keeps at least three rows, the same floor the
+				// dashboard's renderWorkBody leaves it.
+				strip = statusStrip(fullW, h-5-bandH(h-5)-3)
+			}
+			body = renderWorkBody(w, h-5, strip, list, selEntry, selLive, empty)
 		}
 		bodyH := h - 2 - len(rows) // rule + keys footer below
 		for len(body) < bodyH {

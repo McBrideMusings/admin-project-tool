@@ -86,6 +86,39 @@ func TestStatusRowsAbsentWithoutEntries(t *testing.T) {
 	}
 }
 
+// The strip takes its rows from the list, never the band: the band's title
+// rule sits on the same body row with [status] entries as without them
+// (docs/spikes/admin-tui-desktop/commands-status.txt against commands.txt).
+func TestStatusStripLeavesTheBandInPlace(t *testing.T) {
+	stubStatus(t, func(manifest.StatusSpec, string) status.Result { return status.Result{} })
+	freshLivework(t)
+	titleRow := func(st map[string]manifest.StatusSpec) int {
+		m := &manifest.Manifest{
+			Status:  st,
+			Custom:  map[string]manifest.Command{"dev": {Desc: "start dev server", Steps: []string{"dev"}}},
+			Actions: map[string]manifest.Action{"dev": {"kind": "shell", "run": "run-dev"}},
+		}
+		mm := workTestModel(m)
+		mm.cursor[mm.active] = 1 // the "dev" row, under the Commands header
+		lines, _ := mm.renderWorkBody(96, 25)
+		for i, l := range lines {
+			if strings.HasPrefix(stripANSI(l), "── ") {
+				return i
+			}
+		}
+		t.Fatalf("no band title rule in:\n%s", strings.Join(lines, "\n"))
+		return -1
+	}
+	bare := titleRow(nil)
+	withStrip := titleRow(map[string]manifest.StatusSpec{
+		"a": {Kind: manifest.StatusHTTP, URL: "http://x"},
+		"b": {Kind: manifest.StatusHTTP, URL: "http://y"},
+	})
+	if bare != 13 || withStrip != 13 {
+		t.Errorf("band title row = %d without [status], %d with it; want 13 for both (25 rows, band 12)", bare, withStrip)
+	}
+}
+
 // More entries than fit: the strip says how many it hid instead of dropping
 // them silently.
 func TestStatusStripSaysHowManyEntriesItHid(t *testing.T) {

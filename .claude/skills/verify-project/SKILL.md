@@ -106,8 +106,9 @@ go run ./docs/spikes/admin-tui-desktop -dump -w 80 -h 24 -dir <scratch-dir>
 ```
 
 `-w`/`-h` are the full terminal size. The `h=` in a spike frame's top row counts only the list
-and band, 5 rows fewer than the frame itself. With no flags it rewrites the committed 96x30
-frames; a clean `git status` afterwards proves they are current.
+and band, 5 rows fewer than the frame itself. With no `-dir` it writes every frame into the
+current directory (26 stray `.txt` files at the repo root); `-dir docs/spikes/admin-tui-desktop`
+rewrites the committed 96x30 frames, and a clean `git status` afterwards proves they are current.
 
 A behavioral change to `internal/tui` is also proven by:
 

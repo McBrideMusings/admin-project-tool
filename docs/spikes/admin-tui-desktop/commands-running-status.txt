@@ -1,0 +1,30 @@
+ beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
+  Commands 47     Workers 3     Repo     Beads 227     Config                                   
+                                                                                                
+ Status  3                                                                                      
+  ●  local  up                                                                                  
+  ●  prod   v2.3.1 · 4 queued                                                                   
+  ○  queue  timed out                                                                           
+ Commands   ↑ 7 more                                                                            
+ ◇ ├ name-check    cd apps && bunx wrangler deploy --target name-check                          
+ ◇ └ tournament-p… cd apps && bunx wrangler deploy --target tournament-processor                
+   dev             Run a local dev server                                                       
+ ◆ ├ cf            ● running 4m12s  vitepress dev · localhost:5173                              
+ ◇ └ local         cd apps && bunx wrangler dev --target local                                  
+   logs            Tail logs (prod webview client console via Tampermonkey bridge)              
+ ◇ ├ branch-client cd apps && bunx wrangler logs --target branch-client                         
+   ↓ more                                                                                       
+── ● dev cf  running  4m12s ────────────────────────────────────── also 1 command · 3 workers ──
+ log      /Users/dev/admin-project-tool/.admin/logs/dev-cf.log                                  
+ url      ● local  http://localhost:5173                                                        
+                                                                                                
+                                                                                                
+                                                                                                
+   ➜  Network: use --host to expose                                                             
+                                                                                                
+ 14:22:14 [vite] hmr update /guide/index.md                                                     
+ 14:22:41 [vite] hmr update /reference/api.md                                                   
+ 14:23:02 [vite] page reload /architecture/design.md                                            
+ 14:23:19 [vite] hmr update /guide/index.md                                                     
+────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ move · ↵ attach · x kill · c collapse · q/esc quit · o config · ←→ tab                      
