@@ -28,6 +28,7 @@ package kinds
 
 import (
 	"bufio"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"os"
@@ -376,7 +377,11 @@ func appleDeployMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 	// hardened runtime (which notarization requires) and drops get-task-allow.
 	var appPath string
 	if appleWantsDeveloperID(cfg) {
-		exported, cleanup, err := appleArchiveAndExportDeveloperID(cfg, h, project, scheme, config, f.clean)
+		x, err := appleMacExport(cfg, project)
+		if err != nil {
+			return err
+		}
+		exported, cleanup, err := appleArchiveAndExport(cfg, h, project, scheme, config, x)
 		if cleanup != nil {
 			defer cleanup()
 		}
@@ -480,26 +485,36 @@ func appleDeployDevice(cfg map[string]any, h *luahost.Host, platform string, f a
 	h.Info("Deploying to " + deviceName)
 	appleEnsureDeviceRegistered(h, udid, deviceName)
 
-	h.Info(fmt.Sprintf("Building %s for device (%s)...", scheme, config))
-	opts := luahost.XcodebuildOptions{
-		Project: project, Scheme: scheme, Config: config,
-		Destination: sdk.destination, Action: appleBuildAction(f.clean),
-		ExtraSettings: appleComposeSignSettings(cfg, h, project, platform),
-	}
-	res, err := h.XcodebuildFiltered(opts)
-	if err != nil {
-		return err
-	}
-	if !res.Ok {
-		for _, w := range luahost.DiagnoseBuildFailure(res.RawLogPath) {
-			h.Warn(w)
+	var appPath string
+	if x, ok := appleIOSExport(cfg, project); ok && platform == "ios" {
+		exported, cleanup, err := appleArchiveAndExport(cfg, h, project, scheme, config, x)
+		if cleanup != nil {
+			defer cleanup()
 		}
-		return fmt.Errorf("build failed")
-	}
-
-	appPath, err := appleBuiltApp(opts, process)
-	if err != nil {
-		return fmt.Errorf("BUILD SUCCEEDED but %w", err)
+		if err != nil {
+			return err
+		}
+		appPath = exported
+	} else {
+		h.Info(fmt.Sprintf("Building %s for device (%s)...", scheme, config))
+		opts := luahost.XcodebuildOptions{
+			Project: project, Scheme: scheme, Config: config,
+			Destination: sdk.destination, Action: appleBuildAction(f.clean),
+			ExtraSettings: appleComposeSignSettings(cfg, h, project, platform),
+		}
+		res, err := h.XcodebuildFiltered(opts)
+		if err != nil {
+			return err
+		}
+		if !res.Ok {
+			for _, w := range luahost.DiagnoseBuildFailure(res.RawLogPath) {
+				h.Warn(w)
+			}
+			return fmt.Errorf("build failed")
+		}
+		if appPath, err = appleBuiltApp(opts, process); err != nil {
+			return fmt.Errorf("BUILD SUCCEEDED but %w", err)
+		}
 	}
 
 	h.Info("Installing to device " + deviceName + "...")
@@ -823,28 +838,100 @@ func appleWantsDeveloperID(cfg map[string]any) bool {
 	return strings.Contains(strings.ToLower(cfgString(cfg, "mac_sign_identity", "")), "developer id")
 }
 
-// appleArchiveAndExportDeveloperID archives the scheme and exports it with
-// method=developer-id, returning the exported .app and a cleanup for the temp
-// tree it lives in.
-//
-// The archive itself is built under the project's ordinary signing — export is
-// where the identity changes, which is why nothing here passes
-// CODE_SIGN_IDENTITY. -allowProvisioningUpdates plus the App Store Connect key
-// lets the export create the Developer ID profile it needs rather than
-// requiring one to be made in the portal first.
-func appleArchiveAndExportDeveloperID(cfg map[string]any, h *luahost.Host, project, scheme, config string, clean bool) (string, func(), error) {
-	signingCert := cfgString(cfg, "mac_sign_identity", "Developer ID Application")
-	bundleID := appleBundle(project, cfg, "mac", false)
-	profileName := cfgString(cfg, "mac_provisioning_profile", "")
-	if profileName == "" {
-		return "", nil, fmt.Errorf(
+// appleExport is one distribution route a deploy can take: the archive is
+// built under the project's ordinary development signing, then
+// -exportArchive re-signs it with a distribution identity and profile.
+type appleExport struct {
+	destination string // xcodebuild archive destination
+	method      string // ExportOptions method
+	cert        string // signingCertificate
+	profile     string // provisioning profile name or UUID
+	bundleID    string
+}
+
+// appleMacExport is the Developer ID route for deploy mac, or an error when
+// the profile it needs is not named.
+func appleMacExport(cfg map[string]any, project string) (appleExport, error) {
+	x := appleExport{
+		destination: "generic/platform=macOS", method: "developer-id",
+		cert:     cfgString(cfg, "mac_sign_identity", "Developer ID Application"),
+		profile:  cfgString(cfg, "mac_provisioning_profile", ""),
+		bundleID: appleBundle(project, cfg, "mac", false),
+	}
+	if x.profile == "" {
+		return x, fmt.Errorf(
 			"apple.mac_provisioning_profile is required for a Developer ID export: "+
 				"name the MAC_APP_DIRECT profile for %s (manual signing cannot guess "+
 				"it, and automatic signing needs a cloud-signing permission the API "+
-				"key may not have)", bundleID)
+				"key may not have)", x.bundleID)
 	}
+	return x, nil
+}
 
-	tmp, err := os.MkdirTemp("", "admin-devid-")
+// appleIOSExport is the ad-hoc route for deploy ios, and ok is false when the
+// project has not opted in by naming ios_provisioning_profile.
+//
+// Ad-hoc (method=release-testing) is the only distribution method devicectl
+// can install: it signs with Apple Distribution, so the app carries no
+// get-task-allow, and the profile lists the device UDIDs allowed to run it.
+// A development profile cannot drop get-task-allow at all — codesign rejects
+// an entitlements file that sets it false — so this is the only way a
+// deployed iOS build stops being debuggable. ios_sign_identity is not reused
+// for the certificate: appleComposeSignSettings applies it to every iOS build,
+// dev loop included, and a distribution identity there breaks `dev ios`.
+func appleIOSExport(cfg map[string]any, project string) (appleExport, bool) {
+	x := appleExport{
+		destination: "generic/platform=iOS", method: "release-testing",
+		cert:     cfgString(cfg, "ios_export_identity", "Apple Distribution"),
+		profile:  cfgString(cfg, "ios_provisioning_profile", ""),
+		bundleID: appleBundle(project, cfg, "ios", false),
+	}
+	return x, x.profile != ""
+}
+
+// appleExportOptionsPlist is the -exportOptionsPlist body for x.
+//
+// signingStyle MANUAL, naming the profile and the identity outright.
+// `automatic` routes the export through Apple's CLOUD SIGNING, which asks the
+// App Store Connect key to mint a distribution profile on the fly. When the
+// key lacks that permission the export reports "Cloud signing permission
+// error" AND "No profiles for '<bundle id>' were found" together — and the
+// second line is misleading, because an ACTIVE profile can exist in the
+// account and cloud signing still never looks at it. Manual signing uses the
+// profile installed under ~/Library/MobileDevice/Provisioning Profiles and the
+// certificate already in the keychain, so no permission to create anything is
+// needed.
+func appleExportOptionsPlist(x appleExport, team string) string {
+	esc := func(s string) string {
+		var b strings.Builder
+		_ = xml.EscapeText(&b, []byte(s)) // a strings.Builder write never fails
+		return b.String()
+	}
+	return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>method</key><string>` + esc(x.method) + `</string>
+<key>signingStyle</key><string>manual</string>
+<key>destination</key><string>export</string>
+<key>teamID</key><string>` + esc(team) + `</string>
+<key>signingCertificate</key><string>` + esc(x.cert) + `</string>
+<key>provisioningProfiles</key><dict>
+<key>` + esc(x.bundleID) + `</key><string>` + esc(x.profile) + `</string>
+</dict>
+</dict></plist>
+`
+}
+
+// appleArchiveAndExport archives the scheme and exports it along route x,
+// returning the exported .app and a cleanup for the temp tree it lives in. An
+// iOS export writes an .ipa; its Payload/*.app is unzipped and returned, since
+// devicectl installs a bundle.
+//
+// The archive itself is built under the project's ordinary signing — export is
+// where the identity changes, which is why nothing here passes
+// CODE_SIGN_IDENTITY.
+func appleArchiveAndExport(cfg map[string]any, h *luahost.Host, project, scheme, config string, x appleExport) (string, func(), error) {
+	tmp, err := os.MkdirTemp("", "admin-export-")
 	if err != nil {
 		return "", nil, err
 	}
@@ -861,19 +948,19 @@ func appleArchiveAndExportDeveloperID(cfg map[string]any, h *luahost.Host, proje
 	}
 
 	archivePath := filepath.Join(tmp, scheme+".xcarchive")
-	// The action leads, and a macOS archive takes generic/platform=macOS — a
-	// bare `platform=macOS` with the action in the middle makes xcodebuild dump
-	// its usage instead of building anything.
+	// The action leads, and an archive takes a generic/platform= destination —
+	// a bare `platform=macOS` with the action in the middle makes xcodebuild
+	// dump its usage instead of building anything.
 	args := []string{"archive",
 		"-project", project, "-scheme", scheme, "-configuration", config,
-		"-destination", "generic/platform=macOS", "-archivePath", archivePath,
+		"-destination", x.destination, "-archivePath", archivePath,
 		"-allowProvisioningUpdates"}
 	args = append(args, appleAuthArgv()...)
 
 	// The archive is built under the project's ORDINARY signing, team included:
 	// without DEVELOPMENT_TEAM, a target whose entitlements need a profile fails
 	// with "has entitlements that require signing with a development
-	// certificate". The Developer ID identity is deliberately not passed here —
+	// certificate". The distribution identity is deliberately not passed here —
 	// applying it at archive time is the "conflicting provisioning settings"
 	// failure this whole path exists to route around. Export re-signs.
 	if team != "" {
@@ -885,32 +972,8 @@ func appleArchiveAndExportDeveloperID(cfg map[string]any, h *luahost.Host, proje
 		return "", cleanup, fmt.Errorf("archive failed: %v\n%s", err, appleTailLines(string(out), 40))
 	}
 
-	// signingStyle MANUAL, naming the profile and the identity outright.
-	//
-	// `automatic` routes the export through Apple's CLOUD SIGNING, which asks
-	// the App Store Connect key to mint a Developer ID profile on the fly. When
-	// the key lacks that permission the export reports "Cloud signing permission
-	// error" AND "No profiles for '<bundle id>' were found" together — and the
-	// second line is misleading, because an ACTIVE profile can exist in the
-	// account and cloud signing still never looks at it. Manual signing uses the
-	// profile installed under ~/Library/MobileDevice/Provisioning Profiles and
-	// the Developer ID certificate already in the keychain, so no permission to
-	// create anything is needed.
 	options := filepath.Join(tmp, "ExportOptions.plist")
-	plist := `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>method</key><string>developer-id</string>
-<key>signingStyle</key><string>manual</string>
-<key>destination</key><string>export</string>
-<key>teamID</key><string>` + team + `</string>
-<key>signingCertificate</key><string>` + signingCert + `</string>
-<key>provisioningProfiles</key><dict>
-<key>` + bundleID + `</key><string>` + profileName + `</string>
-</dict>
-</dict></plist>
-`
-	if err := os.WriteFile(options, []byte(plist), 0o644); err != nil {
+	if err := os.WriteFile(options, []byte(appleExportOptionsPlist(x, team)), 0o644); err != nil {
 		return "", cleanup, err
 	}
 
@@ -920,9 +983,9 @@ func appleArchiveAndExportDeveloperID(cfg map[string]any, h *luahost.Host, proje
 		"-allowProvisioningUpdates"}
 	exportArgs = append(exportArgs, appleAuthArgv()...)
 
-	h.Info("Exporting Developer ID-signed app...")
+	h.Info(fmt.Sprintf("Exporting %s-signed app (%s, profile %q)...", x.cert, x.method, x.profile))
 	if out, err := exec.Command("xcodebuild", exportArgs...).CombinedOutput(); err != nil {
-		return "", cleanup, fmt.Errorf("developer-id export failed: %v\n%s", err, appleTailLines(string(out), 40))
+		return "", cleanup, fmt.Errorf("%s export failed: %v\n%s", x.method, err, appleTailLines(string(out), 40))
 	}
 
 	entries, err := os.ReadDir(exportDir)
@@ -930,11 +993,23 @@ func appleArchiveAndExportDeveloperID(cfg map[string]any, h *luahost.Host, proje
 		return "", cleanup, err
 	}
 	for _, e := range entries {
+		name := filepath.Join(exportDir, e.Name())
 		if strings.HasSuffix(e.Name(), ".app") {
-			return filepath.Join(exportDir, e.Name()), cleanup, nil
+			return name, cleanup, nil
+		}
+		if strings.HasSuffix(e.Name(), ".ipa") {
+			unzipped := filepath.Join(tmp, "ipa")
+			if out, err := exec.Command("ditto", "-x", "-k", name, unzipped).CombinedOutput(); err != nil {
+				return "", cleanup, fmt.Errorf("unzip %s: %v\n%s", name, err, out)
+			}
+			apps, _ := filepath.Glob(filepath.Join(unzipped, "Payload", "*.app"))
+			if len(apps) != 1 {
+				return "", cleanup, fmt.Errorf("%s holds %d apps under Payload/, want 1", name, len(apps))
+			}
+			return apps[0], cleanup, nil
 		}
 	}
-	return "", cleanup, fmt.Errorf("export produced no .app in %s", exportDir)
+	return "", cleanup, fmt.Errorf("export produced no .app or .ipa in %s", exportDir)
 }
 
 // appleTailLines keeps the last n lines, so a failure reports the part of

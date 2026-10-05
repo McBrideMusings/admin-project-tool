@@ -294,3 +294,38 @@ func TestAppleRunMacDeployVerifySuccessReceivesAppPath(t *testing.T) {
 		t.Errorf("verify command received %q, want the app path %q", strings.TrimSpace(string(got)), appPath)
 	}
 }
+
+func TestAppleIOSExportOnlyWhenProfileNamed(t *testing.T) {
+	if _, ok := appleIOSExport(map[string]any{"ios_bundle": "com.example.app"}, ""); ok {
+		t.Fatal("appleIOSExport opted in with no ios_provisioning_profile; deploy ios must stay a plain build")
+	}
+	x, ok := appleIOSExport(map[string]any{
+		"ios_bundle":               "com.example.app",
+		"ios_provisioning_profile": "Example Ad Hoc",
+	}, "")
+	if !ok {
+		t.Fatal("appleIOSExport did not opt in with ios_provisioning_profile set")
+	}
+	if x.method != "release-testing" || x.cert != "Apple Distribution" || x.destination != "generic/platform=iOS" {
+		t.Errorf("got method %q cert %q destination %q, want release-testing / Apple Distribution / generic/platform=iOS",
+			x.method, x.cert, x.destination)
+	}
+}
+
+func TestAppleExportOptionsPlistNamesRoute(t *testing.T) {
+	plist := appleExportOptionsPlist(appleExport{
+		method: "release-testing", cert: "Apple Distribution",
+		profile: "Example Ad Hoc", bundleID: "com.example.app",
+	}, "TEAM123")
+	for _, want := range []string{
+		"<key>method</key><string>release-testing</string>",
+		"<key>signingStyle</key><string>manual</string>",
+		"<key>teamID</key><string>TEAM123</string>",
+		"<key>signingCertificate</key><string>Apple Distribution</string>",
+		"<key>com.example.app</key><string>Example Ad Hoc</string>",
+	} {
+		if !strings.Contains(plist, want) {
+			t.Errorf("ExportOptions plist missing %q:\n%s", want, plist)
+		}
+	}
+}

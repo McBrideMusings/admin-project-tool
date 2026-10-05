@@ -83,6 +83,28 @@ Process name resolution falls back through: explicit key → the scheme's `PRODU
 | `mac_install_path_dev` | — | Destination for a `dev` macOS build install, when dev-install is requested. |
 | `mac_deploy_verify` | — | Shell command run by `deploy_mac`, from the project root, after build and after notarize/staple, before `install_path` is touched. The built `.app` path is shell-quoted and appended as the final argument. Output streams to the terminal; a non-zero exit aborts the deploy and leaves `install_path` untouched. Unset means no verify step, identical to today's behavior. |
 
+## Distribution signing for deploy
+
+A plain `deploy` builds Release under the project's development signing, so the
+installed app carries `get-task-allow` and a debugger can attach. A distribution
+identity is reachable only by archiving and then running `-exportArchive`, which
+re-signs the app; `appleArchiveAndExport` (`internal/kinds/apple_darwin.go`) does
+both, with manual signing against a profile installed under
+`~/Library/MobileDevice/Provisioning Profiles`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `mac_sign_identity` | — | A value containing `Developer ID` routes `deploy mac` through a `developer-id` export with this certificate. |
+| `mac_provisioning_profile` | — | Name or UUID of the Developer ID profile for the Mac bundle id. Required by the Developer ID export. |
+| `notarize` | `false` | Implies the Developer ID export, then submits the app to the notary service and staples it before install. |
+| `ios_provisioning_profile` | — | Name or UUID of an ad-hoc profile for the iOS bundle id. Setting it routes `deploy ios` through a `release-testing` (ad-hoc) export; the `.ipa`'s `Payload/*.app` is what devicectl installs. The profile must list the device's UDID. |
+| `ios_export_identity` | `Apple Distribution` | Certificate the ad-hoc export signs with. Separate from `ios_sign_identity`, which every iOS build uses, the dev loop included. |
+
+macOS can drop `get-task-allow` without distribution signing: set
+`CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO` on the Release configuration. iOS cannot,
+because a development profile requires `get-task-allow = true` and codesign rejects
+an entitlements file that sets it false.
+
 ## macOS dev-variant renaming
 
 When `mac_dev_rename` is on and a dev product/display name resolves, the dev build is renamed so it can sit alongside the prod app.
