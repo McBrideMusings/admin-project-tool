@@ -22,7 +22,6 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/keymap"
-	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/shim"
@@ -530,27 +529,6 @@ type Model struct {
 	cfgMerged config.Config
 	cfgErr    string
 
-	// Workflow confirm overlay (admin-3rgp.26): a query-sourced workflow row
-	// (Work tab) never dispatches on a bare enter. Enter instead resolves the
-	// query (wfResolving, while the resolveWorkflowCmd is in flight) and this
-	// overlay is what shows the resolved set before anything runs — the
-	// epic's "a query matching nine things must not be able to start nine
-	// agents without the set having been seen." wfErr holds either a
-	// resolution failure or "matched nothing"; either way there is nothing to
-	// confirm and the overlay's only key is dismiss. A real, non-empty
-	// wfTargets is what the confirm key (enter/y) hands to
-	// dispatchWorkflowCmd — esc/n (or dismissing an error/empty result)
-	// closes the overlay having dispatched nothing.
-	wfResolving bool
-	wfOpen      bool
-	wfName      string
-	wfAction    manifest.Action
-	wfQuery     string
-	wfTargets   []kinds.Target
-	wfErr       string
-	wfRun       string
-	wfCeiling   int
-
 	// Worktree-target picker overlay (admin-76tv, worktreepicker.go): `T`
 	// lists the repo's worktrees (git.Worktrees(m.repoRoot)) so the user
 	// can point the dashboard at one of them; enter switches wtTarget/
@@ -1052,7 +1030,10 @@ func (m *Model) moveCursorWork(delta int) {
 				end++
 			}
 			if end == start {
-				return // defensive: a group row always has at least one target
+				// A query workflow that matched nothing: its only row
+				// under the group is text, so walk on to the next
+				// selectable row rather than stall on this keypress.
+				continue
 			}
 			if delta > 0 {
 				m.cursor[m.active] = start
@@ -1787,10 +1768,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(m.workTickCmd(), record)
 
-	case workflowResolvedMsg:
-		m.workflowResolved(msg)
-		return m, nil
-
 	case workflowDispatchDoneMsg:
 		m.workflowDispatchDone(msg)
 		return m, nil
@@ -2076,14 +2053,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// workflow picker itself depends on.
 	if m.wtPickerOpen {
 		return m.worktreePickerKey(msg.String())
-	}
-
-	// The workflow confirm overlay (admin-3rgp.26) owns the keyboard while a
-	// query is resolving or its resolved set is up for confirmation: nothing
-	// underneath (the Work tab's own cursor, dispatch, anything else) can
-	// react to a keypress meant for "does this resolved set actually run".
-	if m.wfResolving || m.wfOpen {
-		return m.workflowConfirmKey(msg.String())
 	}
 
 	// The bead overlay owns the keyboard while it is up, the same way the

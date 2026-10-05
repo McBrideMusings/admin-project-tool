@@ -14,9 +14,9 @@
 // (so a malformed workflow fails the same way any other malformed action
 // does, before a Runner is ever invoked) and hands off to
 // runWorkflowCLI, which resolves a query, confirms it with the user, and
-// dispatches through the same kinds.DispatchTargets machinery
-// internal/tui/workflowconfirm.go's dashboard overlay uses — no second
-// dispatch path exists.
+// dispatches through the same kinds.DispatchTargets machinery the
+// dashboard's target rows use (internal/tui/workflowdispatch.go) — no
+// second dispatch path exists.
 package kinds
 
 import (
@@ -237,7 +237,7 @@ var removedWorkflowKeys = []string{"agent", "mode", "prompt"}
 // RequireRun is the one check that a workflow action has a launch command: nil
 // when run holds something, else an error naming the action. Every place that
 // reads a workflow's run string — manifest validation, the CLI, dispatch, the
-// dashboard's confirm overlays — asks it rather than comparing to "" itself.
+// dashboard's dispatches — asks it rather than comparing to "" itself.
 func RequireRun(name, run string) error {
 	if strings.TrimSpace(run) == "" {
 		return fmt.Errorf(`action %q: kind="workflow" has no run command — set 'run' on the action`, name)

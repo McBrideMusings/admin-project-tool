@@ -94,17 +94,12 @@ func ClassifyQuery(query string) (QueryForm, string) {
 	}
 }
 
-// ResolveQuery resolves query against repoRoot's configured tracker and
-// returns the []Target a confirmed dispatch would run over, each carrying the
-// workflow action's run and done. It never dispatches anything itself —
-// internal/tui's confirm overlay is the only caller, and it is responsible for showing the returned set to the user
-// before ever handing it to DispatchTargets (the epic's "a query matching
-// nine things must not be able to start nine agents without the set having
-// been seen").
+// ResolveQuery reads repoRoot's configured tracker and returns the []Target
+// query matches, each carrying the workflow action's run and done. It never
+// dispatches anything itself; the CLI (workflowcli.go) is its caller.
 //
-// tracker and nwo come from the caller, which already has both (internal/tui
-// resolves the action's tracker via WorkflowTarget.ResolveTracker and reads
-// m.nwo) — ResolveQuery has no manifest of its own to read them from.
+// tracker and nwo come from the caller, which already has both —
+// ResolveQuery has no manifest of its own to read them from.
 func ResolveQuery(ctx context.Context, action manifest.Action, repoRoot, tracker, nwo, query string) ([]Target, error) {
 	switch tracker {
 	case "", "beads":
@@ -116,8 +111,43 @@ func ResolveQuery(ctx context.Context, action manifest.Action, repoRoot, tracker
 	}
 }
 
-// resolveBeadsQuery is ResolveQuery's original, and still only, beads-backed
-// body — unchanged behaviour from before this file gained a second tracker.
+// MatchQuery is ResolveQuery over tracker state the caller already holds:
+// beads for a beads tracker, open issues for a github one. The dashboard
+// calls it while building the Work tab's rows, so a query workflow lists
+// its matched items from the same bd/gh reads its Beads and Issues tabs
+// already poll, with no read of its own.
+func MatchQuery(action manifest.Action, tracker, query string, beads []bd.Bead, issues []gh.IssueItem) ([]Target, error) {
+	switch tracker {
+	case "", "beads":
+		return MatchBeads(action, beads, query)
+	case "github":
+		label, err := githubQueryLabel(tracker, query)
+		if err != nil {
+			return nil, err
+		}
+		var targets []Target
+		for _, it := range issues {
+			if hasLabel(it.Labels, label) {
+				targets = append(targets, NewTarget(action, strconv.Itoa(it.Number)))
+			}
+		}
+		return targets, nil
+	default:
+		return nil, fmt.Errorf("query %q: tracker %q has no query resolver", query, tracker)
+	}
+}
+
+// resolveBeadsQuery is ResolveQuery's beads-backed body: one bd read, then
+// MatchBeads.
+func resolveBeadsQuery(ctx context.Context, action manifest.Action, repoRoot, query string) ([]Target, error) {
+	beads, err := listBeads(ctx, repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolving query %q: %w", query, err)
+	}
+	return MatchBeads(action, beads, query)
+}
+
+// MatchBeads filters beads by query.
 //
 // Two forms are recognized, both plain bd filters rather than a new query
 // language:
@@ -133,14 +163,8 @@ func ResolveQuery(ctx context.Context, action manifest.Action, repoRoot, tracker
 // A query resolving to zero beads is NOT an error: it is reported back as
 // an empty, non-nil slice so the caller can say "matched nothing" and
 // dispatch nothing — this ticket's own acceptance criterion. Only a
-// malformed query string or an unreadable tracker (no bd workspace, a
-// schema bd.List can't read) come back as err.
-func resolveBeadsQuery(ctx context.Context, action manifest.Action, repoRoot, query string) ([]Target, error) {
-	beads, err := listBeads(ctx, repoRoot)
-	if err != nil {
-		return nil, fmt.Errorf("resolving query %q: %w", query, err)
-	}
-
+// malformed query string comes back as err.
+func MatchBeads(action manifest.Action, beads []bd.Bead, query string) ([]Target, error) {
 	form, label := ClassifyQuery(query)
 
 	var matched []bd.Bead
@@ -182,28 +206,36 @@ func resolveBeadsQuery(ctx context.Context, action manifest.Action, repoRoot, qu
 // A query resolving to zero issues is NOT an error, matching
 // resolveBeadsQuery: it comes back as an empty, non-nil slice.
 func resolveGitHubQuery(ctx context.Context, action manifest.Action, nwo, tracker, query string) ([]Target, error) {
-	form, label := ClassifyQuery(query)
+	label, err := githubQueryLabel(tracker, query)
+	if err != nil {
+		return nil, err
+	}
+	issues, err := listGitHubIssues(ctx, nwo, label)
+	if err != nil {
+		return nil, fmt.Errorf("resolving query %q: %w", query, err)
+	}
+	targets := make([]Target, len(issues))
+	for i, it := range issues {
+		targets[i] = NewTarget(action, strconv.Itoa(it.Number))
+	}
+	return targets, nil
+}
 
+// githubQueryLabel is the label a github-tracked query filters by, or the
+// error naming why the query is not one github resolves.
+func githubQueryLabel(tracker, query string) (string, error) {
+	form, label := ClassifyQuery(query)
 	switch form {
 	case QueryFormReady:
-		return nil, fmt.Errorf(
+		return "", fmt.Errorf(
 			`query %q: "ready" is beads-only — it means "no open blocker", and tracker = %q has no dependency edges to derive that from; use "label:<name>"`,
 			query, tracker)
 	case QueryFormEmptyLabel:
-		return nil, fmt.Errorf("query %q: 'label:' needs a name", query)
+		return "", fmt.Errorf("query %q: 'label:' needs a name", query)
 	case QueryFormLabel:
-		issues, err := listGitHubIssues(ctx, nwo, label)
-		if err != nil {
-			return nil, fmt.Errorf("resolving query %q: %w", query, err)
-		}
-		targets := make([]Target, len(issues))
-		for i, it := range issues {
-			id := strconv.Itoa(it.Number)
-			targets[i] = NewTarget(action, id)
-		}
-		return targets, nil
+		return label, nil
 	default:
-		return nil, fmt.Errorf(
+		return "", fmt.Errorf(
 			`query %q: unrecognized — tracker %q supports only %s`, query, tracker, GitHubQueryForms)
 	}
 }

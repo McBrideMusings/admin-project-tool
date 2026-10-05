@@ -4,6 +4,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -37,13 +38,15 @@ type workRowData struct {
 	steps        []workStepInfo
 	// workflow is non-nil only for a query-sourced kind="workflow" command
 	// (a row-sourced one never reaches this list at all — see
-	// declaredCommands). workflowAction is that same step's raw action body
-	// — kept alongside workflow because admin-3rgp.26's resolve/confirm/
-	// dispatch chain (workflowconfirm.go) needs the whole action, not just
-	// its parsed `over`, to resolve the configured agent and hand off to
-	// kinds.DispatchTargets exactly as it would from any other caller.
+	// declaredCommands), on its group row and on each matched item's target
+	// row. workflowAction is that same step's raw action body, which ↵ on a
+	// target hands to kinds.DispatchTargets with that one item
+	// (dispatchWorkflowTarget). workflowNote is what the group shows in place
+	// of targets when its query matched nothing yet: still loading, no
+	// match, or why the query cannot resolve.
 	workflow       *kinds.WorkflowTarget
 	workflowAction manifest.Action
+	workflowNote   string
 	// live is the livework.Entry currently backing this command, if any —
 	// set only for a process-kind entry (Worker == nil); a genuine agent
 	// worker never folds into a command row, it gets its own row below.
@@ -585,11 +588,23 @@ func (m Model) cmdOriginOf(name string) string {
 // never a rendered row, so both workRows' "Commands  N" header and
 // workRowCount can total invocations without depending on whether collapse
 // mode currently hides any target rows. commandRowItem calls this too, so the
-// two can never disagree about which multi-target actions get a group.
+// two can never disagree about which multi-target actions get a group. A
+// query workflow counts one invocation per tracker item its query matches
+// (workflowMatches), zero when it matches none.
 func (m Model) commandInvocationCount(cr workCmdRow) int {
-	if a, ok := m.soleAction(cr.cmd); ok && actionKind(a) == "multi-target" {
+	a, ok := m.soleAction(cr.cmd)
+	if !ok {
+		return 1
+	}
+	switch actionKind(a) {
+	case "multi-target":
 		if keys := kinds.TargetKeys(a); len(keys) > 1 {
 			return len(keys)
+		}
+	case "workflow":
+		if target, err := kinds.ParseWorkflowOver(cr.cmd.Steps[0], a); err == nil {
+			ids, _ := m.workflowMatches(cr.name, target, a)
+			return len(ids)
 		}
 	}
 	return 1
@@ -619,6 +634,17 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 			if target, err := kinds.ParseWorkflowOver(cr.cmd.Steps[0], a); err == nil {
 				wd.workflow = &target
 				wd.workflowAction = a
+				ids, note := m.workflowMatches(cr.name, target, a)
+				wd.workflowNote = note
+				wd.targets = ids
+				wd.targetDescs = map[string]string{}
+				agent := "agent"
+				if f := strings.Fields(kinds.ActionRun(a)); len(f) > 0 {
+					agent = f[0]
+				}
+				for _, id := range ids {
+					wd.targetDescs[id] = "dispatch " + agent + " over " + id
+				}
 			}
 		case "multi-target":
 			// A single-target action isn't a menu — the CLI picks that
@@ -668,8 +694,50 @@ func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) 
 	// A multi-target parent with more than one target is a group: it holds
 	// targets and runs nothing itself, so the cursor must never land on it
 	// (admin-3rgp.72.11). group rides on the rowItem, not workRowData, since
-	// selectable() reads it directly with no need to reach into work.
-	return rowItem{kind: rowCommand, label: cr.name + " " + cr.cmd.Desc, group: len(wd.targets) > 0, work: wd}
+	// selectable() reads it directly with no need to reach into work. A
+	// query workflow is a group whatever its query matched: its targets are
+	// the tracker items, and with none there is nothing for ↵ to dispatch.
+	group := len(wd.targets) > 0 || wd.workflow != nil
+	return rowItem{kind: rowCommand, label: cr.name + " " + cr.cmd.Desc, group: group, work: wd}
+}
+
+// workflowMatches is the tracker item ids a query workflow's query matches
+// right now, read from the beads and open issues the dashboard already
+// polls (kinds.MatchQuery), so drawing the list never reads the tracker
+// itself. With no ids, note says why: the tracker has not answered yet, the
+// query matched nothing, or the query cannot resolve.
+func (m Model) workflowMatches(name string, target kinds.WorkflowTarget, action manifest.Action) (ids []string, note string) {
+	tracker, err := target.ResolveTracker(name, m.trackers())
+	if err != nil {
+		return nil, err.Error()
+	}
+	switch tracker {
+	case "", "beads":
+		if len(m.beads) == 0 && m.beadsErr != "" {
+			return nil, m.beadsErr
+		}
+		if !m.haveBeads {
+			return nil, "loading beads…"
+		}
+	case "github":
+		if m.remote.IssuesFetchedAt.IsZero() {
+			if m.remote.IssuesFetchError != "" {
+				return nil, m.remote.IssuesFetchError
+			}
+			return nil, "loading issues…"
+		}
+	}
+	matched, err := kinds.MatchQuery(action, tracker, target.Query, m.beads, m.remote.Issues)
+	if err != nil {
+		return nil, err.Error()
+	}
+	if len(matched) == 0 {
+		return nil, "no items match " + target.Query
+	}
+	for _, t := range matched {
+		ids = append(ids, t.Name)
+	}
+	return ids, ""
 }
 
 // targetRows is a command's target group: one rowCommandTarget per target of
@@ -692,6 +760,11 @@ func targetRows(parent rowItem, byName map[string]*livework.Entry, pendingTarget
 	if wd == nil {
 		return nil
 	}
+	if wd.workflow != nil && len(wd.targets) == 0 {
+		// The group's one line under it, in the tree column, so a query that
+		// matched nothing reads as that rather than as a header with no rows.
+		return []rowItem{{kind: rowText, label: "  └ " + wd.workflowNote}}
+	}
 	out := make([]rowItem, 0, len(wd.targets))
 	for i, key := range wd.targets {
 		live := byName[kinds.TargetLiveKey(wd.cmdName, key)]
@@ -705,16 +778,18 @@ func targetRows(parent rowItem, byName map[string]*livework.Entry, pendingTarget
 			kind:  rowCommandTarget,
 			label: wd.cmdName + " " + key,
 			work: &workRowData{
-				cmdName:      wd.cmdName,
-				cmdDesc:      wd.cmdDesc,
-				cmdKind:      wd.cmdKind,
-				cmdArchetype: wd.cmdArchetype,
-				steps:        wd.steps,
-				logPath:      logPath,
-				targetKey:    key,
-				targetDesc:   wd.targetDescs[key],
-				targetLast:   i == len(wd.targets)-1,
-				urls:         wd.targetURLs[key],
+				cmdName:        wd.cmdName,
+				cmdDesc:        wd.cmdDesc,
+				cmdKind:        wd.cmdKind,
+				cmdArchetype:   wd.cmdArchetype,
+				steps:          wd.steps,
+				workflow:       wd.workflow,
+				workflowAction: wd.workflowAction,
+				logPath:        logPath,
+				targetKey:      key,
+				targetDesc:     wd.targetDescs[key],
+				targetLast:     i == len(wd.targets)-1,
+				urls:           wd.targetURLs[key],
 				// This target's own qualified entry, if one is running —
 				// see the byName doc comment above. renderTargetRow now
 				// renders state/activity/where from this exactly as
@@ -1025,28 +1100,18 @@ const (
 	actionDispatch
 	actionAttach
 	actionTranscript
-	actionWorkflowConfirm
 )
 
 // resolveRowAction decides ↵'s primary action for kind+wd. wd may be nil (a
 // row with no work payload, or one whose kind carries no primary action at
 // all) — actionNone then, same as any kind resolveRowAction doesn't
 // recognize (rowHeader, rowConfigValue, …).
-//
-// rowCommand checks wd.workflow before wd.live, exactly as activateCommand
-// always has: a query-sourced workflow command opens the confirm overlay
-// even once it is live, because the confirm step is what resolves the query
-// and picks the target to dispatch — attaching skips that. That ordering is
-// unchanged by this ticket; only the duplication is what's fixed.
 func resolveRowAction(kind rowKind, wd *workRowData) rowAction {
 	if wd == nil {
 		return actionNone
 	}
 	switch kind {
 	case rowCommand:
-		if wd.workflow != nil {
-			return actionWorkflowConfirm
-		}
 		if entryIsLive(wd.live) {
 			return actionAttach
 		}
@@ -1065,23 +1130,18 @@ func resolveRowAction(kind rowKind, wd *workRowData) rowAction {
 	return actionNone
 }
 
-// activateCommand handles enter on a command row: a query-sourced workflow
-// resolves its query and opens the confirm overlay rather than dispatching
-// directly (admin-3rgp.26 — see workflowconfirm.go); an already-live command
+// activateCommand handles enter on a command row: an already-live command
 // attaches to its pane instead of dispatching a second run on top of the one
 // that owns its log file and registry entry; a command whose previous enter
 // is still dispatching (wd.pending) queues the attach instead of starting a
 // second run on top of the one that hasn't registered yet (admin-qk77);
-// anything else dispatches. A multi-target command with more than one target
-// is a group row (rowItem.group) the cursor can never land on, so this is
-// never reached with wd.targets non-empty (admin-3rgp.72.11 removed the
+// anything else dispatches. A multi-target command with more than one target,
+// or a query workflow, is a group row (rowItem.group) the cursor can never
+// land on, so this is never reached for one (admin-3rgp.72.11 removed the
 // "pick a target below" branch that used to guard that case here — its
 // targets already render below it, and enter on one of those dispatches it).
 func (m Model) activateCommand(wd *workRowData) (tea.Model, tea.Cmd) {
-	switch resolveRowAction(rowCommand, wd) {
-	case actionWorkflowConfirm:
-		return m.startWorkflowConfirm(wd)
-	case actionAttach:
+	if resolveRowAction(rowCommand, wd) == actionAttach {
 		return m.attachEntry(wd.live)
 	}
 	if wd.pending {
@@ -1161,7 +1221,14 @@ func (m Model) liveEntryForCommand(name string) *livework.Entry {
 // dispatch a second run into the one still starting" guard applies
 // (admin-qk77). Once the entry lands it's keyed on "<cmdName>:<targetKey>"
 // (multiTargetLiveID) and targetRows resolves it per target from then on.
+//
+// A query workflow's target is one matched tracker item, and ↵ dispatches an
+// agent over that item alone (dispatchWorkflowTarget). Its agent registers
+// as a worker, which lives on the Workers tab, so the row never attaches.
 func (m Model) activateCommandTarget(wd *workRowData) (tea.Model, tea.Cmd) {
+	if wd.workflow != nil {
+		return m.dispatchWorkflowTarget(wd)
+	}
 	if resolveRowAction(rowCommandTarget, wd) == actionAttach {
 		return m.attachEntry(wd.live)
 	}
@@ -1171,6 +1238,20 @@ func (m Model) activateCommandTarget(wd *workRowData) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m.startDispatch(wd.cmdName, wd.targetKey)
+}
+
+// dispatchWorkflowTarget hands one matched tracker item to
+// kinds.DispatchTargets through dispatchWorkflowCmd, the path a row-scoped
+// workflow binding takes too (rowKeyWorkflow), and reports the outcome on the
+// status line.
+func (m Model) dispatchWorkflowTarget(wd *workRowData) (tea.Model, tea.Cmd) {
+	target := kinds.NewTarget(wd.workflowAction, wd.targetKey)
+	if err := kinds.RequireRun(wd.cmdName, target.Run); err != nil {
+		m.setStatus(err.Error(), cRed)
+		return m, nil
+	}
+	m.setStatus(fmt.Sprintf("dispatching %s over %s…", wd.cmdName, wd.targetKey), cCyan)
+	return m, dispatchWorkflowCmd(m.repoRoot, wd.cmdName, wd.workflowAction, []kinds.Target{target})
 }
 
 // attachEntry resolves e's attach through the registry — the terminal view

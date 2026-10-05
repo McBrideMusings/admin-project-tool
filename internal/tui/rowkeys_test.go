@@ -285,9 +285,6 @@ func TestRowKeyDispatchWorkflowImmediateOnCursorRow(t *testing.T) {
 		t.Fatal("rowKeyDispatch(\"enter\") on a workflow-bound bead row = miss, want hit")
 	}
 	rm := mm.(Model)
-	if rm.wfOpen {
-		t.Errorf("wfOpen = true on the immediate path, want no overlay")
-	}
 	if !strings.Contains(rm.status, "review-branch") || !strings.Contains(rm.status, "proj-1") {
 		t.Errorf("status = %q, want it to name the command and the bead id", rm.status)
 	}
@@ -310,8 +307,8 @@ func TestRowKeyDispatchWorkflowImmediateOnCursorRow(t *testing.T) {
 // TestRowKeyDispatchWorkflowNoRunReportsRedStatus proves the immediate
 // path's misconfiguration handling: with no run configured on the action
 // the immediate (cursor-row)
-// path reports a red status line and dispatches nothing — the field the
-// confirm overlay would have shown has nowhere else to go on this path.
+// path reports a red status line and dispatches nothing — there is no
+// overlay on this path to show it in.
 func TestRowKeyDispatchWorkflowNoRunReportsRedStatus(t *testing.T) {
 	dispatched := false
 	orig := runDispatchWorkflow
@@ -508,13 +505,9 @@ func TestRowKeyDispatchDogfoodEnterRoutesToWorkflowNotBuiltinWorktree(t *testing
 	}
 	trackerCursorTo(t, &m, "proj-1")
 
-	mm, cmd, ok := m.rowKeyDispatch("enter")
+	_, cmd, ok := m.rowKeyDispatch("enter")
 	if !ok {
 		t.Fatal("rowKeyDispatch(\"enter\") on the dogfood binding = miss, want hit")
-	}
-	rm := mm.(Model)
-	if rm.wfOpen {
-		t.Errorf("wfOpen = true on the immediate path, want no overlay")
 	}
 	if cmd == nil {
 		t.Fatal("rowKeyDispatch returned ok=true with a nil Cmd")

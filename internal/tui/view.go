@@ -202,9 +202,6 @@ func (m Model) renderBodyHits(width, bodyHeight int) ([]string, []hitTarget) {
 	case m.wtPickerOpen:
 		content = m.renderWorktreePickerBody(width, contentH)
 		hits = noneHits(len(content))
-	case m.wfResolving || m.wfOpen:
-		content = m.renderWorkflowConfirmBody(width, contentH)
-		hits = noneHits(len(content))
 	case m.termAttached:
 		content, hits = m.renderTerminalBody(width, contentH)
 	case m.onWorkSurface():
