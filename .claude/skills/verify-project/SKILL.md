@@ -84,8 +84,32 @@ go test ./internal/tui/...              # the dashboard's own package, ~40s
 go test ./...                           # everything, ~3-4 min
 ```
 
-There is no interactive driver for the dashboard's live TUI reachable without a real
-terminal and a screenshot, so a behavioral change to `internal/tui` is proven by:
+**Render a real frame headlessly** with `--dump-frame` — no TTY, no screenshot. It loads the
+dashboard, presses `--keys` in order, waits `--settle`, and prints one frame:
+
+```bash
+admin --dump-frame --width 96 --height 30 --settle 4s --keys down
+admin --dump-frame --width 80 --height 24 --settle 4s --keys down,down,c,up,enter   # dispatch a target
+... | perl -pe 's/\e\]8;;[^\e]*\e\\//g; s/\e\[[0-9;]*m//g'                       # strip OSC 8 + SGR
+```
+
+The dashboard opens with focus on the tab bar: press `down` first to put the cursor in the
+list. `right`/`left` switch tabs, so never use them to move the cursor; a digit jumps to a
+drawn tab (`2` is Workers). A dispatch started by `enter` is a real child that dies when the
+dump exits. Check at 80 columns as well as 96.
+
+**Compare against the design frames** in `docs/spikes/admin-tui-desktop/` by re-rendering the
+spike at the same geometry, never by eyeballing a 96-column frame against an 80-column one:
+
+```bash
+go run ./docs/spikes/admin-tui-desktop -dump -w 80 -h 24 -dir <scratch-dir>
+```
+
+`-w`/`-h` are the full terminal size. The `h=` in a spike frame's top row counts only the list
+and band, 5 rows fewer than the frame itself. With no flags it rewrites the committed 96x30
+frames; a clean `git status` afterwards proves they are current.
+
+A behavioral change to `internal/tui` is also proven by:
 
 1. A focused `go test` exercising the exact `Model.Update` transition through its message
    types and package-level test seams (e.g. `internal/bd`'s `runner` var), not by re-deriving
