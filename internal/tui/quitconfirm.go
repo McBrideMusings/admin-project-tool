@@ -10,7 +10,7 @@
 // router could open a pane for them, not this process's. Quitting must never
 // warn about, let alone kill, either of those.
 //
-// Shape mirrors workflowconfirm.go: a snapshot taken when the confirm opens
+// Shape: a snapshot taken when the confirm opens
 // (quitHosted) so accepting kills exactly what was shown even if the
 // registry changes under it, one key handler (quitConfirmKey) that owns the
 // keyboard while the overlay is up, and one renderer (overlayQuitConfirm)

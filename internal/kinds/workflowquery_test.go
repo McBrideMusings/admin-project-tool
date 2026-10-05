@@ -51,6 +51,26 @@ func TestResolveQueryGitHubLabelResolvesToOpenIssues(t *testing.T) {
 	}
 }
 
+// TestMatchQueryGitHubFiltersHeldIssuesByLabel proves MatchQuery on a
+// github tracker keeps only the held open issues carrying the label, keyed
+// by issue number, with no gh read of its own.
+func TestMatchQueryGitHubFiltersHeldIssuesByLabel(t *testing.T) {
+	stubGitHubIssues(t, nil, errors.New("MatchQuery must not read gh"))
+	issues := []gh.IssueItem{
+		{Number: 12, Labels: []string{"review-me"}},
+		{Number: 13, Labels: []string{"other"}},
+		{Number: 34, Labels: []string{"bug", "review-me"}},
+	}
+
+	targets, err := MatchQuery(nil, "github", "label:review-me", nil, issues)
+	if err != nil {
+		t.Fatalf("MatchQuery: %v", err)
+	}
+	if len(targets) != 2 || targets[0].Name != "12" || targets[1].Name != "34" {
+		t.Fatalf("want targets 12 and 34, got %+v", targets)
+	}
+}
+
 // TestResolveQueryGitHubReadyErrorsNamingTheTracker proves "ready" on a
 // github-tracked project is REJECTED rather than synthesized from prose
 // references — the ticket's headline decision — and the error names the

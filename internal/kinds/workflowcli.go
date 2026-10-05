@@ -1,13 +1,14 @@
 // workflowcli.go is admin-spjp.2: the bare-CLI invocation path for
 // kind="workflow" — `admin <action>` typed straight into a terminal, as
-// opposed to internal/tui/workflowconfirm.go's dashboard row. It adds no
+// opposed to a dashboard target row (internal/tui/work.go). It adds no
 // dispatch machinery of its own: ResolveQuery (workflowquery.go) resolves a
-// query into targets and DispatchTargets (workflowdispatch.go) runs them —
-// the same two calls the TUI confirm overlay makes. This file only decides
-// what a bare CLI run does before and around those two calls: refuse a
-// row-sourced workflow outright (there is no row here to run over), and for a query-sourced one, print what the overlay would have
-// shown — the resolved set, the agent, the ceiling — and read a
-// confirmation from the terminal's own stdin before dispatching anything.
+// query into targets and DispatchTargets (workflowdispatch.go) runs them, the
+// same DispatchTargets the dashboard dispatches through. This file only
+// decides what a bare CLI run does before and around those two calls: refuse
+// a row-sourced workflow outright (there is no row here to run over), and for
+// a query-sourced one, print the resolved set, the agent and the ceiling,
+// then read a confirmation from the terminal's own stdin before dispatching
+// anything.
 //
 // Every message goes to stderr, matching cmd/prompt.go's own convention:
 // stdout stays clean for the `repo()` shell function's cd sentinel.
@@ -31,15 +32,14 @@ import (
 var confirmDispatch = prompt.Confirm
 
 // resolveWorkflowQuery is the seam runWorkflowQuery resolves a query
-// through — kinds.ResolveQuery by default, swapped out in tests exactly as
-// internal/tui/workflowconfirm.go's own runResolveQuery seam is, so a test
+// through — kinds.ResolveQuery by default, swapped out in tests so a test
 // proving this file's printing/confirm/dispatch sequencing never shells out
 // to a real `bd` or `gh` binary.
 var resolveWorkflowQuery = ResolveQuery
 
 // dispatchWorkflowTargets is the seam runWorkflowQuery dispatches a
 // confirmed set through — kinds.DispatchTargets, the one and only dispatch
-// implementation; internal/tui's confirm overlay calls the same function.
+// implementation; the dashboard calls the same function.
 // Swapped out in tests so an accept test proves exactly which targets were
 // handed to it without creating a single real git worktree.
 var dispatchWorkflowTargets = DispatchTargets
@@ -73,8 +73,7 @@ func runWorkflowRow(name string) error {
 }
 
 // runWorkflowQuery is the query-sourced case: resolve, print what would be
-// dispatched (the same four facts internal/tui/workflowconfirm.go's overlay
-// shows — query, agent, ceiling, target list), confirm, then dispatch.
+// dispatched (query, agent, ceiling, target list), confirm, then dispatch.
 func runWorkflowQuery(name string, action manifest.Action, m *manifest.Manifest, target WorkflowTarget) error {
 	repoRoot, err := os.Getwd()
 	if err != nil {

@@ -58,8 +58,7 @@ func (m Model) handleWheel(y int, down bool) (tea.Model, tea.Cmd) {
 // any of them must not move.
 func (m Model) wheelCaptured() bool {
 	return m.quitOpen || m.confirming || m.wtPickerOpen ||
-		m.wfResolving || m.wfOpen || m.errOpen || m.deleting ||
-		m.naming || m.filtering
+		m.errOpen || m.deleting || m.naming || m.filtering
 }
 
 // wheelPane resolves the pane under row y on the Repo tab from the last

@@ -1,9 +1,9 @@
 // workflowcli_test.go covers admin-spjp.2: the bare-CLI invocation path for
 // kind="workflow". The query-path tests exercise runWorkflowCLI through its
 // three seams (resolveWorkflowQuery, confirmDispatch, dispatchWorkflowTargets)
-// exactly as workflowdispatch_test.go and internal/tui's own tests swap out
-// startAgent/runAgent/agentStatus and runResolveQuery/runDispatchWorkflow —
-// no real `bd`/`gh` binary, no real git worktree, no real terminal.
+// exactly as workflowdispatch_test.go swaps out startAgent/runAgent/
+// agentStatus and internal/tui's tests swap out runDispatchWorkflow — no
+// real `bd`/`gh` binary, no real git worktree, no real terminal.
 package kinds
 
 import (
@@ -129,7 +129,7 @@ func TestWorkflowCLIDeclineDispatchesNothing(t *testing.T) {
 // TestWorkflowCLIAcceptDispatchesThroughDispatchTargets proves accepting
 // dispatches exactly once, with the resolved targets, through
 // dispatchWorkflowTargets (kinds.DispatchTargets in production) — the same
-// path internal/tui's confirm overlay uses.
+// function the dashboard dispatches through.
 func TestWorkflowCLIAcceptDispatchesThroughDispatchTargets(t *testing.T) {
 	targets := []Target{{Name: "admin-1"}, {Name: "admin-2"}}
 	_, dispatchCalls, dispatched := withWorkflowCLISeams(t, targets, nil, true)
@@ -154,9 +154,8 @@ func TestWorkflowCLIAcceptDispatchesThroughDispatchTargets(t *testing.T) {
 
 // TestWorkflowCLIMissingRunErrorsBeforeConfirming proves a
 // missing run command fails loudly before the confirm seam is ever touched —
-// the same "fail loud, don't waste a confirmation on a set that would
-// immediately fail dispatch" contract internal/tui/workflowconfirm.go's
-// workflowResolved already enforces.
+// "fail loud, don't waste a confirmation on a set that would immediately
+// fail dispatch".
 func TestWorkflowCLIMissingRunErrorsBeforeConfirming(t *testing.T) {
 	targets := []Target{{Name: "admin-1"}}
 	confirmCalled, dispatchCalls, _ := withWorkflowCLISeams(t, targets, nil, true)
