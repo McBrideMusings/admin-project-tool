@@ -488,3 +488,29 @@ func TestUnpadConsoleRendererNegativeCases(t *testing.T) {
 		}
 	}
 }
+
+// TestPlainLine pins how one raw output line flattens to printable text: the
+// last non-empty "\r" segment wins, a tab expands to the next 8-column stop,
+// a backspace deletes the rune before it, other control bytes are dropped.
+func TestPlainLine(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"progress 10%\rprogress 90%", "progress 90%"},
+		{"done\r", "done"},
+		{"ab\tc", "ab      c"},
+		{"abx\bc", "abc"},
+		{"a\x07b\x00c", "abc"},
+	} {
+		if got := PlainLine(c.in); got != c.want {
+			t.Errorf("PlainLine(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestHasWords pins that only a letter or digit makes a line worth showing.
+func TestHasWords(t *testing.T) {
+	for in, want := range map[string]bool{"count 1": true, "7": true, "────": false, "  ": false, "": false} {
+		if got := HasWords(in); got != want {
+			t.Errorf("HasWords(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
