@@ -18,6 +18,7 @@ package kinds
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"image/color"
@@ -29,6 +30,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"syscall"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/vt"
@@ -36,6 +38,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
+	"github.com/McBrideMusings/admin-project-tool/internal/logformat"
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
@@ -290,12 +293,17 @@ func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx
 		Screen: screen,
 		Worker: worker,
 	}
+	// out is where the pty's bytes go: the band's ring, the terminal screen,
+	// and for a command (never a worker) its activity line.
+	out := io.MultiWriter(e.Output, screen)
 	if worker != nil {
 		// A worker's own terminal title (claude sets one) is its row's
 		// activity line, the same field a window worker's herdr title fills.
 		screen.SetCallbacks(vt.Callbacks{Title: func(t string) {
 			livework.Default.SetActivity(entryID, t)
 		}})
+	} else {
+		out = io.MultiWriter(e.Output, screen, &lastLineActivity{id: entryID})
 	}
 	e.Ops = livework.Ops{
 		Kill: func() error {
@@ -372,7 +380,7 @@ func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx
 	// exact hang that failed Verify.
 	go func() {
 		defer close(exit)
-		_, copyErr := io.Copy(io.MultiWriter(e.Output, screen), ptmx)
+		_, copyErr := io.Copy(out, ptmx)
 		// Closing the reply pipe's write end ends the reply copy's read with
 		// EOF without touching the emulator's closed flag; only once that copy
 		// has returned is Close safe. The grid stays readable after Close.
@@ -400,4 +408,60 @@ func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx
 		exit <- waitErr
 	}()
 	return exit
+}
+
+// lastLineCap bounds the unterminated line lastLineActivity holds, so a
+// child that redraws one line with "\r" forever and never prints "\n"
+// cannot grow it without limit.
+const lastLineCap = 4096
+
+// lastLineActivity is a hosted command's activity line: the last line of its
+// output that holds a letter or digit, as plain text, recorded on the entry
+// with SetActivity. An unterminated line counts as soon as it has words, so
+// a prompt waiting for input ("Enter a number:") is the activity while it
+// waits. It is fed the pty's bytes from the single copy goroutine in
+// recordHostedPTYWork and is not safe for concurrent use.
+type lastLineActivity struct {
+	id    string
+	cur   []byte // the line after the last "\n", not yet terminated
+	last  string // the last terminated line with words
+	shown string // what SetActivity was last called with
+}
+
+func (a *lastLineActivity) Write(p []byte) (int, error) {
+	a.cur = append(a.cur, p...)
+	if i := bytes.LastIndexByte(a.cur, '\n'); i >= 0 {
+		for _, l := range strings.Split(string(a.cur[:i]), "\n") {
+			if s := plainActivity(l); logformat.HasWords(s) {
+				a.last = s
+			}
+		}
+		a.cur = append(a.cur[:0], a.cur[i+1:]...)
+	}
+	if n := len(a.cur); n > lastLineCap {
+		tail := a.cur[n-lastLineCap:]
+		for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+			tail = tail[1:]
+		}
+		a.cur = append(a.cur[:0], tail...)
+	}
+	line := a.last
+	if s := plainActivity(string(a.cur)); logformat.HasWords(s) {
+		line = s
+	}
+	if line != a.shown {
+		a.shown = line
+		livework.Default.SetActivity(a.id, line)
+	}
+	return len(p), nil
+}
+
+// plainActivity is one raw output line as the plain text a row can print:
+// escapes stripped, flattened the way a terminal leaves it, a leading
+// timestamp dropped (the row already shows elapsed time, and a framed child
+// stamps every line with its own HH:MM:SS column), trimmed.
+func plainActivity(l string) string {
+	l = strings.TrimSpace(logformat.PlainLine(logformat.AnsiEscapeRe.ReplaceAllString(l, "")))
+	_, l = logformat.StripLogTimestamp(l)
+	return strings.TrimSpace(l)
 }

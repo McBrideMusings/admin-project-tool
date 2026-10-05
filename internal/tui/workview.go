@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/vt"
@@ -826,12 +825,6 @@ func ringTailLines(r *livework.Ring, w int) []string {
 	return plainTailLines(string(r.Bytes()), w)
 }
 
-// hasWords reports whether l holds a letter or digit, so blank rows and rows
-// that are only rules or box lines can be left out of a band's text.
-func hasWords(l string) bool {
-	return strings.IndexFunc(l, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) >= 0
-}
-
 // screenTailLines is the band's text for a hosted entry: the rows of its
 // terminal screen that carry words, top to bottom, as plain text. A full-screen
 // child (an agent session) repaints in place, so its raw byte stream ends in
@@ -854,7 +847,7 @@ func screenTailLines(screen *vt.SafeEmulator, w int) []string {
 			}
 		}
 		l := strings.TrimRight(b.String(), " \t")
-		if !hasWords(l) {
+		if !logformat.HasWords(l) {
 			continue
 		}
 		lines = append(lines, truncR(l, maxi(w, 1)))
@@ -876,7 +869,7 @@ func snapshotTailLines(id string, w int) []string {
 
 // plainTailLines turns a process's raw terminal output into the band's
 // rows: ANSI escapes stripped, CRLF normalized, each line flattened by
-// plainLine, rows without a letter or digit dropped, and each truncated to
+// logformat.PlainLine, rows without a letter or digit dropped, and each truncated to
 // w cells. The band writes these rows straight into bubbletea's frame, so
 // any control byte left in one reaches the real terminal and moves its
 // cursor.
@@ -885,47 +878,11 @@ func plainTailLines(raw string, w int) []string {
 	raw = strings.ReplaceAll(raw, "\r\n", "\n")
 	var lines []string
 	for _, l := range strings.Split(raw, "\n") {
-		if l = plainLine(l); hasWords(l) {
+		if l = logformat.PlainLine(l); logformat.HasWords(l) {
 			lines = append(lines, truncR(l, maxi(w, 1)))
 		}
 	}
 	return lines
-}
-
-// plainLine renders one output line the way a terminal would leave it,
-// using only printable runes: a bare "\r" redraw keeps the last non-empty
-// segment, a tab expands to spaces up to the next 8-column stop, a
-// backspace deletes the rune before it, and every other control byte is
-// dropped. A tab left in place measures zero cells to truncR but moves the
-// terminal's cursor up to 8 columns, so the row overflows, wraps, and
-// scrolls the dashboard out from under bubbletea's renderer.
-func plainLine(l string) string {
-	segs := strings.Split(l, "\r")
-	l = segs[len(segs)-1]
-	for i := len(segs) - 1; i >= 0 && l == ""; i-- {
-		l = segs[i]
-	}
-	out := make([]rune, 0, len(l))
-	col := 0
-	for _, r := range l {
-		switch {
-		case r == '\t':
-			for n := 8 - col%8; n > 0; n-- {
-				out = append(out, ' ')
-				col++
-			}
-		case r == '\b':
-			if len(out) > 0 {
-				col -= vlen(string(out[len(out)-1]))
-				out = out[:len(out)-1]
-			}
-		case r < 0x20 || (r >= 0x7f && r < 0xa0):
-		default:
-			out = append(out, r)
-			col += vlen(string(r))
-		}
-	}
-	return string(out)
 }
 
 // noLocalOutput is the band's text for a launcher-dispatched entry with no

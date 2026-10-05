@@ -18,6 +18,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ANSI codes.
@@ -502,4 +505,48 @@ func ColorizeLevel(line string) string {
 // expects.
 func MakeFormatter(opts Options) func(string) string {
 	return NewLogFormatter(opts).FormatLine
+}
+
+// HasWords reports whether l holds a letter or digit, so blank rows and rows
+// that are only rules or box lines can be left out of a plain-text view of a
+// process's output.
+func HasWords(l string) bool {
+	return strings.IndexFunc(l, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) >= 0
+}
+
+// PlainLine renders one output line the way a terminal would leave it,
+// using only printable runes: a bare "\r" redraw keeps the last non-empty
+// segment, a tab expands to spaces up to the next 8-column stop, a
+// backspace deletes the rune before it, and every other control byte is
+// dropped. A tab left in place measures zero cells to a width function but
+// moves the terminal's cursor up to 8 columns, so a row holding one
+// overflows, wraps, and scrolls a full-screen view out from under its
+// renderer. The caller strips ANSI escapes first (AnsiEscapeRe).
+func PlainLine(l string) string {
+	segs := strings.Split(l, "\r")
+	l = segs[len(segs)-1]
+	for i := len(segs) - 1; i >= 0 && l == ""; i-- {
+		l = segs[i]
+	}
+	out := make([]rune, 0, len(l))
+	col := 0
+	for _, r := range l {
+		switch {
+		case r == '\t':
+			for n := 8 - col%8; n > 0; n-- {
+				out = append(out, ' ')
+				col++
+			}
+		case r == '\b':
+			if len(out) > 0 {
+				col -= ansi.StringWidth(string(out[len(out)-1]))
+				out = out[:len(out)-1]
+			}
+		case r < 0x20 || (r >= 0x7f && r < 0xa0):
+		default:
+			out = append(out, r)
+			col += ansi.StringWidth(string(r))
+		}
+	}
+	return string(out)
 }

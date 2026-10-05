@@ -440,3 +440,49 @@ func TestHostedPTYKillIsIdempotent(t *testing.T) {
 		}
 	})
 }
+
+// TestStartHostedPTYSetsActivityFromLastOutputLine proves a hosted command's
+// row gets an activity line: the last output line with words, escapes
+// stripped, including an unterminated prompt waiting for input.
+func TestStartHostedPTYSetsActivityFromLastOutputLine(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
+	stubSelfExecutable(t, fixtureAdminScript(t, `printf '\033[32mstarting\033[0m\nready on 8228\n\n'; printf 'Enter a number: '; sleep 5`))
+
+	m := &manifest.Manifest{Custom: map[string]manifest.Command{"ask": {Steps: []string{"ask-step"}}}}
+	if err := StartHostedPTY(m, "ask", nil, 24, 80, nil); err != nil {
+		t.Fatalf("StartHostedPTY: %v", err)
+	}
+	t.Cleanup(func() { _ = livework.Default.Kill("ask") })
+
+	want := "Enter a number:"
+	deadline := time.Now().Add(3 * time.Second)
+	var got string
+	for time.Now().Before(deadline) {
+		if got, _ = livework.Default.Activity("ask"); got == want {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Errorf("Activity = %q, want %q", got, want)
+}
+
+// TestLastLineActivitySkipsBlankLinesAndKeepsTheRedraw proves the activity
+// line skips rows with no words and shows the last "\r" redraw of a line.
+func TestLastLineActivitySkipsBlankLinesAndKeepsTheRedraw(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
+	if err := livework.Default.Add(&livework.Entry{ID: "c", Handle: "pty", Ops: livework.Ops{Kill: func() error { return nil }}}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	a := &lastLineActivity{id: "c"}
+	for _, chunk := range []string{"count 1\r\n", "────\r\n", "  \r\n", "progress 10%\rprogress 9", "0%\r\n"} {
+		_, _ = a.Write([]byte(chunk))
+	}
+	if got, _ := livework.Default.Activity("c"); got != "progress 90%" {
+		t.Errorf("Activity = %q, want %q", got, "progress 90%")
+	}
+	// A framed child's own HH:MM:SS column is dropped: the row shows elapsed.
+	_, _ = a.Write([]byte("02:12:14  count 2\r\n"))
+	if got, _ := livework.Default.Activity("c"); got != "count 2" {
+		t.Errorf("Activity = %q, want %q", got, "count 2")
+	}
+}
