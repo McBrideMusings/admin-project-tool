@@ -1215,7 +1215,7 @@ priority = 60
 kind  = "workflow"
 desc  = "Dispatch a claude agent over the selected bead(s)"
 over = "row"
-run   = "claude '/implement $ADMIN_TARGET afk'"
+run   = "claude '/implement $ADMIN_TARGET auto'"
 done  = 'bd show "$ADMIN_TARGET" --json | jq -e ".[0].status == \"closed\""'
 
 [keys.bead]
@@ -1260,7 +1260,7 @@ enter = "implement"
 	if target.Source != kinds.WorkflowSourceRow {
 		t.Fatalf("implement: Source = %v, want WorkflowSourceRow", target.Source)
 	}
-	if run := kinds.ActionRun(m.Actions["implement"]); !strings.Contains(run, "/implement $ADMIN_TARGET afk") {
+	if run := kinds.ActionRun(m.Actions["implement"]); !strings.Contains(run, "/implement $ADMIN_TARGET auto") {
 		t.Fatalf("implement action's run = %q, want the authored command", run)
 	}
 }

@@ -198,7 +198,7 @@ steps = ["implement"]
 [actions.implement]
 kind  = "workflow"
 over  = "selection"
-run   = 'claude "/implement $ADMIN_TARGET afk"'
+run   = 'claude "/implement $ADMIN_TARGET auto"'
 done  = 'bd show "$ADMIN_TARGET" --json | jq -e ".[0].status == \"closed\""'
 
 [keys.bead]

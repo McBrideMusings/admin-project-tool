@@ -473,13 +473,13 @@ func TestDispatchTargetsSpawnsRunWithTargetEnv(t *testing.T) {
 		return "pane-1", nil
 	})
 
-	action := manifest.Action{"kind": "workflow", "run": "claude '/implement $ADMIN_TARGET afk'"}
+	action := manifest.Action{"kind": "workflow", "run": "claude '/implement $ADMIN_TARGET auto'"}
 	res := DispatchTargets(repoRoot, "implement", action, []Target{NewTarget(action, "proj-1")}, SurfaceDashboard)
 
 	if res[0].Err != nil {
 		t.Fatal(res[0].Err)
 	}
-	if want := "export ADMIN_TARGET=proj-1; claude '/implement $ADMIN_TARGET afk'"; gotCmd != want {
+	if want := "export ADMIN_TARGET=proj-1; claude '/implement $ADMIN_TARGET auto'"; gotCmd != want {
 		t.Errorf("ADMIN_CMD = %q, want %q: the run string behind an export of its target", gotCmd, want)
 	}
 	if gotTarget != "proj-1" {
