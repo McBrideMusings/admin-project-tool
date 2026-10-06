@@ -21,19 +21,3 @@ node_modules/
 # Go build artifacts
 /bin/
 /admin-project-tool
-
-# Spike build output — `go build ./...` inside a spike dir drops a binary
-# beside its own source, and the spikes are committed reference material.
-docs/spikes/*/admin-tui-desktop
-docs/spikes/**/*.test
-
-# admin-tui-desktop's Repo-tab frames render against whatever repo the dump
-# process's cwd sits in, so a re-shoot always rewrites them (admin-3rgp.72.20).
-# They are excluded from the reference set on purpose — the frozen,
-# non-reproducible illustrations live in live-frames/ instead. See
-# docs/spikes/admin-tui-desktop/live-frames/README.md.
-docs/spikes/admin-tui-desktop/repo.txt
-docs/spikes/admin-tui-desktop/repo-commits.txt
-docs/spikes/admin-tui-desktop/repo-filter.txt
-docs/spikes/admin-tui-desktop/repo-new-worktree.txt
-docs/spikes/admin-tui-desktop/no-manifest.txt

@@ -1,8 +1,7 @@
 // workgrid_test.go covers admin-3rgp.72.11: the Work tab's Commands section
 // renders every row on one fixed column grid (workview.go's wMarker/wName/
 // wState/wElapsed), and a multi-target parent is a group the cursor can
-// never land on. See docs/spikes/admin-tui-desktop/commands.txt and
-// commands-running.txt, the reference frames this ticket is graded against.
+// never land on.
 package tui
 
 import (
@@ -301,7 +300,7 @@ func TestNameColumnLeavesGapBeforeKindColumn(t *testing.T) {
 }
 
 // A group collapse mode has closed marks itself and counts what it hides
-// (docs/spikes/admin-tui-desktop/commands-collapsed.txt: "▸ dev (2)"); an open
+// ("▸ dev (2)"); an open
 // one keeps the blank marker cell.
 func TestRenderGroupRowClosedShowsHiddenCount(t *testing.T) {
 	lw := listContentWidth(96, 30)

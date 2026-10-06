@@ -1,8 +1,6 @@
 // workworkers_test.go covers the Workers tab (admin-3rgp.72.16, split from the
 // Commands tab by admin-spjp.9): one flat list of every live worker, rendered
 // on the same column grid as a command row, under its own cursor.
-// See docs/spikes/admin-tui-desktop/swarm.txt and commands.txt, the reference
-// frames this ticket is graded against.
 package tui
 
 import (
@@ -112,7 +110,7 @@ func TestUpFromTopWrapsToLastWorkerRow(t *testing.T) {
 
 // TestScrolledListNamesItsSection: a scrolled Workers list's first visible row
 // names the section the window is inside, with the more-marker —
-// docs/spikes/admin-tui-desktop/swarm.txt:4's "Commands   ↑ 49 more".
+// "Commands   ↑ 49 more".
 func TestScrolledListNamesItsSection(t *testing.T) {
 	freshLivework(t)
 	custom := map[string]manifest.Command{}
@@ -164,9 +162,9 @@ func TestWorkersHeaderCarriesCount(t *testing.T) {
 	t.Fatal("no Workers header found")
 }
 
-// TestWorkersEmptyHintNamesDeclaredSources pins the empty-Workers line
-// (docs/spikes/admin-tui-desktop/workers-empty.txt): it names the places this
-// manifest can start a worker from, and says so when there are none.
+// TestWorkersEmptyHintNamesDeclaredSources pins the empty-Workers line: it
+// names the places this manifest can start a worker from, and says so when
+// there are none.
 func TestWorkersEmptyHintNamesDeclaredSources(t *testing.T) {
 	freshLivework(t)
 	for _, tc := range []struct {
@@ -250,8 +248,7 @@ func TestWorkerRowMatchesCommandsGrid(t *testing.T) {
 	}
 }
 
-// TestWorkerRowDropsWhereColumnWhenNarrow covers the design's own drop rule
-// (docs/spikes/admin-tui-desktop/variants.go:1349-1351): the where-column
+// TestWorkerRowDropsWhereColumnWhenNarrow covers the drop rule: the where-column
 // disappears rather than crowding the activity column below 8 cells.
 func TestWorkerRowDropsWhereColumnWhenNarrow(t *testing.T) {
 	mm, rows := workersFixtureModel(t)

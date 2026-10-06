@@ -87,8 +87,7 @@ func TestStatusRowsAbsentWithoutEntries(t *testing.T) {
 }
 
 // The strip takes its rows from the list, never the band: the band's title
-// rule sits on the same body row with [status] entries as without them
-// (docs/spikes/admin-tui-desktop/commands-status.txt against commands.txt),
+// rule sits on the same body row with [status] entries as without them,
 // including when more entries are declared than the strip can show.
 func TestStatusStripLeavesTheBandInPlace(t *testing.T) {
 	stubStatus(t, func(manifest.StatusSpec, string) status.Result { return status.Result{} })
@@ -118,7 +117,7 @@ func TestStatusStripLeavesTheBandInPlace(t *testing.T) {
 		return st
 	}
 	// Body heights for 26-32 terminal rows (5 rows of chrome) and the band
-	// title's body row the spike draws at each: terminal rows 15/16/17/18.
+	// title's body row at each: terminal rows 15/16/17/18.
 	for _, tc := range []struct{ h, want int }{{21, 11}, {23, 12}, {25, 13}, {27, 14}} {
 		for _, n := range []int{0, 2, 12} {
 			if got := titleRow(entries(n), tc.h); got != tc.want {

@@ -54,7 +54,7 @@ func TestConcurrentStateReadsDoNotRace(t *testing.T) {
 			hostedRunningEntries()
 			bandFieldsWorker(e, 40)
 			bandTitle(40, e, e.Name)
-			m.quitConfirmBox(quitBoxInner)
+			m.quitConfirmBox(quitBoxInner, 30)
 		}
 	}()
 

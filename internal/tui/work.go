@@ -300,9 +300,8 @@ func (m Model) multiStepURLs(c manifest.Command) []frame.URLEntry {
 }
 
 // commandKind is a command's displayed kind: a single step's own declared
-// kind, or "sequence" for more than one — matching the reference frames
-// (docs/spikes/admin-tui-desktop/commands.txt: "deploy" with three steps
-// shows "sequence", "build" with one shows "shell"). "?" marks a step
+// kind, or "sequence" for more than one ("deploy" with three steps shows
+// "sequence", "build" with one shows "shell"). "?" marks a step
 // naming an undeclared action, which a broken manifest can produce and
 // which check (not this tab) is the place to reject.
 func (m Model) commandKind(c manifest.Command) string {
@@ -874,10 +873,9 @@ func (m Model) workRows() []rowItem {
 	}
 
 	// The Commands header's count is every resolved invocation — a target or
-	// a flat command, never a group parent (docs/spikes/admin-tui-desktop/
-	// commands.txt:4, "Commands  47") — computed from cmdRows directly rather
-	// than from cmdList, so it stays the same whether or not collapse mode
-	// hid any target rows out of cmdList (admin-4zz9).
+	// a flat command, never a group parent ("Commands  47") — computed from
+	// cmdRows directly rather than from cmdList, so it stays the same whether
+	// or not collapse mode hid any target rows out of cmdList (admin-4zz9).
 	invocations := 0
 	for _, cr := range cmdRows {
 		invocations += m.commandInvocationCount(cr)
@@ -918,11 +916,10 @@ func (m Model) workerRows() []rowItem {
 }
 
 // workersEmptyHint is the empty Workers tab's one line: where a worker can be
-// started from in THIS project (docs/spikes/admin-tui-desktop/
-// workers-empty.txt). A worker comes from a query-sourced kind="workflow"
-// command on the Commands tab, or from a [keys.<kind>] binding naming a
-// row-sourced one; the hint names each, so it never points at a dispatch the
-// manifest does not declare.
+// started from in THIS project. A worker comes from a query-sourced
+// kind="workflow" command on the Commands tab, or from a [keys.<kind>] binding
+// naming a row-sourced one; the hint names each, so it never points at a
+// dispatch the manifest does not declare.
 func (m Model) workersEmptyHint() string {
 	var sources []string
 	for _, cr := range m.declaredCommands() {
@@ -1422,10 +1419,9 @@ func entryIsLive(e *livework.Entry) bool {
 //   - no actionable row under the cursor → the idle pairs, matching what a
 //     fresh Work tab (cursor on the first idle command) already shows —
 //     except on a Workers tab with no workers, where ↵ has nothing to act
-//     on and is not offered (workers-empty.txt).
+//     on and is not offered.
 //
-// docs/spikes/admin-tui-desktop/commands.txt:30 and commands-running.txt:30
-// are the verbatim targets for the idle/live cases, with one addition since:
+// The idle and live cases each have their own text, with one shared addition:
 // `c` (admin-4zz9) always appears, right before quit, reading "collapse"
 // while expanded and "expand" once collapsed — it names what pressing it
 // would do next, not the mode it's currently in. `a attach` and `/ filter`

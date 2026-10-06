@@ -328,8 +328,8 @@ func (m Model) renderTerminalBody(width, height int) ([]string, []hitTarget) {
 // grid — the part of a fresh or short-lived child's screen its cursor
 // hasn't reached yet — floats to the TOP as blank fill instead, so a short
 // tail leaves its gap above rather than below (the ticket's own wording,
-// matching docs/spikes/admin-tui-desktop/hosted.txt's output sitting on the
-// floor with blank rows between it and the dashed rule). A row the child
+// output sits on the floor with blank rows between it and the dashed rule).
+// A row the child
 // wrote blank lines into on purpose, anywhere but that trailing run, is
 // left exactly where the child put it — only the untouched tail moves.
 func renderTermOutput(screen *vt.SafeEmulator, avail int) []string {

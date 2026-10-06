@@ -174,7 +174,7 @@ func newAttachablePump(t *testing.T, dir string, width, height int) *pump {
 
 // TestTerminalViewAttachedEmptyShowsWaitingCopy is the AC's "before any
 // output arrives the view renders the copy 'waiting for output…'" — pinned
-// against docs/spikes/admin-tui-desktop/hosted-empty.txt's own line 7.
+// against the exact text.
 func TestTerminalViewAttachedEmptyShowsWaitingCopy(t *testing.T) {
 	const cmdName = "termfixture-empty"
 	dir := t.TempDir()

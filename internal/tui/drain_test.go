@@ -14,8 +14,8 @@ import (
 // drain must return as soon as no command is in flight, not only when its
 // backstop timer fires. Before this change drain(d) was a flat time.After(d)
 // wait with no early exit, so under contention a command that took only a
-// little longer than a short, tuned-for-idle-machine deadline (the spike's
-// 900ms Settle) got cut off before it delivered — "repo screen did not
+// little longer than a short, tuned-for-idle-machine deadline (a
+// 900ms settle) got cut off before it delivered — "repo screen did not
 // render" in TestTabSwitchesTabs, reproduced 20/20 under real load (see
 // admin-3rgp.44 notes). Reverting drain to a bare deadline wait makes this
 // test fail: it would sit out the full two-second backstop instead of
@@ -29,7 +29,7 @@ func TestDrainReturnsOnQuiescenceNotBackstop(t *testing.T) {
 	p := &pump{msgs: make(chan tea.Msg, 64), model: m}
 	// A command well short of the backstop but long enough that a machine
 	// under contention could plausibly delay it past a short fixed deadline —
-	// exactly the shape of the spike's git load exceeding its 900ms Settle.
+	// exactly the shape of a git load exceeding a 900ms settle.
 	const work = 120 * time.Millisecond
 	p.run(func() tea.Msg {
 		time.Sleep(work)
