@@ -35,11 +35,12 @@ import (
 // checked at the surface with one command: driving the live TUI needs a pty, and
 // piping a keystroke into it races Bubble Tea's first read and hangs.
 var (
-	dumpFrame  bool
-	dumpWidth  int
-	dumpHeight int
-	dumpKeys   []string
-	dumpSettle time.Duration
+	dumpFrame   bool
+	dumpWidth   int
+	dumpHeight  int
+	dumpKeys    []string
+	dumpSettle  time.Duration
+	dumpFixture string
 
 	// compiledInfoFlag backs --compiled-info: ADR-0006's frozen-manifest
 	// hazard, made visible from the artifact itself rather than left to a
@@ -190,6 +191,9 @@ var rootCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if compiledInfoFlag {
 			return runCompiledInfo(cmd)
+		}
+		if dumpFixture != "" && !dumpFrame {
+			return fmt.Errorf("--fixture only applies to --dump-frame")
 		}
 		if dumpFrame {
 			return runDumpFrame(cmd.Context())
@@ -575,6 +579,8 @@ func init() {
 	f.IntVar(&dumpHeight, "height", 40, "terminal height for --dump-frame")
 	f.StringSliceVar(&dumpKeys, "keys", nil, "keys to press before --dump-frame takes the frame, e.g. --keys tab,tab")
 	f.DurationVar(&dumpSettle, "settle", 2*time.Second, "how long --dump-frame waits for background loads")
+	f.StringVar(&dumpFixture, "fixture", "", "seed live work before --dump-frame draws: "+strings.Join(tui.FrameFixtures, ", "))
+	_ = f.MarkHidden("fixture")
 	f.BoolVar(&compiledInfoFlag, "compiled-info", false, "report which admin.toml this binary was compiled from and when, then exit")
 
 	rootCmd.PersistentFlags().StringVarP(&worktreeFlag, "worktree", "w", "",
@@ -633,6 +639,11 @@ func runDumpFrame(ctx context.Context) error {
 	repoRoot, err := effectiveRepoRoot(ctx)
 	if err != nil {
 		return err
+	}
+	if dumpFixture != "" {
+		if err := tui.SeedFrameFixture(dumpFixture); err != nil {
+			return err
+		}
 	}
 	// Colour is decided by probing the renderer's writer, and a captured frame is
 	// going somewhere that isn't a terminal. Leave the probe on stdout so a run in
