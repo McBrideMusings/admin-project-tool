@@ -517,7 +517,7 @@ func bandEntry(r rowItem) *livework.Entry {
 
 // othersRunning is the live band title's right side: how much is live that
 // is NOT the row being previewed, read from the exact same
-// livework.Default.List() the row list itself reads (work.go's byName/
+// livework.Default.List() the row list itself reads (work.go's byID/
 // liveWorkers), so the row list and this count can never disagree about
 // what is running. An empty registry returns "nothing running".
 func othersRunning(selID string) string {

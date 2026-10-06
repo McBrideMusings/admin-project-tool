@@ -358,7 +358,7 @@ func TestWorkRowsFoldsAProcessEntryIntoItsCommandRow(t *testing.T) {
 	mm := workTestModel(m)
 
 	e := &livework.Entry{
-		ID: "test-fold-process-entry", Name: "dev-server",
+		ID: "dev-server", Name: "dev-server-action",
 		State: livework.StateRunning, Activity: "localhost:5173", Handle: "pane 9", Via: "terminal",
 	}
 	if err := livework.Default.Add(e); err != nil {

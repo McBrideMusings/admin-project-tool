@@ -545,17 +545,31 @@ func unseenCommandNames(m *manifest.Manifest, seen map[string]bool) []string {
 	return out
 }
 
+// liveCommandEntries maps every non-worker livework.Entry by its registry ID —
+// the key TargetLiveKey and liveEntryFor look it up by. Entry.Name is not
+// used: it names the dispatched action, and nothing makes it equal the ID.
+// A genuine agent worker (Worker != nil) never folds into a command row.
+func liveCommandEntries() map[string]*livework.Entry {
+	byID := map[string]*livework.Entry{}
+	for _, e := range livework.Default.List() {
+		if e.Worker == nil {
+			byID[e.ID] = e
+		}
+	}
+	return byID
+}
+
 // liveEntryFor returns the process-kind livework.Entry currently backing
 // the command named name, if any. Both producers (internal/kinds'
-// StartHostedPTY and launchCommand) key an entry on the command that was
-// run, so this is a lookup by that name alone: a command that merely shares
-// a step with the running one never shows it. byName is already filtered to
-// Worker == nil — a genuine agent worker never folds into a command row.
+// StartHostedPTY and launchCommand) register an entry under the id of the
+// command that was run, so this is a lookup by that id alone: a command that
+// merely shares a step with the running one never shows it. byID is already
+// filtered to Worker == nil.
 // For a genuine multi-target menu the registry keys the entry on
 // "<command>:<target>" once a target is picked, so this returns nil for the
 // parent row while targetRows resolves each target's own entry below.
-func liveEntryFor(name string, byName map[string]*livework.Entry) *livework.Entry {
-	return byName[name]
+func liveEntryFor(name string, byID map[string]*livework.Entry) *livework.Entry {
+	return byID[name]
 }
 
 // liveWorkers is every registry entry that IS a genuine agent worker
@@ -616,14 +630,14 @@ func (m Model) commandInvocationCount(cr workCmdRow) int {
 // commandRowItem builds one Work-tab row for a declared command, resolving
 // its live status (if any), its workflow target (if it is one), and its
 // best-effort last-run/log.
-func (m Model) commandRowItem(cr workCmdRow, byName map[string]*livework.Entry) rowItem {
+func (m Model) commandRowItem(cr workCmdRow, byID map[string]*livework.Entry) rowItem {
 	wd := &workRowData{
 		cmdName:      cr.name,
 		cmdDesc:      cr.cmd.Desc,
 		cmdKind:      m.commandKind(cr.cmd),
 		cmdArchetype: m.cmdOriginOf(cr.name),
 		steps:        m.commandSteps(cr.cmd),
-		live:         liveEntryFor(cr.name, byName),
+		live:         liveEntryFor(cr.name, byID),
 		pending:      m.pendingDispatch[cr.name],
 	}
 	if a, ok := m.soleAction(cr.cmd); ok {
@@ -752,13 +766,13 @@ func (m Model) workflowMatches(name string, target kinds.WorkflowTarget, action 
 // list, so every cursor, filter, window and hit-test rule already written
 // for the Work tab applies to them with no special case.
 //
-// byName is the same registry-name -> entry map workRows() built for the
+// byID is the same registry-id -> entry map workRows() built for the
 // parent rows: once a target is actually dispatched, its entry is keyed on
 // "<command>:<targetKey>" (internal/kinds.TargetLiveKey, as written by
 // internal/kinds.multiTargetLiveID), so each target row resolves its OWN
 // live entry here rather than inheriting whatever the parent happened to
 // find.
-func targetRows(parent rowItem, byName map[string]*livework.Entry, pendingTargetKey string) []rowItem {
+func targetRows(parent rowItem, byID map[string]*livework.Entry, pendingTargetKey string) []rowItem {
 	wd := parent.work
 	if wd == nil {
 		return nil
@@ -770,7 +784,7 @@ func targetRows(parent rowItem, byName map[string]*livework.Entry, pendingTarget
 	}
 	out := make([]rowItem, 0, len(wd.targets))
 	for i, key := range wd.targets {
-		live := byName[kinds.TargetLiveKey(wd.cmdName, key)]
+		live := byID[kinds.TargetLiveKey(wd.cmdName, key)]
 		logPath := wd.logPath
 		if live != nil {
 			if p, _ := livework.Default.LogPath(live.ID); p != "" {
@@ -794,7 +808,7 @@ func targetRows(parent rowItem, byName map[string]*livework.Entry, pendingTarget
 				targetLast:     i == len(wd.targets)-1,
 				urls:           wd.targetURLs[key],
 				// This target's own qualified entry, if one is running —
-				// see the byName doc comment above. renderTargetRow now
+				// see the byID doc comment above. renderTargetRow now
 				// renders state/activity/where from this exactly as
 				// renderWorkRow does for a plain command row.
 				live: live,
@@ -825,12 +839,7 @@ func (m Model) workRows() []rowItem {
 		return nil
 	}
 	cmdRows := m.declaredCommands()
-	byName := map[string]*livework.Entry{}
-	for _, e := range livework.Default.List() {
-		if e.Worker == nil {
-			byName[e.Name] = e
-		}
-	}
+	byID := liveCommandEntries()
 
 	var cmdList []rowItem
 	if len(cmdRows) == 0 {
@@ -850,7 +859,7 @@ func (m Model) workRows() []rowItem {
 			}
 			lastGroup = cr.cmd.Group
 			haveLast = true
-			item := m.commandRowItem(cr, byName)
+			item := m.commandRowItem(cr, byID)
 			// showTargets is the collapse gate (admin-4zz9): expanded mode
 			// (m.workCollapsed false, the default and the launch state) shows
 			// every command's targets exactly as before this existed;
@@ -865,7 +874,7 @@ func (m Model) workRows() []rowItem {
 			// command: the reference frames show consecutive groups adjoining
 			// with no rule between them (commands.txt:13 -> :14).
 			if showTargets {
-				if targets := targetRows(item, byName, m.pendingTarget[cr.name]); len(targets) > 0 {
+				if targets := targetRows(item, byID, m.pendingTarget[cr.name]); len(targets) > 0 {
 					cmdList = append(cmdList, targets...)
 				}
 			}

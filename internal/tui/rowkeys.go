@@ -18,7 +18,6 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/keymap"
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
-	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
@@ -167,17 +166,7 @@ func (m Model) rowKeyDispatch(key string) (tea.Model, tea.Cmd, bool) {
 		return mm, cmd, true
 	}
 	if found {
-		// Same filter as workRows' byName build (work.go): only non-worker
-		// entries are keyed by command name. Duplicated rather than
-		// shared because work.go is under concurrent modification by
-		// another swarm — see commandNamed's comment for the same call.
-		byName := map[string]*livework.Entry{}
-		for _, e := range livework.Default.List() {
-			if e.Worker == nil {
-				byName[e.Name] = e
-			}
-		}
-		if e := liveEntryFor(name, byName); e != nil {
+		if e := liveEntryFor(name, liveCommandEntries()); e != nil {
 			mm, cmd := m.attachEntry(e)
 			return mm, cmd, true
 		}
