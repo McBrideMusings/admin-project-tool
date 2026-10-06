@@ -280,7 +280,11 @@ var nonSettingsTopLevelKeys = map[string]bool{
 }
 
 // WorktreesKeys are the keys accepted by the [worktrees] table.
-var WorktreesKeys = map[string]bool{"root": true}
+var WorktreesKeys = map[string]bool{"root": true, "hooks": true}
+
+// WorktreeHookKeys are the hook names accepted by the [worktrees.hooks] table
+// (ADR-0024). Each value is a shell string.
+var WorktreeHookKeys = map[string]bool{"post_create": true, "post_start": true, "pre_remove": true}
 
 // BeadsKeys are the keys accepted by the [beads] table.
 var BeadsKeys = map[string]bool{"columns": true}
@@ -529,6 +533,9 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 		if err := checkUnknownKeys(t.table, t.keys, t.name, source); err != nil {
 			return nil, err
 		}
+	}
+	if err := checkWorktreeHooks(m.Worktrees["hooks"], source); err != nil {
+		return nil, err
 	}
 
 	if m.Populate, err = parsePopulate(data, source); err != nil {
@@ -929,6 +936,27 @@ func checkUnknownKeys(t map[string]any, allowed map[string]bool, name, source st
 	}
 	sort.Strings(unknown)
 	return errf("%s: '%s' has unknown key(s): %s", source, name, joinStrings(unknown, ", "))
+}
+
+// checkWorktreeHooks validates [worktrees.hooks]: a table whose keys are hook
+// names and whose values are shell strings. Absent is fine.
+func checkWorktreeHooks(v any, source string) error {
+	if v == nil {
+		return nil
+	}
+	hooks, ok := v.(map[string]any)
+	if !ok {
+		return errf("%s: '[worktrees].hooks' must be a table", source)
+	}
+	if err := checkUnknownKeys(hooks, WorktreeHookKeys, "[worktrees.hooks]", source); err != nil {
+		return err
+	}
+	for name, body := range hooks {
+		if _, ok := body.(string); !ok {
+			return errf("%s: '[worktrees.hooks].%s' must be a string", source, name)
+		}
+	}
+	return nil
 }
 
 // parsePopulate parses the [[populate]] array of tables — one entry per

@@ -768,4 +768,7 @@ func emitCD(repoRoot, path string) {
 
 func reportPopulate(res create.Result) {
 	reportPopulateResults(res.Populate)
+	if res.PostStartLog != "" {
+		fmt.Fprintf(os.Stderr, "post_start: detached, log %s\n", res.PostStartLog)
+	}
 }

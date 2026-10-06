@@ -556,6 +556,9 @@ func TestParseConfigTablesRejectUnknownKeys(t *testing.T) {
 		{"beads", "project_name = \"x\"\n[beads]\nrows = 5\n", "'[beads]' has unknown key(s): rows"},
 		{"workflow", "project_name = \"x\"\n[workflow]\nlimit = 5\n", "'[workflow]' has unknown key(s): limit"},
 		{"populate entry", "project_name = \"x\"\n[[populate]]\nglob = \".env\"\n", "'[[populate]]' has unknown key(s): glob"},
+		{"worktree hook name", "project_name = \"x\"\n[worktrees.hooks]\npost_remove = \"x\"\n", "'[worktrees.hooks]' has unknown key(s): post_remove"},
+		{"worktree hook value", "project_name = \"x\"\n[worktrees.hooks]\npost_create = [\"x\"]\n", "'[worktrees.hooks].post_create' must be a string"},
+		{"worktree hooks shape", "project_name = \"x\"\n[worktrees]\nhooks = \"x\"\n", "'[worktrees].hooks' must be a table"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
