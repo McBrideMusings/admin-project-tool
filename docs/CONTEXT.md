@@ -51,7 +51,7 @@ Reserved tool verb that resolves an input (branch name, issue/PR number, issue/P
 _Avoid_: checkout (overloaded), switch
 
 **Worktree** (verb — `admin worktree <input>`):
-Reserved tool verb that resolves the same input set as **Branch**, then creates a separate git worktree for that branch (populate, then the project's `post_create` and `post_start` worktree hooks, ADR-0024), rather than switching the current tree. `admin worktree rm [input]` removes one registered worktree and then its branch; it runs `pre_remove` first and refuses a dirty tree, a paused git operation or commits on no origin ref without `--force`.
+Reserved tool verb that resolves the same input set as **Branch**, then creates a separate git worktree for that branch (populate, then the project's `post_create` and `post_start` worktree hooks, ADR-0024), rather than switching the current tree. `admin worktree rm [input]` removes one registered worktree and then its branch; it runs `pre_remove` first and refuses a dirty tree, a paused git operation or commits on no origin ref without `--force`. `admin worktree <input> -x <cmd> -- <prompt words>` creates the worktree, then starts `<cmd>` in it through the project's `[terminal]` launcher instead of emitting a cd; each word after `--` is passed as one shell-quoted argument. With no `[terminal]` declared it fails rather than running inline.
 _Avoid_: wt (fine as a shorthand, not the canonical name), tree
 
 **Resolver**:
