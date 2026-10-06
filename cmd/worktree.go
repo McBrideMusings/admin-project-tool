@@ -9,6 +9,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/create"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
+	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/resolve"
 )
 
@@ -36,8 +37,13 @@ With no input, opens the dashboard so you can pick one instead.
 literally named "rm" is reached with 'admin worktree -- rm'.
 
 Contrast 'admin branch <input>', which resolves the same input set but checks
-the branch out in the CURRENT working tree, with no new worktree.`,
-	Args: cobra.MaximumNArgs(1),
+the branch out in the CURRENT working tree, with no new worktree.
+
+'admin worktree <input> -x <cmd> -- <prompt>' then starts <cmd> in the new
+worktree through the project's [terminal] launcher, the same dispatch a
+kind="workflow" worker takes; each word after -- is passed to <cmd> as one
+argument. With -x, the input must come before --.`,
+	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		prune, _ := cmd.Flags().GetBool("prune")
 		if prune {
@@ -45,21 +51,58 @@ the branch out in the CURRENT working tree, with no new worktree.`,
 			yes, _ := cmd.Flags().GetBool("yes")
 			return runPrune(cmd.Context(), pruneWorktrees, dryRun, yes)
 		}
-		if len(args) == 0 {
+		exec, _ := cmd.Flags().GetString("exec")
+		input, words, err := splitWorktreeArgs(args, cmd.ArgsLenAtDash(), exec != "")
+		if err != nil {
+			return err
+		}
+		if input == "" {
 			return runDashboard(cmd.Context())
 		}
 		yes, _ := cmd.Flags().GetBool("yes")
-		return runWorktree(cmd.Context(), args[0], yes)
+		return worktreeRun(cmd.Context(), input, yes, exec, words)
 	},
 }
+
+// worktreeRun is runWorktree, swapped out in tests that pin argument parsing.
+var worktreeRun = runWorktree
 
 func init() {
 	worktreeCmd.Flags().BoolP("yes", "y", false, "skip the confirmation prompt")
 	worktreeCmd.Flags().Bool("prune", false, "remove worktrees whose branch is dead, and delete that branch")
 	worktreeCmd.Flags().Bool("dry-run", false, "with --prune, list what would be removed without removing it")
+	worktreeCmd.Flags().StringP("exec", "x", "", "start this command in the new worktree through the [terminal] launcher")
 }
 
-func runWorktree(ctx context.Context, input string, skipConfirm bool) error {
+// splitWorktreeArgs separates the input from the words after `--`. dash is
+// cobra's ArgsLenAtDash: -1 with no `--`, else how many args preceded it.
+// Without -x, `--` with nothing before it is the escape for a branch named
+// like a subcommand (`admin worktree -- rm`), so its one word is the input.
+// With -x, the input must precede `--` and every word after it is an argument
+// to the -x command — reading a forgotten input out of the prompt would name a
+// branch after the prompt.
+func splitWorktreeArgs(args []string, dash int, hasExec bool) (input string, words []string, err error) {
+	before, after := args, []string(nil)
+	if dash >= 0 {
+		before, after = args[:dash], args[dash:]
+	}
+	switch {
+	case len(before) > 1:
+		return "", nil, fmt.Errorf("worktree takes one input, got %d: %v", len(before), before)
+	case len(before) == 1:
+		input, words = before[0], after
+	case hasExec:
+		return "", nil, fmt.Errorf("-x needs an input before --: admin worktree <input> -x <cmd> -- <prompt>")
+	case len(after) > 0:
+		input, words = after[0], after[1:]
+	}
+	if len(words) > 0 && !hasExec {
+		return "", nil, fmt.Errorf("arguments after -- (%v) are for -x <cmd>, and no -x was given", words)
+	}
+	return input, words, nil
+}
+
+func runWorktree(ctx context.Context, input string, skipConfirm bool, exec string, words []string) error {
 	repoRoot, err := cwdRepoRoot(ctx)
 	if err != nil {
 		return err
@@ -114,6 +157,24 @@ func runWorktree(ctx context.Context, input string, skipConfirm bool) error {
 		return err
 	}
 	reportPopulate(res)
-	emitCD(repoRoot, res.Path)
+	if exec == "" {
+		emitCD(repoRoot, res.Path)
+		return nil
+	}
+	// The agent's launcher pane is where the worktree is opened, so there is no
+	// cd: a herdr workspace opened here as well would be a second surface on it.
+	return dispatchExec(repoRoot, plan.Branch, res.Path, exec, words)
+}
+
+// dispatchExec starts exec in branch's worktree through kinds.DispatchTargets,
+// the path every workflow worker takes. DispatchTargets finds the worktree
+// runWorktree just made by its branch and reuses it.
+func dispatchExec(repoRoot, branch, path, exec string, words []string) error {
+	tgt := kinds.NewExecTarget(branch, exec, words)
+	res := kinds.DispatchTargets(repoRoot, "worktree", kinds.ExecAction(tgt.Run), []kinds.Target{tgt}, kinds.SurfaceShell)[0]
+	if res.Err != nil {
+		return fmt.Errorf("worktree %s created, but starting %q failed: %w", path, exec, res.Err)
+	}
+	fmt.Fprintf(os.Stderr, "Started %s in %s (pane %s)\n", exec, res.WorktreePath, res.Handle)
 	return nil
 }
