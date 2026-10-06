@@ -58,6 +58,24 @@ type Config struct {
 	Publish string
 
 	Terminal TerminalConfig
+	MacOS    MacOSConfig
+
+	// Root is the project root: Launch, steps and Publish run there. Set by
+	// the caller, not read from the table.
+	Root string
+}
+
+// MacOSConfig is [clip.macos]: which window the macos-window recorder
+// records.
+type MacOSConfig struct {
+	// Owner is the window owner name the window server reports, usually the
+	// app's name.
+	Owner string
+	// Title, when set, must appear in the window's title.
+	Title string
+	// Settle is how long, in seconds, the window's bounds must hold still
+	// before recording starts; Timeout bounds the whole wait.
+	Settle, Timeout float64
 }
 
 // TerminalConfig is [clip.terminal]: how the terminal recorder's virtual
@@ -94,6 +112,7 @@ func Parse(raw map[string]any, resolve func(string) string) (Config, error) {
 		Out:           resolve(r.str("out", "")),
 		Publish:       r.str("publish", ""),
 		Terminal:      TerminalConfig{FontSize: 28, WidthPx: 1920, HeightPx: 1080},
+		MacOS:         MacOSConfig{Settle: 1.0, Timeout: 60},
 	}
 	for _, s := range r.strs("steps") {
 		c.Steps = append(c.Steps, resolve(s))
@@ -107,6 +126,15 @@ func Parse(raw map[string]any, resolve func(string) string) (Config, error) {
 			Shell:      t.str("shell", ""),
 			WidthPx:    int(t.num("width_px", 1920)),
 			HeightPx:   int(t.num("height_px", 1080)),
+		}
+		t.unknown()
+	}
+	if t := r.table("macos"); t != nil {
+		c.MacOS = MacOSConfig{
+			Owner:   t.str("owner", ""),
+			Title:   t.str("title", ""),
+			Settle:  t.num("settle", 1.0),
+			Timeout: t.num("timeout", 60),
 		}
 		t.unknown()
 	}
@@ -132,6 +160,10 @@ func Parse(raw map[string]any, resolve func(string) string) (Config, error) {
 		return c, fmt.Errorf("width and fps must be > 0")
 	case c.Quality < minQuality || c.Quality > 100:
 		return c, fmt.Errorf("quality must be %d-100", minQuality)
+	case c.MacOS.Settle < 0 || c.MacOS.Timeout <= 0:
+		return c, fmt.Errorf("[clip.macos] settle must be >= 0 and timeout > 0 seconds")
+	case c.Recorder == "macos-window" && (c.MacOS.Owner == "" || c.Launch == ""):
+		return c, fmt.Errorf("the macos-window recorder needs launch and [clip.macos].owner (the app's window owner name)")
 	}
 	return c, nil
 }
@@ -163,11 +195,11 @@ func ParseSize(s string) (int64, error) {
 // reader reads typed values off one raw table, remembering the first type
 // error and which keys were read so unknown() can name the rest.
 type reader struct {
-	raw   map[string]any
-	name  string
-	seen  map[string]bool
-	err   error
-	sub   []*reader
+	raw  map[string]any
+	name string
+	seen map[string]bool
+	err  error
+	sub  []*reader
 }
 
 func (r *reader) get(k string) (any, bool) {

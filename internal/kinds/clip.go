@@ -40,6 +40,7 @@ func makeClip(name string, action manifest.Action, m *manifest.Manifest, _ *Surf
 			return fmt.Errorf("action %q: [%s]: %w", name, table, err)
 		}
 		root := projectRoot(m)
+		c.Root = root
 		if c.Out == "" {
 			project := filepath.Base(root)
 			if m != nil && m.ProjectName != "" {
@@ -50,7 +51,7 @@ func makeClip(name string, action manifest.Action, m *manifest.Manifest, _ *Surf
 			c.Out = resolveUnder(root, c.Out)
 		}
 
-		opts := clip.Options{Root: root, Echo: os.Stderr}
+		opts := clip.Options{Echo: os.Stderr}
 		for _, a := range args {
 			switch a {
 			case "--no-publish":

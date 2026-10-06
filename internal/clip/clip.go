@@ -14,8 +14,6 @@ import (
 type Options struct {
 	// NoPublish skips [clip].publish.
 	NoPublish bool
-	// Root is the project root: Publish runs there.
-	Root string
 	// Echo receives the progress lines also written to clip.log.
 	Echo io.Writer
 }
@@ -64,7 +62,7 @@ func Run(ctx context.Context, c Config, o Options) (r Result, err error) {
 	}
 	log.Printf("publish: %s", c.Publish)
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", c.Publish)
-	cmd.Dir = o.Root
+	cmd.Dir = c.Root
 	cmd.Env = append(os.Environ(), "ADMIN_CLIP_FILE="+r.WebP)
 	out, perr := cmd.CombinedOutput()
 	log.raw(out)

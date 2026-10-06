@@ -2,11 +2,13 @@ package clip
 
 import (
 	"context"
+	"math"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseDefaultsAndErrors(t *testing.T) {
@@ -153,5 +155,57 @@ func TestCutCrossfadesANonPeriodicTake(t *testing.T) {
 	}
 	if r.Seconds != 0.7 {
 		t.Errorf("clip %.3fs, want exactly 0.7s", r.Seconds)
+	}
+}
+
+func TestPickWindowSkipsTheUsersOwnInstance(t *testing.T) {
+	ws := []window{
+		{ID: 1, PID: 10, Owner: "NTS Radio", Bounds: winRect{Width: 1040}}, // already running before launch
+		{ID: 2, PID: 20, Owner: "NTS Radio", Bounds: winRect{Width: 40}},   // a sliver, not the main window
+		{ID: 3, PID: 20, Owner: "NTS Radio", Name: "Radio", Bounds: winRect{Width: 1040}},
+	}
+	got := pickWindow(ws, MacOSConfig{Owner: "NTS Radio"}, map[int]bool{10: true})
+	if got == nil || got.ID != 3 {
+		t.Fatalf("picked %+v, want window 3", got)
+	}
+	if pickWindow(ws, MacOSConfig{Owner: "NTS Radio", Title: "Settings"}, map[int]bool{10: true}) != nil {
+		t.Error("a title filter that matches nothing must pick nothing")
+	}
+}
+
+func TestMacStepsAndOwnerRequired(t *testing.T) {
+	ctx := context.Background()
+	if err := runMacStep(ctx, t.TempDir(), nil, "wait 0", nil); err != nil {
+		t.Errorf("wait 0: %v", err)
+	}
+	if err := runMacStep(ctx, t.TempDir(), nil, "sh exit 3", nil); err == nil {
+		t.Error("a failing sh step must fail the take")
+	}
+	if err := runMacStep(ctx, t.TempDir(), nil, "ax-press play", nil); err == nil {
+		t.Error("an unknown step verb must be rejected")
+	}
+	if _, err := Parse(map[string]any{"recorder": "macos-window", "period": 5.0, "launch": "open x.app"}, nil); err == nil {
+		t.Error("macos-window without [clip.macos].owner must be rejected")
+	}
+}
+
+func TestTakeT0SubtractsTheCaptureLag(t *testing.T) {
+	// Touched 1.5s after screencapture launched; 13.56s of wall time held a
+	// 13.29s video, so the first frame came 0.27s late and t0 is 1.23s in.
+	t0, lag := takeT0(1.5, 13.56, 13.29)
+	if math.Abs(lag-0.27) > 1e-9 || math.Abs(t0-1.23) > 1e-9 {
+		t.Errorf("t0=%.4f lag=%.4f, want 1.23 and 0.27", t0, lag)
+	}
+}
+
+func TestLaunchReturnsWhenTheAppIsBackgrounded(t *testing.T) {
+	dir := t.TempDir()
+	c := Config{Launch: "sleep 30 &", Root: dir, MacOS: MacOSConfig{Timeout: 10}}
+	start := time.Now()
+	if err := launchApp(context.Background(), c, nil, dir, nil); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("launch held for %s by a backgrounded child", d)
 	}
 }

@@ -52,9 +52,12 @@ error. The tool writes it even when the run fails.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `recorder` | — | The surface: `terminal` |
+| `recorder` | — | The surface: `terminal` or `macos-window` |
 | `launch` | — | Starts the app |
 | `ready` | — | Regex the terminal recorder waits for before recording |
+| `macos.owner` | — | macos-window: the window owner name (the app's name) |
+| `macos.title` | none | macos-window: text the window title must contain |
+| `macos.settle` / `macos.timeout` | 1 / 60 | macos-window: seconds the bounds must hold still / longest wait for the window |
 | `period` | — | Loop length, seconds |
 | `warmup` | 0 | Seconds recorded before the nominal cut start |
 | `repeat` | 2 | Times the steps run |
@@ -80,3 +83,36 @@ needs no crossfade.
 When steps can't reach what the demo needs (hover, a game canvas, typing one character at a
 time), the app runs its own demo. It does so when it sees `ADMIN_CLIP=1`. Its timeline starts
 when the file named by `ADMIN_CLIP_START` appears, and the demo repeats every `period` seconds.
+
+## macOS windows
+
+`recorder = "macos-window"` records one window of a native app, a raylib game included. `launch`
+starts the app and gets `ADMIN_CLIP=1` and `ADMIN_CLIP_START` in its environment. `open` does
+not forward the environment, so pass both through `open --env`:
+
+```toml
+[clip]
+recorder = "macos-window"
+launch   = 'open -g -n --env ADMIN_CLIP=1 --env ADMIN_CLIP_START="$ADMIN_CLIP_START" "mac/build/NTS Radio.app"'
+period   = 5.0
+warmup   = 0.5
+
+[clip.macos]
+owner = "NTS Radio"
+```
+
+The recorder runs these steps:
+1. It lists windows through `osascript -l JavaScript`.
+2. It waits for a window owned by `owner` from a process that did not exist before launch, so a
+   copy of the app you already have open is never recorded.
+3. It waits until the window's bounds hold still for `settle` seconds.
+4. It records with `screencapture -v -x -o -l<id>`: the window's pixels at its backing scale,
+   with no shadow, even when something covers the window.
+5. It touches `ADMIN_CLIP_START` 1.5 s into the recording. That moment is t0.
+6. It runs `steps`, then stops `screencapture` with SIGINT and quits the app it launched.
+`screencapture`'s first frame lags its launch. The recorder measures that lag as wall time minus
+video length, and subtracts it from t0.
+
+`steps` here are `sh <command>` and `wait <seconds>`. Hover, typing and anything drawn on a
+canvas belong in the app's own demo. The terminal running `admin` needs Screen Recording
+permission.

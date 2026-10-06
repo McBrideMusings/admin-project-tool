@@ -23,7 +23,8 @@ type Recorder interface {
 }
 
 var recorders = map[string]Recorder{
-	"terminal": terminalRecorder{},
+	"terminal":     terminalRecorder{},
+	"macos-window": macWindowRecorder{},
 }
 
 func lookupRecorder(name string) Recorder { return recorders[name] }
