@@ -51,7 +51,7 @@ Reserved tool verb that resolves an input (branch name, issue/PR number, issue/P
 _Avoid_: checkout (overloaded), switch
 
 **Worktree** (verb — `admin worktree <input>`):
-Reserved tool verb that resolves the same input set as **Branch**, then creates a separate git worktree for that branch (branch-state attach + post-create install + Herdr association), rather than switching the current tree.
+Reserved tool verb that resolves the same input set as **Branch**, then creates a separate git worktree for that branch (populate, then the project's `post_create` and `post_start` worktree hooks, ADR-0024), rather than switching the current tree.
 _Avoid_: wt (fine as a shorthand, not the canonical name), tree
 
 **Resolver**:

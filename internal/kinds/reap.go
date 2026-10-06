@@ -231,6 +231,11 @@ var panesClosed sync.Map
 // keeps saying no; it is asked again only after preRemoveRetry.
 var preRemoveVetoed sync.Map
 
+// preRemovePassed holds the live entries whose pre_remove has already passed,
+// so a reap retried after a failed pane kill or worktree removal goes on
+// without running the hook again.
+var preRemovePassed sync.Map
+
 // preRemoveRetry is how long a vetoed reap waits before running pre_remove
 // again. A var so tests can shorten it.
 var preRemoveRetry = 30 * time.Second
@@ -282,8 +287,7 @@ func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t confi
 	}
 	if _, closed := panesClosed.Load(e.ID); !closed {
 		// pre_remove (ADR-0024) can veto, so it runs before the pane closes and
-		// a veto leaves the worker as it was. Once the pane is closed the hook
-		// has already passed, so a retried removal does not run it again.
+		// a veto leaves the worker as it was.
 		if !preRemoveAllows(ctx, repoRoot, e) {
 			return false
 		}
@@ -319,6 +323,7 @@ func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t confi
 	}
 	panesClosed.Delete(e.ID)
 	preRemoveVetoed.Delete(e)
+	preRemovePassed.Delete(e)
 	livework.Default.SetNote(e.ID, "")
 	livework.Default.SetState(e.ID, livework.StateExited, nil)
 	ReleaseWorkerSlot(e.ID)
@@ -328,14 +333,18 @@ func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t confi
 // preRemoveAllows runs pre_remove on the worker's worktree and reports
 // whether the reap may go on. A veto holds the worker with the hook's reason
 // on its row, and for preRemoveRetry after one the hook is not run again: the
-// row keeps the last reason.
+// row keeps the last reason. Once the hook passes it is never run again for e.
 func preRemoveAllows(ctx context.Context, repoRoot string, e *livework.Entry) bool {
+	if _, ok := preRemovePassed.Load(e); ok {
+		return true
+	}
 	if at, ok := preRemoveVetoed.Load(e); ok && time.Since(at.(time.Time)) < preRemoveRetry {
 		return false
 	}
 	err := wthooks.PreRemove(git.WithQuiet(ctx), repoRoot, e.Worker.Worktree, false)
 	if err == nil {
 		preRemoveVetoed.Delete(e)
+		preRemovePassed.Store(e, true)
 		return true
 	}
 	preRemoveVetoed.Store(e, time.Now())
