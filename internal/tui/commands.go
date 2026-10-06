@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -86,7 +87,20 @@ type wtState struct {
 	unread bool
 }
 
-type localDataMsg struct{ d localData }
+// localDataMsg carries one read of local git. seq is the order loadLocalCmd was
+// called in, not the order the reads finish: a read that started before a delete
+// can finish after the read that started once the delete was done, and applying it
+// would put the deleted row back on screen. The model drops any read older than
+// one it already applied. seq 0 is a message built by hand, never dropped.
+type localDataMsg struct {
+	d   localData
+	seq uint64
+}
+
+// localSeq numbers loadLocalCmd calls. Process-wide and only ever compared against
+// numbers drawn from itself, so two models never confuse each other.
+var localSeq atomic.Uint64
+
 type cacheDataMsg struct {
 	r  data.Remote
 	ok bool
@@ -133,18 +147,19 @@ type actionMsg struct {
 // checkout is the one the dashboard was opened in (Model.checkoutDir), and
 // every other read runs there — so the commit list follows its HEAD.
 func loadLocalCmd(ctx context.Context, repoRoot, checkout, current, def string) tea.Cmd {
+	seq := localSeq.Add(1)
 	return func() tea.Msg {
 		var d localData
 		wts, err := git.Worktrees(ctx, checkout)
 		if err != nil {
 			d.err = err
-			return localDataMsg{d}
+			return localDataMsg{d: d, seq: seq}
 		}
 		d.wts = wts
 		byBranch := git.ByBranch(wts, repoRoot)
 		if d.branches, err = git.LocalBranches(ctx, checkout, current, byBranch); err != nil {
 			d.err = err
-			return localDataMsg{d}
+			return localDataMsg{d: d, seq: seq}
 		}
 		d.status, _ = git.WorkingStatus(ctx, repoRoot)
 		// The commits strip is at most historyStripMaxH rows tall and scrolls, so 40
@@ -247,7 +262,7 @@ func loadLocalCmd(ctx context.Context, repoRoot, checkout, current, def string) 
 			d.signals[name] = sig
 		}
 		d.herdrOpen = shim.OpenWorkspaces()
-		return localDataMsg{d}
+		return localDataMsg{d: d, seq: seq}
 	}
 }
 

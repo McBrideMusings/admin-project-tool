@@ -266,8 +266,12 @@ func finishedProof(reason string) bool {
 //
 // "on origin" is deliberately NOT a proof here even though the classifier offers
 // it. See finishedProof: being pushed is the normal state of work in progress.
+//
+// An open PR vetoes, so a PR list that never loaded cannot be read as "no open PR":
+// while prsUnknown holds there is no proof, and the sweep takes nothing. Deleting
+// one branch by hand (`x`) never asks this question and works either way.
 func (m Model) landedProof(branch string, hasOpenPR bool) string {
-	if hasOpenPR {
+	if hasOpenPR || m.prsUnknown() {
 		return ""
 	}
 	// Only a proof counts. The circumstantial tier says a branch looks abandoned,
@@ -317,4 +321,12 @@ func holdsOf(changed int, unpushed bool, ahead int, landed string) []string {
 		out = append(out, "unpushed")
 	}
 	return out
+}
+
+// prsUnknown reports that GitHub's open-PR list is not known, as opposed to known
+// to be empty: the last fetch failed and no earlier one ever succeeded, so there
+// are no cached rows either. A failed fetch over a cached list is not unknown —
+// ApplyTo keeps the old rows, which are stale but real.
+func (m Model) prsUnknown() bool {
+	return m.remote.PRsFetchError != "" && m.remote.PRsFetchedAt.IsZero()
 }

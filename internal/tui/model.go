@@ -195,8 +195,10 @@ type Model struct {
 	// call can refill. branchstate.go joins it with the git-derived signals at read
 	// time; nothing merges the two sources into a stored value.
 	haveLocal bool
-	haveData  bool
-	inflight  int // in-flight background work (the sync, row refreshes); header spins while > 0
+	// localApplied is the seq of the newest local read on screen (localDataMsg.seq).
+	localApplied uint64
+	haveData     bool
+	inflight     int // in-flight background work (the sync, row refreshes); header spins while > 0
 
 	// Beads: whether the Beads tab is drawn at all comes from the declared
 	// tracker list alone (trackers/hasTracker), never from these fields. The
@@ -1424,7 +1426,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case localDataMsg:
-		m.local = msg.d
+		// A read that started before one already applied is older than what is on
+		// screen; replacing the model with it would bring back a branch a delete
+		// just removed. Everything below still runs, so the flags a reload sets
+		// and clears stay in step.
+		if msg.seq == 0 || msg.seq >= m.localApplied {
+			m.local = msg.d
+			if msg.seq != 0 {
+				m.localApplied = msg.seq
+			}
+		}
 		m.haveLocal = true
 		m.clampCursor()
 		// The first local load is one of the two gates on the launch sync. Waiting
