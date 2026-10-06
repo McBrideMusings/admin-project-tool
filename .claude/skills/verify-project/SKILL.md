@@ -156,3 +156,22 @@ the browser's databases.
 - Hash port is tested against TM's algorithm shape in `tools/tampermonkey/tampermonkey_test.go`; a
   mismatch in a live run shows up as `provisioning[…]: Hash mismatch` in TM's
   service-worker console (chrome://extensions → Tampermonkey → service worker).
+
+## Clip kind (`internal/clip`, `kind = "clip"`)
+
+Drive it from a scratch project whose `admin.toml` has a `[clip]` table (see
+`docs/guide/clip.md`) with `launch` pointing at a binary built from this tree
+(`go build -o <scratch>/admin .`), then run `<scratch>/admin clip --no-publish` from that
+project. The run's state is `<out>/clip.json`; `<out>/clip.log` holds every subprocess argv
+and exit.
+
+A pass:
+- exit 0, and `clip.json` `seconds` equals `period` exactly (the clipper counts frames);
+- `seam_diff` under `seam_threshold` with `crossfade: 0` for a choreography that returns to
+  its start, and `crossfade` equal to `fade` for one that doesn't;
+- five files under `<out>/stills/`; `still-4` beside `still-0` is the seam, so check it
+  with `screenshot-checker` at full resolution, never a downscaled contact sheet;
+- a `budget` the clip can't meet exits 1 with every quality tried listed in `attempts`.
+
+`go test ./internal/clip` runs the clipper through real ffmpeg on synthetic takes, both the
+periodic path and the crossfade path; it skips when ffmpeg is missing.

@@ -18,6 +18,7 @@ var envCheckedTables = []string{
 	"dev_kill", "dev_precheck", "clean_dev", "vite_dev", "docker_dev",
 	"deploy", "docker_run", "docker_build", "install_template", "fixtures",
 	"docs", "go", "go_dist", "raylib", "launchd", "log_bridge", "worktree",
+	"clip",
 }
 
 // envRef is one environment variable the manifest references: its default,

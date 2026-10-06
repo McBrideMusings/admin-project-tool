@@ -80,6 +80,9 @@ var Kinds = map[string]Kind{
 	"launchd":     {Name: "launchd", Configless: true, Modules: []string{"launchd"}},
 	"go-dist":     {Name: "go-dist", Modules: []string{"godist"}},
 	"agent-skill": {Name: "agent-skill"},
+	// clip records a looping demo through the recorder its [clip] table
+	// names (internal/clip); its body is that table, not a `run` string.
+	"clip": {Name: "clip", Configless: true},
 
 	"http":               {Name: "http"},
 	"npm":                {Name: "npm"},
