@@ -8,6 +8,7 @@ package tui
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -210,9 +211,30 @@ func TestFrameShowsQuitConfirmOverHostedProcess(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
+	// The entry's name comes from its Work row, so the project declares it.
+	dir := t.TempDir()
+	toml := `project_name = "frame"
+
+[commands.frame-fixture]
+desc  = "fixture"
+steps = ["frame-fixture"]
+
+[actions.frame-fixture]
+kind = "multi-target"
+
+[actions.frame-fixture.cf]
+run = "true"
+
+[actions.frame-fixture.mac]
+run = "true"
+`
+	if err := os.WriteFile(filepath.Join(dir, "admin.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	m := New(ctx, t.TempDir(), "owner/repo", "main", "main")
+	m := New(ctx, dir, "owner/repo", "main", "main")
 	m.herdr = false
 
 	out := Frame(ctx, m, FrameOptions{

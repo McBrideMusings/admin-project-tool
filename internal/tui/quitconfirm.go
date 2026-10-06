@@ -143,7 +143,7 @@ func (m Model) quitConfirmBox(bw int) []string {
 	// design's 10 cells, so the activity column lines up across rows.
 	nameW := 10
 	for _, e := range m.quitHosted {
-		nameW = maxi(nameW, vlen(quitRowName(e))+2)
+		nameW = maxi(nameW, vlen(m.entryName(e))+2)
 	}
 
 	faint := lipgloss.NewStyle().Foreground(cFaint)
@@ -164,7 +164,7 @@ func (m Model) quitConfirmBox(bw int) []string {
 			stateColor = cYellow
 		}
 		line := "    " + lipgloss.NewStyle().Foreground(stateColor).Render(padEnd(string(st), 9)) +
-			padEnd(quitRowName(e), nameW)
+			padEnd(m.entryName(e), nameW)
 		if act, _ := livework.Default.Activity(e.ID); act != "" {
 			// The design leaves 5 cells spare after a 32-cell activity at
 			// the 10-cell command column (variants.go's overlayQuit: bw-28).
@@ -179,11 +179,4 @@ func (m Model) quitConfirmBox(bw int) []string {
 		row("    "+lipgloss.NewStyle().Foreground(cRed).Render("⏎ kill them and quit")+"     "+mutedStyle.Render("esc cancel")),
 		faint.Render("└"+strings.Repeat("─", bw)+"┘"))
 	return box
-}
-
-// quitRowName is a process row's name in the Work band's spaced form
-// ("command-test counter"), not the live-work id's "<command>:<target>"
-// (internal/kinds.TargetLiveKey).
-func quitRowName(e *livework.Entry) string {
-	return strings.Replace(e.ID, ":", " ", 1)
 }

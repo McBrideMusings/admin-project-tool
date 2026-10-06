@@ -236,7 +236,7 @@ func encodeKeyType(msg tea.KeyMsg) []byte {
 
 // attachBreadcrumb renders the row the tab bar gives up while attached (see
 // view.go's frameRaw): what is attached on the left — verbatim "attached",
-// the state glyph, the entry's name, the state word and elapsed. Reuses
+// the state glyph, the band title's name for it, the state word and elapsed. Reuses
 // commandGlyph/stateColor/elapsedStr (workview.go) rather than a second
 // glyph/duration mapping. This is the one line that must always agree with
 // the emulator grid below it, since both read the same live Entry on every
@@ -250,7 +250,7 @@ func (m Model) attachBreadcrumb(width int) string {
 	var state livework.State
 	started := time.Now()
 	if e != nil {
-		name = e.Name
+		name = m.entryName(e)
 		state, _ = livework.Default.State(e.ID)
 		started = e.StartedAt
 	}
@@ -267,20 +267,14 @@ func (m Model) attachBreadcrumb(width int) string {
 
 // termFields is the attached view's field block: the same rows the docked
 // band shows under its title for this entry — a command's log path and one
-// row per configured url, or a worker's five rows. It finds them by matching
-// the attached entry to its Commands or Workers row, with collapse off so a hidden target
-// row still counts. An entry with no row falls back to its log path alone.
+// row per configured url, or a worker's five rows. It finds them through the
+// attached entry's own Commands or Workers row (entryRow). An entry with no
+// row falls back to its log path alone.
 func (m Model) termFields(width int) []string {
 	if !m.termAttached {
 		return nil
 	}
-	all := m
-	all.workCollapsed = false
-	for _, r := range append(all.workRows(), all.workerRows()...) {
-		e := bandEntry(r)
-		if e == nil || e.ID != m.termEntryID {
-			continue
-		}
+	if r, e, ok := m.entryRow(m.termEntryID); ok {
 		return bandFields(e, r.work, width)
 	}
 	if e := m.termEntry(); e != nil {

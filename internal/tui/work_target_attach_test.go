@@ -16,6 +16,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
@@ -101,6 +102,60 @@ func TestEnterOnRunningTargetRowAttachesNotDispatches(t *testing.T) {
 	if cmd != nil {
 		t.Errorf("enter on a running target row returned a non-nil Cmd, want nil (attach is synchronous)")
 	}
+}
+
+// TestAttachedBreadcrumbUsesBandName: the breadcrumb names an attached run
+// the way the band title names its row — a target "dev mac", never the
+// registry id "dev:mac"; a worker by its own Name, whatever its id holds.
+func TestAttachedBreadcrumbUsesBandName(t *testing.T) {
+	for _, c := range []struct {
+		entry *livework.Entry
+		want  string
+	}{
+		{&livework.Entry{ID: "dev:mac", Name: "dev:mac", Kind: "hosted-pty", Handle: "pty-dev-mac"}, "dev mac"},
+		{&livework.Entry{ID: "implement:admin-1", Name: "admin-1", Kind: "workflow", Handle: "pane-1", Via: "terminal",
+			Worker: &livework.WorkerInfo{Branch: "admin-1", Worktree: "/tmp/admin-1"}}, "admin-1"},
+	} {
+		freshLivework(t)
+		c.entry.State = livework.StateRunning
+		if err := livework.Default.Add(c.entry); err != nil {
+			t.Fatalf("Add: %v", err)
+		}
+		m := multiTargetModel(t)
+		m.termAttached, m.termEntryID = true, c.entry.ID
+		crumb := stripANSI(m.attachBreadcrumb(80))
+		if !strings.Contains(crumb, "● "+c.want+"  · ") {
+			t.Errorf("breadcrumb for %s = %q, want it to name %q", c.entry.ID, crumb, c.want)
+		}
+		if band := stripANSI(strings.Join(m.renderWorkBand(m.mustEntryRow(t, c.entry.ID), 80, 12), "\n")); !strings.Contains(band, " "+c.want+"  running") {
+			t.Errorf("band for %s = %q, want its title to name %q", c.entry.ID, band, c.want)
+		}
+	}
+}
+
+// TestQuitConfirmNamesTargetLikeBand: the quit confirm lists a running target
+// as "dev mac", the band title's name for it.
+func TestQuitConfirmNamesTargetLikeBand(t *testing.T) {
+	freshLivework(t)
+	e := &livework.Entry{ID: "dev:mac", Name: "dev:mac", Kind: "hosted-pty", Handle: "pty-dev-mac", State: livework.StateRunning}
+	if err := livework.Default.Add(e); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	m := multiTargetModel(t)
+	m.quitHosted = []*livework.Entry{e}
+	box := stripANSI(strings.Join(m.quitConfirmBox(60), "\n"))
+	if !strings.Contains(box, "dev mac") || strings.Contains(box, "dev:mac") {
+		t.Errorf("quit confirm = %q, want it to list %q", box, "dev mac")
+	}
+}
+
+func (m Model) mustEntryRow(t *testing.T, id string) rowItem {
+	t.Helper()
+	r, _, ok := m.entryRow(id)
+	if !ok {
+		t.Fatalf("no Work row for live entry %q", id)
+	}
+	return r
 }
 
 // TestEnterOnRunningFlatCommandRowStillAttaches is the sibling of the test

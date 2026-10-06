@@ -481,13 +481,7 @@ func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 	}
 
 	live := bandEntry(r)
-	name := wd.cmdName
-	if wd.targetKey != "" {
-		name += " " + wd.targetKey
-	}
-	if r.kind == rowWorker && live != nil {
-		name = live.Name
-	}
+	name := rowName(r, live)
 
 	out := make([]string, 0, h)
 	out = append(out, bandTitle(w, live, name))
@@ -578,6 +572,43 @@ func othersRunning(selID string) string {
 		parts += strconv.Itoa(workers) + " worker" + plural(workers)
 	}
 	return "also " + parts
+}
+
+// rowName is the one name the Work tab prints for a row: a worker's own
+// name, a target's "<command> <target>", or a command's name. The band
+// title reads it directly; the attach breadcrumb and the quit confirm reach
+// it through entryName. live is the row's own entry (bandEntry), nil if idle.
+func rowName(r rowItem, live *livework.Entry) string {
+	if r.kind == rowWorker && live != nil {
+		return live.Name
+	}
+	if r.work.targetKey == "" {
+		return r.work.cmdName
+	}
+	return r.work.cmdName + " " + r.work.targetKey
+}
+
+// entryRow is the Commands or Workers row whose live entry has id, with
+// collapse off so a hidden target row still counts.
+func (m Model) entryRow(id string) (rowItem, *livework.Entry, bool) {
+	all := m
+	all.workCollapsed = false
+	for _, r := range append(all.workRows(), all.workerRows()...) {
+		if e := bandEntry(r); e != nil && e.ID == id && r.work != nil {
+			return r, e, true
+		}
+	}
+	return rowItem{}, nil, false
+}
+
+// entryName is rowName for a live entry, found through its row rather than
+// parsed out of its registry id ("<command>:<target>", kinds.TargetLiveKey).
+// An entry with no row keeps its own Name.
+func (m Model) entryName(e *livework.Entry) string {
+	if r, live, ok := m.entryRow(e.ID); ok {
+		return rowName(r, live)
+	}
+	return e.Name
 }
 
 // bandTitle is the rule between the row list and the live band: the
