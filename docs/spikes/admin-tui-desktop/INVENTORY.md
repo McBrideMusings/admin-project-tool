@@ -27,6 +27,7 @@ No row carries a kind column — the kind is a band field.
 | `commands-status.txt` | `commands.txt` for a project declaring `[status]` entries — the Status strip (dot, label, readout) pinned above the list, its rows taken from the list, never the band |
 | `commands-running-status.txt` | `commands-running.txt` for the same project — a url the `urls` list named by its `[status]` entry reads `● local  http://…` |
 | `commands-empty.txt` | Nothing running and no workers |
+| `commands-collapsed.txt` | Collapse mode (`c`): the group the cursor is in stays open; every other group is a closed row, `▸ dev (2)`, naming how many targets it hides. The footer reads `c expand` |
 | `commands-workflow-selected.txt` | A workflow entry selected — targets are tracker items, so `↵` dispatches an agent |
 | `running.txt` | The Workers tab, cursor on a waiting worker; the band shows log, branch, worktree, session, now, tail |
 | `swarm.txt` | The Workers tab, cursor on a failed worker; the same band fields |
@@ -36,8 +37,8 @@ No row carries a kind column — the kind is a band field.
 | `no-manifest.txt` | A repo with no `admin.toml` |
 
 **Commands/Workers keys.** `↑↓`/`jk` move the tab's cursor · `↵` the row's primary action, following its state · `x` kill (shown on a running row) · `a` attach ·
-`c` collapse targets (Commands only) · `o` config · `←→` switch tabs · `q`/`esc` quit, or detach while attached. A multi-target parent is a
-group row: no marker, and the cursor skips over it.
+`c` collapse targets, so only the cursor's group stays open (Commands only) · `o` config · `←→` switch tabs · `q`/`esc` quit, or detach while attached. A multi-target parent is a
+group row: no marker while open, `▸` and its hidden target count while closed, and the cursor skips over it.
 
 ## Tabs
 

@@ -281,6 +281,8 @@ func TestNameColumnLeavesGapBeforeKindColumn(t *testing.T) {
 		{"flat/short", stripANSI(mm.renderWorkRow(rowItem{kind: rowCommand, work: &workRowData{cmdName: short, cmdDesc: "d", cmdKind: "shell"}}, false, lw))},
 		{"group/long", stripANSI(renderGroupRow(&workRowData{cmdName: long, cmdDesc: "d", cmdKind: "shell", targets: []string{"a", "b"}}, lw))},
 		{"group/short", stripANSI(renderGroupRow(&workRowData{cmdName: short, cmdDesc: "d", cmdKind: "shell", targets: []string{"a", "b"}}, lw))},
+		{"closed/long", stripANSI(renderGroupRow(&workRowData{cmdName: long, cmdDesc: "d", cmdKind: "shell", targets: []string{"a", "b"}, closed: true}, lw))},
+		{"closed/short", stripANSI(renderGroupRow(&workRowData{cmdName: short, cmdDesc: "d", cmdKind: "shell", targets: []string{"a", "b"}, closed: true}, lw))},
 	}
 
 	for _, c := range cases {
@@ -295,5 +297,20 @@ func TestNameColumnLeavesGapBeforeKindColumn(t *testing.T) {
 		if strings.Contains(c.line, "shell") {
 			t.Errorf("%s: row shows its kind: %q", c.name, c.line)
 		}
+	}
+}
+
+// A group collapse mode has closed marks itself and counts what it hides
+// (docs/spikes/admin-tui-desktop/commands-collapsed.txt: "▸ dev (2)"); an open
+// one keeps the blank marker cell.
+func TestRenderGroupRowClosedShowsHiddenCount(t *testing.T) {
+	lw := listContentWidth(96, 30)
+	wd := &workRowData{cmdName: "prototype", cmdDesc: "Open a prototype", targets: []string{"a", "b"}}
+	if got := stripANSI(renderGroupRow(wd, lw)); !strings.HasPrefix(got, "  prototype       Open") {
+		t.Errorf("open group = %q, want blank marker then name", got)
+	}
+	wd.closed = true
+	if got := stripANSI(renderGroupRow(wd, lw)); !strings.HasPrefix(got, "▸ prototype (2)   Open") {
+		t.Errorf("closed group = %q, want %q", got, "▸ prototype (2)   Open…")
 	}
 }

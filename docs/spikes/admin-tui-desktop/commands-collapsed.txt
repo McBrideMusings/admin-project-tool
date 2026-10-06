@@ -1,0 +1,30 @@
+ beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
+  Commands 47     Workers 3     Repo     Beads 227     Config                                   
+                                                                                                
+ Commands  47                                                                                   
+   deploy          Deploy a service to production                                               
+ ◆ ├ analytics-eng cd apps && bunx wrangler deploy --target analytics-eng                       
+ ◇ ├ chat-moderat… cd apps && bunx wrangler deploy --target chat-moderation                     
+ ◇ ├ hand-reports… cd apps && bunx wrangler deploy --target hand-reports-drain                  
+ ◇ ├ ios           cd apps && bunx wrangler deploy --target ios                                 
+ ◇ ├ ios-device    cd apps && bunx wrangler deploy --target ios-device                          
+ ◇ ├ mainframe     cd apps && bunx wrangler deploy --target mainframe                           
+ ◇ ├ name-check    cd apps && bunx wrangler deploy --target name-check                          
+ ◇ └ tournament-p… cd apps && bunx wrangler deploy --target tournament-processor                
+ ▸ dev (2)         Run a local dev server                                                       
+ ▸ logs (6)        Tail logs (prod webview client console via Tampermonkey bridge)              
+   ↓ more                                                                                       
+── deploy analytics-eng  not running ──────────────────────────── also 2 commands · 3 workers ──
+ kind     target                                                                                
+ desc     Deploy a service to production                                                        
+ last run never                                                                                 
+ last log —                                                                                     
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+ output appears here while it runs                                                              
+────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ move · ↵ dispatch · c expand · q/esc quit · o config · ←→ tab                               

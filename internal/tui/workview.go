@@ -379,14 +379,22 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 // renderGroupRow renders a multi-target parent's own row: two blank cells
 // where the marker would be — the marker column is what promises enter will
 // run the row, and a group runs nothing itself — then its name, kind and
-// description in the same columns every other row uses.
+// description in the same columns every other row uses. A group collapse mode
+// has closed (wd.closed) puts "▸" in that marker cell and its hidden target
+// count after the name — "▸ prototype (2)" — so it never reads as empty.
 func renderGroupRow(wd *workRowData, width int) string {
-	// Same reserved cell as renderWorkRow's flat-command branch, for the same
-	// reason: a full-width group name must not run straight into the kind
-	// column (admin-3rgp.72.19).
-	name := lipgloss.NewStyle().Bold(true).Render(padEnd(truncR(wd.cmdName, wName-1), wName))
-	desc := truncR(wd.cmdDesc, idleRest(width))
-	return "  " + name + faintStyle.Render(desc)
+	desc := faintStyle.Render(truncR(wd.cmdDesc, idleRest(width)))
+	bold := lipgloss.NewStyle().Bold(true)
+	if !wd.closed {
+		// Same reserved cell as renderWorkRow's flat-command branch, for the
+		// same reason: a full-width group name must not run straight into the
+		// kind column (admin-3rgp.72.19).
+		return "  " + bold.Render(padEnd(truncR(wd.cmdName, wName-1), wName)) + desc
+	}
+	count := " (" + strconv.Itoa(len(wd.targets)) + ")"
+	name := truncR(wd.cmdName, maxi(wName-1-len(count), 1))
+	label := bold.Render(name) + faintStyle.Render(count) + strings.Repeat(" ", maxi(wName-lipgloss.Width(name)-len(count), 1))
+	return faintStyle.Render("▸ ") + label + desc
 }
 
 // renderTargetRow renders one target of an expanded command: a tree

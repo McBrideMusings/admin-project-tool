@@ -87,6 +87,10 @@ type workRowData struct {
 	// so targetRows can hand each child row its own list without a second
 	// Model-aware resolver.
 	targetURLs map[string][]frame.URLEntry
+	// closed marks a group row whose targets collapse mode is hiding, so
+	// renderGroupRow can say so: "▸" in the marker cell and the hidden count
+	// after the name. Without it a closed group looks like an empty one.
+	closed bool
 	// urls is this row's own resolved urls (admin-1azz): a plain command's
 	// action-level list, or — for a single-target multi-target action,
 	// which the CLI auto-picks with no prompt — that one target's list.
@@ -848,18 +852,19 @@ func (m Model) workRows() []rowItem {
 			lastGroup = cr.cmd.Group
 			haveLast = true
 			item := m.commandRowItem(cr, byName)
-			cmdList = append(cmdList, item)
-			// No trailing ruleRow() between one group's targets and the next
-			// command: the reference frames show consecutive groups adjoining
-			// with no rule between them (commands.txt:13 -> :14).
-			//
 			// showTargets is the collapse gate (admin-4zz9): expanded mode
 			// (m.workCollapsed false, the default and the launch state) shows
 			// every command's targets exactly as before this existed;
 			// collapsed mode shows them only for the one command currently
 			// "open" (m.workOpenCmd), which moveCursorWork keeps pointed at
-			// whichever command the cursor is inside.
+			// whichever command the cursor is inside. A group it hides is
+			// marked closed so its row says so.
 			showTargets := !m.workCollapsed || cr.name == m.workOpenCmd
+			item.work.closed = item.group && !showTargets
+			cmdList = append(cmdList, item)
+			// No trailing ruleRow() between one group's targets and the next
+			// command: the reference frames show consecutive groups adjoining
+			// with no rule between them (commands.txt:13 -> :14).
 			if showTargets {
 				if targets := targetRows(item, byName, m.pendingTarget[cr.name]); len(targets) > 0 {
 					cmdList = append(cmdList, targets...)

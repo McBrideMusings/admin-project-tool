@@ -48,7 +48,7 @@ var Axes = []Axis{
 		// Work tab's default surface. Reordering renames no file —
 		// stateName() keys dumps by value, not position — it only changes
 		// the launch default and the ⌥s cycle order.
-		"commands", "commands-running", "commands-empty",
+		"commands", "commands-running", "commands-empty", "commands-collapsed",
 		// The same two screens for a project declaring [status] entries.
 		"commands-status", "commands-running-status",
 		// The Work tab's live states, then the rest of the reference frames.
@@ -65,9 +65,7 @@ var Axes = []Axis{
 		"repo-commits", "repo-filter", "repo-new-worktree",
 		"tracker-detail", "tracker-graph", "tracker-blocking", "tracker-tree", "tracker-filter",
 		"config-local",
-		// Hosted-process surfaces. commands-targets-open (the multi-target
-		// submenu open) was dropped: every submenu is always open now, so it
-		// was a duplicate of "commands" the moment collapsing went away.
+		// Hosted-process surfaces.
 		"hosted", "hosted-empty", "hosted-quit",
 	}},
 	// Both live-only. Dumping either would multiply every frame name and break
@@ -287,6 +285,10 @@ type screenSpec struct {
 	// (statusFixture): the Status strip above the list, and the band's url
 	// row naming the entry its url came from.
 	status bool
+	// collapsed draws the Commands list in collapse mode (`c`): only the
+	// group the cursor is in shows its targets, and every other group is a
+	// closed row naming how many it hides.
+	collapsed bool
 }
 
 // The tabs, in the order the real dashboard draws them (internal/tui/model.go's
@@ -328,6 +330,9 @@ var screens = map[string]screenSpec{
 	// 9 is "dev cf" in selectableCommands() order, stored +1.
 	"commands-running": {tab: tabCommands, liveSel: -1, cmdSel: 9},
 	"commands-empty":   {tab: tabCommands, liveSel: -1},
+	// The cursor on deploy's first target with collapse mode on: deploy stays
+	// open, every other group is closed.
+	"commands-collapsed": {tab: tabCommands, liveSel: -1, collapsed: true},
 	// commands and commands-running for a project declaring [status] entries.
 	"commands-status":         {tab: tabCommands, liveSel: -1, status: true},
 	"commands-running-status": {tab: tabCommands, liveSel: -1, cmdSel: 9, status: true},
@@ -382,8 +387,8 @@ func onKey(key string, s State, set func(axis, value string)) bool {
 		}
 	}
 	switch key {
-	// A multi-target command's submenu is always open (no collapse state left
-	// to toggle), so → and ← now mean only one thing everywhere: switch tabs.
+	// → and ← mean one thing everywhere: switch tabs. They never open or close
+	// a multi-target group; collapse mode is `c`'s.
 	case "tab", "right", "l":
 		set("screen", workTabs[(idx+1)%len(workTabs)])
 		selDelta = 0
@@ -805,7 +810,18 @@ type commandEntry struct {
 	group               bool
 	spacer              bool
 	last                bool
+	// hidden is how many targets a closed group row (collapse mode) is not
+	// showing; 0 on every other row.
+	hidden int
 }
+
+// collapsed and openGroup are collapse mode for commandRows: while collapsed,
+// only openGroup (the group the cursor is in) shows its targets. render sets
+// both from the screen's spec.
+var (
+	collapsed bool
+	openGroup string
+)
 
 func (e commandEntry) resolved() string {
 	if e.target == "" {
@@ -855,6 +871,10 @@ func commandRows() []commandEntry {
 		}
 		if len(p.targets) == 0 {
 			out = append(out, commandEntry{parent: p.name, run: "bash " + p.name + ".sh"})
+			continue
+		}
+		if collapsed && p.name != openGroup {
+			out = append(out, commandEntry{parent: p.name, group: true, hidden: len(p.targets)})
 			continue
 		}
 		out = append(out, commandEntry{parent: p.name, group: true})
@@ -1220,6 +1240,15 @@ func commandRowLine(e commandEntry, sel bool, lw int, empty bool) string {
 	}
 	if e.group {
 		p := parentOf(e.parent)
+		if e.hidden > 0 {
+			// A closed group (collapse mode) says it is closed and how much it
+			// holds: "▸" in the marker cell, the hidden target count after the
+			// name. Without both it reads as a group with nothing in it.
+			count := " (" + itoa(e.hidden) + ")"
+			name := trunc(p.name, wName-1-len(count))
+			return Pad(" "+dim.Render("▸ ")+bo.Render(name)+dim.Render(count)+
+				strings.Repeat(" ", wName-lipgloss.Width(name)-len(count))+dim.Render(trunc(p.desc, idle)), lw+1)
+		}
 		// Two blank cells where a runnable row has "◇ ": the marker column is
 		// what says the cursor can be here, and a group runs nothing itself.
 		// The name truncates one cell short of wName so a full-width name never
@@ -1826,6 +1855,14 @@ func render(s State) string {
 	// The data axis says the same thing but is NoDump, so without the name check
 	// the dumped frame was byte-identical to the populated one.
 	empty := s.Is("data", "empty") || name == "commands-empty"
+	// Collapse mode keeps open the group the cursor is in, read off the
+	// expanded list before any group closes.
+	collapsed, openGroup = false, ""
+	if sp.collapsed {
+		if cmds, c := selectableCommands(), tabCursor(name, empty); c < len(cmds) {
+			collapsed, openGroup = true, cmds[c].parent
+		}
+	}
 	tracker := s.Get("tracker")
 	if tracker == "" {
 		tracker = "beads"
@@ -2074,14 +2111,17 @@ func placeBox(rows, box []string, w, h, bw int) []string {
 // with the row's state (rowAction): attach while it runs, dispatch while it
 // does not, transcript on a finished worker. Kill is `x`, shown only on a live
 // row: `k` is cursor-up everywhere in this dashboard. `c collapse` folds the
-// Commands tab's targets, so the Workers tab does not offer it.
+// Commands tab's targets, so the Workers tab does not offer it; while folded it
+// reads `c expand`, naming what pressing it does.
 func keys(sp screenSpec, action string) string {
 	if sp.tab <= tabWorkers && !sp.hosted && !sp.sheet {
 		k := "↑↓ move · ↵ " + action
 		if action == "attach" {
 			k += " · x kill"
 		}
-		if sp.tab == tabCommands {
+		if sp.tab == tabCommands && sp.collapsed {
+			k += " · c expand"
+		} else if sp.tab == tabCommands {
 			k += " · c collapse"
 		}
 		return k + " · q/esc quit · o config · ←→ tab"
