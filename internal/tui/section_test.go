@@ -160,7 +160,8 @@ func TestOpenPRVetoesTheDeleteProof(t *testing.T) {
 // TestOpenPRMatchesABranchPushedUnderAnotherName pins the three ways a local
 // branch finds its PR when its name is not the PR's head — a repo that keeps
 // tracker ids out of pushed names has every PR in this shape — and that a PR whose
-// head IS another local branch stays on that branch alone.
+// head IS another local branch is claimed by a second branch only through its
+// upstream, never by sharing a tip.
 func TestOpenPRMatchesABranchPushedUnderAnotherName(t *testing.T) {
 	m := seededModel()
 	m.local.branches = append(m.local.branches,
@@ -179,7 +180,7 @@ func TestOpenPRMatchesABranchPushedUnderAnotherName(t *testing.T) {
 	for branch, want := range map[string]int{
 		"feat/x-9ee.1-seed":    287, // by tip, though its upstream is origin/main
 		"fix/x-9ee.2-rating":   286, // by upstream
-		"spike-tracks-feature": 0,   // tracks `feature`, which is a local branch holding PR #10
+		"spike-tracks-feature": 10,  // tracks `feature`, whose PR #10 gh shows for it too
 		"feature":              10,  // by name
 	} {
 		got := 0
