@@ -68,7 +68,7 @@ var Axes = []Axis{
 		"tracker-detail", "tracker-graph", "tracker-blocking", "tracker-tree", "tracker-filter",
 		"config-local",
 		// Hosted-process surfaces.
-		"hosted", "hosted-empty", "hosted-quit",
+		"hosted", "hosted-empty", "hosted-quit", "hosted-quit-many",
 	}},
 	// Both live-only. Dumping either would multiply every frame name and break
 	// the paths .20 and .28 cite by.
@@ -296,6 +296,9 @@ type screenSpec struct {
 	// (admin-70hb): the active pill is the one solid element on screen, no
 	// list row wears ◆, and the footer offers the tab bar's own keys.
 	tabFocus bool
+	// manyHosted adds manyHostedRows to the quit confirm's list, more hosted
+	// processes than the box has rows for.
+	manyHosted bool
 }
 
 // The tabs, in the order the real dashboard draws them (internal/tui/model.go's
@@ -324,14 +327,16 @@ var screens = map[string]screenSpec{
 	// there: a digit from the tab bar, where focus stays because the list has
 	// no row to enter.
 	"workers-empty": {tab: tabWorkers, liveSel: -1, tabFocus: true},
-	"config":                     {tab: tabConfig},
-	"no-manifest":                {tab: tabRepo, noMan: true},
+	"config":        {tab: tabConfig},
+	"no-manifest":   {tab: tabRepo, noMan: true},
 
 	// Hosted-process surfaces (admin-3rgp.61/.63). liveSel here indexes
 	// liveRows, the row the attached view shows (attachedFor).
 	"hosted":       {tab: tabWorkers, liveSel: 1, hosted: true},
 	"hosted-empty": {tab: tabWorkers, liveSel: 1, hosted: true, hostedEmpty: true},
 	"hosted-quit":  {tab: tabCommands, liveSel: -1, sheet: true, running: true},
+	// The quit confirm over more hosted processes than it has rows for.
+	"hosted-quit-many": {tab: tabCommands, liveSel: -1, sheet: true, running: true, manyHosted: true},
 
 	// The Commands surface — see the block above render() for the fixture and
 	// the interaction. Both render through renderWorkBody, never hostedBody.
@@ -427,7 +432,7 @@ func onKey(key string, s State, set func(axis, value string)) bool {
 			set("screen", "dispatch-sheet")
 		case "dispatch-sheet":
 			set("screen", "issues")
-		case "hosted-quit":
+		case "hosted-quit", "hosted-quit-many":
 			set("screen", "commands")
 		}
 		return true
@@ -448,7 +453,7 @@ func onKey(key string, s State, set func(axis, value string)) bool {
 			}
 			attachedRow = nil
 			set("screen", back)
-		case "hosted-quit":
+		case "hosted-quit", "hosted-quit-many":
 			set("screen", "commands")
 		default:
 			set("screen", "hosted-quit")
@@ -613,6 +618,35 @@ var liveRowsSeed = []liveRow{
 			"  1) all   2) py   3) shell",
 		}},
 }
+
+// manyHostedRows are the extra hosted processes the hosted-quit-many screen
+// adds to the quit confirm, enough that its list outgrows the box at 96x30.
+var manyHostedRows = func() []liveRow {
+	var out []liveRow
+	for _, p := range []struct{ cmd, doing string }{
+		{"api", "bun --watch src/server.ts"},
+		{"web", "next dev · localhost:3000"},
+		{"stories", "storybook dev · localhost:6006"},
+		{"docs", "vitepress dev · localhost:5174"},
+		{"worker", "wrangler dev · localhost:8788"},
+		{"queue", "bullmq worker · 3 jobs active"},
+		{"db", "postgres · localhost:5432"},
+		{"redis", "redis-server · localhost:6379"},
+		{"tailwind", "tailwindcss --watch"},
+		{"tsc", "tsc --watch · 0 errors"},
+		{"e2e", "playwright test --ui"},
+		{"mail", "mailpit · localhost:8025"},
+		{"proxy", "caddy run · :443"},
+		{"metro", "expo start · localhost:8081"},
+		{"ios", "xcrun simctl log stream"},
+		{"android", "adb logcat"},
+		{"lint", "eslint --watch · 2 warnings"},
+		{"tunnel", "cloudflared tunnel run"},
+	} {
+		out = append(out, liveRow{state: "running", cmd: p.cmd, id: p.cmd, doing: p.doing, hosted: true})
+	}
+	return out
+}()
 
 var liveRows = append([]liveRow{}, liveRowsSeed...)
 
@@ -2010,7 +2044,7 @@ func render(s State) string {
 	}
 	if sp.sheet {
 		if sp.running {
-			rows = overlayQuit(rows, w, h)
+			rows = overlayQuit(rows, w, h, sp.manyHosted)
 		} else {
 			rows = overlaySheet(rows, w, h)
 		}
@@ -2091,7 +2125,12 @@ func tabBar(sp screenSpec, w int, tracker string, empty bool) string {
 // running processes (admin-3rgp.63). It lists ONLY hosted processes — a Worker
 // runs in its own pane and outlives the dashboard, so killing it here would be
 // wrong.
-func overlayQuit(rows []string, w, h int) []string {
+//
+// The box never grows past the rows between the tab separator and the footer
+// rule (h-5): a list too long for them shows its first processes and ends on a
+// "+N more running" row, so the title and the action row are always on screen.
+// The title still counts every process, and ⏎ still kills every one.
+func overlayQuit(rows []string, w, h int, many bool) []string {
 	bw := 60
 	box := []string{"┌" + strings.Repeat("─", bw) + "┐"}
 	add := func(s string) { box = append(box, "│"+Pad(s, bw)+"│") }
@@ -2101,11 +2140,25 @@ func overlayQuit(rows []string, w, h int) []string {
 			hosted = append(hosted, &liveRows[i])
 		}
 	}
+	if many {
+		for i := range manyHostedRows {
+			hosted = append(hosted, &manyHostedRows[i])
+		}
+	}
+	shown := hosted
+	// 8 is the box's height around its list: two borders, title and blank,
+	// then blank, workers line, blank and the actions.
+	if room := max(h-5-8, 1); len(hosted) > room {
+		shown = hosted[:room-1]
+	}
 	add("  " + bo.Render("Quit — "+itoa(len(hosted))+" processes still running"))
 	add("")
-	for _, lr := range hosted {
+	for _, lr := range shown {
 		add("    " + liveStyle[lr.state].Render(Pad(lr.state, 9)) + Pad(lr.cmd, 10) +
 			dim.Render(trunc(lr.doing, bw-28)))
+	}
+	if more := len(hosted) - len(shown); more > 0 {
+		add("    " + dim.Render("+"+itoa(more)+" more running"))
 	}
 	add("")
 	add("    " + dim.Render("Workers keep running — they have their own panes."))
@@ -2143,10 +2196,12 @@ func overlaySheet(rows []string, w, h int) []string {
 	return placeBox(rows, box, w, h, bw)
 }
 
-// placeBox centers box over rows. Extracted so the quit confirm and the
-// dispatch sheet share one placement rather than two copies that drift.
+// placeBox centers box over rows, never over the top three rows (header, tabs,
+// separator) or the bottom two (rule, keys): a box as tall as the rows between
+// them sits flush against them. Extracted so the quit confirm and the dispatch
+// sheet share one placement rather than two copies that drift.
 func placeBox(rows, box []string, w, h, bw int) []string {
-	top := (h - len(box)) / 2
+	top := max(min((h-len(box))/2, len(rows)-2-len(box)), 3)
 	left := (w - bw - 2) / 2
 	if left < 0 {
 		left = 0

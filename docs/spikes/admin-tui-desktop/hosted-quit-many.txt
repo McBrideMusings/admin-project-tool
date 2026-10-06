@@ -1,0 +1,30 @@
+ beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
+  Commands 47     Workers 3     Repo     Beads 227     Config                                   
+                                                                                                
+ Commands  47    ┌────────────────────────────────────────────────────────────┐                 
+   deploy        │  Quit — 20 processes still running                         │                 
+ ◆ ├ analytics-en│                                                            │                 
+ ◇ ├ chat-moderat│    running  dev       vitepress dev · localhost:5173       │                 
+ ◇ ├ hand-reports│    waiting  test      Enter a number, or q to cancel:      │                 
+ ◇ ├ ios         │    running  api       bun --watch src/server.ts            │                 
+ ◇ ├ ios-device  │    running  web       next dev · localhost:3000            │                 
+ ◇ ├ mainframe   │    running  stories   storybook dev · localhost:6006       │                 
+ ◇ ├ name-check  │    running  docs      vitepress dev · localhost:5174       │                 
+ ◇ └ tournament-p│    running  worker    wrangler dev · localhost:8788        │r                
+   dev           │    running  queue     bullmq worker · 3 jobs active        │                 
+ ◇ ├ cf          │    running  db        postgres · localhost:5432            │                 
+   ↓ more        │    running  redis     redis-server · localhost:6379        │                 
+── deploy analyti│    running  tailwind  tailwindcss --watch                  │ds · 3 workers ──
+ kind     target │    running  tsc       tsc --watch · 0 errors               │                 
+ desc     Deploy │    running  e2e       playwright test --ui                 │                 
+ last run never  │    running  mail      mailpit · localhost:8025             │                 
+ last log —      │    running  proxy     caddy run · :443                     │                 
+                 │    running  metro     expo start · localhost:8081          │                 
+                 │    +4 more running                                         │                 
+                 │                                                            │                 
+                 │    Workers keep running — they have their own panes.       │                 
+                 │                                                            │                 
+                 │    ⏎ kill them and quit     esc cancel                     │                 
+ output appears h└────────────────────────────────────────────────────────────┘                 
+────────────────────────────────────────────────────────────────────────────────────────────────
+ ⏎ kill them and quit · esc cancel                                                              

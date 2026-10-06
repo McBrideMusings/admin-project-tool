@@ -143,7 +143,7 @@ func TestQuitConfirmNamesTargetLikeBand(t *testing.T) {
 	}
 	m := multiTargetModel(t)
 	m.quitHosted = []*livework.Entry{e}
-	box := stripANSI(strings.Join(m.quitConfirmBox(60), "\n"))
+	box := stripANSI(strings.Join(m.quitConfirmBox(60, 30), "\n"))
 	if !strings.Contains(box, "dev mac") || strings.Contains(box, "dev:mac") {
 		t.Errorf("quit confirm = %q, want it to list %q", box, "dev mac")
 	}

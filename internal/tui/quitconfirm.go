@@ -107,12 +107,14 @@ const quitBoxInner = 60
 // list and band stay visible around it, the way the design frame
 // (docs/spikes/admin-tui-desktop/hosted-quit.txt) places it: centered on the
 // whole screen, never over the top three rows (header, tabs, separator) or
-// the bottom two (rule, keybar). The splice is cell-based (ansi.Cut), so the
-// rows under the box keep their own colors either side of it.
+// the bottom two (rule, keybar). The box gets at most the rows between those,
+// and when it is that tall it sits flush against them rather than centered, so
+// its title and action row are always drawn. The splice is cell-based
+// (ansi.Cut), so the rows under the box keep their own colors either side of it.
 func (m Model) overlayQuitConfirm(lines []string, width int) []string {
 	bw := clampi(1, quitBoxInner, width-2)
-	box := m.quitConfirmBox(bw)
-	top := (len(lines) - len(box)) / 2
+	box := m.quitConfirmBox(bw, len(lines)-5)
+	top := clampi(3, (len(lines)-len(box))/2, len(lines)-2-len(box))
 	left := maxi((width-bw-2)/2, 0)
 	for i, l := range box {
 		y := top + i
@@ -128,21 +130,33 @@ func (m Model) overlayQuitConfirm(lines []string, width int) []string {
 	return lines
 }
 
-// quitConfirmBox renders the box rows at inner width bw from the snapshot
-// taken when the confirm opened: a title counting what will die, one row per
-// hosted process (state, command, what it is doing), the reminder that
-// workers survive, and the two actions.
-func (m Model) quitConfirmBox(bw int) []string {
+// quitBoxChrome is the confirm box's height around its process list: the two
+// borders, the title and the blank under it, and the four rows after the list
+// (blank, workers reminder, blank, actions).
+const quitBoxChrome = 8
+
+// quitConfirmBox renders the box rows at inner width bw, at most maxH rows
+// tall, from the snapshot taken when the confirm opened: a title counting
+// what will die, one row per hosted process (state, command, what it is
+// doing), the reminder that workers survive, and the two actions. A list too
+// long for maxH shows its first processes and ends on a "+N more running"
+// row; the title still counts all of them, and accepting kills all of them.
+func (m Model) quitConfirmBox(bw, maxH int) []string {
 	n := len(m.quitHosted)
 	noun := "processes"
 	if n == 1 {
 		noun = "process"
 	}
 
+	shown := m.quitHosted
+	if room := maxi(maxH-quitBoxChrome, 1); n > room {
+		shown = shown[:room-1]
+	}
+
 	// The command column fits the longest name, never narrower than the
 	// design's 10 cells, so the activity column lines up across rows.
 	nameW := 10
-	for _, e := range m.quitHosted {
+	for _, e := range shown {
 		nameW = maxi(nameW, vlen(m.entryName(e))+2)
 	}
 
@@ -154,7 +168,7 @@ func (m Model) quitConfirmBox(bw int) []string {
 	box = append(box,
 		row("  "+lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("Quit — %d %s still running", n, noun))),
 		row(""))
-	for _, e := range m.quitHosted {
+	for _, e := range shown {
 		st, _ := livework.Default.State(e.ID)
 		stateColor := cDim
 		switch st {
@@ -171,6 +185,9 @@ func (m Model) quitConfirmBox(bw int) []string {
 			line += mutedStyle.Render(truncR(act, maxi(bw-18-nameW, 1)))
 		}
 		box = append(box, row(line))
+	}
+	if more := n - len(shown); more > 0 {
+		box = append(box, row("    "+mutedStyle.Render(fmt.Sprintf("+%d more running", more))))
 	}
 	box = append(box,
 		row(""),

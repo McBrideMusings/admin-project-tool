@@ -35,6 +35,7 @@ No row carries a kind column — the kind is a band field.
 | `workers-empty.txt` | The Workers tab with no workers, reached by its digit, so focus stays on the tab bar. The line under the header names where this manifest can start a worker — each query-sourced workflow command and each `[keys.<kind>]` binding to a row-sourced one — or says it declares no workflow. The band keeps its place: a `no worker` rule counting what is running, the empty field slot, and a last line naming what will appear. No row to enter, so the footer drops `↓/↵ body` and `c collapse` |
 | `hosted.txt` / `hosted-empty.txt` | Attached to a hosted pty — full width, the child's own screen. No tab bar: that row carries the attach breadcrumb instead, and the band's own field rows (log, urls or the worker's five) sit directly under it |
 | `hosted-quit.txt` | The quit confirm over live children |
+| `hosted-quit-many.txt` | The quit confirm over more live children than it has rows for. The box never covers the header, tab bar and separator above it or the rule and keys below it; at that height it sits flush between them, lists the first processes and ends on `+N more running`. The title still counts every process, and `⏎` kills every one |
 | `dispatch-sheet.txt` | Dispatching from the tracker tab |
 | `no-manifest.txt` | A repo with no `admin.toml` |
 

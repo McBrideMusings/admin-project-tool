@@ -304,6 +304,82 @@ func TestQuitConfirmMatchesDesignFrame(t *testing.T) {
 	}
 }
 
+// TestQuitConfirmCapsLongList proves a confirm listing more hosted processes
+// than the screen has rows for keeps its title and action row on screen: at
+// 96x30 the box matches the committed design frame (docs/spikes/
+// admin-tui-desktop/hosted-quit-many.txt) cell for cell, fed the same twenty
+// processes, and at 80x24 it sits flush under the tab separator and over the
+// footer rule, listing ten and counting the other ten.
+func TestQuitConfirmCapsLongList(t *testing.T) {
+	raw, err := os.ReadFile("../../docs/spikes/admin-tui-desktop/hosted-quit-many.txt")
+	if err != nil {
+		t.Fatalf("read design frame: %v", err)
+	}
+	design := strings.Split(stripANSI(strings.TrimRight(string(raw), "\n")), "\n")
+
+	freshLivework(t)
+	procs := [][3]string{
+		{"dev", "running", "vitepress dev · localhost:5173"},
+		{"test", "waiting", "Enter a number, or q to cancel:"},
+		{"api", "running", "bun --watch src/server.ts"},
+		{"web", "running", "next dev · localhost:3000"},
+		{"stories", "running", "storybook dev · localhost:6006"},
+		{"docs", "running", "vitepress dev · localhost:5174"},
+		{"worker", "running", "wrangler dev · localhost:8788"},
+		{"queue", "running", "bullmq worker · 3 jobs active"},
+		{"db", "running", "postgres · localhost:5432"},
+		{"redis", "running", "redis-server · localhost:6379"},
+		{"tailwind", "running", "tailwindcss --watch"},
+		{"tsc", "running", "tsc --watch · 0 errors"},
+		{"e2e", "running", "playwright test --ui"},
+		{"mail", "running", "mailpit · localhost:8025"},
+		{"proxy", "running", "caddy run · :443"},
+		{"metro", "running", "expo start · localhost:8081"},
+		{"ios", "running", "xcrun simctl log stream"},
+		{"android", "running", "adb logcat"},
+		{"lint", "running", "eslint --watch · 2 warnings"},
+		{"tunnel", "running", "cloudflared tunnel run"},
+	}
+	for _, p := range procs {
+		e := &livework.Entry{ID: p[0], Name: p[0], Handle: "pty-" + p[0], State: livework.State(p[1]), Activity: p[2]}
+		e.Ops = livework.Ops{Kill: func() error { return nil }}
+		if err := livework.Default.Add(e); err != nil {
+			t.Fatalf("Add: %v", err)
+		}
+	}
+
+	frame := func(w, h int) []string {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		m := New(ctx, t.TempDir(), "owner/repo", "main", "main")
+		m.herdr = false
+		return strings.Split(stripANSI(Frame(ctx, m, FrameOptions{
+			Width: w, Height: h, Keys: []string{"q"}, Settle: 200 * time.Millisecond,
+		})), "\n")
+	}
+
+	const boxW = 62
+	lines := frame(96, 30)
+	for y := 3; y < 28; y++ {
+		if got, want := cells(lines[y], 17, 17+boxW), cells(design[y], 17, 17+boxW); got != want {
+			t.Errorf("96x30 row %d = %q, want %q", y, got, want)
+		}
+	}
+
+	lines = frame(80, 24)
+	for y, want := range map[int]string{
+		3:  "┌",
+		4:  "│  Quit — 20 processes still running",
+		16: "│    +10 more running",
+		20: "│    ⏎ kill them and quit     esc cancel",
+		21: "└",
+	} {
+		if got := cells(lines[y], 9, 9+boxW); !strings.HasPrefix(got, want) {
+			t.Errorf("80x24 row %d = %q, want it to start %q", y, got, want)
+		}
+	}
+}
+
 // cells returns the runes in columns [a, b) of a plain line, space-padded.
 func cells(s string, a, b int) string {
 	r := []rune(s)
