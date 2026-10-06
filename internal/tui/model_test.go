@@ -18,6 +18,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/wthooks"
 )
 
 func seededModel() Model {
@@ -1125,6 +1126,58 @@ func TestQuarantinedWorktreeDeletesWithForce(t *testing.T) {
 	}
 	if !gotForce {
 		t.Error("quarantined worktree removed without --force; git would refuse it")
+	}
+}
+
+// A pre_remove veto (ADR-0024) stops the delete step before the stash and the
+// removal, its error is the row's reason, and it is a refusal the `f` retry
+// re-offers — which passes force to the hook. Quarantine alone does not.
+func TestPreRemoveVetoStopsDeleteStep(t *testing.T) {
+	var gotForce bool
+	restorePre := preRemoveFn
+	preRemoveFn = func(_ context.Context, _, _ string, force bool) error {
+		gotForce = force
+		if force {
+			return nil
+		}
+		return &wthooks.Error{Hook: wthooks.HookPreRemove, Exit: 1, Output: "draining\nstill serving"}
+	}
+	defer func() { preRemoveFn = restorePre }()
+	var touched []string
+	restoreStash := stashWorktreeFn
+	stashWorktreeFn = func(_ context.Context, _ string) error { touched = append(touched, "stash"); return nil }
+	defer func() { stashWorktreeFn = restoreStash }()
+	restoreRemove := removeWorktreeFn
+	removeWorktreeFn = func(_ context.Context, _, _ string, _ bool) error {
+		touched = append(touched, "remove")
+		return errStubbed
+	}
+	defer func() { removeWorktreeFn = restoreRemove }()
+
+	targets := []cleanupTarget{{
+		id: "wt:/repo/.worktrees/x", kind: cleanupWorktree,
+		branch: "x", path: "/repo/.worktrees/x", dirty: true, quarantined: true,
+	}}
+	msg := deleteStepCmd(context.Background(), t.TempDir(), targets, 0, false)().(deleteStepMsg)
+	if got := deleteErrLine(msg.err); got != "pre_remove hook failed (exit 1): still serving" {
+		t.Errorf("row reason = %q, want the hook's one-line veto", got)
+	}
+	if !isBlocked(msg.err) {
+		t.Error("veto not re-offered under f")
+	}
+	if len(touched) != 0 {
+		t.Errorf("veto still ran %v", touched)
+	}
+	if gotForce {
+		t.Error("a quarantined first delete passed force to pre_remove")
+	}
+
+	deleteStepCmd(context.Background(), t.TempDir(), targets, 0, true)()
+	if !gotForce {
+		t.Error("the f retry did not pass force to pre_remove")
+	}
+	if want := []string{"stash", "remove"}; strings.Join(touched, ",") != strings.Join(want, ",") {
+		t.Errorf("forced retry ran %v, want %v", touched, want)
 	}
 }
 

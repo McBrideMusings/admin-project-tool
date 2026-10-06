@@ -39,6 +39,7 @@ func registerBuiltins(r *Registry) {
 	r.MustRegister("launchd", makeLaunchd)
 	r.MustRegister("go-dist", makeGoDist)
 	r.MustRegister("agent-skill", makeAgentSkill)
+	r.MustRegister("clip", makeClip)
 	r.MustRegister("http", makeHTTP)
 	r.MustRegister("npm", makeNpm)
 	r.MustRegister("go", makeGoKind)

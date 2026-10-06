@@ -20,9 +20,10 @@ import (
 //   - the PR's head commit is this branch's tip — pushed under another name with
 //     no tracking at all, or tracking origin/main because it was cut from it.
 //
-// The last two skip a PR whose head name is another LOCAL branch: that branch is
-// the PR's, and a second branch that merely tracks it or sits on the same commit
-// is not its own claim on it.
+// The tip match skips a PR whose head name is another LOCAL branch: that branch is
+// the PR's, and a second branch sitting on the same commit is not its own claim on
+// it. The upstream match does not: `gh` and the status line resolve a PR through
+// the upstream, so a branch tracking a PR's head shows that PR here too.
 //
 // With none of those, a branch whose tip is inside an open PR's head — the base
 // of a stack, a mid-tier feature with the branch it was built for on top — takes
@@ -44,11 +45,11 @@ func (m Model) openPRFor(branch string) *gh.OpenPR {
 	var byTip *gh.OpenPR
 	for i := range m.remote.PRs {
 		pr := &m.remote.PRs[i]
-		if local[pr.HeadBranch] {
-			continue
-		}
 		if upstream != "" && upstream != m.def && pr.HeadBranch == upstream {
 			return pr
+		}
+		if local[pr.HeadBranch] {
+			continue
 		}
 		if byTip == nil && tip != "" && pr.HeadOID == tip {
 			byTip = pr

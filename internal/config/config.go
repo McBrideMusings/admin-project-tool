@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/archetype"
+	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/timing"
 	"github.com/McBrideMusings/admin-project-tool/internal/validate"
@@ -40,7 +41,16 @@ type Entry struct {
 // which each repo gets a <root>/<repo>/<slug> tree; it is shared with sibling
 // tools that honor the same root. Empty means the built-in default.
 type Worktrees struct {
-	Root string `toml:"root"`
+	Root  string `toml:"root"`
+	Hooks Hooks  `toml:"hooks"`
+}
+
+// Hooks are the [worktrees.hooks] shell strings ADR-0024 defines. Empty means
+// the hook is not declared.
+type Hooks struct {
+	PostCreate string `toml:"post_create"`
+	PostStart  string `toml:"post_start"`
+	PreRemove  string `toml:"pre_remove"`
 }
 
 // Beads configures the Beads tab. Columns names the columns the pane renders and
@@ -88,6 +98,9 @@ type Config struct {
 	Beads     Beads     `toml:"beads"`
 	Workflow  Workflow  `toml:"workflow"`
 	Terminal  Terminal  `toml:"terminal"`
+	// LogDir is the project's run-log directory (`[logging] dir`, resolved
+	// against the project root by luahost.ResolveLogDir). Set by Load only.
+	LogDir string `toml:"-"`
 }
 
 // DefaultWorktreeRoot is where worktrees land when nothing overrides it.
@@ -124,7 +137,12 @@ func Load(repoRoot string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	return FromManifest(merged)
+	cfg, err := FromManifest(merged)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.LogDir = luahost.ResolveLogDir(repoRoot, merged.Logging)
+	return cfg, nil
 }
 
 // FromManifest decodes the five config tables from an already-resolved
@@ -186,6 +204,11 @@ func decodeWorktrees(raw map[string]any) Worktrees {
 	var w Worktrees
 	if v, ok := raw["root"].(string); ok {
 		w.Root = v
+	}
+	if hooks, ok := raw["hooks"].(map[string]any); ok {
+		w.Hooks.PostCreate, _ = hooks["post_create"].(string)
+		w.Hooks.PostStart, _ = hooks["post_start"].(string)
+		w.Hooks.PreRemove, _ = hooks["pre_remove"].(string)
 	}
 	return w
 }

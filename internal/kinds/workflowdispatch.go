@@ -34,6 +34,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -75,6 +76,27 @@ func ActionRun(action manifest.Action) string {
 func NewTarget(action manifest.Action, id string) Target {
 	done, _ := actionString(action, "done")
 	return Target{Name: id, Run: ActionRun(action), Done: done}
+}
+
+// NewExecTarget builds the Target `admin worktree <input> -x <exec> -- <words>`
+// dispatches: exec is a shell command taken verbatim, and each of words is
+// shell-quoted onto it as one argument, so a prompt reaches the agent as typed.
+func NewExecTarget(id, exec string, words []string) Target {
+	run := exec
+	for _, w := range words {
+		// Always quoted: shellQuote leaves "#12" and "=ls" bare, and a bare
+		// "#12" comments out the rest of the line under sh while "=ls" expands
+		// to /bin/ls under zsh, so the prompt would not reach the agent as typed.
+		run += " '" + strings.ReplaceAll(w, "'", `'\''`) + "'"
+	}
+	return Target{Name: id, Run: run}
+}
+
+// ExecAction is the workflow action an `admin worktree -x` dispatch runs under:
+// its run string, and locale = "window" so the worker always opens through the
+// [terminal] launcher and never runs inline in the caller's shell.
+func ExecAction(run string) manifest.Action {
+	return manifest.Action{"kind": "workflow", "locale": validate.LocaleWindow, "run": run}
 }
 
 // TargetResult is one Target's outcome from DispatchTargets.
@@ -253,8 +275,10 @@ func dispatchOne(repoRoot, actionName, group string, index int, t config.Termina
 	lc.Index = index
 	// The launcher types ADMIN_CMD into the pane's own shell, which never saw
 	// the spawn process's ADMIN_TARGET, so the run string's $ADMIN_TARGET
-	// would expand to nothing. Exporting it first puts it in that shell.
-	handle, err := spawnPane("export ADMIN_TARGET="+shellQuote(tgt.Name)+"; "+tgt.Run, wt.Path, lc, t)
+	// would expand to nothing. Exporting it first puts it in that shell, along
+	// with ADMIN_WORKER_WORKTREE, which `admin worktree rm` reads to refuse a
+	// worker removing its own worktree from under the reaper.
+	handle, err := spawnPane("export ADMIN_TARGET="+shellQuote(tgt.Name)+" ADMIN_WORKER_WORKTREE="+shellQuote(wt.Path)+"; "+tgt.Run, wt.Path, lc, t)
 	if err != nil {
 		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Err: fmt.Errorf("opening pane: %w", err)}
 	}

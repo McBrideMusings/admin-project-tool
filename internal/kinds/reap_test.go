@@ -159,6 +159,70 @@ func TestReapWorker(t *testing.T) {
 	}
 }
 
+// A pre_remove veto (ADR-0024) keeps a finished, safe worker in place — pane,
+// worktree and branch — and its output becomes the row's one-line Note. The
+// next tick does not re-run the hook until preRemoveRetry has passed.
+func TestReapWorkerPreRemoveVeto(t *testing.T) {
+	runs := filepath.Join(t.TempDir(), "runs")
+	repoRoot := setupWorkflowRepo(t, terminalTOML+"[worktrees.hooks]\npre_remove = 'echo x >> "+runs+"; echo draining; echo still-serving; exit 1'\n")
+	addOrigin(t, repoRoot)
+	e := dispatchWorker(t, repoRoot, "true")
+	w := e.Worker
+	killed := filepath.Join(t.TempDir(), "killed")
+
+	if ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "touch " + killed}) {
+		t.Fatal("ReapWorker reaped a worker pre_remove vetoed")
+	}
+	if _, err := os.Stat(w.Worktree); err != nil {
+		t.Errorf("worktree removed despite the veto: %v", err)
+	}
+	if !branchExists(t, repoRoot, w.Branch) {
+		t.Errorf("branch %s deleted despite the veto", w.Branch)
+	}
+	if _, err := os.Stat(killed); err == nil {
+		t.Error("pane killed despite the veto")
+	}
+	if note, _ := livework.Default.Line(e.ID); !strings.Contains(note, "pre_remove hook failed (exit 1): still-serving") || strings.Contains(note, "\n") {
+		t.Errorf("row line = %q, want the hook's one-line veto", note)
+	}
+
+	countRuns := func() int {
+		data, _ := os.ReadFile(runs)
+		return strings.Count(string(data), "x")
+	}
+	ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "touch " + killed})
+	if n := countRuns(); n != 1 {
+		t.Errorf("pre_remove ran %d times across two ticks inside the retry window, want 1", n)
+	}
+	prev := preRemoveRetry
+	preRemoveRetry = 0
+	t.Cleanup(func() { preRemoveRetry = prev })
+	ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "touch " + killed})
+	if n := countRuns(); n != 2 {
+		t.Errorf("pre_remove ran %d times once the retry window passed, want 2", n)
+	}
+}
+
+// A pre_remove that passed is not run again when the reap is retried after a
+// failed pane kill.
+func TestReapWorkerPreRemovePassedRunsOnce(t *testing.T) {
+	runs := filepath.Join(t.TempDir(), "runs")
+	repoRoot := setupWorkflowRepo(t, terminalTOML+"[worktrees.hooks]\npre_remove = 'echo x >> "+runs+"'\n")
+	addOrigin(t, repoRoot)
+	e := dispatchWorker(t, repoRoot, "true")
+
+	if ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "false"}) {
+		t.Fatal("reaped though the pane kill failed")
+	}
+	if !ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
+		t.Fatal("retry did not reap")
+	}
+	data, _ := os.ReadFile(runs)
+	if n := strings.Count(string(data), "x"); n != 1 {
+		t.Errorf("pre_remove ran %d times across a failed kill and its retry, want 1", n)
+	}
+}
+
 // With no done predicate, the pane having gone is the finish signal.
 func TestReapWorkerNoDoneUsesPaneStatus(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, terminalTOML)

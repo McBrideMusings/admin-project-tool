@@ -172,11 +172,12 @@ func merge(dst, src *manifest.Manifest, srcLabel string, isManifest bool, log *[
 		dst.InlineFile = src.InlineFile
 	}
 
+	mergeWorktrees(dst.Worktrees, src.Worktrees)
+
 	for _, pair := range []struct{ dst, src map[string]any }{
 		{dst.Logging, src.Logging},
 		{dst.LogBridge, src.LogBridge},
 		{dst.Worktree, src.Worktree},
-		{dst.Worktrees, src.Worktrees},
 		{dst.Beads, src.Beads},
 		{dst.Workflow, src.Workflow},
 		{dst.Terminal, src.Terminal},
@@ -225,6 +226,26 @@ func mergeStringSet(dst, src []string) []string {
 func mergeTable(dst, src map[string]any) {
 	for k, v := range src {
 		dst[k] = v
+	}
+}
+
+// mergeWorktrees is mergeTable for [worktrees], except that its hooks
+// subtable merges by hook name (ADR-0024): an archetype's post_create survives
+// a project that declares only pre_remove, and a later declaration of the same
+// hook wins.
+func mergeWorktrees(dst, src map[string]any) {
+	for k, v := range src {
+		srcHooks, ok := v.(map[string]any)
+		if k != "hooks" || !ok {
+			dst[k] = v
+			continue
+		}
+		dstHooks, ok := dst[k].(map[string]any)
+		if !ok {
+			dstHooks = map[string]any{}
+			dst[k] = dstHooks
+		}
+		mergeTable(dstHooks, srcHooks)
 	}
 }
 

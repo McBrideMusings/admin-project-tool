@@ -59,9 +59,10 @@ func hostedRunArgv(run string) []string {
 }
 
 // targetEnv is the environment a worker's run string sees beyond the parent's
-// own: the target id, as ADMIN_TARGET.
-func targetEnv(tgt Target) []string {
-	return []string{"ADMIN_TARGET=" + tgt.Name}
+// own: the target id, as ADMIN_TARGET, and its worktree, as
+// ADMIN_WORKER_WORKTREE.
+func targetEnv(tgt Target, worktree string) []string {
+	return []string{"ADMIN_TARGET=" + tgt.Name, "ADMIN_WORKER_WORKTREE=" + worktree}
 }
 
 // startHostedWorker and runInlineWorker are the seams tests swap so a hosted
@@ -102,14 +103,14 @@ func hostedOne(repoRoot, actionName string, surface DispatchSurface, tgt Target,
 	}
 	argv := hostedRunArgv(tgt.Run)
 	if surface == SurfaceShell {
-		if err := runInlineWorker(argv, wt.Path, targetEnv(tgt)); err != nil {
+		if err := runInlineWorker(argv, wt.Path, targetEnv(tgt, wt.Path)); err != nil {
 			res.Err = fmt.Errorf("worker: %w", err)
 		}
 		return res
 	}
 	id := workerLiveID(actionName, tgt.Name)
 	worker := &livework.WorkerInfo{Branch: wt.Branch, Worktree: wt.Path, Target: tgt.Name, Done: tgt.Done}
-	exit, err := startHostedWorker(id, argv, wt.Path, targetEnv(tgt), 0, 0, worker)
+	exit, err := startHostedWorker(id, argv, wt.Path, targetEnv(tgt, wt.Path), 0, 0, worker)
 	if err != nil {
 		res.Err = fmt.Errorf("starting worker: %w", err)
 		return res

@@ -1197,7 +1197,7 @@ func (m Model) modalContent() (title, badge string, lines [][]seg, active int) {
 		}
 		segs := []seg{{t: " "}, g, {t: " "}, {t: cleanupKindLabel(r.target), fg: cFg}}
 		if r.status == stFailed && r.err != nil {
-			segs = append(segs, seg{t: "  " + r.err.Error(), fg: cRed})
+			segs = append(segs, seg{t: "  " + deleteErrLine(r.err), fg: cRed})
 		}
 		if r.status == stDone && r.stashRef != "" {
 			segs = append(segs, seg{t: "  stashed → " + r.stashRef, fg: cMag})
@@ -1214,15 +1214,21 @@ func (m Model) modalContent() (title, badge string, lines [][]seg, active int) {
 		// than left to the footer's general hints.
 		var keys [][]seg
 		if b := m.blockedCount(); b > 0 {
+			what := "the conflicted files go with them"
+			if v := m.vetoedCount(); v == b {
+				what = "past the pre_remove hook"
+			} else if v > 0 {
+				what = "past the pre_remove hook, and the conflicted files go with them"
+			}
 			keys = append(keys, []seg{
 				{t: " f", fg: cYellow},
-				{t: fmt.Sprintf("  delete %d anyway — the conflicted files go with them", b), fg: cFg},
+				{t: fmt.Sprintf("  delete %d anyway — %s", b, what), fg: cFg},
 			})
 		}
 		if _, detail := m.deleteErrDetail(); detail != "" {
 			keys = append(keys, []seg{
 				{t: " e", fg: cCyan},
-				{t: "  what git actually said", fg: cFg},
+				{t: "  the full output", fg: cFg},
 			})
 		}
 		if len(keys) > 0 {
