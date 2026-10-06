@@ -86,7 +86,7 @@ func TestBandWithoutReadKeepsAttachHint(t *testing.T) {
 func TestScreenTailLinesKeepsWordRows(t *testing.T) {
 	screen := vt.NewSafeEmulator(40, 8)
 	_, _ = screen.Write([]byte("editing local.go\r\n\r\n────────\r\nrunning tests\r\n"))
-	got := screenTailLines(screen, 40)
+	got := screenTailLines(screen, 40, 24)
 	want := []string{"editing local.go", "running tests"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("screenTailLines = %q, want %q", got, want)

@@ -6,11 +6,13 @@ package tui
 
 import (
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/vt"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
@@ -469,8 +471,8 @@ func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 		avail := maxi(h-1-fieldRowsH, 1)
 		var tail []string
 		switch {
-		case live.Output != nil:
-			tail = ringTailLines(live.Output, maxi(w-1, 1))
+		case live.Screen != nil:
+			tail = screenTailLines(live.Screen, maxi(w-1, 1), avail)
 		case live.Via != "":
 			tail = snapshotTailLines(live.ID, maxi(w-1, 1))
 		}
@@ -833,42 +835,23 @@ func fitPath(p string, w int) string {
 	return truncR(base, maxi(w, 1))
 }
 
-// ringTailLines reads a live entry's whole Ring, strips ANSI escapes (this
-// is a raw peek at the process's own output — internal/logformat already
-// owns re-timestamping and re-colorizing for every other surface, and this
-// pane does neither), splits on lines, and truncates each to w display
-// cells. A trailing blank line left by the child's own final newline is
-// dropped so it doesn't masquerade as a real blank row of output.
-//
-// The Ring holds raw bytes straight off the hosted pty's master fd
-// (internal/kinds/hostedpty.go's io.Copy), and a pty in the ordinary cooked
-// mode every plain CLI process runs in (nothing here sets the slave to raw
-// mode) applies ONLCR: every outgoing "\n" the child writes arrives here as
-// "\r\n". Splitting on "\n" alone left that "\r" stuck to the end of every
-// line, and bubbletea's own line-diffing renderer turns that into a visibly
-// blank row: it truncates/pads each rendered line, and pads short lines with
-// an erase-to-end-of-line escape appended AFTER the text — but a trailing
-// "\r" moves the real terminal's cursor back to column 0 first, so that
-// erase wipes out the very content this line just painted, one full row
-// after every real line of tail output. Normalizing CRLF to LF before
-// splitting (rather than only trimming the buffer's own trailing newline)
-// is what keeps that "\r" off the end of every line, not just the last one.
-func ringTailLines(r *livework.Ring, w int) []string {
-	return plainTailLines(string(r.Bytes()), w)
-}
-
-// screenTailLines is the band's text for a hosted entry: the rows of its
-// terminal screen that carry words, top to bottom, as plain text. A full-screen
-// child (an agent session) repaints in place, so its raw byte stream ends in
-// cursor moves and blanks; the screen grid is what a person reads. Rows that
-// are empty or only rules and box lines are dropped.
-func screenTailLines(screen *vt.SafeEmulator, w int) []string {
-	rows, cols := screen.Height(), screen.Width()
-	var lines []string
-	for y := 0; y < rows; y++ {
+// screenTailLines is the band's text for a hosted entry: the last n rows of
+// its terminal (livework.Entry.Screen, the vt emulator the hosted pty writes
+// into) that carry words, top to bottom, as plain text. It reads the screen
+// from the bottom up and continues into the main screen's scrollback, so a
+// band taller than the pty still fills with the lines that scrolled off; a
+// child on the alternate screen (a full-screen agent) shows its screen alone.
+// The emulator has already applied every escape, tab, carriage return and
+// cursor move the child wrote — a docker buildx progress block redrawn with
+// cursor-up leaves only its latest rows — so each cell is printable text and
+// no control byte reaches bubbletea's frame. Rows that are empty or only
+// rules and box lines are dropped, and each is truncated to w cells.
+func screenTailLines(screen *vt.SafeEmulator, w, n int) []string {
+	cols := screen.Width()
+	row := func(cell func(x int) *uv.Cell) string {
 		var b strings.Builder
 		for x := 0; x < cols; x++ {
-			c := screen.CellAt(x, y)
+			c := cell(x)
 			switch {
 			case c != nil && c.Width == 0:
 				// A wide rune's continuation cell.
@@ -878,12 +861,25 @@ func screenTailLines(screen *vt.SafeEmulator, w int) []string {
 				b.WriteString(c.Content)
 			}
 		}
-		l := strings.TrimRight(b.String(), " \t")
-		if !logformat.HasWords(l) {
-			continue
-		}
-		lines = append(lines, truncR(l, maxi(w, 1)))
+		return strings.TrimRight(b.String(), " \t")
 	}
+	var lines []string
+	keep := func(l string) bool {
+		if logformat.HasWords(l) {
+			lines = append(lines, truncR(l, maxi(w, 1)))
+		}
+		return len(lines) < n
+	}
+	more := true
+	for y := screen.Height() - 1; y >= 0 && more; y-- {
+		more = keep(row(func(x int) *uv.Cell { return screen.CellAt(x, y) }))
+	}
+	if !screen.IsAltScreen() {
+		for y := screen.ScrollbackLen() - 1; y >= 0 && more; y-- {
+			more = keep(row(func(x int) *uv.Cell { return screen.ScrollbackCellAt(x, y) }))
+		}
+	}
+	slices.Reverse(lines)
 	return lines
 }
 
@@ -899,10 +895,10 @@ func snapshotTailLines(id string, w int) []string {
 	return []string{truncR(noLocalOutput, maxi(w, 1))}
 }
 
-// plainTailLines turns a process's raw terminal output into the band's
+// plainTailLines turns a launcher pane snapshot's text into the band's
 // rows: ANSI escapes stripped, CRLF normalized, each line flattened by
-// logformat.PlainLine, rows without a letter or digit dropped, and each truncated to
-// w cells. The band writes these rows straight into bubbletea's frame, so
+// logformat.PlainLine, rows without a letter or digit dropped, and each
+// truncated to w cells. The band writes these rows straight into bubbletea's frame, so
 // any control byte left in one reaches the real terminal and moves its
 // cursor.
 func plainTailLines(raw string, w int) []string {

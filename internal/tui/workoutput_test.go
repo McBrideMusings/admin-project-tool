@@ -1,33 +1,32 @@
-// workoutput_test.go covers the Work tab's live band output tail
-// (admin-3rgp.72.6): a hosted entry's Output ring, once non-nil, fills the
-// rest of the band below the fixed field block, bottom-aligned so a short
-// tail leaves its gap above rather than below — with no "output" section
-// header or rule, unlike the old right-hand detail pane this replaced (that
-// framing lived in appendLiveTail/outputRule, both deleted with this
-// ticket).
+// workoutput_test.go covers the Work tab's live band output tail: a hosted
+// entry's Screen fills the rest of the band below the fixed field block,
+// bottom-aligned so a short tail leaves its gap above rather than below,
+// with no "output" section header or rule.
 package tui
 
 import (
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
+	"github.com/charmbracelet/x/vt"
 )
 
-// TestRenderWorkBandTailsLiveRingBottomAligned is the core acceptance
-// criterion: a worker with a live Output ring shows its last lines
+// TestRenderWorkBandTailsLiveScreenBottomAligned is the core acceptance
+// criterion: a worker with a live Screen shows its last lines
 // bottom-aligned against the floor of the band, with the field block (a
 // worker's own five real rows) and the title rule above it untouched.
-func TestRenderWorkBandTailsLiveRingBottomAligned(t *testing.T) {
+func TestRenderWorkBandTailsLiveScreenBottomAligned(t *testing.T) {
 	freshLivework(t)
-	ring := livework.NewRing(4096)
-	ring.Write([]byte("line one\nline two\nline three\n"))
+	screen := hostedScreen(t, "line one\nline two\nline three\n")
 	e := &livework.Entry{
 		ID: "test-tail-worker", Name: "test-tail-worker",
 		State: livework.StateRunning, StartedAt: time.Now(),
-		Output: ring,
+		Screen: screen,
 	}
 
 	mm := workTestModel(nil)
@@ -35,10 +34,10 @@ func TestRenderWorkBandTailsLiveRingBottomAligned(t *testing.T) {
 	const h = 20
 	out := mm.renderWorkBand(row, 60, h)
 	if len(out) != h {
-		t.Fatalf("renderWorkBand with a live ring produced %d lines, want exactly %d (fills the band)", len(out), h)
+		t.Fatalf("renderWorkBand with a live screen produced %d lines, want exactly %d (fills the band)", len(out), h)
 	}
 
-	// Bottom-aligned against the band's own last row: the three ring lines
+	// Bottom-aligned against the band's own last row: the three output lines
 	// are the very last three rows, with no rule or header between the
 	// field block and the tail.
 	if strings.TrimSpace(out[h-1]) != "line three" || strings.TrimSpace(out[h-2]) != "line two" || strings.TrimSpace(out[h-3]) != "line one" {
@@ -60,12 +59,11 @@ func TestRenderWorkBandTailsLiveRingBottomAligned(t *testing.T) {
 // the slot and ends on the band's last row.
 func TestRenderWorkBandNoRuleBetweenFieldsAndTail(t *testing.T) {
 	freshLivework(t)
-	ring := livework.NewRing(4096)
-	ring.Write([]byte("tail line\n"))
+	screen := hostedScreen(t, "tail line\n")
 	wd := &workRowData{
 		cmdName: "dev", cmdKind: "shell",
 		urls: []frame.URLEntry{{Label: "local", URL: "http://localhost:1"}},
-		live: &livework.Entry{ID: "dev-rule", StartedAt: time.Now(), State: livework.StateRunning, Output: ring},
+		live: &livework.Entry{ID: "dev-rule", StartedAt: time.Now(), State: livework.StateRunning, Screen: screen},
 	}
 	out := workTestModel(nil).renderWorkBand(rowItem{kind: rowCommand, work: wd}, 60, 12)
 	if !strings.Contains(out[1], "log") || !strings.Contains(out[2], "url") {
@@ -81,11 +79,11 @@ func TestRenderWorkBandNoRuleBetweenFieldsAndTail(t *testing.T) {
 	}
 }
 
-// TestRenderWorkBandEmptyTailWithoutLiveRing is the negative case: a worker
-// with no Output ring and no pane snapshot (dispatched through a [terminal]
+// TestRenderWorkBandEmptyTailWithoutLiveScreen is the negative case: a worker
+// with no Screen and no pane snapshot (dispatched through a [terminal]
 // launcher that declares no read command) shows the attach hint as its last
 // row, everything else below the field block blank, still exactly h lines.
-func TestRenderWorkBandEmptyTailWithoutLiveRing(t *testing.T) {
+func TestRenderWorkBandEmptyTailWithoutLiveScreen(t *testing.T) {
 	freshLivework(t)
 	e := &livework.Entry{
 		ID: "test-no-tail-worker", Name: "test-no-tail-worker",
@@ -102,7 +100,7 @@ func TestRenderWorkBandEmptyTailWithoutLiveRing(t *testing.T) {
 	}
 	for i := 1 + fieldRowsH + 1; i < h-1; i++ {
 		if strings.TrimSpace(out[i]) != "" {
-			t.Errorf("row %d with no live ring = %q, want blank", i, out[i])
+			t.Errorf("row %d with no live screen = %q, want blank", i, out[i])
 		}
 	}
 	if got := strings.TrimSpace(out[h-1]); got != noLocalOutput {
@@ -115,12 +113,11 @@ func TestRenderWorkBandEmptyTailWithoutLiveRing(t *testing.T) {
 // the column width rather than wrapped or left overflowing.
 func TestRenderWorkBandAnsiStrippedAndTruncated(t *testing.T) {
 	freshLivework(t)
-	ring := livework.NewRing(4096)
-	ring.Write([]byte("\x1b[31mred error\x1b[0m\n" + strings.Repeat("x", 200) + "\n"))
+	screen := hostedScreen(t, "\x1b[31mred error\x1b[0m\n"+strings.Repeat("x", 200)+"\n")
 	e := &livework.Entry{
 		ID: "test-ansi-worker", Name: "test-ansi-worker",
 		State: livework.StateRunning, StartedAt: time.Now(),
-		Output: ring,
+		Screen: screen,
 	}
 
 	mm := workTestModel(nil)
@@ -140,16 +137,15 @@ func TestRenderWorkBandAnsiStrippedAndTruncated(t *testing.T) {
 	}
 }
 
-// TestRenderWorkBandCommandTailsLiveRing proves the same tail behavior on
-// the live-command branch (a hosted command's own Output ring), not just
+// TestRenderWorkBandCommandTailsLiveScreen proves the same tail behavior on
+// the live-command branch (a hosted command's own Screen), not just
 // the worker branch.
-func TestRenderWorkBandCommandTailsLiveRing(t *testing.T) {
+func TestRenderWorkBandCommandTailsLiveScreen(t *testing.T) {
 	freshLivework(t)
-	ring := livework.NewRing(4096)
-	ring.Write([]byte("building...\ndone\n"))
+	screen := hostedScreen(t, "building...\ndone\n")
 	wd := &workRowData{
 		cmdName: "dev", cmdKind: "shell", cmdDesc: "start dev",
-		live: &livework.Entry{ID: "dev-tail", StartedAt: time.Now(), Output: ring},
+		live: &livework.Entry{ID: "dev-tail", StartedAt: time.Now(), Screen: screen},
 	}
 
 	mm := workTestModel(nil)
@@ -157,7 +153,7 @@ func TestRenderWorkBandCommandTailsLiveRing(t *testing.T) {
 	const h = 25
 	out := mm.renderWorkBand(row, 60, h)
 	if len(out) != h {
-		t.Fatalf("renderWorkBand with a live ring produced %d lines, want exactly %d", len(out), h)
+		t.Fatalf("renderWorkBand with a live screen produced %d lines, want exactly %d", len(out), h)
 	}
 	if strings.TrimSpace(out[h-1]) != "done" || strings.TrimSpace(out[h-2]) != "building..." {
 		t.Fatalf("tail not bottom-aligned against the band's floor, rows h-2..h-1 = %q", out[h-2:])
@@ -170,13 +166,10 @@ func TestRenderWorkBandCommandTailsLiveRing(t *testing.T) {
 // command with urls and nothing under the block moves.
 func TestRenderWorkBandNoURLsKeepsFieldSlot(t *testing.T) {
 	freshLivework(t)
-	ring := livework.NewRing(4096)
-	for i := 0; i < 30; i++ {
-		ring.Write([]byte("line\n"))
-	}
+	screen := hostedScreen(t, strings.Repeat("line\n", 30))
 	wd := &workRowData{
 		cmdName: "dev", cmdKind: "shell", cmdDesc: "start dev",
-		live: &livework.Entry{ID: "dev-no-urls", StartedAt: time.Now(), Output: ring},
+		live: &livework.Entry{ID: "dev-no-urls", StartedAt: time.Now(), Screen: screen},
 	}
 
 	const h = 20
@@ -197,55 +190,41 @@ func TestRenderWorkBandNoURLsKeepsFieldSlot(t *testing.T) {
 	}
 }
 
-// TestRingTailLinesNoBlankRowBetweenLines is the CRLF defect: a hosted
-// pty's raw bytes carry ONLCR "\r\n" line endings, and splitting on "\n"
-// alone left a stray "\r" glued to the end of every line — which bubbletea's
-// own line-diffing renderer turns into a visibly blank row underneath every
-// real line of tail output (see ringTailLines' own doc comment for the
-// mechanism). Every rendered line must be exactly its plain content, with no
-// blank entries interleaved and no trailing "\r" surviving onto any of them.
-func TestRingTailLinesNoBlankRowBetweenLines(t *testing.T) {
-	r := livework.NewRing(4096)
-	r.Write([]byte("line one\r\nline two\r\nline three\r\n"))
-
-	lines := ringTailLines(r, 40)
-	want := []string{"line one", "line two", "line three"}
-	if len(lines) != len(want) {
-		t.Fatalf("ringTailLines = %q (%d lines), want %q (%d lines) — no blank row between each",
-			lines, len(lines), want, len(want))
+// hostedScreen is a hosted entry's Screen after its child wrote out through
+// the pty: every "\n" goes through the pty's ONLCR translation to "\r\n"
+// (a child's own "\r\n" arrives as "\r\r\n"), the way
+// internal/kinds/hostedpty.go's 80x24 emulator receives it.
+func hostedScreen(t *testing.T, out string) *vt.SafeEmulator {
+	t.Helper()
+	screen := vt.NewSafeEmulator(80, 24)
+	out = strings.ReplaceAll(out, "\n", "\r\n")
+	if _, err := screen.Write([]byte(out)); err != nil {
+		t.Fatalf("screen.Write: %v", err)
 	}
-	for i, l := range lines {
-		if l != want[i] {
-			t.Errorf("line %d = %q, want %q", i, l, want[i])
-		}
-		if strings.Contains(l, "\r") {
-			t.Errorf("line %d = %q retained a raw \\r", i, l)
-		}
-	}
+	return screen
 }
 
-// TestRingTailLinesNoControlBytes feeds the band the line a docker build of
+// TestScreenTailLinesNoControlBytes feeds the band the line a docker build of
 // ffmpeg printed — make's "INSTALL\t<file>" behind buildkit's "#34 493.7"
 // prefix — plus a progress line redrawn with bare "\r" and a stray
 // backspace. A tab measures zero cells but the terminal jumps to the next
-// tab stop, so the row painted wider than its width and wrapped, scrolling
-// the dashboard and leaving the line drawn over the header. Every rendered
-// line must be plain printable text no wider than w.
-func TestRingTailLinesNoControlBytes(t *testing.T) {
-	r := livework.NewRing(4096)
-	r.Write([]byte("#34 493.7 INSTALL\tlibavfilter/libavfilter.a\r\n" +
-		"pull 10%\rpull 55%\rpull 100%\r\n" +
-		"abc\bd\r\n"))
+// tab stop, so a row carrying one paints wider than its width and wraps,
+// scrolling the dashboard and leaving the line drawn over the header. Every
+// rendered line must be plain printable text no wider than w.
+func TestScreenTailLinesNoControlBytes(t *testing.T) {
+	screen := hostedScreen(t, "#34 493.7 INSTALL\tlibavfilter/libavfilter.a\n"+
+		"pull 10%\rpull 55%\rpull 100%\n"+
+		"abc\bd\n")
 
 	const w = 30
-	lines := ringTailLines(r, w)
+	lines := screenTailLines(screen, w, 24)
 	want := []string{
 		"#34 493.7 INSTALL       libav…",
 		"pull 100%",
 		"abd",
 	}
 	if len(lines) != len(want) {
-		t.Fatalf("ringTailLines = %q, want %q", lines, want)
+		t.Fatalf("screenTailLines = %q, want %q", lines, want)
 	}
 	for i, l := range lines {
 		if l != want[i] {
@@ -260,16 +239,59 @@ func TestRingTailLinesNoControlBytes(t *testing.T) {
 	}
 }
 
-// TestRenderWorkBandNoBlankRowBetweenTailLines is the same defect proven
-// through the full band assembly (renderWorkBand), not just ringTailLines in
-// isolation — the shape a real live band actually renders.
+// TestScreenTailLinesCursorUpRedraw is docker buildx's progress block: it
+// prints its step rows, then moves the cursor up and repaints them in place.
+// The band shows each row once, at its latest state — never the stale row
+// and the repaint concatenated or stacked.
+func TestScreenTailLinesCursorUpRedraw(t *testing.T) {
+	screen := hostedScreen(t, "#5 [1/2] RUN make\n#6 [2/2] COPY out\n"+
+		"\x1b[2A\x1b[2K#5 [1/2] RUN make 2.3s\n\x1b[2K#6 [2/2] COPY out DONE\n")
+
+	got := screenTailLines(screen, 40, 24)
+	want := []string{"#5 [1/2] RUN make 2.3s", "#6 [2/2] COPY out DONE"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("screenTailLines = %q, want %q", got, want)
+	}
+}
+
+// TestScreenTailLinesReadsScrollback: a build prints more lines than the
+// pty has rows, and the band is taller than the pty. The band fills from
+// the emulator's scrollback, ending on the last line printed.
+func TestScreenTailLinesReadsScrollback(t *testing.T) {
+	var b strings.Builder
+	for i := 1; i <= 60; i++ {
+		fmt.Fprintf(&b, "line %d\n", i)
+	}
+	screen := hostedScreen(t, b.String())
+
+	got := screenTailLines(screen, 40, 40)
+	if len(got) != 40 || got[0] != "line 21" || got[39] != "line 60" {
+		t.Errorf("screenTailLines = %q, want line 21 through line 60", got)
+	}
+}
+
+// TestScreenTailLinesAltScreenSkipsScrollback: a full-screen child on the
+// alternate screen shows only its own grid, never the main screen's
+// scrollback stacked above it.
+func TestScreenTailLinesAltScreenSkipsScrollback(t *testing.T) {
+	screen := hostedScreen(t, strings.Repeat("shell line\n", 30)+"\x1b[?1049h\x1b[Hagent view\n")
+
+	got := screenTailLines(screen, 40, 40)
+	if !reflect.DeepEqual(got, []string{"agent view"}) {
+		t.Errorf("screenTailLines = %q, want only the alternate screen's row", got)
+	}
+}
+
+// TestRenderWorkBandNoBlankRowBetweenTailLines: a child that writes "\r\n"
+// itself reaches the emulator as "\r\r\n" after ONLCR. Through the full
+// band assembly, its three lines are the band's last three rows with no
+// blank row between them and no "\r" on any of them.
 func TestRenderWorkBandNoBlankRowBetweenTailLines(t *testing.T) {
 	freshLivework(t)
-	ring := livework.NewRing(4096)
-	ring.Write([]byte("alpha\r\nbeta\r\ngamma\r\n"))
+	screen := hostedScreen(t, "alpha\r\nbeta\r\ngamma\r\n")
 	e := &livework.Entry{
 		ID: "test-crlf-worker", Name: "test-crlf-worker",
-		State: livework.StateRunning, StartedAt: time.Now(), Output: ring,
+		State: livework.StateRunning, StartedAt: time.Now(), Screen: screen,
 	}
 
 	mm := workTestModel(nil)
@@ -278,5 +300,10 @@ func TestRenderWorkBandNoBlankRowBetweenTailLines(t *testing.T) {
 	out := mm.renderWorkBand(row, 40, h)
 	if strings.TrimSpace(out[h-1]) != "gamma" || strings.TrimSpace(out[h-2]) != "beta" || strings.TrimSpace(out[h-3]) != "alpha" {
 		t.Fatalf("expected the three tail lines with no blank rows between them, got %q", out[h-3:])
+	}
+	for i, l := range out {
+		if strings.Contains(l, "\r") {
+			t.Errorf("row %d = %q carries a raw \\r", i, l)
+		}
 	}
 }

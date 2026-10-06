@@ -16,7 +16,7 @@ import (
 )
 
 // buildRunningWorkModelAt is workbody_test.go's own fixture: one declared
-// command, backed by a live hosted entry whose Output ring holds real
+// command, backed by a live hosted entry whose Screen holds real
 // pty-shaped bytes, cursor parked on that row so renderWorkBody's band is
 // the live tail — the same shape the (now-deleted) orientation switch's own
 // fixture used, sized to whatever geometry a test wants.
@@ -34,11 +34,10 @@ func buildRunningWorkModelAt(t *testing.T, w, h int) Model {
 	mm.focus = focusBody
 	mm.width, mm.height = w, h
 
-	ring := livework.NewRing(4096)
-	ring.Write([]byte("collecting tests\r\ntest_a ... ok\r\ntest_b ... ok\r\n"))
+	screen := hostedScreen(t, "collecting tests\r\ntest_a ... ok\r\ntest_b ... ok\r\n")
 	entry := &livework.Entry{
 		ID: "command-test", Name: "command-test", Handle: "test-command-test",
-		State: livework.StateRunning, StartedAt: time.Now(), Output: ring,
+		State: livework.StateRunning, StartedAt: time.Now(), Screen: screen,
 	}
 	if err := livework.Default.Add(entry); err != nil {
 		t.Fatalf("Add: %v", err)
