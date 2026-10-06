@@ -164,22 +164,64 @@ func TestWorkersHeaderCarriesCount(t *testing.T) {
 	t.Fatal("no Workers header found")
 }
 
-// TestWorkersEmptyStateVerbatim pins the empty-Workers copy exactly as the
-// design specifies (docs/spikes/admin-tui-desktop/variants.go:1373).
-func TestWorkersEmptyStateVerbatim(t *testing.T) {
+// TestWorkersEmptyHintNamesDeclaredSources pins the empty-Workers line
+// (docs/spikes/admin-tui-desktop/workers-empty.txt): it names the places this
+// manifest can start a worker from, and says so when there are none.
+func TestWorkersEmptyHintNamesDeclaredSources(t *testing.T) {
+	freshLivework(t)
+	for _, tc := range []struct {
+		name    string
+		actions map[string]manifest.Action
+		want    string
+	}{
+		{"no workflow", map[string]manifest.Action{"build": {"kind": "shell"}},
+			"no workers running — this project declares no workflow"},
+		{"query workflow", map[string]manifest.Action{"build": {"kind": "workflow", "over": map[string]any{"query": "label:stale"}}},
+			"no workers running — start one: build (Commands)"},
+	} {
+		mm := workTestModel(&manifest.Manifest{
+			Custom:  map[string]manifest.Command{"build": {Desc: "build it", Steps: []string{"build"}}},
+			Actions: tc.actions,
+		})
+		found := false
+		for _, r := range mm.workerRows() {
+			if r.kind == rowText && r.label == tc.want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: workerRows() did not contain %q", tc.name, tc.want)
+		}
+	}
+}
+
+// TestWorkersEmptyKeepsBandAndOffersNoEnter pins the rest of workers-empty.txt:
+// the band keeps its rule and last line, its right side counts what IS
+// running, and the footer offers no ↵ over a list with no row.
+func TestWorkersEmptyKeepsBandAndOffersNoEnter(t *testing.T) {
+	freshLivework(t)
+	if err := livework.Default.Add(&livework.Entry{ID: "build", Name: "build", State: livework.StateRunning, Handle: "pane-build", Via: "terminal"}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
 	mm := workTestModel(&manifest.Manifest{
 		Custom:  map[string]manifest.Command{"build": {Desc: "build it", Steps: []string{"build"}}},
 		Actions: map[string]manifest.Action{"build": {"kind": "shell"}},
 	})
-	want := "no workers running — dispatch a bead from the tracker tab"
-	found := false
-	for _, r := range mm.workerRows() {
-		if r.kind == rowText && r.label == want {
-			found = true
-		}
+	mm.active = tabWorkers
+	band := mm.renderWorkBand(rowItem{kind: rowText}, 80, 9)
+	if len(band) != 9 {
+		t.Fatalf("band has %d rows, want 9", len(band))
 	}
-	if !found {
-		t.Errorf("workerRows() did not contain the verbatim empty-Workers line %q", want)
+	if got := stripANSI(band[0]); !strings.HasPrefix(got, "── no worker ─") || !strings.HasSuffix(got, " 1 command running ──") {
+		t.Errorf("band rule = %q", got)
+	}
+	if got := strings.TrimSpace(stripANSI(band[8])); got != "a worker's log, branch, worktree and session appear here" {
+		t.Errorf("band last row = %q", got)
+	}
+	for _, p := range mm.workFooterPairs() {
+		if p[0] == "↵" {
+			t.Errorf("footer offers %v on an empty Workers tab", p)
+		}
 	}
 }
 

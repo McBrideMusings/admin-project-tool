@@ -55,7 +55,7 @@ var Axes = []Axis{
 		"commands-status", "commands-running-status",
 		// The Work tab's live states, then the rest of the reference frames.
 		"commands-workflow-selected", "repo", "issues", "issues-selected",
-		"dispatch-sheet", "swarm", "config", "running", "no-manifest",
+		"dispatch-sheet", "swarm", "workers-empty", "config", "running", "no-manifest",
 		// Every other surface repo-dash draws — see INVENTORY.md. Each is the real
 		// frame, reached by driving the same keys a person would press.
 		//
@@ -320,6 +320,10 @@ var screens = map[string]screenSpec{
 	"issues-selected":            {tab: tabTracker},
 	"dispatch-sheet":             {tab: tabTracker, sheet: true},
 	"swarm":                      {tab: tabWorkers, liveSel: 2}, // admin-3rgp.33 — worker, failed
+	// The Workers tab before any worker exists, reached the way admin gets
+	// there: a digit from the tab bar, where focus stays because the list has
+	// no row to enter.
+	"workers-empty": {tab: tabWorkers, liveSel: -1, tabFocus: true},
 	"config":                     {tab: tabConfig},
 	"no-manifest":                {tab: tabRepo, noMan: true},
 
@@ -1569,12 +1573,27 @@ func liveSections(w, selIdx int, empty bool) []string {
 	rows := liveSectionRows(empty)
 	out := []string{Pad(" "+bo.Render("Workers")+dim.Render("  "+itoa(len(rows))), w)}
 	if len(rows) == 0 {
-		return append(out, Pad(" "+dim.Render("no workers running — dispatch a bead from the tracker tab"), w))
+		return append(out, Pad(" "+dim.Render(trunc(workersEmptyHint(), w-1)), w))
 	}
 	for i, lr := range rows {
 		out = append(out, liveRowLine(lr, i == selIdx, w))
 	}
 	return out
+}
+
+// workerSources is where the fixture project can start a worker: its one
+// query-sourced workflow command, and a [keys.bead] enter binding naming a
+// row-sourced one — the same two sources the dashboard reads off a manifest.
+var workerSources = []string{"retire-merged (Commands)", "↵ on a bead (Beads)"}
+
+// workersEmptyHint is the empty Workers tab's one line: where a worker can be
+// started from in this project, so it never points at a dispatch the
+// manifest does not declare.
+func workersEmptyHint() string {
+	if len(workerSources) == 0 {
+		return "no workers running — this project declares no workflow"
+	}
+	return "no workers running — start one: " + strings.Join(workerSources, ", ")
 }
 
 // liveSectionRows is every row the Workers tab draws. Live COMMANDS are not
@@ -1644,7 +1663,23 @@ func bandTitle(w int, sel *liveRow, idle string, empty bool) string {
 	} else {
 		title = bo.Render(idle) + dim.Render("  not running")
 	}
-	right := othersRunning(sel, empty)
+	return bandRule(w, title, othersRunning(sel, empty))
+}
+
+// emptyWorkersTitle is the empty Workers tab's band rule. Nothing is
+// previewed, so the right side counts what is running rather than what else
+// is.
+func emptyWorkersTitle(w int, empty bool) string {
+	right := strings.TrimPrefix(othersRunning(nil, empty), "also ")
+	if right != "nothing running" {
+		right += " running"
+	}
+	return bandRule(w, dim.Render("no worker"), right)
+}
+
+// bandRule draws the band's title rule: title on the left, right on the
+// right, dashes between.
+func bandRule(w int, title, right string) string {
 	// Budget: "── " + title + " " + fill + suffix + " ──" = w, so the dashes are
 	// whatever is left after everything with a fixed width. The identity wins
 	// the space — on a narrow terminal the count drops rather than squeezing
@@ -1790,7 +1825,11 @@ func renderWorkBody(w, h int, strip, list []string, selEntry *commandEntry, selW
 	if selEntry != nil {
 		idleName = selEntry.resolved()
 	}
-	out = append(out, bandTitle(w, selWorker, idleName, empty))
+	if selWorker == nil && selEntry == nil {
+		out = append(out, emptyWorkersTitle(w, empty))
+	} else {
+		out = append(out, bandTitle(w, selWorker, idleName, empty))
+	}
 	switch {
 	case selWorker != nil:
 		fields := bandFields(selWorker, fullW)
@@ -1800,6 +1839,11 @@ func renderWorkBody(w, h int, strip, list []string, selEntry *commandEntry, selW
 		out = append(out, prefixRows(bandIdle(selEntry, fullW), fullW)...)
 		out = append(out, blankRows(w, maxInt(bh-2-fieldRowsH, 0))...)
 		out = append(out, Pad(" "+dim.Render("output appears here while it runs"), fullW))
+	default:
+		// The empty Workers tab keeps the band, so the layout does not change
+		// shape when the first worker arrives.
+		out = append(out, blankRows(w, maxInt(bh-2, 0))...)
+		out = append(out, Pad(" "+dim.Render("a worker's log, branch, worktree and session appear here"), fullW))
 	}
 	for len(out) < h {
 		out = append(out, Pad("", w))
@@ -1864,7 +1908,7 @@ func render(s State) string {
 	// The empty screen depicts a project with nothing running and no workers.
 	// The data axis says the same thing but is NoDump, so without the name check
 	// the dumped frame was byte-identical to the populated one.
-	empty := s.Is("data", "empty") || name == "commands-empty"
+	empty := s.Is("data", "empty") || name == "commands-empty" || name == "workers-empty"
 	// Collapse mode keeps open the group the cursor is in, read off the
 	// expanded list before any group closes.
 	collapsed, openGroup = false, ""
@@ -1946,6 +1990,9 @@ func render(s State) string {
 				list = commandSections(fullW, mark, empty)
 			}
 			action = rowAction(selLive, onWorkersTab(name))
+			if onWorkersTab(name) && selLive == nil {
+				action = "" // no worker row, so ↵ has nothing to act on
+			}
 			var strip []string
 			if sp.status {
 				// The list keeps at least three rows, the same floor the
@@ -2135,7 +2182,16 @@ func keys(sp screenSpec, action string) string {
 	if sp.tabFocus {
 		// From the tab bar ↑ does nothing and ↓ and ↵ both enter the list;
 		// the row's own keys wait until focus is there. The digits jump tabs.
-		return "↓/↵ body · c collapse · q/esc quit · 1-5 jump · o config · ←→ tab"
+		// A list with no row has no body to enter, and only the Commands
+		// list collapses.
+		k := ""
+		if action != "" {
+			k += "↓/↵ body · "
+		}
+		if sp.tab == tabCommands {
+			k += "c collapse · "
+		}
+		return k + "q/esc quit · 1-5 jump · o config · ←→ tab"
 	}
 	if sp.tab <= tabWorkers && !sp.hosted && !sp.sheet {
 		k := "↑↓ move · ↵ " + action

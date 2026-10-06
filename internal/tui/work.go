@@ -901,7 +901,7 @@ func (m Model) workerRows() []rowItem {
 	workers := liveWorkers()
 	rows := []rowItem{headerRow("Workers", seg{t: "  " + strconv.Itoa(len(workers))})}
 	if len(workers) == 0 {
-		return append(rows, rowItem{kind: rowText, label: "no workers running — dispatch a bead from the tracker tab"})
+		return append(rows, rowItem{kind: rowText, label: m.workersEmptyHint()})
 	}
 	for _, e := range workers {
 		label := e.Name
@@ -915,6 +915,79 @@ func (m Model) workerRows() []rowItem {
 		})
 	}
 	return rows
+}
+
+// workersEmptyHint is the empty Workers tab's one line: where a worker can be
+// started from in THIS project (docs/spikes/admin-tui-desktop/
+// workers-empty.txt). A worker comes from a query-sourced kind="workflow"
+// command on the Commands tab, or from a [keys.<kind>] binding naming a
+// row-sourced one; the hint names each, so it never points at a dispatch the
+// manifest does not declare.
+func (m Model) workersEmptyHint() string {
+	var sources []string
+	for _, cr := range m.declaredCommands() {
+		a, ok := m.soleAction(cr.cmd)
+		if !ok || actionKind(a) != "workflow" {
+			continue
+		}
+		if t, err := kinds.ParseWorkflowOver(cr.cmd.Steps[0], a); err == nil && t.Source == kinds.WorkflowSourceQuery {
+			sources = append(sources, cr.name+" ("+tabDisplay(tabWork)+")")
+		}
+	}
+	for _, kind := range keymap.Bindable {
+		t, noun, ok := rowKindSource(kind)
+		if !ok || m.tabIndex(t) < 0 {
+			continue
+		}
+		keys := make([]string, 0, len(m.rowKeys[kind]))
+		for k := range m.rowKeys[kind] {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if c, found := m.commandNamed(m.rowKeys[kind][k]); found && m.isRowWorkflow(c) {
+				sources = append(sources, keyGlyph(k)+" on "+noun+" ("+tabDisplay(t)+")")
+			}
+		}
+	}
+	if len(sources) == 0 {
+		return "no workers running — this project declares no workflow"
+	}
+	return "no workers running — start one: " + strings.Join(sources, ", ")
+}
+
+// rowKindSource is the tab a row kind's rows live on and the noun the empty
+// Workers hint calls one of them. A worker row cannot start a worker when
+// there are none, so it has no source.
+func rowKindSource(k keymap.RowKind) (tab, string, bool) {
+	switch k {
+	case keymap.Bead:
+		return tabBeads, "a bead", true
+	case keymap.Issue:
+		return tabIssues, "an issue", true
+	case keymap.PR:
+		return tabPRs, "a PR", true
+	case keymap.Branch:
+		return tabLocal, "a branch", true
+	case keymap.Commit:
+		return tabLocal, "a commit", true
+	case keymap.Stash:
+		return tabLocal, "a stash", true
+	case keymap.Command:
+		return tabWork, "a command", true
+	case keymap.CommandTarget:
+		return tabWork, "a target", true
+	}
+	return 0, "", false
+}
+
+// keyGlyph is how the footer writes a bound key: enter as ↵, anything else
+// as typed.
+func keyGlyph(k string) string {
+	if k == "enter" {
+		return "↵"
+	}
+	return k
 }
 
 // onWorkSurface reports whether the active tab is Commands or Workers — the two
@@ -1347,7 +1420,9 @@ func entryIsLive(e *livework.Entry) bool {
 //   - live command/target or live worker → "↵ attach · x kill".
 //   - finished worker → "↵ transcript", no kill (nothing left to stop).
 //   - no actionable row under the cursor → the idle pairs, matching what a
-//     fresh Work tab (cursor on the first idle command) already shows.
+//     fresh Work tab (cursor on the first idle command) already shows —
+//     except on a Workers tab with no workers, where ↵ has nothing to act
+//     on and is not offered (workers-empty.txt).
 //
 // docs/spikes/admin-tui-desktop/commands.txt:30 and commands-running.txt:30
 // are the verbatim targets for the idle/live cases, with one addition since:
@@ -1361,6 +1436,9 @@ func (m Model) workFooterPairs() [][2]string {
 	kind, enter, kill := keymap.Command, "dispatch", false
 	if m.active == tabWorkers {
 		kind = keymap.Worker
+		if len(liveWorkers()) == 0 {
+			enter = ""
+		}
 	}
 	if r, ok := m.currentRow(); ok && r.work != nil {
 		if k, bindable := rowKindOf(r); bindable {
@@ -1382,6 +1460,9 @@ func (m Model) workFooterPairs() [][2]string {
 	for _, b := range keymap.Builtins(kind) {
 		switch b.Key {
 		case "enter":
+			if enter == "" {
+				continue
+			}
 			b.Label = enter
 		case "a":
 			continue

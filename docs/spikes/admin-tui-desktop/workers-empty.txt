@@ -1,0 +1,30 @@
+ beads-repo   main  ✔ clean                                        w=96 h=25  list 13 · band 12 
+  Commands 47     Workers 0     Repo     Beads 227     Config                                   
+                                                                                                
+ Workers  0                                                                                     
+ no workers running — start one: retire-merged (Commands), ↵ on a bead (Beads)                  
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+── no worker ──────────────────────────────────────────────────────────────── nothing running ──
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+ a worker's log, branch, worktree and session appear here                                       
+────────────────────────────────────────────────────────────────────────────────────────────────
+ q/esc quit · 1-5 jump · o config · ←→ tab                                                      

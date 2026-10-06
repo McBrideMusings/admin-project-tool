@@ -473,6 +473,9 @@ func renderTargetRow(wd *workRowData, focused bool, rest int) string {
 // the band beneath it; a block taller than the slot is clipped to it.
 func (m Model) renderWorkBand(r rowItem, w, h int) []string {
 	wd := r.work
+	if wd == nil && m.active == tabWorkers && len(liveWorkers()) == 0 {
+		return workersEmptyBand(w, h)
+	}
 	if wd == nil {
 		return blankRows(w, h)
 	}
@@ -600,7 +603,28 @@ func bandTitle(w int, live *livework.Entry, name string) string {
 		titleStyled = lipgloss.NewStyle().Bold(true).Render(name) + faintStyle.Render("  not running")
 	}
 
-	right := othersRunning(selID)
+	return bandRule(w, titlePlain, titleStyled, othersRunning(selID))
+}
+
+// workersEmptyBand is the empty Workers tab's band (docs/spikes/
+// admin-tui-desktop/workers-empty.txt): the same rule, field slot and last
+// line as an idle command's band, so the tab keeps its one layout before the
+// first worker exists. Nothing is previewed, so the right side counts what
+// is running rather than what else is.
+func workersEmptyBand(w, h int) []string {
+	right := strings.TrimPrefix(othersRunning(""), "also ")
+	if right != "nothing running" {
+		right += " running"
+	}
+	out := []string{bandRule(w, "no worker", faintStyle.Render("no worker"), right)}
+	out = append(out, blankRows(w, maxi(h-2, 0))...)
+	out = append(out, padEnd(" "+faintStyle.Render("a worker's log, branch, worktree and session appear here"), w))
+	return out[:maxi(h, 0)]
+}
+
+// bandRule draws the band's title rule: titleStyled (whose visible text is
+// titlePlain) on the left, right on the right, dashes between.
+func bandRule(w int, titlePlain, titleStyled, right string) string {
 	// Budget: "── " + title + " " + fill + suffix + " ──" = w, so the dashes
 	// are whatever is left after everything with a fixed width. The
 	// identity wins the space: on a narrow terminal the count drops rather
