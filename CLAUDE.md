@@ -197,7 +197,7 @@ steps = ["implement"]
 
 [actions.implement]
 kind  = "workflow"
-over  = "selection"
+over  = "row"
 run   = 'claude "/implement $ADMIN_TARGET auto"'
 done  = 'bd show "$ADMIN_TARGET" --json | jq -e ".[0].status == \"closed\""'
 
@@ -227,7 +227,7 @@ Three validation rules govern bindings (`internal/validate/keys.go`, `RowKeys`):
 
 Dispatch (`internal/tui/rowkeys.go`, `rowKeyDispatch`) is consulted before the built-in switch in `Model.handleKey`; a miss (no table, no row, unbindable kind, unbound key) returns ok=false and the built-in switch runs exactly as today; a hit dispatches the named command through `dispatchCommandCmd` — the same path a Commands-tab row uses — with the row's environment variables; if that command already has a live non-worker entry the dashboard attaches to it rather than re-running it (admin-c2zl).
 
-A binding resolving to a single-step `kind="workflow"` action with `over = "selection"` dispatches over the tracker selection through the same picker/confirm overlay `space`-then-`w` uses when the ACTIVE pane's selection is nonempty, and immediately over the cursor row alone (no overlay, outcome on the status line, missing agent reported as a red status line) when it is empty. Every other command shape acts on the cursor row alone however many rows are selected — the environment variables carry one row and have no plural form.
+A binding resolving to a single-step `kind="workflow"` action with `over = "row"` dispatches immediately over the cursor row alone: no overlay, outcome on the status line, a missing agent reported as a red status line (`internal/tui/rowkeys.go`'s `rowKeyWorkflow`). `over = "selection"` is rejected. A workflow with `over = { query = "..." }` needs no binding: the Work tab draws it as a group row with one target row per matched tracker item (`kinds.MatchQuery`/`MatchBeads` over the beads and issues the dashboard already polls), the cursor skips the group row, and Enter on a target dispatches over that one item through `internal/tui/work.go`'s `dispatchWorkflowTarget`. Every other command shape acts on the cursor row alone — the environment variables carry one row and have no plural form.
 
 **Pipeline.** `manifest.Keys` (raw top-level `[keys]` table, `internal/manifest/manifest.go:122`, unvalidated at parse) → `validate.RowKeys` against the manifest's declared command names (called by `cmd/check.go`'s `checkRowKeys` and by the TUI's `buildRowKeys`) → `internal/keymap` holding the built-in labels keyed by row kind, the leaf package both `validate` and `tui` import → `internal/tui/rowkeys.go` for the lookup and dispatch, with `Model.keymap()`/`rowPairs` (`internal/tui/view.go:675`) merging bindings into the footer: a bound key that shadows a built-in replaces that pair's label in place, an unshadowing one is appended after the built-ins. `[keys]` is the one raw archetype table merged per key rather than whole-value (`internal/archetype/merge.go`'s `mergeRowKeys`).
 
