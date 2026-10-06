@@ -285,7 +285,7 @@ func (m Model) deadReason(branch string) string {
 // is deletable. It quarantines it, so a batch sweep passes it over and deleting it
 // takes a deliberate pick. path is "" for a branch with no worktree.
 func (m Model) isActive(branch, path string) bool {
-	if path != "" && m.local.herdrOpen[path] {
+	if _, open := m.local.herdrOpen[path]; path != "" && open {
 		return true
 	}
 	t, ok := m.local.touched[branch]

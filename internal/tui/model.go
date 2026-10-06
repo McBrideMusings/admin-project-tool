@@ -1970,9 +1970,49 @@ func (m Model) click(y, x int) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case hitRow:
+		if m.herdr && h.pane == paneBranches && x == 1+gutterWidth(m.selectMode())-brGutterW {
+			if id, ok := m.spaceAtRow(h.row); ok {
+				return m.focusSpace(id)
+			}
+		}
 		return m.clickRow(h.pane, h.row)
 	}
 	return m, nil
+}
+
+// branchSpace is the herdr workspace open on a branch's worktree, when the
+// dashboard runs under herdr and one is. The dashboard's last poll answers it, so
+// drawing a row never shells out.
+func (m Model) branchSpace(b git.BranchInfo) (string, bool) {
+	if !m.herdr {
+		return "", false
+	}
+	path := b.WorktreePath
+	if path == "" {
+		path = m.worktreeByBranch()[b.Name]
+	}
+	id, ok := m.local.herdrOpen[path]
+	return id, ok && path != ""
+}
+
+// spaceAtRow is branchSpace for the Branches row at index i.
+func (m Model) spaceAtRow(i int) (string, bool) {
+	branches := m.branchInfos(m.branchRows())
+	if i < 0 || i >= len(branches) {
+		return "", false
+	}
+	return m.branchSpace(branches[i])
+}
+
+// focusSpace jumps herdr to an already-open workspace and leaves the dashboard
+// where it is.
+func (m Model) focusSpace(id string) (tea.Model, tea.Cmd) {
+	return m, func() tea.Msg {
+		if err := shim.FocusWorkspace(id); err != nil {
+			return actionMsg{text: "focus failed", err: fmt.Errorf("herdr focus failed: %w", err)}
+		}
+		return actionMsg{text: "focused herdr space", color: cGreen}
+	}
 }
 
 // clickRow is a click resolved to one pane's row: the first click on a row

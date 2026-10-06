@@ -39,7 +39,7 @@ type localData struct {
 	wts          []git.Worktree
 	signals      map[string]gitSignals // branch -> its git-derived dead-or-alive evidence
 	touched      map[string]time.Time  // branch -> when it or its worktree last saw activity
-	herdrOpen    map[string]bool       // worktree path -> herdr has a workspace open on it
+	herdrOpen    map[string]string     // worktree path -> id of the herdr workspace open on it
 	wtState      map[string]wtState    // worktree path -> what its working-tree read found
 	branchUnsafe map[string]bool       // branch -> has unpushed commits (would lose work)
 	tips         map[string]string     // branch -> the SHA its ref points at, for the merged-PR proof
@@ -246,7 +246,7 @@ func loadLocalCmd(ctx context.Context, repoRoot, checkout, current, def string) 
 			sig.idle = time.Since(t)
 			d.signals[name] = sig
 		}
-		d.herdrOpen = shim.OpenWorktreePaths()
+		d.herdrOpen = shim.OpenWorkspaces()
 		return localDataMsg{d}
 	}
 }
@@ -605,6 +605,15 @@ func worktreeCmd(ctx context.Context, repoRoot string, req worktreeReq) tea.Cmd 
 				return actionMsg{text: "worktree failed", err: err}
 			}
 			path = res.Path
+		}
+		// A worktree herdr already has a space on is focused, never opened a second
+		// time. The lookup is made now rather than read from the dashboard's last
+		// poll, so a space opened or closed since then cannot misdirect the click.
+		if id, open := shim.OpenWorkspaces()[path]; open && req.kind == "open" {
+			if err := shim.FocusWorkspace(id); err != nil {
+				return actionMsg{text: "focus failed", err: fmt.Errorf("herdr focus failed: %w", err)}
+			}
+			return actionMsg{text: "focused " + req.branch + " in herdr", color: cGreen}
 		}
 		if err := shim.OpenInHerdr(repoRoot, path); err != nil {
 			// The worktree already exists; only the herdr open failed. Surface its

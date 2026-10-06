@@ -1017,9 +1017,9 @@ func freshWorktreeModel(t *testing.T, touched time.Time, herdrOpen bool) Model {
 	m.local.wts = append(m.local.wts, git.Worktree{Path: path, Branch: branch})
 	m.local.signals = map[string]gitSignals{branch: {mergedLocal: true, empty: true}}
 	m.local.touched = map[string]time.Time{branch: touched}
-	m.local.herdrOpen = map[string]bool{}
+	m.local.herdrOpen = map[string]string{}
 	if herdrOpen {
-		m.local.herdrOpen[path] = true
+		m.local.herdrOpen[path] = "w1"
 	}
 	statFn = func(string) (os.FileInfo, error) { return nil, nil }
 	t.Cleanup(func() { statFn = os.Stat })

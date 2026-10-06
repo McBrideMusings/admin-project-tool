@@ -267,9 +267,19 @@ func (m Model) branchRowLayout(r paneRow, w int, plan columnPlan) branchRowLayou
 // current status, color carries ownership — so a repo where every branch is
 // worktree-backed (every glyph rendering ◇) still distinguishes mine from
 // someone else's from unknown by color alone.
-func brGlyph(r paneRow, b git.BranchInfo) seg {
+//
+// Under herdr, a worktree with a workspace open on it draws ▣ in place of ◇:
+// clicking it (or enter on the row) focuses that workspace.
+func (m Model) brGlyph(r paneRow, b git.BranchInfo) seg {
 	if r.sec == secMain {
 		return seg{t: "◆", fg: cGreen}
+	}
+	if _, open := m.branchSpace(b); open {
+		color := cCyan
+		if r.owner.mine {
+			color = cGreen
+		}
+		return seg{t: "▣", fg: color}
 	}
 	if b.WorktreePath != "" {
 		color := cCyan
@@ -310,7 +320,7 @@ func (m Model) gutterSegs(r paneRow, b git.BranchInfo) []seg {
 		}
 		segs = append(segs, check, seg{t: " "})
 	}
-	return append(segs, brGlyph(r, b), seg{t: " "})
+	return append(segs, m.brGlyph(r, b), seg{t: " "})
 }
 
 // brPanelLine renders one branch row: the gutter, the name, the purpose when it

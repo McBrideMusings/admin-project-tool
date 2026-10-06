@@ -33,15 +33,16 @@ func OpenInHerdr(repoRoot, worktreePath string) error {
 	return cmd.Run()
 }
 
-// OpenWorktreePaths is the set of worktree checkout paths herdr currently has a
-// workspace open on — the strongest "something is working here right now" signal
-// available, and the one that distinguishes a worktree an agent is sitting in from
-// leftovers that merely look identical to git.
+// OpenWorkspaces maps each worktree checkout path herdr currently has a workspace
+// open on to that workspace's id. A path in the map is the strongest "something is
+// working here right now" signal available — it distinguishes a worktree an agent
+// is sitting in from leftovers that merely look identical to git — and the id is
+// what FocusWorkspace needs to jump there.
 //
 // Empty when herdr is unavailable or the call fails, so every caller degrades to
 // the timestamp-based signals rather than to a wrong answer.
-func OpenWorktreePaths() map[string]bool {
-	open := map[string]bool{}
+func OpenWorkspaces() map[string]string {
+	open := map[string]string{}
 	if !Available() {
 		return open
 	}
@@ -52,6 +53,7 @@ func OpenWorktreePaths() map[string]bool {
 	var resp struct {
 		Result struct {
 			Workspaces []struct {
+				ID       string `json:"workspace_id"`
 				Worktree struct {
 					CheckoutPath string `json:"checkout_path"`
 				} `json:"worktree"`
@@ -62,11 +64,19 @@ func OpenWorktreePaths() map[string]bool {
 		return open
 	}
 	for _, w := range resp.Result.Workspaces {
-		if p := w.Worktree.CheckoutPath; p != "" {
-			open[p] = true
+		if p := w.Worktree.CheckoutPath; p != "" && w.ID != "" {
+			open[p] = w.ID
 		}
 	}
 	return open
+}
+
+// FocusWorkspace brings an already-open herdr workspace to the front.
+func FocusWorkspace(id string) error {
+	if !Available() {
+		return ErrHerdrUnavailable
+	}
+	return exec.Command("herdr", "workspace", "focus", id).Run()
 }
 
 // Available reports whether repo is running in a herdr pane with the herdr CLI
