@@ -67,7 +67,7 @@ func Frame(ctx context.Context, m Model, opts FrameOptions) string {
 // every time — five views of the same repo cost five loads of it. Here the
 // load happens once and every sequence starts from a copy of the settled
 // model, which is what makes a tool that shows many views of one repo (a
-// prototype, a docs dump, a regression sweep) practical.
+// docs dump, a regression sweep) practical.
 //
 // Each sequence gets its own copy, so a mode toggle in one cannot leak into the
 // next — `g` twice across two sequences would otherwise turn tree mode back off.

@@ -1,12 +1,9 @@
 // workbody_test.go covers admin-3rgp.72.15: renderWorkBody has one layout at
 // every geometry — the row list fills the body width, and the live band
 // spans that same full width beneath it, with the list giving up HEIGHT
-// (never width) to the band. The prototype's own two-orientation switch
-// (docs/spikes/admin-tui-desktop/variants.go) picked between a side-by-side
-// split and a stacked layout by comparing width against height; this file
-// proves the app now renders the single, unconditional shape at three
-// geometries the prototype's own reference frame (docs/spikes/
-// admin-tui-desktop/commands.txt) is graded against.
+// (never width) to the band. There is no side-by-side split chosen by
+// comparing width against height; this file proves the app renders the
+// single, unconditional shape at three geometries.
 package tui
 
 import (

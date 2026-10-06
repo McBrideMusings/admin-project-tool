@@ -12,12 +12,11 @@ import (
 // no-ops that return r (or nothing at all). It returns a restore func that
 // puts the real implementations back — callers must defer it.
 //
-// This exists for a headless caller that wants to render Model/Frame/Frames
-// against a fixture with no network and no on-disk state — today,
-// docs/spikes/admin-tui-desktop's fixtures.go, which is package main and so
-// cannot reach the unexported loadRemoteFn/fetchAllFn/fetchPruneFn vars in
-// commands.go directly. Mirrors archetype.UseInstalledDir
-// (internal/archetype/search.go).
+// This is the seam for a headless caller that wants to render Model/Frame/
+// Frames against a fixture with no network and no on-disk state (show_test.go
+// is one). The unexported loadRemoteFn/fetchAllFn/fetchPruneFn vars in
+// commands.go are out of reach of any caller outside this package. Mirrors
+// archetype.UseInstalledDir (internal/archetype/search.go).
 //
 // The four vars it sets are process-global, exactly like UseInstalledDir's
 // InstalledArchetypesDir — a concurrent caller that also overrides them would

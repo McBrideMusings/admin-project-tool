@@ -186,7 +186,7 @@ func renderSegs(segs []seg, bg lipgloss.TerminalColor) string {
 }
 
 // compactAge turns git's relative date ("19 minutes ago", "2 days ago") into the
-// terse form the prototype shows ("19m", "2d"). Unparseable input passes through.
+// terse form ("19m", "2d"). Unparseable input passes through.
 func compactAge(s string) string {
 	s = strings.TrimSpace(s)
 	switch s {

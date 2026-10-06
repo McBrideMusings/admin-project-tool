@@ -311,12 +311,12 @@ func behindDefault(ctx context.Context, dir string, br git.BranchInfo, def strin
 	return 0
 }
 
-// loadRemoteFn, fetchAllFn and fetchPruneFn are the seams a headless caller
-// (docs/spikes/admin-tui-desktop's fixtures, via the exported UseStaticRemote
-// in remoteseam.go) overrides to render the dashboard with no `gh` round
-// trip, no `git fetch`, and no on-disk cache read keyed by nwo. Nothing in
-// this package or its own tests overrides them, so the real program's
-// behaviour is unchanged.
+// loadRemoteFn, fetchAllFn, fetchPruneFn and fetchIdentityFn are the seams a
+// headless caller (show_test.go, via the exported UseStaticRemote in
+// remoteseam.go) overrides to render the dashboard with no `gh` round trip,
+// no `git fetch`, and no on-disk cache read keyed by nwo. Only
+// UseStaticRemote overrides them, and it restores them on return, so the real
+// program's behaviour is unchanged.
 var (
 	loadRemoteFn    = data.Load
 	fetchAllFn      = data.FetchAll

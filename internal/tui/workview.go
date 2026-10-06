@@ -30,8 +30,7 @@ func bandH(h int) int {
 // session+now, or an idle entry's kind+desc+last run+last log (+query).
 // Five is the tallest. The block is padded or clipped to exactly this by
 // slotRows, so moving the cursor between rows in different states never moves
-// a row of the band (docs/spikes/admin-tui-desktop/README.md, "The band's
-// field block is a fixed slot").
+// a row of the band.
 const fieldRowsH = 5
 
 // renderWorkBody lays out the Work tab: one layout at every geometry — the
@@ -39,21 +38,16 @@ const fieldRowsH = 5
 // width beneath it, pinned to the bottom: always bandH rows, whatever state
 // the cursor row is in. The list gives up HEIGHT to the band and never width;
 // a short list leaves blank rows between itself and the band.
-// Ported from the design prototype's workBody/renderPaletteScreen
-// (docs/spikes/admin-tui-desktop/variants.go); the prototype's own two-
-// orientation switch (a side-by-side split on a wide terminal, a stacked
-// layout on a tall narrow one, picked by comparing width against height) is
-// gone — the side-by-side split gave the detail pane roughly 30 columns on
-// exactly the terminals where log lines are longest, and the two branches
-// were two bodies of layout code that could disagree.
+// There is no side-by-side split on a wide terminal: it would give the detail
+// pane roughly 30 columns on exactly the terminals where log lines are
+// longest, and two layout branches could disagree.
 func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 	rows := m.visibleRows()
 	cursor := m.cursor[m.active]
 
 	// The Status strip is pinned above the scrolling list, whatever the filter
 	// leaves in it, and takes its rows from the list alone while leaving the
-	// list at least three — the band keeps bandH(fullHeight) either way
-	// (docs/spikes/admin-tui-desktop/commands-status.txt).
+	// list at least three — the band keeps bandH(fullHeight) either way.
 	var strip []string
 	var stripHits []hitTarget
 	if m.manifest != nil {
@@ -82,9 +76,8 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		case rowHeader:
 			// A header carrying a rightSegs entry (Commands' and Workers' own
 			// counts — work.go's workRows) renders bold label + dim count,
-			// matching the reference frames' "Commands  47" (docs/spikes/
-			// admin-tui-desktop/commands.txt:4) and "Workers  3" (swarm.txt:
-			// 13); any other header keeps the plain muted form it always had.
+			// ("Commands  47", "Workers  3"); any other header keeps the
+			// plain muted form.
 			// No leading space of its own — the outer render loop below
 			// (padEnd(" "+padEnd(l, lw), width)) already supplies the single
 			// leading column every row gets, headers included.
@@ -97,8 +90,7 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		case rowText:
 			// Same rule as rowHeader just above: the outer loop already
 			// supplies the row's one leading column, so this adds none of its
-			// own — matching the empty-Workers reference line's single
-			// leading space (docs/spikes/admin-tui-desktop/variants.go:1373).
+			// own, so the empty-Workers line carries a single leading space.
 			if r.label != "" {
 				left[i] = faintStyle.Render(r.label)
 			} else {
@@ -135,8 +127,8 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 			// The header of whichever section the window starts inside is
 			// pinned to its first row, PLUS the "↑ N more" marker — never the
 			// marker alone replacing it — so a scrolled list still says
-			// whether the rows below are Commands or Workers (docs/spikes/
-			// admin-tui-desktop/swarm.txt:4, "Commands   ↑ 49 more").
+			// whether the rows below are Commands or Workers ("Commands   ↑ 49
+			// more").
 			header := lipgloss.NewStyle().Bold(true).Render(sectionHeaderAt(rows, start))
 			listLines[0] = header + faintStyle.Render("   ↑ "+strconv.Itoa(start)+" more")
 			hitLines[0] = hitTarget{kind: hitNone}
@@ -168,7 +160,7 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		// The band is edge to edge, like the footer rule under it: its title
 		// rule, dashed rule and tail lines carry their own one-column margin
 		// where they want one (bandFields*, bandTail), so no outer inset is
-		// added here (docs/spikes/admin-tui-desktop/commands-running.txt:16).
+		// added here.
 		out = append(out, padEnd(d, width))
 		outHits = append(outHits, hitTarget{kind: hitNone})
 	}
@@ -179,10 +171,8 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 
 // sectionHeaderAt is which section a scrolled window starting at row i is
 // inside — the nearest rowHeader at or above it in the combined (unwindowed)
-// row list, matching the design prototype's own sectionHeaderAt (docs/
-// spikes/admin-tui-desktop/variants.go:1597-1605), ported here against the
-// real rowItem list rather than re-parsing rendered text, since the header
-// row's own label is already the answer.
+// row list. It reads the rowItem list rather than re-parsing rendered text,
+// since the header row's own label is already the answer.
 func sectionHeaderAt(rows []rowItem, i int) string {
 	for j := i; j >= 0 && j < len(rows); j-- {
 		if rows[j].kind == rowHeader {
@@ -192,8 +182,7 @@ func sectionHeaderAt(rows []rowItem, i int) string {
 	return "Commands"
 }
 
-// The Commands section's one column grid (docs/spikes/admin-tui-desktop/
-// variants.go:1252-1255, ported verbatim): a two-cell cursor marker, a
+// The Commands section's one column grid: a two-cell cursor marker, a
 // 16-cell name (or, on a target row, connector+key sharing that same 16
 // cells), a 10-cell state column ("● running"), a 7-cell elapsed column
 // ("4m12s"), then one free column that spends itself on activity, a run
@@ -216,10 +205,8 @@ func idleRest(width int) int {
 
 // commandGlyph is the state marker shown to the left of a Commands-section
 // row's state word: waiting and failed override everything else, anything
-// else — running, starting — gets the plain dot (docs/spikes/
-// admin-tui-desktop/variants.go:1319 minus the isWorkerRow branch, which
-// only ever applied to the Workers section — out of scope here, admin-3rgp.
-// 72.16).
+// else — running, starting — gets the plain dot. A worker row never reaches
+// this function; workerGlyph owns the Workers section's marker.
 func commandGlyph(s livework.State) string {
 	switch s {
 	case livework.StateWaiting:
@@ -233,9 +220,7 @@ func commandGlyph(s livework.State) string {
 
 // liveGlyph is the live band title's own state marker: the same waiting/
 // failed overrides as commandGlyph, but a worker's default glyph is the
-// diamond ◈, not the dot — ported from the design prototype's liveRow
-// version of this rule (docs/spikes/admin-tui-desktop/variants.go:1319-
-// 1331), which commandGlyph above deliberately dropped since the Commands
+// diamond ◈, not the dot, which commandGlyph above omits since the Commands
 // section never draws a worker row. The caller passes st, read through
 // livework.Default.State, since e.State is written by SetState on another
 // goroutine.
@@ -311,27 +296,23 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 	if r.kind == rowWorker {
 		// The Workers section now renders on the exact same grid the
 		// Commands section uses (admin-3rgp.72.16): marker, name, state,
-		// elapsed, activity, then a right-hand where-column — verified
-		// against docs/spikes/admin-tui-desktop/swarm.txt:14-16.
+		// elapsed, activity, then a right-hand where-column.
 		e := wd.worker
 		name := padEnd(truncR(e.ID, wName), wName)
 		st, _ := livework.Default.State(e.ID)
 		state := renderWorkerState(st)
 		elapsed := faintStyle.Render(padEnd(elapsedStr(time.Since(e.StartedAt)), wElapsed))
-		// used counts the row's own leading column (the "1", matching the
-		// design prototype's liveRowLine — docs/spikes/admin-tui-desktop/
-		// variants.go:1345) plus the fixed grid columns, even though that
-		// leading column is prepended by renderWorkBody's caller rather than
-		// by this function: the row's total on-screen width is the same
-		// either way, and activity/where would each claim one cell too many
-		// without it, shifting the where-column one column right of
-		// swarm.txt's own.
+		// used counts the row's own leading column (the "1") plus the fixed
+		// grid columns, even though that leading column is prepended by
+		// renderWorkBody's caller rather than by this function: the row's
+		// total on-screen width is the same either way, and activity/where
+		// would each claim one cell too many without it, shifting the
+		// where-column one column to the right.
 		used := 1 + wMarker + wName + wState + wElapsed
 		whereText, whereStyled := whereSeg(e)
 		ww := whereWidth(whereText)
 		// Drop the where-column rather than overflow when the activity
-		// column would be left under eight cells (docs/spikes/admin-tui-
-		// desktop/variants.go:1349-1351's own liveRowLine rule).
+		// column would be left under eight cells.
 		if ww > 0 && width-used-ww < 8 {
 			ww, whereStyled = 0, ""
 		}
@@ -460,11 +441,8 @@ func renderTargetRow(wd *workRowData, focused bool, rest int) string {
 // everything else running (bandTitle), a fixed fieldRowsH-row field block
 // chosen by the row's own state (bandIdle / bandFieldsCommand /
 // bandFieldsWorker), then the row's own live output tail filling the rest.
-// Ported from the design prototype's renderWorkBody band half (docs/spikes/
-// admin-tui-desktop/variants.go:1533-1588) — the row-list half of that
-// function stays in Model.renderWorkBody above, unchanged; this replaces
-// the old right-hand detail pane (renderWorkDetail/commandDetail/
-// workerDetail/detailHeader/appendLiveTail/outputRule) entirely.
+// The row-list half of the Work tab's layout lives in Model.renderWorkBody
+// above; this is the band half.
 //
 // Contract: given the body width w and the band's own height h, returns
 // exactly h lines, whatever row r is. The field block is a fixed fieldRowsH
@@ -539,9 +517,7 @@ func bandEntry(r rowItem) *livework.Entry {
 // is NOT the row being previewed, read from the exact same
 // livework.Default.List() the row list itself reads (work.go's byName/
 // liveWorkers), so the row list and this count can never disagree about
-// what is running. Ported from the design prototype (docs/spikes/
-// admin-tui-desktop/variants.go:1400-1437). An empty registry returns
-// "nothing running" (commands-empty.txt).
+// what is running. An empty registry returns "nothing running".
 func othersRunning(selID string) string {
 	entries := livework.Default.List()
 	if len(entries) == 0 {
@@ -613,8 +589,7 @@ func (m Model) entryName(e *livework.Entry) string {
 
 // bandTitle is the rule between the row list and the live band: the
 // previewed row's own identity on the left, once, and the count of
-// everything else running on the right — ported from the design prototype
-// (docs/spikes/admin-tui-desktop/variants.go:1439-1473). live nil means the
+// everything else running on the right. live nil means the
 // previewed row is idle; name is the row's own identity (a command's name,
 // a target's "<cmd> <target>", or a worker's own name).
 func bandTitle(w int, live *livework.Entry, name string) string {
@@ -637,10 +612,9 @@ func bandTitle(w int, live *livework.Entry, name string) string {
 	return bandRule(w, titlePlain, titleStyled, othersRunning(selID))
 }
 
-// workersEmptyBand is the empty Workers tab's band (docs/spikes/
-// admin-tui-desktop/workers-empty.txt): the same rule, field slot and last
-// line as an idle command's band, so the tab keeps its one layout before the
-// first worker exists. Nothing is previewed, so the right side counts what
+// workersEmptyBand is the empty Workers tab's band: the same rule, field slot
+// and last line as an idle command's band, so the tab keeps its one layout
+// before the first worker exists. Nothing is previewed, so the right side counts what
 // is running rather than what else is.
 func workersEmptyBand(w, h int) []string {
 	right := strings.TrimPrefix(othersRunning(""), "also ")
@@ -758,10 +732,8 @@ func bandIdle(wd *workRowData, w int) []string {
 // its log path, then one row per configured url — sized to its own content:
 // a command with no url gets no url row at all, and one with several gets a
 // row for every one of them rather than being clipped at a fixed slot.
-// Ported from the design prototype's bandFields (docs/spikes/
-// admin-tui-desktop/variants.go:1475-1487); the url row reuses urlRow's own
-// reachability indicator rather than the prototype's plain string, since the
-// real app (unlike the fixture) actually probes.
+// The url row reuses urlRow's own reachability indicator, since the app
+// probes each url.
 func bandFieldsCommand(wd *workRowData, w int) []string {
 	lw := maxi(w-11, 8)
 	out := []string{" " + faintStyle.Render(padEnd("log", 9)) + faintStyle.Render(fitPath(wd.logPath, lw))}
@@ -773,9 +745,8 @@ func bandFieldsCommand(wd *workRowData, w int) []string {
 
 // bandFieldsWorker is the band's field block for a live worker: log,
 // branch, worktree, session, now — always all five, since a worker (unlike
-// a command) has no idle state to preview instead. Ported from the design
-// prototype's bandFields worker branch (docs/spikes/admin-tui-desktop/
-// variants.go:1489-1496); "now" is the worker's own self-reported Activity.
+// a command) has no idle state to preview instead. "now" is the worker's own
+// self-reported Activity.
 func bandFieldsWorker(e *livework.Entry, w int) []string {
 	lw := maxi(w-11, 8)
 	var branch, worktree string
@@ -794,8 +765,7 @@ func bandFieldsWorker(e *livework.Entry, w int) []string {
 }
 
 // sessionField is the worker band's "session" value: hosted-here vs a
-// detached launcher pane, ported from the design prototype's whereLabel
-// (docs/spikes/admin-tui-desktop/variants.go:604-609) — decided from Via,
+// detached launcher pane — decided from Via,
 // never from a possibly-empty Handle, the same rule whereSeg (below) already
 // follows for the Workers section's own where-column.
 func sessionField(e *livework.Entry, w int) string {
@@ -833,10 +803,8 @@ func bandTail(lines []string, avail, w int) []string {
 // fitPath keeps a log or worktree path absolute. When it will not fit,
 // whole segments go from the middle — "/Users/…/logs/docs.log" — so it
 // still reads as a path. A mid-rune cut produces "/Users/pierce/Proj…tool/"
-// and reads as corruption. Ported from the design prototype (docs/spikes/
-// admin-tui-desktop/variants.go:1278-1299). Replaces shortenLogPath, which
-// made a path relative to the process's cwd instead — the wrong rule per
-// the design README's own "Log paths are absolute" section.
+// and reads as corruption. A log path is always shown absolute, never
+// relative to the process's cwd.
 func fitPath(p string, w int) string {
 	if vlen(p) <= w {
 		return p
@@ -985,10 +953,8 @@ func urlRow(u frame.URLEntry, live bool, w int) string {
 // workerGlyph is the Workers-section state marker: the same waiting/failed
 // overrides as commandGlyph, but the default is the diamond ◈ — a worker row
 // is always a genuine agent session, never the plain-dot default commandGlyph
-// falls back to for a running/starting command (docs/spikes/admin-tui-
-// desktop/variants.go:1319-1331's isWorkerRow branch, applied here
-// unconditionally since renderWorkRow only reaches this for r.kind ==
-// rowWorker).
+// falls back to for a running/starting command. renderWorkRow only reaches
+// this for r.kind == rowWorker, so the diamond applies unconditionally.
 func workerGlyph(s livework.State) string {
 	switch s {
 	case livework.StateWaiting:

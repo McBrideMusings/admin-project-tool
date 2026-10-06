@@ -17,8 +17,7 @@ import (
 // admin-3rgp.72.11 ported the Commands section (flat commands and targets)
 // onto the Dock design's fixed column grid, whose running-row shape is
 // marker+name+state+elapsed+activity with no room left for a where-value
-// (docs/spikes/admin-tui-desktop/commands-running.txt:15 shows no such
-// text) — so the where-column is gone from THAT section's rows. It survives
+// — so the where-column is gone from THAT section's rows. It survives
 // unchanged on the Workers section below (out of scope for that ticket;
 // admin-3rgp.72.16 owns porting Workers onto this same grid) — the tests
 // below that still exercise a rowWorker row are untouched.

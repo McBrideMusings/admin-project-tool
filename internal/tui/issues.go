@@ -68,9 +68,9 @@ func (m Model) issueRows() []rowItem {
 // issueColumnWidths sizes the three right-hand columns shared by every issue
 // row: the number column widens for 5-digit+ issue numbers; the status column
 // fits the widest stage/assignee badge actually present; the label column
-// mirrors the original per-row width-responsive budget (mirrors the
-// prototype's issueLine), just computed once from the widest label list
-// instead of per row, so every row's column boundaries line up.
+// mirrors the original per-row width-responsive budget, just computed once
+// from the widest label list instead of per row, so every row's column
+// boundaries line up.
 func (m Model) issueColumnWidths(cols int, mine, unassigned, others []gh.IssueItem) (numW, statusW, labelW int) {
 	numW = 5
 	natLabelW := 0

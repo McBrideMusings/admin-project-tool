@@ -63,10 +63,9 @@ func TestBeadNeighbourhoodWalksBothWays(t *testing.T) {
 	}
 }
 
-// TestBeadGraphJunctions pins the two drawing rules the prototype learned the
-// hard way: two edges leaving the same box merge into the junction they form
-// rather than overwriting each other, and the arrowheads survive the box paint
-// because they are drawn after it.
+// TestBeadGraphJunctions pins two drawing rules: two edges leaving the same
+// box merge into the junction they form rather than overwriting each other,
+// and the arrowheads survive the box paint because they are drawn after it.
 func TestBeadGraphJunctions(t *testing.T) {
 	beads := []bd.Bead{
 		{ID: "bdtest-p", Title: "Parent", Status: "open", Type: "task"},

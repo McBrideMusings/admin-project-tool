@@ -256,14 +256,14 @@ run = "true"
 	}
 }
 
-// TestQuitConfirmMatchesDesignFrame compares the confirm box cell for cell
-// with the committed design frame (docs/spikes/admin-tui-desktop/
-// hosted-quit.txt, 96x30), fed the same two hosted processes the spike
-// lists, and checks the 80x24 placement follows the same centering.
-func TestQuitConfirmMatchesDesignFrame(t *testing.T) {
-	raw, err := os.ReadFile("../../docs/spikes/admin-tui-desktop/hosted-quit.txt")
+// TestQuitConfirmMatchesGolden compares the confirm box cell for cell with
+// testdata/quit-confirm-two.txt (96x30), fed the same two hosted processes
+// the golden frame lists, and checks the 80x24 placement follows the same
+// centering.
+func TestQuitConfirmMatchesGolden(t *testing.T) {
+	raw, err := os.ReadFile("testdata/quit-confirm-two.txt")
 	if err != nil {
-		t.Fatalf("read design frame: %v", err)
+		t.Fatalf("read golden frame: %v", err)
 	}
 	design := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
 
@@ -306,14 +306,13 @@ func TestQuitConfirmMatchesDesignFrame(t *testing.T) {
 
 // TestQuitConfirmCapsLongList proves a confirm listing more hosted processes
 // than the screen has rows for keeps its title and action row on screen: at
-// 96x30 the box matches the committed design frame (docs/spikes/
-// admin-tui-desktop/hosted-quit-many.txt) cell for cell, fed the same twenty
-// processes, and at 80x24 it sits flush under the tab separator and over the
-// footer rule, listing ten and counting the other ten.
+// 96x30 the box matches testdata/quit-confirm-twenty.txt cell for cell, fed
+// the same twenty processes, and at 80x24 it sits flush under the tab
+// separator and over the footer rule, listing ten and counting the other ten.
 func TestQuitConfirmCapsLongList(t *testing.T) {
-	raw, err := os.ReadFile("../../docs/spikes/admin-tui-desktop/hosted-quit-many.txt")
+	raw, err := os.ReadFile("testdata/quit-confirm-twenty.txt")
 	if err != nil {
-		t.Fatalf("read design frame: %v", err)
+		t.Fatalf("read golden frame: %v", err)
 	}
 	design := strings.Split(stripANSI(strings.TrimRight(string(raw), "\n")), "\n")
 

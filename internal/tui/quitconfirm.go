@@ -98,14 +98,12 @@ func (m Model) quitConfirmKey(key string) (tea.Model, tea.Cmd) {
 	}
 }
 
-// quitBoxInner is the confirm box's inner width — the design frame's
-// (docs/spikes/admin-tui-desktop/variants.go's overlayQuit), narrowed only
-// when the terminal cannot fit it.
+// quitBoxInner is the confirm box's inner width, narrowed only when the
+// terminal cannot fit it.
 const quitBoxInner = 60
 
 // overlayQuitConfirm draws the confirm box over the finished frame, so the
-// list and band stay visible around it, the way the design frame
-// (docs/spikes/admin-tui-desktop/hosted-quit.txt) places it: centered on the
+// list and band stay visible around it: centered on the
 // whole screen, never over the top three rows (header, tabs, separator) or
 // the bottom two (rule, keybar). The box gets at most the rows between those,
 // and when it is that tall it sits flush against them rather than centered, so

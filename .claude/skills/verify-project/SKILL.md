@@ -98,18 +98,6 @@ list. `right`/`left` switch tabs, so never use them to move the cursor; a digit 
 drawn tab (`2` is Workers). A dispatch started by `enter` is a real child that dies when the
 dump exits. Check at 80 columns as well as 96.
 
-**Compare against the design frames** in `docs/spikes/admin-tui-desktop/` by re-rendering the
-spike at the same geometry, never by eyeballing a 96-column frame against an 80-column one:
-
-```bash
-go run ./docs/spikes/admin-tui-desktop -dump -w 80 -h 24 -dir <scratch-dir>
-```
-
-`-w`/`-h` are the full terminal size. The `h=` in a spike frame's top row counts only the list
-and band, 5 rows fewer than the frame itself. With no `-dir` it writes every frame into the
-current directory (26 stray `.txt` files at the repo root); `-dir docs/spikes/admin-tui-desktop`
-rewrites the committed 96x30 frames, and a clean `git status` afterwards proves they are current.
-
 A behavioral change to `internal/tui` is also proven by:
 
 1. A focused `go test` exercising the exact `Model.Update` transition through its message

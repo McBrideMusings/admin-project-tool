@@ -146,9 +146,8 @@ func TestXKeyKillsLiveWorkerRow(t *testing.T) {
 }
 
 // TestWorkFooterMatchesFramesVerbatim is the AC "the footer text changes
-// between those states to match the frames verbatim" — docs/spikes/
-// admin-tui-desktop/commands.txt:30 for the idle case, commands-running.txt:
-// 30 (and swarm.txt:30, for a worker row) for the live case. Checked against
+// between those states" — one text for the idle case, another for the live
+// case (a command or a worker row). Checked against
 // workFooterPairs() directly — the same values view.go's viewKeymap() and
 // the case "k"/"x" handlers both key off — rather than the rendered ANSI
 // string, so this test can never pass by accident of two parallel
