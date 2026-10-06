@@ -217,6 +217,11 @@ func rmTarget(ctx context.Context, cwd, repoRoot, input string) (git.Worktree, e
 				return w, nil
 			}
 		}
+		// A directory that names no branch either — a subdirectory of a
+		// worktree, say — is a path typed by mistake, not a branch name.
+		if !git.BranchExistsLocal(ctx, repoRoot, input) {
+			return git.Worktree{}, fmt.Errorf("%s is not a registered worktree of %s", abs, repoRoot)
+		}
 	}
 	nwo, _ := git.OriginNWO(ctx, repoRoot)
 	plan, err := resolve.BranchInput(ctx, repoRoot, nwo, input)
