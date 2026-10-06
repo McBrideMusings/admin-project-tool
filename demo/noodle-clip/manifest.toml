@@ -1,0 +1,46 @@
+# Demo project for the portfolio tile. prepare.sh <dir> copies this file to <dir>/admin.toml
+# beside scripts/, in a throwaway git repo named `atlas`; run `admin` in <dir> to start.
+#
+# Keystrokes, in order, sent to the dashboard (becomes [clip].steps):
+#   sleep 300ms
+#   key   Down      # the first key only focuses the Commands list
+#   sleep 300ms
+#   key   Enter     # build starts, exits after ~1.4s
+#   sleep 500ms
+#   key   Down
+#   key   Enter     # dev starts and streams until killed
+#   sleep 500ms
+#   key   Down
+#   key   Enter     # test starts, exits after ~2.1s
+#   sleep 1600ms
+#   key   Up
+#   key   Enter     # attach to dev: full-screen coloured log stream
+#   sleep 2200ms
+# Steps total 5.9s.
+project_name = "atlas"
+archetypes   = []
+modules      = ["core"]
+
+[commands.dev]
+desc  = "Run the dev server"
+steps = ["dev"]
+
+[commands.build]
+desc  = "Build the app for production"
+steps = ["build"]
+
+[commands.test]
+desc  = "Run the test suite"
+steps = ["test"]
+
+[actions.dev]
+kind = "shell"
+run  = "bash scripts/dev.sh"
+
+[actions.build]
+kind = "shell"
+run  = "bash scripts/build.sh"
+
+[actions.test]
+kind = "shell"
+run  = "bash scripts/test.sh"
