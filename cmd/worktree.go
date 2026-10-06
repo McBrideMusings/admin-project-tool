@@ -32,6 +32,9 @@ gitignored, so a fresh worktree has no task runner until it is seeded.
 
 With no input, opens the dashboard so you can pick one instead.
 
+'admin worktree rm <input>' removes one worktree and its branch; a branch
+literally named "rm" is reached with 'admin worktree -- rm'.
+
 Contrast 'admin branch <input>', which resolves the same input set but checks
 the branch out in the CURRENT working tree, with no new worktree.`,
 	Args: cobra.MaximumNArgs(1),
