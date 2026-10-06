@@ -27,4 +27,4 @@
                                                                                                 
  output appears here while it runs                                                              
 ────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ body · c collapse · q/esc quit · 1-5 jump · ↓ body · o config · ←→ tab             
+ ↓/↵ body · c collapse · q/esc quit · 1-5 jump · o config · ←→ tab                              

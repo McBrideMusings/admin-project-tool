@@ -28,6 +28,7 @@ No row carries a kind column — the kind is a band field.
 | `commands-running-status.txt` | `commands-running.txt` for the same project — a url the `urls` list named by its `[status]` entry reads `● local  http://…` |
 | `commands-empty.txt` | Nothing running and no workers |
 | `commands-collapsed.txt` | Collapse mode (`c`): the group the cursor is in stays open; every other group is a closed row, `▸ dev (2)`, naming how many targets it hides. The footer reads `c expand` |
+| `commands-launch.txt` | What admin opens on: focus on the tab bar. The active pill is the one solid element, no row wears `◆`, the band previews the first row, and the footer reads `↓/↵ body` (`↑` does nothing from there) with `1-5 jump`. One `↓` or `↵` lands in `commands.txt` |
 | `commands-workflow-selected.txt` | A workflow entry selected — targets are tracker items, so `↵` dispatches an agent |
 | `running.txt` | The Workers tab, cursor on a waiting worker; the band shows log, branch, worktree, session, now, tail |
 | `swarm.txt` | The Workers tab, cursor on a failed worker; the same band fields |

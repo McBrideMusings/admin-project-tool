@@ -27,4 +27,4 @@
                                                                                                 
                                                                                                 
 ───────────────────────────────────────── dependency tree — blockers sit above what they block ─
- ↑↓ move · ↵ start work · d detail · g tree · s sort · / filter · q quit · o config · ←→ tab    
+ ↵ start work · d detail · g tree · s sort · / filter · r refresh · q quit · o config · ←→ tab  

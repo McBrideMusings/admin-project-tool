@@ -729,34 +729,27 @@ func (m Model) keymap() [][2]string {
 		// Focus on the tab bar still shows the tab's full hotkey set
 		// (viewKeymap() falls back to builtinPairs(k) via rowPairs() since
 		// there's no current row to apply a manifest [keys.<kind>] override
-		// to) — plus the tab-bar-only nav pairs, merged in rather than
-		// replacing the row-scoped keys outright (admin-wuz9.1). Previously
-		// (admin-70hb, AC9) this branch returned a hardcoded 3-key nav slice
-		// instead, hiding the tab's real hotkeys until focus left the bar.
+		// to), plus the tab-bar-only nav pairs (admin-wuz9.1).
+		//
+		// From here up does nothing, and down and enter both call
+		// enterBody(), which declines with no rows. So "↑↓ move" always goes,
+		// and with rows "↓/↵ body" leads in place of the row kind's own "↵"
+		// label (e.g. "checkout"), an action enter doesn't take here.
+		hasRows := m.bodyRowCount() > 0
+		var out [][2]string // fresh backing array: pairs may alias a shared table
+		if hasRows {
+			out = append(out, [2]string{"↓/↵", "body"})
+		}
+		for _, p := range pairs {
+			if p[0] == "↑↓" || (p[0] == "↵" && hasRows) {
+				continue
+			}
+			out = append(out, p)
+		}
+		pairs = out
 		jump := fmt.Sprintf("1-%d", len(m.visibleTabs()))
 		if !hasKey(pairs, jump) {
 			pairs = append(pairs, [2]string{jump, "jump"})
-		}
-		if m.bodyRowCount() > 0 && !hasKey(pairs, "↓") {
-			pairs = append(pairs, [2]string{"↓", "body"})
-		}
-		// While focus is on the tab bar, enter calls enterBody() — the same
-		// action "↓ body" already advertises — not whatever the active
-		// tab's row kind labels it (e.g. "start work", "checkout"). That
-		// row-kind label is only true once focus moves into the body, so
-		// overwrite the pre-existing "↵" pair in place rather than let it
-		// advertise an action enter doesn't perform in this focus state
-		// (admin-wuz9.1). enterBody() itself declines with no rows, so
-		// leave the row-kind's label alone in that case — same as the
-		// other row-scoped keys (d, g, s, w, /), which are genuine no-ops
-		// while tab-bar-focused.
-		if m.bodyRowCount() > 0 {
-			for i := range pairs {
-				if pairs[i][0] == "↵" {
-					pairs[i][1] = "body"
-					break
-				}
-			}
 		}
 	}
 	// A row that binds `o` in [keys.<kind>] (ADR-0018) is dispatched by

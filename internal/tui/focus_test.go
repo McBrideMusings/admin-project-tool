@@ -240,6 +240,18 @@ func TestEmptyBodyDoesNotTrapFocus(t *testing.T) {
 	}
 }
 
+// TestEmptyBodyKeybarOffersNoBody: with no rows, ↓ and ↵ cannot reach a body,
+// so the tab-bar footer offers neither "↑↓ move" nor "↓/↵ body".
+func TestEmptyBodyKeybarOffersNoBody(t *testing.T) {
+	m := workFocusModel()
+	m.active = tabIssues
+	for _, p := range m.keymap() {
+		if p[0] == "↑↓" || p[0] == "↓/↵" {
+			t.Errorf("empty-bodied tab-bar keymap = %v, want no %q pair", m.keymap(), p[0])
+		}
+	}
+}
+
 // TestClickSetsFocus is AC8: clicking a tab (tabBarHit) and clicking a row
 // each set focus to what was clicked.
 func TestClickSetsFocus(t *testing.T) {
@@ -323,21 +335,23 @@ func TestKeybarFollowsFocus(t *testing.T) {
 	if foundKill || foundAttach {
 		t.Errorf("tab-bar keymap on the Work tab = %v, want no row-scoped %q/%q pairs — there is no current row while the tab bar has focus", tabsPairs, "kill", "attach")
 	}
-	// enter calls enterBody() while focus is on the tab bar — the same
-	// action "↓ body" already advertises — not tabWork's own row-kind
-	// label ("open, run or attach"), which only applies once focus is in
-	// the body (admin-wuz9.1).
+	// From the tab bar up does nothing and down and enter both call
+	// enterBody(), so neither "↑↓ move" nor the row kind's own "↵" label may
+	// appear; down and enter share one "↓/↵ body" pair.
 	foundEnterBody := false
 	for _, p := range tabsPairs {
-		if p[0] == "↵" {
+		switch p[0] {
+		case "↓/↵":
 			if p[1] != "body" {
-				t.Errorf("tab-bar keymap ↵ pair = %q, want %q (enter moves focus into the body while tab-bar-focused, it doesn't run the row kind's own action)", p[1], "body")
+				t.Errorf("tab-bar keymap ↓/↵ pair = %q, want %q", p[1], "body")
 			}
 			foundEnterBody = true
+		case "↑↓", "↵", "↓":
+			t.Errorf("tab-bar keymap = %v, want no %q pair — only ↓/↵ body", tabsPairs, p[0])
 		}
 	}
 	if !foundEnterBody {
-		t.Errorf("tab-bar keymap = %v, want a ↵ pair", tabsPairs)
+		t.Errorf("tab-bar keymap = %v, want a ↓/↵ body pair", tabsPairs)
 	}
 
 	m.enterBody()

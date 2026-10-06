@@ -49,6 +49,8 @@ var Axes = []Axis{
 		// stateName() keys dumps by value, not position — it only changes
 		// the launch default and the ⌥s cycle order.
 		"commands", "commands-running", "commands-empty", "commands-collapsed",
+		// What admin opens on: focus still on the tab bar (admin-70hb).
+		"commands-launch",
 		// The same two screens for a project declaring [status] entries.
 		"commands-status", "commands-running-status",
 		// The Work tab's live states, then the rest of the reference frames.
@@ -75,14 +77,15 @@ var Axes = []Axis{
 }
 
 var (
-	dim  = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(8))
-	cy   = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(6))
-	gr   = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(2))
-	yl   = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(3))
-	rd   = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(1))
-	mg   = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(5))
-	bo   = lipgloss.NewStyle().Bold(true)
-	pill = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(0)).Background(lipgloss.ANSIColor(6)).Bold(true)
+	dim         = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(8))
+	cy          = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(6))
+	gr          = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(2))
+	yl          = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(3))
+	rd          = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(1))
+	mg          = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(5))
+	bo          = lipgloss.NewStyle().Bold(true)
+	pill        = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(0)).Background(lipgloss.ANSIColor(6)).Bold(true)
+	pillOutline = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(6)).Bold(true)
 )
 
 // Settled: a right-aligned word per row — "hosted" for a child process this
@@ -289,6 +292,10 @@ type screenSpec struct {
 	// group the cursor is in shows its targets, and every other group is a
 	// closed row naming how many it hides.
 	collapsed bool
+	// tabFocus draws focus on the tab bar, where a fresh dashboard opens
+	// (admin-70hb): the active pill is the one solid element on screen, no
+	// list row wears ◆, and the footer offers the tab bar's own keys.
+	tabFocus bool
 }
 
 // The tabs, in the order the real dashboard draws them (internal/tui/model.go's
@@ -333,6 +340,9 @@ var screens = map[string]screenSpec{
 	// The cursor on deploy's first target with collapse mode on: deploy stays
 	// open, every other group is closed.
 	"commands-collapsed": {tab: tabCommands, liveSel: -1, collapsed: true},
+	// The list as admin opens it, focus still on the tab bar. The band
+	// previews the row ↓ or ↵ lands on.
+	"commands-launch": {tab: tabCommands, liveSel: -1, tabFocus: true},
 	// commands and commands-running for a project declaring [status] entries.
 	"commands-status":         {tab: tabCommands, liveSel: -1, status: true},
 	"commands-running-status": {tab: tabCommands, liveSel: -1, cmdSel: 9, status: true},
@@ -1929,7 +1939,11 @@ func render(s State) string {
 						selLive, selEntry = lr, nil
 					}
 				}
-				list = commandSections(fullW, cursor, empty)
+				mark := cursor
+				if sp.tabFocus {
+					mark = -1 // focus is on the tab bar, so no row is the cursor
+				}
+				list = commandSections(fullW, mark, empty)
 			}
 			action = rowAction(selLive, onWorkersTab(name))
 			var strip []string
@@ -2013,8 +2027,12 @@ func tabBar(sp screenSpec, w int, tracker string, empty bool) string {
 			b.WriteString("   ")
 		}
 		label := " " + t + " "
-		if i == active {
+		if i == active && sp.tabFocus {
 			b.WriteString(pill.Render(label))
+		} else if i == active {
+			// Focus in the body outlines the pill, so the cursor row is the
+			// one solid element on screen (internal/tui/view.go's tab bar).
+			b.WriteString(pillOutline.Render(label))
 		} else {
 			b.WriteString(dim.Render(label))
 		}
@@ -2114,6 +2132,11 @@ func placeBox(rows, box []string, w, h, bw int) []string {
 // Commands tab's targets, so the Workers tab does not offer it; while folded it
 // reads `c expand`, naming what pressing it does.
 func keys(sp screenSpec, action string) string {
+	if sp.tabFocus {
+		// From the tab bar ↑ does nothing and ↓ and ↵ both enter the list;
+		// the row's own keys wait until focus is there. The digits jump tabs.
+		return "↓/↵ body · c collapse · q/esc quit · 1-5 jump · o config · ←→ tab"
+	}
 	if sp.tab <= tabWorkers && !sp.hosted && !sp.sheet {
 		k := "↑↓ move · ↵ " + action
 		if action == "attach" {
