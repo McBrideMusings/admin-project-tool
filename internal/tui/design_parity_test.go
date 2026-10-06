@@ -108,7 +108,8 @@ func TestRepoTabLayout(t *testing.T) {
 		// state glyph renders ◇ for all of them — ownership is carried by color
 		// alone (invisible to stripANSI), not by a distinct shape.
 		"⇅ next action", "◆", "main", "Continue Working", "Reviewing", "◇ ", "19m",
-		"  Repo ", "PRs 2",
+		// The Repo badge counts local branches, the default branch excluded.
+		"  Repo "+strconv.Itoa(len(m.local.branches)-1)+" ", "PRs 2",
 		// The footer no longer advertises `space select` — the key still works,
 		// it just isn't a hint the Branches pane spends footer width on.
 		"↑↓ move", "↵ checkout", "⇥ pane", "←→ tab",
@@ -123,7 +124,7 @@ func TestListTabsDesign(t *testing.T) {
 	m := protoModel()
 	m.active = tabPRs
 	mustContainAll(t, "PRs", stripANSI(m.View()),
-		"Mine", "✓ #1092", "in review", "Needs me", "needs review", "@mate", "Waiting on others")
+		"Mine", "○ #1092", "Needs me", "needs review", "@mate", "Waiting on others")
 	m.active = tabIssues
 	mustContainAll(t, "Issues", stripANSI(m.View()),
 		"Assigned to me", "✓ #1148", "cloudflare", "PR open", "Unassigned", "Assigned to someone else")

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"strconv"
 	"strings"
 
@@ -80,47 +81,118 @@ func rowCellR(s string, n int, fg lipgloss.TerminalColor) seg {
 	return seg{t: padN(n-vlen(t)) + t, fg: fg}
 }
 
-// readyColor: green proves deleting is free, yellow says something would be lost,
-// blue says it is live work and the question does not arise.
-func readyColor(ready string) lipgloss.TerminalColor {
-	switch ready {
-	case "ready":
-		return cGreen
-	case "held":
-		return cYellow
-	}
-	return cBlue
-}
-
-// stateColor tracks what the word means, not which section it sits in: red is
-// something broken, green is a standing approval, dim is finished.
+// stateColor is the state word's color: red for a worktree stopped on
+// something, dim for a landing proof.
 func (m Model) stateColor(r paneRow) lipgloss.TerminalColor {
-	switch {
-	case len(r.broken) > 0:
+	if len(r.broken) > 0 && r.sec != secCleanup {
 		return cRed
-	case r.sec == secCleanup:
-		return cDim
-	case r.state == "approved":
-		return cGreen
-	case r.state == "draft":
-		return cMag
 	}
-	return cCyan
+	return cDim
 }
 
-// nullState: the state words that mean "this field has no value" — printed as a
-// blank padded cell.
-func nullState(s string) bool {
-	return s == "empty" || s == "no commits"
+// prText is the row's PR cell as plain text — "#287 ○" (the number and prMark),
+// then any state word ("#287 ≠ rebasing"), or a landing proof alone ("merged"),
+// or "" for a branch with neither. planColumns measures rows by this exact
+// string, so prSegs must draw the same characters.
+func prText(r paneRow) string {
+	var parts []string
+	if r.prNum > 0 {
+		parts = append(parts, "#"+strconv.Itoa(r.prNum))
+	}
+	if r.pr != nil {
+		parts = append(parts, prMark(r.pr).t)
+	}
+	if r.state != "" && r.state != "empty" {
+		parts = append(parts, r.state)
+	}
+	return strings.Join(parts, " ")
 }
 
-// stateCell renders the state, blanking the cell when the state is a null word
-// but keeping the cell's padding so column offsets do not shift.
-func stateCell(r paneRow) string {
-	if nullState(r.state) {
-		return ""
+// colWidths is the PR and git column widths a section's plan settled on, or the
+// caps for an unplanned row.
+func colWidths(plan columnPlan) (prW, gitW int) {
+	prW, gitW = plan.prW, plan.gitW
+	if prW == 0 {
+		prW = brPRW
 	}
-	return r.state
+	if gitW == 0 {
+		gitW = brGitW
+	}
+	return prW, gitW
+}
+
+// prSegs draws prText in exactly n cells: the number cyan (a link to the
+// PR), the mark in its own color, the word in stateColor.
+func (m Model) prSegs(r paneRow, n int) []seg {
+	var segs []seg
+	add := func(sg seg) {
+		if len(segs) > 0 {
+			segs = append(segs, seg{t: " "})
+		}
+		segs = append(segs, sg)
+	}
+	if r.prNum > 0 {
+		add(seg{t: "#" + strconv.Itoa(r.prNum), fg: cCyan, link: gh.PRURL(m.nwo, r.prNum)})
+	}
+	if r.pr != nil {
+		add(prMark(r.pr))
+	}
+	if r.state != "" && r.state != "empty" {
+		add(seg{t: r.state, fg: m.stateColor(r)})
+	}
+	return fitCell(segs, n)
+}
+
+// gitText is the row's git cell in `git status` notation — "↑6 ↓47 ~13": ↑ commits
+// not on origin, ↓ commits behind the default branch, ~ files changed in the
+// worktree. A zero count is left out, so a branch fully pushed, current and clean
+// reads blank. See paneRow.ahead.
+func gitText(r paneRow) string {
+	return strings.Join(gitParts(r), " ")
+}
+
+func gitParts(r paneRow) []string {
+	var parts []string
+	if r.ahead > 0 {
+		parts = append(parts, "↑"+strconv.Itoa(r.ahead))
+	}
+	if r.behind > 0 {
+		parts = append(parts, "↓"+strconv.Itoa(r.behind))
+	}
+	if r.changed > 0 {
+		parts = append(parts, "~"+strconv.Itoa(r.changed))
+	}
+	return parts
+}
+
+// gitSegs draws gitText in exactly n cells, in the colors styles.go assigns
+// these marks everywhere: ↑ green, ↓ red, ~ yellow.
+func gitSegs(r paneRow, n int) []seg {
+	var segs []seg
+	for i, p := range gitParts(r) {
+		if i > 0 {
+			segs = append(segs, seg{t: " "})
+		}
+		fg := cGreen
+		switch {
+		case strings.HasPrefix(p, "↓"):
+			fg = cRed
+		case strings.HasPrefix(p, "~"):
+			fg = cYellow
+		}
+		segs = append(segs, seg{t: p, fg: fg})
+	}
+	return fitCell(segs, n)
+}
+
+// fitCell truncates a run of segments to n cells and pads it to exactly n — rowCell
+// for a cell drawn in more than one color.
+func fitCell(segs []seg, n int) []seg {
+	segs = fitSegs(segs, n)
+	if w := segsWidth(segs); w < n {
+		segs = append(segs, seg{t: padN(n - w)})
+	}
+	return segs
 }
 
 // branchRowLayout is which optional right-hand columns fit at width w, and how
@@ -137,18 +209,20 @@ type branchRowLayout struct {
 
 // branchRowLayout mirrors brPanelLine's own right-column budgeting exactly:
 // columns are kept while they fit, least dispensable first, so a narrow pane
-// loses whole columns instead of squeezing every value into an ellipsis. A
-// dropped column is a decision the row can explain; a line reading "dar…"
-// "conf…" "456 …" is one nobody can read. Their left-to-right ORDER never
-// changes, whichever survive — a column that moves when the terminal is resized
-// is no longer a column.
+// loses whole columns instead of squeezing every value into an ellipsis. Their
+// left-to-right ORDER never changes, whichever survive — a column that moves when
+// the terminal is resized is no longer a column.
 //
 // plan.drop skips a column before the fit test ever runs: a column this row's
 // SECTION hoisted onto its own rule (or dropped as constantly empty) consumes
-// no width budget at all, and the surplus flows to nameW the same way a column
-// that simply didn't fit would. That skip must `continue`, never `break` — a
-// dropped column must never stop the scan from reaching a later one that
-// would otherwise fit.
+// no width budget at all, and the surplus flows to the name. That skip must
+// `continue`, never `break` — a dropped column must never stop the scan from
+// reaching a later one that would otherwise fit.
+//
+// The name outranks the purpose. The purpose is a column on the row only when
+// the section's longest name fits whole AND brPurposeMinW cells are left after
+// it; otherwise the purpose moves to the row's second line and the name takes
+// the whole flexible width.
 func (m Model) branchRowLayout(r paneRow, w int, plan columnPlan) branchRowLayout {
 	keep := map[string]bool{}
 	g := gutterWidth(m.selectMode())
@@ -156,18 +230,18 @@ func (m Model) branchRowLayout(r paneRow, w int, plan columnPlan) branchRowLayou
 	// the name and the columns; 8 for the least a name can say.
 	used := g + 1 + 8 + brAgeW + 1
 	rightW := brAgeW
+	prW, gitW := colWidths(plan)
 	for _, col := range []struct {
 		name string
 		w    int
 	}{
-		{"ready", brReadyW}, {"state", brStateW}, {"owner", brOwnerW}, {"hold", brHoldW},
+		{"pr", prW}, {"git", gitW}, {"owner", brOwnerW},
 	} {
 		if plan.drop[col.name] {
 			continue
 		}
 		// +1 for the gap that follows every column. Without it a value that exactly
-		// fills its width butts against the next one ("remote deletedactive") and the
-		// two read as a single word.
+		// fills its width butts against the next one and the two read as one word.
 		if used+col.w+1 > w {
 			break
 		}
@@ -178,40 +252,15 @@ func (m Model) branchRowLayout(r paneRow, w int, plan columnPlan) branchRowLayou
 	// gutter(g) plus 1 for the separator composeLR always inserts between the name
 	// and the right-hand columns — flexWidth's `fixed` has to include that forced
 	// gap or the row comes out exactly one cell wider than w.
-	nameW := flexWidth(w, g+1, rightW, 8)
-	// With room for a readable name AND a readable purpose, the purpose is a column
-	// on this row and its second line goes away. The split is per layout, and the
-	// layout is per section plan, so every row of a section decides the same way.
-	// Below that threshold the name keeps the whole flexible width and the purpose
-	// stays on its own line, as before.
-	if r.sec.showsPurpose() && nameW >= brNameMinW+1+brPurposeMinW {
-		name := min(brNameMaxW, nameW-1-brPurposeMinW)
-		return branchRowLayout{keep: keep, nameW: name, purposeW: nameW - name - 1}
+	flexW := flexWidth(w, g+1, rightW, 8)
+	name := plan.nameW
+	if name == 0 {
+		name = vlen(r.name)
 	}
-	return branchRowLayout{keep: keep, nameW: nameW}
-}
-
-// stateColumnEnd is the cell offset, from the left edge of the row, where the
-// state column's right edge falls — or, if state itself was dropped for width,
-// wherever the row's content stops before it. The purpose subline is capped to
-// this so it never runs on past where "draft" / "conflicts" / "no commits" sits
-// on the row above: the two lines describe the same branch, and a subline that
-// sprawls under the hold/ready/age columns reads as unrelated to the state word
-// it is actually elaborating on. Note: null state words ("empty" / "no commits")
-// are rendered as blank padded cells at the render layer, but are semantically
-// intact in r.state for the purpose of stateColor and classifySection.
-func (m Model) stateColumnEnd(r paneRow, w int, plan columnPlan) int {
-	layout := m.branchRowLayout(r, w, plan)
-	// gutter(left fixed) + name + 1(forced separator) is where the right-hand
-	// columns begin; owner sits before state when both are kept.
-	pos := gutterWidth(m.selectMode()) + layout.nameW + 1
-	if layout.keep["owner"] {
-		pos += brOwnerW + 1
+	if r.sec.showsPurpose() && flexW-name-1 >= brPurposeMinW {
+		return branchRowLayout{keep: keep, nameW: name, purposeW: flexW - name - 1}
 	}
-	if layout.keep["state"] {
-		pos += brStateW
-	}
-	return pos
+	return branchRowLayout{keep: keep, nameW: flexW}
 }
 
 // brGlyph is the row's single leading state glyph: shape carries worktree/
@@ -264,41 +313,24 @@ func (m Model) gutterSegs(r paneRow, b git.BranchInfo) []seg {
 	return append(segs, brGlyph(r, b), seg{t: " "})
 }
 
-// brPanelLine renders one branch row: the gutter, the name, then up to four
-// fixed columns. The gutter's glyph is the ownership/worktree state — see
-// brGlyph — so the axis the sections group on is readable straight down the
-// left edge without reading a heading.
+// brPanelLine renders one branch row: the gutter, the name, the purpose when it
+// fits inline, then owner (Reviewing only), the PR cell, the git cell and age.
+// The gutter's glyph is the ownership/worktree state — see brGlyph — so the axis
+// the sections group on is readable straight down the left edge.
 func (m Model) brPanelLine(r paneRow, b git.BranchInfo, w int, plan columnPlan) []seg {
-	ownerColor := cFaint
-	switch {
-	case r.owner.unknown:
-		ownerColor = cMag
-	case r.owner.mine:
-		ownerColor = cGreen
-	}
-
-	owner, ready := r.owner.who, r.ready
-	if r.sec == secMain {
-		// The default branch has no owner and is never a delete candidate; blanking
-		// those two cells says so more plainly than filling them with a verdict that
-		// does not apply.
-		owner, ready = "", ""
-	}
 	layout := m.branchRowLayout(r, w, plan)
 	keep, nameW := layout.keep, layout.nameW
+	prW, gitW := colWidths(plan)
 	var right []seg
-	addCol := func(s seg) { right = append(right, s, seg{t: " "}) }
+	addCol := func(s ...seg) { right = append(append(right, s...), seg{t: " "}) }
 	if keep["owner"] {
-		addCol(rowCell(owner, brOwnerW, ownerColor))
+		addCol(rowCell(ownerCell(r), brOwnerW, cSlate))
 	}
-	if keep["state"] {
-		addCol(rowCell(stateCell(r), brStateW, m.stateColor(r)))
+	if keep["pr"] {
+		addCol(m.prSegs(r, prW)...)
 	}
-	if keep["hold"] {
-		addCol(rowCell(strings.Join(r.holds, " · "), brHoldW, cYellow))
-	}
-	if keep["ready"] {
-		addCol(rowCellR(ready, brReadyW, readyColor(r.ready)))
+	if keep["git"] {
+		addCol(gitSegs(r, gitW)...)
 	}
 	right = append(right, rowCellR(compactAge(b.LastCommit), brAgeW, cDim))
 
@@ -367,12 +399,32 @@ func (m Model) brSubLine(r paneRow, w int, plan columnPlan) []seg {
 		segs = append(segs, link)
 		used += vlen(label)
 	}
-	// Capped to where the state column ends on the row above, not the full pane
-	// width — the subline elaborates on that state word, and letting it run on
-	// under the hold/ready/age columns instead reads as unrelated to it.
-	maxText := mini(w-used, m.stateColumnEnd(r, w, plan)-used)
+	// Capped to where the PR cell ends on the row above, not the full pane width —
+	// the subline says what that branch and its PR are for, and letting it run on
+	// under the git and age cells reads as part of them.
+	maxText := mini(w-used, m.prColumnEnd(r, w, plan)-used)
 	segs = append(segs, rowCell(r.purpose.text, maxi(0, maxText), cDim))
 	return segs
+}
+
+// prColumnEnd is the cell offset, from the row's left edge, where the PR cell's
+// right edge falls — or where the name column ends when the PR cell was dropped
+// for width or hoisted. brSubLine caps the purpose subline to it.
+func (m Model) prColumnEnd(r paneRow, w int, plan columnPlan) int {
+	layout := m.branchRowLayout(r, w, plan)
+	pos := gutterWidth(m.selectMode()) + layout.nameW
+	if layout.purposeW > 0 {
+		pos += 1 + layout.purposeW
+	}
+	pos++ // the separator composeLR always keeps after the name
+	if layout.keep["owner"] {
+		pos += brOwnerW + 1
+	}
+	if layout.keep["pr"] {
+		prW, _ := colWidths(plan)
+		pos += prW
+	}
+	return pos
 }
 
 // purposeColor separates a statement of intent from a description of a change: a
@@ -390,42 +442,24 @@ func purposeColor(src string) lipgloss.TerminalColor {
 	return cFaint
 }
 
-// brSectionLine is a section heading: its title, a rule, the measurement that
-// files branches here, and the count. The rule is on screen rather than in the
-// docs because a section whose membership you cannot account for is one you end up
-// re-deriving by reading its contents.
-//
-// chips are the values planColumns hoisted off this section's own rows because
-// every row agreed on them — a heading reading "Clean Up  ── merged · ready ── 6"
-// says once what every row would otherwise have repeated. The chip run is
-// dropped entirely, never squeezed, when it wouldn't leave room for at least a
-// short dash fill: a heading that doesn't fit is worse than one that says
-// nothing extra.
-func brSectionLine(sec section, n, w int, chips []string) []seg {
+// brSectionLine is a section heading: its title, a rule, and the count. legend,
+// when given, sits on the rule after the title.
+func brSectionLine(sec section, n, w int, legend []seg) []seg {
 	title := " " + sectionTitle[sec] + "  "
 	count := strconv.Itoa(n)
-	const minFill = 3
-	var chip seg
-	chipLen := 0
-	if len(chips) > 0 {
-		chip = seg{t: "── " + strings.Join(chips, " · ") + " ", fg: cFaint}
-		chipLen = vlen(chip.t)
+	out := []seg{{t: title, fg: cBright}}
+	fill := w - vlen(title) - vlen(count) - 2
+	if lw := segsWidth(legend); legend != nil && fill-lw-4 >= 4 {
+		out = append(out, seg{t: "── ", fg: cFaint})
+		out = append(out, legend...)
+		out = append(out, seg{t: " ", fg: cFaint})
+		fill -= lw + 4
 	}
-	fill := w - vlen(title) - chipLen - vlen(count) - 2
-	if chipLen > 0 && fill < minFill {
-		chip, chipLen = seg{}, 0
-		fill = w - vlen(title) - vlen(count) - 2
-	}
-	segs := []seg{{t: title, fg: cBright}}
-	if chipLen > 0 {
-		segs = append(segs, chip)
-	}
-	segs = append(segs,
+	return append(out,
 		seg{t: strings.Repeat("─", maxi(0, fill)), fg: cFaint},
 		seg{t: "  ", fg: cFaint},
 		seg{t: count, fg: cGreen},
 	)
-	return segs
 }
 
 // branchOnOrigin reports whether origin currently carries a branch of this name,

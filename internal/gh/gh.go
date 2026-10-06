@@ -378,6 +378,7 @@ type OpenPR struct {
 	Title      string
 	Author     string
 	HeadBranch string
+	HeadOID    string // head commit SHA — ties a local branch pushed under another name to its PR
 	IsDraft    bool
 	Mergeable  string // "MERGEABLE", "CONFLICTING", "UNKNOWN"
 	Checks     CheckState
@@ -396,6 +397,7 @@ type openPRNode struct {
 	Number      int    `json:"number"`
 	Title       string `json:"title"`
 	HeadRefName string `json:"headRefName"`
+	HeadRefOid  string `json:"headRefOid"`
 	IsDraft     bool   `json:"isDraft"`
 	Mergeable   string `json:"mergeable"`
 	UpdatedAt   string `json:"updatedAt"`
@@ -540,6 +542,7 @@ func (n openPRNode) toOpenPR(login string) OpenPR {
 		Title:      n.Title,
 		Author:     n.Author.Login,
 		HeadBranch: n.HeadRefName,
+		HeadOID:    n.HeadRefOid,
 		IsDraft:    n.IsDraft,
 		Mergeable:  n.Mergeable,
 		Checks:     n.reviewClassInput.checks(),
@@ -564,6 +567,7 @@ query($q: String!, $after: String) {
         number
         title
         headRefName
+        headRefOid
         isDraft
         mergeable
         updatedAt
@@ -888,6 +892,7 @@ query($owner: String!, $name: String!, $number: Int!) {
       number
       title
       headRefName
+      headRefOid
       isDraft
       mergeable
       updatedAt

@@ -11,14 +11,63 @@ import (
 // The Branches pane, assembled: one paneRow per branch, grouped by what you do
 // next. See section.go for the ladder and ownership.go for what "yours" means.
 
-// openPRFor returns the open PR whose head is this branch, or nil.
+// openPRFor returns the open PR whose head is this branch, or nil. Three ways in,
+// first hit wins:
+//
+//   - the PR's head has this branch's name;
+//   - the PR's head is this branch's upstream — pushed as `HEAD:other-name` with
+//     tracking, so GitHub knows the work only by the remote name;
+//   - the PR's head commit is this branch's tip — pushed under another name with
+//     no tracking at all, or tracking origin/main because it was cut from it.
+//
+// The last two skip a PR whose head name is another LOCAL branch: that branch is
+// the PR's, and a second branch that merely tracks it or sits on the same commit
+// is not its own claim on it.
+//
+// With none of those, a branch whose tip is inside an open PR's head — the base
+// of a stack, a mid-tier feature with the branch it was built for on top — takes
+// the nearest such PR (fewest commits above its tip). Only then: a base that has
+// a PR of its own was matched above and keeps it, so two branches meant to be
+// reviewed separately always show their separate PRs.
 func (m Model) openPRFor(branch string) *gh.OpenPR {
 	for i := range m.remote.PRs {
 		if m.remote.PRs[i].HeadBranch == branch {
 			return &m.remote.PRs[i]
 		}
 	}
-	return nil
+	local := map[string]bool{}
+	for _, b := range m.local.branches {
+		local[b.Name] = true
+	}
+	upstream := m.local.signals[branch].upstream
+	tip := m.local.tips[branch]
+	var byTip *gh.OpenPR
+	for i := range m.remote.PRs {
+		pr := &m.remote.PRs[i]
+		if local[pr.HeadBranch] {
+			continue
+		}
+		if upstream != "" && upstream != m.def && pr.HeadBranch == upstream {
+			return pr
+		}
+		if byTip == nil && tip != "" && pr.HeadOID == tip {
+			byTip = pr
+		}
+	}
+	if byTip != nil {
+		return byTip
+	}
+	var nearest *gh.OpenPR
+	best := 0
+	for i := range m.remote.PRs {
+		pr := &m.remote.PRs[i]
+		above, ok := m.local.containedIn[branch][pr.HeadBranch]
+		if !ok || (nearest != nil && above >= best) {
+			continue
+		}
+		nearest, best = pr, above
+	}
+	return nearest
 }
 
 // rowFor resolves one branch into everything the pane draws. Every field comes
@@ -42,12 +91,7 @@ func (m Model) rowFor(b git.BranchInfo) paneRow {
 	}
 	st := m.local.wtState[wtPath]
 	broken := blockers(pr, m.worktreeOp(wtPath), st.conflicts)
-	ahead := b.Ahead
-	if !b.HasRemote {
-		// With no counterpart on origin, "ahead" has to be measured against the default
-		// branch — there is nothing else for the commits to be ahead OF.
-		ahead = m.local.aheadDefault[b.Name]
-	}
+	ahead := m.local.unpushed[b.Name]
 	holds := holdsOf(st.changed, m.local.branchUnsafe[b.Name], ahead, landed)
 	// Being worked on right now holds a branch ONLY where the clock is carrying real
 	// information — an `empty` branch, or one with no proof at all, where "cut ten
@@ -75,22 +119,16 @@ func (m Model) rowFor(b git.BranchInfo) paneRow {
 	}
 	r.sec = classifySection(protected, own, landed, pr, broken, holds)
 	r.state = stateWord(r, landed)
-	if r.state == "" {
-		// Nothing about the branch's review or landing says anything, so fall back to
-		// its relationship with origin — the only thing left that distinguishes work
-		// sitting on this machine from work that has been shared.
-		switch {
-		case ahead > 0 && !b.HasRemote:
-			r.state = "local only"
-		case ahead > 0:
-			r.state = "unpushed"
-		case protected:
-			r.state = ""
-		default:
-			// "no commits" is a null state, blanked at render by stateCell in local.go
-			// but kept semantically intact here for stateColor/section reasoning.
-			r.state = "no commits"
-		}
+	r.ahead, r.behind, r.changed = ahead, m.local.signals[b.Name].behind, st.changed
+	switch {
+	case protected:
+		// The default branch is behind nothing but its own origin copy: ↑/↓ there are
+		// what a push or a pull would move.
+		r.ahead, r.behind = b.Ahead, b.Behind
+	case r.sec == secCleanup:
+		// A landed branch falls further behind every day and nobody will ever rebase
+		// it; the count would be the only non-empty cell on a row that is finished.
+		r.behind = 0
 	}
 	prTitle := ""
 	if pr != nil {
@@ -181,24 +219,25 @@ func (m Model) branchInfos(rows []paneRow) []git.BranchInfo {
 // each row index back to the line it landed on, since a row costs one line or
 // two and headings are lines nothing can be the cursor on.
 //
-// This is the single production caller of planColumns: rows are grouped by
-// section once, a plan computed per section, and that plan threaded into the
-// heading, the row and the subline for every row in that section — the only
-// way all three can agree on which columns this section hoisted or dropped.
+// This is the single production caller of planColumns: one plan over every row,
+// threaded into each row and subline, so every section draws its columns at the
+// same cells.
 func (m Model) branchPaneLines(rows []paneRow, byName map[string]git.BranchInfo, counts map[section]int, w int) (lines [][]seg, itemLine []int) {
-	secRows := map[section][]paneRow{}
-	for _, r := range rows {
-		secRows[r.sec] = append(secRows[r.sec], r)
-	}
-	plans := make(map[section]columnPlan, len(secRows))
-	for sec, rs := range secRows {
-		plans[sec] = planColumns(sec, rs)
-	}
-
+	plan := planColumns(rows)
 	itemLine = make([]int, len(rows))
+	// The PR marks' legend rides the first heading over a row that carries one.
+	var prs []*gh.OpenPR
+	legendSec := section(-1)
+	for _, r := range rows {
+		if r.pr != nil {
+			if legendSec == section(-1) && r.sec != secMain {
+				legendSec = r.sec
+			}
+			prs = append(prs, r.pr)
+		}
+	}
 	lastSec := section(-1)
 	for i, r := range rows {
-		plan := plans[r.sec]
 		if r.sec != lastSec {
 			// A section with nothing in it is not drawn at all — an empty heading is a
 			// row of furniture that says only that you have nothing to do there, and the
@@ -207,7 +246,11 @@ func (m Model) branchPaneLines(rows []paneRow, byName map[string]git.BranchInfo,
 				lines = append(lines, []seg{{t: ""}})
 			}
 			if r.sec != secMain {
-				lines = append(lines, brSectionLine(r.sec, counts[r.sec], w, plan.chips))
+				var legend []seg
+				if r.sec == legendSec {
+					legend = markLegend(prs, w)
+				}
+				lines = append(lines, brSectionLine(r.sec, counts[r.sec], w, legend))
 			}
 			lastSec = r.sec
 		}

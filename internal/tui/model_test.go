@@ -196,11 +196,11 @@ func TestCleanupQuarantinesDirtyWorktree(t *testing.T) {
 	m.active, m.pane = tabLocal, paneBranches
 	row := branchRow(t, m, "old-merged")
 	text := segsText(row)
-	if !strings.Contains(text, "held") {
-		t.Errorf("dirty merged worktree did not read as held: %q", text)
+	if !strings.Contains(text, "~2") {
+		t.Errorf("dirty merged worktree row is missing its changed-file count: %q", text)
 	}
-	if !strings.Contains(text, "uncommitted") {
-		t.Errorf("dirty merged worktree row is missing its uncommitted flag: %q", text)
+	if struckText(row) != "" {
+		t.Errorf("dirty merged worktree is struck through as finished: %q", text)
 	}
 }
 
@@ -212,22 +212,14 @@ func branchRow(t *testing.T, m Model, name string) []seg {
 }
 
 // branchRowAt is branchRow at an explicit width, for the column-geometry tests.
-// It computes the real per-section columnPlan the same way branchPaneLines
-// does — grouping every row by section and planning from that section's own
-// rows — so a test observing hoisting behaves exactly like the live renderer.
+// It computes the pane-wide columnPlan the same way branchPaneLines does, so the
+// row matches the live renderer.
 func branchRowAt(t *testing.T, m Model, name string, w int) []seg {
 	t.Helper()
 	rows := m.branchRows()
 	for _, r := range rows {
 		if r.name == name {
-			var secRows []paneRow
-			for _, rr := range rows {
-				if rr.sec == r.sec {
-					secRows = append(secRows, rr)
-				}
-			}
-			plan := planColumns(r.sec, secRows)
-			return m.brPanelLine(r, m.branchInfo(name), w, plan)
+			return m.brPanelLine(r, m.branchInfo(name), w, planColumns(rows))
 		}
 	}
 	t.Fatalf("no branch %q in fixture", name)
@@ -266,7 +258,7 @@ func struckText(segs []seg) string {
 
 // TestBranchRowsFormFixedColumns pins the Branches pane as a table. Every field
 // right of the name has to occupy the same cells on every row of the SAME
-// SECTION, whatever that row's owner, state word or hold happens to be — laying
+// SECTION, whatever that row's owner, PR cell or git cell happens to be — laying
 // the cluster out flush-right per row instead makes each value's position depend
 // on the length of its neighbours, so nothing lines up and the list reads as a
 // run of strings. The guarantee is per section, not per pane: see
@@ -278,40 +270,35 @@ func struckText(segs []seg) string {
 // it out of alignment and, at the end of the row, straight out of the box into
 // whatever is drawn beside it.
 //
-// Rows are built directly rather than through rowFor/classifySection: the
-// property under test is the rendering layer's column geometry, not
-// classification, and constructing paneRow directly lets every row's
-// owner/state/hold/ready be pinned to a deliberately DIFFERENT value so nothing
-// in this one section is constant and planColumns hoists nothing — the
-// baseline this test exists to pin.
+// Rows are built directly in Reviewing — the one section that draws the owner
+// column — so all three right-hand columns are drawn.
 func TestBranchRowsFormFixedColumns(t *testing.T) {
 	const w = 90
 	m := seededModel()
 	branches := []git.BranchInfo{
-		{Name: "short", HasRemote: true, Ahead: 4, Behind: 123, LastCommit: "2 days ago"},
+		{Name: "short", HasRemote: true, LastCommit: "2 days ago"},
 		{Name: "a-considerably-longer-branch-name", WorktreePath: "/repo/.worktrees/x", LastCommit: "6 weeks ago"},
 		{Name: "even", HasRemote: true, LastCommit: "49 seconds ago"},
-		{Name: "commitless", LastCommit: "1 second ago"},
-		{Name: "old-merged", HasRemote: true, LastCommit: "3 months ago"},
+		{Name: "bare", LastCommit: "1 second ago"},
 	}
 	byName := map[string]git.BranchInfo{}
 	for _, b := range branches {
 		byName[b.Name] = b
 	}
+	draft := &gh.OpenPR{Number: 12, IsDraft: true, Checks: gh.ChecksPassing}
 	rows := []paneRow{
-		{name: "short", sec: secContinue, owner: ownership{who: "amy"}, state: "unpushed", ready: "keep"},
-		{name: "a-considerably-longer-branch-name", sec: secContinue, owner: ownership{who: "averyverylongpersonname"}, state: "draft", holds: []string{"2 uncommitted"}, ready: "held"},
-		{name: "even", sec: secContinue, owner: ownership{who: "someone"}, state: "approved", ready: "keep"},
-		{name: "commitless", sec: secContinue, owner: ownership{who: "casey"}, state: "no commits", ready: "keep"}, // null state
-		{name: "old-merged", sec: secContinue, owner: ownership{who: "dana"}, state: "merged", ready: "ready"},
+		{name: "short", sec: secTheirs, owner: ownership{who: "amy"}, ahead: 4, behind: 123},
+		{name: "a-considerably-longer-branch-name", sec: secTheirs, owner: ownership{who: "averyverylongpersonname"}, pr: draft, prNum: 12, changed: 2},
+		{name: "even", sec: secTheirs, owner: ownership{who: "someone"}, pr: &gh.OpenPR{Number: 1234, Review: gh.ReviewApproved, Checks: gh.ChecksFailing}, prNum: 1234},
+		{name: "bare", sec: secTheirs, owner: ownership{who: "casey"}}, // nothing in either cell
 	}
 	byRowName := map[string]paneRow{}
 	for _, r := range rows {
 		byRowName[r.name] = r
 	}
-	plan := planColumns(secContinue, rows)
-	if len(plan.drop) != 0 {
-		t.Fatalf("fixture setup: expected nothing to hoist in this section, got drop=%v", plan.drop)
+	plan := planColumns(rows)
+	if plan.drop["owner"] || plan.drop["pr"] || plan.drop["git"] {
+		t.Fatalf("fixture setup: expected every column drawn, got drop=%v", plan.drop)
 	}
 	rowAt := func(name string) []seg {
 		return m.brPanelLine(byRowName[name], byName[name], w, plan)
@@ -321,167 +308,108 @@ func TestBranchRowsFormFixedColumns(t *testing.T) {
 	// Every column is followed by a one-cell gap, so a value that exactly fills its
 	// width never butts against the next one.
 	ageAt := w - brAgeW
-	readyAt := ageAt - 1 - brReadyW
-	holdAt := readyAt - 1 - brHoldW
-	stateAt := holdAt - 1 - brStateW
-	ownerAt := stateAt - 1 - brOwnerW
+	gitAt := ageAt - 1 - plan.gitW
+	prAt := gitAt - 1 - plan.prW
+	ownerAt := prAt - 1 - brOwnerW
+	if plan.prW != vlen("#1234 ✗") || plan.gitW != vlen("↑4 ↓123") {
+		t.Fatalf("plan sized pr/git to %d/%d, want the section's longest values", plan.prW, plan.gitW)
+	}
 
-	for _, name := range []string{"short", "a-considerably-longer-branch-name", "even", "commitless", "old-merged"} {
-		row := rowAt(name)
-		text := []rune(segsText(row))
+	for _, r := range rows {
+		text := []rune(segsText(rowAt(r.name)))
 		if len(text) != w {
-			t.Fatalf("%s: row is %d cells wide, want %d: %q", name, len(text), w, string(text))
+			t.Fatalf("%s: row is %d cells wide, want %d: %q", r.name, len(text), w, string(text))
 		}
 		for _, c := range []struct {
 			name  string
 			at, n int
+			want  string
 		}{
-			{"owner", ownerAt, brOwnerW},
-			{"state", stateAt, brStateW},
-			{"hold", holdAt, brHoldW},
-			{"ready", readyAt, brReadyW},
-			{"age", ageAt, brAgeW},
+			{"owner", ownerAt, brOwnerW, ""},
+			{"pr", prAt, plan.prW, prText(r)},
+			{"git", gitAt, plan.gitW, gitText(r)},
+			{"age", ageAt, brAgeW, ""},
 		} {
 			got := string(text[c.at : c.at+c.n])
-			if len([]rune(got)) != c.n {
-				t.Errorf("%s: %s column is %d cells, want %d — the columns have shifted",
-					name, c.name, len([]rune(got)), c.n)
-			}
-			// The cell after each column (except the last) must be the gap.
 			if c.at+c.n < w && string(text[c.at+c.n]) != " " {
-				t.Errorf("%s: %s column is not followed by a gap: %q",
-					name, c.name, string(text[c.at:min(w, c.at+c.n+1)]))
+				t.Errorf("%s: %s column is not followed by a gap: %q", r.name, c.name, string(text[c.at:min(w, c.at+c.n+1)]))
+			}
+			if c.want != "" && strings.TrimRight(got, " ") != c.want {
+				t.Errorf("%s: %s column holds %q, want %q — the columns have shifted", r.name, c.name, got, c.want)
 			}
 		}
 	}
-
-	// The null-state row (commitless) must have a blank state cell that is still
-	// brStateW cells wide, so every column offset remains unchanged.
-	commitlessRow := rowAt("commitless")
-	text := []rune(segsText(commitlessRow))
-	stateCell := string(text[stateAt : stateAt+brStateW])
-	if len([]rune(stateCell)) != brStateW {
-		t.Errorf("commitless: state cell is %d cells, want %d", len([]rune(stateCell)), brStateW)
+	// Approved with failing checks: one mark, and the more urgent one wins.
+	if got := prText(byRowName["even"]); got != "#1234 ✗" {
+		t.Errorf("PR cell = %q, want the number and the single most urgent mark", got)
 	}
-	if strings.TrimSpace(stateCell) != "" {
-		t.Errorf("commitless: state cell should be blank but holds %q", stateCell)
+	if got := prText(byRowName["a-considerably-longer-branch-name"]); got != "#12 ◌" {
+		t.Errorf("draft PR cell = %q, want the number and the draft mark", got)
 	}
-
-	// The old-merged row must still show its state word even though it's old.
-	mergedRow := rowAt("old-merged")
-	mtext := []rune(segsText(mergedRow))
-	mergedStateCell := string(mtext[stateAt : stateAt+brStateW])
-	if !strings.Contains(mergedStateCell, "merged") {
-		t.Errorf("old-merged: state cell should contain 'merged' but holds %q", mergedStateCell)
+	if got := gitText(byRowName["short"]); got != "↑4 ↓123" {
+		t.Errorf("git cell = %q, want git-status notation with zero counts left out", got)
 	}
 
 	// The over-long owner must be truncated into its column, not allowed to widen it.
-	long := rowAt("a-considerably-longer-branch-name")
-	owner := string([]rune(segsText(long))[ownerAt : ownerAt+brOwnerW])
-	if got := string([]rune(segsText(long))[stateAt-1]); got != " " {
-		t.Errorf("no gap between the owner and state columns: %q", got)
-	}
-	if len([]rune(strings.TrimRight(owner, " "))) > brOwnerW {
-		t.Errorf("owner cell grew past its column: %q", owner)
-	}
-	if !strings.Contains(owner, "\u2026") {
+	owner := string([]rune(segsText(rowAt("a-considerably-longer-branch-name")))[ownerAt : ownerAt+brOwnerW])
+	if !strings.Contains(owner, "…") {
 		t.Errorf("an over-long owner was not truncated: %q — a cell that grows breaks every column right of it", owner)
 	}
 }
 
-// TestBranchRowsHoistConstantSectionColumns pins the opposite of the baseline
-// above: when every row in a section agrees on a column's value, that column is
-// dropped from the rows and printed once as a chip on the section's own rule
-// (brSectionLine), and the width it frees goes to the name column. A column
-// every row leaves EMPTY is dropped the same way but names nothing on the rule.
-// The columns that survive must still agree row to row on where they fall —
-// hoisting removes a column, it never leaves the survivors misaligned.
-func TestBranchRowsHoistConstantSectionColumns(t *testing.T) {
-	const w = 90
+// TestColumnsAlignAcrossSections pins one geometry for the whole pane: the name,
+// PR and git columns start at the same cell in every section, whatever each
+// section's own longest values are. Sections that sized their own columns drew
+// Continue Working's PR cell at a different offset from Waiting on Review's.
+func TestColumnsAlignAcrossSections(t *testing.T) {
+	const w = 120
 	m := seededModel()
-	// state and ready agree on every row ("merged"/"ready"); hold is empty on
-	// every row; owner differs row to row, so it must survive.
 	rows := []paneRow{
-		{name: "one", sec: secCleanup, owner: ownership{who: "dana"}, state: "merged", ready: "ready"},
-		{name: "two", sec: secCleanup, owner: ownership{who: "chris"}, state: "merged", ready: "ready"},
-		{name: "three", sec: secCleanup, owner: ownership{who: "amy"}, state: "merged", ready: "ready"},
+		{name: "a-much-longer-branch-name-in-continue", sec: secContinue, ahead: 12, behind: 345, purpose: purpose{text: "work"}},
+		{name: "short", sec: secWaiting, state: "in review", prNum: 7, purpose: purpose{text: "review"}},
+		{name: "gone", sec: secCleanup, state: "merged", ready: "ready"},
 	}
-	plan := planColumns(secCleanup, rows)
-	if !plan.drop["state"] || !plan.drop["ready"] || !plan.drop["hold"] {
-		t.Fatalf("fixture setup: expected state, ready and hold to be dropped, got drop=%v", plan.drop)
-	}
-	if plan.drop["owner"] {
-		t.Fatalf("fixture setup: owner should not hoist — every row names a different person, got drop=%v", plan.drop)
-	}
-	if len(plan.chips) != 2 || plan.chips[0] != "merged" || plan.chips[1] != "ready" {
-		t.Fatalf("chips = %v, want [merged ready] in column order (state before ready); hold hoists nothing because it was empty", plan.chips)
-	}
-
-	// The chips appear once on the section rule, and hold — dropped but empty —
-	// contributes nothing there.
-	heading := segsText(brSectionLine(secCleanup, len(rows), w, plan.chips))
-	if !strings.Contains(heading, "merged · ready") {
-		t.Errorf("section rule missing the hoisted chips: %q", heading)
-	}
-
-	// owner and age are the only columns left; they must fall at the same offset
-	// on every row, and the hoisted words must appear on none of them.
-	ageAt := w - brAgeW
-	ownerAt := ageAt - 1 - brOwnerW
-	b := git.BranchInfo{Name: "one", LastCommit: "1 day ago"}
-	for _, r := range rows {
-		text := []rune(segsText(m.brPanelLine(r, b, w, plan)))
-		if len(text) != w {
-			t.Fatalf("%s: row is %d cells wide, want %d", r.name, len(text), w)
+	plan := planColumns(rows)
+	at := func(r paneRow, cell string) int {
+		text := segsText(m.brPanelLine(r, git.BranchInfo{Name: r.name, LastCommit: "1 day ago"}, w, plan))
+		if len([]rune(text)) != w {
+			t.Fatalf("%s: row is %d cells, want %d", r.name, len([]rune(text)), w)
 		}
-		if got := strings.TrimSpace(string(text[ownerAt : ownerAt+brOwnerW])); got != r.owner.who {
-			t.Errorf("%s: owner column holds %q, want %q — the columns have shifted", r.name, got, r.owner.who)
-		}
-		if strings.Contains(string(text), "merged") || strings.Contains(string(text), "ready") {
-			t.Errorf("%s: hoisted word still appears on the row: %q", r.name, string(text))
-		}
+		return len([]rune(text[:strings.Index(text, cell)]))
 	}
-
-	// A section that hoists gets a strictly wider name column than one that
-	// doesn't, at the same pane width — the freed width has to go somewhere.
-	noHoist := planColumns(secContinue, []paneRow{
-		{name: "a", sec: secContinue, owner: ownership{who: "amy"}, state: "unpushed", ready: "keep"},
-		{name: "b", sec: secContinue, owner: ownership{who: "chris"}, state: "draft", ready: "held"},
-	})
-	hoistLayout := m.branchRowLayout(rows[0], w, plan)
-	noHoistLayout := m.branchRowLayout(rows[0], w, noHoist)
-	if hoistLayout.nameW <= noHoistLayout.nameW {
-		t.Errorf("hoisting section's name column is %d cells, want wider than the non-hoisting section's %d",
-			hoistLayout.nameW, noHoistLayout.nameW)
+	if a, b := at(rows[0], "work"), at(rows[1], "review"); a != b {
+		t.Errorf("purpose starts at %d in Continue Working and %d in Waiting on Review — the name column differs", a, b)
+	}
+	if a, b := at(rows[0], "↑12"), at(rows[1], "#7")+plan.prW+1; a != b {
+		t.Errorf("git cell starts at %d in Continue Working, %d in Waiting on Review", a, b)
+	}
+	if a, b := at(rows[1], "#7"), at(rows[2], "merged"); a != b {
+		t.Errorf("PR cell starts at %d in Waiting on Review and %d in Clean Up", a, b)
 	}
 }
 
-// TestBranchRowsHoistNothingWithOneRow pins the floor: a section of a single row
-// has nothing to compare it against, so planColumns must hoist nothing — a lone
-// row does not lose its state/owner/hold/ready cells just because there is only
-// one value to look at.
-func TestBranchRowsHoistNothingWithOneRow(t *testing.T) {
+// TestBranchNameOutranksPurpose pins the name's priority over the purpose: the
+// name column is sized to the section's longest name, and the purpose is drawn
+// on the row only with what is left. When too little is left, the purpose moves
+// to its own line rather than taking cells from the name.
+func TestBranchNameOutranksPurpose(t *testing.T) {
+	m := seededModel()
+	long := "social-chess-l37.2-give-alertscontroller-its-own-clock"
 	rows := []paneRow{
-		{name: "solo", sec: secWaiting, owner: ownership{who: "amy"}, state: "in review", ready: "keep"},
+		{name: long, sec: secContinue, ahead: 1, purpose: purpose{text: "feat(client): give AlertsController its own clock"}},
+		{name: "short", sec: secContinue, purpose: purpose{text: "something"}},
 	}
-	plan := planColumns(secWaiting, rows)
-	if len(plan.drop) != 0 || len(plan.chips) != 0 {
-		t.Errorf("a one-row section hoisted columns: drop=%v chips=%v", plan.drop, plan.chips)
+	plan := planColumns(rows)
+	if plan.nameW != len(long) {
+		t.Fatalf("plan.nameW = %d, want the longest name, %d", plan.nameW, len(long))
 	}
-}
-
-// TestBranchRowsNeverHoistOnSecMain pins the other floor: secMain draws no
-// heading, so even if its (single, protected) row's columns were somehow
-// compared, a hoisted chip would be printed nowhere and silently vanish.
-// planColumns refuses to hoist there at all, whatever the row count.
-func TestBranchRowsNeverHoistOnSecMain(t *testing.T) {
-	rows := []paneRow{
-		{name: "main", sec: secMain, state: "merged"},
-		{name: "main2", sec: secMain, state: "merged"},
+	wide := m.branchRowLayout(rows[1], 150, plan)
+	if wide.nameW != len(long) || wide.purposeW < brPurposeMinW {
+		t.Errorf("at 150 cells: name %d, purpose %d; want the whole longest name and an inline purpose", wide.nameW, wide.purposeW)
 	}
-	plan := planColumns(secMain, rows)
-	if len(plan.drop) != 0 || len(plan.chips) != 0 {
-		t.Errorf("secMain hoisted columns: drop=%v chips=%v", plan.drop, plan.chips)
+	narrow := m.branchRowLayout(rows[0], 85, plan)
+	if narrow.purposeW != 0 || narrow.nameW < len(long) {
+		t.Errorf("at 85 cells: name %d, purpose %d; want the purpose on its own line and the name whole", narrow.nameW, narrow.purposeW)
 	}
 }
 
@@ -594,7 +522,7 @@ func TestBranchRowSelectModeGrowsTheGutter(t *testing.T) {
 			r = rr
 		}
 	}
-	plan := planColumns(r.sec, []paneRow{r})
+	plan := planColumns([]paneRow{r})
 	m.selected = map[string]bool{}
 	offLayout := m.branchRowLayout(r, w, plan)
 	m.selected = map[string]bool{"other": true}
@@ -699,11 +627,8 @@ func TestBranchRowNeverStrikesHeld(t *testing.T) {
 	if s := struckText(row); s != "" {
 		t.Errorf("held branch struck through: %q", s)
 	}
-	if !strings.Contains(segsText(row), "uncommitted") {
-		t.Errorf("held branch row missing the uncommitted flag: %q", segsText(row))
-	}
-	if !strings.Contains(segsText(row), "held") {
-		t.Errorf("held branch row did not read as held: %q", segsText(row))
+	if !strings.Contains(segsText(row), "~3") {
+		t.Errorf("held branch row missing its changed-file count: %q", segsText(row))
 	}
 }
 
@@ -716,12 +641,10 @@ func TestProvenLandedIsNotAlsoUnpushed(t *testing.T) {
 	m := seededModel()
 	m.local.branchUnsafe["old-merged"] = true
 
-	row := branchRow(t, m, "old-merged")
-	if strings.Contains(segsText(row), "unpushed") {
-		t.Errorf("a proven-merged branch was flagged unpushed: %q", segsText(row))
-	}
-	if !strings.Contains(segsText(row), "ready") {
-		t.Errorf("a proven-merged branch is not sweepable: %q", segsText(row))
+	for _, r := range m.branchRows() {
+		if r.name == "old-merged" && r.ready != "ready" {
+			t.Errorf("a proven-merged branch is not sweepable: ready = %q, holds = %v", r.ready, r.holds)
+		}
 	}
 }
 

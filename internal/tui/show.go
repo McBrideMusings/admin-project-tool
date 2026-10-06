@@ -64,9 +64,15 @@ type ShowRow struct {
 	Path   string `json:"path,omitempty"`
 	Absent bool   `json:"absent,omitempty"`
 
-	// Repo tab: the branch classification, and commit/stash fields.
+	// Repo tab: the branch row's cells as drawn — owner (Reviewing only), the PR
+	// cell, the git cell — plus what the sweep reads, and commit/stash fields.
 	Owner   string   `json:"owner,omitempty"`
 	State   string   `json:"state,omitempty"`
+	PRCell  string   `json:"pr_cell,omitempty"`
+	Git     string   `json:"git,omitempty"`
+	Ahead   int      `json:"ahead,omitempty"`
+	Behind  int      `json:"behind,omitempty"`
+	Changed int      `json:"changed,omitempty"`
 	Ready   string   `json:"ready,omitempty"`
 	Holds   []string `json:"holds,omitempty"`
 	Broken  []string `json:"broken,omitempty"`
@@ -254,8 +260,13 @@ func (m Model) showRepoRows() []ShowRow {
 			Section: sectionTitle[r.sec],
 			Kind:    "branch",
 			Branch:  r.name,
-			Owner:   r.owner.who,
+			Owner:   ownerCell(r),
 			State:   r.state,
+			PRCell:  prText(r),
+			Git:     gitText(r),
+			Ahead:   r.ahead,
+			Behind:  r.behind,
+			Changed: r.changed,
 			Ready:   r.ready,
 			Holds:   r.holds,
 			Broken:  r.broken,

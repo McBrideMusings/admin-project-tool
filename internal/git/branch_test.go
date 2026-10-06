@@ -108,14 +108,55 @@ func TestBranchRemoteStateWithoutUpstreamConfig(t *testing.T) {
 
 	// The unsafe check has to follow the same reading of "on origin", or a branch
 	// pushed without -u gets quarantined as holding unsaved work it does not hold.
-	if HasUnpushedCommits(context.Background(), dir, byName["untracked-pushed"], "main") {
-		t.Error("a branch fully pushed without -u read as having unpushed commits")
+	for _, tc := range []struct {
+		branch string
+		want   int
+		why    string
+	}{
+		{"untracked-pushed", 0, "a branch fully pushed without -u"},
+		{"untracked-ahead", 1, "a branch with one commit origin has not seen"},
+		{"local-only", 1, "a never-pushed branch"},
+	} {
+		if n, ok := CountUnpushed(context.Background(), dir, tc.branch, "main"); !ok || n != tc.want {
+			t.Errorf("%s: CountUnpushed(%q) = %d, %v; want %d, true", tc.why, tc.branch, n, ok, tc.want)
+		}
 	}
-	if !HasUnpushedCommits(context.Background(), dir, byName["untracked-ahead"], "main") {
-		t.Error("a branch with a local-only commit read as fully pushed")
+}
+
+// TestCountUnpushedIgnoresUpstreamName pins the shape that made a pushed branch
+// read as unpushed: cut from origin/main with tracking, so its upstream is
+// origin/main, then pushed under a different name (`HEAD:other-name`, as a repo
+// that keeps tracker ids out of pushed names does). Ahead-of-upstream says 1;
+// every commit is on origin, so the count must say 0.
+func TestCountUnpushedIgnoresUpstreamName(t *testing.T) {
+	origin := t.TempDir()
+	gitT(t, origin, "init", "-q", "--bare", "-b", "main")
+
+	dir := t.TempDir()
+	gitT(t, dir, "init", "-q", "-b", "main")
+	writeFile(t, filepath.Join(dir, "f.txt"), "base\n")
+	gitT(t, dir, "add", "-A")
+	gitT(t, dir, "commit", "-qm", "init")
+	gitT(t, dir, "remote", "add", "origin", origin)
+	gitT(t, dir, "push", "-q", "-u", "origin", "main")
+
+	gitT(t, dir, "switch", "-q", "-c", "local-name-1", "--track", "origin/main")
+	writeFile(t, filepath.Join(dir, "g.txt"), "work\n")
+	gitT(t, dir, "add", "-A")
+	gitT(t, dir, "commit", "-qm", "work")
+	gitT(t, dir, "push", "-q", "origin", "HEAD:feat/remote-name")
+
+	branches, err := LocalBranches(context.Background(), dir, "local-name-1", nil)
+	if err != nil {
+		t.Fatalf("LocalBranches: %v", err)
 	}
-	if !HasUnpushedCommits(context.Background(), dir, byName["local-only"], "main") {
-		t.Error("a never-pushed branch read as having no unpushed commits")
+	for _, bi := range branches {
+		if bi.Name == "local-name-1" && bi.Ahead != 1 {
+			t.Fatalf("fixture: Ahead of upstream origin/main = %d, want 1", bi.Ahead)
+		}
+	}
+	if n, ok := CountUnpushed(context.Background(), dir, "local-name-1", "main"); !ok || n != 0 {
+		t.Errorf("CountUnpushed = %d, %v; want 0, true — the commit is on origin/feat/remote-name", n, ok)
 	}
 }
 

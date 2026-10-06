@@ -50,12 +50,19 @@ type localData struct {
 	// non-merge commit subject. Top and bottom rungs of the purpose ladder.
 	branchNote  map[string]string
 	lastSubject map[string]string
-	// aheadDefault is how many commits a branch holds that the DEFAULT branch does
-	// not. Deliberately not BranchInfo.Ahead, which counts against the branch's own
-	// origin copy and so reads 0 for every branch that has none — the shape that
-	// made a branch with twenty-eight commits describe itself as "no commits".
-	aheadDefault map[string]int
-	err          error
+	// unpushed is how many commits a branch holds that no origin ref and not the
+	// default branch hold (git.CountUnpushed). Deliberately not BranchInfo.Ahead,
+	// which counts against the branch's own upstream: that reads 0 for a branch with
+	// none, and reads 1 for a branch that tracks origin/main but was pushed under
+	// another name with every commit already on origin.
+	unpushed map[string]int
+	// containedIn is, per branch, every origin branch whose history holds its tip
+	// and how many commits each carries beyond it (git.ContainingRemoteBranches).
+	// Empty for a branch the default branch's origin copy already contains — that
+	// one landed, it is not the base of a stack. openPRFor reads it to give a
+	// stacked base with no PR of its own the PR of the branch built on it.
+	containedIn map[string]map[string]int
+	err         error
 }
 
 // wtState is one worktree's working-tree read, held as a single value rather than
@@ -174,7 +181,8 @@ func loadLocalCmd(ctx context.Context, repoRoot, checkout, current, def string) 
 		d.firstAuthor = map[string]string{}
 		d.branchNote = map[string]string{}
 		d.lastSubject = map[string]string{}
-		d.aheadDefault = map[string]int{}
+		d.unpushed = map[string]int{}
+		d.containedIn = map[string]map[string]int{}
 		perBranchGitLoad(ctx, checkout, d.branches, def, &d)
 
 		// Classification signals: every git-visible reason a branch might be
@@ -243,9 +251,9 @@ func loadLocalCmd(ctx context.Context, repoRoot, checkout, current, def string) 
 	}
 }
 
-// perBranchGitLoad fills d.branchUnsafe/tips/firstAuthor/aheadDefault/branchNote/
-// lastSubject — five independent per-branch git reads (unpushed check, FirstAuthor,
-// CountAheadOf, BranchNote, LastSubject; Tip needs none) — running up to 8 branches
+// perBranchGitLoad fills d.branchUnsafe/unpushed/containedIn/tips/firstAuthor/
+// branchNote/lastSubject — five independent per-branch git reads (CountUnpushed,
+// ContainingRemoteBranches, FirstAuthor, BranchNote, LastSubject; Tip needs none) — running up to 8 branches
 // at once rather than one full pass at a time.
 //
 // The five are unrelated reads over the same ref, so nothing about running them
@@ -268,19 +276,27 @@ func perBranchGitLoad(ctx context.Context, dir string, branches []git.BranchInfo
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			unsafe := git.HasUnpushedCommits(ctx, dir, br, def)
+			unpushed, unpushedOK := git.CountUnpushed(ctx, dir, br.Name, def)
+			var contained map[string]int
+			if br.Name != def {
+				contained = git.ContainingRemoteBranches(ctx, dir, br.Name)
+				if _, inDefault := contained[def]; inDefault {
+					contained = nil
+				}
+			}
 			firstAuthor := git.FirstAuthor(ctx, dir, br.Name, def)
-			ahead, aheadOK := git.CountAheadOf(ctx, dir, def, br.Name)
 			note := git.BranchNote(ctx, dir, br.Name)
 			subject := git.LastSubject(ctx, dir, br.Name, def)
 
 			mu.Lock()
-			d.branchUnsafe[br.Name] = unsafe
+			// An unreadable count is unpushed, never clean — see git.CountUnpushed.
+			d.branchUnsafe[br.Name] = !unpushedOK || unpushed > 0
+			d.unpushed[br.Name] = unpushed
+			if contained != nil {
+				d.containedIn[br.Name] = contained
+			}
 			d.tips[br.Name] = br.Tip
 			d.firstAuthor[br.Name] = firstAuthor
-			if aheadOK {
-				d.aheadDefault[br.Name] = ahead
-			}
 			d.branchNote[br.Name] = note
 			d.lastSubject[br.Name] = subject
 			mu.Unlock()

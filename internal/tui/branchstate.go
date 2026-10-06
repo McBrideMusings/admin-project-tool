@@ -352,14 +352,10 @@ func (m Model) mergedHead(branch, upstream string) (oid string, ok bool) {
 
 // hasOpenPR reports whether an open PR in the repo has this branch as its head.
 // Read from the open-PR list the PRs tab already holds rather than from a set of
-// its own: one fetch, and the veto can never disagree with what that tab shows.
+// its own: one fetch, and the veto can never disagree with what that tab shows —
+// or with the row, since both go through openPRFor's matching.
 func (m Model) hasOpenPR(branch string) bool {
-	for i := range m.remote.PRs {
-		if m.remote.PRs[i].HeadBranch == branch {
-			return true
-		}
-	}
-	return false
+	return m.openPRFor(branch) != nil
 }
 
 // supersededBy reports whether the issue this branch was created for already has a

@@ -14,7 +14,7 @@ import (
 //
 // A read that fails (e.g. no origin at all, so --remotes=origin matches nothing)
 // answers true, not false — the same fail-safe direction as
-// HasUnpushedCommits: a broken read must never claim a branch is provably empty
+// CountUnpushed: a broken read must never claim a branch is provably empty
 // of local-only work, which is what would let ClassifyDead treat it as safe to
 // drop.
 func HasCommitsNotOnOrigin(ctx context.Context, dir, branch string) bool {

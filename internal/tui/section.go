@@ -2,7 +2,6 @@ package tui
 
 import (
 	"strconv"
-	"strings"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 )
@@ -43,10 +42,10 @@ const (
 // knew the sections by name, so it now lives only here and in classifySection's
 // comments — one heading line instead of a heading plus a restated rule.
 var sectionTitle = map[section]string{
-	secContinue: "Continue Working",  // yours · no open PR, or a draft with nothing broken
+	secContinue: "Continue Working",  // yours · no open PR, or a draft
 	secFixes:    "Fixes Needed",      // yours · changes requested, a check failing, or conflicting
 	secMerge:    "Ready to Merge",    // yours · approved, mergeable, checks green
-	secWaiting:  "Waiting on Review", // yours · open, nothing for you to do
+	secWaiting:  "Waiting on Review", // yours · open, nothing broken — unpushed work shows in the git cell
 	secTheirs:   "Reviewing",         // not yours · fetched here and still live
 	secCleanup:  "Clean Up",          // any owner · proven landed — deleting loses nothing
 	secUnsorted: "Unsorted",          // nothing identifies who started it — claim or delete
@@ -64,91 +63,79 @@ var sectionOrder = []section{secContinue, secFixes, secMerge, secWaiting, secThe
 // one property the fixed-column pane exists to provide.
 func (s section) showsPurpose() bool { return s != secCleanup }
 
-// columnPlan is what a section does with its own owner/state/hold/ready
-// columns: which are dropped from every row in the section, and which of those
-// dropped columns hoist a non-empty value onto the section's own rule as a
-// chip. Computed once per section by planColumns so every row, subline and
-// heading builder for that section agrees on it.
+// columnPlan is the pane's column geometry, shared by every section: which of
+// owner/pr/git no row has anything to say in, and how wide the name, PR and git
+// columns are. One plan for the whole pane, so a column starts and ends at the
+// same cell in Continue Working as in Waiting on Review — sections that sized
+// their own columns put the same column at a different offset under each
+// heading, and the eye stops being able to read straight down it.
 type columnPlan struct {
-	drop  map[string]bool // "owner"|"state"|"hold"|"ready" — removed from this section's rows
-	chips []string        // hoisted non-empty values, in row column order: owner, state, hold, ready
+	drop map[string]bool // "owner"|"pr"|"git" — empty on every row, so not drawn
+	// nameW is the longest branch name in the pane, in cells. The name column is
+	// sized to it before the purpose column gets anything: a branch name you
+	// cannot read in full is a row you cannot act on, while a purpose cut short
+	// still says what the branch is for. 0 means unplanned — size to the row's own
+	// name.
+	nameW int
+	// prW and gitW are the pane's longest PR and git cells, capped at brPRW and
+	// brGitW. A column sized for its worst case ("#1234 checks failing ✓") when
+	// the longest value is "#289 draft" takes a dozen cells from the name for
+	// nothing. 0 means unplanned — use the cap.
+	prW, gitW int
 }
 
-// planColumns decides, for one section's rows, which of owner/state/hold/ready
-// are constant across every row. A column constant and non-empty is dropped
-// from the rows and printed once as a chip on the section's rule; a column
-// constant and empty (every row has nothing to say) is dropped and named
-// nowhere; a column that varies is left on the rows untouched.
-//
-// A section of fewer than two rows hoists nothing — there is no "constant
-// across the section" to observe with only one data point, and the freed
-// width would buy that one row a wider name for no reader-visible reason.
-// secMain never hoists either: it draws no heading, so a chip there would be
-// printed nowhere and just vanish.
-//
-// Each column's value MUST be computed the same way brPanelLine renders it,
-// or the plan and the row disagree — a column would be dropped from the row
-// while the plan believes it varies, or printed on the rule while the row
-// still shows a different value.
-func planColumns(sec section, rows []paneRow) columnPlan {
-	plan := columnPlan{drop: map[string]bool{}}
-	if len(rows) < 2 || sec == secMain {
-		return plan
-	}
-	cols := []struct {
-		name string
-		val  func(paneRow) string
-	}{
-		{"owner", func(r paneRow) string {
-			if r.sec == secMain {
-				return ""
-			}
-			return r.owner.who
-		}},
-		{"state", func(r paneRow) string { return stateCell(r) }},
-		{"hold", func(r paneRow) string { return strings.Join(r.holds, " · ") }},
-		{"ready", func(r paneRow) string {
-			if r.sec == secMain {
-				return ""
-			}
-			return r.ready
-		}},
-	}
-	for _, c := range cols {
-		first := c.val(rows[0])
-		constant := true
-		for _, r := range rows[1:] {
-			if c.val(r) != first {
-				constant = false
-				break
-			}
+// planColumns measures every row the pane draws. Each column's value MUST be
+// computed the same way brPanelLine renders it, or the plan and the row disagree.
+func planColumns(rows []paneRow) columnPlan {
+	plan := columnPlan{drop: map[string]bool{"owner": true, "pr": true, "git": true}}
+	for _, r := range rows {
+		plan.nameW = max(plan.nameW, vlen(r.name))
+		plan.prW = min(brPRW, max(plan.prW, vlen(prText(r))))
+		plan.gitW = min(brGitW, max(plan.gitW, vlen(gitText(r))))
+		if ownerCell(r) != "" {
+			plan.drop["owner"] = false
 		}
-		if !constant {
-			continue
+		if prText(r) != "" {
+			plan.drop["pr"] = false
 		}
-		plan.drop[c.name] = true
-		if first != "" {
-			plan.chips = append(plan.chips, first)
+		if gitText(r) != "" {
+			plan.drop["git"] = false
 		}
 	}
 	return plan
 }
 
-// paneRow is one branch fully resolved: its section, who owns it, the single
-// word describing its state, and what is holding it. The pane renders this and
-// nothing else, so the list and the delete path cannot reach different verdicts.
+// ownerCell is who a row's branch belongs to, printed only in Reviewing: every
+// other section is your own work (or, in Unsorted, nobody's), where the column
+// would read "you" on every row and say nothing.
+func ownerCell(r paneRow) string {
+	if r.sec != secTheirs {
+		return ""
+	}
+	return r.owner.who
+}
+
+// paneRow is one branch fully resolved: its section, who owns it, its PR or
+// landing word, its standing against origin, and what is holding it. The pane
+// renders this and nothing else, so the list and the delete path cannot reach
+// different verdicts.
 type paneRow struct {
-	name    string
-	sec     section
-	owner   ownership
-	state   string   // one or two tokens, never longer than brStateW
-	holds   []string // uncommitted / unpushed — what a delete would cost
-	ready   string   // "ready" | "keep" | "held"
-	broken  []string // why it is in Fixes Needed
-	issue   int      // issue number parsed from the branch name, 0 when none
-	purpose purpose  // the subline: what this branch is for
-	pr      *gh.OpenPR
-	prNum   int
+	name  string
+	sec   section
+	owner ownership
+	state string   // the PR's review word or the landing proof; "" when neither applies
+	holds []string // uncommitted / unpushed / active — what a delete would cost; never drawn
+	ready string   // "ready" | "keep" | "held" — the sweep's verdict; never drawn
+	// ahead, behind and changed are the row's git cell, in `git status` notation:
+	// ↑ commits on no origin ref, ↓ commits the default branch has that this one
+	// does not, ~ files changed in its worktree. On the default branch itself ↑/↓
+	// are measured against its own upstream instead.
+	ahead, behind, changed int
+	broken                 []string // why it is in Fixes Needed
+	issue                  int      // issue number parsed from the branch name, 0 when none
+	purpose                purpose  // the subline: what this branch is for
+	pr                     *gh.OpenPR
+	prNum                  int
 }
 
 // blockers lists everything wrong with an open PR, measured independently. One
@@ -181,7 +168,7 @@ func blockers(pr *gh.OpenPR, op string, conflicted int) []string {
 
 // classifySection is the ladder. Every argument is a measurement, so the rule for
 // each section is readable in one place rather than spread over the renderer.
-// classifySection is the ladder. holds is what THIS row currently holds — see
+// holds is what THIS row currently holds — see
 // holdsOf — and it is what keeps a landed branch someone is still sitting in out
 // of Clean Up: "empty" or "merged" is a proof about the committed history, not a
 // statement that the WORKTREE has nothing left in it.
@@ -195,6 +182,12 @@ func blockers(pr *gh.OpenPR, op string, conflicted int) []string {
 // else's, which is why `unfinished` treats `own.mine` and `own.unknown` the same
 // and only `own.theirs` (mine==false, unknown==false — someone else's PR or first
 // commit) blocks it.
+//
+// A non-draft open PR outranks held work: the PR's state is the next action
+// (fix it, merge it, or wait), and work not yet pushed to it shows in the row's
+// own git cell rather than pulling the branch out of its PR section. A draft
+// says the author is still working, so it keeps the old order — held work files
+// it under Continue Working, and only a draft holding nothing reaches Fixes Needed.
 func classifySection(protected bool, own ownership, landed string, pr *gh.OpenPR, broken []string, holds []string) section {
 	claimedByOther := !own.mine && !own.unknown
 	unfinished := len(holds) > 0 && !claimedByOther
@@ -206,39 +199,40 @@ func classifySection(protected bool, own ownership, landed string, pr *gh.OpenPR
 		return secCleanup
 	case claimedByOther:
 		return secTheirs
+	case pr != nil && !pr.IsDraft && len(broken) > 0:
+		return secFixes
+	case pr != nil && !pr.IsDraft && pr.Review == gh.ReviewApproved:
+		return secMerge
+	case pr != nil && !pr.IsDraft:
+		return secWaiting
 	case unfinished:
 		return secContinue
 	case own.unknown:
 		return secUnsorted
 	case pr != nil && len(broken) > 0:
 		return secFixes
-	case pr != nil && !pr.IsDraft && pr.Review == gh.ReviewApproved:
-		return secMerge
-	case pr != nil && !pr.IsDraft:
-		return secWaiting
 	default:
 		return secContinue
 	}
 }
 
-// stateWord is the row's one-or-two-token status. Deliberately short: the column
-// is a fixed width and a phrase that needs truncating to fit ("conflicts with
-// main" cut to "conflicts with…") reads worse than the short word does.
-// Note: "empty" (from stateWord's caller, landedProof) and "no commits" (the
-// fallback in rowFor) are null states rendered as blank padded cells at the
-// render layer by stateCell in local.go.
+// stateWord is the word in the row's PR cell for what is NOT a PR state: the
+// proof the branch landed, or a worktree stopped mid-rebase or on conflicted
+// files. An open PR's own state is prMark's, never a word. "" for a branch with
+// neither — whether its work is on origin is the git cell's job, not this one's.
+// "empty" (a landedProof) is a null state, blanked at render by prText in
+// local.go.
 func stateWord(r paneRow, landed string) string {
-	switch {
-	case landed != "":
+	if landed != "" {
 		return landed
-	case len(r.broken) > 0:
-		return r.broken[0]
-	case r.pr != nil && r.pr.IsDraft:
-		return "draft"
-	case r.pr != nil && r.pr.Review == gh.ReviewApproved:
-		return "approved"
-	case r.pr != nil:
-		return "in review"
+	}
+	for _, b := range r.broken {
+		switch b {
+		case "changes", "checks failing", "conflicts":
+			// Read off the PR, so prMark already shows it.
+		default:
+			return b
+		}
 	}
 	return ""
 }

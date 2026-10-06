@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/bd"
-	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
@@ -92,74 +91,15 @@ func TestStashRowsFormFixedColumns(t *testing.T) {
 	}
 }
 
-// TestNullStateRendersBlankCell pins the null-state rendering: a branch with no
-// state renders a blank padded cell rather than the words "empty" or "no commits",
-// while keeping the cell's full width so column offsets do not shift.
+// TestNullStateRendersBlankCell pins that "empty" — a landing proof meaning no
+// commit ever landed on the branch — draws a blank PR cell rather than the word,
+// while a real proof ("merged") is drawn.
 func TestNullStateRendersBlankCell(t *testing.T) {
-	const w = 90
-	m := seededModel()
-	m.identity = data.Identity{Login: "me", Email: "me@example.com"}
-	m.local.branches = []git.BranchInfo{
-		{Name: "commitless", LastCommit: "1 second ago"},                            // null state: no commits
-		{Name: "old-merged", HasRemote: true, Ahead: 0, LastCommit: "3 months ago"}, // merged
+	if got := prText(paneRow{state: "empty"}); got != "" {
+		t.Errorf("an empty branch's PR cell = %q, want blank", got)
 	}
-	m.local.firstAuthor = map[string]string{
-		"commitless": "me@example.com",
-		"old-merged": "me@example.com",
-	}
-	m.remote.MergedHeads["old-merged"] = "sha-old-merged"
-
-	// Column positions computed the same way as TestBranchRowsFormFixedColumns.
-	ageAt := w - brAgeW
-	readyAt := ageAt - 1 - brReadyW
-	holdAt := readyAt - 1 - brHoldW
-	stateAt := holdAt - 1 - brStateW
-	ownerAt := stateAt - 1 - brOwnerW
-
-	commitlessRow := branchRowAt(t, m, "commitless", w)
-	commitlessText := []rune(segsText(commitlessRow))
-	if len(commitlessText) != w {
-		t.Fatalf("commitless: row is %d cells wide, want %d", len(commitlessText), w)
-	}
-
-	// The null-state branch must have a blank state cell that is still brStateW wide.
-	commitlessStateCell := string(commitlessText[stateAt : stateAt+brStateW])
-	if len([]rune(commitlessStateCell)) != brStateW {
-		t.Errorf("commitless: state cell is %d cells, want %d", len([]rune(commitlessStateCell)), brStateW)
-	}
-	if strings.TrimSpace(commitlessStateCell) != "" {
-		t.Errorf("commitless: state cell should be blank but holds %q", commitlessStateCell)
-	}
-
-	mergedRow := branchRowAt(t, m, "old-merged", w)
-	mergedText := []rune(segsText(mergedRow))
-	if len(mergedText) != w {
-		t.Fatalf("old-merged: row is %d cells wide, want %d", len(mergedText), w)
-	}
-
-	// The merged branch must still show its state word and keep the same column offsets.
-	mergedStateCell := string(mergedText[stateAt : stateAt+brStateW])
-	if !strings.Contains(mergedStateCell, "merged") {
-		t.Errorf("old-merged: state cell should contain 'merged' but holds %q", mergedStateCell)
-	}
-
-	// Both rows must have the same column offsets: the blank cell doesn't shift anything.
-	for _, c := range []struct {
-		name  string
-		at, n int
-	}{
-		{"owner", ownerAt, brOwnerW},
-		{"hold", holdAt, brHoldW},
-		{"ready", readyAt, brReadyW},
-		{"age", ageAt, brAgeW},
-	} {
-		commitlessCol := string(commitlessText[c.at : c.at+c.n])
-		mergedCol := string(mergedText[c.at : c.at+c.n])
-		// Both should have the same width.
-		if len([]rune(commitlessCol)) != len([]rune(mergedCol)) {
-			t.Errorf("column %s: commitless is %d cells, merged is %d cells — null state shifted the columns",
-				c.name, len([]rune(commitlessCol)), len([]rune(mergedCol)))
-		}
+	if got := prText(paneRow{state: "merged"}); got != "merged" {
+		t.Errorf("a merged branch's PR cell = %q, want %q", got, "merged")
 	}
 }
 
@@ -219,10 +159,11 @@ func TestPRRowsFormFixedColumns(t *testing.T) {
 		t.Fatalf("fixture produced no branch/verdict column: %+v", pc)
 	}
 
-	want := map[int]struct{ num, branch, verdict string }{
-		7:    {"#7", "feature", "approved"},
-		1234: {"#1234", "very-long-branch-name-goes-…", "in review"},
-		22:   {"#22", "", "● needs review"},
+	// Only a reviewer bucket has a verdict; the author-side state is the mark.
+	want := map[int]struct{ mark, num, branch, verdict string }{
+		7:    {"●", "#7", "feature", ""},
+		1234: {"≠", "#1234", "very-long-branch-name-goes-here", ""},
+		22:   {"○", "#22", "", "● needs review"},
 	}
 	branchAt := -1
 	rightW := -1
@@ -236,6 +177,9 @@ func TestPRRowsFormFixedColumns(t *testing.T) {
 			t.Fatalf("#%d: row is %d cells wide, want %d", r.prNum, len(text), cols)
 		}
 		w := want[r.prNum]
+		if got := string(text[0]); got != w.mark {
+			t.Errorf("#%d: mark is %q, want %q", r.prNum, got, w.mark)
+		}
 
 		// The number column is shared, so the title (and everything after it)
 		// starts at the same cell however many digits the PR number has.
@@ -285,10 +229,9 @@ func TestPRRowsFormFixedColumns(t *testing.T) {
 	}
 }
 
-// A PR whose worst problem is its build has to say "✗ tests failed" in words at
-// every width, not just wear a red ✗ next to its number. The flag columns used
-// to drop as a group on a narrow terminal and leave the row reading "in review".
-func TestFailingChecksAlwaysSpelledOut(t *testing.T) {
+// A PR's mark rides beside its number, so no width drops it: a failing build
+// reads ✗ at every terminal size, and a passing PR in review never does.
+func TestPRMarkSurvivesEveryWidth(t *testing.T) {
 	for _, cols := range []int{50, 60, 80, 140, 200} {
 		m := seededModel()
 		m.width = cols
@@ -310,11 +253,11 @@ func TestFailingChecksAlwaysSpelledOut(t *testing.T) {
 				t.Errorf("cols=%d: #%d row is %d cells wide — it spills past the right edge", cols, r.prNum, len(line))
 			}
 			text := string(line)
-			if r.prNum == 1234 && !strings.Contains(text, "✗ tests failed") {
-				t.Errorf("cols=%d: failing PR row reads %q, want it to say \"✗ tests failed\"", cols, strings.TrimSpace(text))
+			if r.prNum == 1234 && !strings.HasPrefix(text, "✗ #1234") {
+				t.Errorf("cols=%d: failing PR row reads %q, want it to start \"✗ #1234\"", cols, strings.TrimSpace(text))
 			}
-			if r.prNum == 7 && strings.Contains(text, "tests failed") {
-				t.Errorf("cols=%d: passing PR row claims failing tests: %q", cols, strings.TrimSpace(text))
+			if r.prNum == 7 && !strings.HasPrefix(text, "○ #7") {
+				t.Errorf("cols=%d: passing PR row reads %q, want it to start \"○ #7\"", cols, strings.TrimSpace(text))
 			}
 		}
 	}
@@ -329,19 +272,19 @@ func TestUnusedFlagColumnsTakeNoWidth(t *testing.T) {
 	m.remote.PRs = []gh.OpenPR{
 		{Number: 7, Title: "Passing one", HeadBranch: "feature", Checks: gh.ChecksPassing, Bucket: gh.BucketMine},
 	}
-	if pc := m.prColumns(cols); pc.flagW != 0 {
-		t.Errorf("no PR is draft/conflicting/failing/untriaged, but the flag column is %d cells, want 0", pc.flagW)
-	}
 	m.remote.PRs[0].IsDraft = true
-	if pc := m.prColumns(cols); pc.flagW != vlen("draft") {
-		t.Errorf("one draft PR gives a flag column of %d cells, want %d", pc.flagW, vlen("draft"))
+	if pc := m.prColumns(cols); pc.flagW != 0 {
+		t.Errorf("no PR is untriaged, but the flag column is %d cells, want 0", pc.flagW)
+	}
+	m.remote.PRs[0].Gaps = gh.GapLabels
+	if pc := m.prColumns(cols); pc.flagW != vlen("⚑ L") {
+		t.Errorf("one untriaged PR gives a flag column of %d cells, want %d", pc.flagW, vlen("⚑ L"))
 	}
 }
 
-// Four sparse flags share one column, so the cell names the worst one and counts
-// the rest rather than growing a column each. It must never hide that there are
-// more: the "+N" is what keeps one bounded column honest.
-func TestFlagCellNamesWorstAndCountsRest(t *testing.T) {
+// The flag cell holds only triage gaps: conflicts, failing tests and draft are
+// PR states, and a PR state is prMark's one mark, never a second word.
+func TestFlagCellCarriesOnlyGaps(t *testing.T) {
 	cases := []struct {
 		name string
 		pr   gh.OpenPR
@@ -350,11 +293,11 @@ func TestFlagCellNamesWorstAndCountsRest(t *testing.T) {
 		{"clean", gh.OpenPR{Number: 1}, ""},
 		{"labels only", gh.OpenPR{Number: 2, Gaps: gh.GapLabels}, "⚑ L"},
 		{"all three gaps", gh.OpenPR{Number: 3, Gaps: gh.GapAssignee | gh.GapReviewer | gh.GapLabels}, "⚑ ARL"},
-		{"tests beat draft", gh.OpenPR{Number: 4, Checks: gh.ChecksFailing, IsDraft: true}, "✗ tests failed +1"},
-		{"conflicts beat everything", gh.OpenPR{
+		{"states are the mark's", gh.OpenPR{Number: 4, Checks: gh.ChecksFailing, IsDraft: true}, ""},
+		{"gaps beside every state", gh.OpenPR{
 			Number: 5, Mergeable: "CONFLICTING", Checks: gh.ChecksFailing,
 			IsDraft: true, Gaps: gh.GapLabels,
-		}, "⚠ conflicts +3"},
+		}, "⚑ L"},
 	}
 	for _, c := range cases {
 		if got := flagSeg(c.pr).t; got != c.want {
@@ -395,12 +338,12 @@ func TestBranchColumnNeverEatsTheTitle(t *testing.T) {
 			}
 		}
 	}
-	// At 128 the branch column is the field that gives way; at 200 there is
+	// At 80 the branch column is the field that gives way; at 200 there is
 	// genuine surplus and it comes back.
 	narrow := seededModel()
-	narrow.width, narrow.remote.PRs = 128, prs
-	if w := narrow.prColumns(128).branchW; w != 0 {
-		t.Errorf("at 128 cells the branch column is %d wide, want it dropped for the title", w)
+	narrow.width, narrow.remote.PRs = 80, prs
+	if w := narrow.prColumns(80).branchW; w != 0 {
+		t.Errorf("at 80 cells the branch column is %d wide, want it dropped for the title", w)
 	}
 	wide := seededModel()
 	wide.width, wide.remote.PRs = 200, prs
@@ -876,162 +819,6 @@ func TestWidePaneDrawsPurposeOnTheRow(t *testing.T) {
 	if !strings.Contains(next, "↳") {
 		t.Errorf("at 40 columns feature lost its purpose subline: %q", next)
 	}
-}
-
-// TestCleanUpSectionHoistsConstantColumns pins the acceptance case for issue #20
-// against the real renderer (branchPaneLines), the same way
-// TestCleanUpRowsDropTheirPurposeSubline pins the Clean Up gate against it. Two
-// Clean Up rows agree on state ("merged") and the delete verdict ("ready"), so
-// both are hoisted onto the Clean Up rule as a single chip and dropped from the
-// rows; their owners differ, so the owner column survives on the rows exactly
-// as before. A section holding only one row (secFixes here) hoists nothing at
-// all, and its narrower name column proves the freed width in Clean Up actually
-// went somewhere.
-func TestCleanUpSectionHoistsConstantColumns(t *testing.T) {
-	const w = 100
-	m := seededModel()
-	m.identity = data.Identity{Login: "me", Email: "me@example.com"}
-	m.local.branches = []git.BranchInfo{
-		{Name: "alpha-done", HasRemote: true, LastCommit: "10 days ago"},
-		{Name: "beta-done", HasRemote: true, LastCommit: "20 days ago"},
-		{Name: "solo-fix", HasRemote: true, LastCommit: "2 days ago"},
-	}
-	m.local.firstAuthor = map[string]string{
-		"alpha-done": "amy@example.com",
-		"beta-done":  "chris@example.com",
-		"solo-fix":   "me@example.com",
-	}
-	m.remote.MergedHeads = map[string]string{"alpha-done": "sha1", "beta-done": "sha2"}
-	m.remote.PRs = []gh.OpenPR{
-		{Number: 99, Title: "broken pr", HeadBranch: "solo-fix", Checks: gh.ChecksFailing, Bucket: gh.BucketMine},
-	}
-
-	rows := m.branchRows()
-	byName := map[string]git.BranchInfo{}
-	for _, b := range m.local.branches {
-		byName[b.Name] = b
-	}
-	counts := map[section]int{}
-	for _, r := range rows {
-		counts[r.sec]++
-	}
-	if counts[secCleanup] != 2 {
-		t.Fatalf("fixture setup: expected 2 Clean Up rows, got %d (rows=%+v)", counts[secCleanup], rows)
-	}
-	if counts[secFixes] != 1 {
-		t.Fatalf("fixture setup: expected 1 Fixes Needed row, got %d (rows=%+v)", counts[secFixes], rows)
-	}
-	lines, itemLine := m.branchPaneLines(rows, byName, counts, w)
-
-	cleanAt := -1
-	for i, l := range lines {
-		if strings.Contains(segsText(l), "Clean Up") {
-			cleanAt = i
-			break
-		}
-	}
-	if cleanAt == -1 {
-		t.Fatal("no Clean Up heading rendered")
-	}
-	heading := segsText(lines[cleanAt])
-	if !strings.Contains(heading, "merged · ready") {
-		t.Errorf("Clean Up rule missing the hoisted chip: %q", heading)
-	}
-
-	var alphaLine, betaLine, soloLine int = -1, -1, -1
-	for i, r := range rows {
-		switch r.name {
-		case "alpha-done":
-			alphaLine = itemLine[i]
-		case "beta-done":
-			betaLine = itemLine[i]
-		case "solo-fix":
-			soloLine = itemLine[i]
-		}
-	}
-	if alphaLine == -1 || betaLine == -1 || soloLine == -1 {
-		t.Fatalf("fixture rows not all found: alpha=%d beta=%d solo=%d", alphaLine, betaLine, soloLine)
-	}
-
-	// Neither hoisted word appears on either Clean Up row — they were dropped, not
-	// just left unmentioned by coincidence.
-	for _, ln := range []int{alphaLine, betaLine} {
-		text := segsText(lines[ln])
-		if strings.Contains(text, "merged") {
-			t.Errorf("line %d still carries the hoisted state word: %q", ln, text)
-		}
-		if strings.Contains(text, "ready") {
-			t.Errorf("line %d still carries the hoisted ready word: %q", ln, text)
-		}
-	}
-	// The owners disagree, so that column must survive on both rows.
-	if !strings.Contains(segsText(lines[alphaLine]), "amy") {
-		t.Errorf("alpha-done row lost its owner column: %q", segsText(lines[alphaLine]))
-	}
-	if !strings.Contains(segsText(lines[betaLine]), "chris") {
-		t.Errorf("beta-done row lost its owner column: %q", segsText(lines[betaLine]))
-	}
-
-	// solo-fix is alone in Fixes Needed — a section of one hoists nothing, so its
-	// own verdict must still be printed on its row.
-	if !strings.Contains(segsText(lines[soloLine]), "keep") {
-		t.Errorf("solo-fix (a one-row section) lost its own ready column: %q", segsText(lines[soloLine]))
-	}
-
-	// The width Clean Up freed by hoisting has to go into ITS name column, wider
-	// than the one-row Fixes Needed section gets at the same pane width.
-	var cleanupRow, fixesRow paneRow
-	for _, r := range rows {
-		if r.name == "alpha-done" {
-			cleanupRow = r
-		}
-		if r.name == "solo-fix" {
-			fixesRow = r
-		}
-	}
-	var cleanupRows, fixesRows []paneRow
-	for _, r := range rows {
-		if r.sec == secCleanup {
-			cleanupRows = append(cleanupRows, r)
-		}
-		if r.sec == secFixes {
-			fixesRows = append(fixesRows, r)
-		}
-	}
-	cleanupPlan := planColumns(secCleanup, cleanupRows)
-	fixesPlan := planColumns(secFixes, fixesRows)
-	cleanupLayout := m.branchRowLayout(cleanupRow, w, cleanupPlan)
-	fixesLayout := m.branchRowLayout(fixesRow, w, fixesPlan)
-	if cleanupLayout.nameW <= fixesLayout.nameW {
-		t.Errorf("Clean Up's name column is %d cells, want wider than Fixes Needed's %d at the same width",
-			cleanupLayout.nameW, fixesLayout.nameW)
-	}
-
-	// Select mode must shrink BOTH sections' name column by exactly brSelectW —
-	// the hoisting section (Clean Up) and the non-hoisting one (Fixes Needed)
-	// alike, since gutterWidth(selectMode) is the one function both the row's
-	// gutter segments and this width math read from. If the two disagreed, the
-	// hoisting section's extra-wide name column would drift out of step with the
-	// narrower one's the moment select mode turned on.
-	m.selected = map[string]bool{selectableBranch(t, m): true}
-	cleanupLayoutSel := m.branchRowLayout(cleanupRow, w, cleanupPlan)
-	fixesLayoutSel := m.branchRowLayout(fixesRow, w, fixesPlan)
-	if cleanupLayout.nameW-cleanupLayoutSel.nameW != brSelectW {
-		t.Errorf("Clean Up (hoisting): select mode changed nameW by %d, want brSelectW=%d",
-			cleanupLayout.nameW-cleanupLayoutSel.nameW, brSelectW)
-	}
-	if fixesLayout.nameW-fixesLayoutSel.nameW != brSelectW {
-		t.Errorf("Fixes Needed (non-hoisting): select mode changed nameW by %d, want brSelectW=%d",
-			fixesLayout.nameW-fixesLayoutSel.nameW, brSelectW)
-	}
-	// The two sections' relative ordering must survive select mode too — the
-	// freed width still flows to Clean Up's already-wider name column, not just
-	// to whichever section happens to render first.
-	if cleanupLayoutSel.nameW <= fixesLayoutSel.nameW {
-		t.Errorf("in select mode, Clean Up's name column is %d cells, want wider than Fixes Needed's %d",
-			cleanupLayoutSel.nameW, fixesLayoutSel.nameW)
-	}
-	m.selected = map[string]bool{}
 }
 
 // TestBeadTreeKeepsFixedColumns is the table guarantee in tree mode: the indent

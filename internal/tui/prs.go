@@ -33,7 +33,17 @@ func (m Model) prRows() []rowItem {
 		}
 		hdr := countSeg(len(prs))
 		if first {
-			hdr = append(gapLegend(m.remote.PRs, cols), hdr...)
+			all := make([]*gh.OpenPR, len(m.remote.PRs))
+			for i := range m.remote.PRs {
+				all[i] = &m.remote.PRs[i]
+			}
+			gaps := gapLegend(m.remote.PRs, cols)
+			// What the heading needs beside the legends: its label, the count and
+			// the gaps around both — the same reserve gapLegend keeps.
+			if marks := markLegend(all, cols-24-segsWidth(gaps)-3); marks != nil {
+				gaps = append(append(marks, seg{t: "   "}), gaps...)
+			}
+			hdr = append(gaps, hdr...)
 		}
 		rows = append(rows, headerRow(title, hdr...), ruleRow())
 		if len(prs) == 0 {
@@ -64,11 +74,8 @@ type prCols struct {
 	numW     int // width of the "#<number>" column (widest number in the list)
 	ownerW   int // 0 when every open PR is the viewer's own (no owner column)
 	verdictW int
-	// flagW is the one column holding every sparse per-PR flag — conflicts,
-	// failing tests, draft, triage gaps. They are booleans that are false on most
-	// rows, so a column each spent 92 cells of a 128-cell terminal to say
-	// something about one or two PRs, and the title was what paid for it. 0 when
-	// no open PR carries any flag.
+	// flagW is the triage column — the ⚑ gaps a PR is missing. 0 when no open PR
+	// is missing anything.
 	flagW   int
 	branchW int // width of the branch-name column (measured, capped)
 }
@@ -122,8 +129,8 @@ func (pc prCols) rightWidth() int {
 
 // prColumns measures every column from the data, so each is as tight as the
 // widest value that will land in it and a flag nobody has takes no width at all.
-// No column is ever dropped for width: whatever flag a row leads with is spelled
-// out in words at any terminal size, never reduced to a bare coloured glyph.
+// No status column is ever dropped for width, and the PR's state needs none: its
+// mark rides beside the number.
 //
 // The branch column is the one that gives way under width pressure — it shrinks
 // to fit whatever the number, title floor, and status block leave over, and
@@ -169,7 +176,7 @@ func (m Model) prColumns(cols int) prCols {
 	return pc
 }
 
-// openPRRow builds left + right segments for one open PR. The checks glyph rides
+// openPRRow builds left + right segments for one open PR. The PR's mark rides
 // the left with the number and title; the right is the fixed-width status grid
 // (see prStatusCells). pc is the shared column geometry from prColumns.
 func (m Model) openPRRow(pr gh.OpenPR, pc prCols, cols int) (left, right []seg) {
@@ -197,12 +204,12 @@ func (m Model) openPRRow(pr gh.OpenPR, pc prCols, cols int) (left, right []seg) 
 			{t: "  "},
 		}
 	}
-	left = numberedRowLeft(checksGlyph(pr.Checks), numSeg, pc.numW, pr.Title, tail, right, cols)
+	left = numberedRowLeft(prMark(&pr), numSeg, pc.numW, pr.Title, tail, right, cols)
 	return left, right
 }
 
 // prStatusCells builds the fixed-width status columns for one PR row: owner,
-// draft, conflicts, tests, then verdict. A column present in the geometry
+// triage gaps, then verdict. A column present in the geometry
 // reserves its width on every row even when this PR has nothing for it, so the
 // columns line up vertically down the table; composeLR flush-rights the
 // resulting constant-width block. A column no PR in the list needs is zero-width
@@ -253,48 +260,80 @@ func gapLegend(prs []gh.OpenPR, cols int) []seg {
 	return []seg{{t: legend, fg: cFaint}, {t: "   "}}
 }
 
-// prFlags lists every sparse flag this PR carries, worst first: a conflict has
-// to be resolved before the tests can even be trusted, a red build before the
-// draft matters, and all three before anyone cares that the labels are missing.
-// The order is the priority the merged flag cell reports.
-func prFlags(pr gh.OpenPR) []seg {
+// prMark is a PR's state as one mark: the most urgent thing true of it wins, in
+// the order conflicts ≠, checks failing ✗, changes requested ⊗, reply owed ◐,
+// checks pending ◷, draft ◌, approved ●, in review ○. The PR number already says
+// a PR exists, so the mark only has to say what it needs next.
+func prMark(pr *gh.OpenPR) seg {
+	switch {
+	case pr.Mergeable == "CONFLICTING":
+		return seg{t: "≠", fg: cRed}
+	case pr.Checks == gh.ChecksFailing:
+		return seg{t: "✗", fg: cRed}
+	case pr.Review == gh.ReviewChangesRequested:
+		return seg{t: "⊗", fg: cRed}
+	case pr.Review == gh.ReviewNeedsResponse:
+		return seg{t: "◐", fg: cYellow}
+	case pr.Checks == gh.ChecksPending:
+		return seg{t: "◷", fg: cYellow}
+	case pr.IsDraft:
+		return seg{t: "◌", fg: cMag}
+	case pr.Review == gh.ReviewApproved:
+		return seg{t: "●", fg: cGreen}
+	}
+	return seg{t: "○", fg: cDim}
+}
+
+// markNames is every mark prMark draws, most urgent first, with the word its
+// legend gives it.
+var markNames = []struct{ mark, name string }{
+	{"≠", "conflicts"}, {"✗", "failing"}, {"⊗", "changes"}, {"◐", "reply owed"},
+	{"◷", "pending"}, {"◌", "draft"}, {"●", "approved"}, {"○", "in review"},
+}
+
+// markLegend names the marks these PRs actually carry, in urgency order, so a
+// mark is never a private code and a mark nobody has costs no width. nil when
+// there are no PRs, or when the legend is wider than room.
+func markLegend(prs []*gh.OpenPR, room int) []seg {
+	present := map[string]seg{}
+	for _, pr := range prs {
+		mk := prMark(pr)
+		present[mk.t] = mk
+	}
 	var out []seg
-	if pr.Mergeable == "CONFLICTING" {
-		out = append(out, seg{t: "⚠ conflicts", fg: cRed})
+	w := 0
+	for _, n := range markNames {
+		mk, ok := present[n.mark]
+		if !ok {
+			continue
+		}
+		if len(out) > 0 {
+			out = append(out, seg{t: "  "})
+			w += 2
+		}
+		out = append(out, mk, seg{t: " " + n.name, fg: cFaint})
+		w += vlen(mk.t) + 1 + vlen(n.name)
 	}
-	if pr.Checks == gh.ChecksFailing {
-		out = append(out, seg{t: "✗ tests failed", fg: cRed})
-	}
-	if pr.IsDraft {
-		out = append(out, seg{t: "draft", fg: cFaint})
-	}
-	if l := pr.Gaps.Letters(); l != "" {
-		// A assignee, R reviewer, L labels — see the PRs section of docs/api.md and
-		// the help overlay. Spelled out, this cell was 32 cells wide on every row.
-		out = append(out, seg{t: "⚑ " + l, fg: cYellow})
+	if w > room {
+		return nil
 	}
 	return out
 }
 
-// flagSeg is the single merged flag cell: the worst flag the PR carries, plus
-// "+N" for the rest. It never hides that there is more — the count is what keeps
-// one bounded column honest about a PR carrying four problems at once.
+// flagSeg is the triage cell: the metadata the PR is missing. Conflicts, failing
+// tests and draft are PR states, so prMark carries them.
 func flagSeg(pr gh.OpenPR) seg {
-	flags := prFlags(pr)
-	if len(flags) == 0 {
-		return seg{}
+	if l := pr.Gaps.Letters(); l != "" {
+		// A assignee, R reviewer, L labels — see the PRs section of docs/api.md and
+		// the help overlay. Spelled out, this cell was 32 cells wide on every row.
+		return seg{t: "⚑ " + l, fg: cYellow}
 	}
-	top := flags[0]
-	if n := len(flags) - 1; n > 0 {
-		top.t += " +" + strconv.Itoa(n)
-	}
-	return top
+	return seg{}
 }
 
-// verdictSeg is the single review-state badge in the verdict column. For the
-// viewer's own and everyone-else PRs it's the author-POV status; for the two
-// reviewer buckets it's the viewer's own standing, worded as whose move it is.
-// Always non-empty.
+// verdictSeg is the reviewer buckets' badge in the verdict column: the viewer's
+// own standing, worded as whose move it is. Empty for the viewer's own and
+// everyone-else PRs, whose review state is the PR's and so prMark's.
 //
 // The two reviewer buckets read differently on purpose. "Needs me" rows are
 // yellow and say what the viewer owes. "Waiting on others" rows say what the
@@ -329,16 +368,8 @@ func verdictSeg(pr gh.OpenPR) seg {
 			return seg{t: "○ you commented", fg: cDim}
 		}
 	}
-	switch pr.Review {
-	case gh.ReviewChangesRequested:
-		return seg{t: "● changes requested", fg: cYellow}
-	case gh.ReviewNeedsResponse:
-		return seg{t: "● needs response", fg: cYellow}
-	case gh.ReviewApproved:
-		return seg{t: "approved", fg: cGreen}
-	default:
-		return seg{t: "in review", fg: cDim}
-	}
+	// An author-side review state is the PR's own, so prMark carries it.
+	return seg{}
 }
 
 // prCoreBadges builds the inline draft/conflicts/tests-failed badge run used by

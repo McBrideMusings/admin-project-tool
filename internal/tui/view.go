@@ -489,8 +489,24 @@ func (m Model) tabCount(t tab) int {
 	case tabBeads:
 		human, ready, inProgress, blocked := groupBeads(m.beads)
 		return len(human) + len(ready) + len(inProgress) + len(blocked)
+	case tabLocal:
+		return m.localBranchCount()
 	}
 	return 0
+}
+
+// localBranchCount is how many local branches this checkout has, the default
+// branch not counted — the branches you could be working on. The pane's filter
+// and the `g` narrowing do not apply: the tab badge counts the machine, not the
+// view.
+func (m Model) localBranchCount() int {
+	n := 0
+	for _, b := range m.local.branches {
+		if b.Name != m.def {
+			n++
+		}
+	}
+	return n
 }
 
 // tabBarSegs builds the tab bar's segments and, for each visible tab, its
@@ -511,7 +527,7 @@ func (m Model) tabBarSegs() (segs []seg, ranges []tabHit) {
 		start := x
 		label := tabDisplay(t)
 		badge := ""
-		if n := m.tabCount(t); t != tabLocal && t != tabConfig {
+		if n := m.tabCount(t); t != tabConfig {
 			badge = fmt.Sprintf("%d", n)
 		}
 		if t == m.active {

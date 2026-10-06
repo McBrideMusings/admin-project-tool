@@ -481,7 +481,7 @@ func LastSubject(ctx context.Context, dir, branch, base string) string {
 
 // CountAheadOf returns how many commits branch is ahead of base (base..branch).
 // ok is false when the count could not be read at all, which callers must not
-// treat as zero — see HasUnpushedCommits.
+// treat as zero — see CountUnpushed.
 func CountAheadOf(ctx context.Context, dir, base, branch string) (n int, ok bool) {
 	out, err := runner(ctx, dir, "rev-list", "--count", base+".."+branch)
 	if err != nil {
@@ -494,27 +494,64 @@ func CountAheadOf(ctx context.Context, dir, base, branch string) (n int, ok bool
 	return n, true
 }
 
-// HasUnpushedCommits reports whether a branch holds commits origin has never
-// seen. With a counterpart on origin that is simply its ahead count; without one
-// it is every commit beyond the default branch, since nothing on the remote holds
-// the work.
+// CountUnpushed is how many commits a branch holds that origin has never seen:
+// commits reachable from the branch and from no origin ref and not from the local
+// default branch. It is measured against EVERY remote-tracking ref, never just
+// the branch's own upstream, because the upstream can name a different branch
+// than the one holding the work — a branch cut with `git switch -c x origin/main`
+// tracks origin/main, and pushing it as `HEAD:other-name` puts every commit on
+// origin while the ahead-of-upstream count still reads 1. The default branch is
+// excluded too so a repo with no origin at all counts what the branch added
+// rather than its whole history.
 //
-// A count that cannot be read answers true, not false. This is the flag that
-// quarantines a branch out of the batch sweep, and it is load-bearing on its own
-// for a branch the evidence tier only *guesses* is dead — no proof is standing
-// behind that one, so a failed `rev-list` reading as "nothing unpushed" would let
-// a transient git error hand a branch full of local-only commits to a sweep. Same
-// fail-safe as an unreadable worktree status (see wtState.unread): the direction
-// that costs a wasted keystroke is always preferred over the one that costs work.
-func HasUnpushedCommits(ctx context.Context, dir string, bi BranchInfo, def string) bool {
-	if bi.HasRemote {
-		return bi.Ahead > 0
+// ok is false when the count could not be read. Callers that gate a delete must
+// treat that as unpushed, not as zero: this is the flag that quarantines a branch
+// out of the batch sweep, and for a branch the evidence tier only *guesses* is
+// dead it is the sole guard. Same fail-safe as an unreadable worktree status (see
+// wtState.unread): the direction that costs a wasted keystroke is always preferred
+// over the one that costs work.
+func CountUnpushed(ctx context.Context, dir, branch, def string) (n int, ok bool) {
+	if def == "" || def == branch {
+		return 0, true
 	}
-	if def == "" || def == bi.Name {
-		return false
+	out, err := runner(ctx, dir, "rev-list", "--count", "refs/heads/"+branch, "--not", "--remotes=origin", "refs/heads/"+def)
+	if err != nil {
+		return 0, false
 	}
-	n, ok := CountAheadOf(ctx, dir, def, bi.Name)
-	return !ok || n > 0
+	n, err = strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// ContainingRemoteBranches maps every origin branch whose history contains
+// branch's tip to how many commits it carries beyond that tip — 0 for one sitting
+// exactly on it. A branch stacked under another (the base of a stacked PR) is
+// contained in the branch built on it, and the smallest count is the nearest
+// one. nil when nothing on origin contains the tip, or the read fails.
+func ContainingRemoteBranches(ctx context.Context, dir, branch string) map[string]int {
+	out, err := runner(ctx, dir, "for-each-ref", "--contains", "refs/heads/"+branch,
+		"--format=%(refname:strip=3) %(ahead-behind:refs/heads/"+branch+")", "refs/remotes/origin/")
+	if err != nil {
+		return nil
+	}
+	var set map[string]int
+	for line := range strings.SplitSeq(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) != 3 || f[0] == "HEAD" {
+			continue
+		}
+		n, err := strconv.Atoi(f[1])
+		if err != nil {
+			continue
+		}
+		if set == nil {
+			set = map[string]int{}
+		}
+		set[f[0]] = n
+	}
+	return set
 }
 
 // BranchInfo is a local branch with the annotations the Local view shows.

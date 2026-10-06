@@ -6,13 +6,12 @@ import (
 	"testing"
 )
 
-// TestHasUnpushedCommitsFailsSafe pins the direction HasUnpushedCommits errs in
-// when it cannot count. The flag quarantines a branch out of the batch sweep, and
-// for a branch the evidence tier only *guesses* is dead it is the sole guard —
-// nothing proved that one dead. Reading an unreadable count as "nothing unpushed"
-// would let a transient git failure hand a branch full of local-only commits to a
-// sweep, so it must answer true instead.
-func TestHasUnpushedCommitsFailsSafe(t *testing.T) {
+// TestCountUnpushedFailsSafe pins that CountUnpushed reports an unreadable count
+// as not ok rather than as zero. The caller turns not-ok into "unpushed", which
+// quarantines a branch out of the batch sweep; for a branch the evidence tier only
+// *guesses* is dead that is the sole guard, so a transient git failure must never
+// read as "nothing unpushed".
+func TestCountUnpushedFailsSafe(t *testing.T) {
 	dir := t.TempDir()
 	gitT(t, dir, "init", "-q", "-b", "main")
 	writeFile(t, filepath.Join(dir, "f.txt"), "base\n")
@@ -22,15 +21,14 @@ func TestHasUnpushedCommitsFailsSafe(t *testing.T) {
 
 	ctx := context.Background()
 
-	bi := BranchInfo{Name: "local-only"}
-	if !HasUnpushedCommits(ctx, dir, bi, "main") {
-		t.Error("a branch with commits beyond main reported nothing unpushed")
+	if n, ok := CountUnpushed(ctx, dir, "local-only", "main"); !ok || n != 1 {
+		t.Errorf("CountUnpushed = %d, %v; want 1, true for one commit beyond main with no origin", n, ok)
 	}
 
 	// A default branch that does not exist makes the rev-list fail. That is the
 	// unreadable case, and it must not read as clean.
-	if !HasUnpushedCommits(ctx, dir, bi, "no-such-branch") {
-		t.Error("an unreadable count reported nothing unpushed; a sweep could take the branch")
+	if _, ok := CountUnpushed(ctx, dir, "local-only", "no-such-branch"); ok {
+		t.Error("an unreadable count reported ok; a sweep could take the branch")
 	}
 
 	// CountAheadOf reports the same failure to any other caller.

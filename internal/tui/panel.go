@@ -257,12 +257,10 @@ const (
 	// so select mode adds brSelectW cells to the row's left edge and takes them
 	// back out of the name column — never a separate width computation.
 	brSelectW = 4
-	// brNameMaxW and brPurposeMinW size the inline purpose column. When the pane is
-	// wide enough that the name column can keep brNameMinW cells and the purpose
-	// still gets brPurposeMinW, purpose is a column on the branch's own row; below
-	// that it stays on the second line, where the name has the whole width.
-	brNameMaxW    = 28
-	brNameMinW    = 20
+	// brPurposeMinW is the least the inline purpose column gets. The section's
+	// longest branch name is sized first; when fewer than this many cells are left
+	// after it, the purpose stays on the second line and the name has the whole
+	// width (see branchRowLayout).
 	brPurposeMinW = 24
 
 	// historyStripMaxH is the tallest the Commits/Stashes strip gets under
@@ -270,23 +268,18 @@ const (
 	// strip never takes more than a third of what Branches needs.
 	historyStripMaxH = 9
 
-	// Columns of the sectioned Branches row. The name column takes whatever is
-	// left, so everything right of it sits at the same offset on every line at any
-	// terminal width WITHIN A GIVEN SECTION — the property that makes the pane
-	// readable by scanning down a column instead of re-parsing each row. A column
-	// constant across an entire section is hoisted onto that section's own rule
-	// (see columnPlan/planColumns in section.go) and dropped from its rows, so two
-	// sections may legitimately size their name column differently at the same
-	// pane width; the guarantee is per section, not per pane.
+	// Columns of the sectioned Branches row. One columnPlan covers the whole pane
+	// (see planColumns in section.go), so every column sits at the same offset on
+	// every line, under every section heading — the property that makes the pane
+	// readable by scanning down a column instead of re-parsing each row.
 	//
 	// Every one is a hard cap, never a minimum: a value longer than its column is
 	// truncated, because a cell that grows to fit its content shoves every column
 	// right of it out of alignment and, at the end of the row, straight out of the
 	// box. See rowCell.
 	brOwnerW = 10 // "darren"; a GitHub login when no commit names the person
-	brStateW = 14 // "remote deleted", the longest state word
-	brHoldW  = 16 // "456 uncommitted"
-	brReadyW = 6  // "ready" / "keep" / "held"
+	brPRW    = 22 // cap: "#1234 checks failing ✓" — number, the longest state word, CI glyph
+	brGitW   = 14 // cap: "↑12 ↓345 ~123"; both are sized per section below the cap (columnPlan)
 )
 
 // gutterWidth is the left gutter's total cell width — the single function the

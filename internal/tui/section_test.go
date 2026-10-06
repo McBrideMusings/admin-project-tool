@@ -157,6 +157,76 @@ func TestOpenPRVetoesTheDeleteProof(t *testing.T) {
 	}
 }
 
+// TestOpenPRMatchesABranchPushedUnderAnotherName pins the three ways a local
+// branch finds its PR when its name is not the PR's head — a repo that keeps
+// tracker ids out of pushed names has every PR in this shape — and that a PR whose
+// head IS another local branch stays on that branch alone.
+func TestOpenPRMatchesABranchPushedUnderAnotherName(t *testing.T) {
+	m := seededModel()
+	m.local.branches = append(m.local.branches,
+		git.BranchInfo{Name: "feat/x-9ee.1-seed"},
+		git.BranchInfo{Name: "fix/x-9ee.2-rating"},
+		git.BranchInfo{Name: "spike-tracks-feature"},
+	)
+	m.local.tips = map[string]string{"feat/x-9ee.1-seed": "4e9dff59", "spike-tracks-feature": "aaaa"}
+	m.local.signals["fix/x-9ee.2-rating"] = gitSignals{upstream: "fix/rating"}
+	m.local.signals["spike-tracks-feature"] = gitSignals{upstream: "feature"}
+	m.local.signals["feat/x-9ee.1-seed"] = gitSignals{upstream: "main"}
+	m.remote.PRs = append(m.remote.PRs,
+		gh.OpenPR{Number: 287, HeadBranch: "feat/dev-seed", HeadOID: "4e9dff59"},
+		gh.OpenPR{Number: 286, HeadBranch: "fix/rating", HeadOID: "d811c7a9"},
+	)
+	for branch, want := range map[string]int{
+		"feat/x-9ee.1-seed":    287, // by tip, though its upstream is origin/main
+		"fix/x-9ee.2-rating":   286, // by upstream
+		"spike-tracks-feature": 0,   // tracks `feature`, which is a local branch holding PR #10
+		"feature":              10,  // by name
+	} {
+		got := 0
+		if pr := m.openPRFor(branch); pr != nil {
+			got = pr.Number
+		}
+		if got != want {
+			t.Errorf("openPRFor(%q) = #%d, want #%d", branch, got, want)
+		}
+		if m.hasOpenPR(branch) != (want != 0) {
+			t.Errorf("hasOpenPR(%q) disagrees with openPRFor", branch)
+		}
+	}
+}
+
+// TestStackedBaseTakesTheNearestPROnlyWithoutItsOwn pins stacked PRs: a branch
+// whose commits all sit inside an open PR's head — the base of a stack — shows
+// the nearest such PR when it has none of its own, and keeps its own when it
+// does, so two branches meant to be reviewed separately show separate PRs.
+func TestStackedBaseTakesTheNearestPROnlyWithoutItsOwn(t *testing.T) {
+	m := seededModel()
+	m.local.branches = append(m.local.branches,
+		git.BranchInfo{Name: "mid-tier"}, git.BranchInfo{Name: "top"}, git.BranchInfo{Name: "base-with-pr"})
+	m.local.containedIn = map[string]map[string]int{
+		"mid-tier":     {"top": 34, "top-of-top": 50},
+		"base-with-pr": {"top": 3},
+	}
+	m.remote.PRs = append(m.remote.PRs,
+		gh.OpenPR{Number: 278, HeadBranch: "top"},
+		gh.OpenPR{Number: 300, HeadBranch: "top-of-top"},
+		gh.OpenPR{Number: 277, HeadBranch: "base-with-pr"},
+	)
+	for branch, want := range map[string]int{
+		"mid-tier":     278, // contained in two PRs; #278 is 34 commits above it, #300 is 50
+		"base-with-pr": 277, // its own PR, never the one stacked on it
+		"top":          278,
+	} {
+		got := 0
+		if pr := m.openPRFor(branch); pr != nil {
+			got = pr.Number
+		}
+		if got != want {
+			t.Errorf("openPRFor(%q) = #%d, want #%d", branch, got, want)
+		}
+	}
+}
+
 // TestBlockersAreMeasuredIndependently pins the collapse behind "Fixes Needed":
 // four different measurements, all reported, because they co-occur and hiding one
 // behind another sends you back for a second look.
@@ -180,7 +250,8 @@ func TestBlockersAreMeasuredIndependently(t *testing.T) {
 }
 
 // TestReadinessIgnoresTheClock: nothing becomes deletable by sitting still. The
-// only clock left withholds (see the "active" hold), it never authorises.
+// only clock left withholds (see the "active" hold), it never authorises. The
+// verdict is not drawn; ⇧X sweeps the Clean Up rows it calls "ready".
 func TestReadinessIgnoresTheClock(t *testing.T) {
 	if readyWord("", nil) != "keep" {
 		t.Error("a branch with no proof was not kept")
@@ -393,38 +464,31 @@ func TestSelectModeLeavesWhenTheLastRowIsDeselected(t *testing.T) {
 	}
 }
 
-// TestPurposeSublineStopsAtTheStateColumn pins the width cap on the row below
-// each branch. It used to run the full pane width — under whatever hold/ready/age
-// values sat above it — which read as unrelated to the state word it was actually
-// elaborating on. It must now stop no later than where the state column's own
-// right edge falls on the row above, whatever width the pane renders at.
-func TestPurposeSublineStopsAtTheStateColumn(t *testing.T) {
+// TestPurposeSublineStopsAtThePRColumn pins the width cap on the row below each
+// branch: it stops no later than where the PR cell's right edge falls on the row
+// above, whatever width the pane renders at, so it never runs on under the git and
+// age cells and reads as part of them.
+func TestPurposeSublineStopsAtThePRColumn(t *testing.T) {
 	m := seededModel()
 	m.local.branchNote = map[string]string{
 		"feature": "a purpose sentence long enough to reach the far right edge of a wide pane if nothing capped it",
 	}
 	for w := 60; w <= 160; w += 11 {
 		rows := m.branchRows()
-		// Group by section and plan once per section, the same way branchPaneLines
-		// does — the subline's cap has to be measured against the SAME plan its
-		// section's rows actually render with, or the cap and the row disagree.
-		secRows := map[section][]paneRow{}
+		// The same pane-wide plan branchPaneLines draws with.
+		plan := planColumns(rows)
 		for _, r := range rows {
-			secRows[r.sec] = append(secRows[r.sec], r)
-		}
-		plans := map[section]columnPlan{}
-		for sec, rs := range secRows {
-			plans[sec] = planColumns(sec, rs)
-		}
-		for _, r := range rows {
-			plan := plans[r.sec]
+			// branchPaneLines draws the subline only when the purpose is not inline.
+			if m.branchRowLayout(r, w, plan).purposeW > 0 {
+				continue
+			}
 			sub := m.brSubLine(r, w, plan)
 			if sub == nil {
 				continue
 			}
-			end := m.stateColumnEnd(r, w, plan)
+			end := m.prColumnEnd(r, w, plan)
 			if got := len([]rune(segsText(sub))); got > end {
-				t.Errorf("width %d: %s subline is %d cells, past the state column's edge at %d",
+				t.Errorf("width %d: %s subline is %d cells, past the PR cell's edge at %d",
 					w, r.name, got, end)
 			}
 		}
@@ -485,6 +549,32 @@ func TestRenderLocalPanelsFillsBodyHeight(t *testing.T) {
 			if len(hits) != height {
 				t.Errorf("stashes=%v height=%d: built %d hit targets", stashes, height, len(hits))
 			}
+		}
+	}
+}
+
+// TestPRMarkMostUrgentWins pins the one-mark rule: each case adds the next more
+// urgent state to a PR that already carries every less urgent one, so the mark
+// must change at every step.
+func TestPRMarkMostUrgentWins(t *testing.T) {
+	pr := gh.OpenPR{Review: gh.ReviewInProgress}
+	steps := []struct {
+		apply func()
+		want  string
+	}{
+		{func() {}, "○"},
+		{func() { pr.Review = gh.ReviewApproved }, "●"},
+		{func() { pr.IsDraft = true }, "◌"},
+		{func() { pr.Checks = gh.ChecksPending }, "◷"},
+		{func() { pr.Review = gh.ReviewNeedsResponse }, "◐"},
+		{func() { pr.Review = gh.ReviewChangesRequested }, "⊗"},
+		{func() { pr.Checks = gh.ChecksFailing }, "✗"},
+		{func() { pr.Mergeable = "CONFLICTING" }, "≠"},
+	}
+	for _, s := range steps {
+		s.apply()
+		if got := prMark(&pr).t; got != s.want {
+			t.Errorf("prMark(%+v) = %q, want %q", pr, got, s.want)
 		}
 	}
 }
