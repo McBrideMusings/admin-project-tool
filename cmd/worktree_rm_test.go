@@ -110,6 +110,50 @@ func TestWorktreeRmRefusesUnpushedCommits(t *testing.T) {
 	}
 }
 
+func TestWorktreeRmRefusesPausedOperation(t *testing.T) {
+	repo, wt := rmFixture(t, "")
+	// A conflicting cherry-pick from main leaves one paused in the worktree.
+	writeFileCT(t, filepath.Join(repo, "g.txt"), "main side\n")
+	gitCT(t, repo, "add", "g.txt")
+	gitCT(t, repo, "commit", "-qm", "conflict")
+	cmd := exec.Command("git", "-C", wt, "cherry-pick", "main")
+	cmd.Env = append(os.Environ(), "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	if cmd.Run() == nil {
+		t.Fatal("cherry-pick applied cleanly; the fixture needs a conflict")
+	}
+	err := runWorktreeRm(context.Background(), repo, "feat", false, true)
+	if err == nil || !strings.Contains(err.Error(), "a paused cherry-pick") {
+		t.Fatalf("err = %v, want a paused-operation refusal", err)
+	}
+	if !dirExists(wt) {
+		t.Fatal("refused removal deleted the worktree")
+	}
+}
+
+func TestWorktreeRmRefusesDetachedHead(t *testing.T) {
+	repo, wt := rmFixture(t, "")
+	gitCT(t, wt, "switch", "-q", "--detach")
+	err := runWorktreeRm(context.Background(), repo, wt, false, true)
+	if err == nil || !strings.Contains(err.Error(), "detached HEAD") {
+		t.Fatalf("err = %v, want a detached-HEAD refusal", err)
+	}
+	if !dirExists(wt) {
+		t.Fatal("refused removal deleted the worktree")
+	}
+}
+
+func TestWorktreeRmRejectsUnregisteredDirectory(t *testing.T) {
+	repo, wt := rmFixture(t, "")
+	sub := filepath.Join(wt, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := runWorktreeRm(context.Background(), repo, sub, false, true)
+	if err == nil || !strings.Contains(err.Error(), "not a registered worktree") {
+		t.Fatalf("err = %v, want the not-a-worktree error", err)
+	}
+}
+
 func TestWorktreeRmKeepsSurvivorBranch(t *testing.T) {
 	repo, wt := rmFixture(t, "")
 	// Every commit lives on origin, but under another name with no counterpart

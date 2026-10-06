@@ -51,7 +51,7 @@ Reserved tool verb that resolves an input (branch name, issue/PR number, issue/P
 _Avoid_: checkout (overloaded), switch
 
 **Worktree** (verb — `admin worktree <input>`):
-Reserved tool verb that resolves the same input set as **Branch**, then creates a separate git worktree for that branch (populate, then the project's `post_create` and `post_start` worktree hooks, ADR-0024), rather than switching the current tree.
+Reserved tool verb that resolves the same input set as **Branch**, then creates a separate git worktree for that branch (populate, then the project's `post_create` and `post_start` worktree hooks, ADR-0024), rather than switching the current tree. `admin worktree rm [input]` removes one registered worktree and then its branch; it runs `pre_remove` first and refuses a dirty tree, a paused git operation or commits on no origin ref without `--force`.
 _Avoid_: wt (fine as a shorthand, not the canonical name), tree
 
 **Resolver**:
@@ -59,7 +59,7 @@ The input-classification-and-resolution stage shared by **Branch** and **Worktre
 _Avoid_: parser, classify (that names only phase 1)
 
 **Dead branch**:
-A local branch that cleanup can force-delete safely, origin untouched: its remote is gone, its PR merged on GitHub (catches squash/rebase that `git branch --merged` misses, gated on not-ahead), it's merged into the default, or it's fully pushed. Everything else is a *survivor* (needs human judgment). Classified by `git.ClassifyDead` (`internal/git`). Surfaced by `admin branch --prune` / `admin worktree --prune` and the bare-verb TUI.
+A local branch that cleanup can force-delete safely, origin untouched: its remote is gone, its PR merged on GitHub (catches squash/rebase that `git branch --merged` misses, gated on not-ahead), it's merged into the default, or it's fully pushed. Everything else is a *survivor* (needs human judgment). Classified by `git.ClassifyDead` (`internal/git`). Surfaced by `admin branch --prune` / `admin worktree --prune` and the bare-verb TUI; `admin worktree rm` deletes a removed worktree's branch only when it is dead, unless `--force`.
 _Avoid_: stale (that's only one weaker signal), orphan
 
 **Binding**:
