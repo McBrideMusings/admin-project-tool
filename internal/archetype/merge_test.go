@@ -589,6 +589,39 @@ ceiling = 5
 	}
 }
 
+// [worktrees.hooks] merges by hook name (ADR-0024): a project declaring one
+// hook keeps the archetype's others, and its own declaration of a shared hook
+// wins.
+func TestWorktreeHooksMergeByHookName(t *testing.T) {
+	root := t.TempDir()
+	writeArchetypeDir(t, root, "base", `
+[worktrees.hooks]
+post_create = "archetype-create"
+pre_remove  = "archetype-remove"
+`, false)
+	sp := SearchPath{{Label: root, FS: os.DirFS(root)}}
+
+	project := projectManifest(t, `
+project_name = "widget"
+archetypes   = ["base"]
+
+[worktrees.hooks]
+pre_remove = "project-remove"
+`)
+
+	merged, _, err := Resolve(project, sp)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	hooks, _ := merged.Worktrees["hooks"].(map[string]any)
+	if hooks["post_create"] != "archetype-create" {
+		t.Errorf("hooks[post_create] = %v, want the archetype's value to survive", hooks["post_create"])
+	}
+	if hooks["pre_remove"] != "project-remove" {
+		t.Errorf("hooks[pre_remove] = %v, want the project's value to win", hooks["pre_remove"])
+	}
+}
+
 // TestTerminalMergesLikeEveryOtherArchetypeTable is the ADR-0020 acceptance
 // criterion for archetype merge: an archetype-supplied [terminal] reaches
 // the merged manifest via mergeTable ([keys] is the one exception to this

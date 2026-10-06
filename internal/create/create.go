@@ -1,7 +1,8 @@
 // Package create is the single worktree-creation path. Every entry point —
-// `repo branch` and pressing enter on an issue/PR — calls Worktree. It does the
-// bare minimum: git worktree add, then populate. No post-create commands, no
-// dependency install, no branch prefixing.
+// `repo branch` and pressing enter on an issue/PR — calls Worktree. It runs git
+// worktree add, then populate, then the project's [worktrees.hooks]
+// post_create and post_start (ADR-0024, internal/wthooks). No branch
+// prefixing.
 package create
 
 import (
@@ -14,13 +15,16 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/populate"
+	"github.com/McBrideMusings/admin-project-tool/internal/wthooks"
 )
 
-// Result reports where the worktree landed and what populate did.
+// Result reports where the worktree landed, what populate did, and where a
+// detached post_start hook writes its output ("" when none started).
 type Result struct {
-	Path     string
-	Branch   string
-	Populate []populate.Result
+	Path         string
+	Branch       string
+	Populate     []populate.Result
+	PostStartLog string
 }
 
 // Worktree creates a worktree for branch under <root>/<repo>/<dir> (root
@@ -113,7 +117,29 @@ func Worktree(ctx context.Context, repoRoot, branch string) (Result, error) {
 	if len(cfg.Populate) > 0 {
 		res.Populate = populate.Run(repoRoot, path, cfg.Populate)
 	}
-	return res, nil
+	return res, runCreateHooks(ctx, cfg, repoRoot, &res)
+}
+
+// runCreateHooks runs ADR-0024's creation hooks on a worktree Worktree just
+// made: post_create, waited on, then post_start, detached. A failing
+// post_create keeps the worktree, skips post_start and returns the hook's
+// *wthooks.Error — res still names the worktree, so a caller can report where
+// it is.
+func runCreateHooks(ctx context.Context, cfg config.Config, repoRoot string, res *Result) error {
+	hooks := cfg.Worktrees.Hooks
+	if hooks.PostCreate != "" {
+		if err := wthooks.Run(ctx, wthooks.HookPostCreate, hooks.PostCreate, repoRoot, res.Path, res.Branch); err != nil {
+			return fmt.Errorf("worktree kept at %s: %w", res.Path, err)
+		}
+	}
+	if hooks.PostStart != "" {
+		log, err := wthooks.Start(wthooks.HookPostStart, hooks.PostStart, repoRoot, res.Path, res.Branch, cfg.LogDir)
+		res.PostStartLog = log
+		if err != nil {
+			return fmt.Errorf("worktree kept at %s: %w", res.Path, err)
+		}
+	}
+	return nil
 }
 
 // IsRegisteredWorktree reports whether path is a worktree of the repo at

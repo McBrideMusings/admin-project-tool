@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
+	"github.com/McBrideMusings/admin-project-tool/internal/wthooks"
 )
 
 type cleanupKind int
@@ -428,11 +429,18 @@ func (e *blockedError) Error() string {
 	return what + ", " + conflictNote(e.conflicts) + " — can't stash, nothing deleted"
 }
 
-// isBlocked reports whether a delete result failed the conflict refusal rather
-// than a real git error, so only those get re-offered under force.
+// isBlocked reports whether a delete result failed a refusal force can
+// override — the conflict refusal, or a pre_remove veto — rather than a real
+// git error, so only those get re-offered under force.
 func isBlocked(err error) bool {
 	var be *blockedError
-	return errors.As(err, &be)
+	return errors.As(err, &be) || isVetoed(err)
+}
+
+// isVetoed reports whether a delete result is a pre_remove hook's veto.
+func isVetoed(err error) bool {
+	var he *wthooks.Error
+	return errors.As(err, &he)
 }
 
 func plural(n int) string {
@@ -716,14 +724,24 @@ func (m Model) blockedTargets() []cleanupTarget {
 func (m Model) deleteErrDetail() (title, detail string) {
 	var b strings.Builder
 	for _, r := range m.deleteResults {
+		if r.status != stFailed {
+			continue
+		}
+		var out string
 		var ce *git.CmdError
-		if r.status != stFailed || !errors.As(r.err, &ce) || !ce.HasDetail() {
+		var he *wthooks.Error
+		switch {
+		case errors.As(r.err, &he) && strings.TrimSpace(he.Output) != "":
+			out = he.Output
+		case errors.As(r.err, &ce) && ce.HasDetail():
+			out = ce.Output
+		default:
 			continue
 		}
 		if b.Len() > 0 {
 			b.WriteString("\n\n")
 		}
-		b.WriteString(cleanupKindLabel(r.target) + "\n" + ce.Output)
+		b.WriteString(cleanupKindLabel(r.target) + "\n" + out)
 	}
 	if b.Len() == 0 {
 		return "", ""
@@ -734,6 +752,28 @@ func (m Model) deleteErrDetail() (title, detail string) {
 // blockedCount is how many finished items were refused over unresolved conflicts,
 // so the done phase knows whether to offer the force retry.
 func (m Model) blockedCount() int { return len(m.blockedTargets()) }
+
+// vetoedCount is how many of the blocked items a pre_remove hook refused, so
+// the force offer names what `f` overrides.
+func (m Model) vetoedCount() int {
+	n := 0
+	for _, r := range m.deleteResults {
+		if r.status == stFailed && isVetoed(r.err) {
+			n++
+		}
+	}
+	return n
+}
+
+// deleteErrLine is a failed delete's reason as one modal row: a hook veto's
+// one-line form, any other error as it reads.
+func deleteErrLine(err error) string {
+	var he *wthooks.Error
+	if errors.As(err, &he) {
+		return he.Line()
+	}
+	return err.Error()
+}
 
 // advanceDelete records one finished item and either fires the next or, when the
 // batch is exhausted, flips to the done phase and refreshes local git state.

@@ -11,6 +11,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
+	"github.com/McBrideMusings/admin-project-tool/internal/wthooks"
 )
 
 // statFn is os.Stat, indirected so tests could stub it.
@@ -19,6 +20,10 @@ var statFn = os.Stat
 // removeWorktreeFn is git.RemoveWorktree, indirected so tests can observe the
 // force flag a delete passes without touching a real repo.
 var removeWorktreeFn = git.RemoveWorktree
+
+// preRemoveFn is wthooks.PreRemove, indirected so tests can veto a delete
+// without a real repo or manifest.
+var preRemoveFn = wthooks.PreRemove
 
 // stashWorktreeFn is the delete step's recovery step — git.StashWorktree with the
 // step's own name in front of git's refusal, so a failed row says which half of

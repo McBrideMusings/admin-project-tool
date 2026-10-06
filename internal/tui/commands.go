@@ -684,11 +684,19 @@ func deleteStepCmd(ctx context.Context, dir string, targets []cleanupTarget, i i
 			// is paused instead, and leave the delete to the explicit `f` retry. A
 			// worktree whose status could not be read at all takes the same route: it
 			// might hold conflicts, and guessing wrong costs files nothing brings back.
-			switch {
-			case t.unstashable() && !force:
+			if t.unstashable() && !force {
 				return deleteStepMsg{idx: i, err: &blockedError{
 					op: t.op, conflicts: t.conflicts, unread: t.statusUnread,
 				}}
+			}
+			// pre_remove (ADR-0024) goes before the stash and the herdr close, so
+			// a veto leaves the worktree exactly as it was. The veto is a refusal
+			// the done phase re-offers under `f`, and that forced retry still runs
+			// the hook but removes whatever it returns.
+			if err = preRemoveFn(git.WithQuiet(ctx), dir, t.path, force); err != nil {
+				return deleteStepMsg{idx: i, err: err}
+			}
+			switch {
 			case t.unstashable():
 				// Forced: no stash is possible, so the removal below is the whole step.
 			case t.dirty:

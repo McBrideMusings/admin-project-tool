@@ -8,6 +8,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/shim"
+	"github.com/McBrideMusings/admin-project-tool/internal/wthooks"
 )
 
 // pruneKind selects which candidate set `admin branch --prune` / `admin
@@ -194,6 +195,11 @@ func pruneDeadWorktrees(ctx context.Context, dir, repoRoot string, merged map[st
 	}
 	var failed int
 	for _, v := range victims {
+		if err := wthooks.PreRemove(ctx, dir, v.path, false); err != nil {
+			fmt.Fprintf(os.Stderr, "kept %s [%s]: %v\n", v.path, v.branch, err)
+			failed++
+			continue
+		}
 		if _, err := shim.CloseWorkspaceAt(v.path); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s: closing the herdr workspace: %v\n", v.path, err)
 			failed++
