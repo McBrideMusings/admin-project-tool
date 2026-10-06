@@ -582,6 +582,34 @@ func TestTargetRowsResolvesLiveEntryByCommandName(t *testing.T) {
 	}
 }
 
+// In collapse mode workRows marks every group it hides as closed, and leaves
+// the open one (workOpenCmd) and every group in expanded mode unmarked, so
+// renderGroupRow can tell a closed group from an empty one (admin-3rgp.72.35).
+func TestWorkRowsMarksHiddenGroupsClosed(t *testing.T) {
+	two := map[string]any{"kind": "multi-target", "a": map[string]any{"run": "a"}, "b": map[string]any{"run": "b"}}
+	m := &manifest.Manifest{
+		Custom:  map[string]manifest.Command{"dev": {Desc: "dev", Steps: []string{"dev"}}, "logs": {Desc: "logs", Steps: []string{"logs"}}},
+		Actions: map[string]manifest.Action{"dev": two, "logs": two},
+	}
+	closed := func(mm Model) map[string]bool {
+		got := map[string]bool{}
+		for _, r := range mm.workRows() {
+			if r.kind == rowCommand && r.group {
+				got[r.work.cmdName] = r.work.closed
+			}
+		}
+		return got
+	}
+	mm := workTestModel(m)
+	if got := closed(mm); got["dev"] || got["logs"] {
+		t.Errorf("expanded mode closed = %v, want no group closed", got)
+	}
+	mm.workCollapsed, mm.workOpenCmd = true, "dev"
+	if got := closed(mm); got["dev"] || !got["logs"] {
+		t.Errorf("collapsed with dev open: closed = %v, want only logs closed", got)
+	}
+}
+
 // TestWorkRowsWorkersHeaderAlwaysPresent covers admin-spjp.1's core claim:
 // the Workers header renders whether or not any worker is live, and the row
 // directly under it matches whatever liveWorkers() actually returns right
