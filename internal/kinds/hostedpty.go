@@ -439,14 +439,16 @@ func (a *lastLineActivity) Write(p []byte) (int, error) {
 		a.cur = append(a.cur[:0], a.cur[i+1:]...)
 	}
 	if n := len(a.cur); n > lastLineCap {
-		tail := a.cur[n-lastLineCap:]
+		tail := a.cur[escapeSafeCut(a.cur, n-lastLineCap):]
 		for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
 			tail = tail[1:]
 		}
 		a.cur = append(a.cur[:0], tail...)
 	}
 	line := a.last
-	if s := plainActivity(string(a.cur)); logformat.HasWords(s) {
+	// An escape the pty read ended inside is held back until the next write
+	// completes it: stripped as it stands it would leave its tail ("[3") as text.
+	if s := plainActivity(string(a.cur[:completeEscapesLen(a.cur)])); logformat.HasWords(s) {
 		line = s
 	}
 	if line != a.shown {
@@ -454,6 +456,40 @@ func (a *lastLineActivity) Write(p []byte) (int, error) {
 		livework.Default.SetActivity(a.id, line)
 	}
 	return len(p), nil
+}
+
+// maxEscapeLen bounds how far back an escape sequence is looked for: a longer
+// run after an ESC is text the terminal never read as an escape, so it is not
+// held back.
+const maxEscapeLen = 32
+
+// completeEscapesLen is how much of b to read as text: all of it, unless it
+// ends in an escape sequence still waiting for its final byte, which it stops
+// before.
+func completeEscapesLen(b []byte) int {
+	i := bytes.LastIndexByte(b, 0x1b)
+	if i < 0 || len(b)-i > maxEscapeLen {
+		return len(b)
+	}
+	if loc := logformat.AnsiEscapeRe.FindIndex(b[i:]); loc != nil && loc[0] == 0 {
+		return len(b)
+	}
+	return i
+}
+
+// escapeSafeCut moves a cut at index cut forward past an escape sequence it
+// would split, so the bytes kept never start inside one.
+func escapeSafeCut(b []byte, cut int) int {
+	for j := cut - 1; j >= 0 && j >= cut-maxEscapeLen; j-- {
+		if b[j] != 0x1b {
+			continue
+		}
+		if loc := logformat.AnsiEscapeRe.FindIndex(b[j:]); loc != nil && loc[0] == 0 && j+loc[1] > cut {
+			return j + loc[1]
+		}
+		break
+	}
+	return cut
 }
 
 // plainActivity is one raw output line as the plain text a row can print:

@@ -486,3 +486,29 @@ func TestLastLineActivitySkipsBlankLinesAndKeepsTheRedraw(t *testing.T) {
 		t.Errorf("Activity = %q, want %q", got, "count 2")
 	}
 }
+
+// TestLastLineActivityHoldsBackASplitEscape: a pty read that ends inside an
+// escape ("\x1b[3") never records the escape's tail ("[3") as activity, and the
+// 4096-byte cap never cuts through one.
+func TestLastLineActivityHoldsBackASplitEscape(t *testing.T) {
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
+	if err := livework.Default.Add(&livework.Entry{ID: "c", Handle: "pty", Ops: livework.Ops{Kill: func() error { return nil }}}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	a := &lastLineActivity{id: "c"}
+	_, _ = a.Write([]byte("\x1b[3"))
+	if got, _ := livework.Default.Activity("c"); got != "" {
+		t.Errorf("Activity after a split escape = %q, want empty", got)
+	}
+	_, _ = a.Write([]byte("2mok\n"))
+	if got, _ := livework.Default.Activity("c"); got != "ok" {
+		t.Errorf("Activity = %q, want %q", got, "ok")
+	}
+
+	// The cap keeps the last 4096 bytes: an escape across that cut must go whole.
+	b := &lastLineActivity{id: "c"}
+	_, _ = b.Write([]byte("\x1b[31m" + strings.Repeat("x", lastLineCap-2)))
+	if got, _ := livework.Default.Activity("c"); !strings.HasPrefix(got, "xxx") {
+		t.Errorf("Activity after a capped line starts %q, want text, not an escape remnant", got[:8])
+	}
+}
