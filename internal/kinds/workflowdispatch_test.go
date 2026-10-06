@@ -479,8 +479,8 @@ func TestDispatchTargetsSpawnsRunWithTargetEnv(t *testing.T) {
 	if res[0].Err != nil {
 		t.Fatal(res[0].Err)
 	}
-	if want := "export ADMIN_TARGET=proj-1; claude '/implement $ADMIN_TARGET auto'"; gotCmd != want {
-		t.Errorf("ADMIN_CMD = %q, want %q: the run string behind an export of its target", gotCmd, want)
+	if want := "export ADMIN_TARGET=proj-1 ADMIN_WORKER_WORKTREE=" + shellQuote(res[0].WorktreePath) + "; claude '/implement $ADMIN_TARGET auto'"; gotCmd != want {
+		t.Errorf("ADMIN_CMD = %q, want %q: the run string behind an export of its target and worktree", gotCmd, want)
 	}
 	if gotTarget != "proj-1" {
 		t.Errorf("ADMIN_TARGET = %q, want proj-1", gotTarget)

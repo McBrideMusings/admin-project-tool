@@ -136,8 +136,8 @@ func TestHostedShellSurfaceRunsInlineOneAtATime(t *testing.T) {
 		}
 	}
 	want := []string{
-		"do a [ADMIN_TARGET=a] @ " + filepath.Base(res[0].WorktreePath),
-		"do b [ADMIN_TARGET=b] @ " + filepath.Base(res[1].WorktreePath),
+		"do a [ADMIN_TARGET=a ADMIN_WORKER_WORKTREE=" + res[0].WorktreePath + "] @ " + filepath.Base(res[0].WorktreePath),
+		"do b [ADMIN_TARGET=b ADMIN_WORKER_WORKTREE=" + res[1].WorktreePath + "] @ " + filepath.Base(res[1].WorktreePath),
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Errorf("inline calls = %q, want %q", calls, want)
