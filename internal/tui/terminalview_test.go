@@ -718,3 +718,40 @@ func TestEncodeKey(t *testing.T) {
 		}
 	}
 }
+
+// TestCapFieldBlockClipsAndCountsWhatItHides: a block over the limit keeps
+// limit-1 rows plus a "+N more" row, counting the row it replaced; a block
+// within the limit is untouched; a limit of one keeps the first row alone.
+func TestCapFieldBlockClipsAndCountsWhatItHides(t *testing.T) {
+	rows := []string{"log", "url a", "url b", "url c", "url d", "url e", "url f"}
+	got := capFieldBlock(rows, 5, 30)
+	if len(got) != 5 {
+		t.Fatalf("capped to %d rows, want 5: %q", len(got), got)
+	}
+	if last := strings.TrimSpace(stripANSI(got[4])); last != "… +3 more" {
+		t.Errorf("last row = %q, want %q (7 rows, 4 shown, 3 hidden)", last, "… +3 more")
+	}
+	if got := capFieldBlock(rows[:5], 5, 30); len(got) != 5 || got[4] != "url d" {
+		t.Errorf("a block within the limit changed: %q", got)
+	}
+	if got := capFieldBlock(rows, 1, 30); len(got) != 1 || got[0] != "log" {
+		t.Errorf("limit 1 = %q, want just the log row", got)
+	}
+}
+
+// TestAttachedFieldBlockLeavesRoomForOutput: on a short terminal the field
+// block takes at most half the body, so the dashed rule and the child's rows
+// are not pushed out.
+func TestAttachedFieldBlockLeavesRoomForOutput(t *testing.T) {
+	mm, _ := workersFixtureModel(t)
+	mm.termAttached = true
+	mm.termEntryID = "admin-3rgp.36"
+	mm.width, mm.height = 90, 12
+	_, _, bodyHeight := mm.frameGeom()
+	if got, max := len(mm.termFields(90)), maxi((bodyHeight-1)/2, 1); got > max {
+		t.Errorf("field block = %d rows on a %d-row body, want at most %d", got, bodyHeight, max)
+	}
+	if rows, _ := mm.termRegion(); rows < 2 {
+		t.Errorf("child pty region = %d rows, want output to keep room", rows)
+	}
+}

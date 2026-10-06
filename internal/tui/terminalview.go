@@ -22,6 +22,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -269,20 +270,41 @@ func (m Model) attachBreadcrumb(width int) string {
 // band shows under its title for this entry — a command's log path and one
 // row per configured url, or a worker's five rows. It finds them through the
 // attached entry's own Commands or Workers row (entryRow). An entry with no
-// row falls back to its log path alone.
+// row falls back to its log path alone. The block is capped by capFieldBlock,
+// so a command with many urls cannot push the dashed rule and the child's
+// output off a short terminal.
 func (m Model) termFields(width int) []string {
 	if !m.termAttached {
 		return nil
 	}
+	_, _, bodyHeight := m.frameGeom()
+	limit := mini(fieldRowsH, maxi((bodyHeight-1)/2, 1))
 	if r, e, ok := m.entryRow(m.termEntryID); ok {
-		return bandFields(e, r.work, width)
+		return capFieldBlock(bandFields(e, r.work, width), limit, width)
 	}
 	if e := m.termEntry(); e != nil {
 		if logPath, _ := livework.Default.LogPath(e.ID); logPath != "" {
-			return bandFieldsCommand(&workRowData{logPath: logPath}, width)
+			return capFieldBlock(bandFieldsCommand(&workRowData{logPath: logPath}, width), limit, width)
 		}
 	}
 	return nil
+}
+
+// capFieldBlock clips an attached view's field block to limit rows — at most
+// fieldRowsH, the height the docked band gives the same rows, and at most
+// half the body so the child's output keeps the rest. A clipped block ends in
+// a "+N more" row counting what it hides, the row it replaced included; at a
+// limit of one there is no room for the marker and only the first row stays.
+func capFieldBlock(rows []string, limit, w int) []string {
+	if len(rows) <= limit {
+		return rows
+	}
+	if limit <= 1 {
+		return rows[:1]
+	}
+	out := append([]string{}, rows[:limit-1]...)
+	more := " " + faintStyle.Render(fmt.Sprintf("… +%d more", len(rows)-(limit-1)))
+	return append(out, padEnd(more, w))
 }
 
 // renderTerminalBody is view.go's full-tab replacement for the list/detail
