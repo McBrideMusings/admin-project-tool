@@ -750,14 +750,16 @@ func (m Model) keymap() [][2]string {
 		// From here up does nothing, and down and enter both call
 		// enterBody(), which declines with no rows. So "↑↓ move" always goes,
 		// and with rows "↓/↵ body" leads in place of the row kind's own "↵"
-		// label (e.g. "checkout"), an action enter doesn't take here.
+		// label (e.g. "checkout"), an action enter doesn't take here. With no
+		// rows enter does nothing at all, and neither do the keys that act on
+		// the row under the cursor (rowScopedGlyphs), so none is advertised.
 		hasRows := m.bodyRowCount() > 0
 		var out [][2]string // fresh backing array: pairs may alias a shared table
 		if hasRows {
 			out = append(out, [2]string{"↓/↵", "body"})
 		}
 		for _, p := range pairs {
-			if p[0] == "↑↓" || (p[0] == "↵" && hasRows) {
+			if p[0] == "↑↓" || p[0] == "↵" || (!hasRows && rowScopedGlyphs[p[0]]) {
 				continue
 			}
 			out = append(out, p)
@@ -779,6 +781,10 @@ func (m Model) keymap() [][2]string {
 	}
 	return append(pairs, [2]string{"←→", "tab"})
 }
+
+// rowScopedGlyphs are the footer glyphs whose keys act on the row under the
+// cursor, so they do nothing over an empty body.
+var rowScopedGlyphs = map[string]bool{"d": true, "i": true, "x": true, "p": true, "⌥↵/W": true}
 
 // hasKey reports whether any pair already advertises this footer glyph.
 func hasKey(pairs [][2]string, display string) bool {

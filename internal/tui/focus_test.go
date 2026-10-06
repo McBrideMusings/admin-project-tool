@@ -246,9 +246,32 @@ func TestEmptyBodyKeybarOffersNoBody(t *testing.T) {
 	m := workFocusModel()
 	m.active = tabIssues
 	for _, p := range m.keymap() {
-		if p[0] == "↑↓" || p[0] == "↓/↵" {
+		if p[0] == "↑↓" || p[0] == "↓/↵" || p[0] == "↵" {
 			t.Errorf("empty-bodied tab-bar keymap = %v, want no %q pair", m.keymap(), p[0])
 		}
+	}
+}
+
+// TestEmptyBodyKeybarDropsRowScopedKeys: on an empty Branches list the tab-bar
+// footer drops x delete, p pull and the worktree chord — each acts on the row
+// under the cursor — and keeps w new, which needs no row.
+func TestEmptyBodyKeybarDropsRowScopedKeys(t *testing.T) {
+	m := workFocusModel()
+	m.active = tabLocal
+	if got := m.bodyRowCount(); got != 0 {
+		t.Fatalf("bodyRowCount() on an empty Branches tab = %d, want 0", got)
+	}
+	keys := map[string]bool{}
+	for _, p := range m.keymap() {
+		keys[p[0]] = true
+	}
+	for _, g := range []string{"x", "p", "⌥↵/W", "↵"} {
+		if keys[g] {
+			t.Errorf("empty Branches tab-bar footer advertises %q, which does nothing over no rows", g)
+		}
+	}
+	if !keys["w"] {
+		t.Errorf("empty Branches tab-bar footer dropped w new, which needs no row")
 	}
 }
 
