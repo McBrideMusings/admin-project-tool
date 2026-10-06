@@ -79,6 +79,25 @@ func FocusWorkspace(id string) error {
 	return exec.Command("herdr", "workspace", "focus", id).Run()
 }
 
+// CloseWorkspaceAt closes the herdr workspace open on the worktree at path, with
+// every pane in it, and reports whether it closed one. The lookup is made now, so
+// a workspace opened since the dashboard's last poll is still found. A worktree
+// herdr has no workspace on, or no herdr at all, is not an error: there is
+// nothing to close.
+//
+// Callers run it before removing the worktree, so no pane is left holding a
+// directory that no longer exists.
+func CloseWorkspaceAt(path string) (bool, error) {
+	id, open := OpenWorkspaces()[path]
+	if !open {
+		return false, nil
+	}
+	if err := exec.Command("herdr", "workspace", "close", id).Run(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // Available reports whether repo is running in a herdr pane with the herdr CLI
 // reachable and not disabled via REPO_HERDR=off. When true the dashboard creates
 // worktrees inline (opening a focused herdr workspace) instead of quitting to

@@ -169,6 +169,12 @@ func renderSegs(segs []seg, bg lipgloss.TerminalColor) string {
 			st = st.Background(s.bg)
 		case bg != nil:
 			st = st.Background(bg)
+			// The selected-row background is the same ANSI gray the dim palette
+			// uses for text, so a dim segment on it vanishes. Lift it to bright
+			// white while the row is selected.
+			if s.fg == cDim || s.fg == bg {
+				st = st.Foreground(cBright)
+			}
 		}
 		if s.strike {
 			st = st.Strikethrough(true)

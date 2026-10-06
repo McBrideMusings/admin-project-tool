@@ -701,6 +701,12 @@ func deleteStepCmd(ctx context.Context, dir string, targets []cleanupTarget, i i
 			// dirty, or holding a paused operation. Selecting one is the
 			// deliberate act quarantine exists to require, so honour it with --force;
 			// without it the delete can only ever fail.
+			// A herdr workspace open on the worktree closes with it: its panes would
+			// otherwise sit in a directory that no longer exists. If herdr refuses
+			// to close it the step stops, leaving the worktree intact.
+			if _, cerr := shim.CloseWorkspaceAt(t.path); cerr != nil {
+				return deleteStepMsg{idx: i, err: fmt.Errorf("closing the herdr workspace: %w", cerr)}
+			}
 			if err = removeWorktreeFn(ctx, dir, t.path, t.quarantined); err == nil {
 				err = git.DeleteBranch(ctx, dir, t.branch, true)
 			}
