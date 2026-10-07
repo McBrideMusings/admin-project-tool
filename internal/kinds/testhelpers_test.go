@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/archetype"
+	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 )
 
@@ -45,7 +46,10 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	restore := archetype.UseInstalledDir(archDir)
+	// A dispatched worker is shared through the state dir; never the user's.
+	restoreLivework := livework.UseRegistry(livework.NewSharedRegistry(filepath.Join(archDir, "livework")))
 	code := m.Run()
+	restoreLivework()
 	restore()
 	os.RemoveAll(archDir)
 	os.Exit(code)

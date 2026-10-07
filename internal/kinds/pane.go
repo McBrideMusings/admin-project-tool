@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
+	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/timing"
 )
@@ -272,27 +273,25 @@ func ReadLauncherPane(ctx context.Context, run, handle string) (string, error) {
 
 // recordLiveWork adds a running entry for a successfully-dispatched
 // detached action or command to the process-wide live-work registry, keyed
-// on id. When the registry rejects the entry (a live duplicate), it closes the
-// pane through the launcher's kill so no pane stays open unregistered, and
+// on id and shared with every other admin process working in root's repo.
+// When the registry rejects the entry (a live duplicate), it closes the pane
+// through the launcher's kill so no pane stays open unregistered, and
 // returns the rejection.
-func recordLiveWork(id, kind, handle string, t config.Terminal) error {
+func recordLiveWork(root, id, kind, handle string, t config.Terminal) error {
+	// Workers are keyed on the primary checkout; a manifest found inside a
+	// linked worktree must share under the same key.
+	if primary, err := git.RepoRoot(context.Background(), root); err == nil {
+		root = primary
+	}
 	e := &livework.Entry{
 		ID:     id,
 		Name:   id,
 		Kind:   kind,
 		Handle: handle,
 		Via:    "terminal",
+		Root:   root,
 	}
-	e.Ops = livework.Ops{
-		Attach: func() error { return runLauncherShell(t.Attach, e.Handle) },
-		Kill: func() error {
-			if err := runLauncherShell(t.Kill, e.Handle); err != nil {
-				return err
-			}
-			livework.Default.SetState(e.ID, livework.StateExited, nil)
-			return nil
-		},
-	}
+	e.Ops = launcherOps(e, t)
 	if err := livework.Default.Add(e); err != nil {
 		if killErr := runLauncherShell(t.Kill, handle); killErr != nil {
 			log.Printf("recordLiveWork: closing pane %s: %v", handle, killErr)
@@ -300,4 +299,60 @@ func recordLiveWork(id, kind, handle string, t config.Terminal) error {
 		return err
 	}
 	return nil
+}
+
+// launcherOps is the attach and kill of an entry living in a [terminal]
+// launcher pane: t's attach and kill, shelled with ADMIN_HANDLE set to the
+// entry's handle. A worker's kill tolerates a pane that already closed and
+// frees the worker's ceiling slot. A fresh dispatch and an entry loaded from
+// another process's file both get their Ops here, so the two cannot differ.
+func launcherOps(e *livework.Entry, t config.Terminal) livework.Ops {
+	kill := func() error {
+		if err := runLauncherShell(t.Kill, e.Handle); err != nil {
+			return err
+		}
+		livework.Default.SetState(e.ID, livework.StateExited, nil)
+		return nil
+	}
+	if e.Worker != nil {
+		kill = func() error {
+			// A pane that already closed makes kill fail; closing it was the
+			// goal, so the row still exits and frees its slot.
+			ctx, cancel := context.WithTimeout(context.Background(), doneTimeout)
+			defer cancel()
+			if err := closeFinishedPane(ctx, e.Handle, t); err != nil {
+				return err
+			}
+			livework.Default.SetState(e.ID, livework.StateExited, nil)
+			ReleaseWorkerSlot(e.ID)
+			return nil
+		}
+	}
+	return livework.Ops{
+		Attach: func() error { return runLauncherShell(t.Attach, e.Handle) },
+		Kill:   kill,
+	}
+}
+
+// loadedEntryOps rebuilds the Ops of an entry another admin process wrote,
+// from the [terminal] its repo root declares. A root whose config no longer
+// loads, or that declares no launcher, leaves the entry with no attach or
+// kill, which the registry reports as unsupported.
+func loadedEntryOps(e *livework.Entry) livework.Ops {
+	if e.Via != "terminal" {
+		return livework.Ops{}
+	}
+	cfg, err := config.Load(e.Root)
+	if err != nil {
+		log.Printf("livework: entry %s: loading %s: %v", e.ID, e.Root, err)
+		return livework.Ops{}
+	}
+	if cfg.Terminal.Spawn == "" {
+		return livework.Ops{}
+	}
+	return launcherOps(e, cfg.Terminal)
+}
+
+func init() {
+	livework.SetOpsBuilder(loadedEntryOps)
 }

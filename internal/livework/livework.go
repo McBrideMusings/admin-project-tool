@@ -14,8 +14,9 @@
 //
 // There is exactly one registry per process (Default), matching the "one
 // process runs one dev loop" assumption internal/frame and internal/reload
-// already make: the registry is in-memory only and is not persisted or
-// shared across admin invocations.
+// already make. An entry living in a launcher pane outlives the process that
+// opened it, so Default also shares such entries with every other admin
+// process through files under DefaultStateDir — see persist.go.
 package livework
 
 import (
@@ -199,6 +200,17 @@ type Entry struct {
 	// Err is set when State is StateFailed; nil otherwise.
 	Err error
 
+	// Root is the primary checkout of the repo this entry was dispatched
+	// from. A launcher-dispatched entry carrying one is shared with every
+	// other admin process working in that repo (persist.go); "" keeps the
+	// entry in this process only.
+	Root string
+
+	// onDisk is true once this entry's shared file has been written or the
+	// entry was loaded from one, so Sync can read a missing file as "ended
+	// elsewhere" without misreading a write that failed. Guarded by r.mu.
+	onDisk bool
+
 	// LogPath is the real log file this entry's process is writing to, once
 	// known. It is empty until the producer learns it — for a hosted-pty
 	// entry (internal/kinds/hostedpty.go's recordHostedPTYWork), that means
@@ -210,18 +222,30 @@ type Entry struct {
 	LogPath string
 }
 
-// Registry is a concurrency-safe, in-memory, append-mostly set of Entry
-// records, keyed by ID.
+// Registry is a concurrency-safe, append-mostly set of Entry records, keyed
+// by ID. A registry with a state dir also shares its launcher-dispatched
+// entries through that dir (persist.go).
 type Registry struct {
 	mu             sync.Mutex
+	dir            string          // state dir; "" keeps every entry in memory only
+	writeErrs      []error         // failed updates, reported by the next Sync
+	reported       map[string]bool // malformed files Sync has already named
 	entries        map[string]*Entry
 	order          []string // insertion order, for a deterministic List
 	terminalOpener func(handle string) error
 }
 
-// NewRegistry returns an empty Registry.
+// NewRegistry returns an empty, in-memory Registry.
 func NewRegistry() *Registry {
 	return &Registry{entries: map[string]*Entry{}}
+}
+
+// NewSharedRegistry returns an empty Registry that shares its
+// launcher-dispatched entries through files under dir.
+func NewSharedRegistry(dir string) *Registry {
+	r := NewRegistry()
+	r.dir = dir
+	return r
 }
 
 // SetTerminalOpener installs the dashboard's "open the terminal view over
@@ -244,7 +268,9 @@ func (r *Registry) SetTerminalOpener(open func(handle string) error) {
 //
 // Add rejects e and stores nothing when e carries an empty Handle — an
 // entry must address something — or when an entry with the same ID is still
-// running or waiting: overwriting it would orphan that entry's pane.
+// running or waiting: overwriting it would orphan that entry's pane. A
+// shared entry is also rejected while another admin process holds a live
+// file for its ID.
 func (r *Registry) Add(e *Entry) error {
 	if e.Handle == "" {
 		return fmt.Errorf("live-work: entry %q must carry a Handle", e.ID)
@@ -257,10 +283,18 @@ func (r *Registry) Add(e *Entry) error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if old, exists := r.entries[e.ID]; !exists {
-		r.order = append(r.order, e.ID)
-	} else if old.State != StateExited && old.State != StateFailed {
+	old, exists := r.entries[e.ID]
+	if exists && old.State.live() {
 		return fmt.Errorf("live-work: entry %q is already %s (handle %s)", e.ID, old.State, old.Handle)
+	}
+	// Claiming the file refuses an id another process holds live. A shared
+	// entry no other process can see would be lost the moment this process
+	// exits, so a failed write rejects it like a duplicate does.
+	if err := r.claimLocked(e); err != nil {
+		return err
+	}
+	if !exists {
+		r.order = append(r.order, e.ID)
 	}
 	r.entries[e.ID] = e
 	return nil
@@ -326,9 +360,13 @@ func (r *Registry) SetState(id string, state State, err error) {
 	if !ok {
 		return
 	}
+	changed := e.State != state
 	e.State = state
 	if state == StateFailed {
 		e.Err = err
+	}
+	if changed {
+		r.updateLocked(e)
 	}
 }
 
@@ -344,7 +382,10 @@ func (r *Registry) SetLogPath(id, path string) {
 	if !ok {
 		return
 	}
-	e.LogPath = path
+	if e.LogPath != path {
+		e.LogPath = path
+		r.updateLocked(e)
+	}
 }
 
 // SetActivity updates the entry for id's current-activity line, if present.
@@ -362,8 +403,9 @@ func (r *Registry) SetActivity(id, activity string) {
 func (r *Registry) SetNote(id, note string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if e, ok := r.entries[id]; ok {
+	if e, ok := r.entries[id]; ok && e.Note != note {
 		e.Note = note
+		r.updateLocked(e)
 	}
 }
 
@@ -495,7 +537,7 @@ func (r *Registry) Kill(id string) error {
 // Default is the process-wide registry every long-running dispatch and
 // every workflow target records itself into, and what the Work tab
 // (admin-3rgp.20) reads.
-var Default = NewRegistry()
+var Default = NewSharedRegistry(DefaultStateDir())
 
 // UseRegistry points Default at r for the duration of a test and returns a
 // restore func that puts the previous registry back — the same seam pattern

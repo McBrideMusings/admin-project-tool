@@ -729,7 +729,7 @@ func (m Model) Init() tea.Cmd {
 		// hears from otherwise — livework.Default has no notification of
 		// its own. This tick is the Work tab's only wake source for that,
 		// mirroring beadsTickCmd's own reason for existing.
-		cmds = append(cmds, m.workTickCmd())
+		cmds = append(cmds, m.workTickCmd(), syncLiveWorkCmd(m.repoRoot))
 	}
 	return tea.Batch(cmds...)
 }
@@ -1779,6 +1779,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(m.workTickCmd(), record)
 
+	case liveWorkSyncMsg:
+		m.setStatus(msg.err.Error(), cRed)
+		return m, nil
+
 	case workflowDispatchDoneMsg:
 		m.workflowDispatchDone(msg)
 		return m, nil
@@ -1791,7 +1795,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// here, never from View, so starting either stays a side effect and
 		// rendering stays pure.
 		m.refreshDetailProbes()
-		return m, tea.Batch(m.workTickCmd(), pollAgentStatusCmd(), pollPaneStatusCmd(m.cfgMerged.Terminal.Status), reapWorkersCmd(m.repoRoot, m.cfgMerged.Terminal), m.pollPaneTailCmd(m.cfgMerged.Terminal.Read))
+		return m, tea.Batch(m.workTickCmd(), syncLiveWorkCmd(m.repoRoot), pollAgentStatusCmd(), pollPaneStatusCmd(m.cfgMerged.Terminal.Status), reapWorkersCmd(m.repoRoot, m.cfgMerged.Terminal), m.pollPaneTailCmd(m.cfgMerged.Terminal.Read))
 
 	case agentStatusMsg:
 		// applyAgentStatuses is the only writer of the herdr-derived state

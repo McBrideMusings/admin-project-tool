@@ -702,17 +702,82 @@ func TestRecordLiveWorkClosesPaneWhenRegistryRejects(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "killed")
 	term := config.Terminal{Kill: `echo "$ADMIN_HANDLE" > ` + marker}
 	id := "record-dup-" + t.Name()
-	if err := recordLiveWork(id, "shell", "pane-1", term); err != nil {
+	if err := recordLiveWork("", id, "shell", "pane-1", term); err != nil {
 		t.Fatalf("first record: %v", err)
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("kill ran for the accepted entry")
 	}
-	if err := recordLiveWork(id, "shell", "pane-2", term); err == nil {
+	if err := recordLiveWork("", id, "shell", "pane-2", term); err == nil {
 		t.Fatal("second record of a live id: want rejection")
 	}
 	got, err := os.ReadFile(marker)
 	if err != nil || strings.TrimSpace(string(got)) != "pane-2" {
 		t.Fatalf("kill marker = %q, %v; want pane-2", got, err)
+	}
+}
+
+// TestDispatchReplacesAWorkerWhosePaneIsGone: a worker whose pane closed
+// outside admin, with no dashboard to notice, must not block its target.
+func TestDispatchReplacesAWorkerWhosePaneIsGone(t *testing.T) {
+	killLog := filepath.Join(t.TempDir(), "kills")
+	repoRoot := setupWorkflowRepo(t, killLogTerminal(killLog)+"status = \"false\"\n")
+	t.Cleanup(livework.UseRegistry(livework.NewSharedRegistry(t.TempDir())))
+	n := 0
+	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) { n++; return fmt.Sprintf("pane-%d", n), nil })
+	tgt := []Target{NewExecTarget("fix-it", "claude", nil)}
+
+	if res := DispatchTargets(repoRoot, "worktree", ExecAction("claude"), tgt, SurfaceShell); res[0].Err != nil {
+		t.Fatal(res[0].Err)
+	}
+	res := DispatchTargets(repoRoot, "worktree", ExecAction("claude"), tgt, SurfaceShell)
+	if res[0].Err != nil || res[0].Handle != "pane-2" {
+		t.Fatalf("re-dispatch over a dead pane = %+v, want pane-2", res[0])
+	}
+}
+
+// TestShellDispatchedWorkerOutlivesItsProcess: a worker `admin worktree -x`
+// dispatches from a shell is still live, and still killable through the
+// repo's [terminal].kill, from a second process after the first one is gone —
+// and that second process refuses to dispatch the same target again.
+func TestShellDispatchedWorkerOutlivesItsProcess(t *testing.T) {
+	killLog := filepath.Join(t.TempDir(), "kills")
+	repoRoot := setupWorkflowRepo(t, ""+killLogTerminal(killLog))
+	state := t.TempDir()
+	t.Cleanup(livework.UseRegistry(livework.NewSharedRegistry(state)))
+	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) { return "pane-cli", nil })
+
+	res := DispatchTargets(repoRoot, "worktree", ExecAction("claude"), []Target{NewExecTarget("fix-it", "claude", nil)}, SurfaceShell)
+	if res[0].Err != nil {
+		t.Fatalf("DispatchTargets: %v", res[0].Err)
+	}
+
+	// The dispatching process exits; a second one starts with an empty registry.
+	livework.Default = livework.NewSharedRegistry(state)
+	if err := livework.Default.Sync(repoRoot); err != nil {
+		t.Fatal(err)
+	}
+	id := workerLiveID("worktree", "fix-it")
+	e, ok := livework.Default.Get(id)
+	if !ok || e.Handle != "pane-cli" || e.Worker == nil || e.Worker.Target != "fix-it" {
+		t.Fatalf("second process sees %+v, want the fix-it worker on pane-cli", e)
+	}
+
+	again := DispatchTargets(repoRoot, "worktree", ExecAction("claude"), []Target{NewExecTarget("fix-it", "claude", nil)}, SurfaceShell)
+	if again[0].Err == nil || !strings.Contains(again[0].Err.Error(), "already has a worker") {
+		t.Fatalf("second dispatch of fix-it = %v, want refusal", again[0].Err)
+	}
+
+	if err := livework.Default.Kill(id); err != nil {
+		t.Fatalf("kill through rebuilt ops: %v", err)
+	}
+	if got := killedHandles(t, killLog); len(got) != 1 || got[0] != "pane-cli" {
+		t.Errorf("killed panes = %v, want [pane-cli]", got)
+	}
+	if st, _ := livework.Default.State(id); st != livework.StateExited {
+		t.Errorf("state after kill = %q, want exited", st)
+	}
+	if names, _ := os.ReadDir(livework.Default.RepoDir(repoRoot)); len(names) != 0 {
+		t.Errorf("%d entry files left after the worker exited", len(names))
 	}
 }

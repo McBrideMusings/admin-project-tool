@@ -35,12 +35,15 @@ func TestMain(m *testing.M) {
 	restoreViewState := viewstate.UseGlobalPath(filepath.Join(dir, "unused-global-view.toml"))
 	// Tests that reach syncCmd log every sync; that log is the user's real one.
 	restoreSyncLog := data.UseSyncLogPath(filepath.Join(dir, "sync.log"))
+	// A dispatched worker is shared through the state dir; never the user's.
+	restoreLivework := livework.UseRegistry(livework.NewSharedRegistry(filepath.Join(dir, "livework")))
 	// Identity is `gh api user` cached under the real user cache dir; a test that
 	// runs Init's commands must neither call gh nor write that cache.
 	prevFetchIdentity := fetchIdentityFn
 	fetchIdentityFn = func(context.Context, string) (data.Identity, error) { return data.Identity{}, nil }
 	code := m.Run()
 	fetchIdentityFn = prevFetchIdentity
+	restoreLivework()
 	restoreSyncLog()
 	restoreViewState()
 	restoreArchetypes()

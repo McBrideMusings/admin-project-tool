@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/archetype"
+	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 )
 
 // TestMain isolates every test in this package from the machine's installed
@@ -20,7 +22,10 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	restore := archetype.UseInstalledDir(dir)
+	// `admin worktree -x` shares its worker through the state dir; never the user's.
+	restoreLivework := livework.UseRegistry(livework.NewSharedRegistry(filepath.Join(dir, "livework")))
 	code := m.Run()
+	restoreLivework()
 	restore()
 	os.RemoveAll(dir)
 	os.Exit(code)

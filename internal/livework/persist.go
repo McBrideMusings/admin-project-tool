@@ -1,0 +1,340 @@
+// persist.go shares launcher-dispatched entries between admin processes. A
+// window worker or detached action runs in a launcher pane that outlives the
+// admin process that opened it, so that process's in-memory registry is not
+// enough: `admin worktree <input> -x claude` exits the moment its pane is up,
+// and the dashboard has to learn about the worker from somewhere.
+//
+// Each such entry is one JSON file, <dir>/<repo-key>/<id>.json, written to a
+// temp file in the same directory and renamed over the old one so a reader
+// never sees half a file. The file exists exactly while the entry is live:
+// SetState to exited or failed removes it, so a file that is gone means the
+// entry is over. A hosted-pty entry (Via empty) is never written — its pty
+// dies with the process that owns it, so no other process could reach it.
+//
+// Ops cannot be written down. A process that loads an entry another process
+// wrote rebuilds them through the builder SetOpsBuilder installed
+// (internal/kinds, from the entry's own repo root and handle).
+package livework
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+// record is an Entry's on-disk form: everything except the in-process parts
+// (Ops, the hosted pty's Output and Screen, the polled Activity and Snapshot).
+type record struct {
+	ID        string      `json:"id"`
+	Name      string      `json:"name"`
+	Kind      string      `json:"kind"`
+	Handle    string      `json:"handle"`
+	Via       string      `json:"via"`
+	Root      string      `json:"root"`
+	StartedAt time.Time   `json:"started_at"`
+	State     State       `json:"state"`
+	Note      string      `json:"note,omitempty"`
+	Worker    *WorkerInfo `json:"worker,omitempty"`
+	LogPath   string      `json:"log_path,omitempty"`
+}
+
+func toRecord(e *Entry) record {
+	return record{
+		ID: e.ID, Name: e.Name, Kind: e.Kind, Handle: e.Handle, Via: e.Via, Root: e.Root,
+		StartedAt: e.StartedAt, State: e.State, Note: e.Note, Worker: e.Worker, LogPath: e.LogPath,
+	}
+}
+
+func (rec record) entry() *Entry {
+	return &Entry{
+		ID: rec.ID, Name: rec.Name, Kind: rec.Kind, Handle: rec.Handle, Via: rec.Via, Root: rec.Root,
+		StartedAt: rec.StartedAt, State: rec.State, Note: rec.Note, Worker: rec.Worker, LogPath: rec.LogPath,
+	}
+}
+
+// live reports whether s is a state a shared file holds: anything but over.
+func (s State) live() bool {
+	return s != StateExited && s != StateFailed
+}
+
+// DefaultStateDir is where Default keeps its entries: ~/.admin/state/livework.
+// "" when the home directory cannot be found, which leaves Default in-memory.
+func DefaultStateDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".admin", "state", "livework")
+}
+
+// repoKey names root's directory under the state dir: the root's base name,
+// for a person reading the directory, and a hash of the cleaned full path, so
+// two checkouts with the same name stay apart.
+func repoKey(root string) string {
+	root = filepath.Clean(root)
+	sum := sha256.Sum256([]byte(root))
+	return filepath.Base(root) + "-" + hex.EncodeToString(sum[:])[:12]
+}
+
+// RepoDir is the directory holding root's shared entries in r, "" when r
+// keeps nothing on disk.
+func (r *Registry) RepoDir(root string) string {
+	if r.dir == "" || root == "" {
+		return ""
+	}
+	return filepath.Join(r.dir, repoKey(root))
+}
+
+func (r *Registry) entryPath(e *Entry) string {
+	return filepath.Join(r.RepoDir(e.Root), e.ID+".json")
+}
+
+// shared reports whether e belongs on disk in r: r keeps a store, e names the
+// repo it belongs to, and e lives in a launcher pane rather than this
+// process's own pty.
+func (r *Registry) shared(e *Entry) bool {
+	return r.dir != "" && e.Root != "" && e.Via != ""
+}
+
+// opsBuilder rebuilds a loaded entry's Ops. See SetOpsBuilder.
+var opsBuilder func(e *Entry) Ops
+
+// SetOpsBuilder installs the function that gives an entry loaded from disk its
+// attach and kill. internal/kinds installs it at init, since only it knows how
+// to reach a project's [terminal] launcher.
+func SetOpsBuilder(build func(e *Entry) Ops) {
+	opsBuilder = build
+}
+
+// errClaimed reports that claimLocked found another process's live file.
+type errClaimed struct{ rec record }
+
+func (e errClaimed) Error() string {
+	return fmt.Sprintf("live-work: entry %q is already %s in another admin process (handle %s)", e.rec.ID, e.rec.State, e.rec.Handle)
+}
+
+// claimLocked writes the file of e, an entry being added. The file is
+// created exclusively, so of two processes adding one id at once exactly one
+// wins; a file already there is replaced only when it holds no live entry.
+// Called with r.mu held.
+func (r *Registry) claimLocked(e *Entry) error {
+	if !r.shared(e) {
+		return nil
+	}
+	path := r.entryPath(e)
+	err := writeFile(path, toRecord(e), true)
+	if os.IsExist(err) {
+		if rec, rerr := readRecord(path); rerr == nil && rec.State.live() {
+			return errClaimed{rec}
+		}
+		err = writeFile(path, toRecord(e), false)
+	}
+	if err != nil {
+		return fmt.Errorf("livework: writing %s: %w", path, err)
+	}
+	e.onDisk = true
+	return nil
+}
+
+// writeLocked rewrites the file of e, an entry already added, or removes it
+// once e is over. Called with r.mu held, so two writers in one process never
+// interleave on one file.
+func (r *Registry) writeLocked(e *Entry) error {
+	if !r.shared(e) {
+		return nil
+	}
+	path := r.entryPath(e)
+	if !e.State.live() {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("livework: removing %s: %w", path, err)
+		}
+		return nil
+	}
+	if err := writeFile(path, toRecord(e), false); err != nil {
+		return fmt.Errorf("livework: writing %s: %w", path, err)
+	}
+	e.onDisk = true
+	return nil
+}
+
+// updateLocked is writeLocked for a change to an entry already added. The
+// entry keeps working in this process when the write fails, so the failure is
+// kept for the next Sync to report rather than returned to a setter no caller
+// checks. Called with r.mu held.
+func (r *Registry) updateLocked(e *Entry) {
+	if err := r.writeLocked(e); err != nil {
+		r.writeErrs = append(r.writeErrs, err)
+	}
+}
+
+// writeFile writes rec as JSON to path through a temp file in the same
+// directory, so a reader never sees half a file. exclusive links the temp
+// file into place, failing with an IsExist error when path already exists;
+// otherwise it is renamed over whatever is there. Not synced: the file only
+// has to outlive the process that wrote it, not the machine.
+func writeFile(path string, rec record, exclusive bool) error {
+	data, err := json.MarshalIndent(rec, "", "  ")
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(append(data, '\n')); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if exclusive {
+		return os.Link(tmp.Name(), path)
+	}
+	return os.Rename(tmp.Name(), path)
+}
+
+// readRecord reads one entry file. A file that is not a well-formed record is
+// an error naming the file.
+func readRecord(path string) (record, error) {
+	var rec record
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return rec, err
+	}
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return rec, fmt.Errorf("livework: malformed entry file %s: %w", path, err)
+	}
+	if rec.ID == "" || rec.Handle == "" {
+		return rec, fmt.Errorf("livework: malformed entry file %s: missing id or handle", path)
+	}
+	return rec, nil
+}
+
+// Sync brings r up to date with root's shared entries on disk. An entry
+// another process added appears, with Ops rebuilt; an entry whose state or
+// note another process changed takes the new values; a live entry of root's
+// whose file is gone was ended by another process and reads exited. Sync
+// never replaces an entry still live in this process, and never revives one
+// this process saw end on the same handle. A malformed file is skipped and
+// named in the returned error the first time Sync meets it; every other file
+// still loads. The error also carries every write this registry failed since
+// the last Sync.
+func (r *Registry) Sync(root string) error {
+	dir := r.RepoDir(root)
+	if dir == "" {
+		return nil
+	}
+	// Only an entry already on disk before the directory is read can be judged
+	// gone by that read: one added meanwhile is missing from it only because
+	// it is newer.
+	r.mu.Lock()
+	before := map[string]*Entry{}
+	known := map[string]string{}
+	for id, e := range r.entries {
+		known[id] = e.Handle
+		if e.Root == root && e.onDisk && e.State.live() {
+			before[id] = e
+		}
+	}
+	r.mu.Unlock()
+
+	names, err := os.ReadDir(dir)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("livework: reading %s: %w", dir, err)
+	}
+	var errs []error
+	onDisk := map[string]record{}
+	for _, de := range names {
+		name := de.Name()
+		if de.IsDir() || strings.HasPrefix(name, ".") || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		rec, err := readRecord(path)
+		if err != nil {
+			if !os.IsNotExist(err) && r.firstReport(path) { // IsNotExist: removed since ReadDir
+				errs = append(errs, err)
+			}
+			continue
+		}
+		onDisk[rec.ID] = rec
+	}
+	// Rebuilding Ops loads the repo's config, so it happens outside the lock.
+	fresh := map[string]*Entry{}
+	for id, rec := range onDisk {
+		if h, ok := known[id]; rec.State.live() && (!ok || h != rec.Handle) {
+			e := rec.entry()
+			e.onDisk = true
+			if opsBuilder != nil {
+				e.Ops = opsBuilder(e)
+			}
+			fresh[id] = e
+		}
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	errs = append(errs, r.writeErrs...)
+	r.writeErrs = nil
+	for id, e := range before {
+		if _, ok := onDisk[id]; !ok && r.entries[id] == e && e.State.live() {
+			e.State = StateExited
+		}
+	}
+	for id, rec := range onDisk {
+		if !rec.State.live() {
+			continue
+		}
+		old, exists := r.entries[id]
+		if exists && old.Handle == rec.Handle {
+			// The same pane. Exited here means this process ended it and its
+			// file outlived it; it stays ended.
+			if old.State.live() && old.onDisk {
+				old.State, old.Note = rec.State, rec.Note
+				if rec.LogPath != "" {
+					old.LogPath = rec.LogPath
+				}
+			}
+			continue
+		}
+		if exists && old.State.live() {
+			continue // this process's own live entry under that id
+		}
+		e := fresh[id]
+		if e == nil {
+			continue // appeared after the snapshot; the next Sync loads it
+		}
+		if !exists {
+			r.order = append(r.order, id)
+		}
+		r.entries[id] = e
+	}
+	return errors.Join(errs...)
+}
+
+// firstReport reports whether Sync has not yet named path as malformed, and
+// records that it now has, so a file that stays broken is reported once.
+func (r *Registry) firstReport(path string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.reported == nil {
+		r.reported = map[string]bool{}
+	}
+	if r.reported[path] {
+		return false
+	}
+	r.reported[path] = true
+	return true
+}

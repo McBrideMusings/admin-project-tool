@@ -378,7 +378,7 @@ func launchCommand(m *manifest.Manifest, name string, args []string, env []strin
 				if err == nil {
 					kind, _ := actionString(action, "kind")
 					liveID := multiTargetLiveID(name, action, args)
-					if err := recordLiveWork(liveID, kind, handle, cfg.Terminal); err != nil {
+					if err := recordLiveWork(root, liveID, kind, handle, cfg.Terminal); err != nil {
 						// The pane is closed and unregistered; run on the default
 						// surface rather than leave a command running nowhere.
 						fmt.Fprintf(os.Stderr, "warning: command %q: %v, running on the default surface\n", name, err)

@@ -34,6 +34,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -172,7 +173,16 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 	// One live worker per target. Refusing here, before any worktree or pane
 	// exists, stops a dispatch started after a worker is registered. Two
 	// dispatches racing inside the window before either registers are still
-	// caught by livework.Registry.Add, but only after their pane opens.
+	// caught by livework.Registry.Add, but only after their pane opens. A
+	// worker another admin process started counts too: from a shell, read the
+	// shared entries now; the dashboard's tick already keeps them read, and
+	// reports their errors on its status line.
+	if surface == SurfaceShell {
+		if err := livework.Default.Sync(repoRoot); err != nil {
+			fmt.Fprintln(os.Stderr, "warning:", err)
+		}
+	}
+	endDeadWorkers(targets, cfg.Terminal)
 	live := livework.Default.WorkerStates()
 	for i, t := range targets {
 		if st, ok := live[t.Name]; ok {
@@ -299,28 +309,45 @@ func dispatchOne(repoRoot, actionName, group string, index int, t config.Termina
 		Kind:   "workflow",
 		Handle: handle,
 		Via:    "terminal",
+		Root:   repoRoot,
 		Worker: &livework.WorkerInfo{Branch: wt.Branch, Worktree: wt.Path, Target: tgt.Name, Done: tgt.Done},
 	}
-	e.Ops = livework.Ops{
-		Attach: func() error { return runLauncherShell(t.Attach, e.Handle) },
-		Kill: func() error {
-			// A pane that already closed makes kill fail; closing it was the
-			// goal, so the row still exits and frees its slot.
-			ctx, cancel := context.WithTimeout(context.Background(), doneTimeout)
-			defer cancel()
-			if err := closeFinishedPane(ctx, e.Handle, t); err != nil {
-				return err
-			}
-			livework.Default.SetState(e.ID, livework.StateExited, nil)
-			ReleaseWorkerSlot(e.ID)
-			return nil
-		},
-	}
+	e.Ops = launcherOps(e, t)
 	if err := livework.Default.Add(e); err != nil {
 		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Handle: handle, Err: closePane(err)}
 	}
 	holdWorkerSlot(id, release)
 	return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Handle: handle}
+}
+
+// endDeadWorkers ends every live window worker for one of targets whose pane
+// [terminal].status reports gone. A pane that no longer exists runs no worker,
+// so it must not refuse a new one — and with no dashboard running, nothing
+// else would ever end it: its shared file would block the target for good.
+// The worktree and branch stay; the new dispatch reuses them.
+func endDeadWorkers(targets []Target, t config.Terminal) {
+	if t.Status == "" {
+		return
+	}
+	want := map[string]bool{}
+	for _, tgt := range targets {
+		want[tgt.Name] = true
+	}
+	for _, e := range livework.Default.List() {
+		if e.Worker == nil || e.Via != "terminal" || !want[e.Worker.Target] {
+			continue
+		}
+		if st, ok := livework.Default.State(e.ID); !ok || !st.Reapable() {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), doneTimeout)
+		gone, err := PaneGone(ctx, t.Status, e.Handle)
+		cancel()
+		if err == nil && gone {
+			livework.Default.SetState(e.ID, livework.StateExited, nil)
+			ReleaseWorkerSlot(e.ID)
+		}
+	}
 }
 
 // workerSlots maps a window worker's live id to the function that frees its
