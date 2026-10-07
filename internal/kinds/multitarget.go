@@ -159,6 +159,21 @@ func TargetSummary(action manifest.Action, key string) string {
 // delegated action's own `run` rather than its bare "@name", which restates
 // the row's key.
 func TargetDescription(m *manifest.Manifest, action manifest.Action, key string) string {
+	return firstLine(targetDescription(m, action, key))
+}
+
+// firstLine is the first non-empty line of s with runs of whitespace
+// collapsed to single spaces, so a multi-line `run` script is one row.
+func firstLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if f := strings.Fields(line); len(f) > 0 {
+			return strings.Join(f, " ")
+		}
+	}
+	return ""
+}
+
+func targetDescription(m *manifest.Manifest, action manifest.Action, key string) string {
 	if tbl, ok := action[key].(map[string]any); ok && !multiTargetReserved[key] {
 		if s, ok := tbl["desc"].(string); ok && s != "" {
 			return s
@@ -180,6 +195,16 @@ func TargetDescription(m *manifest.Manifest, action manifest.Action, key string)
 		return s
 	}
 	return summary
+}
+
+// pickerEntries is the picker's rows: each target's key with the same
+// description the Work tab's expanded command list shows.
+func pickerEntries(m *manifest.Manifest, action manifest.Action, order []string) []luahost.TargetEntry {
+	entries := make([]luahost.TargetEntry, 0, len(order))
+	for _, k := range order {
+		entries = append(entries, luahost.TargetEntry{Key: k, Description: TargetDescription(m, action, k)})
+	}
+	return entries
 }
 
 // makeMultiTarget is kind="multi-target"'s factory, with BOTH per-target
@@ -325,7 +350,7 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 			} else {
 				entries := make([]luahost.TargetEntry, 0, len(order))
 				for _, k := range order {
-					entries = append(entries, luahost.TargetEntry{Key: k, Description: k})
+					entries = append(entries, luahost.TargetEntry{Key: k, Description: TargetDescription(m, action, k)})
 				}
 				key, outcome := h.PickTarget(entries, desc+" — select target")
 				switch outcome {

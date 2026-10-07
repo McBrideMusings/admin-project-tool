@@ -1,6 +1,7 @@
 package luahost
 
 import (
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"testing"
 	"time"
@@ -160,5 +161,20 @@ func TestPickTargetEmptyIsUnavailable(t *testing.T) {
 	}
 	if errOut.String() != "" {
 		t.Fatalf("expected no diagnostic for zero real entries, got %q", errOut.String())
+	}
+}
+
+func TestPickerRowTruncatesDescriptionToWidth(t *testing.T) {
+	e := TargetEntry{Key: "dev", Description: strings.Repeat("x", 200)}
+	row := pickerRow("  > ", "", 3, e, 40)
+	if w := ansi.StringWidth(row); w >= 40 || !strings.Contains(row, "…") {
+		t.Errorf("width %d, row %q: want under 40 cells ending in an ellipsis", w, row)
+	}
+	flat := pickerRow("    ", "", 3, TargetEntry{Key: "dev", Description: "a\nb"}, 40)
+	if strings.Contains(flat, "\n") {
+		t.Errorf("row has a newline: %q", flat)
+	}
+	if bare := pickerRow("    ", "", 3, TargetEntry{Key: "dev"}, 40); strings.Contains(bare, "\x1b[2m") {
+		t.Errorf("empty description still printed a dim column: %q", bare)
 	}
 }

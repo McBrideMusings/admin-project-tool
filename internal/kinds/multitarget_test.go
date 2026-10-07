@@ -369,3 +369,45 @@ func TestTargetDescriptionPrefersDescOverRun(t *testing.T) {
 		t.Errorf("inline delegate = %q", got)
 	}
 }
+
+func pickerTestManifest() (*manifest.Manifest, manifest.Action) {
+	m := &manifest.Manifest{Actions: map[string]manifest.Action{
+		"documented": {"kind": "shell", "run": "make docs", "desc": "Build the docs"},
+	}}
+	parent := manifest.Action{
+		"kind": "multi-target",
+		"own":  map[string]any{"run": "go test", "desc": "Run the tests"},
+		"targets": map[string]any{
+			"docs": "@documented", "raw": "echo hi", "empty": "",
+		},
+	}
+	return m, parent
+}
+
+// TestPickerEntriesOfferTargetDescription pins that the picker's second column
+// is TargetDescription's text, not a repeat of the key.
+func TestPickerEntriesOfferTargetDescription(t *testing.T) {
+	m, parent := pickerTestManifest()
+	got := map[string]string{}
+	for _, e := range pickerEntries(m, parent, []string{"own", "docs", "raw", "empty"}) {
+		got[e.Key] = e.Description
+	}
+	want := map[string]string{"own": "Run the tests", "docs": "Build the docs", "raw": "echo hi", "empty": ""}
+	for k, w := range want {
+		if got[k] != w {
+			t.Errorf("picker row %q description = %q, want %q", k, got[k], w)
+		}
+	}
+}
+
+// TestTargetDescriptionIsOneLine pins that a multi-line `run` script reads as
+// its first non-empty line with whitespace collapsed.
+func TestTargetDescriptionIsOneLine(t *testing.T) {
+	parent := manifest.Action{
+		"kind":    "multi-target",
+		"targets": map[string]any{"script": "\n\n  set -e\t\n  make   all\n  make deploy\n"},
+	}
+	if got := TargetDescription(nil, parent, "script"); got != "set -e" {
+		t.Errorf("multi-line run = %q, want %q", got, "set -e")
+	}
+}

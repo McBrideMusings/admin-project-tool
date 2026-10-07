@@ -59,6 +59,7 @@ func (h *Host) runArrowPicker(items []TargetEntry, prompt string) (string, PickO
 			fmt.Fprintf(h.Stdout, "\x1b[%dA\x1b[0J", linesDrawn)
 		}
 
+		width := pickerTermWidth(h.Stdout)
 		rows := make([]string, 0, len(items)+2)
 		rows = append(rows, fmt.Sprintf("%s%s%s", ansiBold, prompt, ansiReset))
 		for i, e := range items {
@@ -68,11 +69,10 @@ func (h *Host) runArrowPicker(items []TargetEntry, prompt string) (string, PickO
 				marker = "  > "
 				style = ansiCyan + ansiBold
 			}
-			rows = append(rows, fmt.Sprintf("%s%s%-*s%s  %s%s%s", marker, style, keyWidth, e.Key, ansiReset, ansiDim, e.Description, ansiReset))
+			rows = append(rows, pickerRow(marker, style, keyWidth, e, width))
 		}
 		rows = append(rows, fmt.Sprintf("%s[up/down/j/k] move  [enter] select  [esc/q] cancel%s", ansiDim, ansiReset))
 
-		width := pickerTermWidth(h.Stdout)
 		var b strings.Builder
 		physicalRows := 0
 		for _, row := range rows {
@@ -100,6 +100,23 @@ func (h *Host) runArrowPicker(items []TargetEntry, prompt string) (string, PickO
 			return "", PickCancelled
 		}
 	}
+}
+
+// pickerRow renders one target row, cutting its description with an ellipsis
+// so the row never exceeds width cells and never wraps. A description that is
+// empty (or has no room left) leaves the key alone; a newline in it is
+// flattened to a space so one entry is always one terminal row.
+func pickerRow(marker, style string, keyWidth int, e TargetEntry, width int) string {
+	if width <= 0 {
+		width = 80
+	}
+	row := fmt.Sprintf("%s%s%-*s%s", marker, style, keyWidth, e.Key, ansiReset)
+	desc := strings.Join(strings.Fields(e.Description), " ")
+	room := width - 1 - ansi.StringWidth(marker) - keyWidth - 2
+	if desc == "" || room < 2 {
+		return row
+	}
+	return fmt.Sprintf("%s  %s%s%s", row, ansiDim, ansi.Truncate(desc, room, "…"), ansiReset)
 }
 
 // pickerTermWidth returns the real terminal width behind w, falling back to

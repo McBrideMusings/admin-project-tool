@@ -297,3 +297,17 @@ func TestFooterAgreesWithActionForBothRowKinds(t *testing.T) {
 		})
 	}
 }
+
+// TestExpandedListShowsSameTextAsPicker pins that a target row's description in
+// the Work tab is kinds.TargetDescription's text — the same call the CLI picker
+// builds its rows from (kinds.pickerEntries).
+func TestExpandedListShowsSameTextAsPicker(t *testing.T) {
+	m := multiTargetModel(t)
+	for _, key := range []string{"mac", "server"} {
+		row := m.workRows()[targetRowIndex(t, m, "dev", key)]
+		want := kinds.TargetDescription(m.manifest, m.manifest.Actions["dev"], key)
+		if row.work.targetDesc != want || want == "" {
+			t.Errorf("target %q row desc = %q, picker text = %q", key, row.work.targetDesc, want)
+		}
+	}
+}
