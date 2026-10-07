@@ -129,6 +129,11 @@ Drive the agent column against the real shared state in
   `admin worktree rm <name> -y --force` and delete the leftover entry file.
 - `env PATH=/usr/bin:/bin ~/.admin/admin worktree list` (no gh) exits 0 with the PR
   column empty.
+- The directory also holds `.lock`, which every entry write and remove flocks. Hold it from
+  another process (`python3 -c 'import fcntl,time; f=open("<dir>/.lock","a");
+  fcntl.flock(f,fcntl.LOCK_EX); time.sleep(3)'`) while a `list` ends a dead non-worker:
+  the `list` finishes only after the lock is released. `go test ./internal/livework` covers
+  the revive and same-id re-dispatch cases.
 
 The probe itself is `internal/kinds/liveness.go`; `go test ./internal/kinds -run Liveness`
 and `go test ./cmd -run WorktreeAgents` cover it through the `PaneGoneFn`/`AgentInfoFn` seams.
