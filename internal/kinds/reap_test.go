@@ -318,6 +318,17 @@ func TestPaneGoneExitCode(t *testing.T) {
 	}
 }
 
+// A status command killed by its deadline exits nonzero too; that is a wedged
+// launcher, not a closed pane.
+func TestPaneGoneTimeoutIsNotGone(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	gone, err := PaneGone(ctx, "sleep 5", "handle")
+	if gone || err == nil {
+		t.Errorf("PaneGone(timed out) = %v, %v; want false and an error", gone, err)
+	}
+}
+
 // TestPaneGonePassesHandleEnv proves ADMIN_HANDLE reaches the command,
 // exactly the env shape ADR-0020's attach/kill contract already uses.
 func TestPaneGonePassesHandleEnv(t *testing.T) {

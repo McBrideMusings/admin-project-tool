@@ -100,6 +100,10 @@ func PaneGone(ctx context.Context, statusCmd, handle string) (gone bool, err err
 	if runErr == nil {
 		return false, nil
 	}
+	if ctx.Err() != nil {
+		// Killed by the deadline: the exit says nothing about the pane.
+		return false, ctx.Err()
+	}
 	var exitErr *exec.ExitError
 	if errors.As(runErr, &exitErr) {
 		return true, nil

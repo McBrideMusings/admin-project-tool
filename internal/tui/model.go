@@ -22,6 +22,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/keymap"
+	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/shim"
@@ -1795,23 +1796,18 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// here, never from View, so starting either stays a side effect and
 		// rendering stays pure.
 		m.refreshDetailProbes()
-		return m, tea.Batch(m.workTickCmd(), syncLiveWorkCmd(m.repoRoot), pollAgentStatusCmd(), pollPaneStatusCmd(m.cfgMerged.Terminal.Status), reapWorkersCmd(m.repoRoot, m.cfgMerged.Terminal), m.pollPaneTailCmd(m.cfgMerged.Terminal.Read))
+		return m, tea.Batch(m.workTickCmd(), syncLiveWorkCmd(m.repoRoot), pollLivenessCmd(m.cfgMerged.Terminal.Status), reapWorkersCmd(m.repoRoot, m.cfgMerged.Terminal), m.pollPaneTailCmd(m.cfgMerged.Terminal.Read))
 
-	case agentStatusMsg:
-		// applyAgentStatuses is the only writer of the herdr-derived state
-		// transition; the next workTickMsg's repaint picks it up through the
-		// existing livework.Default.State(e.ID) reads workview.go already makes.
-		applyAgentStatuses(msg)
+	case livenessMsg:
+		// The only writer of the "pane closed out from under us" and the
+		// agent's waiting/running transitions; the next workTickMsg's repaint
+		// picks them up through the livework.Default.State reads workview.go
+		// already makes.
+		kinds.ApplyLiveness(msg.results)
 		return m, nil
 
 	case paneTailMsg:
 		applyPaneTail(msg)
-		return m, nil
-
-	case paneStatusMsg:
-		// applyPaneStatuses is the only writer of the "pane closed out from
-		// under us" transition; same repaint path as agentStatusMsg above.
-		applyPaneStatuses(msg)
 		return m, nil
 
 	case termTickMsg:

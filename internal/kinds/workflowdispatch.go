@@ -333,19 +333,19 @@ func endDeadWorkers(targets []Target, t config.Terminal) {
 	for _, tgt := range targets {
 		want[tgt.Name] = true
 	}
+	var workers []*livework.Entry
 	for _, e := range livework.Default.List() {
-		if e.Worker == nil || e.Via != "terminal" || !want[e.Worker.Target] {
+		if e.Worker == nil || !want[e.Worker.Target] {
 			continue
 		}
-		if st, ok := livework.Default.State(e.ID); !ok || !st.Reapable() {
-			continue
+		if st, ok := livework.Default.State(e.ID); ok && st.Reapable() {
+			workers = append(workers, e)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), doneTimeout)
-		gone, err := PaneGone(ctx, t.Status, e.Handle)
-		cancel()
-		if err == nil && gone {
-			livework.Default.SetState(e.ID, livework.StateExited, nil)
-			ReleaseWorkerSlot(e.ID)
+	}
+	for _, l := range ProbeLiveness(workers, t.Status, PaneOnly) {
+		if l.Gone() {
+			livework.Default.SetState(l.ID, livework.StateExited, nil)
+			ReleaseWorkerSlot(l.ID)
 		}
 	}
 }

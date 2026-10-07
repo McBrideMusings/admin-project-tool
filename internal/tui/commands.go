@@ -81,6 +81,9 @@ type wtState struct {
 	// file and an unfinished feature, and `uncommitted` alone renders those two
 	// identically. It is shown, never weighed.
 	changed int
+	// status is the read itself, for a caller that needs the counts apart
+	// (`admin worktree list`). Zero when unread.
+	status git.Status
 	// unread is set when the status read itself failed. It is not "clean" and not
 	// "conflicted" — it is *unknown*, and every caller has to treat it as the worse
 	// of the two, because the files a wrong guess destroys do not come back.
@@ -189,6 +192,7 @@ func loadLocalCmd(ctx context.Context, repoRoot, checkout, current, def string) 
 				dirty:     !st.Clean(),
 				conflicts: st.Conflicted,
 				changed:   st.Staged + st.Unstaged + st.Untracked,
+				status:    st,
 			}
 		}
 		d.branchUnsafe = map[string]bool{}
@@ -217,7 +221,7 @@ func loadLocalCmd(ctx context.Context, repoRoot, checkout, current, def string) 
 		d.touched = map[string]time.Time{}
 		for _, br := range d.branches {
 			act := activity[br.Name]
-			d.signals[br.Name] = gitSignals{
+			sig := gitSignals{
 				gone:        gone[br.Name],
 				fullyPushed: fullyPushed[br.Name],
 				mergedLocal: mergedLocal[br.Name],
@@ -237,8 +241,9 @@ func loadLocalCmd(ctx context.Context, repoRoot, checkout, current, def string) 
 				// those are `gone`, a proof, and counting them here as well would let a
 				// proof's own evidence vote a second time in the tier below it.
 				neverPushed: !br.HasRemote && !br.UpstreamGone,
-				behind:      behindDefault(ctx, checkout, br, def),
 			}
+			sig.aheadDefault, sig.behind, sig.defaultRead = againstDefault(ctx, checkout, br, def)
+			d.signals[br.Name] = sig
 			if !act.LastTouched.IsZero() {
 				d.touched[br.Name] = act.LastTouched
 			}
@@ -320,8 +325,9 @@ func perBranchGitLoad(ctx context.Context, dir string, branches []git.BranchInfo
 	wg.Wait()
 }
 
-// behindDefault is how many commits the default branch holds that br does not —
-// the "the work moved on without this one" measure the evidence tier weighs.
+// againstDefault is how many commits br holds that the default branch does not,
+// and how many the default branch holds that br does not — the second is the
+// "the work moved on without this one" measure the evidence tier weighs.
 //
 // BranchInfo.Behind cannot answer this: it is counted against the branch's own
 // origin counterpart, so it is 0 for every branch that has none, which is exactly
@@ -330,16 +336,13 @@ func perBranchGitLoad(ctx context.Context, dir string, branches []git.BranchInfo
 // unpushed check already pays.
 //
 // A branch that IS the default, or a repo with no default, has nothing to be
-// behind. An unreadable count returns 0 and so weighs as no evidence — never as
-// maximally behind.
-func behindDefault(ctx context.Context, dir string, br git.BranchInfo, def string) int {
+// measured against. Either case, and an unreadable count, returns 0 with ok
+// false: the 0 weighs as no evidence — never as maximally behind.
+func againstDefault(ctx context.Context, dir string, br git.BranchInfo, def string) (ahead, behind int, ok bool) {
 	if def == "" || def == br.Name {
-		return 0
+		return 0, 0, false
 	}
-	if _, behind, ok := git.AheadBehind(ctx, dir, br.Name, def); ok {
-		return behind
-	}
-	return 0
+	return git.AheadBehind(ctx, dir, br.Name, def)
 }
 
 // loadRemoteFn, fetchAllFn, fetchPruneFn and fetchIdentityFn are the seams a
@@ -441,8 +444,8 @@ func fetchOpenPRRowCmd(ctx context.Context, nwo string, number, gen int) tea.Cmd
 // mid-session appears while the pane is still on screen.
 const beadsInterval = 15 * time.Second
 
-// beadsPollTimeout bounds a single beads poll, mirroring agentPollTimeout's own
-// per-query timeout in agentpoll.go. `bd list` is a local Dolt read that takes
+// beadsPollTimeout bounds a single beads poll, mirroring kinds.LivenessTimeout's
+// own per-query timeout. `bd list` is a local Dolt read that takes
 // about 2s healthy and 6s when several dashboards and agents query the embedded
 // Dolt (one writer at a time) together, so 15s covers contention. A wedged Dolt
 // costs one beadsInterval: Model.beadsPolling skips the ticks that land while a

@@ -111,6 +111,28 @@ A behavioral change to `internal/tui` is also proven by:
 `seededModel()` in `internal/tui/model_test.go` is the standard fixture for a `Model` with
 sane defaults; most `internal/tui` tests build one and mutate the fields they need.
 
+## Worktree listing and live-work liveness (`admin worktree list`)
+
+`admin worktree list [--json] [--settle 0]` is the state query for worktrees and the agents
+in them. Its git columns must equal `git status --porcelain` and
+`git rev-list --left-right --count <branch>...main` run in each worktree.
+
+Drive the agent column against the real shared state in
+`~/.admin/state/livework/<repo>-<hash>/`:
+
+- Write an entry JSON there by hand with `"via":"terminal"`, a handle no pane has
+  (`wNOPE:p999`) and `"state":"running"`. As a worker (with a `worker` object naming a
+  worktree) list shows `gone` and the file stays — the reaper ends workers. As a
+  non-worker the file is gone after one `list`.
+- `admin worktree <name> -y -x sleep -- 300` starts a real worker: list shows `running`.
+  `herdr pane close <pane>` and list again: `gone`. Clean up with
+  `admin worktree rm <name> -y --force` and delete the leftover entry file.
+- `env PATH=/usr/bin:/bin ~/.admin/admin worktree list` (no gh) exits 0 with the PR
+  column empty.
+
+The probe itself is `internal/kinds/liveness.go`; `go test ./internal/kinds -run Liveness`
+and `go test ./cmd -run WorktreeAgents` cover it through the `PaneGoneFn`/`AgentInfoFn` seams.
+
 ## Log-bridge rendering
 
 Bridged browser lines must be indistinguishable from the wrapped process's own output.

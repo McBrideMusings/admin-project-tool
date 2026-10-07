@@ -91,6 +91,12 @@ type gitSignals struct {
 	// counts at all past behindEvidenceFloor. Zero when it could not be read, which
 	// weighs as no evidence.
 	behind int
+	// aheadDefault is how many commits this branch has that the default branch
+	// does not — behind's other half. Never weighed; `admin worktree list` shows it.
+	aheadDefault int
+	// defaultRead is whether aheadDefault and behind were measured: false for the
+	// default branch itself, with no default, or when the count failed.
+	defaultRead bool
 }
 
 // branchSignals is the complete input to the classifier: the git snapshot's
