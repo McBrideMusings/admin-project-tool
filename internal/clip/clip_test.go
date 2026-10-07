@@ -3,10 +3,14 @@ package clip
 import (
 	"context"
 	"math"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -207,5 +211,105 @@ func TestLaunchReturnsWhenTheAppIsBackgrounded(t *testing.T) {
 	}
 	if d := time.Since(start); d > 5*time.Second {
 		t.Errorf("launch held for %s by a backgrounded child", d)
+	}
+}
+
+func TestExpandPortAndWebConfig(t *testing.T) {
+	if got := expandPort("http://127.0.0.1:$ADMIN_CLIP_PORT/?clip&p=${ADMIN_CLIP_PORT}", 5123); got != "http://127.0.0.1:5123/?clip&p=5123" {
+		t.Errorf("expandPort: %s", got)
+	}
+	if _, err := Parse(map[string]any{"recorder": "web", "period": 4.5}, nil); err == nil {
+		t.Error("web without [clip.web].url must be rejected")
+	}
+	for name, web := range map[string]map[string]any{
+		"unknown scheme":   {"url": "http://x/", "scheme": "sepia"},
+		"odd pixel width":  {"url": "http://x/", "width": int64(1281), "scale": 1.0},
+		"fractional width": {"url": "http://x/", "width": 1280.5},
+	} {
+		if _, err := Parse(map[string]any{"recorder": "web", "period": 4.5, "web": web}, nil); err == nil {
+			t.Errorf("%s must be rejected", name)
+		}
+	}
+}
+
+// seekPage paints a solid colour that cycles with period p seconds and
+// exposes window.__clip.
+func seekPage(p float64) string {
+	return `<!doctype html><body style="margin:0"><canvas id=c width=320 height=180></canvas><script>
+const c = document.getElementById("c").getContext("2d");
+const period = ` + strconv.FormatFloat(p, 'f', -1, 64) + `;
+function seek(t) { const u = (t % period) / period; c.fillStyle = "hsl(" + Math.round(u * 360) + ",80%,50%)"; c.fillRect(0, 0, 320, 180); }
+seek(0);
+window.__clip = { period, seek(t) { seek(t); return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); } };
+</script></body>`
+}
+
+// TestWebRecorderRendersAFrameExactLoop drives headless Chrome over a page
+// served in-process: the take must hold warmup+period+fade frames and the
+// seam must match exactly; a page whose period disagrees must be refused.
+func TestWebRecorderRendersAFrameExactLoop(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		p := 1.0
+		if r.URL.Query().Has("wrong") {
+			p = 2.0
+		}
+		w.Write([]byte(seekPage(p)))
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	c := Config{Period: 1, Fade: 0.2, SeamThreshold: 0.5, Width: 320,
+		Web: WebConfig{URL: srv.URL + "/?clip", Width: 320, Height: 180, Scale: 1, Timeout: 20}}
+	ctx := context.Background()
+	take, err := webRecorder{}.Record(ctx, c, dir, nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "executable file not found") {
+			t.Skip("no Chrome installed")
+		}
+		t.Fatal(err)
+	}
+	var r Result
+	if err := Cut(ctx, c, take, dir, nil, &r); err != nil {
+		t.Fatal(err)
+	}
+	if r.SeamDiff > 0.5 || r.Crossfade != 0 || r.Seconds != 1 {
+		t.Errorf("seam %.2f crossfade %.2f length %.3fs, want a matching seam and exactly 1s", r.SeamDiff, r.Crossfade, r.Seconds)
+	}
+	c.Web.URL = srv.URL + "/?clip&wrong"
+	if _, err := (webRecorder{}).Record(ctx, c, t.TempDir(), nil); err == nil || !strings.Contains(err.Error(), "period") {
+		t.Errorf("a page period of 2s against [clip].period 1s must be refused, got %v", err)
+	}
+}
+
+// TestWebRecorderStartsAndStopsTheLaunch serves the page through [clip].launch
+// on $ADMIN_CLIP_PORT and checks the launch's process group is gone after.
+func TestWebRecorderStartsAndStopsTheLaunch(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not installed")
+	}
+	site := t.TempDir()
+	if err := os.WriteFile(filepath.Join(site, "index.html"), []byte(seekPage(1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	c := Config{Period: 1, Root: site, Launch: `echo $$ > server.pid; exec python3 -m http.server "$ADMIN_CLIP_PORT" --bind 127.0.0.1`,
+		Web: WebConfig{URL: "http://127.0.0.1:$ADMIN_CLIP_PORT/?clip", Width: 320, Height: 180, Scale: 1, Timeout: 20}}
+	if _, err := (webRecorder{}).Record(context.Background(), c, dir, nil); err != nil {
+		if strings.Contains(err.Error(), "executable file not found") {
+			t.Skip("no Chrome installed")
+		}
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(site, "server.pid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	if pid > 0 && syscall.Kill(pid, 0) == nil {
+		syscall.Kill(pid, syscall.SIGKILL)
+		t.Errorf("launch pid %d still running after the take", pid)
 	}
 }

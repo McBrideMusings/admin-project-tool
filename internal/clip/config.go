@@ -11,6 +11,7 @@ package clip
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -59,10 +60,30 @@ type Config struct {
 
 	Terminal TerminalConfig
 	MacOS    MacOSConfig
+	Web      WebConfig
 
 	// Root is the project root: Launch, steps and Publish run there. Set by
 	// the caller, not read from the table.
 	Root string
+}
+
+// WebConfig is [clip.web]: which page the web recorder renders, and how.
+type WebConfig struct {
+	// URL is the page, opened once it answers; $ADMIN_CLIP_PORT is replaced
+	// with the port handed to Launch.
+	URL string
+	// Width and Height are the viewport in CSS pixels; Scale the device
+	// pixel ratio.
+	Width, Height int
+	Scale         float64
+	// Scheme, when set, emulates prefers-color-scheme: "dark" or "light".
+	Scheme string
+	// Browser is a Chrome or chrome-headless-shell binary; empty finds an
+	// installed Chrome.
+	Browser string
+	// Timeout bounds the wait for the server to answer and the page to
+	// expose window.__clip, in seconds.
+	Timeout float64
 }
 
 // MacOSConfig is [clip.macos]: which window the macos-window recorder
@@ -113,6 +134,7 @@ func Parse(raw map[string]any, resolve func(string) string) (Config, error) {
 		Publish:       r.str("publish", ""),
 		Terminal:      TerminalConfig{FontSize: 28, WidthPx: 1920, HeightPx: 1080},
 		MacOS:         MacOSConfig{Settle: 1.0, Timeout: 60},
+		Web:           WebConfig{Width: 1280, Height: 720, Scale: 2, Timeout: 180},
 	}
 	for _, s := range r.strs("steps") {
 		c.Steps = append(c.Steps, resolve(s))
@@ -126,6 +148,18 @@ func Parse(raw map[string]any, resolve func(string) string) (Config, error) {
 			Shell:      t.str("shell", ""),
 			WidthPx:    int(t.num("width_px", 1920)),
 			HeightPx:   int(t.num("height_px", 1080)),
+		}
+		t.unknown()
+	}
+	if t := r.table("web"); t != nil {
+		c.Web = WebConfig{
+			URL:     t.str("url", ""),
+			Width:   t.whole("width", 1280),
+			Height:  t.whole("height", 720),
+			Scale:   t.num("scale", 2),
+			Scheme:  t.str("scheme", ""),
+			Browser: resolve(t.str("browser", "")),
+			Timeout: t.num("timeout", 180),
 		}
 		t.unknown()
 	}
@@ -162,6 +196,15 @@ func Parse(raw map[string]any, resolve func(string) string) (Config, error) {
 		return c, fmt.Errorf("quality must be %d-100", minQuality)
 	case c.MacOS.Settle < 0 || c.MacOS.Timeout <= 0:
 		return c, fmt.Errorf("[clip.macos] settle must be >= 0 and timeout > 0 seconds")
+	case c.Recorder == "web" && c.Web.URL == "":
+		return c, fmt.Errorf("the web recorder needs [clip.web].url")
+	case c.Web.Width <= 0 || c.Web.Height <= 0 || c.Web.Scale <= 0 || c.Web.Timeout <= 0:
+		return c, fmt.Errorf("[clip.web] width, height, scale and timeout must be > 0")
+	case !evenPixels(float64(c.Web.Width)*c.Web.Scale) || !evenPixels(float64(c.Web.Height)*c.Web.Scale):
+		return c, fmt.Errorf("[clip.web] width × scale and height × scale must be even whole pixel counts (the encoder needs them), got %g × %g",
+			float64(c.Web.Width)*c.Web.Scale, float64(c.Web.Height)*c.Web.Scale)
+	case c.Web.Scheme != "" && c.Web.Scheme != "dark" && c.Web.Scheme != "light":
+		return c, fmt.Errorf(`[clip.web].scheme must be "dark" or "light"`)
 	case c.Recorder == "macos-window" && (c.MacOS.Owner == "" || c.Launch == ""):
 		return c, fmt.Errorf("the macos-window recorder needs launch and [clip.macos].owner (the app's window owner name)")
 	}
@@ -245,6 +288,17 @@ func (r *reader) num(k string, def float64) float64 {
 	r.fail(k, "a number", v)
 	return def
 }
+
+// whole reads a number that must be a whole number.
+func (r *reader) whole(k string, def int) int {
+	v := r.num(k, float64(def))
+	if v != math.Trunc(v) {
+		r.fail(k, "a whole number", v)
+	}
+	return int(v)
+}
+
+func evenPixels(v float64) bool { return v == math.Trunc(v) && int64(v)%2 == 0 }
 
 func (r *reader) strs(k string) []string {
 	v, ok := r.get(k)

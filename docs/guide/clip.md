@@ -52,9 +52,14 @@ error. The tool writes it even when the run fails.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `recorder` | — | The surface: `terminal` or `macos-window` |
+| `recorder` | — | The surface: `terminal`, `macos-window` or `web` |
 | `launch` | — | Starts the app |
 | `ready` | — | Regex the terminal recorder waits for before recording |
+| `web.url` | — | web: the page; `$ADMIN_CLIP_PORT` is replaced with the port handed to `launch` |
+| `web.width` / `web.height` / `web.scale` | 1280 / 720 / 2 | web: viewport in CSS pixels and device pixel ratio |
+| `web.scheme` | none | web: emulate `prefers-color-scheme`, `dark` or `light` |
+| `web.browser` | installed Chrome | web: a Chrome or chrome-headless-shell binary |
+| `web.timeout` | 180 | web: seconds to wait for the server and for `window.__clip` |
 | `macos.owner` | — | macos-window: the window owner name (the app's name) |
 | `macos.title` | none | macos-window: text the window title must contain |
 | `macos.settle` / `macos.timeout` | 1 / 60 | macos-window: seconds the bounds must hold still / longest wait for the window |
@@ -116,3 +121,40 @@ video length, and subtracts it from t0.
 `steps` here are `sh <command>` and `wait <seconds>`. Hover, typing and anything drawn on a
 canvas belong in the app's own demo. The terminal running `admin` needs Screen Recording
 permission.
+
+## Web pages
+
+`recorder = "web"` renders a page frame by frame in headless Chrome, driven from Go over the
+DevTools protocol, so no browser window ever shows.
+
+```toml
+[clip]
+recorder = "web"
+launch   = 'exec uv run plexdb explore --host 127.0.0.1 --port "$ADMIN_CLIP_PORT"'
+period   = 4.5
+
+[clip.web]
+url    = "http://127.0.0.1:$ADMIN_CLIP_PORT/?clip"
+scheme = "dark"
+```
+
+The recorder runs these steps:
+1. It picks a free port and, when `launch` is set, starts it in its own process group, with `ADMIN_CLIP=1` and
+   `ADMIN_CLIP_PORT` set. Write the port as `$ADMIN_CLIP_PORT`, without braces, so the shell
+   expands it rather than `admin`.
+2. It waits for `url` to answer.
+3. It opens `url` at the configured viewport and waits for the page to expose
+   `window.__clip = { period, seek(t) }`. `seek(t)` draws the frame at `t` seconds and resolves
+   once that frame is painted. `t` and `t + period` draw the same frame.
+4. It refuses the page when `window.__clip.period` differs from `[clip].period`.
+5. For each frame `i` it awaits `seek(i / 30)` and takes a screenshot. The take is therefore
+   exact to the frame, and the seam needs no search.
+6. It stops the launch's process group: SIGTERM, then SIGKILL after 5 s.
+
+Leave `launch` unset to record a page that is already being served. `web.timeout` bounds the
+server wait, the page load and the wait for `window.__clip`, each on its own. Each `seek`
+gets 30 s. `web.width × web.scale` and `web.height × web.scale` must come out as even whole
+numbers of pixels.
+
+The recorder writes the page's console lines and exceptions to `clip.log`. A page with no
+`window.__clip` is refused, because this recorder renders only seekable pages.
