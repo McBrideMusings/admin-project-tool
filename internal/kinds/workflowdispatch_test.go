@@ -777,7 +777,7 @@ func TestShellDispatchedWorkerOutlivesItsProcess(t *testing.T) {
 	if st, _ := livework.Default.State(id); st != livework.StateExited {
 		t.Errorf("state after kill = %q, want exited", st)
 	}
-	if names, _ := os.ReadDir(livework.Default.RepoDir(repoRoot)); len(names) != 0 {
+	if names, _ := filepath.Glob(filepath.Join(livework.Default.RepoDir(repoRoot), "*.json")); len(names) != 0 {
 		t.Errorf("%d entry files left after the worker exited", len(names))
 	}
 }

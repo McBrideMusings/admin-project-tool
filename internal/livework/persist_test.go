@@ -86,6 +86,55 @@ func TestStateChangesCrossProcessesAndExitRemovesTheFile(t *testing.T) {
 	}
 }
 
+func TestAnUpdateDoesNotReviveAnEntryAnotherProcessEnded(t *testing.T) {
+	a, b, _ := twoProcesses(t)
+	if err := a.Add(sharedWorker("w", "h")); err != nil {
+		t.Fatal(err)
+	}
+	b.Sync("/repo")
+	b.SetState("w", StateExited, nil)
+
+	a.SetNote("w", "worktree has uncommitted changes")
+	a.SetLogPath("w", "/tmp/w.log")
+	a.SetState("w", StateWaiting, nil)
+	if _, err := os.Stat(filepath.Join(a.RepoDir("/repo"), "w.json")); !os.IsNotExist(err) {
+		t.Fatalf("a's update recreated the file b removed: %v", err)
+	}
+	if err := a.Sync("/repo"); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := a.State("w"); st != StateExited {
+		t.Fatalf("a sees %q after b ended the entry, want exited", st)
+	}
+	b.Sync("/repo")
+	if st, _ := b.State("w"); st != StateExited {
+		t.Fatalf("b's ended entry came back as %q", st)
+	}
+}
+
+func TestAStaleUpdateLeavesAReDispatchUnderTheSameIDAlone(t *testing.T) {
+	a, b, _ := twoProcesses(t)
+	c := NewSharedRegistry(filepath.Dir(a.RepoDir("/repo")))
+	if err := a.Add(sharedWorker("w", "h1")); err != nil {
+		t.Fatal(err)
+	}
+	b.Sync("/repo")
+	b.SetState("w", StateExited, nil)
+	if err := c.Add(sharedWorker("w", "h2")); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(a.RepoDir("/repo"), "w.json")
+	a.SetNote("w", "stale")
+	if rec, err := readRecord(path); err != nil || rec.Handle != "h2" || rec.Note != "" {
+		t.Fatalf("after a's stale note the file holds %+v (%v), want c's h2 untouched", rec, err)
+	}
+	a.SetState("w", StateExited, nil)
+	if rec, err := readRecord(path); err != nil || rec.Handle != "h2" {
+		t.Fatalf("a's exit of h1 removed or replaced c's h2 file: %+v (%v)", rec, err)
+	}
+}
+
 func TestAddRefusesAnIDAnotherProcessHoldsLive(t *testing.T) {
 	a, b, _ := twoProcesses(t)
 	if err := a.Add(sharedWorker("w", "h1")); err != nil {

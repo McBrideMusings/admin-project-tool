@@ -8,8 +8,10 @@
 // temp file in the same directory and renamed over the old one so a reader
 // never sees half a file. The file exists exactly while the entry is live:
 // SetState to exited or failed removes it, so a file that is gone means the
-// entry is over. A hosted-pty entry (Via empty) is never written — its pty
-// dies with the process that owns it, so no other process could reach it.
+// entry is over, and no later update from any process brings it back. Every
+// write and remove holds the repo dir's .lock (lockRepoDir). A hosted-pty
+// entry (Via empty) is never written — its pty dies with the process that
+// owns it, so no other process could reach it.
 //
 // Ops cannot be written down. A process that loads an entry another process
 // wrote rebuilds them through the builder SetOpsBuilder installed
@@ -25,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -128,7 +131,12 @@ func (r *Registry) claimLocked(e *Entry) error {
 		return nil
 	}
 	path := r.entryPath(e)
-	err := writeFile(path, toRecord(e), true)
+	unlock, err := lockRepoDir(filepath.Dir(path))
+	if err != nil {
+		return fmt.Errorf("livework: locking %s: %w", filepath.Dir(path), err)
+	}
+	defer unlock()
+	err = writeFile(path, toRecord(e), true)
 	if os.IsExist(err) {
 		if rec, rerr := readRecord(path); rerr == nil && rec.State.live() {
 			return errClaimed{rec}
@@ -144,16 +152,33 @@ func (r *Registry) claimLocked(e *Entry) error {
 
 // writeLocked rewrites the file of e, an entry already added, or removes it
 // once e is over. Called with r.mu held, so two writers in one process never
-// interleave on one file.
+// interleave on one file, and under the repo dir's lock, so the check of what
+// the file holds and the write that follows are one step for every process.
+// Only a file holding e's own handle is rewritten or removed; a file that is
+// gone after e was written is left gone. Either way e's change still applies
+// in this process, and the next Sync reads a gone file as exited.
 func (r *Registry) writeLocked(e *Entry) error {
 	if !r.shared(e) {
 		return nil
 	}
 	path := r.entryPath(e)
+	unlock, err := lockRepoDir(filepath.Dir(path))
+	if err != nil {
+		return fmt.Errorf("livework: locking %s: %w", filepath.Dir(path), err)
+	}
+	defer unlock()
+	rec, err := readRecord(path)
+	exists := !os.IsNotExist(err)
+	ours := err == nil && rec.Handle == e.Handle
 	if !e.State.live() {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("livework: removing %s: %w", path, err)
+		if ours {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("livework: removing %s: %w", path, err)
+			}
 		}
+		return nil
+	}
+	if !ours && (exists || e.onDisk) {
 		return nil
 	}
 	if err := writeFile(path, toRecord(e), false); err != nil {
@@ -171,6 +196,31 @@ func (r *Registry) updateLocked(e *Entry) {
 	if err := r.writeLocked(e); err != nil {
 		r.writeErrs = append(r.writeErrs, err)
 	}
+}
+
+// lockRepoDir takes an exclusive flock on dir/.lock, serialising every
+// create, rewrite and remove of dir's entry files across admin processes.
+// Readers need no lock: a rename is already atomic for them. The returned
+// func releases it.
+func lockRepoDir(dir string) (func(), error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(filepath.Join(dir, ".lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+		if err != syscall.EINTR {
+			break
+		}
+	}
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return func() { f.Close() }, nil
 }
 
 // writeFile writes rec as JSON to path through a temp file in the same
