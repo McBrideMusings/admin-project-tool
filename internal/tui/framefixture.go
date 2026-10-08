@@ -12,10 +12,10 @@ import (
 
 // FrameFixtures names the live-work fixtures SeedFrameFixture builds. A
 // headless frame has no worker and no hosted pty to look at, so these put the
-// same three workers (running, waiting, failed) into the registry a real
-// swarm would, and optionally one hosted-pty worker to attach to:
+// same four workers (running, waiting, failed, stopped) into the registry a
+// real swarm would, and optionally one hosted-pty worker to attach to:
 //
-//	swarm         three launcher-dispatched workers; the failed one carries a
+//	swarm         four launcher-dispatched workers; the failed one carries a
 //	              pane snapshot for the band to show
 //	hosted        the same, but the waiting worker is a hosted pty with a
 //	              prompt on its screen
@@ -71,6 +71,12 @@ func SeedFrameFixture(name string) error {
 				Branch:   "fix/admin-3rgp.33-detect",
 				Worktree: "/Users/dev/.worktrees/admin-project-tool/admin-3rgp.33",
 			}},
+		{ID: "admin-3rgp.41", Name: "admin-3rgp.41", Handle: "pane 6", Via: "terminal",
+			State: livework.StateStopped, StartedAt: now.Add(-47 * time.Minute),
+			Worker: &livework.WorkerInfo{
+				Branch:   "fix/admin-3rgp.41-footer",
+				Worktree: "/Users/dev/.worktrees/admin-project-tool/admin-3rgp.41",
+			}},
 	}
 	for _, e := range workers {
 		if hosted && e.ID == "admin-3rgp.7" {
@@ -94,6 +100,7 @@ func SeedFrameFixture(name string) error {
 	livework.Default.SetActivity("admin-3rgp.36", "writing internal/lua/host.go")
 	livework.Default.SetActivity("admin-3rgp.7", "needs input: root command name")
 	livework.Default.SetActivity("admin-3rgp.33", "go test ./internal/detect FAIL")
+	livework.Default.SetNote("admin-3rgp.41", "pane closed before done passed")
 	livework.Default.SetLogPath("admin-3rgp.36", "/Users/dev/admin-project-tool/.admin/logs/worker-admin-3rgp.36.log")
 	livework.Default.SetLogPath("admin-3rgp.7", "/Users/dev/admin-project-tool/.admin/logs/worker-admin-3rgp.7.log")
 	livework.Default.SetLogPath("admin-3rgp.33", "/Users/dev/admin-project-tool/.admin/logs/worker-admin-3rgp.33.log")

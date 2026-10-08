@@ -51,6 +51,13 @@ const (
 	// live: it can be attached, killed and reaped again. Only the reaper sets
 	// it, and sets it back to StateRunning if the work stops being finished.
 	StateFinished State = "finished"
+	// StateStopped marks a worker whose launcher pane is gone before its done
+	// predicate passed: nothing runs any more, but its worktree and branch may
+	// still hold the work. The entry stays live so a person can inspect and
+	// kill it, and reapable so it is still removed once done passes. Only the
+	// reaper sets it, and nothing sets it back: a pane that closed does not
+	// reopen.
+	StateStopped State = "stopped"
 	// StateStarting is the pre-registration, pre-handle phase between a
 	// dispatch keypress and the entry that eventually records it — Add
 	// rejects an entry with an empty Handle, and a pending dispatch has no
@@ -63,9 +70,10 @@ const (
 )
 
 // Reapable reports whether a worker in state s is still the reaper's to
-// judge: running, waiting, or finished and awaiting a safe removal.
+// judge: running, waiting, finished and awaiting a safe removal, or stopped
+// and awaiting its done predicate.
 func (s State) Reapable() bool {
-	return s == StateRunning || s == StateWaiting || s == StateFinished
+	return s == StateRunning || s == StateWaiting || s == StateFinished || s == StateStopped
 }
 
 // WorkerInfo is present only on an entry for an agent worker — a workflow
@@ -507,6 +515,8 @@ func (r *Registry) Attach(id string) error {
 		return err
 	}
 	if e.Via == "" {
+		// A hosted pty's screen outlives its child: attaching an exited one
+		// opens its transcript.
 		r.mu.Lock()
 		open := r.terminalOpener
 		r.mu.Unlock()
@@ -515,6 +525,11 @@ func (r *Registry) Attach(id string) error {
 		}
 		return open(e.Handle)
 	}
+	// A launcher pane that is gone cannot be focused, and its address may now
+	// name another pane.
+	if st, _ := r.State(id); !st.live() || st == StateStopped {
+		return fmt.Errorf("live-work: entry %q has %s: its pane is gone", id, st)
+	}
 	if e.Ops.Attach == nil {
 		return fmt.Errorf("live-work: entry %q does not support attach", id)
 	}
@@ -522,11 +537,16 @@ func (r *Registry) Attach(id string) error {
 }
 
 // Kill stops id — closes the pane it is running in. It errors when id
-// doesn't exist or its producer never wired a Kill operation.
+// doesn't exist, is already over, or its producer never wired a Kill
+// operation. An entry that is over runs nothing: its handle names a pane that
+// is gone, and a launcher may have reused that address for another one.
 func (r *Registry) Kill(id string) error {
 	e, err := r.lookup(id)
 	if err != nil {
 		return err
+	}
+	if st, _ := r.State(id); !st.live() {
+		return fmt.Errorf("live-work: entry %q has already %s", id, st)
 	}
 	if e.Ops.Kill == nil {
 		return fmt.Errorf("live-work: entry %q does not support kill", id)

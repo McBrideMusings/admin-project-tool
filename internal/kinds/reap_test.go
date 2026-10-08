@@ -345,16 +345,29 @@ func TestPaneGonePassesHandleEnv(t *testing.T) {
 }
 
 // A worker that declares done and whose pane has gone without done passing
-// is left in place with a reason.
+// is left in place, stopped, with a reason — and is still reaped once done
+// passes.
 func TestReapWorkerDiedBeforeDone(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, terminalTOML)
 	addOrigin(t, repoRoot)
 	e := dispatchWorker(t, repoRoot, "false")
-	if ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true", Status: "false"}) {
+	term := config.Terminal{Kill: "true", Status: "false"}
+	if ReapWorker(context.Background(), repoRoot, e, term) {
 		t.Fatal("reaped a worker whose done never passed")
 	}
 	if note, _ := livework.Default.Line(e.ID); !strings.Contains(note, "pane closed before done") {
 		t.Errorf("row line = %q, want the pane-closed reason", note)
+	}
+	if st, _ := livework.Default.State(e.ID); st != livework.StateStopped {
+		t.Errorf("state = %q, want %q", st, livework.StateStopped)
+	}
+
+	e.Worker.Done = "true"
+	if !ReapWorker(context.Background(), repoRoot, e, term) {
+		t.Fatal("did not reap a stopped worker whose done now passes")
+	}
+	if st, _ := livework.Default.State(e.ID); st != livework.StateExited {
+		t.Errorf("state after reap = %q, want %q", st, livework.StateExited)
 	}
 }
 

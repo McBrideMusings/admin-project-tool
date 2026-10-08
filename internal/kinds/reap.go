@@ -260,9 +260,7 @@ func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t confi
 	}
 	finished, note := workerFinished(ctx, e, t)
 	if !finished {
-		if st == livework.StateFinished {
-			livework.Default.SetState(e.ID, livework.StateRunning, nil)
-		}
+		stopped := false
 		if note == "" && w.Done != "" && t.Status != "" && e.Via == "terminal" {
 			// A worker that declares done is finished only when done passes;
 			// a pane that has gone without it is a worker that died. Leave
@@ -271,7 +269,14 @@ func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t confi
 			defer cancel()
 			if gone, err := PaneGone(sctx, t.Status, e.Handle); err == nil && gone {
 				note = "pane closed before done passed"
+				stopped = true
 			}
+		}
+		switch {
+		case stopped:
+			livework.Default.SetState(e.ID, livework.StateStopped, nil)
+		case st == livework.StateFinished:
+			livework.Default.SetState(e.ID, livework.StateRunning, nil)
 		}
 		livework.Default.SetNote(e.ID, note)
 		return false

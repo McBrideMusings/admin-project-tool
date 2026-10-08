@@ -1206,8 +1206,11 @@ func resolveRowAction(kind rowKind, wd *workRowData) rowAction {
 		}
 		return actionDispatch
 	case rowWorker:
+		// A stopped worker is live, but its pane is gone: nothing to attach.
 		if entryIsLive(wd.worker) {
-			return actionAttach
+			if st, _ := livework.Default.State(wd.worker.ID); st != livework.StateStopped {
+				return actionAttach
+			}
 		}
 		return actionTranscript
 	}
@@ -1453,7 +1456,8 @@ func (m Model) workFooterPairs() [][2]string {
 		case actionAttach:
 			enter, kill = "attach", true
 		case actionTranscript:
-			enter = "transcript"
+			// A stopped worker still holds its worktree; kill retires it.
+			enter, kill = "transcript", r.kind == rowWorker && entryIsLive(r.work.worker)
 		}
 	}
 	collapse := "collapse"
@@ -1488,11 +1492,11 @@ func (m Model) workFooterPairs() [][2]string {
 
 func (m Model) killCurrentWork() (tea.Model, tea.Cmd) {
 	e := m.currentLiveEntry()
-	if e == nil || e.Ops.Kill == nil {
+	if !entryIsLive(e) || e.Ops.Kill == nil {
 		return m, nil
 	}
 	id := e.ID
-	if err := e.Ops.Kill(); err != nil {
+	if err := livework.Default.Kill(id); err != nil {
 		m.setStatus("kill failed: "+err.Error(), cRed)
 	} else {
 		m.setStatus("killed "+id, cDim)

@@ -216,6 +216,62 @@ func TestKillInvokesOps(t *testing.T) {
 	}
 }
 
+// TestKillOnSettledEntryRunsNothing proves Kill on an entry that is already
+// over refuses without running its Ops.Kill: the handle names a pane that is
+// gone.
+func TestKillOnSettledEntryRunsNothing(t *testing.T) {
+	for _, st := range []State{StateExited, StateFailed} {
+		r := NewRegistry()
+		called := false
+		r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-a", Via: "terminal", Ops: Ops{
+			Kill: func() error { called = true; return nil },
+		}})
+		r.SetState("a", st, nil)
+		if err := r.Kill("a"); err == nil {
+			t.Errorf("%s: Kill() = nil, want an error", st)
+		}
+		if called {
+			t.Errorf("%s: Kill ran the entry's Ops.Kill", st)
+		}
+	}
+}
+
+// TestAttachOnStoppedOrSettledEntryRunsNothing proves Attach refuses an entry
+// whose pane is gone, without running its Ops.Attach: the handle may name a
+// pane a launcher has since reused.
+func TestAttachOnStoppedOrSettledEntryRunsNothing(t *testing.T) {
+	for _, st := range []State{StateStopped, StateExited, StateFailed} {
+		r := NewRegistry()
+		called := false
+		r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-a", Via: "terminal", Ops: Ops{
+			Attach: func() error { called = true; return nil },
+		}})
+		r.SetState("a", st, nil)
+		if err := r.Attach("a"); err == nil {
+			t.Errorf("%s: Attach() = nil, want an error", st)
+		}
+		if called {
+			t.Errorf("%s: Attach ran the entry's Ops.Attach", st)
+		}
+	}
+}
+
+// TestAttachOnExitedHostedEntryOpensTranscript proves an exited hosted pty
+// still attaches: its screen outlives the child, and the terminal view shows it.
+func TestAttachOnExitedHostedEntryOpensTranscript(t *testing.T) {
+	r := NewRegistry()
+	opened := ""
+	r.SetTerminalOpener(func(handle string) error { opened = handle; return nil })
+	r.Add(&Entry{ID: "a", Name: "one", Handle: "pty-a"})
+	r.SetState("a", StateExited, nil)
+	if err := r.Attach("a"); err != nil {
+		t.Fatalf("Attach() = %v, want nil", err)
+	}
+	if opened != "pty-a" {
+		t.Errorf("terminal opener got %q, want %q", opened, "pty-a")
+	}
+}
+
 // TestAddOverwritesInPlace proves re-Adding an Entry under an ID already in
 // the registry replaces its pane/state/Ops but keeps the same List position
 // — a re-dispatched worker stays the same row, it doesn't grow a second one.

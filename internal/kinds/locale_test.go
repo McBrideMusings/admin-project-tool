@@ -439,6 +439,29 @@ func TestWindowEntryKillRunsLauncherKillWithHandle(t *testing.T) {
 	}
 }
 
+// TestLauncherShellOutputStaysOffTheTerminal proves a launcher command's
+// output never reaches this process's stdout or stderr — the dashboard's
+// screen when it runs a kill — and that a failure carries it in the error.
+func TestLauncherShellOutputStaysOffTheTerminal(t *testing.T) {
+	sink, err := os.Create(filepath.Join(t.TempDir(), "terminal"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sink.Close()
+	stdout, stderr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = sink, sink
+	err = runLauncherShell(`echo out; echo '{"error":"workspace w1D0 not found"}' >&2; exit 1`, "w1D0:p1")
+	os.Stdout, os.Stderr = stdout, stderr
+
+	if err == nil || !strings.Contains(err.Error(), "workspace w1D0 not found") {
+		t.Errorf("runLauncherShell error = %v, want one carrying the command's stderr", err)
+	}
+	if info, _ := sink.Stat(); info.Size() != 0 {
+		body, _ := os.ReadFile(sink.Name())
+		t.Errorf("launcher output reached the terminal: %q", body)
+	}
+}
+
 // -- [terminal].locale as the base of the chain ----------------------------
 
 // TestDispatchLocaleChain covers the resolutions the chain names: the

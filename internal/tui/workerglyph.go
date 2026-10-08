@@ -11,7 +11,7 @@ func workerRowGlyph(st livework.State) seg {
 	switch st {
 	case livework.StateWaiting:
 		return seg{t: "◐", fg: cYellow}
-	case livework.StateFinished:
+	case livework.StateFinished, livework.StateStopped:
 		return seg{t: "◈", fg: cDim}
 	default:
 		return seg{t: "◈", fg: cGreen}

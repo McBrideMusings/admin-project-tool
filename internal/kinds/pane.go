@@ -232,10 +232,15 @@ func spawnLauncher(cmdLine, wd string, ctx launchCtx, t config.Terminal) (string
 	defer timing.Phase("launcher spawn", start)
 	cmd := exec.Command("/bin/sh", "-c", t.Spawn)
 	cmd.Env = append(os.Environ(), ctx.env(cmdLine, wd)...)
-	cmd.Stderr = os.Stderr
-	var out bytes.Buffer
+	// stderr is captured for the same reason runLauncherShell captures
+	// everything: the dashboard spawns while it owns the screen.
+	var out, stderr bytes.Buffer
 	cmd.Stdout = &out
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return "", fmt.Errorf("terminal.spawn: %w: %s", err, msg)
+		}
 		return "", fmt.Errorf("terminal.spawn: %w", err)
 	}
 	handle := strings.TrimSpace(out.String())
@@ -259,13 +264,20 @@ func reentryCommandLine(verb, name string, args []string) string {
 }
 
 // runLauncherShell runs one of t's attach/kill commands with ADMIN_HANDLE
-// set to handle — the shape ADR-0020 gives both.
+// set to handle — the shape ADR-0020 gives both. Its output is captured, never
+// passed to this process's terminal: the dashboard calls it while it owns the
+// screen, and a launcher line printed there scrolls the screen out from under
+// the renderer. A failure carries the output in its error instead.
 func runLauncherShell(run, handle string) error {
 	cmd := exec.Command("/bin/sh", "-c", run)
 	cmd.Env = append(os.Environ(), "ADMIN_HANDLE="+handle)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			return fmt.Errorf("%w: %s", err, msg)
+		}
+	}
+	return err
 }
 
 // ReadLauncherPane runs a [terminal].read command with ADMIN_HANDLE set to
