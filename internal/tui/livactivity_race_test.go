@@ -34,7 +34,7 @@ func TestConcurrentActivityReadsDoNotRace(t *testing.T) {
 	freshLivework(t)
 	e := &livework.Entry{
 		ID: "livactivity-race-entry", Name: "livactivity-race",
-		Handle: "pty-livactivity-race", State: livework.StateRunning,
+		Handle: "pty-livactivity-race",
 	}
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add(%s): %v", e.ID, err)

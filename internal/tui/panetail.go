@@ -2,9 +2,9 @@
 // launcher-dispatched worker (admin-spjp.6). A worker in a launcher pane is
 // not a child of this process, so there is no Ring to read; when the project
 // declares [terminal].read, the work tick shells it with ADMIN_HANDLE set and
-// stores the printed text as livework.Entry.Snapshot. Only the row under the
-// cursor is read — the band shows one entry — and each reply replaces the
-// last whole, never appending.
+// stores the printed text through livework.Default.SetSnapshot. Only the row
+// under the cursor is read — the band shows one entry — and each reply
+// replaces the last whole, never appending.
 package tui
 
 import (

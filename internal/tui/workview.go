@@ -224,8 +224,7 @@ func commandGlyph(s livework.State) string {
 // failed overrides as commandGlyph, but a worker's default glyph is the
 // diamond ◈, not the dot, which commandGlyph above omits since the Commands
 // section never draws a worker row. The caller passes st, read through
-// livework.Default.State, since e.State is written by SetState on another
-// goroutine.
+// livework.Default.State, the only reader of an entry's state.
 func liveGlyph(e *livework.Entry, st livework.State) string {
 	switch st {
 	case livework.StateWaiting:

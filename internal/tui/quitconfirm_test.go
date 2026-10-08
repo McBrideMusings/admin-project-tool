@@ -28,23 +28,23 @@ func TestHostedRunningEntriesFiltersByAddressAndState(t *testing.T) {
 	freshLivework(t)
 	hosted := &livework.Entry{
 		ID: "quitconfirm-hosted-running", Name: "hosted-running",
-		Handle: "pty-1", State: livework.StateRunning,
+		Handle: "pty-1",
 	}
 	waiting := &livework.Entry{
 		ID: "quitconfirm-hosted-waiting", Name: "hosted-waiting",
-		Handle: "pty-2", State: livework.StateWaiting,
+		Handle: "pty-2",
 	}
 	exited := &livework.Entry{
 		ID: "quitconfirm-hosted-exited", Name: "hosted-exited",
-		Handle: "pty-3", State: livework.StateExited,
+		Handle: "pty-3",
 	}
 	paned := &livework.Entry{
 		ID: "quitconfirm-paned", Name: "paned",
-		Handle: "pane-1", Via: "terminal", State: livework.StateRunning,
+		Handle: "pane-1", Via: "terminal",
 	}
 	worker := &livework.Entry{
 		ID: "quitconfirm-worker", Name: "worker",
-		Handle: "pane-2", Via: "terminal", State: livework.StateRunning,
+		Handle: "pane-2", Via: "terminal",
 		Worker: &livework.WorkerInfo{Branch: "b", Worktree: "/tmp/b"},
 	}
 	for _, e := range []*livework.Entry{hosted, waiting, exited, paned, worker} {
@@ -52,6 +52,8 @@ func TestHostedRunningEntriesFiltersByAddressAndState(t *testing.T) {
 			t.Fatalf("Add(%s): %v", e.ID, err)
 		}
 	}
+	livework.Default.SetState(waiting.ID, livework.StateWaiting, nil)
+	livework.Default.SetState(exited.ID, livework.StateExited, nil)
 	got := hostedRunningEntries()
 	names := map[string]bool{}
 	for _, e := range got {
@@ -100,7 +102,7 @@ func TestRequestQuitWithHostedProcessOpensConfirm(t *testing.T) {
 	freshLivework(t)
 	e := &livework.Entry{
 		ID: "quitconfirm-opens-confirm", Name: "opens-confirm",
-		Handle: "pty-opens-confirm", State: livework.StateRunning,
+		Handle: "pty-opens-confirm",
 	}
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add: %v", err)
@@ -134,8 +136,8 @@ func TestQuitConfirmKeyEnterKillsAndQuits(t *testing.T) {
 	killed := false
 	e := &livework.Entry{
 		ID: "quitconfirm-enter-kills", Name: "enter-kills",
-		Handle: "pty-enter-kills", State: livework.StateRunning,
-		Ops: livework.Ops{Kill: func() error { killed = true; return nil }},
+		Handle: "pty-enter-kills",
+		Ops:    livework.Ops{Kill: func() error { killed = true; return nil }},
 	}
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add: %v", err)
@@ -169,8 +171,8 @@ func TestQuitConfirmKeyOtherCancelsWithoutKilling(t *testing.T) {
 	killed := false
 	e := &livework.Entry{
 		ID: "quitconfirm-esc-cancels", Name: "esc-cancels",
-		Handle: "pty-esc-cancels", State: livework.StateRunning,
-		Ops: livework.Ops{Kill: func() error { killed = true; return nil }},
+		Handle: "pty-esc-cancels",
+		Ops:    livework.Ops{Kill: func() error { killed = true; return nil }},
 	}
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add: %v", err)
@@ -191,8 +193,8 @@ func TestQuitConfirmKeyOtherCancelsWithoutKilling(t *testing.T) {
 	if cmd != nil {
 		t.Error("quitConfirmKey(\"esc\") returned a non-nil Cmd, want nil — cancelling must not quit")
 	}
-	if got, _ := livework.Default.Get(e.ID); got.State != livework.StateRunning {
-		t.Errorf("entry state = %v after cancel, want %v — still running", got.State, livework.StateRunning)
+	if st, _ := livework.Default.State(e.ID); st != livework.StateRunning {
+		t.Errorf("entry state = %v after cancel, want %v — still running", st, livework.StateRunning)
 	}
 }
 
@@ -203,13 +205,14 @@ func TestQuitConfirmKeyOtherCancelsWithoutKilling(t *testing.T) {
 func TestFrameShowsQuitConfirmOverHostedProcess(t *testing.T) {
 	freshLivework(t)
 	e := &livework.Entry{
-		ID: "frame-fixture:cf", Name: "frame-fixture:cf", Activity: "vitepress dev · localhost:5173",
-		Handle: "pty-frame-entry", State: livework.StateRunning,
-		Ops: livework.Ops{Kill: func() error { return nil }},
+		ID: "frame-fixture:cf", Name: "frame-fixture:cf",
+		Handle: "pty-frame-entry",
+		Ops:    livework.Ops{Kill: func() error { return nil }},
 	}
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
+	livework.Default.SetActivity(e.ID, "vitepress dev · localhost:5173")
 
 	// The entry's name comes from its Work row, so the project declares it.
 	dir := t.TempDir()
@@ -269,14 +272,17 @@ func TestQuitConfirmMatchesGolden(t *testing.T) {
 
 	freshLivework(t)
 	for _, e := range []*livework.Entry{
-		{ID: "dev", Name: "dev", Handle: "pty-dev", State: livework.StateRunning, Activity: "vitepress dev · localhost:5173"},
-		{ID: "test", Name: "test", Handle: "pty-test", State: livework.StateWaiting, Activity: "Enter a number, or q to cancel:"},
+		{ID: "dev", Name: "dev", Handle: "pty-dev"},
+		{ID: "test", Name: "test", Handle: "pty-test"},
 	} {
 		e.Ops = livework.Ops{Kill: func() error { return nil }}
 		if err := livework.Default.Add(e); err != nil {
 			t.Fatalf("Add: %v", err)
 		}
 	}
+	livework.Default.SetActivity("dev", "vitepress dev · localhost:5173")
+	livework.Default.SetState("test", livework.StateWaiting, nil)
+	livework.Default.SetActivity("test", "Enter a number, or q to cancel:")
 
 	const boxW, boxH = 62, 10
 	for _, geo := range []struct{ w, h, top, left int }{
@@ -340,11 +346,13 @@ func TestQuitConfirmCapsLongList(t *testing.T) {
 		{"tunnel", "running", "cloudflared tunnel run"},
 	}
 	for _, p := range procs {
-		e := &livework.Entry{ID: p[0], Name: p[0], Handle: "pty-" + p[0], State: livework.State(p[1]), Activity: p[2]}
+		e := &livework.Entry{ID: p[0], Name: p[0], Handle: "pty-" + p[0]}
 		e.Ops = livework.Ops{Kill: func() error { return nil }}
 		if err := livework.Default.Add(e); err != nil {
 			t.Fatalf("Add: %v", err)
 		}
+		livework.Default.SetState(e.ID, livework.State(p[1]), nil)
+		livework.Default.SetActivity(e.ID, p[2])
 	}
 
 	frame := func(w, h int) []string {

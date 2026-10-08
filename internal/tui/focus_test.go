@@ -312,7 +312,7 @@ func TestKeybarFollowsFocus(t *testing.T) {
 	// original intent (the tab-bar keymap merges the row-scoped pairs with
 	// the nav-only ones) exercised against a live row.
 	if err := livework.Default.Add(&livework.Entry{
-		ID: "build", Name: "build", State: livework.StateRunning,
+		ID: "build", Name: "build",
 		Handle: "pane-build", Via: "terminal",
 	}); err != nil {
 		t.Fatalf("Add: %v", err)

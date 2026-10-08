@@ -50,14 +50,14 @@ type record struct {
 func toRecord(e *Entry) record {
 	return record{
 		ID: e.ID, Name: e.Name, Kind: e.Kind, Handle: e.Handle, Via: e.Via, Root: e.Root,
-		StartedAt: e.StartedAt, State: e.State, Note: e.Note, Worker: e.Worker, LogPath: e.LogPath,
+		StartedAt: e.StartedAt, State: e.state, Note: e.note, Worker: e.Worker, LogPath: e.logPath,
 	}
 }
 
 func (rec record) entry() *Entry {
 	return &Entry{
 		ID: rec.ID, Name: rec.Name, Kind: rec.Kind, Handle: rec.Handle, Via: rec.Via, Root: rec.Root,
-		StartedAt: rec.StartedAt, State: rec.State, Note: rec.Note, Worker: rec.Worker, LogPath: rec.LogPath,
+		StartedAt: rec.StartedAt, state: rec.State, note: rec.Note, Worker: rec.Worker, logPath: rec.LogPath,
 	}
 }
 
@@ -170,7 +170,7 @@ func (r *Registry) writeLocked(e *Entry) error {
 	rec, err := readRecord(path)
 	exists := !os.IsNotExist(err)
 	ours := err == nil && rec.Handle == e.Handle
-	if !e.State.live() {
+	if !e.state.live() {
 		if ours {
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("livework: removing %s: %w", path, err)
@@ -294,7 +294,7 @@ func (r *Registry) Sync(root string) error {
 	known := map[string]string{}
 	for id, e := range r.entries {
 		known[id] = e.Handle
-		if e.Root == root && e.onDisk && e.State.live() {
+		if e.Root == root && e.onDisk && e.state.live() {
 			before[id] = e
 		}
 	}
@@ -339,8 +339,8 @@ func (r *Registry) Sync(root string) error {
 	errs = append(errs, r.writeErrs...)
 	r.writeErrs = nil
 	for id, e := range before {
-		if _, ok := onDisk[id]; !ok && r.entries[id] == e && e.State.live() {
-			e.State = StateExited
+		if _, ok := onDisk[id]; !ok && r.entries[id] == e && e.state.live() {
+			e.state = StateExited
 		}
 	}
 	for id, rec := range onDisk {
@@ -351,15 +351,15 @@ func (r *Registry) Sync(root string) error {
 		if exists && old.Handle == rec.Handle {
 			// The same pane. Exited here means this process ended it and its
 			// file outlived it; it stays ended.
-			if old.State.live() && old.onDisk {
-				old.State, old.Note = rec.State, rec.Note
+			if old.state.live() && old.onDisk {
+				old.state, old.note = rec.State, rec.Note
 				if rec.LogPath != "" {
-					old.LogPath = rec.LogPath
+					old.logPath = rec.LogPath
 				}
 			}
 			continue
 		}
-		if exists && old.State.live() {
+		if exists && old.state.live() {
 			continue // this process's own live entry under that id
 		}
 		e := fresh[id]

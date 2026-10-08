@@ -51,7 +51,7 @@ func TestKKeyOnLiveRowMovesCursorAndDoesNotKill(t *testing.T) {
 	freshLivework(t)
 	killed := false
 	live := &livework.Entry{
-		ID: "deploy", Name: "deploy", State: livework.StateRunning,
+		ID: "deploy", Name: "deploy",
 		Handle: "pane-deploy", Via: "terminal",
 		Ops: livework.Ops{Kill: func() error { killed = true; return nil }},
 	}
@@ -94,7 +94,7 @@ func TestXKeyKillsLiveCommandRow(t *testing.T) {
 	freshLivework(t)
 	killed := false
 	live := &livework.Entry{
-		ID: "deploy", Name: "deploy", State: livework.StateRunning,
+		ID: "deploy", Name: "deploy",
 		Handle: "pane-deploy", Via: "terminal",
 		Ops: livework.Ops{Kill: func() error { killed = true; return nil }},
 	}
@@ -121,7 +121,7 @@ func TestXKeyKillsLiveWorkerRow(t *testing.T) {
 	freshLivework(t)
 	killed := false
 	worker := &livework.Entry{
-		ID: "review-agent", Name: "review-agent", State: livework.StateRunning,
+		ID: "review-agent", Name: "review-agent",
 		Handle: "pane-review", Via: "terminal",
 		Worker: &livework.WorkerInfo{Branch: "feat/x", Worktree: "/repo/.worktrees/x"},
 		Ops:    livework.Ops{Kill: func() error { killed = true; return nil }},
@@ -159,7 +159,7 @@ func TestXKeyKillsLiveWorkerRow(t *testing.T) {
 func TestWorkFooterMatchesFramesVerbatim(t *testing.T) {
 	freshLivework(t)
 	live := &livework.Entry{
-		ID: "deploy", Name: "deploy", State: livework.StateRunning,
+		ID: "deploy", Name: "deploy",
 		Handle: "pane-deploy", Via: "terminal",
 	}
 	if err := livework.Default.Add(live); err != nil {

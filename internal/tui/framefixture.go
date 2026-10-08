@@ -54,25 +54,25 @@ func SeedFrameFixture(name string) error {
 	now := time.Now()
 	workers := []*livework.Entry{
 		{ID: "admin-3rgp.36", Name: "admin-3rgp.36", Handle: "pane 3", Via: "terminal",
-			State: livework.StateRunning, StartedAt: now.Add(-18 * time.Minute),
+			StartedAt: now.Add(-18 * time.Minute),
 			Worker: &livework.WorkerInfo{
 				Branch:   "feat/admin-3rgp.36-lua-host",
 				Worktree: "/Users/dev/.worktrees/admin-project-tool/admin-3rgp.36",
 			}},
 		{ID: "admin-3rgp.7", Name: "admin-3rgp.7", Handle: "pane 4", Via: "terminal",
-			State: livework.StateWaiting, StartedAt: now.Add(-6 * time.Minute),
+			StartedAt: now.Add(-6 * time.Minute),
 			Worker: &livework.WorkerInfo{
 				Branch:   "feat/admin-3rgp.7-root-command",
 				Worktree: "/Users/dev/.worktrees/admin-project-tool/admin-3rgp.7",
 			}},
 		{ID: "admin-3rgp.33", Name: "admin-3rgp.33", Handle: "pane 5", Via: "terminal",
-			State: livework.StateFailed, StartedAt: now.Add(-2 * time.Minute),
+			StartedAt: now.Add(-2 * time.Minute),
 			Worker: &livework.WorkerInfo{
 				Branch:   "fix/admin-3rgp.33-detect",
 				Worktree: "/Users/dev/.worktrees/admin-project-tool/admin-3rgp.33",
 			}},
 		{ID: "admin-3rgp.41", Name: "admin-3rgp.41", Handle: "pane 6", Via: "terminal",
-			State: livework.StateStopped, StartedAt: now.Add(-47 * time.Minute),
+			StartedAt: now.Add(-47 * time.Minute),
 			Worker: &livework.WorkerInfo{
 				Branch:   "fix/admin-3rgp.41-footer",
 				Worktree: "/Users/dev/.worktrees/admin-project-tool/admin-3rgp.41",
@@ -97,6 +97,9 @@ func SeedFrameFixture(name string) error {
 			return err
 		}
 	}
+	livework.Default.SetState("admin-3rgp.7", livework.StateWaiting, nil)
+	livework.Default.SetState("admin-3rgp.33", livework.StateFailed, nil)
+	livework.Default.SetState("admin-3rgp.41", livework.StateStopped, nil)
 	livework.Default.SetActivity("admin-3rgp.36", "writing internal/lua/host.go")
 	livework.Default.SetActivity("admin-3rgp.7", "needs input: root command name")
 	livework.Default.SetActivity("admin-3rgp.33", "go test ./internal/detect FAIL")

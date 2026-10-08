@@ -567,8 +567,8 @@ func TestDispatchTargetsRecordsLiveWorkWithPaneHandle(t *testing.T) {
 	if entry.Handle != "pane-live-1" {
 		t.Errorf("entry.Handle = %q, want pane-live-1", entry.Handle)
 	}
-	if entry.State != livework.StateRunning {
-		t.Errorf("entry.State = %q, want running", entry.State)
+	if st, _ := livework.Default.State(entry.ID); st != livework.StateRunning {
+		t.Errorf("entry state = %q, want running", st)
 	}
 }
 

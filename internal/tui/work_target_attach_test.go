@@ -81,7 +81,7 @@ func TestEnterOnRunningTargetRowAttachesNotDispatches(t *testing.T) {
 	attached := false
 	live := &livework.Entry{
 		ID: "dev:mac", Name: kinds.TargetLiveKey("dev", "mac"), Kind: "multi-target",
-		State: livework.StateRunning, Handle: "pane-dev-mac", Via: "terminal",
+		Handle: "pane-dev-mac", Via: "terminal",
 		Ops: livework.Ops{Attach: func() error { attached = true; return nil }},
 	}
 	if err := livework.Default.Add(live); err != nil {
@@ -117,7 +117,6 @@ func TestAttachedBreadcrumbUsesBandName(t *testing.T) {
 			Worker: &livework.WorkerInfo{Branch: "admin-1", Worktree: "/tmp/admin-1"}}, "admin-1"},
 	} {
 		freshLivework(t)
-		c.entry.State = livework.StateRunning
 		if err := livework.Default.Add(c.entry); err != nil {
 			t.Fatalf("Add: %v", err)
 		}
@@ -137,7 +136,7 @@ func TestAttachedBreadcrumbUsesBandName(t *testing.T) {
 // as "dev mac", the band title's name for it.
 func TestQuitConfirmNamesTargetLikeBand(t *testing.T) {
 	freshLivework(t)
-	e := &livework.Entry{ID: "dev:mac", Name: "dev:mac", Kind: "hosted-pty", Handle: "pty-dev-mac", State: livework.StateRunning}
+	e := &livework.Entry{ID: "dev:mac", Name: "dev:mac", Kind: "hosted-pty", Handle: "pty-dev-mac"}
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -167,7 +166,7 @@ func TestEnterOnRunningFlatCommandRowStillAttaches(t *testing.T) {
 	attached := false
 	live := &livework.Entry{
 		ID: "test", Name: "test", Kind: "shell",
-		State: livework.StateRunning, Handle: "pane-test", Via: "terminal",
+		Handle: "pane-test", Via: "terminal",
 		Ops: livework.Ops{Attach: func() error { attached = true; return nil }},
 	}
 	if err := livework.Default.Add(live); err != nil {
@@ -259,7 +258,7 @@ func TestFooterAgreesWithActionForBothRowKinds(t *testing.T) {
 					id = kinds.TargetLiveKey(c.cmdName, c.targetKey)
 				}
 				live := &livework.Entry{
-					ID: id, Name: id, Kind: "shell", State: livework.StateRunning,
+					ID: id, Name: id, Kind: "shell",
 					Handle: "pane-" + id, Via: "terminal",
 					Ops: livework.Ops{Attach: func() error { return nil }},
 				}

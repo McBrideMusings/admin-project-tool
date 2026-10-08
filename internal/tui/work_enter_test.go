@@ -79,7 +79,7 @@ func TestActivateCommandAttachesWhenLive(t *testing.T) {
 	freshLivework(t)
 	attached := false
 	live := &livework.Entry{
-		ID: "build", Name: "build", State: livework.StateRunning,
+		ID: "build", Name: "build",
 		Handle: "pane-build", Via: "terminal",
 		Ops: livework.Ops{Attach: func() error { attached = true; return nil }},
 	}
@@ -120,7 +120,7 @@ func TestActivateWorkerRowAttaches(t *testing.T) {
 	attached := false
 	worker := &livework.Entry{
 		ID: "test-enter-worker-attaches", Name: "test-enter-worker-attaches",
-		State: livework.StateRunning, Handle: "pane-enter-worker", Via: "herdr",
+		Handle: "pane-enter-worker", Via: "herdr",
 		Worker: &livework.WorkerInfo{
 			Branch: "test-enter-worker-attaches", Worktree: "/tmp/test-enter-worker-attaches",
 		},
@@ -237,7 +237,7 @@ func TestAttachKeyRunsOpsAttachForLauncherRow(t *testing.T) {
 	attached := false
 	live := &livework.Entry{
 		ID: "attach-key-launcher", Name: "attach-key-launcher", Kind: "shell",
-		State: livework.StateRunning, Handle: "fake-handle-attach-key", Via: "terminal",
+		Handle: "fake-handle-attach-key", Via: "terminal",
 		Ops: livework.Ops{Attach: func() error { attached = true; return nil }},
 	}
 	if err := livework.Default.Add(live); err != nil {

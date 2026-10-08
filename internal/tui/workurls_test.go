@@ -55,12 +55,13 @@ func TestBandShowsLiveLogElapsedAndURLs(t *testing.T) {
 
 	freshLivework(t)
 	live := &livework.Entry{
-		ID: "dev-detail-test", Name: "dev", Handle: "pty-dev-detail-test", State: livework.StateRunning,
-		LogPath: "/live/dev.log", StartedAt: time.Now().Add(-5 * time.Minute),
+		ID: "dev-detail-test", Name: "dev", Handle: "pty-dev-detail-test",
+		StartedAt: time.Now().Add(-5 * time.Minute),
 	}
 	if err := livework.Default.Add(live); err != nil {
 		t.Fatalf("Add(%s): %v", live.ID, err)
 	}
+	livework.Default.SetLogPath(live.ID, "/live/dev.log")
 	row := mm.commandRowItem(workCmdRow{name: "dev", cmd: m.Custom["dev"]}, map[string]*livework.Entry{"dev": live})
 
 	title := bandTitle(80, live, row.work.cmdName)

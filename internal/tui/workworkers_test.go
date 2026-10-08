@@ -30,20 +30,22 @@ func workersFixtureModel(t *testing.T) (Model, []rowItem) {
 
 	entries := []*livework.Entry{
 		{ID: "admin-3rgp.36", Name: "admin-3rgp.36", Handle: "pane 3", Via: "terminal",
-			State: livework.StateRunning, StartedAt: time.Now().Add(-18 * time.Minute),
-			Worker: &livework.WorkerInfo{Branch: "b1", Worktree: "/tmp/b1"}},
+			StartedAt: time.Now().Add(-18 * time.Minute),
+			Worker:    &livework.WorkerInfo{Branch: "b1", Worktree: "/tmp/b1"}},
 		{ID: "admin-3rgp.7", Name: "admin-3rgp.7", Handle: "pane 4", Via: "terminal",
-			State: livework.StateWaiting, StartedAt: time.Now().Add(-6 * time.Minute),
-			Worker: &livework.WorkerInfo{Branch: "b2", Worktree: "/tmp/b2"}},
+			StartedAt: time.Now().Add(-6 * time.Minute),
+			Worker:    &livework.WorkerInfo{Branch: "b2", Worktree: "/tmp/b2"}},
 		{ID: "admin-3rgp.33", Name: "admin-3rgp.33", Handle: "pane 5", Via: "terminal",
-			State: livework.StateFailed, StartedAt: time.Now().Add(-2 * time.Minute),
-			Worker: &livework.WorkerInfo{Branch: "b3", Worktree: "/tmp/b3"}},
+			StartedAt: time.Now().Add(-2 * time.Minute),
+			Worker:    &livework.WorkerInfo{Branch: "b3", Worktree: "/tmp/b3"}},
 	}
 	for _, e := range entries {
 		if err := livework.Default.Add(e); err != nil {
 			t.Fatalf("Add(%s): %v", e.ID, err)
 		}
 	}
+	livework.Default.SetState("admin-3rgp.7", livework.StateWaiting, nil)
+	livework.Default.SetState("admin-3rgp.33", livework.StateFailed, nil)
 	livework.Default.SetActivity("admin-3rgp.36", "writing internal/lua/host.go")
 	livework.Default.SetActivity("admin-3rgp.7", "needs input: root command name")
 	livework.Default.SetActivity("admin-3rgp.33", "go test ./internal/detect FAIL")
@@ -124,7 +126,7 @@ func TestScrolledListNamesItsSection(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		id := "worker" + string(rune('a'+i))
 		e := &livework.Entry{
-			ID: id, Name: id, Handle: "pane", Via: "terminal", State: livework.StateRunning,
+			ID: id, Name: id, Handle: "pane", Via: "terminal",
 			StartedAt: time.Now(), Worker: &livework.WorkerInfo{Branch: "b", Worktree: "/tmp/w"},
 		}
 		if err := livework.Default.Add(e); err != nil {
@@ -198,7 +200,7 @@ func TestWorkersEmptyHintNamesDeclaredSources(t *testing.T) {
 // running, and the footer offers no ↵ over a list with no row.
 func TestWorkersEmptyKeepsBandAndOffersNoEnter(t *testing.T) {
 	freshLivework(t)
-	if err := livework.Default.Add(&livework.Entry{ID: "build", Name: "build", State: livework.StateRunning, Handle: "pane-build", Via: "terminal"}); err != nil {
+	if err := livework.Default.Add(&livework.Entry{ID: "build", Name: "build", Handle: "pane-build", Via: "terminal"}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 	mm := workTestModel(&manifest.Manifest{

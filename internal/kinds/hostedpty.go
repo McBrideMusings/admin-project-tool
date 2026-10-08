@@ -256,8 +256,7 @@ func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx
 	// below knows the resulting "signal: killed" c.Wait() error is expected
 	// and must not overwrite the StateExited Kill already set. exited is set
 	// by the wait goroutine the instant c.Wait() returns, so Kill can tell
-	// "this already finished on its own" without reading e.State — that field
-	// is unsynchronised (the pre-existing race admin-ddc8, not fixed here).
+	// "this already finished on its own" without a registry lookup.
 	var killed atomic.Bool
 	var exited atomic.Bool
 	// closed mirrors whether ptmx itself has been closed — by Kill, or by

@@ -19,8 +19,8 @@ func TestAddDefaultsStateAndTimestamp(t *testing.T) {
 	if !ok {
 		t.Fatal("Get(w1:p1) = false, want true")
 	}
-	if e.State != StateRunning {
-		t.Errorf("State = %q, want %q", e.State, StateRunning)
+	if e.state != StateRunning {
+		t.Errorf("State = %q, want %q", e.state, StateRunning)
 	}
 	if e.StartedAt.IsZero() {
 		t.Error("StartedAt should default to now, not the zero time")
@@ -33,9 +33,9 @@ func TestAddDefaultsStateAndTimestamp(t *testing.T) {
 // independently reportable, through more than one transition.
 //
 // MUTATION EVIDENCE: add a guard to SetState that skips entries not already
-// StateRunning (`if e.State != StateRunning { return }`), and this test
+// StateRunning (`if e.state != StateRunning { return }`), and this test
 // fails — entry a's second transition (Exited -> Failed) becomes a no-op,
-// so a.State stays "exited" instead of "failed".
+// so a.state stays "exited" instead of "failed".
 func TestListSurvivesForLifeOfRegistry(t *testing.T) {
 	r := NewRegistry()
 	r.Add(&Entry{ID: "a", Name: "one", Kind: "vite-dev", Handle: "pane-a", Via: "terminal"})
@@ -54,15 +54,15 @@ func TestListSurvivesForLifeOfRegistry(t *testing.T) {
 		t.Fatalf("List() has %d entries after SetState, want 2 (state changes, not removal)", len(entries))
 	}
 	a, _ := r.Get("a")
-	if a.State != StateFailed {
-		t.Errorf("entry a State = %q, want %q (its second transition)", a.State, StateFailed)
+	if a.state != StateFailed {
+		t.Errorf("entry a State = %q, want %q (its second transition)", a.state, StateFailed)
 	}
 	b, _ := r.Get("b")
-	if b.State != StateFailed {
-		t.Errorf("entry b State = %q, want %q", b.State, StateFailed)
+	if b.state != StateFailed {
+		t.Errorf("entry b State = %q, want %q", b.state, StateFailed)
 	}
-	if b.Err == nil || b.Err.Error() != "boom" {
-		t.Errorf("entry b Err = %v, want the recorded failure", b.Err)
+	if b.err == nil || b.err.Error() != "boom" {
+		t.Errorf("entry b Err = %v, want the recorded failure", b.err)
 	}
 }
 
@@ -74,8 +74,8 @@ func TestSetStateOnlyRecordsErrForFailed(t *testing.T) {
 	r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-a", Via: "terminal"})
 	r.SetState("a", StateExited, errors.New("ignored"))
 	a, _ := r.Get("a")
-	if a.Err != nil {
-		t.Errorf("Err = %v, want nil for a StateExited transition", a.Err)
+	if a.err != nil {
+		t.Errorf("Err = %v, want nil for a StateExited transition", a.err)
 	}
 }
 
@@ -122,8 +122,8 @@ func TestSetActivity(t *testing.T) {
 	r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-a", Via: "terminal"})
 	r.SetActivity("a", "writing internal/lua/host.go")
 	e, _ := r.Get("a")
-	if e.Activity != "writing internal/lua/host.go" {
-		t.Errorf("Activity = %q, want the set line", e.Activity)
+	if e.activity != "writing internal/lua/host.go" {
+		t.Errorf("Activity = %q, want the set line", e.activity)
 	}
 	// A missing ID is silently ignored, like SetState.
 	r.SetActivity("missing", "should not panic")
@@ -137,10 +137,10 @@ func TestStateWaitingIsDistinctFromRunning(t *testing.T) {
 	r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-a", Via: "terminal"})
 	r.SetState("a", StateWaiting, nil)
 	e, _ := r.Get("a")
-	if e.State != StateWaiting {
-		t.Errorf("State = %q, want %q", e.State, StateWaiting)
+	if e.state != StateWaiting {
+		t.Errorf("State = %q, want %q", e.state, StateWaiting)
 	}
-	if e.State == StateRunning {
+	if e.state == StateRunning {
 		t.Error("StateWaiting must not equal StateRunning")
 	}
 }
@@ -282,7 +282,7 @@ func TestAddOverwritesInPlace(t *testing.T) {
 	r.SetState("a", StateFailed, errors.New("boom"))
 
 	// A brand new Entry, same ID, new pane.
-	r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-3", Via: "terminal", State: StateRunning})
+	r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-3", Via: "terminal"})
 
 	entries := r.List()
 	if len(entries) != 2 {
@@ -291,8 +291,8 @@ func TestAddOverwritesInPlace(t *testing.T) {
 	if entries[0].Name != "one" || entries[0].Handle != "pane-3" {
 		t.Errorf("entries[0] = %+v, want the re-added entry (pane-3) still in slot 0", entries[0])
 	}
-	if entries[0].State != StateRunning {
-		t.Errorf("entries[0].State = %q, want running after re-add", entries[0].State)
+	if entries[0].state != StateRunning {
+		t.Errorf("entries[0].state = %q, want running after re-add", entries[0].state)
 	}
 }
 
