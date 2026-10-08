@@ -87,6 +87,9 @@ type Remote struct {
 	// stood when the merged section was last fetched; empty after a failed or
 	// partial fetch. See decideMerged.
 	MergedRemoteSig string `json:"merged_remote_sig"`
+	// SyncedBy is the pid of the dashboard whose sync last wrote the cache, so
+	// the sync log can name which dashboard another one reused.
+	SyncedBy int `json:"synced_by"`
 	// MergedSkipped marks a fragment whose merged fetch did not run this sync
 	// because nothing could have changed: it carries only the time of that check
 	// (MergedFetchedAt), and applyMergedTo leaves the cached data untouched.
@@ -375,12 +378,24 @@ type SyncOpts struct {
 // their answer only changes when a branch moved or a PR left the open list. A
 // section that fails carries its error back and changes nothing — see ApplyTo.
 //
+// Every dashboard open on one repo shares this fetch: an unforced sync first
+// claims the repo (claimSync) and returns another dashboard's result instead
+// when it is fresh. `r`/`⇧R` always fetch, and their result is what the others
+// then reuse.
+//
 // nwo empty means there's no GitHub remote at all — nothing to sync there, not
 // a failure — so every GitHub fetch is skipped the same way and the zero Remote
 // carries no *FetchError for the header to render as "sync failed".
 func FetchAll(ctx context.Context, nwo string, o SyncOpts) Remote {
 	if nwo == "" {
 		return Remote{}
+	}
+	if !o.Force {
+		cached, reuse, release := claimSync(nwo)
+		defer release()
+		if reuse {
+			return cached
+		}
 	}
 	LogSync(nwo, "start", 0, fmt.Sprintf("issues=%t merged_limit=%d force=%t", o.WithIssues, o.MergedLimit, o.Force), nil)
 	var prs, issues, merged Remote
@@ -441,7 +456,8 @@ func FetchAll(ctx context.Context, nwo string, o SyncOpts) Remote {
 	merged.applyMergedTo(&r)
 	r.MergedSkipped = merged.MergedSkipped // ApplyTo runs again below and over the model; it must skip too
 
-	mergeSave(nwo, func(c *Remote) { r.ApplyTo(c) })
+	r.SyncedBy = os.Getpid()
+	mergeSave(nwo, func(c *Remote) { r.ApplyTo(c); c.SyncedBy = r.SyncedBy })
 	return r
 }
 

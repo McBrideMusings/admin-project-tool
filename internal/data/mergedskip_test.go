@@ -62,6 +62,7 @@ func gitIn(t *testing.T, dir string, args ...string) {
 // dashboard never saw open, a PR leaving the open list, and a forced sync each
 // bring the call back.
 func TestFetchAllSkipsTheMergedQueryUntilSomethingMoved(t *testing.T) {
+	everySyncFetches(t)
 	logPath := t.TempDir() + "/sync.log"
 	t.Cleanup(UseSyncLogPath(logPath))
 	t.Setenv("HOME", t.TempDir())
@@ -177,6 +178,7 @@ func TestFailedMergedFetchIsRetriedNextTick(t *testing.T) {
 // query failed keeps its merged data but is not stamped with fingerprints, so an
 // unchanged repo runs the query again on the next sync instead of skipping past it.
 func TestFailedClosedQueryIsRetriedNextSync(t *testing.T) {
+	everySyncFetches(t)
 	t.Cleanup(UseSyncLogPath(t.TempDir() + "/sync.log"))
 	t.Setenv("HOME", t.TempDir())
 	prevPRs, prevIssues, prevMerged, prevRemote := fetchPRsFn, fetchIssuesFn, fetchMergedFn, remoteSigFn
