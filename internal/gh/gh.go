@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 )
 
@@ -1522,7 +1523,20 @@ func IssueByNumber(ctx context.Context, nwo string, number int) (item IssueItem,
 // in a form anything can read. See argv_test.go.
 var runner = run
 
+// RefuseUnderTest panics when the process is a test binary: no test may reach
+// the real gh, which spends the shared GitHub rate limit and ties a result to
+// the network. A test that needs gh output replaces the runner (or the caller's
+// own seam) with a stub; one that does not and still gets here fails loudly,
+// naming the argv, rather than silently calling GitHub. run calls it first, so
+// every command in this package is covered.
+func RefuseUnderTest(args ...string) {
+	if testing.Testing() {
+		panic(fmt.Sprintf("test reached the real gh: gh %s (stub the call; tests must not use the network)", strings.Join(args, " ")))
+	}
+}
+
 func run(ctx context.Context, args ...string) (string, error) {
+	RefuseUnderTest(args...)
 	var stderr strings.Builder
 	cmd := exec.CommandContext(ctx, "gh", args...)
 	cmd.Stderr = &stderr
