@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
+	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/wthooks"
@@ -111,46 +112,108 @@ func PaneGone(ctx context.Context, statusCmd, handle string) (gone bool, err err
 	return false, runErr
 }
 
+// doneInterval is the least time between two runs of one worker's done
+// predicate. The reaper is called on every 1s dashboard tick, while a
+// predicate commonly asks GitHub (`gh pr view`) a question whose answer moves
+// on the scale of minutes; run every tick, a handful of workers exhaust the
+// account's GraphQL rate limit.
+var doneInterval = 60 * time.Second
+
+// doneRun is the outcome of one worker's last done-predicate run, reused until
+// the next run is due.
+type doneRun struct {
+	at       time.Time
+	paneGone bool
+	finished bool
+	note     string
+}
+
+// doneRuns holds each worker entry's last doneRun, keyed by the entry pointer
+// so a re-dispatch under the same id starts with no history.
+var doneRuns sync.Map
+
+// doneDue reports whether e's done predicate runs now: it never has, its last
+// run is doneInterval old, or its pane has gone since that run — a worker
+// whose agent just exited is the one most likely to have finished.
+func doneDue(e *livework.Entry, paneGone bool, now time.Time) (last doneRun, due bool) {
+	v, ok := doneRuns.Load(e)
+	if !ok {
+		return doneRun{}, true
+	}
+	last = v.(doneRun)
+	return last, now.Sub(last.at) >= doneInterval || (paneGone && !last.paneGone)
+}
+
+// workerPaneGone asks [terminal].status whether e's launcher pane has gone.
+// A hosted worker, or a launcher with no status command, has no pane to ask
+// about and reads as not gone; so does a probe that could not answer.
+func workerPaneGone(ctx context.Context, e *livework.Entry, t config.Terminal) bool {
+	if t.Status == "" || e.Via != "terminal" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, doneTimeout)
+	defer cancel()
+	gone, err := PaneGone(ctx, t.Status, e.Handle)
+	return err == nil && gone
+}
+
 // workerFinished reports whether w's work is over. A done predicate that
-// exits nonzero is "not finished"; so is a worker with no done predicate and
-// no [terminal].status to ask. note is non-empty when the predicate could not
-// give an answer at all (it timed out or would not start), so the row says
-// why it is not progressing instead of looking merely unfinished.
-func workerFinished(ctx context.Context, e *livework.Entry, t config.Terminal) (finished bool, note string) {
-	w, handle := e.Worker, e.Handle
+// exits nonzero is "not finished"; so is a worker with no done predicate whose
+// pane is still there. note is non-empty when the predicate could not give an
+// answer at all (it timed out or would not start), so the row says why it is
+// not progressing instead of looking merely unfinished. Between runs of the
+// predicate (doneDue) the last run's answer stands.
+func workerFinished(ctx context.Context, repoRoot string, e *livework.Entry, paneGone bool) (finished bool, note string) {
+	w := e.Worker
 	if workerWorktreeGone(w) {
 		// The done predicate runs in the worktree, so it cannot run at all.
 		// The directory is gone (removed by hand); workerSafety decides
 		// whether the branch is safe to drop.
 		return true, ""
 	}
-	if w.Done != "" {
-		ctx, cancel := context.WithTimeout(ctx, doneTimeout)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, "/bin/sh", "-c", w.Done)
-		cmd.Dir = w.Worktree
-		cmd.Env = append(os.Environ(), "ADMIN_TARGET="+w.Target, "ADMIN_HANDLE="+handle)
-		cmd.WaitDelay = time.Second
-		err := cmd.Run()
-		if err == nil {
-			return true, ""
-		}
-		var exitErr *exec.ExitError
-		switch {
-		case errors.Is(ctx.Err(), context.DeadlineExceeded):
-			return false, fmt.Sprintf("done predicate timed out after %s", doneTimeout)
-		case !errors.As(err, &exitErr):
-			return false, "done predicate failed to run: " + err.Error()
-		}
-		return false, ""
+	if w.Done == "" {
+		return paneGone, ""
 	}
-	if t.Status == "" || e.Via != "terminal" {
-		return false, ""
+	last, due := doneDue(e, paneGone, time.Now())
+	if !due {
+		return last.finished, last.note
 	}
+	start := time.Now()
+	finished, code, note := runDone(ctx, e)
+	doneRuns.Store(e, doneRun{at: start, paneGone: paneGone, finished: finished, note: note})
+	// LogSync prints either the detail or the error, so a run that could not
+	// answer carries its fields inside the error text.
+	detail := fmt.Sprintf("worker=%s target=%s exit=%d finished=%t pane_gone=%t", e.ID, w.Target, code, finished, paneGone)
+	var logErr error
+	if note != "" {
+		logErr = fmt.Errorf("%s: %s", note, detail)
+	}
+	data.LogSync(filepath.Base(repoRoot), "done", time.Since(start), detail, logErr)
+	return finished, note
+}
+
+// runDone runs e's done predicate once in its worktree. code is the shell's
+// exit status, -1 when it never produced one.
+func runDone(ctx context.Context, e *livework.Entry) (finished bool, code int, note string) {
+	w := e.Worker
 	ctx, cancel := context.WithTimeout(ctx, doneTimeout)
 	defer cancel()
-	gone, err := PaneGone(ctx, t.Status, handle)
-	return err == nil && gone, ""
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", w.Done)
+	cmd.Dir = w.Worktree
+	cmd.Env = append(os.Environ(), "ADMIN_TARGET="+w.Target, "ADMIN_HANDLE="+e.Handle)
+	cmd.WaitDelay = time.Second
+	err := cmd.Run()
+	if err == nil {
+		return true, 0, ""
+	}
+	var exitErr *exec.ExitError
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return false, -1, fmt.Sprintf("done predicate timed out after %s", doneTimeout)
+	case !errors.As(err, &exitErr):
+		return false, -1, "done predicate failed to run: " + err.Error()
+	}
+	return false, exitErr.ExitCode(), ""
 }
 
 // workerWorktreeGone reports whether w's worktree directory no longer exists.
@@ -258,19 +321,16 @@ func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t confi
 	if !ok || !st.Reapable() {
 		return false
 	}
-	finished, note := workerFinished(ctx, e, t)
+	paneGone := workerPaneGone(ctx, e, t)
+	finished, note := workerFinished(ctx, repoRoot, e, paneGone)
 	if !finished {
 		stopped := false
-		if note == "" && w.Done != "" && t.Status != "" && e.Via == "terminal" {
+		if note == "" && w.Done != "" && paneGone {
 			// A worker that declares done is finished only when done passes;
 			// a pane that has gone without it is a worker that died. Leave
 			// the row for a person to inspect and kill.
-			sctx, cancel := context.WithTimeout(ctx, doneTimeout)
-			defer cancel()
-			if gone, err := PaneGone(sctx, t.Status, e.Handle); err == nil && gone {
-				note = "pane closed before done passed"
-				stopped = true
-			}
+			note = "pane closed before done passed"
+			stopped = true
 		}
 		switch {
 		case stopped:
@@ -333,6 +393,7 @@ func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t confi
 	panesClosed.Delete(e.ID)
 	preRemoveVetoed.Delete(e)
 	preRemovePassed.Delete(e)
+	doneRuns.Delete(e)
 	livework.Default.SetNote(e.ID, "")
 	livework.Default.SetState(e.ID, livework.StateExited, nil)
 	ReleaseWorkerSlot(e.ID)

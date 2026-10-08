@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
+	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 )
 
@@ -348,6 +349,7 @@ func TestPaneGonePassesHandleEnv(t *testing.T) {
 // is left in place, stopped, with a reason — and is still reaped once done
 // passes.
 func TestReapWorkerDiedBeforeDone(t *testing.T) {
+	noDoneGate(t)
 	repoRoot := setupWorkflowRepo(t, terminalTOML)
 	addOrigin(t, repoRoot)
 	e := dispatchWorker(t, repoRoot, "false")
@@ -483,10 +485,20 @@ func TestReapWorkerReportsDoneTimeout(t *testing.T) {
 
 	repoRoot := setupWorkflowRepo(t, terminalTOML)
 	addOrigin(t, repoRoot)
+	logPath := filepath.Join(t.TempDir(), "sync.log")
+	t.Cleanup(data.UseSyncLogPath(logPath))
 	e := dispatchWorker(t, repoRoot, "sleep 5")
 	ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"})
 	if note, _ := livework.Default.Line(e.ID); !strings.Contains(note, "timed out") {
 		t.Errorf("row line = %q, want the timeout reason", note)
+	}
+	// The run that could not answer is the one a person reads the log for, so
+	// its line names the worker and the exit code too.
+	b, _ := os.ReadFile(logPath)
+	for _, want := range []string{" done FAIL ", "timed out", "worker=" + e.ID, "exit=-1"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("sync log = %q, want %q", b, want)
+		}
 	}
 }
 
@@ -620,6 +632,7 @@ func TestReapWorkerWorktreeAndBranchGone(t *testing.T) {
 // A finished worker whose reap is refused reads finished, not running, and
 // goes back to running if its done predicate stops passing.
 func TestReapWorkerBlockedReadsFinished(t *testing.T) {
+	noDoneGate(t)
 	repoRoot := setupWorkflowRepo(t, terminalTOML)
 	addOrigin(t, repoRoot)
 	excludes := filepath.Join(t.TempDir(), "ignore")
@@ -677,5 +690,93 @@ func TestDispatchRefusesATargetWithALiveWorker(t *testing.T) {
 	livework.Default.SetState(workerLiveID("reap", "t0"), livework.StateExited, nil)
 	if res := DispatchTargets(repoRoot, "reap", workflowAction(), targets, SurfaceDashboard); res[0].Err != nil {
 		t.Fatalf("redispatch after the worker exited: %v", res[0].Err)
+	}
+}
+
+// noDoneGate runs every worker's done predicate on every reap for t, for a
+// test that changes the predicate between two back-to-back reaps.
+func noDoneGate(t *testing.T) {
+	t.Helper()
+	prev := doneInterval
+	doneInterval = 0
+	t.Cleanup(func() { doneInterval = prev })
+}
+
+// countingDone is a done predicate that never passes and appends one line to
+// the returned file per run.
+func countingDone(t *testing.T) (done string, runs func() int) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "runs")
+	return fmt.Sprintf("echo x >> %q; false", path), func() int {
+		b, _ := os.ReadFile(path)
+		return strings.Count(string(b), "x")
+	}
+}
+
+// The done predicate runs once per doneInterval, however often the dashboard
+// tick reaps, and the answer between runs is the last one.
+func TestReapWorkerRunsDoneOncePerInterval(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	addOrigin(t, repoRoot)
+	done, runs := countingDone(t)
+	e := dispatchWorker(t, repoRoot, done)
+	alive := config.Terminal{Kill: "true", Status: "true"}
+	for range 5 {
+		if ReapWorker(context.Background(), repoRoot, e, alive) {
+			t.Fatal("reaped a worker whose done never passed")
+		}
+	}
+	if n := runs(); n != 1 {
+		t.Fatalf("done ran %d times over 5 reaps inside one interval, want 1", n)
+	}
+
+	prev := doneInterval
+	doneInterval = 50 * time.Millisecond
+	t.Cleanup(func() { doneInterval = prev })
+	time.Sleep(60 * time.Millisecond)
+	ReapWorker(context.Background(), repoRoot, e, alive)
+	if n := runs(); n != 2 {
+		t.Fatalf("done ran %d times after the interval passed, want 2", n)
+	}
+}
+
+// A pane that goes between two runs makes the predicate run on the next reap,
+// not a whole interval later: an agent that just exited has likely finished.
+func TestReapWorkerRunsDoneWhenPaneGoes(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	addOrigin(t, repoRoot)
+	done, runs := countingDone(t)
+	e := dispatchWorker(t, repoRoot, done)
+	ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true", Status: "true"})
+	gone := config.Terminal{Kill: "true", Status: "false"}
+	ReapWorker(context.Background(), repoRoot, e, gone)
+	ReapWorker(context.Background(), repoRoot, e, gone)
+	if n := runs(); n != 2 {
+		t.Fatalf("done ran %d times (pane alive, gone, still gone), want 2", n)
+	}
+	if st, _ := livework.Default.State(e.ID); st != livework.StateStopped {
+		t.Errorf("state = %q, want %q", st, livework.StateStopped)
+	}
+}
+
+// A predicate that passed keeps reading finished between runs, so a worker
+// whose reap is refused does not flip back to running on the next tick.
+func TestReapWorkerKeepsFinishedBetweenRuns(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	excludes := filepath.Join(t.TempDir(), "ignore")
+	if err := os.WriteFile(excludes, []byte(".env\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wfGitT(t, repoRoot, "config", "core.excludesFile", excludes)
+	addOrigin(t, repoRoot)
+	e := dispatchWorker(t, repoRoot, "true")
+	if err := os.WriteFile(filepath.Join(e.Worker.Worktree, ".env"), []byte("K=1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"})
+		if st, _ := livework.Default.State(e.ID); st != livework.StateFinished {
+			t.Fatalf("state = %q, want finished", st)
+		}
 	}
 }
