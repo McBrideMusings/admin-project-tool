@@ -111,6 +111,15 @@ func populateTargets(ctx context.Context, dir, repoRoot string, all bool) ([]str
 	return targets, nil
 }
 
+// populateHow names the mode a path was populated with, plus why a clone had
+// to make a full copy, so a slow populate is explained.
+func populateHow(r populate.Result) string {
+	if r.FullCopy != "" {
+		return fmt.Sprintf("%s, full copy: %s", r.Mode, r.FullCopy)
+	}
+	return string(r.Mode)
+}
+
 func reportPopulateResults(results []populate.Result) {
 	for _, r := range results {
 		switch {
@@ -120,10 +129,12 @@ func reportPopulateResults(results []populate.Result) {
 			fmt.Fprintf(os.Stderr, "skipped  %s (git tracks it)\n", r.Rel)
 		case r.Unchanged:
 			fmt.Fprintf(os.Stderr, "same     %s (matches the primary)\n", r.Rel)
+		case r.Kept:
+			fmt.Fprintf(os.Stderr, "kept     %s (the worktree's own directory)\n", r.Rel)
 		case r.Diff != "":
-			fmt.Fprintf(os.Stderr, "replaced %s (%s) — the worktree's old copy differed:\n%s", r.Rel, r.Mode, r.Diff)
+			fmt.Fprintf(os.Stderr, "replaced %s (%s) — the worktree's old copy differed:\n%s", r.Rel, populateHow(r), r.Diff)
 		default:
-			fmt.Fprintf(os.Stderr, "populate %s (%s)\n", r.Rel, r.Mode)
+			fmt.Fprintf(os.Stderr, "populate %s (%s)\n", r.Rel, populateHow(r))
 		}
 	}
 }

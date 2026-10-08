@@ -1,5 +1,6 @@
 // Package populate brings gitignored local files (.env, etc.) from the primary
-// repo into a worktree, per-pattern as a symlink (default) or a copy.
+// repo into a worktree, per-pattern as a symlink (default), a copy, or a
+// copy-on-write clone.
 package populate
 
 import (
@@ -26,7 +27,14 @@ type Result struct {
 	// Tracked is set when the match was left alone because git tracks it. See
 	// Run for why a tracked path is never populated.
 	Tracked bool
-	Err     error
+	// Kept is set when a clone-mode entry found a real directory already at the
+	// destination and left it alone: a cloned build cache is the worktree's own
+	// once it builds into it.
+	Kept bool
+	// FullCopy holds why a clone-mode entry could not share blocks with the
+	// primary and made a full copy instead, so a slow populate is explained.
+	FullCopy string
+	Err      error
 }
 
 // Run applies every populate entry from src (the primary repo root) into dst (a
@@ -98,8 +106,15 @@ func apply(src, dst, rel string, mode config.Mode) Result {
 	// left over from when this pattern was symlink-mode, and a broken one would
 	// make Stat fail and hide it entirely — either way it is a stale artifact to
 	// replace, with no content of the worktree's own to report.
-	if mode == config.Copy {
+	//
+	// A clone-mode directory is the exception: it is a build cache, a diff of it
+	// is unreadable, and replacing it would discard the worktree's builds.
+	if mode == config.Copy || mode == config.Clone {
 		if info, err := os.Lstat(dst); err == nil && info.Mode()&os.ModeSymlink == 0 {
+			if info.IsDir() && mode == config.Clone && isDir(src) {
+				r.Kept = true
+				return r
+			}
 			diff, err := unifiedDiff(dst, src, rel)
 			if err != nil {
 				r.Err = err
@@ -121,10 +136,17 @@ func apply(src, dst, rel string, mode config.Mode) Result {
 	switch mode {
 	case config.Copy:
 		r.Err = copyPath(src, dst)
+	case config.Clone:
+		r.FullCopy, r.Err = clonePath(src, dst)
 	default: // symlink
 		r.Err = os.Symlink(src, dst)
 	}
 	return r
+}
+
+func isDir(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.IsDir()
 }
 
 // unifiedDiff returns the unified diff from old to new, or "" when the two are

@@ -12,7 +12,10 @@ name = "base"
 # mode = "symlink" (default) points at the primary repo's file; mode = "copy"
 # gives the worktree its own, so a write there never reaches the primary.
 # `admin populate` re-copies a copy that differs from the primary and prints
-# the diff of what it replaced.
+# the diff of what it replaced. mode = "clone" is a copy-on-write copy that
+# also takes a directory, for seeding a build cache (node_modules, target):
+# clonefile(2) on APFS, FICLONE on btrfs/XFS, and a full copy, reported, on
+# any other filesystem. A re-run keeps a cloned directory the worktree has.
 #
 # A pattern is glob-matched against the PRIMARY repo, and the primary repo is
 # derived from the worktree, so a pattern can never reach into a different

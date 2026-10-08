@@ -4,7 +4,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
@@ -102,6 +104,135 @@ func TestSymlinkIsRelaid(t *testing.T) {
 	}
 	if got != real {
 		t.Errorf("link points at %q, want %q", got, real)
+	}
+}
+
+// cacheTree builds a node_modules-shaped directory under root: a nested file
+// and a relative symlink beside it.
+func cacheTree(t *testing.T, root string) {
+	t.Helper()
+	pkg := filepath.Join(root, "node_modules", "pkg")
+	if err := os.MkdirAll(pkg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "index.js"), []byte("module.exports = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("index.js", filepath.Join(pkg, "main.js")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// assertTreeCopied checks dst holds its own copy of cacheTree: same bytes, the
+// symlink still a symlink, and a write in the worktree not reaching the primary.
+func assertTreeCopied(t *testing.T, src, dst string) {
+	t.Helper()
+	got, err := os.ReadFile(filepath.Join(dst, "node_modules", "pkg", "index.js"))
+	if err != nil || string(got) != "module.exports = 1\n" {
+		t.Fatalf("cloned index.js = %q, %v", got, err)
+	}
+	if link, err := os.Readlink(filepath.Join(dst, "node_modules", "pkg", "main.js")); err != nil || link != "index.js" {
+		t.Errorf("cloned main.js -> %q, %v; want a symlink to index.js", link, err)
+	}
+	if err := os.WriteFile(filepath.Join(dst, "node_modules", "pkg", "index.js"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if orig, _ := os.ReadFile(filepath.Join(src, "node_modules", "pkg", "index.js")); string(orig) != "module.exports = 1\n" {
+		t.Errorf("a write in the worktree reached the primary: %q", orig)
+	}
+}
+
+// TestCloneCopiesADirectory pins that clone mode takes a directory, which copy
+// mode refuses, and on APFS shares blocks rather than falling back.
+func TestCloneCopiesADirectory(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	cacheTree(t, src)
+
+	res := Run(src, dst, []config.Entry{{Pattern: "node_modules", Mode: config.Clone}})
+	if len(res) != 1 || res[0].Err != nil {
+		t.Fatalf("clone = %+v", res)
+	}
+	if runtime.GOOS == "darwin" && res[0].FullCopy != "" {
+		t.Errorf("clone on APFS made a full copy: %s", res[0].FullCopy)
+	}
+	assertTreeCopied(t, src, dst)
+
+	if res := Run(src, t.TempDir(), []config.Entry{{Pattern: "node_modules", Mode: config.Copy}}); res[0].Err == nil {
+		t.Error("copy mode accepted a directory; want it refused as before")
+	}
+}
+
+// TestCloneFallsBackToAFullCopyAndSaysWhy pins the fallback: a filesystem that
+// cannot share blocks still gets the tree, read-only directories included, any
+// half-made destination is cleared first, and the result carries the reason so
+// a slow populate is explained.
+func TestCloneFallsBackToAFullCopyAndSaysWhy(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	cacheTree(t, src)
+	srcPkg, dstPkg := filepath.Join(src, "node_modules", "pkg"), filepath.Join(dst, "node_modules", "pkg")
+	if err := os.Chmod(srcPkg, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(srcPkg, 0o755); _ = os.Chmod(dstPkg, 0o755) })
+	reflinkFn = func(_, dst string) error {
+		_ = os.MkdirAll(filepath.Join(dst, "half"), 0o755)
+		return syscall.EXDEV
+	}
+	t.Cleanup(func() { reflinkFn = reflink })
+
+	res := Run(src, dst, []config.Entry{{Pattern: "node_modules", Mode: config.Clone}})
+	if len(res) != 1 || res[0].Err != nil {
+		t.Fatalf("clone = %+v", res)
+	}
+	if res[0].FullCopy != syscall.EXDEV.Error() {
+		t.Errorf("FullCopy = %q, want %q", res[0].FullCopy, syscall.EXDEV.Error())
+	}
+	if _, err := os.Lstat(filepath.Join(dst, "node_modules", "half")); !os.IsNotExist(err) {
+		t.Error("the half-made clone was left behind")
+	}
+	if info, err := os.Stat(dstPkg); err != nil || info.Mode().Perm() != 0o555 {
+		t.Errorf("copied read-only dir = %v, %v; want mode 0555", info, err)
+	}
+	assertTreeCopied(t, src, dst)
+}
+
+// TestCloneKeepsTheWorktreesDirectory pins that a re-run leaves a cloned
+// directory alone: the worktree has built into it, and that is its own.
+func TestCloneKeepsTheWorktreesDirectory(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	cacheTree(t, src)
+	entries := []config.Entry{{Pattern: "node_modules", Mode: config.Clone}}
+	if res := Run(src, dst, entries); res[0].Err != nil {
+		t.Fatal(res[0].Err)
+	}
+	built := filepath.Join(dst, "node_modules", ".cache")
+	if err := os.WriteFile(built, []byte("built\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res := Run(src, dst, entries)
+	if len(res) != 1 || !res[0].Kept || res[0].Err != nil {
+		t.Fatalf("re-run = %+v, want Kept", res)
+	}
+	if _, err := os.Stat(built); err != nil {
+		t.Errorf("the worktree's build output is gone: %v", err)
+	}
+}
+
+// TestCloneSkipsATrackedPath pins that the tracked-path guard covers clone mode.
+func TestCloneSkipsATrackedPath(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	gitT(t, src, "init", "-q")
+	cacheTree(t, src)
+	gitT(t, src, "add", "node_modules")
+	gitT(t, src, "commit", "-qm", "vendor node_modules")
+
+	res := Run(src, dst, []config.Entry{{Pattern: "node_modules", Mode: config.Clone}})
+	if len(res) != 1 || !res[0].Tracked {
+		t.Fatalf("clone of a tracked directory = %+v, want Tracked", res)
+	}
+	if _, err := os.Lstat(filepath.Join(dst, "node_modules")); !os.IsNotExist(err) {
+		t.Error("a tracked directory was cloned into the worktree")
 	}
 }
 

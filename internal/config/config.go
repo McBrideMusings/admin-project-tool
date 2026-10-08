@@ -28,6 +28,9 @@ const (
 	Symlink Mode = "symlink"
 	// Copy duplicates the file so each worktree can diverge.
 	Copy Mode = "copy"
+	// Clone is a copy-on-write copy that also accepts a directory, for seeding
+	// a build cache (node_modules/, target/) a worktree then builds into.
+	Clone Mode = "clone"
 )
 
 // Entry is one populate rule: a glob pattern (relative to the repo root) and how
