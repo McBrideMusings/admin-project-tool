@@ -44,7 +44,7 @@ func TestMain(m *testing.M) {
 	// No test here is about the remote; every Frame/Init sync answers empty.
 	// A test that restores the real FetchAll still dies in gh.run.
 	prevFetchAll := fetchAllFn
-	fetchAllFn = func(context.Context, string, int, bool) data.Remote { return data.Remote{} }
+	fetchAllFn = func(context.Context, string, data.SyncOpts) data.Remote { return data.Remote{} }
 	code := m.Run()
 	fetchAllFn = prevFetchAll
 	fetchIdentityFn = prevFetchIdentity
