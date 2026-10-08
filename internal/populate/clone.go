@@ -17,8 +17,9 @@ var reflinkFn = reflink
 // worktree gets its own copy that shares disk blocks with the primary's until
 // either side writes. When the filesystem cannot share blocks it makes a full
 // copy instead and returns why, so the caller can say a slow populate was a
-// full copy. dst must not exist: clonePath removes a half-made dst on the way
-// to the full copy, and must never remove anything it did not create.
+// full copy. dst must not exist when clonePath starts: after a failed reflink
+// it removes whatever is at dst, taking it to be the half-made clone, so
+// nothing else may create dst while a populate runs.
 func clonePath(src, dst string) (fullCopy string, err error) {
 	if _, err := os.Lstat(dst); err == nil {
 		return "", fmt.Errorf("clone %s: destination already exists", dst)
