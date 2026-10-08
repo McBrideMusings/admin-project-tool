@@ -1,6 +1,7 @@
 package data
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,29 +12,33 @@ import (
 )
 
 // sharedFresh is how recent another dashboard's sync of a repo must be for a
-// poll to reuse it instead of calling GitHub. It is half the poll, so with any
+// poll to reuse it instead of calling GitHub. It is TTL, half the poll: with any
 // number of dashboards open on one repo, whichever tick lands first past it
 // syncs and every other tick in the following half-interval reuses that
-// result: the repo syncs once per PollInterval, not once per dashboard. A var
-// so a test can make every sync go to GitHub.
-var sharedFresh = PollInterval / 2
+// result, so the repo syncs once per PollInterval rather than once per
+// dashboard, and a reused result never reads as stale. A var so a test can
+// make every sync go to GitHub.
+var sharedFresh = TTL
 
 // leaderWait bounds how long a dashboard waits on another dashboard's sync of
-// the same repo. Past it, the waiter reuses whatever the cache holds rather
-// than hang behind a stuck gh call. A var so a test can shorten it.
+// the same repo. Past it the waiter fetches for itself: a stuck gh call in one
+// dashboard must not stall the others. A var so a test can shorten it.
 var leaderWait = 45 * time.Second
 
 // claimSync elects one syncing dashboard per repo. It takes the repo's sync
-// lock (<cache>.sync.lock) and reads the cache: when another process synced
-// within sharedFresh, it returns that result with reuse=true and releases the
-// lock at once. Otherwise this process is the syncer and holds the lock until
-// it calls release, after saving, so a dashboard that was waiting reads the
-// new result rather than fetching it a second time.
+// lock (<cache>.sync.lock) and reads the cache: when every section this
+// dashboard shows was synced within sharedFresh, it returns that result with
+// reuse=true and releases the lock at once. Otherwise this process syncs, and
+// holds the lock until it calls release after saving, so a dashboard waiting
+// on it reads the new result rather than fetching it a second time.
 //
-// The lock is a flock, so a syncer that dies mid-fetch frees it with its file
-// descriptor. A lock that cannot be opened at all elects this process, since a
-// broken lock must never stop a dashboard from syncing.
-func claimSync(nwo string) (cached Remote, reuse bool, release func()) {
+// A section that failed in another dashboard's sync keeps its old stamp, so it
+// is never fresh and the next dashboard retries it. The lock is a flock, so a
+// syncer that dies frees it with its file descriptor. Every way of not getting
+// the lock — it cannot be opened, the wait passed leaderWait, ctx ended —
+// fetches without it: the lock only saves calls and must never be why a
+// dashboard does not sync.
+func claimSync(ctx context.Context, nwo string, withIssues bool) (cached Remote, reuse bool, release func()) {
 	release = func() {}
 	path := cachePath(nwo) + ".sync.lock"
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -49,37 +54,55 @@ func claimSync(nwo string) (cached Remote, reuse bool, release func()) {
 		if err == nil {
 			break
 		}
-		if !errors.Is(err, unix.EWOULDBLOCK) {
-			f.Close()
-			return Remote{}, false, release
+		reason := ""
+		switch {
+		case !errors.Is(err, unix.EWOULDBLOCK):
+			reason = "lock-failed"
+		case ctx.Err() != nil:
+			reason = "cancelled"
+		case time.Since(start) > leaderWait:
+			reason = "syncer-busy"
 		}
-		if time.Since(start) > leaderWait {
+		if reason != "" {
 			f.Close()
-			waited := time.Since(start).Round(time.Millisecond)
-			c, ok := Load(nwo)
-			if !ok {
-				// Nothing cached to show: fetch rather than leave the dashboard empty.
-				LogSync(nwo, "shared", 0, fmt.Sprintf("fetching reason=syncer-busy-no-cache waited=%s", waited), nil)
-				return Remote{}, false, release
-			}
-			LogSync(nwo, "shared", 0, fmt.Sprintf("reused reason=syncer-busy waited=%s cache_age=%s", waited, age(c.PRsFetchedAt)), nil)
-			return c, true, release
+			LogSync(nwo, "shared", 0, fmt.Sprintf("fetching reason=%s waited=%s", reason, time.Since(start).Round(time.Millisecond)), nil)
+			return Remote{}, false, release
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 	unlock := func() { unix.Flock(int(f.Fd()), unix.LOCK_UN); f.Close() }
 	c, ok := Load(nwo)
-	if ok && !c.PRsFetchedAt.IsZero() && time.Since(c.PRsFetchedAt) < sharedFresh {
+	oldest := c.oldestSection(withIssues)
+	if ok && !oldest.IsZero() && time.Since(oldest) < sharedFresh {
 		unlock()
-		LogSync(nwo, "shared", 0, fmt.Sprintf("reused reason=fresh cache_age=%s synced_by=%d waited=%s", age(c.PRsFetchedAt), c.SyncedBy, time.Since(start).Round(time.Millisecond)), nil)
+		LogSync(nwo, "shared", 0, fmt.Sprintf("reused cache_age=%s synced_by=%d waited=%s", age(oldest), c.SyncedBy, time.Since(start).Round(time.Millisecond)), nil)
 		return c, true, release
 	}
-	LogSync(nwo, "shared", 0, fmt.Sprintf("syncer pid=%d cache_age=%s", os.Getpid(), age(c.PRsFetchedAt)), nil)
+	LogSync(nwo, "shared", 0, fmt.Sprintf("syncer pid=%d cache_age=%s", os.Getpid(), age(oldest)), nil)
 	return Remote{}, false, unlock
 }
 
-// age renders how old a cache stamp is for the sync log; "none" when the
-// section was never fetched.
+// oldestSection is the stamp of the least recently fetched section a dashboard
+// shows — zero when any of them was never fetched.
+func (r Remote) oldestSection(withIssues bool) time.Time {
+	stamps := []time.Time{r.PRsFetchedAt, r.MergedFetchedAt}
+	if withIssues {
+		stamps = append(stamps, r.IssuesFetchedAt)
+	}
+	oldest := stamps[0]
+	for _, s := range stamps {
+		if s.IsZero() {
+			return time.Time{}
+		}
+		if s.Before(oldest) {
+			oldest = s
+		}
+	}
+	return oldest
+}
+
+// age renders how old a cache stamp is for the sync log; "none" when a section
+// was never fetched.
 func age(at time.Time) string {
 	if at.IsZero() {
 		return "none"

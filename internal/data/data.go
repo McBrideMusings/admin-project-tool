@@ -25,8 +25,10 @@ import (
 // launch sync — relaunching the dashboard in a fresh terminal (the common case:
 // new session, same repo) renders straight off the disk cache instead of
 // spending a round of GraphQL calls — and it is the age at which the header
-// tints its freshness label yellow.
-const TTL = 2 * time.Minute
+// tints its freshness label yellow. It is half the poll because it is also the
+// window in which one dashboard reuses another's sync of the same repo
+// (sharedFresh), and a reused result must not read as stale.
+const TTL = PollInterval / 2
 
 // PollInterval is how often an open dashboard re-syncs everything in the
 // background. It is deliberately longer than TTL: TTL answers "is this cache
@@ -391,7 +393,7 @@ func FetchAll(ctx context.Context, nwo string, o SyncOpts) Remote {
 		return Remote{}
 	}
 	if !o.Force {
-		cached, reuse, release := claimSync(nwo)
+		cached, reuse, release := claimSync(ctx, nwo, o.WithIssues)
 		defer release()
 		if reuse {
 			return cached
