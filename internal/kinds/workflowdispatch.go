@@ -35,6 +35,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/agent"
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/create"
+	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
@@ -124,6 +126,34 @@ var spawnPane = func(cmdLine, cwd string, ctx launchCtx, t config.Terminal) (str
 // createWorktree is DispatchTargets's worktree-creating step, swapped out in
 // tests to observe the context it is handed.
 var createWorktree = create.Worktree
+
+// targetBranch is the branch a target's worktree sits on. A PR number names a
+// branch that already exists under another name, so a numeric target is looked
+// up on GitHub and a PR resolves to its head branch — fetched first, since a
+// fork's head is not on origin — and its worker opens on the PR's own commits.
+// Any other target (a bead id, an issue number, a branch) is its own branch
+// name. Swapped out in tests so dispatch never calls gh.
+var targetBranch = func(ctx context.Context, repoRoot, name string) (string, error) {
+	num, err := strconv.Atoi(name)
+	if err != nil || num <= 0 {
+		return name, nil
+	}
+	nwo, err := git.OriginNWO(ctx, repoRoot)
+	if err != nil || nwo == "" {
+		return name, nil
+	}
+	ref, err := gh.ResolveNumber(ctx, nwo, num)
+	if err != nil {
+		return "", err
+	}
+	if !ref.IsPR {
+		return name, nil
+	}
+	if err := git.FetchPRHead(ctx, repoRoot, num, ref.HeadBranch); err != nil {
+		return "", err
+	}
+	return ref.HeadBranch, nil
+}
 
 // Ceiling returns the workflow's concurrency ceiling: the project
 // configuration's [workflow].ceiling when positive, else DefaultCeiling.
@@ -219,7 +249,12 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 		if results[i].Err != nil {
 			continue // already refused: this target has a live worker
 		}
-		res, err := createWorktree(ctx, repoRoot, t.Name)
+		branch, err := targetBranch(ctx, repoRoot, t.Name)
+		if err != nil {
+			results[i] = TargetResult{Target: t.Name, Err: fmt.Errorf("resolving branch: %w", err)}
+			continue
+		}
+		res, err := createWorktree(ctx, repoRoot, branch)
 		if err != nil {
 			results[i] = TargetResult{Target: t.Name, Err: fmt.Errorf("creating worktree: %w", err)}
 			continue

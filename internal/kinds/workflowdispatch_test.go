@@ -176,6 +176,47 @@ func TestDispatchTargetsQuietOnlyOnDashboard(t *testing.T) {
 	}
 }
 
+// TestDispatchTargetsOpensPROnItsHeadBranch: a PR row's target is its number,
+// and the worker's worktree is created on the branch that number resolves to,
+// never on a new branch named after the number. ADMIN_TARGET stays the number.
+func TestDispatchTargetsOpensPROnItsHeadBranch(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	var target string
+	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) {
+		target = ctx.Target
+		return "pane", nil
+	})
+
+	origResolve := targetBranch
+	targetBranch = func(ctx context.Context, root, name string) (string, error) {
+		if name == "292" {
+			return "perf/lobby-single-paint", nil
+		}
+		return name, nil
+	}
+	t.Cleanup(func() { targetBranch = origResolve })
+
+	var branch string
+	origCreate := createWorktree
+	createWorktree = func(ctx context.Context, root, b string) (create.Result, error) {
+		branch = b
+		return origCreate(ctx, root, b)
+	}
+	t.Cleanup(func() { createWorktree = origCreate })
+
+	res := DispatchTargets(repoRoot, "pr", workflowAction(), []Target{{Name: "292", Run: "x"}}, SurfaceDashboard)
+
+	if res[0].Err != nil {
+		t.Fatalf("unexpected error: %v", res[0].Err)
+	}
+	if branch != "perf/lobby-single-paint" {
+		t.Errorf("worktree created on branch %q, want the PR head %q", branch, "perf/lobby-single-paint")
+	}
+	if target != "292" {
+		t.Errorf("ADMIN_TARGET = %q, want %q", target, "292")
+	}
+}
+
 // TestDispatchTargetsSpawnGetsSharedGroupAndIndex: one dispatch of three
 // targets spawns three times with one ADMIN_GROUP and ADMIN_INDEX 0, 1, 2; a
 // second dispatch gets a different group.
