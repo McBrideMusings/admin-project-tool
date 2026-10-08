@@ -34,9 +34,11 @@ import (
 // this constant, never 0.
 const RetainUnset = -1
 
-// LogAnnouncePrefix is the literal text announce writes to Stderr, dimmed,
+// LogAnnouncePrefix is the literal text AnnounceEnd writes to Stderr, dimmed,
 // immediately before the log path, so a person running a command in a
-// terminal sees where its log went.
+// terminal sees where its log went. The opening announcement, printed when
+// the log materializes, carries no prefix: it is the bare path, so it can be
+// selected and pasted while the command is still running.
 const LogAnnouncePrefix = "→ wrote: "
 
 // LogAnnounceFDEnv names the file descriptor a hosted child writes its log
@@ -82,13 +84,18 @@ var announceFD = sync.OnceValue(func() *os.File {
 })
 
 // announce reports the log path: over LogAnnounceFDEnv's pipe when a
-// dashboard hosts this process, otherwise as a dimmed line on Stderr.
-func (c *LogContext) announce() {
+// dashboard hosts this process, otherwise on Stderr — the bare path when the
+// log opens, the dimmed LogAnnouncePrefix line when the run ends.
+func (c *LogContext) announce(end bool) {
 	if f := announceFD(); f != nil {
 		fmt.Fprintln(f, c.logFile)
 		return
 	}
-	fmt.Fprintf(c.Stderr, "\033[2m%s%s\033[0m\n", LogAnnouncePrefix, c.logFile)
+	if end {
+		fmt.Fprintf(c.Stderr, "\033[2m%s%s\033[0m\n", LogAnnouncePrefix, c.logFile)
+		return
+	}
+	fmt.Fprintln(c.Stderr, c.logFile)
 }
 
 // pendingContext holds a log-file name or path pending — not created —
@@ -339,7 +346,19 @@ func (c *LogContext) AnnounceEnd() {
 		return
 	}
 	c.announcedEnd = true
-	c.announce()
+	c.announce(true)
+}
+
+// materializeForOutput materializes a pending context before a Host prints a
+// line, so the opening announcement lands above the first line a step shows
+// rather than under it. A no-op with logging disabled, the same condition
+// Write checks before it materializes.
+func (c *LogContext) materializeForOutput() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.enabled {
+		c.materializeLocked()
+	}
 }
 
 // Write appends text (ANSI-stripped, newline-terminated) to the active log
@@ -416,7 +435,7 @@ func (c *LogContext) materializeLocked() {
 		}
 	}
 	c.active = true
-	c.announce()
+	c.announce(false)
 }
 
 // pruneLogsLocked deletes older same-stem logs beyond retain. retain == 0

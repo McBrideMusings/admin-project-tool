@@ -16,6 +16,7 @@ const (
 // Info prints msg in cyan to Stdout and appends it (plain) to the active
 // log. Host function: info(msg).
 func (h *Host) Info(msg string) {
+	h.logCtx.materializeForOutput()
 	fmt.Fprintf(h.Stdout, "%s%s%s\n", ansiCyan, msg, ansiReset)
 	h.logWrite(msg)
 }
@@ -23,6 +24,7 @@ func (h *Host) Info(msg string) {
 // Ok prints msg in green to Stdout and appends it (plain) to the active log.
 // Host function: ok(msg).
 func (h *Host) Ok(msg string) {
+	h.logCtx.materializeForOutput()
 	fmt.Fprintf(h.Stdout, "%s%s%s\n", ansiGreen, msg, ansiReset)
 	h.logWrite(msg)
 }
@@ -30,6 +32,7 @@ func (h *Host) Ok(msg string) {
 // Warn prints msg in yellow to Stderr and appends "WARNING: msg" to the
 // active log. Host function: warn(msg).
 func (h *Host) Warn(msg string) {
+	h.logCtx.materializeForOutput()
 	fmt.Fprintf(h.Stderr, "%s%s%s\n", ansiYellow, msg, ansiReset)
 	h.logWrite("WARNING: " + msg)
 }
@@ -37,6 +40,7 @@ func (h *Host) Warn(msg string) {
 // Err prints msg in red to Stderr and appends "ERROR: msg" to the active
 // log. Host function: err(msg).
 func (h *Host) Err(msg string) {
+	h.logCtx.materializeForOutput()
 	fmt.Fprintf(h.Stderr, "%s%s%s\n", ansiRed, msg, ansiReset)
 	h.logWrite("ERROR: " + msg)
 }
@@ -49,9 +53,12 @@ func (h *Host) Err(msg string) {
 // `[actions.X] log = false` command capturing `$(...)` would get the escape
 // codes baked into the captured string. Added by admin-3rgp.37 (docker's
 // `run-args` action is the first Lua body needing it) — no host verb existed
-// for "write plain stdout" before this.
+// for "write plain stdout" before this. It still opens a pending log first,
+// so the path announcement (on Stderr, outside what `$(...)` captures)
+// precedes the first line a step prints, as Info/Ok/Warn/Err do.
 // Host function: print(msg).
 func (h *Host) Print(msg string) {
+	h.logCtx.materializeForOutput()
 	fmt.Fprintf(h.Stdout, "%s\n", msg)
 }
 

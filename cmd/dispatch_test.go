@@ -416,12 +416,21 @@ run  = "` + tc.run + `"
 				t.Fatal("RunE = nil, want an error (run = \"false\")")
 			}
 
-			if got := strings.Count(out, luahost.LogAnnouncePrefix); got != 2 {
-				t.Fatalf("announce count = %d, want 2 (start + end); output:\n%s", got, out)
-			}
 			path := luahost.Process().LogFile()
 			if path == "" {
 				t.Fatal("no log file was ever materialized")
+			}
+			bare := 0
+			for _, line := range strings.Split(out, "\n") {
+				if line == path {
+					bare++
+				}
+			}
+			if bare != 1 {
+				t.Fatalf("bare opening path lines = %d, want 1; output:\n%s", bare, out)
+			}
+			if got := strings.Count(out, luahost.LogAnnouncePrefix+path); got != 1 {
+				t.Fatalf("closing announce count = %d, want 1; output:\n%s", got, out)
 			}
 			if _, err := os.Stat(path); err != nil {
 				t.Fatalf("stat %s: %v", path, err)

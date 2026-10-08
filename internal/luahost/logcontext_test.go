@@ -54,11 +54,31 @@ func TestMaterializeSettlesNameAndCreatesExactlyOneFile(t *testing.T) {
 	if len(matches) != 1 {
 		t.Fatalf("expected exactly 1 file, got %d: %v", len(matches), matches)
 	}
-	if !strings.Contains(errOut.String(), LogAnnouncePrefix) {
-		t.Fatalf("expected the announce prefix on Stderr, got %q", errOut.String())
+	if got, want := errOut.String(), path+"\n"; got != want {
+		t.Fatalf("Stderr = %q, want the bare path line %q", got, want)
 	}
-	if !strings.Contains(errOut.String(), LogAnnouncePrefix+path) {
-		t.Fatalf("Stderr = %q, want it to announce %q", errOut.String(), path)
+}
+
+// TestInfoAnnouncesPathBeforeItsLine proves the opening announcement lands
+// above the first line a Host prints, not under it, so the path is on screen
+// before any step output.
+func TestInfoAnnouncesPathBeforeItsLine(t *testing.T) {
+	c, _ := newTestLogContext(t)
+	var out bytes.Buffer
+	c.Stderr = &out
+	h := New(t.TempDir())
+	h.Stdout = &out
+	h.UseLogContext(c)
+	c.SetLogContext([]string{"dev"}, RetainUnset)
+
+	h.Info("first line")
+
+	lines := strings.Split(out.String(), "\n")
+	if len(lines) < 2 || lines[0] != c.LogFile() {
+		t.Fatalf("output = %q, want the bare log path %q as its first line", out.String(), c.LogFile())
+	}
+	if !strings.Contains(lines[1], "first line") {
+		t.Fatalf("output = %q, want the Info line after the path", out.String())
 	}
 }
 

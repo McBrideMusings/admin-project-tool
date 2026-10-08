@@ -235,8 +235,8 @@ func TestRunCommandNamesLogUnconditionally(t *testing.T) {
 		t.Fatalf("log file has steps out of order: %q", content)
 	}
 
-	if !strings.Contains(announced, luahost.LogAnnouncePrefix+matches[0]) {
-		t.Fatalf("stderr = %q, want it to announce the stat-able path %q", announced, matches[0])
+	if !strings.HasPrefix(announced, matches[0]+"\n") {
+		t.Fatalf("stderr = %q, want it to open with the stat-able path %q on its own line", announced, matches[0])
 	}
 }
 
