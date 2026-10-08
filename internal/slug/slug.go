@@ -55,6 +55,25 @@ func FromBead(id, title string) string {
 	return id + "-" + words
 }
 
+// IssueLabel names an issue's worker space, like "Issue-42-fix-the-thing".
+func IssueLabel(number int, title string) string {
+	return withWords(fmt.Sprintf("Issue-%d", number), title)
+}
+
+// BeadLabel names a bead's worker space, like "Bead-l37.2-add-password-reset".
+// The id loses its workspace prefix ("social-chess-l37.2" → "l37.2"): every
+// space under one repo shares that prefix, so it only crowds the sidebar.
+func BeadLabel(id, title string) string {
+	return withWords("Bead-"+id[strings.LastIndex(id, "-")+1:], title)
+}
+
+func withWords(head, title string) string {
+	if words := titleWords(title); words != "" {
+		return head + "-" + words
+	}
+	return head
+}
+
 // titleWords is the shared "first few sanitized words of a title" part, joined
 // with dashes. Empty when the title has no usable characters at all.
 func titleWords(title string) string {

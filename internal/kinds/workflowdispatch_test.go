@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -178,23 +179,21 @@ func TestDispatchTargetsQuietOnlyOnDashboard(t *testing.T) {
 
 // TestDispatchTargetsOpensPROnItsHeadBranch: a PR row's target is its number,
 // and the worker's worktree is created on the branch that number resolves to,
-// never on a new branch named after the number. ADMIN_TARGET stays the number.
+// never on a new branch named after the number. ADMIN_TARGET stays the number,
+// and spawn sees the space label as ADMIN_TARGET_LABEL.
 func TestDispatchTargetsOpensPROnItsHeadBranch(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, terminalTOML)
-	var target string
+	var env []string
 	stubSpawn(t, func(cmdLine, cwd string, ctx launchCtx) (string, error) {
-		target = ctx.Target
+		env = ctx.env(cmdLine, cwd)
 		return "pane", nil
 	})
 
-	origResolve := targetBranch
-	targetBranch = func(ctx context.Context, root, name string) (string, error) {
-		if name == "292" {
-			return "perf/lobby-single-paint", nil
-		}
-		return name, nil
+	origResolve := resolveTarget
+	resolveTarget = func(ctx context.Context, root, name string) (resolvedTarget, error) {
+		return resolvedTarget{Branch: "perf/lobby-single-paint", Label: "PR#292"}, nil
 	}
-	t.Cleanup(func() { targetBranch = origResolve })
+	t.Cleanup(func() { resolveTarget = origResolve })
 
 	var branch string
 	origCreate := createWorktree
@@ -212,8 +211,10 @@ func TestDispatchTargetsOpensPROnItsHeadBranch(t *testing.T) {
 	if branch != "perf/lobby-single-paint" {
 		t.Errorf("worktree created on branch %q, want the PR head %q", branch, "perf/lobby-single-paint")
 	}
-	if target != "292" {
-		t.Errorf("ADMIN_TARGET = %q, want %q", target, "292")
+	for _, want := range []string{"ADMIN_TARGET=292", "ADMIN_TARGET_LABEL=PR#292"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("spawn env %v lacks %s", env, want)
+		}
 	}
 }
 
@@ -487,7 +488,7 @@ func TestDispatchOneFailsLoudlyWhenWorktreeVanished(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
-	res := dispatchOne(repoRoot, "sweep", "sweep-g", 0, cfg.Terminal, Target{Name: "vanish-me", Run: "x"}, wt, func() {})
+	res := dispatchOne(repoRoot, "sweep", "sweep-g", 0, cfg.Terminal, Target{Name: "vanish-me", Run: "x"}, "vanish-me", wt, func() {})
 
 	if res.Err == nil {
 		t.Fatal("expected an error for a worktree removed before dispatch, got nil")

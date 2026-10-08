@@ -94,6 +94,10 @@ type launchCtx struct {
 	// Target is the workflow target id a worker's run string sees as
 	// ADMIN_TARGET; empty for every other dispatch.
 	Target string
+	// TargetLabel is the worker space's display name a workflow target
+	// resolved to ("PR#292", "Issue-42-fix-login", "Bead-l37.2-add-reset"),
+	// which spawn sees as ADMIN_TARGET_LABEL; empty for every other dispatch.
+	TargetLabel string
 	// Group is the id shared by every target of one workflow dispatch, and
 	// Index the target's position in it from 0; ADMIN_GROUP/ADMIN_INDEX carry
 	// them to spawn. Group is empty for every other dispatch, which sets neither.
@@ -148,6 +152,9 @@ func (c launchCtx) env(cmdLine, wd string) []string {
 	}
 	if c.Target != "" {
 		out = append(out, "ADMIN_TARGET="+c.Target)
+	}
+	if c.TargetLabel != "" {
+		out = append(out, "ADMIN_TARGET_LABEL="+c.TargetLabel)
 	}
 	if c.Group != "" {
 		out = append(out, "ADMIN_GROUP="+c.Group, "ADMIN_INDEX="+strconv.Itoa(c.Index))

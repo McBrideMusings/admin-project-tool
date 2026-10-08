@@ -41,12 +41,14 @@ import (
 	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/agent"
+	"github.com/McBrideMusings/admin-project-tool/internal/bd"
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/create"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/slug"
 	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
 
@@ -54,11 +56,10 @@ import (
 // configuration names one.
 const DefaultCeiling = 3
 
-// Target is one workflow target to dispatch. Name identifies it for the
-// worktree/branch (an issue number, a PR branch, a resolved query row —
-// whatever the invocation path resolved it to) and is sanitized into a
-// branch name by internal/create exactly as `repo branch` sanitizes one
-// today. Run is the shell command the target's pane executes, read from the
+// Target is one workflow target to dispatch. Name identifies it (an issue
+// number, a PR number, a bead id, a resolved query row — whatever the
+// invocation path resolved it to); resolveTarget turns it into the worktree's
+// branch and the worker space's label. Run is the shell command the target's pane executes, read from the
 // workflow action's `run` key, and Done is the optional predicate the
 // dashboard polls to learn the worker finished (the action's `done` key).
 type Target struct {
@@ -127,32 +128,53 @@ var spawnPane = func(cmdLine, cwd string, ctx launchCtx, t config.Terminal) (str
 // tests to observe the context it is handed.
 var createWorktree = create.Worktree
 
-// targetBranch is the branch a target's worktree sits on. A PR number names a
-// branch that already exists under another name, so a numeric target is looked
-// up on GitHub and a PR resolves to its head branch — fetched first, since a
-// fork's head is not on origin — and its worker opens on the PR's own commits.
-// Any other target (a bead id, an issue number, a branch) is its own branch
-// name. Swapped out in tests so dispatch never calls gh.
-var targetBranch = func(ctx context.Context, repoRoot, name string) (string, error) {
+// resolvedTarget is what a target's name resolves to: the branch its worktree
+// sits on, and the label its worker space carries (ADMIN_TARGET_LABEL).
+type resolvedTarget struct {
+	Branch string
+	Label  string
+}
+
+// resolveTarget looks a target's name up. A numeric name is asked of GitHub:
+// a PR resolves to its head branch — fetched first, since a fork's head is not
+// on origin — so its worker opens on the PR's own commits, labelled "PR#292";
+// an issue keeps its number as the branch, labelled "Issue-292-<title words>".
+// A name that is a bead id keeps the id as the branch, labelled
+// "Bead-l37.2-<title words>". Anything else is its own branch and label.
+// Swapped out in tests so dispatch never calls gh or bd.
+var resolveTarget = func(ctx context.Context, repoRoot, name string) (resolvedTarget, error) {
+	plain := resolvedTarget{Branch: name, Label: name}
 	num, err := strconv.Atoi(name)
 	if err != nil || num <= 0 {
-		return name, nil
+		if _, err := bd.Detect(ctx, repoRoot); err != nil {
+			return plain, nil
+		}
+		beads, err := bd.List(ctx, repoRoot)
+		if err != nil {
+			return plain, nil
+		}
+		for _, b := range beads {
+			if strings.EqualFold(b.ID, name) {
+				return resolvedTarget{Branch: name, Label: slug.BeadLabel(b.ID, b.Title)}, nil
+			}
+		}
+		return plain, nil
 	}
 	nwo, err := git.OriginNWO(ctx, repoRoot)
 	if err != nil || nwo == "" {
-		return name, nil
+		return plain, nil
 	}
 	ref, err := gh.ResolveNumber(ctx, nwo, num)
 	if err != nil {
-		return "", err
+		return resolvedTarget{}, err
 	}
 	if !ref.IsPR {
-		return name, nil
+		return resolvedTarget{Branch: name, Label: slug.IssueLabel(num, ref.Title)}, nil
 	}
 	if err := git.FetchPRHead(ctx, repoRoot, num, ref.HeadBranch); err != nil {
-		return "", err
+		return resolvedTarget{}, err
 	}
-	return ref.HeadBranch, nil
+	return resolvedTarget{Branch: ref.HeadBranch, Label: fmt.Sprintf("PR#%d", num)}, nil
 }
 
 // Ceiling returns the workflow's concurrency ceiling: the project
@@ -245,16 +267,18 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 	}
 	group := actionName + "-" + time.Now().Format("20060102T150405.000000000")
 	worktrees := make([]create.Result, len(targets))
+	labels := make([]string, len(targets))
 	for i, t := range targets {
 		if results[i].Err != nil {
 			continue // already refused: this target has a live worker
 		}
-		branch, err := targetBranch(ctx, repoRoot, t.Name)
+		rt, err := resolveTarget(ctx, repoRoot, t.Name)
 		if err != nil {
-			results[i] = TargetResult{Target: t.Name, Err: fmt.Errorf("resolving branch: %w", err)}
+			results[i] = TargetResult{Target: t.Name, Err: fmt.Errorf("resolving target: %w", err)}
 			continue
 		}
-		res, err := createWorktree(ctx, repoRoot, branch)
+		labels[i] = rt.Label
+		res, err := createWorktree(ctx, repoRoot, rt.Branch)
 		if err != nil {
 			results[i] = TargetResult{Target: t.Name, Err: fmt.Errorf("creating worktree: %w", err)}
 			continue
@@ -285,7 +309,7 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 			// A window worker keeps its slot after the spawn returns:
 			// dispatchOne hands release to ReleaseWorkerSlot once the worker
 			// is registered, and this frees it on any failure.
-			results[i] = dispatchOne(repoRoot, actionName, group, i, cfg.Terminal, t, wt, release)
+			results[i] = dispatchOne(repoRoot, actionName, group, i, cfg.Terminal, t, labels[i], wt, release)
 			if results[i].Err != nil {
 				release()
 			}
@@ -307,7 +331,7 @@ func DispatchTargets(repoRoot, actionName string, action manifest.Action, target
 // internal/kinds/pane.go's recordLiveWork for the single-pane LongRunning
 // case, but is keyed on the pane this dispatch itself opened rather than one
 // launchCommand opened for it.
-func dispatchOne(repoRoot, actionName, group string, index int, t config.Terminal, tgt Target, wt create.Result, release func()) TargetResult {
+func dispatchOne(repoRoot, actionName, group string, index int, t config.Terminal, tgt Target, label string, wt create.Result, release func()) TargetResult {
 	if err := worktreeGone(repoRoot, tgt, wt); err != nil {
 		return TargetResult{Target: tgt.Name, WorktreePath: wt.Path, Err: err}
 	}
@@ -318,6 +342,7 @@ func dispatchOne(repoRoot, actionName, group string, index int, t config.Termina
 	lc.Target = tgt.Name
 	lc.Group = group
 	lc.Index = index
+	lc.TargetLabel = label
 	// The launcher types ADMIN_CMD into the pane's own shell, which never saw
 	// the spawn process's ADMIN_TARGET, so the run string's $ADMIN_TARGET
 	// would expand to nothing. Exporting it first puts it in that shell, along
