@@ -403,7 +403,8 @@ func installBinary(src, dest string) error {
 		return err
 	}
 	if runtime.GOOS == "darwin" {
-		if _, err := exec.LookPath("codesign"); err == nil {
+		// A valid signature stays: macOS keys privacy grants to it.
+		if _, err := exec.LookPath("codesign"); err == nil && exec.Command("codesign", "-v", tmp).Run() != nil {
 			out, err := exec.Command("codesign", "--force", "--sign", "-", tmp).CombinedOutput()
 			if err != nil {
 				return fmt.Errorf("could not ad-hoc sign %s: %s", tmp, strings.TrimSpace(string(out)))

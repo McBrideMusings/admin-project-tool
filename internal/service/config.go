@@ -51,8 +51,9 @@
 // invalidates its mapped text pages: macOS refuses to spawn the new file with
 // OS_REASON_CODESIGNING even though `codesign -v` passes; Linux hits ETXTBSY.
 // installBinary writes a sibling temp file (its own inode) and renames it into
-// place, then ad-hoc re-signs on macOS so the kernel accepts the swapped-in
-// file regardless of how it was produced.
+// place. On macOS a file whose signature doesn't verify is ad-hoc signed so the
+// kernel accepts it; a valid signature is kept, since macOS privacy grants are
+// keyed to it.
 package service
 
 import (
