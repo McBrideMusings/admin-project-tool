@@ -38,15 +38,16 @@ func TestCmdVerbIsRegisteredReservedVerb(t *testing.T) {
 
 // TestReservedCmdVerbsIncludesCmd is admin-u7qi.1's other half of that same
 // precedence: admin check's checkReservedCollisions rejects a manifest that
-// declares its own command named "cmd" only because reservedCmdVerbs names
+// declares its own command named "cmd" only because reservedCmdVerbs() names
 // it.
 func TestReservedCmdVerbsIncludesCmd(t *testing.T) {
-	for _, v := range reservedCmdVerbs {
+	verbs := reservedCmdVerbs()
+	for _, v := range verbs {
 		if v == "cmd" {
 			return
 		}
 	}
-	t.Fatalf("reservedCmdVerbs = %v, want it to include \"cmd\"", reservedCmdVerbs)
+	t.Fatalf("reservedCmdVerbs() = %v, want it to include \"cmd\"", verbs)
 }
 
 // writeMarkerManifest writes a one-command admin.toml (a "build" command

@@ -24,7 +24,7 @@ import (
 // before. It is registered on rootCmd in cmd/root.go's init(), which is what
 // makes dispatchArgs' loop over rootCmd.Commands() match `admin cmd` before
 // ever consulting the manifest for a command literally named "cmd" (see
-// reservedCmdVerbs in cmd/manifest.go, which admin check's
+// reservedCmdVerbs() in cmd/manifest.go, which admin check's
 // checkReservedCollisions enforces against a manifest declaring the name).
 var cmdCmd = &cobra.Command{
 	Use:   "cmd",

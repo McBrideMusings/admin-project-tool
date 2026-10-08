@@ -23,25 +23,31 @@ import (
 // non-breaking change instead of a silent shadow.
 var reservedToolVerbs = []string{"new", "check", "compile", "branch", "worktree"}
 
-// reservedCmdVerbs are cmd/'s own subcommands plus cobra's built-ins —
-// ADR-0011 §2's explicit enumeration of what step 1 of the resolution order
-// covers ("new, check, compile, branch, worktree, show, populate, plus
-// cobra's help and completion") — and §3 extends the "tool verbs are
-// reserved" rule to these too, rather than inventing a second concept.
-//
-// This list is intentionally the ADR's own enumeration rather than derived
-// from rootCmd.Commands(): a cmd/ verb the ADR doesn't name (e.g.
-// "archetypes", added by admin-3rgp.29) is still caught at dispatch time by
-// dispatchArgs' generic loop over rootCmd.Commands() — it just isn't
-// reported as a *reserved-name* violation by admin check, which checks
-// against this literal list. Widening this list to every current cmd/ verb
-// is a legitimate follow-up; it is out of this ticket's scope, which is to
-// implement what the ADR says, not to extend it.
-//
-// "cmd" (admin-u7qi.1) was added alongside the ADR's original enumeration
-// rather than left to fall into the "caught but not reported" gap the
-// comment above describes, since it's a verb this ticket introduces itself.
-var reservedCmdVerbs = []string{"show", "populate", "cmd", "help", "completion"}
+// dynamicCommand is the cobra annotation dispatchArgs' registrations carry
+// (a manifest command, a broken-manifest error, an unknown word), so
+// reservedCmdVerbs can tell them apart from cmd/'s own verbs on the same
+// global rootCmd.
+const dynamicCommand = "admin.dynamic"
+
+// reservedCmdVerbs are cmd/'s own subcommands, their aliases, and cobra's
+// built-in help and completion — every name dispatchArgs' loop over
+// rootCmd.Commands() matches before it ever consults the manifest — step 1
+// of ADR-0011's resolution order, which reserves them. It is derived from
+// rootCmd rather than listed, so a new cmd/ verb is reserved the moment it
+// is registered and admin check reports a manifest command it would shadow.
+func reservedCmdVerbs() []string {
+	rootCmd.InitDefaultHelpCmd()
+	rootCmd.InitDefaultCompletionCmd()
+	var verbs []string
+	for _, c := range rootCmd.Commands() {
+		if _, dyn := c.Annotations[dynamicCommand]; dyn {
+			continue
+		}
+		verbs = append(verbs, c.Name())
+		verbs = append(verbs, c.Aliases...)
+	}
+	return verbs
+}
 
 // resolveProjectManifest loads dir's admin.toml (if any) and resolves it
 // against its declared archetypes, using the same search path
@@ -166,7 +172,7 @@ func reservedVerbCollisions(m *manifest.Manifest) []string {
 	for _, v := range reservedToolVerbs {
 		reserved[v] = true
 	}
-	for _, v := range reservedCmdVerbs {
+	for _, v := range reservedCmdVerbs() {
 		reserved[v] = true
 	}
 

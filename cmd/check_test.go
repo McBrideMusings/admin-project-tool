@@ -73,6 +73,39 @@ func TestCheckReservedCollisionsRejectsCmdVerb(t *testing.T) {
 	}
 }
 
+// TestCheckReservedCollisionsRejectsEveryRegisteredVerb proves the reserved
+// set covers every verb registered on rootCmd, including ones no literal list
+// named (archetypes, env) — a manifest command by either name would be
+// shadowed at dispatch and never run.
+func TestCheckReservedCollisionsRejectsEveryRegisteredVerb(t *testing.T) {
+	for _, name := range []string{"archetypes", "env"} {
+		m := &manifest.Manifest{
+			Custom: map[string]manifest.Command{name: {Steps: []string{"noop"}}},
+		}
+		err := checkReservedCollisions(m)
+		if err == nil || !strings.Contains(err.Error(), name) {
+			t.Fatalf("checkReservedCollisions(%s) = %v, want an error naming %q", name, err, name)
+		}
+	}
+}
+
+// TestCheckReservedCollisionsIgnoresDispatchedManifestCommands proves a
+// manifest command dispatchArgs has already registered on rootCmd does not
+// become reserved against its own manifest.
+func TestCheckReservedCollisionsIgnoresDispatchedManifestCommands(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeManifest(t, dir, "fy95-build")
+	dispatchArgs([]string{"fy95-build"})
+
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{"fy95-build": {Steps: []string{"noop"}}},
+	}
+	if err := checkReservedCollisions(m); err != nil {
+		t.Fatalf("checkReservedCollisions = %v, want nil for a dispatched manifest command", err)
+	}
+}
+
 // TestCheckReservedCollisionsReportsEveryName proves multiple collisions are
 // all named, sorted, in one error rather than only the first found.
 func TestCheckReservedCollisionsReportsEveryName(t *testing.T) {

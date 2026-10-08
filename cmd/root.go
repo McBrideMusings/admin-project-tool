@@ -256,8 +256,9 @@ func stripTimingFlag(args []string) ([]string, bool) {
 
 // dispatchArgs resolves a bare first argument in two steps:
 //
-//  1. A tool verb or an existing cmd/ verb (branch, worktree, show, populate,
-//     plus cobra's help/completion) — handled by the loop below.
+//  1. Any verb registered on rootCmd, aliases and cobra's help/completion
+//     included — handled by the loop below. reservedCmdVerbs reads the same
+//     set, so admin check rejects a manifest command it would shadow.
 //  2. A command declared in the current project's admin.toml — handled by
 //     registerManifestCommand.
 //
@@ -309,6 +310,7 @@ func registerUnknownCommand(name string) {
 		Use:                name,
 		Hidden:             true,
 		DisableFlagParsing: true,
+		Annotations:        map[string]string{dynamicCommand: ""},
 		RunE: func(cmd *cobra.Command, cmdArgs []string) error {
 			return unknownCommandError(name)
 		},
@@ -373,6 +375,7 @@ func registerManifestCommand(name string) bool {
 			Use:                name,
 			Short:              "admin.toml is invalid",
 			DisableFlagParsing: true,
+			Annotations:        map[string]string{dynamicCommand: ""},
 			RunE: func(cmd *cobra.Command, cmdArgs []string) error {
 				return fmt.Errorf("admin.toml is invalid: %w", err)
 			},
@@ -386,6 +389,7 @@ func registerManifestCommand(name string) bool {
 		Use:                name,
 		Short:              "admin.toml command: " + name,
 		DisableFlagParsing: true, // flags belong to the underlying steps, not to cobra
+		Annotations:        map[string]string{dynamicCommand: ""},
 		RunE: func(cmd *cobra.Command, cmdArgs []string) error {
 			// AnnounceEnd's defer fires on both a normal return and an
 			// error return, so one registration covers the explicit
