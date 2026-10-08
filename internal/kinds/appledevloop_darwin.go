@@ -64,9 +64,9 @@ func appleDevMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 	if err != nil {
 		return err
 	}
-	launchArgs := f.launchArgs
-	if len(launchArgs) == 0 {
-		launchArgs = cfgStrings(cfg, "launch_args")
+	launchArgs, err := appleLaunchArgs(cfg, f)
+	if err != nil {
+		return err
 	}
 	extraSettings, err := appleComposeDevSettings(cfg, h, project, "mac")
 	if err != nil {
@@ -226,9 +226,9 @@ func appleDevSimulator(cfg map[string]any, h *luahost.Host, platform string, f a
 		return err
 	}
 	sdk := appleSimSDK[platform]
-	launchArgs := f.launchArgs
-	if len(launchArgs) == 0 {
-		launchArgs = cfgStrings(cfg, "launch_args")
+	launchArgs, err := appleLaunchArgs(cfg, f)
+	if err != nil {
+		return err
 	}
 	devEnv, err := appleDevEnv(cfg)
 	if err != nil {

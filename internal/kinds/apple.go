@@ -64,3 +64,20 @@ func parseAppleFlags(args []string) appleFlags {
 	}
 	return f
 }
+
+// appleLaunchArgs is what a dev loop launches the app with: --args when the
+// command line gave any, which the invoking shell already expanded, else the
+// [apple] table's launch_args with each ${VAR} expanded (envResolver) — they
+// become argv, so no shell will expand them later, and an unset reference is
+// an error rather than a literal "${WORKTREE_SLUG}" reaching the app.
+func appleLaunchArgs(cfg map[string]any, f appleFlags) ([]string, error) {
+	if len(f.launchArgs) > 0 {
+		return f.launchArgs, nil
+	}
+	var r envResolver
+	out := r.all(cfgStrings(cfg, "launch_args"))
+	if r.firstErr != nil {
+		return nil, fmt.Errorf("apple.launch_args: %w", r.firstErr)
+	}
+	return out, nil
+}

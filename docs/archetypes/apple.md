@@ -156,7 +156,7 @@ Team is `IOS_DEVELOPMENT_TEAM` from the environment — not a key here.
 
 | Key | Meaning |
 |---|---|
-| `launch_args` | List of strings appended to the macOS `dev` launch as `open -n <app> --args ...`, so the app receives them as its own process arguments. Read by `dev_mac`. Mac only today — `dev_ios`/`dev_tv` take a `launch_args` parameter but nothing reads this key into it. |
+| `launch_args` | List of strings appended to the macOS `dev` launch as `open -n <app> --args ...`, so the app receives them as its own process arguments. Read by the macOS and simulator dev loops. Each `${VAR}` is expanded (including `${WORKTREE_SLUG}`), and an unset reference is an error; `--args` on the command line replaces the list and is passed verbatim. |
 
 ## Simulator / device
 

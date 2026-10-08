@@ -739,3 +739,33 @@ func TestNestedLogFalseDoesNotSilenceOuter(t *testing.T) {
 		t.Fatalf("nested `log = false` silenced the outer command:\n%s", string(body))
 	}
 }
+
+// TestRunActionNamesTheManifestRootInWorktreeSlug proves ${WORKTREE_SLUG}
+// names the dispatching manifest's Root, not the cwd — what `admin -w
+// <worktree>` relies on, since it runs from the primary checkout with Root
+// pointed at the worktree.
+func TestRunActionNamesTheManifestRootInWorktreeSlug(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(t.TempDir())
+	defer manifest.SetCheckoutRoot("")
+	wt := filepath.Join(home, ".worktrees", "app")
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := &manifest.Manifest{
+		Root:    wt,
+		Actions: map[string]manifest.Action{"slug": {"run": "printf %s ${WORKTREE_SLUG} > slug.txt"}},
+	}
+	if err := RunAction(m, newDispatchTestRegistry(), "slug", nil); err != nil {
+		t.Fatalf("RunAction = %v, want nil", err)
+	}
+	got, err := os.ReadFile(filepath.Join(wt, "slug.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != ".worktrees-app" {
+		t.Errorf("WORKTREE_SLUG = %q, want %q", got, ".worktrees-app")
+	}
+}

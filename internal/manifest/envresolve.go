@@ -5,6 +5,9 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync/atomic"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/slug"
 )
 
 // lanIP returns the address another device on this network reaches this machine
@@ -36,12 +39,46 @@ func lanIP() string {
 	return "127.0.0.1"
 }
 
+// checkoutRoot is the root of the checkout being dispatched, registered by
+// SetCheckoutRoot. Atomic because one process can dispatch concurrently (the
+// dashboard's hosted runs); every dispatch in a process shares one root.
+var checkoutRoot atomic.Pointer[string]
+
+// SetCheckoutRoot registers the checkout root ${WORKTREE_SLUG} names — the
+// dispatching manifest's Root, which for `admin -w <worktree>` is the worktree
+// even though its admin.toml was borrowed from the primary checkout.
+func SetCheckoutRoot(root string) { checkoutRoot.Store(&root) }
+
+// worktreeSlug names the checkout being dispatched (slug.FromRoot), so two
+// checkouts of one project that interpolate it — a --defaults-suite launch
+// arg, a container name — stop overwriting each other's state. Before any
+// dispatch registers a root (a status poll, `admin env`), it names the
+// checkout holding the nearest admin.toml at or above the cwd — the same root
+// the CLI dispatches in — so a subdirectory gets its checkout's slug.
+func worktreeSlug() string {
+	var root string
+	if p := checkoutRoot.Load(); p != nil {
+		root = *p
+	}
+	if root == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			root = cwd
+			if r, ok := FindRoot(cwd); ok {
+				root = r
+			}
+		}
+	}
+	home, _ := os.UserHomeDir()
+	return slug.FromRoot(root, home)
+}
+
 // ComputedVars maps a computed ${VAR} name (one not read from the plain
 // environment) to the function that computes it. An explicit environment
 // value still wins over a computed one, so a project can pin one when the
 // automatic answer is wrong.
 var ComputedVars = map[string]func() string{
-	"LAN_IP": lanIP,
+	"LAN_IP":        lanIP,
+	"WORKTREE_SLUG": worktreeSlug,
 }
 
 // ResolveEnv expands every ${VAR} / ${VAR:-default} in s against the process

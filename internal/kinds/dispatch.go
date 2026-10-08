@@ -202,6 +202,9 @@ func RunAction(m *manifest.Manifest, r *Registry, name string, args []string) er
 	// (admin-3rgp.7) — keeps every requires check below reachable without
 	// requiring a caller to remember a setup step.
 	guards.Register(m.Guards)
+	// Every step and every target passes through here, so this is the one
+	// place ${WORKTREE_SLUG} learns which checkout it names.
+	manifest.SetCheckoutRoot(projectRoot(m))
 	kind, _ := actionString(action, "kind")
 	if kind == "" {
 		kind = "shell"

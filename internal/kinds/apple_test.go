@@ -48,3 +48,27 @@ func TestMakeAppleRequiresRun(t *testing.T) {
 		t.Fatal("expected an error when 'run' is absent")
 	}
 }
+
+func TestAppleLaunchArgsExpandsConfigButNotCLIArgs(t *testing.T) {
+	t.Setenv("ADMIN_TEST_SUITE", "iptv-x")
+	cfg := map[string]any{"launch_args": []any{"--defaults-suite=${ADMIN_TEST_SUITE}", "-v"}}
+
+	got, err := appleLaunchArgs(cfg, appleFlags{})
+	if err != nil {
+		t.Fatalf("appleLaunchArgs: %v", err)
+	}
+	if want := []string{"--defaults-suite=iptv-x", "-v"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("config launch_args = %v, want %v", got, want)
+	}
+
+	cli := []string{"--literal=${ADMIN_TEST_SUITE}"}
+	got, err = appleLaunchArgs(cfg, appleFlags{launchArgs: cli})
+	if err != nil || !reflect.DeepEqual(got, cli) {
+		t.Errorf("--args launch args = %v (err %v), want %v verbatim", got, err, cli)
+	}
+
+	cfg = map[string]any{"launch_args": []any{"--suite=${ADMIN_TEST_TOTALLY_UNSET}"}}
+	if _, err := appleLaunchArgs(cfg, appleFlags{}); err == nil {
+		t.Error("an unset ${VAR} in launch_args should error, not reach the app literally")
+	}
+}

@@ -236,3 +236,31 @@ func TestResolveEnvExplicitLANIPWinsOverComputed(t *testing.T) {
 		t.Errorf("got %q, want the explicit environment value %q", got, "192.168.1.1")
 	}
 }
+
+// TestResolveEnvWorktreeSlugNamesTheRegisteredCheckout proves ${WORKTREE_SLUG}
+// names the root SetCheckoutRoot registered, so a primary checkout and its
+// linked worktree expand it to different, non-empty values.
+func TestResolveEnvWorktreeSlugNamesTheRegisteredCheckout(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	defer SetCheckoutRoot("")
+
+	got := map[string]string{}
+	for _, root := range []string{home + "/Projects/app", home + "/.worktrees/app"} {
+		SetCheckoutRoot(root)
+		v, err := ResolveEnv("--defaults-suite=app-${WORKTREE_SLUG}")
+		if err != nil {
+			t.Fatalf("ResolveEnv: %v", err)
+		}
+		got[root] = v
+	}
+	if want := "--defaults-suite=app-Projects-app"; got[home+"/Projects/app"] != want {
+		t.Errorf("primary = %q, want %q", got[home+"/Projects/app"], want)
+	}
+	if want := "--defaults-suite=app-.worktrees-app"; got[home+"/.worktrees/app"] != want {
+		t.Errorf("worktree = %q, want %q", got[home+"/.worktrees/app"], want)
+	}
+	if ResolveComputed("${WORKTREE_SLUG}") != ".worktrees-app" {
+		t.Errorf("ResolveComputed did not substitute WORKTREE_SLUG")
+	}
+}

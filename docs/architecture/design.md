@@ -340,6 +340,7 @@ url  = "${PROD_URL:-https://example.com}"
 **Resolution rules:**
 - Interpolation happens at **dispatch time**, via `internal/manifest.ResolveEnv`, so the same manifest works unchanged across machines with different environments.
 - If a referenced variable is unset and has no default, the command fails fast with a clear error before running anything.
+- Two names are computed rather than read (`manifest.ComputedVars`), and an exported value still wins over the computed one: `${LAN_IP}`, the address another device on the network reaches this machine at, and `${WORKTREE_SLUG}`, a name for the checkout being dispatched (`internal/slug.FromRoot`: the root's path below `$HOME` with `/` turned into `-`, so `~/Projects/app` is `Projects-app` and its worktree `~/.worktrees/app` is `.worktrees-app`). Writing `launch_args = ["--defaults-suite=app-${WORKTREE_SLUG}"]` keeps two checkouts of one project from sharing saved state.
 - `admin env` (`cmd/env.go`) lists every env var the manifest references and shows which are set/unset on the current machine — the discovery mechanism for new contributors. `admin check`'s config-table `${VAR}` check (`cmd/check_env.go`, `cmd/envrefs.go`) flags a reference to an unset variable with no default at validation time.
 
 **Where the env vars themselves live:** out of scope. Users set them via shell rc files, direnv, `.envrc`, or whatever they prefer. `admin.toml` only references them.

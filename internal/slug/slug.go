@@ -1,11 +1,35 @@
-// Package slug derives a short branch name from an issue. Deliberately simple:
-// issue number plus a few sanitized title words. None of wtree's tuning knobs.
+// Package slug derives short names: a branch name from an issue (issue number
+// plus a few sanitized title words, none of wtree's tuning knobs), and a
+// per-checkout name from a checkout's root directory.
 package slug
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 )
+
+// FromRoot names a checkout by its root directory: the path below home with
+// every "/" turned into "-", or, for a root outside home, the full path with
+// its leading "/" dropped. It is the rule ~/.claude's hooks/repo-slug.sh
+// applies, so ~/Projects/muxarr is "Projects-muxarr" and its linked worktree
+// ~/.worktrees/muxarr is ".worktrees-muxarr" — the directory name alone would
+// give both "muxarr". Never empty: a caller interpolates it into a value like
+// --defaults-suite=<slug>, where an empty one silently selects the default.
+func FromRoot(root, home string) string {
+	root = filepath.Clean(root)
+	rel := root
+	if home != "" {
+		if r, ok := strings.CutPrefix(root, filepath.Clean(home)+"/"); ok {
+			rel = r
+		}
+	}
+	rel = strings.TrimPrefix(rel, "/")
+	if rel == "" {
+		return "root"
+	}
+	return strings.ReplaceAll(rel, "/", "-")
+}
 
 const maxWords = 5
 
