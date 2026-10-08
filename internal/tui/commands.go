@@ -393,12 +393,15 @@ func loadCacheCmd(nwo string) tea.Cmd {
 //
 // A failed prune is logged (data.LogSync) and goes no further: a checkout with
 // no origin fails it on every sync, so it cannot be what turns the header red.
-func syncCmd(ctx context.Context, dir, nwo string, withIssues bool) tea.Cmd {
+func syncCmd(ctx context.Context, dir, nwo string, withIssues, force bool) tea.Cmd {
 	return func() tea.Msg {
 		var r data.Remote
 		var wg sync.WaitGroup
 		wg.Add(2)
-		go func() { defer wg.Done(); r = fetchAllFn(ctx, nwo, mergedPRLimit, withIssues) }()
+		go func() {
+			defer wg.Done()
+			r = fetchAllFn(ctx, nwo, data.SyncOpts{MergedLimit: mergedPRLimit, WithIssues: withIssues, Dir: dir, Force: force})
+		}()
 		go func() {
 			defer wg.Done()
 			start := time.Now()

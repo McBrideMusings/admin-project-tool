@@ -297,6 +297,9 @@ type Model struct {
 	// and every frame waits out its full Settle backstop, and the watcher's
 	// per-directory descriptors are never closed.
 	headless bool
+	// blurred is true between a tea.BlurMsg and the next tea.FocusMsg. The zero
+	// value is "focused", so a terminal that never reports focus keeps polling.
+	blurred bool
 
 	filtering bool
 	filter    string
@@ -1210,7 +1213,31 @@ func (m *Model) startSyncCmd(force bool) tea.Cmd {
 	}
 	m.syncing = true
 	m.inflight++
-	return syncCmd(m.ctx, m.checkoutDir(), m.nwo, withIssues)
+	return syncCmd(m.ctx, m.checkoutDir(), m.nwo, withIssues, force)
+}
+
+// refocus resumes the GitHub poll after the terminal regained focus. Before the
+// launch sync has been considered it starts nothing — launchSyncCmd owns the
+// first sync and waits for local git, which the first PR-row paint needs.
+// After that, startSyncCmd's TTL gate makes it one sync when the cache is stale
+// and nothing at all when it is fresh.
+func (m *Model) refocus(source string) tea.Cmd {
+	m.blurred = false
+	var cmd tea.Cmd
+	if m.synced {
+		cmd = m.startSyncCmd(false)
+	}
+	data.LogSync(m.nwo, source, 0, fmt.Sprintf("poll=resumed sync=%t", cmd != nil), nil)
+	return cmd
+}
+
+// refocusOnInput resumes a paused poll on a key press or mouse event, the
+// fallback for a focus-in event that never reached the dashboard.
+func (m *Model) refocusOnInput() tea.Cmd {
+	if !m.blurred {
+		return nil
+	}
+	return m.refocus("input")
 }
 
 // launchSyncCmd fires the one-time launch sync, but only once local git has
@@ -1617,7 +1644,21 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// recomputing — re-read local git rather than trying to patch the maps.
 		return m, loadLocalCmd(m.ctx, m.repoRoot, m.checkoutDir(), m.current, m.def)
 
+	case tea.BlurMsg:
+		m.blurred = true
+		data.LogSync(m.nwo, "blur", 0, "poll=paused", nil)
+		return m, nil
+
+	case tea.FocusMsg:
+		return m, m.refocus("focus")
+
 	case syncTickMsg:
+		if m.blurred {
+			// Re-arm so the poll resumes on its own cadence after a refocus, but
+			// spend no gh call while nobody is looking.
+			data.LogSync(m.nwo, "tick", 0, "skipped=blurred", nil)
+			return m, m.syncTickCmd()
+		}
 		// The poll. It fires regardless of which tab is on screen — the merged set
 		// behind the Repo tab and the PR list behind the PRs tab go stale at the
 		// same rate whether or not you are looking at them. Re-arm unconditionally
@@ -1817,10 +1858,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, termTickCmd()
 
 	case tea.KeyMsg:
-		return m.handleKey(msg)
+		// Input proves someone is looking, whether or not the focus-in event that
+		// should have come first ever arrived.
+		resume := m.refocusOnInput()
+		next, cmd := m.handleKey(msg)
+		return next, tea.Batch(resume, cmd)
 
 	case tea.MouseMsg:
-		return m.handleMouse(msg)
+		resume := m.refocusOnInput()
+		next, cmd := m.handleMouse(msg)
+		return next, tea.Batch(resume, cmd)
 
 	case selWatchdogMsg:
 		if msg.gen != m.selGen || !m.sel.inProgress() {

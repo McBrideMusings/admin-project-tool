@@ -28,7 +28,7 @@ func runGit(t *testing.T, dir string, args ...string) {
 func rateLimitedSync(t *testing.T) {
 	t.Helper()
 	prevAll, prevPrune := fetchAllFn, fetchPruneFn
-	fetchAllFn = func(context.Context, string, int, bool) data.Remote {
+	fetchAllFn = func(context.Context, string, data.SyncOpts) data.Remote {
 		return data.Remote{
 			PRsFetchError:    "PRs: exit status 1: gh: API rate limit already exceeded",
 			MergedFetchError: "merged: exit status 1: gh: API rate limit already exceeded",

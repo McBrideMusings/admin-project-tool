@@ -599,6 +599,31 @@ func remoteBranchNames(ctx context.Context, dir string) map[string]bool {
 	return set
 }
 
+// BranchHeads returns every local branch and the commit it points at, one
+// "<refname> <oid>" line each, in refname order — a fingerprint of the branch
+// set that changes when a branch is created, deleted or committed to.
+func BranchHeads(ctx context.Context, dir string) (string, error) {
+	out, err := runner(ctx, dir, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// RemoteHeads asks origin, over the network, for every branch it has and the
+// commit each points at, one "<oid>\t<refname>" line each. Every PR merge moves
+// its base branch, squash merges and stacked PRs included, so a changed answer
+// means a PR may have merged. It uses the git protocol, not the GitHub API, so it
+// spends no API quota. It never prompts for credentials: a remote that needs them
+// is an error.
+func RemoteHeads(ctx context.Context, dir string) (string, error) {
+	out, err := runner(ctx, dir, "-c", "core.askPass=true", "ls-remote", "--heads", "origin")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // LocalBranches lists local branches with ahead/behind and last-commit dates.
 // worktreeByBranch maps branch name -> worktree path for annotation.
 func LocalBranches(ctx context.Context, dir, current string, worktreeByBranch map[string]string) ([]BranchInfo, error) {

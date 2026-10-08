@@ -721,7 +721,7 @@ func runDashboard(ctx context.Context) error {
 	// function captures stdout via $(...) while the TUI draws on the TTY (stderr).
 	// Cell motion reports a click and a drag but not idle movement, which is all
 	// the dashboard's own mouse support (click to act, drag to copy) needs.
-	prog := tea.NewProgram(model, tea.WithContext(ctx), tea.WithAltScreen(), tea.WithOutput(os.Stderr), tea.WithMouseCellMotion())
+	prog := tea.NewProgram(model, tea.WithContext(ctx), tea.WithAltScreen(), tea.WithOutput(os.Stderr), tea.WithMouseCellMotion(), tea.WithReportFocus())
 	final, err := prog.Run()
 	if err != nil {
 		return err

@@ -52,14 +52,14 @@ func TestFetchAllLogsEachSectionsOwnError(t *testing.T) {
 	fetchIssuesFn = func(context.Context, string) Remote { return Remote{IssuesFetchError: "issues broke"} }
 	fetchMergedFn = func(context.Context, string, int) Remote { return Remote{MergedFetchedAt: time.Now()} }
 
-	FetchAll(context.Background(), "owner/repo", 200, true)
+	FetchAll(context.Background(), "owner/repo", SyncOpts{MergedLimit: 200, WithIssues: true})
 
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"sync owner/repo start ok issues=true merged_limit=200",
+		"sync owner/repo start ok issues=true merged_limit=200 force=false",
 		`sync owner/repo prs FAIL`, `err="prs broke"`,
 		`sync owner/repo issues FAIL`, `err="issues broke"`,
 		"sync owner/repo merged ok",

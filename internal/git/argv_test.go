@@ -168,6 +168,18 @@ func TestCommandArgv(t *testing.T) {
 			want: []call{rd("log", "--no-merges", "--reverse", "--format=%ae", "main..feat/x")},
 		},
 		{
+			name: "BranchHeads lists every local ref with its commit",
+			out:  []string{"refs/heads/main abc"},
+			call: func(ctx context.Context) { BranchHeads(ctx, "/repo") },
+			want: []call{rd("for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/")},
+		},
+		{
+			name: "RemoteHeads asks origin without prompting",
+			out:  []string{"abc\trefs/heads/main"},
+			call: func(ctx context.Context) { RemoteHeads(ctx, "/repo") },
+			want: []call{rd("-c", "core.askPass=true", "ls-remote", "--heads", "origin")},
+		},
+		{
 			name: "BranchNote",
 			call: func(ctx context.Context) { BranchNote(ctx, "/repo", "feat/x") },
 			want: []call{rd("config", "--get", "branch.feat/x.description")},
@@ -448,6 +460,8 @@ var coveredCommands = map[string]bool{
 	"WorkingStatusIgnored":     true,
 	"WorktreeTouched":          true,
 	"Worktrees":                true,
+	"BranchHeads":              true,
+	"RemoteHeads":              true,
 }
 
 // TestEmptyDirIsRefused pins the seams' refusal of an empty directory. `git -C

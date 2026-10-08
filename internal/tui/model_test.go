@@ -1849,12 +1849,12 @@ func TestPersistingSyncFailureDoesNotClobber(t *testing.T) {
 func TestSyncLogsPruneFailureWithGitsWholeOutput(t *testing.T) {
 	prevFetch, prevPrune := fetchAllFn, fetchPruneFn
 	t.Cleanup(func() { fetchAllFn, fetchPruneFn = prevFetch, prevPrune })
-	fetchAllFn = func(context.Context, string, int, bool) data.Remote { return data.Remote{} }
+	fetchAllFn = func(context.Context, string, data.SyncOpts) data.Remote { return data.Remote{} }
 	fetchPruneFn = func(context.Context, string) error {
 		return &git.CmdError{Err: errors.New("exit status 128"), Headline: "fatal: unable to access", Output: "fatal: unable to access\nhint: check your network"}
 	}
 
-	syncCmd(context.Background(), "/repo", "owner/prune-probe", false)()
+	syncCmd(context.Background(), "/repo", "owner/prune-probe", false, false)()
 
 	b, err := os.ReadFile(data.SyncLogPath())
 	if err != nil {
@@ -2649,5 +2649,83 @@ func TestFilterEmptyingTheFocusedPaneMovesFocus(t *testing.T) {
 	m.clampCursor()
 	if m.pane != paneBranches {
 		t.Errorf("filter matching nothing anywhere moved focus to %v, want paneBranches", m.pane)
+	}
+}
+
+// TestBlurredDashboardSpendsNoSyncOnThePoll pins that a poll tick that fires
+// while the terminal is unfocused starts no sync yet still re-arms, and that a
+// model which never received a focus event polls as before.
+func TestBlurredDashboardSpendsNoSyncOnThePoll(t *testing.T) {
+	m := seededModel()
+	m.syncing, m.synced = false, true
+	m.remote.PRsFetchedAt = time.Now().Add(-2 * data.TTL)
+
+	blurred, _ := m.Update(tea.BlurMsg{})
+	updated, cmd := blurred.Update(syncTickMsg{})
+	if updated.(Model).syncing {
+		t.Error("a blurred dashboard started a sync on the poll tick")
+	}
+	if cmd == nil {
+		t.Error("the poll did not re-arm while blurred")
+	}
+
+	updated, _ = m.Update(syncTickMsg{})
+	if !updated.(Model).syncing {
+		t.Error("a dashboard that never saw a focus event stopped polling")
+	}
+}
+
+// TestFocusRunsOneSyncOnlyWhenCacheIsStale pins the refocus path: a stale
+// cache syncs once at once, a fresh one spends nothing.
+func TestFocusRunsOneSyncOnlyWhenCacheIsStale(t *testing.T) {
+	m := seededModel()
+	m.syncing, m.synced = false, true
+	m.remote.PRsFetchedAt = time.Now().Add(-2 * data.TTL)
+	b, _ := m.Update(tea.BlurMsg{})
+	f, cmd := b.Update(tea.FocusMsg{})
+	if !f.(Model).syncing || cmd == nil {
+		t.Error("refocusing with a stale cache did not start a sync")
+	}
+	if f.(Model).blurred {
+		t.Error("FocusMsg left the model blurred")
+	}
+
+	now := time.Now()
+	fresh := seededModel()
+	fresh.syncing, fresh.synced = false, true
+	fresh.remote.PRsFetchedAt, fresh.remote.IssuesFetchedAt, fresh.remote.MergedFetchedAt = now, now, now
+	fb, _ := fresh.Update(tea.BlurMsg{})
+	ff, _ := fb.Update(tea.FocusMsg{})
+	if ff.(Model).syncing {
+		t.Error("refocusing with a fresh cache started a sync")
+	}
+}
+
+// TestFocusBeforeLaunchSyncStartsNothing pins that a focus-in arriving before the
+// launch sync has been considered leaves the first sync to launchSyncCmd, which
+// waits for local git.
+func TestFocusBeforeLaunchSyncStartsNothing(t *testing.T) {
+	m := seededModel()
+	m.syncing, m.synced = false, false
+	m.remote.PRsFetchedAt = time.Now().Add(-2 * data.TTL)
+	f, _ := m.Update(tea.FocusMsg{})
+	if f.(Model).syncing {
+		t.Error("a focus-in before the launch sync started a sync")
+	}
+}
+
+// TestInputResumesAPausedPoll pins the fallback for a lost focus-in: a key press
+// on a blurred dashboard un-pauses the poll.
+func TestInputResumesAPausedPoll(t *testing.T) {
+	m := seededModel()
+	m.syncing, m.synced = false, true
+	m.remote.PRsFetchedAt = time.Now().Add(-2 * data.TTL)
+	b, _ := m.Update(tea.BlurMsg{})
+	k, _ := b.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if k.(Model).blurred {
+		t.Error("a key press left the dashboard blurred")
+	}
+	if !k.(Model).syncing {
+		t.Error("a key press on a blurred dashboard with a stale cache did not sync")
 	}
 }

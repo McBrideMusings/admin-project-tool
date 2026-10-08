@@ -5,6 +5,8 @@ package data
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +18,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
+	"github.com/McBrideMusings/admin-project-tool/internal/git"
 )
 
 // TTL is how long cached data is trusted without a live fetch. It gates the
@@ -67,19 +70,34 @@ const PollInterval = 5 * time.Minute
 // against the local tip the same way MergedHeads' is; see
 // branchSignals.closedTipMatch.
 type Remote struct {
-	PRs              []gh.OpenPR           `json:"prs"`
-	Issues           []gh.IssueItem        `json:"issues"`
-	MergedHeads      map[string]string     `json:"merged_head_oids"`
-	MergedAuthors    map[string]string     `json:"merged_authors"`
-	ClosedHeads      map[string]string     `json:"closed_heads"`
-	MergedByIssue    map[int][]MergedPRRef `json:"merged_by_issue"`
-	ViewerLogin      string                `json:"viewer_login"`
-	PRsFetchedAt     time.Time             `json:"prs_fetched_at"`
-	IssuesFetchedAt  time.Time             `json:"issues_fetched_at"`
-	MergedFetchedAt  time.Time             `json:"merged_fetched_at"`
-	PRsFetchError    string                `json:"-"` // populated on a failed live fetch, never cached
-	IssuesFetchError string                `json:"-"` // populated on a failed live fetch, never cached
-	MergedFetchError string                `json:"-"` // populated on a failed live fetch, never cached
+	PRs             []gh.OpenPR           `json:"prs"`
+	Issues          []gh.IssueItem        `json:"issues"`
+	MergedHeads     map[string]string     `json:"merged_head_oids"`
+	MergedAuthors   map[string]string     `json:"merged_authors"`
+	ClosedHeads     map[string]string     `json:"closed_heads"`
+	MergedByIssue   map[int][]MergedPRRef `json:"merged_by_issue"`
+	ViewerLogin     string                `json:"viewer_login"`
+	PRsFetchedAt    time.Time             `json:"prs_fetched_at"`
+	IssuesFetchedAt time.Time             `json:"issues_fetched_at"`
+	MergedFetchedAt time.Time             `json:"merged_fetched_at"`
+	// MergedLocalSig fingerprints the local branch set (names and heads) the merged
+	// section was last fetched against; empty after a failed fetch. See decideMerged.
+	MergedLocalSig string `json:"merged_local_sig"`
+	// MergedRemoteSig fingerprints origin's branches (names and heads) as they
+	// stood when the merged section was last fetched; empty after a failed or
+	// partial fetch. See decideMerged.
+	MergedRemoteSig string `json:"merged_remote_sig"`
+	// MergedSkipped marks a fragment whose merged fetch did not run this sync
+	// because nothing could have changed: it carries only the time of that check
+	// (MergedFetchedAt), and applyMergedTo leaves the cached data untouched.
+	MergedSkipped    bool   `json:"-"`
+	PRsFetchError    string `json:"-"` // populated on a failed live fetch, never cached
+	IssuesFetchError string `json:"-"` // populated on a failed live fetch, never cached
+	MergedFetchError string `json:"-"` // populated on a failed live fetch, never cached
+	// ClosedFetchError is the closed-PR query's failure inside an otherwise good
+	// merged fetch. The merged data still lands, but the fetch is not stamped with
+	// fingerprints, so the next sync runs it again rather than skipping past it.
+	ClosedFetchError string `json:"-"`
 }
 
 // MergedPRRef is a merged PR reduced to what the "superseded" probe needs: its
@@ -238,10 +256,21 @@ func (src Remote) applyIssuesTo(dst *Remote) {
 // the set only ever grows, and the by-issue index (a fresh whole-window value) is
 // the one part still replaced outright.
 func (src Remote) applyMergedTo(dst *Remote) {
-	if src.MergedFetchError != "" {
-		dst.MergedFetchError = src.MergedFetchError
+	if src.MergedSkipped {
+		// A skip is a check that proved the cached answer still current, so the
+		// section is as fresh as the check.
+		dst.MergedFetchedAt = src.MergedFetchedAt
+		dst.MergedFetchError = ""
 		return
 	}
+	if src.MergedFetchError != "" {
+		dst.MergedFetchError = src.MergedFetchError
+		// The next sync must retry, whatever the branches did.
+		dst.MergedLocalSig, dst.MergedRemoteSig = "", ""
+		return
+	}
+	dst.MergedLocalSig = src.MergedLocalSig
+	dst.MergedRemoteSig = src.MergedRemoteSig
 	dst.MergedHeads = unionHeads(dst.MergedHeads, src.MergedHeads)
 	dst.MergedAuthors = unionHeads(dst.MergedAuthors, src.MergedAuthors)
 	dst.ClosedHeads = unionHeads(dst.ClosedHeads, src.ClosedHeads)
@@ -319,6 +348,20 @@ var (
 	fetchMergedFn = fetchMerged
 )
 
+// SyncOpts is what one FetchAll needs beyond the repo's name.
+type SyncOpts struct {
+	// MergedLimit is how many recent merged (and closed) PRs the merged query asks for.
+	MergedLimit int
+	// WithIssues is false in a beads-backed repo. There, GitHub issues are not the
+	// repo's issue tracker at all — the Issues tab doesn't exist and nothing reads
+	// the section — so the call is not made rather than made and discarded.
+	WithIssues bool
+	// Dir is the checkout whose local branches the merged-fetch decision reads.
+	Dir string
+	// Force is the user's `r` / `⇧R`: run every query whatever the cache says.
+	Force bool
+}
+
 // FetchAll queries every remote section the dashboard shows — open PRs, open
 // issues, and the merged-PR set — in one go, and writes all three into the cache
 // under a single lock. This is the dashboard's only whole-repo fetch: the three
@@ -326,38 +369,59 @@ var (
 // its own read-modify-write of the cache file, so which data was current depended
 // on which tab you happened to be looking at.
 //
-// The three run concurrently because none of them needs another's answer, so the
-// sync costs the slowest one rather than their sum. A section that fails carries
-// its error back and changes nothing — see ApplyTo.
-//
-// withIssues is false in a beads-backed repo. There, GitHub issues are not the
-// repo's issue tracker at all — the Issues tab doesn't exist and nothing reads
-// the section — so the call is not made rather than made and discarded.
+// The PR and issue queries run concurrently because neither needs the other's
+// answer. The merged query waits for the PR answer, because whether it runs at all
+// depends on it (decideMerged): its two GraphQL calls are the expensive ones and
+// their answer only changes when a branch moved or a PR left the open list. A
+// section that fails carries its error back and changes nothing — see ApplyTo.
 //
 // nwo empty means there's no GitHub remote at all — nothing to sync there, not
 // a failure — so every GitHub fetch is skipped the same way and the zero Remote
 // carries no *FetchError for the header to render as "sync failed".
-func FetchAll(ctx context.Context, nwo string, mergedLimit int, withIssues bool) Remote {
+func FetchAll(ctx context.Context, nwo string, o SyncOpts) Remote {
 	if nwo == "" {
 		return Remote{}
 	}
-	LogSync(nwo, "start", 0, fmt.Sprintf("issues=%t merged_limit=%d", withIssues, mergedLimit), nil)
+	LogSync(nwo, "start", 0, fmt.Sprintf("issues=%t merged_limit=%d force=%t", o.WithIssues, o.MergedLimit, o.Force), nil)
 	var prs, issues, merged Remote
 	var wg sync.WaitGroup
 	wg.Add(2)
+	prsDone := make(chan struct{})
 	go func() {
 		defer wg.Done()
+		defer close(prsDone)
 		start := time.Now()
 		prs = fetchPRsFn(ctx, nwo)
 		LogSync(nwo, "prs", time.Since(start), fmt.Sprintf("n=%d", len(prs.PRs)), errOf(prs.PRsFetchError))
 	}()
 	go func() {
 		defer wg.Done()
+		// Both fingerprints are read while the PR query is still in flight, so the
+		// ls-remote round trip costs no wall time on its own.
+		sig := localSig(ctx, o.Dir)
+		remoteSig := remoteSigFn(ctx, o.Dir)
+		<-prsDone
+		// The cache is read only now, after the PR query, so another dashboard's
+		// sync that landed meanwhile is part of what this one compares against.
+		prev, _ := Load(nwo)
+		run, reason := decideMerged(prev, prs, sig, remoteSig, o.Force)
+		if !run {
+			merged = Remote{MergedSkipped: true, MergedFetchedAt: time.Now()}
+			LogSync(nwo, "merged", 0, "skipped reason="+reason, nil)
+			return
+		}
 		start := time.Now()
-		merged = fetchMergedFn(ctx, nwo, mergedLimit)
-		LogSync(nwo, "merged", time.Since(start), fmt.Sprintf("heads=%d closed=%d", len(merged.MergedHeads), len(merged.ClosedHeads)), errOf(merged.MergedFetchError))
+		merged = fetchMergedFn(ctx, nwo, o.MergedLimit)
+		if merged.ClosedFetchError == "" {
+			merged.MergedLocalSig = sig
+			merged.MergedRemoteSig = remoteSig
+		}
+		LogSync(nwo, "merged", time.Since(start), fmt.Sprintf("ran reason=%s heads=%d closed=%d", reason, len(merged.MergedHeads), len(merged.ClosedHeads)), errOf(merged.MergedFetchError))
+		if merged.ClosedFetchError != "" {
+			LogSync(nwo, "closed", 0, "retry=next-sync", errOf(merged.ClosedFetchError))
+		}
 	}()
-	if withIssues {
+	if o.WithIssues {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -375,9 +439,79 @@ func FetchAll(ctx context.Context, nwo string, mergedLimit int, withIssues bool)
 	prs.applyPRsTo(&r)
 	issues.applyIssuesTo(&r)
 	merged.applyMergedTo(&r)
+	r.MergedSkipped = merged.MergedSkipped // ApplyTo runs again below and over the model; it must skip too
 
 	mergeSave(nwo, func(c *Remote) { r.ApplyTo(c) })
 	return r
+}
+
+// localSig fingerprints dir's local branches — names and heads — or returns ""
+// when they cannot be read, which decideMerged treats as "assume changed".
+func localSig(ctx context.Context, dir string) string {
+	heads, err := git.BranchHeads(ctx, dir)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(heads))
+	return hex.EncodeToString(sum[:8])
+}
+
+// remoteSigFn is the seam a test replaces to move origin's branches without a
+// network.
+var remoteSigFn = remoteSig
+
+// remoteSig fingerprints origin's branches — names and heads — or returns ""
+// when origin cannot be reached, which decideMerged treats as "assume changed".
+// It gets its own deadline because it is the one network call the sync makes
+// outside gh, and a hung remote must not hold the merged section hostage.
+func remoteSig(ctx context.Context, dir string) string {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	heads, err := git.RemoteHeads(ctx, dir)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(heads))
+	return hex.EncodeToString(sum[:8])
+}
+
+// decideMerged says whether this sync runs the merged/closed PR queries, and names
+// the condition that decided it for the sync log. Their answer can only change
+// when a local branch was created, deleted or moved (a branch newly matches a
+// merged head), when a PR merged on origin (which moves its base branch, squash
+// merges and stacked PRs included, even for a PR this dashboard never saw open),
+// or when a PR it saw open merged or closed (which removes it from the open
+// list). A PR opened and closed unmerged between two syncs, on a branch that did
+// not move, changes none of these: it only feeds the "abandoned" hint, and the
+// next sync that runs the query picks it up. Anything else keeps the cache.
+// Conditions are checked in the order below; the first that holds wins.
+func decideMerged(prev, prs Remote, sig, remoteSig string, force bool) (run bool, reason string) {
+	switch {
+	case force:
+		return true, "forced"
+	case prev.MergedFetchedAt.IsZero():
+		return true, "no-cached-result"
+	case prs.PRsFetchError != "":
+		return true, "open-prs-unknown"
+	case sig == "" || prev.MergedLocalSig == "":
+		return true, "local-branches-unknown"
+	case sig != prev.MergedLocalSig:
+		return true, "local-branches-changed"
+	case remoteSig == "" || prev.MergedRemoteSig == "":
+		return true, "remote-branches-unknown"
+	case remoteSig != prev.MergedRemoteSig:
+		return true, "remote-branches-moved"
+	}
+	open := make(map[int]bool, len(prs.PRs))
+	for _, p := range prs.PRs {
+		open[p.Number] = true
+	}
+	for _, p := range prev.PRs {
+		if !open[p.Number] {
+			return true, fmt.Sprintf("pr-left-open-list=#%d", p.Number)
+		}
+	}
+	return false, "unchanged"
 }
 
 // errOf turns a section's stored error text back into an error for LogSync —
@@ -592,14 +726,16 @@ func fetchMerged(ctx context.Context, nwo string, limit int) Remote {
 	// nothing else. Failing the whole merged section over it would blank the squash-
 	// merge detection — a far more expensive loss than missing an "abandoned" hint.
 	closed, err := gh.ClosedPRHeads(ctx, nwo, limit)
+	closedErr := ""
 	if err != nil {
-		closed = nil
+		closed, closedErr = nil, err.Error()
 	}
 	return Remote{
-		MergedHeads:     heads,
-		MergedAuthors:   authors,
-		ClosedHeads:     closed,
-		MergedByIssue:   byIssue,
-		MergedFetchedAt: time.Now(),
+		MergedHeads:      heads,
+		MergedAuthors:    authors,
+		ClosedHeads:      closed,
+		MergedByIssue:    byIssue,
+		MergedFetchedAt:  time.Now(),
+		ClosedFetchError: closedErr,
 	}
 }
