@@ -1,22 +1,12 @@
-// livactivity_race_test.go is admin-8hlz.1's required regression test: it
-// mirrors livestate_race_test.go's TestConcurrentStateReadsDoNotRace for the
-// neighbouring field. It pairs a goroutine calling livework.Default.
-// SetActivity against the reader paths that used to read Entry.Activity
-// directly off a pointer with no lock — renderWorkRow (both the rowWorker
-// and the wd.live branches), renderTargetRow, and bandFieldsWorker.
-// attachBreadcrumb (admin-3rgp.72.17's replacement for the since-removed
-// renderTermHeader) is exercised alongside them too, though it no longer
-// reads Activity at all — the breadcrumb's copy has no activity field, only
-// glyph/name/state/elapsed plus the log path — so it now guards the State
-// read termEntry does instead. Before the Registry.Activity fix,
-// `go test -race -run TestConcurrentActivityReadsDoNotRace ./internal/tui/`
-// reports a data race on Entry.Activity; a green run alone proves nothing,
-// since nothing else pairs a concurrent SetActivity against these specific
-// reads. The 2-goroutine/200-iteration shape livestate_race_test.go uses for
-// State did not reliably surface the race for this field on this machine —
-// four reader goroutines and 20000 iterations does, and was confirmed to
-// fail against the pre-fix (direct Entry.Activity read) code before this
-// file's iteration count was raised.
+// livactivity_race_test.go is livestate_race_test.go's counterpart for the
+// activity line: it pairs a goroutine calling livework.Default.SetActivity
+// against the reader paths that render it — renderWorkRow (both the
+// rowWorker and the wd.live branches), renderTargetRow, and bandFieldsWorker
+// — plus attachBreadcrumb, which reads the state termEntry looks up. `go
+// test -race` reports any of them reading without the registry's lock. Four
+// reader goroutines and 20000 iterations are what it takes for -race to
+// catch an unlocked activity read on this machine; two goroutines and 200
+// iterations miss it.
 package tui
 
 import (
@@ -34,7 +24,7 @@ func TestConcurrentActivityReadsDoNotRace(t *testing.T) {
 	freshLivework(t)
 	e := &livework.Entry{
 		ID: "livactivity-race-entry", Name: "livactivity-race",
-		Handle: "pty-livactivity-race", State: livework.StateRunning,
+		Handle: "pty-livactivity-race",
 	}
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add(%s): %v", e.ID, err)

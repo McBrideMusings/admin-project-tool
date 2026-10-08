@@ -260,7 +260,7 @@ func TestKillOnRunningTargetRowKillsIt(t *testing.T) {
 	freshLivework(t)
 	killed := false
 	live := &livework.Entry{
-		ID: kinds.TargetLiveKey("dev", "mac"), Name: "dev:mac", State: livework.StateRunning,
+		ID: kinds.TargetLiveKey("dev", "mac"), Name: "dev:mac",
 		Handle: "pty-dev-mac",
 		Ops:    livework.Ops{Kill: func() error { killed = true; return nil }},
 	}

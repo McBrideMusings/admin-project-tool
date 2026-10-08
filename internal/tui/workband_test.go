@@ -26,7 +26,7 @@ import (
 func TestBandTitleExactlyBodyWidth(t *testing.T) {
 	freshLivework(t)
 	live := &livework.Entry{
-		ID: "band-title-live", Name: "dev", Handle: "pty-band-title-live", State: livework.StateRunning,
+		ID: "band-title-live", Name: "dev", Handle: "pty-band-title-live",
 		StartedAt: time.Now().Add(-4 * time.Minute),
 	}
 	if err := livework.Default.Add(live); err != nil {
@@ -52,9 +52,9 @@ func TestBandTitleDropsCountBeforeSqueezingName(t *testing.T) {
 	freshLivework(t)
 	live := &livework.Entry{
 		ID: "band-title-narrow-live", Name: "a-fairly-long-command-name", Handle: "pty-band-title-narrow-live",
-		State: livework.StateRunning, StartedAt: time.Now(),
+		StartedAt: time.Now(),
 	}
-	other := &livework.Entry{ID: "band-title-other", Name: "other", Handle: "pty-band-title-other", State: livework.StateRunning, StartedAt: time.Now()}
+	other := &livework.Entry{ID: "band-title-other", Name: "other", Handle: "pty-band-title-other", StartedAt: time.Now()}
 	if err := livework.Default.Add(live); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestBandTitleFourStates(t *testing.T) {
 
 	t.Run("live, nothing else running", func(t *testing.T) {
 		freshLivework(t)
-		e := &livework.Entry{ID: "solo-live", Name: "dev", Handle: "pty-solo-live", State: livework.StateRunning, StartedAt: time.Now()}
+		e := &livework.Entry{ID: "solo-live", Name: "dev", Handle: "pty-solo-live", StartedAt: time.Now()}
 		if err := livework.Default.Add(e); err != nil {
 			t.Fatalf("Add: %v", err)
 		}
@@ -108,12 +108,12 @@ func TestBandTitleFourStates(t *testing.T) {
 
 	t.Run("live, others running, plural counts", func(t *testing.T) {
 		freshLivework(t)
-		e := &livework.Entry{ID: "main-live", Name: "dev", Handle: "pty-main-live", State: livework.StateRunning, StartedAt: time.Now()}
-		c1 := &livework.Entry{ID: "c1", Name: "c1", Handle: "pty-c1", State: livework.StateRunning, StartedAt: time.Now()}
-		c2 := &livework.Entry{ID: "c2", Name: "c2", Handle: "pty-c2", State: livework.StateRunning, StartedAt: time.Now()}
-		w1 := &livework.Entry{ID: "w1", Name: "w1", Handle: "pty-w1", State: livework.StateRunning, StartedAt: time.Now(), Worker: &livework.WorkerInfo{}}
-		w2 := &livework.Entry{ID: "w2", Name: "w2", Handle: "pty-w2", State: livework.StateRunning, StartedAt: time.Now(), Worker: &livework.WorkerInfo{}}
-		w3 := &livework.Entry{ID: "w3", Name: "w3", Handle: "pty-w3", State: livework.StateRunning, StartedAt: time.Now(), Worker: &livework.WorkerInfo{}}
+		e := &livework.Entry{ID: "main-live", Name: "dev", Handle: "pty-main-live", StartedAt: time.Now()}
+		c1 := &livework.Entry{ID: "c1", Name: "c1", Handle: "pty-c1", StartedAt: time.Now()}
+		c2 := &livework.Entry{ID: "c2", Name: "c2", Handle: "pty-c2", StartedAt: time.Now()}
+		w1 := &livework.Entry{ID: "w1", Name: "w1", Handle: "pty-w1", StartedAt: time.Now(), Worker: &livework.WorkerInfo{}}
+		w2 := &livework.Entry{ID: "w2", Name: "w2", Handle: "pty-w2", StartedAt: time.Now(), Worker: &livework.WorkerInfo{}}
+		w3 := &livework.Entry{ID: "w3", Name: "w3", Handle: "pty-w3", StartedAt: time.Now(), Worker: &livework.WorkerInfo{}}
 		for _, x := range []*livework.Entry{e, c1, c2, w1, w2, w3} {
 			if err := livework.Default.Add(x); err != nil {
 				t.Fatalf("Add(%s): %v", x.ID, err)
@@ -127,8 +127,8 @@ func TestBandTitleFourStates(t *testing.T) {
 
 	t.Run("idle, others running singular", func(t *testing.T) {
 		freshLivework(t)
-		c := &livework.Entry{ID: "c1", Name: "c1", Handle: "pty-c1", State: livework.StateRunning, StartedAt: time.Now()}
-		w := &livework.Entry{ID: "w1", Name: "w1", Handle: "pty-w1", State: livework.StateRunning, StartedAt: time.Now(), Worker: &livework.WorkerInfo{}}
+		c := &livework.Entry{ID: "c1", Name: "c1", Handle: "pty-c1", StartedAt: time.Now()}
+		w := &livework.Entry{ID: "w1", Name: "w1", Handle: "pty-w1", StartedAt: time.Now(), Worker: &livework.WorkerInfo{}}
 		if err := livework.Default.Add(c); err != nil {
 			t.Fatalf("Add: %v", err)
 		}
@@ -162,7 +162,7 @@ func TestFieldBlockSizedToContent(t *testing.T) {
 	}
 
 	worker := bandFieldsWorker(&livework.Entry{
-		ID: "w", LogPath: "/x/w.log", Worker: &livework.WorkerInfo{Branch: "b", Worktree: "/wt"},
+		ID: "w", Worker: &livework.WorkerInfo{Branch: "b", Worktree: "/wt"},
 	}, 60)
 	if len(worker) != 5 {
 		t.Errorf("bandFieldsWorker produced %d rows, want exactly 5 (log/branch/worktree/session/now)", len(worker))

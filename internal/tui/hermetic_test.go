@@ -41,7 +41,12 @@ func TestMain(m *testing.M) {
 	// runs Init's commands must neither call gh nor write that cache.
 	prevFetchIdentity := fetchIdentityFn
 	fetchIdentityFn = func(context.Context, string) (data.Identity, error) { return data.Identity{}, nil }
+	// No test here is about the remote; every Frame/Init sync answers empty.
+	// A test that restores the real FetchAll still dies in gh.run.
+	prevFetchAll := fetchAllFn
+	fetchAllFn = func(context.Context, string, int, bool) data.Remote { return data.Remote{} }
 	code := m.Run()
+	fetchAllFn = prevFetchAll
 	fetchIdentityFn = prevFetchIdentity
 	restoreLivework()
 	restoreSyncLog()

@@ -133,7 +133,7 @@ func registerFakePTYEntry(t *testing.T, cmdName string, ring *livework.Ring, rec
 		Name:   cmdName,
 		Kind:   "hosted-pty",
 		Handle: cmdName + "-pty",
-		State:  livework.StateRunning,
+
 		Output: ring,
 		Screen: screen,
 		Ops: livework.Ops{
@@ -630,8 +630,8 @@ func TestAttachedViewSwitchesToDifferentEntry(t *testing.T) {
 		t.Fatalf("Write: %v", err)
 	}
 	for _, e := range []*livework.Entry{
-		{ID: "termfixture-first", Name: "termfixture-first", Kind: "hosted-pty", Handle: "termfixture-first-pty", State: livework.StateRunning, Output: ring1, Ops: livework.Ops{Kill: func() error { return nil }, Write: (&termRecorder{}).write, Resize: (&termRecorder{}).resize}},
-		{ID: "termfixture-second", Name: "termfixture-second", Kind: "hosted-pty", Handle: "termfixture-second-pty", State: livework.StateRunning, Output: ring2, Ops: livework.Ops{Kill: func() error { return nil }, Write: (&termRecorder{}).write, Resize: (&termRecorder{}).resize}},
+		{ID: "termfixture-first", Name: "termfixture-first", Kind: "hosted-pty", Handle: "termfixture-first-pty", Output: ring1, Ops: livework.Ops{Kill: func() error { return nil }, Write: (&termRecorder{}).write, Resize: (&termRecorder{}).resize}},
+		{ID: "termfixture-second", Name: "termfixture-second", Kind: "hosted-pty", Handle: "termfixture-second-pty", Output: ring2, Ops: livework.Ops{Kill: func() error { return nil }, Write: (&termRecorder{}).write, Resize: (&termRecorder{}).resize}},
 	} {
 		if err := livework.Default.Add(e); err != nil {
 			t.Fatalf("Add(%s): %v", e.ID, err)

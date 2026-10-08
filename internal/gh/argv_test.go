@@ -3,6 +3,7 @@ package gh
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/argvscan"
@@ -277,4 +278,17 @@ func TestArgvCoverage(t *testing.T) {
 		Seams:   []string{"runner("},
 		Covered: coveredCommands,
 	})
+}
+
+// TestRealRunnerRefusesUnderTest pins the fail-closed default: a test that
+// reaches the real runner panics with the argv instead of calling GitHub.
+func TestRealRunnerRefusesUnderTest(t *testing.T) {
+	defer func() {
+		msg, _ := recover().(string)
+		if !strings.Contains(msg, "gh api repos/o/r/issues/7") {
+			t.Fatalf("panic = %q, want it to name the argv", msg)
+		}
+	}()
+	_, _ = run(context.Background(), "api", "repos/o/r/issues/7")
+	t.Fatal("run returned; want a panic")
 }

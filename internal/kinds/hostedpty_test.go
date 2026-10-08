@@ -192,7 +192,7 @@ func TestStartHostedPTYWiresWriteAndResize(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if got, ok := livework.Default.Get("echoer"); ok && got.State == livework.StateExited {
+		if st, ok := livework.Default.State("echoer"); ok && st == livework.StateExited {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)

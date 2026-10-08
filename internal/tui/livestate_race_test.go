@@ -1,11 +1,9 @@
-// livestate_race_test.go is admin-ddc8's required regression test: it pairs a
-// goroutine calling livework.Default.SetState against the reader paths that
-// used to read Entry.State directly off a pointer with no lock —
-// hostedRunningEntries, bandFieldsWorker/bandTitle, and quitConfirmBox. Before the fix,
-// `go test -race -run TestConcurrentStateReadsDoNotRace ./internal/tui/`
-// reports a data race on Entry.State; a green run alone (this suite already
-// passes -race today without this test, because nothing else pairs a
-// concurrent SetState against these specific reads) proves nothing.
+// livestate_race_test.go pairs a goroutine calling livework.Default.SetState
+// against the reader paths that render an entry's state —
+// hostedRunningEntries, bandFieldsWorker/bandTitle, and quitConfirmBox — so
+// `go test -race` reports any of them reading the state without the
+// registry's lock. Only this test pairs a concurrent SetState against these
+// reads, so a green -race run of the rest of the suite proves nothing.
 package tui
 
 import (
@@ -25,7 +23,7 @@ func TestConcurrentStateReadsDoNotRace(t *testing.T) {
 	freshLivework(t)
 	e := &livework.Entry{
 		ID: "livestate-race-entry", Name: "livestate-race",
-		Handle: "pty-livestate-race", State: livework.StateRunning,
+		Handle: "pty-livestate-race",
 	}
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add(%s): %v", e.ID, err)

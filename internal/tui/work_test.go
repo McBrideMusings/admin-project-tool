@@ -270,7 +270,7 @@ func TestRunningCommandLightsOnlyItsOwnRow(t *testing.T) {
 			"dev":          {"kind": "shell"},
 		},
 	}
-	if err := livework.Default.Add(&livework.Entry{ID: "dev", Name: "dev", Handle: "pty-dev", State: livework.StateRunning}); err != nil {
+	if err := livework.Default.Add(&livework.Entry{ID: "dev", Name: "dev", Handle: "pty-dev"}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
@@ -289,7 +289,7 @@ func TestRunningCommandLightsOnlyItsOwnRow(t *testing.T) {
 
 	// An entry keyed on the shared step is not either command's run.
 	freshLivework(t)
-	if err := livework.Default.Add(&livework.Entry{ID: "db-ensure", Name: "db-ensure", Handle: "pty-db", State: livework.StateRunning}); err != nil {
+	if err := livework.Default.Add(&livework.Entry{ID: "db-ensure", Name: "db-ensure", Handle: "pty-db"}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 	for _, r := range workTestModel(m).workRows() {
@@ -315,12 +315,14 @@ func TestWorkerAppearsOnlyInWorkersTab(t *testing.T) {
 
 	worker := &livework.Entry{
 		ID: "test-work-rows-worker", Name: "test-work-rows-worker",
-		State: livework.StateWaiting, Activity: "needs input", Handle: "pane-worker", Via: "terminal",
+		Handle: "pane-worker", Via: "terminal",
 		Worker: &livework.WorkerInfo{Branch: "some-branch", Worktree: "/tmp/some-branch"},
 	}
 	if err := livework.Default.Add(worker); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
+	livework.Default.SetState(worker.ID, livework.StateWaiting, nil)
+	livework.Default.SetActivity(worker.ID, "needs input")
 
 	for _, r := range mm.workRows() {
 		if r.kind == rowWorker {
@@ -359,11 +361,12 @@ func TestWorkRowsFoldsAProcessEntryIntoItsCommandRow(t *testing.T) {
 
 	e := &livework.Entry{
 		ID: "dev-server", Name: "dev-server-action",
-		State: livework.StateRunning, Activity: "localhost:5173", Handle: "pane 9", Via: "terminal",
+		Handle: "pane 9", Via: "terminal",
 	}
 	if err := livework.Default.Add(e); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
+	livework.Default.SetActivity(e.ID, "localhost:5173")
 
 	// livework.Default is a process-wide singleton (internal/livework's own
 	// doc comment: "one registry per process"), so other tests in this
@@ -441,8 +444,8 @@ func TestRenderWorkRowShowsDescriptionWhenIdleAndLiveStateWhenRunning(t *testing
 	}
 
 	entry := &livework.Entry{
-		ID: "build", Name: "build", State: livework.StateRunning,
-		Activity: "compiling", Handle: "pane 3", Via: "terminal", StartedAt: time.Now(),
+		ID: "build", Name: "build",
+		Handle: "pane 3", Via: "terminal", StartedAt: time.Now(),
 	}
 	// renderWorkRow reads state through livework.Default.State(e.ID) rather
 	// than the struct field directly (admin-ddc8), so the entry must actually
@@ -454,6 +457,7 @@ func TestRenderWorkRowShowsDescriptionWhenIdleAndLiveStateWhenRunning(t *testing
 	if err := livework.Default.Add(entry); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
+	livework.Default.SetActivity(entry.ID, "compiling")
 	live := &workRowData{cmdName: "build", live: entry}
 	liveLine := workTestModel(nil).renderWorkRow(rowItem{kind: rowCommand, work: live}, false, 60)
 	if strings.Contains(liveLine, "compile the binary") {
@@ -469,7 +473,7 @@ func TestRenderWorkRowShowsDescriptionWhenIdleAndLiveStateWhenRunning(t *testing
 
 // TestCommandRowItemPrefersLiveEntryLogPath is admin-rc82's Work-tab
 // acceptance criterion: the detail pane shows the path from the running
-// command (livework.Entry.LogPath, set by hostedpty.go's announce sniffer)
+// command (livework.Default.LogPath, set by hostedpty.go's announce sniffer)
 // rather than the best-effort glob, whenever a live entry carries one.
 func TestCommandRowItemPrefersLiveEntryLogPath(t *testing.T) {
 	dir := t.TempDir()
@@ -493,10 +497,11 @@ func TestCommandRowItemPrefersLiveEntryLogPath(t *testing.T) {
 	}
 
 	freshLivework(t)
-	live := &livework.Entry{ID: "build", Name: "build", Handle: "pty-build", State: livework.StateRunning, LogPath: "/live/current.log"}
+	live := &livework.Entry{ID: "build", Name: "build", Handle: "pty-build"}
 	if err := livework.Default.Add(live); err != nil {
 		t.Fatalf("Add(%s): %v", live.ID, err)
 	}
+	livework.Default.SetLogPath(live.ID, "/live/current.log")
 	byName := map[string]*livework.Entry{"build": live}
 
 	row := mm.commandRowItem(workCmdRow{name: "build", cmd: m.Custom["build"]}, byName)
@@ -564,8 +569,8 @@ func TestTargetRowsResolvesLiveEntryByCommandName(t *testing.T) {
 	}
 	mm := workTestModel(m)
 
-	live := &livework.Entry{ID: "dev:cf", Name: "dev:cf", State: livework.StateRunning}
-	other := &livework.Entry{ID: "pick:prod", Name: "pick:prod", State: livework.StateRunning}
+	live := &livework.Entry{ID: "dev:cf", Name: "dev:cf"}
+	other := &livework.Entry{ID: "pick:prod", Name: "pick:prod"}
 	byName := map[string]*livework.Entry{"dev:cf": live, "pick:prod": other}
 
 	parent := mm.commandRowItem(workCmdRow{name: "dev", cmd: m.Custom["dev"]}, byName)
@@ -682,12 +687,14 @@ func TestWorkRowsWorkersHeaderStaysPutAcrossDispatch(t *testing.T) {
 
 	worker := &livework.Entry{
 		ID: "test-header-stays-put-worker", Name: "test-header-stays-put-worker",
-		State: livework.StateWaiting, Activity: "needs input", Handle: "pane-stays-put", Via: "terminal",
+		Handle: "pane-stays-put", Via: "terminal",
 		Worker: &livework.WorkerInfo{Branch: "some-branch", Worktree: "/tmp/some-branch"},
 	}
 	if err := livework.Default.Add(worker); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
+	livework.Default.SetState(worker.ID, livework.StateWaiting, nil)
+	livework.Default.SetActivity(worker.ID, "needs input")
 
 	after := mm.workerRows()
 	headerAfter, workerIdx := -1, -1
@@ -754,7 +761,7 @@ func TestWorkRowsWorkerLabelHasNoTrailingSpaceWhenActivityEmpty(t *testing.T) {
 
 	worker := &livework.Entry{
 		ID: "test-work-rows-no-activity", Name: "test-work-rows-no-activity",
-		State: livework.StateRunning, Activity: "", Handle: "pane-no-activity", Via: "terminal",
+		Handle: "pane-no-activity", Via: "terminal",
 		Worker: &livework.WorkerInfo{Branch: "no-activity", Worktree: "/tmp/no-activity"},
 	}
 	if err := livework.Default.Add(worker); err != nil {
@@ -788,7 +795,7 @@ func TestWorkerBandFieldsAlwaysHasNowRow(t *testing.T) {
 	freshLivework(t)
 	e := &livework.Entry{
 		ID: "test-worker-detail-no-activity", Name: "test-worker-detail-no-activity",
-		State: livework.StateRunning, Activity: "", Handle: "pty-detail-no-activity",
+		Handle:    "pty-detail-no-activity",
 		StartedAt: time.Now(),
 	}
 	if err := livework.Default.Add(e); err != nil {

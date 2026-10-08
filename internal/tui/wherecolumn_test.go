@@ -30,8 +30,8 @@ import (
 func TestCommandRowRunningShowsNoWhereColumn(t *testing.T) {
 	freshLivework(t)
 	entry := &livework.Entry{
-		ID: "docs", Name: "docs", State: livework.StateRunning,
-		Activity: "vitepress dev", Handle: "pty-1", StartedAt: time.Now(),
+		ID: "docs", Name: "docs",
+		Handle: "pty-1", StartedAt: time.Now(),
 	}
 	// renderWorkRow now reads state through livework.Default.State(e.ID)
 	// (admin-ddc8), so the entry must actually be in the process-wide
@@ -41,6 +41,7 @@ func TestCommandRowRunningShowsNoWhereColumn(t *testing.T) {
 	if err := livework.Default.Add(entry); err != nil {
 		t.Fatalf("Add(%s): %v", entry.ID, err)
 	}
+	livework.Default.SetActivity(entry.ID, "vitepress dev")
 	live := &workRowData{cmdName: "docs", live: entry}
 	line := workTestModel(nil).renderWorkRow(rowItem{kind: rowCommand, work: live}, false, 60)
 	plain := stripANSI(line)
@@ -66,7 +67,7 @@ func TestWhereColumnDetachedWorkerRowShowsPaneNeverHosted(t *testing.T) {
 	freshLivework(t)
 	worker := &livework.Entry{
 		ID: "test-wherecol-detached-worker", Name: "test-wherecol-detached-worker",
-		State: livework.StateWaiting, Activity: "awaiting approval", Handle: "pane 3", Via: "terminal",
+		Handle: "pane 3", Via: "terminal",
 		Worker: &livework.WorkerInfo{Branch: "some-branch", Worktree: "/tmp/some-branch"},
 	}
 	// renderWorkRow now reads activity through livework.Default.Activity(e.ID)
@@ -76,6 +77,8 @@ func TestWhereColumnDetachedWorkerRowShowsPaneNeverHosted(t *testing.T) {
 	if err := livework.Default.Add(worker); err != nil {
 		t.Fatalf("Add(%s): %v", worker.ID, err)
 	}
+	livework.Default.SetState(worker.ID, livework.StateWaiting, nil)
+	livework.Default.SetActivity(worker.ID, "awaiting approval")
 	line := workTestModel(nil).renderWorkRow(rowItem{kind: rowWorker, work: &workRowData{worker: worker}}, false, 60)
 	plain := stripANSI(line)
 
@@ -107,7 +110,7 @@ func TestWhereColumnStateWordsAreVerbatim(t *testing.T) {
 	}
 	entry := &livework.Entry{
 		ID: "wherecol-state-words", Name: "build",
-		Activity: "doing the thing", Handle: "pty-2", StartedAt: time.Now(),
+		Handle: "pty-2", StartedAt: time.Now(),
 	}
 	// See TestWhereColumnHostedCommandRowShowsHostedNeverPane: renderWorkRow
 	// reads state through the registry now, so the entry must be Added, and
@@ -115,6 +118,7 @@ func TestWhereColumnStateWordsAreVerbatim(t *testing.T) {
 	if err := livework.Default.Add(entry); err != nil {
 		t.Fatalf("Add(%s): %v", entry.ID, err)
 	}
+	livework.Default.SetActivity(entry.ID, "doing the thing")
 	live := &workRowData{cmdName: "build", live: entry}
 	for _, c := range cases {
 		livework.Default.SetState(entry.ID, c.state, nil)
@@ -134,8 +138,8 @@ func TestCommandRowTruncatesLongActivity(t *testing.T) {
 	freshLivework(t)
 	longActivity := strings.Repeat("writing a very long activity line ", 4)
 	entry := &livework.Entry{
-		ID: "wherecol-truncate-activity", Name: "build", State: livework.StateRunning,
-		Activity: longActivity, Handle: "pty-3", StartedAt: time.Now(),
+		ID: "wherecol-truncate-activity", Name: "build",
+		Handle: "pty-3", StartedAt: time.Now(),
 	}
 	// renderWorkRow now reads activity through livework.Default.Activity(e.ID)
 	// (admin-8hlz.1, mirroring admin-ddc8's State fix), so the entry must
@@ -144,6 +148,7 @@ func TestCommandRowTruncatesLongActivity(t *testing.T) {
 	if err := livework.Default.Add(entry); err != nil {
 		t.Fatalf("Add(%s): %v", entry.ID, err)
 	}
+	livework.Default.SetActivity(entry.ID, longActivity)
 	live := &workRowData{cmdName: "build", live: entry}
 	line := stripANSI(workTestModel(nil).renderWorkRow(rowItem{kind: rowCommand, work: live}, false, 40))
 	if !strings.Contains(line, "…") {
@@ -187,21 +192,24 @@ func TestWhereColumnFrameAtMultipleWidths(t *testing.T) {
 	}
 
 	hosted := &livework.Entry{
-		ID: cmdName, Name: cmdName, State: livework.StateRunning,
-		Activity: "running the fixture", Handle: "pty-wherecol-fixture", StartedAt: time.Now(),
+		ID: cmdName, Name: cmdName,
+		Handle: "pty-wherecol-fixture", StartedAt: time.Now(),
 	}
 	if err := livework.Default.Add(hosted); err != nil {
 		t.Fatalf("Add hosted: %v", err)
 	}
+	livework.Default.SetActivity(hosted.ID, "running the fixture")
 
 	detached := &livework.Entry{
 		ID: "wherecolfixturedetachedworker", Name: "wherecolfixturedetachedworker",
-		State: livework.StateWaiting, Activity: "needs input", Handle: "pane 7", Via: "terminal",
+		Handle: "pane 7", Via: "terminal",
 		Worker: &livework.WorkerInfo{Branch: "wherecol-branch", Worktree: "/tmp/wherecol-branch"},
 	}
 	if err := livework.Default.Add(detached); err != nil {
 		t.Fatalf("Add detached: %v", err)
 	}
+	livework.Default.SetState(detached.ID, livework.StateWaiting, nil)
+	livework.Default.SetActivity(detached.ID, "needs input")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

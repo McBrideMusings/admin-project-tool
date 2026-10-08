@@ -176,26 +176,6 @@ type Entry struct {
 	Screen *vt.SafeEmulator
 
 	StartedAt time.Time
-	State     State
-
-	// Activity is a one-line human-readable description of what the entry
-	// is doing right now (e.g. "writing internal/lua/host.go") — the
-	// acceptance criterion's "current-activity line". Empty means the
-	// producer hasn't reported one.
-	Activity string
-
-	// Note is why the entry is not progressing the way its owner expects —
-	// a finished worker the reaper declined to delete. Empty when there is
-	// nothing to say. Read it through Registry.Line; SetNote writes it under
-	// r.mu.
-	Note string
-
-	// Snapshot is the last text a launcher's [terminal].read printed for
-	// Handle: the pane's current last lines, replaced whole on every refresh
-	// (never appended to). Empty until the first read succeeds, and always
-	// empty for a hosted-pty entry, whose bytes are in Output. Read it
-	// through Registry.Snapshot — SetSnapshot writes it under r.mu.
-	Snapshot string
 
 	// Worker is non-nil for an agent worker and nil for a long-running
 	// process — see WorkerInfo's doc comment.
@@ -205,21 +185,42 @@ type Entry struct {
 	// Ops's doc comment.
 	Ops Ops
 
-	// Err is set when State is StateFailed; nil otherwise.
-	Err error
-
 	// Root is the primary checkout of the repo this entry was dispatched
 	// from. A launcher-dispatched entry carrying one is shared with every
 	// other admin process working in that repo (persist.go); "" keeps the
 	// entry in this process only.
 	Root string
 
-	// onDisk is true once this entry's shared file has been written or the
-	// entry was loaded from one, so Sync can read a missing file as "ended
-	// elsewhere" without misreading a write that failed. Guarded by r.mu.
-	onDisk bool
+	// Every field below changes while the entry runs, written by a producer
+	// goroutine under the owning Registry's mu. They are unexported so the
+	// only way to read one from outside this package is the Registry
+	// accessor that takes that lock: State, Activity, Line, Snapshot,
+	// LogPath. A producer sets them through SetState, SetActivity, SetNote,
+	// SetSnapshot and SetLogPath once the entry is added.
 
-	// LogPath is the real log file this entry's process is writing to, once
+	// state is the entry's lifecycle; Add sets StateRunning.
+	state State
+
+	// activity is a one-line human-readable description of what the entry
+	// is doing right now (e.g. "writing internal/lua/host.go"). Empty means
+	// the producer hasn't reported one.
+	activity string
+
+	// note is why the entry is not progressing the way its owner expects —
+	// a finished worker the reaper declined to delete. Empty when there is
+	// nothing to say.
+	note string
+
+	// snapshot is the last text a launcher's [terminal].read printed for
+	// Handle: the pane's current last lines, replaced whole on every refresh
+	// (never appended to). Empty until the first read succeeds, and always
+	// empty for a hosted-pty entry, whose bytes are in Output.
+	snapshot string
+
+	// err is set when state is StateFailed; nil otherwise.
+	err error
+
+	// logPath is the real log file this entry's process is writing to, once
 	// known. It is empty until the producer learns it — for a hosted-pty
 	// entry (internal/kinds/hostedpty.go's recordHostedPTYWork), that means
 	// sniffing the child's own announce line off its pty output, since the
@@ -227,7 +228,12 @@ type Entry struct {
 	// learn the path luahost's deferred naming settled on. The Work tab
 	// (internal/tui/work.go) prefers this over its own best-effort glob
 	// whenever it's set.
-	LogPath string
+	logPath string
+
+	// onDisk is true once this entry's shared file has been written or the
+	// entry was loaded from one, so Sync can read a missing file as "ended
+	// elsewhere" without misreading a write that failed.
+	onDisk bool
 }
 
 // Registry is a concurrency-safe, append-mostly set of Entry records, keyed
@@ -268,11 +274,11 @@ func (r *Registry) SetTerminalOpener(open func(handle string) error) {
 	r.terminalOpener = open
 }
 
-// Add records e, defaulting StartedAt to now and State to StateRunning when
-// the caller left them zero. Re-adding the ID of an entry that has finished
-// (exited or failed) overwrites that entry's fields but keeps its original
-// position in List's order, so a re-dispatch under the same ID stays on the
-// same row.
+// Add records e as running, defaulting StartedAt to now when the caller left
+// it zero; a producer reports any later state through SetState. Re-adding the
+// ID of an entry that has finished (exited or failed) overwrites that entry's
+// fields but keeps its original position in List's order, so a re-dispatch
+// under the same ID stays on the same row.
 //
 // Add rejects e and stores nothing when e carries an empty Handle — an
 // entry must address something — or when an entry with the same ID is still
@@ -286,19 +292,21 @@ func (r *Registry) Add(e *Entry) error {
 	if e.StartedAt.IsZero() {
 		e.StartedAt = time.Now()
 	}
-	if e.State == "" {
-		e.State = StateRunning
-	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	old, exists := r.entries[e.ID]
-	if exists && old.State.live() {
-		return fmt.Errorf("live-work: entry %q is already %s (handle %s)", e.ID, old.State, old.Handle)
+	if exists && old.state.live() {
+		return fmt.Errorf("live-work: entry %q is already %s (handle %s)", e.ID, old.state, old.Handle)
 	}
+	// e may be the stored entry itself, re-added after it ended, so a
+	// rejection puts its state back.
+	prev := e.state
+	e.state = StateRunning
 	// Claiming the file refuses an id another process holds live. A shared
 	// entry no other process can see would be lost the moment this process
 	// exits, so a failed write rejects it like a duplicate does.
 	if err := r.claimLocked(e); err != nil {
+		e.state = prev
 		return err
 	}
 	if !exists {
@@ -318,8 +326,8 @@ func (r *Registry) Get(id string) (*Entry, bool) {
 
 // State returns the entry for id's current State, safe for concurrent use
 // with SetState — a caller polling for a transition (tests included) must
-// go through this rather than reading a *Entry's State field directly,
-// since that field is mutated under r.mu by SetState's own goroutine.
+// go through this, since SetState writes the state under r.mu on its own
+// goroutine.
 func (r *Registry) State(id string) (State, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -327,14 +335,13 @@ func (r *Registry) State(id string) (State, bool) {
 	if !ok {
 		return "", false
 	}
-	return e.State, true
+	return e.state, true
 }
 
 // Activity returns the entry for id's current Activity line, safe for
 // concurrent use with SetActivity — a caller reading the current-activity
-// line (a render, a header) must go through this rather than reading a
-// *Entry's Activity field directly, since that field is mutated under r.mu
-// by SetActivity's own goroutine.
+// line (a render, a header) must go through this, since SetActivity writes
+// it under r.mu on its own goroutine.
 func (r *Registry) Activity(id string) (string, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -342,13 +349,12 @@ func (r *Registry) Activity(id string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	return e.Activity, true
+	return e.activity, true
 }
 
 // LogPath returns the entry for id's current LogPath, safe for concurrent
-// use with SetLogPath — a render must go through this rather than reading a
-// *Entry's LogPath field directly, since that field is mutated under r.mu by
-// the producer's announce-line sniffer on its own goroutine.
+// use with SetLogPath — the producer's announce-line sniffer writes it under
+// r.mu on its own goroutine.
 func (r *Registry) LogPath(id string) (string, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -356,7 +362,7 @@ func (r *Registry) LogPath(id string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	return e.LogPath, true
+	return e.logPath, true
 }
 
 // SetState transitions the entry for id, if present. err is recorded only
@@ -368,10 +374,10 @@ func (r *Registry) SetState(id string, state State, err error) {
 	if !ok {
 		return
 	}
-	changed := e.State != state
-	e.State = state
+	changed := e.state != state
+	e.state = state
 	if state == StateFailed {
-		e.Err = err
+		e.err = err
 	}
 	if changed {
 		r.updateLocked(e)
@@ -390,8 +396,8 @@ func (r *Registry) SetLogPath(id, path string) {
 	if !ok {
 		return
 	}
-	if e.LogPath != path {
-		e.LogPath = path
+	if e.logPath != path {
+		e.logPath = path
 		r.updateLocked(e)
 	}
 }
@@ -404,15 +410,15 @@ func (r *Registry) SetActivity(id, activity string) {
 	if !ok {
 		return
 	}
-	e.Activity = activity
+	e.activity = activity
 }
 
 // SetNote replaces the entry for id's note, if present. "" clears it.
 func (r *Registry) SetNote(id, note string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if e, ok := r.entries[id]; ok && e.Note != note {
-		e.Note = note
+	if e, ok := r.entries[id]; ok && e.note != note {
+		e.note = note
 		r.updateLocked(e)
 	}
 }
@@ -428,12 +434,12 @@ func (r *Registry) Line(id string) (string, bool) {
 		return "", false
 	}
 	switch {
-	case e.Note == "":
-		return e.Activity, true
-	case e.Activity == "":
-		return e.Note, true
+	case e.note == "":
+		return e.activity, true
+	case e.activity == "":
+		return e.note, true
 	}
-	return e.Note + " · " + e.Activity, true
+	return e.note + " · " + e.activity, true
 }
 
 // SetSnapshot replaces the entry for id's pane snapshot, if present.
@@ -441,7 +447,7 @@ func (r *Registry) SetSnapshot(id, snapshot string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if e, ok := r.entries[id]; ok {
-		e.Snapshot = snapshot
+		e.snapshot = snapshot
 	}
 }
 
@@ -454,7 +460,7 @@ func (r *Registry) Snapshot(id string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	return e.Snapshot, true
+	return e.snapshot, true
 }
 
 // List returns every entry, oldest-added first. The returned slice is a
@@ -481,11 +487,11 @@ func (r *Registry) WorkerStates() map[string]State {
 	out := map[string]State{}
 	for _, id := range r.order {
 		e := r.entries[id]
-		if e.Worker == nil || !e.State.Reapable() {
+		if e.Worker == nil || !e.state.Reapable() {
 			continue
 		}
 		if _, seen := out[e.Worker.Target]; !seen {
-			out[e.Worker.Target] = e.State
+			out[e.Worker.Target] = e.state
 		}
 	}
 	return out

@@ -37,7 +37,7 @@ func buildRunningWorkModelAt(t *testing.T, w, h int) Model {
 	screen := hostedScreen(t, "collecting tests\r\ntest_a ... ok\r\ntest_b ... ok\r\n")
 	entry := &livework.Entry{
 		ID: "command-test", Name: "command-test", Handle: "test-command-test",
-		State: livework.StateRunning, StartedAt: time.Now(), Screen: screen,
+		StartedAt: time.Now(), Screen: screen,
 	}
 	if err := livework.Default.Add(entry); err != nil {
 		t.Fatalf("Add: %v", err)

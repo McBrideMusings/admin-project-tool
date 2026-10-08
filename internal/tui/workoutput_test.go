@@ -25,8 +25,8 @@ func TestRenderWorkBandTailsLiveScreenBottomAligned(t *testing.T) {
 	screen := hostedScreen(t, "line one\nline two\nline three\n")
 	e := &livework.Entry{
 		ID: "test-tail-worker", Name: "test-tail-worker",
-		State: livework.StateRunning, StartedAt: time.Now(),
-		Screen: screen,
+		StartedAt: time.Now(),
+		Screen:    screen,
 	}
 
 	mm := workTestModel(nil)
@@ -63,7 +63,7 @@ func TestRenderWorkBandNoRuleBetweenFieldsAndTail(t *testing.T) {
 	wd := &workRowData{
 		cmdName: "dev", cmdKind: "shell",
 		urls: []frame.URLEntry{{Label: "local", URL: "http://localhost:1"}},
-		live: &livework.Entry{ID: "dev-rule", StartedAt: time.Now(), State: livework.StateRunning, Screen: screen},
+		live: &livework.Entry{ID: "dev-rule", StartedAt: time.Now(), Screen: screen},
 	}
 	out := workTestModel(nil).renderWorkBand(rowItem{kind: rowCommand, work: wd}, 60, 12)
 	if !strings.Contains(out[1], "log") || !strings.Contains(out[2], "url") {
@@ -87,8 +87,8 @@ func TestRenderWorkBandEmptyTailWithoutLiveScreen(t *testing.T) {
 	freshLivework(t)
 	e := &livework.Entry{
 		ID: "test-no-tail-worker", Name: "test-no-tail-worker",
-		State: livework.StateRunning, StartedAt: time.Now(),
-		Via: "terminal", Handle: "pane-1",
+		StartedAt: time.Now(),
+		Via:       "terminal", Handle: "pane-1",
 	}
 
 	mm := workTestModel(nil)
@@ -116,8 +116,8 @@ func TestRenderWorkBandAnsiStrippedAndTruncated(t *testing.T) {
 	screen := hostedScreen(t, "\x1b[31mred error\x1b[0m\n"+strings.Repeat("x", 200)+"\n")
 	e := &livework.Entry{
 		ID: "test-ansi-worker", Name: "test-ansi-worker",
-		State: livework.StateRunning, StartedAt: time.Now(),
-		Screen: screen,
+		StartedAt: time.Now(),
+		Screen:    screen,
 	}
 
 	mm := workTestModel(nil)
@@ -291,7 +291,7 @@ func TestRenderWorkBandNoBlankRowBetweenTailLines(t *testing.T) {
 	screen := hostedScreen(t, "alpha\r\nbeta\r\ngamma\r\n")
 	e := &livework.Entry{
 		ID: "test-crlf-worker", Name: "test-crlf-worker",
-		State: livework.StateRunning, StartedAt: time.Now(), Screen: screen,
+		StartedAt: time.Now(), Screen: screen,
 	}
 
 	mm := workTestModel(nil)

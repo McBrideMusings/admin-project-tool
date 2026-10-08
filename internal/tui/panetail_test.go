@@ -29,7 +29,7 @@ func launcherBandModel(t *testing.T) Model {
 	mm.width, mm.height = 96, 30
 	if err := livework.Default.Add(&livework.Entry{
 		ID: "dev", Name: "dev", Handle: "pane-7", Via: "terminal",
-		State: livework.StateRunning, StartedAt: time.Now(),
+		StartedAt: time.Now(),
 	}); err != nil {
 		t.Fatal(err)
 	}

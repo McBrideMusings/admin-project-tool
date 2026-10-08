@@ -92,12 +92,13 @@ func TestCursorWrapsPastGroupRow(t *testing.T) {
 func TestRunningCommandRowShowsStateElapsedActivityOnItsOwnRow(t *testing.T) {
 	freshLivework(t)
 	entry := &livework.Entry{
-		ID: "build", Name: "build", State: livework.StateRunning,
-		Activity: "compiling host.go", Handle: "pty-1", StartedAt: time.Now().Add(-30 * time.Second),
+		ID: "build", Name: "build",
+		Handle: "pty-1", StartedAt: time.Now().Add(-30 * time.Second),
 	}
 	if err := livework.Default.Add(entry); err != nil {
 		t.Fatalf("Add(%s): %v", entry.ID, err)
 	}
+	livework.Default.SetActivity(entry.ID, "compiling host.go")
 	wd := &workRowData{cmdName: "build", cmdDesc: "build it", cmdKind: "shell", live: entry}
 	row := rowItem{kind: rowCommand, work: wd}
 
@@ -161,12 +162,13 @@ func listContentWidth(width, _ int) int {
 func TestNameColumnAlignsAcrossRowKindsAndGeometries(t *testing.T) {
 	freshLivework(t)
 	entry := &livework.Entry{
-		ID: "target-live", Name: "target-live", State: livework.StateRunning,
-		Activity: "doing the thing", Handle: "pty-align", StartedAt: time.Now(),
+		ID: "target-live", Name: "target-live",
+		Handle: "pty-align", StartedAt: time.Now(),
 	}
 	if err := livework.Default.Add(entry); err != nil {
 		t.Fatalf("Add(%s): %v", entry.ID, err)
 	}
+	livework.Default.SetActivity(entry.ID, "doing the thing")
 
 	groupWD := &workRowData{cmdName: "deploy", cmdDesc: "shipit-desc", cmdKind: "widgetlabel", targets: []string{"a", "b"}}
 	flatWD := &workRowData{cmdName: "build", cmdDesc: "buildit-desc", cmdKind: "widgetlabel"}

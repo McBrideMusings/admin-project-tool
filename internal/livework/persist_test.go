@@ -42,7 +42,7 @@ func TestSyncShowsAnEntryAnotherProcessAdded(t *testing.T) {
 	if !ok {
 		t.Fatal("b does not see the worker a added")
 	}
-	if e.State != StateRunning || e.Handle != "w1:p2" || e.Worker == nil || e.Worker.Worktree != "/wt/fix-it" {
+	if e.state != StateRunning || e.Handle != "w1:p2" || e.Worker == nil || e.Worker.Worktree != "/wt/fix-it" {
 		t.Fatalf("loaded entry = %+v, worker %+v", e, e.Worker)
 	}
 	if got := strings.Join(*rebuilt, ","); got != "worktree-fix-it@w1:p2" {
@@ -210,8 +210,8 @@ func TestSyncDoesNotReviveAnEntryThisProcessEnded(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.Sync("/repo")
-	if e, _ := a.Get("w"); e.Handle != "h2" || e.State != StateRunning {
-		t.Fatalf("re-dispatched entry = %s %s, want h2 running", e.Handle, e.State)
+	if e, _ := a.Get("w"); e.Handle != "h2" || e.state != StateRunning {
+		t.Fatalf("re-dispatched entry = %s %s, want h2 running", e.Handle, e.state)
 	}
 }
 
