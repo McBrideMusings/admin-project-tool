@@ -163,6 +163,12 @@ type Manifest struct {
 	Logs   map[string]LogSource
 	Guards map[string]Guard
 
+	// EnvRequires is [env].requires: every environment variable the project
+	// needs set (non-empty) before any command runs — usually a secret its
+	// .env supplies. Archetypes and the project union their lists.
+	// MissingEnv answers which are unset; `admin check` and runSteps both ask.
+	EnvRequires []string
+
 	// Keys carries the raw top-level [keys.<row-kind>] table (ADR-0018) —
 	// each row kind maps a key name to a command name. Kept raw (like the
 	// archetype-specific tables above) because internal/manifest owns only
@@ -241,7 +247,7 @@ var knownTopLevelKeys = map[string]bool{
 	"go": true, "go_dist": true, "raylib": true, "worktree": true, "launchd": true, "electron": true,
 	"keys":      true,
 	"worktrees": true, "beads": true, "workflow": true, "populate": true,
-	"terminal": true,
+	"terminal": true, "env": true,
 	// Obsolete under interpreter mode (ADR-0006); tolerated silently.
 	"generator_commit": true,
 }
@@ -277,6 +283,7 @@ var nonSettingsTopLevelKeys = map[string]bool{
 	"beads":            true,
 	"workflow":         true,
 	"terminal":         true,
+	"env":              true,
 }
 
 // WorktreesKeys are the keys accepted by the [worktrees] table.
@@ -288,6 +295,9 @@ var WorktreeHookKeys = map[string]bool{"post_create": true, "post_start": true, 
 
 // BeadsKeys are the keys accepted by the [beads] table.
 var BeadsKeys = map[string]bool{"columns": true}
+
+// EnvKeys are the keys accepted by the [env] table.
+var EnvKeys = map[string]bool{"requires": true}
 
 // WorkflowKeys are the keys accepted by the [workflow] table.
 var WorkflowKeys = map[string]bool{"ceiling": true}
@@ -535,6 +545,10 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 		}
 	}
 	if err := checkWorktreeHooks(m.Worktrees["hooks"], source); err != nil {
+		return nil, err
+	}
+
+	if m.EnvRequires, err = parseEnv(data, source); err != nil {
 		return nil, err
 	}
 

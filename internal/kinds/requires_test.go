@@ -218,3 +218,38 @@ func TestRunCommandPreflightExemptForDeclaredCommand(t *testing.T) {
 	}
 	assertFileExists(t, dir, "ran.txt")
 }
+
+// TestRunCommandEnvRequiresBlocksBeforeAnyStepRuns: a name in [env].requires
+// that is unset refuses the command before its first step, and the error
+// names the variable; a preflight = false command runs anyway.
+func TestRunCommandEnvRequiresBlocksBeforeAnyStepRuns(t *testing.T) {
+	t.Cleanup(guards.ResetPreflight)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	guards.ResetPreflight()
+	t.Setenv("ADMIN_TEST_REQUIRED_SECRET", "")
+
+	m := &manifest.Manifest{
+		EnvRequires: []string{"ADMIN_TEST_REQUIRED_SECRET"},
+		Custom: map[string]manifest.Command{
+			"build": {Steps: []string{"step"}},
+			"kill":  {Steps: []string{"step"}, Preflight: false, HasPreflight: true},
+		},
+		Actions: map[string]manifest.Action{
+			"step": {"kind": "shell", "run": "touch ran.txt"},
+		},
+	}
+	r := NewRegistry()
+	r.MustRegister("shell", makeShell)
+
+	err := RunCommandInline(m, r, "build", nil)
+	if err == nil || !strings.Contains(err.Error(), "ADMIN_TEST_REQUIRED_SECRET") {
+		t.Fatalf("RunCommandInline(build) = %v, want an error naming ADMIN_TEST_REQUIRED_SECRET", err)
+	}
+	assertFileMissing(t, dir, "ran.txt")
+
+	if err := RunCommandInline(m, r, "kill", nil); err != nil {
+		t.Fatalf("RunCommandInline(kill) = %v, want nil — kill declares preflight = false", err)
+	}
+	assertFileExists(t, dir, "ran.txt")
+}

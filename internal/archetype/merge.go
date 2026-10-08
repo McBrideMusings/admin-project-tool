@@ -148,6 +148,7 @@ func merge(dst, src *manifest.Manifest, srcLabel string, isManifest bool, log *[
 	dst.Modules = mergeStringSet(dst.Modules, src.Modules)
 	dst.ExcludeModules = mergeStringSet(dst.ExcludeModules, src.ExcludeModules)
 	dst.HideCommands = mergeStringSet(dst.HideCommands, src.HideCommands)
+	dst.EnvRequires = mergeStringSet(dst.EnvRequires, src.EnvRequires)
 
 	// A non-empty Order REPLACES dst's outright: the last archetype/manifest
 	// to declare an order wins rather than being appended to.

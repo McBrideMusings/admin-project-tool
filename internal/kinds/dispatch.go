@@ -405,7 +405,8 @@ func launchCommand(m *manifest.Manifest, name string, args []string, env []strin
 // requires before every command, skipped when the command itself declares
 // `preflight = false` (admin-tlhw.3 — no name is hardcoded here) and
 // memoized so a multi-step command pays for it once per invocation, not
-// once per step — plus the ADR-0003 pure-routing check, the empty-steps
+// once per step — then the [env].requires check under the same exemption,
+// plus the ADR-0003 pure-routing check, the empty-steps
 // check, declared-order execution, stop-at-first-failure, and the error
 // wrapping that names the command. Every step dispatches through RunAction,
 // which never reaches the launcher.
@@ -417,6 +418,11 @@ func runSteps(m *manifest.Manifest, r *Registry, name string, args []string) err
 	exempt := cmd.HasPreflight && !cmd.Preflight
 	if err := guards.RunGlobalPreflight(exempt); err != nil {
 		return err
+	}
+	if !exempt {
+		if err := manifest.CheckEnvRequires(m.EnvRequires); err != nil {
+			return fmt.Errorf("command %q: %w", name, err)
+		}
 	}
 	if err := checkPureRouting(name, cmd); err != nil {
 		return err

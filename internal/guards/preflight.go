@@ -19,9 +19,11 @@ type preflightCheck func() (bool, string)
 // add a check by
 // appending its func() (bool, string) here. Per ADR-0005 the bar for adding
 // one is narrow: it must guard the interpreter's own ability to run project
-// code at all, not one action.
+// code at all, not one action — or, for dotenv-ignored, keep a run from
+// sitting one commit away from publishing the project's secrets.
 var preflightChecks = []preflightCheck{
 	func() (bool, string) { return depsFreshCheck("") },
+	func() (bool, string) { return dotenvIgnoredCheck("") },
 }
 
 var (

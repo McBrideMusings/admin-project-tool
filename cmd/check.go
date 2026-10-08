@@ -100,6 +100,9 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	if err := checkConfigEnvRefs(m); err != nil {
 		problems = append(problems, err)
 	}
+	if err := manifest.CheckEnvRequires(m.EnvRequires); err != nil {
+		problems = append(problems, validate.Wrap(err))
+	}
 	shadows, err := checkRowKeys(m)
 	if err != nil {
 		problems = append(problems, validate.Wrap(err))
