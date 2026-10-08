@@ -614,10 +614,11 @@ func BranchHeads(ctx context.Context, dir string) (string, error) {
 // commit each points at, one "<oid>\t<refname>" line each. Every PR merge moves
 // its base branch, squash merges and stacked PRs included, so a changed answer
 // means a PR may have merged. It uses the git protocol, not the GitHub API, so it
-// spends no API quota. It never prompts for credentials: a remote that needs them
-// is an error.
+// spends no API quota. It never prompts: askPass=true answers git's own credential
+// prompt with nothing, and BatchMode stops ssh asking for a key passphrase on the
+// terminal the dashboard is drawing on. A remote that needs either is an error.
 func RemoteHeads(ctx context.Context, dir string) (string, error) {
-	out, err := runner(ctx, dir, "-c", "core.askPass=true", "ls-remote", "--heads", "origin")
+	out, err := runner(ctx, dir, "-c", "core.askPass=true", "-c", "core.sshCommand=ssh -o BatchMode=yes", "ls-remote", "--heads", "origin")
 	if err != nil {
 		return "", err
 	}

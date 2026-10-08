@@ -177,7 +177,7 @@ func TestCommandArgv(t *testing.T) {
 			name: "RemoteHeads asks origin without prompting",
 			out:  []string{"abc\trefs/heads/main"},
 			call: func(ctx context.Context) { RemoteHeads(ctx, "/repo") },
-			want: []call{rd("-c", "core.askPass=true", "ls-remote", "--heads", "origin")},
+			want: []call{rd("-c", "core.askPass=true", "-c", "core.sshCommand=ssh -o BatchMode=yes", "ls-remote", "--heads", "origin")},
 		},
 		{
 			name: "BranchNote",
