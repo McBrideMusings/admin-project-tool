@@ -543,10 +543,14 @@ const portHolderRetryBudget = 1 * time.Second
 // PortFree's bind() probe already sees the port busy gets another look
 // before NukeDevProcesses skips that port's kill.
 //
-// portHoldersWithRetry polls every 50ms, up to budget, stopping as soon as
-// a holder turns up, PortFree(port) reports the port is actually free after
-// all, or the budget is spent — never a blind sleep, and never entered at
-// all for a port PortFree already sees as free.
+// portHoldersWithRetry polls every 50ms, stopping as soon as a holder turns
+// up, PortFree(port) reports the port is actually free after all, or an
+// attempt ends past budget — never a blind sleep, and never entered at all
+// for a port PortFree already sees as free. budget decides whether another
+// attempt starts; it does not cut one short. One attempt can take 2s per
+// external lookup PortHolders tries (fuser, netstat, lsof) plus 2s for the
+// ProjectDevHolders fallback, so the worst case is budget plus one such
+// attempt, not budget.
 func portHoldersWithRetry(port int, projectRoot string, budget time.Duration) []Holder {
 	deadline := time.Now().Add(budget)
 	for {
