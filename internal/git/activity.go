@@ -45,7 +45,11 @@ type Activity struct {
 // leaves `.git/logs/refs/heads/<name>` on disk for the next branch of that name to
 // append to. Reading the creation *segment* handles the recreated name; the commit
 // count is a second, cheaper-to-trust confirmation that nothing landed.
-func BranchActivity(ctx context.Context, dir string, branches []BranchInfo) map[string]Activity {
+//
+// base resolves that fork ref for dir (OriginBase fetches first, KnownBase reads
+// only local refs). It runs only when some branch needs confirming, and a ""
+// result skips the commit count, leaving the reflog's answer standing.
+func BranchActivity(ctx context.Context, dir string, branches []BranchInfo, base func(context.Context, string) string) map[string]Activity {
 	out := map[string]Activity{}
 	common, err := runner(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil || common == "" {
@@ -70,12 +74,12 @@ func BranchActivity(ctx context.Context, dir string, branches []BranchInfo) map[
 	}
 	// No default branch means there is no fork ref to count against; the reflog
 	// segment stands alone rather than disqualifying every branch in the repo.
-	base := OriginBase(ctx, dir)
-	if base == "" {
+	fork := base(ctx, dir)
+	if fork == "" {
 		return out
 	}
 	for _, name := range candidates {
-		if !zeroAhead(ctx, dir, base, name) {
+		if !zeroAhead(ctx, dir, fork, name) {
 			a := out[name]
 			a.NeverCommitted = false
 			out[name] = a

@@ -216,7 +216,7 @@ func loadLocalCmd(ctx context.Context, repoRoot, checkout, current, def string) 
 		// workspace around it, and these are what tell the two apart.
 		gone, fullyPushed := git.UpstreamState(d.branches)
 		mergedLocal, _ := git.MergedIntoDefault(ctx, checkout, def)
-		activity := git.BranchActivity(ctx, checkout, d.branches)
+		activity := git.BranchActivity(ctx, checkout, d.branches, forkBaseFn)
 		d.signals = map[string]gitSignals{}
 		d.touched = map[string]time.Time{}
 		for _, br := range d.branches {
@@ -345,17 +345,20 @@ func againstDefault(ctx context.Context, dir string, br git.BranchInfo, def stri
 	return git.AheadBehind(ctx, dir, br.Name, def)
 }
 
-// loadRemoteFn, fetchAllFn, fetchPruneFn and fetchIdentityFn are the seams a
-// headless caller (show_test.go, via the exported UseStaticRemote in
-// remoteseam.go) overrides to render the dashboard with no `gh` round trip,
-// no `git fetch`, and no on-disk cache read keyed by nwo. Only
-// UseStaticRemote overrides them, and it restores them on return, so the real
-// program's behaviour is unchanged.
+// loadRemoteFn, fetchAllFn, fetchPruneFn, fetchIdentityFn and forkBaseFn are
+// the seams a headless caller (show_test.go, via the exported UseStaticRemote
+// in remoteseam.go) overrides to render the dashboard with no `gh` round trip,
+// no `git fetch`, and no on-disk cache read keyed by nwo. forkBaseFn is the
+// local reload's one network call: BranchActivity's `git fetch origin
+// <default>` before confirming a branch is empty. Only UseStaticRemote
+// overrides them, and it restores them on return, so the real program's
+// behaviour is unchanged.
 var (
 	loadRemoteFn    = data.Load
 	fetchAllFn      = data.FetchAll
 	fetchPruneFn    = git.FetchPrune
 	fetchIdentityFn = data.FetchIdentity
+	forkBaseFn      = git.OriginBase
 )
 
 // identityMsg carries who `gh` says you are (data.FetchIdentity). id is the zero

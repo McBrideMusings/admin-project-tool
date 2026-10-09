@@ -43,7 +43,7 @@ func TestBranchActivitySeparatesEmptyFromMerged(t *testing.T) {
 		t.Fatalf("precondition: expected both branches merged into main, got %v", merged)
 	}
 
-	act := BranchActivity(context.Background(), dir, branches)
+	act := BranchActivity(context.Background(), dir, branches, KnownBase)
 	if !act["fresh-empty"].NeverCommitted {
 		t.Error("a branch created and never committed to did not report NeverCommitted — it would read as merged work")
 	}
@@ -73,7 +73,7 @@ func TestCheckingOutAnEmptyBranchLeavesItsReflogAlone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LocalBranches: %v", err)
 	}
-	if !BranchActivity(context.Background(), dir, branches)["empty"].NeverCommitted {
+	if !BranchActivity(context.Background(), dir, branches, KnownBase)["empty"].NeverCommitted {
 		t.Error("checking a branch out counted as work on it; NeverCommitted must survive checkouts")
 	}
 }
@@ -112,7 +112,7 @@ func TestReusedBranchNameReadsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LocalBranches: %v", err)
 	}
-	act := BranchActivity(context.Background(), dir, branches)
+	act := BranchActivity(context.Background(), dir, branches, KnownBase)
 	if !act["reused"].NeverCommitted {
 		t.Error("a branch created under a name whose old reflog entries survived did not report NeverCommitted — the stale segment disqualified the name")
 	}
@@ -141,7 +141,7 @@ func TestBranchStartedAtExistingWorkIsNotEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LocalBranches: %v", err)
 	}
-	if BranchActivity(context.Background(), dir, branches)["forked-at-work"].NeverCommitted {
+	if BranchActivity(context.Background(), dir, branches, KnownBase)["forked-at-work"].NeverCommitted {
 		t.Error("a branch created at an unmerged commit reported NeverCommitted — its reflog holds only a creation entry, so the commit count is what must catch it")
 	}
 }

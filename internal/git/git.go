@@ -913,6 +913,21 @@ func OriginBase(ctx context.Context, dir string) string {
 	// Best effort: refresh origin/<default> so we fork from current origin, not a
 	// stale snapshot. Offline or no-origin repos just fork from what's known.
 	_, _ = runner(ctx, dir, "fetch", "origin", def)
+	return knownBase(ctx, dir, def)
+}
+
+// KnownBase is OriginBase without the fetch: "origin/<default>" when that
+// remote-tracking ref already exists locally, the local default branch name
+// otherwise, or "" when there is no default branch. It runs no network command.
+func KnownBase(ctx context.Context, dir string) string {
+	def := DefaultBranch(ctx, dir)
+	if def == "" {
+		return ""
+	}
+	return knownBase(ctx, dir, def)
+}
+
+func knownBase(ctx context.Context, dir, def string) string {
 	if BranchExistsRemote(ctx, dir, def) {
 		return "origin/" + def
 	}

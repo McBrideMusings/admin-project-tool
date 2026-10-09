@@ -38,7 +38,7 @@ func TestMain(m *testing.M) {
 	restoreLivework := livework.UseRegistry(livework.NewSharedRegistry(filepath.Join(dir, "livework")))
 	// No test here is about the remote: every Frame/Init answers from an empty
 	// Remote — no on-disk cache read, no `gh`, no `git fetch --prune`, no
-	// identity lookup. The cache read reports a hit, so a model has data before
+	// `git fetch origin <default>` from the local reload, no identity lookup. The cache read reports a hit, so a model has data before
 	// its first sync. A test that needs a miss or particular data sets its own.
 	restoreRemote := UseStaticRemote(data.Remote{})
 	code := m.Run()

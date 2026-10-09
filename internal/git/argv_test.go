@@ -318,6 +318,15 @@ func TestCommandArgv(t *testing.T) {
 			},
 		},
 		{
+			name: "KnownBase reads the default branch's refs without fetching",
+			out:  []string{"refs/remotes/origin/main"},
+			call: func(ctx context.Context) { KnownBase(ctx, "/repo") },
+			want: []call{
+				rd("symbolic-ref", "refs/remotes/origin/HEAD"),
+				rd("show-ref", "--verify", "--quiet", "refs/remotes/origin/main"),
+			},
+		},
+		{
 			name: "FetchBranch",
 			call: func(ctx context.Context) { FetchBranch(ctx, "/repo", "feat/x") },
 			want: []call{mut("fetch", "origin", "feat/x")},
@@ -364,7 +373,7 @@ func TestCommandArgv(t *testing.T) {
 			name: "BranchActivity locates the reflogs in the common git dir",
 			out:  []string{"/repo/.git"},
 			call: func(ctx context.Context) {
-				BranchActivity(ctx, "/repo", []BranchInfo{{Name: "feat/x"}})
+				BranchActivity(ctx, "/repo", []BranchInfo{{Name: "feat/x"}}, OriginBase)
 			},
 			want: []call{rd("rev-parse", "--path-format=absolute", "--git-common-dir")},
 		},
@@ -439,6 +448,7 @@ var coveredCommands = map[string]bool{
 	"FirstAuthor":              true,
 	"CountUnpushed":            true,
 	"ContainingRemoteBranches": true,
+	"KnownBase":                true,
 	"LastSubject":              true,
 	"LocalBranches":            true,
 	"MergedIntoDefault":        true,
