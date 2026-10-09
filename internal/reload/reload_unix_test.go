@@ -331,3 +331,58 @@ func TestRunWithReloadSIGUSR1RestartsTheChildProcess(t *testing.T) {
 		t.Fatal("RunWithReload did not return after SIGTERM")
 	}
 }
+
+// TestKillAndWaitReachesAProcessForkedDuringTheGroupKill proves the teardown
+// signal reaches a process the child forks while kill(-pgid) is in flight.
+// darwin does not deliver a process-group signal to a child whose fork is
+// still in progress, so such a child survives the group kill, keeps the
+// output pipe open, and c.Wait blocks until killAndWait's 5s SIGKILL
+// fallback: Ctrl-C or SIGTERM ignored for 5s.
+// The shell here forks in a tight loop, so a fork is in flight at nearly
+// every kill.
+//
+// MUTATION EVIDENCE: make killAndWait send only kill(-pgid, sig) and this test
+// fails — a round takes ~5s instead of returning well under the 2s bound.
+func TestKillAndWaitReachesAProcessForkedDuringTheGroupKill(t *testing.T) {
+	for round := 0; round < 5; round++ {
+		marker := filepath.Join(t.TempDir(), "forking")
+		c := exec.Command("/bin/sh", "-c", "echo x > "+marker+"; while :; do sleep 5 & done")
+		c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		var out bytes.Buffer
+		c.Stdout = &out
+		if err := c.Start(); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		pgid := c.Process.Pid
+		t.Cleanup(func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
+		exitCh := make(chan error, 1)
+		go func() { exitCh <- c.Wait() }()
+
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(marker); err == nil {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		time.Sleep(30 * time.Millisecond)
+
+		start := time.Now()
+		late := killAndWait(c, exitCh, syscall.SIGTERM)
+		t.Logf("round %d: %d pid(s) joined the group after the first read", round, len(late))
+		if took := time.Since(start); took > 2*time.Second {
+			t.Fatalf("round %d: killAndWait took %v, want under 2s — a process forked during the group kill survived it", round, took)
+		}
+		// Signalled members can still be exiting when Wait returns; give
+		// them a second to leave the group.
+		var members map[int]bool
+		for wait := time.Now().Add(time.Second); time.Now().Before(wait); time.Sleep(10 * time.Millisecond) {
+			if members, _ = groupMembers(pgid); len(members) == 0 {
+				break
+			}
+		}
+		if len(members) > 0 {
+			t.Fatalf("round %d: group %d still has %v a second after killAndWait returned", round, pgid, members)
+		}
+	}
+}

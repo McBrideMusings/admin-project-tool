@@ -406,6 +406,14 @@ const (
 // (SIGINT/SIGTERM/Ctrl-C). On a reload or stop outcome it tears the child's
 // whole process group down before returning.
 func waitForExitOrSignal(c *exec.Cmd, sigCh <-chan os.Signal, keys <-chan byte, exitCh <-chan error, opts Options) waitOutcome {
+	// teardown tears the child's group down and records in the action's log
+	// any member that joined the group after killAndWait's first read.
+	teardown := func(sig syscall.Signal) {
+		late := killAndWait(c, exitCh, sig)
+		if len(late) > 0 && opts.LogFn != nil {
+			opts.LogFn(fmt.Sprintf("reload: %v teardown signalled pids %v, which joined the process group after it started\n", sig, late))
+		}
+	}
 	for {
 		select {
 		case err := <-exitCh:
@@ -417,13 +425,13 @@ func waitForExitOrSignal(c *exec.Cmd, sigCh <-chan os.Signal, keys <-chan byte, 
 				if opts.Info != nil {
 					opts.Info("Reload requested — restarting...")
 				}
-				killAndWait(c, exitCh, syscall.SIGTERM)
+				teardown(syscall.SIGTERM)
 				return outcomeReload
 			case syscall.SIGINT:
-				killAndWait(c, exitCh, syscall.SIGINT)
+				teardown(syscall.SIGINT)
 				return outcomeSigint
 			case syscall.SIGTERM:
-				killAndWait(c, exitCh, syscall.SIGTERM)
+				teardown(syscall.SIGTERM)
 				return outcomeSigterm
 			}
 		case b, ok := <-keys:
@@ -435,36 +443,88 @@ func waitForExitOrSignal(c *exec.Cmd, sigCh <-chan os.Signal, keys <-chan byte, 
 				if opts.Info != nil {
 					opts.Info("Reload requested — restarting...")
 				}
-				killAndWait(c, exitCh, syscall.SIGTERM)
+				teardown(syscall.SIGTERM)
 				return outcomeReload
 			// Cbreak mode leaves ISIG on, so a terminal Ctrl-C normally
 			// arrives on sigCh as a real SIGINT and never gets here. This
 			// stays for the case where 0x03 is piped/typed into a stdin
 			// whose ISIG is off.
 			case b == 0x03:
-				killAndWait(c, exitCh, syscall.SIGINT)
+				teardown(syscall.SIGINT)
 				return outcomeSigint
 			}
 		}
 	}
 }
 
+// sweepInterval is how often killAndWait re-reads the process group while it
+// waits, looking for members that have not had the signal yet.
+const sweepInterval = 10 * time.Millisecond
+
 // killAndWait sends sig to c's whole process group, then waits up to 5s for
-// it to exit before escalating to SIGKILL.
-func killAndWait(c *exec.Cmd, exitCh <-chan error, sig syscall.Signal) {
+// it to exit before escalating to SIGKILL. It returns the pids that joined
+// the group after the first read and were signalled when a later read found
+// them.
+//
+// On darwin a group kill is not atomic against a fork in progress: a child
+// the shell forks while kill(-pgid) runs is not signalled, outlives its
+// parent, and holds the output pipe open, so c.Wait — and with it a Ctrl-C,
+// SIGTERM or reload — stalls until the SIGKILL fallback. Re-sending a group
+// signal to whoever turns up later cannot fix that, since some of those did
+// get it and some tools treat a second SIGINT as "force quit now". So where
+// the group can be read, killAndWait never signals the group: it signals each
+// member by pid, once, and keeps re-reading the group until the child exits,
+// so a member forked at any point before then gets the signal exactly once.
+// A member still being created by fork is left for the next read, because a
+// signal sent to it can be lost.
+func killAndWait(c *exec.Cmd, exitCh <-chan error, sig syscall.Signal) (late []int) {
 	if c.Process == nil {
-		return
+		return nil
 	}
 	pgid, err := syscall.Getpgid(c.Process.Pid)
 	if err != nil {
 		pgid = c.Process.Pid
 	}
-	_ = syscall.Kill(-pgid, sig)
-	select {
-	case <-exitCh:
-	case <-time.After(5 * time.Second):
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-		<-exitCh
+
+	members, perPid := groupMembers(pgid)
+	if !perPid {
+		_ = syscall.Kill(-pgid, sig)
+	}
+	signalled := map[int]bool{}
+	signalNew := func(members map[int]bool, sig syscall.Signal) (fresh []int) {
+		for pid, idle := range members {
+			if !idle && !signalled[pid] {
+				signalled[pid] = true
+				_ = syscall.Kill(pid, sig)
+				fresh = append(fresh, pid)
+			}
+		}
+		return fresh
+	}
+	signalNew(members, sig)
+
+	tick := time.NewTicker(sweepInterval)
+	defer tick.Stop()
+	escalate := time.NewTimer(5 * time.Second)
+	defer escalate.Stop()
+	for {
+		select {
+		case <-exitCh:
+			return late
+		case <-tick.C:
+			if members, ok := groupMembers(pgid); perPid && ok {
+				late = append(late, signalNew(members, sig)...)
+			}
+		case <-escalate.C:
+			// A second SIGKILL is harmless, so the escalation signals the
+			// group and every member again.
+			sig = syscall.SIGKILL
+			signalled = map[int]bool{}
+			_ = syscall.Kill(-pgid, sig)
+			if members, ok := groupMembers(pgid); perPid && ok {
+				signalNew(members, sig)
+			}
+		}
 	}
 }
 
