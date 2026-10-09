@@ -88,10 +88,7 @@ func NewTarget(action manifest.Action, id string) Target {
 func NewExecTarget(id, exec string, words []string) Target {
 	run := exec
 	for _, w := range words {
-		// Always quoted: shellQuote leaves "#12" and "=ls" bare, and a bare
-		// "#12" comments out the rest of the line under sh while "=ls" expands
-		// to /bin/ls under zsh, so the prompt would not reach the agent as typed.
-		run += " '" + strings.ReplaceAll(w, "'", `'\''`) + "'"
+		run += " " + shellQuote(w)
 	}
 	return Target{Name: id, Run: run}
 }

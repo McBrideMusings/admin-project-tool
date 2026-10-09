@@ -54,12 +54,12 @@ func TestWorktreeExecTakesPromptAfterDash(t *testing.T) {
 	}
 }
 
-// A word that is bare to shellQuote ("#12", "=ls") still must reach the agent
-// as one literal argument: "#12" would otherwise comment out the rest of the
-// line under sh.
+// Each prompt word reaches the agent as one literal argument: "#12" would
+// otherwise comment out the rest of the line under sh, and "=ls" expand to
+// /bin/ls under zsh.
 func TestExecTargetQuotesEveryWord(t *testing.T) {
 	got := kinds.NewExecTarget("feat", "claude", []string{"see", "#12", "=ls", "it's"}).Run
-	want := `claude 'see' '#12' '=ls' 'it'\''s'`
+	want := `claude see '#12' '=ls' 'it'\''s'`
 	if got != want {
 		t.Fatalf("Run = %q, want %q", got, want)
 	}

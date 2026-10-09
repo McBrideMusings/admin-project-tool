@@ -159,16 +159,24 @@ func orDefault(s, def string) string {
 
 // shellQuote wraps s in single quotes for safe inclusion in a /bin/sh -c
 // command line, escaping any single quote it contains — used for
-// shell-passthrough argument forwarding and kind="go"'s -o path.
+// shell-passthrough argument forwarding and kind="go"'s -o path. A word is
+// left bare only when every byte is in shellSafe and it does not start with
+// "=" (zsh expands a leading "=cmd" to the command's path); anything else —
+// "#" starting a comment, a glob, a non-ASCII byte — is quoted.
 func shellQuote(s string) string {
 	if s == "" {
 		return "''"
 	}
-	if !strings.ContainsAny(s, "\t\n '\"$&*()[]{}|;<>?!~`\\") {
+	if s[0] != '=' && strings.Trim(s, shellSafe) == "" {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
+
+// shellSafe is every byte shellQuote leaves bare: none of them means anything
+// to sh, bash or zsh in an argument. A bare "FOO=bar" in command position is
+// still an assignment; every caller quoting a command passes a path.
+const shellSafe = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-"
 
 // cfgString reads a string-valued key off a raw config table (as decoded
 // from TOML into map[string]any by a [xxx_config]-style manifest table),
