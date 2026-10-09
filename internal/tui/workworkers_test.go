@@ -15,7 +15,7 @@ import (
 )
 
 // workersFixtureModel builds a Model on the Workers tab with 3 live workers
-// (running/waiting/failed, matching swarm.txt's own fixture) — enough rows
+// (two running, one waiting) — enough rows
 // to exercise the cursor without needing to scroll.
 func workersFixtureModel(t *testing.T) (Model, []rowItem) {
 	t.Helper()
@@ -45,10 +45,9 @@ func workersFixtureModel(t *testing.T) (Model, []rowItem) {
 		}
 	}
 	livework.Default.SetState("admin-3rgp.7", livework.StateWaiting, nil)
-	livework.Default.SetState("admin-3rgp.33", livework.StateFailed, nil)
 	livework.Default.SetActivity("admin-3rgp.36", "writing internal/lua/host.go")
 	livework.Default.SetActivity("admin-3rgp.7", "needs input: root command name")
-	livework.Default.SetActivity("admin-3rgp.33", "go test ./internal/detect FAIL")
+	livework.Default.SetActivity("admin-3rgp.33", "running go test ./internal/detect")
 
 	mm := workTestModel(m)
 	mm.focus = focusBody

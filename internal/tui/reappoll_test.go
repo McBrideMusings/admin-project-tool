@@ -38,11 +38,11 @@ func TestReapWorkersCmdReapsOnlyRunningWorkers(t *testing.T) {
 	var mu sync.Mutex
 	var reaped []string
 	prev := reapWorkerFn
-	reapWorkerFn = func(_ context.Context, _ string, e *livework.Entry, _ config.Terminal) bool {
+	reapWorkerFn = func(_ context.Context, _ string, e *livework.Entry, _ config.Terminal) (bool, string) {
 		mu.Lock()
 		defer mu.Unlock()
 		reaped = append(reaped, e.ID)
-		return false
+		return false, ""
 	}
 	t.Cleanup(func() { reapWorkerFn = prev })
 
@@ -71,11 +71,11 @@ func TestReapWorkersCmdSkipsOnlyBusyWorker(t *testing.T) {
 	var mu sync.Mutex
 	var reaped []string
 	prev := reapWorkerFn
-	reapWorkerFn = func(_ context.Context, _ string, e *livework.Entry, _ config.Terminal) bool {
+	reapWorkerFn = func(_ context.Context, _ string, e *livework.Entry, _ config.Terminal) (bool, string) {
 		mu.Lock()
 		defer mu.Unlock()
 		reaped = append(reaped, e.ID)
-		return false
+		return false, ""
 	}
 	t.Cleanup(func() { reapWorkerFn = prev })
 
@@ -83,5 +83,39 @@ func TestReapWorkersCmdSkipsOnlyBusyWorker(t *testing.T) {
 
 	if len(reaped) != 1 || reaped[0] != "fast" {
 		t.Errorf("reaped = %v, want [fast]", reaped)
+	}
+}
+
+// Every worker a tick ends comes back as one outcome line for the status
+// line, and a tick that ends none returns no message.
+func TestReapWorkersCmdReportsOutcomes(t *testing.T) {
+	freshLivework(t)
+	for _, id := range []string{"b", "a", "keep"} {
+		e := &livework.Entry{
+			ID: id, Name: id, Kind: "workflow", Handle: "pane-" + id, Via: "terminal",
+			Worker: &livework.WorkerInfo{Branch: "b", Worktree: "/wt"},
+		}
+		if err := livework.Default.Add(e); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { livework.Default.SetState(id, livework.StateExited, nil) })
+	}
+	prev := reapWorkerFn
+	reapWorkerFn = func(_ context.Context, _ string, e *livework.Entry, _ config.Terminal) (bool, string) {
+		if e.ID == "keep" {
+			return false, ""
+		}
+		return true, e.ID + " pane closed"
+	}
+	t.Cleanup(func() { reapWorkerFn = prev })
+
+	msg, ok := reapWorkersCmd("/repo", config.Terminal{})().(reapedMsg)
+	if !ok || len(msg.outcomes) != 2 || msg.outcomes[0] != "a pane closed" || msg.outcomes[1] != "b pane closed" {
+		t.Errorf("msg = %#v, want the two ended workers' outcomes, sorted", msg)
+	}
+
+	reapWorkerFn = func(context.Context, string, *livework.Entry, config.Terminal) (bool, string) { return false, "" }
+	if msg := reapWorkersCmd("/repo", config.Terminal{})(); msg != nil {
+		t.Errorf("msg = %#v, want nil when nothing ended", msg)
 	}
 }

@@ -1,13 +1,15 @@
-// reap.go retires a window worker once it has finished: the dashboard tick
-// calls ReapWorker for every live worker row, and a worker whose work is safe
-// to delete has its pane closed, its worktree and branch removed, and its
-// ceiling slot freed so a queued target starts.
+// reap.go ends a worker's session once it is over: the dashboard tick calls
+// ReapWorker for every running or waiting worker. A worker is a live agent
+// session tasked with something, so its row lasts exactly as long as that
+// session does.
 //
-// What "finished" means comes from the manifest: the action's `done`
-// predicate (exit 0 = finished), or, with no `done`, the launcher pane having
-// gone. What "safe to delete" means does not: the worktree must be clean and
-// the branch must hold no commit origin/main lacks, checked here in Go so no
-// manifest can loosen it.
+// The session is over when its launcher pane has gone (closed by a person, or
+// the agent exited), or when the action's `done` predicate passes, in which
+// case the reaper closes the pane itself. Either way the row ends and the
+// ceiling slot frees. The worktree and branch are a separate question: they
+// are removed only when nothing in them exists outside origin, checked here in
+// Go so no manifest can loosen it; otherwise they stay on disk for the Repo
+// tab, and the reap's outcome says why.
 package kinds
 
 import (
@@ -28,19 +30,12 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/wthooks"
 )
 
-// reapBase is the ref a worker's branch must be fully contained in.
-const (
-	reapBaseBranch = "main"
-	reapBase       = "origin/" + reapBaseBranch
-)
-
 // doneTimeout bounds one done-predicate run, so a wedged predicate reads as
 // "not finished" rather than stalling the tick.
 var doneTimeout = 5 * time.Second
 
 // fetchInterval is the least time between two fetches of one repo's origin
-// by the reaper, so a finished worker that stays unmerged does not trigger a
-// fetch on every dashboard tick.
+// by the reaper, so a run of reaps does not fetch once per worker.
 var fetchInterval = 30 * time.Second
 
 var (
@@ -49,8 +44,8 @@ var (
 )
 
 // fetchOrigin refreshes repoRoot's remote-tracking refs, at most once per
-// fetchInterval. Landing a branch moves origin/main on the remote; without
-// this the local origin/main never learns the branch is merged.
+// fetchInterval. A branch pushed from another machine, or landed on the
+// remote, is on origin before the local tracking refs know it.
 func fetchOrigin(ctx context.Context, repoRoot string) {
 	// Held across the fetch so a concurrent worker waits for fresh refs
 	// instead of re-checking against stale ones.
@@ -63,18 +58,16 @@ func fetchOrigin(ctx context.Context, repoRoot string) {
 	fetchedAt[repoRoot] = time.Now()
 }
 
-// maxNamedIgnored is how many worker-only ignored paths a row note names.
+// maxNamedIgnored is how many worker-only ignored paths a keep reason names.
 const maxNamedIgnored = 3
 
-// ReapDecision is the reap rule over its inputs. A worker that has not
-// finished yields no reason: there is nothing to report about it. A finished
-// worker that is not safe to delete yields the reason it stays. workerOnly is
-// the ignored paths workerSafety found that the primary checkout lacks; when
-// the worktree is dirty because of them, the reason names them.
-func ReapDecision(finished, clean, merged bool, workerOnly []string) (reap bool, reason string) {
+// KeepReason is the removal rule over its inputs: why an ended worker's
+// worktree and branch stay on disk, "" when removing them loses nothing.
+// workerOnly is the ignored paths the primary checkout lacks; unpushed is how
+// many commits exist on no origin ref, and counted is false when that could
+// not be read, which keeps the work.
+func KeepReason(clean bool, workerOnly []string, unpushed int, counted bool) string {
 	switch {
-	case !finished:
-		return false, ""
 	case !clean && len(workerOnly) > 0:
 		named := workerOnly
 		more := ""
@@ -82,13 +75,15 @@ func ReapDecision(finished, clean, merged bool, workerOnly []string) (reap bool,
 			more = fmt.Sprintf(" (+%d more)", len(named)-maxNamedIgnored)
 			named = named[:maxNamedIgnored]
 		}
-		return false, "finished, not removed: worktree has ignored files not in the primary checkout: " + strings.Join(named, ", ") + more
+		return "ignored files not in the primary checkout: " + strings.Join(named, ", ") + more
 	case !clean:
-		return false, "finished, not removed: worktree has uncommitted changes"
-	case !merged:
-		return false, "finished, not removed: branch has commits not on " + reapBase
+		return "uncommitted changes"
+	case !counted:
+		return "could not tell which commits origin holds"
+	case unpushed > 0:
+		return fmt.Sprintf("%d commit(s) on no origin branch", unpushed)
 	}
-	return true, ""
+	return ""
 }
 
 // PaneGone runs a [terminal].status command with ADMIN_HANDLE set to handle.
@@ -123,7 +118,6 @@ var doneInterval = 60 * time.Second
 // the next run is due.
 type doneRun struct {
 	at       time.Time
-	paneGone bool
 	finished bool
 	note     string
 }
@@ -132,16 +126,15 @@ type doneRun struct {
 // so a re-dispatch under the same id starts with no history.
 var doneRuns sync.Map
 
-// doneDue reports whether e's done predicate runs now: it never has, its last
-// run is doneInterval old, or its pane has gone since that run — a worker
-// whose agent just exited is the one most likely to have finished.
-func doneDue(e *livework.Entry, paneGone bool, now time.Time) (last doneRun, due bool) {
+// doneDue reports whether e's done predicate runs now: it never has, or its
+// last run is doneInterval old.
+func doneDue(e *livework.Entry, now time.Time) (last doneRun, due bool) {
 	v, ok := doneRuns.Load(e)
 	if !ok {
 		return doneRun{}, true
 	}
 	last = v.(doneRun)
-	return last, now.Sub(last.at) >= doneInterval || (paneGone && !last.paneGone)
+	return last, now.Sub(last.at) >= doneInterval
 }
 
 // workerPaneGone asks [terminal].status whether e's launcher pane has gone.
@@ -157,33 +150,32 @@ func workerPaneGone(ctx context.Context, e *livework.Entry, t config.Terminal) b
 	return err == nil && gone
 }
 
-// workerFinished reports whether w's work is over. A done predicate that
-// exits nonzero is "not finished"; so is a worker with no done predicate whose
-// pane is still there. note is non-empty when the predicate could not give an
-// answer at all (it timed out or would not start), so the row says why it is
-// not progressing instead of looking merely unfinished. Between runs of the
-// predicate (doneDue) the last run's answer stands.
-func workerFinished(ctx context.Context, repoRoot string, e *livework.Entry, paneGone bool) (finished bool, note string) {
+// workerFinished reports whether a worker whose session is still running has
+// completed its task: its done predicate passed, or its worktree was removed
+// by hand. A worker with no done predicate is never finished this way; its
+// session ends when its pane does. note is non-empty when the predicate could
+// not give an answer at all (it timed out or would not start), so the row says
+// why it is not progressing. Between runs of the predicate (doneDue) the last
+// run's answer stands.
+func workerFinished(ctx context.Context, repoRoot string, e *livework.Entry) (finished bool, note string) {
 	w := e.Worker
 	if workerWorktreeGone(w) {
 		// The done predicate runs in the worktree, so it cannot run at all.
-		// The directory is gone (removed by hand); workerSafety decides
-		// whether the branch is safe to drop.
 		return true, ""
 	}
 	if w.Done == "" {
-		return paneGone, ""
+		return false, ""
 	}
-	last, due := doneDue(e, paneGone, time.Now())
+	last, due := doneDue(e, time.Now())
 	if !due {
 		return last.finished, last.note
 	}
 	start := time.Now()
 	finished, code, note := runDone(ctx, e)
-	doneRuns.Store(e, doneRun{at: start, paneGone: paneGone, finished: finished, note: note})
+	doneRuns.Store(e, doneRun{at: start, finished: finished, note: note})
 	// LogSync prints either the detail or the error, so a run that could not
 	// answer carries its fields inside the error text.
-	detail := fmt.Sprintf("worker=%s target=%s exit=%d finished=%t pane_gone=%t", e.ID, w.Target, code, finished, paneGone)
+	detail := fmt.Sprintf("worker=%s target=%s exit=%d finished=%t", e.ID, w.Target, code, finished)
 	var logErr error
 	if note != "" {
 		logErr = fmt.Errorf("%s: %s", note, detail)
@@ -222,23 +214,24 @@ func workerWorktreeGone(w *livework.WorkerInfo) bool {
 	return os.IsNotExist(err)
 }
 
-// workerSafety reads the facts ReapDecision needs. A fact git cannot report
-// reads as false, the direction that keeps the work. baseKnown is false when
-// reapBase does not resolve at all (no origin remote, never fetched), which
-// is a different problem from a branch that holds commits the base lacks.
-func workerSafety(ctx context.Context, repoRoot string, w *livework.WorkerInfo) (clean, merged, baseKnown bool, workerOnly []string) {
-	if w.Branch == "" {
-		return false, false, true, nil
+// workerKeepReason reads the facts KeepReason needs and returns its answer. A
+// fact git cannot report reads in the direction that keeps the work. Commits
+// are counted from the worktree's HEAD (a detached checkout holds commits no
+// branch names) and from the branch, against every origin ref and the local
+// default branch.
+func workerKeepReason(ctx context.Context, repoRoot string, w *livework.WorkerInfo) string {
+	def := git.DefaultBranch(ctx, repoRoot)
+	if def == "" {
+		return "no default branch to compare against"
 	}
-	if workerWorktreeGone(w) {
-		// Already removed (by a failed earlier reap or by hand): nothing on
-		// disk left to lose.
-		clean = true
-		if !git.BranchExistsLocal(ctx, repoRoot, w.Branch) {
-			// The branch went with it, so there is no work left either.
-			return true, true, true, nil
+	clean := true
+	var workerOnly []string
+	treeGone := workerWorktreeGone(w)
+	if !treeGone {
+		st, err := git.WorkingStatusIgnored(ctx, w.Worktree)
+		if err != nil {
+			return "could not read its git status"
 		}
-	} else if st, err := git.WorkingStatusIgnored(ctx, w.Worktree); err == nil {
 		// Ignored files count: worktree removal deletes a worker-made .env
 		// or build output as surely as tracked work. An ignored path that
 		// also exists in the primary checkout (the seeded admin.toml) is not
@@ -247,18 +240,25 @@ func workerSafety(ctx context.Context, repoRoot string, w *livework.WorkerInfo) 
 		workerOnly = workerOnlyIgnored(repoRoot, st.IgnoredPaths)
 		clean = st.Clean() && len(workerOnly) == 0
 	}
-	baseKnown = git.BranchExistsRemote(ctx, repoRoot, reapBaseBranch)
-	if n, ok := git.CountAheadOf(ctx, repoRoot, reapBase, w.Branch); ok && baseKnown && n == 0 {
-		return clean, true, true, workerOnly
+	count := func() (int, bool) {
+		n, ok := 0, true
+		if !treeGone {
+			h, hok := git.CountUnpushedRev(ctx, w.Worktree, "HEAD", def)
+			n, ok = max(n, h), ok && hok
+		}
+		if w.Branch != "" && git.BranchExistsLocal(ctx, repoRoot, w.Branch) {
+			b, bok := git.CountUnpushed(ctx, repoRoot, w.Branch, def)
+			n, ok = max(n, b), ok && bok
+		}
+		return n, ok
 	}
-	// Not merged as far as the local refs say; origin/main may simply be
-	// stale, so refresh it and ask once more.
-	fetchOrigin(ctx, repoRoot)
-	baseKnown = git.BranchExistsRemote(ctx, repoRoot, reapBaseBranch)
-	if n, ok := git.CountAheadOf(ctx, repoRoot, reapBase, w.Branch); ok && baseKnown {
-		merged = n == 0
+	n, ok := count()
+	if clean && (!ok || n > 0) {
+		// The local tracking refs may simply be stale; refresh and ask again.
+		fetchOrigin(ctx, repoRoot)
+		n, ok = count()
 	}
-	return clean, merged, baseKnown, workerOnly
+	return KeepReason(clean, workerOnly, n, ok)
 }
 
 // regenerableIgnored reports whether an ignored path is a dependency install
@@ -283,148 +283,87 @@ func workerOnlyIgnored(repoRoot string, paths []string) []string {
 	return out
 }
 
-// reapKilled holds the live ids of hosted workers the reaper stopped because
-// they had finished, so their dispatch reports a finished target rather than
-// the killed one a person's x key makes.
-var reapKilled sync.Map
-
-// panesClosed holds the live ids whose pane a reap has already closed.
-var panesClosed sync.Map
-
-// preRemoveVetoed holds, per live entry (one per dispatch, so a later dispatch
-// of the same target starts fresh), when pre_remove last vetoed that
-// worker's reap. The reaper runs every tick, and a hook with side effects
-// (draining a server, releasing a port) must not run once a second while it
-// keeps saying no; it is asked again only after preRemoveRetry.
-var preRemoveVetoed sync.Map
-
-// preRemovePassed holds the live entries whose pre_remove has already passed,
-// so a reap retried after a failed pane kill or worktree removal goes on
-// without running the hook again.
-var preRemovePassed sync.Map
-
-// preRemoveRetry is how long a vetoed reap waits before running pre_remove
-// again. A var so tests can shorten it.
-var preRemoveRetry = 30 * time.Second
-
-// ReapWorker retires e when its worker has finished and its work is safe to
-// delete, reporting whether it did. When the worker finished but the work is
-// not safe, everything stays in place and the reason lands on the entry's
-// Note. Only a worker is ever reaped: an entry without WorkerInfo, or
-// not running or waiting, is left alone.
-func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t config.Terminal) bool {
-	w := e.Worker
-	if w == nil {
-		return false
-	}
-	st, ok := livework.Default.State(e.ID)
-	if !ok || !st.Reapable() {
-		return false
-	}
-	paneGone := workerPaneGone(ctx, e, t)
-	finished, note := workerFinished(ctx, repoRoot, e, paneGone)
-	if !finished {
-		stopped := false
-		if note == "" && w.Done != "" && paneGone {
-			// A worker that declares done is finished only when done passes;
-			// a pane that has gone without it is a worker that died. Leave
-			// the row for a person to inspect and kill.
-			note = "pane closed before done passed"
-			stopped = true
-		}
-		switch {
-		case stopped:
-			livework.Default.SetState(e.ID, livework.StateStopped, nil)
-		case st == livework.StateFinished:
-			livework.Default.SetState(e.ID, livework.StateRunning, nil)
-		}
-		livework.Default.SetNote(e.ID, note)
-		return false
-	}
-	clean, merged, baseKnown, workerOnly := workerSafety(ctx, repoRoot, w)
-	if !baseKnown {
-		holdFinished(e.ID, "finished, not removed: "+reapBase+" does not exist (no origin remote, or never fetched)")
-		return false
-	}
-	reap, reason := ReapDecision(true, clean, merged, workerOnly)
-	if !reap && !merged && workerWorktreeGone(w) {
-		reason = "finished, not removed: worktree is gone and branch has commits not on " + reapBase
-	}
-	if !reap {
-		holdFinished(e.ID, reason)
-		return false
-	}
-	if _, closed := panesClosed.Load(e.ID); !closed {
-		// pre_remove (ADR-0024) can veto, so it runs before the pane closes and
-		// a veto leaves the worker as it was.
-		if !preRemoveAllows(ctx, repoRoot, e) {
-			return false
-		}
-		if err := closeFinishedWorker(ctx, e, t); err != nil {
-			holdFinished(e.ID, "finished, not removed: "+err.Error())
-			return false
-		}
-		// A later tick retrying a failed worktree or branch removal must not
-		// run kill again on a pane that is already closed.
-		panesClosed.Store(e.ID, true)
+// removeWorkerTree removes an ended worker's worktree and local branch when
+// that loses nothing and pre_remove (ADR-0024) allows it. kept is why they
+// stay, "" when both are gone.
+func removeWorkerTree(ctx context.Context, repoRoot string, w *livework.WorkerInfo) (kept string) {
+	if reason := workerKeepReason(ctx, repoRoot, w); reason != "" {
+		return reason
 	}
 	if workerWorktreeGone(w) {
 		// A directory removed without `git worktree remove` stays registered
 		// and keeps git from deleting its branch.
 		if err := git.PruneWorktrees(ctx, repoRoot); err != nil {
-			holdFinished(e.ID, "finished, not removed: worktree: "+err.Error())
-			return false
+			return "pruning its worktree record failed: " + err.Error()
 		}
 	} else {
+		if err := wthooks.PreRemove(git.WithQuiet(ctx), repoRoot, w.Worktree, false); err != nil {
+			var he *wthooks.Error
+			if errors.As(err, &he) {
+				return he.Line()
+			}
+			return err.Error()
+		}
 		if err := git.RemoveWorktree(ctx, repoRoot, w.Worktree, false); err != nil {
-			holdFinished(e.ID, "finished, not removed: worktree: "+err.Error())
-			return false
+			return "removing it failed: " + err.Error()
 		}
 	}
-	// -D, not -d: -d judges "merged" against the main checkout's HEAD, which
-	// may not have pulled yet. workerSafety already proved the branch holds
-	// nothing origin/main lacks.
-	if !git.BranchExistsLocal(ctx, repoRoot, w.Branch) {
-		// Already deleted by hand.
-	} else if err := git.DeleteBranch(ctx, repoRoot, w.Branch, true); err != nil {
-		holdFinished(e.ID, "finished, not removed: branch: "+err.Error())
-		return false
+	// -D, not -d: -d judges "merged" against the main checkout's HEAD.
+	// workerKeepReason already proved origin holds every commit.
+	if w.Branch != "" && git.BranchExistsLocal(ctx, repoRoot, w.Branch) {
+		if err := git.DeleteBranch(ctx, repoRoot, w.Branch, true); err != nil {
+			return "deleting branch " + w.Branch + " failed: " + err.Error()
+		}
 	}
-	panesClosed.Delete(e.ID)
-	preRemoveVetoed.Delete(e)
-	preRemovePassed.Delete(e)
+	return ""
+}
+
+// reapKilled holds the live ids of hosted workers the reaper stopped because
+// they had finished, so their dispatch reports a finished target rather than
+// the killed one a person's x key makes.
+var reapKilled sync.Map
+
+// ReapWorker ends e's session when it is over, reporting whether it did and,
+// when it did, one line saying what happened to the worktree. A session is
+// over when its launcher pane has gone, or when its task is finished
+// (workerFinished), in which case the reaper closes the pane first; a close
+// that fails leaves the worker running with the reason on its row, retried
+// next tick. Only a running or waiting worker is judged.
+func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t config.Terminal) (ended bool, outcome string) {
+	w := e.Worker
+	if w == nil {
+		return false, ""
+	}
+	st, ok := livework.Default.State(e.ID)
+	if !ok || !st.Reapable() {
+		return false, ""
+	}
+	start := time.Now()
+	why := "pane closed"
+	if !workerPaneGone(ctx, e, t) {
+		finished, note := workerFinished(ctx, repoRoot, e)
+		if !finished {
+			livework.Default.SetNote(e.ID, note)
+			return false, ""
+		}
+		if err := closeFinishedWorker(ctx, e, t); err != nil {
+			livework.Default.SetNote(e.ID, "finished, but closing its session failed: "+err.Error())
+			return false, ""
+		}
+		why = "finished"
+	}
+	kept := removeWorkerTree(ctx, repoRoot, w)
 	doneRuns.Delete(e)
 	livework.Default.SetNote(e.ID, "")
 	livework.Default.SetState(e.ID, livework.StateExited, nil)
 	ReleaseWorkerSlot(e.ID)
-	return true
-}
 
-// preRemoveAllows runs pre_remove on the worker's worktree and reports
-// whether the reap may go on. A veto holds the worker with the hook's reason
-// on its row, and for preRemoveRetry after one the hook is not run again: the
-// row keeps the last reason. Once the hook passes it is never run again for e.
-func preRemoveAllows(ctx context.Context, repoRoot string, e *livework.Entry) bool {
-	if _, ok := preRemovePassed.Load(e); ok {
-		return true
+	outcome = fmt.Sprintf("%s %s: worktree and branch removed", e.ID, why)
+	if kept != "" {
+		outcome = fmt.Sprintf("%s %s: worktree left at %s (%s)", e.ID, why, w.Worktree, kept)
 	}
-	if at, ok := preRemoveVetoed.Load(e); ok && time.Since(at.(time.Time)) < preRemoveRetry {
-		return false
-	}
-	err := wthooks.PreRemove(git.WithQuiet(ctx), repoRoot, e.Worker.Worktree, false)
-	if err == nil {
-		preRemoveVetoed.Delete(e)
-		preRemovePassed.Store(e, true)
-		return true
-	}
-	preRemoveVetoed.Store(e, time.Now())
-	reason := err.Error()
-	var he *wthooks.Error
-	if errors.As(err, &he) {
-		reason = he.Line()
-	}
-	holdFinished(e.ID, "finished, not removed: "+reason)
-	return false
+	data.LogSync(filepath.Base(repoRoot), "reap", time.Since(start), outcome, nil)
+	return true, outcome
 }
 
 // closeFinishedWorker stops a finished worker's session: the launcher's kill
@@ -460,12 +399,4 @@ func closeFinishedPane(ctx context.Context, handle string, t config.Terminal) er
 		}
 	}
 	return fmt.Errorf("closing pane %s: %w", handle, killErr)
-}
-
-// holdFinished records why a finished worker was not removed. The worker's
-// work is over, so the row says finished rather than running, and it stays
-// reapable so a later tick retries once the cause clears.
-func holdFinished(id, note string) {
-	livework.Default.SetNote(id, note)
-	livework.Default.SetState(id, livework.StateFinished, nil)
 }

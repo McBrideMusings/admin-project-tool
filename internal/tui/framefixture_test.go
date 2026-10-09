@@ -28,7 +28,7 @@ func fixtureFrame(t *testing.T, name string, keys ...string) string {
 // waiting and failed workers on the Workers tab.
 func TestFrameFixtureSwarmDrawsThreeWorkers(t *testing.T) {
 	out := fixtureFrame(t, "swarm", "2")
-	for _, want := range []string{"admin-3rgp.36", "running", "admin-3rgp.7", "waiting", "admin-3rgp.33", "failed"} {
+	for _, want := range []string{"admin-3rgp.36", "running", "admin-3rgp.7", "waiting"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("swarm frame lacks %q:\n%s", want, out)
 		}

@@ -220,6 +220,12 @@ func TestCommandArgv(t *testing.T) {
 			want: []call{rd("rev-list", "--count", "refs/heads/feat/x", "--not", "--remotes=origin", "refs/heads/main")},
 		},
 		{
+			name: "CountUnpushedRev counts any revision, read in the given checkout",
+			out:  []string{"0"},
+			call: func(ctx context.Context) { CountUnpushedRev(ctx, "/wt", "HEAD", "main") },
+			want: []call{rdIn("/wt", "rev-list", "--count", "HEAD", "--not", "--remotes=origin", "refs/heads/main")},
+		},
+		{
 			name: "LocalBranches reads heads, then origin's names, then the counts",
 			out: []string{
 				"feat/x\t3 days ago\torigin/feat/x\t\tdeadbeef",
@@ -447,6 +453,7 @@ var coveredCommands = map[string]bool{
 	"FetchPrune":               true,
 	"FirstAuthor":              true,
 	"CountUnpushed":            true,
+	"CountUnpushedRev":         true,
 	"ContainingRemoteBranches": true,
 	"KnownBase":                true,
 	"LastSubject":              true,

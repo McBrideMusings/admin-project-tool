@@ -236,11 +236,11 @@ func TestKillOnSettledEntryRunsNothing(t *testing.T) {
 	}
 }
 
-// TestAttachOnStoppedOrSettledEntryRunsNothing proves Attach refuses an entry
+// TestAttachOnSettledEntryRunsNothing proves Attach refuses an entry
 // whose pane is gone, without running its Ops.Attach: the handle may name a
 // pane a launcher has since reused.
-func TestAttachOnStoppedOrSettledEntryRunsNothing(t *testing.T) {
-	for _, st := range []State{StateStopped, StateExited, StateFailed} {
+func TestAttachOnSettledEntryRunsNothing(t *testing.T) {
+	for _, st := range []State{StateExited, StateFailed} {
 		r := NewRegistry()
 		called := false
 		r.Add(&Entry{ID: "a", Name: "one", Handle: "pane-a", Via: "terminal", Ops: Ops{
@@ -466,12 +466,12 @@ func TestLineJoinsNoteAndActivity(t *testing.T) {
 	if got, _ := r.Line("a"); got != "writing x.go" {
 		t.Errorf("activity only: %q", got)
 	}
-	r.SetNote("a", "finished, not removed")
-	if got, _ := r.Line("a"); got != "finished, not removed · writing x.go" {
+	r.SetNote("a", "done predicate timed out after 5s")
+	if got, _ := r.Line("a"); got != "done predicate timed out after 5s · writing x.go" {
 		t.Errorf("both: %q", got)
 	}
 	r.SetActivity("a", "")
-	if got, _ := r.Line("a"); got != "finished, not removed" {
+	if got, _ := r.Line("a"); got != "done predicate timed out after 5s" {
 		t.Errorf("note only: %q", got)
 	}
 }

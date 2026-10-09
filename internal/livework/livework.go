@@ -45,19 +45,6 @@ const (
 	StateWaiting State = "waiting"
 	StateExited  State = "exited"
 	StateFailed  State = "failed"
-	// StateFinished marks a worker whose work is over but whose reap was
-	// refused (a worktree holding files only the worker has, a branch ahead
-	// of its base). The pane and worktree are still there, so the entry is
-	// live: it can be attached, killed and reaped again. Only the reaper sets
-	// it, and sets it back to StateRunning if the work stops being finished.
-	StateFinished State = "finished"
-	// StateStopped marks a worker whose launcher pane is gone before its done
-	// predicate passed: nothing runs any more, but its worktree and branch may
-	// still hold the work. The entry stays live so a person can inspect and
-	// kill it, and reapable so it is still removed once done passes. Only the
-	// reaper sets it, and nothing sets it back: a pane that closed does not
-	// reopen.
-	StateStopped State = "stopped"
 	// StateStarting is the pre-registration, pre-handle phase between a
 	// dispatch keypress and the entry that eventually records it — Add
 	// rejects an entry with an empty Handle, and a pending dispatch has no
@@ -69,11 +56,11 @@ const (
 	StateStarting State = "starting"
 )
 
-// Reapable reports whether a worker in state s is still the reaper's to
-// judge: running, waiting, finished and awaiting a safe removal, or stopped
-// and awaiting its done predicate.
+// Reapable reports whether a worker in state s still has a session the
+// reaper judges: running or waiting. A worker is its live agent session, so
+// these are also the only states a Workers-tab row shows.
 func (s State) Reapable() bool {
-	return s == StateRunning || s == StateWaiting || s == StateFinished || s == StateStopped
+	return s == StateRunning || s == StateWaiting
 }
 
 // WorkerInfo is present only on an entry for an agent worker — a workflow
@@ -477,8 +464,7 @@ func (r *Registry) List() []*Entry {
 }
 
 // WorkerStates maps each target that has a live worker to that worker's state:
-// running, waiting or finished — a worker whose pane is still up and whose
-// worktree is still there. An exited or failed worker is not live, so its
+// running or waiting. An exited or failed worker is not live, so its
 // target is absent and may be dispatched again. When one target somehow holds
 // two live workers (two actions over the same id), the one added first wins.
 func (r *Registry) WorkerStates() map[string]State {
@@ -533,7 +519,7 @@ func (r *Registry) Attach(id string) error {
 	}
 	// A launcher pane that is gone cannot be focused, and its address may now
 	// name another pane.
-	if st, _ := r.State(id); !st.live() || st == StateStopped {
+	if st, _ := r.State(id); !st.live() {
 		return fmt.Errorf("live-work: entry %q has %s: its pane is gone", id, st)
 	}
 	if e.Ops.Attach == nil {

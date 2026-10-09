@@ -284,7 +284,7 @@ func TestReapWorkerStopsHostedWorker(t *testing.T) {
 	if e == nil {
 		t.Fatal("no live-work entry hostedreap-h0")
 	}
-	if !ReapWorker(context.Background(), repoRoot, e, config.Terminal{}) {
+	if ended, _ := ReapWorker(context.Background(), repoRoot, e, config.Terminal{}); !ended {
 		line, _ := livework.Default.Line(e.ID)
 		t.Fatalf("ReapWorker did not reap a finished hosted worker (line %q)", line)
 	}

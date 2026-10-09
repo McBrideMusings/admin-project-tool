@@ -573,13 +573,18 @@ func liveEntryFor(name string, byID map[string]*livework.Entry) *livework.Entry 
 }
 
 // liveWorkers is every registry entry that IS a genuine agent worker
-// (Worker != nil) — the Work tab's "Workers" section, in the registry's own
-// insertion order (livework.Registry.List already guarantees that), which is
-// what keeps the section from reordering itself as entries change state.
+// (Worker != nil) whose session is still running or waiting — the Workers
+// tab's rows, in the registry's own insertion order (livework.Registry.List
+// already guarantees that), which is what keeps the tab from reordering
+// itself as entries change state. A worker is its live session, so an ended
+// one is not a row; the reap's outcome reaches the status line instead.
 func liveWorkers() []*livework.Entry {
 	var out []*livework.Entry
 	for _, e := range livework.Default.List() {
-		if e.Worker != nil {
+		if e.Worker == nil {
+			continue
+		}
+		if st, ok := livework.Default.State(e.ID); ok && st.Reapable() {
 			out = append(out, e)
 		}
 	}
@@ -1206,11 +1211,8 @@ func resolveRowAction(kind rowKind, wd *workRowData) rowAction {
 		}
 		return actionDispatch
 	case rowWorker:
-		// A stopped worker is live, but its pane is gone: nothing to attach.
 		if entryIsLive(wd.worker) {
-			if st, _ := livework.Default.State(wd.worker.ID); st != livework.StateStopped {
-				return actionAttach
-			}
+			return actionAttach
 		}
 		return actionTranscript
 	}

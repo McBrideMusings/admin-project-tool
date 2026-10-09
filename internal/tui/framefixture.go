@@ -65,18 +65,6 @@ func SeedFrameFixture(name string) error {
 				Branch:   "feat/admin-3rgp.7-root-command",
 				Worktree: "/Users/dev/.worktrees/admin-project-tool/admin-3rgp.7",
 			}},
-		{ID: "admin-3rgp.33", Name: "admin-3rgp.33", Handle: "pane 5", Via: "terminal",
-			StartedAt: now.Add(-2 * time.Minute),
-			Worker: &livework.WorkerInfo{
-				Branch:   "fix/admin-3rgp.33-detect",
-				Worktree: "/Users/dev/.worktrees/admin-project-tool/admin-3rgp.33",
-			}},
-		{ID: "admin-3rgp.41", Name: "admin-3rgp.41", Handle: "pane 6", Via: "terminal",
-			StartedAt: now.Add(-47 * time.Minute),
-			Worker: &livework.WorkerInfo{
-				Branch:   "fix/admin-3rgp.41-footer",
-				Worktree: "/Users/dev/.worktrees/admin-project-tool/admin-3rgp.41",
-			}},
 	}
 	for _, e := range workers {
 		if hosted && e.ID == "admin-3rgp.7" {
@@ -98,18 +86,9 @@ func SeedFrameFixture(name string) error {
 		}
 	}
 	livework.Default.SetState("admin-3rgp.7", livework.StateWaiting, nil)
-	livework.Default.SetState("admin-3rgp.33", livework.StateFailed, nil)
-	livework.Default.SetState("admin-3rgp.41", livework.StateStopped, nil)
 	livework.Default.SetActivity("admin-3rgp.36", "writing internal/lua/host.go")
 	livework.Default.SetActivity("admin-3rgp.7", "needs input: root command name")
-	livework.Default.SetActivity("admin-3rgp.33", "go test ./internal/detect FAIL")
-	livework.Default.SetNote("admin-3rgp.41", "pane closed before done passed")
 	livework.Default.SetLogPath("admin-3rgp.36", "/Users/dev/admin-project-tool/.admin/logs/worker-admin-3rgp.36.log")
 	livework.Default.SetLogPath("admin-3rgp.7", "/Users/dev/admin-project-tool/.admin/logs/worker-admin-3rgp.7.log")
-	livework.Default.SetLogPath("admin-3rgp.33", "/Users/dev/admin-project-tool/.admin/logs/worker-admin-3rgp.33.log")
-	livework.Default.SetSnapshot("admin-3rgp.33", "    detect_test.go:88: expected archetype\n"+
-		"        \"react-native\", got \"\"\n"+
-		"FAIL\n"+
-		"FAIL    github.com/.../internal/detect    0.014s\n")
 	return nil
 }

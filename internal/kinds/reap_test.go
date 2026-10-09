@@ -16,32 +16,29 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 )
 
-func TestReapDecision(t *testing.T) {
+func TestKeepReason(t *testing.T) {
 	tests := []struct {
-		name                    string
-		finished, clean, merged bool
-		workerOnly              []string
-		wantReap                bool
-		wantReason              string
+		name       string
+		clean      bool
+		workerOnly []string
+		unpushed   int
+		counted    bool
+		want       string
 	}{
-		{"finished clean merged reaps", true, true, true, nil, true, ""},
-		{"finished dirty stays", true, false, true, nil, false, "uncommitted"},
-		{"worker-only ignored names up to 3", true, false, true, []string{"a/.env", "b/dist/", "c/out/", "d/x/"}, false, "a/.env, b/dist/, c/out/ (+1 more)"},
-		{"finished unmerged stays", true, true, false, nil, false, "origin/main"},
-		{"not finished says nothing", false, true, true, nil, false, ""},
-		{"not finished dirty says nothing", false, false, false, nil, false, ""},
+		{"clean and on origin removes", true, nil, 0, true, ""},
+		{"dirty keeps", false, nil, 0, true, "uncommitted"},
+		{"worker-only ignored names up to 3", false, []string{"a/.env", "b/dist/", "c/out/", "d/x/"}, 0, true, "a/.env, b/dist/, c/out/ (+1 more)"},
+		{"commits on no origin branch keep", true, nil, 2, true, "2 commit(s) on no origin branch"},
+		{"uncountable keeps", true, nil, 0, false, "could not tell"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reap, reason := ReapDecision(tt.finished, tt.clean, tt.merged, tt.workerOnly)
-			if reap != tt.wantReap {
-				t.Errorf("reap = %v, want %v", reap, tt.wantReap)
+			got := KeepReason(tt.clean, tt.workerOnly, tt.unpushed, tt.counted)
+			if tt.want == "" && got != "" {
+				t.Errorf("reason = %q, want empty", got)
 			}
-			if tt.wantReason == "" && reason != "" {
-				t.Errorf("reason = %q, want empty", reason)
-			}
-			if !strings.Contains(reason, tt.wantReason) {
-				t.Errorf("reason = %q, want it to contain %q", reason, tt.wantReason)
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("reason = %q, want it to contain %q", got, tt.want)
 			}
 		})
 	}
@@ -80,17 +77,60 @@ func branchExists(t *testing.T, repoRoot, branch string) bool {
 	return cmd.Run() == nil
 }
 
+// commitIn commits one new file in dir.
+func commitIn(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "work.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wfGitT(t, dir, "add", "-A")
+	wfGitT(t, dir, "commit", "-qm", "work")
+}
+
+// assertEnded checks e ended, its worktree and branch are removed or kept as
+// removed says, and its outcome contains want.
+func assertEnded(t *testing.T, repoRoot string, e *livework.Entry, ended bool, outcome string, removed bool, want string) {
+	t.Helper()
+	if !ended {
+		line, _ := livework.Default.Line(e.ID)
+		t.Fatalf("ReapWorker did not end the worker; row line = %q", line)
+	}
+	if st, _ := livework.Default.State(e.ID); st != livework.StateExited {
+		t.Errorf("state = %s, want exited", st)
+	}
+	if !strings.Contains(outcome, want) {
+		t.Errorf("outcome = %q, want it to contain %q", outcome, want)
+	}
+	_, statErr := os.Stat(e.Worker.Worktree)
+	if removed {
+		if !os.IsNotExist(statErr) {
+			t.Errorf("worktree %s still exists", e.Worker.Worktree)
+		}
+		if branchExists(t, repoRoot, e.Worker.Branch) {
+			t.Errorf("branch %s still exists", e.Worker.Branch)
+		}
+		return
+	}
+	if statErr != nil && !os.IsNotExist(statErr) {
+		t.Errorf("stat worktree: %v", statErr)
+	}
+	if !branchExists(t, repoRoot, e.Worker.Branch) {
+		t.Errorf("branch %s deleted though its work was kept", e.Worker.Branch)
+	}
+}
+
 func TestReapWorker(t *testing.T) {
 	tests := []struct {
-		name       string
-		done       string
-		prepare    func(t *testing.T, w *livework.WorkerInfo)
-		wantReaped bool
-		wantNote   string
+		name    string
+		done    string
+		prepare func(t *testing.T, w *livework.WorkerInfo)
+		ended   bool
+		removed bool
+		want    string
 	}{
-		{name: "done passes, clean, merged: reaped", done: "true", wantReaped: true},
+		{name: "done passes, clean: worktree removed", done: "true", ended: true, removed: true, want: "finished: worktree and branch removed"},
 		{
-			name: "done passes, dirty: stays with reason", done: "true", wantNote: "uncommitted",
+			name: "done passes, dirty: ends, worktree kept", done: "true", ended: true, want: "uncommitted",
 			prepare: func(t *testing.T, w *livework.WorkerInfo) {
 				if err := os.WriteFile(filepath.Join(w.Worktree, "scratch.txt"), []byte("x"), 0o644); err != nil {
 					t.Fatal(err)
@@ -98,18 +138,27 @@ func TestReapWorker(t *testing.T) {
 			},
 		},
 		{
-			name: "done passes, unmerged: stays with reason", done: "true", wantNote: "origin/main",
+			name: "done passes, commit on no origin branch: ends, worktree kept", done: "true", ended: true, want: "1 commit(s) on no origin branch",
+			prepare: func(t *testing.T, w *livework.WorkerInfo) { commitIn(t, w.Worktree) },
+		},
+		{
+			// An open PR's branch: pushed, never merged. Nothing is only local.
+			name: "done passes, branch pushed but unmerged: worktree removed", done: "true", ended: true, removed: true,
 			prepare: func(t *testing.T, w *livework.WorkerInfo) {
-				if err := os.WriteFile(filepath.Join(w.Worktree, "work.txt"), []byte("x"), 0o644); err != nil {
-					t.Fatal(err)
-				}
-				wfGitT(t, w.Worktree, "add", "-A")
-				wfGitT(t, w.Worktree, "commit", "-qm", "work")
+				commitIn(t, w.Worktree)
+				wfGitT(t, w.Worktree, "push", "-q", "origin", w.Branch)
 			},
 		},
-		{name: "done exits nonzero: stays", done: "false"},
-		{name: "done times out: stays", done: "sleep 5"},
-		{name: "done sees ADMIN_TARGET", done: `test "$ADMIN_TARGET" = t0`, wantReaped: true},
+		{
+			name: "detached HEAD with a commit on no origin branch: kept", done: "true", ended: true, want: "on no origin branch",
+			prepare: func(t *testing.T, w *livework.WorkerInfo) {
+				wfGitT(t, w.Worktree, "checkout", "-q", "--detach")
+				commitIn(t, w.Worktree)
+			},
+		},
+		{name: "done exits nonzero: keeps running", done: "false"},
+		{name: "done times out: keeps running", done: "sleep 5"},
+		{name: "done sees ADMIN_TARGET", done: `test "$ADMIN_TARGET" = t0`, ended: true, removed: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -120,132 +169,105 @@ func TestReapWorker(t *testing.T) {
 			t.Cleanup(func() { doneTimeout = prev })
 
 			e := dispatchWorker(t, repoRoot, tt.done)
-			w := e.Worker
 			if tt.prepare != nil {
-				tt.prepare(t, w)
+				tt.prepare(t, e.Worker)
 			}
-
-			got := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"})
-			if got != tt.wantReaped {
-				t.Fatalf("ReapWorker = %v, want %v", got, tt.wantReaped)
-			}
-			_, statErr := os.Stat(w.Worktree)
-			st, _ := livework.Default.State(e.ID)
-			note, _ := livework.Default.Line(e.ID)
-			if tt.wantReaped {
-				if !os.IsNotExist(statErr) {
-					t.Errorf("worktree %s still exists after reap", w.Worktree)
+			ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"})
+			if !tt.ended {
+				if ended {
+					t.Fatalf("ReapWorker ended a worker whose done never passed: %q", outcome)
 				}
-				if branchExists(t, repoRoot, w.Branch) {
-					t.Errorf("branch %s still exists after reap", w.Branch)
+				if st, _ := livework.Default.State(e.ID); st != livework.StateRunning {
+					t.Errorf("state = %s, want running", st)
 				}
-				if st != livework.StateExited {
-					t.Errorf("state = %s, want exited", st)
+				if _, err := os.Stat(e.Worker.Worktree); err != nil {
+					t.Errorf("worktree touched though the session runs: %v", err)
 				}
 				return
 			}
-			if statErr != nil {
-				t.Errorf("worktree removed though the worker was not reaped: %v", statErr)
-			}
-			if !branchExists(t, repoRoot, w.Branch) {
-				t.Errorf("branch %s deleted though the worker was not reaped", w.Branch)
-			}
-			if want := wantState(tt.wantNote); st != want {
-				t.Errorf("state = %s, want %s", st, want)
-			}
-			if !strings.Contains(note, tt.wantNote) {
-				t.Errorf("row line = %q, want it to contain %q", note, tt.wantNote)
-			}
+			assertEnded(t, repoRoot, e, ended, outcome, tt.removed, tt.want)
 		})
 	}
 }
 
-// A pre_remove veto (ADR-0024) keeps a finished, safe worker in place — pane,
-// worktree and branch — and its output becomes the row's one-line Note. The
-// next tick does not re-run the hook until preRemoveRetry has passed.
+// A pane a person closed ends the worker even though done never passed: the
+// session is gone. Its work is removed when origin holds all of it.
+func TestReapWorkerPaneClosedBeforeDone(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	addOrigin(t, repoRoot)
+	done, runs := countingDone(t)
+	e := dispatchWorker(t, repoRoot, done)
+	ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "false", Status: "false"})
+	assertEnded(t, repoRoot, e, ended, outcome, true, "pane closed: worktree and branch removed")
+	if n := runs(); n != 0 {
+		t.Errorf("done ran %d times for a worker whose pane had gone, want 0", n)
+	}
+}
+
+// Same, but the worktree holds a commit origin lacks: the row still ends, and
+// the work stays on disk.
+func TestReapWorkerPaneClosedKeepsLocalWork(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	addOrigin(t, repoRoot)
+	e := dispatchWorker(t, repoRoot, "false")
+	commitIn(t, e.Worker.Worktree)
+	ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true", Status: "false"})
+	assertEnded(t, repoRoot, e, ended, outcome, false, "pane closed: worktree left at "+e.Worker.Worktree)
+}
+
+// A pre_remove veto (ADR-0024) keeps the worktree and branch, and its one-line
+// output is the outcome's reason; the session still ends.
 func TestReapWorkerPreRemoveVeto(t *testing.T) {
-	runs := filepath.Join(t.TempDir(), "runs")
-	repoRoot := setupWorkflowRepo(t, terminalTOML+"[worktrees.hooks]\npre_remove = 'echo x >> "+runs+"; echo draining; echo still-serving; exit 1'\n")
+	repoRoot := setupWorkflowRepo(t, terminalTOML+"[worktrees.hooks]\npre_remove = 'echo draining; echo still-serving; exit 1'\n")
 	addOrigin(t, repoRoot)
 	e := dispatchWorker(t, repoRoot, "true")
-	w := e.Worker
 	killed := filepath.Join(t.TempDir(), "killed")
-
-	if ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "touch " + killed}) {
-		t.Fatal("ReapWorker reaped a worker pre_remove vetoed")
+	ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "touch " + killed})
+	assertEnded(t, repoRoot, e, ended, outcome, false, "pre_remove hook failed (exit 1): still-serving")
+	if _, err := os.Stat(killed); err != nil {
+		t.Error("pane not closed though done passed")
 	}
-	if _, err := os.Stat(w.Worktree); err != nil {
-		t.Errorf("worktree removed despite the veto: %v", err)
-	}
-	if !branchExists(t, repoRoot, w.Branch) {
-		t.Errorf("branch %s deleted despite the veto", w.Branch)
-	}
-	if _, err := os.Stat(killed); err == nil {
-		t.Error("pane killed despite the veto")
-	}
-	if note, _ := livework.Default.Line(e.ID); !strings.Contains(note, "pre_remove hook failed (exit 1): still-serving") || strings.Contains(note, "\n") {
-		t.Errorf("row line = %q, want the hook's one-line veto", note)
-	}
-
-	countRuns := func() int {
-		data, _ := os.ReadFile(runs)
-		return strings.Count(string(data), "x")
-	}
-	ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "touch " + killed})
-	if n := countRuns(); n != 1 {
-		t.Errorf("pre_remove ran %d times across two ticks inside the retry window, want 1", n)
-	}
-	prev := preRemoveRetry
-	preRemoveRetry = 0
-	t.Cleanup(func() { preRemoveRetry = prev })
-	ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "touch " + killed})
-	if n := countRuns(); n != 2 {
-		t.Errorf("pre_remove ran %d times once the retry window passed, want 2", n)
+	if strings.Contains(outcome, "\n") {
+		t.Errorf("outcome = %q, want one line", outcome)
 	}
 }
 
-// A pre_remove that passed is not run again when the reap is retried after a
-// failed pane kill.
-func TestReapWorkerPreRemovePassedRunsOnce(t *testing.T) {
-	runs := filepath.Join(t.TempDir(), "runs")
-	repoRoot := setupWorkflowRepo(t, terminalTOML+"[worktrees.hooks]\npre_remove = 'echo x >> "+runs+"'\n")
+// A pane close that fails leaves the worker running with the reason on its
+// row; the next tick tries again.
+func TestReapWorkerFailedCloseKeepsRunning(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
 	addOrigin(t, repoRoot)
 	e := dispatchWorker(t, repoRoot, "true")
-
-	if ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "false"}) {
-		t.Fatal("reaped though the pane kill failed")
+	if ended, _ := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "false"}); ended {
+		t.Fatal("ended a worker whose pane would not close")
 	}
-	if !ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
-		t.Fatal("retry did not reap")
+	if line, _ := livework.Default.Line(e.ID); !strings.Contains(line, "closing its session failed") {
+		t.Errorf("row line = %q, want the close failure", line)
 	}
-	data, _ := os.ReadFile(runs)
-	if n := strings.Count(string(data), "x"); n != 1 {
-		t.Errorf("pre_remove ran %d times across a failed kill and its retry, want 1", n)
-	}
+	ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"})
+	assertEnded(t, repoRoot, e, ended, outcome, true, "finished")
 }
 
-// With no done predicate, the pane having gone is the finish signal.
+// With no done predicate, only the pane going ends the worker.
 func TestReapWorkerNoDoneUsesPaneStatus(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, terminalTOML)
 	addOrigin(t, repoRoot)
 	e := dispatchWorker(t, repoRoot, "")
 
-	alive := config.Terminal{Kill: "true", Status: "true"}
-	if ReapWorker(context.Background(), repoRoot, e, alive) {
-		t.Fatal("reaped a worker whose pane is still alive")
+	if ended, _ := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true", Status: "true"}); ended {
+		t.Fatal("ended a worker whose pane is still alive")
 	}
-	if ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
-		t.Fatal("reaped a worker with no done and no status command")
+	if ended, _ := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}); ended {
+		t.Fatal("ended a worker with no done and no status command")
 	}
-	gone := config.Terminal{Kill: "false", Status: "false"}
-	if !ReapWorker(context.Background(), repoRoot, e, gone) {
-		t.Fatal("did not reap a worker whose pane has gone")
-	}
+	ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "false", Status: "false"})
+	assertEnded(t, repoRoot, e, ended, outcome, true, "pane closed")
 }
 
-// A queued target starts after a reap frees its slot, and not while a
-// finished-but-unlanded worker holds it.
+// A queued target starts once a worker's session ends, even when that
+// worker's worktree is kept.
 func TestReapFreesSlotForQueuedTarget(t *testing.T) {
+	noDoneGate(t)
 	repoRoot := setupWorkflowRepo(t, "[workflow]\nceiling = 1\n\n"+terminalTOML)
 	addOrigin(t, repoRoot)
 	var spawned int32
@@ -256,7 +278,7 @@ func TestReapFreesSlotForQueuedTarget(t *testing.T) {
 	done := make(chan []TargetResult, 1)
 	go func() {
 		done <- DispatchTargets(repoRoot, "slot", workflowAction(),
-			[]Target{{Name: "t0", Run: "x", Done: "true"}, {Name: "t1", Run: "x"}}, SurfaceDashboard)
+			[]Target{{Name: "t0", Run: "x", Done: "false"}, {Name: "t1", Run: "x"}}, SurfaceDashboard)
 	}()
 	for atomic.LoadInt32(&spawned) < 1 {
 		time.Sleep(time.Millisecond)
@@ -266,23 +288,21 @@ func TestReapFreesSlotForQueuedTarget(t *testing.T) {
 		t.Fatal("t0 not registered")
 	}
 
-	// Finished but dirty: unlanded work keeps the slot.
-	if err := os.WriteFile(filepath.Join(e.Worker.Worktree, "wip.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
-		t.Fatal("reaped a dirty worker")
+	// Still running: the slot stays held.
+	if ended, _ := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}); ended {
+		t.Fatal("ended a running worker")
 	}
 	time.Sleep(100 * time.Millisecond)
 	if got := atomic.LoadInt32(&spawned); got != 1 {
-		t.Fatalf("spawned while an unlanded worker held the slot = %d, want 1", got)
+		t.Fatalf("spawned while a running worker held the slot = %d, want 1", got)
 	}
 
-	if err := os.Remove(filepath.Join(e.Worker.Worktree, "wip.txt")); err != nil {
+	if err := os.WriteFile(filepath.Join(e.Worker.Worktree, "wip.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if !ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
-		t.Fatal("did not reap the clean, merged worker")
+	e.Worker.Done = "true"
+	if ended, _ := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}); !ended {
+		t.Fatal("did not end the finished worker")
 	}
 	for _, r := range <-done {
 		if r.Err != nil {
@@ -345,66 +365,31 @@ func TestPaneGonePassesHandleEnv(t *testing.T) {
 	}
 }
 
-// A worker that declares done and whose pane has gone without done passing
-// is left in place, stopped, with a reason — and is still reaped once done
-// passes.
-func TestReapWorkerDiedBeforeDone(t *testing.T) {
-	noDoneGate(t)
-	repoRoot := setupWorkflowRepo(t, terminalTOML)
-	addOrigin(t, repoRoot)
-	e := dispatchWorker(t, repoRoot, "false")
-	term := config.Terminal{Kill: "true", Status: "false"}
-	if ReapWorker(context.Background(), repoRoot, e, term) {
-		t.Fatal("reaped a worker whose done never passed")
-	}
-	if note, _ := livework.Default.Line(e.ID); !strings.Contains(note, "pane closed before done") {
-		t.Errorf("row line = %q, want the pane-closed reason", note)
-	}
-	if st, _ := livework.Default.State(e.ID); st != livework.StateStopped {
-		t.Errorf("state = %q, want %q", st, livework.StateStopped)
-	}
-
-	e.Worker.Done = "true"
-	if !ReapWorker(context.Background(), repoRoot, e, term) {
-		t.Fatal("did not reap a stopped worker whose done now passes")
-	}
-	if st, _ := livework.Default.State(e.ID); st != livework.StateExited {
-		t.Errorf("state after reap = %q, want %q", st, livework.StateExited)
-	}
-}
-
 // A hosted worker has no launcher pane, so [terminal].status says nothing
-// about it and must not put a pane-closed reason on its row.
+// about it: a failing status does not end it.
 func TestReapWorkerHostedIgnoresPaneStatus(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, terminalTOML)
 	addOrigin(t, repoRoot)
 	e := dispatchWorker(t, repoRoot, "false")
 	e.Via = ""
-	if ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true", Status: "false"}) {
-		t.Fatal("reaped a worker whose done never passed")
-	}
-	if note, _ := livework.Default.Line(e.ID); strings.Contains(note, "pane closed") {
-		t.Errorf("row line = %q, want no pane-closed reason for a hosted worker", note)
+	if ended, _ := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true", Status: "false"}); ended {
+		t.Fatal("ended a hosted worker on a launcher's pane status")
 	}
 }
 
-// A reap whose worktree removal failed retries on the next tick without
-// running kill on the already-closed pane again.
-func TestReapWorkerRetryDoesNotKillTwice(t *testing.T) {
+// A worktree removal that fails keeps the worktree and says why; the session
+// still ends, and kill runs once.
+func TestReapWorkerRemovalFailureKeepsWorktree(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, terminalTOML)
 	addOrigin(t, repoRoot)
 	e := dispatchWorker(t, repoRoot, "true")
 	killLog := filepath.Join(t.TempDir(), "kills")
-	term := config.Terminal{Kill: `echo k >> ` + killLog}
-
-	// Make the removal fail: a locked worktree refuses `worktree remove`.
+	// A locked worktree refuses `worktree remove`.
 	wfGitT(t, repoRoot, "worktree", "lock", e.Worker.Worktree)
-	if ReapWorker(context.Background(), repoRoot, e, term) {
-		t.Fatal("reaped a locked worktree")
-	}
-	wfGitT(t, repoRoot, "worktree", "unlock", e.Worker.Worktree)
-	if !ReapWorker(context.Background(), repoRoot, e, term) {
-		t.Fatal("retry did not reap")
+	ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: `echo k >> ` + killLog})
+	assertEnded(t, repoRoot, e, ended, outcome, false, "removing it failed")
+	if ended, _ := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: `echo k >> ` + killLog}); ended {
+		t.Error("ended an already-ended worker again")
 	}
 	out, err := os.ReadFile(killLog)
 	if err != nil {
@@ -415,8 +400,8 @@ func TestReapWorkerRetryDoesNotKillTwice(t *testing.T) {
 	}
 }
 
-// Ignored files (.env, build output) block a reap: removing the worktree
-// would delete them even though git status calls the tree clean.
+// Ignored files (.env, build output) keep the worktree: removing it would
+// delete them even though git status calls the tree clean.
 func TestReapWorkerKeepsIgnoredFiles(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, terminalTOML)
 	addOrigin(t, repoRoot)
@@ -429,51 +414,42 @@ func TestReapWorkerKeepsIgnoredFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(e.Worker.Worktree, ".env"), []byte("K=1"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
-		t.Fatal("reaped a worktree holding an ignored .env")
-	}
+	ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"})
+	assertEnded(t, repoRoot, e, ended, outcome, false, ".env")
 	if _, err := os.Stat(filepath.Join(e.Worker.Worktree, ".env")); err != nil {
 		t.Errorf(".env gone: %v", err)
 	}
-	if note, _ := livework.Default.Line(e.ID); !strings.Contains(note, ".env") {
-		t.Errorf("row line = %q, want it to name the ignored path", note)
-	}
 }
 
-// A branch landed on the remote reads as merged once the reaper fetches,
-// though the local origin/main was stale.
-func TestReapWorkerFetchesOriginMain(t *testing.T) {
+// A branch pushed from elsewhere reads as on origin once the reaper fetches,
+// though the local tracking refs were stale.
+func TestReapWorkerFetchesOrigin(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, terminalTOML)
 	addOrigin(t, repoRoot)
 	e := dispatchWorker(t, repoRoot, "true")
 	w := e.Worker
-	if err := os.WriteFile(filepath.Join(w.Worktree, "work.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	wfGitT(t, w.Worktree, "add", "-A")
-	wfGitT(t, w.Worktree, "commit", "-qm", "work")
-	// Land it on the remote only: local origin/main does not move.
+	commitIn(t, w.Worktree)
 	wfGitT(t, w.Worktree, "push", "-q", "origin", w.Branch+":main")
 	// The push refreshed the tracking ref; put it back to the stale value.
 	wfGitT(t, repoRoot, "update-ref", "refs/remotes/origin/main", "main")
 
-	if !ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
-		note, _ := livework.Default.Line(e.ID)
-		t.Fatalf("did not reap a branch already on origin/main; row line = %q", note)
-	}
+	ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"})
+	assertEnded(t, repoRoot, e, ended, outcome, true, "removed")
 }
 
-// With no origin the row says origin/main is missing, not that the branch has
-// unmerged commits.
-func TestReapWorkerNoOriginSaysSo(t *testing.T) {
+// With no origin at all, a branch that adds nothing beyond the local default
+// branch loses nothing; one that adds a commit is kept.
+func TestReapWorkerNoOrigin(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, terminalTOML)
 	e := dispatchWorker(t, repoRoot, "true")
-	if ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
-		t.Fatal("reaped with no origin/main to compare against")
-	}
-	if note, _ := livework.Default.Line(e.ID); !strings.Contains(note, "does not exist") {
-		t.Errorf("row line = %q, want it to say origin/main does not exist", note)
-	}
+	ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"})
+	assertEnded(t, repoRoot, e, ended, outcome, true, "removed")
+
+	repoRoot = setupWorkflowRepo(t, terminalTOML)
+	e = dispatchWorker(t, repoRoot, "true")
+	commitIn(t, e.Worker.Worktree)
+	ended, outcome = ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"})
+	assertEnded(t, repoRoot, e, ended, outcome, false, "on no origin branch")
 }
 
 // A done predicate that times out shows why on the row; one that merely exits
@@ -502,6 +478,20 @@ func TestReapWorkerReportsDoneTimeout(t *testing.T) {
 	}
 }
 
+// Every ended worker writes its outcome to the sync log.
+func TestReapWorkerLogsOutcome(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	addOrigin(t, repoRoot)
+	logPath := filepath.Join(t.TempDir(), "sync.log")
+	t.Cleanup(data.UseSyncLogPath(logPath))
+	e := dispatchWorker(t, repoRoot, "true")
+	_, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"})
+	b, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(b), " reap ") || !strings.Contains(string(b), outcome) {
+		t.Errorf("sync log = %q, want a reap line carrying %q", b, outcome)
+	}
+}
+
 // Killing a worker whose pane already closed still exits the row and frees its
 // ceiling slot.
 func TestKillWorkerWithGonePaneReleasesSlot(t *testing.T) {
@@ -522,8 +512,8 @@ func TestKillWorkerWithGonePaneReleasesSlot(t *testing.T) {
 	}
 }
 
-// An ignored path the primary checkout also has (a seeded copy) does not
-// block a reap.
+// An ignored path the primary checkout also has (a seeded copy) does not keep
+// the worktree.
 func TestReapWorkerIgnoresSeededIgnoredFiles(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, terminalTOML)
 	addOrigin(t, repoRoot)
@@ -539,16 +529,13 @@ func TestReapWorkerIgnoresSeededIgnoredFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(e.Worker.Worktree, ".env"), []byte("K=1"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if !ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
-		note, _ := livework.Default.Line(e.ID)
-		t.Fatalf("did not reap; row line = %q", note)
-	}
+	ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"})
+	assertEnded(t, repoRoot, e, ended, outcome, true, "removed")
 }
 
-// A dependency install directory the primary checkout lacks (a package that
-// arrived after the primary last installed) is regenerable, so it does not
-// block a reap, including one nested under a directory git would otherwise
-// report as a single ignored path.
+// A dependency install directory the primary checkout lacks is regenerable,
+// so it does not keep the worktree, including one nested under a directory
+// git would otherwise report as a single ignored path.
 func TestReapWorkerIgnoresWorkerOnlyNodeModules(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, terminalTOML)
 	addOrigin(t, repoRoot)
@@ -565,14 +552,12 @@ func TestReapWorkerIgnoresWorkerOnlyNodeModules(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(nm, "pkg.js"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if !ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
-		note, _ := livework.Default.Line(e.ID)
-		t.Fatalf("did not reap; row line = %q", note)
-	}
+	ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"})
+	assertEnded(t, repoRoot, e, ended, outcome, true, "removed")
 }
 
 // A worker whose worktree a person removed by hand has no directory to run
-// done in; a merged branch makes it finished and reapable.
+// done in; it ends, and a branch with nothing local-only goes too.
 func TestReapWorkerWorktreeRemovedByHand(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, terminalTOML)
 	addOrigin(t, repoRoot)
@@ -580,40 +565,21 @@ func TestReapWorkerWorktreeRemovedByHand(t *testing.T) {
 	if err := os.RemoveAll(e.Worker.Worktree); err != nil {
 		t.Fatal(err)
 	}
-	if !ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
-		note, _ := livework.Default.Line(e.ID)
-		t.Fatalf("did not reap; row line = %q", note)
-	}
-	if st, _ := livework.Default.State(e.ID); st != livework.StateExited {
-		t.Errorf("state = %s, want exited", st)
-	}
+	ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"})
+	assertEnded(t, repoRoot, e, ended, outcome, true, "removed")
 }
 
-// Same, but the branch still holds unmerged commits: the work stays, and the
-// row says the worktree is gone instead of a chdir error.
-func TestReapWorkerWorktreeGoneBranchUnmerged(t *testing.T) {
+// Same, but the branch holds a commit origin lacks: the branch stays.
+func TestReapWorkerWorktreeGoneBranchUnpushed(t *testing.T) {
 	repoRoot := setupWorkflowRepo(t, terminalTOML)
 	addOrigin(t, repoRoot)
 	e := dispatchWorker(t, repoRoot, "true")
-	w := e.Worker
-	if err := os.WriteFile(filepath.Join(w.Worktree, "work.txt"), []byte("x"), 0o644); err != nil {
+	commitIn(t, e.Worker.Worktree)
+	if err := os.RemoveAll(e.Worker.Worktree); err != nil {
 		t.Fatal(err)
 	}
-	wfGitT(t, w.Worktree, "add", "-A")
-	wfGitT(t, w.Worktree, "commit", "-qm", "work")
-	if err := os.RemoveAll(w.Worktree); err != nil {
-		t.Fatal(err)
-	}
-	if ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
-		t.Fatal("reaped a worker whose branch holds unmerged commits")
-	}
-	note, _ := livework.Default.Line(e.ID)
-	if !strings.Contains(note, "worktree is gone") {
-		t.Errorf("row line = %q, want it to say the worktree is gone", note)
-	}
-	if !branchExists(t, repoRoot, w.Branch) {
-		t.Errorf("branch %s deleted though it holds unmerged work", w.Branch)
-	}
+	ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"})
+	assertEnded(t, repoRoot, e, ended, outcome, false, "on no origin branch")
 }
 
 // Worktree and branch both removed by hand: nothing is left to lose.
@@ -623,47 +589,10 @@ func TestReapWorkerWorktreeAndBranchGone(t *testing.T) {
 	e := dispatchWorker(t, repoRoot, "true")
 	wfGitT(t, repoRoot, "worktree", "remove", "--force", e.Worker.Worktree)
 	wfGitT(t, repoRoot, "branch", "-D", e.Worker.Branch)
-	if !ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
+	if ended, _ := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}); !ended {
 		note, _ := livework.Default.Line(e.ID)
-		t.Fatalf("did not reap; row line = %q", note)
+		t.Fatalf("did not end; row line = %q", note)
 	}
-}
-
-// A finished worker whose reap is refused reads finished, not running, and
-// goes back to running if its done predicate stops passing.
-func TestReapWorkerBlockedReadsFinished(t *testing.T) {
-	noDoneGate(t)
-	repoRoot := setupWorkflowRepo(t, terminalTOML)
-	addOrigin(t, repoRoot)
-	excludes := filepath.Join(t.TempDir(), "ignore")
-	if err := os.WriteFile(excludes, []byte(".env\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	wfGitT(t, repoRoot, "config", "core.excludesFile", excludes)
-	e := dispatchWorker(t, repoRoot, "true")
-	if err := os.WriteFile(filepath.Join(e.Worker.Worktree, ".env"), []byte("K=1"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"}) {
-		t.Fatal("reaped a worktree holding an ignored .env")
-	}
-	if st, _ := livework.Default.State(e.ID); st != livework.StateFinished {
-		t.Fatalf("state = %q, want finished", st)
-	}
-	e.Worker.Done = "false"
-	ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"})
-	if st, _ := livework.Default.State(e.ID); st != livework.StateRunning {
-		t.Fatalf("state = %q after done stopped passing, want running", st)
-	}
-}
-
-// wantState is the state a not-reaped worker shows: finished when the reaper
-// held it back with a reason, running when it never finished.
-func wantState(wantNote string) livework.State {
-	if wantNote == "" {
-		return livework.StateRunning
-	}
-	return livework.StateFinished
 }
 
 // TestDispatchRefusesATargetWithALiveWorker: a second dispatch over a target
@@ -722,8 +651,8 @@ func TestReapWorkerRunsDoneOncePerInterval(t *testing.T) {
 	e := dispatchWorker(t, repoRoot, done)
 	alive := config.Terminal{Kill: "true", Status: "true"}
 	for range 5 {
-		if ReapWorker(context.Background(), repoRoot, e, alive) {
-			t.Fatal("reaped a worker whose done never passed")
+		if ended, _ := ReapWorker(context.Background(), repoRoot, e, alive); ended {
+			t.Fatal("ended a worker whose done never passed")
 		}
 	}
 	if n := runs(); n != 1 {
@@ -737,46 +666,5 @@ func TestReapWorkerRunsDoneOncePerInterval(t *testing.T) {
 	ReapWorker(context.Background(), repoRoot, e, alive)
 	if n := runs(); n != 2 {
 		t.Fatalf("done ran %d times after the interval passed, want 2", n)
-	}
-}
-
-// A pane that goes between two runs makes the predicate run on the next reap,
-// not a whole interval later: an agent that just exited has likely finished.
-func TestReapWorkerRunsDoneWhenPaneGoes(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, terminalTOML)
-	addOrigin(t, repoRoot)
-	done, runs := countingDone(t)
-	e := dispatchWorker(t, repoRoot, done)
-	ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true", Status: "true"})
-	gone := config.Terminal{Kill: "true", Status: "false"}
-	ReapWorker(context.Background(), repoRoot, e, gone)
-	ReapWorker(context.Background(), repoRoot, e, gone)
-	if n := runs(); n != 2 {
-		t.Fatalf("done ran %d times (pane alive, gone, still gone), want 2", n)
-	}
-	if st, _ := livework.Default.State(e.ID); st != livework.StateStopped {
-		t.Errorf("state = %q, want %q", st, livework.StateStopped)
-	}
-}
-
-// A predicate that passed keeps reading finished between runs, so a worker
-// whose reap is refused does not flip back to running on the next tick.
-func TestReapWorkerKeepsFinishedBetweenRuns(t *testing.T) {
-	repoRoot := setupWorkflowRepo(t, terminalTOML)
-	excludes := filepath.Join(t.TempDir(), "ignore")
-	if err := os.WriteFile(excludes, []byte(".env\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	wfGitT(t, repoRoot, "config", "core.excludesFile", excludes)
-	addOrigin(t, repoRoot)
-	e := dispatchWorker(t, repoRoot, "true")
-	if err := os.WriteFile(filepath.Join(e.Worker.Worktree, ".env"), []byte("K=1"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true"})
-		if st, _ := livework.Default.State(e.ID); st != livework.StateFinished {
-			t.Fatalf("state = %q, want finished", st)
-		}
 	}
 }

@@ -1,13 +1,14 @@
 // reappoll.go is the Work tab's per-tick worker reaper: once a tick it hands
-// every live window worker to kinds.ReapWorker, which decides from the
-// worker's done predicate (or its vanished pane) and a clean/merged check
-// whether to close the pane, delete the worktree and branch, and free the
-// worker's ceiling slot. The effects all go through the live registry, so the
-// next repaint shows them and the poller returns no message.
+// every running or waiting worker to kinds.ReapWorker, which ends the worker
+// once its pane has gone or its done predicate passes, removes the worktree
+// and branch when nothing in them is missing from origin, and frees the
+// worker's ceiling slot. The ended row leaves the Workers tab, so each reap's
+// one-line outcome comes back as a reapedMsg for the status line.
 package tui
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -30,7 +31,11 @@ var reapInflight sync.Map
 // reapWorkerFn is the test seam for the per-worker reap.
 var reapWorkerFn = kinds.ReapWorker
 
-// reapWorkersCmd reaps every running-or-waiting worker once.
+// reapedMsg carries the outcome line of every worker one tick ended.
+type reapedMsg struct{ outcomes []string }
+
+// reapWorkersCmd reaps every running-or-waiting worker once, returning a
+// reapedMsg when any ended.
 func reapWorkersCmd(repoRoot string, t config.Terminal) tea.Cmd {
 	return func() tea.Msg {
 		var workers []*livework.Entry
@@ -42,7 +47,11 @@ func reapWorkersCmd(repoRoot string, t config.Terminal) tea.Cmd {
 				workers = append(workers, e)
 			}
 		}
-		var wg sync.WaitGroup
+		var (
+			wg       sync.WaitGroup
+			mu       sync.Mutex
+			outcomes []string
+		)
 		for _, e := range workers {
 			if _, busy := reapInflight.LoadOrStore(e.ID, true); busy {
 				continue
@@ -53,10 +62,18 @@ func reapWorkersCmd(repoRoot string, t config.Terminal) tea.Cmd {
 				defer reapInflight.Delete(e.ID)
 				ctx, cancel := context.WithTimeout(context.Background(), reapTimeout)
 				defer cancel()
-				reapWorkerFn(ctx, repoRoot, e, t)
+				if ended, outcome := reapWorkerFn(ctx, repoRoot, e, t); ended {
+					mu.Lock()
+					outcomes = append(outcomes, outcome)
+					mu.Unlock()
+				}
 			}(e)
 		}
 		wg.Wait()
-		return nil
+		if len(outcomes) == 0 {
+			return nil
+		}
+		sort.Strings(outcomes)
+		return reapedMsg{outcomes: outcomes}
 	}
 }

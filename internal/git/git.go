@@ -514,7 +514,14 @@ func CountUnpushed(ctx context.Context, dir, branch, def string) (n int, ok bool
 	if def == "" || def == branch {
 		return 0, true
 	}
-	out, err := runner(ctx, dir, "rev-list", "--count", "refs/heads/"+branch, "--not", "--remotes=origin", "refs/heads/"+def)
+	return CountUnpushedRev(ctx, dir, "refs/heads/"+branch, def)
+}
+
+// CountUnpushedRev is CountUnpushed for any revision, read in dir: "HEAD" in a
+// worktree counts what that checkout holds, detached or not. def must be
+// non-empty; ok is false when the count could not be read.
+func CountUnpushedRev(ctx context.Context, dir, rev, def string) (n int, ok bool) {
+	out, err := runner(ctx, dir, "rev-list", "--count", rev, "--not", "--remotes=origin", "refs/heads/"+def)
 	if err != nil {
 		return 0, false
 	}

@@ -1851,6 +1851,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		applyPaneTail(msg)
 		return m, nil
 
+	case reapedMsg:
+		// The ended rows are already gone from the Workers tab; this line is
+		// the only on-screen trace of what happened to their worktrees.
+		m.setStatus(strings.Join(msg.outcomes, " · "), cDim)
+		return m, nil
+
 	case termTickMsg:
 		if !m.termAttached {
 			return m, nil
