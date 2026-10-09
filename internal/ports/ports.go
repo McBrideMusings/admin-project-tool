@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -23,7 +24,7 @@ import (
 // psParent returns pid's parent pid and the parent's command line, via `ps`
 // — portable across macOS and Linux, unlike reading /proc/<pid>/stat for the
 // ppid field (which this package doesn't otherwise need, since holder
-// detection already has the pid from /proc/net/tcp or lsof/fuser directly).
+// detection already has the pid from /proc/net/tcp, fuser, netstat or lsof).
 // Returns (0, "") when ps is unavailable, times out, or pid has no parent.
 func psParent(pid int) (int, string) {
 	psPath, err := exec.LookPath("ps")
@@ -145,7 +146,7 @@ func PortHolders(port int) []Holder {
 }
 
 // portHolderPIDs finds listener pids via /proc/net/tcp{,6}, then `fuser`,
-// then `lsof`.
+// then `netstat -anv` (macOS), then `lsof`.
 func portHolderPIDs(port int, timeout time.Duration) []int {
 	if pids := pidsForSocketInodes(procNetListeners(port)); len(pids) > 0 {
 		return pids
@@ -162,6 +163,15 @@ func portHolderPIDs(port int, timeout time.Duration) []int {
 			}
 		}
 		if len(pids) > 0 {
+			return pids
+		}
+	}
+
+	if netstatPath, err := exec.LookPath("netstat"); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		out, _ := exec.CommandContext(ctx, netstatPath, "-anv", "-p", "tcp").Output()
+		cancel()
+		if pids, ok := netstatListenerPIDs(string(out), port); ok {
 			return pids
 		}
 	}
@@ -185,6 +195,44 @@ func portHolderPIDs(port int, timeout time.Duration) []int {
 	}
 
 	return nil
+}
+
+// netstatListenerPIDs parses macOS `netstat -anv -p tcp` output for the pids
+// listening on port. macOS netstat reads the kernel's socket table and names
+// each socket's owner in a `process:pid` column, so it answers in
+// milliseconds; lsof instead walks every process's file table and blocks
+// for minutes behind any process wedged in the kernel (a hung SMB mount is
+// enough). The process name can contain spaces ("Code Helper:812"), so the
+// pid is the first field after the state that ends in `:<digits>`, not a
+// fixed column. ok reports whether the output carried the `process:pid`
+// header: when it did, an empty pid list is the complete answer (nothing
+// listens) and lsof is not consulted. Linux netstat has no such column, so
+// ok is false there and the caller falls through.
+func netstatListenerPIDs(out string, port int) (pids []int, ok bool) {
+	suffix := "." + strconv.Itoa(port)
+	for line := range strings.SplitSeq(out, "\n") {
+		if strings.Contains(line, "process:pid") {
+			ok = true
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 7 || !strings.HasPrefix(fields[0], "tcp") ||
+			fields[5] != "LISTEN" || !strings.HasSuffix(fields[3], suffix) {
+			continue
+		}
+		for _, f := range fields[6:] {
+			i := strings.LastIndexByte(f, ':')
+			if i < 0 {
+				continue
+			}
+			if pid, err := strconv.Atoi(f[i+1:]); err == nil && pid > 0 {
+				if !slices.Contains(pids, pid) {
+					pids = append(pids, pid)
+				}
+				break
+			}
+		}
+	}
+	return pids, ok
 }
 
 // procNetListeners parses /proc/net/tcp{,6} for sockets in LISTEN state on

@@ -138,7 +138,6 @@ func runApplePrebuild(cfg map[string]any, h *luahost.Host) error {
 	if cmd == "" || applePrebuildRan[cmd] {
 		return nil
 	}
-	applePrebuildRan[cmd] = true
 	h.Info("prereqs: " + cmd)
 	res, err := h.RunCmd(cmd, luahost.RunCmdOptions{CaptureLog: true})
 	if err != nil {
@@ -147,6 +146,7 @@ func runApplePrebuild(cfg map[string]any, h *luahost.Host) error {
 	if !res.Ok {
 		return fmt.Errorf("prereq command failed: %s", cmd)
 	}
+	applePrebuildRan[cmd] = true
 	return nil
 }
 

@@ -82,7 +82,7 @@ func TestNukeDevProcessesReportsPortHolderKills(t *testing.T) {
 	}
 	// python3 -m http.server binds a real listening socket lsof/PortHolders
 	// can find, unlike `sleep` which holds no port at all.
-	port := freeTCPPortForNuke(t)
+	port := freeTCPPort(t)
 	cmd := exec.Command("python3", "-m", "http.server", "--bind", "127.0.0.1", itoaLocal(port))
 	if err := cmd.Start(); err != nil {
 		t.Skipf("python3 unavailable: %v", err)
@@ -188,7 +188,7 @@ func TestPortHolderCleanupRunsDespiteSubtestFailure(t *testing.T) {
 		t.Skip("python3 not available")
 	}
 
-	port := freeTCPPortForNuke(t)
+	port := freeTCPPort(t)
 
 	cmd := exec.Command(os.Args[0], "-test.run", "^TestPortHolderCleanupHelperProcess$", "-test.v=true")
 	cmd.Env = append(os.Environ(),
@@ -215,7 +215,7 @@ func TestPortHolderCleanupRunsDespiteSubtestFailure(t *testing.T) {
 // directly: "a port already free is a no-op that exits zero" — here, that
 // StillHeld stays empty and nothing gets killed for an unheld port.
 func TestNukeDevProcessesOnAFreePortIsANoOp(t *testing.T) {
-	port := freeTCPPortForNuke(t)
+	port := freeTCPPort(t)
 	report := NukeDevProcesses(t.TempDir(), NukeDevOptions{
 		Ports: []PortSpec{{Port: port}},
 	})
@@ -333,17 +333,6 @@ func waitForPortBusy(port int, timeout time.Duration) bool {
 		time.Sleep(20 * time.Millisecond)
 	}
 	return false
-}
-
-func freeTCPPortForNuke(t *testing.T) int {
-	t.Helper()
-	for p := 20000; p < 20100; p++ {
-		if PortFree(p) {
-			return p
-		}
-	}
-	t.Fatal("no free port found in 20000-20100")
-	return 0
 }
 
 func itoaLocal(n int) string {

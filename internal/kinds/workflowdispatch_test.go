@@ -743,7 +743,8 @@ func TestDispatchOneSpawnFailureReportsNoHandle(t *testing.T) {
 func TestRecordLiveWorkClosesPaneWhenRegistryRejects(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "killed")
 	term := config.Terminal{Kill: `echo "$ADMIN_HANDLE" > ` + marker}
-	id := "record-dup-" + t.Name()
+	t.Cleanup(livework.UseRegistry(livework.NewRegistry()))
+	id := "record-dup"
 	if err := recordLiveWork("", id, "shell", "pane-1", term); err != nil {
 		t.Fatalf("first record: %v", err)
 	}

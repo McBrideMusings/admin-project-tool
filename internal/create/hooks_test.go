@@ -80,27 +80,31 @@ post_start  = 'touch "$ADMIN_REPO_ROOT/post_start-ran"'
 
 // post_start runs detached: Worktree returns while the hook is still
 // running, and the hook's output lands in a log under the project's log
-// directory.
+// directory. The hook blocks on a gate file the test creates only after
+// Worktree has returned, so a Worktree that waited on the hook would return
+// with the hook already finished (its 30s give-up spent) — no wall-clock
+// bound on Worktree itself, which a loaded machine can miss.
 func TestWorktreePostStartIsDetached(t *testing.T) {
 	clone, _ := setupRepo(t)
+	gate := filepath.Join(t.TempDir(), "gate")
 	writeFile(t, filepath.Join(clone, "admin.toml"), `project_name = "t"
 
 [worktrees.hooks]
-post_start = 'sleep 1; echo "started on $ADMIN_WT_BRANCH"'
+post_start = 'i=0; while [ ! -f "`+gate+`" ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done; echo "started on $ADMIN_WT_BRANCH"'
 `)
 
-	start := time.Now()
 	res, err := Worktree(git.WithQuiet(context.Background()), clone, "feat-start")
 	if err != nil {
 		t.Fatalf("Worktree: %v", err)
 	}
-	if elapsed := time.Since(start); elapsed >= time.Second {
-		t.Errorf("Worktree took %s, want it to return before the 1s post_start finishes", elapsed)
-	}
 	if filepath.Dir(res.PostStartLog) != filepath.Join(clone, "tmp") {
 		t.Fatalf("PostStartLog = %q, want a file under %s", res.PostStartLog, filepath.Join(clone, "tmp"))
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	if data, _ := os.ReadFile(res.PostStartLog); strings.Contains(string(data), "post_start: exit") {
+		t.Fatalf("post_start had already finished when Worktree returned, want it still running:\n%s", data)
+	}
+	writeFile(t, gate, "")
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		data, _ := os.ReadFile(res.PostStartLog)
 		if strings.Contains(string(data), "started on feat-start") && strings.Contains(string(data), "post_start: exit 0") {

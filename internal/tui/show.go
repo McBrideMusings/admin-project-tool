@@ -128,14 +128,18 @@ func ShowRows(m Model, name string, opts FrameOptions) ([]ShowRow, error) {
 	// A tab's data can arrive in several hops (the Beads probe, then its list),
 	// so keep pumping until this tab has it, bounded by a further opts.Settle
 	// that starts once the first load has finished.
-	deadline := time.Now().Add(opts.Settle)
+	start := time.Now()
+	deadline := start.Add(opts.Settle)
 	// Idle with nothing in flight means nothing more can arrive: stop, don't spin.
 	for !p.model.tabLoaded(want) && time.Now().Before(deadline) && atomic.LoadInt32(&p.inFlight) > 0 {
 		p.drain(100 * time.Millisecond)
 	}
 	m = p.model
 	if !m.tabLoaded(want) {
-		return nil, fmt.Errorf("the %s tab had not loaded its data after %s", name, opts.Settle)
+		if n := atomic.LoadInt32(&p.inFlight); n > 0 {
+			return nil, fmt.Errorf("the %s tab had not loaded its data after %s (%d command(s) still in flight)", name, opts.Settle, n)
+		}
+		return nil, fmt.Errorf("the %s tab had not loaded its data, and nothing was left in flight to load it, after %s", name, time.Since(start).Round(time.Millisecond))
 	}
 	m.active = want
 	return m.showRows(), nil

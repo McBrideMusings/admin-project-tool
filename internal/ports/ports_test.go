@@ -1,23 +1,13 @@
 package ports
 
 import (
+	"math/rand/v2"
 	"net"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
 )
-
-// TestPortFreeOnAnUnusedPort proves PortFree reports true for a port nothing
-// is listening on. Picks the port by binding port 0 and releasing it
-// immediately, then race-checking free before anything else on the CI
-// machine can grab it — flaky in theory, standard practice in this class of
-// test.
-func TestPortFreeOnAnUnusedPort(t *testing.T) {
-	port := freeTCPPort(t)
-	if !PortFree(port) {
-		t.Errorf("PortFree(%d) = false, want true for an unused port", port)
-	}
-}
 
 // TestPortFreeFalseWhileListening proves PortFree reports false for a port
 // with a live listener.
@@ -50,11 +40,11 @@ func TestPortFreeFalseWhileListening(t *testing.T) {
 // entirely and the underlying bind starts refusing to reuse a
 // freshly-closed, unconnected listener's port on a loaded CI box.
 func TestPortFreeTrueAfterListenerCloses(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	port := freeTCPPort(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
 
 	if !PortFree(port) {
@@ -98,13 +88,46 @@ func TestWaitForPortTimesOutWhenNothingListens(t *testing.T) {
 	}
 }
 
+// freeTCPPort returns a random port in 20000-39999 that PortFree accepts.
+// The range sits below the kernel's ephemeral range (49152-65535 on macOS),
+// so no other process's outgoing connection takes the port mid-test; a
+// kernel-assigned ":0" port is free only on the address it was bound to,
+// while PortFree probes every address. The pick is random rather than the
+// first free port so two test binaries running at once don't both take it.
 func freeTCPPort(t *testing.T) int {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("Listen: %v", err)
+	for range 100 {
+		if p := 20000 + rand.IntN(20000); PortFree(p) {
+			return p
+		}
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	ln.Close()
-	return port
+	t.Fatal("no free port found in 20000-39999 after 100 picks")
+	return 0
+}
+
+// TestNetstatListenerPIDs proves the macOS netstat parser picks the owner of
+// a LISTEN socket on the asked port only: a spaced process name still yields
+// its pid, a dual-stack listener is reported once, and an ESTABLISHED row or
+// a listener on a port that merely shares a suffix is ignored.
+func TestNetstatListenerPIDs(t *testing.T) {
+	out := `Active Internet connections (including servers)
+Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)          rxbytes      txbytes  rhiwat  shiwat          process:pid    state  options           gencnt    flags   flags1 usecnt rtncnt fltrs
+tcp4       0      0  127.0.0.1.21052        *.*                    LISTEN                 0            0  131072  131072           Python:91451  00000 00000006 0000000003ac13e0 00000000 00000800      1      0 000000
+tcp6       0      0  ::1.21052              *.*                    LISTEN                 0            0  131072  131072           Python:91451  00000 00000006 0000000003ac6a89 00000000 00000800      1      0 000000
+tcp4       0      0  *.21052                *.*                    LISTEN                 0            0  131072  131072      Code Helper:812  00000 00000006 0000000003ac13e1 00000000 00000800      1      0 000000
+tcp4       0      0  127.0.0.1.21052        127.0.0.1.50000        ESTABLISHED            0            0  131072  131072             curl:4000  00000 00000006 0000000003ac13e2 00000000 00000800      1      0 000000
+tcp4       0      0  127.0.0.1.121052       *.*                    LISTEN                 0            0  131072  131072             node:5000  00000 00000006 0000000003ac13e3 00000000 00000800      1      0 000000
+`
+	got, ok := netstatListenerPIDs(out, 21052)
+	want := []int{91451, 812}
+	if !ok || !slices.Equal(got, want) {
+		t.Errorf("netstatListenerPIDs(..., 21052) = %v, %v; want %v, true", got, ok, want)
+	}
+
+	// Linux netstat prints no process:pid column: not an answer, so the
+	// caller must fall through to lsof rather than report the port unheld.
+	linux := "Proto Recv-Q Send-Q Local Address           Foreign Address         State\ntcp        0      0 0.0.0.0:21052           0.0.0.0:*               LISTEN\n"
+	if got, ok := netstatListenerPIDs(linux, 21052); ok || got != nil {
+		t.Errorf("netstatListenerPIDs(linux output) = %v, %v; want nil, false", got, ok)
+	}
 }

@@ -532,30 +532,16 @@ func containerRunning(name string) bool {
 	return false
 }
 
-// portHolderRetryBudget bounds portHoldersWithRetry's polling. 1s is enough
-// slack for lsof to catch up with a socket the kernel already reports bound
-// (see portHoldersWithRetry's doc comment) without meaningfully slowing a
-// NukeDevProcesses call on a port that turns out to have no holder at all —
-// that path never enters the retry loop, since it never has PortFree(port)
-// == false with zero holders found.
+// portHolderRetryBudget bounds portHoldersWithRetry's polling. A port with
+// no holder never enters the retry loop, since it never has PortFree(port)
+// == false with zero holders found, so the budget costs nothing there.
 const portHolderRetryBudget = 1 * time.Second
 
 // portHoldersWithRetry discovers the holder(s) of a port the caller already
 // knows (or suspects) is busy, retrying with a short poll-and-backoff
-// instead of a single lookup.
-//
-// The single-shot version of this call is where
-// TestNukeDevProcessesReportsPortHolderKills' flake lived: PortFree does a
-// raw bind()-probe, which sees a freshly-listen()ing socket the instant the
-// kernel accepts it, while PortHolders/ProjectDevHolders both shell out to
-// lsof, which walks its own kernel/proc-table snapshot on its own schedule
-// and can momentarily still report zero holders for a socket a bind probe
-// already sees as busy — worse under load or parallel test execution, which
-// matches the observed "flaky solo, passes inside the full suite" shape.
-// Pass 1 calling PortHolders exactly once meant that race silently skipped
-// the port's kill for the rest of NukeDevProcesses, surfacing only in pass
-// 5's own two-attempt, no-delay verify loop — not enough of a gap for lsof
-// to catch up either.
+// instead of a single lookup, so a holder lookup that comes back empty while
+// PortFree's bind() probe already sees the port busy gets another look
+// before NukeDevProcesses skips that port's kill.
 //
 // portHoldersWithRetry polls every 50ms, up to budget, stopping as soon as
 // a holder turns up, PortFree(port) reports the port is actually free after
