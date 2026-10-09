@@ -111,6 +111,23 @@ A behavioral change to `internal/tui` is also proven by:
 `seededModel()` in `internal/tui/model_test.go` is the standard fixture for a `Model` with
 sane defaults; most `internal/tui` tests build one and mutate the fields they need.
 
+## Shared GitHub sync between dashboards (`internal/data/sharedsync.go`)
+
+Dashboards on one repo elect one syncer per poll through `<cache>.sync.lock`. Drive two
+real dashboards on one repo (a clone and a worktree of it, or two clones with the same
+origin) on ptys that never report focus, so both keep polling, the second started ~30s
+after the first, for longer than one `data.PollInterval`. A pty runner that drains output
+and answers the `ESC[6n` cursor query is enough; Bubble Tea blocks without one.
+
+- `~/Library/Logs/admin/sync.log` per tick: one `shared ok syncer pid=<A>` line, then the
+  other dashboard's `shared ok reused cache_age=<under 2m30s> synced_by=<A>`.
+- `~/.claude/logs/gh-calls.log` (and `~/.claude-work/logs/gh-calls.log` for a work-account
+  shell — dashboards log to their own `CLAUDE_CONFIG_DIR`): gh calls for that tick come only
+  from the syncer's directory.
+- `go test ./internal/data -run 'FetchAll(Reuses|WaitsOut|StopsWaiting)'` covers reuse, the
+  issues-coverage rule, a failed section being retried, the 45s busy-syncer fallback and
+  cancellation.
+
 ## Worktree listing and live-work liveness (`admin worktree list`)
 
 `admin worktree list [--json] [--settle 0]` is the state query for worktrees and the agents
