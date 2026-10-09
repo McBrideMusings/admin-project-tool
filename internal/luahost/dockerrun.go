@@ -132,6 +132,42 @@ func (h *Host) registerDockerRun(L *lua.LState) {
 		return 1
 	}))
 
+	// dockerrun.preflight_argv(cfg, target_argv, image) -> argv or nil, err
+	tbl.RawSetString("preflight_argv", L.NewFunction(func(L *lua.LState) int {
+		cfg, _ := fromLuaValue(L.CheckTable(1)).(map[string]any)
+		argv := tableToStringSlice(L.CheckTable(2))
+		parts, err := dockerrun.PreflightArgv(cfg, argv, L.CheckString(3))
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+		if parts == nil {
+			L.Push(lua.LNil)
+			return 1
+		}
+		L.Push(stringSliceToLua(L, parts))
+		return 1
+	}))
+
+	// dockerrun.rollback_tag(image) -> string
+	tbl.RawSetString("rollback_tag", L.NewFunction(func(L *lua.LState) int {
+		L.Push(lua.LString(dockerrun.RollbackTag(L.CheckString(1))))
+		return 1
+	}))
+
+	// dockerrun.health_probe_shell(cfg[, env_vars]) -> string or nil
+	tbl.RawSetString("health_probe_shell", L.NewFunction(func(L *lua.LState) int {
+		cfg, _ := fromLuaValue(L.CheckTable(1)).(map[string]any)
+		shell := dockerrun.HealthProbeShell(cfg, optionalStringMap(L, 2), h.Warn)
+		if shell == "" {
+			L.Push(lua.LNil)
+			return 1
+		}
+		L.Push(lua.LString(shell))
+		return 1
+	}))
+
 	// dockerrun.mount_env_deps(cfg) -> {name, ...}
 	tbl.RawSetString("mount_env_deps", L.NewFunction(func(L *lua.LState) int {
 		cfg, _ := fromLuaValue(L.CheckTable(1)).(map[string]any)

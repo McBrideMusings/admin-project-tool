@@ -59,6 +59,19 @@ func ProvisionCommands(cfg map[string]any, envVars map[string]string, warn Warne
 // when no [docker_run.health] table is declared (or its url references an
 // unset var).
 func HealthCheckShell(cfg map[string]any, envVars map[string]string, warn Warner) string {
+	return healthShell(cfg, envVars, warn, false)
+}
+
+// HealthProbeShell is HealthCheckShell's single attempt: one request, exit 0
+// on the expected status, else 1 — no polling. Deploy asks it whether the
+// container about to be replaced is healthy, which decides whether that
+// container's image becomes the rollback target. "" when no
+// [docker_run.health] url is declared.
+func HealthProbeShell(cfg map[string]any, envVars map[string]string, warn Warner) string {
+	return healthShell(cfg, envVars, warn, true)
+}
+
+func healthShell(cfg map[string]any, envVars map[string]string, warn Warner, once bool) string {
 	if warn == nil {
 		warn = noopWarn
 	}
@@ -97,10 +110,13 @@ func HealthCheckShell(cfg map[string]any, envVars map[string]string, warn Warner
 	if tries < 1 {
 		tries = 1
 	}
-	uq := shq(url)
+	probe := "code=$(curl -s -o /dev/null -w '%{http_code}' " + shq(url) + " 2>/dev/null || true); " +
+		`[ "$code" = "` + strconv.Itoa(expect) + `" ]`
+	if once {
+		return probe
+	}
 	return "for _ in $(seq 1 " + strconv.Itoa(tries) + "); do " +
-		"code=$(curl -s -o /dev/null -w '%{http_code}' " + uq + " 2>/dev/null || true); " +
-		`[ "$code" = "` + strconv.Itoa(expect) + `" ] && exit 0; sleep ` + strconv.Itoa(interval) + "; done; exit 1"
+		probe + " && exit 0; sleep " + strconv.Itoa(interval) + "; done; exit 1"
 }
 
 // ContainerName is the name deploy, diff and logs address the container by:

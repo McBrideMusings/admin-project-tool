@@ -539,6 +539,23 @@ local remote_run = table.concat(run_quoted, " ")
 
 local provision = run_cfg_present and dockerrun.provision_commands(run_cfg, run_env_vars) or {}
 local health_shell = run_cfg_present and dockerrun.health_check_shell(run_cfg, run_env_vars) or nil
+-- [docker_run.preflight]: a command run from the NEW image with the deployed
+-- container's mounts (read-only) and env, before the running container is
+-- touched. A non-zero exit refuses the deploy with the old container serving.
+local preflight_parts, preflight_shell = nil, nil
+if run_cfg_present then
+  local preflight_err
+  preflight_parts, preflight_err = dockerrun.preflight_argv(run_cfg, target_argv, image)
+  if preflight_err then
+    err(preflight_err)
+    error("docker deploy: bad [docker_run.preflight]")
+  end
+  if preflight_parts then
+    local q = {}
+    for _, p in ipairs(preflight_parts) do table.insert(q, shq(p)) end
+    preflight_shell = table.concat(q, " ")
+  end
+end
 
 if dry_run then
   local masked = dockerrun.mask_argv_for_display(run_parts)
@@ -549,6 +566,16 @@ if dry_run then
     info("Dry run — bind-mount dirs that would be provisioned " .. location .. ":")
     for _, c in ipairs(provision) do print("  " .. c) end
     print("")
+  end
+  if preflight_shell then
+    info("Dry run — preflight that would run from the new image " .. location .. ", before the container is replaced:")
+    local mq = {}
+    for _, p in ipairs(dockerrun.mask_argv_for_display(preflight_parts)) do table.insert(mq, shq(p)) end
+    print("  " .. table.concat(mq, " ") .. "\n")
+  end
+  if container_exists then
+    info("Dry run — outgoing image " .. restore_image .. " would become " ..
+         dockerrun.rollback_tag(image) .. " if '" .. container .. "' is healthy at deploy time")
   end
   info("Dry run — docker run command that would be executed " .. location .. ":")
   print("  " .. display_run .. "\n")
@@ -571,14 +598,62 @@ else
   ok("Transfer complete")
 end
 
+if preflight_shell then
+  info("Preflight: running the new image's check " .. location .. " (the running container is untouched)...")
+  if not run_cmd(local_deploy and preflight_shell or ("ssh " .. shq(host) .. " " .. shq(preflight_shell))) then
+    err("Preflight failed — the new image refused this config. '" .. container .. "' was not replaced and is still running.")
+    error("docker deploy: preflight refused")
+  end
+  ok("Preflight passed")
+end
+
+-- The rollback target is a tag, because the new build already holds the
+-- image's own tag: the old one is dangling, and the prune at the end of a
+-- deploy deletes dangling images — the target would be gone exactly when a
+-- failed start needs it.
+--
+-- The tag moves onto the outgoing image only when that container is healthy
+-- right now (its health URL answers, or with none declared, it is running and
+-- not restart-looping). Otherwise the outgoing image is the broken build a
+-- previous deploy left behind, and the tag stays on the last good one — two
+-- failed deploys in a row must still roll back to something that worked.
 local restore_path = "/tmp/" .. container .. "-restore.sh"
+local rollback_tag = dockerrun.rollback_tag(image)
+local function on_target(shell)
+  return run_cmd(local_deploy and shell or ("ssh " .. shq(host) .. " " .. shq(shell)))
+end
 if container_exists then
+  local outgoing_healthy
+  local probe = run_cfg_present and dockerrun.health_probe_shell(run_cfg, run_env_vars) or nil
+  if probe then
+    outgoing_healthy = on_target(probe)
+  else
+    local st = inspect.State or {}
+    outgoing_healthy = st.Running == true and st.Restarting ~= true
+  end
+  local have_previous = on_target("docker image inspect " .. shq(rollback_tag) .. " >/dev/null 2>&1")
+
+  if outgoing_healthy or not have_previous then
+    if not on_target("docker tag " .. shq(restore_image) .. " " .. shq(rollback_tag)) then
+      err("Could not tag the outgoing image as " .. rollback_tag .. " — aborting deploy to preserve recovery path")
+      error("docker deploy: rollback tag failed")
+    end
+    if not outgoing_healthy then
+      warn("'" .. container .. "' is not healthy, but it is the only rollback candidate — tagged as " .. rollback_tag)
+    end
+  else
+    warn("'" .. container .. "' is not healthy — keeping " .. rollback_tag .. " on the last healthy build instead of moving it")
+  end
+
   local restore_parts = {"docker", "run", "-d", "--name", container}
   for _, a in ipairs(target_argv) do table.insert(restore_parts, a) end
-  table.insert(restore_parts, restore_image)
+  table.insert(restore_parts, rollback_tag)
   local restore_quoted = {}
   for _, p in ipairs(restore_parts) do table.insert(restore_quoted, shq(p)) end
-  local restore_script = "#!/bin/sh\n" .. table.concat(restore_quoted, " ") .. "\n"
+  -- `rm -f` first: by the time anyone runs this, the failed new container
+  -- usually still holds the name.
+  local restore_script = "#!/bin/sh\ndocker rm -f " .. shq(container) .. " >/dev/null 2>&1\n" ..
+                         table.concat(restore_quoted, " ") .. "\n"
 
   local write_shell = "printf '%s' " .. shq(restore_script) .. " > " .. shq(restore_path) ..
                        " && chmod +x " .. shq(restore_path)
@@ -587,9 +662,9 @@ if container_exists then
     err("Could not write restore script — aborting deploy to preserve recovery path")
     error("docker deploy: restore script write failed")
   end
-  local sha_note = (restore_image ~= image) and (" (SHA: " .. restore_image:sub(1, 12) .. ")") or ""
-  info("Restore script saved: " .. restore_path .. sha_note)
+  info("Restore script saved: " .. restore_path .. " (starts " .. rollback_tag .. ")")
 end
+local restore_hint = local_deploy and ("bash " .. restore_path) or ("ssh " .. host .. " bash " .. restore_path)
 
 if container_exists then
   info("Stopping + removing '" .. container .. "' " .. location .. "...")
@@ -613,16 +688,11 @@ local config_source = run_cfg_present and "[docker_run] in admin.toml" or "prese
 info("Recreating '" .. container .. "' " .. location .. " from " .. config_source .. "...")
 local recreate_cmd = local_deploy and remote_run or ("ssh " .. shq(host) .. " " .. shq(remote_run))
 if not run_cmd(recreate_cmd) then
-  local restore_hint = local_deploy and ("bash " .. restore_path) or ("ssh " .. host .. " bash " .. restore_path)
   err("Container start failed — to restore: " .. restore_hint)
   error("docker deploy: recreate failed")
 end
 
 ok("Deployed " .. image .. " as container '" .. container .. "' " .. location)
-
-info("Pruning dangling images " .. location .. "...")
-local prune_shell = "docker image prune -f"
-run_cmd(local_deploy and prune_shell or ("ssh " .. shq(host) .. " " .. shq(prune_shell)))
 
 local snapshot_path = "/tmp/" .. container .. "-lastdeploy.json"
 local snap_shell = "docker inspect " .. shq(container) .. " > " .. shq(snapshot_path)
@@ -634,11 +704,21 @@ if health_shell then
   if not hc_ok then
     err("Container '" .. container .. "' started but never became healthy.")
     local logs_hint = local_deploy and ("docker logs " .. container) or ("ssh " .. host .. " docker logs " .. container)
-    print("\n  Check: " .. logs_hint .. "\n")
+    print("\n  Check: " .. logs_hint)
+    if container_exists then
+      print("  Roll back to " .. rollback_tag .. ": " .. restore_hint)
+    end
+    print("")
     error("docker deploy: health check failed")
   end
   ok("Health check passed")
 end
+
+-- Only now, with the new container answering (or no health check declared),
+-- is the previous build safe to lose. The rollback tag survives this.
+info("Pruning dangling images " .. location .. "...")
+local prune_shell = "docker image prune -f"
+run_cmd(local_deploy and prune_shell or ("ssh " .. shq(host) .. " " .. shq(prune_shell)))
 '''
 
 
