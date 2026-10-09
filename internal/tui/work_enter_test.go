@@ -168,8 +168,9 @@ func TestActivateWorkerRowAttaches(t *testing.T) {
 // startHostedRun is never reached — it exists to catch a regression where
 // activateCommand's dispatch path is changed back to something that hands
 // the terminal away, at which point the pump's own model stops advancing
-// past the exec and the frame would come back short (Frame's own Settle
-// backstop firing with nothing drawn) or missing the tab bar.
+// past the exec. Frame returns as soon as its pump goes quiescent (frame.go's
+// drain), not on a timeout, so a stalled dispatch shows up as a frame
+// missing the command list or the tab bar rather than as a slow test.
 func TestFrameDuringHostedRunShowsTheDashboard(t *testing.T) {
 	old := startHostedRun
 	defer func() { startHostedRun = old }()

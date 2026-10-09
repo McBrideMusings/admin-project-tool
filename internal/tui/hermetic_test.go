@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -37,17 +36,13 @@ func TestMain(m *testing.M) {
 	restoreSyncLog := data.UseSyncLogPath(filepath.Join(dir, "sync.log"))
 	// A dispatched worker is shared through the state dir; never the user's.
 	restoreLivework := livework.UseRegistry(livework.NewSharedRegistry(filepath.Join(dir, "livework")))
-	// Identity is `gh api user` cached under the real user cache dir; a test that
-	// runs Init's commands must neither call gh nor write that cache.
-	prevFetchIdentity := fetchIdentityFn
-	fetchIdentityFn = func(context.Context, string) (data.Identity, error) { return data.Identity{}, nil }
-	// No test here is about the remote; every Frame/Init sync answers empty.
-	// A test that restores the real FetchAll still dies in gh.run.
-	prevFetchAll := fetchAllFn
-	fetchAllFn = func(context.Context, string, data.SyncOpts) data.Remote { return data.Remote{} }
+	// No test here is about the remote: every Frame/Init answers from an empty
+	// Remote — no on-disk cache read, no `gh`, no `git fetch --prune`, no
+	// identity lookup. The cache read reports a hit, so a model has data before
+	// its first sync. A test that needs a miss or particular data sets its own.
+	restoreRemote := UseStaticRemote(data.Remote{})
 	code := m.Run()
-	fetchAllFn = prevFetchAll
-	fetchIdentityFn = prevFetchIdentity
+	restoreRemote()
 	restoreLivework()
 	restoreSyncLog()
 	restoreViewState()
