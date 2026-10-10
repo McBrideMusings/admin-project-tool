@@ -245,7 +245,9 @@ func startHostedChild(liveID, name string, c *exec.Cmd, rows, cols int, announce
 // a successfully-spawned hosted dispatch, and waits for the child to exit
 // in a goroutine so the entry can flip to exited/failed the same way
 // recordLiveWork's launcher-backed entry does — the only visible
-// difference to a caller is whether Via is empty. announce is the read end of
+// difference to a caller is whether Via is empty. A worker entry is the
+// exception: its exit leaves the entry running and reports through
+// Ops.Exited, so the reaper ends it. announce is the read end of
 // the child's log-path pipe, nil for a child with none. The returned channel
 // receives the child's exit error (ErrHostedKilled after a Kill) once its final state
 // is recorded, then closes; when the entry cannot be registered the child is killed and it closes
@@ -265,6 +267,9 @@ func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx
 	// would otherwise hit a closed *os.File, rather than surfacing
 	// whatever the OS happens to return for that.
 	var closed atomic.Bool
+	// waitErr is the child's c.Wait() result, written before exited is set
+	// and read only after exited reads true.
+	var waitErr error
 
 	// screen is the child's terminal: it answers the child's terminal
 	// queries — bubbletea's package init asks for the background color
@@ -349,6 +354,14 @@ func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx
 			return nil
 		},
 	}
+	if worker != nil {
+		e.Ops.Exited = func() (bool, error) {
+			if !exited.Load() || killed.Load() {
+				return false, nil
+			}
+			return true, waitErr
+		}
+	}
 	if err := livework.Default.Add(e); err != nil {
 		log.Printf("recordHostedPTYWork: %v", err)
 		if announce != nil {
@@ -391,7 +404,7 @@ func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx
 		// must not be surfaced as a wait error.
 		_ = copyErr
 
-		waitErr := c.Wait()
+		waitErr = c.Wait()
 		closed.Store(true)
 		_ = ptmx.Close()
 		exited.Store(true)
@@ -399,9 +412,13 @@ func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx
 			exit <- ErrHostedKilled
 			return
 		}
-		if waitErr != nil {
+		switch {
+		case worker != nil:
+			// A worker's session ending is the reaper's to record (Ops.Exited),
+			// so its worktree gets the same decision a closed pane's does.
+		case waitErr != nil:
 			livework.Default.SetState(e.ID, livework.StateFailed, waitErr)
-		} else {
+		default:
 			livework.Default.SetState(e.ID, livework.StateExited, nil)
 		}
 		exit <- waitErr

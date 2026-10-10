@@ -1,9 +1,10 @@
 // reappoll.go is the Work tab's per-tick worker reaper: once a tick it hands
 // every running or waiting worker to kinds.ReapWorker, which ends the worker
-// once its pane has gone or its done predicate passes, removes the worktree
-// and branch when nothing in them is missing from origin, and frees the
-// worker's ceiling slot. The ended row leaves the Workers tab, so each reap's
-// one-line outcome comes back as a reapedMsg for the status line.
+// once its pane has gone, its hosted process has exited or its done predicate
+// passes, removes the worktree and branch when nothing in them is missing
+// from origin, and frees the worker's ceiling slot. The ended row leaves the
+// Workers tab, so each reap's one-line outcome comes back as a reapedMsg for
+// the status line.
 package tui
 
 import (

@@ -85,6 +85,9 @@ func TestHostedWorkersRunOnDashboardPtyOneSlotAtATime(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("DispatchTargets never returned")
 	}
+	if ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{}); !ended || !strings.Contains(outcome, "process exited") {
+		t.Errorf("ReapWorker = %v, %q; want the exited worker ended", ended, outcome)
+	}
 	if st, _ := livework.Default.State("hostedseq-a"); st != livework.StateExited {
 		t.Errorf("hostedseq-a state = %q, want exited", st)
 	}
@@ -99,9 +102,52 @@ func TestHostedWorkerNonzeroExitFailsTheTarget(t *testing.T) {
 	if strings.Contains(res[0].Err.Error(), "exit 3") {
 		t.Errorf("Err = %v, echoes the run string", res[0].Err)
 	}
-	if st, _ := livework.Default.State("hostedfail-t1"); st != livework.StateFailed {
-		t.Errorf("state = %q, want failed", st)
+	e, _ := livework.Default.Get("hostedfail-t1")
+	if ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{}); !ended || !strings.Contains(outcome, "process exited (exit status 3)") {
+		t.Errorf("ReapWorker = %v, %q; want the exit status in the outcome", ended, outcome)
 	}
+	if ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{}); ended {
+		t.Errorf("ended an already-ended worker again: %q", outcome)
+	}
+}
+
+// waitHostedExit dispatches one hosted target whose run exits at once, and
+// returns its entry after the dispatch has returned.
+func waitHostedExit(t *testing.T, repoRoot, action, run string) *livework.Entry {
+	t.Helper()
+	res := DispatchTargets(repoRoot, action, hostedAction(nil), []Target{{Name: "t0", Run: run}}, SurfaceDashboard)
+	if res[0].Err != nil {
+		t.Fatal(res[0].Err)
+	}
+	e, ok := livework.Default.Get(action + "-t0")
+	if !ok {
+		t.Fatal("hosted worker not in the live registry")
+	}
+	return e
+}
+
+// A hosted worker whose process exits on its own gets the same end-of-session
+// path as a window worker whose pane closed: the row ends, and a clean worktree
+// origin holds in full is removed with its branch.
+func TestReapWorkerHostedExitRemovesCleanWorktree(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, "")
+	addOrigin(t, repoRoot)
+	e := waitHostedExit(t, repoRoot, "hostedexit", "true")
+	if st, _ := livework.Default.State(e.ID); !st.Reapable() {
+		t.Fatalf("state after exit = %s, want it left for the reaper", st)
+	}
+	ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{})
+	assertEnded(t, repoRoot, e, ended, outcome, true, "process exited: worktree and branch removed")
+}
+
+// The exited worker's commit origin lacks keeps the worktree, and says why.
+func TestReapWorkerHostedExitKeepsLocalWork(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, "")
+	addOrigin(t, repoRoot)
+	run := `echo x > work.txt && git add -A && git -c user.email=t@t -c user.name=t commit -qm work`
+	e := waitHostedExit(t, repoRoot, "hostedkeep", run)
+	ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{})
+	assertEnded(t, repoRoot, e, ended, outcome, false, "process exited: worktree left at "+e.Worker.Worktree+" (1 commit(s) on no origin branch)")
 }
 
 // TestHostedShellSurfaceRunsInlineOneAtATime: from a plain shell no pty is

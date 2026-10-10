@@ -4,12 +4,13 @@
 // session does.
 //
 // The session is over when its launcher pane has gone (closed by a person, or
-// the agent exited), or when the action's `done` predicate passes, in which
-// case the reaper closes the pane itself. Either way the row ends and the
-// ceiling slot frees. The worktree and branch are a separate question: they
-// are removed only when nothing in them exists outside origin, checked here in
-// Go so no manifest can loosen it; otherwise they stay on disk for the Repo
-// tab, and the reap's outcome says why.
+// the agent exited) or a hosted worker's process has exited, or when the
+// action's `done` predicate passes, in which case the reaper closes the
+// session itself. Either way the row ends and the ceiling slot frees. The
+// worktree and branch are a separate question: they are removed only when
+// nothing in them exists outside origin, checked here in Go so no manifest
+// can loosen it; otherwise they stay on disk for the Repo tab, and the reap's
+// outcome says why.
 package kinds
 
 import (
@@ -137,17 +138,31 @@ func doneDue(e *livework.Entry, now time.Time) (last doneRun, due bool) {
 	return last, now.Sub(last.at) >= doneInterval
 }
 
-// workerPaneGone asks [terminal].status whether e's launcher pane has gone.
-// A hosted worker, or a launcher with no status command, has no pane to ask
-// about and reads as not gone; so does a probe that could not answer.
-func workerPaneGone(ctx context.Context, e *livework.Entry, t config.Terminal) bool {
-	if t.Status == "" || e.Via != "terminal" {
-		return false
+// workerSessionGone reports whether e's session has ended on its own, and how:
+// a window worker's launcher pane has gone ([terminal].status), or a hosted
+// worker's process has exited (Ops.Exited). A launcher with no status command,
+// or a probe that could not answer, reads as not gone.
+func workerSessionGone(ctx context.Context, e *livework.Entry, t config.Terminal) (gone bool, why string) {
+	if e.Via != "terminal" {
+		if e.Ops.Exited == nil {
+			return false, ""
+		}
+		exited, err := e.Ops.Exited()
+		if !exited {
+			return false, ""
+		}
+		if err != nil {
+			return true, "process exited (" + err.Error() + ")"
+		}
+		return true, "process exited"
+	}
+	if t.Status == "" {
+		return false, ""
 	}
 	ctx, cancel := context.WithTimeout(ctx, doneTimeout)
 	defer cancel()
 	gone, err := PaneGone(ctx, t.Status, e.Handle)
-	return err == nil && gone
+	return err == nil && gone, "pane closed"
 }
 
 // workerFinished reports whether a worker whose session is still running has
@@ -325,7 +340,8 @@ var reapKilled sync.Map
 
 // ReapWorker ends e's session when it is over, reporting whether it did and,
 // when it did, one line saying what happened to the worktree. A session is
-// over when its launcher pane has gone, or when its task is finished
+// over when its launcher pane has gone or its hosted process has exited
+// (workerSessionGone), or when its task is finished
 // (workerFinished), in which case the reaper closes the pane first; a close
 // that fails leaves the worker running with the reason on its row, retried
 // next tick. Only a running or waiting worker is judged.
@@ -339,8 +355,8 @@ func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t confi
 		return false, ""
 	}
 	start := time.Now()
-	why := "pane closed"
-	if !workerPaneGone(ctx, e, t) {
+	gone, why := workerSessionGone(ctx, e, t)
+	if !gone {
 		finished, note := workerFinished(ctx, repoRoot, e)
 		if !finished {
 			livework.Default.SetNote(e.ID, note)

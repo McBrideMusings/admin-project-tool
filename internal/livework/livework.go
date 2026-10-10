@@ -110,6 +110,12 @@ type Ops struct {
 	// Both are nil for a pane-addressed entry, which needs neither.
 	Write  func(p []byte) (int, error)
 	Resize func(rows, cols int) error
+
+	// Exited reports whether a hosted worker's process has exited on its
+	// own, and its wait error. A hosted worker's exit leaves the entry
+	// running so the reaper ends it, as it does a window worker whose pane
+	// closed. nil for every other entry.
+	Exited func() (exited bool, err error)
 }
 
 // Entry is one live-work record: a long-running kind's single-pane
