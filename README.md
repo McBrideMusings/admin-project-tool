@@ -35,6 +35,7 @@ Once installed, `admin` is on your PATH. Run it from anywhere inside a project â
 | `admin new` | Detect the project's stack and write a starter `admin.toml` |
 | `admin check` | Validate that `admin.toml` parses and resolves |
 | `admin compile` | Build a standalone `./admin` binary, resolved manifest embedded, for a machine without the tool installed |
+| `admin sim launch <app> [--device <udid\|name>]` | Resolve and boot a simulator, install a built `.app` and launch it â€” the `apple.*` simulator helpers for a script with no `admin.toml` (macOS only) |
 | `admin <command>` | Run a command defined in the project's `admin.toml` |
 
 To update the tool: edit, commit, push, then re-run `./install.sh`. There is no per-project regeneration.

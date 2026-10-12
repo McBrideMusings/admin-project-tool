@@ -199,7 +199,7 @@ just a bare `nil`.
 | `apple.resolve_simulator(platform)` | `(string) -> (string?, string?)` | Picks the best simulator for `"ios"`/`"tv"`: booted first, else newest available. Returns device id and name. |
 | `apple.boot_simulator(device_id)` | `(string) -> ()` | Issues `simctl boot` and opens Simulator.app. Returns once boot is requested, not once it completes. |
 | `apple.ensure_booted_simulator(platform)` | `(string) -> (string?, string?)` | Resolves a simulator and blocks until it has finished booting. |
-| `apple.install_and_launch_sim(device_id, app_path, bundle_id[, launch_args])` | `(string, string, string, string[]?) -> ()` | Installs and launches, passing `launch_args` as `UIApplication` launch arguments. |
+| `apple.install_and_launch_sim(device_id, app_path, bundle_id[, launch_args])` | `(string, string, string, string[]?) -> ()` | Installs and launches, passing `launch_args` as `UIApplication` launch arguments. A failed install or launch is reported through `err()`. Outside a manifest, `admin sim launch <app>` runs the same resolve, boot, install and launch. |
 | `apple.terminate_sim_app(device_id, bundle_id)` / `apple.is_sim_app_running(device_id, bundle_id)` | `(string, string) -> ()` / `(string, string) -> bool` | |
 | `apple.app_bundle_identifier(app_path)` | `(string) -> string?` | Reads `CFBundleIdentifier` via PlistBuddy (handles binary Info.plist, unlike `plist.read`). |
 | `apple.find_connected_device(platform[, device_type])` | `(string, string?) -> (string?, string?, string?)` | Finds a connected physical device via devicectl; returns id, name, udid. `device_type` (e.g. `"iPhone"`) disambiguates when more than one candidate of the platform is connected. |

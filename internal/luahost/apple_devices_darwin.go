@@ -20,24 +20,30 @@ var simRuntimeHeader = regexp.MustCompile(`^-- (.+) --$`)
 // FindSimulator finds a simulator device ID by exact name, preferring a
 // booted instance. Returns "" if none match.
 func FindSimulator(deviceName string) (string, error) {
+	id, _, err := FindSimulatorDevice(deviceName)
+	return id, err
+}
+
+// FindSimulatorDevice finds an available simulator whose exact name or UDID
+// is device, preferring a booted instance, else the one on the newest runtime
+// (simctl lists runtimes oldest first, as ResolveSimulator relies on too).
+// Returns its id and name, or ("", "", nil) if none match.
+func FindSimulatorDevice(device string) (deviceID, deviceName string, err error) {
 	out, err := execOutput("xcrun", "simctl", "list", "devices", "available")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	var first string
 	for _, line := range strings.Split(out, "\n") {
 		m := simDeviceLine.FindStringSubmatch(line)
-		if m == nil || m[1] != deviceName {
+		if m == nil || (m[1] != device && !strings.EqualFold(m[2], device)) {
 			continue
 		}
 		if m[3] == "Booted" {
-			return m[2], nil
+			return m[2], m[1], nil
 		}
-		if first == "" {
-			first = m[2]
-		}
+		deviceID, deviceName = m[2], m[1]
 	}
-	return first, nil
+	return deviceID, deviceName, nil
 }
 
 // ResolveSimulator picks the best simulator for platform ("ios" or "tv"):
@@ -113,9 +119,15 @@ func EnsureBootedSimulator(platform string) (deviceID, deviceName, infoLine stri
 	if err != nil {
 		return "", "", "", err
 	}
+	WaitBootedSimulator(deviceID)
+	return deviceID, deviceName, infoLine, nil
+}
+
+// WaitBootedSimulator opens Simulator.app and blocks on `simctl bootstatus
+// -b` until deviceID finishes booting, booting it first if it is shut down.
+func WaitBootedSimulator(deviceID string) {
 	_ = execRun("open", "-a", "Simulator")
 	_ = execRun("xcrun", "simctl", "bootstatus", deviceID, "-b")
-	return deviceID, deviceName, infoLine, nil
 }
 
 // InstallAndLaunchSim installs appPath on deviceID and launches bundleID,
@@ -123,20 +135,28 @@ func EnsureBootedSimulator(platform string) (deviceID, deviceName, infoLine stri
 // variables delivered to the launched process. `simctl launch` reads any
 // SIMCTL_CHILD_<NAME> var off its own environment and hands <NAME> to the
 // child — there is no direct `-e` flag the way `devicectl` has, so that's the
-// prefix this applies.
-func InstallAndLaunchSim(deviceID, appPath, bundleID string, launchArgs []string, env map[string]string) {
-	_ = execRun("xcrun", "simctl", "install", deviceID, appPath)
+// prefix this applies. Returns simctl's error when the install or the launch
+// fails.
+func InstallAndLaunchSim(deviceID, appPath, bundleID string, launchArgs []string, env map[string]string) error {
+	if err := execRun("xcrun", "simctl", "install", deviceID, appPath); err != nil {
+		return fmt.Errorf("simctl install %s on %s: %w", appPath, deviceID, err)
+	}
 	args := append([]string{"simctl", "launch", deviceID, bundleID}, launchArgs...)
+	var err error
 	if len(env) == 0 {
-		_ = execRun("xcrun", args...)
-		return
+		err = execRun("xcrun", args...)
+	} else {
+		cmd := exec.Command("xcrun", args...)
+		cmd.Env = os.Environ()
+		for k, v := range env {
+			cmd.Env = append(cmd.Env, "SIMCTL_CHILD_"+k+"="+v)
+		}
+		err = cmd.Run()
 	}
-	cmd := exec.Command("xcrun", args...)
-	cmd.Env = os.Environ()
-	for k, v := range env {
-		cmd.Env = append(cmd.Env, "SIMCTL_CHILD_"+k+"="+v)
+	if err != nil {
+		return fmt.Errorf("simctl launch %s on %s: %w", bundleID, deviceID, err)
 	}
-	_ = cmd.Run()
+	return nil
 }
 
 func TerminateSimApp(deviceID, bundleID string) {

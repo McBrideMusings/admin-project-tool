@@ -349,7 +349,9 @@ func appleDevSimulator(cfg map[string]any, h *luahost.Host, platform string, f a
 		}
 
 		h.Info("Installing on simulator...")
-		luahost.InstallAndLaunchSim(simID, appPath, launchBundle, launchArgs, devEnv)
+		if err := luahost.InstallAndLaunchSim(simID, appPath, launchBundle, launchArgs, devEnv); err != nil {
+			h.Err(err.Error())
+		}
 
 		isRunning := func() bool { return luahost.IsSimAppRunning(simID, launchBundle) }
 		waitForTrue(10, reloadPollInterval, isRunning)
