@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -587,8 +588,55 @@ func init() {
 	_ = f.MarkHidden("fixture")
 	f.BoolVar(&compiledInfoFlag, "compiled-info", false, "report which admin.toml this binary was compiled from and when, then exit")
 
+	// --version is a flag, not a verb: a `version` subcommand would join
+	// reservedCmdVerbs and shadow any admin.toml command of that name. It
+	// prints "<revision> <sourceDir>" so a caller can look the revision up in
+	// the checkout that holds it.
+	rootCmd.Version = versionLine(buildRevision(), sourceDir)
+	rootCmd.SetVersionTemplate("{{.Version}}\n")
+
 	rootCmd.PersistentFlags().StringVarP(&worktreeFlag, "worktree", "w", "",
 		"run against another git worktree instead of the cwd — a directory path, a worktree's basename, its branch, or a substring of either")
+}
+
+// buildRevision is the commit `go build` stamped into this binary from the
+// checkout it ran in — "+dirty" when that tree had uncommitted changes — so a
+// caller can ask whether an installed admin carries a given fix. A build with
+// no VCS stamp (go test, admin compile's temp copy) reports "unknown".
+func buildRevision() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown"
+	}
+	return revisionFromSettings(info.Settings)
+}
+
+// versionLine is what `admin --version` prints: the revision, then the source
+// checkout when install.sh stamped one in.
+func versionLine(rev, src string) string {
+	if src == "" {
+		return rev
+	}
+	return rev + " " + src
+}
+
+func revisionFromSettings(settings []debug.BuildSetting) string {
+	rev, dirty := "", false
+	for _, s := range settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	if rev == "" {
+		return "unknown"
+	}
+	if dirty {
+		rev += "+dirty"
+	}
+	return rev
 }
 
 // dashboardManifestRoot is where the dashboard should read admin.toml from.

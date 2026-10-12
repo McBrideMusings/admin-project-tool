@@ -1,6 +1,58 @@
 package cmd
 
-import "testing"
+import (
+	"bytes"
+	"runtime/debug"
+	"testing"
+)
+
+// TestVersionFlag drives `admin --version` through cobra: the line is the
+// build revision, then the source checkout, which is the shape
+// ~/.claude/hooks/tests-worktree-link-locals.sh reads as "<rev> <src>".
+func TestVersionFlag(t *testing.T) {
+	var out bytes.Buffer
+	t.Cleanup(func() {
+		_ = rootCmd.Flags().Set("version", "false")
+		rootCmd.SetArgs(nil)
+		rootCmd.SetOut(nil)
+	})
+	rootCmd.SetOut(&out)
+	rootCmd.SetArgs([]string{"--version"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("admin --version: %v", err)
+	}
+	if want := versionLine(buildRevision(), sourceDir) + "\n"; out.String() != want {
+		t.Errorf("admin --version printed %q, want %q", out.String(), want)
+	}
+	if got, want := versionLine("abc", "/src/admin"), "abc /src/admin"; got != want {
+		t.Errorf("versionLine with a source dir = %q, want %q", got, want)
+	}
+	if got, want := versionLine("abc", ""), "abc"; got != want {
+		t.Errorf("versionLine without a source dir = %q, want %q", got, want)
+	}
+}
+
+// TestRevisionFromSettings pins what `admin --version` prints, since
+// ~/.claude's hook suites compare it against the commit that carries a fix.
+func TestRevisionFromSettings(t *testing.T) {
+	const sha = "bdce50c306005de8f4a6dc24842a827d6c6a20e2"
+	cases := []struct {
+		name     string
+		settings []debug.BuildSetting
+		want     string
+	}{
+		{"no vcs stamp", nil, "unknown"},
+		{"clean tree", []debug.BuildSetting{{Key: "vcs.revision", Value: sha}, {Key: "vcs.modified", Value: "false"}}, sha},
+		{"dirty tree", []debug.BuildSetting{{Key: "vcs.revision", Value: sha}, {Key: "vcs.modified", Value: "true"}}, sha + "+dirty"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := revisionFromSettings(tc.settings); got != tc.want {
+				t.Errorf("revisionFromSettings = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
 
 // TestColorfgbgDarkBackground exercises colorfgbgDarkBackground directly —
 // no live terminal, no OSC 11 query, no pty — proving the heuristic that
