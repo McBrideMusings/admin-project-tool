@@ -80,7 +80,7 @@ Process name resolution falls back through: explicit key → the scheme's `PRODU
 | Key | Default | Meaning |
 |---|---|---|
 | `mac_install_path_prod` | `/Applications` | Destination for a deployed (prod) macOS build. |
-| `mac_install_path_dev` | — | Destination for a `dev` macOS build install, when dev-install is requested. |
+| `mac_install_path_dev` | — | Where the macOS dev build is installed: by `deploy_mac_dev`, and by `dev_mac --install`. Both build with the DEV-banner icons and the dev rename. |
 | `mac_deploy_verify` | — | Shell command run by `deploy_mac`, from the project root, after build and after notarize/staple, before `install_path` is touched. The built `.app` path is shell-quoted and appended as the final argument. Output streams to the terminal; a non-zero exit aborts the deploy and leaves `install_path` untouched. Unset means no verify step, identical to today's behavior. |
 
 ## Distribution signing for deploy

@@ -101,6 +101,8 @@ func runAppleVerb(verb, action string, cfg map[string]any, args []string, m *man
 		return appleDevDevice(cfg, h, "tv", f)
 	case "deploy_mac":
 		return appleDeployMac(cfg, h, f)
+	case "deploy_mac_dev":
+		return appleDeployMacDev(cfg, h, f)
 	case "deploy_ios":
 		return appleDeployDevice(cfg, h, "ios", f)
 	case "deploy_tv":

@@ -84,6 +84,13 @@ kind = "apple"
 desc = "deploy macOS"
 run = "deploy_mac"
 
+# The dev variant (dev bundle suffix, DEV-banner icon, "<Name> Dev.app")
+# installed at mac_install_path_dev and launched; returns once it is running.
+[actions.deploy-mac-dev]
+kind = "apple"
+desc = "deploy macOS dev build"
+run = "deploy_mac_dev"
+
 [actions.deploy-ios]
 kind = "apple"
 desc = "deploy iOS"

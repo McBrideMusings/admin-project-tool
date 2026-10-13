@@ -22,13 +22,12 @@ package kinds
 // See apple_darwin.go's package doc comment for App Store Connect device
 // registration. The dev/prod bundle-suffix convention layer
 // (applesign_darwin.go's appleComposeDevSettings) is wired into every build
-// call below, and so are the dev-icon-swap hooks and the iOS/tvOS
-// display-name patch (appleiconhooks_darwin.go's
-// appleBuildIconHooks/applePatchDisplayName), around appleDevSimulator's
-// and appleDevDevice's build/install steps. appleDevMac has no icon-swap
-// story of its own but does get its own dev-rename/re-sign postprocessing
-// and dev-aware process checks — see the mac_dev_rename handling and
-// appleMacDevIsRunning/appleMacDevKill calls below.
+// call below, and so are the dev-icon-swap hooks (appleiconhooks_darwin.go's
+// appleBuildIconHooks) around every build. The iOS/tvOS display-name patch
+// (applePatchDisplayName) wraps appleDevSimulator's and appleDevDevice's
+// install steps; macOS gets its dev rename/re-sign postprocessing instead, in
+// appleBuildMacDevApp, which dev_mac and deploy_mac_dev share, plus the
+// dev-aware process checks appleMacDevIsRunning/appleMacDevKill.
 
 import (
 	"fmt"
@@ -92,66 +91,22 @@ func appleDevMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 		reload.ClearRebuildRequest()
 		killDev()
 
-		h.Info("Building...")
 		opts := luahost.XcodebuildOptions{
 			Project: project, Scheme: scheme, Config: config,
 			Destination: "platform=macOS", Action: appleBuildAction(f.clean),
 			ExtraSettings: extraSettings,
 		}
-		res, err := h.XcodebuildFiltered(opts)
+		appPath, built, err := appleBuildMacDevApp(cfg, h, opts, process, f.install)
 		if err != nil {
 			return err
 		}
-		if !res.Ok {
+		if !built {
 			h.Err("Build failed")
 			if reload.IsRebuildRequested() {
 				h.Warn("Rebuild requested during failed build, retrying...")
 				continue
 			}
 			return fmt.Errorf("build failed")
-		}
-
-		appPath, err := appleBuiltApp(opts, process)
-		if err != nil {
-			h.Err("BUILD SUCCEEDED but " + err.Error())
-			return err
-		}
-
-		// Two independent things can happen to the built app before launch:
-		// it can be renamed to the dev name (mac_dev_rename, default true),
-		// and it can be installed to a fixed path (--install). Rename FIRST,
-		// then install what came out. Renaming after the install copy would
-		// rename the wrong (already-copied) path.
-		if cfgBool(cfg, "mac_dev_rename", true) {
-			product := appleResolveMacDevProductName(cfg, process)
-			display := appleResolveDevDisplayName(cfg, "mac", process)
-			if product != "" || display != "" {
-				signIdentity := appleResolveDevSignIdentity(cfg, h)
-				dest, perr := luahost.DevMacOSPostprocess(appPath, product, display, signIdentity)
-				// DevMacOSPostprocess returns "" only on a real failure
-				// (not an .app bundle, missing Info.plist, rename failed);
-				// a non-empty dest with a non-nil error is a cosmetic-only
-				// plutil/codesign warning — the rename itself succeeded.
-				if dest == "" {
-					return perr
-				}
-				if perr != nil {
-					h.Warn(perr.Error())
-				}
-				appPath = dest
-			}
-		}
-
-		if f.install {
-			dest := cfgString(cfg, "mac_install_path_dev", "")
-			if dest == "" {
-				return fmt.Errorf("--install requires apple.mac_install_path_dev in admin.toml")
-			}
-			h.Info("Installing to " + dest)
-			if _, err := macapp.Install(appPath, dest, h); err != nil {
-				return err
-			}
-			appPath = dest
 		}
 
 		h.Info("Launching " + appPath)
@@ -202,6 +157,115 @@ func appleDevMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 			return nil
 		}
 	}
+}
+
+// appleBuildMacDevApp builds the macOS dev variant once, for dev_mac's loop and
+// deploy_mac_dev alike: the DEV-banner icons for the length of the build (the
+// committed art is restored whatever the build does), then the dev rename and
+// re-sign (mac_dev_rename, default true), then with install a copy at
+// mac_install_path_dev. Returns the app to launch; built is false when
+// xcodebuild itself failed, so the dev loop can retry on a reload.
+func appleBuildMacDevApp(cfg map[string]any, h *luahost.Host, opts luahost.XcodebuildOptions, process string, install bool) (appPath string, built bool, err error) {
+	iconPre, iconPost := appleBuildIconHooks(cfg, h)
+	if err := iconPre(); err != nil {
+		return "", false, err
+	}
+	h.Info("Building...")
+	res, err := h.XcodebuildFiltered(opts)
+	if perr := iconPost(); perr != nil {
+		h.Warn("could not restore icons: " + perr.Error())
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if !res.Ok {
+		return "", false, nil
+	}
+
+	appPath, err = appleBuiltApp(opts, process)
+	if err != nil {
+		h.Err("BUILD SUCCEEDED but " + err.Error())
+		return "", false, err
+	}
+
+	// Rename FIRST, then install what came out. Renaming after the install
+	// copy would rename the wrong (already-copied) path.
+	if cfgBool(cfg, "mac_dev_rename", true) {
+		product := appleResolveMacDevProductName(cfg, process)
+		display := appleResolveDevDisplayName(cfg, "mac", process)
+		if product != "" || display != "" {
+			signIdentity := appleResolveDevSignIdentity(cfg, h)
+			dest, perr := luahost.DevMacOSPostprocess(appPath, product, display, signIdentity)
+			// DevMacOSPostprocess returns "" only on a real failure (not an
+			// .app bundle, missing Info.plist, rename failed); a non-empty
+			// dest with a non-nil error is a cosmetic-only plutil/codesign
+			// warning — the rename itself succeeded.
+			if dest == "" {
+				return "", false, perr
+			}
+			if perr != nil {
+				h.Warn(perr.Error())
+			}
+			appPath = dest
+		}
+	}
+
+	if install {
+		dest := cfgString(cfg, "mac_install_path_dev", "")
+		if dest == "" {
+			return "", false, fmt.Errorf("installing the dev app requires apple.mac_install_path_dev in admin.toml")
+		}
+		h.Info("Installing to " + dest)
+		if _, err := macapp.Install(appPath, dest, h); err != nil {
+			return "", false, err
+		}
+		appPath = dest
+	}
+	return appPath, true, nil
+}
+
+// appleDeployMacDev is deploy_mac_dev: the dev variant built, installed at
+// mac_install_path_dev and launched, then done — deploy_mac's counterpart for
+// the dev build. Unlike dev_mac it neither streams logs nor waits, so the
+// installed dev app keeps running after the command returns.
+func appleDeployMacDev(cfg map[string]any, h *luahost.Host, f appleFlags) error {
+	scheme := cfgString(cfg, "mac_scheme", "")
+	if scheme == "" {
+		return fmt.Errorf("apple.mac_scheme required")
+	}
+	project, err := appleProject(cfg, h)
+	if err != nil {
+		return err
+	}
+	config := cfgString(cfg, "mac_build_config", "Debug")
+	process := appleProcess(project, cfg, "mac", scheme)
+	extraSettings, err := appleComposeDevSettings(cfg, h, project, "mac")
+	if err != nil {
+		return err
+	}
+	h.Info("Stopping any running dev " + process + "...")
+	appleMacDevKill(h, cfg, process, true)()
+
+	opts := luahost.XcodebuildOptions{
+		Project: project, Scheme: scheme, Config: config,
+		Destination: "platform=macOS", Action: appleBuildAction(f.clean),
+		ExtraSettings: extraSettings,
+	}
+	appPath, built, err := appleBuildMacDevApp(cfg, h, opts, process, true)
+	if err != nil {
+		return err
+	}
+	if !built {
+		return fmt.Errorf("build failed")
+	}
+	if cfgBool(cfg, "mac_deploy_launch", true) {
+		h.Info("Launching " + appPath)
+		if err := runOpen([]string{appPath}); err != nil {
+			return err
+		}
+	}
+	h.Ok("deploy mac dev -> " + appPath)
+	return nil
 }
 
 // appleDevSimulator is dev_ios/dev_tv: build for an iOS or tvOS simulator,
