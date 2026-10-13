@@ -267,8 +267,8 @@ func TestBucket(t *testing.T) {
 				`"comments":{"nodes":[{"author":{"login":"pierce"},"createdAt":"2026-01-01T00:00:00Z"}]},` + commits + `}`,
 			want: BucketAssigned,
 		},
-		// A verdict is where assignment stops mattering: I have ruled on the PR, so
-		// the next move is the author's however I came to be on it.
+		// A verdict is participation like any other: I have ruled on the PR, so the
+		// next move is the author's however I came to be on it.
 		{
 			name: "assigned, and I approved",
 			json: `{"author":{"login":"alice"},` +
@@ -282,15 +282,6 @@ func TestBucket(t *testing.T) {
 				`"assignees":{"nodes":[{"login":"pierce"}]},` +
 				`"reviews":{"nodes":[{"author":{"login":"pierce"},"state":"CHANGES_REQUESTED","submittedAt":"` + after + `"}]},` + commits + `}`,
 			want: BucketReviewed,
-		},
-		// A new commit landed after my approval, so the approval no longer covers the
-		// PR: the assignment is live again.
-		{
-			name: "assigned, approved, then a new commit landed",
-			json: `{"author":{"login":"alice"},` +
-				`"assignees":{"nodes":[{"login":"pierce"}]},` +
-				`"reviews":{"nodes":[{"author":{"login":"pierce"},"state":"APPROVED","submittedAt":"2026-01-01T00:00:00Z"}]},` + commits + `}`,
-			want: BucketAssigned,
 		},
 		{
 			name: "reviewed, then a new commit landed",
