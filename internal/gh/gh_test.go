@@ -244,13 +244,27 @@ func TestBucket(t *testing.T) {
 				`"comments":{"nodes":[{"author":{"login":"pierce"},"createdAt":"` + after + `"}]},` + commits + `}`,
 			want: BucketReviewed,
 		},
-		// Assignment is a claim on my time that a comment doesn't discharge, and
-		// GitHub never clears it on my behalf the way it clears a review request.
+		// Assignment decides only a PR I have never touched; once I have taken part in
+		// any form, the PR follows my own activity like an open review request does.
 		{
-			name: "assigned, and I commented",
+			name: "assigned, and I left a COMMENTED review",
+			json: `{"author":{"login":"alice"},` +
+				`"assignees":{"nodes":[{"login":"pierce"}]},` +
+				`"reviews":{"nodes":[{"author":{"login":"pierce"},"state":"COMMENTED","submittedAt":"` + after + `"}]},` + commits + `}`,
+			want: BucketReviewed,
+		},
+		{
+			name: "assigned, and I left a plain conversation comment",
 			json: `{"author":{"login":"alice"},` +
 				`"assignees":{"nodes":[{"login":"pierce"}]},` +
 				`"comments":{"nodes":[{"author":{"login":"pierce"},"createdAt":"` + after + `"}]},` + commits + `}`,
+			want: BucketReviewed,
+		},
+		{
+			name: "assigned, I commented, then a commit landed",
+			json: `{"author":{"login":"alice"},` +
+				`"assignees":{"nodes":[{"login":"pierce"}]},` +
+				`"comments":{"nodes":[{"author":{"login":"pierce"},"createdAt":"2026-01-01T00:00:00Z"}]},` + commits + `}`,
 			want: BucketAssigned,
 		},
 		// A verdict is where assignment stops mattering: I have ruled on the PR, so

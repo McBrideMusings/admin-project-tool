@@ -461,11 +461,9 @@ func (n openPRNode) hasReviewer() bool {
 	return false
 }
 
-// assigned reports whether the viewer is an assignee on this PR. Assignment is a
-// standing claim on their time — they own work on it — and unlike a review
-// request GitHub never clears it on their behalf, so it outranks their activity
-// in bucket(): having commented is not having finished the thing you were
-// assigned. Only the person who assigned it can take it back.
+// assigned reports whether the viewer is an assignee on this PR. Assignment
+// decides only a PR the viewer has never touched, the same way a still-open review
+// request does: once they have taken part, bucket() follows their own activity.
 func (n openPRNode) assigned(login string) bool {
 	for _, a := range n.Assignees.Nodes {
 		if strings.EqualFold(a.Login, login) {
@@ -494,33 +492,21 @@ func (n openPRNode) reviewRequested(login string) bool {
 // on it (my, already computed by classifyInboxState) rather than from GitHub's
 // mutable review-request list. login is the viewer.
 //
-// Once the viewer has taken part at all — a submitted review or a comment — their
-// activity is what decides: if nothing has happened since their last word the PR
-// is waiting on someone else (BucketReviewed), and it only comes back to them
-// when a new commit lands or someone replies to them directly. A still-open
-// review request does not override that; having said their piece is the point.
-// GitHub's own request list only decides PRs the viewer has never touched.
-//
-// Assignment (see assigned) outranks a review request but not a verdict. Being
-// assigned asks for work, and a comment doesn't finish it, so assignment survives
-// everything an open review request wouldn't. A submitted APPROVED or
-// CHANGES_REQUESTED is where it stops: the viewer has ruled on the PR, so whatever
-// the assignment was asking for, it is now someone else's move — the author's or
-// the other reviewers'. Leaving it in BucketAssigned puts a PR the viewer has
-// already signed off under a heading that says they still owe it something.
+// Once the viewer has taken part at all — a submitted review of any state or a
+// comment, including a plain conversation comment — their activity is what
+// decides: if nothing has happened since their last word the PR is waiting on
+// someone else (BucketReviewed), and it only comes back to them when a new commit
+// lands or someone replies to them directly. Assignment and a still-open review
+// request do not override that; having said their piece is the point. They decide
+// only PRs the viewer has never touched: assigned or asked for a review is
+// BucketAssigned, anything else BucketOther.
 func (n openPRNode) bucket(login string, my ReviewState) PRBucket {
 	if strings.EqualFold(n.Author.Login, login) {
 		return BucketMine
 	}
-	if my == ReviewedApproved || my == ReviewedChangesRequested {
-		return BucketReviewed
-	}
-	if n.assigned(login) {
-		return BucketAssigned
-	}
 	switch my {
 	case NotReviewed:
-		if n.reviewRequested(login) {
+		if n.assigned(login) || n.reviewRequested(login) {
 			return BucketAssigned
 		}
 		return BucketOther
