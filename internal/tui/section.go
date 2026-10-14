@@ -270,7 +270,7 @@ func finishedProof(reason string) bool {
 // An open PR vetoes, so a PR list that never loaded cannot be read as "no open PR":
 // while prsUnknown holds there is no proof, and the sweep takes nothing. Deleting
 // one branch by hand (`x`) never asks this question and works either way.
-func (m Model) landedProof(branch string, hasOpenPR bool) string {
+func (m repoView) landedProof(branch string, hasOpenPR bool) string {
 	if hasOpenPR || m.prsUnknown() {
 		return ""
 	}
@@ -327,6 +327,6 @@ func holdsOf(changed int, unpushed bool, ahead int, landed string) []string {
 // to be empty: the last fetch failed and no earlier one ever succeeded, so there
 // are no cached rows either. A failed fetch over a cached list is not unknown —
 // ApplyTo keeps the old rows, which are stale but real.
-func (m Model) prsUnknown() bool {
+func (m repoView) prsUnknown() bool {
 	return m.remote.PRsFetchError != "" && m.remote.PRsFetchedAt.IsZero()
 }

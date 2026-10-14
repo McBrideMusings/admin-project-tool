@@ -60,7 +60,7 @@ func staleModel() Model {
 // take it, because nothing proved it dead.
 func TestLikelyStaleIsSurfacedNotSwept(t *testing.T) {
 	m := staleModel()
-	set := m.cleanupTargets()
+	set := m.repo().cleanupTargets()
 
 	// The never-pushed orphan appears at all — before the evidence tier it emitted
 	// no signal, so it was not a cleanup target and never rendered anywhere. It
@@ -101,8 +101,8 @@ func TestLikelyStaleIsSurfacedNotSwept(t *testing.T) {
 	}
 
 	// And the sweep itself takes only the proven one.
-	updated, _ := m.cleanAll()
-	got := updated.(Model)
+	m.repo().cleanAll()
+	got := m
 	if len(got.confirmTargets) != 1 || got.confirmTargets[0].branch != "old-merged" {
 		var names []string
 		for _, tgt := range got.confirmTargets {
@@ -117,7 +117,7 @@ func TestLikelyStaleIsSurfacedNotSwept(t *testing.T) {
 // signals that fired, so the row has to carry them.
 func TestLikelyStaleRowShowsItsEvidence(t *testing.T) {
 	m := staleModel()
-	set := m.cleanupTargets()
+	set := m.repo().cleanupTargets()
 	if len(set.likely) == 0 {
 		t.Fatal("no likely target to inspect")
 	}
@@ -157,7 +157,7 @@ func TestLikelyStaleRowShowsItsEvidence(t *testing.T) {
 func TestProtectedBranchNeverEntersCleanup(t *testing.T) {
 	m := staleModel()
 	m.local.signals["main"] = gitSignals{fullyPushed: true, mergedLocal: true, idle: 9 * week, behind: 0}
-	for _, tgt := range m.cleanupTargets().all() {
+	for _, tgt := range m.repo().cleanupTargets().all() {
 		if tgt.branch == "main" {
 			t.Fatalf("the default branch entered Cleanup as %q", tgt.reason)
 		}

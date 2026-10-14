@@ -57,7 +57,8 @@ func (t *beadsTab) modal() bool { return t.overlay }
 // `d` (open the overlay on the bead under the cursor), `g` (cycle the list
 // shape) and `r` (re-read the workspace); every other key, and `d` with no
 // bead under the cursor, reports unhandled so the shell's built-ins run.
-func (t *beadsTab) key(sh *shell, k string) (bool, tea.Cmd) {
+func (t *beadsTab) key(sh *shell, msg tea.KeyMsg) (bool, tea.Cmd) {
+	k := msg.String()
 	if t.overlay {
 		t.beadOverlayKey(k)
 		return true, nil
@@ -116,7 +117,7 @@ func (t *beadsTab) body(sh *shell, width, height int) ([]string, []hitTarget) {
 }
 
 // footer replaces the dashboard's keybar while the overlay is up.
-func (t *beadsTab) footer() (string, bool) {
+func (t *beadsTab) footer(int) (string, bool) {
 	if t.overlay {
 		return beadOverlayFooter(), true
 	}

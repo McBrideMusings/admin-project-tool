@@ -168,7 +168,7 @@ func (s cleanupSet) byBranch() map[string]cleanupTarget {
 
 // cleanupTargets computes the Cleanup view's deletable items from local git state
 // + merged-PR detection — the data, with no rendering.
-func (m Model) cleanupTargets() cleanupSet {
+func (m repoView) cleanupTargets() cleanupSet {
 	var set cleanupSet
 	if !m.haveLocal {
 		return set
@@ -242,7 +242,7 @@ func (s *cleanupSet) place(t cleanupTarget) {
 // mainTreeBranch is the branch checked out in the main working tree, or "" when it
 // is detached. worktreeByBranch deliberately omits the main tree (nothing should
 // offer to cd there or delete it), so this is the only way to see what it holds.
-func (m Model) mainTreeBranch() string {
+func (m repoView) mainTreeBranch() string {
 	for _, w := range m.local.wts {
 		if w.Path == m.repoRoot {
 			return w.Branch
@@ -253,7 +253,7 @@ func (m Model) mainTreeBranch() string {
 
 // worktreeOp is the paused operation holding the worktree at path (see
 // git.Worktree.Op), read from the worktree list the panes already show.
-func (m Model) worktreeOp(path string) string {
+func (m repoView) worktreeOp(path string) string {
 	for _, w := range m.local.wts {
 		if w.Path == path {
 			return w.Op
@@ -265,7 +265,7 @@ func (m Model) worktreeOp(path string) string {
 // deadReason says why a branch is safe to drop, or "" when it is still live. It
 // reads the branch's one classification record — see branchstate.go for the
 // signals and their precedence.
-func (m Model) deadReason(branch string) string {
+func (m repoView) deadReason(branch string) string {
 	return m.branchState(branch).reason
 }
 
@@ -285,7 +285,7 @@ func (m Model) deadReason(branch string) string {
 // Being active never makes a branch live again — the reason word still says why it
 // is deletable. It quarantines it, so a batch sweep passes it over and deleting it
 // takes a deliberate pick. path is "" for a branch with no worktree.
-func (m Model) isActive(branch, path string) bool {
+func (m repoView) isActive(branch, path string) bool {
 	if _, open := m.local.herdrOpen[path]; path != "" && open {
 		return true
 	}
@@ -459,43 +459,42 @@ func plural(n int) string {
 // which flags anything holding unsaved work, is the safety. Only the branch you are
 // standing on and the default branch are refused, since deleting either is a git
 // error rather than a choice.
-func (m Model) deleteBranchUnderCursor() (tea.Model, tea.Cmd) {
+func (m repoView) deleteBranchUnderCursor() {
 	// Addressed through branchRows, not localPanes: the pane groups by section, so
 	// the cursor's Nth row is only the Nth branch when both use the same ordering.
 	rows := m.branchRows()
 	i := m.paneCursor[paneBranches]
 	if i < 0 || i >= len(rows) {
-		return m, nil
+		return
 	}
 	b := m.branchInfo(rows[i].name)
 	switch {
 	case b.Current || b.Name == m.mainTreeBranch():
 		m.setStatus("can't delete a branch that's checked out", cYellow)
-		return m, nil
+		return
 	case b.Name == m.def || b.Name == "main" || b.Name == "master":
 		m.setStatus("can't delete "+b.Name, cYellow)
-		return m, nil
+		return
 	}
 	// branchRefused (below) is the exact same test, kept spelled out here so each
 	// branch keeps its own status message — a checked-out branch and the default
 	// branch are refused for different reasons and a reader should see which.
 	m.confirming = true
 	m.confirmTargets = []cleanupTarget{m.targetFor(b)}
-	return m, nil
 }
 
 // branchRefused reports whether name may not be staged for deletion at all —
 // the branch checked out right now, or the default branch — the one check shared
 // by every path that stages a delete, so a selection and a single-row `x` can
 // never disagree about what's off limits.
-func (m Model) branchRefused(b git.BranchInfo) bool {
+func (m repoView) branchRefused(b git.BranchInfo) bool {
 	return b.Current || b.Name == m.mainTreeBranch() ||
 		b.Name == m.def || b.Name == "main" || b.Name == "master"
 }
 
 // toggleBranchSelection flips the row under the cursor in and out of the
 // multi-select (`space`), refusing the same branches a single `x` refuses.
-func (m *Model) toggleBranchSelection() {
+func (m repoView) toggleBranchSelection() {
 	rows := m.branchRows()
 	i := m.paneCursor[paneBranches]
 	if i < 0 || i >= len(rows) {
@@ -526,7 +525,7 @@ func (m *Model) toggleBranchSelection() {
 // being selected and the delete (force-deleted elsewhere, renamed) is silently
 // dropped instead of building a target for a name that no longer resolves to
 // anything.
-func (m Model) deleteSelectedBranches() (tea.Model, tea.Cmd) {
+func (m repoView) deleteSelectedBranches() {
 	var targets []cleanupTarget
 	for _, r := range m.branchRows() {
 		if !m.selected[r.name] || r.sec == secMain {
@@ -540,11 +539,10 @@ func (m Model) deleteSelectedBranches() (tea.Model, tea.Cmd) {
 	}
 	if len(targets) == 0 {
 		m.setStatus("nothing selected", cDim)
-		return m, nil
+		return
 	}
 	m.confirming = true
 	m.confirmTargets = targets
-	return m, nil
 }
 
 // targetFor builds the cleanupTarget the delete stepper needs for one branch — the
@@ -558,7 +556,7 @@ func (m Model) deleteSelectedBranches() (tea.Model, tea.Cmd) {
 // straight through and would delete a branch someone was still reviewing. Building
 // every target through the same reader as the row itself is what makes that
 // impossible now, not a second check bolted onto the old path.
-func (m Model) targetFor(b git.BranchInfo) cleanupTarget {
+func (m repoView) targetFor(b git.BranchInfo) cleanupTarget {
 	st := m.branchState(b.Name)
 	t := cleanupTarget{
 		id: "br:" + b.Name, kind: cleanupBranch, branch: b.Name,
@@ -597,7 +595,7 @@ func (m Model) targetFor(b git.BranchInfo) cleanupTarget {
 // row in Clean Up (23 on a real repo) while the sweep took only what an entirely
 // separate, older classifier called sweepable (2), because that older path didn't
 // apply the open-PR veto the way landedProof does.
-func (m Model) cleanAll() (tea.Model, tea.Cmd) {
+func (m repoView) cleanAll() {
 	targets := m.pruneTargets()
 	for _, r := range m.branchRows() {
 		if r.sec == secCleanup && r.ready == "ready" {
@@ -606,18 +604,17 @@ func (m Model) cleanAll() (tea.Model, tea.Cmd) {
 	}
 	if len(targets) == 0 {
 		m.setStatus("nothing to clean up", cDim)
-		return m, nil
+		return
 	}
 	m.confirming = true
 	m.confirmTargets = targets
-	return m, nil
 }
 
 // pruneTargets is the synthetic delete for orphaned worktree metadata: entries
 // `git worktree list` still carries for a directory that no longer exists on disk.
 // This is not a branch classification — it never touches a ref — so it sits
 // outside the section ladder and is always offered for sweep.
-func (m Model) pruneTargets() []cleanupTarget {
+func (m repoView) pruneTargets() []cleanupTarget {
 	n := 0
 	for _, w := range m.local.wts {
 		if w.Branch != "" && w.Path != m.repoRoot && !pathExists(w.Path) {
@@ -666,7 +663,7 @@ func (m Model) startDelete() (tea.Model, tea.Cmd) {
 	targets := m.confirmTargets
 	m.confirming = false
 	m.confirmTargets = nil
-	m.selected = map[string]bool{}
+	m.repoTab.selected = map[string]bool{}
 	if len(targets) == 0 {
 		return m, nil
 	}

@@ -173,7 +173,7 @@ func upstreamName(b git.BranchInfo) string {
 // worktreePR is branch's PR: its open PR through openPRFor's matching (the
 // Repo tab row's), else a merged or closed one GitHub recorded at its tip.
 func (m Model) worktreePR(branch string) *WorktreePR {
-	if pr := m.openPRFor(branch); pr != nil {
+	if pr := m.repo().openPRFor(branch); pr != nil {
 		n, checks, url := pr.Number, checksName(pr.Checks), gh.PRURL(m.nwo, pr.Number)
 		state := "open"
 		if pr.IsDraft {
@@ -184,7 +184,7 @@ func (m Model) worktreePR(branch string) *WorktreePR {
 	// Only a PR whose head is this branch's tip is this branch's: a name reused
 	// after a merge points somewhere else (branchState's tip-match rule).
 	tip := m.local.tips[branch]
-	if oid, _ := m.mergedHead(branch, m.local.signals[branch].upstream); oid != "" && oid == tip {
+	if oid, _ := m.repo().mergedHead(branch, m.local.signals[branch].upstream); oid != "" && oid == tip {
 		return &WorktreePR{State: "merged"}
 	}
 	if oid := m.remote.ClosedHeads[branch]; oid != "" && oid == tip {

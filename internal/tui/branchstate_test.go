@@ -294,7 +294,7 @@ func TestClosedTipMatchEmptyOIDNeverMatches(t *testing.T) {
 	m.local.signals = map[string]gitSignals{"declined": {}}
 	m.local.tips = map[string]string{} // tip unreadable — blank
 	m.remote.ClosedHeads = map[string]string{"declined": ""}
-	st := m.branchState("declined")
+	st := m.repo().branchState("declined")
 	if st.signals.closedTipMatch {
 		t.Error("two blank OIDs compared equal; closedTipMatch must require a non-empty match")
 	}
@@ -345,10 +345,10 @@ func TestMergedPRFoundUnderUpstreamName(t *testing.T) {
 		"feat/castling-affordance": "aaa",
 		"feat/reused":              "old",
 	}
-	if got := m.deadReason("castling-affordance"); got != "merged" {
+	if got := m.repo().deadReason("castling-affordance"); got != "merged" {
 		t.Errorf("deadReason = %q, want merged", got)
 	}
-	if got := m.deadReason("reused"); got != "" {
+	if got := m.repo().deadReason("reused"); got != "" {
 		t.Errorf("a reused upstream name with a different tip and local commits = %q, want live", got)
 	}
 }
@@ -373,7 +373,7 @@ func TestMergedHeadPrefersTheTipMatchingEntry(t *testing.T) {
 		{"no entry", map[string]string{}, "u", "", false},
 	} {
 		m.remote.MergedHeads = tc.heads
-		got, ok := m.mergedHead("b", tc.upstream)
+		got, ok := m.repo().mergedHead("b", tc.upstream)
 		if got != tc.want || ok != tc.wantOK {
 			t.Errorf("%s: mergedHead = (%q, %v), want (%q, %v)", tc.name, got, ok, tc.want, tc.wantOK)
 		}

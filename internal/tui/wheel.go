@@ -21,18 +21,18 @@ func (m Model) handleWheel(y int, down bool) (tea.Model, tea.Cmd) {
 	if m.termAttached {
 		return m, nil
 	}
+	if m.wheelCaptured() {
+		return m, nil
+	}
 	// A tab's own overlay (the bead box) scrolls on ↑/↓: reuse its keys.
 	if tm := m.tabModel(m.active); tm != nil && tm.modal() {
-		key := "up"
+		key := tea.KeyMsg{Type: tea.KeyUp}
 		if down {
-			key = "down"
+			key.Type = tea.KeyDown
 		}
 		for i := 0; i < wheelRows; i++ {
 			tm.key(&m.shell, key)
 		}
-		return m, nil
-	}
-	if m.wheelCaptured() {
 		return m, nil
 	}
 	if m.focus == focusTabs {
@@ -42,14 +42,14 @@ func (m Model) handleWheel(y int, down bool) (tea.Model, tea.Cmd) {
 		m.enterBody()
 	}
 
-	activePane := m.pane
-	m.pane = m.wheelPane(y)
+	activePane := m.repoTab.pane
+	m.repoTab.pane = m.wheelPane(y)
 	for i := 0; i < wheelRows; i++ {
 		if !m.wheelStep(delta) {
 			break
 		}
 	}
-	m.pane = activePane
+	m.repoTab.pane = activePane
 	return m, nil
 }
 
@@ -58,7 +58,7 @@ func (m Model) handleWheel(y int, down bool) (tea.Model, tea.Cmd) {
 // any of them must not move.
 func (m Model) wheelCaptured() bool {
 	return m.quitOpen || m.confirming || m.wtPickerOpen ||
-		m.errOpen || m.deleting || m.naming || m.filtering
+		m.errOpen || m.deleting || m.repoTab.naming || m.filtering
 }
 
 // wheelPane resolves the pane under row y on the Repo tab from the last
@@ -66,16 +66,16 @@ func (m Model) wheelCaptured() bool {
 // tab, gives the active pane.
 func (m Model) wheelPane(y int) localPane {
 	if m.active != tabLocal {
-		return m.pane
+		return m.repoTab.pane
 	}
 	_, hits := m.frameRaw()
 	if y < 0 || y >= len(hits) {
-		return m.pane
+		return m.repoTab.pane
 	}
-	if h := hits[y]; h.kind == hitRow && m.paneCount(h.pane) > 0 {
+	if h := hits[y]; h.kind == hitRow && m.repo().paneCount(h.pane) > 0 {
 		return h.pane
 	}
-	return m.pane
+	return m.repoTab.pane
 }
 
 // wheelStep moves the cursor one row through moveCursor and reports whether it

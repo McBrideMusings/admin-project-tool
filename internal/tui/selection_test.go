@@ -229,7 +229,7 @@ func TestClickResolvesToRenderedLocalRow(t *testing.T) {
 	if h.kind != hitRow || h.pane != paneBranches || h.row < 0 {
 		t.Fatalf("hit at old-merged's line is %+v, want a Branches row with a resolved row index", h)
 	}
-	rows := m.branchRows()
+	rows := m.repo().branchRows()
 	if rows[h.row].name != "old-merged" {
 		t.Fatalf("hit resolved to row %d (%q), want old-merged", h.row, rows[h.row].name)
 	}
@@ -294,8 +294,8 @@ func TestClickToActMovesThenActivatesOnSecondClick(t *testing.T) {
 	if cmd != nil {
 		t.Error("the first click activated the row instead of just moving focus onto it")
 	}
-	if m.pane != paneCommits || m.paneCursor[paneCommits] != 0 {
-		t.Fatalf("first click did not focus Commits row 0: pane=%v cursor=%d", m.pane, m.paneCursor[paneCommits])
+	if m.repoTab.pane != paneCommits || m.repoTab.paneCursor[paneCommits] != 0 {
+		t.Fatalf("first click did not focus Commits row 0: pane=%v cursor=%d", m.repoTab.pane, m.repoTab.paneCursor[paneCommits])
 	}
 
 	next, cmd = m.Update(tea.MouseMsg{Y: y, X: x, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})

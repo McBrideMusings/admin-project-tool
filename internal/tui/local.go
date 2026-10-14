@@ -24,7 +24,7 @@ const (
 // localPanes returns the Commits and Stashes panel item lists after the filter.
 // Branches has its own path — branchRows() — because it groups by section rather
 // than filtering a flat list; this is what remains once that split happened.
-func (m Model) localPanes() (commits []git.Commit, stashes []git.Stash) {
+func (m repoView) localPanes() (commits []git.Commit, stashes []git.Stash) {
 	flt := strings.ToLower(m.filter)
 	match := func(s string) bool { return flt == "" || strings.Contains(strings.ToLower(s), flt) }
 
@@ -46,7 +46,7 @@ func (m Model) localPanes() (commits []git.Commit, stashes []git.Stash) {
 // not lines: headings and purpose sublines are drawn but cannot be landed on, so
 // the cursor addresses exactly the branches the pane lists. paneCleanup counts 0
 // because it no longer draws rows of its own.
-func (m Model) paneCount(p localPane) int {
+func (m repoView) paneCount(p localPane) int {
 	switch p {
 	case paneBranches:
 		return len(m.branchRows())
@@ -83,7 +83,7 @@ func rowCellR(s string, n int, fg lipgloss.TerminalColor) seg {
 
 // stateColor is the state word's color: red for a worktree stopped on
 // something, dim for a landing proof.
-func (m Model) stateColor(r paneRow) lipgloss.TerminalColor {
+func (m repoView) stateColor(r paneRow) lipgloss.TerminalColor {
 	if len(r.broken) > 0 && r.sec != secCleanup {
 		return cRed
 	}
@@ -123,7 +123,7 @@ func colWidths(plan columnPlan) (prW, gitW int) {
 
 // prSegs draws prText in exactly n cells: the number cyan (a link to the
 // PR), the mark in its own color, the word in stateColor.
-func (m Model) prSegs(r paneRow, n int) []seg {
+func (m repoView) prSegs(r paneRow, n int) []seg {
 	var segs []seg
 	add := func(sg seg) {
 		if len(segs) > 0 {
@@ -223,7 +223,7 @@ type branchRowLayout struct {
 // the section's longest name fits whole AND brPurposeMinW cells are left after
 // it; otherwise the purpose moves to the row's second line and the name takes
 // the whole flexible width.
-func (m Model) branchRowLayout(r paneRow, w int, plan columnPlan) branchRowLayout {
+func (m repoView) branchRowLayout(r paneRow, w int, plan columnPlan) branchRowLayout {
 	keep := map[string]bool{}
 	g := gutterWidth(m.selectMode())
 	// gutter(g) on the left; 1 for the separator composeLR always keeps between
@@ -270,7 +270,7 @@ func (m Model) branchRowLayout(r paneRow, w int, plan columnPlan) branchRowLayou
 //
 // Under herdr, a worktree with a workspace open on it draws ▣ in place of ◇:
 // clicking it (or enter on the row) focuses that workspace.
-func (m Model) brGlyph(r paneRow, b git.BranchInfo) seg {
+func (m repoView) brGlyph(r paneRow, b git.BranchInfo) seg {
 	if r.sec == secMain {
 		return seg{t: "◆", fg: cGreen}
 	}
@@ -305,7 +305,7 @@ func (m Model) brGlyph(r paneRow, b git.BranchInfo) seg {
 // state glyph, each with its trailing gap. Both branchRowLayout and
 // stateColumnEnd size the name column off gutterWidth, so whatever this emits
 // can never disagree with where they expect the name to start.
-func (m Model) gutterSegs(r paneRow, b git.BranchInfo) []seg {
+func (m repoView) gutterSegs(r paneRow, b git.BranchInfo) []seg {
 	var segs []seg
 	if m.selectMode() {
 		// The checkbox is always drawn, blank on the row nothing can select (main),
@@ -327,7 +327,7 @@ func (m Model) gutterSegs(r paneRow, b git.BranchInfo) []seg {
 // fits inline, then owner (Reviewing only), the PR cell, the git cell and age.
 // The gutter's glyph is the ownership/worktree state — see brGlyph — so the axis
 // the sections group on is readable straight down the left edge.
-func (m Model) brPanelLine(r paneRow, b git.BranchInfo, w int, plan columnPlan) []seg {
+func (m repoView) brPanelLine(r paneRow, b git.BranchInfo, w int, plan columnPlan) []seg {
 	layout := m.branchRowLayout(r, w, plan)
 	keep, nameW := layout.keep, layout.nameW
 	prW, gitW := colWidths(plan)
@@ -391,7 +391,7 @@ func (m Model) brPanelLine(r paneRow, b git.BranchInfo, w int, plan columnPlan) 
 // so a row costs one line rather than two. Which sections draw this line at all
 // is section.showsPurpose's call, not this function's — branchPaneLines gates
 // the call to brSubLine on it, so Clean Up rows never reach here.
-func (m Model) brSubLine(r paneRow, w int, plan columnPlan) []seg {
+func (m repoView) brSubLine(r paneRow, w int, plan columnPlan) []seg {
 	if r.purpose.text == "" {
 		return nil
 	}
@@ -420,7 +420,7 @@ func (m Model) brSubLine(r paneRow, w int, plan columnPlan) []seg {
 // prColumnEnd is the cell offset, from the row's left edge, where the PR cell's
 // right edge falls — or where the name column ends when the PR cell was dropped
 // for width or hoisted. brSubLine caps the purpose subline to it.
-func (m Model) prColumnEnd(r paneRow, w int, plan columnPlan) int {
+func (m repoView) prColumnEnd(r paneRow, w int, plan columnPlan) int {
 	layout := m.branchRowLayout(r, w, plan)
 	pos := gutterWidth(m.selectMode()) + layout.nameW
 	if layout.purposeW > 0 {
@@ -476,7 +476,7 @@ func brSectionLine(sec section, n, w int, legend []seg) []seg {
 // read from the loaded branch list (unfiltered — the header's branch is linkable
 // whether or not the filter box is hiding its row). False before the local data
 // lands, which only means the header's branch name isn't a link for that first frame.
-func (m Model) branchOnOrigin(name string) bool {
+func (m repoView) branchOnOrigin(name string) bool {
 	for _, b := range m.local.branches {
 		if b.Name == name {
 			return b.HasRemote
@@ -490,7 +490,7 @@ func (m Model) branchOnOrigin(name string) bool {
 // its full budget rather than left to its own length: sizing the row from each
 // commit's own age and subject makes every value's position depend on the one
 // next to it, which is what turns the list back into a run of strings.
-func (m Model) cmPanelLine(c git.Commit, w int) []seg {
+func (m repoView) cmPanelLine(c git.Commit, w int) []seg {
 	// " " + sha + "  " + subject + " " + age.
 	msgW := w - 1 - cmShaW - 2 - 1 - cmAgeW
 	if msgW < 4 {
@@ -510,7 +510,7 @@ func (m Model) cmPanelLine(c git.Commit, w int) []seg {
 // stPanelLine renders one stash row as a fixed ref column and a subject column,
 // so a two-digit stash index can't shift that row's subject out of line with
 // every other row's.
-func (m Model) stPanelLine(s git.Stash, w int) []seg {
+func (m repoView) stPanelLine(s git.Stash, w int) []seg {
 	// " " + ref + "  " + subject.
 	msgW := w - 1 - stRefW - 2
 	if msgW < 4 {
@@ -526,7 +526,7 @@ func (m Model) stPanelLine(s git.Stash, w int) []seg {
 // renderLocalPanels renders the Repo tab in exactly height lines, alongside
 // which pane/row each line hits: Branches across the full width, with a
 // Commits/Stashes strip beneath it.
-func (m Model) renderLocalPanels(width, height int) ([]string, []hitTarget) {
+func (m repoView) renderLocalPanels(width, height int) ([]string, []hitTarget) {
 	if !m.haveLocal {
 		lines := []string{"  " + mutedStyle.Render("loading…")}
 		return lines, noneHits(len(lines))
@@ -627,7 +627,7 @@ func (m Model) renderLocalPanels(width, height int) ([]string, []hitTarget) {
 
 // historyPane is the pane the bottom strip is showing: Commits unless the toggle
 // has switched it to Stashes.
-func (m Model) historyPane() localPane {
+func (m repoView) historyPane() localPane {
 	if m.historyStashes {
 		return paneStashes
 	}
@@ -637,7 +637,7 @@ func (m Model) historyPane() localPane {
 // paneShown reports whether a pane is on screen. Branches always is; of Commits
 // and Stashes only the one the strip toggle points at is, so focus never lands on
 // the hidden one.
-func (m Model) paneShown(p localPane) bool {
+func (m repoView) paneShown(p localPane) bool {
 	switch p {
 	case paneBranches:
 		return true
@@ -666,7 +666,7 @@ func historyStripH(body int) int {
 // historyStrip is the box under Branches. Its title is the toggle itself: both
 // names and counts, the one on screen in brackets, so which list this is and what
 // `c` will switch to are readable without remembering the last keypress.
-func (m Model) historyStrip(width, height int, commits []git.Commit, stashes []git.Stash) boxPanel {
+func (m repoView) historyStrip(width, height int, commits []git.Commit, stashes []git.Stash) boxPanel {
 	inner := width - 2
 	pane := m.historyPane()
 	var lines [][]seg
@@ -745,7 +745,7 @@ func clampi(lo, v, hi int) int {
 // The walk is bounded by numPanes, so a state where every other pane is empty
 // returns the pane already focused rather than spinning. Branches always lists at
 // least the default branch, so that case cannot leave the focus nowhere.
-func (m Model) nextVisiblePane(p localPane, dir int) localPane {
+func (m repoView) nextVisiblePane(p localPane, dir int) localPane {
 	n := p
 	for i := 0; i < int(numPanes); i++ {
 		n = localPane((int(n) + dir + int(numPanes)) % int(numPanes))

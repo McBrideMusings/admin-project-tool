@@ -106,7 +106,7 @@ func personName(email string) string {
 // ownership. "" when no PR is known at all. openPR is the open PR already
 // resolved for this branch (nil if none); the open-PR list is not re-scanned
 // here, since the caller has already paid for that scan once via openPRFor.
-func (m Model) prAuthorOf(branch string, openPR *gh.OpenPR) string {
+func (m repoView) prAuthorOf(branch string, openPR *gh.OpenPR) string {
 	if openPR != nil {
 		return openPR.Author
 	}
@@ -115,6 +115,6 @@ func (m Model) prAuthorOf(branch string, openPR *gh.OpenPR) string {
 
 // ownership resolves one branch's owner from the model's identity and snapshots.
 // openPR is passed in rather than looked up again — see prAuthorOf.
-func (m Model) ownership(branch string, openPR *gh.OpenPR) ownership {
+func (m repoView) ownership(branch string, openPR *gh.OpenPR) ownership {
 	return ownerOf(m.identity, m.prAuthorOf(branch, openPR), m.local.firstAuthor[branch])
 }

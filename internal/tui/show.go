@@ -151,10 +151,6 @@ func (m Model) tabLoaded(t tab) bool {
 	if tm := m.tabModel(t); tm != nil {
 		return tm.loaded()
 	}
-	switch t {
-	case tabLocal:
-		return m.haveLocal
-	}
 	return true
 }
 
@@ -258,7 +254,8 @@ func segTexts(segs []seg) []string {
 // the pane's own order, then commits and stashes.
 func (m Model) showRepoRows() []ShowRow {
 	out := []ShowRow{}
-	for _, r := range m.branchRows() {
+	v := m.repo()
+	for _, r := range v.branchRows() {
 		sr := ShowRow{
 			Section: sectionTitle[r.sec],
 			Kind:    "branch",
@@ -284,7 +281,7 @@ func (m Model) showRepoRows() []ShowRow {
 		}
 		out = append(out, sr)
 	}
-	commits, stashes := m.localPanes()
+	commits, stashes := v.localPanes()
 	for _, c := range commits {
 		out = append(out, ShowRow{Section: "Commits", Kind: "commit", ID: c.SHA, Title: c.Subject, When: c.When})
 	}

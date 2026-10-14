@@ -7,6 +7,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -127,7 +128,6 @@ func TestKeybarFallsBackToCommandName(t *testing.T) {
 func TestKeybarRestoresBuiltinsOnUnboundKind(t *testing.T) {
 	m := Model{
 		shell:      shell{active: tabLocal, width: 120, height: 40},
-		pane:       paneCommits,
 		manifestOK: true,
 		manifest:   &manifest.Manifest{},
 		feeds:      feeds{localFeed: &localFeed{local: localData{commits: []git.Commit{{SHA: "abc123", Subject: "msg"}}}}},
@@ -135,6 +135,8 @@ func TestKeybarRestoresBuiltinsOnUnboundKind(t *testing.T) {
 			keymap.Bead: {"enter": "start-triage"},
 		},
 	}
+	m.repoTab = newRepoTab(m.feeds, context.Background(), "", "", false)
+	m.repoTab.pane = paneCommits
 
 	got := m.rowPairs(keymap.Commit)
 	want := builtinPairs(keymap.Commit)
@@ -241,7 +243,7 @@ func TestKeybarKeepsLastTwoOnPanesWithoutQuit(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := seededModel()
-			m.active, m.pane = tabLocal, tc.pane
+			m.active, m.repoTab.pane = tabLocal, tc.pane
 			full := m.keymap()
 			if len(full) < 2 {
 				t.Fatalf("%s: keymap has %d pairs, want at least 2", tc.name, len(full))

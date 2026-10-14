@@ -32,7 +32,7 @@ func TestOpenHerdrSpaceMarksTheRowAndClickFocusesIt(t *testing.T) {
 		t.Fatalf("row with an open space has no ▣ mark: %q", line)
 	}
 	row := hits[y].row
-	cursor := m.paneCursor[paneBranches]
+	cursor := m.repoTab.paneCursor[paneBranches]
 	next, cmd := m.Update(tea.MouseMsg{Y: y, X: 1, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	m = next.(Model)
 	next, cmd = m.Update(tea.MouseMsg{Y: y, X: 1, Action: tea.MouseActionRelease})
@@ -40,8 +40,8 @@ func TestOpenHerdrSpaceMarksTheRowAndClickFocusesIt(t *testing.T) {
 	if cmd == nil {
 		t.Error("clicking the ▣ mark issued no focus command")
 	}
-	if m.paneCursor[paneBranches] != cursor || row < 0 {
-		t.Errorf("focus click moved the cursor: %d -> %d", cursor, m.paneCursor[paneBranches])
+	if m.repoTab.paneCursor[paneBranches] != cursor || row < 0 {
+		t.Errorf("focus click moved the cursor: %d -> %d", cursor, m.repoTab.paneCursor[paneBranches])
 	}
 }
 

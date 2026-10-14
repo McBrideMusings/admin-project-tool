@@ -35,6 +35,19 @@ type shell struct {
 	// Empty means "fall back to repoRoot" — see manifestDir.
 	manifestRoot string
 
+	// checkout is the top level of the checkout the dashboard was opened in,
+	// which differs from repoRoot inside a linked worktree for the same reason
+	// manifestRoot does. Every git read and write runs there except the main
+	// checkout's own working status: the current branch, its commit list, pull
+	// and checkout all belong to the checkout the user is standing in. Empty
+	// means "fall back to repoRoot" — see checkoutDir.
+	checkout string
+
+	// herdr mode: when running inside a herdr pane, enter on a worktree action
+	// creates/opens it inline (opening a focused herdr workspace) and the
+	// dashboard stays up, instead of quitting to cd the parent shell.
+	herdr bool
+
 	active tab
 	// focus is which zone on screen owns the keyboard — the tab bar or the
 	// body. New() sets it to focusTabs after settling active, so a fresh
@@ -71,6 +84,11 @@ type shell struct {
 	// expiry tick can tell whether the status line still holds the toast it was
 	// scheduled for, or whether a newer action has already replaced it.
 	toastGen int
+
+	// confirming is the delete modal's confirm phase: awaiting y/n on a batch
+	// of confirmTargets, staged by the Repo tab's x and ⇧X.
+	confirming     bool
+	confirmTargets []cleanupTarget
 
 	// Error detail: the status line holds one line, but a git refusal often carries
 	// the part you actually need on the lines after its headline — the files a
@@ -130,6 +148,15 @@ type shell struct {
 func (s shell) manifestDir() string {
 	if s.manifestRoot != "" {
 		return s.manifestRoot
+	}
+	return s.repoRoot
+}
+
+// checkoutDir is the directory the dashboard's git commands run in — see the
+// checkout field.
+func (s shell) checkoutDir() string {
+	if s.checkout != "" {
+		return s.checkout
 	}
 	return s.repoRoot
 }

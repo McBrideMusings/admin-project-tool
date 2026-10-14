@@ -39,13 +39,13 @@ func (t *issuesTab) modal() bool { return false }
 
 // key reports every key unhandled: the shell's row bindings and built-ins own
 // them all.
-func (t *issuesTab) key(*shell, string) (bool, tea.Cmd) { return false, nil }
+func (t *issuesTab) key(*shell, tea.KeyMsg) (bool, tea.Cmd) { return false, nil }
 
 func (t *issuesTab) body(sh *shell, width, height int) ([]string, []hitTarget) {
 	return sh.renderRows(sh.filterRows(t.rows(sh)), t.cursor, width, height)
 }
 
-func (t *issuesTab) footer() (string, bool) { return "", false }
+func (t *issuesTab) footer(int) (string, bool) { return "", false }
 
 // count is the tab-bar badge: every open issue.
 func (t *issuesTab) count() int { return len(t.sync.issues()) }

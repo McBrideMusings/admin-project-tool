@@ -28,6 +28,9 @@ type feeds struct {
 	// as its own fields; tabs read them through syncSource and localSource.
 	*syncFeed
 	*localFeed
+	// identityFeed is the signed-in GitHub account; Model reads it as its own
+	// identity field, tabs through identitySource.
+	*identityFeed
 }
 
 // syncFeed is the sync source's state: the open PRs, open issues and merged-PR
@@ -45,15 +48,26 @@ type syncFeed struct {
 }
 
 // localFeed is the last local git read. Local git is not a startable source —
-// every tab reads it, so it loads unconditionally in Init.
+// every tab reads it, so it loads unconditionally in Init. haveLocal records
+// that a read has landed.
 type localFeed struct {
-	local localData
+	local     localData
+	haveLocal bool
+}
+
+// identityFeed is who "you" are — the GitHub account `gh api user` reports,
+// cached per host (data.FetchIdentity). It decides which branches the Branches
+// pane treats as your work; see ownership.go. Zero until the cache read or the
+// first fetch lands, which only means the first frame files every attributed
+// branch as Unsorted rather than mis-filing any of them.
+type identityFeed struct {
+	identity data.Identity
 }
 
 // newFeeds builds every feed, idle. A feed starts only when sources.go's
 // claimSources finds a mounted tab declaring it.
 func newFeeds(ctx context.Context, repoRoot string) feeds {
-	return feeds{beads: &beadsFeed{ctx: ctx, root: repoRoot}, syncFeed: &syncFeed{}, localFeed: &localFeed{}, config: &configFeed{}}
+	return feeds{beads: &beadsFeed{ctx: ctx, root: repoRoot}, syncFeed: &syncFeed{}, localFeed: &localFeed{}, identityFeed: &identityFeed{}, config: &configFeed{}}
 }
 
 // sourceSet is how a tab model's constructor obtains handles to feeds.
@@ -102,6 +116,12 @@ func (d *sourceSet) sync() syncSource {
 // every tab and loads unconditionally, so asking for it declares nothing.
 func (d *sourceSet) local() localSource { return localSource{f: d.f.localFeed} }
 
+// identity declares srcIdentity and returns the handle to the signed-in account.
+func (d *sourceSet) identity() identitySource {
+	d.declare(srcIdentity)
+	return identitySource{f: d.f.identityFeed}
+}
+
 // tabModel is a tab that owns its own rows, cursor, keys and overlays
 // (ADR-0026). The shell keeps everything every tab shares — size, focus,
 // filter, status line, popups — and calls into the tab with it.
@@ -118,12 +138,12 @@ type tabModel interface {
 	modal() bool
 	// key offers the tab a key the shell's overlays and the row bindings did
 	// not take; unhandled falls through to the shell's built-ins.
-	key(s *shell, k string) (handled bool, cmd tea.Cmd)
+	key(s *shell, msg tea.KeyMsg) (handled bool, cmd tea.Cmd)
 	// body draws the tab into width×height.
 	body(s *shell, width, height int) ([]string, []hitTarget)
 	// footer replaces the keybar while the tab needs it to (an overlay's own
-	// help line); ok false keeps the keybar.
-	footer() (line string, ok bool)
+	// help line), drawn width cells wide; ok false keeps the keybar.
+	footer(width int) (line string, ok bool)
 	// count is the tab-bar badge.
 	count() int
 	// loaded reports whether the tab has what it draws.
@@ -140,6 +160,15 @@ type syncSource struct{ f *syncFeed }
 // issues is every open issue the last sync answered.
 func (h syncSource) issues() []gh.IssueItem { return h.f.remote.Issues }
 
+// remote is everything the last sync (or the on-disk cache) answered. It is
+// the zero value for a handle with no feed behind it.
+func (h syncSource) remote() *data.Remote {
+	if h.f == nil {
+		return &data.Remote{}
+	}
+	return &h.f.remote
+}
+
 // viewerLogin is the signed-in GitHub account's login, or "".
 func (h syncSource) viewerLogin() string { return h.f.remote.ViewerLogin }
 
@@ -153,10 +182,22 @@ func (h syncSource) prsFetchedAt() time.Time { return h.f.remote.PRsFetchedAt }
 func (h syncSource) issuesFetchedAt() time.Time { return h.f.remote.IssuesFetchedAt }
 
 // loaded reports whether any sync or cache read has answered.
-func (h syncSource) loaded() bool { return h.f.haveData }
+func (h syncSource) loaded() bool { return h.f != nil && h.f.haveData }
 
 // localSource is a tab's read handle on the local git read.
 type localSource struct{ f *localFeed }
+
+// data is the last local git read, the zero value before one lands or for a
+// handle with no feed behind it.
+func (h localSource) data() *localData {
+	if h.f == nil {
+		return &localData{}
+	}
+	return &h.f.local
+}
+
+// loaded reports whether a local git read has landed.
+func (h localSource) loaded() bool { return h.f != nil && h.f.haveLocal }
 
 // branches is every local branch.
 func (h localSource) branches() []git.BranchInfo { return h.f.local.branches }
@@ -169,6 +210,17 @@ func (h localSource) worktrees() []git.Worktree { return h.f.local.wts }
 
 // wtDirty reports a worktree whose working tree is dirty.
 func (h localSource) wtDirty(path string) bool { return h.f.local.wtState[path].dirty }
+
+// identitySource is a tab's read handle on the signed-in account.
+type identitySource struct{ f *identityFeed }
+
+// who is the account `gh api user` reported, zero while it is unknown.
+func (h identitySource) who() data.Identity {
+	if h.f == nil {
+		return data.Identity{}
+	}
+	return h.f.identity
+}
 
 // beadsSource is a tab's read handle on the beads feed. Its methods are the
 // whole of what a tab can learn about the beads workspace.

@@ -352,25 +352,6 @@ func beadCandidates(beads []bd.Bead, prefix, buf string) []bd.Bead {
 	return out
 }
 
-// refreshNameCands recomputes the new-worktree prompt's bead search from the
-// current nameBuf. It always drops any prior highlight and only picks a fresh
-// one back up when the typed text is now an exact id match — that is the one
-// case the issue calls out for auto-highlighting; a prefix or title match never
-// pre-selects, since it may not be the bead the user meant.
-func (m *Model) refreshNameCands() {
-	m.nameCands = beadCandidates(m.feeds.beads.beads, m.feeds.beads.prefix, m.nameBuf)
-	m.nameSel = -1
-	q := strings.ToLower(strings.TrimSpace(m.nameBuf))
-	for i, b := range m.nameCands {
-		id := strings.ToLower(b.ID)
-		short := strings.ToLower(shortBeadID(b.ID, m.feeds.beads.prefix))
-		if id == q || short == q {
-			m.nameSel = i
-			break
-		}
-	}
-}
-
 // beadBranch derives the branch name a worktree gets when you start work on a
 // bead: the bead's own id, then a few words of its title. The id already carries
 // the workspace prefix, so "bd-4f2-add-password-reset" names its bead outright.

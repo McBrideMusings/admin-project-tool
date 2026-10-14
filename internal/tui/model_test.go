@@ -181,7 +181,7 @@ func TestCleanupQuarantinesDirtyWorktree(t *testing.T) {
 	defer func() { statFn = os.Stat }()
 
 	// The dirty merged worktree must route to quarantine, never the safe bucket.
-	set := m.cleanupTargets()
+	set := m.repo().cleanupTargets()
 	if len(set.quarantine) != 1 {
 		t.Fatalf("expected 1 quarantined target, got %d", len(set.quarantine))
 	}
@@ -194,7 +194,7 @@ func TestCleanupQuarantinesDirtyWorktree(t *testing.T) {
 	// It renders in the Branches pane row itself saying what is actually at stake:
 	// files that live only in that directory. There is no separate Cleanup box any
 	// more — every deletable branch is marked in place.
-	m.active, m.pane = tabLocal, paneBranches
+	m.active, m.repoTab.pane = tabLocal, paneBranches
 	row := branchRow(t, m, "old-merged")
 	text := segsText(row)
 	if !strings.Contains(text, "~2") {
@@ -217,10 +217,10 @@ func branchRow(t *testing.T, m Model, name string) []seg {
 // row matches the live renderer.
 func branchRowAt(t *testing.T, m Model, name string, w int) []seg {
 	t.Helper()
-	rows := m.branchRows()
+	rows := m.repo().branchRows()
 	for _, r := range rows {
 		if r.name == name {
-			return m.brPanelLine(r, m.branchInfo(name), w, planColumns(rows))
+			return m.repo().brPanelLine(r, m.repo().branchInfo(name), w, planColumns(rows))
 		}
 	}
 	t.Fatalf("no branch %q in fixture", name)
@@ -230,7 +230,7 @@ func branchRowAt(t *testing.T, m Model, name string, w int) []seg {
 // branchSection is the section the pane files a branch under.
 func branchSection(t *testing.T, m Model, name string) section {
 	t.Helper()
-	for _, r := range m.branchRows() {
+	for _, r := range m.repo().branchRows() {
 		if r.name == name {
 			return r.sec
 		}
@@ -302,7 +302,7 @@ func TestBranchRowsFormFixedColumns(t *testing.T) {
 		t.Fatalf("fixture setup: expected every column drawn, got drop=%v", plan.drop)
 	}
 	rowAt := func(name string) []seg {
-		return m.brPanelLine(byRowName[name], byName[name], w, plan)
+		return m.repo().brPanelLine(byRowName[name], byName[name], w, plan)
 	}
 
 	// Column boundaries, counted back from the right edge the way the row builds them.
@@ -372,7 +372,7 @@ func TestColumnsAlignAcrossSections(t *testing.T) {
 	}
 	plan := planColumns(rows)
 	at := func(r paneRow, cell string) int {
-		text := segsText(m.brPanelLine(r, git.BranchInfo{Name: r.name, LastCommit: "1 day ago"}, w, plan))
+		text := segsText(m.repo().brPanelLine(r, git.BranchInfo{Name: r.name, LastCommit: "1 day ago"}, w, plan))
 		if len([]rune(text)) != w {
 			t.Fatalf("%s: row is %d cells, want %d", r.name, len([]rune(text)), w)
 		}
@@ -404,11 +404,11 @@ func TestBranchNameOutranksPurpose(t *testing.T) {
 	if plan.nameW != len(long) {
 		t.Fatalf("plan.nameW = %d, want the longest name, %d", plan.nameW, len(long))
 	}
-	wide := m.branchRowLayout(rows[1], 150, plan)
+	wide := m.repo().branchRowLayout(rows[1], 150, plan)
 	if wide.nameW != len(long) || wide.purposeW < brPurposeMinW {
 		t.Errorf("at 150 cells: name %d, purpose %d; want the whole longest name and an inline purpose", wide.nameW, wide.purposeW)
 	}
-	narrow := m.branchRowLayout(rows[0], 85, plan)
+	narrow := m.repo().branchRowLayout(rows[0], 85, plan)
 	if narrow.purposeW != 0 || narrow.nameW < len(long) {
 		t.Errorf("at 85 cells: name %d, purpose %d; want the purpose on its own line and the name whole", narrow.nameW, narrow.purposeW)
 	}
@@ -432,7 +432,7 @@ func TestBranchRowGutterCollapsesOutsideSelectMode(t *testing.T) {
 	}
 	m.local.firstAuthor = map[string]string{"mine": "me@example.com"}
 
-	if m.selectMode() {
+	if m.repo().selectMode() {
 		t.Fatalf("fixture setup: expected select mode to start off")
 	}
 
@@ -484,8 +484,8 @@ func TestBranchRowSelectModeGrowsTheGutter(t *testing.T) {
 
 	// Select mode has no state beyond the selection, so a different row being
 	// selected is what puts this one in select mode with an empty checkbox.
-	m.selected = map[string]bool{"other": true}
-	if !m.selectMode() {
+	m.repoTab.selected = map[string]bool{"other": true}
+	if !m.repo().selectMode() {
 		t.Fatalf("fixture setup: a nonempty selection did not enter select mode")
 	}
 
@@ -495,7 +495,7 @@ func TestBranchRowSelectModeGrowsTheGutter(t *testing.T) {
 		t.Errorf("unselected row in select mode does not start with the blank checkbox: %q", uText)
 	}
 
-	m.selected["no-wt"] = true
+	m.repoTab.selected["no-wt"] = true
 	selected := branchRowAt(t, m, "no-wt", w)
 	sText := segsText(selected)
 	if !strings.HasPrefix(sText, "[x] ") {
@@ -518,16 +518,16 @@ func TestBranchRowSelectModeGrowsTheGutter(t *testing.T) {
 	// the freed gutter width and the name column's width are computed from the
 	// same gutterWidth(selectMode) call, so they can never disagree.
 	var r paneRow
-	for _, rr := range m.branchRows() {
+	for _, rr := range m.repo().branchRows() {
 		if rr.name == "no-wt" {
 			r = rr
 		}
 	}
 	plan := planColumns([]paneRow{r})
-	m.selected = map[string]bool{}
-	offLayout := m.branchRowLayout(r, w, plan)
-	m.selected = map[string]bool{"other": true}
-	onLayout := m.branchRowLayout(r, w, plan)
+	m.repoTab.selected = map[string]bool{}
+	offLayout := m.repo().branchRowLayout(r, w, plan)
+	m.repoTab.selected = map[string]bool{"other": true}
+	onLayout := m.repo().branchRowLayout(r, w, plan)
 	// The flexible region is the name plus, when the section draws it inline, the
 	// purpose column and the gap before it.
 	flex := func(l branchRowLayout) int {
@@ -552,22 +552,22 @@ func TestBranchRowNeverOverflowsAnyWidth(t *testing.T) {
 	// between the two, and that is exactly where the row and its width math
 	// (gutterWidth) could disagree and overflow.
 	for _, selecting := range []bool{false, true} {
-		m.selected = map[string]bool{}
+		m.repoTab.selected = map[string]bool{}
 		if selecting {
 			// Select mode is exactly "something is selected"; which row holds the
 			// selection makes no difference to the width property.
-			m.selected[selectableBranch(t, m)] = true
+			m.repoTab.selected[selectableBranch(t, m)] = true
 		}
 		for w := 40; w <= 200; w += 7 {
-			for _, r := range m.branchRows() {
+			for _, r := range m.repo().branchRows() {
 				// A single row at a time, no section-wide plan — this test is the raw
 				// width property, not hoisting, so it exercises the zero (no-drop, no-chip)
 				// plan, exactly as a one-row section would.
-				row := segsText(m.brPanelLine(r, m.branchInfo(r.name), w, columnPlan{}))
+				row := segsText(m.repo().brPanelLine(r, m.repo().branchInfo(r.name), w, columnPlan{}))
 				if got := len([]rune(row)); got != w {
 					t.Fatalf("selecting=%v width %d: row %q is %d cells: %q", selecting, w, r.name, got, row)
 				}
-				if sub := m.brSubLine(r, w, columnPlan{}); sub != nil {
+				if sub := m.repo().brSubLine(r, w, columnPlan{}); sub != nil {
 					if got := len([]rune(segsText(sub))); got > w {
 						t.Fatalf("selecting=%v width %d: subline for %q is %d cells: %q", selecting, w, r.name, got, segsText(sub))
 					}
@@ -584,7 +584,7 @@ func TestBranchRowNeverOverflowsAnyWidth(t *testing.T) {
 // accept — anything outside the protected main section.
 func selectableBranch(t *testing.T, m Model) string {
 	t.Helper()
-	for _, r := range m.branchRows() {
+	for _, r := range m.repo().branchRows() {
 		if r.sec != secMain {
 			return r.name
 		}
@@ -642,7 +642,7 @@ func TestProvenLandedIsNotAlsoUnpushed(t *testing.T) {
 	m := seededModel()
 	m.local.branchUnsafe["old-merged"] = true
 
-	for _, r := range m.branchRows() {
+	for _, r := range m.repo().branchRows() {
 		if r.name == "old-merged" && r.ready != "ready" {
 			t.Errorf("a proven-merged branch is not sweepable: ready = %q, holds = %v", r.ready, r.holds)
 		}
@@ -670,7 +670,7 @@ func TestDeadReasonSignals(t *testing.T) {
 		{"reworked", ""}, // merged PR, but local commits landed since
 		{"feature", ""},
 	} {
-		if got := m.deadReason(tc.branch); got != tc.want {
+		if got := m.repo().deadReason(tc.branch); got != tc.want {
 			t.Errorf("deadReason(%q) = %q, want %q", tc.branch, got, tc.want)
 		}
 	}
@@ -721,7 +721,7 @@ func TestSupersededBranchClassifiesInstantly(t *testing.T) {
 		{"50-my-head", "on origin"},       // the PR's head is my own pushed branch
 		{"60-i-merged-it", "merged"},      // my merged PR outranks alice's open one
 	} {
-		if got := m.deadReason(tc.branch); got != tc.want {
+		if got := m.repo().deadReason(tc.branch); got != tc.want {
 			t.Errorf("deadReason(%q) = %q, want %q", tc.branch, got, tc.want)
 		}
 	}
@@ -729,7 +729,7 @@ func TestSupersededBranchClassifiesInstantly(t *testing.T) {
 	// Without a known viewer login, "someone else" is unprovable — the probe stays
 	// off rather than sweep the branch on what might be the viewer's own PR.
 	m.remote.ViewerLogin = ""
-	if got := m.deadReason("14-open-other"); got != "empty" {
+	if got := m.repo().deadReason("14-open-other"); got != "empty" {
 		t.Errorf("with no viewer login, deadReason(14-open-other) = %q, want %q", got, "empty")
 	}
 }
@@ -742,7 +742,7 @@ func TestSupersededBranchClassifiesInstantly(t *testing.T) {
 // squash-merged branch then read as live for the rest of the session.
 func TestMergedPRsSurviveALocalReload(t *testing.T) {
 	m := seededModel()
-	if got := m.deadReason("old-merged"); got != "merged" {
+	if got := m.repo().deadReason("old-merged"); got != "merged" {
 		t.Fatalf("precondition: deadReason(old-merged) = %q, want %q", got, "merged")
 	}
 
@@ -758,7 +758,7 @@ func TestMergedPRsSurviveALocalReload(t *testing.T) {
 	updated, _ := m.Update(localDataMsg{d: reloaded})
 	m = updated.(Model)
 
-	if got := m.deadReason("old-merged"); got != "merged" {
+	if got := m.repo().deadReason("old-merged"); got != "merged" {
 		t.Errorf("deadReason(old-merged) = %q after a local reload, want %q — the merged-PR set was blanked", got, "merged")
 	}
 }
@@ -798,7 +798,7 @@ func TestClassificationIsOrderIndependent(t *testing.T) {
 		m = updated.(Model)
 		out := map[string]string{}
 		for _, br := range branches {
-			out[br.Name] = m.deadReason(br.Name)
+			out[br.Name] = m.repo().deadReason(br.Name)
 		}
 		return out
 	}
@@ -846,13 +846,13 @@ func TestDefaultAndCheckedOutBranchesAreNeverDead(t *testing.T) {
 		"wt-branch": {mergedLocal: true},
 	}
 
-	if got := m.deadReason("main"); got != "" {
+	if got := m.repo().deadReason("main"); got != "" {
 		t.Errorf("default branch classified dead as %q — it would be struck through and swept by ⇧X", got)
 	}
-	if got := m.deadReason("wt-branch"); got == "" {
+	if got := m.repo().deadReason("wt-branch"); got == "" {
 		t.Error("a linked worktree's branch should still be classifiable; only the main tree's is exempt")
 	}
-	for _, tgt := range m.cleanupTargets().all() {
+	for _, tgt := range m.repo().cleanupTargets().all() {
 		if tgt.branch == "main" {
 			t.Errorf("main reached the cleanup set as %+v", tgt)
 		}
@@ -874,7 +874,7 @@ func TestCleanupFindsLocallyMergedAndPushedBranches(t *testing.T) {
 	}
 
 	got := map[string]string{}
-	for _, tgt := range m.cleanupTargets().all() {
+	for _, tgt := range m.repo().cleanupTargets().all() {
 		got[tgt.branch] = tgt.reason
 	}
 	if got["reachable"] != "merged" {
@@ -894,11 +894,11 @@ func stageBranchDelete(t *testing.T, m Model, branch string) Model {
 	t.Helper()
 	// Addressed through branchRows, the same ordering the pane draws and the delete
 	// path reads — positions in localPanes no longer correspond to rows.
-	m.active, m.pane = tabLocal, paneBranches
+	m.active, m.repoTab.pane = tabLocal, paneBranches
 	found := false
-	for i, r := range m.branchRows() {
+	for i, r := range m.repo().branchRows() {
 		if r.name == branch {
-			m.paneCursor[paneBranches], found = i, true
+			m.repoTab.paneCursor[paneBranches], found = i, true
 		}
 	}
 	if !found {
@@ -1030,7 +1030,7 @@ func freshWorktreeModel(t *testing.T, touched time.Time, herdrOpen bool) Model {
 // targetFor finds a branch's cleanup target and which bucket it landed in.
 func targetFor(t *testing.T, m Model, branch string) (cleanupTarget, string) {
 	t.Helper()
-	set := m.cleanupTargets()
+	set := m.repo().cleanupTargets()
 	for _, b := range []struct {
 		name    string
 		targets []cleanupTarget
@@ -1539,7 +1539,7 @@ func TestDoneModalDismissesOnKeysOtherThanForce(t *testing.T) {
 // whatever sat last — always `←→ tab`, the one binding every view shares.
 func TestKeybarDropsPairsRatherThanTruncating(t *testing.T) {
 	m := seededModel()
-	m.active, m.pane = tabLocal, paneBranches
+	m.active, m.repoTab.pane = tabLocal, paneBranches
 	full := m.keymap()
 	if len(full) < 4 {
 		t.Fatalf("Branches keymap too short to exercise dropping: %v", full)
@@ -1895,7 +1895,7 @@ func TestRowRefreshDroppedAfterSync(t *testing.T) {
 // ready to sweep.
 func TestBranchesFooterAdvertisesCleanup(t *testing.T) {
 	m := seededModel()
-	m.active, m.pane = tabLocal, paneBranches
+	m.active, m.repoTab.pane = tabLocal, paneBranches
 
 	out := stripANSI(m.View())
 	if !strings.Contains(out, "clean up") || !strings.Contains(out, "⇧X") {
@@ -1987,7 +1987,7 @@ func TestEnterOnWorktreeBranchInHerdrStaysOpen(t *testing.T) {
 func TestCapitalWWorktreesCurrentBranch(t *testing.T) {
 	m := seededModel()
 	m.herdr = true
-	m.active, m.pane = tabLocal, paneBranches
+	m.active, m.repoTab.pane = tabLocal, paneBranches
 	for i := 0; i < 6; i++ {
 		if r, ok := m.currentRow(); ok && r.wtPath != "" {
 			break
@@ -2227,7 +2227,7 @@ func TestNamePromptBeadSearch(t *testing.T) {
 	base := seededModel()
 	base.feeds.beads.present, base.feeds.beads.have = true, true
 	base.feeds.beads.beads = beads
-	base.active, base.pane = tabLocal, paneBranches
+	base.active, base.repoTab.pane = tabLocal, paneBranches
 	// resolveNameCmd asks git whether the typed name is a legal ref, in the
 	// checkout; seededModel's /repo does not exist, so give it a real directory.
 	base.checkout = t.TempDir()
@@ -2240,8 +2240,8 @@ func TestNamePromptBeadSearch(t *testing.T) {
 	// Criterion 1: literal text matching no bead still resolves the literal text.
 	t.Run("literal text with no match resolves the literal", func(t *testing.T) {
 		m := typeIntoNamePrompt(open(), "totally-unmatched-branch-name")
-		if m.nameSel != -1 {
-			t.Fatalf("nameSel = %d, want -1 (nothing should match)", m.nameSel)
+		if m.repoTab.nameSel != -1 {
+			t.Fatalf("nameSel = %d, want -1 (nothing should match)", m.repoTab.nameSel)
 		}
 		if got, want := resolvedBranch(t, m), "totally-unmatched-branch-name"; got != want {
 			t.Errorf("branch = %q, want %q", got, want)
@@ -2251,11 +2251,11 @@ func TestNamePromptBeadSearch(t *testing.T) {
 	// Criterion 2: an exact id match auto-highlights, and enter takes it with no ↓.
 	t.Run("exact id match auto-highlights and enter takes it", func(t *testing.T) {
 		m := typeIntoNamePrompt(open(), "bd-4f2")
-		if m.nameSel != 0 {
-			t.Fatalf("nameSel = %d, want 0 (exact id match)", m.nameSel)
+		if m.repoTab.nameSel != 0 {
+			t.Fatalf("nameSel = %d, want 0 (exact id match)", m.repoTab.nameSel)
 		}
-		if len(m.nameCands) != 1 || m.nameCands[0].ID != "bd-4f2" {
-			t.Fatalf("nameCands = %v, want just bd-4f2", m.nameCands)
+		if len(m.repoTab.nameCands) != 1 || m.repoTab.nameCands[0].ID != "bd-4f2" {
+			t.Fatalf("nameCands = %v, want just bd-4f2", m.repoTab.nameCands)
 		}
 		if got, want := resolvedBranch(t, m), "bd-4f2"; got != want {
 			t.Errorf("branch = %q, want %q", got, want)
@@ -2265,13 +2265,13 @@ func TestNamePromptBeadSearch(t *testing.T) {
 	// Criterion 3: a title word plus ↓ then enter takes the highlighted bead.
 	t.Run("title word plus down then enter takes the bead", func(t *testing.T) {
 		m := typeIntoNamePrompt(open(), "reset")
-		if m.nameSel != -1 {
-			t.Fatalf("nameSel = %d, want -1 before any ↓ (title match must not auto-highlight)", m.nameSel)
+		if m.repoTab.nameSel != -1 {
+			t.Fatalf("nameSel = %d, want -1 before any ↓ (title match must not auto-highlight)", m.repoTab.nameSel)
 		}
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 		m = updated.(Model)
-		if m.nameSel != 0 {
-			t.Fatalf("nameSel = %d after ↓, want 0", m.nameSel)
+		if m.repoTab.nameSel != 0 {
+			t.Fatalf("nameSel = %d after ↓, want 0", m.repoTab.nameSel)
 		}
 		if got, want := resolvedBranch(t, m), "bd-4f2"; got != want {
 			t.Errorf("branch = %q, want %q", got, want)
@@ -2291,25 +2291,25 @@ func TestNamePromptBeadSearch(t *testing.T) {
 	// Criterion 5: editing the buffer after a manual ↓ drops the highlight.
 	t.Run("a rune after down drops the highlight", func(t *testing.T) {
 		m := typeIntoNamePrompt(open(), "bd-4f") // prefix match, not exact: no auto-highlight
-		if m.nameSel != -1 {
-			t.Fatalf("nameSel = %d, want -1 (prefix match must not auto-highlight)", m.nameSel)
+		if m.repoTab.nameSel != -1 {
+			t.Fatalf("nameSel = %d, want -1 (prefix match must not auto-highlight)", m.repoTab.nameSel)
 		}
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 		m = updated.(Model)
-		if m.nameSel != 0 {
-			t.Fatalf("nameSel = %d after ↓, want 0", m.nameSel)
+		if m.repoTab.nameSel != 0 {
+			t.Fatalf("nameSel = %d after ↓, want 0", m.repoTab.nameSel)
 		}
 		m = typeIntoNamePrompt(m, "z") // now matches nothing
-		if m.nameSel != -1 {
-			t.Errorf("nameSel = %d after editing, want -1 (edit must drop the highlight)", m.nameSel)
+		if m.repoTab.nameSel != -1 {
+			t.Errorf("nameSel = %d after editing, want -1 (edit must drop the highlight)", m.repoTab.nameSel)
 		}
 	})
 
 	// Criterion 6: the list caps at five even when more beads match.
 	t.Run("more than five matches yields five", func(t *testing.T) {
 		m := typeIntoNamePrompt(open(), "widget")
-		if len(m.nameCands) != nameCandMax {
-			t.Fatalf("got %d candidates, want %d", len(m.nameCands), nameCandMax)
+		if len(m.repoTab.nameCands) != nameCandMax {
+			t.Fatalf("got %d candidates, want %d", len(m.repoTab.nameCands), nameCandMax)
 		}
 	})
 
@@ -2319,17 +2319,17 @@ func TestNamePromptBeadSearch(t *testing.T) {
 		m := typeIntoNamePrompt(open(), "bd-4f2")
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 		m = updated.(Model)
-		if m.naming {
+		if m.repoTab.naming {
 			t.Error("esc left the prompt open")
 		}
-		if m.nameBuf != "" {
-			t.Errorf("nameBuf = %q after esc, want empty", m.nameBuf)
+		if m.repoTab.nameBuf != "" {
+			t.Errorf("nameBuf = %q after esc, want empty", m.repoTab.nameBuf)
 		}
-		if m.nameCands != nil {
-			t.Errorf("nameCands = %v after esc, want nil", m.nameCands)
+		if m.repoTab.nameCands != nil {
+			t.Errorf("nameCands = %v after esc, want nil", m.repoTab.nameCands)
 		}
-		if m.nameSel != -1 {
-			t.Errorf("nameSel = %d after esc, want -1", m.nameSel)
+		if m.repoTab.nameSel != -1 {
+			t.Errorf("nameSel = %d after esc, want -1", m.repoTab.nameSel)
 		}
 	})
 }
@@ -2340,8 +2340,8 @@ func TestNamePromptBeadSearch(t *testing.T) {
 // when there is nothing to search.
 func TestNamePromptFooterUnchangedWithoutBeads(t *testing.T) {
 	m := seededModel()
-	m.naming = true
-	m.nameBuf = "some-branch-name"
+	m.repoTab.naming = true
+	m.repoTab.nameBuf = "some-branch-name"
 	const width = 100
 
 	got := m.footer(width)
@@ -2373,17 +2373,17 @@ func TestNamePromptFrameHeightWithCandidates(t *testing.T) {
 	m.feeds.beads.present, m.feeds.beads.have = true, true
 	m.feeds.beads.beads = beads
 	m.width, m.height = 80, 24
-	m.naming = true
-	m.nameBuf = "widget"
-	m.refreshNameCands()
-	if len(m.nameCands) != nameCandMax {
-		t.Fatalf("got %d candidates, want %d", len(m.nameCands), nameCandMax)
+	m.repoTab.naming = true
+	m.repoTab.nameBuf = "widget"
+	m.repo().refreshNameCands()
+	if len(m.repoTab.nameCands) != nameCandMax {
+		t.Fatalf("got %d candidates, want %d", len(m.repoTab.nameCands), nameCandMax)
 	}
 
 	out := m.View()
 	lines := strings.Split(out, "\n")
 	if len(lines) != m.height {
-		t.Fatalf("got %d lines with %d candidates showing, want exactly %d", len(lines), len(m.nameCands), m.height)
+		t.Fatalf("got %d lines with %d candidates showing, want exactly %d", len(lines), len(m.repoTab.nameCands), m.height)
 	}
 	for i, l := range lines {
 		if w := lipgloss.Width(l); w > m.width {
@@ -2429,7 +2429,7 @@ func TestBranchNamesLinkToGitHub(t *testing.T) {
 	}
 
 	// No GitHub remote, no links anywhere.
-	m.nwo = ""
+	m.nwo, m.repoTab.nwo = "", ""
 	if got := nameLink(branchRow(t, m, "feature"), "feature"); got != "" {
 		t.Errorf("origin isn't GitHub: link = %q, want none", got)
 	}
@@ -2466,7 +2466,7 @@ func TestRowNamesLinkToGitHub(t *testing.T) {
 	m.width = cols
 
 	sha := m.local.commits[0]
-	if got, want := nameLink(m.cmPanelLine(sha, 60), sha.SHA), "https://github.com/owner/repo/commit/abc123"; got != want {
+	if got, want := nameLink(m.repo().cmPanelLine(sha, 60), sha.SHA), "https://github.com/owner/repo/commit/abc123"; got != want {
 		t.Errorf("commit sha: link = %q, want %q", got, want)
 	}
 
@@ -2483,8 +2483,8 @@ func TestRowNamesLinkToGitHub(t *testing.T) {
 	}
 
 	// No GitHub remote, no links on any of the three.
-	m.nwo, m.issuesTab.nwo, m.prsTab.nwo = "", "", ""
-	if got := nameLink(m.cmPanelLine(sha, 60), sha.SHA); got != "" {
+	m.nwo, m.issuesTab.nwo, m.prsTab.nwo, m.repoTab.nwo = "", "", "", ""
+	if got := nameLink(m.repo().cmPanelLine(sha, 60), sha.SHA); got != "" {
 		t.Errorf("origin isn't GitHub: commit sha link = %q, want none", got)
 	}
 	prLeft, _ = m.prsTab.openPRRow(pr, m.prsTab.prColumns(cols), cols)
@@ -2504,31 +2504,31 @@ func TestTabSkipsPanesWithNoRows(t *testing.T) {
 	m := seededModel()
 
 	// Commits is showing: ⇥ alternates Branches and Commits, never Stashes.
-	if got := m.nextVisiblePane(paneBranches, 1); got != paneCommits {
+	if got := m.repo().nextVisiblePane(paneBranches, 1); got != paneCommits {
 		t.Errorf("⇥ from Branches = %v, want paneCommits", got)
 	}
-	if got := m.nextVisiblePane(paneCommits, 1); got != paneBranches {
+	if got := m.repo().nextVisiblePane(paneCommits, 1); got != paneBranches {
 		t.Errorf("⇥ from Commits = %v, want paneBranches (Stashes is hidden)", got)
 	}
-	if got := m.nextVisiblePane(paneBranches, -1); got != paneCommits {
+	if got := m.repo().nextVisiblePane(paneBranches, -1); got != paneCommits {
 		t.Errorf("⇧⇥ from Branches = %v, want paneCommits", got)
 	}
 
 	// Switch the strip and the roles swap.
-	m.historyStashes = true
-	if got := m.nextVisiblePane(paneBranches, 1); got != paneStashes {
+	m.repoTab.historyStashes = true
+	if got := m.repo().nextVisiblePane(paneBranches, 1); got != paneStashes {
 		t.Errorf("strip on Stashes: ⇥ from Branches = %v, want paneStashes", got)
 	}
-	if got := m.nextVisiblePane(paneStashes, 1); got != paneBranches {
+	if got := m.repo().nextVisiblePane(paneStashes, 1); got != paneBranches {
 		t.Errorf("strip on Stashes: ⇥ from Stashes = %v, want paneBranches", got)
 	}
 
 	// The shown list is empty: nothing in the strip to focus.
 	m.local.stashes = nil
-	if got := m.nextVisiblePane(paneBranches, 1); got != paneBranches {
+	if got := m.repo().nextVisiblePane(paneBranches, 1); got != paneBranches {
 		t.Errorf("empty Stashes shown: ⇥ from Branches = %v, want paneBranches", got)
 	}
-	if got := m.nextVisiblePane(paneBranches, -1); got != paneBranches {
+	if got := m.repo().nextVisiblePane(paneBranches, -1); got != paneBranches {
 		t.Errorf("empty Stashes shown: ⇧⇥ from Branches = %v, want paneBranches", got)
 	}
 }
@@ -2538,22 +2538,22 @@ func TestTabSkipsPanesWithNoRows(t *testing.T) {
 func TestCSwitchesTheHistoryStrip(t *testing.T) {
 	m := seededModel()
 	m.active = tabLocal
-	m.pane = paneCommits
+	m.repoTab.pane = paneCommits
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	m = next.(Model)
-	if !m.historyStashes || m.pane != paneStashes {
-		t.Fatalf("after c: historyStashes=%v pane=%v, want Stashes shown and focused", m.historyStashes, m.pane)
+	if !m.repoTab.historyStashes || m.repoTab.pane != paneStashes {
+		t.Fatalf("after c: historyStashes=%v pane=%v, want Stashes shown and focused", m.repoTab.historyStashes, m.repoTab.pane)
 	}
 	if out := stripANSI(m.View()); !strings.Contains(out, "stash@{0}") || !strings.Contains(out, "[Stashes ") {
 		t.Errorf("after c the strip does not show the stashes\n%s", out)
 	}
 
 	// With focus on Branches, c switches the list and leaves focus alone.
-	m.pane = paneBranches
+	m.repoTab.pane = paneBranches
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	m = next.(Model)
-	if m.historyStashes || m.pane != paneBranches {
-		t.Errorf("c from Branches: historyStashes=%v pane=%v, want Commits shown, focus unmoved", m.historyStashes, m.pane)
+	if m.repoTab.historyStashes || m.repoTab.pane != paneBranches {
+		t.Errorf("c from Branches: historyStashes=%v pane=%v, want Commits shown, focus unmoved", m.repoTab.historyStashes, m.repoTab.pane)
 	}
 }
 
@@ -2563,7 +2563,7 @@ func TestClickOnEmptyStripPlaceholderIsNoOp(t *testing.T) {
 	m := seededModel()
 	m.active = tabLocal
 	m.local.stashes = nil
-	m.historyStashes = true
+	m.repoTab.historyStashes = true
 	lines, hits := m.frame()
 	y := -1
 	for i, l := range lines {
@@ -2577,11 +2577,11 @@ func TestClickOnEmptyStripPlaceholderIsNoOp(t *testing.T) {
 	if hits[y].row != -1 {
 		t.Fatalf("hit on the placeholder = %+v, want row -1", hits[y])
 	}
-	before := m.pane
+	before := m.repoTab.pane
 	next, _ := m.Update(tea.MouseMsg{Y: y, X: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	m = next.(Model)
-	if m.pane != before {
-		t.Errorf("clicking the placeholder moved focus from %v to %v", before, m.pane)
+	if m.repoTab.pane != before {
+		t.Errorf("clicking the placeholder moved focus from %v to %v", before, m.repoTab.pane)
 	}
 }
 
@@ -2590,10 +2590,10 @@ func TestToggleOntoEmptyListHandsFocusToBranches(t *testing.T) {
 	m := seededModel()
 	m.active = tabLocal
 	m.local.stashes = nil
-	m.pane = paneCommits
-	m.toggleHistory()
-	if !m.historyStashes || m.pane != paneBranches {
-		t.Errorf("after toggling onto empty Stashes: historyStashes=%v pane=%v, want Stashes shown and focus on Branches", m.historyStashes, m.pane)
+	m.repoTab.pane = paneCommits
+	m.repo().toggleHistory()
+	if !m.repoTab.historyStashes || m.repoTab.pane != paneBranches {
+		t.Errorf("after toggling onto empty Stashes: historyStashes=%v pane=%v, want Stashes shown and focus on Branches", m.repoTab.historyStashes, m.repoTab.pane)
 	}
 }
 
@@ -2616,34 +2616,34 @@ func TestFilterEmptyingTheFocusedPaneMovesFocus(t *testing.T) {
 	// A filter that empties the focused Recent commits pane moves focus off
 	// it, onto a pane that still has rows — here Branches, whose "feature"
 	// row still matches while no commit or stash does.
-	m.pane = paneCommits
+	m.repoTab.pane = paneCommits
 	m.filter = "feature"
 	m.clampCursor()
-	if m.pane == paneCommits {
+	if m.repoTab.pane == paneCommits {
 		t.Fatalf("filter emptied Commits but focus stayed on it")
 	}
-	if m.paneCount(m.pane) == 0 {
-		t.Fatalf("focus landed on pane %v, which has no rows", m.pane)
+	if m.repo().paneCount(m.repoTab.pane) == 0 {
+		t.Fatalf("focus landed on pane %v, which has no rows", m.repoTab.pane)
 	}
 
 	// Clearing the filter restores Commits' rows but does not fling focus
 	// back to it.
-	moved := m.pane
+	moved := m.repoTab.pane
 	m.filter = ""
 	m.clampCursor()
-	if m.pane != moved {
-		t.Errorf("clearing the filter moved focus from %v to %v, want unchanged", moved, m.pane)
+	if m.repoTab.pane != moved {
+		t.Errorf("clearing the filter moved focus from %v to %v, want unchanged", moved, m.repoTab.pane)
 	}
 
 	// A filter matching nothing anywhere leaves focus where it is rather
 	// than looping.
-	m.pane = paneBranches
+	m.repoTab.pane = paneBranches
 	m.local.commits = nil
 	m.local.stashes = nil
 	m.filter = "zzz-no-match-anywhere"
 	m.clampCursor()
-	if m.pane != paneBranches {
-		t.Errorf("filter matching nothing anywhere moved focus to %v, want paneBranches", m.pane)
+	if m.repoTab.pane != paneBranches {
+		t.Errorf("filter matching nothing anywhere moved focus to %v, want paneBranches", m.repoTab.pane)
 	}
 }
 

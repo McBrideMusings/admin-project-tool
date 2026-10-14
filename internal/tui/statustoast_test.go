@@ -63,8 +63,8 @@ func TestStatusToastOverlaysLastBodyRow(t *testing.T) {
 // expiry: a statusExpiredMsg carrying the resulting toastGen clears it.
 func TestNonErrorStatusExpiresOnGenMatch(t *testing.T) {
 	m := seededModel()
-	m.active, m.pane = tabLocal, paneBranches
-	m.selected = map[string]bool{"feature": true} // the checked-out branch — always refused
+	m.active, m.repoTab.pane = tabLocal, paneBranches
+	m.repoTab.selected = map[string]bool{"feature": true} // the checked-out branch — always refused
 
 	updated, cmd := m.Update(keyMsg("x"))
 	mm := updated.(Model)
@@ -87,8 +87,8 @@ func TestNonErrorStatusExpiresOnGenMatch(t *testing.T) {
 // on the same model — is a no-op rather than clearing the newer toast.
 func TestStaleGenExpiryIsANoOp(t *testing.T) {
 	m := seededModel()
-	m.active, m.pane = tabLocal, paneBranches
-	m.selected = map[string]bool{"feature": true}
+	m.active, m.repoTab.pane = tabLocal, paneBranches
+	m.repoTab.selected = map[string]bool{"feature": true}
 
 	updated, _ := m.Update(keyMsg("x")) // "nothing selected"
 	mm := updated.(Model)

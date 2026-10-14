@@ -35,15 +35,12 @@ const (
 )
 
 // tabSources is the declaration of the sources each tab reads, for the tabs
-// whose state still lives on Model. The Repo tab reads the sync (the
-// merged-PR head set), beads (the `w` naming prompt's bead search) and
-// identity (which branches are yours); Commands and Workers read the work
-// tick. A tab that has moved into its own model has no row here: its
-// constructor's handles are its declaration (Model.declared).
+// whose state still lives on Model: Commands and Workers read the work tick. A
+// tab that has moved into its own model has no row here: its constructor's
+// handles are its declaration (Model.declared).
 var tabSources = map[tab][]source{
 	tabWork:    {srcWork},
 	tabWorkers: {srcWork},
-	tabLocal:   {srcSync, srcBeads, srcIdentity},
 }
 
 // declared is the sources tab t reads: its model's declaration, or its

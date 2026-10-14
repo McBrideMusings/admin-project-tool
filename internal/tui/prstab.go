@@ -37,13 +37,13 @@ func (t *prsTab) modal() bool { return false }
 
 // key reports every key unhandled: the shell's row bindings and built-ins own
 // them all.
-func (t *prsTab) key(*shell, string) (bool, tea.Cmd) { return false, nil }
+func (t *prsTab) key(*shell, tea.KeyMsg) (bool, tea.Cmd) { return false, nil }
 
 func (t *prsTab) body(sh *shell, width, height int) ([]string, []hitTarget) {
 	return sh.renderRows(sh.filterRows(t.rows(sh)), t.cursor, width, height)
 }
 
-func (t *prsTab) footer() (string, bool) { return "", false }
+func (t *prsTab) footer(int) (string, bool) { return "", false }
 
 // count is the tab-bar badge: every open PR.
 func (t *prsTab) count() int { return len(t.sync.prs()) }
