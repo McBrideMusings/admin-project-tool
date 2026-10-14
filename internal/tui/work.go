@@ -636,6 +636,12 @@ func (t *commandsTab) commandRowItem(s *shell, cr workCmdRow, byID map[string]*l
 			if target, err := kinds.ParseWorkflowOver(cr.cmd.Steps[0], a); err == nil {
 				wd.workflow = &target
 				wd.workflowAction = a
+				if s.alone {
+					// ADR-0026: a tab mounted alone dispatches no workers, so
+					// the group lists no targets for ↵ to act on.
+					wd.workflowNote = workflowOffNote
+					break
+				}
 				ids, note := t.workflowMatches(cr.name, target, a)
 				wd.workflowNote = note
 				wd.targets = ids
@@ -1279,6 +1285,9 @@ func (t *commandsTab) liveEntryForCommand(s *shell, name string) *livework.Entry
 // as a worker, which lives on the Workers tab, so the row never attaches.
 func (t *commandsTab) activateCommandTarget(s *shell, wd *workRowData) tea.Cmd {
 	if wd.workflow != nil {
+		if s.alone {
+			return nil
+		}
 		return dispatchWorkflowTarget(s, wd)
 	}
 	if resolveRowAction(rowCommandTarget, wd) == actionAttach {
@@ -1291,6 +1300,10 @@ func (t *commandsTab) activateCommandTarget(s *shell, wd *workRowData) tea.Cmd {
 	}
 	return t.startDispatch(s, wd.cmdName, wd.targetKey)
 }
+
+// workflowOffNote is the line a query workflow's group shows in a tab mounted
+// alone, where no worker is dispatched (ADR-0026).
+const workflowOffNote = "workflow dispatch is off when this tab is mounted alone"
 
 // dispatchWorkflowTarget hands one matched tracker item to
 // kinds.DispatchTargets through dispatchWorkflowCmd, the path a row-scoped

@@ -161,6 +161,12 @@ func (m Model) rowKeyDispatch(key string) (tea.Model, tea.Cmd, bool) {
 		return m, nil, false
 	}
 	c, found := commandNamed(m.manifest, name)
+	if found && m.alone && isWorkflowCommand(m.manifest, c) {
+		// ADR-0026: a tab mounted alone dispatches no workers, so the
+		// binding is a miss and the key keeps its built-in meaning, the
+		// one withRowKeys advertises.
+		return m, nil, false
+	}
 	if found && isRowWorkflow(m.manifest, c) {
 		mm, cmd := m.rowKeyWorkflow(name, c, r, kind)
 		return mm, cmd, true
@@ -171,6 +177,13 @@ func (m Model) rowKeyDispatch(key string) (tea.Model, tea.Cmd, bool) {
 		}
 	}
 	return m, dispatchCommandCmd(m.manifest, m.width, m.height, name, rowEnv(r, kind)), true
+}
+
+// isWorkflowCommand reports whether c is a single-step kind="workflow" action
+// of any `over`.
+func isWorkflowCommand(mf *manifest.Manifest, c manifest.Command) bool {
+	a, ok := soleAction(mf, c)
+	return ok && actionKind(a) == "workflow"
 }
 
 // commandNamed looks up a declared command by name in mf, Custom winning over
