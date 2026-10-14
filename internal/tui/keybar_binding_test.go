@@ -130,7 +130,7 @@ func TestKeybarRestoresBuiltinsOnUnboundKind(t *testing.T) {
 		pane:       paneCommits,
 		manifestOK: true,
 		manifest:   &manifest.Manifest{},
-		local:      localData{commits: []git.Commit{{SHA: "abc123", Subject: "msg"}}},
+		feeds:      feeds{localFeed: &localFeed{local: localData{commits: []git.Commit{{SHA: "abc123", Subject: "msg"}}}}},
 		rowKeys: map[keymap.RowKind]map[string]string{
 			keymap.Bead: {"enter": "start-triage"},
 		},

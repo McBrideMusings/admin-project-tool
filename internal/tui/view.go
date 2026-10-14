@@ -429,8 +429,6 @@ func (m Model) freshnessSeg() seg {
 		return seg{t: "live", fg: cFaint}
 	case tabPRs:
 		at = m.remote.PRsFetchedAt
-	case tabIssues:
-		at = m.remote.IssuesFetchedAt
 	case tabLocal:
 		// The Repo tab's remote input is the merged-PR set: what strikes a
 		// squash-merged branch through.
@@ -478,8 +476,6 @@ func (m Model) tabCount(t tab) int {
 		return len(liveWorkers())
 	case tabPRs:
 		return len(m.remote.PRs)
-	case tabIssues:
-		return len(m.remote.Issues)
 	case tabLocal:
 		return m.localBranchCount()
 	}

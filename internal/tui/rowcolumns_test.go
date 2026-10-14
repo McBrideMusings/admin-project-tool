@@ -382,8 +382,8 @@ func TestIssueRowsFormFixedColumns(t *testing.T) {
 		{Number: 1234, Title: "A considerably longer issue title", Labels: []string{"enhancement", "documentation"}},
 		{Number: 77, Title: "Someone else's issue", Assignees: []string{"alice"}},
 	}
-	mine, unassigned, others := m.groupIssues()
-	numW, statusW, labelW := m.issueColumnWidths(cols, mine, unassigned, others)
+	mine, unassigned, others := m.issuesTab.groupIssues()
+	numW, statusW, labelW := m.issuesTab.issueColumnWidths(cols, mine, unassigned, others)
 	if labelW == 0 || statusW == 0 {
 		t.Fatalf("fixture produced no label/status column: numW=%d statusW=%d labelW=%d", numW, statusW, labelW)
 	}
@@ -395,7 +395,7 @@ func TestIssueRowsFormFixedColumns(t *testing.T) {
 		1234: {"#1234", "", "enhancement, documentation"},
 		77:   {"#77", "@alice", ""},
 	}
-	issueRows := rowsOfKind(m.issueRows(), rowIssue)
+	issueRows := rowsOfKind(m.issuesTab.issueRows(&m.shell), rowIssue)
 	if len(issueRows) != len(m.remote.Issues) {
 		t.Fatalf("rendered %d issue rows, want %d", len(issueRows), len(m.remote.Issues))
 	}
@@ -1159,11 +1159,11 @@ func TestWorkerMarksItsBeadAndIssueRow(t *testing.T) {
 		t.Fatalf("worker glyph must replace ▶ on its own row only: %q", got)
 	}
 
-	g, status := m.issueStatus(gh.IssueItem{Number: 7}, true)
+	g, status := m.issuesTab.issueStatus(gh.IssueItem{Number: 7}, true)
 	if g.t != "◈" || len(status) != 1 || status[0].t != "worker running" {
 		t.Fatalf("issue row = %q %q, want ◈ and \"worker running\"", g.t, status[0].t)
 	}
-	if g, _ := m.issueStatus(gh.IssueItem{Number: 8}, true); g.t == "◈" {
+	if g, _ := m.issuesTab.issueStatus(gh.IssueItem{Number: 8}, true); g.t == "◈" {
 		t.Fatalf("an issue with no worker drew the worker glyph")
 	}
 }

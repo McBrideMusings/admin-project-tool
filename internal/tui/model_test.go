@@ -2477,13 +2477,13 @@ func TestRowNamesLinkToGitHub(t *testing.T) {
 	}
 
 	it := m.remote.Issues[0]
-	issueLeft, _ := m.issueRow(it, false, cols, 6, 0, 0)
+	issueLeft, _ := m.issuesTab.issueRow(it, false, cols, 6, 0, 0)
 	if got, want := nameLink(issueLeft, it.Title), "https://github.com/owner/repo/issues/5"; got != want {
 		t.Errorf("issue title: link = %q, want %q", got, want)
 	}
 
 	// No GitHub remote, no links on any of the three.
-	m.nwo = ""
+	m.nwo, m.issuesTab.nwo = "", ""
 	if got := nameLink(m.cmPanelLine(sha, 60), sha.SHA); got != "" {
 		t.Errorf("origin isn't GitHub: commit sha link = %q, want none", got)
 	}
@@ -2491,7 +2491,7 @@ func TestRowNamesLinkToGitHub(t *testing.T) {
 	if got := nameLink(prLeft, pr.Title); got != "" {
 		t.Errorf("origin isn't GitHub: PR title link = %q, want none", got)
 	}
-	issueLeft, _ = m.issueRow(it, false, cols, 6, 0, 0)
+	issueLeft, _ = m.issuesTab.issueRow(it, false, cols, 6, 0, 0)
 	if got := nameLink(issueLeft, it.Title); got != "" {
 		t.Errorf("origin isn't GitHub: issue title link = %q, want none", got)
 	}

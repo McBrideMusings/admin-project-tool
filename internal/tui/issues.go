@@ -28,13 +28,13 @@ const (
 // across every group so the view reads as a proper table — every row's title
 // ends at the same column, every status badge starts at the same column —
 // instead of each row's right cluster floating to its own width.
-func (m Model) issueRows() []rowItem {
-	mine, unassigned, others := m.groupIssues()
+func (t *issuesTab) issueRows(sh *shell) []rowItem {
+	mine, unassigned, others := t.groupIssues()
 	for _, s := range [][]gh.IssueItem{mine, unassigned, others} {
-		sortIssuesBy(s, m.trackSort)
+		sortIssuesBy(s, sh.trackSort)
 	}
-	cols := m.cols()
-	numW, statusW, labelW := m.issueColumnWidths(cols, mine, unassigned, others)
+	cols := sh.cols()
+	numW, statusW, labelW := t.issueColumnWidths(cols, mine, unassigned, others)
 
 	secs := []struct {
 		title     string
@@ -50,17 +50,17 @@ func (m Model) issueRows() []rowItem {
 	// placeholder shows; once data is in, drop any section whose group is empty.
 	var rows []rowItem
 	for _, s := range secs {
-		if m.haveData && len(s.items) == 0 {
+		if t.sync.loaded() && len(s.items) == 0 {
 			continue
 		}
 		if len(rows) > 0 {
 			rows = append(rows, blankRow())
 		}
 		rows = append(rows, headerRow(s.title, countSeg(len(s.items))...), ruleRow())
-		rows = append(rows, m.issueSection(s.items, s.showStage, cols, numW, statusW, labelW)...)
+		rows = append(rows, t.issueSection(s.items, s.showStage, cols, numW, statusW, labelW)...)
 	}
 	if len(rows) == 0 {
-		rows = append(rows, rowItem{kind: rowText, label: emptyOrLoading(m.haveData, "none")})
+		rows = append(rows, rowItem{kind: rowText, label: emptyOrLoading(t.sync.loaded(), "none")})
 	}
 	return rows
 }
@@ -71,12 +71,12 @@ func (m Model) issueRows() []rowItem {
 // mirrors the original per-row width-responsive budget, just computed once
 // from the widest label list instead of per row, so every row's column
 // boundaries line up.
-func (m Model) issueColumnWidths(cols int, mine, unassigned, others []gh.IssueItem) (numW, statusW, labelW int) {
+func (t *issuesTab) issueColumnWidths(cols int, mine, unassigned, others []gh.IssueItem) (numW, statusW, labelW int) {
 	numW = 5
 	natLabelW := 0
 	widen := func(it gh.IssueItem, showStage bool) {
 		numW = max(numW, vlen("#"+strconv.Itoa(it.Number)))
-		_, statusSegs := m.issueStatus(it, showStage)
+		_, statusSegs := t.issueStatus(it, showStage)
 		statusW = max(statusW, segsWidth(statusSegs))
 		natLabelW = max(natLabelW, vlen(strings.Join(it.Labels, ", ")))
 	}
@@ -121,10 +121,10 @@ func (m Model) issueColumnWidths(cols int, mine, unassigned, others []gh.IssueIt
 // groupIssues buckets every open issue by who's supposed to do the work — the
 // viewer, nobody yet, or someone else — in priority order for deciding what
 // to pick up next.
-func (m Model) groupIssues() (mine, unassigned, others []gh.IssueItem) {
-	for _, it := range m.remote.Issues {
+func (t *issuesTab) groupIssues() (mine, unassigned, others []gh.IssueItem) {
+	for _, it := range t.sync.issues() {
 		switch {
-		case containsLogin(it.Assignees, m.remote.ViewerLogin):
+		case containsLogin(it.Assignees, t.sync.viewerLogin()):
 			mine = append(mine, it)
 		case len(it.Assignees) == 0:
 			unassigned = append(unassigned, it)
@@ -159,16 +159,16 @@ func otherAssignee(assignees []string, viewerLogin string) string {
 	return ""
 }
 
-func (m Model) issueSection(items []gh.IssueItem, showStage bool, cols, numW, statusW, labelW int) []rowItem {
+func (t *issuesTab) issueSection(items []gh.IssueItem, showStage bool, cols, numW, statusW, labelW int) []rowItem {
 	if len(items) == 0 {
-		return []rowItem{{kind: rowText, label: emptyOrLoading(m.haveData, "none")}}
+		return []rowItem{{kind: rowText, label: emptyOrLoading(t.sync.loaded(), "none")}}
 	}
 	var rows []rowItem
 	for _, it := range items {
-		left, right := m.issueRow(it, showStage, cols, numW, statusW, labelW)
+		left, right := t.issueRow(it, showStage, cols, numW, statusW, labelW)
 		rows = append(rows, rowItem{
 			kind: rowIssue, leftSegs: left, rightSegs: right,
-			issueNum: it.Number, issueTitle: it.Title, url: gh.IssueURL(m.nwo, it.Number),
+			issueNum: it.Number, issueTitle: it.Title, url: gh.IssueURL(t.nwo, it.Number),
 		})
 	}
 	return rows
@@ -176,19 +176,19 @@ func (m Model) issueSection(items []gh.IssueItem, showStage bool, cols, numW, st
 
 // issueStatus returns an issue's left glyph and status badge: the progress
 // stage (mine/unassigned groups) or the @handle badge (someone-else group).
-func (m Model) issueStatus(it gh.IssueItem, showStage bool) (glyph seg, statusSegs []seg) {
+func (t *issuesTab) issueStatus(it gh.IssueItem, showStage bool) (glyph seg, statusSegs []seg) {
 	glyph = seg{t: " "}
 	if st, ok := livework.Default.WorkerStates()[strconv.Itoa(it.Number)]; ok {
 		g := workerRowGlyph(st)
 		return g, []seg{{t: "worker " + string(st), fg: g.fg}}
 	}
 	if !showStage {
-		if a := otherAssignee(it.Assignees, m.remote.ViewerLogin); a != "" {
+		if a := otherAssignee(it.Assignees, t.sync.viewerLogin()); a != "" {
 			statusSegs = []seg{{t: "@" + a, fg: cMag}}
 		}
 		return glyph, statusSegs
 	}
-	switch m.issueStageOf(it) {
+	switch t.issueStageOf(it) {
 	case stagePROpen:
 		glyph = checksGlyph(it.PR.Checks)
 		statusSegs = issuePRBadge(*it.PR)
@@ -207,8 +207,8 @@ func (m Model) issueStatus(it gh.IssueItem, showStage bool) (glyph seg, statusSe
 // columns shared by every row in the view (see issueColumnWidths) — each
 // column is left-aligned and blank-padded to its shared width so rows form a
 // proper table instead of each one's right cluster floating to its own width.
-func (m Model) issueRow(it gh.IssueItem, showStage bool, cols, numW, statusW, labelW int) (left, right []seg) {
-	glyph, statusSegs := m.issueStatus(it, showStage)
+func (t *issuesTab) issueRow(it gh.IssueItem, showStage bool, cols, numW, statusW, labelW int) (left, right []seg) {
+	glyph, statusSegs := t.issueStatus(it, showStage)
 
 	if statusW > 0 {
 		// statusW is always >= the natural width of statusSegs (computed as a
@@ -227,7 +227,7 @@ func (m Model) issueRow(it gh.IssueItem, showStage bool, cols, numW, statusW, la
 	// The number column is padded to the shared numW so every row's number
 	// (and everything after it) starts at the same column.
 	numStr := "#" + strconv.Itoa(it.Number)
-	numSeg := seg{t: padEnd(numStr, numW), fg: cCyan, link: gh.IssueURL(m.nwo, it.Number)}
+	numSeg := seg{t: padEnd(numStr, numW), fg: cCyan, link: gh.IssueURL(t.nwo, it.Number)}
 	left = numberedRowLeft(glyph, numSeg, numW, it.Title, nil, right, cols)
 	return left, right
 }
@@ -249,17 +249,17 @@ func issuePRBadge(pr gh.IssuePR) []seg {
 // slug.FromIssue's naming convention ("<number>-<slug>", or "issue-<number>"
 // when the title yields no usable words) and its ahead-count and dirty/unsafe
 // state. No matching branch means not started.
-func (m Model) issueStageOf(it gh.IssueItem) issueStage {
+func (t *issuesTab) issueStageOf(it gh.IssueItem) issueStage {
 	if it.PR != nil {
 		return stagePROpen
 	}
 	prefix := strconv.Itoa(it.Number) + "-"
 	bare := "issue-" + strconv.Itoa(it.Number)
-	for _, br := range m.local.branches {
+	for _, br := range t.local.branches() {
 		if !strings.HasPrefix(br.Name, prefix) && br.Name != bare {
 			continue
 		}
-		dirty := m.local.branchUnsafe[br.Name] || (br.WorktreePath != "" && m.local.wtState[br.WorktreePath].dirty)
+		dirty := t.local.branchUnsafe(br.Name) || (br.WorktreePath != "" && t.local.wtDirty(br.WorktreePath))
 		if br.Ahead > 0 || dirty {
 			return stageInProgress
 		}

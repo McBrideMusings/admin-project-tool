@@ -3,10 +3,14 @@ package tui
 import (
 	"context"
 	"errors"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/bd"
+	"github.com/McBrideMusings/admin-project-tool/internal/data"
+	"github.com/McBrideMusings/admin-project-tool/internal/gh"
+	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
@@ -19,12 +23,37 @@ import (
 type feeds struct {
 	beads  *beadsFeed
 	config *configFeed
+	// syncFeed is what the whole-repo GitHub sync last answered, and localFeed
+	// what the last local git read found. Model embeds feeds, so it reads both
+	// as its own fields; tabs read them through syncSource and localSource.
+	*syncFeed
+	*localFeed
+}
+
+// syncFeed is the sync source's state: the open PRs, open issues and merged-PR
+// head set the last sync (or the on-disk cache) answered, and whether any of
+// them has arrived yet. The merged-PR head-branch set (branches a merged PR
+// had as its head) is remote.MergedHeads, cached on disk beside the PR and
+// issue sections. It comes from GitHub, not git, so it must not live in
+// localData — that is replaced wholesale every time local git is re-read, and
+// every sync ends with exactly that reload, which would blank a set only the
+// slower gh call can refill. branchstate.go joins it with the git-derived
+// signals at read time; nothing merges the two sources into a stored value.
+type syncFeed struct {
+	remote   data.Remote
+	haveData bool
+}
+
+// localFeed is the last local git read. Local git is not a startable source —
+// every tab reads it, so it loads unconditionally in Init.
+type localFeed struct {
+	local localData
 }
 
 // newFeeds builds every feed, idle. A feed starts only when sources.go's
 // claimSources finds a mounted tab declaring it.
 func newFeeds(ctx context.Context, repoRoot string) feeds {
-	return feeds{beads: &beadsFeed{ctx: ctx, root: repoRoot}, config: &configFeed{}}
+	return feeds{beads: &beadsFeed{ctx: ctx, root: repoRoot}, syncFeed: &syncFeed{}, localFeed: &localFeed{}, config: &configFeed{}}
 }
 
 // sourceSet is how a tab model's constructor obtains handles to feeds.
@@ -63,6 +92,16 @@ func (d *sourceSet) beads() beadsSource {
 // save, for every tab, so there is nothing to start.
 func (d *sourceSet) config() configSource { return configSource{f: d.f.config} }
 
+// sync declares srcSync and returns the handle to the sync's last answer.
+func (d *sourceSet) sync() syncSource {
+	d.declare(srcSync)
+	return syncSource{f: d.f.syncFeed}
+}
+
+// local returns the handle to the last local git read. Local git is read by
+// every tab and loads unconditionally, so asking for it declares nothing.
+func (d *sourceSet) local() localSource { return localSource{f: d.f.localFeed} }
+
 // tabModel is a tab that owns its own rows, cursor, keys and overlays
 // (ADR-0026). The shell keeps everything every tab shares — size, focus,
 // filter, status line, popups — and calls into the tab with it.
@@ -94,6 +133,33 @@ type tabModel interface {
 	// update takes every message the shell does not consume itself.
 	update(msg tea.Msg) tea.Cmd
 }
+
+// syncSource is a tab's read handle on the GitHub sync.
+type syncSource struct{ f *syncFeed }
+
+// issues is every open issue the last sync answered.
+func (h syncSource) issues() []gh.IssueItem { return h.f.remote.Issues }
+
+// viewerLogin is the signed-in GitHub account's login, or "".
+func (h syncSource) viewerLogin() string { return h.f.remote.ViewerLogin }
+
+// issuesFetchedAt is when the issues section was last fetched cleanly.
+func (h syncSource) issuesFetchedAt() time.Time { return h.f.remote.IssuesFetchedAt }
+
+// loaded reports whether any sync or cache read has answered.
+func (h syncSource) loaded() bool { return h.f.haveData }
+
+// localSource is a tab's read handle on the local git read.
+type localSource struct{ f *localFeed }
+
+// branches is every local branch.
+func (h localSource) branches() []git.BranchInfo { return h.f.local.branches }
+
+// branchUnsafe reports a branch with unpushed commits.
+func (h localSource) branchUnsafe(name string) bool { return h.f.local.branchUnsafe[name] }
+
+// wtDirty reports a worktree whose working tree is dirty.
+func (h localSource) wtDirty(path string) bool { return h.f.local.wtState[path].dirty }
 
 // beadsSource is a tab's read handle on the beads feed. Its methods are the
 // whole of what a tab can learn about the beads workspace.
