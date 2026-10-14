@@ -27,6 +27,10 @@ func workTestModel(m *manifest.Manifest) Model {
 		pendingTarget:   map[string]string{},
 	}
 	mm.mountTabs(viewstate.State{})
+	*mm.feeds.config = configFeed{manifest: m, ok: true}
+	if m != nil {
+		mm.feeds.work.emptyHint = mm.workersEmptyHint()
+	}
 	return mm
 }
 
@@ -332,7 +336,7 @@ func TestWorkerAppearsOnlyInWorkersTab(t *testing.T) {
 		}
 	}
 	found := 0
-	for _, r := range mm.workerRows() {
+	for _, r := range mm.workersTab.rows(&mm.shell) {
 		if r.kind == rowCommand || r.kind == rowCommandTarget {
 			t.Errorf("Workers tab holds a command row: %+v", r)
 		}
@@ -635,7 +639,7 @@ func TestWorkRowsWorkersHeaderAlwaysPresent(t *testing.T) {
 	}
 	mm := workTestModel(m)
 
-	rows := mm.workerRows()
+	rows := mm.workersTab.rows(&mm.shell)
 	headerIdx := -1
 	for i, r := range rows {
 		if r.kind == rowHeader && r.label == "Workers" {
@@ -663,7 +667,7 @@ func TestWorkRowsWorkersHeaderAlwaysPresent(t *testing.T) {
 
 // TestWorkRowsWorkersHeaderStaysPutAcrossDispatch is AC 3: the Workers
 // header sits at a fixed offset from the Commands section (built before the
-// workers branch in workerRows), so dispatching a new worker cannot move it —
+// workers branch in workersTab.rows), so dispatching a new worker cannot move it —
 // the empty-state line and the worker rows are alternatives at the same
 // slot, never a reason for the header itself to shift.
 func TestWorkRowsWorkersHeaderStaysPutAcrossDispatch(t *testing.T) {
@@ -676,7 +680,7 @@ func TestWorkRowsWorkersHeaderStaysPutAcrossDispatch(t *testing.T) {
 	}
 	mm := workTestModel(m)
 
-	before := mm.workerRows()
+	before := mm.workersTab.rows(&mm.shell)
 	headerBefore := -1
 	for i, r := range before {
 		if r.kind == rowHeader && r.label == "Workers" {
@@ -698,7 +702,7 @@ func TestWorkRowsWorkersHeaderStaysPutAcrossDispatch(t *testing.T) {
 	livework.Default.SetState(worker.ID, livework.StateWaiting, nil)
 	livework.Default.SetActivity(worker.ID, "needs input")
 
-	after := mm.workerRows()
+	after := mm.workersTab.rows(&mm.shell)
 	headerAfter, workerIdx := -1, -1
 	for i, r := range after {
 		if r.kind == rowHeader && r.label == "Workers" {
@@ -712,7 +716,7 @@ func TestWorkRowsWorkersHeaderStaysPutAcrossDispatch(t *testing.T) {
 		t.Errorf("Workers header moved from %d to %d when a worker was added", headerBefore, headerAfter)
 	}
 	if workerIdx < 0 {
-		t.Fatalf("dispatched worker's row not found in workerRows")
+		t.Fatalf("dispatched worker's row not found in the Workers rows")
 	}
 	if after[headerAfter+1].kind != rowWorker {
 		t.Errorf("row directly after the Workers header = %+v, want a rowWorker now that one is live", after[headerAfter+1])
@@ -770,7 +774,7 @@ func TestWorkRowsWorkerLabelHasNoTrailingSpaceWhenActivityEmpty(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	rows := mm.workerRows()
+	rows := mm.workersTab.rows(&mm.shell)
 	found := false
 	for _, r := range rows {
 		if r.kind == rowWorker && r.work.worker.ID == worker.ID {

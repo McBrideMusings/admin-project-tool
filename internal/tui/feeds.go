@@ -11,6 +11,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
+	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
@@ -23,6 +24,7 @@ import (
 type feeds struct {
 	beads  *beadsFeed
 	config *configFeed
+	work   *workFeed
 	// syncFeed is what the whole-repo GitHub sync last answered, and localFeed
 	// what the last local git read found. Model embeds feeds, so it reads both
 	// as its own fields; tabs read them through syncSource and localSource.
@@ -67,7 +69,7 @@ type identityFeed struct {
 // newFeeds builds every feed, idle. A feed starts only when sources.go's
 // claimSources finds a mounted tab declaring it.
 func newFeeds(ctx context.Context, repoRoot string) feeds {
-	return feeds{beads: &beadsFeed{ctx: ctx, root: repoRoot}, syncFeed: &syncFeed{}, localFeed: &localFeed{}, identityFeed: &identityFeed{}, config: &configFeed{}}
+	return feeds{beads: &beadsFeed{ctx: ctx, root: repoRoot}, syncFeed: &syncFeed{}, localFeed: &localFeed{}, identityFeed: &identityFeed{}, config: &configFeed{}, work: &workFeed{}}
 }
 
 // sourceSet is how a tab model's constructor obtains handles to feeds.
@@ -99,6 +101,15 @@ func (d *sourceSet) declare(s source) {
 func (d *sourceSet) beads() beadsSource {
 	d.declare(srcBeads)
 	return beadsSource{f: d.f.beads}
+}
+
+// work declares srcWork and returns the handle to what the work tick keeps
+// current. The live-work registry itself is process-wide state, not a feed
+// the shell owns; the handle is the declaration, and the way a tab reads the
+// registry's worker rows.
+func (d *sourceSet) work() workSource {
+	d.declare(srcWork)
+	return workSource{f: d.f.work}
 }
 
 // config returns the handle to the manifest the shell loads. It declares no
@@ -396,3 +407,20 @@ func (h configSource) err() string { return h.f.err }
 
 // origin is who declared key, or "" when nothing did.
 func (h configSource) origin(key string) string { return h.f.origin[key] }
+
+// workFeed is what the work source keeps beside the live-work registry: the
+// empty Workers tab's hint, which names the dispatches this project's
+// manifest declares and so can only be worded by the Model that holds the
+// commands and key bindings. loadManifest rewrites it on every read.
+type workFeed struct {
+	emptyHint string
+}
+
+// workSource is a tab's read handle on the work source.
+type workSource struct{ f *workFeed }
+
+// workers is every live agent worker, in the registry's insertion order.
+func (h workSource) workers() []*livework.Entry { return liveWorkers() }
+
+// emptyHint is the line the Workers tab shows when no worker is running.
+func (h workSource) emptyHint() string { return h.f.emptyHint }

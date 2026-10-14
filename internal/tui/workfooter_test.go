@@ -132,7 +132,7 @@ func TestXKeyKillsLiveWorkerRow(t *testing.T) {
 
 	m := twoCommandModel()
 	m.active = tabWorkers
-	m.cursor[tabWorkers] = rowIndex(t, m, func(r rowItem) bool {
+	m.workersTab.cursor = rowIndex(t, m, func(r rowItem) bool {
 		return r.kind == rowWorker && r.work != nil && r.work.worker == worker
 	})
 

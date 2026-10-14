@@ -145,4 +145,5 @@ func (m *Model) loadManifest() {
 		m.rowKeys = buildRowKeys(merged)
 	}
 	*m.feeds.config = configFeed{manifest: m.manifest, ok: m.manifestOK, err: m.manifestErr, origin: keyOrigin}
+	m.feeds.work.emptyHint = m.workersEmptyHint()
 }
