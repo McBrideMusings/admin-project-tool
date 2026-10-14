@@ -37,11 +37,11 @@ func TestNewSeedsCollapsedFromViewToml(t *testing.T) {
 	if !m.manifestOK {
 		t.Fatalf("manifestOK = false (err: %s)", m.manifestErr)
 	}
-	if !m.workCollapsed {
+	if !m.commandsTab.collapsed {
 		t.Fatal("workCollapsed = false, want true from view.toml's work.collapsed")
 	}
 	rows := m.visibleRows()
-	i := m.cursor[m.active]
+	i := *m.cur(m.active)
 	if i < 0 || i >= len(rows) {
 		t.Fatalf("cursor %d out of range of %d visible rows", i, len(rows))
 	}
@@ -51,8 +51,8 @@ func TestNewSeedsCollapsedFromViewToml(t *testing.T) {
 	// "build" sorts before "test" (group/priority tie, alphabetical name) —
 	// declaredCommands' own order, which is what the zero-value cursor lands
 	// the dashboard on.
-	if m.workOpenCmd != "build" {
-		t.Errorf("workOpenCmd = %q, want %q, the command the cursor started on", m.workOpenCmd, "build")
+	if m.commandsTab.openCmd != "build" {
+		t.Errorf("workOpenCmd = %q, want %q, the command the cursor started on", m.commandsTab.openCmd, "build")
 	}
 }
 
@@ -69,12 +69,12 @@ func TestToggleWorkCollapseSavesToProjectLevelFile(t *testing.T) {
 	}
 
 	m := New(context.Background(), dir, "", "main", "main")
-	if m.workCollapsed {
+	if m.commandsTab.collapsed {
 		t.Fatal("workCollapsed = true before any toggle, want false (no view.toml exists yet)")
 	}
 	m.focus = focusBody
-	m.toggleWorkCollapse()
-	if !m.workCollapsed {
+	m.commandsTab.toggleCollapse(&m.shell)
+	if !m.commandsTab.collapsed {
 		t.Fatal("workCollapsed = false after toggleWorkCollapse, want true")
 	}
 
@@ -83,7 +83,7 @@ func TestToggleWorkCollapseSavesToProjectLevelFile(t *testing.T) {
 		t.Fatalf("reading the saved view.toml: %v", err)
 	}
 	m2 := New(context.Background(), dir, "", "main", "main")
-	if !m2.workCollapsed {
+	if !m2.commandsTab.collapsed {
 		t.Errorf("a fresh New() over the same dir did not read back the saved collapse — file contents: %s", raw)
 	}
 }

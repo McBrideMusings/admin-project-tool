@@ -9,7 +9,7 @@
 // independently and got it right — was already advertising "↵ attach".
 //
 // Every test here drives the real key handler (m.activate(), reached via
-// m.cursor[m.active] the way a keypress would move it) rather than calling
+// *m.cur(m.active) the way a keypress would move it) rather than calling
 // activateCommand/activateCommandTarget directly, and every test written for
 // one row kind is written for the other — the previous round's tests only
 // ever exercised activateCommand, which is exactly how this shipped broken.
@@ -28,7 +28,7 @@ import (
 // current Work-tab row list, failing the test if it's missing.
 func targetRowIndex(t *testing.T, m Model, cmdName, targetKey string) int {
 	t.Helper()
-	for i, r := range m.workRows() {
+	for i, r := range m.commandsTab.rows(&m.shell) {
 		if r.kind == rowCommandTarget && r.work != nil && r.work.cmdName == cmdName && r.work.targetKey == targetKey {
 			return i
 		}
@@ -40,7 +40,7 @@ func targetRowIndex(t *testing.T, m Model, cmdName, targetKey string) int {
 // flatCommandRowIndex finds the row index of a flat (non-target) command row.
 func flatCommandRowIndex(t *testing.T, m Model, cmdName string) int {
 	t.Helper()
-	for i, r := range m.workRows() {
+	for i, r := range m.commandsTab.rows(&m.shell) {
 		if r.kind == rowCommand && r.work != nil && r.work.cmdName == cmdName {
 			return i
 		}
@@ -90,7 +90,7 @@ func TestEnterOnRunningTargetRowAttachesNotDispatches(t *testing.T) {
 
 	m := multiTargetModel(t)
 	m.active = tabWork
-	m.cursor[tabWork] = targetRowIndex(t, m, "dev", "mac")
+	m.commandsTab.cursor = targetRowIndex(t, m, "dev", "mac")
 
 	_, cmd := m.activate()
 	if !attached {
@@ -126,7 +126,7 @@ func TestAttachedBreadcrumbUsesBandName(t *testing.T) {
 		if !strings.Contains(crumb, "● "+c.want+"  · ") {
 			t.Errorf("breadcrumb for %s = %q, want it to name %q", c.entry.ID, crumb, c.want)
 		}
-		if band := stripANSI(strings.Join(m.renderWorkBand(m.mustEntryRow(t, c.entry.ID), 80, 12), "\n")); !strings.Contains(band, " "+c.want+"  running") {
+		if band := stripANSI(strings.Join(workBand(m, m.mustEntryRow(t, c.entry.ID), 80, 12), "\n")); !strings.Contains(band, " "+c.want+"  running") {
 			t.Errorf("band for %s = %q, want its title to name %q", c.entry.ID, band, c.want)
 		}
 	}
@@ -175,7 +175,7 @@ func TestEnterOnRunningFlatCommandRowStillAttaches(t *testing.T) {
 
 	m := multiTargetModel(t)
 	m.active = tabWork
-	m.cursor[tabWork] = flatCommandRowIndex(t, m, "test")
+	m.commandsTab.cursor = flatCommandRowIndex(t, m, "test")
 
 	_, cmd := m.activate()
 	if !attached {
@@ -197,7 +197,7 @@ func TestEnterOnIdleTargetRowDispatches(t *testing.T) {
 
 	m := multiTargetModel(t)
 	m.active = tabWork
-	m.cursor[tabWork] = targetRowIndex(t, m, "dev", "mac")
+	m.commandsTab.cursor = targetRowIndex(t, m, "dev", "mac")
 
 	if _, cmd := m.activate(); cmd != nil {
 		cmd()
@@ -215,7 +215,7 @@ func TestEnterOnIdleFlatCommandRowDispatches(t *testing.T) {
 
 	m := multiTargetModel(t)
 	m.active = tabWork
-	m.cursor[tabWork] = flatCommandRowIndex(t, m, "test")
+	m.commandsTab.cursor = flatCommandRowIndex(t, m, "test")
 
 	if _, cmd := m.activate(); cmd != nil {
 		cmd()
@@ -270,9 +270,9 @@ func TestFooterAgreesWithActionForBothRowKinds(t *testing.T) {
 			mm := multiTargetModel(t)
 			mm.active = tabWork
 			if c.targetKey != "" {
-				mm.cursor[tabWork] = targetRowIndex(t, mm, c.cmdName, c.targetKey)
+				mm.commandsTab.cursor = targetRowIndex(t, mm, c.cmdName, c.targetKey)
 			} else {
-				mm.cursor[tabWork] = flatCommandRowIndex(t, mm, c.cmdName)
+				mm.commandsTab.cursor = flatCommandRowIndex(t, mm, c.cmdName)
 			}
 
 			r, ok := mm.currentRow()
@@ -283,7 +283,7 @@ func TestFooterAgreesWithActionForBothRowKinds(t *testing.T) {
 			if gotAct != c.wantAct {
 				t.Errorf("resolveRowAction = %v, want %v", gotAct, c.wantAct)
 			}
-			pairs := mm.workFooterPairs()
+			pairs := mm.viewKeymap()
 			var gotLabel string
 			for _, p := range pairs {
 				if p[0] == "↵" {
@@ -303,7 +303,7 @@ func TestFooterAgreesWithActionForBothRowKinds(t *testing.T) {
 func TestExpandedListShowsSameTextAsPicker(t *testing.T) {
 	m := multiTargetModel(t)
 	for _, key := range []string{"mac", "server"} {
-		row := m.workRows()[targetRowIndex(t, m, "dev", key)]
+		row := m.commandsTab.rows(&m.shell)[targetRowIndex(t, m, "dev", key)]
 		want := kinds.TargetDescription(m.manifest, m.manifest.Actions["dev"], key)
 		if row.work.targetDesc != want || want == "" {
 			t.Errorf("target %q row desc = %q, picker text = %q", key, row.work.targetDesc, want)

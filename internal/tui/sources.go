@@ -9,9 +9,8 @@ import (
 )
 
 // source is one background feed the dashboard runs on behalf of its tabs
-// (ADR-0026). A tab with a model of its own declares the sources it reads by
-// asking its sourceSet for their handles (feeds.go); a tab whose state still
-// lives on Model declares them in tabSources. The shell starts each source
+// (ADR-0026). Every tab is a model of its own and declares the sources it
+// reads by asking its sourceSet for their handles (feeds.go). The shell starts each source
 // once, for every mounted tab that declares it, and never starts one that no
 // mounted tab declares. Local git and the merged config are
 // not sources: every tab reads them, so they load unconditionally in Init.
@@ -34,21 +33,14 @@ const (
 	numSources
 )
 
-// tabSources is the declaration of the sources each tab reads, for the tabs
-// whose state still lives on Model: Commands reads the work tick. A tab that
-// has moved into its own model has no row here: its constructor's handles are
-// its declaration (Model.declared).
-var tabSources = map[tab][]source{
-	tabWork: {srcWork},
-}
-
-// declared is the sources tab t reads: its model's declaration, or its
-// tabSources row while it has no model.
+// declared is the sources tab t reads: its model's declaration, recorded by
+// the handles its constructor asked for. A tab with no model (not mounted)
+// declares nothing.
 func (m Model) declared(t tab) []source {
 	if tm := m.tabModel(t); tm != nil {
 		return tm.sources()
 	}
-	return tabSources[t]
+	return nil
 }
 
 // dataSource is one row of the registry: whether the project has what the

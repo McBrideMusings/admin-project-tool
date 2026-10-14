@@ -186,7 +186,7 @@ func TestRenderWorkBandOverflowingFieldsStillFillsExactlyH(t *testing.T) {
 	row := rowItem{kind: rowCommand, work: wd}
 
 	const h = 10
-	out := (Model{}).renderWorkBand(row, 60, h)
+	out := workSurface{}.band(row, 60, h)
 	if len(out) != h {
 		t.Fatalf("renderWorkBand with a field block larger than h produced %d rows, want exactly %d", len(out), h)
 	}
@@ -209,7 +209,7 @@ func TestBandIdleShowsFieldSlot(t *testing.T) {
 		workflow: &kinds.WorkflowTarget{Source: kinds.WorkflowSourceQuery, Query: "status:closed"},
 	}}
 	const h = 12
-	out := mm.renderWorkBand(row, 60, h)
+	out := workBand(mm, row, 60, h)
 	if len(out) != h {
 		t.Fatalf("renderWorkBand produced %d lines, want exactly %d", len(out), h)
 	}

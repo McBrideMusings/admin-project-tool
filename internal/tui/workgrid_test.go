@@ -18,7 +18,7 @@ import (
 // multiTargetModel's "dev" (four targets) is exactly that row, at index 1.
 func TestCursorSkipsGroupRowMovingDown(t *testing.T) {
 	m := multiTargetModel(t)
-	rows := m.workRows()
+	rows := m.commandsTab.rows(&m.shell)
 	if !rows[1].group {
 		t.Fatalf("row 1 = %+v, want the group row (dev, four targets)", rows[1])
 	}
@@ -26,12 +26,12 @@ func TestCursorSkipsGroupRowMovingDown(t *testing.T) {
 	// only place moveCursor(1) is ever asked to step off of, in practice) and
 	// stepping down must skip straight over the group at row 1 onto its
 	// first target at row 2.
-	m.cursor[tabWork] = 0
+	m.commandsTab.cursor = 0
 	m.moveCursor(1)
-	if got := m.cursor[tabWork]; got != 2 {
+	if got := m.commandsTab.cursor; got != 2 {
 		t.Errorf("moveCursor(1) from the header landed on row %d (%+v), want row 2, the group's first target", got, rows[got])
 	}
-	if rows[m.cursor[tabWork]].group {
+	if rows[m.commandsTab.cursor].group {
 		t.Errorf("moveCursor(1) landed on a group row")
 	}
 }
@@ -40,17 +40,17 @@ func TestCursorSkipsGroupRowMovingDown(t *testing.T) {
 // also never land on the group row.
 func TestCursorSkipsGroupRowMovingUp(t *testing.T) {
 	m := multiTargetModel(t)
-	rows := m.workRows()
+	rows := m.commandsTab.rows(&m.shell)
 	// Row 2 is dev's first target (dev/ios); stepping up from there must
 	// skip the group row at 1 and the header at 0, wrapping to the last
 	// selectable row instead of ever landing on 1.
-	m.cursor[tabWork] = 2
+	m.commandsTab.cursor = 2
 	m.moveCursor(-1)
-	if rows[m.cursor[tabWork]].group {
-		t.Errorf("moveCursor(-1) landed on a group row (index %d)", m.cursor[tabWork])
+	if rows[m.commandsTab.cursor].group {
+		t.Errorf("moveCursor(-1) landed on a group row (index %d)", m.commandsTab.cursor)
 	}
-	if !rows[m.cursor[tabWork]].selectable() {
-		t.Errorf("moveCursor(-1) landed on an unselectable row (index %d, %+v)", m.cursor[tabWork], rows[m.cursor[tabWork]])
+	if !rows[m.commandsTab.cursor].selectable() {
+		t.Errorf("moveCursor(-1) landed on an unselectable row (index %d, %+v)", m.commandsTab.cursor, rows[m.commandsTab.cursor])
 	}
 }
 
@@ -61,7 +61,7 @@ func TestCursorSkipsGroupRowMovingUp(t *testing.T) {
 // stopping there.
 func TestCursorWrapsPastGroupRow(t *testing.T) {
 	m := multiTargetModel(t)
-	rows := m.workRows()
+	rows := m.commandsTab.rows(&m.shell)
 
 	// Find the last selectable row's index (test/cmd row) directly rather
 	// than hard-coding it, so a fixture edit elsewhere in the package can't
@@ -76,12 +76,12 @@ func TestCursorWrapsPastGroupRow(t *testing.T) {
 		t.Fatal("multiTargetModel produced no selectable rows at all")
 	}
 
-	m.cursor[tabWork] = last
+	m.commandsTab.cursor = last
 	m.moveCursor(1)
-	if got := m.cursor[tabWork]; rows[got].group {
+	if got := m.commandsTab.cursor; rows[got].group {
 		t.Errorf("wrapping down from the last row landed on the group row (index %d)", got)
 	}
-	if got := m.cursor[tabWork]; got != 2 {
+	if got := m.commandsTab.cursor; got != 2 {
 		t.Errorf("wrapping down from the last row landed on index %d, want 2 (dev's first target, past the group at 1)", got)
 	}
 }
@@ -117,7 +117,7 @@ func TestRunningCommandRowShowsStateElapsedActivityOnItsOwnRow(t *testing.T) {
 		Actions: map[string]manifest.Action{"build": {"kind": "shell"}},
 	})
 	seen := 0
-	for _, r := range mm.workRows() {
+	for _, r := range mm.commandsTab.rows(&mm.shell) {
 		if r.kind == rowCommand && r.work != nil && r.work.cmdName == "build" {
 			seen++
 		}
@@ -215,7 +215,7 @@ func TestNameColumnAlignsAcrossRowKindsAndGeometries(t *testing.T) {
 // counts a group parent itself, matching commands.txt:4's "Commands  47".
 func TestCommandsHeaderCountsInvocationsNotGroups(t *testing.T) {
 	m := multiTargetModel(t)
-	rows := m.workRows()
+	rows := m.commandsTab.rows(&m.shell)
 	if rows[0].kind != rowHeader || rows[0].label != "Commands" {
 		t.Fatalf("rows[0] = %+v, want the Commands header", rows[0])
 	}
@@ -239,7 +239,7 @@ func TestCommandsHeaderCountsInvocationsNotGroups(t *testing.T) {
 func TestGroupRowIsNotClickable(t *testing.T) {
 	m := multiTargetModel(t)
 	m.width, m.height = 100, 30
-	rows := m.workRows()
+	rows := m.commandsTab.rows(&m.shell)
 	groupIdx := -1
 	for i, r := range rows {
 		if r.group {
@@ -251,7 +251,7 @@ func TestGroupRowIsNotClickable(t *testing.T) {
 		t.Fatal("multiTargetModel produced no group row")
 	}
 
-	_, hits := m.renderWorkBody(m.width, m.height)
+	_, hits := workBody(m, m.width, m.height)
 	if groupIdx >= len(hits) {
 		t.Fatalf("renderWorkBody returned %d hit rows, want at least %d", len(hits), groupIdx+1)
 	}

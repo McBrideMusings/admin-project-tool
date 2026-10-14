@@ -61,7 +61,7 @@ func (t *configTab) loaded() bool { return true }
 func (t *configTab) freshness() seg { return seg{t: "cached", fg: cFaint} }
 
 // update takes the merged config.
-func (t *configTab) update(msg tea.Msg) tea.Cmd {
+func (t *configTab) update(_ *shell, msg tea.Msg) tea.Cmd {
 	if msg, ok := msg.(settingsMsg); ok {
 		t.cfg, t.cfgErr = msg.cfg, msg.loadErr
 	}

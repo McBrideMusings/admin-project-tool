@@ -91,10 +91,14 @@ func (m *Model) wheelStep(delta int) bool {
 	if delta < 0 && m.atBodyTop() {
 		return false
 	}
-	before, open := *m.cur(m.active), m.workOpenCmd
+	before := *m.cur(m.active)
+	restore := func() { *m.cur(m.active) = before }
+	if mv, ok := m.tabModel(m.active).(cursorMover); ok {
+		restore = mv.cursorMark()
+	}
 	m.moveCursor(delta)
 	if m.active != tabLocal && (*m.cur(m.active)-before)*delta < 0 {
-		*m.cur(m.active), m.workOpenCmd = before, open
+		restore()
 		return false
 	}
 	return true

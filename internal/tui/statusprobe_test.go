@@ -99,8 +99,8 @@ func TestStatusStripLeavesTheBandInPlace(t *testing.T) {
 			Actions: map[string]manifest.Action{"dev": {"kind": "shell", "run": "run-dev"}},
 		}
 		mm := workTestModel(m)
-		mm.cursor[mm.active] = 1 // the "dev" row, under the Commands header
-		lines, _ := mm.renderWorkBody(96, h)
+		*mm.cur(mm.active) = 1 // the "dev" row, under the Commands header
+		lines, _ := workBody(mm, 96, h)
 		for i, l := range lines {
 			if strings.HasPrefix(stripANSI(l), "── ") {
 				return i

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
+	"github.com/McBrideMusings/admin-project-tool/internal/viewstate"
 )
 
 func TestConcurrentStateReadsDoNotRace(t *testing.T) {
@@ -30,6 +31,7 @@ func TestConcurrentStateReadsDoNotRace(t *testing.T) {
 	}
 
 	m := Model{shell: shell{quitHosted: []*livework.Entry{e}}}
+	m.mountTabs(viewstate.State{})
 
 	const iterations = 200
 	var wg sync.WaitGroup

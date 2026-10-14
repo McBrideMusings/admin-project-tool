@@ -148,7 +148,7 @@ func (t *beadsTab) freshness() seg {
 
 // update takes the messages the tab reads beyond its keys: the merged config
 // names its columns.
-func (t *beadsTab) update(msg tea.Msg) tea.Cmd {
+func (t *beadsTab) update(_ *shell, msg tea.Msg) tea.Cmd {
 	if msg, ok := msg.(settingsMsg); ok {
 		t.cols = msg.beads.Columns
 	}

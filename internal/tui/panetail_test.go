@@ -33,16 +33,16 @@ func launcherBandModel(t *testing.T) Model {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for i, r := range mm.workRows() {
+	for i, r := range mm.commandsTab.rows(&mm.shell) {
 		if r.kind == rowCommand && r.work.cmdName == "dev" {
-			mm.cursor[tabWork] = i
+			mm.commandsTab.cursor = i
 		}
 	}
 	return mm
 }
 
 func renderedBand(mm Model) string {
-	out, _ := mm.renderWorkBody(96, 30)
+	out, _ := workBody(mm, 96, 30)
 	return strings.Join(out, "\n")
 }
 
@@ -97,6 +97,6 @@ func TestScreenTailLinesKeepsWordRows(t *testing.T) {
 // while the cursor sits low) draws the last row instead of panicking.
 func TestRenderWorkBodyCursorPastRows(t *testing.T) {
 	m := launcherBandModel(t)
-	m.cursor[m.active] = 999
-	m.renderWorkBody(80, 24)
+	*m.cur(m.active) = 999
+	workBody(m, 80, 24)
 }

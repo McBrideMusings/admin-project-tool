@@ -65,7 +65,7 @@ func TestKKeyOnLiveRowMovesCursorAndDoesNotKill(t *testing.T) {
 	if deployIdx != buildIdx+1 {
 		t.Fatalf("deploy row (%d) is not directly below build row (%d) — fixture assumption broke", deployIdx, buildIdx)
 	}
-	m.cursor[tabWork] = deployIdx
+	m.commandsTab.cursor = deployIdx
 
 	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
 	if cmd != nil {
@@ -74,7 +74,7 @@ func TestKKeyOnLiveRowMovesCursorAndDoesNotKill(t *testing.T) {
 	if killed {
 		t.Error("k killed the live entry under the old cursor position — kill must live on x now, never k")
 	}
-	got := updated.(Model).cursor[tabWork]
+	got := updated.(Model).commandsTab.cursor
 	if got != buildIdx {
 		t.Errorf("cursor after k = %d, want %d (moved up onto the build row, same as every other tab's k)", got, buildIdx)
 	}
@@ -103,7 +103,7 @@ func TestXKeyKillsLiveCommandRow(t *testing.T) {
 	}
 
 	m := twoCommandModel()
-	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("deploy"))
+	m.commandsTab.cursor = rowIndex(t, m, isCmdRow("deploy"))
 
 	_, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 	if cmd != nil {
@@ -169,14 +169,14 @@ func TestWorkFooterMatchesFramesVerbatim(t *testing.T) {
 	m := twoCommandModel()
 
 	idlePairs := [][2]string{{"↑↓", "move"}, {"↵", "dispatch"}, {"c", "collapse"}, {"q/esc", "quit"}}
-	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("build"))
-	if got := m.workFooterPairs(); !pairsEqual(got, idlePairs) {
+	m.commandsTab.cursor = rowIndex(t, m, isCmdRow("build"))
+	if got := m.viewKeymap(); !pairsEqual(got, idlePairs) {
 		t.Errorf("footer pairs on an idle command row = %v, want %v (commands.txt:30 verbatim, plus admin-4zz9's c collapse)", got, idlePairs)
 	}
 
 	livePairs := [][2]string{{"↑↓", "move"}, {"↵", "attach"}, {"x", "kill"}, {"c", "collapse"}, {"q/esc", "quit"}}
-	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("deploy"))
-	if got := m.workFooterPairs(); !pairsEqual(got, livePairs) {
+	m.commandsTab.cursor = rowIndex(t, m, isCmdRow("deploy"))
+	if got := m.viewKeymap(); !pairsEqual(got, livePairs) {
 		t.Errorf("footer pairs on a live command row = %v, want %v (commands-running.txt:30 verbatim, plus admin-4zz9's c collapse)", got, livePairs)
 	}
 

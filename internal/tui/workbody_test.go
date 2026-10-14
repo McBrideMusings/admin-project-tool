@@ -43,10 +43,10 @@ func buildRunningWorkModelAt(t *testing.T, w, h int) Model {
 		t.Fatalf("Add: %v", err)
 	}
 
-	rows := mm.workRows()
+	rows := mm.commandsTab.rows(&mm.shell)
 	for i, r := range rows {
 		if r.kind == rowCommand && r.work.cmdName == "command-test" {
-			mm.cursor[tabWork] = i
+			mm.commandsTab.cursor = i
 		}
 	}
 	return mm
@@ -62,7 +62,7 @@ func TestWorkBodyOneLayoutAtEveryGeometry(t *testing.T) {
 	for _, geo := range []struct{ w, h int }{{80, 24}, {96, 30}, {178, 46}} {
 		mm := buildRunningWorkModelAt(t, geo.w, geo.h)
 
-		out, hits := mm.renderWorkBody(geo.w, geo.h)
+		out, hits := workBody(mm, geo.w, geo.h)
 		if len(out) != geo.h {
 			t.Fatalf("%dx%d: renderWorkBody produced %d lines, want exactly %d", geo.w, geo.h, len(out), geo.h)
 		}
@@ -115,7 +115,7 @@ func TestWorkBodyOneLayoutAtEveryGeometry(t *testing.T) {
 func TestWorkBodyBandRulesAreEdgeToEdge(t *testing.T) {
 	for _, geo := range []struct{ w, h int }{{80, 24}, {96, 30}, {178, 46}} {
 		mm := buildRunningWorkModelAt(t, geo.w, geo.h)
-		out, _ := mm.renderWorkBody(geo.w, geo.h)
+		out, _ := workBody(mm, geo.w, geo.h)
 
 		title := ""
 		for _, l := range out {
@@ -144,7 +144,7 @@ func TestWorkBodyBandStaysOpen(t *testing.T) {
 		mm := buildRunningWorkModelAt(t, w, h)
 		livework.Default.SetState("command-test", state, nil)
 
-		out, _ := mm.renderWorkBody(w, h)
+		out, _ := workBody(mm, w, h)
 		titleIdx := -1
 		for i, l := range out {
 			if strings.Contains(l, "── ") && strings.Contains(stripANSI(l), "command-test") {
@@ -165,10 +165,10 @@ func TestWorkBodyBandStaysOpen(t *testing.T) {
 func TestWorkBodyBandIsFixedHeightAtBottom(t *testing.T) {
 	const w, h = 96, 30
 	mm := buildRunningWorkModelAt(t, w, h)
-	rows := mm.workRows()
+	rows := mm.commandsTab.rows(&mm.shell)
 	wantListH := len(rows)
 
-	out, _ := mm.renderWorkBody(w, h)
+	out, _ := workBody(mm, w, h)
 	if len(out) != h {
 		t.Fatalf("renderWorkBody produced %d lines, want exactly %d", len(out), h)
 	}

@@ -84,12 +84,12 @@ func TestDownMovesBetweenWorkerRows(t *testing.T) {
 	mm, rows := workersFixtureModel(t)
 	mm.workersTab.cursor = firstSelectable(rows)
 	first := mm.workersTab.cursor
-	before := mm.renderWorkBand(rows[first], 90, 12)
+	before := workBand(mm, rows[first], 90, 12)
 	mm.moveCursor(1)
 	if got := mm.workersTab.cursor; got != first+1 {
 		t.Fatalf("↓ from the first worker landed on row %d, want %d", got, first+1)
 	}
-	after := mm.renderWorkBand(rows[mm.workersTab.cursor], 90, 12)
+	after := workBand(mm, rows[mm.workersTab.cursor], 90, 12)
 	if strings.Join(before, "\n") == strings.Join(after, "\n") {
 		t.Errorf("band content did not change between the first and second worker")
 	}
@@ -141,7 +141,7 @@ func TestScrolledListNamesItsSection(t *testing.T) {
 	// Cursor on the last row scrolls the window down, so the pinned first row
 	// must still name "Workers".
 	mm.workersTab.cursor = lastSelectable(rows)
-	lines, _ := mm.renderWorkBody(96, 25)
+	lines, _ := workBody(mm, 96, 25)
 	first := stripANSI(lines[0])
 	if !strings.Contains(first, "Workers") || !strings.Contains(first, "more") {
 		t.Errorf("scrolled-into-Workers first line = %q, want it to name Workers and show the more-marker", first)
@@ -207,7 +207,7 @@ func TestWorkersEmptyKeepsBandAndOffersNoEnter(t *testing.T) {
 		Actions: map[string]manifest.Action{"build": {"kind": "shell"}},
 	})
 	mm.active = tabWorkers
-	band := mm.renderWorkBand(rowItem{kind: rowText}, 80, 9)
+	band := workBand(mm, rowItem{kind: rowText}, 80, 9)
 	if len(band) != 9 {
 		t.Fatalf("band has %d rows, want 9", len(band))
 	}
@@ -217,7 +217,7 @@ func TestWorkersEmptyKeepsBandAndOffersNoEnter(t *testing.T) {
 	if got := strings.TrimSpace(stripANSI(band[8])); got != "a worker's log, branch, worktree and session appear here" {
 		t.Errorf("band last row = %q", got)
 	}
-	for _, p := range mm.workFooterPairs() {
+	for _, p := range mm.viewKeymap() {
 		if p[0] == "↵" {
 			t.Errorf("footer offers %v on an empty Workers tab", p)
 		}

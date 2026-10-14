@@ -35,17 +35,17 @@ func withDeploy(m Model) Model {
 func TestCollapsedModeShowsOnlyCursorsCommandTargets(t *testing.T) {
 	m := withDeploy(multiTargetModel(t))
 	m.active = tabWork
-	m.cursor[tabWork] = rowIndex(t, m, isTargetRow("dev", "mac"))
+	m.commandsTab.cursor = rowIndex(t, m, isTargetRow("dev", "mac"))
 
-	m.toggleWorkCollapse()
-	if !m.workCollapsed {
+	m.commandsTab.toggleCollapse(&m.shell)
+	if !m.commandsTab.collapsed {
 		t.Fatal("toggleWorkCollapse did not turn collapse on")
 	}
-	if m.workOpenCmd != "dev" {
-		t.Fatalf("workOpenCmd = %q, want %q (the command the cursor was inside)", m.workOpenCmd, "dev")
+	if m.commandsTab.openCmd != "dev" {
+		t.Fatalf("workOpenCmd = %q, want %q (the command the cursor was inside)", m.commandsTab.openCmd, "dev")
 	}
 
-	got := rowNames(m.workRows())
+	got := rowNames(m.commandsTab.rows(&m.shell))
 	want := []string{
 		"cmd:dev",
 		"target:dev/ios", "target:dev/mac", "target:dev/server", "target:dev/tv",
@@ -69,7 +69,7 @@ func TestCollapsedModeShowsOnlyCursorsCommandTargets(t *testing.T) {
 // zero value changes nothing.
 func TestExpandedModeUnaffectedByCollapseField(t *testing.T) {
 	m := withDeploy(multiTargetModel(t))
-	got := rowNames(m.workRows())
+	got := rowNames(m.commandsTab.rows(&m.shell))
 	want := []string{
 		"cmd:dev",
 		"target:dev/ios", "target:dev/mac", "target:dev/server", "target:dev/tv",
@@ -111,10 +111,10 @@ func currentRowName(t *testing.T, m Model) string {
 func TestMoveCursorWorkDownThroughTargetsAndOutNoDrift(t *testing.T) {
 	m := withDeploy(multiTargetModel(t))
 	m.active = tabWork
-	m.cursor[tabWork] = rowIndex(t, m, isTargetRow("dev", "ios"))
-	m.toggleWorkCollapse()
-	if m.workOpenCmd != "dev" {
-		t.Fatalf("workOpenCmd = %q, want %q", m.workOpenCmd, "dev")
+	m.commandsTab.cursor = rowIndex(t, m, isTargetRow("dev", "ios"))
+	m.commandsTab.toggleCollapse(&m.shell)
+	if m.commandsTab.openCmd != "dev" {
+		t.Fatalf("workOpenCmd = %q, want %q", m.commandsTab.openCmd, "dev")
 	}
 
 	wantDown := []string{
@@ -130,8 +130,8 @@ func TestMoveCursorWorkDownThroughTargetsAndOutNoDrift(t *testing.T) {
 	if strings.Join(gotDown, ",") != strings.Join(wantDown, ",") {
 		t.Fatalf("down walk = %v, want %v", gotDown, wantDown)
 	}
-	if m.workOpenCmd != "deploy" {
-		t.Errorf("workOpenCmd after the down walk = %q, want %q", m.workOpenCmd, "deploy")
+	if m.commandsTab.openCmd != "deploy" {
+		t.Errorf("workOpenCmd after the down walk = %q, want %q", m.commandsTab.openCmd, "deploy")
 	}
 
 	wantUp := []string{
@@ -146,8 +146,8 @@ func TestMoveCursorWorkDownThroughTargetsAndOutNoDrift(t *testing.T) {
 	if strings.Join(gotUp, ",") != strings.Join(wantUp, ",") {
 		t.Fatalf("up walk = %v, want %v", gotUp, wantUp)
 	}
-	if m.workOpenCmd != "dev" {
-		t.Errorf("workOpenCmd after retracing up = %q, want %q (back where the walk started)", m.workOpenCmd, "dev")
+	if m.commandsTab.openCmd != "dev" {
+		t.Errorf("workOpenCmd after retracing up = %q, want %q (back where the walk started)", m.commandsTab.openCmd, "dev")
 	}
 }
 
@@ -162,16 +162,16 @@ func TestWorkRowCountStableAcrossCollapseAndCursorWalk(t *testing.T) {
 	m.active = tabWork
 	const want = 6 // dev's 4 targets + solo + test — multiTargetModel's own invocation count
 
-	if got := m.workRowCount(); got != want {
+	if got := m.commandsTab.count(); got != want {
 		t.Fatalf("expanded workRowCount = %d, want %d", got, want)
 	}
 
-	m.cursor[tabWork] = rowIndex(t, m, isTargetRow("dev", "ios"))
-	m.toggleWorkCollapse()
-	if !m.workCollapsed {
+	m.commandsTab.cursor = rowIndex(t, m, isTargetRow("dev", "ios"))
+	m.commandsTab.toggleCollapse(&m.shell)
+	if !m.commandsTab.collapsed {
 		t.Fatal("toggleWorkCollapse did not turn collapse on")
 	}
-	if got := m.workRowCount(); got != want {
+	if got := m.commandsTab.count(); got != want {
 		t.Fatalf("collapsed workRowCount (cursor inside dev) = %d, want %d", got, want)
 	}
 
@@ -187,13 +187,13 @@ func TestWorkRowCountStableAcrossCollapseAndCursorWalk(t *testing.T) {
 		if got := currentRowName(t, m); got != wantRow {
 			t.Fatalf("cursor walk landed on %q, want %q", got, wantRow)
 		}
-		if got := m.workRowCount(); got != want {
+		if got := m.commandsTab.count(); got != want {
 			t.Fatalf("workRowCount at %q = %d, want %d", wantRow, got, want)
 		}
 	}
 	for range walk {
 		m.moveCursor(-1)
-		if got := m.workRowCount(); got != want {
+		if got := m.commandsTab.count(); got != want {
 			t.Fatalf("workRowCount walking back = %d, want %d", got, want)
 		}
 	}
@@ -213,7 +213,7 @@ func TestCKeyOnOtherTabsIsANoOp(t *testing.T) {
 		t.Errorf("c on a non-Work tab returned a non-nil Cmd, want nil")
 	}
 	nm := next.(Model)
-	if nm.workCollapsed {
+	if nm.commandsTab.collapsed {
 		t.Error("c on a non-Work tab turned collapse mode on, want it untouched")
 	}
 	if nm.active != tabBeads {
@@ -226,9 +226,9 @@ func TestCKeyOnOtherTabsIsANoOp(t *testing.T) {
 // collapsed the same key relabels to "c expand".
 func TestCKeyTogglesFooterHintCollapseVsExpand(t *testing.T) {
 	m := twoCommandModel()
-	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("build"))
+	m.commandsTab.cursor = rowIndex(t, m, isCmdRow("build"))
 
-	pairs := m.workFooterPairs()
+	pairs := m.viewKeymap()
 	found := false
 	for _, p := range pairs {
 		if p[0] == "c" {
@@ -244,10 +244,10 @@ func TestCKeyTogglesFooterHintCollapseVsExpand(t *testing.T) {
 
 	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	nm := next.(Model)
-	if !nm.workCollapsed {
+	if !nm.commandsTab.collapsed {
 		t.Fatal("c did not turn collapse mode on")
 	}
-	pairs = nm.workFooterPairs()
+	pairs = nm.viewKeymap()
 	found = false
 	for _, p := range pairs {
 		if p[0] == "c" {

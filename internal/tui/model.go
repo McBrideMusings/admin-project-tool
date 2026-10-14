@@ -198,6 +198,11 @@ type Model struct {
 	// prsTab is the PRs tab's own model (prstab.go), built and reached the
 	// same way.
 	prsTab prsTab
+	// commandsTab is the Commands tab's own model (commandstab.go), reached
+	// through tabModel. It is nil until mountTabs builds it for a mounted
+	// Commands tab, so a Model that never mounted it has no Commands tab at
+	// all rather than one with no handles.
+	commandsTab *commandsTab
 	// repoTab is the Repo tab's own model (repotab.go), built and reached the
 	// same way.
 	repoTab repoTab
@@ -278,70 +283,12 @@ type Model struct {
 	// anywhere else in the repo (a source file, a build artifact) doesn't
 	// re-parse the manifest or overwrite the status line.
 	manifestStamp manifestStamp
-	// cmdOrigin/actionOrigin name which archetype (or "(manifest)") last
-	// contributed each command/action name — the detail pane's "archetype"
-	// and each step's "from <archetype>" line. archetype.Resolve's own merge
-	// log only records a COLLISION, not "here is who owns every key", so
-	// these are computed by a second, read-only walk of the same search
-	// path (computeOrigins).
-	cmdOrigin    map[string]string
-	actionOrigin map[string]string
 	// rowKeys is the resolved [keys.<row-kind>] lookup (ADR-0018,
 	// admin-l6kb.2), built once at New from validate.RowKeys over
 	// m.manifest.Keys — see rowkeys.go. Nil (not just empty) when there is
 	// no manifest at all, which is what makes rowKeyDispatch a clean miss
 	// on every project written before this feature existed.
 	rowKeys map[keymap.RowKind]map[string]string
-	// pendingDispatch holds the command names whose dispatchCommandCmd is in
-	// flight — the window between the enter keypress and the
-	// workDispatchStartedMsg that reports either a livework.Entry now exists
-	// or the spawn failed. commandRowItem reads it to set workRowData.pending
-	// so the row renders "starting" instead of idle, and activateCommand
-	// consults it to refuse a second dispatch of the same command during
-	// that window (admin-qk77). A map, not a single string, because more
-	// than one command's dispatch can be in flight at once. Shared state
-	// across every copy of this value-type Model (map identity, not the map
-	// itself, is what's copied) — mutate it only from Update, never from
-	// View.
-	pendingDispatch map[string]bool
-	// pendingAttach holds the command names whose enter arrived WHILE their
-	// dispatch was still pending — activateCommand records the intent to
-	// attach here instead of dispatching a second run, and the
-	// workDispatchStartedMsg handler drains it once the entry the attach
-	// needs actually exists.
-	pendingAttach map[string]bool
-	// pendingTarget holds, for a command name currently in pendingDispatch,
-	// WHICH target key that in-flight dispatch was for — admin-2y6p follow-
-	// up (a user report that dispatching one target of a multi-target
-	// command, e.g. "counter" under "command-test", showed every sibling
-	// target as "starting" too). pendingDispatch/pendingAttach stay keyed by
-	// command name alone (at most one dispatch in flight per command — the
-	// existing pending guard), but a multi-target command's OWN target rows
-	// (targetRows) must only mark the ONE row actually being dispatched, not
-	// every target sharing that command name. Absent or "" means either no
-	// dispatch is pending for that command, or it was a flat (non-target)
-	// dispatch — targetRows treats both the same way: nothing lights up.
-	pendingTarget map[string]string
-	// workCollapsed is the Work tab's display mode, toggled by `c` (admin-4zz9):
-	// false (the zero value, and the launch default when no view.toml sets it)
-	// is expanded — every command's targets render, byte-identical to the
-	// dashboard's original behavior. true is collapsed — only the command
-	// named by workOpenCmd shows its targets; see workRows' showTargets gate.
-	// Persisted to view.toml's work.collapsed (admin-y5lc.1): New() loads it
-	// through viewstate's cascade — seeding workOpenCmd from the cursor row
-	// when it starts collapsed, since toggleWorkCollapse isn't what set it
-	// this time — and toggleWorkCollapse saves every flip to the
-	// project-level file.
-	workCollapsed bool
-	// workOpenCmd is which command's targets show while workCollapsed is
-	// true: the command owning whatever row the cursor is currently on.
-	// toggleWorkCollapse seeds it the instant collapse turns on (from the
-	// row under the cursor at that moment); moveCursorWork keeps it in sync
-	// as the cursor moves through a collapsed row list. New() seeds it the
-	// same way when the dashboard launches already collapsed (view.toml's
-	// work.collapsed = true), since there is no toggle keypress to do it.
-	// Ignored entirely while workCollapsed is false.
-	workOpenCmd string
 
 	// Config tab (admin-3rgp.21): the resolved config.Config — repoRoot's
 	// admin.toml [worktrees]/[[populate]]/[beads]/[workflow]
@@ -361,16 +308,6 @@ type Model struct {
 	wtPickerCursor  int
 	wtTarget        string
 	wtTargetBranch  string
-
-	// Terminal view (admin-3rgp.65): attaching to a pty-addressed live-work
-	// row replaces the whole tab with that entry's Screen rather than the
-	// list/detail layout — see terminalview.go. termAttached is the switch
-	// view.go and handleKey both read; the rest describe the one open view,
-	// all zeroed together by detachTerminal.
-	termAttached bool
-	termEntryID  string
-	termRows     int
-	termCols     int
 }
 
 // Option adjusts a Model at construction. Options are applied before the
@@ -472,14 +409,11 @@ func FindManifestRoot(cwd string) string {
 // gathered by the caller and passed in so the first frame can render immediately.
 func New(ctx context.Context, repoRoot, nwo, current, def string, opts ...Option) Model {
 	m := Model{
-		ctx:             ctx,
-		nwo:             nwo,
-		current:         current,
-		def:             def,
-		shell:           shell{active: tabLocal, repoRoot: repoRoot, herdr: shim.Available()},
-		pendingDispatch: map[string]bool{},
-		pendingAttach:   map[string]bool{},
-		pendingTarget:   map[string]string{},
+		ctx:     ctx,
+		nwo:     nwo,
+		current: current,
+		def:     def,
+		shell:   shell{active: tabLocal, repoRoot: repoRoot, herdr: shim.Available()},
 	}
 	for _, opt := range opts {
 		opt(&m)
@@ -490,7 +424,6 @@ func New(ctx context.Context, repoRoot, nwo, current, def string, opts ...Option
 	// only because manifestDir() (which this uses) doesn't need the manifest
 	// itself loaded to resolve.
 	vs := viewstate.Load(ctx, m.manifestDir())
-	m.workCollapsed = vs.WorkCollapsed
 	m.mountTabs(vs)
 	if sort, ok := trackSortFromView(vs.TrackSort); ok {
 		m.trackSort = sort
@@ -501,22 +434,17 @@ func New(ctx context.Context, repoRoot, nwo, current, def string, opts ...Option
 		// manifest."
 		m.active = tabWork
 	}
-	if m.workCollapsed {
+	if m.tabModel(tabWork) != nil && m.commandsTab.collapsed {
 		// Launching already collapsed (view.toml's work.collapsed = true) has
-		// no toggle keypress to seed workOpenCmd the way toggleWorkCollapse
-		// does, so do it here from the row the cursor starts on. loadManifest
-		// has already run, so workRows() (gated on m.manifestOK) reflects the
-		// real command list; clampCursor moves the zero-value cursor off row
-		// 0's section header onto the first real row. m.focus is still its
-		// zero value (focusBody) here — m.focus = focusTabs runs later below
-		// — so currentRow() reads the same row a keypress would at this
-		// point, same as toggleWorkCollapse's own before, ok := m.currentRow().
+		// no toggle keypress to open the command under the cursor, so the tab
+		// does it here from the row the cursor starts on. loadManifest has
+		// already run, so the tab's rows reflect the real command list;
+		// clampCursor moves the zero-value cursor off row 0's section header
+		// onto the first real row. m.focus is still its zero value
+		// (focusBody) here — m.focus = focusTabs runs later below — so the
+		// tab reads the same row a keypress would at this point.
 		m.clampCursor()
-		if row, ok := m.currentRow(); ok {
-			if name := ownerCmdName(row); name != "" {
-				m.workOpenCmd = name
-			}
-		}
+		m.commandsTab.seedOpen(&m.shell)
 	}
 	if m.alone {
 		m.active = m.mounted[0]
@@ -576,10 +504,16 @@ func (m Model) syncTickCmd() tea.Cmd {
 // admin-3rgp.21 added to admin.toml, and admin-j00d lets that key name more
 // than one tracker at once.
 func (m Model) trackers() []string {
-	if m.manifest == nil || !m.manifest.HasTracker {
+	return manifestTrackers(m.manifest)
+}
+
+// manifestTrackers is mf's declared tracker list, nil when mf is nil or
+// declares none.
+func manifestTrackers(mf *manifest.Manifest) []string {
+	if mf == nil || !mf.HasTracker {
 		return nil
 	}
-	return m.manifest.Trackers
+	return mf.Trackers
 }
 
 // hasTracker reports whether name is one of the manifest's declared
@@ -672,6 +606,9 @@ func (m *Model) mountTabs(vs viewstate.State) {
 	if m.isMounted(tabPRs) {
 		m.prsTab = newPRsTab(m.feeds, m.nwo)
 	}
+	if m.isMounted(tabWork) {
+		m.commandsTab = newCommandsTab(m.feeds, vs.WorkCollapsed)
+	}
 }
 
 // updateTabs hands msg to every mounted tab model.
@@ -679,7 +616,7 @@ func (m *Model) updateTabs(msg tea.Msg) tea.Cmd {
 	var cmds []tea.Cmd
 	for t := tab(0); t < numTabs; t++ {
 		if tm := m.tabModel(t); tm != nil {
-			cmds = append(cmds, tm.update(msg))
+			cmds = append(cmds, tm.update(&m.shell, msg))
 		}
 	}
 	return tea.Batch(cmds...)
@@ -702,6 +639,11 @@ func (m *Model) tabModel(t tab) tabModel {
 		return &m.workersTab
 	case tabPRs:
 		return &m.prsTab
+	case tabWork:
+		if m.commandsTab == nil {
+			return nil
+		}
+		return m.commandsTab
 	case tabLocal:
 		return &m.repoTab
 	}
@@ -720,10 +662,6 @@ func (m *Model) cur(t tab) *int {
 func (m Model) rows() []rowItem {
 	if tm := m.tabModel(m.active); tm != nil {
 		return tm.rows(&m.shell)
-	}
-	switch m.active {
-	case tabWork:
-		return m.workRows()
 	}
 	// The Repo (local) tab uses the lazygit panes, not the flat row list.
 	return nil
@@ -772,22 +710,22 @@ func (m *Model) moveCursor(delta int) {
 		m.repo().movePane(delta)
 		return
 	}
-	// Collapsed Work-tab mode needs its own walk: the row list is a function
-	// of (m.workCollapsed, m.workOpenCmd), and workOpenCmd itself has to
-	// track where the cursor is heading, so this can't reuse the generic
-	// fixed-list skip loop below. Expanded mode (workCollapsed false, the
-	// default) renders every row exactly as it always has, so it keeps using
-	// the generic walk.
-	if m.active == tabWork && m.workCollapsed {
-		m.moveCursorWork(delta)
+	if mv, ok := m.tabModel(m.active).(cursorMover); ok {
+		mv.moveCursor(&m.shell, delta)
 		return
 	}
-	rows := m.visibleRows()
+	stepCursor(m.visibleRows(), m.cur(m.active), delta)
+}
+
+// stepCursor moves *cur delta rows through rows, skipping every row the
+// cursor cannot sit on and wrapping past either end. With no selectable row
+// it leaves *cur where it is.
+func stepCursor(rows []rowItem, cur *int, delta int) {
 	n := len(rows)
 	if n == 0 {
 		return
 	}
-	i := *m.cur(m.active)
+	i := *cur
 	for steps := 0; steps < n; steps++ {
 		i += delta
 		if i < 0 {
@@ -797,101 +735,7 @@ func (m *Model) moveCursor(delta int) {
 			i = 0
 		}
 		if rows[i].selectable() {
-			*m.cur(m.active) = i
-			return
-		}
-	}
-}
-
-// moveCursorWork is moveCursor's collapsed-Work-tab variant. The generic
-// walk above assumes the row list is fixed for the whole walk; here it
-// isn't, in two ways:
-//
-//   - Stepping onto a closed command's group header (unselectable, since a
-//     header never gets a cursor marker) is the signal to open that
-//     command, which inserts its target rows into the list right where the
-//     header sits. This lands directly on the first selectable row after
-//     the header (moving down) or the last one before it (moving up) —
-//     never on the header itself, and never by continuing to add delta to
-//     an index whose meaning changed out from under it once the rebuild ran.
-//   - Stepping onto an ALREADY-selectable row that belongs to a different
-//     command than the one currently open also changes which command is
-//     open (to that row's own owner) — and opening or closing a command
-//     resizes the list by however many target rows it has. The row just
-//     landed on is still in the rebuilt list (opening/closing some OTHER
-//     command never removes it), so it's relocated there by identity
-//     (sameRowIdentity) rather than by reusing the old index i, which was
-//     computed against the list from before the resize.
-//
-// This is the reason the row list can be treated as "a pure function of
-// (mode, cursor)" per the ticket: the cursor here is workOpenCmd (which
-// command is open) plus the row index, and moveCursorWork is what keeps the
-// two in lockstep as the index moves across a command boundary.
-func (m *Model) moveCursorWork(delta int) {
-	rows := m.visibleRows()
-	n := len(rows)
-	if n == 0 {
-		return
-	}
-	i := *m.cur(m.active)
-	for steps := 0; steps < n; steps++ {
-		i += delta
-		if i < 0 {
-			i = n - 1
-		}
-		if i >= n {
-			i = 0
-		}
-		r := rows[i]
-		if r.selectable() {
-			owner := ownerCmdName(r)
-			if owner == m.workOpenCmd {
-				*m.cur(m.active) = i
-				return
-			}
-			m.workOpenCmd = owner
-			newRows := m.visibleRows()
-			for j, rr := range newRows {
-				if sameRowIdentity(rr, r) {
-					*m.cur(m.active) = j
-					return
-				}
-			}
-			*m.cur(m.active) = i // defensive fallback; should be unreachable
-			return
-		}
-		if r.kind == rowCommand && r.group && r.work != nil && r.work.cmdName != m.workOpenCmd {
-			name := r.work.cmdName
-			m.workOpenCmd = name
-			newRows := m.visibleRows()
-			idx := indexOfCommandRow(newRows, name)
-			if idx < 0 {
-				return
-			}
-			// A command's target rows always sit immediately after its own
-			// header, whichever direction opened it — targetRows never
-			// inserts anything before the header it belongs to. So the
-			// block to land in is the contiguous run starting right after
-			// idx, and the direction only picks which end of that run: the
-			// first row (moving down, arriving from above) or the last
-			// (moving up, arriving from below).
-			start := idx + 1
-			end := start
-			for end < len(newRows) && newRows[end].kind == rowCommandTarget &&
-				newRows[end].work != nil && newRows[end].work.cmdName == name {
-				end++
-			}
-			if end == start {
-				// A query workflow that matched nothing: its only row
-				// under the group is text, so walk on to the next
-				// selectable row rather than stall on this keypress.
-				continue
-			}
-			if delta > 0 {
-				*m.cur(m.active) = start
-			} else {
-				*m.cur(m.active) = end - 1
-			}
+			*cur = i
 			return
 		}
 	}
@@ -1178,15 +1022,17 @@ func (m *Model) leaveBody() {
 	m.focus = focusTabs
 }
 
-// Update handles messages and key input. It wraps update with one piece of
-// shared bookkeeping: whenever update's changes bump m.toastGen and leave a
-// non-error status on screen, this schedules that status's expiry — the one
-// place that decision is made, so no individual case inside update has to
-// remember to return its own expiry cmd.
+// Update handles messages and key input. It wraps update with two pieces of
+// shared bookkeeping: it sizes an attached terminal view's child to the body
+// region (fitTerminal), and whenever update's changes bump m.toastGen and
+// leave a non-error status on screen, it schedules that status's expiry — the
+// one place each decision is made, so no individual case inside update has to
+// remember either.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	genBefore := m.toastGen
 	updated, cmd := m.update(msg)
 	mm := updated.(Model)
+	mm.fitTerminal()
 	if mm.toastGen != genBefore && mm.status != "" && mm.statusFg != cRed {
 		cmd = tea.Batch(cmd, statusExpireCmd(mm.toastGen))
 	}
@@ -1200,13 +1046,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		if m.termAttached {
-			rows, cols := m.termRegion()
-			m.termRows, m.termCols = rows, cols
-			if e := m.termEntry(); e != nil && e.Ops.Resize != nil {
-				_ = e.Ops.Resize(rows, cols)
-			}
-		}
 		return m, nil
 
 	case localDataMsg:
@@ -1467,36 +1306,23 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case workDispatchStartedMsg:
 		// A hosted dispatch reports "started" immediately rather than an
 		// exit status — the command keeps running on its own pty long after
-		// this message lands. Handling it repaints the Work tab, so the
+		// this message lands. Handling it repaints the Commands tab, so the
 		// live-work entry StartHostedPTY just registered shows up without
 		// waiting on a keypress; the work source's own tick keeps it current
 		// from there. Starting another tick here would add a second 1s chain
 		// per dispatch for the life of the process.
 		//
-		// Clearing pendingDispatch here — on both the error and success
-		// paths — is what ends the "starting" window a row shows from the
-		// moment enter was pressed (admin-qk77): a failed spawn falls back
-		// to idle (the red status line below is the only trace it left),
-		// and a successful one either shows running (once the entry exists)
-		// or idle again if the command already exited before this landed.
-		delete(m.pendingDispatch, msg.name)
-		delete(m.pendingTarget, msg.name)
+		// The Commands tab ends the row's "starting" window and runs an
+		// attach queued during it (commandsTab.dispatchStarted) — after the
+		// status line is set, so a failed attach's own red line is the one
+		// left on screen.
 		if msg.err != nil {
-			delete(m.pendingAttach, msg.name)
 			m.setStatus(msg.name+" failed to start: "+msg.err.Error(), cRed)
-			return m, nil
+			return m, m.updateTabs(msg)
 		}
 		m.setStatus(msg.name+" started", cGreen)
-		record := recordUsageCmd(m.nwo, resolvedInvocation(msg.name, msg.args))
 		m.refreshDetailProbes()
-		if m.pendingAttach[msg.name] {
-			delete(m.pendingAttach, msg.name)
-			if e := m.liveEntryForCommand(msg.name); e != nil {
-				am, acmd := m.attachEntry(e)
-				return am, tea.Batch(acmd, record)
-			}
-		}
-		return m, record
+		return m, tea.Batch(m.updateTabs(msg), recordUsageCmd(m.nwo, resolvedInvocation(msg.name, msg.args)))
 
 	case liveWorkSyncMsg:
 		m.setStatus(msg.err.Error(), cRed)
@@ -1952,31 +1778,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.moveCursor(-1)
-	case "a":
-		if m.onWorkSurface() {
-			return m.attachCurrentWork()
-		}
-	case "c":
-		// Cursor-following collapse toggle (admin-4zz9): Work-tab only, a
-		// no-op everywhere else — every other tab already uses "c" for
-		// nothing, so there is nothing to preserve there. The Repo tab takes
-		// "c" itself, for the strip under Branches.
-		if m.active == tabWork {
-			m.toggleWorkCollapse()
-		}
 	case "/":
 		m.filtering = true
 		m.filter = ""
 	case "r":
-		// The Work tab has no `r`. It must not become "refresh" by falling
-		// through either: the Work tab renders the live
-		// registry and the resolved manifest, neither of which a refresh
-		// fetches, so `r` there would spend a network sync to redraw the same
-		// rows. `R` still syncs everything from any tab.
-		if m.onWorkSurface() {
-			return m, nil
-		}
-		// On an Issues/PRs row, refresh just that row — one targeted GraphQL call
+		// The Commands and Workers tabs take `r` first and swallow it
+		// (workSurface.key). On an Issues/PRs row, refresh just that row — one targeted GraphQL call
 		// instead of syncing the whole repo. Anywhere else (the Repo tab, or no row
 		// under the cursor), fall back to refreshing everything.
 		if cmd, handled := m.rowRefreshCmd(); handled {
@@ -2022,14 +1829,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// with w = new named worktree.
 		if m.active == tabLocal && m.repoTab.pane == paneBranches {
 			return m.worktreeCurrentBranch()
-		}
-	case "x":
-		// The Work tab's kill, moved off k (admin-3rgp.72.12). A manifest
-		// [keys.command]/[keys.worker] binding for x shadows it (reported by
-		// admin check). killCurrentWork is already a no-op with no live row
-		// under the cursor.
-		if m.onWorkSurface() {
-			return m.killCurrentWork()
 		}
 	case "T":
 		// Worktree-target picker (admin-76tv): global, not tab-scoped — the
@@ -2112,18 +1911,10 @@ func (m Model) activate() (tea.Model, tea.Cmd) {
 			return m.startWorktree(worktreeReq{kind: "create", branch: branch})
 		}
 		return m.quitWith(&PendingAction{Kind: "create-cd", Branch: branch, RepoRoot: m.repoRoot})
-	case rowCommand:
-		return m.activateCommand(r.work)
-	case rowCommandTarget:
-		return m.activateCommandTarget(r.work)
+	case rowCommand, rowCommandTarget:
+		return m, m.commandsTab.activate(&m.shell, r)
 	case rowWorker:
-		// Every rowWorker row carries a non-nil work.worker (workRows()
-		// always sets it), so resolveRowAction never returns actionNone
-		// here — it's either actionAttach (still running) or
-		// actionTranscript (finished); attachEntry's own Attach call is
-		// what unifies both into "open its pane" (livework.go's Attach
-		// doc comment).
-		return m.attachEntry(r.work.worker)
+		return m, m.workersTab.activate(&m.shell, r)
 	case rowConfigValue, rowConfigPath:
 		return m, m.configTab.openRow(&m.shell, r)
 	}

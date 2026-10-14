@@ -9,9 +9,9 @@
 //   - the terminalOpener seam: livework.Registry.Attach for a hosted-pty
 //     entry calls back into this package (installTerminalOpener, wired from
 //     Model.Init) rather than mutating a value-type Model directly. The
-//     callback can only record which handle was requested; work.go's
-//     attachEntry reads that back and does the actual transition.
-//   - sizing: attach resizes the child's pty, and the entry's Screen with
+//     callback can only record which handle was requested; shell.go's
+//     attach reads that back and does the actual transition.
+//   - sizing: Model.fitTerminal resizes the child's pty, and the entry's Screen with
 //     it, to the body region. The Screen itself belongs to the hosted pty
 //     (internal/kinds/hostedpty.go), which feeds it for the child's whole
 //     run.
@@ -37,10 +37,10 @@ import (
 )
 
 // pendingTerminal is the handoff between livework.Registry.Attach (called
-// from work.go's attachEntry, on the Bubble Tea loop's own goroutine) and
+// from shell.go's attach, on the Bubble Tea loop's own goroutine) and
 // the terminal-opener callback the registry invokes synchronously inside
 // that same call. The callback cannot mutate a value-type Model itself, so
-// it records the requested handle here and attachEntry drains it right
+// it records the requested handle here and shell.attach drains it right
 // after Attach returns — see installTerminalOpener and takePendingTerminal.
 var (
 	pendingTerminalMu sync.Mutex
@@ -63,7 +63,7 @@ func installTerminalOpener() {
 
 // takePendingTerminal returns and clears whatever handle the opener last
 // recorded. It is drained unconditionally after every attach attempt (see
-// work.go's attachEntry) — a launcher-dispatched Attach never writes here,
+// shell.go's attach) — a launcher-dispatched Attach never writes here,
 // so there is nothing to leak into a later, unrelated pty attach.
 func takePendingTerminal() (string, bool) {
 	pendingTerminalMu.Lock()
@@ -86,32 +86,27 @@ func termTickCmd() tea.Cmd {
 	return tea.Tick(50*time.Millisecond, func(time.Time) tea.Msg { return termTickMsg{} })
 }
 
-// openTerminal transitions m into the attached state over e and resizes the
-// child's pty — and with it the entry's Screen — to the body region. The
-// Screen has been the child's terminal since it started, so everything it
-// already printed is on it. Called only from attachEntry, after
-// livework.Default.Attach has already succeeded for e.
-func (m Model) openTerminal(e *livework.Entry) Model {
-	m.termAttached = true
-	m.termEntryID = e.ID
+// fitTerminal sizes the attached child's pty — and with it the entry's
+// Screen — to the body region, whenever the region differs from the size it
+// was last given: the attach that just opened the view, a terminal resize, or
+// a field block that grew or shrank. The Screen has been the child's terminal
+// since it started, so everything it already printed is on it. Update calls
+// this after every message, so no single case has to remember to.
+func (m *Model) fitTerminal() {
+	if !m.termAttached {
+		return
+	}
 	rows, cols := m.termRegion()
+	if rows == m.termRows && cols == m.termCols {
+		return
+	}
 	m.termRows, m.termCols = rows, cols
-	if e.Ops.Resize != nil {
+	if e := m.termEntry(); e != nil && e.Ops.Resize != nil {
 		_ = e.Ops.Resize(rows, cols)
 	}
-	return m
 }
 
-// detachTerminal returns to the list. It never touches the child — the
-// process keeps running, exactly as attaching to a pane never suspends it.
-func (m Model) detachTerminal() Model {
-	m.termAttached = false
-	m.termEntryID = ""
-	m.termRows, m.termCols = 0, 0
-	return m
-}
-
-// termEntry resolves the attached entry by the ID openTerminal recorded, or
+// termEntry resolves the attached entry by the ID shell.attach recorded, or
 // nil once it is no longer attached. Re-resolved from the registry on every
 // call rather than cached, since a hosted-pty entry mutates in place
 // (SetState, SetActivity) — the header must always read the current State.
@@ -165,7 +160,8 @@ func (m Model) termRegion() (rows, cols int) {
 // and kill it from there.
 func (m Model) terminalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyEsc {
-		return m.detachTerminal(), nil
+		m.detachTerminal()
+		return m, nil
 	}
 	if b := encodeKey(msg); len(b) > 0 {
 		if e := m.termEntry(); e != nil && e.Ops.Write != nil {

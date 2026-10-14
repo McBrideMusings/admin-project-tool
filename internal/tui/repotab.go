@@ -358,7 +358,7 @@ func (t *repoTab) freshness() seg {
 	return cachedAgeSeg(t.syncSrc.remote().MergedFetchedAt)
 }
 
-func (t *repoTab) update(tea.Msg) tea.Cmd { return nil }
+func (t *repoTab) update(*shell, tea.Msg) tea.Cmd { return nil }
 
 // toggleMinesOnly flips the `G` narrowing, refusing it while nothing defines
 // whose work is "yours".

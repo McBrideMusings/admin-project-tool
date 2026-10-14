@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	tea "github.com/charmbracelet/bubbletea"
 	"testing"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
@@ -41,13 +42,9 @@ func multiTargetModel(t *testing.T) Model {
 				"test": {"kind": "shell", "run": "go test ./..."},
 			},
 		},
-		cmdOrigin:       map[string]string{},
-		actionOrigin:    map[string]string{},
-		pendingDispatch: map[string]bool{},
-		pendingAttach:   map[string]bool{},
-		pendingTarget:   map[string]string{},
 	}
 	m.mountTabs(viewstate.State{})
+	*m.feeds.config = configFeed{manifest: m.manifest, ok: true}
 	return m
 }
 
@@ -72,7 +69,7 @@ func rowNames(rows []rowItem) []string {
 // listed beneath it.
 func TestEveryCommandsTargetsRenderUnconditionally(t *testing.T) {
 	m := multiTargetModel(t)
-	got := rowNames(m.workRows())
+	got := rowNames(m.commandsTab.rows(&m.shell))
 	want := []string{
 		"cmd:dev",
 		"target:dev/ios", "target:dev/mac", "target:dev/server", "target:dev/tv",
@@ -94,7 +91,7 @@ func TestEveryCommandsTargetsRenderUnconditionally(t *testing.T) {
 // still renders unconditionally.
 func TestSingleTargetCommandIsNotAnExpander(t *testing.T) {
 	m := multiTargetModel(t)
-	for _, r := range m.workRows() {
+	for _, r := range m.commandsTab.rows(&m.shell) {
 		if r.kind == rowCommandTarget && r.work != nil && r.work.cmdName == "solo" {
 			t.Fatalf("single-target command expanded into %q", r.work.targetKey)
 		}
@@ -109,7 +106,7 @@ func TestSingleTargetCommandIsNotAnExpander(t *testing.T) {
 // may index into it positionally.
 func cmdRow(t *testing.T, m Model, name string) *workRowData {
 	t.Helper()
-	for _, r := range m.workRows() {
+	for _, r := range m.commandsTab.rows(&m.shell) {
 		if r.kind == rowCommand && r.work != nil && r.work.cmdName == name {
 			return r.work
 		}
@@ -130,7 +127,7 @@ func TestMultiTargetParentRowIsUngroupUnselectable(t *testing.T) {
 	m := multiTargetModel(t)
 	var parent rowItem
 	found := false
-	for _, r := range m.workRows() {
+	for _, r := range m.commandsTab.rows(&m.shell) {
 		if r.kind == rowCommand && r.work != nil && r.work.cmdName == "dev" {
 			parent = r
 			found = true
@@ -159,7 +156,7 @@ func TestEveryCommandsTargetsRenderAtOnce(t *testing.T) {
 	m.manifest.Custom["deploy"] = manifest.Command{Desc: "ship it", Steps: []string{"deploy"}, Group: 1, Priority: 4}
 
 	var sawDevTarget, sawDeployTarget bool
-	for _, r := range m.workRows() {
+	for _, r := range m.commandsTab.rows(&m.shell) {
 		if r.kind == rowCommandTarget && r.work != nil {
 			switch r.work.cmdName {
 			case "dev":
@@ -183,7 +180,7 @@ func TestEveryCommandsTargetsRenderAtOnce(t *testing.T) {
 func TestTargetRowDispatchesParentWithTargetArg(t *testing.T) {
 	m := multiTargetModel(t)
 	var target *workRowData
-	for _, r := range m.workRows() {
+	for _, r := range m.commandsTab.rows(&m.shell) {
 		if r.kind == rowCommandTarget && r.work != nil && r.work.targetKey == "mac" {
 			target = r.work
 		}
@@ -203,7 +200,7 @@ func TestTargetRowDispatchesParentWithTargetArg(t *testing.T) {
 		return nil
 	}
 
-	_, cmd := m.activateCommandTarget(target)
+	cmd := m.commandsTab.activateCommandTarget(&m.shell, target)
 	if cmd == nil {
 		t.Fatal("activateCommandTarget returned a nil Cmd")
 	}
@@ -227,7 +224,7 @@ func TestEnterOnMultiTargetParentLeavesCursorPut(t *testing.T) {
 	}
 	m.manifest.Custom["deploy"] = manifest.Command{Desc: "ship it", Steps: []string{"deploy"}, Group: 1, Priority: 4}
 
-	rows := m.workRows()
+	rows := m.commandsTab.rows(&m.shell)
 	var deployIdx int
 	for i, r := range rows {
 		if r.kind == rowCommand && r.work != nil && r.work.cmdName == "deploy" {
@@ -235,14 +232,14 @@ func TestEnterOnMultiTargetParentLeavesCursorPut(t *testing.T) {
 		}
 	}
 	deploy := cmdRow(t, m, "deploy")
-	m.cursor[m.active] = deployIdx
+	*m.cur(m.active) = deployIdx
 
-	next, _ := m.activateCommand(deploy)
-	nm := next.(Model)
-	if nm.cursor[nm.active] != deployIdx {
-		t.Fatalf("cursor moved to %d, want it to stay at %d", nm.cursor[nm.active], deployIdx)
+	m.commandsTab.activateCommand(&m.shell, deploy)
+	nm := m
+	if *nm.cur(nm.active) != deployIdx {
+		t.Fatalf("cursor moved to %d, want it to stay at %d", *nm.cur(nm.active), deployIdx)
 	}
-	cur := nm.workRows()[nm.cursor[nm.active]]
+	cur := nm.commandsTab.rows(&nm.shell)[*nm.cur(nm.active)]
 	if cur.kind != rowCommand || cur.work.cmdName != "deploy" {
 		t.Fatalf("cursor sits on %v/%v, want the deploy command row", cur.kind, cur.work)
 	}
@@ -273,7 +270,7 @@ func TestKillOnRunningTargetRowKillsIt(t *testing.T) {
 	}
 
 	m := multiTargetModel(t)
-	rows := m.workRows()
+	rows := m.commandsTab.rows(&m.shell)
 	idx := -1
 	for i, r := range rows {
 		if r.kind == rowCommandTarget && r.work != nil && r.work.targetKey == "mac" && r.work.cmdName == "dev" {
@@ -286,10 +283,11 @@ func TestKillOnRunningTargetRowKillsIt(t *testing.T) {
 	if rows[idx].work.live != live {
 		t.Fatalf("dev/mac target row's live entry = %v, want the registry entry this test added", rows[idx].work.live)
 	}
-	m.cursor[m.active] = idx
+	*m.cur(m.active) = idx
 
-	if _, cmd := m.killCurrentWork(); cmd != nil {
-		t.Errorf("killCurrentWork returned a non-nil Cmd, want nil (it acts synchronously via Ops.Kill)")
+	m.focus = focusBody
+	if _, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")}); cmd != nil {
+		t.Errorf("`x` returned a non-nil Cmd, want nil (it acts synchronously via Ops.Kill)")
 	}
 	if !killed {
 		t.Error("killCurrentWork on a running target row did nothing — Ops.Kill was never invoked")

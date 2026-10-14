@@ -62,7 +62,7 @@ func TestBandShowsLiveLogElapsedAndURLs(t *testing.T) {
 		t.Fatalf("Add(%s): %v", live.ID, err)
 	}
 	livework.Default.SetLogPath(live.ID, "/live/dev.log")
-	row := mm.commandRowItem(workCmdRow{name: "dev", cmd: m.Custom["dev"]}, map[string]*livework.Entry{"dev": live})
+	row := mm.commandsTab.commandRowItem(&mm.shell, workCmdRow{name: "dev", cmd: m.Custom["dev"]}, map[string]*livework.Entry{"dev": live})
 
 	title := bandTitle(80, live, row.work.cmdName)
 	if !strings.Contains(title, "5m") {
@@ -90,7 +90,7 @@ func TestFrameURLsBareVsKeyedLabel(t *testing.T) {
 		},
 	}
 	mm := workTestModel(m)
-	row := mm.commandRowItem(workCmdRow{name: "serve", cmd: m.Custom["serve"]}, map[string]*livework.Entry{})
+	row := mm.commandsTab.commandRowItem(&mm.shell, workCmdRow{name: "serve", cmd: m.Custom["serve"]}, map[string]*livework.Entry{})
 
 	if len(row.work.urls) != 2 {
 		t.Fatalf("urls = %+v, want 2 entries", row.work.urls)
@@ -131,7 +131,7 @@ func TestTargetURLsInheritanceTriState(t *testing.T) {
 		},
 	}
 	mm := workTestModel(m)
-	row := mm.commandRowItem(workCmdRow{name: "preview", cmd: m.Custom["preview"]}, map[string]*livework.Entry{})
+	row := mm.commandsTab.commandRowItem(&mm.shell, workCmdRow{name: "preview", cmd: m.Custom["preview"]}, map[string]*livework.Entry{})
 
 	if len(row.work.targetURLs["inherits"]) != 1 || row.work.targetURLs["inherits"][0].URL != "http://parent.example.com" {
 		t.Errorf("inherits target urls = %+v, want the parent's list", row.work.targetURLs["inherits"])
@@ -161,7 +161,7 @@ func TestFrameURLsExpandsComputedVar(t *testing.T) {
 		},
 	}
 	mm := workTestModel(m)
-	row := mm.commandRowItem(workCmdRow{name: "dev", cmd: m.Custom["dev"]}, map[string]*livework.Entry{})
+	row := mm.commandsTab.commandRowItem(&mm.shell, workCmdRow{name: "dev", cmd: m.Custom["dev"]}, map[string]*livework.Entry{})
 
 	if len(row.work.urls) != 1 || row.work.urls[0].URL != "http://10.0.0.5:8787" {
 		t.Errorf("urls = %+v, want ${LAN_IP} expanded to 10.0.0.5", row.work.urls)
@@ -184,7 +184,7 @@ func TestMultiStepCommandCollectsAllStepsURLs(t *testing.T) {
 		},
 	}
 	mm := workTestModel(m)
-	row := mm.commandRowItem(workCmdRow{name: "dev", cmd: m.Custom["dev"]}, map[string]*livework.Entry{})
+	row := mm.commandsTab.commandRowItem(&mm.shell, workCmdRow{name: "dev", cmd: m.Custom["dev"]}, map[string]*livework.Entry{})
 
 	if len(row.work.urls) != 1 || row.work.urls[0].URL != "http://127.0.0.1:5173" {
 		t.Errorf("urls = %+v, want the second step's url", row.work.urls)

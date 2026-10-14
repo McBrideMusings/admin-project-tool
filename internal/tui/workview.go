@@ -35,7 +35,7 @@ func bandH(h int) int {
 // a row of the band.
 const fieldRowsH = 5
 
-// renderWorkBody lays out the Work tab: one layout at every geometry — the
+// body lays out a work tab (Commands or Workers): one layout at every geometry — the
 // row list fills the body width, and the live band spans that same full
 // width beneath it, pinned to the bottom: always bandH rows, whatever state
 // the cursor row is in. The list gives up HEIGHT to the band and never width;
@@ -43,17 +43,15 @@ const fieldRowsH = 5
 // There is no side-by-side split on a wide terminal: it would give the detail
 // pane roughly 30 columns on exactly the terminals where log lines are
 // longest, and two layout branches could disagree.
-func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
-	rows := m.visibleRows()
-	cursor := *m.cur(m.active)
+func (w workSurface) body(s *shell, rows []rowItem, cursor, width, height int) ([]string, []hitTarget) {
 
 	// The Status strip is pinned above the scrolling list, whatever the filter
 	// leaves in it, and takes its rows from the list alone while leaving the
 	// list at least three — the band keeps bandH(fullHeight) either way.
 	var strip []string
 	var stripHits []hitTarget
-	if m.manifest != nil {
-		strip, stripHits = statusStrip(m.manifest.Status, width, height-bandH(height)-3)
+	if mf := w.cfg.manifest(); mf != nil {
+		strip, stripHits = statusStrip(mf.Status, width, height-bandH(height)-3)
 	}
 	fullHeight := height
 	height -= len(strip)
@@ -77,7 +75,7 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		switch r.kind {
 		case rowHeader:
 			// A header carrying a rightSegs entry (Commands' and Workers' own
-			// counts — work.go's workRows) renders bold label + dim count,
+			// counts — work.go's commandsTab.rows) renders bold label + dim count,
 			// ("Commands  47", "Workers  3"); any other header keeps the
 			// plain muted form.
 			// No leading space of its own — the outer render loop below
@@ -100,7 +98,7 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 			}
 			hits[i] = hitTarget{kind: hitNone}
 		default:
-			left[i] = m.renderWorkRow(r, i == cursor, lw)
+			left[i] = s.renderWorkRow(r, i == cursor, lw)
 			if r.group {
 				// A group parent carries no marker and the cursor can never
 				// land on it (selectable() excludes it) — it must not be
@@ -142,7 +140,7 @@ func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 		}
 	}
 
-	detail := m.renderWorkBand(rows[cursor], width, maxi(bh, 1))
+	detail := w.band(rows[cursor], width, maxi(bh, 1))
 
 	out := make([]string, 0, height)
 	outHits := make([]hitTarget, 0, height)
@@ -270,7 +268,7 @@ func renderCommandState(s livework.State) string {
 // above. A group row (a multi-target parent with more than one target) is
 // routed to renderGroupRow instead: it carries no marker and no live state
 // of its own — it holds targets and runs nothing itself.
-func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
+func (s shell) renderWorkRow(r rowItem, selected bool, width int) string {
 	wd := r.work
 	if wd == nil {
 		return ""
@@ -283,7 +281,7 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 	// only means "current" while focus is actually in the body (admin-70hb,
 	// AC1/AC6) — from the tab bar every row falls back to the faint,
 	// unfocused marker so nothing on the Work tab reads as current either.
-	current := selected && m.focus == focusBody
+	current := selected && s.focus == focusBody
 	marker := faintStyle.Render("◇ ")
 	if current {
 		marker = lipgloss.NewStyle().Foreground(cCyan).Render("◆ ")
@@ -305,7 +303,7 @@ func (m Model) renderWorkRow(r rowItem, selected bool, width int) string {
 		elapsed := faintStyle.Render(padEnd(elapsedStr(time.Since(e.StartedAt)), wElapsed))
 		// used counts the row's own leading column (the "1") plus the fixed
 		// grid columns, even though that leading column is prepended by
-		// renderWorkBody's caller rather than by this function: the row's
+		// body's caller rather than by this function: the row's
 		// total on-screen width is the same either way, and activity/where
 		// would each claim one cell too many without it, shifting the
 		// where-column one column to the right.
@@ -425,11 +423,11 @@ func renderTargetRow(wd *workRowData, focused bool, rest int) string {
 		//
 		// pendingHere, not pending: pending is command-wide (every sibling
 		// target under the same multi-target command shares
-		// Model.pendingDispatch[cmdName]), so using it here made EVERY
+		// commandsTab.pendingDispatch[cmdName]), so using it here made EVERY
 		// target under "command-test" render "starting" the instant any ONE
 		// of them (e.g. "counter") was dispatched — a second, distinct bug
 		// this same report caught. pendingHere is targetRows' per-row answer
-		// to "is THIS target the one Model.pendingTarget[cmdName] names".
+		// to "is THIS target the one commandsTab.pendingTarget[cmdName] names".
 		state := renderCommandState(livework.StateStarting)
 		return faintStyle.Render(connector) + name + state
 	}
@@ -437,22 +435,21 @@ func renderTargetRow(wd *workRowData, focused bool, rest int) string {
 	return faintStyle.Render(connector) + name + faintStyle.Render(hint)
 }
 
-// renderWorkBand is the Work tab's full-width live band (admin-3rgp.72.6): a
+// band is a work tab's full-width live band (admin-3rgp.72.6): a
 // title rule naming whatever the combined cursor sits on plus a count of
 // everything else running (bandTitle), a fixed fieldRowsH-row field block
 // chosen by the row's own state (bandIdle / bandFieldsCommand /
 // bandFieldsWorker), then the row's own live output tail filling the rest.
-// The row-list half of the Work tab's layout lives in Model.renderWorkBody
-// above; this is the band half.
+// The row-list half of the layout lives in body above; this is the band half.
 //
 // Contract: given the body width w and the band's own height h, returns
 // exactly h lines, whatever row r is. The field block is a fixed fieldRowsH
 // slot for every row kind (live command, live worker, idle entry), so
 // moving the cursor between rows in different states never moves a row of
 // the band beneath it; a block taller than the slot is clipped to it.
-func (m Model) renderWorkBand(r rowItem, w, h int) []string {
+func (ws workSurface) band(r rowItem, w, h int) []string {
 	wd := r.work
-	if wd == nil && m.active == tabWorkers && len(liveWorkers()) == 0 {
+	if wd == nil && ws.workers && len(ws.work.workers()) == 0 {
 		return workersEmptyBand(w, h)
 	}
 	if wd == nil {
@@ -566,12 +563,11 @@ func rowName(r rowItem, live *livework.Entry) string {
 }
 
 // entryRow is the Commands or Workers row whose live entry has id, with
-// collapse off so a hidden target row still counts.
+// collapse off so a hidden target row still counts. A Commands row is found
+// only while that tab is mounted.
 func (m Model) entryRow(id string) (rowItem, *livework.Entry, bool) {
-	all := m
-	all.workCollapsed = false
-	for _, r := range all.workRows() {
-		if e := bandEntry(r); e != nil && e.ID == id && r.work != nil {
+	if m.tabModel(tabWork) != nil {
+		if r, e, ok := m.commandsTab.entryRow(&m.shell, id); ok {
 			return r, e, true
 		}
 	}
