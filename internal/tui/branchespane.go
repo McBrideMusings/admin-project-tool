@@ -93,7 +93,7 @@ func (m repoView) rowFor(b git.BranchInfo) paneRow {
 	st := m.local.wtState[wtPath]
 	broken := blockers(pr, m.worktreeOp(wtPath), st.conflicts)
 	ahead := m.local.unpushed[b.Name]
-	holds := holdsOf(st.changed, m.local.branchUnsafe[b.Name], ahead, landed)
+	holds := holdsOf(st.changed, len(st.ignored), m.local.branchUnsafe[b.Name], ahead, landed)
 	// Being worked on right now holds a branch ONLY where the clock is carrying real
 	// information — an `empty` branch, or one with no proof at all, where "cut ten
 	// minutes ago" and "abandoned in March" are the same shape in the commit graph.
@@ -121,6 +121,7 @@ func (m repoView) rowFor(b git.BranchInfo) paneRow {
 	r.sec = classifySection(protected, own, landed, pr, broken, holds)
 	r.state = stateWord(r, landed)
 	r.ahead, r.behind, r.changed = ahead, m.local.signals[b.Name].behind, st.changed
+	r.ignored, r.kept = len(st.ignored), st.kept
 	switch {
 	case protected:
 		// The default branch is behind nothing but its own origin copy: ↑/↓ there are
@@ -263,6 +264,9 @@ func (m repoView) branchPaneLines(rows []paneRow, byName map[string]git.BranchIn
 			if sub := m.brSubLine(r, w, plan); sub != nil {
 				lines = append(lines, sub)
 			}
+		}
+		if kept := brKeptLine(r, w); kept != nil {
+			lines = append(lines, kept)
 		}
 	}
 	return lines, itemLine

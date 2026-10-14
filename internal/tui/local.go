@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
+	"github.com/McBrideMusings/admin-project-tool/internal/keptnote"
 )
 
 // localPane identifies the focused panel in the Repo (local) tab.
@@ -162,11 +163,14 @@ func gitParts(r paneRow) []string {
 	if r.changed > 0 {
 		parts = append(parts, "~"+strconv.Itoa(r.changed))
 	}
+	if r.ignored > 0 {
+		parts = append(parts, "!!"+strconv.Itoa(r.ignored))
+	}
 	return parts
 }
 
 // gitSegs draws gitText in exactly n cells, in the colors styles.go assigns
-// these marks everywhere: ↑ green, ↓ red, ~ yellow.
+// these marks everywhere: ↑ green, ↓ red, ~ and !! yellow.
 func gitSegs(r paneRow, n int) []seg {
 	var segs []seg
 	for i, p := range gitParts(r) {
@@ -177,7 +181,7 @@ func gitSegs(r paneRow, n int) []seg {
 		switch {
 		case strings.HasPrefix(p, "↓"):
 			fg = cRed
-		case strings.HasPrefix(p, "~"):
+		case strings.HasPrefix(p, "~"), strings.HasPrefix(p, "!"):
 			fg = cYellow
 		}
 		segs = append(segs, seg{t: p, fg: fg})
@@ -415,6 +419,27 @@ func (m repoView) brSubLine(r paneRow, w int, plan columnPlan) []seg {
 	maxText := mini(w-used, m.prColumnEnd(r, w, plan)-used)
 	segs = append(segs, rowCell(r.purpose.text, maxi(0, maxText), cDim))
 	return segs
+}
+
+// keptText is the kept line's text: when the reaper left the worktree, and why.
+func keptText(n *keptnote.Note) string {
+	return "reaper left the worktree " + n.At.Local().Format("Jan 2 3:04pm") + ": " + n.Reason
+}
+
+// brKeptLine is the row's kept line, drawn under it in every section while the
+// worker reaper's note on its worktree stands (internal/keptnote): a
+// pre_remove veto or a failed removal, which nothing else on the row can show.
+// Returns nil when there is no note.
+func brKeptLine(r paneRow, w int) []seg {
+	if r.kept == nil {
+		return nil
+	}
+	used := 3 + 2 + 7
+	return []seg{
+		{t: "   "}, {t: "↳ ", fg: cFaint},
+		rowCell("kept", 7, cYellow),
+		rowCell(keptText(r.kept), maxi(0, w-used), cDim),
+	}
 }
 
 // prColumnEnd is the cell offset, from the row's left edge, where the PR cell's

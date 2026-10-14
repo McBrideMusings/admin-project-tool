@@ -19,6 +19,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
+	"github.com/McBrideMusings/admin-project-tool/internal/keptnote"
 	"github.com/McBrideMusings/admin-project-tool/internal/resolve"
 	"github.com/McBrideMusings/admin-project-tool/internal/shim"
 	"github.com/McBrideMusings/admin-project-tool/internal/workusage"
@@ -84,6 +85,13 @@ type wtState struct {
 	// status is the read itself, for a caller that needs the counts apart
 	// (`admin worktree list`). Zero when unread.
 	status git.Status
+	// ignored is the worktree's ignored paths the primary checkout lacks
+	// (git.UnsharedIgnored) — files removing the worktree deletes, which a
+	// plain `git status` never lists. The reaper keeps a worktree for them.
+	ignored []string
+	// kept is the reaper's note on why it left this worktree (internal/keptnote),
+	// nil when there is none or HEAD has moved since it was written.
+	kept *keptnote.Note
 	// unread is set when the status read itself failed. It is not "clean" and not
 	// "conflicted" — it is *unknown*, and every caller has to treat it as the worse
 	// of the two, because the files a wrong guess destroys do not come back.
@@ -180,7 +188,7 @@ func loadLocalCmd(ctx context.Context, repoRoot, checkout, current, def string) 
 			if w.Path == repoRoot {
 				continue
 			}
-			st, err := git.WorkingStatus(ctx, w.Path)
+			st, err := git.WorkingStatusIgnored(ctx, w.Path)
 			if err != nil {
 				// Fail safe on both counts at once: dirty so nothing pre-selects it,
 				// unread so the delete refuses rather than betting on a stash it has
@@ -188,12 +196,17 @@ func loadLocalCmd(ctx context.Context, repoRoot, checkout, current, def string) 
 				d.wtState[w.Path] = wtState{dirty: true, unread: true}
 				continue
 			}
-			d.wtState[w.Path] = wtState{
+			ws := wtState{
 				dirty:     !st.Clean(),
 				conflicts: st.Conflicted,
 				changed:   st.Staged + st.Unstaged + st.Untracked,
 				status:    st,
+				ignored:   git.UnsharedIgnored(repoRoot, st.IgnoredPaths),
 			}
+			if n, ok := keptnote.Read(w.Path, w.Head); ok {
+				ws.kept = &n
+			}
+			d.wtState[w.Path] = ws
 		}
 		d.branchUnsafe = map[string]bool{}
 		d.tips = map[string]string{}

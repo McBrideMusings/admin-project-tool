@@ -73,6 +73,8 @@ type ShowRow struct {
 	Ahead   int      `json:"ahead,omitempty"`
 	Behind  int      `json:"behind,omitempty"`
 	Changed int      `json:"changed,omitempty"`
+	Ignored int      `json:"ignored,omitempty"`
+	Kept    string   `json:"kept,omitempty"` // the kept line as drawn
 	Ready   string   `json:"ready,omitempty"`
 	Holds   []string `json:"holds,omitempty"`
 	Broken  []string `json:"broken,omitempty"`
@@ -272,6 +274,10 @@ func (m Model) showRepoRows() []ShowRow {
 			Broken:  r.broken,
 			Number:  r.prNum,
 			Purpose: r.purpose.text,
+			Ignored: r.ignored,
+		}
+		if r.kept != nil {
+			sr.Kept = keptText(r.kept)
 		}
 		if r.sec == secMain {
 			sr.Section = "Main"

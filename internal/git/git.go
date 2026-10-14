@@ -239,6 +239,15 @@ func primaryWorktreeOf(ctx context.Context, commonDir string) string {
 	return filepath.Clean(wt)
 }
 
+// HeadSHA returns the commit HEAD points at in dir.
+func HeadSHA(ctx context.Context, dir string) (string, error) {
+	out, err := runner(ctx, dir, "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // CurrentBranch returns the checked-out branch at dir, or "" if detached.
 func CurrentBranch(ctx context.Context, dir string) string {
 	out, err := runner(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD")
@@ -335,6 +344,26 @@ func WorkingStatus(ctx context.Context, path string) (Status, error) {
 // take ignored files with it.
 func WorkingStatusIgnored(ctx context.Context, path string) (Status, error) {
 	return workingStatus(ctx, path, "--porcelain", "--ignored=matching")
+}
+
+// UnsharedIgnored returns the ignored paths of a worktree (relative to it, as
+// Status.IgnoredPaths holds them) that the primary checkout at primary lacks,
+// leaving out dependency install directories. These are what removing the
+// worktree would lose: an ignored path the primary also has (a seeded
+// admin.toml) is not the worktree's own, and a package manager recreates
+// node_modules. Build output and .env files count.
+func UnsharedIgnored(primary string, paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		rel := strings.TrimSuffix(p, "/")
+		if filepath.Base(rel) == "node_modules" {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(primary, rel)); err != nil {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func workingStatus(ctx context.Context, path string, flags ...string) (Status, error) {

@@ -17,6 +17,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
+	"github.com/McBrideMusings/admin-project-tool/internal/keptnote"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/wthooks"
 )
@@ -202,6 +203,39 @@ func TestCleanupQuarantinesDirtyWorktree(t *testing.T) {
 	}
 	if struckText(row) != "" {
 		t.Errorf("dirty merged worktree is struck through as finished: %q", text)
+	}
+}
+
+// A merged worktree holding only ignored files the primary checkout lacks, which
+// the worker reaper kept after a pre_remove veto: the row says both — the !!
+// count and the hold that keeps it out of the sweep, and the kept line.
+func TestBranchRowShowsReaperKeep(t *testing.T) {
+	m := seededModel()
+	m.local.wts = append(m.local.wts, git.Worktree{Path: "/repo/.worktrees/old-merged", Branch: "old-merged"})
+	m.remote.MergedHeads["old-merged"] = "abc123"
+	m.local.wtState["/repo/.worktrees/old-merged"] = wtState{
+		ignored: []string{".env"},
+		kept:    &keptnote.Note{Reason: "pre_remove hook failed (exit 1): still-serving", At: time.Now()},
+	}
+	m.active, m.repoTab.pane = tabLocal, paneBranches
+
+	var got *ShowRow
+	for _, r := range m.showRepoRows() {
+		if r.Branch == "old-merged" {
+			got = &r
+		}
+	}
+	if got == nil {
+		t.Fatal("no old-merged row")
+	}
+	if got.Ignored != 1 || got.Ready != "held" || !strings.Contains(got.Git, "!!1") {
+		t.Errorf("row = ignored %d, ready %q, git %q; want 1, held, !!1", got.Ignored, got.Ready, got.Git)
+	}
+	if !strings.Contains(got.Kept, "still-serving") {
+		t.Errorf("kept = %q, want the veto line", got.Kept)
+	}
+	if view := m.View(); !strings.Contains(view, "still-serving") {
+		t.Errorf("the Branches pane does not draw the kept line:\n%s", view)
 	}
 }
 

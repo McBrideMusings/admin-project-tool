@@ -106,6 +106,12 @@ func TestCommandArgv(t *testing.T) {
 			},
 		},
 		{
+			name: "HeadSHA",
+			out:  []string{"abc123"},
+			call: func(ctx context.Context) { HeadSHA(ctx, "/repo") },
+			want: []call{rd("rev-parse", "HEAD")},
+		},
+		{
 			name: "CurrentBranch",
 			out:  []string{"feat/x"},
 			call: func(ctx context.Context) { CurrentBranch(ctx, "/repo") },
@@ -446,6 +452,7 @@ var coveredCommands = map[string]bool{
 	"CountAheadOf":             true,
 	"HasCommitsNotOnOrigin":    true,
 	"CurrentBranch":            true,
+	"HeadSHA":                  true,
 	"DefaultBranch":            true,
 	"DeleteBranch":             true,
 	"FetchBranch":              true,

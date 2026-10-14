@@ -23,6 +23,14 @@ type WorktreeRow struct {
 
 	Status *WorktreeStatus `json:"status"` // nil when git could not read it
 	Op     *string         `json:"op"`     // the paused operation: rebase, merge, cherry-pick, revert, bisect
+	// Ignored lists the worktree's ignored paths the primary checkout lacks,
+	// which removing it deletes (git.UnsharedIgnored); nil for the primary
+	// checkout and when the status read failed.
+	Ignored []string `json:"ignored"`
+	// Kept is why the worker reaper left this worktree, when that was a
+	// pre_remove veto or a failed removal (internal/keptnote); nil when there is
+	// no note, or HEAD moved since it was written.
+	Kept *WorktreeKept `json:"kept"`
 
 	Default  *AheadBehind `json:"default"`  // against the default branch; nil when detached, on it, or unreadable
 	Upstream *Upstream    `json:"upstream"` // nil when origin has never carried the branch
@@ -35,6 +43,12 @@ type WorktreeStatus struct {
 	Unstaged   int `json:"unstaged"`
 	Untracked  int `json:"untracked"`
 	Conflicted int `json:"conflicted"`
+}
+
+// WorktreeKept is the reaper's recorded keep reason and when it wrote it.
+type WorktreeKept struct {
+	Reason string    `json:"reason"`
+	At     time.Time `json:"at"`
 }
 
 // AheadBehind is commits on this branch only, and on the other ref only.
@@ -117,6 +131,12 @@ func (m Model) worktreeRows() []WorktreeRow {
 		}
 		if st, ok := m.worktreeStatus(w.Path, row.Primary); ok {
 			row.Status = &st
+		}
+		if ws, ok := m.local.wtState[w.Path]; ok && !row.Primary && !ws.unread {
+			row.Ignored = append([]string{}, ws.ignored...)
+		}
+		if n := m.local.wtState[w.Path].kept; n != nil {
+			row.Kept = &WorktreeKept{Reason: n.Reason, At: n.At}
 		}
 		if w.Op != "" {
 			op := w.Op

@@ -27,6 +27,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
+	"github.com/McBrideMusings/admin-project-tool/internal/keptnote"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/wthooks"
 )
@@ -274,11 +275,8 @@ func workerKeepReason(ctx context.Context, repoRoot string, w *livework.WorkerIn
 			return "could not read its git status"
 		}
 		// Ignored files count: worktree removal deletes a worker-made .env
-		// or build output as surely as tracked work. An ignored path that
-		// also exists in the primary checkout (the seeded admin.toml) is not
-		// the worker's to lose, and a dependency install directory is
-		// regenerable.
-		workerOnly = workerOnlyIgnored(repoRoot, st.IgnoredPaths)
+		// or build output as surely as tracked work.
+		workerOnly = git.UnsharedIgnored(repoRoot, st.IgnoredPaths)
 		clean = st.Clean() && len(workerOnly) == 0
 	}
 	count := func() (int, bool) {
@@ -302,33 +300,22 @@ func workerKeepReason(ctx context.Context, repoRoot string, w *livework.WorkerIn
 	return KeepReason(clean, workerOnly, n, ok)
 }
 
-// regenerableIgnored reports whether an ignored path is a dependency install
-// directory: a package manager recreates it, so deleting it loses nothing.
-// Build output and .env files are not regenerable and stay blocking.
-func regenerableIgnored(p string) bool {
-	return filepath.Base(strings.TrimSuffix(p, "/")) == "node_modules"
-}
-
-// workerOnlyIgnored returns the ignored paths absent from the primary checkout
-// at repoRoot, leaving out regenerable ones.
-func workerOnlyIgnored(repoRoot string, paths []string) []string {
-	var out []string
-	for _, p := range paths {
-		if regenerableIgnored(p) {
-			continue
-		}
-		if _, err := os.Lstat(filepath.Join(repoRoot, strings.TrimSuffix(p, "/"))); err != nil {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
 // removeWorkerTree removes an ended worker's worktree and local branch when
 // that loses nothing and pre_remove (ADR-0024) allows it. kept is why they
 // stay, "" when both are gone.
+//
+// A keep the Repo tab can read back from git (uncommitted, unpushed, ignored
+// files) is not recorded. A pre_remove veto or a failed removal is an event
+// git cannot show again, so it goes to the worktree's kept note
+// (internal/keptnote), which the Repo tab and `admin worktree list` show.
 func removeWorkerTree(ctx context.Context, repoRoot string, w *livework.WorkerInfo) (kept string) {
 	if reason := workerKeepReason(ctx, repoRoot, w); reason != "" {
+		// Any earlier note described an event this state reason supersedes.
+		if !workerWorktreeGone(w) {
+			if err := keptnote.Clear(w.Worktree); err != nil {
+				data.LogSync(filepath.Base(repoRoot), "kept-note", 0, "", fmt.Errorf("clearing %s: %w", w.Worktree, err))
+			}
+		}
 		return reason
 	}
 	if workerWorktreeGone(w) {
@@ -338,15 +325,19 @@ func removeWorkerTree(ctx context.Context, repoRoot string, w *livework.WorkerIn
 			return "pruning its worktree record failed: " + err.Error()
 		}
 	} else {
+		// The HEAD the hook and the removal judge, read before either can
+		// move it, so a note is never stamped with a state it did not see.
+		head, headErr := git.HeadSHA(ctx, w.Worktree)
 		if err := wthooks.PreRemove(git.WithQuiet(ctx), repoRoot, w.Worktree, false); err != nil {
+			reason := err.Error()
 			var he *wthooks.Error
 			if errors.As(err, &he) {
-				return he.Line()
+				reason = he.Line()
 			}
-			return err.Error()
+			return recordKept(repoRoot, w.Worktree, head, headErr, reason)
 		}
 		if err := git.RemoveWorktree(ctx, repoRoot, w.Worktree, false); err != nil {
-			return "removing it failed: " + err.Error()
+			return recordKept(repoRoot, w.Worktree, head, headErr, "removing it failed: "+err.Error())
 		}
 	}
 	// -D, not -d: -d judges "merged" against the main checkout's HEAD.
@@ -357,6 +348,22 @@ func removeWorkerTree(ctx context.Context, repoRoot string, w *livework.WorkerIn
 		}
 	}
 	return ""
+}
+
+// recordKept writes reason to the worktree's kept note at head (headErr is the
+// error reading it) and returns reason. A note that cannot be written is
+// logged; the reap's outcome line still carries the reason.
+func recordKept(repoRoot, worktree, head string, headErr error, reason string) string {
+	err := headErr
+	if err == nil {
+		err = keptnote.Write(worktree, head, reason)
+	}
+	detail := fmt.Sprintf("worktree=%s head=%s reason=%q", worktree, head, reason)
+	if err != nil {
+		err = fmt.Errorf("writing kept note: %w: %s", err, detail)
+	}
+	data.LogSync(filepath.Base(repoRoot), "kept-note", 0, detail, err)
+	return reason
 }
 
 // reapKilled holds the live ids of hosted workers the reaper stopped because

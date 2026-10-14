@@ -13,6 +13,8 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
+	"github.com/McBrideMusings/admin-project-tool/internal/git"
+	"github.com/McBrideMusings/admin-project-tool/internal/keptnote"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 )
 
@@ -213,6 +215,11 @@ func TestReapWorkerPaneClosedKeepsLocalWork(t *testing.T) {
 	commitIn(t, e.Worker.Worktree)
 	ended, outcome := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true", Status: "false"})
 	assertEnded(t, repoRoot, e, ended, outcome, false, "pane closed: worktree left at "+e.Worker.Worktree)
+	// Unpushed commits are git state the Repo tab reads live: no note.
+	head, _ := git.HeadSHA(context.Background(), e.Worker.Worktree)
+	if n, ok := keptnote.Read(e.Worker.Worktree, head); ok {
+		t.Errorf("kept note %+v written for a reason git still shows", n)
+	}
 }
 
 // A pre_remove veto (ADR-0024) keeps the worktree and branch, and its one-line
@@ -229,6 +236,19 @@ func TestReapWorkerPreRemoveVeto(t *testing.T) {
 	}
 	if strings.Contains(outcome, "\n") {
 		t.Errorf("outcome = %q, want one line", outcome)
+	}
+
+	// The veto outlives the worker as the worktree's kept note, until HEAD moves.
+	wt := e.Worker.Worktree
+	head, _ := git.HeadSHA(context.Background(), wt)
+	n, ok := keptnote.Read(wt, head)
+	if !ok || n.Reason != "pre_remove hook failed (exit 1): still-serving" {
+		t.Fatalf("kept note = %+v, %t; want the veto line", n, ok)
+	}
+	commitIn(t, wt)
+	head, _ = git.HeadSHA(context.Background(), wt)
+	if n, ok := keptnote.Read(wt, head); ok {
+		t.Errorf("kept note %+v survived a commit", n)
 	}
 }
 

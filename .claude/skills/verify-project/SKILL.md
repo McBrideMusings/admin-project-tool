@@ -173,6 +173,16 @@ Drive the agent column against the real shared state in
   the `list` finishes only after the lock is released. `go test ./internal/livework` covers
   the revive and same-id re-dispatch cases.
 
+**Why a reaped worker's worktree stayed.** In a scratch repo, make a linked worktree holding
+an ignored `.env` the primary lacks, and write `{"reason":"…","at":"…","head":"<HEAD sha>"}` to
+`$(git -C <wt> rev-parse --absolute-git-dir)/admin-kept.json`, which is the file the reaper writes on a
+`pre_remove` veto. Using a binary built from this tree, `worktree list` shows `!!1` in GIT plus
+a `kept <path>: reaper left it …` line, and `--json` has `ignored: [".env"]` and `kept`.
+`repo --dump-frame` at 96 and 80 columns draws `!!1` and a `↳ kept` line under the row.
+Commit in the worktree and list again: the kept line is gone (the file stays until the next write or the worktree goes). The real
+write is covered by `go test ./internal/kinds -run TestReapWorkerPreRemoveVeto`; its sync-log
+line is `kept-note ok worktree=… head=… reason="…"`.
+
 The probe itself is `internal/kinds/liveness.go`; `go test ./internal/kinds -run Liveness`
 and `go test ./cmd -run WorktreeAgents` cover it through the `PaneGoneFn`/`AgentInfoFn` seams.
 

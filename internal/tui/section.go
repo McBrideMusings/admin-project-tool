@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
+	"github.com/McBrideMusings/admin-project-tool/internal/keptnote"
 )
 
 // Sections: the Branches pane groups by WHAT YOU DO NEXT, not by what a branch is.
@@ -126,16 +127,20 @@ type paneRow struct {
 	state string   // the PR's review word or the landing proof; "" when neither applies
 	holds []string // uncommitted / unpushed / active — what a delete would cost; never drawn
 	ready string   // "ready" | "keep" | "held" — the sweep's verdict; never drawn
-	// ahead, behind and changed are the row's git cell, in `git status` notation:
-	// ↑ commits on no origin ref, ↓ commits the default branch has that this one
-	// does not, ~ files changed in its worktree. On the default branch itself ↑/↓
-	// are measured against its own upstream instead.
-	ahead, behind, changed int
-	broken                 []string // why it is in Fixes Needed
-	issue                  int      // issue number parsed from the branch name, 0 when none
-	purpose                purpose  // the subline: what this branch is for
-	pr                     *gh.OpenPR
-	prNum                  int
+	// ahead, behind, changed and ignored are the row's git cell, in `git status`
+	// notation: ↑ commits on no origin ref, ↓ commits the default branch has that
+	// this one does not, ~ files changed in its worktree, !! ignored paths in its
+	// worktree the primary checkout lacks. On the default branch itself ↑/↓ are
+	// measured against its own upstream instead.
+	ahead, behind, changed, ignored int
+	// kept is the worker reaper's recorded reason for leaving this branch's
+	// worktree on disk (internal/keptnote), nil when there is none.
+	kept    *keptnote.Note
+	broken  []string // why it is in Fixes Needed
+	issue   int      // issue number parsed from the branch name, 0 when none
+	purpose purpose  // the subline: what this branch is for
+	pr      *gh.OpenPR
+	prNum   int
 }
 
 // blockers lists everything wrong with an open PR, measured independently. One
@@ -304,12 +309,16 @@ func readyWord(landed string, holds []string) string {
 }
 
 // holdsOf is what a delete would cost, in the order it would cost it. Uncommitted
-// files come first because they are the unrecoverable half — removing the worktree
-// ends them, while local-only commits survive in the reflog.
-func holdsOf(changed int, unpushed bool, ahead int, landed string) []string {
+// files and ignored files only the worktree has come first because they are the
+// unrecoverable half — removing the worktree ends them, while local-only commits
+// survive in the reflog.
+func holdsOf(changed, ignored int, unpushed bool, ahead int, landed string) []string {
 	var out []string
 	if changed > 0 {
 		out = append(out, strconv.Itoa(changed)+" uncommitted")
+	}
+	if ignored > 0 {
+		out = append(out, strconv.Itoa(ignored)+" ignored")
 	}
 	// Commits that exist nowhere else are only a hold while nothing proves they
 	// landed. A squash-merged branch reads as "unpushed" by the commit graph — its

@@ -183,6 +183,13 @@ func printWorktreeTable(out io.Writer, rows []worktreeListRow) {
 			gitCell(r.WorktreeRow), defaultCell(r.WorktreeRow), upstreamCell(r.Upstream), prCell(r.PR), agentCell(r.Agent))
 	}
 	tw.Flush()
+	// A kept reason is a sentence, too long for a column.
+	for _, r := range rows {
+		if r.Kept != nil {
+			fmt.Fprintf(out, "kept %s: reaper left it %s: %s\n", tildePath(r.Path, home),
+				r.Kept.At.Local().Format("Jan 2 3:04pm"), r.Kept.Reason)
+		}
+	}
 }
 
 func tildePath(p, home string) string {
@@ -193,19 +200,19 @@ func tildePath(p, home string) string {
 }
 
 // gitCell is the working tree in `git status` shorthand: +staged ~unstaged
-// ?untracked !conflicted, then the paused operation.
+// ?untracked !conflicted !!ignored-only-here, then the paused operation.
 func gitCell(r tui.WorktreeRow) string {
 	var parts []string
 	switch s := r.Status; {
 	case s == nil:
 		parts = append(parts, "unreadable")
-	case s.Staged+s.Unstaged+s.Untracked+s.Conflicted == 0:
+	case s.Staged+s.Unstaged+s.Untracked+s.Conflicted+len(r.Ignored) == 0:
 		parts = append(parts, "clean")
 	default:
 		for _, c := range []struct {
 			mark string
 			n    int
-		}{{"+", s.Staged}, {"~", s.Unstaged}, {"?", s.Untracked}, {"!", s.Conflicted}} {
+		}{{"+", s.Staged}, {"~", s.Unstaged}, {"?", s.Untracked}, {"!", s.Conflicted}, {"!!", len(r.Ignored)}} {
 			if c.n > 0 {
 				parts = append(parts, c.mark+strconv.Itoa(c.n))
 			}
