@@ -1061,19 +1061,18 @@ if target == "live" then
   return
 end
 
--- target == "dev": trail the newest local dev log file. Newest-by-filename
--- (the timestamp stem sorts lexicographically, oldest to newest) rather than
--- newest-by-mtime — there is no host binding for
--- file mtimes in this VM; correct for every dev log set_log_context creates
--- (always timestamped), an approximation only for a hand-placed bare
--- "dev.log" with no timestamp suffix.
-local matches = glob.match("tmp/dev.log")
-for _, m in ipairs(glob.match("tmp/dev.*.log")) do table.insert(matches, m) end
+-- target == "dev": trail the newest log the `dev` command wrote — every one
+-- is "dev~<stem>.<ts>.log", whatever stem a step or target picked. Newest by
+-- the trailing timestamp segment (it sorts lexicographically, oldest to
+-- newest) rather than by mtime — there is no host binding for file mtimes in
+-- this VM.
+local matches = glob.match("tmp/dev~*.log")
 if #matches == 0 then
   err("no dev logs found in tmp")
   error("logs: no dev logs found")
 end
-table.sort(matches)
+local function stamp(p) return p:match("%.([^.]+)%.log$") or "" end
+table.sort(matches, function(a, b) return stamp(a) < stamp(b) end)
 local path = matches[#matches]
 info("trailing " .. path)
 

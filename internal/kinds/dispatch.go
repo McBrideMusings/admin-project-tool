@@ -491,6 +491,7 @@ func nameCommandLog(m *manifest.Manifest, name string, cmd manifest.Command) {
 	// where `admin logs` looks.
 	ctx := luahost.Process()
 	ctx.Configure(projectRoot(m), m.Logging)
+	ctx.ClaimOwner(name)
 
 	retain := luahost.RetainUnset
 	if cmd.HasRetain {

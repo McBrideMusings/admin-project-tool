@@ -217,6 +217,20 @@ func TestParsePartialAllowsMissingProjectName(t *testing.T) {
 	}
 }
 
+// TestParseRejectsOwnerSepInCommandName proves a command name cannot hold
+// LogOwnerSep, which would let "<command>~" prefix another command's logs.
+func TestParseRejectsOwnerSepInCommandName(t *testing.T) {
+	for _, commands := range []map[string]any{
+		{"a~b": map[string]any{"steps": []any{"x"}}},
+		{"custom": map[string]any{"a~b": map[string]any{"steps": []any{"x"}}}},
+	} {
+		_, err := ParsePartial(map[string]any{"commands": commands}, "admin.toml")
+		if err == nil || !strings.Contains(err.Error(), `may not contain "~"`) {
+			t.Errorf("ParsePartial(%v) error = %v, want a rejection naming \"~\"", commands, err)
+		}
+	}
+}
+
 func TestParsePreservesEnvPlaceholders(t *testing.T) {
 	dir := writeManifest(t, `
 project_name = "envtest"

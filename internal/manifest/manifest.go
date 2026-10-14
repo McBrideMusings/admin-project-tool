@@ -336,6 +336,12 @@ func Load(projectDir string) (*Manifest, error) {
 	return m, nil
 }
 
+// LogOwnerSep separates a log file's owning command from its stem —
+// "<command>~<stem>.<ts>.log" (internal/luahost's LogContext). Parse rejects
+// a command name containing it, so "<command>~" prefixes only that command's
+// logs.
+const LogOwnerSep = "~"
+
 // Parse turns an already-decoded TOML table into a Manifest. source is used
 // only to prefix error messages (typically the file path Load read from).
 // project_name is required, matching admin_toml's own manifest.
@@ -453,6 +459,9 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 		if !ok {
 			return nil, errf("%s: commands.%s must be a table with 'steps' (a list of action names)", source, name)
 		}
+		if strings.Contains(name, LogOwnerSep) {
+			return nil, errf("%s: commands.%s: a command name may not contain %q — it separates a log file's owning command from its name", source, name, LogOwnerSep)
+		}
 		cmd, err := toCommand(val)
 		if err != nil {
 			return nil, errf("%s: commands.%s: %s", source, name, err.Error())
@@ -467,6 +476,9 @@ func parse(data map[string]any, source string, requireName bool) (*Manifest, err
 			return nil, errf(
 				"%s: commands.custom.%s must be a table with 'steps' (a list of action names). "+
 					"Move run/kind/targets to [actions].", source, name)
+		}
+		if strings.Contains(name, LogOwnerSep) {
+			return nil, errf("%s: commands.custom.%s: a command name may not contain %q — it separates a log file's owning command from its name", source, name, LogOwnerSep)
 		}
 		cmd, err := toCommand(val)
 		if err != nil {

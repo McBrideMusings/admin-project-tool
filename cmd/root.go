@@ -432,6 +432,8 @@ var runActionCmd = &cobra.Command{
 		// covers this verb's own outermost dispatch boundary.
 		defer luahost.Process().AnnounceEnd()
 		kinds.MarkReentry()
+		// No command runs here, so the action itself owns the log.
+		luahost.Process().ClaimOwner(args[0])
 		wd, err := os.Getwd()
 		if err != nil {
 			return err

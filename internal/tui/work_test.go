@@ -551,7 +551,7 @@ func TestCommandRowItemFallsBackToScannedLogWhenNoLiveEntry(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "tmp"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	found := filepath.Join(dir, "tmp", "build.2026-01-01_000000.log")
+	found := filepath.Join(dir, "tmp", "build~build.2026-01-01_000000.log")
 	if err := os.WriteFile(found, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -569,42 +569,32 @@ func TestCommandRowItemFallsBackToScannedLogWhenNoLiveEntry(t *testing.T) {
 	}
 }
 
-// TestCommandLogPathMatchesOnlyItsOwnStems proves a command's last log is
-// never another command's log just because that command's name starts with
-// "<step>-", while a multi-target step's own target logs — dashed when
-// unframed, colon when framed — still resolve, as does the log of an action
-// a target delegates to.
-func TestCommandLogPathMatchesOnlyItsOwnStems(t *testing.T) {
-	m := &manifest.Manifest{
-		Custom: map[string]manifest.Command{
-			"deploy": {Steps: []string{"install", "tampermonkey"}},
-			"dev":    {Steps: []string{"dev"}},
-		},
-		Actions: map[string]manifest.Action{
-			"install":      {"kind": "shell"},
-			"tampermonkey": {"kind": "shell"},
-			"dev":          {"kind": "multi-target", "cf": map[string]any{"run": "x"}, "web": map[string]any{"run": "y"}, "edge": map[string]any{"action": "edge-dev"}},
-		},
-	}
+// TestCommandLogPathMatchesOnlyItsOwnCommand proves a command's last log is
+// the newest file its own command wrote, whatever stem the log carries: a
+// Lua action's runtime-picked target, a delegated action's per-target log,
+// and never the log of a same-named step's command or of a command whose
+// name merely starts like this one's.
+func TestCommandLogPathMatchesOnlyItsOwnCommand(t *testing.T) {
 	names := []string{
-		"deploy.2026-10-01_000000_000000000.log",
-		"tampermonkey-status.2026-10-08_000000_000000000.log",
-		"dev-cf.2026-10-02_000000_000000000.log",
-		"dev:web.2026-10-03_000000_000000000.log",
-		"dev-server.2026-10-09_000000_000000000.log",
-		"edge-dev.2026-10-04_000000_000000000.log",
+		"deploy~deploy.2026-10-01_000000_000000000.log",
+		"tampermonkey-status~tampermonkey-status.2026-10-08_000000_000000000.log",
+		"test~test-iPhone 16.2026-10-05_000000_000000000.log",
+		"ci~test.2026-10-03_000000_000000000.log",
+		"dev~edge-dev-cf.2026-10-04_000000_000000000.log",
+		"dev~dev-cf.2026-10-02_000000_000000000.log",
+		"dev-server~dev-server.2026-10-09_000000_000000000.log",
+		"notes.txt",
 	}
-	if got, want := commandLogPath("/l", names, m, "deploy", m.Custom["deploy"]), "/l/deploy.2026-10-01_000000_000000000.log"; got != want {
-		t.Errorf("deploy log = %q, want %q", got, want)
-	}
-	if got, want := commandLogPath("/l", names, m, "dev", m.Custom["dev"]), "/l/edge-dev.2026-10-04_000000_000000000.log"; got != want {
-		t.Errorf("dev log = %q, want %q", got, want)
-	}
-	if got, want := commandLogPath("/l", names[:4], m, "dev", m.Custom["dev"]), "/l/dev:web.2026-10-03_000000_000000000.log"; got != want {
-		t.Errorf("dev log without the delegated one = %q, want %q", got, want)
-	}
-	if got, want := commandLogPath("/l", names[:3], m, "dev", m.Custom["dev"]), "/l/dev-cf.2026-10-02_000000_000000000.log"; got != want {
-		t.Errorf("dev log without the framed one = %q, want %q", got, want)
+	for _, tc := range []struct{ cmd, want string }{
+		{"deploy", "/l/deploy~deploy.2026-10-01_000000_000000000.log"},
+		{"test", "/l/test~test-iPhone 16.2026-10-05_000000_000000000.log"},
+		{"ci", "/l/ci~test.2026-10-03_000000_000000000.log"},
+		{"dev", "/l/dev~edge-dev-cf.2026-10-04_000000_000000000.log"},
+		{"tampermonkey", ""},
+	} {
+		if got := commandLogPath("/l", names, tc.cmd); got != tc.want {
+			t.Errorf("%s log = %q, want %q", tc.cmd, got, tc.want)
+		}
 	}
 }
 

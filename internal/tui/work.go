@@ -340,50 +340,29 @@ func commandLogDir(repoRoot string, m *manifest.Manifest) string {
 	return luahost.ResolveLogDir(repoRoot, m.Logging)
 }
 
-// commandLogPath is the "log" the detail pane shows: since admin-rc82 every
-// command names its log deterministically before its first step runs (the
-// command's own name, dispatch.go's nameCommandLog), refined only when a
-// step's own kind (a multi-target target, a framed action) sets a more
-// specific name before first use — so the real stem is one of: the command
-// name itself, one of its step (action) names, or, for each declared target
-// of a multi-target step, "<step>-<target>" (multitarget.go's own log
-// context), "<step>:<target>" (the frame's label, when the target is
-// framed), or the action a target delegates to (that action's own frame).
-// Only exact stems count, so a command whose name merely starts with
-// "<step>-" never lends this row its log. The newest match by filename
-// timestamp wins: a log is "<stem>.<ts>.log", the timestamp the last
-// dot-segment, in a format (YYYY-MM-DD_HHMMSS_NNNNNNNNN, no dot inside it)
-// that sorts chronologically as a plain string, so no stat call is needed.
-// A command that has never run matches nothing and degrades to "none yet".
+// commandLogPath is the "log" the detail pane shows: the newest file name
+// command wrote. Every log a command's process writes is named
+// "<command>~<stem>.<ts>.log" (luahost.LogContext's owner prefix), so the
+// "<command>~" prefix alone attributes a file, whatever stem a step, a
+// target, a delegated action or a Lua set_log_context picked. The timestamp
+// is the last dot-segment, in a format (YYYY-MM-DD_HHMMSS_NNNNNNNNN, no dot
+// inside it) that sorts chronologically as a plain string, so no stat call is
+// needed. A command that has never run matches nothing and degrades to "none
+// yet".
 //
 // names is logDir's file names as the work source last scanned them
 // (scanLogsCmd): matching against that list means drawing a row never reads
 // the directory.
-func commandLogPath(logDir string, names []string, mf *manifest.Manifest, name string, c manifest.Command) string {
-	stems := map[string]bool{name: true}
-	for _, step := range c.Steps {
-		stems[step] = true
-	}
-	if mf != nil {
-		for _, step := range c.Steps {
-			a := mf.Actions[step]
-			for _, target := range kinds.TargetKeys(a) {
-				stems[step+"-"+target] = true
-				stems[step+":"+target] = true
-				if ref, ok := strings.CutPrefix(kinds.TargetSummary(a, target), "@"); ok {
-					stems[ref] = true
-				}
-			}
-		}
-	}
+func commandLogPath(logDir string, names []string, name string) string {
+	prefix := name + manifest.LogOwnerSep
 	var best, bestTS string
 	for _, n := range names {
 		stem, ok := strings.CutSuffix(n, ".log")
-		if !ok {
+		if !ok || !strings.HasPrefix(stem, prefix) {
 			continue
 		}
 		i := strings.LastIndex(stem, ".")
-		if i < 0 || !stems[stem[:i]] {
+		if i < len(prefix) {
 			continue
 		}
 		if ts := stem[i+1:]; ts > bestTS {
@@ -694,7 +673,7 @@ func (t *commandsTab) commandRowItem(s *shell, cr workCmdRow, byID map[string]*l
 		wd.logPath = livePath
 	} else {
 		dir := commandLogDir(s.manifestDir(), mf)
-		wd.logPath = commandLogPath(dir, t.work.logNames(dir), mf, cr.name, cr.cmd)
+		wd.logPath = commandLogPath(dir, t.work.logNames(dir), cr.name)
 	}
 	// A multi-target parent with more than one target is a group: it holds
 	// targets and runs nothing itself, so the cursor must never land on it

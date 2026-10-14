@@ -124,8 +124,9 @@ func Run(ctx context.Context, hook, body, repoRoot, path, branch string) error {
 
 // Start runs hook's body detached inside the worktree at path: it returns as
 // soon as the process starts, and the hook's output goes to a new
-// "<hook>-<dir>.<timestamp>.log" under logDir — the same "<stem>.<ts>.log"
-// shape luahost names run logs. The child gets its own session, so it
+// "<hook>-<dir>.<timestamp>.log" under logDir. No command runs a hook, so
+// the name carries no "<command>~" owner and no Commands row claims it. The
+// child gets its own session, so it
 // outlives this process and a ctrl-c at the terminal does not reach it.
 // Returns the log path.
 func Start(hook, body, repoRoot, path, branch, logDir string) (string, error) {

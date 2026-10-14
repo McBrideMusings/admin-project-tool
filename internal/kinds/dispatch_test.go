@@ -182,7 +182,7 @@ func TestRunActionDefaultsToShellKind(t *testing.T) {
 // TestRunCommandNamesLogUnconditionally is admin-rc82's central acceptance
 // criterion: a command whose step bodies never call set_log_context
 // themselves still produces exactly one log file, under
-// <LOG_DIR>/<commandName>.<timestamp>.log, carrying every step's output in
+// <LOG_DIR>/<commandName>~<commandName>.<timestamp>.log, carrying every step's output in
 // chronological order — and the path luahost announces (captured off
 // os.Stderr, since that's the only channel a hosted-pty child could use
 // too) is the exact path that ends up on disk.
@@ -213,7 +213,7 @@ func TestRunCommandNamesLogUnconditionally(t *testing.T) {
 		}
 	})
 
-	matches, err := filepath.Glob(filepath.Join(dir, "tmp", "build.*.log"))
+	matches, err := filepath.Glob(filepath.Join(dir, "tmp", "build~build.*.log"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,6 +237,36 @@ func TestRunCommandNamesLogUnconditionally(t *testing.T) {
 
 	if !strings.HasPrefix(announced, matches[0]+"\n") {
 		t.Fatalf("stderr = %q, want it to open with the stat-able path %q on its own line", announced, matches[0])
+	}
+}
+
+// TestLuaRuntimeLogNameCarriesItsCommand is admin-7b2u: a Lua step that
+// names its log from a target picked at runtime (the apple archetype's
+// set_log_context("test", target)) still writes a file prefixed by the
+// command that ran it, not by the step — here a step named "test" under the
+// command "ci" — so the Commands tab attributes it to "ci" alone.
+func TestLuaRuntimeLogNameCarriesItsCommand(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	luahost.ResetProcessLogContext(dir)
+
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"ci": {Steps: []string{"test"}},
+		},
+		Actions: map[string]manifest.Action{
+			"test": {"kind": "lua", "run": "set_log_context(\"test\", \"iPhone 16\")\ninfo(\"ran\")"},
+		},
+	}
+	if err := RunCommandInline(m, Default, "ci", nil); err != nil {
+		t.Fatalf("RunCommandInline = %v, want nil", err)
+	}
+	all, err := filepath.Glob(filepath.Join(dir, "tmp", "*.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 || !strings.HasPrefix(filepath.Base(all[0]), "ci~test-iPhone 16.") {
+		t.Fatalf("log files = %v, want one named ci~test-iPhone 16.<ts>.log", all)
 	}
 }
 
@@ -313,7 +343,7 @@ func TestRunCommandHonoursLoggingDirConfig(t *testing.T) {
 	if err := RunCommandInline(m, newDispatchTestRegistry(), "build", nil); err != nil {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
-	matches, _ := filepath.Glob(filepath.Join(dir, "customlogs", "build.*.log"))
+	matches, _ := filepath.Glob(filepath.Join(dir, "customlogs", "build~build.*.log"))
 	if len(matches) != 1 {
 		t.Fatalf("expected 1 log file under customlogs/, got %d", len(matches))
 	}
@@ -679,7 +709,7 @@ func TestNestedCommandWritesOneLogFile(t *testing.T) {
 	if len(all) != 1 {
 		t.Fatalf("one invocation wrote %d log files, want exactly 1: %v", len(all), all)
 	}
-	if base := filepath.Base(all[0]); !strings.HasPrefix(base, "outer.") {
+	if base := filepath.Base(all[0]); !strings.HasPrefix(base, "outer~outer.") {
 		t.Fatalf("log file is %q, want it named for the outer command", base)
 	}
 
@@ -724,7 +754,7 @@ func TestNestedLogFalseDoesNotSilenceOuter(t *testing.T) {
 		t.Fatalf("RunCommand = %v, want nil", err)
 	}
 
-	matches, err := filepath.Glob(filepath.Join(dir, "tmp", "outer.*.log"))
+	matches, err := filepath.Glob(filepath.Join(dir, "tmp", "outer~outer.*.log"))
 	if err != nil {
 		t.Fatal(err)
 	}

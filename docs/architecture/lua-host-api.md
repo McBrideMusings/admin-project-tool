@@ -41,7 +41,7 @@ through `RunCommand` calls `internal/kinds/dispatch.go`'s `nameCommandLog`. Neit
 function below is what makes a log exist; both are how a step (a multi-target target, a framed
 action) *refines* the name the command already set, before anything is actually created.
 
-| `set_log_context(...parts[, {retain=N}])` | `(string..., table?) -> ()` | Names this run's log file — deferred until first actual write, not created here. Parts join with `-` (e.g. `set_log_context("dev", "cf")` → `tmp/dev-cf.<timestamp>.log`). A no-op once a context is already active (materialized): the LAST call before first use wins, so a step's own name overrides the command's still-pending one rather than being blocked by it. |
+| `set_log_context(...parts[, {retain=N}])` | `(string..., table?) -> ()` | Names this run's log file — deferred until first actual write, not created here. Parts join with `-`, and the command running the step prefixes the name before a `~` (e.g. `set_log_context("dev", "cf")` under `admin dev` → `tmp/dev~dev-cf.<timestamp>.log`), so every log names the command that wrote it. A no-op once a context is already active (materialized): the LAST call before first use wins, so a step's own name overrides the command's still-pending one rather than being blocked by it. |
 | `set_log_context_path(path[, {retain=N}])` | `(string, table?) -> ()` | Same deferral rule, but names an explicit path instead of a timestamped stem. |
 
 `retain` omitted (or its table key absent) falls back to the configured default — 5, or an

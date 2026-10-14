@@ -178,7 +178,7 @@ func TestHostedPTYLogFileMatchesAPlainCLIRun(t *testing.T) {
 	if err := RunCommandInline(m, Default, "hosted-frame-cmd", nil); err != nil {
 		t.Fatalf("RunCommandInline (plain-CLI leg): %v", err)
 	}
-	plainLogs, err := filepath.Glob(filepath.Join(dir, "tmp", "hosted-frame.*.log"))
+	plainLogs, err := filepath.Glob(filepath.Join(dir, "tmp", "hosted-frame-cmd~hosted-frame.*.log"))
 	if err != nil {
 		t.Fatalf("globbing plain-leg logs: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestHostedPTYLogFileMatchesAPlainCLIRun(t *testing.T) {
 		}
 	})
 
-	hostedLogs, err := filepath.Glob(filepath.Join(dir, "tmp", "hosted-frame.*.log"))
+	hostedLogs, err := filepath.Glob(filepath.Join(dir, "tmp", "hosted-frame-cmd~hosted-frame.*.log"))
 	if err != nil {
 		t.Fatalf("globbing hosted-leg logs: %v", err)
 	}

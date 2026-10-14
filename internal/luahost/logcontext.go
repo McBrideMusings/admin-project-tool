@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/logformat"
+	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
 // RetainUnset marks "no explicit retain value was given" — the caller falls
@@ -137,6 +138,12 @@ type LogContext struct {
 
 	enabled       bool
 	retainDefault int
+
+	// owner is the command this process runs — the outermost one, claimed
+	// by the first ClaimOwner call — and prefixes every stem-named log as
+	// "<owner>~<stem>.<ts>.log", so a reader attributes a log to its command
+	// from the file name alone.
+	owner string
 
 	pending      *pendingContext
 	logFile      string
@@ -282,10 +289,23 @@ func (c *LogContext) taken() bool {
 	return c.active && c.logFile != ""
 }
 
+// ClaimOwner records name as the command owning every log this process
+// writes. Only the first call counts: a nested dispatch (a surf.Command hop,
+// an `@`-ref, a sequence step) runs under the outer command, one process and
+// one log.
+func (c *LogContext) ClaimOwner(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.owner == "" {
+		c.owner = name
+	}
+}
+
 // SetLogContext names this run's log file by joining non-empty parts with
-// "-", deferred until first actual use. A no-op once a context is already
-// materialized (taken) — see pendingContext's doc comment for why the
-// LAST caller before first use wins rather than the first.
+// "-" behind the owning command and manifest.LogOwnerSep, deferred until
+// first actual use. A no-op once a context is already materialized (taken) —
+// see pendingContext's doc comment for why the LAST caller before first use
+// wins rather than the first.
 func (c *LogContext) SetLogContext(parts []string, retain int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -293,6 +313,9 @@ func (c *LogContext) SetLogContext(parts []string, retain int) {
 		return
 	}
 	name := joinNonEmpty(parts, "-")
+	if c.owner != "" {
+		name = c.owner + manifest.LogOwnerSep + name
+	}
 	c.pending = &pendingContext{stem: true, value: name, retain: retain}
 }
 
