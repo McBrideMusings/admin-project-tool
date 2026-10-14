@@ -1,0 +1,3 @@
+# ADR-0026: Every dashboard tab is its own program
+
+Each dashboard tab is a Bubble Tea model that owns its rows, its loads and its polls. The dashboard is a shell that holds the tabs it mounts, plus the state they share: header, status line, popups, filter and drag-to-copy. `admin cmd`, `admin workers`, `admin repo`, `admin prs`, `admin issues`, `admin beads` and `admin config` each mount one tab with no tab bar, and bare `admin` mounts every tab the project draws. A tab that reads another tab's data declares that source, and the shell runs each source once for all mounted tabs. Asking for a tab the project does not draw exits 1. A tab mounted alone does not dispatch workflow workers.
