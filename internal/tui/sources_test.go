@@ -9,6 +9,7 @@ import (
 
 	"github.com/McBrideMusings/admin-project-tool/internal/bd"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
+	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/viewstate"
 )
@@ -168,5 +169,42 @@ func TestCommandsTabMountedAloneMatchesBare(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(aloneBody, "\n"), "a-1") {
 		t.Errorf("commands alone did not list the matched bead a-1:\n%s", strings.Join(aloneBody, "\n"))
+	}
+}
+
+// TestRepoTabMountedAloneMatchesBare pins the Repo slice's acceptance: the tab
+// declares the sync, beads and identity sources through its constructor's
+// handles, so mounted alone it starts exactly those, and it draws the same
+// panes as under bare admin.
+func TestRepoTabMountedAloneMatchesBare(t *testing.T) {
+	build := func(mounted []tab) Model {
+		m := Model{
+			ctx:        context.Background(),
+			nwo:        "owner/repo",
+			def:        "main",
+			shell:      shell{mounted: mounted, repoRoot: t.TempDir(), width: 120, height: 40, active: tabLocal},
+			manifestOK: true,
+			manifest:   &manifest.Manifest{HasTracker: true, Trackers: []string{"beads"}},
+			headless:   true,
+		}
+		m.mountTabs(viewstate.State{})
+		m.local = localData{
+			branches: []git.BranchInfo{{Name: "main", Current: true}, {Name: "feat-x", LastCommit: "1 hour ago"}},
+			commits:  []git.Commit{{SHA: "abc123", Subject: "do a thing", When: "1 hour ago"}},
+		}
+		m.haveLocal = true
+		return m
+	}
+	alone, bare := build([]tab{tabLocal}), build(nil)
+	if got := alone.claimSources(); !slices.Equal(got, []source{srcSync, srcBeads, srcIdentity}) {
+		t.Errorf("repo alone claimed %v, want [srcSync srcBeads srcIdentity]", got)
+	}
+	aloneBody, _ := alone.repoTab.body(&alone.shell, 120, 30)
+	bareBody, _ := bare.repoTab.body(&bare.shell, 120, 30)
+	if len(aloneBody) == 0 || !slices.Equal(aloneBody, bareBody) {
+		t.Errorf("repo alone drew %d lines, bare drew %d, or they differ", len(aloneBody), len(bareBody))
+	}
+	if !strings.Contains(strings.Join(aloneBody, "\n"), "feat-x") {
+		t.Errorf("repo tab mounted alone does not list the branch:\n%s", strings.Join(aloneBody, "\n"))
 	}
 }

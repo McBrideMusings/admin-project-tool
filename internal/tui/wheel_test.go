@@ -100,7 +100,7 @@ func TestWheelDoesNotTouchSelectionWatchdog(t *testing.T) {
 func TestWheelMovesPaneUnderPointerOnRepoTab(t *testing.T) {
 	m := seededModel()
 	m.active = tabLocal
-	m.pane = paneBranches
+	m.repoTab.pane = paneBranches
 	for i := 0; i < 8; i++ {
 		m.local.commits = append(m.local.commits, git.Commit{SHA: fmt.Sprintf("c%d", i), Subject: "s"})
 	}
@@ -116,7 +116,7 @@ func TestWheelMovesPaneUnderPointerOnRepoTab(t *testing.T) {
 		t.Fatal("no Commits row in the hit index")
 	}
 	m, _ = wheel(m, y, true)
-	if m.paneCursor[paneCommits] != 3 || m.paneCursor[paneBranches] != 0 || m.pane != paneBranches {
-		t.Fatalf("commits cursor %d branches cursor %d active pane %v, want 3, 0, Branches", m.paneCursor[paneCommits], m.paneCursor[paneBranches], m.pane)
+	if m.repoTab.paneCursor[paneCommits] != 3 || m.repoTab.paneCursor[paneBranches] != 0 || m.repoTab.pane != paneBranches {
+		t.Fatalf("commits cursor %d branches cursor %d active pane %v, want 3, 0, Branches", m.repoTab.paneCursor[paneCommits], m.repoTab.paneCursor[paneBranches], m.repoTab.pane)
 	}
 }

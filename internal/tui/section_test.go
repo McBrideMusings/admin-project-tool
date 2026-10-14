@@ -152,7 +152,7 @@ func TestSectionLadderIsExclusive(t *testing.T) {
 func TestOpenPRVetoesTheDeleteProof(t *testing.T) {
 	m := seededModel()
 	m.remote.PRs = append(m.remote.PRs, gh.OpenPR{Number: 9, HeadBranch: "old-merged", Author: "pierce"})
-	if got := m.landedProof("old-merged", true); got != "" {
+	if got := m.repo().landedProof("old-merged", true); got != "" {
 		t.Errorf("a branch with an open PR claimed a delete proof: %q", got)
 	}
 }
@@ -184,13 +184,13 @@ func TestOpenPRMatchesABranchPushedUnderAnotherName(t *testing.T) {
 		"feature":              10,  // by name
 	} {
 		got := 0
-		if pr := m.openPRFor(branch); pr != nil {
+		if pr := m.repo().openPRFor(branch); pr != nil {
 			got = pr.Number
 		}
 		if got != want {
 			t.Errorf("openPRFor(%q) = #%d, want #%d", branch, got, want)
 		}
-		if m.hasOpenPR(branch) != (want != 0) {
+		if m.repo().hasOpenPR(branch) != (want != 0) {
 			t.Errorf("hasOpenPR(%q) disagrees with openPRFor", branch)
 		}
 	}
@@ -219,7 +219,7 @@ func TestStackedBaseTakesTheNearestPROnlyWithoutItsOwn(t *testing.T) {
 		"top":          278,
 	} {
 		got := 0
-		if pr := m.openPRFor(branch); pr != nil {
+		if pr := m.repo().openPRFor(branch); pr != nil {
 			got = pr.Number
 		}
 		if got != want {
@@ -273,18 +273,18 @@ func TestPurposeLadderPrefersIntentOverDescription(t *testing.T) {
 	m.local.branchNote = map[string]string{"feature": "spike the wallet read API"}
 	m.local.lastSubject = map[string]string{"feature": "wip"}
 
-	if got := m.purposeOf("feature", "feat: something else", 0); got.src != "note" {
+	if got := m.repo().purposeOf("feature", "feat: something else", 0); got.src != "note" {
 		t.Errorf("a branch note lost to a PR title: %+v", got)
 	}
 	delete(m.local.branchNote, "feature")
-	if got := m.purposeOf("feature", "feat: something else", 0); got.src != "pr" {
+	if got := m.repo().purposeOf("feature", "feat: something else", 0); got.src != "pr" {
 		t.Errorf("a PR title lost to a commit subject: %+v", got)
 	}
-	if got := m.purposeOf("feature", "", 0); got.src != "commit" || got.text != "wip" {
+	if got := m.repo().purposeOf("feature", "", 0); got.src != "commit" || got.text != "wip" {
 		t.Errorf("the commit subject fallback did not fire: %+v", got)
 	}
 	m.local.lastSubject = map[string]string{}
-	if got := m.purposeOf("feature", "", 0); got.text != "" {
+	if got := m.repo().purposeOf("feature", "", 0); got.text != "" {
 		t.Errorf("purpose invented a sentence from nothing: %+v", got)
 	}
 }
@@ -306,7 +306,7 @@ func TestSweepCountMatchesSweepBatch(t *testing.T) {
 		Number: 99, HeadBranch: "under-review", Author: "me", Bucket: gh.BucketMine,
 	})
 
-	m.active, m.pane = tabLocal, paneBranches
+	m.active, m.repoTab.pane = tabLocal, paneBranches
 	before, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}})
 	updated := before.(Model)
 	if !updated.confirming {
@@ -316,8 +316,8 @@ func TestSweepCountMatchesSweepBatch(t *testing.T) {
 
 	// The footer's count is computed the same way inside renderLocalPanels; recompute
 	// it here the way a reader of the rendered pane would, and it must equal the batch.
-	want := len(m.pruneTargets())
-	for _, r := range m.branchRows() {
+	want := len(m.repo().pruneTargets())
+	for _, r := range m.repo().branchRows() {
 		if r.sec == secCleanup && r.ready == "ready" {
 			want++
 		}
@@ -345,7 +345,7 @@ func TestReviewingNameColorIsDistinctFromDeadGray(t *testing.T) {
 	})
 	m.remote.MergedHeads = map[string]string{}
 
-	rows := m.branchRows()
+	rows := m.repo().branchRows()
 	var reviewing paneRow
 	found := false
 	for _, r := range rows {
@@ -356,7 +356,7 @@ func TestReviewingNameColorIsDistinctFromDeadGray(t *testing.T) {
 	if !found || reviewing.sec != secTheirs {
 		t.Fatalf("fixture setup: expected old-merged in Reviewing, got sec=%v found=%v", reviewing.sec, found)
 	}
-	row := m.brPanelLine(reviewing, m.branchInfo("old-merged"), 90, columnPlan{})
+	row := m.repo().brPanelLine(reviewing, m.repo().branchInfo("old-merged"), 90, columnPlan{})
 	name := row[2] // glyph, " ", name — see brPanelLine's `left` slice (gutterSegs + nameSeg)
 	if name.fg != cSlate {
 		t.Errorf("a Reviewing row's name is not cSlate: %v", name.fg)
@@ -376,13 +376,13 @@ func TestMultiSelectDeletesAMixedBatch(t *testing.T) {
 	m.local.branches = append(m.local.branches,
 		git.BranchInfo{Name: "eyeballed", HasRemote: true, Ahead: 2, LastCommit: "40 days ago"})
 	m.local.branchUnsafe["eyeballed"] = true
-	m.active, m.pane = tabLocal, paneBranches
+	m.active, m.repoTab.pane = tabLocal, paneBranches
 
 	toggle := func(name string) Model {
 		found := false
-		for i, r := range m.branchRows() {
+		for i, r := range m.repo().branchRows() {
 			if r.name == name {
-				m.paneCursor[paneBranches], found = i, true
+				m.repoTab.paneCursor[paneBranches], found = i, true
 			}
 		}
 		if !found {
@@ -393,8 +393,8 @@ func TestMultiSelectDeletesAMixedBatch(t *testing.T) {
 	}
 	m = toggle("old-merged")
 	m = toggle("eyeballed")
-	if !m.selected["old-merged"] || !m.selected["eyeballed"] {
-		t.Fatalf("selection did not record both branches: %+v", m.selected)
+	if !m.repoTab.selected["old-merged"] || !m.repoTab.selected["eyeballed"] {
+		t.Fatalf("selection did not record both branches: %+v", m.repoTab.selected)
 	}
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
@@ -420,11 +420,11 @@ func TestSelectionRefusesCurrentAndDefault(t *testing.T) {
 		m := seededModel()
 		m.local.branches = append(m.local.branches,
 			git.BranchInfo{Name: "main", HasRemote: true, LastCommit: "2 hours ago"})
-		m.active, m.pane = tabLocal, paneBranches
+		m.active, m.repoTab.pane = tabLocal, paneBranches
 		found := false
-		for i, r := range m.branchRows() {
+		for i, r := range m.repo().branchRows() {
 			if r.name == name {
-				m.paneCursor[paneBranches], found = i, true
+				m.repoTab.paneCursor[paneBranches], found = i, true
 			}
 		}
 		if !found {
@@ -432,11 +432,11 @@ func TestSelectionRefusesCurrentAndDefault(t *testing.T) {
 		}
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}})
 		m = updated.(Model)
-		if m.selected[name] {
+		if m.repoTab.selected[name] {
 			t.Errorf("%s entered the selection", name)
 		}
-		if m.selectMode() {
-			t.Errorf("space on %s entered select mode with %d rows selected", name, len(m.selected))
+		if m.repo().selectMode() {
+			t.Errorf("space on %s entered select mode with %d rows selected", name, len(m.repoTab.selected))
 		}
 	}
 }
@@ -447,21 +447,21 @@ func TestSelectionRefusesCurrentAndDefault(t *testing.T) {
 func TestSelectModeLeavesWhenTheLastRowIsDeselected(t *testing.T) {
 	m := seededModel()
 	m.remote.MergedHeads["old-merged"] = "abc123"
-	m.active, m.pane = tabLocal, paneBranches
-	for i, r := range m.branchRows() {
+	m.active, m.repoTab.pane = tabLocal, paneBranches
+	for i, r := range m.repo().branchRows() {
 		if r.name == "old-merged" {
-			m.paneCursor[paneBranches] = i
+			m.repoTab.paneCursor[paneBranches] = i
 		}
 	}
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}})
 	m = updated.(Model)
-	if !m.selectMode() || !m.selected["old-merged"] {
-		t.Fatalf("space on a selectable row did not select it: %+v", m.selected)
+	if !m.repo().selectMode() || !m.repoTab.selected["old-merged"] {
+		t.Fatalf("space on a selectable row did not select it: %+v", m.repoTab.selected)
 	}
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}})
 	m = updated.(Model)
-	if m.selectMode() {
-		t.Errorf("deselecting the last row left select mode on: %+v", m.selected)
+	if m.repo().selectMode() {
+		t.Errorf("deselecting the last row left select mode on: %+v", m.repoTab.selected)
 	}
 }
 
@@ -475,19 +475,19 @@ func TestPurposeSublineStopsAtThePRColumn(t *testing.T) {
 		"feature": "a purpose sentence long enough to reach the far right edge of a wide pane if nothing capped it",
 	}
 	for w := 60; w <= 160; w += 11 {
-		rows := m.branchRows()
+		rows := m.repo().branchRows()
 		// The same pane-wide plan branchPaneLines draws with.
 		plan := planColumns(rows)
 		for _, r := range rows {
 			// branchPaneLines draws the subline only when the purpose is not inline.
-			if m.branchRowLayout(r, w, plan).purposeW > 0 {
+			if m.repo().branchRowLayout(r, w, plan).purposeW > 0 {
 				continue
 			}
-			sub := m.brSubLine(r, w, plan)
+			sub := m.repo().brSubLine(r, w, plan)
 			if sub == nil {
 				continue
 			}
-			end := m.prColumnEnd(r, w, plan)
+			end := m.repo().prColumnEnd(r, w, plan)
 			if got := len([]rune(segsText(sub))); got > end {
 				t.Errorf("width %d: %s subline is %d cells, past the PR cell's edge at %d",
 					w, r.name, got, end)
@@ -542,8 +542,8 @@ func TestRenderLocalPanelsFillsBodyHeight(t *testing.T) {
 	for _, stashes := range []bool{false, true} {
 		for height := 1; height <= 12; height++ {
 			m := seededModel()
-			m.historyStashes = stashes
-			lines, hits := m.renderLocalPanels(80, height)
+			m.repoTab.historyStashes = stashes
+			lines, hits := m.repo().renderLocalPanels(80, height)
 			if len(lines) != height {
 				t.Errorf("stashes=%v height=%d: rendered %d lines", stashes, height, len(lines))
 			}

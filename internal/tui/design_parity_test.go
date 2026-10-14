@@ -196,7 +196,7 @@ func TestEveryLineWithinWidth(t *testing.T) {
 func TestEmptyStashesSaysSo(t *testing.T) {
 	m := protoModel()
 	m.local.stashes = nil
-	m.historyStashes = true
+	m.repoTab.historyStashes = true
 	out := stripANSI(m.View())
 	mustContainAll(t, "empty stashes", out, "[Stashes 0]", "no stashes", "Commits 1")
 }

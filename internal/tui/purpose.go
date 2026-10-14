@@ -34,7 +34,7 @@ type purpose struct {
 //     Merges are skipped because "Merge origin/main into 1719-theme-equip" is a
 //     branch describing its maintenance rather than its purpose; four of the
 //     twenty-six branches this was built against said exactly that.
-func (m Model) purposeOf(branch string, prTitle string, issue int) purpose {
+func (m repoView) purposeOf(branch string, prTitle string, issue int) purpose {
 	if d := strings.TrimSpace(m.local.branchNote[branch]); d != "" {
 		return purpose{src: "note", text: d}
 	}
@@ -56,7 +56,7 @@ func (m Model) purposeOf(branch string, prTitle string, issue int) purpose {
 // has since been closed finds nothing here and falls through to its commit
 // subject, which is the right answer: the issue is done, so it no longer explains
 // why the branch is still sitting there.
-func (m Model) issueTitle(n int) string {
+func (m repoView) issueTitle(n int) string {
 	for i := range m.remote.Issues {
 		if m.remote.Issues[i].Number == n {
 			return m.remote.Issues[i].Title

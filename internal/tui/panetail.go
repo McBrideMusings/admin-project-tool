@@ -34,10 +34,13 @@ type paneTailMsg struct {
 	err      error
 }
 
-// paneTailTarget is the launcher-dispatched live entry under a work tab's
-// cursor, or nil when the cursor is on a row with no such entry — every row
-// off the Commands and Workers tabs carries no live entry.
+// paneTailTarget is the launcher-dispatched live entry under the Commands or
+// Workers tab's cursor, or nil when another tab is up or the cursor is on a
+// row with no such entry.
 func (m Model) paneTailTarget() *livework.Entry {
+	if m.active != tabWork && m.active != tabWorkers {
+		return nil
+	}
 	rows := m.visibleRows()
 	cur := *m.cur(m.active)
 	if cur < 0 || cur >= len(rows) {

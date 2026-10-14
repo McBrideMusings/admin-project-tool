@@ -51,7 +51,7 @@ func TestCommitRowsFormFixedColumns(t *testing.T) {
 		},
 		{git.Commit{SHA: "0000000", Subject: "", When: "just now"}, "0000000", "", "now"},
 	} {
-		text := []rune(segsText(m.cmPanelLine(tc.c, w)))
+		text := []rune(segsText(m.repo().cmPanelLine(tc.c, w)))
 		if len(text) != w {
 			t.Fatalf("%s: row is %d cells wide, want %d: %q", tc.sha, len(text), w, string(text))
 		}
@@ -78,7 +78,7 @@ func TestStashRowsFormFixedColumns(t *testing.T) {
 		{git.Stash{Ref: "stash@{12}", Subject: "on feature: a longer stash subject"}},
 		{git.Stash{Ref: "stash@{3}", Subject: ""}},
 	} {
-		text := []rune(segsText(m.stPanelLine(tc.s, w)))
+		text := []rune(segsText(m.repo().stPanelLine(tc.s, w)))
 		if len(text) != w {
 			t.Fatalf("%s: row is %d cells wide, want %d: %q", tc.s.Ref, len(text), w, string(text))
 		}
@@ -712,7 +712,7 @@ func TestCleanUpRowsDropTheirPurposeSubline(t *testing.T) {
 		"feature":    "the thing I'm actually working on",
 	}
 
-	rows := m.branchRows()
+	rows := m.repo().branchRows()
 	byName := map[string]git.BranchInfo{}
 	for _, b := range m.local.branches {
 		byName[b.Name] = b
@@ -722,7 +722,7 @@ func TestCleanUpRowsDropTheirPurposeSubline(t *testing.T) {
 		counts[r.sec]++
 	}
 	const w = 100
-	lines, itemLine := m.branchPaneLines(rows, byName, counts, w)
+	lines, itemLine := m.repo().branchPaneLines(rows, byName, counts, w)
 
 	// Locate the Clean Up heading and the next heading/blank after it, and scan
 	// only that span for the purpose glyph — it appears nowhere else in this pane.
@@ -780,7 +780,7 @@ func TestWidePaneDrawsPurposeOnTheRow(t *testing.T) {
 	m := seededModel()
 	m.local.branchNote = map[string]string{"feature": note}
 
-	rows := m.branchRows()
+	rows := m.repo().branchRows()
 	byName := map[string]git.BranchInfo{}
 	for _, b := range m.local.branches {
 		byName[b.Name] = b
@@ -790,7 +790,7 @@ func TestWidePaneDrawsPurposeOnTheRow(t *testing.T) {
 		counts[r.sec]++
 	}
 	featureRow := func(w int) (row, next string) {
-		lines, itemLine := m.branchPaneLines(rows, byName, counts, w)
+		lines, itemLine := m.repo().branchPaneLines(rows, byName, counts, w)
 		for i, r := range rows {
 			if r.name == "feature" {
 				row = segsText(lines[itemLine[i]])
@@ -1000,12 +1000,12 @@ func TestNameCandidateRowsFormFixedColumns(t *testing.T) {
 		{ID: "bdtest-qt0", Title: "Add password reset", Status: "open", Type: "feature", Priority: 1},
 		{ID: "bdtest-1xn", Title: "Bump deps", Status: "in_progress", Type: "chore", Priority: 2},
 	}
-	m.naming = true
-	m.nameCands = m.feeds.beads.beads
-	m.nameSel = 1
+	m.repoTab.naming = true
+	m.repoTab.nameCands = m.feeds.beads.beads
+	m.repoTab.nameSel = 1
 
 	names := []string{"id", "priority", "type", "title"}
-	l := beadLayoutFor(names, cols, m.beadsTab.beadCtx(false), m.nameCands)
+	l := beadLayoutFor(names, cols, m.beadsTab.beadCtx(false), m.repoTab.nameCands)
 	wID, wType := l.widths[l.indexOf("id")], l.widths[l.indexOf("type")]
 
 	// The lead (cursor/highlight) cell is prepended the same way renderRow
@@ -1022,7 +1022,7 @@ func TestNameCandidateRowsFormFixedColumns(t *testing.T) {
 	}
 	for i, b := range m.feeds.beads.beads {
 		left, right := l.row(beadNode{b: b}, cols)
-		line := append([]seg{leadSeg(i == m.nameSel)}, left...)
+		line := append([]seg{leadSeg(i == m.repoTab.nameSel)}, left...)
 		text := []rune(segsText(fitSegs(composeLR(line, right, cols), cols)))
 		if len(text) != cols {
 			t.Fatalf("%s: row is %d cells wide, want %d", b.ID, len(text), cols)
@@ -1039,7 +1039,7 @@ func TestNameCandidateRowsFormFixedColumns(t *testing.T) {
 		}
 	}
 
-	lines := m.nameCandLines(cols)
+	lines := m.repo().nameCandLines(cols)
 	if len(lines) != len(m.feeds.beads.beads) {
 		t.Fatalf("nameCandLines returned %d lines, want %d", len(lines), len(m.feeds.beads.beads))
 	}

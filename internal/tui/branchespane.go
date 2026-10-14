@@ -30,7 +30,7 @@ import (
 // the nearest such PR (fewest commits above its tip). Only then: a base that has
 // a PR of its own was matched above and keeps it, so two branches meant to be
 // reviewed separately always show their separate PRs.
-func (m Model) openPRFor(branch string) *gh.OpenPR {
+func (m repoView) openPRFor(branch string) *gh.OpenPR {
 	for i := range m.remote.PRs {
 		if m.remote.PRs[i].HeadBranch == branch {
 			return &m.remote.PRs[i]
@@ -74,7 +74,7 @@ func (m Model) openPRFor(branch string) *gh.OpenPR {
 // rowFor resolves one branch into everything the pane draws. Every field comes
 // from a measurement made elsewhere — this only assembles them, so the row and
 // the delete path cannot disagree about a branch.
-func (m Model) rowFor(b git.BranchInfo) paneRow {
+func (m repoView) rowFor(b git.BranchInfo) paneRow {
 	protected := b.Name == m.def || b.Name == m.mainTreeBranch()
 	pr := m.openPRFor(b.Name)
 	landed := m.landedProof(b.Name, pr != nil)
@@ -147,7 +147,7 @@ func (m Model) rowFor(b git.BranchInfo) paneRow {
 // I do" — but recency still decides the order WITHIN a section, because among two
 // branches that both want the same action, the one you touched an hour ago is the
 // one you meant.
-func (m Model) branchRows() []paneRow {
+func (m repoView) branchRows() []paneRow {
 	flt := strings.ToLower(m.filter)
 	var rows []paneRow
 	for _, b := range m.local.branches {
@@ -195,7 +195,7 @@ func mineCount(rows []paneRow) int {
 // the name is unknown, which only happens if the branch vanished between the pane
 // building its rows and a key being handled — the row's own fields still describe
 // what the user was looking at.
-func (m Model) branchInfo(name string) git.BranchInfo {
+func (m repoView) branchInfo(name string) git.BranchInfo {
 	for _, b := range m.local.branches {
 		if b.Name == name {
 			return b
@@ -206,7 +206,7 @@ func (m Model) branchInfo(name string) git.BranchInfo {
 
 // branchInfos maps the pane's rows back to git records, preserving row order so a
 // cursor index means the same branch in both.
-func (m Model) branchInfos(rows []paneRow) []git.BranchInfo {
+func (m repoView) branchInfos(rows []paneRow) []git.BranchInfo {
 	out := make([]git.BranchInfo, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, m.branchInfo(r.name))
@@ -223,7 +223,7 @@ func (m Model) branchInfos(rows []paneRow) []git.BranchInfo {
 // This is the single production caller of planColumns: one plan over every row,
 // threaded into each row and subline, so every section draws its columns at the
 // same cells.
-func (m Model) branchPaneLines(rows []paneRow, byName map[string]git.BranchInfo, counts map[section]int, w int) (lines [][]seg, itemLine []int) {
+func (m repoView) branchPaneLines(rows []paneRow, byName map[string]git.BranchInfo, counts map[section]int, w int) (lines [][]seg, itemLine []int) {
 	plan := planColumns(rows)
 	itemLine = make([]int, len(rows))
 	// The PR marks' legend rides the first heading over a row that carries one.

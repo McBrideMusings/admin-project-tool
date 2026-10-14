@@ -204,8 +204,6 @@ func (m Model) renderBodyHits(width, bodyHeight int) ([]string, []hitTarget) {
 		hits = noneHits(len(content))
 	case m.termAttached:
 		content, hits = m.renderTerminalBody(width, contentH)
-	case m.active == tabLocal:
-		content, hits = m.renderLocalPanels(width, contentH)
 	case tm != nil:
 		content, hits = tm.body(&m.shell, width, contentH)
 	default:
@@ -340,7 +338,7 @@ func (m Model) headerLine(width int) string {
 	// to its GitHub page, the current branch to its branch page — the latter only
 	// when origin carries that branch, since a local-only branch has no page there.
 	branchSeg := seg{t: branch, fg: cGreen}
-	if m.branchOnOrigin(m.current) {
+	if m.repo().branchOnOrigin(m.current) {
 		branchSeg.link = branchURL(m.nwo, m.current)
 	}
 	left := []seg{
@@ -419,14 +417,7 @@ func (m Model) freshnessSeg() seg {
 	if tm := m.tabModel(m.active); tm != nil {
 		return tm.freshness()
 	}
-	var at time.Time
-	switch m.active {
-	case tabLocal:
-		// The Repo tab's remote input is the merged-PR set: what strikes a
-		// squash-merged branch through.
-		at = m.remote.MergedFetchedAt
-	}
-	return cachedAgeSeg(at)
+	return seg{}
 }
 
 // cachedAgeSeg is the header's cache readout for data last fetched at `at`:
@@ -467,25 +458,7 @@ func (m Model) tabCount(t tab) int {
 	if tm := m.tabModel(t); tm != nil {
 		return tm.count()
 	}
-	switch t {
-	case tabLocal:
-		return m.localBranchCount()
-	}
 	return 0
-}
-
-// localBranchCount is how many local branches this checkout has, the default
-// branch not counted — the branches you could be working on. The pane's filter
-// and the `g` narrowing do not apply: the tab badge counts the machine, not the
-// view.
-func (m Model) localBranchCount() int {
-	n := 0
-	for _, b := range m.local.branches {
-		if b.Name != m.def {
-			n++
-		}
-	}
-	return n
 }
 
 // tabBarSegs builds the tab bar's segments and, for each visible tab, its
@@ -596,7 +569,7 @@ func (s shell) renderRow(r rowItem, selected bool, width int) string {
 
 func (m Model) footer(width int) string {
 	if tm := m.tabModel(m.active); tm != nil {
-		if line, ok := tm.footer(); ok {
+		if line, ok := tm.footer(width); ok {
 			return line
 		}
 	}
@@ -612,24 +585,6 @@ func (m Model) footer(width int) string {
 		}
 		return renderSegs([]seg{{t: " "}, {t: hint, fg: cDim}}, nil)
 	}
-	if m.naming {
-		hint, hintFg := "(name, #number or URL · enter to create · esc to cancel)", cFaint
-		if m.resolving {
-			hint = "(resolving… · esc to cancel)"
-		}
-		if m.nameErr != "" {
-			hint, hintFg = "("+m.nameErr+" · esc to cancel)", cRed
-		}
-		line := renderSegs([]seg{
-			{t: " "}, {t: "new worktree: ", fg: cDim}, {t: m.nameBuf, fg: cFg},
-			{t: "▌", fg: cBlue},
-			{t: "   " + hint, fg: hintFg},
-		}, nil)
-		for _, cand := range m.nameCandLines(width) {
-			line += "\n" + cand
-		}
-		return line
-	}
 	if m.confirming {
 		return renderSegs([]seg{
 			{t: " "}, {t: "y", fg: cCyan}, {t: " confirm", fg: cDim},
@@ -643,36 +598,6 @@ func (m Model) footer(width int) string {
 	// body row instead (frameRaw, below), so the footer here is always just
 	// the keybar and body height never depends on whether a status is set.
 	return m.keybar(width)
-}
-
-// nameCandLines renders the new-worktree prompt's bead search as extra footer
-// rows: id / priority / type / title, in the same fixed-width columns the Beads
-// pane draws, so the search list reads as a table like every other list in this
-// repo (see CLAUDE.md, "Row layout: every list pane is a table"). Reusing
-// beadLayoutFor rather than hand-rolling padding means these columns can never
-// disagree with the Beads pane's own.
-//
-// Empty in every case that predates this feature — no beads loaded, or nothing
-// typed yet — so a repo with no beads workspace draws a footer byte-identical to
-// before this prompt could search anything.
-func (m Model) nameCandLines(width int) []string {
-	if len(m.nameCands) == 0 {
-		return nil
-	}
-	l := beadLayoutFor([]string{"id", "priority", "type", "title"}, width, beadCtxFor(m.feeds.beads.beads, m.feeds.beads.prefix, false), m.nameCands)
-	lines := make([]string, len(m.nameCands))
-	for i, b := range m.nameCands {
-		left, right := l.row(beadNode{b: b}, width)
-		selected := i == m.nameSel
-		line := append([]seg{leadSeg(selected)}, left...)
-		fitted := fitSegs(composeLR(line, right, width), width)
-		if selected {
-			lines[i] = renderSegs(fitted, cSel)
-		} else {
-			lines[i] = renderSegs(fitted, nil)
-		}
-	}
-	return lines
 }
 
 // builtinPairs turns a row kind's internal/keymap.Builtins list into the
@@ -786,7 +711,7 @@ func hasKey(pairs [][2]string, display string) bool {
 // (ADR-0018) and keeps its pairs here.
 func (m Model) viewKeymap() [][2]string {
 	if m.active == tabLocal {
-		switch m.pane {
+		switch m.repoTab.pane {
 		case paneCommits:
 			return m.rowPairs(keymap.Commit)
 		case paneStashes:
@@ -1000,8 +925,9 @@ func (m Model) filterFooter() string {
 // matchCount is the number of items the current filter matches, for the footer.
 func (m Model) matchCount() int {
 	if m.active == tabLocal {
-		c, s := m.localPanes()
-		return len(m.branchRows()) + len(c) + len(s)
+		v := m.repo()
+		c, s := v.localPanes()
+		return len(v.branchRows()) + len(c) + len(s)
 	}
 	n := 0
 	for _, r := range m.visibleRows() {

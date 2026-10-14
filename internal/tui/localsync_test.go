@@ -65,7 +65,7 @@ func pumpMsgs(m Model, cmd tea.Cmd) Model {
 
 func branchRowNames(m Model) []string {
 	var out []string
-	for _, r := range m.branchRows() {
+	for _, r := range m.repo().branchRows() {
 		out = append(out, r.name)
 	}
 	return out
@@ -102,7 +102,7 @@ func TestDeletedBranchLeavesPaneWhenSyncFails(t *testing.T) {
 	m := repoWithWorktree(t)
 	m = pumpMsgs(m, m.startSyncCmd(true))
 
-	m.confirming, m.confirmTargets = true, []cleanupTarget{m.targetFor(m.branchInfo("feat-x"))}
+	m.confirming, m.confirmTargets = true, []cleanupTarget{m.repo().targetFor(m.repo().branchInfo("feat-x"))}
 	next, cmd := m.startDelete()
 	m = pumpMsgs(next.(Model), cmd)
 
@@ -120,7 +120,7 @@ func TestSlowStaleLocalReadCannotResurrectDeletedBranch(t *testing.T) {
 		t.Fatal("fixture: the early read should still see feat-x")
 	}
 
-	m.confirming, m.confirmTargets = true, []cleanupTarget{m.targetFor(m.branchInfo("feat-x"))}
+	m.confirming, m.confirmTargets = true, []cleanupTarget{m.repo().targetFor(m.repo().branchInfo("feat-x"))}
 	next, cmd := m.startDelete()
 	m = pumpMsgs(next.(Model), cmd)
 
@@ -134,12 +134,12 @@ func TestSlowStaleLocalReadCannotResurrectDeletedBranch(t *testing.T) {
 func TestUnknownPRListGivesNoDeleteProof(t *testing.T) {
 	m := seededModel()
 	m.local.signals["old-merged"] = gitSignals{mergedLocal: true}
-	if m.landedProof("old-merged", false) == "" {
+	if m.repo().landedProof("old-merged", false) == "" {
 		t.Fatal("fixture: a branch merged into the default branch should have a proof")
 	}
 	m.remote.PRsFetchError = "rate limited"
 	m.remote.PRsFetchedAt = time.Time{}
-	if got := m.landedProof("old-merged", false); got != "" {
+	if got := m.repo().landedProof("old-merged", false); got != "" {
 		t.Fatalf("proof with the PR list never loaded = %q, want none", got)
 	}
 }

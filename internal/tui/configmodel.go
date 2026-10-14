@@ -42,14 +42,14 @@ func (t *configTab) modal() bool { return false }
 // key handles no keys of its own: the cursor keys and ↵ are the shell's list
 // machinery, and ↵ reaches activate, which hands a config row back to
 // openRow.
-func (t *configTab) key(*shell, string) (bool, tea.Cmd) { return false, nil }
+func (t *configTab) key(*shell, tea.KeyMsg) (bool, tea.Cmd) { return false, nil }
 
 // body draws the filtered row list.
 func (t *configTab) body(sh *shell, width, height int) ([]string, []hitTarget) {
 	return sh.renderRows(sh.filterRows(t.rows(sh)), t.cursor, width, height)
 }
 
-func (t *configTab) footer() (string, bool) { return "", false }
+func (t *configTab) footer(int) (string, bool) { return "", false }
 
 // count is zero: the tab bar draws no badge for this tab.
 func (t *configTab) count() int { return 0 }

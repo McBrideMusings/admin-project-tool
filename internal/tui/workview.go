@@ -449,7 +449,7 @@ func renderTargetRow(wd *workRowData, focused bool, rest int) string {
 // the band beneath it; a block taller than the slot is clipped to it.
 func (ws workSurface) band(r rowItem, w, h int) []string {
 	wd := r.work
-	if wd == nil && ws.workers && len(liveWorkers()) == 0 {
+	if wd == nil && ws.workers && len(ws.work.workers()) == 0 {
 		return workersEmptyBand(w, h)
 	}
 	if wd == nil {

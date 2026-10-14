@@ -315,7 +315,7 @@ func classifyBranch(sig branchSignals) branchState {
 // only knows the branch at the *cwd*, which is a linked worktree's branch
 // whenever the dashboard is launched from one, so the main working tree's branch
 // has to be looked up.
-func (m Model) branchState(branch string) branchState {
+func (m repoView) branchState(branch string) branchState {
 	sig := m.local.signals[branch]
 	mergedOID, mergedPR := m.mergedHead(branch, sig.upstream)
 	closedOID, closedPR := m.remote.ClosedHeads[branch]
@@ -340,7 +340,7 @@ func (m Model) branchState(branch string) branchState {
 // by the latter. When both names have a merged PR, the one whose head is this
 // branch's tip wins, so the tip comparison runs against the entry that describes
 // this branch; otherwise the local name's entry is used.
-func (m Model) mergedHead(branch, upstream string) (oid string, ok bool) {
+func (m repoView) mergedHead(branch, upstream string) (oid string, ok bool) {
 	tip := m.local.tips[branch]
 	oid, ok = m.remote.MergedHeads[branch]
 	if ok && oid != "" && oid == tip {
@@ -360,7 +360,7 @@ func (m Model) mergedHead(branch, upstream string) (oid string, ok bool) {
 // Read from the open-PR list the PRs tab already holds rather than from a set of
 // its own: one fetch, and the veto can never disagree with what that tab shows —
 // or with the row, since both go through openPRFor's matching.
-func (m Model) hasOpenPR(branch string) bool {
+func (m repoView) hasOpenPR(branch string) bool {
 	return m.openPRFor(branch) != nil
 }
 
@@ -379,7 +379,7 @@ func (m Model) hasOpenPR(branch string) bool {
 // reading as superseded; the head-branch check keeps a branch that IS the PR's head
 // (the viewer's own pushed work) out. A missing viewer login makes "someone else"
 // unprovable, so the signal stays off rather than misfire on the viewer's own PR.
-func (m Model) supersededBy(branch string) bool {
+func (m repoView) supersededBy(branch string) bool {
 	me := m.remote.ViewerLogin
 	if me == "" {
 		return false

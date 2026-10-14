@@ -14,7 +14,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fsnotify/fsnotify"
 
-	"github.com/McBrideMusings/admin-project-tool/internal/bd"
 	"github.com/McBrideMusings/admin-project-tool/internal/config"
 	"github.com/McBrideMusings/admin-project-tool/internal/data"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
@@ -170,15 +169,6 @@ type Model struct {
 
 	cursor [numTabs]int
 
-	// Repo (local) tab: lazygit-style panes with independent cursors.
-	pane       localPane
-	paneCursor [numPanes]int
-	// historyStashes is which list the strip under Branches shows: false is
-	// Commits, true is Stashes. The strip shows one at a time, so the hidden list's
-	// pane is never focusable (paneShown).
-	historyStashes bool
-
-	haveLocal bool
 	// localApplied is the seq of the newest local read on screen (localDataMsg.seq).
 	localApplied uint64
 	inflight     int // in-flight background work (the sync, row refreshes); header spins while > 0
@@ -213,6 +203,9 @@ type Model struct {
 	// Commands tab, so a Model that never mounted it has no Commands tab at
 	// all rather than one with no handles.
 	commandsTab *commandsTab
+	// repoTab is the Repo tab's own model (repotab.go), built and reached the
+	// same way.
+	repoTab repoTab
 
 	// One background sync covers everything the dashboard reads from outside the
 	// working tree — open PRs, open issues, the merged-PR set, and `git fetch
@@ -252,31 +245,6 @@ type Model struct {
 	// value is "focused", so a terminal that never reports focus keeps polling.
 	blurred bool
 
-	naming    bool // "w" on the Local tab: typing a name for a new worktree branch
-	nameBuf   string
-	nameErr   string // inline validation message shown under an invalid nameBuf
-	resolving bool   // an enter'd nameBuf is out at resolveNameCmd; keys are held
-	// nameCands is the bead search under the naming prompt in a beads repo,
-	// recomputed on every edit from the beads feed's loaded list (see
-	// refreshNameCands). nameSel is -1 when nothing in the list is highlighted, in
-	// which case enter creates a branch from the literal typed text exactly as it
-	// always has — only an exact id match auto-highlights a candidate, and editing
-	// the buffer always drops the highlight again.
-	nameCands []bd.Bead
-	nameSel   int
-
-	confirming     bool // cleanup: awaiting y/n on a batch delete
-	confirmTargets []cleanupTarget
-	// selected is the Branches pane's multi-select, keyed by branch name — `space`
-	// toggles the row under the cursor, `x` with a nonempty selection deletes the
-	// whole batch together instead of just the one row under the cursor. This is
-	// what lets a mixed pick (some proven, some merely eyeballed) go through one
-	// confirm, which neither `x` alone (one row) nor `⇧X` (every proven-ready row,
-	// no exceptions) can express.
-	// The selection is the whole of select mode's state: there is no separate
-	// latch, so the pane cannot be in select mode with nothing selected.
-	selected map[string]bool
-
 	Pending *PendingAction
 
 	// syncFailedAt is when the last sync that came back with a failed section
@@ -285,27 +253,12 @@ type Model struct {
 	// sections themselves live on m.remote (data.Remote.FetchErrors).
 	syncFailedAt time.Time
 
-	// herdr mode: when running inside a herdr pane, enter on a worktree action
-	// creates/opens it inline (opening a focused herdr workspace) and the
-	// dashboard stays up, instead of quitting to cd the parent shell. creating
-	// is set while that inline work is in flight and drives the header status.
-	herdr       bool
+	// creating is set while an inline (herdr-mode) worktree action is in flight
+	// and drives the header status.
 	creating    bool
 	createLabel string
 
 	closedIssues bool // Issues view: show closed too (toggle) — reserved
-
-	// identity is who "you" are — the GitHub account `gh api user` reports,
-	// cached per host (data.FetchIdentity). It decides which branches the
-	// Branches pane treats as your work; see ownership.go. Zero until the cache
-	// read or the first fetch lands, which only means the first frame files every
-	// attributed branch as Unsorted rather than mis-filing any of them.
-	identity data.Identity
-	// minesOnly (G) narrows the Branches pane to your work. Clean Up is exempt —
-	// see branchRows. Persisted to view.toml's branches.mine_only (admin-y5lc.1):
-	// New() loads it through viewstate's cascade and every `G` press saves it
-	// to the project-level file.
-	minesOnly bool
 
 	// Work tab (admin-3rgp.20): the project's admin.toml, merged with its
 	// declared archetypes, loaded once at New (a local file read plus a
@@ -325,13 +278,6 @@ type Model struct {
 	// so each runs once for the life of the process however many times the
 	// manifest flaps between invalid and valid.
 	started [numSources]bool
-	// checkout is the top level of the checkout the dashboard was opened in,
-	// which differs from repoRoot inside a linked worktree for the same reason
-	// manifestRoot does. Every git read and write runs there except the main
-	// checkout's own working status: the current branch, its commit list, pull
-	// and checkout all belong to the checkout the user is standing in. Empty
-	// means "fall back to repoRoot" — see checkoutDir.
-	checkout string
 	// manifestStamp is admin.toml's mtime+size as of the last loadManifest
 	// call — the gate fsChangedMsg checks before reloading, so a save
 	// anywhere else in the repo (a source file, a build artifact) doesn't
@@ -362,15 +308,6 @@ type Model struct {
 	wtPickerCursor  int
 	wtTarget        string
 	wtTargetBranch  string
-}
-
-// checkoutDir is the directory the dashboard's git commands run in — see the
-// checkout field.
-func (m Model) checkoutDir() string {
-	if m.checkout != "" {
-		return m.checkout
-	}
-	return m.repoRoot
 }
 
 // Option adjusts a Model at construction. Options are applied before the
@@ -422,13 +359,11 @@ func FindManifestRoot(cwd string) string {
 // gathered by the caller and passed in so the first frame can render immediately.
 func New(ctx context.Context, repoRoot, nwo, current, def string, opts ...Option) Model {
 	m := Model{
-		ctx:      ctx,
-		nwo:      nwo,
-		current:  current,
-		def:      def,
-		shell:    shell{active: tabLocal, repoRoot: repoRoot},
-		herdr:    shim.Available(),
-		selected: map[string]bool{},
+		ctx:     ctx,
+		nwo:     nwo,
+		current: current,
+		def:     def,
+		shell:   shell{active: tabLocal, repoRoot: repoRoot, herdr: shim.Available()},
 	}
 	for _, opt := range opts {
 		opt(&m)
@@ -443,7 +378,6 @@ func New(ctx context.Context, repoRoot, nwo, current, def string, opts ...Option
 	if sort, ok := trackSortFromView(vs.TrackSort); ok {
 		m.trackSort = sort
 	}
-	m.minesOnly = vs.MinesOnly
 	m.loadManifest()
 	if m.manifestOK {
 		// AC: "the dashboard opens on the Work tab when the project has a
@@ -542,16 +476,6 @@ func (m Model) wantsPRs() bool {
 	return m.manifest != nil && m.manifest.HasUsesPullRequests && m.manifest.UsesPullRequests
 }
 
-// selectMode reports whether the Branches pane is in multi-select, which is
-// exactly "at least one row is selected" — the mode has no state of its own, so
-// it can neither be entered with an empty selection nor stay on after the last
-// row is deselected. brPanelLine, branchRowLayout and stateColumnEnd all read
-// this one predicate so the row's checkbox and the name column's width can never
-// disagree about whether select mode is active.
-func (m Model) selectMode() bool {
-	return len(m.selected) > 0
-}
-
 // visibleTabs is the tab bar, in the order it is drawn. Only the Repo tab is
 // unconditional: Work needs a manifest, PRs needs uses_pull_requests declared
 // true, and the tracker tabs are Issues and/or Beads depending on the
@@ -608,6 +532,9 @@ func (m Model) tabIndex(t tab) int {
 // it once the options have settled what is mounted.
 func (m *Model) mountTabs(vs viewstate.State) {
 	m.feeds = newFeeds(m.ctx, m.repoRoot)
+	if m.isMounted(tabLocal) {
+		m.repoTab = newRepoTab(m.feeds, m.ctx, m.nwo, m.def, vs.MinesOnly)
+	}
 	if m.isMounted(tabBeads) {
 		tree, _ := beadTreeModeFromView(vs.BeadTree)
 		m.beadsTab = newBeadsTab(m.feeds, tree)
@@ -662,6 +589,8 @@ func (m *Model) tabModel(t tab) tabModel {
 			return nil
 		}
 		return m.commandsTab
+	case tabLocal:
+		return &m.repoTab
 	}
 	return nil
 }
@@ -698,12 +627,7 @@ func (m Model) visibleRows() []rowItem {
 // rows, so this is a no-op when every pane is empty.
 func (m *Model) clampCursor() {
 	if m.active == tabLocal {
-		for p := localPane(0); p < numPanes; p++ {
-			m.paneCursor[p] = clampi(0, m.paneCursor[p], m.paneCount(p)-1)
-		}
-		if m.paneCount(m.pane) == 0 {
-			m.pane = m.nextVisiblePane(m.pane, 1)
-		}
+		m.repo().clampPanes()
 		return
 	}
 	rows := m.visibleRows()
@@ -728,11 +652,7 @@ func (m *Model) clampCursor() {
 
 func (m *Model) moveCursor(delta int) {
 	if m.active == tabLocal {
-		n := m.paneCount(m.pane)
-		if n == 0 {
-			return
-		}
-		m.paneCursor[m.pane] = clampi(0, m.paneCursor[m.pane]+delta, n-1)
+		m.repo().movePane(delta)
 		return
 	}
 	if mv, ok := m.tabModel(m.active).(cursorMover); ok {
@@ -816,7 +736,7 @@ func oneLine(s string) string {
 // The clamp then snaps the active tab's cursor onto the first selectable row.
 func (m *Model) resetCursors() {
 	*m.cur(m.active) = 0
-	m.paneCursor = [numPanes]int{}
+	m.repoTab.paneCursor = [numPanes]int{}
 	m.clampCursor()
 }
 
@@ -988,7 +908,7 @@ func (m Model) currentRow() (rowItem, bool) {
 		return rowItem{}, false
 	}
 	if m.active == tabLocal {
-		return m.localCurrent()
+		return m.repo().current()
 	}
 	return m.rowAt(m.visibleRows(), *m.cur(m.active))
 }
@@ -998,13 +918,7 @@ func (m Model) currentRow() (rowItem, bool) {
 func (m Model) bodyRowCount() int {
 	switch m.active {
 	case tabLocal:
-		n := 0
-		for p := localPane(0); p < numPanes; p++ {
-			if m.paneShown(p) {
-				n += m.paneCount(p)
-			}
-		}
-		return n
+		return m.repo().bodyRowCount()
 	default:
 		n := 0
 		for _, r := range m.visibleRows() {
@@ -1021,7 +935,7 @@ func (m Model) bodyRowCount() int {
 // bar rather than moving (or wrapping) the cursor.
 func (m Model) atBodyTop() bool {
 	if m.active == tabLocal {
-		return m.paneCursor[m.pane] == 0
+		return m.repo().atTop()
 	}
 	rows := m.visibleRows()
 	for i, r := range rows {
@@ -1043,60 +957,11 @@ func (m *Model) enterBody() {
 	m.clampCursor()
 }
 
-// toggleHistory switches the strip under Branches between Commits and Stashes.
-// Focus follows it when it was on the strip, so the key a user pressed with the
-// cursor in Commits leaves the cursor in Stashes, not on a pane that just vanished
-// — unless the list it switched to is empty, which has no row to focus, and then
-// clampCursor hands focus to Branches.
-func (m *Model) toggleHistory() {
-	onStrip := m.pane == m.historyPane()
-	m.historyStashes = !m.historyStashes
-	if onStrip {
-		m.pane = m.historyPane()
-	}
-	m.clampCursor()
-}
-
 // leaveBody hands focus back to the tab bar. It never touches m.cursor or
-// m.paneCursor — those persist untouched, which is the whole of what makes a
+// the Repo tab's paneCursor — those persist untouched, which is the whole of what makes a
 // trip back into the body land on the same row again.
 func (m *Model) leaveBody() {
 	m.focus = focusTabs
-}
-
-// localCurrent synthesizes a rowItem for the focused pane's selected item so the
-// shared enter/o handlers work for the Repo tab too.
-func (m Model) localCurrent() (rowItem, bool) {
-	commits, stashes := m.localPanes()
-	branches := m.branchInfos(m.branchRows())
-	switch m.pane {
-	case paneCleanup:
-		// Unreachable in practice — paneCount is 0 here, so nextVisiblePane never
-		// focuses it — but kept as a defensive no-op rather than assuming that
-		// guarantee holds forever.
-		return rowItem{}, false
-	case paneCommits:
-		i := m.paneCursor[paneCommits]
-		if i < 0 || i >= len(commits) {
-			return rowItem{}, false
-		}
-		c := commits[i]
-		return rowItem{kind: rowCommit, label: c.SHA, url: commitURL(m.nwo, c.SHA)}, true
-	case paneStashes:
-		i := m.paneCursor[paneStashes]
-		if i < 0 || i >= len(stashes) {
-			return rowItem{}, false
-		}
-		s := stashes[i]
-		return rowItem{kind: rowStash, label: s.Ref + "  " + s.Subject}, true
-	default:
-		i := m.paneCursor[paneBranches]
-		if i < 0 || i >= len(branches) {
-			return rowItem{}, false
-		}
-		b := branches[i]
-		return rowItem{kind: rowBranch, label: b.Name, branch: b.Name, wtPath: b.WorktreePath}, true
-	}
 }
 
 // Update handles messages and key input. It wraps update with two pieces of
@@ -1172,7 +1037,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case identityMsg:
 		// The zero identity (gh failed, nothing fresh cached) is applied too:
 		// ownership goes back to unknown rather than keeping a stale account.
-		m.identity = msg.id
+		m.identity = msg.id // the identity feed, shared with the tabs that declared it
 		return m, nil
 
 	case watcherReadyMsg:
@@ -1318,18 +1183,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case nameResolvedMsg:
 		// Esc during the lookup already closed the prompt; a late plan must not
 		// resurrect it or create a worktree the user cancelled.
-		if !m.naming {
+		if !m.repoTab.naming {
 			return m, nil
 		}
-		m.resolving = false
+		m.repoTab.resolving = false
 		if msg.err != nil {
 			// Keep the prompt and the typed text so the input can be corrected.
-			m.nameErr = msg.err.Error()
+			m.repoTab.nameErr = msg.err.Error()
 			return m, nil
 		}
-		m.naming = false
-		m.nameBuf = ""
-		m.nameErr = ""
+		m.repoTab.closeNamePrompt()
 		// A resolved PR takes the PR route, not the create route: its head branch
 		// may live only on the contributor's fork, where nothing that knows just
 		// the name can reach it. Both routes are the ones the PRs tab already uses.
@@ -1392,15 +1255,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// per dispatch for the life of the process.
 		//
 		// The Commands tab ends the row's "starting" window and runs an
-		// attach queued during it (commandsTab.dispatchStarted).
-		tabs := m.updateTabs(msg)
+		// attach queued during it (commandsTab.dispatchStarted) — after the
+		// status line is set, so a failed attach's own red line is the one
+		// left on screen.
 		if msg.err != nil {
 			m.setStatus(msg.name+" failed to start: "+msg.err.Error(), cRed)
-			return m, tabs
+			return m, m.updateTabs(msg)
 		}
 		m.setStatus(msg.name+" started", cGreen)
 		m.refreshDetailProbes()
-		return m, tea.Batch(tabs, recordUsageCmd(m.nwo, resolvedInvocation(msg.name, msg.args)))
+		return m, tea.Batch(m.updateTabs(msg), recordUsageCmd(m.nwo, resolvedInvocation(msg.name, msg.args)))
 
 	case liveWorkSyncMsg:
 		m.setStatus(msg.err.Error(), cRed)
@@ -1615,38 +1479,14 @@ func (m Model) click(y, x int) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case hitRow:
-		if m.herdr && h.pane == paneBranches && x == 1+gutterWidth(m.selectMode())-brGutterW {
-			if id, ok := m.spaceAtRow(h.row); ok {
+		if v := m.repo(); m.herdr && h.pane == paneBranches && x == 1+gutterWidth(v.selectMode())-brGutterW {
+			if id, ok := v.spaceAtRow(h.row); ok {
 				return m.focusSpace(id)
 			}
 		}
 		return m.clickRow(h.pane, h.row)
 	}
 	return m, nil
-}
-
-// branchSpace is the herdr workspace open on a branch's worktree, when the
-// dashboard runs under herdr and one is. The dashboard's last poll answers it, so
-// drawing a row never shells out.
-func (m Model) branchSpace(b git.BranchInfo) (string, bool) {
-	if !m.herdr {
-		return "", false
-	}
-	path := b.WorktreePath
-	if path == "" {
-		path = m.worktreeByBranch()[b.Name]
-	}
-	id, ok := m.local.herdrOpen[path]
-	return id, ok && path != ""
-}
-
-// spaceAtRow is branchSpace for the Branches row at index i.
-func (m Model) spaceAtRow(i int) (string, bool) {
-	branches := m.branchInfos(m.branchRows())
-	if i < 0 || i >= len(branches) {
-		return "", false
-	}
-	return m.branchSpace(branches[i])
 }
 
 // focusSpace jumps herdr to an already-open workspace and leaves the dashboard
@@ -1673,11 +1513,11 @@ func (m Model) clickRow(pane localPane, row int) (tea.Model, tea.Cmd) {
 	fromTabs := m.focus == focusTabs
 	m.focus = focusBody
 	if m.active == tabLocal {
-		if !fromTabs && m.pane == pane && m.paneCursor[pane] == row {
+		if !fromTabs && m.repoTab.pane == pane && m.repoTab.paneCursor[pane] == row {
 			return m.activate()
 		}
-		m.pane = pane
-		m.paneCursor[pane] = row
+		m.repoTab.pane = pane
+		m.repoTab.paneCursor[pane] = row
 		return m, nil
 	}
 	if !fromTabs && *m.cur(m.active) == row {
@@ -1744,7 +1584,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// it is up, the same way the error-detail overlay does below: the tab
 	// takes every key rather than letting one move the list it is drawn over.
 	if tm := m.tabModel(m.active); tm != nil && tm.modal() {
-		_, cmd := tm.key(&m.shell, msg.String())
+		_, cmd := tm.key(&m.shell, msg)
 		return m, cmd
 	}
 
@@ -1785,70 +1625,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// New-worktree name entry swallows most keys; enter resolves the text through
-	// the same path as `repo branch` — a branch name, an issue/PR number, or a
-	// GitHub issue/PR/project URL all land on a branch — then creates via the same
-	// path as enter-on-issue (herdr inline, else quit-and-cd). Esc cancels.
-	if m.naming {
-		// A lookup in flight freezes the buffer: editing or re-submitting it would
-		// leave the returned plan describing text that is no longer on screen. Esc
-		// still gets through, so a slow lookup is never a trap.
-		if m.resolving && msg.Type != tea.KeyEsc {
-			return m, nil
-		}
-		switch msg.Type {
-		case tea.KeyEsc:
-			m.naming = false
-			m.resolving = false
-			m.nameBuf = ""
-			m.nameErr = ""
-			m.nameCands = nil
-			m.nameSel = -1
-		case tea.KeyUp:
-			if m.nameSel > -1 {
-				m.nameSel--
-			}
-		case tea.KeyDown:
-			if m.nameSel < len(m.nameCands)-1 {
-				m.nameSel++
-			}
-		case tea.KeyEnter:
-			name := strings.TrimSpace(m.nameBuf)
-			if name == "" {
-				m.naming = false
-				m.nameBuf = ""
-				m.nameErr = ""
-				m.nameCands = nil
-				m.nameSel = -1
-				return m, nil
-			}
-			// A highlighted candidate (only ever set by an exact id match or by
-			// ↑/↓) takes that bead's id instead of the literal text; with no
-			// highlight the typed text is what gets resolved, exactly as before
-			// this prompt could search beads at all.
-			if m.nameSel >= 0 && m.nameSel < len(m.nameCands) {
-				name = m.nameCands[m.nameSel].ID
-			}
-			// Resolution reaches the network for a number or URL, so the prompt
-			// stays up in a resolving state and the outcome arrives as a
-			// nameResolvedMsg — which either creates or reports the failure inline.
-			m.resolving = true
-			m.nameErr = ""
-			return m, resolveNameCmd(m.ctx, m.checkoutDir(), m.nwo, name)
-		case tea.KeyBackspace:
-			if len(m.nameBuf) > 0 {
-				m.nameBuf = m.nameBuf[:len(m.nameBuf)-1]
-			}
-			m.nameErr = ""
-			m.refreshNameCands()
-		case tea.KeyRunes:
-			m.nameBuf += string(msg.Runes)
-			m.nameErr = ""
-			m.refreshNameCands()
-		}
-		return m, nil
-	}
-
 	// Filter input mode swallows most keys.
 	if m.filtering {
 		switch msg.Type {
@@ -1886,7 +1662,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// A tab with a model of its own gets the key next: the keys it owns
 	// preempt the built-in switch, and everything else falls through to it.
 	if tm := m.tabModel(m.active); tm != nil {
-		if handled, cmd := tm.key(&m.shell, msg.String()); handled {
+		if handled, cmd := tm.key(&m.shell, msg); handled {
 			return m, cmd
 		}
 	}
@@ -1911,17 +1687,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.stepTab(-1)
 	case "esc":
 		// No-op on the Work tab: there is no submenu left to close.
-	case "tab":
-		// Tab cycles the focused pane within the Repo tab; it never switches
-		// the top-level tab. The Config tab is a plain read-only readout
-		// (admin-3rgp.21) with nothing to cycle.
-		if m.active == tabLocal {
-			m.pane = m.nextVisiblePane(m.pane, 1)
-		}
-	case "shift+tab":
-		if m.active == tabLocal {
-			m.pane = m.nextVisiblePane(m.pane, -1)
-		}
 	case "1", "2", "3", "4", "5", "6", "7":
 		// The digits number the tabs in the order they are drawn, so `3` is the
 		// third tab on screen — Beads in a beads repo, Issues in a GitHub one.
@@ -1955,12 +1720,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.moveCursor(-1)
-	case "c":
-		// On the Repo tab `c` switches the strip under Branches between
-		// Commits and Stashes. The Commands tab takes it first, for collapse.
-		if m.active == tabLocal {
-			m.toggleHistory()
-		}
 	case "/":
 		m.filtering = true
 		m.filter = ""
@@ -1991,11 +1750,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.errDetail != "" {
 			m.errOpen = true
 		}
-	case "p":
-		if m.active == tabLocal && m.pane == paneBranches {
-			m.setStatus("pulling…", cDim)
-			return m, pullCmd(m.ctx, m.checkoutDir())
-		}
 	case "s":
 		if m.active == tabBeads || m.active == tabIssues {
 			m.trackSort = m.trackSort.next()
@@ -2004,34 +1758,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if err := viewstate.SaveTrackSort(m.manifestDir(), m.trackSort.viewString()); err != nil {
 				m.setStatus("view.toml: "+err.Error(), cRed)
 			}
-		}
-	case "G":
-		if m.active == tabLocal && m.pane == paneBranches {
-			m.minesOnly = !m.minesOnly
-			m.paneCursor[paneBranches] = 0
-			if m.minesOnly {
-				if !m.identity.Known() {
-					// Narrowing to "yours" with nothing defining yours would empty the pane and
-					// look like a repo with no work in it. Say which it is.
-					m.minesOnly = false
-					m.setStatus("your GitHub account is not known yet — nothing is known to be yours", cYellow)
-					break
-				}
-				m.setStatus("showing your branches (Clean Up still shows everything)", cDim)
-			} else {
-				m.setStatus("showing every branch", cDim)
-			}
-			m.clampCursor()
-			if err := viewstate.SaveMinesOnly(m.manifestDir(), m.minesOnly); err != nil {
-				m.setStatus("view.toml: "+err.Error(), cRed)
-			}
-		}
-	case "w":
-		if m.active == tabLocal && m.pane == paneBranches {
-			m.naming = true
-			m.nameBuf = ""
-			m.nameCands = nil
-			m.nameSel = -1
 		}
 	case "enter":
 		if m.focus == focusTabs {
@@ -2043,32 +1769,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// W is a plain-letter fallback for terminals that swallow alt+enter
 		// (same class that collapses shift+enter to a bare CR); mnemonic pair
 		// with w = new named worktree.
-		if m.active == tabLocal && m.pane == paneBranches {
+		if m.active == tabLocal && m.repoTab.pane == paneBranches {
 			return m.worktreeCurrentBranch()
-		}
-	case " ":
-		// Select mode is the selection, so a refused toggle changes nothing: on
-		// the protected main row or a branch checked out elsewhere, `space`
-		// leaves the pane exactly as it found it.
-		if m.active == tabLocal && m.pane == paneBranches {
-			m.toggleBranchSelection()
-		}
-	case "x":
-		// With a selection, x takes the whole batch — a mixed pick (some proven
-		// ready, some merely eyeballed) that neither a single x nor ⇧X (every
-		// proven-ready row, no exceptions) can express on its own. With nothing
-		// selected it falls back to the row under the cursor, unchanged.
-		if m.active == tabLocal && m.pane == paneBranches {
-			if len(m.selected) > 0 {
-				return m.deleteSelectedBranches()
-			}
-			return m.deleteBranchUnderCursor()
-		}
-	case "X":
-		// Clean-all works from any Repo-tab pane: the collapsed Cleanup box advertises
-		// it from all of them, and it needs no per-row cursor.
-		if m.active == tabLocal {
-			return m.cleanAll()
 		}
 	case "T":
 		// Worktree-target picker (admin-76tv): global, not tab-scoped — the

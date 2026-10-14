@@ -823,7 +823,7 @@ func (t *commandsTab) rows(s *shell) []rowItem {
 		return nil
 	}
 	cmdRows := declaredCommands(t.cfg.manifest())
-	byID := liveCommandEntries()
+	byID := t.work.commandEntries()
 
 	var cmdList []rowItem
 	if len(cmdRows) == 0 {

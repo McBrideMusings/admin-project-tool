@@ -72,9 +72,9 @@ func (t *workersTab) currentRow(s *shell) (rowItem, bool) {
 }
 
 // key takes the work surface's keys: attach, kill, and a swallowed `r`.
-func (t *workersTab) key(s *shell, k string) (bool, tea.Cmd) {
+func (t *workersTab) key(s *shell, msg tea.KeyMsg) (bool, tea.Cmd) {
 	r, ok := t.currentRow(s)
-	return t.surface.key(s, r, ok, k)
+	return t.surface.key(s, r, ok, msg.String())
 }
 
 // activate is ↵ on a worker row: open its session, live or finished
@@ -95,7 +95,7 @@ func (t *workersTab) bindings(s *shell) (keymap.RowKind, []keymap.Binding) {
 	return t.surface.bindings(r, ok, "")
 }
 
-func (t *workersTab) footer() (string, bool) { return "", false }
+func (t *workersTab) footer(int) (string, bool) { return "", false }
 
 // count is the tab-bar badge: every live worker.
 func (t *workersTab) count() int { return len(t.work.workers()) }

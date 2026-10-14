@@ -260,13 +260,13 @@ func (t *commandsTab) activate(s *shell, r rowItem) tea.Cmd {
 func (t *commandsTab) modal() bool { return false }
 
 // key takes `c`, which toggles collapse, and the work surface's keys.
-func (t *commandsTab) key(s *shell, k string) (bool, tea.Cmd) {
-	if k == "c" {
+func (t *commandsTab) key(s *shell, msg tea.KeyMsg) (bool, tea.Cmd) {
+	if msg.String() == "c" {
 		t.toggleCollapse(s)
 		return true, nil
 	}
 	r, ok := t.currentRow(s)
-	return t.surface.key(s, r, ok, k)
+	return t.surface.key(s, r, ok, msg.String())
 }
 
 // body is the work surface's list and band over this tab's rows.
@@ -285,7 +285,7 @@ func (t *commandsTab) bindings(s *shell) (keymap.RowKind, []keymap.Binding) {
 	return t.surface.bindings(r, ok, collapse)
 }
 
-func (t *commandsTab) footer() (string, bool) { return "", false }
+func (t *commandsTab) footer(int) (string, bool) { return "", false }
 
 // loaded is always true: the manifest and the registry are read fresh on
 // every frame.

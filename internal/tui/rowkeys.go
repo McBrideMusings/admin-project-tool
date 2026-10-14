@@ -106,12 +106,12 @@ func rowID(r rowItem, kind keymap.RowKind) string {
 	case keymap.Branch:
 		return r.branch
 	case keymap.Commit:
-		return r.label // the commit SHA (model.go's localCurrent)
+		return r.label // the commit SHA (repotab.go's repoView.current)
 	case keymap.Stash:
 		// A stash row's label is "<ref>  <subject>" (two spaces,
-		// model.go's localCurrent) — there is no dedicated ref field, so
+		// repotab.go's repoView.current) — there is no dedicated ref field, so
 		// the ref is the part before that separator. A label with no
-		// separator (defensive; localCurrent always writes one) falls
+		// separator (defensive; current always writes one) falls
 		// back to the whole label rather than an empty id.
 		if ref, _, ok := strings.Cut(r.label, "  "); ok {
 			return ref
