@@ -162,10 +162,10 @@ func TestRowKeyDispatchOnWorkCommandRow(t *testing.T) {
 	m.manifest.Custom["reload"] = manifest.Command{Desc: "reload", Steps: []string{"reload"}}
 	m.manifest.Actions["reload"] = manifest.Action{"kind": "server-reload"}
 	m.rowKeys = map[keymap.RowKind]map[string]string{keymap.Command: {"r": "reload"}}
-	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("build"))
+	m.commandsTab.cursor = rowIndex(t, m, isCmdRow("build"))
 
 	want := [][2]string{{"↑↓", "move"}, {"↵", "dispatch"}, {"c", "collapse"}, {"q/esc", "quit"}, {"r", "reload"}}
-	if got := m.workFooterPairs(); !pairsEqual(got, want) {
+	if got := m.viewKeymap(); !pairsEqual(got, want) {
 		t.Errorf("footer pairs = %v, want %v", got, want)
 	}
 

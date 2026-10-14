@@ -51,7 +51,7 @@ func TestQueryWorkflowListsEachMatchedItemAsATarget(t *testing.T) {
 		{ID: "a-2"},
 		{ID: "a-3", Labels: []string{"stale"}},
 	})
-	rows := m.workRows()
+	rows := m.commandsTab.rows(&m.shell)
 
 	var got []string
 	for _, r := range rows {
@@ -77,7 +77,7 @@ func TestQueryWorkflowListsEachMatchedItemAsATarget(t *testing.T) {
 // one unselectable line under the group naming the query, not a bare header.
 func TestQueryWorkflowWithNoMatchSaysSo(t *testing.T) {
 	m := queryWorkflowModel([]bd.Bead{{ID: "a-1"}})
-	rows := m.workRows()
+	rows := m.commandsTab.rows(&m.shell)
 	last := rows[len(rows)-1]
 	if last.kind != rowText || last.label != "  └ no items match label:stale" {
 		t.Errorf("last row = %v %q, want the rowText %q", last.kind, last.label, "  └ no items match label:stale")
@@ -94,12 +94,12 @@ func TestCollapsedCursorPassesAQueryWorkflowWithNoMatch(t *testing.T) {
 	m.manifest.Actions["aaa"] = manifest.Action{"kind": "shell"}
 	m.manifest.Actions["zzz"] = manifest.Action{"kind": "shell"}
 	m.active = tabWork
-	m.workCollapsed = true
-	m.workOpenCmd = "aaa"
-	m.cursor[tabWork] = indexOfCommandRow(m.visibleRows(), "aaa")
+	m.commandsTab.collapsed = true
+	m.commandsTab.openCmd = "aaa"
+	m.commandsTab.cursor = indexOfCommandRow(m.visibleRows(), "aaa")
 
-	m.moveCursorWork(1)
-	r := m.visibleRows()[m.cursor[tabWork]]
+	m.commandsTab.moveCursorWork(&m.shell, 1)
+	r := m.visibleRows()[m.commandsTab.cursor]
 	if r.work == nil || r.work.cmdName != "zzz" {
 		t.Errorf("cursor landed on %q, want zzz", r.label)
 	}
@@ -114,7 +114,7 @@ func TestEnterOnQueryWorkflowTargetDispatchesThatItem(t *testing.T) {
 		{ID: "a-3", Labels: []string{"stale"}},
 	})
 	var wd *workRowData
-	for _, r := range m.workRows() {
+	for _, r := range m.commandsTab.rows(&m.shell) {
 		if r.kind == rowCommandTarget && r.work.targetKey == "a-3" {
 			wd = r.work
 		}
@@ -123,7 +123,8 @@ func TestEnterOnQueryWorkflowTargetDispatchesThatItem(t *testing.T) {
 		t.Fatal("no target row for a-3")
 	}
 
-	updated, cmd := m.activateCommandTarget(wd)
+	cmd := m.commandsTab.activateCommandTarget(&m.shell, wd)
+	updated := m
 	if cmd == nil {
 		t.Fatal("activateCommandTarget returned a nil Cmd, want a dispatch")
 	}
@@ -133,7 +134,7 @@ func TestEnterOnQueryWorkflowTargetDispatchesThatItem(t *testing.T) {
 	if len(*got) != 1 || (*got)[0].Name != "a-3" {
 		t.Errorf("dispatched %v, want exactly a-3", *got)
 	}
-	if s := updated.(Model).status; !strings.Contains(s, "retire") || !strings.Contains(s, "a-3") {
+	if s := updated.status; !strings.Contains(s, "retire") || !strings.Contains(s, "a-3") {
 		t.Errorf("status = %q, want it to name the command and the item", s)
 	}
 }

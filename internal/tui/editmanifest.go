@@ -124,8 +124,8 @@ func (m *Model) loadManifest() {
 	defer timing.Phase("tui manifest load", start)
 
 	m.manifest, m.manifestOK, m.manifestErr = nil, false, ""
-	m.cmdOrigin, m.actionOrigin, m.rowKeys = nil, nil, nil
-	var keyOrigin map[string]string
+	m.rowKeys = nil
+	var keyOrigin, cmdOrigin, actionOrigin map[string]string
 
 	// Stat before the read: if the file is rewritten between the stat and
 	// the read below, this stamp is already stale against the file on disk,
@@ -141,9 +141,12 @@ func (m *Model) loadManifest() {
 	case ok:
 		m.manifest = merged
 		m.manifestOK = true
-		m.cmdOrigin, m.actionOrigin, keyOrigin = computeOrigins(project, sp)
+		cmdOrigin, actionOrigin, keyOrigin = computeOrigins(project, sp)
 		m.rowKeys = buildRowKeys(merged)
 	}
-	*m.feeds.config = configFeed{manifest: m.manifest, ok: m.manifestOK, err: m.manifestErr, origin: keyOrigin}
+	*m.feeds.config = configFeed{
+		manifest: m.manifest, ok: m.manifestOK, err: m.manifestErr,
+		origin: keyOrigin, cmdOrigin: cmdOrigin, actionOrigin: actionOrigin,
+	}
 	m.feeds.work.emptyHint = m.workersEmptyHint()
 }

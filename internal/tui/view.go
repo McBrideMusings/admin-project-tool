@@ -204,8 +204,6 @@ func (m Model) renderBodyHits(width, bodyHeight int) ([]string, []hitTarget) {
 		hits = noneHits(len(content))
 	case m.termAttached:
 		content, hits = m.renderTerminalBody(width, contentH)
-	case m.onWorkSurface():
-		content, hits = m.renderWorkBody(width, contentH)
 	case m.active == tabLocal:
 		content, hits = m.renderLocalPanels(width, contentH)
 	case tm != nil:
@@ -423,10 +421,6 @@ func (m Model) freshnessSeg() seg {
 	}
 	var at time.Time
 	switch m.active {
-	case tabWork:
-		// The manifest and the live-work registry are both read fresh on every
-		// frame — no fetch, no cache, exactly like the Beads tab.
-		return seg{t: "live", fg: cFaint}
 	case tabLocal:
 		// The Repo tab's remote input is the merged-PR set: what strikes a
 		// squash-merged branch through.
@@ -474,8 +468,6 @@ func (m Model) tabCount(t tab) int {
 		return tm.count()
 	}
 	switch t {
-	case tabWork:
-		return m.workRowCount()
 	case tabLocal:
 		return m.localBranchCount()
 	}
@@ -788,8 +780,10 @@ func hasKey(pairs [][2]string, display string) bool {
 // viewKeymap is the active tab/pane's own pairs, without the shared trailing
 // two. The six row-kind branches (bead, issue, PR, branch, commit, stash) read
 // their built-in pairs from internal/keymap — the single table admin-l6kb.1's
-// shadow-detection check also reads — rather than carrying their own literals;
-// tabWork and tabConfig are not row kinds (ADR-0018) and keep their pairs here.
+// shadow-detection check also reads — rather than carrying their own literals.
+// The Commands and Workers tabs compute their own (keyBinder), since theirs
+// follow the cursor row's live state; the Config tab is not a row kind
+// (ADR-0018) and keeps its pairs here.
 func (m Model) viewKeymap() [][2]string {
 	if m.active == tabLocal {
 		switch m.pane {
@@ -801,9 +795,11 @@ func (m Model) viewKeymap() [][2]string {
 			return m.rowPairs(keymap.Branch)
 		}
 	}
+	if kb, ok := m.tabModel(m.active).(keyBinder); ok {
+		k, bindings := kb.bindings(&m.shell)
+		return m.withRowKeys(k, bindings)
+	}
 	switch m.active {
-	case tabWork, tabWorkers:
-		return m.workFooterPairs()
 	case tabPRs:
 		return m.rowPairs(keymap.PR)
 	case tabIssues:

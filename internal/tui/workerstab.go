@@ -5,6 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/keymap"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 )
 
@@ -12,12 +13,13 @@ import (
 // cursor. It reaches the registry of live agent workers and the empty-state
 // hint through the work source's handle, and whether the project has a
 // manifest through the config handle; its constructor asking for them is its
-// declaration. The live band, attach and kill it shares with the Commands tab
-// stay on the shell's work surface (workview.go, work.go).
+// declaration. The list-and-band body, attach, kill and the footer are its
+// work surface (worksurface.go), the same component the Commands tab holds.
 type workersTab struct {
 	declared []source
 	work     workSource
 	cfg      configSource
+	surface  workSurface
 
 	cursor int
 }
@@ -27,6 +29,7 @@ type workersTab struct {
 func newWorkersTab(f feeds) workersTab {
 	d := sourceSet{f: f}
 	t := workersTab{work: d.work(), cfg: d.config()}
+	t.surface = newWorkSurface(t.work, t.cfg, true)
 	t.declared = d.declared
 	return t
 }
@@ -62,13 +65,35 @@ func (t *workersTab) rows(*shell) []rowItem {
 // modal is false: the tab has no overlay of its own.
 func (t *workersTab) modal() bool { return false }
 
-// key reports every key unhandled: attach, kill and the row bindings are the
-// shell's work surface, shared with the Commands tab.
-func (t *workersTab) key(*shell, string) (bool, tea.Cmd) { return false, nil }
+// currentRow is the row under the cursor, or none while focus is on the tab
+// bar.
+func (t *workersTab) currentRow(s *shell) (rowItem, bool) {
+	return s.rowAt(s.filterRows(t.rows(s)), t.cursor)
+}
 
-// body is never reached: the shell draws the work surface's list and band
-// for this tab and the Commands tab alike (renderWorkBody).
-func (t *workersTab) body(*shell, int, int) ([]string, []hitTarget) { return nil, nil }
+// key takes the work surface's keys: attach, kill, and a swallowed `r`.
+func (t *workersTab) key(s *shell, k string) (bool, tea.Cmd) {
+	r, ok := t.currentRow(s)
+	return t.surface.key(s, r, ok, k)
+}
+
+// activate is ↵ on a worker row: open its session, live or finished
+// (livework.Registry.Attach covers both).
+func (t *workersTab) activate(s *shell, r rowItem) tea.Cmd {
+	return t.surface.attach(s, r)
+}
+
+// body is the work surface's list and band over this tab's rows.
+func (t *workersTab) body(s *shell, width, height int) ([]string, []hitTarget) {
+	return t.surface.body(s, s.filterRows(t.rows(s)), t.cursor, width, height)
+}
+
+// bindings is the work surface's footer for the cursor row; the tab has no
+// collapse key.
+func (t *workersTab) bindings(s *shell) (keymap.RowKind, []keymap.Binding) {
+	r, ok := t.currentRow(s)
+	return t.surface.bindings(r, ok, "")
+}
 
 func (t *workersTab) footer() (string, bool) { return "", false }
 
@@ -82,7 +107,7 @@ func (t *workersTab) loaded() bool { return true }
 // time to report.
 func (t *workersTab) freshness() seg { return seg{t: "live", fg: cFaint} }
 
-func (t *workersTab) update(tea.Msg) tea.Cmd { return nil }
+func (t *workersTab) update(*shell, tea.Msg) tea.Cmd { return nil }
 
 // workerRow is the row for live worker e: the one shape the Workers list, the
 // band and the attached view's field block all resolve.

@@ -141,8 +141,8 @@ type tabModel interface {
 	loaded() bool
 	// freshness is the header's age readout for the tab's data.
 	freshness() seg
-	// update takes every message the shell does not consume itself.
-	update(msg tea.Msg) tea.Cmd
+	// update takes the messages the shell hands its tabs (updateTabs).
+	update(s *shell, msg tea.Msg) tea.Cmd
 }
 
 // syncSource is a tab's read handle on the GitHub sync.
@@ -162,6 +162,9 @@ func (h syncSource) prsFetchedAt() time.Time { return h.f.remote.PRsFetchedAt }
 
 // issuesFetchedAt is when the issues section was last fetched cleanly.
 func (h syncSource) issuesFetchedAt() time.Time { return h.f.remote.IssuesFetchedAt }
+
+// issuesFetchError is why the issues section's last fetch failed, or "".
+func (h syncSource) issuesFetchError() string { return h.f.remote.IssuesFetchError }
 
 // loaded reports whether any sync or cache read has answered.
 func (h syncSource) loaded() bool { return h.f.haveData }
@@ -338,6 +341,14 @@ type configFeed struct {
 	// origin names which archetype (or "(manifest)") declared each top-level
 	// key; a key missing from the map was never declared.
 	origin map[string]string
+	// cmdOrigin/actionOrigin name which archetype (or "(manifest)") last
+	// contributed each command/action name — the Commands band's "archetype"
+	// and each step's "from <archetype>" line. archetype.Resolve's own merge
+	// log only records a COLLISION, not "here is who owns every key", so
+	// these come from a second, read-only walk of the same search path
+	// (computeOrigins).
+	cmdOrigin    map[string]string
+	actionOrigin map[string]string
 }
 
 // configSource is a tab's read handle on the loaded manifest.
@@ -355,6 +366,25 @@ func (h configSource) err() string { return h.f.err }
 
 // origin is who declared key, or "" when nothing did.
 func (h configSource) origin(key string) string { return h.f.origin[key] }
+
+// cmdOrigin is who declared command name, "(manifest)" when no walk saw it.
+func (h configSource) cmdOrigin(name string) string {
+	if o, ok := h.f.cmdOrigin[name]; ok {
+		return o
+	}
+	return "(manifest)"
+}
+
+// actionOrigin is who declared action name, "(manifest)" when no walk saw it.
+func (h configSource) actionOrigin(name string) string {
+	if o := h.f.actionOrigin[name]; o != "" {
+		return o
+	}
+	return "(manifest)"
+}
+
+// trackers is the manifest's declared tracker list, nil when it declares none.
+func (h configSource) trackers() []string { return manifestTrackers(h.f.manifest) }
 
 // workFeed is what the work source keeps beside the live-work registry: the
 // empty Workers tab's hint, which names the dispatches this project's

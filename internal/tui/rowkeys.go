@@ -160,30 +160,26 @@ func (m Model) rowKeyDispatch(key string) (tea.Model, tea.Cmd, bool) {
 	if !ok {
 		return m, nil, false
 	}
-	c, found := m.commandNamed(name)
-	if found && m.isRowWorkflow(c) {
+	c, found := commandNamed(m.manifest, name)
+	if found && isRowWorkflow(m.manifest, c) {
 		mm, cmd := m.rowKeyWorkflow(name, c, r, kind)
 		return mm, cmd, true
 	}
 	if found {
 		if e := liveEntryFor(name, liveCommandEntries()); e != nil {
-			mm, cmd := m.attachEntry(e)
-			return mm, cmd, true
+			return m, m.attach(e), true
 		}
 	}
 	return m, dispatchCommandCmd(m.manifest, m.width, m.height, name, rowEnv(r, kind)), true
 }
 
-// commandNamed looks up a declared command by name, Custom winning over
-// Overrides — the same rule collectCommands' own unexported `lookup`
-// closure applies (work.go), duplicated here rather than shared because
-// that closure is local to collectCommands and work.go is under
-// concurrent modification by another swarm.
-func (m Model) commandNamed(name string) (manifest.Command, bool) {
-	if c, ok := m.manifest.Custom[name]; ok {
+// commandNamed looks up a declared command by name in mf, Custom winning over
+// Overrides — the lookup collectCommands orders the Commands tab by.
+func commandNamed(mf *manifest.Manifest, name string) (manifest.Command, bool) {
+	if c, ok := mf.Custom[name]; ok {
 		return c, true
 	}
-	c, ok := m.manifest.Overrides[name]
+	c, ok := mf.Overrides[name]
 	return c, ok
 }
 
@@ -192,7 +188,7 @@ func (m Model) commandNamed(name string) (manifest.Command, bool) {
 // dispatches immediately over just the row under the cursor, with no overlay,
 // reporting the outcome on the status line instead.
 func (m Model) rowKeyWorkflow(name string, c manifest.Command, r rowItem, kind keymap.RowKind) (tea.Model, tea.Cmd) {
-	action, ok := m.soleAction(c)
+	action, ok := soleAction(m.manifest, c)
 	if !ok {
 		// Defensive: isRowWorkflow already proved c is a single-step
 		// kind="workflow" action, so this can't happen outside a bug

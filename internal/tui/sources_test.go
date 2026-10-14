@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/bd"
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/viewstate"
@@ -24,7 +26,7 @@ func TestSourcesStartOnlyForMountedTabs(t *testing.T) {
 		{"bare admin", nil, []source{srcSync, srcBeads, srcWork, srcIdentity}, true},
 		{"config alone", []tab{tabConfig}, nil, false},
 		{"beads alone", []tab{tabBeads}, []source{srcBeads}, false},
-		{"commands alone", []tab{tabWork}, []source{srcWork}, false},
+		{"commands alone", []tab{tabWork}, []source{srcSync, srcBeads, srcWork}, true},
 		{"workers alone", []tab{tabWorkers}, []source{srcWork}, false},
 		{"prs alone", []tab{tabPRs}, []source{srcSync}, true},
 	}
@@ -124,5 +126,47 @@ func TestPRsTabMountedAloneMatchesBare(t *testing.T) {
 		if a, b := fmt.Sprint(rowLine(aloneRows[i], 120)), fmt.Sprint(rowLine(bareRows[i], 120)); a != b {
 			t.Errorf("row %d: alone %q, bare %q", i, a, b)
 		}
+	}
+}
+
+// TestCommandsTabMountedAloneMatchesBare pins the Commands slice's acceptance:
+// mounted alone the tab starts the beads feed its query workflows read, and it
+// draws the same rows and body as under bare admin — the workflow's matched
+// beads as targets, never "loading beads…".
+func TestCommandsTabMountedAloneMatchesBare(t *testing.T) {
+	build := func(mounted []tab) Model {
+		mf := &manifest.Manifest{
+			HasTracker: true, Trackers: []string{"beads"},
+			Custom: map[string]manifest.Command{"retire": {Desc: "Retire stale beads", Steps: []string{"retire"}}},
+			Actions: map[string]manifest.Action{"retire": {
+				"kind": "workflow",
+				"over": map[string]any{"query": "label:stale"},
+				"run":  `claude "/retire $ADMIN_TARGET"`,
+			}},
+		}
+		m := Model{
+			ctx:        context.Background(),
+			shell:      shell{mounted: mounted, repoRoot: t.TempDir(), width: 120, height: 40},
+			manifestOK: true,
+			manifest:   mf,
+			headless:   true,
+		}
+		m.mountTabs(viewstate.State{})
+		*m.feeds.config = configFeed{manifest: mf, ok: true}
+		if !slices.Contains(m.claimSources(), srcBeads) {
+			t.Fatalf("mounted %v did not start the beads feed", mounted)
+		}
+		m.feeds.beads.have = true
+		m.feeds.beads.beads = []bd.Bead{{ID: "a-1", Labels: []string{"stale"}}}
+		return m
+	}
+	alone, bare := build([]tab{tabWork}), build(nil)
+	aloneBody, _ := alone.renderBodyHits(120, 30)
+	bareBody, _ := bare.renderBodyHits(120, 30)
+	if a, b := strings.Join(aloneBody, "\n"), strings.Join(bareBody, "\n"); a != b {
+		t.Errorf("commands alone drew\n%s\nbare drew\n%s", a, b)
+	}
+	if !strings.Contains(strings.Join(aloneBody, "\n"), "a-1") {
+		t.Errorf("commands alone did not list the matched bead a-1:\n%s", strings.Join(aloneBody, "\n"))
 	}
 }

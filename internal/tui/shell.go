@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
@@ -122,6 +123,56 @@ type shell struct {
 	// only cancels the gesture if its gen still matches, so an older
 	// watchdog from before the most recent motion is a no-op.
 	selGen int
+
+	// Terminal view (admin-3rgp.65): attaching to a pty-addressed live-work
+	// entry replaces the tab bar and the body with that entry's Screen — see
+	// terminalview.go. It is the shell's because any tab can open it: a
+	// Commands or Workers row, a [keys.*] binding on any row, or a dispatch
+	// whose enter arrived while it was still starting. termAttached is the
+	// switch view.go and handleKey both read; termRows/termCols are the size
+	// the child's pty was last given (Model.fitTerminal). All four are zeroed
+	// together by detachTerminal.
+	termAttached bool
+	termEntryID  string
+	termRows     int
+	termCols     int
+}
+
+// attach resolves e's attach through the registry — the terminal view for an
+// entry on the dashboard's own hosted pty (Via empty), the project's declared
+// [terminal] attach command for one dispatched through a launcher (Via set) —
+// see livework.Registry.Attach. A nil e is a silent no-op, matching every
+// other action that requires a live row to act on.
+//
+// A hosted-pty entry's Attach call reaches installTerminalOpener's callback
+// synchronously (terminalview.go), which can only record the requested
+// handle. Draining that recording right after Attach succeeds is what opens
+// the terminal view; a launcher-dispatched entry's Attach shells out instead
+// and records nothing, so takePendingTerminal reports false. The view opens
+// unsized: Model.fitTerminal sizes the child's pty to the body region at the
+// end of the same Update.
+func (s *shell) attach(e *livework.Entry) tea.Cmd {
+	if e == nil {
+		return nil
+	}
+	if err := livework.Default.Attach(e.ID); err != nil {
+		s.setStatus("attach failed: "+err.Error(), cRed)
+		return nil
+	}
+	if _, ok := takePendingTerminal(); ok {
+		s.termAttached, s.termEntryID = true, e.ID
+		s.termRows, s.termCols = 0, 0
+		return termTickCmd()
+	}
+	return nil
+}
+
+// detachTerminal returns to the list. It never touches the child — the
+// process keeps running, exactly as attaching to a pane never suspends it.
+func (s *shell) detachTerminal() {
+	s.termAttached = false
+	s.termEntryID = ""
+	s.termRows, s.termCols = 0, 0
 }
 
 // manifestDir is the directory to read admin.toml, and anything co-located with

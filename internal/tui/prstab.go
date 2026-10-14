@@ -53,4 +53,4 @@ func (t *prsTab) loaded() bool { return t.sync.loaded() }
 // freshness is the age of the PRs section the last sync stamped.
 func (t *prsTab) freshness() seg { return cachedAgeSeg(t.sync.prsFetchedAt()) }
 
-func (t *prsTab) update(tea.Msg) tea.Cmd { return nil }
+func (t *prsTab) update(*shell, tea.Msg) tea.Cmd { return nil }

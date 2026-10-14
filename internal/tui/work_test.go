@@ -19,12 +19,9 @@ import (
 // workRows can be tested against exact, known input.
 func workTestModel(m *manifest.Manifest) Model {
 	mm := Model{
-		shell:           shell{width: 120, height: 40},
-		manifest:        m,
-		manifestOK:      true,
-		pendingDispatch: map[string]bool{},
-		pendingAttach:   map[string]bool{},
-		pendingTarget:   map[string]string{},
+		shell:      shell{width: 120, height: 40},
+		manifest:   m,
+		manifestOK: true,
 	}
 	mm.mountTabs(viewstate.State{})
 	*mm.feeds.config = configFeed{manifest: m, ok: true}
@@ -32,6 +29,22 @@ func workTestModel(m *manifest.Manifest) Model {
 		mm.feeds.work.emptyHint = mm.workersEmptyHint()
 	}
 	return mm
+}
+
+// workRowsOf is the Commands tab's rows in m.
+func workRowsOf(m Model) []rowItem { return m.commandsTab.rows(&m.shell) }
+
+// workBody is the active work tab's body, as the shell draws it.
+func workBody(m Model, width, height int) ([]string, []hitTarget) {
+	return m.tabModel(m.active).body(&m.shell, width, height)
+}
+
+// workBand is the live band the active work tab draws for row r.
+func workBand(m Model, r rowItem, w, h int) []string {
+	if m.active == tabWorkers {
+		return m.workersTab.surface.band(r, w, h)
+	}
+	return m.commandsTab.surface.band(r, w, h)
 }
 
 func TestDeclaredCommandsOrdersByGroupThenPriorityThenName(t *testing.T) {
@@ -46,7 +59,7 @@ func TestDeclaredCommandsOrdersByGroupThenPriorityThenName(t *testing.T) {
 		},
 	}
 	mm := workTestModel(m)
-	got := mm.declaredCommands()
+	got := declaredCommands(mm.manifest)
 	var names []string
 	for _, c := range got {
 		names = append(names, c.name)
@@ -70,7 +83,7 @@ func TestDeclaredCommandsHonorsDeclaredOrder(t *testing.T) {
 		},
 	}
 	mm := workTestModel(m)
-	got := mm.declaredCommands()
+	got := declaredCommands(mm.manifest)
 	var names []string
 	for _, c := range got {
 		names = append(names, c.name)
@@ -93,7 +106,7 @@ func TestDeclaredCommandsDropsHidden(t *testing.T) {
 		Actions: map[string]manifest.Action{"x": {"kind": "shell"}},
 	}
 	mm := workTestModel(m)
-	for _, c := range mm.declaredCommands() {
+	for _, c := range declaredCommands(mm.manifest) {
 		if c.name == "internal" {
 			t.Errorf("hide_commands entry %q was not dropped", c.name)
 		}
@@ -116,7 +129,7 @@ func TestDeclaredCommandsFiltersWorkflowBySource(t *testing.T) {
 		},
 	}
 	mm := workTestModel(m)
-	got := mm.declaredCommands()
+	got := declaredCommands(mm.manifest)
 	names := map[string]bool{}
 	for _, c := range got {
 		names[c.name] = true
@@ -150,7 +163,7 @@ func TestCommandKind(t *testing.T) {
 		{"no steps", manifest.Command{}, "?"},
 	}
 	for _, c := range cases {
-		if got := mm.commandKind(c.cmd); got != c.want {
+		if got := commandKind(mm.manifest, c.cmd); got != c.want {
 			t.Errorf("%s: commandKind = %q, want %q", c.name, got, c.want)
 		}
 	}
@@ -281,7 +294,7 @@ func TestRunningCommandLightsOnlyItsOwnRow(t *testing.T) {
 	}
 
 	live := map[string]bool{}
-	for _, r := range workTestModel(m).workRows() {
+	for _, r := range workRowsOf(workTestModel(m)) {
 		if r.kind == rowCommand && r.work != nil {
 			live[r.work.cmdName] = r.work.live != nil
 		}
@@ -298,7 +311,7 @@ func TestRunningCommandLightsOnlyItsOwnRow(t *testing.T) {
 	if err := livework.Default.Add(&livework.Entry{ID: "db-ensure", Name: "db-ensure", Handle: "pty-db"}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	for _, r := range workTestModel(m).workRows() {
+	for _, r := range workRowsOf(workTestModel(m)) {
 		if r.kind == rowCommand && r.work != nil && r.work.live != nil {
 			t.Errorf("%s row is live from an entry keyed on its step db-ensure", r.work.cmdName)
 		}
@@ -330,7 +343,7 @@ func TestWorkerAppearsOnlyInWorkersTab(t *testing.T) {
 	livework.Default.SetState(worker.ID, livework.StateWaiting, nil)
 	livework.Default.SetActivity(worker.ID, "needs input")
 
-	for _, r := range mm.workRows() {
+	for _, r := range mm.commandsTab.rows(&mm.shell) {
 		if r.kind == rowWorker {
 			t.Errorf("Commands tab holds a worker row: %+v", r)
 		}
@@ -378,7 +391,7 @@ func TestWorkRowsFoldsAProcessEntryIntoItsCommandRow(t *testing.T) {
 	// doc comment: "one registry per process"), so other tests in this
 	// package may have already left entries in it — this only asserts on
 	// e's own row, never on the absence of every other one.
-	rows := mm.workRows()
+	rows := mm.commandsTab.rows(&mm.shell)
 	found := false
 	for _, r := range rows {
 		if r.kind == rowCommand && r.work.cmdName == "dev-server" {
@@ -510,7 +523,7 @@ func TestCommandRowItemPrefersLiveEntryLogPath(t *testing.T) {
 	livework.Default.SetLogPath(live.ID, "/live/current.log")
 	byName := map[string]*livework.Entry{"build": live}
 
-	row := mm.commandRowItem(workCmdRow{name: "build", cmd: m.Custom["build"]}, byName)
+	row := mm.commandsTab.commandRowItem(&mm.shell, workCmdRow{name: "build", cmd: m.Custom["build"]}, byName)
 	if row.work.logPath != "/live/current.log" {
 		t.Errorf("logPath = %q, want the live entry's LogPath %q", row.work.logPath, "/live/current.log")
 	}
@@ -543,12 +556,12 @@ func TestCommandRowItemFallsBackToGlobWhenNoLiveEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	row := mm.commandRowItem(workCmdRow{name: "build", cmd: m.Custom["build"]}, nil)
+	row := mm.commandsTab.commandRowItem(&mm.shell, workCmdRow{name: "build", cmd: m.Custom["build"]}, nil)
 	if row.work.logPath != found {
 		t.Errorf("logPath = %q, want the glob match %q", row.work.logPath, found)
 	}
 
-	neverRow := mm.commandRowItem(workCmdRow{name: "never-run", cmd: m.Custom["never-run"]}, nil)
+	neverRow := mm.commandsTab.commandRowItem(&mm.shell, workCmdRow{name: "never-run", cmd: m.Custom["never-run"]}, nil)
 	if neverRow.work.logPath != "" {
 		t.Errorf("logPath for a never-run command = %q, want empty (\"none yet\")", neverRow.work.logPath)
 	}
@@ -579,7 +592,7 @@ func TestTargetRowsResolvesLiveEntryByCommandName(t *testing.T) {
 	other := &livework.Entry{ID: "pick:prod", Name: "pick:prod"}
 	byName := map[string]*livework.Entry{"dev:cf": live, "pick:prod": other}
 
-	parent := mm.commandRowItem(workCmdRow{name: "dev", cmd: m.Custom["dev"]}, byName)
+	parent := mm.commandsTab.commandRowItem(&mm.shell, workCmdRow{name: "dev", cmd: m.Custom["dev"]}, byName)
 	rows := targetRows(parent, byName, "")
 	got := map[string]*livework.Entry{}
 	for _, r := range rows {
@@ -604,7 +617,7 @@ func TestWorkRowsMarksHiddenGroupsClosed(t *testing.T) {
 	}
 	closed := func(mm Model) map[string]bool {
 		got := map[string]bool{}
-		for _, r := range mm.workRows() {
+		for _, r := range mm.commandsTab.rows(&mm.shell) {
 			if r.kind == rowCommand && r.group {
 				got[r.work.cmdName] = r.work.closed
 			}
@@ -615,7 +628,7 @@ func TestWorkRowsMarksHiddenGroupsClosed(t *testing.T) {
 	if got := closed(mm); got["dev"] || got["logs"] {
 		t.Errorf("expanded mode closed = %v, want no group closed", got)
 	}
-	mm.workCollapsed, mm.workOpenCmd = true, "dev"
+	mm.commandsTab.collapsed, mm.commandsTab.openCmd = true, "dev"
 	if got := closed(mm); got["dev"] || !got["logs"] {
 		t.Errorf("collapsed with dev open: closed = %v, want only logs closed", got)
 	}
@@ -733,7 +746,7 @@ func TestWorkRowsNoCommandsStillLegible(t *testing.T) {
 	}
 	mm := workTestModel(m)
 
-	rows := mm.workRows()
+	rows := mm.commandsTab.rows(&mm.shell)
 	if len(rows) == 0 {
 		t.Fatalf("workRows returned nothing for a manifest with no commands")
 	}

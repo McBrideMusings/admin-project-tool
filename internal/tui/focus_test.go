@@ -39,6 +39,7 @@ func workFocusModel() Model {
 		},
 	}
 	m.manifestOK = true
+	*m.feeds.config = configFeed{manifest: m.manifest, ok: true}
 	m.active = tabWork
 	return m
 }
@@ -98,14 +99,14 @@ func TestEnterAndDownMoveFocusIntoBody(t *testing.T) {
 	// "some selectable row mid-list" here.
 	for _, key := range []string{"j", "down", "enter"} {
 		m := workFocusModel()
-		m.cursor[tabWork] = 1 // pretend a prior trip left the cursor mid-list
+		m.commandsTab.cursor = 1 // pretend a prior trip left the cursor mid-list
 		next, _ := m.handleKey(keyMsg(key))
 		nm := next.(Model)
 		if nm.focus != focusBody {
 			t.Errorf("%q from the tab bar left focus at %v, want focusBody", key, nm.focus)
 		}
-		if nm.cursor[tabWork] != 1 {
-			t.Errorf("%q from the tab bar disturbed the preserved cursor: got %d, want 1", key, nm.cursor[tabWork])
+		if nm.commandsTab.cursor != 1 {
+			t.Errorf("%q from the tab bar disturbed the preserved cursor: got %d, want 1", key, nm.commandsTab.cursor)
 		}
 	}
 }
@@ -115,27 +116,27 @@ func TestEnterAndDownMoveFocusIntoBody(t *testing.T) {
 func TestUpAtTopRowReturnsToTabBar(t *testing.T) {
 	m := workFocusModel()
 	m.focus = focusBody
-	m.cursor[tabWork] = 0
+	m.commandsTab.cursor = 0
 	next, _ := m.handleKey(keyMsg("up"))
 	nm := next.(Model)
 	if nm.focus != focusTabs {
 		t.Errorf("up on the top row left focus at %v, want focusTabs", nm.focus)
 	}
-	if nm.cursor[tabWork] != 0 {
-		t.Errorf("leaveBody moved the cursor: got %d, want 0 (unchanged)", nm.cursor[tabWork])
+	if nm.commandsTab.cursor != 0 {
+		t.Errorf("leaveBody moved the cursor: got %d, want 0 (unchanged)", nm.commandsTab.cursor)
 	}
 
 	// Not at the top: up moves the cursor as it always has.
 	m2 := workFocusModel()
 	m2.focus = focusBody
-	m2.cursor[tabWork] = 2
+	m2.commandsTab.cursor = 2
 	next2, _ := m2.handleKey(keyMsg("up"))
 	nm2 := next2.(Model)
 	if nm2.focus != focusBody {
 		t.Errorf("up off the top row moved focus to %v, want it to stay focusBody", nm2.focus)
 	}
-	if nm2.cursor[tabWork] != 1 {
-		t.Errorf("up off the top row cursor = %d, want 1", nm2.cursor[tabWork])
+	if nm2.commandsTab.cursor != 1 {
+		t.Errorf("up off the top row cursor = %d, want 1", nm2.commandsTab.cursor)
 	}
 }
 
@@ -158,7 +159,7 @@ func TestTargetsAlreadyVisibleRightLeftJustSwitchTabInBody(t *testing.T) {
 	if idx < 0 {
 		t.Fatalf("no rowCommand for %q in %v", "deploy", rows)
 	}
-	m.cursor[tabWork] = idx
+	m.commandsTab.cursor = idx
 
 	sawTarget := false
 	for _, r := range rows {
@@ -190,7 +191,7 @@ func TestExactlyOneSolidHighlight(t *testing.T) {
 		m := workFocusModel()
 		m.focus = focus
 		if focus == focusBody {
-			m.cursor[tabWork] = 1
+			m.commandsTab.cursor = 1
 		}
 		out := m.View()
 		segs, _ := m.tabBarSegs()
@@ -202,8 +203,8 @@ func TestExactlyOneSolidHighlight(t *testing.T) {
 		}
 		rows := m.visibleRows()
 		rowSolid := false
-		if m.cursor[tabWork] >= 0 && m.cursor[tabWork] < len(rows) {
-			rowSolid = m.focus == focusBody && rows[m.cursor[tabWork]].selectable()
+		if m.commandsTab.cursor >= 0 && m.commandsTab.cursor < len(rows) {
+			rowSolid = m.focus == focusBody && rows[m.commandsTab.cursor].selectable()
 		}
 		switch focus {
 		case focusTabs:

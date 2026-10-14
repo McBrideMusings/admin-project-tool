@@ -32,7 +32,7 @@ func TestRenderWorkBandTailsLiveScreenBottomAligned(t *testing.T) {
 	mm := workTestModel(nil)
 	row := rowItem{kind: rowWorker, work: &workRowData{worker: e}}
 	const h = 20
-	out := mm.renderWorkBand(row, 60, h)
+	out := workBand(mm, row, 60, h)
 	if len(out) != h {
 		t.Fatalf("renderWorkBand with a live screen produced %d lines, want exactly %d (fills the band)", len(out), h)
 	}
@@ -65,7 +65,7 @@ func TestRenderWorkBandNoRuleBetweenFieldsAndTail(t *testing.T) {
 		urls: []frame.URLEntry{{Label: "local", URL: "http://localhost:1"}},
 		live: &livework.Entry{ID: "dev-rule", StartedAt: time.Now(), Screen: screen},
 	}
-	out := workTestModel(nil).renderWorkBand(rowItem{kind: rowCommand, work: wd}, 60, 12)
+	out := workBand(workTestModel(nil), rowItem{kind: rowCommand, work: wd}, 60, 12)
 	if !strings.Contains(out[1], "log") || !strings.Contains(out[2], "url") {
 		t.Fatalf("rows 1-2 = %q, want the log and url field rows", out[1:3])
 	}
@@ -94,7 +94,7 @@ func TestRenderWorkBandEmptyTailWithoutLiveScreen(t *testing.T) {
 	mm := workTestModel(nil)
 	row := rowItem{kind: rowWorker, work: &workRowData{worker: e}}
 	const h = 20
-	out := mm.renderWorkBand(row, 60, h)
+	out := workBand(mm, row, 60, h)
 	if len(out) != h {
 		t.Fatalf("renderWorkBand produced %d lines, want exactly %d", len(out), h)
 	}
@@ -122,7 +122,7 @@ func TestRenderWorkBandAnsiStrippedAndTruncated(t *testing.T) {
 
 	mm := workTestModel(nil)
 	row := rowItem{kind: rowWorker, work: &workRowData{worker: e}}
-	out := mm.renderWorkBand(row, 20, 20)
+	out := workBand(mm, row, 20, 20)
 	joined := strings.Join(out, "\n")
 	if strings.Contains(joined, "\x1b[") {
 		t.Errorf("tail retained a raw ANSI escape:\n%q", joined)
@@ -151,7 +151,7 @@ func TestRenderWorkBandCommandTailsLiveScreen(t *testing.T) {
 	mm := workTestModel(nil)
 	row := rowItem{kind: rowCommand, work: wd}
 	const h = 25
-	out := mm.renderWorkBand(row, 60, h)
+	out := workBand(mm, row, 60, h)
 	if len(out) != h {
 		t.Fatalf("renderWorkBand with a live screen produced %d lines, want exactly %d", len(out), h)
 	}
@@ -173,7 +173,7 @@ func TestRenderWorkBandNoURLsKeepsFieldSlot(t *testing.T) {
 	}
 
 	const h = 20
-	out := workTestModel(nil).renderWorkBand(rowItem{kind: rowCommand, work: wd}, 60, h)
+	out := workBand(workTestModel(nil), rowItem{kind: rowCommand, work: wd}, 60, h)
 	if len(out) != h {
 		t.Fatalf("renderWorkBand produced %d lines, want exactly %d", len(out), h)
 	}
@@ -297,7 +297,7 @@ func TestRenderWorkBandNoBlankRowBetweenTailLines(t *testing.T) {
 	mm := workTestModel(nil)
 	row := rowItem{kind: rowWorker, work: &workRowData{worker: e}}
 	const h = 20
-	out := mm.renderWorkBand(row, 40, h)
+	out := workBand(mm, row, 40, h)
 	if strings.TrimSpace(out[h-1]) != "gamma" || strings.TrimSpace(out[h-2]) != "beta" || strings.TrimSpace(out[h-3]) != "alpha" {
 		t.Fatalf("expected the three tail lines with no blank rows between them, got %q", out[h-3:])
 	}

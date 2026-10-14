@@ -11,6 +11,7 @@ package tui
 import (
 	"context"
 	"errors"
+	tea "github.com/charmbracelet/bubbletea"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,7 +53,7 @@ func TestActivateCommandDispatchesWhenIdle(t *testing.T) {
 	})
 	wd := &workRowData{cmdName: "build"}
 
-	_, cmd := m.activateCommand(wd)
+	cmd := m.commandsTab.activateCommand(&m.shell, wd)
 	if cmd == nil {
 		t.Fatal("activateCommand returned a nil Cmd for an idle command, want a dispatch Cmd")
 	}
@@ -92,7 +93,7 @@ func TestActivateCommandAttachesWhenLive(t *testing.T) {
 	})
 	wd := &workRowData{cmdName: "build", live: live}
 
-	_, cmd := m.activateCommand(wd)
+	cmd := m.commandsTab.activateCommand(&m.shell, wd)
 	if !attached {
 		t.Error("activateCommand dispatched a second run instead of attaching, attached=false")
 	}
@@ -250,7 +251,7 @@ func TestAttachKeyRunsOpsAttachForLauncherRow(t *testing.T) {
 		Actions: map[string]manifest.Action{"attach-key-launcher": {"kind": "shell"}},
 	})
 	m.active = tabWork
-	rows := m.workRows()
+	rows := m.commandsTab.rows(&m.shell)
 	idx := -1
 	for i, r := range rows {
 		if r.work != nil && r.work.live != nil && r.work.live.ID == live.ID {
@@ -260,10 +261,11 @@ func TestAttachKeyRunsOpsAttachForLauncherRow(t *testing.T) {
 	if idx < 0 {
 		t.Fatalf("no row found for the fixture entry %q in %v", live.ID, rows)
 	}
-	m.cursor[tabWork] = idx
+	m.commandsTab.cursor = idx
 
-	if _, cmd := m.attachCurrentWork(); cmd != nil {
-		t.Errorf("attachCurrentWork returned a non-nil Cmd for a launcher row, want nil (attach is synchronous)")
+	m.focus = focusBody
+	if _, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")}); cmd != nil {
+		t.Errorf("`a` returned a non-nil Cmd for a launcher row, want nil (attach is synchronous)")
 	}
 	if !attached {
 		t.Error("`a` on a Via-set row did not invoke Ops.Attach, attached=false")
@@ -404,7 +406,7 @@ func TestEnterOnPendingRowDoesNotDispatchAgain(t *testing.T) {
 	// the deferred restore of startHostedRun runs, so there is no race
 	// between this goroutine reading the package var and the defer above
 	// rewriting it.
-	m1, cmd1 := m.activateCommand(wd)
+	cmd1 := m.commandsTab.activateCommand(&m.shell, wd)
 	if cmd1 == nil {
 		t.Fatal("first enter on an idle command returned a nil Cmd")
 	}
@@ -426,16 +428,16 @@ func TestEnterOnPendingRowDoesNotDispatchAgain(t *testing.T) {
 
 	// Second enter, on the SAME row data reflecting the now-pending state —
 	// this is what commandRowItem would hand back on the next frame.
-	mm := m1.(Model)
-	wd2 := &workRowData{cmdName: "build", pending: mm.pendingDispatch["build"]}
+	mm := m
+	wd2 := &workRowData{cmdName: "build", pending: mm.commandsTab.pendingDispatch["build"]}
 	if !wd2.pending {
 		t.Fatal("pendingDispatch[\"build\"] is false after the first enter — startDispatch never marked it")
 	}
-	_, cmd2 := mm.activateCommand(wd2)
+	cmd2 := mm.commandsTab.activateCommand(&mm.shell, wd2)
 	if cmd2 != nil {
 		t.Error("enter on a pending row returned a non-nil dispatch Cmd, want nil — it must queue an attach, not dispatch again")
 	}
-	if !mm.pendingAttach["build"] {
+	if !mm.commandsTab.pendingAttach["build"] {
 		t.Error("enter on a pending row did not record a queued attach in pendingAttach")
 	}
 
@@ -455,16 +457,16 @@ func TestEnterOnPendingRowDoesNotDispatchAgain(t *testing.T) {
 // row would render "starting" forever.
 func TestFailedDispatchClearsPendingState(t *testing.T) {
 	m := workTestModel(&manifest.Manifest{})
-	m.pendingDispatch["build"] = true
-	m.pendingAttach["build"] = true
+	m.commandsTab.pendingDispatch["build"] = true
+	m.commandsTab.pendingAttach["build"] = true
 
 	updated, cmd := m.Update(workDispatchStartedMsg{name: "build", err: errors.New("spawn failed")})
 	um := updated.(Model)
 
-	if um.pendingDispatch["build"] {
+	if um.commandsTab.pendingDispatch["build"] {
 		t.Error("pendingDispatch[\"build\"] still true after a failed dispatch — the row would render \"starting\" forever")
 	}
-	if um.pendingAttach["build"] {
+	if um.commandsTab.pendingAttach["build"] {
 		t.Error("pendingAttach[\"build\"] still true after a failed dispatch — a queued attach against an entry that will never exist")
 	}
 	if !strings.Contains(um.status, "build") || !strings.Contains(um.status, "spawn failed") {
@@ -475,17 +477,17 @@ func TestFailedDispatchClearsPendingState(t *testing.T) {
 	}
 }
 
-// TestAttachEntryNilOpsIsANoOp proves attachEntry degrades to a silent
+// TestAttachEntryNilOpsIsANoOp proves shell.attach degrades to a silent
 // no-op — not a panic — for a nil entry or one whose producer never wired
 // an Attach op, matching every other action here that requires a live row
-// to act on (work.go's own doc comment on attachEntry).
+// to act on (shell.go's own doc comment on attach).
 func TestAttachEntryNilOpsIsANoOp(t *testing.T) {
 	m := workTestModel(&manifest.Manifest{})
-	if _, cmd := m.attachEntry(nil); cmd != nil {
-		t.Errorf("attachEntry(nil) returned a non-nil Cmd, want nil")
+	if cmd := m.attach(nil); cmd != nil {
+		t.Errorf("attach(nil) returned a non-nil Cmd, want nil")
 	}
 	noAttach := &livework.Entry{ID: "x", Name: "x"}
-	if _, cmd := m.attachEntry(noAttach); cmd != nil {
+	if cmd := m.attach(noAttach); cmd != nil {
 		t.Errorf("attachEntry with nil Ops.Attach returned a non-nil Cmd, want nil")
 	}
 }

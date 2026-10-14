@@ -46,7 +46,7 @@ func isTargetRow(cmdName, key string) func(rowItem) bool {
 func TestRightOnRowWithTargetsSwitchesTab(t *testing.T) {
 	m := multiTargetModel(t)
 	m.active = tabWork
-	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("dev"))
+	m.commandsTab.cursor = rowIndex(t, m, isCmdRow("dev"))
 
 	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRight})
 	nm := next.(Model)
@@ -59,7 +59,7 @@ func TestRightOnRowWithTargetsSwitchesTab(t *testing.T) {
 func TestLeftOnRowWithTargetsSwitchesTab(t *testing.T) {
 	m := multiTargetModel(t)
 	m.active = tabWork
-	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("dev"))
+	m.commandsTab.cursor = rowIndex(t, m, isCmdRow("dev"))
 
 	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyLeft})
 	nm := next.(Model)
@@ -73,7 +73,7 @@ func TestLeftOnRowWithTargetsSwitchesTab(t *testing.T) {
 func TestEscOnTargetRowIsANoOp(t *testing.T) {
 	m := multiTargetModel(t)
 	m.active = tabWork
-	m.cursor[tabWork] = rowIndex(t, m, isTargetRow("dev", "mac"))
+	m.commandsTab.cursor = rowIndex(t, m, isTargetRow("dev", "mac"))
 
 	next, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	if cmd != nil {
@@ -89,7 +89,7 @@ func TestEscOnTargetRowIsANoOp(t *testing.T) {
 func TestEscOnParentRowIsANoOp(t *testing.T) {
 	m := multiTargetModel(t)
 	m.active = tabWork
-	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("dev"))
+	m.commandsTab.cursor = rowIndex(t, m, isCmdRow("dev"))
 
 	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	nm := next.(Model)
@@ -103,7 +103,7 @@ func TestEscOnParentRowIsANoOp(t *testing.T) {
 func TestRightOnRowWithNoTargetsSwitchesTab(t *testing.T) {
 	m := multiTargetModel(t)
 	m.active = tabWork
-	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("test"))
+	m.commandsTab.cursor = rowIndex(t, m, isCmdRow("test"))
 
 	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRight})
 	nm := next.(Model)
@@ -116,7 +116,7 @@ func TestRightOnRowWithNoTargetsSwitchesTab(t *testing.T) {
 func TestLeftOnRowWithNoTargetsSwitchesTab(t *testing.T) {
 	m := multiTargetModel(t)
 	m.active = tabWork
-	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("test"))
+	m.commandsTab.cursor = rowIndex(t, m, isCmdRow("test"))
 
 	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyLeft})
 	nm := next.(Model)
@@ -130,7 +130,7 @@ func TestLeftOnRowWithNoTargetsSwitchesTab(t *testing.T) {
 func TestEscOnRowWithNoTargetsIsANoOp(t *testing.T) {
 	m := multiTargetModel(t)
 	m.active = tabWork
-	m.cursor[tabWork] = rowIndex(t, m, isCmdRow("test"))
+	m.commandsTab.cursor = rowIndex(t, m, isCmdRow("test"))
 
 	next, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	if cmd != nil {
@@ -147,7 +147,7 @@ func TestEscOnRowWithNoTargetsIsANoOp(t *testing.T) {
 func TestHAndLStaySwitchingTabOnTargetRow(t *testing.T) {
 	m := multiTargetModel(t)
 	m.active = tabWork
-	m.cursor[tabWork] = rowIndex(t, m, isTargetRow("dev", "mac"))
+	m.commandsTab.cursor = rowIndex(t, m, isTargetRow("dev", "mac"))
 
 	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	nm := next.(Model)
@@ -157,7 +157,7 @@ func TestHAndLStaySwitchingTabOnTargetRow(t *testing.T) {
 
 	m2 := multiTargetModel(t)
 	m2.active = tabWork
-	m2.cursor[tabWork] = rowIndex(t, m2, isTargetRow("dev", "mac"))
+	m2.commandsTab.cursor = rowIndex(t, m2, isTargetRow("dev", "mac"))
 	next2, _ := m2.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	nm2 := next2.(Model)
 	if nm2.active == tabWork {

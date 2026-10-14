@@ -34,7 +34,7 @@ func TestConcurrentActivityReadsDoNotRace(t *testing.T) {
 	workerRow := rowItem{kind: rowWorker, work: &workRowData{worker: e}}
 	liveCommandRow := rowItem{kind: rowCommand, work: &workRowData{cmdName: "cmd", live: e}}
 	targetWD := &workRowData{live: e, targetKey: "target", targetLast: true}
-	m := Model{termAttached: true, termEntryID: e.ID}
+	m := Model{shell: shell{termAttached: true, termEntryID: e.ID}}
 	m.mountTabs(viewstate.State{})
 
 	const iterations = 20000

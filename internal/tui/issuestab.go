@@ -55,4 +55,4 @@ func (t *issuesTab) loaded() bool { return t.sync.loaded() }
 // freshness is the age of the issues section the last sync stamped.
 func (t *issuesTab) freshness() seg { return cachedAgeSeg(t.sync.issuesFetchedAt()) }
 
-func (t *issuesTab) update(tea.Msg) tea.Cmd { return nil }
+func (t *issuesTab) update(*shell, tea.Msg) tea.Cmd { return nil }

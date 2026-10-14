@@ -55,9 +55,9 @@ type workRowData struct {
 	// pending is true while this command's dispatch tea.Cmd is in flight but
 	// has not yet returned a workDispatchStartedMsg — the window between the
 	// keypress and the point a livework.Entry (or a dispatch error) exists.
-	// Mirrors Model.pendingDispatch[cmdName]; kept as its own field (rather
+	// Mirrors commandsTab.pendingDispatch[cmdName]; kept as its own field (rather
 	// than read live from the Model during render) for the same reason live
-	// is: workRows() rebuilds every rowItem from scratch each frame, so the
+	// is: rows() rebuilds every rowItem from scratch each frame, so the
 	// value is resolved once at build time and read by both the child-row
 	// builder (targetRows) and the renderer.
 	pending bool
@@ -69,7 +69,7 @@ type workRowData struct {
 	// in flight per command name, whichever target it was for), so
 	// commandRowItem's plain rowCommand row — which has no sibling targets
 	// to distinguish from — never needs this field and leaves it false; only
-	// targetRows sets it, from Model.pendingTarget[cmdName] matching this
+	// targetRows sets it, from commandsTab.pendingTarget[cmdName] matching this
 	// row's own targetKey.
 	pendingHere bool
 	// targets is a kind="multi-target" sole step's target list, in the
@@ -254,11 +254,11 @@ func actionKind(a manifest.Action) string {
 // soleAction returns c's one action, when it has exactly one step — the
 // shape both the "single-step command's own kind" and "is this a workflow"
 // checks need.
-func (m Model) soleAction(c manifest.Command) (manifest.Action, bool) {
-	if len(c.Steps) != 1 {
+func soleAction(mf *manifest.Manifest, c manifest.Command) (manifest.Action, bool) {
+	if mf == nil || len(c.Steps) != 1 {
 		return manifest.Action{}, false
 	}
-	a, ok := m.manifest.Actions[c.Steps[0]]
+	a, ok := mf.Actions[c.Steps[0]]
 	return a, ok
 }
 
@@ -270,11 +270,11 @@ func (m Model) soleAction(c manifest.Command) (manifest.Action, bool) {
 // undeclared action is skipped, matching commandSteps' own "?" handling. A
 // step whose action is a single-target multi-target resolves that one
 // target's inherited list, same as soleAction's single-step path.
-func (m Model) multiStepURLs(c manifest.Command) []frame.URLEntry {
+func multiStepURLs(mf *manifest.Manifest, c manifest.Command) []frame.URLEntry {
 	var out []frame.URLEntry
 	seen := map[string]bool{}
 	for _, s := range c.Steps {
-		a, ok := m.manifest.Actions[s]
+		a, ok := mf.Actions[s]
 		if !ok {
 			continue
 		}
@@ -284,7 +284,7 @@ func (m Model) multiStepURLs(c manifest.Command) []frame.URLEntry {
 				target = keys[0]
 			}
 		}
-		u, err := kinds.FrameURLs(a, target, m.manifest)
+		u, err := kinds.FrameURLs(a, target, mf)
 		if err != nil {
 			continue
 		}
@@ -304,12 +304,12 @@ func (m Model) multiStepURLs(c manifest.Command) []frame.URLEntry {
 // "sequence", "build" with one shows "shell"). "?" marks a step
 // naming an undeclared action, which a broken manifest can produce and
 // which check (not this tab) is the place to reject.
-func (m Model) commandKind(c manifest.Command) string {
+func commandKind(mf *manifest.Manifest, c manifest.Command) string {
 	switch len(c.Steps) {
 	case 0:
 		return "?"
 	case 1:
-		if a, ok := m.soleAction(c); ok {
+		if a, ok := soleAction(mf, c); ok {
 			return actionKind(a)
 		}
 		return "?"
@@ -321,18 +321,14 @@ func (m Model) commandKind(c manifest.Command) string {
 // commandSteps builds the detail pane's per-step listing: each step's
 // position, its declared (or defaulted) kind, and which archetype (or
 // "(manifest)") contributed the action it names.
-func (m Model) commandSteps(c manifest.Command) []workStepInfo {
+func (t *commandsTab) commandSteps(c manifest.Command) []workStepInfo {
 	out := make([]workStepInfo, 0, len(c.Steps))
 	for i, s := range c.Steps {
 		kind := "?"
-		if a, ok := m.manifest.Actions[s]; ok {
+		if a, ok := t.cfg.manifest().Actions[s]; ok {
 			kind = actionKind(a)
 		}
-		arch := m.actionOrigin[s]
-		if arch == "" {
-			arch = "(manifest)"
-		}
-		out = append(out, workStepInfo{idx: i + 1, name: s, kind: kind, archetype: arch})
+		out = append(out, workStepInfo{idx: i + 1, name: s, kind: kind, archetype: t.cfg.actionOrigin(s)})
 	}
 	return out
 }
@@ -402,7 +398,7 @@ func commandLogPath(repoRoot string, m *manifest.Manifest, name string, c manife
 }
 
 // workCmdRow pairs a declared command's name with its parsed body — what
-// declaredCommands orders and workRows renders.
+// declaredCommands orders and commandsTab.rows renders.
 type workCmdRow struct {
 	name string
 	cmd  manifest.Command
@@ -418,15 +414,15 @@ type workCmdRow struct {
 // is "row" never appears here at all — WorkflowTarget.
 // AppearsInCommandList (internal/kinds/workflow.go) is the single source of
 // truth for that rule, applied by workTabInclude below.
-func (m Model) declaredCommands() []workCmdRow {
-	return m.collectCommands(m.workTabInclude)
+func declaredCommands(mf *manifest.Manifest) []workCmdRow {
+	return collectCommands(mf, func(c manifest.Command) bool { return workTabInclude(mf, c) })
 }
 
 // workTabInclude is declaredCommands' filter: every command except a
 // row-sourced kind="workflow" one, which never appears in the Work
 // tab's command list — see AppearsInCommandList's own doc comment for why.
-func (m Model) workTabInclude(c manifest.Command) bool {
-	if a, ok := m.soleAction(c); ok && actionKind(a) == "workflow" {
+func workTabInclude(mf *manifest.Manifest, c manifest.Command) bool {
+	if a, ok := soleAction(mf, c); ok && actionKind(a) == "workflow" {
 		if target, err := kinds.ParseWorkflowOver(c.Steps[0], a); err == nil && !target.AppearsInCommandList() {
 			return false
 		}
@@ -437,8 +433,8 @@ func (m Model) workTabInclude(c manifest.Command) bool {
 // isRowWorkflow reports whether c is a kind="workflow" action whose `over`
 // is "row" — the one predicate rowKeyDispatch needs beyond what
 // soleAction/actionKind/ParseWorkflowOver already give declaredCommands.
-func (m Model) isRowWorkflow(c manifest.Command) bool {
-	a, ok := m.soleAction(c)
+func isRowWorkflow(mf *manifest.Manifest, c manifest.Command) bool {
+	a, ok := soleAction(mf, c)
 	if !ok || actionKind(a) != "workflow" {
 		return false
 	}
@@ -451,21 +447,15 @@ func (m Model) isRowWorkflow(c manifest.Command) bool {
 // each one to include so the two lists above can share every rule except
 // which side of AppearsInCommandList they want: hide_commands, dedup against
 // Custom/Overrides, and the manifest-order-vs-grouped-fallback ordering.
-func (m Model) collectCommands(include func(manifest.Command) bool) []workCmdRow {
-	if !m.manifestOK {
+func collectCommands(mf *manifest.Manifest, include func(manifest.Command) bool) []workCmdRow {
+	if mf == nil {
 		return nil
 	}
 	hidden := map[string]bool{}
-	for _, h := range m.manifest.HideCommands {
+	for _, h := range mf.HideCommands {
 		hidden[h] = true
 	}
-	lookup := func(name string) (manifest.Command, bool) {
-		if c, ok := m.manifest.Custom[name]; ok {
-			return c, true
-		}
-		c, ok := m.manifest.Overrides[name]
-		return c, ok
-	}
+	lookup := func(name string) (manifest.Command, bool) { return commandNamed(mf, name) }
 	seen := map[string]bool{}
 	var out []workCmdRow
 	add := func(name string, c manifest.Command) {
@@ -476,8 +466,8 @@ func (m Model) collectCommands(include func(manifest.Command) bool) []workCmdRow
 		out = append(out, workCmdRow{name: name, cmd: c})
 	}
 
-	if len(m.manifest.Order) > 0 {
-		for _, name := range m.manifest.Order {
+	if len(mf.Order) > 0 {
+		for _, name := range mf.Order {
 			if name == manifest.Spacer {
 				continue
 			}
@@ -485,7 +475,7 @@ func (m Model) collectCommands(include func(manifest.Command) bool) []workCmdRow
 				add(name, c)
 			}
 		}
-		rest := unseenCommandNames(m.manifest, seen)
+		rest := unseenCommandNames(mf, seen)
 		sort.Strings(rest)
 		for _, name := range rest {
 			if c, ok := lookup(name); ok {
@@ -500,11 +490,11 @@ func (m Model) collectCommands(include func(manifest.Command) bool) []workCmdRow
 		cmd  manifest.Command
 	}
 	var items []item
-	for name, c := range m.manifest.Custom {
+	for name, c := range mf.Custom {
 		items = append(items, item{name, c})
 	}
-	for name, c := range m.manifest.Overrides {
-		if _, exists := m.manifest.Custom[name]; !exists {
+	for name, c := range mf.Overrides {
+		if _, exists := mf.Custom[name]; !exists {
 			items = append(items, item{name, c})
 		}
 	}
@@ -591,30 +581,19 @@ func liveWorkers() []*livework.Entry {
 	return out
 }
 
-// cmdOriginOf is a command's displayed archetype, falling back to
-// "(manifest)" for a command computeOrigins somehow never saw (defensive;
-// every declared command comes from Custom, Overrides, or an archetype's
-// own, all of which computeOrigins covers).
-func (m Model) cmdOriginOf(name string) string {
-	if o, ok := m.cmdOrigin[name]; ok {
-		return o
-	}
-	return "(manifest)"
-}
-
 // commandInvocationCount is how many resolved invocations cr resolves to: the
 // same count commandRowItem uses to decide whether a multi-target action gets
 // a target group (len(keys) > 1) rather than a plain single dispatch row — 1
 // for a flat command or a single-target multi-target, len(keys) for a
 // multi-target action with more than one target. It reads only cr's action,
-// never a rendered row, so both workRows' "Commands  N" header and
-// workRowCount can total invocations without depending on whether collapse
+// never a rendered row, so both rows' "Commands  N" header and
+// count can total invocations without depending on whether collapse
 // mode currently hides any target rows. commandRowItem calls this too, so the
 // two can never disagree about which multi-target actions get a group. A
 // query workflow counts one invocation per tracker item its query matches
 // (workflowMatches), zero when it matches none.
-func (m Model) commandInvocationCount(cr workCmdRow) int {
-	a, ok := m.soleAction(cr.cmd)
+func (t *commandsTab) commandInvocationCount(cr workCmdRow) int {
+	a, ok := soleAction(t.cfg.manifest(), cr.cmd)
 	if !ok {
 		return 1
 	}
@@ -625,7 +604,7 @@ func (m Model) commandInvocationCount(cr workCmdRow) int {
 		}
 	case "workflow":
 		if target, err := kinds.ParseWorkflowOver(cr.cmd.Steps[0], a); err == nil {
-			ids, _ := m.workflowMatches(cr.name, target, a)
+			ids, _ := t.workflowMatches(cr.name, target, a)
 			return len(ids)
 		}
 	}
@@ -635,17 +614,18 @@ func (m Model) commandInvocationCount(cr workCmdRow) int {
 // commandRowItem builds one Work-tab row for a declared command, resolving
 // its live status (if any), its workflow target (if it is one), and its
 // best-effort last-run/log.
-func (m Model) commandRowItem(cr workCmdRow, byID map[string]*livework.Entry) rowItem {
+func (t *commandsTab) commandRowItem(s *shell, cr workCmdRow, byID map[string]*livework.Entry) rowItem {
+	mf := t.cfg.manifest()
 	wd := &workRowData{
 		cmdName:      cr.name,
 		cmdDesc:      cr.cmd.Desc,
-		cmdKind:      m.commandKind(cr.cmd),
-		cmdArchetype: m.cmdOriginOf(cr.name),
-		steps:        m.commandSteps(cr.cmd),
+		cmdKind:      commandKind(mf, cr.cmd),
+		cmdArchetype: t.cfg.cmdOrigin(cr.name),
+		steps:        t.commandSteps(cr.cmd),
 		live:         liveEntryFor(cr.name, byID),
-		pending:      m.pendingDispatch[cr.name],
+		pending:      t.pendingDispatch[cr.name],
 	}
-	if a, ok := m.soleAction(cr.cmd); ok {
+	if a, ok := soleAction(mf, cr.cmd); ok {
 		kind := actionKind(a)
 		var keys []string
 		if kind == "multi-target" {
@@ -656,7 +636,7 @@ func (m Model) commandRowItem(cr workCmdRow, byID map[string]*livework.Entry) ro
 			if target, err := kinds.ParseWorkflowOver(cr.cmd.Steps[0], a); err == nil {
 				wd.workflow = &target
 				wd.workflowAction = a
-				ids, note := m.workflowMatches(cr.name, target, a)
+				ids, note := t.workflowMatches(cr.name, target, a)
 				wd.workflowNote = note
 				wd.targets = ids
 				wd.targetDescs = map[string]string{}
@@ -675,13 +655,13 @@ func (m Model) commandRowItem(cr workCmdRow, byID map[string]*livework.Entry) ro
 			// rather than a group with a target list under it.
 			// commandInvocationCount makes exactly this same call so the two
 			// can never disagree about which actions get a target group.
-			if m.commandInvocationCount(cr) > 1 {
+			if t.commandInvocationCount(cr) > 1 {
 				wd.targets = keys
 				wd.targetDescs = map[string]string{}
 				wd.targetURLs = map[string][]frame.URLEntry{}
 				for _, k := range keys {
-					wd.targetDescs[k] = kinds.TargetDescription(m.manifest, a, k)
-					if u, err := kinds.FrameURLs(a, k, m.manifest); err == nil {
+					wd.targetDescs[k] = kinds.TargetDescription(mf, a, k)
+					if u, err := kinds.FrameURLs(a, k, mf); err == nil {
 						wd.targetURLs[k] = u
 					}
 				}
@@ -697,12 +677,12 @@ func (m Model) commandRowItem(cr workCmdRow, byID map[string]*livework.Entry) ro
 			if kind == "multi-target" && len(keys) == 1 {
 				target = keys[0]
 			}
-			if u, err := kinds.FrameURLs(a, target, m.manifest); err == nil {
+			if u, err := kinds.FrameURLs(a, target, mf); err == nil {
 				wd.urls = u
 			}
 		}
 	} else {
-		wd.urls = m.multiStepURLs(cr.cmd)
+		wd.urls = multiStepURLs(mf, cr.cmd)
 	}
 	var livePath string
 	if wd.live != nil {
@@ -711,7 +691,7 @@ func (m Model) commandRowItem(cr workCmdRow, byID map[string]*livework.Entry) ro
 	if livePath != "" {
 		wd.logPath = livePath
 	} else {
-		wd.logPath = commandLogPath(m.manifestDir(), m.manifest, cr.name, cr.cmd)
+		wd.logPath = commandLogPath(s.manifestDir(), mf, cr.name, cr.cmd)
 	}
 	// A multi-target parent with more than one target is a group: it holds
 	// targets and runs nothing itself, so the cursor must never land on it
@@ -728,28 +708,28 @@ func (m Model) commandRowItem(cr workCmdRow, byID map[string]*livework.Entry) ro
 // polls (kinds.MatchQuery), so drawing the list never reads the tracker
 // itself. With no ids, note says why: the tracker has not answered yet, the
 // query matched nothing, or the query cannot resolve.
-func (m Model) workflowMatches(name string, target kinds.WorkflowTarget, action manifest.Action) (ids []string, note string) {
-	tracker, err := target.ResolveTracker(name, m.trackers())
+func (t *commandsTab) workflowMatches(name string, target kinds.WorkflowTarget, action manifest.Action) (ids []string, note string) {
+	tracker, err := target.ResolveTracker(name, t.cfg.trackers())
 	if err != nil {
 		return nil, err.Error()
 	}
 	switch tracker {
 	case "", "beads":
-		if len(m.feeds.beads.beads) == 0 && m.feeds.beads.err != "" {
-			return nil, m.feeds.beads.err
+		if len(t.beads.list()) == 0 && t.beads.err() != "" {
+			return nil, t.beads.err()
 		}
-		if !m.feeds.beads.have {
+		if !t.beads.loaded() {
 			return nil, "loading beads…"
 		}
 	case "github":
-		if m.remote.IssuesFetchedAt.IsZero() {
-			if m.remote.IssuesFetchError != "" {
-				return nil, m.remote.IssuesFetchError
+		if t.sync.issuesFetchedAt().IsZero() {
+			if e := t.sync.issuesFetchError(); e != "" {
+				return nil, e
 			}
 			return nil, "loading issues…"
 		}
 	}
-	matched, err := kinds.MatchQuery(action, tracker, target.Query, m.feeds.beads.beads, m.remote.Issues)
+	matched, err := kinds.MatchQuery(action, tracker, target.Query, t.beads.list(), t.sync.issues())
 	if err != nil {
 		return nil, err.Error()
 	}
@@ -765,13 +745,13 @@ func (m Model) workflowMatches(name string, target kinds.WorkflowTarget, action 
 // targetRows is a command's target group: one rowCommandTarget per target of
 // parent, or nothing at all when parent has no targets. It always builds the
 // full set for parent — whether that set actually reaches the row list is
-// workRows' call, gated on m.workCollapsed and m.workOpenCmd (`c` toggles
+// rows' call, gated on t.collapsed and t.openCmd (`c` toggles
 // between the two; see moveCursorWork for how the open command tracks the
 // cursor). Target rows sit directly under their parent in the same flat row
 // list, so every cursor, filter, window and hit-test rule already written
 // for the Work tab applies to them with no special case.
 //
-// byID is the same registry-id -> entry map workRows() built for the
+// byID is the same registry-id -> entry map rows() built for the
 // parent rows: once a target is actually dispatched, its entry is keyed on
 // "<command>:<targetKey>" (internal/kinds.TargetLiveKey, as written by
 // internal/kinds.multiTargetLiveID), so each target row resolves its OWN
@@ -833,17 +813,16 @@ func targetRows(parent rowItem, byID map[string]*livework.Entry, pendingTargetKe
 	return out
 }
 
-// workRows builds the Work tab's one combined list: every declared command
-// first, then any live-work entry that IS a genuine agent worker — the
-// ticket's own "commands first, then any worker with no command behind it."
-// A process-kind entry (a LongRunning command actually running) never gets
-// a row of its own; it folds into its command's row via commandRowItem's
-// live lookup instead.
-func (m Model) workRows() []rowItem {
-	if !m.manifestOK {
+// rows builds the Commands tab's list: every declared command, each
+// multi-target or query-workflow command followed by its target rows. A
+// process-kind entry (a LongRunning command actually running) never gets a row
+// of its own; it folds into its command's row via commandRowItem's live lookup
+// instead, and a genuine agent worker lives on the Workers tab.
+func (t *commandsTab) rows(s *shell) []rowItem {
+	if !t.cfg.ok() {
 		return nil
 	}
-	cmdRows := m.declaredCommands()
+	cmdRows := declaredCommands(t.cfg.manifest())
 	byID := liveCommandEntries()
 
 	var cmdList []rowItem
@@ -864,22 +843,22 @@ func (m Model) workRows() []rowItem {
 			}
 			lastGroup = cr.cmd.Group
 			haveLast = true
-			item := m.commandRowItem(cr, byID)
+			item := t.commandRowItem(s, cr, byID)
 			// showTargets is the collapse gate (admin-4zz9): expanded mode
-			// (m.workCollapsed false, the default and the launch state) shows
+			// (t.collapsed false, the default and the launch state) shows
 			// every command's targets exactly as before this existed;
 			// collapsed mode shows them only for the one command currently
-			// "open" (m.workOpenCmd), which moveCursorWork keeps pointed at
+			// "open" (t.openCmd), which moveCursorWork keeps pointed at
 			// whichever command the cursor is inside. A group it hides is
 			// marked closed so its row says so.
-			showTargets := !m.workCollapsed || cr.name == m.workOpenCmd
+			showTargets := !t.collapsed || cr.name == t.openCmd
 			item.work.closed = item.group && !showTargets
 			cmdList = append(cmdList, item)
 			// No trailing ruleRow() between one group's targets and the next
 			// command: the reference frames show consecutive groups adjoining
 			// with no rule between them (commands.txt:13 -> :14).
 			if showTargets {
-				if targets := targetRows(item, byID, m.pendingTarget[cr.name]); len(targets) > 0 {
+				if targets := targetRows(item, byID, t.pendingTarget[cr.name]); len(targets) > 0 {
 					cmdList = append(cmdList, targets...)
 				}
 			}
@@ -892,7 +871,7 @@ func (m Model) workRows() []rowItem {
 	// or not collapse mode hid any target rows out of cmdList (admin-4zz9).
 	invocations := 0
 	for _, cr := range cmdRows {
-		invocations += m.commandInvocationCount(cr)
+		invocations += t.commandInvocationCount(cr)
 	}
 
 	var rows []rowItem
@@ -908,8 +887,8 @@ func (m Model) workRows() []rowItem {
 // dispatch the manifest does not declare.
 func (m Model) workersEmptyHint() string {
 	var sources []string
-	for _, cr := range m.declaredCommands() {
-		a, ok := m.soleAction(cr.cmd)
+	for _, cr := range declaredCommands(m.manifest) {
+		a, ok := soleAction(m.manifest, cr.cmd)
 		if !ok || actionKind(a) != "workflow" {
 			continue
 		}
@@ -928,7 +907,7 @@ func (m Model) workersEmptyHint() string {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			if c, found := m.commandNamed(m.rowKeys[kind][k]); found && m.isRowWorkflow(c) {
+			if c, found := commandNamed(m.manifest, m.rowKeys[kind][k]); found && isRowWorkflow(m.manifest, c) {
 				sources = append(sources, keyGlyph(k)+" on "+noun+" ("+tabDisplay(t)+")")
 			}
 		}
@@ -973,13 +952,6 @@ func keyGlyph(k string) string {
 	return k
 }
 
-// onWorkSurface reports whether the active tab is Commands or Workers — the two
-// tabs that share the live band, attach (`a`, enter), kill (`x`) and the
-// pane-tail poll.
-func (m Model) onWorkSurface() bool {
-	return m.active == tabWork || m.active == tabWorkers
-}
-
 // ownerCmdName is the command a row belongs to, for collapse purposes: a
 // command row's own name, or a target row's parent's name. Empty for
 // anything else (a worker row, a header, a rule) — those rows carry no
@@ -998,7 +970,7 @@ func ownerCmdName(r rowItem) string {
 // sameRowIdentity reports whether a and b are the same logical row — not the
 // same rowItem value, since collapsing/expanding rebuilds every row from
 // scratch, but the same command, the same command's same target, or the
-// same worker entry. toggleWorkCollapse uses this to relocate the cursor
+// same worker entry. toggleCollapse uses this to relocate the cursor
 // after a rebuild changes how many rows come before it.
 func sameRowIdentity(a, b rowItem) bool {
 	if a.kind != b.kind || a.work == nil || b.work == nil {
@@ -1029,42 +1001,42 @@ func indexOfCommandRow(rows []rowItem, name string) int {
 	return -1
 }
 
-// toggleWorkCollapse flips the Work tab's display mode (key `c`): expanded
+// toggleCollapse flips the Commands tab's display mode (key `c`): expanded
 // (every command's targets render — this dashboard's original behavior)
 // versus collapsed (only the command the cursor is inside shows its targets
-// — see workRows' showTargets gate and moveCursorWork). before is read with
+// — see rows' showTargets gate and moveCursorWork). before is read with
 // the OLD mode still in effect (the expanded list always has every row, so
 // ownerCmdName always resolves correctly there) — reading it after flipping
-// the bool would ask m.currentRow() to rebuild against a workOpenCmd that
-// hasn't been set yet, hiding the very command the cursor is sitting on.
-// Once the mode (and, when turning collapse on, workOpenCmd) is set, the
+// the bool would rebuild the rows against an openCmd that hasn't been set
+// yet, hiding the very command the cursor is sitting on.
+// Once the mode (and, when turning collapse on, openCmd) is set, the
 // cursor is relocated onto that same row's identity in the freshly built
 // list, since collapsing removes rows that may sit ahead of it. The new mode
 // is persisted to view.toml's work.collapsed (admin-y5lc.1) — a write
 // failure is reported on the status line but never undoes the in-memory
 // flip.
-func (m *Model) toggleWorkCollapse() {
-	before, ok := m.currentRow()
-	m.workCollapsed = !m.workCollapsed
-	if m.workCollapsed && ok {
-		m.workOpenCmd = ownerCmdName(before)
+func (t *commandsTab) toggleCollapse(s *shell) {
+	before, ok := t.currentRow(s)
+	t.collapsed = !t.collapsed
+	if t.collapsed && ok {
+		t.openCmd = ownerCmdName(before)
 	}
-	if err := viewstate.SaveWorkCollapsed(m.manifestDir(), m.workCollapsed); err != nil {
-		m.setStatus("view.toml: "+err.Error(), cRed)
+	if err := viewstate.SaveWorkCollapsed(s.manifestDir(), t.collapsed); err != nil {
+		s.setStatus("view.toml: "+err.Error(), cRed)
 	}
 	if !ok {
 		return
 	}
-	for i, r := range m.visibleRows() {
+	for i, r := range t.visibleRows(s) {
 		if sameRowIdentity(r, before) {
-			*m.cur(m.active) = i
+			t.cursor = i
 			return
 		}
 	}
-	m.clampCursor()
+	t.clamp(s)
 }
 
-// workRowCount is the tab bar's badge count for Commands — every resolved
+// count is the tab bar's badge count for Commands — every resolved
 // invocation (a flat command, or one entry per target of a multi-target
 // command), matching how the PRs/Issues/Beads badges
 // count what exists rather than what's currently painted. It totals
@@ -1073,13 +1045,13 @@ func (m *Model) toggleWorkCollapse() {
 // expanded mode and at every cursor position — collapsing the Work tab's
 // `c` toggle only changes which target rows are drawn, never how many
 // commands or targets exist.
-func (m Model) workRowCount() int {
-	if !m.manifestOK {
+func (t *commandsTab) count() int {
+	if !t.cfg.ok() {
 		return 0
 	}
 	n := 0
-	for _, cr := range m.declaredCommands() {
-		n += m.commandInvocationCount(cr)
+	for _, cr := range declaredCommands(t.cfg.manifest()) {
+		n += t.commandInvocationCount(cr)
 	}
 	return n
 }
@@ -1148,11 +1120,11 @@ func dispatchCommandCmd(m *manifest.Manifest, width, height int, name string, en
 // activateCommand's ladder, and only the activateCommand copy ever got the
 // "already live → attach" branch (admin-3rgp.72.12 added it there and
 // nowhere else) — so ↵ on a running target row (e.g. command-test's
-// "counter") dispatched a SECOND run while workFooterPairs, which already
+// "counter") dispatched a SECOND run while the footer, which already
 // read row state independently and got it right, advertised "↵ attach". The
 // fix is not a second copy of the missing branch on the target ladder; it is
 // this one function, read by activateCommand, activateCommandTarget, the
-// rowWorker case in Model.activate (model.go), and workFooterPairs — so the
+// workersTab.activate, and workSurface.bindings — so the
 // four can no longer drift the way the two ladders just did.
 type rowAction int
 
@@ -1201,21 +1173,21 @@ func resolveRowAction(kind rowKind, wd *workRowData) rowAction {
 // land on, so this is never reached for one (admin-3rgp.72.11 removed the
 // "pick a target below" branch that used to guard that case here — its
 // targets already render below it, and enter on one of those dispatches it).
-func (m Model) activateCommand(wd *workRowData) (tea.Model, tea.Cmd) {
+func (t *commandsTab) activateCommand(s *shell, wd *workRowData) tea.Cmd {
 	if resolveRowAction(rowCommand, wd) == actionAttach {
-		return m.attachEntry(wd.live)
+		return s.attach(wd.live)
 	}
 	if wd.pending {
 		// The dispatch this row's own previous enter started hasn't
 		// registered a livework.Entry yet (or already failed and the
 		// pendingDispatch flag just hasn't been cleared by this frame) — do
 		// NOT dispatch again. Record the intent to attach once it lands;
-		// workDispatchStartedMsg's handler resolves and attaches it.
-		m.pendingAttach[wd.cmdName] = true
-		m.setStatus(wd.cmdName+" starting…", cCyan)
-		return m, nil
+		// dispatchStarted resolves and attaches it.
+		t.pendingAttach[wd.cmdName] = true
+		s.setStatus(wd.cmdName+" starting…", cCyan)
+		return nil
 	}
-	return m.startDispatch(wd.cmdName)
+	return t.startDispatch(s, wd.cmdName)
 }
 
 // startDispatch marks name pending (so its row renders "starting" and a
@@ -1224,8 +1196,8 @@ func (m Model) activateCommand(wd *workRowData) (tea.Model, tea.Cmd) {
 // tea.Cmd dispatchCommandCmd always returned. The single entry point both
 // dispatch sites route through, so pendingDispatch can never go stale by one
 // of them forgetting to set it.
-func (m Model) startDispatch(name string, args ...string) (tea.Model, tea.Cmd) {
-	m.pendingDispatch[name] = true
+func (t *commandsTab) startDispatch(s *shell, name string, args ...string) tea.Cmd {
+	t.pendingDispatch[name] = true
 	// args[0], when present, is the target key a multi-target dispatch was
 	// made with (activateCommandTarget) — recorded so targetRows can light up
 	// only the ONE target row actually being dispatched (admin-2y6p) rather
@@ -1233,19 +1205,38 @@ func (m Model) startDispatch(name string, args ...string) (tea.Model, tea.Cmd) {
 	// (not left stale) on a flat dispatch so a later target dispatch of the
 	// same command name never inherits a leftover key from a previous run.
 	if len(args) > 0 {
-		m.pendingTarget[name] = args[0]
+		t.pendingTarget[name] = args[0]
 	} else {
-		delete(m.pendingTarget, name)
+		delete(t.pendingTarget, name)
 	}
-	return m, dispatchCommandCmd(m.manifest, m.width, m.height, name, nil, args...)
+	return dispatchCommandCmd(t.cfg.manifest(), s.width, s.height, name, nil, args...)
+}
+
+// dispatchStarted ends name's "starting" window once its dispatch reports —
+// on both the error and success paths (admin-qk77): a failed spawn falls back
+// to idle, and a successful one either shows running (once the entry exists)
+// or idle again if the command already exited. An enter that arrived during
+// the window attaches now, to the entry the dispatch registered.
+func (t *commandsTab) dispatchStarted(s *shell, msg workDispatchStartedMsg) tea.Cmd {
+	delete(t.pendingDispatch, msg.name)
+	delete(t.pendingTarget, msg.name)
+	queued := t.pendingAttach[msg.name]
+	delete(t.pendingAttach, msg.name)
+	if msg.err != nil || !queued {
+		return nil
+	}
+	if e := t.liveEntryForCommand(s, msg.name); e != nil {
+		return s.attach(e)
+	}
+	return nil
 }
 
 // liveEntryForCommand resolves the livework.Entry now backing name, once its
-// dispatch has registered one — the workDispatchStartedMsg handler's queued-
-// attach path uses this rather than re-deriving the registry ID
-// (multiTargetLiveID per locale.go/hostedpty.go) itself, reusing
-// commandRowItem's/targetRows' own lookups via the same workRows() scan
-// every other row-driven action already does.
+// dispatch has registered one — dispatchStarted's queued-attach path uses
+// this rather than re-deriving the registry ID (multiTargetLiveID per
+// locale.go/hostedpty.go) itself, reusing commandRowItem's/targetRows' own
+// lookups via the same rows() scan every other row-driven action already
+// does.
 //
 // pendingDispatch/pendingAttach stay keyed by command name only, not target
 // — there is at most one in-flight dispatch per command name (the existing
@@ -1253,8 +1244,8 @@ func (m Model) startDispatch(name string, args ...string) (tea.Model, tea.Cmd) {
 // may now be recorded under a target row's qualified name rather than the
 // parent's bare one, so both rowCommand and rowCommandTarget rows are
 // scanned for a match.
-func (m Model) liveEntryForCommand(name string) *livework.Entry {
-	for _, r := range m.workRows() {
+func (t *commandsTab) liveEntryForCommand(s *shell, name string) *livework.Entry {
+	for _, r := range t.rows(s) {
 		if r.kind != rowCommand && r.kind != rowCommandTarget {
 			continue
 		}
@@ -1286,91 +1277,33 @@ func (m Model) liveEntryForCommand(name string) *livework.Entry {
 // A query workflow's target is one matched tracker item, and ↵ dispatches an
 // agent over that item alone (dispatchWorkflowTarget). Its agent registers
 // as a worker, which lives on the Workers tab, so the row never attaches.
-func (m Model) activateCommandTarget(wd *workRowData) (tea.Model, tea.Cmd) {
+func (t *commandsTab) activateCommandTarget(s *shell, wd *workRowData) tea.Cmd {
 	if wd.workflow != nil {
-		return m.dispatchWorkflowTarget(wd)
+		return dispatchWorkflowTarget(s, wd)
 	}
 	if resolveRowAction(rowCommandTarget, wd) == actionAttach {
-		return m.attachEntry(wd.live)
+		return s.attach(wd.live)
 	}
 	if wd.pending {
-		m.pendingAttach[wd.cmdName] = true
-		m.setStatus(wd.cmdName+" starting…", cCyan)
-		return m, nil
+		t.pendingAttach[wd.cmdName] = true
+		s.setStatus(wd.cmdName+" starting…", cCyan)
+		return nil
 	}
-	return m.startDispatch(wd.cmdName, wd.targetKey)
+	return t.startDispatch(s, wd.cmdName, wd.targetKey)
 }
 
 // dispatchWorkflowTarget hands one matched tracker item to
 // kinds.DispatchTargets through dispatchWorkflowCmd, the path a row-scoped
 // workflow binding takes too (rowKeyWorkflow), and reports the outcome on the
 // status line.
-func (m Model) dispatchWorkflowTarget(wd *workRowData) (tea.Model, tea.Cmd) {
+func dispatchWorkflowTarget(s *shell, wd *workRowData) tea.Cmd {
 	target := kinds.NewTarget(wd.workflowAction, wd.targetKey)
 	if err := kinds.RequireRun(wd.cmdName, target.Run); err != nil {
-		m.setStatus(err.Error(), cRed)
-		return m, nil
-	}
-	m.setStatus(fmt.Sprintf("dispatching %s over %s…", wd.cmdName, wd.targetKey), cCyan)
-	return m, dispatchWorkflowCmd(m.repoRoot, wd.cmdName, wd.workflowAction, []kinds.Target{target})
-}
-
-// attachEntry resolves e's attach through the registry — the terminal view
-// for an entry on the dashboard's own hosted pty (Via empty), the project's
-// declared [terminal] attach command for one dispatched through a launcher
-// (Via set) — see livework.Registry.Attach. A nil e is a silent no-op,
-// matching every other action here that requires a live row to act on.
-//
-// A hosted-pty entry's Attach call reaches installTerminalOpener's
-// callback synchronously (terminalview.go), which can only record the
-// requested handle — it cannot mutate this value-type Model. Draining that
-// recording right after Attach succeeds is what completes the transition
-// into the terminal view; a launcher-dispatched entry's Attach shells out
-// instead and records nothing, so takePendingTerminal reports false and
-// this falls through to the same no-op return it always had.
-func (m Model) attachEntry(e *livework.Entry) (tea.Model, tea.Cmd) {
-	if e == nil {
-		return m, nil
-	}
-	if err := livework.Default.Attach(e.ID); err != nil {
-		m.setStatus("attach failed: "+err.Error(), cRed)
-		return m, nil
-	}
-	if _, ok := takePendingTerminal(); ok {
-		return m.openTerminal(e), termTickCmd()
-	}
-	return m, nil
-}
-
-// currentLiveEntry resolves the row under the cursor to the livework.Entry
-// its a/k actions operate on: a worker row's own entry, a command row's
-// currently-running entry, or one target of a multi-target command's own
-// currently-running entry (nil for an idle command/target, or any other row
-// — a and k are then no-ops).
-//
-// rowCommandTarget was missing here entirely (admin-ptf1: a and k silently
-// did nothing with the cursor on a running target row, e.g. Command Test's
-// "counter" — the row visibly showed "running" but neither attach nor kill
-// had anything to act on) until this case was added; targetRows already
-// resolves each target's OWN entry into wd.live (keyed by
-// kinds.TargetLiveKey, not the shared parent lookup), so this reads exactly
-// the same field rowCommand does.
-func (m Model) currentLiveEntry() *livework.Entry {
-	r, ok := m.currentRow()
-	if !ok || r.work == nil {
+		s.setStatus(err.Error(), cRed)
 		return nil
 	}
-	switch r.kind {
-	case rowWorker:
-		return r.work.worker
-	case rowCommand, rowCommandTarget:
-		return r.work.live
-	}
-	return nil
-}
-
-func (m Model) attachCurrentWork() (tea.Model, tea.Cmd) {
-	return m.attachEntry(m.currentLiveEntry())
+	s.setStatus(fmt.Sprintf("dispatching %s over %s…", wd.cmdName, wd.targetKey), cCyan)
+	return dispatchWorkflowCmd(s.repoRoot, wd.cmdName, wd.workflowAction, []kinds.Target{target})
 }
 
 // entryIsLive reports whether e is still running in the sense that matters to
@@ -1388,94 +1321,6 @@ func entryIsLive(e *livework.Entry) bool {
 	default:
 		return true
 	}
-}
-
-// workFooterPairs is the Work tab's viewKeymap() branch, drawn from the Work
-// row kind's keymap.Builtins table with the cursor row's [keys.<kind>]
-// bindings merged over it (withRowKeys), and computed from the
-// SAME row-state resolution currentLiveEntry()'s callers already use — so the
-// footer can never advertise an action the key does not take (admin-3rgp.
-// 72.12's whole point: one dispatch point resolves the row's state, both the
-// key handler and the footer read it, never two parallel checks). It follows
-// the cursor row:
-//
-//   - idle command/target → "↵ dispatch", no kill.
-//   - live command/target or live worker → "↵ attach · x kill".
-//   - finished worker → "↵ transcript", no kill (nothing left to stop).
-//   - no actionable row under the cursor → the idle pairs, matching what a
-//     fresh Work tab (cursor on the first idle command) already shows —
-//     except on a Workers tab with no workers, where ↵ has nothing to act
-//     on and is not offered.
-//
-// The idle and live cases each have their own text, with one shared addition:
-// `c` (admin-4zz9) always appears, right before quit, reading "collapse"
-// while expanded and "expand" once collapsed — it names what pressing it
-// would do next, not the mode it's currently in. `a attach` and `/ filter`
-// are deliberately not advertised here even though both keys still work —
-// the frames don't show them, and the footer's job is to say only what the
-// current row can actually do.
-func (m Model) workFooterPairs() [][2]string {
-	kind, enter, kill := keymap.Command, "dispatch", false
-	if m.active == tabWorkers {
-		kind = keymap.Worker
-		if len(liveWorkers()) == 0 {
-			enter = ""
-		}
-	}
-	if r, ok := m.currentRow(); ok && r.work != nil {
-		if k, bindable := rowKindOf(r); bindable {
-			kind = k
-		}
-		switch resolveRowAction(r.kind, r.work) {
-		case actionAttach:
-			enter, kill = "attach", true
-		case actionTranscript:
-			// A stopped worker still holds its worktree; kill retires it.
-			enter, kill = "transcript", r.kind == rowWorker && entryIsLive(r.work.worker)
-		}
-	}
-	collapse := "collapse"
-	if m.workCollapsed {
-		collapse = "expand"
-	}
-
-	var shown []keymap.Binding
-	for _, b := range keymap.Builtins(kind) {
-		switch b.Key {
-		case "enter":
-			if enter == "" {
-				continue
-			}
-			b.Label = enter
-		case "a":
-			continue
-		case "x":
-			if !kill {
-				continue
-			}
-		case "c":
-			if m.active == tabWorkers {
-				continue
-			}
-			b.Label = collapse
-		}
-		shown = append(shown, b)
-	}
-	return m.withRowKeys(kind, shown)
-}
-
-func (m Model) killCurrentWork() (tea.Model, tea.Cmd) {
-	e := m.currentLiveEntry()
-	if !entryIsLive(e) || e.Ops.Kill == nil {
-		return m, nil
-	}
-	id := e.ID
-	if err := livework.Default.Kill(id); err != nil {
-		m.setStatus("kill failed: "+err.Error(), cRed)
-	} else {
-		m.setStatus("killed "+id, cDim)
-	}
-	return m, nil
 }
 
 // workTickMsg fires on a repeating timer to repaint the Work tab so a
