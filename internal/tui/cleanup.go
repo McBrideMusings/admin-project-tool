@@ -355,10 +355,16 @@ func cleanupReason(t cleanupTarget) string {
 		// over one stray scratch file and over an unfinished feature, and those are
 		// the two things the reader is actually trying to tell apart before deciding
 		// whether to go and look.
+		word := "uncommitted"
 		if t.changed > 0 {
-			return "uncommitted " + strconv.Itoa(t.changed)
+			word += " " + strconv.Itoa(t.changed)
 		}
-		return "uncommitted"
+		// The stash saves uncommitted files but not ignored ones, so a row holding
+		// both has to name the ignored ones too — they are why the delete stops.
+		if t.ignored > 0 {
+			word += " · ignored " + strconv.Itoa(t.ignored)
+		}
+		return word
 	case t.ignored > 0:
 		// Ignored files only this worktree has die with it exactly as uncommitted
 		// ones do, and nothing stashes them, so they rank beside uncommitted.
