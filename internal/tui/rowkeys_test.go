@@ -42,9 +42,7 @@ func TestRowKeyDispatchHitOnBeadRow(t *testing.T) {
 	gotEnv := stubStartHostedRun(t)
 
 	m := Model{
-		active:     tabBeads,
-		width:      120,
-		height:     40,
+		shell:      shell{active: tabBeads, width: 120, height: 40},
 		manifestOK: true,
 		manifest: &manifest.Manifest{
 			Custom: map[string]manifest.Command{"mycmd": {Steps: []string{"mycmd"}}},
@@ -93,9 +91,7 @@ func TestRowKeyDispatchHitOnBeadRow(t *testing.T) {
 // in handleKey's built-in switch.
 func TestRowKeyDispatchRefusesReservedKey(t *testing.T) {
 	m := Model{
-		active:     tabBeads,
-		width:      120,
-		height:     40,
+		shell:      shell{active: tabBeads, width: 120, height: 40},
 		manifestOK: true,
 		manifest:   &manifest.Manifest{},
 		beads:      []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}},
@@ -120,11 +116,9 @@ func TestRowKeyDispatchRefusesReservedKey(t *testing.T) {
 // commit row under the cursor, with only [keys.bead] declared, must miss.
 func TestRowKeyDispatchMissOnOtherRowKind(t *testing.T) {
 	m := Model{
-		active: tabLocal,
-		pane:   paneCommits,
-		width:  120,
-		height: 40,
-		local:  localData{commits: []git.Commit{{SHA: "abc123", Subject: "msg"}}},
+		shell: shell{active: tabLocal, width: 120, height: 40},
+		pane:  paneCommits,
+		local: localData{commits: []git.Commit{{SHA: "abc123", Subject: "msg"}}},
 		rowKeys: map[keymap.RowKind]map[string]string{
 			keymap.Bead: {"o": "mycmd"},
 		},
@@ -143,9 +137,7 @@ func TestRowKeyDispatchMissOnOtherRowKind(t *testing.T) {
 // reach the built-in switch in handleKey.
 func TestRowKeyDispatchNoKeysTableIsAlwaysAMiss(t *testing.T) {
 	m := Model{
-		active:     tabBeads,
-		width:      120,
-		height:     40,
+		shell:      shell{active: tabBeads, width: 120, height: 40},
 		manifestOK: true,
 		manifest:   &manifest.Manifest{},
 		beads:      []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}},
@@ -410,9 +402,7 @@ func TestRowKeyDispatchAttachesWhenCommandAlreadyLive(t *testing.T) {
 	}
 
 	m := Model{
-		active:     tabBeads,
-		width:      120,
-		height:     40,
+		shell:      shell{active: tabBeads, width: 120, height: 40},
 		manifestOK: true,
 		manifest: &manifest.Manifest{
 			Custom:  map[string]manifest.Command{"rowkeylive": {Steps: []string{"rowkeylive"}}},

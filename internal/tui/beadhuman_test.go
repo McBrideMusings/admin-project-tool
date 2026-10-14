@@ -77,6 +77,9 @@ func beadsModel(t *testing.T) Model {
 	m := New(ctx, t.TempDir(), "owner/repo", "main", "main")
 	m.herdr = false
 	m.manifest = &manifest.Manifest{Trackers: []string{"beads"}, HasTracker: true}
+	// New claimed the sources the empty manifest made ready; claim the beads
+	// source this manifest adds so Init starts it.
+	m.claimSources()
 	return m
 }
 

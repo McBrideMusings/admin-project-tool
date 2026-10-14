@@ -21,9 +21,7 @@ import (
 // Display glyph, only the Label changes.
 func TestKeybarShowsEffectiveBinding(t *testing.T) {
 	m := Model{
-		active:     tabBeads,
-		width:      120,
-		height:     40,
+		shell:      shell{active: tabBeads, width: 120, height: 40},
 		manifestOK: true,
 		manifest: &manifest.Manifest{
 			Custom: map[string]manifest.Command{
@@ -64,9 +62,7 @@ func TestKeybarShowsEffectiveBinding(t *testing.T) {
 // built-ins, landing before the trailing `←→ tab` keymap() appends.
 func TestKeybarAppendsUnboundKey(t *testing.T) {
 	m := Model{
-		active:     tabBeads,
-		width:      120,
-		height:     40,
+		shell:      shell{active: tabBeads, width: 120, height: 40},
 		manifestOK: true,
 		manifest: &manifest.Manifest{
 			Custom: map[string]manifest.Command{
@@ -104,9 +100,7 @@ func TestKeybarAppendsUnboundKey(t *testing.T) {
 // Desc labels the key with the command's own name.
 func TestKeybarFallsBackToCommandName(t *testing.T) {
 	m := Model{
-		active:     tabBeads,
-		width:      120,
-		height:     40,
+		shell:      shell{active: tabBeads, width: 120, height: 40},
 		manifestOK: true,
 		manifest: &manifest.Manifest{
 			Custom: map[string]manifest.Command{
@@ -132,10 +126,8 @@ func TestKeybarFallsBackToCommandName(t *testing.T) {
 // the built-in labels for the commit pane.
 func TestKeybarRestoresBuiltinsOnUnboundKind(t *testing.T) {
 	m := Model{
-		active:     tabLocal,
+		shell:      shell{active: tabLocal, width: 120, height: 40},
 		pane:       paneCommits,
-		width:      120,
-		height:     40,
 		manifestOK: true,
 		manifest:   &manifest.Manifest{},
 		local:      localData{commits: []git.Commit{{SHA: "abc123", Subject: "msg"}}},
@@ -162,9 +154,7 @@ func TestKeybarRestoresBuiltinsOnUnboundKind(t *testing.T) {
 // call, no allocation difference an observer could see.
 func TestKeybarIdenticalWithoutKeysTable(t *testing.T) {
 	m := Model{
-		active:     tabBeads,
-		width:      120,
-		height:     40,
+		shell:      shell{active: tabBeads, width: 120, height: 40},
 		manifestOK: true,
 		manifest:   &manifest.Manifest{},
 		beads:      []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}},
@@ -200,9 +190,7 @@ func TestKeybarIdenticalWithoutKeysTable(t *testing.T) {
 // stay visible across a spread of widths.
 func TestKeybarKeepsQuitAndTabWithBindings(t *testing.T) {
 	m := Model{
-		active:     tabBeads,
-		width:      120,
-		height:     40,
+		shell:      shell{active: tabBeads, width: 120, height: 40},
 		manifestOK: true,
 		manifest: &manifest.Manifest{
 			Custom: map[string]manifest.Command{

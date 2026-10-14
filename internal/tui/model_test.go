@@ -1429,8 +1429,7 @@ func TestForcedConflictedWorktreeRemovesWithoutStashing(t *testing.T) {
 func TestFailedStepKeepsGitsFullOutputForTheOverlay(t *testing.T) {
 	full := "error: could not write index\napps/devvit/src/state/locks.test.ts: needs merge"
 	m := Model{
-		deleting: true, deleteDone: true,
-		deleteResults: []deleteResult{{
+		shell: shell{deleting: true, deleteDone: true, deleteResults: []deleteResult{{
 			target: cleanupTarget{kind: cleanupWorktree, branch: "x", path: "/w/x"},
 			status: stFailed,
 			err: fmt.Errorf("stash failed: %w", &git.CmdError{
@@ -1438,7 +1437,7 @@ func TestFailedStepKeepsGitsFullOutputForTheOverlay(t *testing.T) {
 				Headline: "error: could not write index",
 				Output:   full,
 			}),
-		}},
+		}}},
 	}
 
 	// The row stays one line — a modal row has no room for more.
@@ -1478,13 +1477,11 @@ func TestFailedStepKeepsGitsFullOutputForTheOverlay(t *testing.T) {
 func TestForceRetryTakesOnlyBlockedItems(t *testing.T) {
 	blocked := cleanupTarget{kind: cleanupWorktree, branch: "blocked", path: "/w/blocked", conflicts: 1}
 	m := Model{
-		deleting:   true,
-		deleteDone: true,
-		deleteResults: []deleteResult{
+		shell: shell{deleting: true, deleteDone: true, deleteResults: []deleteResult{
 			{target: cleanupTarget{kind: cleanupWorktree, branch: "ok", path: "/w/ok"}, status: stDone},
 			{target: blocked, status: stFailed, err: &blockedError{op: "merge", conflicts: 1}},
 			{target: cleanupTarget{kind: cleanupBranch, branch: "boom"}, status: stFailed, err: errStubbed},
-		},
+		}},
 	}
 	if got := m.blockedCount(); got != 1 {
 		t.Fatalf("blockedCount = %d, want 1", got)
@@ -1513,11 +1510,10 @@ func TestForceRetryTakesOnlyBlockedItems(t *testing.T) {
 func TestDoneModalDismissesOnKeysOtherThanForce(t *testing.T) {
 	blockedModel := func() Model {
 		return Model{
-			deleting: true, deleteDone: true,
-			deleteResults: []deleteResult{{
+			shell: shell{deleting: true, deleteDone: true, deleteResults: []deleteResult{{
 				target: cleanupTarget{kind: cleanupWorktree, branch: "x", path: "/w/x", conflicts: 1},
 				status: stFailed, err: &blockedError{op: "merge", conflicts: 1},
-			}},
+			}}},
 		}
 	}
 	m := blockedModel()
@@ -1527,10 +1523,9 @@ func TestDoneModalDismissesOnKeysOtherThanForce(t *testing.T) {
 	}
 
 	noneBlocked := Model{
-		deleting: true, deleteDone: true,
-		deleteResults: []deleteResult{{
+		shell: shell{deleting: true, deleteDone: true, deleteResults: []deleteResult{{
 			target: cleanupTarget{kind: cleanupBranch, branch: "x"}, status: stFailed, err: errStubbed,
-		}},
+		}}},
 	}
 	next, _ = noneBlocked.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
 	if next.(Model).deleting {

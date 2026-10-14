@@ -121,6 +121,7 @@ func TestShowRowsBeadsWaitsForData(t *testing.T) {
 	m := New(ctx, t.TempDir(), "", "main", "main")
 	m.manifest = &manifest.Manifest{HasTracker: true, Trackers: []string{"beads"}}
 	m.manifestOK = true
+	m.claimSources()
 	rows, err := ShowRows(m, "beads", FrameOptions{Settle: 5 * time.Second})
 	if err != nil {
 		t.Fatal(err)
@@ -150,6 +151,7 @@ func TestShowRowsBeadsNeverPrintsPlaceholder(t *testing.T) {
 	m := New(ctx, t.TempDir(), "", "main", "main")
 	m.manifest = &manifest.Manifest{HasTracker: true, Trackers: []string{"beads"}}
 	m.manifestOK = true
+	m.claimSources()
 	rows, err := ShowRows(m, "beads", FrameOptions{Settle: 400 * time.Millisecond})
 	if err == nil || !strings.Contains(err.Error(), "had not loaded") {
 		t.Errorf("rows = %+v, err = %v; want a \"had not loaded\" error, not a placeholder row", rows, err)

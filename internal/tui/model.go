@@ -13,7 +13,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/bd"
@@ -23,7 +22,6 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
 	"github.com/McBrideMusings/admin-project-tool/internal/keymap"
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
-	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/shim"
 	"github.com/McBrideMusings/admin-project-tool/internal/viewstate"
@@ -156,8 +154,12 @@ type PendingAction struct {
 	RepoRoot string
 }
 
-// Model is the root dashboard model.
+// Model is the root dashboard model: the shell every mounted tab shares (see
+// shell), the data sources those tabs declare (see sources.go), and the
+// per-tab state that has not yet moved into a tab model of its own (ADR-0026).
 type Model struct {
+	shell
+
 	ctx      context.Context
 	repoRoot string
 	nwo      string
@@ -168,15 +170,7 @@ type Model struct {
 	current    string
 	def        string
 
-	width, height int
-
-	active tab
 	cursor [numTabs]int
-	// focus is which zone on screen owns the keyboard — the tab bar or the
-	// body. New() sets it to focusTabs after settling active, so a fresh
-	// session opens on the tab bar; every other Model literal built directly
-	// by a test gets focusBody for free from the zero value. See focusZone.
-	focus focusZone
 
 	// Repo (local) tab: lazygit-style panes with independent cursors.
 	pane       localPane
@@ -301,8 +295,6 @@ type Model struct {
 	// value is "focused", so a terminal that never reports focus keeps polling.
 	blurred bool
 
-	filtering bool
-	filter    string
 	naming    bool // "w" on the Local tab: typing a name for a new worktree branch
 	nameBuf   string
 	nameErr   string // inline validation message shown under an invalid nameBuf
@@ -328,35 +320,7 @@ type Model struct {
 	// latch, so the pane cannot be in select mode with nothing selected.
 	selected map[string]bool
 
-	// Delete modal: a centered overlay that steps through the batch one git call
-	// at a time so the UI repaints between items and shows live per-item progress.
-	deleting      bool
-	deleteDone    bool // every item processed; modal shows the summary, any key dismisses
-	deleteTargets []cleanupTarget
-	deleteIdx     int
-	deleteResults []deleteResult
-	// deleteForce is set only on the `f` retry over conflict-blocked items, and
-	// tells the stepper to remove those worktrees without the auto-stash that
-	// cannot run on an unmerged index. It rides on the model rather than the
-	// target because every step of that retry batch takes the same answer.
-	deleteForce bool
-
-	status   string                 // transient action result line
-	statusFg lipgloss.TerminalColor // its color (nil → dim)
-	// statusHint is pinned flush-right on the status line and the message is
-	// truncated to make room, so an affordance can't be the thing that falls off
-	// the end — a long git refusal is exactly when "e for detail" has to be visible.
-	statusHint string
-	Pending    *PendingAction
-
-	// Error detail: the status line holds one line, but a git refusal often carries
-	// the part you actually need on the lines after its headline — the files a
-	// checkout would overwrite, the worktree already holding a branch. Those lines
-	// are parked here when an action fails and shown as a centered overlay on `e`,
-	// rather than being dropped or smeared across the dashboard.
-	errTitle  string // the action that failed, e.g. "pull failed"
-	errDetail string // git's full output, headline included
-	errOpen   bool   // the overlay is up
+	Pending *PendingAction
 
 	// syncFailedAt is when the last sync that came back with a failed section
 	// finished — printed beside the header's "sync failed" so a failure from
@@ -386,31 +350,6 @@ type Model struct {
 	// to the project-level file.
 	minesOnly bool
 
-	// sel is the in-progress or just-finished drag-to-copy gesture — anchor on
-	// mouse-down, drag on motion. It is reset to its zero value (selection{},
-	// phase selNone) in the same Update that finishes a real drag, so the
-	// highlight is gone on the very next frame; selection never persists.
-	//
-	// That invariant depends on a release event actually arriving. Cell-motion
-	// mouse reporting (the mode this program enables) only emits escape
-	// sequences for positions inside the terminal's grid — a button released
-	// after the cursor has left the window generates no SGR sequence at all,
-	// so finishMouse's tea.MouseActionRelease case never runs. selGen/the
-	// selWatchdogMsg cycle below is the self-heal for exactly that: a gesture
-	// with no fresh mouse event in selIdleTimeout is finished the way a real
-	// release would have — see finishStaleSelection — so a lost release
-	// can't leave the highlight stuck, and a lost motion frozen mid-drag
-	// still resolves to a real copy instead of nothing.
-	sel selection
-	// selGen counts drag-to-copy presses/motions; a scheduled selWatchdogMsg
-	// only cancels the gesture if its gen still matches, so an older
-	// watchdog from before the most recent motion is a no-op.
-	selGen int
-	// toastGen counts the "copied to clipboard" toasts shown, so a delayed
-	// expiry tick can tell whether the status line still holds the toast it was
-	// scheduled for, or whether a newer action has already replaced it.
-	toastGen int
-
 	// Work tab (admin-3rgp.20): the project's admin.toml, merged with its
 	// declared archetypes, loaded once at New (a local file read plus a
 	// read-only archetype-directory walk, cheap enough to do synchronously
@@ -425,12 +364,10 @@ type Model struct {
 	manifest    *manifest.Manifest
 	manifestOK  bool
 	manifestErr string
-	// workTicking is true once workTickCmd's self-perpetuating loop (Init, or a
-	// later manifestOK false→true transition in fsChangedMsg) has been started —
-	// checked instead of manifestOK itself so a manifest that flaps invalid and
-	// back valid across several edits starts exactly one loop for the life of
-	// the process, not one per transition.
-	workTicking bool
+	// started records which data sources have been started (see sources.go),
+	// so each runs once for the life of the process however many times the
+	// manifest flaps between invalid and valid.
+	started [numSources]bool
 	// manifestRoot is the directory whose admin.toml this dashboard reads, and
 	// it is not always repoRoot. git.RepoRoot deliberately returns the MAIN
 	// worktree from inside a linked one (internal/git/git.go), which is right
@@ -547,14 +484,6 @@ type Model struct {
 	wtTarget        string
 	wtTargetBranch  string
 
-	// Quit confirm overlay (admin-3rgp.63): quitting while the dashboard is
-	// hosting a running process on its own pty must not kill it silently —
-	// see requestQuit in quitconfirm.go. quitHosted is the snapshot taken
-	// when the confirm opened, so accepting kills exactly what was shown
-	// even if the registry changes under it.
-	quitOpen   bool
-	quitHosted []*livework.Entry
-
 	// Terminal view (admin-3rgp.65): attaching to a pty-addressed live-work
 	// row replaces the whole tab with that entry's Screen rather than the
 	// list/detail layout — see terminalview.go. termAttached is the switch
@@ -639,7 +568,7 @@ func New(ctx context.Context, repoRoot, nwo, current, def string, opts ...Option
 		nwo:             nwo,
 		current:         current,
 		def:             def,
-		active:          tabLocal,
+		shell:           shell{active: tabLocal},
 		herdr:           shim.Available(),
 		selected:        map[string]bool{},
 		pendingDispatch: map[string]bool{},
@@ -686,11 +615,9 @@ func New(ctx context.Context, repoRoot, nwo, current, def string, opts ...Option
 			}
 		}
 	}
-	// Init dispatches workTickCmd/detectBeadsCmd exactly when these are true at
-	// boot — seed the guard flags to match so fsChangedMsg's later gates don't
-	// double-start either chain.
-	m.workTicking = m.manifestOK
-	m.beadsProbing = m.hasTracker("beads")
+	// Init starts exactly the sources claimed here, so a later manifest
+	// reload (fsChangedMsg) never starts one a second time.
+	m.claimSources()
 	// admin-70hb: a new session opens with focus on the tab bar, not on a
 	// body row — set after active settles so it doesn't interact with which
 	// tab that is.
@@ -698,44 +625,21 @@ func New(ctx context.Context, repoRoot, nwo, current, def string, opts ...Option
 	return m
 }
 
-// Init kicks off the local git load (instant), the cache read (instant), the file
-// watcher, and the sync poll. The first sync itself waits for local git to land
-// (see the localDataMsg case), so the first frame paints off git and cache with
+// Init kicks off the local git load (instant), the merged config, the file
+// watcher, and every data source New claimed for the mounted tabs
+// (sources.go). The first sync itself waits for local git to land (see the
+// localDataMsg case), so the first frame paints off git and cache with
 // nothing blocking on the network.
 func (m Model) Init() tea.Cmd {
 	// No per-model state — see installTerminalOpener's own comment on why
 	// calling it again on a second Init in the same process is harmless.
 	installTerminalOpener()
-	cmds := []tea.Cmd{
+	return tea.Batch(
 		loadLocalCmd(m.ctx, m.repoRoot, m.checkoutDir(), m.current, m.def),
-		loadCacheCmd(m.nwo),
 		m.startWatchCmd(),
-		m.syncTickCmd(),
 		loadConfigCmd(m.ctx, m.manifestDir()),
-		fetchIdentityCmd(m.ctx),
-	}
-	if m.hasTracker("beads") {
-		// The `bd where` probe only runs for a repo that declared "beads"
-		// among its trackers — its answer feeds the tab's content (which
-		// bead workspace, or an error if none is found), never whether the
-		// tab is drawn at all. A repo that didn't declare beads has no
-		// reason to pay for this subprocess.
-		cmds = append(cmds, detectBeadsCmd(m.ctx, m.repoRoot))
-	}
-	if m.manifestOK {
-		// Start the [status] checks at launch so the first frame is not a
-		// second of empty readouts; later refreshes ride workTickMsg.
-		if m.manifest != nil {
-			statusProbes.Refresh(m.manifest.Status, m.manifest.Root)
-		}
-		// A herdr pane or agent worker changes state (running → waiting →
-		// failed, a new Activity line) from goroutines this process never
-		// hears from otherwise — livework.Default has no notification of
-		// its own. This tick is the Work tab's only wake source for that,
-		// mirroring beadsTickCmd's own reason for existing.
-		cmds = append(cmds, m.workTickCmd(), syncLiveWorkCmd(m.repoRoot))
-	}
-	return tea.Batch(cmds...)
+		m.sourceCmds(m.startedSources()),
+	)
 }
 
 // syncTickMsg fires on a repeating timer to run the whole-repo sync. Everything
@@ -805,27 +709,33 @@ func (m Model) selectMode() bool {
 // open, and not from a `bd where` probe of the repo — that inference is
 // exactly what admin-3rgp.22 replaced with the declared keys admin-3rgp.21
 // added. The digit keys index this list, so `3` is whatever the third drawn
-// tab happens to be.
+// tab happens to be. A tab the shell has not mounted is left out.
 func (m Model) visibleTabs() []tab {
-	var tabs []tab
+	var drawn []tab
 	if m.manifestOK {
-		tabs = append(tabs, tabWork, tabWorkers)
+		drawn = append(drawn, tabWork, tabWorkers)
 	}
-	tabs = append(tabs, tabLocal)
+	drawn = append(drawn, tabLocal)
 	if m.nwo != "" && m.wantsPRs() {
-		tabs = append(tabs, tabPRs)
+		drawn = append(drawn, tabPRs)
 	}
 	for _, t := range m.trackers() {
 		switch t {
 		case "github":
 			if m.nwo != "" {
-				tabs = append(tabs, tabIssues)
+				drawn = append(drawn, tabIssues)
 			}
 		case "beads":
-			tabs = append(tabs, tabBeads)
+			drawn = append(drawn, tabBeads)
 		}
 	}
-	tabs = append(tabs, tabConfig)
+	drawn = append(drawn, tabConfig)
+	tabs := drawn[:0]
+	for _, t := range drawn {
+		if m.isMounted(t) {
+			tabs = append(tabs, t)
+		}
+	}
 	return tabs
 }
 
@@ -1051,30 +961,6 @@ func (m *Model) moveCursorWork(delta int) {
 	}
 }
 
-// setStatus sets the transient status line and its color in one place.
-// toastGen bumps on every call, error included, so Update can tell a status
-// change happened and schedule that status's expiry itself — see Update's
-// wrapper around update. A caller never needs to thread an expiry cmd of its
-// own back out; setting m.status here is enough.
-func (m *Model) setStatus(text string, fg lipgloss.TerminalColor) {
-	m.status = text
-	m.statusFg = fg
-	m.statusHint = ""
-	m.toastGen++
-}
-
-// stashErrDetail parks a failed action's full git output for the `e` overlay, and
-// clears any older one. Only a *git.CmdError carrying more than its headline gets
-// stashed — for every other error the status line already says everything there is
-// to say, and offering a detail view that repeats it would be a dead end.
-func (m *Model) stashErrDetail(title string, err error) {
-	m.errTitle, m.errDetail, m.errOpen = "", "", false
-	var ce *git.CmdError
-	if errors.As(err, &ce) && ce.HasDetail() {
-		m.errTitle, m.errDetail = title, ce.Output
-	}
-}
-
 // settleSyncFailure updates what the dashboard says about the sync once a
 // result lands. A failure puts its first error on the status line and every
 // error, verbatim, in the `e` overlay beside the sync log's path — the same
@@ -1171,10 +1057,14 @@ func (m *Model) switchTab(t tab) {
 // against landing on a tab index that turns out not to be drawn, rather than
 // leaving a view no key can leave and no label points at.
 func (m *Model) settleActiveTab() {
-	if m.tabIndex(m.active) < 0 {
-		m.active = tabLocal
-		m.clampCursor()
+	if m.tabIndex(m.active) >= 0 {
+		return
 	}
+	m.active = tabLocal
+	if tabs := m.visibleTabs(); m.tabIndex(tabLocal) < 0 && len(tabs) > 0 {
+		m.active = tabs[0]
+	}
+	m.clampCursor()
 }
 
 // stepTab moves delta places along the drawn tab order, wrapping at both ends.
@@ -1208,7 +1098,7 @@ func (m *Model) switchTabAt(n int) {
 // terminal from re-fetching data the disk cache already holds.
 func (m *Model) startSyncCmd(force bool) tea.Cmd {
 	withIssues := m.hasTracker("github")
-	if m.syncing || !(force || m.remote.Stale(withIssues)) {
+	if !m.wants(srcSync) || m.syncing || !(force || m.remote.Stale(withIssues)) {
 		return nil
 	}
 	m.syncing = true
@@ -1245,13 +1135,13 @@ func (m *Model) refocusOnInput() tea.Cmd {
 // drawn) — and, for a repo that declares "beads" among its trackers, only
 // once the probe that workspace's data comes from has also answered. Whether
 // the sync itself asks GitHub for issues is decided by the declared tracker
-// list alone (startSyncCmd), so a repo with no "beads" tracker never waits on
-// the probe at all.
+// list alone (startSyncCmd), so a repo with no "beads" tracker — or a shell
+// with no mounted tab declaring the beads source — never waits on the probe.
 func (m *Model) launchSyncCmd() tea.Cmd {
 	if m.synced || !m.haveLocal {
 		return nil
 	}
-	if m.hasTracker("beads") && !m.beadsProbed {
+	if m.sourceOn(srcBeads) && !m.beadsProbed {
 		return nil
 	}
 	m.synced = true
@@ -1590,33 +1480,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.manifestOK {
 				m.setStatus("manifest reloaded", cDim)
 			}
-			// Init only fires workTickCmd's first link (line ~584) and
-			// detectBeadsCmd (line ~576) when manifestOK/tracker="beads" are
-			// already true at startup — an admin.toml that doesn't exist yet,
-			// or that gains tracker="beads", when this dashboard launches never
-			// gets that one-shot kickoff, so the Work tab and Beads tab painted
-			// (fsChangedMsg above already reloads and repaints the manifest
-			// itself) but stayed on their zero state forever: nothing ever
-			// re-armed workTickCmd's self-perpetuating loop, and
-			// detectBeadsCmd/loadBeadsCmd/beadsTickCmd never ran, since both
-			// chains only start from Init or from these same guarded spots.
-			// Restarting the dashboard re-ran Init and picked it up, which is
-			// what made "close and reopen" look like the only fix. Kick each
-			// chain here, gated on the dedicated workTicking/beadsProbing flags
-			// rather than manifestOK/beadsProbed themselves — a manifest that
-			// flaps invalid and back valid across several edits (or two
-			// fsChangedMsg events arriving before the first beads probe's
-			// goroutine returns) would otherwise start a new concurrent
-			// workTickCmd chain, or launch a redundant `bd where`, on every
-			// occurrence.
-			if !m.workTicking && m.manifestOK {
-				m.workTicking = true
-				reloadCmds = append(reloadCmds, m.workTickCmd())
-			}
-			if m.hasTracker("beads") && !m.beadsProbed && !m.beadsProbing {
-				m.beadsProbing = true
-				reloadCmds = append(reloadCmds, detectBeadsCmd(m.ctx, m.repoRoot))
-			}
+			// Init only starts the sources that are ready at launch — an
+			// admin.toml that doesn't exist yet, or that gains
+			// tracker="beads", after this dashboard launches would leave the
+			// Work and Beads tabs on their zero state forever. Start whatever
+			// the reloaded manifest made ready; claimSources' started set is
+			// what keeps a manifest that flaps invalid and back valid from
+			// starting a second work tick or a redundant `bd where`.
+			reloadCmds = append(reloadCmds, m.sourceCmds(m.claimSources()))
 		}
 		reloadCmds = append(reloadCmds, waitForFSCmd(m.fsCh))
 		if m.fsReloading {
@@ -1663,7 +1534,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// behind the Repo tab and the PR list behind the PRs tab go stale at the
 		// same rate whether or not you are looking at them. Re-arm unconditionally
 		// so the next tick still comes even when this one found a sync in flight.
-		return m, tea.Batch(m.startSyncCmd(false), m.syncTickCmd(), fetchIdentityCmd(m.ctx))
+		cmds := []tea.Cmd{m.startSyncCmd(false), m.syncTickCmd()}
+		if m.wants(srcIdentity) {
+			cmds = append(cmds, fetchIdentityCmd(m.ctx))
+		}
+		return m, tea.Batch(cmds...)
 
 	case issueRowMsg:
 		m.fetchDone()
@@ -1792,9 +1667,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case workDispatchStartedMsg:
 		// A hosted dispatch reports "started" immediately rather than an
 		// exit status — the command keeps running on its own pty long after
-		// this message lands. workTickCmd is what repaints the Work tab so
-		// the live-work entry StartHostedPTY just registered shows up
-		// without waiting on a keypress.
+		// this message lands. Handling it repaints the Work tab, so the
+		// live-work entry StartHostedPTY just registered shows up without
+		// waiting on a keypress; the work source's own tick keeps it current
+		// from there. Starting another tick here would add a second 1s chain
+		// per dispatch for the life of the process.
 		//
 		// Clearing pendingDispatch here — on both the error and success
 		// paths — is what ends the "starting" window a row shows from the
@@ -1816,10 +1693,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			delete(m.pendingAttach, msg.name)
 			if e := m.liveEntryForCommand(msg.name); e != nil {
 				am, acmd := m.attachEntry(e)
-				return am, tea.Batch(acmd, m.workTickCmd(), record)
+				return am, tea.Batch(acmd, record)
 			}
 		}
-		return m, tea.Batch(m.workTickCmd(), record)
+		return m, record
 
 	case liveWorkSyncMsg:
 		m.setStatus(msg.err.Error(), cRed)

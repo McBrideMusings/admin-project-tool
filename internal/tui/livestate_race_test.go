@@ -29,7 +29,7 @@ func TestConcurrentStateReadsDoNotRace(t *testing.T) {
 		t.Fatalf("Add(%s): %v", e.ID, err)
 	}
 
-	m := Model{quitHosted: []*livework.Entry{e}}
+	m := Model{shell: shell{quitHosted: []*livework.Entry{e}}}
 
 	const iterations = 200
 	var wg sync.WaitGroup

@@ -186,8 +186,8 @@ func TestFSChangeStartsWorkTickOnceManifestFirstAppears(t *testing.T) {
 	dir := t.TempDir()
 
 	m := New(context.Background(), dir, "owner/repo", "main", "main")
-	if m.manifestOK || m.workTicking {
-		t.Fatalf("manifestOK = %v, workTicking = %v before any manifest exists, want both false", m.manifestOK, m.workTicking)
+	if m.manifestOK || m.started[srcWork] {
+		t.Fatalf("manifestOK = %v, workTicking = %v before any manifest exists, want both false", m.manifestOK, m.started[srcWork])
 	}
 
 	writeTestManifest(t, dir, editTestManifest)
@@ -197,7 +197,7 @@ func TestFSChangeStartsWorkTickOnceManifestFirstAppears(t *testing.T) {
 	if !mm.manifestOK {
 		t.Fatalf("manifestOK = false after admin.toml first appeared, err = %q", mm.manifestErr)
 	}
-	if !mm.workTicking {
+	if !mm.started[srcWork] {
 		t.Error("workTicking = false after the manifestOK false→true transition, want the Work-tab loop started")
 	}
 	if !containsMsgType[workTickMsg](cmdBatchMsgs(t, cmd)) {
@@ -218,7 +218,7 @@ func TestFSChangeDoesNotRestartAnAlreadyTickingWorkLoop(t *testing.T) {
 	writeTestManifest(t, dir, editTestManifest)
 	updated, _ := m.Update(fsChangedMsg{})
 	m = updated.(Model)
-	if !m.workTicking {
+	if !m.started[srcWork] {
 		t.Fatal("workTicking = false after the first valid manifest, want true")
 	}
 
@@ -228,7 +228,7 @@ func TestFSChangeDoesNotRestartAnAlreadyTickingWorkLoop(t *testing.T) {
 	if m.manifestOK {
 		t.Fatal("manifestOK = true after the manifest was broken, want false")
 	}
-	if !m.workTicking {
+	if !m.started[srcWork] {
 		t.Error("workTicking flipped to false when the manifest broke, want it to stay true (the loop is still running)")
 	}
 

@@ -18,10 +18,9 @@ import (
 // workRows can be tested against exact, known input.
 func workTestModel(m *manifest.Manifest) Model {
 	return Model{
+		shell:           shell{width: 120, height: 40},
 		manifest:        m,
 		manifestOK:      true,
-		width:           120,
-		height:          40,
 		pendingDispatch: map[string]bool{},
 		pendingAttach:   map[string]bool{},
 		pendingTarget:   map[string]string{},
