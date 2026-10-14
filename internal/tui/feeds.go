@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"errors"
+	"io/fs"
+	"os"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -474,9 +476,48 @@ func (h configSource) trackers() []string { return manifestTrackers(h.f.manifest
 // empty Workers tab's hint, which names the dispatches this project's
 // manifest declares and so can only be worded by the Model that holds the
 // commands and key bindings. loadManifest rewrites it on every read.
+//
+// logDir and logNames are the command log directory's file names as the last
+// scan (scanLogsCmd) read them, so drawing a row never reads the directory.
 type workFeed struct {
 	emptyHint string
+	logDir    string
+	logNames  []string
 }
+
+// logScanMsg carries one read of the command log directory: every file name
+// in dir, or none when it does not exist yet. err is a read that failed for
+// any other reason; the feed keeps its last scan.
+type logScanMsg struct {
+	dir   string
+	names []string
+	err   error
+}
+
+// scanLogsCmd reads the command log directory once. The work source runs it
+// when it starts, on every work tick, and when a dispatch starts — the moments
+// a command can have named a new log.
+func scanLogsCmd(dir string) tea.Cmd {
+	if dir == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		ents, err := os.ReadDir(dir)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return logScanMsg{dir: dir, err: err}
+		}
+		names := make([]string, 0, len(ents))
+		for _, e := range ents {
+			if !e.IsDir() {
+				names = append(names, e.Name())
+			}
+		}
+		return logScanMsg{dir: dir, names: names}
+	}
+}
+
+// updateLogs applies a fresh scan.
+func (f *workFeed) updateLogs(msg logScanMsg) { f.logDir, f.logNames = msg.dir, msg.names }
 
 // workSource is a tab's read handle on the work source.
 type workSource struct{ f *workFeed }
@@ -490,3 +531,12 @@ func (h workSource) commandEntries() map[string]*livework.Entry { return liveCom
 
 // emptyHint is the line the Workers tab shows when no worker is running.
 func (h workSource) emptyHint() string { return h.f.emptyHint }
+
+// logNames is the file names the last scan found in dir, or nil when the last
+// scan read another directory or none has landed.
+func (h workSource) logNames(dir string) []string {
+	if h.f == nil || h.f.logDir != dir {
+		return nil
+	}
+	return h.f.logNames
+}

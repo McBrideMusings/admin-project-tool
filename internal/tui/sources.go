@@ -90,7 +90,7 @@ var sources = [numSources]dataSource{
 			// failed, a new Activity line) from goroutines this process never
 			// hears from otherwise — livework.Default has no notification of
 			// its own. This tick is the Work tab's only wake source for that.
-			return tea.Batch(m.workTickCmd(), syncLiveWorkCmd(m.repoRoot))
+			return tea.Batch(m.workTickCmd(), m.scanLogs(), syncLiveWorkCmd(m.repoRoot))
 		},
 	},
 	srcIdentity: {

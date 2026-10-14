@@ -1348,7 +1348,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.setStatus(msg.name+" started", cGreen)
 		m.refreshDetailProbes()
-		return m, tea.Batch(m.updateTabs(msg), recordUsageCmd(m.nwo, resolvedInvocation(msg.name, msg.args)))
+		return m, tea.Batch(m.updateTabs(msg), m.scanLogs(), recordUsageCmd(m.nwo, resolvedInvocation(msg.name, msg.args)))
+
+	case logScanMsg:
+		if msg.err != nil {
+			data.LogSync(m.nwo, "logscan", 0, "dir="+msg.dir, msg.err)
+			return m, nil
+		}
+		m.feeds.work.updateLogs(msg)
+		return m, nil
 
 	case liveWorkSyncMsg:
 		m.setStatus(msg.err.Error(), cRed)
@@ -1366,7 +1374,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// here, never from View, so starting either stays a side effect and
 		// rendering stays pure.
 		m.refreshDetailProbes()
-		return m, tea.Batch(m.workTickCmd(), syncLiveWorkCmd(m.repoRoot), pollLivenessCmd(m.cfgMerged.Terminal.Status), reapWorkersCmd(m.repoRoot, m.cfgMerged.Terminal), m.pollPaneTailCmd(m.cfgMerged.Terminal.Read))
+		return m, tea.Batch(m.workTickCmd(), m.scanLogs(), syncLiveWorkCmd(m.repoRoot), pollLivenessCmd(m.cfgMerged.Terminal.Status), reapWorkersCmd(m.repoRoot, m.cfgMerged.Terminal), m.pollPaneTailCmd(m.cfgMerged.Terminal.Read))
 
 	case livenessMsg:
 		// The only writer of the "pane closed out from under us" and the

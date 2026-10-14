@@ -366,31 +366,31 @@ func logStemTimestamp(path string) string {
 // step's own kind (a multi-target target, a framed action) sets a more
 // specific name before first use — so the real stem is one of: the command
 // name itself, one of its step (action) names, or "<step>-<target>" for a
-// multi-target step. Globbing all of those and taking the newest by
+// multi-target step. Matching all of those and taking the newest by
 // filename timestamp covers every shape without needing an mtime tiebreak
 // or a per-step ranking loop — naming can no longer collide ACROSS two
 // different commands, only within one command's own set of possible stems.
 // A command that has genuinely never run matches nothing here and degrades
-// to "none yet", same as before.
-func commandLogPath(repoRoot string, m *manifest.Manifest, name string, c manifest.Command) string {
-	logDir := commandLogDir(repoRoot, m)
+// to "none yet".
+//
+// names is logDir's file names as the work source last scanned them
+// (scanLogsCmd): the patterns match against that list, so drawing a row
+// never reads the directory.
+func commandLogPath(logDir string, names []string, name string, c manifest.Command) string {
 	stems := map[string]bool{name: true}
 	for _, step := range c.Steps {
 		stems[step] = true
 	}
 	var best, bestTS string
 	for stem := range stems {
-		var matches []string
-		if ms, err := filepath.Glob(filepath.Join(logDir, stem+".*.log")); err == nil {
-			matches = append(matches, ms...)
-		}
-		if ms, err := filepath.Glob(filepath.Join(logDir, stem+"-*.*.log")); err == nil {
-			matches = append(matches, ms...)
-		}
-		for _, p := range matches {
-			ts := logStemTimestamp(p)
-			if ts > bestTS {
-				bestTS, best = ts, p
+		for _, n := range names {
+			plain, _ := filepath.Match(stem+".*.log", n)
+			dashed, _ := filepath.Match(stem+"-*.*.log", n)
+			if !plain && !dashed {
+				continue
+			}
+			if ts := logStemTimestamp(n); ts > bestTS {
+				bestTS, best = ts, filepath.Join(logDir, n)
 			}
 		}
 	}
@@ -697,7 +697,8 @@ func (t *commandsTab) commandRowItem(s *shell, cr workCmdRow, byID map[string]*l
 	if livePath != "" {
 		wd.logPath = livePath
 	} else {
-		wd.logPath = commandLogPath(s.manifestDir(), mf, cr.name, cr.cmd)
+		dir := commandLogDir(s.manifestDir(), mf)
+		wd.logPath = commandLogPath(dir, t.work.logNames(dir), cr.name, cr.cmd)
 	}
 	// A multi-target parent with more than one target is a group: it holds
 	// targets and runs nothing itself, so the cursor must never land on it
@@ -1340,6 +1341,15 @@ func entryIsLive(e *livework.Entry) bool {
 // livework.Entry another goroutine mutated (a herdr pane settling, an agent
 // finishing) shows up without needing a keypress — see Init's own comment.
 type workTickMsg struct{}
+
+// scanLogs reads the command log directory the manifest names, nil while no
+// manifest has loaded.
+func (m Model) scanLogs() tea.Cmd {
+	if !m.manifestOK || m.manifest == nil {
+		return nil
+	}
+	return scanLogsCmd(commandLogDir(m.manifestDir(), m.manifest))
+}
 
 func (m Model) workTickCmd() tea.Cmd {
 	if m.headless {

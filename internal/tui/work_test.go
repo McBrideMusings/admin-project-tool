@@ -529,11 +529,11 @@ func TestCommandRowItemPrefersLiveEntryLogPath(t *testing.T) {
 	}
 }
 
-// TestCommandRowItemFallsBackToGlobWhenNoLiveEntry proves the reverse: a
-// command with no live entry falls back to commandLogPath's filesystem
-// glob, and a genuinely never-run command still reads as "none yet" (empty
-// logPath).
-func TestCommandRowItemFallsBackToGlobWhenNoLiveEntry(t *testing.T) {
+// TestCommandRowItemFallsBackToScannedLogWhenNoLiveEntry proves the reverse: a
+// command with no live entry falls back to the newest log the work source's
+// scan of the log directory found, and a genuinely never-run command still
+// reads as "none yet" (empty logPath).
+func TestCommandRowItemFallsBackToScannedLogWhenNoLiveEntry(t *testing.T) {
 	dir := t.TempDir()
 	m := &manifest.Manifest{
 		Custom: map[string]manifest.Command{
@@ -555,6 +555,8 @@ func TestCommandRowItemFallsBackToGlobWhenNoLiveEntry(t *testing.T) {
 	if err := os.WriteFile(found, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	next, _ := mm.Update(mm.scanLogs()())
+	mm = next.(Model)
 
 	row := mm.commandsTab.commandRowItem(&mm.shell, workCmdRow{name: "build", cmd: m.Custom["build"]}, nil)
 	if row.work.logPath != found {
