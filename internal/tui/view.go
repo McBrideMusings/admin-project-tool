@@ -924,9 +924,15 @@ func keybarWidth(pairs [][2]string) int {
 
 func (m Model) filterFooter() string {
 	n := m.matchCount()
+	srch, searching := m.tabModel(m.active).(searcher)
 	segs := []seg{{t: " "}, {t: "/", fg: cCyan}, {t: m.filter, fg: cFg}}
+	ghost := ""
 	if m.filtering {
 		segs = append(segs, seg{t: "▌", fg: cBlue})
+		if searching {
+			ghost = srch.ghost(&m.shell)
+			segs = append(segs, seg{t: ghost, fg: cFaint})
+		}
 	}
 	plural := "es"
 	if n == 1 {
@@ -935,7 +941,15 @@ func (m Model) filterFooter() string {
 	segs = append(segs, seg{t: "   "}, seg{t: fmt.Sprintf("%d match%s", n, plural), fg: cDim},
 		seg{t: "   "}, seg{t: "esc", fg: cCyan}, seg{t: " clear", fg: cDim})
 	if m.filtering {
-		segs = append(segs, seg{t: "  ·  ", fg: cFaint}, seg{t: "enter", fg: cCyan}, seg{t: " apply", fg: cDim})
+		enter := " apply"
+		if searching {
+			enter = " run"
+		}
+		segs = append(segs, seg{t: "  ·  ", fg: cFaint}, seg{t: "enter", fg: cCyan}, seg{t: enter, fg: cDim})
+		// Last, so a long ghost on a narrow terminal clips this before enter.
+		if ghost != "" {
+			segs = append(segs, seg{t: "  ·  ", fg: cFaint}, seg{t: "⇥", fg: cCyan}, seg{t: " complete", fg: cDim})
+		}
 	}
 	return renderSegs(segs, nil)
 }

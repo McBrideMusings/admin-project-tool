@@ -98,6 +98,11 @@ func (w workSurface) body(s *shell, rows []rowItem, cursor, width, height int) (
 			}
 			hits[i] = hitTarget{kind: hitNone}
 		default:
+			if r.recent != nil {
+				left[i] = renderRecentStrip(r.recent, i == cursor && s.focus == focusBody, lw)
+				hits[i] = hitTarget{kind: hitRow, row: i}
+				break
+			}
 			left[i] = s.renderWorkRow(r, i == cursor, lw)
 			if r.group {
 				// A group parent carries no marker and the cursor can never

@@ -1,9 +1,8 @@
 // Package workusage records and reads back a per-repo, most-recent-first list
 // of fully-resolved dispatch invocations from the Work tab — "deploy grafana",
 // never the bare command name "deploy" a multi-target dispatch is a no-op
-// without its target. It backs the future command palette's MRU strip
-// (admin-3rgp.72); this package owns only the on-disk list, not the palette
-// UI.
+// without its target. It backs the Commands tab's Recent strip
+// (internal/tui/commandsearch.go); this package owns only the on-disk list.
 package workusage
 
 import (
@@ -19,7 +18,7 @@ import (
 // otherwise both load the same list and one entry would overwrite the other.
 var recordMu sync.Mutex
 
-// maxEntries caps the stored list. The palette wants the top 5 (Top's n
+// maxEntries caps the stored list. The Recent strip wants the top 5 (Top's n
 // parameter), but the cap here is deliberately larger so a recently-bumped
 // invocation isn't lost to the cap before it has a chance to resurface.
 const maxEntries = 20

@@ -98,6 +98,20 @@ list. `right`/`left` switch tabs, so never use them to move the cursor; a digit 
 drawn tab (`2` is Workers). A dispatch started by `enter` is a real child that dies when the
 dump exits. Check at 80 columns as well as 96.
 
+**Commands tab search and Recent strip** (`internal/tui/commandsearch.go`). `admin cmd` mounts
+the tab alone with focus already in the body. The Recent strip reads the per-repo usage store
+at `~/Library/Caches/work-usage/<owner>-<repo>.json`; it lists only entries that still name a
+row, so an empty or stale store draws no strip.
+
+```bash
+admin cmd --dump-frame --width 100 --height 30 --keys up,right,right   # strip: band titled with the 3rd entry
+admin cmd --dump-frame --width 100 --height 30 --keys /,c,t,space,c    # fuzzy matches, footer ghost "→ <invocation>"
+admin cmd --dump-frame --width 100 --height 30 --keys /,c,o,m,tab      # query becomes "command-test ", ghost "counter"
+```
+
+A piped dump drops colour; the picked strip entry is cyan and underlined only on a TTY, so
+look at it with `vhs` (`Screenshot` steps) rather than `--dump-frame`.
+
 To prove a tab move changed nothing, build the base commit (`git archive <sha> | tar -x -C <scratch>/base`,
 `go build` there) and the working tree into two binaries, then diff their `--dump-frame` output for the same
 `--keys` at widths 96 and 80, ANSI kept. `3` jumps to the Repo tab. `G` (mines-only) and `c` (Work collapse)

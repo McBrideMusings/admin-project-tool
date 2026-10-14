@@ -979,7 +979,7 @@ func ownerCmdName(r rowItem) string {
 // same worker entry. toggleCollapse uses this to relocate the cursor
 // after a rebuild changes how many rows come before it.
 func sameRowIdentity(a, b rowItem) bool {
-	if a.kind != b.kind || a.work == nil || b.work == nil {
+	if a.kind != b.kind || a.work == nil || b.work == nil || (a.recent == nil) != (b.recent == nil) {
 		return false
 	}
 	switch a.kind {
@@ -1000,7 +1000,7 @@ func sameRowIdentity(a, b rowItem) bool {
 // index is no longer trustworthy.
 func indexOfCommandRow(rows []rowItem, name string) int {
 	for i, r := range rows {
-		if r.kind == rowCommand && r.work != nil && r.work.cmdName == name {
+		if r.kind == rowCommand && r.recent == nil && r.work != nil && r.work.cmdName == name {
 			return i
 		}
 	}

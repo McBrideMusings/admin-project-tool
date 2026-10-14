@@ -113,6 +113,11 @@ type rowItem struct {
 	// cfg carries a Config-tab row's payload — set only for rowConfigValue/
 	// rowConfigPath, following the same one-field-per-tab precedent as work.
 	cfg *configRowData
+	// recent marks the Commands tab's Recent strip. The strip's kind and work
+	// are those of the entry it has picked, so ↵, attach, kill, the footer,
+	// the band and [keys.command] bindings all act on that invocation's own
+	// row with no case of their own (commandsearch.go).
+	recent *recentStrip
 }
 
 func (r rowItem) selectable() bool {
@@ -667,9 +672,14 @@ func (m Model) rows() []rowItem {
 	return nil
 }
 
-// visibleRows applies the active filter (substring on label), always keeping
-// section headers so the structure stays legible.
+// visibleRows is the active tab's rows under the filter: the tab's own
+// filtering when it has one (the Commands tab's fuzzy search), else the
+// shell's substring filter, which always keeps section headers so the
+// structure stays legible.
 func (m Model) visibleRows() []rowItem {
+	if v, ok := m.tabModel(m.active).(searcher); ok {
+		return v.visibleRows(&m.shell)
+	}
 	return m.filterRows(m.rows())
 }
 
@@ -1077,6 +1087,22 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.feeds.beads.update(msg, m.headless)
 		m.clampCursor()
 		return m, tea.Batch(cmd, m.launchSyncCmd())
+
+	case usageMsg:
+		// The strip appearing or vanishing above the list shifts every row
+		// by one, so the cursor follows its row rather than its index.
+		if m.feeds.usage == nil {
+			return m, nil
+		}
+		srch, searching := m.tabModel(m.active).(searcher)
+		before, ok := m.currentRow()
+		m.feeds.usage.update(msg)
+		if searching && ok {
+			srch.relocate(&m.shell, before)
+		} else {
+			m.clampCursor()
+		}
+		return m, nil
 
 	case beadsMsg, beadsReprobeMsg, beadsTickMsg:
 		cmd := m.feeds.beads.update(msg, m.headless)
@@ -1685,25 +1711,62 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Filter input mode swallows most keys.
 	if m.filtering {
+		// A searching tab (the Commands tab) puts the cursor on its best match
+		// after every edit, moves it with the arrows, completes with tab, and
+		// runs the match on enter; any other tab applies the filter on enter.
+		srch, searching := m.tabModel(m.active).(searcher)
+		edited := false
 		switch msg.Type {
 		case tea.KeyEsc:
+			before, ok := m.currentRow()
 			m.filtering = false
 			m.filter = ""
-			m.clampCursor()
+			if searching && ok {
+				// Back on the full list, the cursor stays on the match.
+				srch.relocate(&m.shell, before)
+			} else {
+				m.clampCursor()
+			}
 		case tea.KeyEnter:
 			m.filtering = false
 			m.clampCursor()
+			// An empty query only closes the input; a typed one runs the
+			// match under the cursor.
+			if searching && m.filter != "" {
+				return m.activate()
+			}
 		case tea.KeyBackspace:
 			if len(m.filter) > 0 {
 				m.filter = m.filter[:len(m.filter)-1]
-				m.resetCursors()
+				edited = true
 			}
 		case tea.KeyRunes:
 			m.filter += string(msg.Runes)
-			m.resetCursors()
+			edited = true
 		case tea.KeySpace:
 			m.filter += " "
+			edited = true
+		case tea.KeyTab:
+			if searching {
+				if q, ok := srch.complete(&m.shell); ok {
+					m.filter = q
+					edited = true
+				}
+			}
+		case tea.KeyUp:
+			if searching {
+				m.moveCursor(-1)
+			}
+		case tea.KeyDown:
+			if searching {
+				m.moveCursor(1)
+			}
+		}
+		if edited {
 			m.resetCursors()
+			if searching {
+				srch.filterChanged(&m.shell)
+			}
 		}
 		return m, nil
 	}
@@ -1781,6 +1844,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.filtering = true
 		m.filter = ""
+		// The search's cursor is the body's: from the tab bar, `/` hands
+		// focus in so the best match is a row ↵ can run.
+		if _, ok := m.tabModel(m.active).(searcher); ok && m.focus == focusTabs {
+			m.enterBody()
+		}
 	case "r":
 		// The Commands and Workers tabs take `r` first and swallow it
 		// (workSurface.key). On an Issues/PRs row, refresh just that row — one targeted GraphQL call

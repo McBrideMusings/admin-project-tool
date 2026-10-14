@@ -24,10 +24,10 @@ func TestSourcesStartOnlyForMountedTabs(t *testing.T) {
 		want    []source
 		sync    bool // whether a forced sync may go out
 	}{
-		{"bare admin", nil, []source{srcSync, srcBeads, srcWork, srcIdentity}, true},
+		{"bare admin", nil, []source{srcSync, srcBeads, srcWork, srcIdentity, srcUsage}, true},
 		{"config alone", []tab{tabConfig}, nil, false},
 		{"beads alone", []tab{tabBeads}, []source{srcBeads}, false},
-		{"commands alone", []tab{tabWork}, []source{srcSync, srcBeads, srcWork}, true},
+		{"commands alone", []tab{tabWork}, []source{srcSync, srcBeads, srcWork, srcUsage}, true},
 		{"workers alone", []tab{tabWorkers}, []source{srcWork}, false},
 		{"prs alone", []tab{tabPRs}, []source{srcSync}, true},
 	}

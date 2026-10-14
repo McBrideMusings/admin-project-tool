@@ -530,15 +530,20 @@ func loadBeadsCmd(ctx context.Context, repoRoot string) tea.Cmd {
 	}
 }
 
-// recordUsageCmd writes a successful dispatch to the Work tab's MRU list. The
-// write reads, rewrites and renames a file, so it runs in a Cmd rather than on
-// the update goroutine. It reports nothing back: nothing in the dashboard
-// reads the list yet.
+// recordUsageCmd writes a successful dispatch to the recent-invocations list
+// and reads the list back for the Commands tab's Recent strip. The write
+// reads, rewrites and renames a file, so it runs in a Cmd rather than on the
+// update goroutine.
 func recordUsageCmd(nwo, invocation string) tea.Cmd {
 	return func() tea.Msg {
 		workusage.Record(nwo, invocation)
-		return nil
+		return usageMsg{recent: workusage.Top(nwo, recentMax)}
 	}
+}
+
+// loadUsageCmd reads the recent invocations the Commands tab's strip shows.
+func loadUsageCmd(nwo string) tea.Cmd {
+	return func() tea.Msg { return usageMsg{recent: workusage.Top(nwo, recentMax)} }
 }
 
 // beadsTickCmd schedules the next beads read (none for a headless frame).

@@ -33,7 +33,21 @@ type feeds struct {
 	// identityFeed is the signed-in GitHub account; Model reads it as its own
 	// identity field, tabs through identitySource.
 	*identityFeed
+	usage *usageFeed
 }
+
+// usageFeed is the Commands tab's recent invocations, most recent first, as
+// internal/workusage last read them back: once when the source starts, and
+// again after every dispatch it records (recordUsageCmd).
+type usageFeed struct {
+	recent []string
+}
+
+// usageMsg carries a fresh read of the recent invocations.
+type usageMsg struct{ recent []string }
+
+// update applies a fresh read.
+func (f *usageFeed) update(msg usageMsg) { f.recent = msg.recent }
 
 // syncFeed is the sync source's state: the open PRs, open issues and merged-PR
 // head set the last sync (or the on-disk cache) answered, and whether any of
@@ -69,7 +83,7 @@ type identityFeed struct {
 // newFeeds builds every feed, idle. A feed starts only when sources.go's
 // claimSources finds a mounted tab declaring it.
 func newFeeds(ctx context.Context, repoRoot string) feeds {
-	return feeds{beads: &beadsFeed{ctx: ctx, root: repoRoot}, syncFeed: &syncFeed{}, localFeed: &localFeed{}, identityFeed: &identityFeed{}, config: &configFeed{}, work: &workFeed{}}
+	return feeds{beads: &beadsFeed{ctx: ctx, root: repoRoot}, syncFeed: &syncFeed{}, localFeed: &localFeed{}, identityFeed: &identityFeed{}, config: &configFeed{}, work: &workFeed{}, usage: &usageFeed{}}
 }
 
 // sourceSet is how a tab model's constructor obtains handles to feeds.
@@ -126,6 +140,24 @@ func (d *sourceSet) sync() syncSource {
 // local returns the handle to the last local git read. Local git is read by
 // every tab and loads unconditionally, so asking for it declares nothing.
 func (d *sourceSet) local() localSource { return localSource{f: d.f.localFeed} }
+
+// usage declares srcUsage and returns the handle to the recent invocations.
+func (d *sourceSet) usage() usageSource {
+	d.declare(srcUsage)
+	return usageSource{f: d.f.usage}
+}
+
+// usageSource is a tab's read handle on the recent invocations.
+type usageSource struct{ f *usageFeed }
+
+// recent is the recorded invocations, most recent first — "deploy",
+// "command-test counter" — empty before the first read lands.
+func (h usageSource) recent() []string {
+	if h.f == nil {
+		return nil
+	}
+	return h.f.recent
+}
 
 // identity declares srcIdentity and returns the handle to the signed-in account.
 func (d *sourceSet) identity() identitySource {

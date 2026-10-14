@@ -30,6 +30,9 @@ const (
 	// srcIdentity is the signed-in GitHub account (`gh api user`), re-read
 	// on every sync tick.
 	srcIdentity
+	// srcUsage is the Commands tab's recent invocations (internal/workusage),
+	// read once at start and again after every recorded dispatch.
+	srcUsage
 	numSources
 )
 
@@ -94,6 +97,11 @@ var sources = [numSources]dataSource{
 		name:  "identity",
 		ready: func(Model) bool { return true },
 		start: func(m Model) tea.Cmd { return fetchIdentityCmd(m.ctx) },
+	},
+	srcUsage: {
+		name:  "usage",
+		ready: func(Model) bool { return true },
+		start: func(m Model) tea.Cmd { return loadUsageCmd(m.nwo) },
 	},
 }
 

@@ -20,9 +20,14 @@ type commandsTab struct {
 	cfg      configSource
 	beads    beadsSource
 	sync     syncSource
+	usage    usageSource
 	surface  workSurface
 
 	cursor int
+	// recentPick is the invocation the Recent strip has picked, moved by
+	// ←→ while the cursor is on the strip; "" picks the most recent
+	// (commandsearch.go).
+	recentPick string
 
 	// collapsed is the display mode, toggled by `c` (admin-4zz9): false (the
 	// zero value, and the launch default when no view.toml sets it) is
@@ -72,6 +77,7 @@ func newCommandsTab(f feeds, collapsed bool) *commandsTab {
 		cfg:             d.config(),
 		beads:           d.beads(),
 		sync:            d.sync(),
+		usage:           d.usage(),
 		collapsed:       collapsed,
 		pendingDispatch: map[string]bool{},
 		pendingAttach:   map[string]bool{},
@@ -85,9 +91,6 @@ func newCommandsTab(f feeds, collapsed bool) *commandsTab {
 func (t *commandsTab) sources() []source { return t.declared }
 
 func (t *commandsTab) cursorRef() *int { return &t.cursor }
-
-// visibleRows is rows with the shell's filter applied.
-func (t *commandsTab) visibleRows(s *shell) []rowItem { return s.filterRows(t.rows(s)) }
 
 // currentRow is the row under the cursor, or none while focus is on the tab
 // bar.
@@ -127,7 +130,7 @@ func (t *commandsTab) clamp(s *shell) {
 // the walk and the shell's skip-and-wrap walk applies; collapsed, the list
 // depends on where the cursor goes (moveCursorWork).
 func (t *commandsTab) moveCursor(s *shell, delta int) {
-	if t.collapsed {
+	if t.collapsed && s.filter == "" {
 		t.moveCursorWork(s, delta)
 		return
 	}
@@ -179,6 +182,12 @@ func (t *commandsTab) moveCursorWork(s *shell, delta int) {
 			i = 0
 		}
 		r := rows[i]
+		if r.recent != nil {
+			// The Recent strip previews its pick in the band; it opens
+			// nothing in the list below it.
+			t.cursor = i
+			return
+		}
 		if r.selectable() {
 			owner := ownerCmdName(r)
 			if owner == t.openCmd {
@@ -266,6 +275,16 @@ func (t *commandsTab) key(s *shell, msg tea.KeyMsg) (bool, tea.Cmd) {
 		return true, nil
 	}
 	r, ok := t.currentRow(s)
+	if ok && r.recent != nil {
+		switch msg.String() {
+		case "left", "h":
+			t.stepRecent(r, -1)
+			return true, nil
+		case "right", "l":
+			t.stepRecent(r, 1)
+			return true, nil
+		}
+	}
 	return t.surface.key(s, r, ok, msg.String())
 }
 
@@ -282,7 +301,19 @@ func (t *commandsTab) bindings(s *shell) (keymap.RowKind, []keymap.Binding) {
 		collapse = "expand"
 	}
 	r, ok := t.currentRow(s)
-	return t.surface.bindings(r, ok, collapse)
+	kind, shown := t.surface.bindings(r, ok, collapse)
+	if !ok || r.recent == nil {
+		return kind, shown
+	}
+	// ←→ sits beside ↵, the key it chooses the target of.
+	out := make([]keymap.Binding, 0, len(shown)+1)
+	for _, b := range shown {
+		out = append(out, b)
+		if b.Key == "enter" {
+			out = append(out, keymap.Binding{Display: "←→", Label: "recent"})
+		}
+	}
+	return kind, out
 }
 
 func (t *commandsTab) footer(int) (string, bool) { return "", false }
