@@ -103,7 +103,9 @@ func PaneGone(ctx context.Context, statusCmd, handle string) (gone bool, err err
 	// must not hold Run past it.
 	cmd.WaitDelay = time.Second
 	runErr := cmd.Run()
-	if runErr == nil {
+	if runErr == nil || errors.Is(runErr, exec.ErrWaitDelay) {
+		// ErrWaitDelay means sh exited 0 and a grandchild still held stderr:
+		// the command's answer was "alive".
 		return false, nil
 	}
 	if ctx.Err() != nil {

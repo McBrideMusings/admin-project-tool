@@ -324,6 +324,7 @@ func TestPaneGoneExitCode(t *testing.T) {
 		wantErr string
 	}{
 		{cmd: "exit 0"},
+		{cmd: "sleep 3 >&2 & exit 0"},
 		{cmd: "exit 1", gone: true},
 		{cmd: "exit 125", gone: true},
 		{cmd: "exit 126", wantErr: "exit 126"},
