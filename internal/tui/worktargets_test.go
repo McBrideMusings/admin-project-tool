@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"testing"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
@@ -14,6 +15,7 @@ import (
 func multiTargetModel(t *testing.T) Model {
 	t.Helper()
 	m := Model{
+		feeds:      newFeeds(context.Background(), ""),
 		manifestOK: true,
 		manifest: &manifest.Manifest{
 			Custom: map[string]manifest.Command{

@@ -118,7 +118,7 @@ func TestRowKeyDispatchMissOnOtherRowKind(t *testing.T) {
 	m := Model{
 		shell: shell{active: tabLocal, width: 120, height: 40},
 		pane:  paneCommits,
-		local: localData{commits: []git.Commit{{SHA: "abc123", Subject: "msg"}}},
+		feeds: feeds{localFeed: &localFeed{local: localData{commits: []git.Commit{{SHA: "abc123", Subject: "msg"}}}}},
 		rowKeys: map[keymap.RowKind]map[string]string{
 			keymap.Bead: {"o": "mycmd"},
 		},

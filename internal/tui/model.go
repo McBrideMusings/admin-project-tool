@@ -178,19 +178,9 @@ type Model struct {
 	// pane is never focusable (paneShown).
 	historyStashes bool
 
-	local  localData
-	remote data.Remote
-	// The merged-PR head-branch set (branches a merged PR had as its head) lives on
-	// remote as remote.MergedHeads, cached on disk right beside the PR/Issue
-	// sections. It comes from GitHub, not git, so it must not live in localData —
-	// that is replaced wholesale every time local git is re-read, and every sync
-	// ends with exactly that reload, which would blank a set only the slower gh
-	// call can refill. branchstate.go joins it with the git-derived signals at read
-	// time; nothing merges the two sources into a stored value.
 	haveLocal bool
 	// localApplied is the seq of the newest local read on screen (localDataMsg.seq).
 	localApplied uint64
-	haveData     bool
 	inflight     int // in-flight background work (the sync, row refreshes); header spins while > 0
 
 	// feeds is the state of every data source a tab model reads through a
@@ -198,10 +188,17 @@ type Model struct {
 	// declare it (sources.go). Whether the Beads tab is drawn at all comes
 	// from the declared tracker list alone (trackers/hasTracker), never from
 	// the beads feed: the feed decides what is inside the tab.
-	feeds feeds
+	//
+	// feeds is embedded so Model reads the sync's remote and haveData and the
+	// local git read as its own fields; a tab model holds the same pointers as
+	// typed handles instead.
+	feeds
 	// beadsTab is the Beads tab's own model (beadstab.go). It is built only
 	// when the tab is mounted (mountTabs) and reached through tabModel.
 	beadsTab beadsTab
+	// issuesTab is the Issues tab's own model (issuestab.go), built and reached
+	// the same way.
+	issuesTab issuesTab
 
 	// One background sync covers everything the dashboard reads from outside the
 	// working tree — open PRs, open issues, the merged-PR set, and `git fetch
@@ -681,6 +678,9 @@ func (m *Model) mountTabs(vs viewstate.State) {
 		tree, _ := beadTreeModeFromView(vs.BeadTree)
 		m.beadsTab = newBeadsTab(m.feeds, tree)
 	}
+	if m.isMounted(tabIssues) {
+		m.issuesTab = newIssuesTab(m.feeds, m.nwo)
+	}
 }
 
 // updateTabs hands msg to every mounted tab model.
@@ -703,6 +703,8 @@ func (m *Model) tabModel(t tab) tabModel {
 	switch t {
 	case tabBeads:
 		return &m.beadsTab
+	case tabIssues:
+		return &m.issuesTab
 	}
 	return nil
 }
@@ -727,8 +729,6 @@ func (m Model) rows() []rowItem {
 		return m.workerRows()
 	case tabPRs:
 		return m.prRows()
-	case tabIssues:
-		return m.issueRows()
 	case tabConfig:
 		return m.configRows()
 	}

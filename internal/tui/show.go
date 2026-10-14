@@ -154,7 +154,7 @@ func (m Model) tabLoaded(t tab) bool {
 	switch t {
 	case tabLocal:
 		return m.haveLocal
-	case tabPRs, tabIssues:
+	case tabPRs:
 		return m.haveData
 	}
 	return true

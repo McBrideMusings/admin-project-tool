@@ -2,9 +2,11 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"testing"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/gh"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/viewstate"
 )
@@ -50,5 +52,39 @@ func TestSourcesStartOnlyForMountedTabs(t *testing.T) {
 				t.Errorf("forced sync went out = %v, want %v", gotSync, tc.sync)
 			}
 		})
+	}
+}
+
+// TestIssuesTabMountedAloneMatchesBare pins the Issues slice's acceptance: the
+// tab declares only the sync, so mounted alone it starts exactly that, and it
+// renders the same rows as under bare admin.
+func TestIssuesTabMountedAloneMatchesBare(t *testing.T) {
+	build := func(mounted []tab) Model {
+		m := Model{
+			ctx:        context.Background(),
+			nwo:        "owner/repo",
+			shell:      shell{mounted: mounted, repoRoot: t.TempDir(), width: 120, height: 40},
+			manifestOK: true,
+			manifest:   &manifest.Manifest{HasTracker: true, Trackers: []string{"github"}},
+			headless:   true,
+		}
+		m.mountTabs(viewstate.State{})
+		m.remote.Issues = []gh.IssueItem{{Number: 5, Title: "Fix bug", Labels: []string{"bug"}}}
+		m.haveData = true
+		return m
+	}
+	alone, bare := build([]tab{tabIssues}), build(nil)
+	if got := alone.claimSources(); !slices.Equal(got, []source{srcSync}) {
+		t.Errorf("issues alone claimed %v, want [srcSync]", got)
+	}
+	aloneRows := alone.issuesTab.rows(&alone.shell)
+	bareRows := bare.issuesTab.rows(&bare.shell)
+	if len(aloneRows) == 0 || len(aloneRows) != len(bareRows) {
+		t.Fatalf("issues alone drew %d rows, bare drew %d", len(aloneRows), len(bareRows))
+	}
+	for i := range aloneRows {
+		if a, b := fmt.Sprint(rowLine(aloneRows[i], 120)), fmt.Sprint(rowLine(bareRows[i], 120)); a != b {
+			t.Errorf("row %d: alone %q, bare %q", i, a, b)
+		}
 	}
 }

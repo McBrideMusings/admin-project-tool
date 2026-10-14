@@ -38,7 +38,7 @@ const (
 // whose state still lives on Model. The Repo tab reads the sync (the
 // merged-PR head set), beads (the `w` naming prompt's bead search) and
 // identity (which branches are yours); PRs reads the sync and identity;
-// Issues reads the sync; Commands and Workers read the work tick; Config reads
+// Commands and Workers read the work tick; Config reads
 // none. A tab that has moved into its own model has no row here: its
 // constructor's handles are its declaration (Model.declared).
 var tabSources = map[tab][]source{
@@ -46,7 +46,6 @@ var tabSources = map[tab][]source{
 	tabWorkers: {srcWork},
 	tabLocal:   {srcSync, srcBeads, srcIdentity},
 	tabPRs:     {srcSync, srcIdentity},
-	tabIssues:  {srcSync},
 	tabConfig:  nil,
 }
 
