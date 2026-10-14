@@ -340,58 +340,54 @@ func commandLogDir(repoRoot string, m *manifest.Manifest) string {
 	return luahost.ResolveLogDir(repoRoot, m.Logging)
 }
 
-// logStemTimestamp extracts the "<stem>.<TIMESTAMP>.log" suffix's timestamp
-// segment, which sorts correctly as a plain string (the format is
-// YYYY-MM-DD_HHMMSS_NNNNNNNNN — seconds plus a zero-padded nanosecond
-// disambiguator, underscore-joined so it stays part of the SAME
-// dot-delimited segment rather than adding a second dot) — used so the
-// newest-of-several-matches pick doesn't need a filesystem stat call, since
-// a "which file is really newest" tie only needs to compare the name
-// luahost itself chose.
-func logStemTimestamp(path string) string {
-	base := filepath.Base(path)
-	// base is "<stem>.<ts>.log"; the timestamp is always the last
-	// dot-segment before ".log".
-	base = strings.TrimSuffix(base, ".log")
-	i := strings.LastIndex(base, ".")
-	if i < 0 {
-		return ""
-	}
-	return base[i+1:]
-}
-
 // commandLogPath is the "log" the detail pane shows: since admin-rc82 every
 // command names its log deterministically before its first step runs (the
 // command's own name, dispatch.go's nameCommandLog), refined only when a
 // step's own kind (a multi-target target, a framed action) sets a more
 // specific name before first use — so the real stem is one of: the command
-// name itself, one of its step (action) names, or "<step>-<target>" for a
-// multi-target step. Matching all of those and taking the newest by
-// filename timestamp covers every shape without needing an mtime tiebreak
-// or a per-step ranking loop — naming can no longer collide ACROSS two
-// different commands, only within one command's own set of possible stems.
-// A command that has genuinely never run matches nothing here and degrades
-// to "none yet".
+// name itself, one of its step (action) names, or, for each declared target
+// of a multi-target step, "<step>-<target>" (multitarget.go's own log
+// context), "<step>:<target>" (the frame's label, when the target is
+// framed), or the action a target delegates to (that action's own frame).
+// Only exact stems count, so a command whose name merely starts with
+// "<step>-" never lends this row its log. The newest match by filename
+// timestamp wins: a log is "<stem>.<ts>.log", the timestamp the last
+// dot-segment, in a format (YYYY-MM-DD_HHMMSS_NNNNNNNNN, no dot inside it)
+// that sorts chronologically as a plain string, so no stat call is needed.
+// A command that has never run matches nothing and degrades to "none yet".
 //
 // names is logDir's file names as the work source last scanned them
-// (scanLogsCmd): the patterns match against that list, so drawing a row
-// never reads the directory.
-func commandLogPath(logDir string, names []string, name string, c manifest.Command) string {
+// (scanLogsCmd): matching against that list means drawing a row never reads
+// the directory.
+func commandLogPath(logDir string, names []string, mf *manifest.Manifest, name string, c manifest.Command) string {
 	stems := map[string]bool{name: true}
 	for _, step := range c.Steps {
 		stems[step] = true
 	}
+	if mf != nil {
+		for _, step := range c.Steps {
+			a := mf.Actions[step]
+			for _, target := range kinds.TargetKeys(a) {
+				stems[step+"-"+target] = true
+				stems[step+":"+target] = true
+				if ref, ok := strings.CutPrefix(kinds.TargetSummary(a, target), "@"); ok {
+					stems[ref] = true
+				}
+			}
+		}
+	}
 	var best, bestTS string
-	for stem := range stems {
-		for _, n := range names {
-			plain, _ := filepath.Match(stem+".*.log", n)
-			dashed, _ := filepath.Match(stem+"-*.*.log", n)
-			if !plain && !dashed {
-				continue
-			}
-			if ts := logStemTimestamp(n); ts > bestTS {
-				bestTS, best = ts, filepath.Join(logDir, n)
-			}
+	for _, n := range names {
+		stem, ok := strings.CutSuffix(n, ".log")
+		if !ok {
+			continue
+		}
+		i := strings.LastIndex(stem, ".")
+		if i < 0 || !stems[stem[:i]] {
+			continue
+		}
+		if ts := stem[i+1:]; ts > bestTS {
+			bestTS, best = ts, filepath.Join(logDir, n)
 		}
 	}
 	return best
@@ -698,7 +694,7 @@ func (t *commandsTab) commandRowItem(s *shell, cr workCmdRow, byID map[string]*l
 		wd.logPath = livePath
 	} else {
 		dir := commandLogDir(s.manifestDir(), mf)
-		wd.logPath = commandLogPath(dir, t.work.logNames(dir), cr.name, cr.cmd)
+		wd.logPath = commandLogPath(dir, t.work.logNames(dir), mf, cr.name, cr.cmd)
 	}
 	// A multi-target parent with more than one target is a group: it holds
 	// targets and runs nothing itself, so the cursor must never land on it

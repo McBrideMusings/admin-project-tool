@@ -401,7 +401,7 @@ func (c *LogContext) materializeLocked() {
 	if pc.stem {
 		// Nanosecond precision, underscore-joined onto the same
 		// dot-delimited segment (never a second dot — internal/tui/work.go's
-		// logStemTimestamp takes everything after the LAST dot before
+		// commandLogPath takes everything after the LAST dot before
 		// ".log", so an added dot would truncate the extracted timestamp to
 		// just the fractional tail). Fixed-width, zero-padded, so
 		// pruneLogsLocked's sort.Strings and commandLogPath's lexicographic

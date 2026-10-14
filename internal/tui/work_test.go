@@ -569,6 +569,45 @@ func TestCommandRowItemFallsBackToScannedLogWhenNoLiveEntry(t *testing.T) {
 	}
 }
 
+// TestCommandLogPathMatchesOnlyItsOwnStems proves a command's last log is
+// never another command's log just because that command's name starts with
+// "<step>-", while a multi-target step's own target logs — dashed when
+// unframed, colon when framed — still resolve, as does the log of an action
+// a target delegates to.
+func TestCommandLogPathMatchesOnlyItsOwnStems(t *testing.T) {
+	m := &manifest.Manifest{
+		Custom: map[string]manifest.Command{
+			"deploy": {Steps: []string{"install", "tampermonkey"}},
+			"dev":    {Steps: []string{"dev"}},
+		},
+		Actions: map[string]manifest.Action{
+			"install":      {"kind": "shell"},
+			"tampermonkey": {"kind": "shell"},
+			"dev":          {"kind": "multi-target", "cf": map[string]any{"run": "x"}, "web": map[string]any{"run": "y"}, "edge": map[string]any{"action": "edge-dev"}},
+		},
+	}
+	names := []string{
+		"deploy.2026-10-01_000000_000000000.log",
+		"tampermonkey-status.2026-10-08_000000_000000000.log",
+		"dev-cf.2026-10-02_000000_000000000.log",
+		"dev:web.2026-10-03_000000_000000000.log",
+		"dev-server.2026-10-09_000000_000000000.log",
+		"edge-dev.2026-10-04_000000_000000000.log",
+	}
+	if got, want := commandLogPath("/l", names, m, "deploy", m.Custom["deploy"]), "/l/deploy.2026-10-01_000000_000000000.log"; got != want {
+		t.Errorf("deploy log = %q, want %q", got, want)
+	}
+	if got, want := commandLogPath("/l", names, m, "dev", m.Custom["dev"]), "/l/edge-dev.2026-10-04_000000_000000000.log"; got != want {
+		t.Errorf("dev log = %q, want %q", got, want)
+	}
+	if got, want := commandLogPath("/l", names[:4], m, "dev", m.Custom["dev"]), "/l/dev:web.2026-10-03_000000_000000000.log"; got != want {
+		t.Errorf("dev log without the delegated one = %q, want %q", got, want)
+	}
+	if got, want := commandLogPath("/l", names[:3], m, "dev", m.Custom["dev"]), "/l/dev-cf.2026-10-02_000000_000000000.log"; got != want {
+		t.Errorf("dev log without the framed one = %q, want %q", got, want)
+	}
+}
+
 // TestTargetRowsResolvesLiveEntryByCommandName proves a target row resolves
 // the entry keyed "<command>:<target>" — the shape
 // internal/kinds.multiTargetLiveID writes (see detach_test.go's
