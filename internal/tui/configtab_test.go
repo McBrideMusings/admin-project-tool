@@ -22,8 +22,13 @@ func rowsText(rows []rowItem) string {
 	return strings.Join(texts, "\n")
 }
 
+// testConfigTab builds a config tab over a hand-set manifest feed.
+func testConfigTab(f configFeed, cfg config.Config) configTab {
+	return configTab{src: configSource{f: &f}, cfg: cfg}
+}
+
 func TestManifestConfigLinesNoManifest(t *testing.T) {
-	m := Model{manifestOK: false}
+	m := testConfigTab(configFeed{}, config.Config{})
 	joined := rowsText(m.manifestConfigRows())
 	if !strings.Contains(joined, "no admin.toml") {
 		t.Errorf("manifestConfigRows(no manifest) = %q, want it to say no admin.toml", joined)
@@ -35,17 +40,17 @@ func TestManifestConfigLinesNoManifest(t *testing.T) {
 // shows its value and origin, an undeclared one shows the "not declared"
 // placeholder rather than a guessed value.
 func TestManifestConfigLinesTrackerDeclaredAndDefaulted(t *testing.T) {
-	m := Model{
-		manifestOK: true,
-		manifest:   &manifest.Manifest{Trackers: []string{"beads"}, HasTracker: true},
-		keyOrigin:  map[string]string{"tracker": "(manifest)"},
-	}
+	m := testConfigTab(configFeed{
+		ok:       true,
+		manifest: &manifest.Manifest{Trackers: []string{"beads"}, HasTracker: true},
+		origin:   map[string]string{"tracker": "(manifest)"},
+	}, config.Config{})
 	joined := rowsText(m.manifestConfigRows())
 	if !strings.Contains(joined, "beads") || !strings.Contains(joined, "(manifest)") {
 		t.Errorf("manifestConfigRows(tracker declared) = %q, want it to show \"beads\" and its \"(manifest)\" origin", joined)
 	}
 
-	m2 := Model{manifestOK: true, manifest: &manifest.Manifest{}}
+	m2 := testConfigTab(configFeed{ok: true, manifest: &manifest.Manifest{}}, config.Config{})
 	joined2 := rowsText(m2.manifestConfigRows())
 	if !strings.Contains(joined2, "no tracker declared") {
 		t.Errorf("manifestConfigRows(no tracker) = %q, want \"no tracker declared\" per the AC (never guess one)", joined2)
@@ -59,11 +64,11 @@ func TestManifestConfigLinesTrackerDeclaredAndDefaulted(t *testing.T) {
 }
 
 func TestManifestConfigLinesUsesArchetypeOrigin(t *testing.T) {
-	m := Model{
-		manifestOK: true,
-		manifest:   &manifest.Manifest{Trackers: []string{"github"}, HasTracker: true},
-		keyOrigin:  map[string]string{"tracker": "beads-tracker"},
-	}
+	m := testConfigTab(configFeed{
+		ok:       true,
+		manifest: &manifest.Manifest{Trackers: []string{"github"}, HasTracker: true},
+		origin:   map[string]string{"tracker": "beads-tracker"},
+	}, config.Config{})
 	joined := rowsText(m.manifestConfigRows())
 	if !strings.Contains(joined, "beads-tracker") {
 		t.Errorf("manifestConfigRows = %q, want it to name the declaring archetype \"beads-tracker\"", joined)
@@ -75,14 +80,10 @@ func TestManifestConfigLinesUsesArchetypeOrigin(t *testing.T) {
 // the acceptance criterion "never a dotfile" — never a hardcoded file path.
 func TestConfigTableLinesReportsOrigin(t *testing.T) {
 	dir := t.TempDir()
-	m := Model{
-		shell: shell{repoRoot: dir},
-		cfgMerged: config.Config{
-			Worktrees: config.Worktrees{Root: "/tmp/wt"},
-		},
-		keyOrigin: map[string]string{"worktrees": "some-archetype"},
-	}
-	joined := rowsText(m.configTableRows())
+	m := testConfigTab(configFeed{origin: map[string]string{"worktrees": "some-archetype"}}, config.Config{
+		Worktrees: config.Worktrees{Root: "/tmp/wt"},
+	})
+	joined := rowsText(m.configTableRows(&shell{repoRoot: dir}))
 	if strings.Contains(joined, "login") || strings.Contains(joined, "emails") {
 		t.Errorf("configTableRows still shows identity rows: %q", joined)
 	}
@@ -115,13 +116,13 @@ func TestConfigTabCursorMoves(t *testing.T) {
 	dir := t.TempDir()
 	m := configTestModel(t, dir)
 	m.focus = focusBody
-	m.cursor[tabConfig] = 0
+	m.configTab.cursor = 0
 	m.clampCursor()
-	start := m.cursor[tabConfig]
+	start := m.configTab.cursor
 
 	next, _ := m.handleKey(keyMsg("j"))
 	nm := next.(Model)
-	if nm.cursor[tabConfig] == start {
+	if nm.configTab.cursor == start {
 		t.Fatalf("j did not move the Config tab cursor off %d", start)
 	}
 	r, ok := nm.currentRow()
@@ -134,8 +135,8 @@ func TestConfigTabCursorMoves(t *testing.T) {
 
 	next2, _ := nm.handleKey(keyMsg("k"))
 	nm2 := next2.(Model)
-	if nm2.cursor[tabConfig] != start {
-		t.Errorf("k did not return the cursor to %d, got %d", start, nm2.cursor[tabConfig])
+	if nm2.configTab.cursor != start {
+		t.Errorf("k did not return the cursor to %d, got %d", start, nm2.configTab.cursor)
 	}
 }
 
@@ -157,7 +158,7 @@ func TestConfigTabEnterOpensKeyFile(t *testing.T) {
 	if idx < 0 {
 		t.Fatalf("no admin.toml row in %v", rows)
 	}
-	m.cursor[tabConfig] = idx
+	m.configTab.cursor = idx
 
 	_, cmd := m.activate()
 	if cmd == nil {
@@ -197,7 +198,7 @@ func TestConfigTabEnterOnAbsentFileRefuses(t *testing.T) {
 	if idx < 0 {
 		t.Fatalf("no AGENTS.md row in %v", rows)
 	}
-	m.cursor[tabConfig] = idx
+	m.configTab.cursor = idx
 
 	nm, cmd := m.activate()
 	if cmd != nil {
@@ -228,7 +229,7 @@ func TestConfigTabEnterOnValueRowSaysNothingToOpen(t *testing.T) {
 	if idx < 0 {
 		t.Fatalf("no tracker value row in %v", rows)
 	}
-	m.cursor[tabConfig] = idx
+	m.configTab.cursor = idx
 
 	// activate() itself never schedules the status toast's expiry (only
 	// Update does, wrapping around it), so its own cmd return says nothing
@@ -264,7 +265,7 @@ func TestConfigTabClickActivatesCurrentRow(t *testing.T) {
 	if idx < 0 {
 		t.Fatalf("no admin.toml row in %v", rows)
 	}
-	m.cursor[tabConfig] = idx
+	m.configTab.cursor = idx
 
 	_, cmd := m.clickRow(0, idx)
 	if cmd == nil {
@@ -280,13 +281,10 @@ func TestConfigTabClickActivatesCurrentRow(t *testing.T) {
 // directory, not a file — opens it the same way a file row does.
 func TestConfigTabDirectoryRowOpens(t *testing.T) {
 	dir := t.TempDir()
-	m := Model{
-		shell: shell{repoRoot: dir},
-		cfgMerged: config.Config{
-			Worktrees: config.Worktrees{Root: dir},
-		},
-	}
-	rows := m.configTableRows()
+	m := testConfigTab(configFeed{}, config.Config{
+		Worktrees: config.Worktrees{Root: dir},
+	})
+	rows := m.configTableRows(&shell{repoRoot: dir})
 	var row rowItem
 	found := false
 	for _, r := range rows {
@@ -313,9 +311,9 @@ func TestConfigTabPopulatePatternAbsentRow(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "present.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m := Model{shell: shell{repoRoot: dir}}
+	m := testConfigTab(configFeed{}, config.Config{})
 	entries := []config.Entry{{Pattern: "present.txt"}, {Pattern: "missing.txt"}}
-	rows := m.populateRows(entries, "")
+	rows := m.populateRows(&shell{repoRoot: dir}, entries, "")
 
 	var present, missing *configRowData
 	for _, r := range rows {

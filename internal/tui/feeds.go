@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/bd"
+	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 )
 
 // feeds holds the state of every data source a tab model reads through a
@@ -16,13 +17,14 @@ import (
 // handle sees the one copy the shell keeps current, across the Model copies
 // Bubble Tea makes on every Update.
 type feeds struct {
-	beads *beadsFeed
+	beads  *beadsFeed
+	config *configFeed
 }
 
 // newFeeds builds every feed, idle. A feed starts only when sources.go's
 // claimSources finds a mounted tab declaring it.
 func newFeeds(ctx context.Context, repoRoot string) feeds {
-	return feeds{beads: &beadsFeed{ctx: ctx, root: repoRoot}}
+	return feeds{beads: &beadsFeed{ctx: ctx, root: repoRoot}, config: &configFeed{}}
 }
 
 // sourceSet is how a tab model's constructor obtains handles to feeds.
@@ -55,6 +57,11 @@ func (d *sourceSet) beads() beadsSource {
 	d.declare(srcBeads)
 	return beadsSource{f: d.f.beads}
 }
+
+// config returns the handle to the manifest the shell loads. It declares no
+// source: the manifest is read synchronously at launch and re-read on every
+// save, for every tab, so there is nothing to start.
+func (d *sourceSet) config() configSource { return configSource{f: d.f.config} }
 
 // tabModel is a tab that owns its own rows, cursor, keys and overlays
 // (ADR-0026). The shell keeps everything every tab shares — size, focus,
@@ -234,3 +241,31 @@ func (f *beadsFeed) update(msg tea.Msg, headless bool) tea.Cmd {
 	}
 	return nil
 }
+
+// configFeed is the manifest as the shell last loaded it. loadManifest
+// rewrites it on every read, failures included, so a manifest that was valid
+// and is now broken clears what it used to declare.
+type configFeed struct {
+	manifest *manifest.Manifest
+	ok       bool
+	err      string
+	// origin names which archetype (or "(manifest)") declared each top-level
+	// key; a key missing from the map was never declared.
+	origin map[string]string
+}
+
+// configSource is a tab's read handle on the loaded manifest.
+type configSource struct{ f *configFeed }
+
+// manifest is the merged manifest, nil when the project has none or it is
+// broken.
+func (h configSource) manifest() *manifest.Manifest { return h.f.manifest }
+
+// ok reports whether the project has a manifest that resolved.
+func (h configSource) ok() bool { return h.f.ok }
+
+// err is a present-but-broken manifest's parse/resolve error, or "".
+func (h configSource) err() string { return h.f.err }
+
+// origin is who declared key, or "" when nothing did.
+func (h configSource) origin(key string) string { return h.f.origin[key] }

@@ -76,38 +76,38 @@ func pathAbsent(path string) bool {
 // configRows builds the Config tab's row list: the admin.toml-declared
 // scalar keys, the five config tables, then the key-file section — the same
 // order renderConfigBody drew before this tab gained a cursor.
-func (m Model) configRows() []rowItem {
+func (t configTab) configRows(sh *shell) []rowItem {
 	var rows []rowItem
 	rows = append(rows, headerRow("MANIFEST", seg{t: "admin.toml", fg: cFaint}))
-	rows = append(rows, m.manifestConfigRows()...)
+	rows = append(rows, t.manifestConfigRows()...)
 	rows = append(rows, blankRow())
 	rows = append(rows, headerRow("IDENTITY & WORKTREES", seg{t: "admin.toml", fg: cFaint}))
-	rows = append(rows, m.configTableRows()...)
+	rows = append(rows, t.configTableRows(sh)...)
 	rows = append(rows, blankRow())
 	rows = append(rows, headerRow("KEY FILES"))
-	rows = append(rows, m.keyFileRows()...)
+	rows = append(rows, t.keyFileRows(sh)...)
 	return rows
 }
 
 // manifestConfigRows renders the admin.toml-declared keys: tracker and
 // uses_pull_requests. A project with no admin.toml at all declares neither,
 // which is exactly what "not declared" already means — no special case
-// needed beyond that m.manifest is nil.
-func (m Model) manifestConfigRows() []rowItem {
-	if !m.manifestOK {
+// needed beyond that the manifest is nil.
+func (t configTab) manifestConfigRows() []rowItem {
+	if !t.src.ok() {
 		return []rowItem{{kind: rowText, label: "no admin.toml — nothing declared here"}}
 	}
-	if m.manifestErr != "" {
-		return []rowItem{{kind: rowText, leftSegs: []seg{{t: "manifest error: " + m.manifestErr, fg: cRed}}}}
+	if t.src.err() != "" {
+		return []rowItem{{kind: rowText, leftSegs: []seg{{t: "manifest error: " + t.src.err(), fg: cRed}}}}
 	}
 
-	tracker := declared{origin: m.keyOrigin["tracker"]}
-	if m.manifest.HasTracker {
-		tracker.value = strings.Join(m.manifest.Trackers, ", ")
+	tracker := declared{origin: t.src.origin("tracker")}
+	if t.src.manifest().HasTracker {
+		tracker.value = strings.Join(t.src.manifest().Trackers, ", ")
 	}
-	pr := declared{origin: m.keyOrigin["uses_pull_requests"]}
-	if m.manifest.HasUsesPullRequests {
-		pr.value = strconv.FormatBool(m.manifest.UsesPullRequests)
+	pr := declared{origin: t.src.origin("uses_pull_requests")}
+	if t.src.manifest().HasUsesPullRequests {
+		pr.value = strconv.FormatBool(t.src.manifest().UsesPullRequests)
 	} else {
 		pr.value = "false"
 	}
@@ -120,24 +120,24 @@ func (m Model) manifestConfigRows() []rowItem {
 
 // configTableRows renders the config.Config tables —
 // worktree root, populate patterns, the default workflow agent and its
-// concurrency ceiling — resolved from m.cfgMerged, with each row's origin
-// coming from m.keyOrigin (admin.toml itself, or the contributing
+// concurrency ceiling — resolved from t.cfg, with each row's origin
+// coming from the source's key origins (admin.toml itself, or the contributing
 // archetype's name; never a dotfile — there is no other file left to name).
 // The worktree root and each populate pattern are path rows: openable, and
 // marked absent when nothing is there to open.
-func (m Model) configTableRows() []rowItem {
-	if m.cfgErr != "" {
-		return []rowItem{{kind: rowText, leftSegs: []seg{{t: "config error: " + m.cfgErr, fg: cRed}}}}
+func (t configTab) configTableRows(sh *shell) []rowItem {
+	if t.cfgErr != "" {
+		return []rowItem{{kind: rowText, leftSegs: []seg{{t: "config error: " + t.cfgErr, fg: cRed}}}}
 	}
 
 	var out []rowItem
 
-	out = append(out, m.worktreeRootRow())
-	out = append(out, m.populateRows(m.cfgMerged.Populate, m.keyOrigin["populate"])...)
+	out = append(out, t.worktreeRootRow())
+	out = append(out, t.populateRows(sh, t.cfg.Populate, t.src.origin("populate"))...)
 
-	ceiling := declared{origin: m.keyOrigin["workflow"]}
-	if m.cfgMerged.Workflow.Ceiling > 0 {
-		ceiling.value = strconv.Itoa(m.cfgMerged.Workflow.Ceiling)
+	ceiling := declared{origin: t.src.origin("workflow")}
+	if t.cfg.Workflow.Ceiling > 0 {
+		ceiling.value = strconv.Itoa(t.cfg.Workflow.Ceiling)
 	}
 	out = append(out, renderConfigRow("concurrency ceiling", ceiling, "not declared — dispatcher default applies"))
 
@@ -148,9 +148,9 @@ func (m Model) configTableRows() []rowItem {
 // directory row — one of the two path shapes named in the ticket's AC
 // ("Enter on a directory row … opens the directory") alongside a populate
 // pattern.
-func (m Model) worktreeRootRow() rowItem {
-	root := config.WorktreeRoot(m.cfgMerged)
-	origin := m.keyOrigin["worktrees"]
+func (t configTab) worktreeRootRow() rowItem {
+	root := config.WorktreeRoot(t.cfg)
+	origin := t.src.origin("worktrees")
 	if root == "" {
 		return renderConfigRow("worktree root", declared{origin: origin}, "")
 	}
@@ -163,7 +163,7 @@ func (m Model) worktreeRootRow() rowItem {
 // declared [[populate]]), never a dotfile. A pattern that resolves to
 // nothing on disk (including a glob, which never stats as a literal path)
 // is simply an absent row that refuses to open.
-func (m Model) populateRows(entries []config.Entry, origin string) []rowItem {
+func (t configTab) populateRows(sh *shell, entries []config.Entry, origin string) []rowItem {
 	if len(entries) == 0 {
 		return []rowItem{renderConfigRow("populate patterns", declared{}, "none declared")}
 	}
@@ -172,7 +172,7 @@ func (m Model) populateRows(entries []config.Entry, origin string) []rowItem {
 	}
 	out := []rowItem{{kind: rowText, label: "populate patterns"}}
 	for _, e := range entries {
-		path := filepath.Join(m.repoRoot, e.Pattern)
+		path := filepath.Join(sh.repoRoot, e.Pattern)
 		absent := pathAbsent(path)
 		labelFg := cFg
 		if absent {
@@ -195,16 +195,16 @@ func (m Model) populateRows(entries []config.Entry, origin string) []rowItem {
 // present or not. A file that does not exist still gets a row, marked
 // absent, which is how you find out a file was never created; opening one
 // is refused with a status line rather than creating an empty one.
-func (m Model) keyFileRows() []rowItem {
+func (t configTab) keyFileRows(sh *shell) []rowItem {
 	rows := make([]rowItem, 0, len(keyConfigFiles))
 	for _, rel := range keyConfigFiles {
-		rows = append(rows, m.keyFileRow(rel))
+		rows = append(rows, t.keyFileRow(sh, rel))
 	}
 	return rows
 }
 
-func (m Model) keyFileRow(rel string) rowItem {
-	abs := filepath.Join(m.repoRoot, rel)
+func (t configTab) keyFileRow(sh *shell, rel string) rowItem {
+	abs := filepath.Join(sh.repoRoot, rel)
 	absent := pathAbsent(abs)
 	labelFg := cFg
 	var right []seg

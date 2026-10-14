@@ -6,6 +6,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/viewstate"
 )
 
 // multiTargetModel is a Model with one multi-target command ("dev", four
@@ -44,6 +45,7 @@ func multiTargetModel(t *testing.T) Model {
 		pendingAttach:   map[string]bool{},
 		pendingTarget:   map[string]string{},
 	}
+	m.mountTabs(viewstate.State{})
 	return m
 }
 

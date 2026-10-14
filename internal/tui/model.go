@@ -202,6 +202,9 @@ type Model struct {
 	// beadsTab is the Beads tab's own model (beadstab.go). It is built only
 	// when the tab is mounted (mountTabs) and reached through tabModel.
 	beadsTab beadsTab
+	// configTab is the Config tab's own model (configmodel.go), mounted the
+	// same way.
+	configTab configTab
 
 	// One background sync covers everything the dashboard reads from outside the
 	// working tree — open PRs, open issues, the merged-PR set, and `git fetch
@@ -334,12 +337,6 @@ type Model struct {
 	// path (computeOrigins).
 	cmdOrigin    map[string]string
 	actionOrigin map[string]string
-	// keyOrigin names which archetype (or "(manifest)") declared each
-	// scalar top-level manifest key the Config tab renders ("tracker",
-	// "uses_pull_requests") — same mechanism as cmdOrigin/actionOrigin, via
-	// computeOrigins. A key missing from the map was never declared, which
-	// the Config tab shows as defaulted rather than guessing a source.
-	keyOrigin map[string]string
 	// rowKeys is the resolved [keys.<row-kind>] lookup (ADR-0018,
 	// admin-l6kb.2), built once at New from validate.RowKeys over
 	// m.manifest.Keys — see rowkeys.go. Nil (not just empty) when there is
@@ -399,13 +396,10 @@ type Model struct {
 
 	// Config tab (admin-3rgp.21): the resolved config.Config — repoRoot's
 	// admin.toml [worktrees]/[[populate]]/[beads]/[workflow]
-	// tables, merged with its declared archetypes. Each field's origin
-	// (admin.toml itself, or the contributing archetype) comes from
-	// keyOrigin, the same mechanism the manifest-declared keys use — see
-	// work.go's computeOrigins. Loaded once at launch by loadConfigCmd; zero
-	// until settingsMsg lands, zero like identity is.
+	// tables, merged with its declared archetypes. The Config tab keeps its own
+	// copy (configmodel.go); this one is for the terminal launcher keys.
+	// Loaded once at launch by loadConfigCmd; zero until settingsMsg lands.
 	cfgMerged config.Config
-	cfgErr    string
 
 	// Worktree-target picker overlay (admin-76tv, worktreepicker.go): `T`
 	// lists the repo's worktrees (git.Worktrees(m.repoRoot)) so the user
@@ -681,6 +675,9 @@ func (m *Model) mountTabs(vs viewstate.State) {
 		tree, _ := beadTreeModeFromView(vs.BeadTree)
 		m.beadsTab = newBeadsTab(m.feeds, tree)
 	}
+	if m.isMounted(tabConfig) {
+		m.configTab = newConfigTab(m.feeds)
+	}
 }
 
 // updateTabs hands msg to every mounted tab model.
@@ -703,6 +700,8 @@ func (m *Model) tabModel(t tab) tabModel {
 	switch t {
 	case tabBeads:
 		return &m.beadsTab
+	case tabConfig:
+		return &m.configTab
 	}
 	return nil
 }
@@ -729,8 +728,6 @@ func (m Model) rows() []rowItem {
 		return m.prRows()
 	case tabIssues:
 		return m.issueRows()
-	case tabConfig:
-		return m.configRows()
 	}
 	// The Repo (local) tab uses the lazygit panes, not the flat row list.
 	return nil
@@ -1531,7 +1528,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, loadLocalCmd(m.ctx, m.repoRoot, m.checkoutDir(), m.current, m.def)
 
 	case settingsMsg:
-		m.cfgMerged, m.cfgErr = msg.cfg, msg.loadErr
+		m.cfgMerged = msg.cfg
 		return m, m.updateTabs(msg)
 
 	case workDispatchStartedMsg:
@@ -2354,18 +2351,8 @@ func (m Model) activate() (tea.Model, tea.Cmd) {
 		// what unifies both into "open its pane" (livework.go's Attach
 		// doc comment).
 		return m.attachEntry(r.work.worker)
-	case rowConfigValue:
-		m.setStatus("nothing to open on this row", cDim)
-		return m, nil
-	case rowConfigPath:
-		if r.cfg == nil {
-			return m, nil
-		}
-		if r.cfg.absent {
-			m.setStatus(r.cfg.label+" does not exist", cRed)
-			return m, nil
-		}
-		return m, openPathCmd(r.cfg.path, r.cfg.label)
+	case rowConfigValue, rowConfigPath:
+		return m, m.configTab.openRow(&m.shell, r)
 	}
 	return m, nil
 }
