@@ -132,7 +132,7 @@ func TestActivateWorkerRowAttaches(t *testing.T) {
 
 	m := workTestModel(&manifest.Manifest{})
 	m.active = tabWorkers
-	rows := m.workerRows()
+	rows := m.workersTab.rows(&m.shell)
 	idx := -1
 	for i, r := range rows {
 		if r.kind == rowWorker && r.work.worker.ID == worker.ID {
@@ -142,7 +142,7 @@ func TestActivateWorkerRowAttaches(t *testing.T) {
 	if idx < 0 {
 		t.Fatalf("no row found for the fixture worker %q in %v", worker.ID, rows)
 	}
-	m.cursor[tabWorkers] = idx
+	m.workersTab.cursor = idx
 
 	_, cmd := m.activate()
 	if !attached {

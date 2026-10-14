@@ -10,6 +10,7 @@
 package tui
 
 import (
+	"github.com/McBrideMusings/admin-project-tool/internal/viewstate"
 	"sync"
 	"testing"
 
@@ -34,6 +35,7 @@ func TestConcurrentActivityReadsDoNotRace(t *testing.T) {
 	liveCommandRow := rowItem{kind: rowCommand, work: &workRowData{cmdName: "cmd", live: e}}
 	targetWD := &workRowData{live: e, targetKey: "target", targetLast: true}
 	m := Model{termAttached: true, termEntryID: e.ID}
+	m.mountTabs(viewstate.State{})
 
 	const iterations = 20000
 	var wg sync.WaitGroup

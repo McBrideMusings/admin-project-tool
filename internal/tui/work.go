@@ -901,34 +901,6 @@ func (m Model) workRows() []rowItem {
 	return rows
 }
 
-// workerRows is the Workers tab's row list: every live agent worker, from any
-// surface (a command's agents, a bead, issue or PR binding), in the registry's
-// own insertion order so the list never reorders itself as entries change
-// state. A worker never appears on the Commands tab. The rows are the same
-// rowWorker rows the band, attach and kill already resolve.
-func (m Model) workerRows() []rowItem {
-	if !m.manifestOK {
-		return nil
-	}
-	workers := liveWorkers()
-	rows := []rowItem{headerRow("Workers", seg{t: "  " + strconv.Itoa(len(workers))})}
-	if len(workers) == 0 {
-		return append(rows, rowItem{kind: rowText, label: m.workersEmptyHint()})
-	}
-	for _, e := range workers {
-		label := e.Name
-		if activity, _ := livework.Default.Line(e.ID); activity != "" {
-			label = e.Name + " " + activity
-		}
-		rows = append(rows, rowItem{
-			kind:  rowWorker,
-			label: label,
-			work:  &workRowData{worker: e},
-		})
-	}
-	return rows
-}
-
 // workersEmptyHint is the empty Workers tab's one line: where a worker can be
 // started from in THIS project. A worker comes from a query-sourced
 // kind="workflow" command on the Commands tab, or from a [keys.<kind>] binding

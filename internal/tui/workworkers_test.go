@@ -53,7 +53,7 @@ func workersFixtureModel(t *testing.T) (Model, []rowItem) {
 	mm.focus = focusBody
 	mm.width, mm.height = 96, 25
 	mm.active = tabWorkers
-	return mm, mm.workerRows()
+	return mm, mm.workersTab.rows(&mm.shell)
 }
 
 // firstSelectable/lastSelectable are the fixture's first and last selectable
@@ -82,14 +82,14 @@ func lastSelectable(rows []rowItem) int {
 // the band's content changes with the row.
 func TestDownMovesBetweenWorkerRows(t *testing.T) {
 	mm, rows := workersFixtureModel(t)
-	mm.cursor[tabWorkers] = firstSelectable(rows)
-	first := mm.cursor[tabWorkers]
+	mm.workersTab.cursor = firstSelectable(rows)
+	first := mm.workersTab.cursor
 	before := mm.renderWorkBand(rows[first], 90, 12)
 	mm.moveCursor(1)
-	if got := mm.cursor[tabWorkers]; got != first+1 {
+	if got := mm.workersTab.cursor; got != first+1 {
 		t.Fatalf("↓ from the first worker landed on row %d, want %d", got, first+1)
 	}
-	after := mm.renderWorkBand(rows[mm.cursor[tabWorkers]], 90, 12)
+	after := mm.renderWorkBand(rows[mm.workersTab.cursor], 90, 12)
 	if strings.Join(before, "\n") == strings.Join(after, "\n") {
 		t.Errorf("band content did not change between the first and second worker")
 	}
@@ -102,9 +102,9 @@ func TestUpFromTopWrapsToLastWorkerRow(t *testing.T) {
 	if rows[last].kind != rowWorker {
 		t.Fatalf("fixture's last selectable row is %+v, want a worker row", rows[last])
 	}
-	mm.cursor[tabWorkers] = firstSelectable(rows)
+	mm.workersTab.cursor = firstSelectable(rows)
 	mm.moveCursor(-1)
-	if got := mm.cursor[tabWorkers]; got != last {
+	if got := mm.workersTab.cursor; got != last {
 		t.Errorf("up from the top row landed on %d (%+v), want %d, the last Workers row", got, rows[got], last)
 	}
 }
@@ -136,11 +136,11 @@ func TestScrolledListNamesItsSection(t *testing.T) {
 	mm.focus = focusBody
 	mm.width, mm.height = 96, 25
 	mm.active = tabWorkers
-	rows := mm.workerRows()
+	rows := mm.workersTab.rows(&mm.shell)
 
 	// Cursor on the last row scrolls the window down, so the pinned first row
 	// must still name "Workers".
-	mm.cursor[tabWorkers] = lastSelectable(rows)
+	mm.workersTab.cursor = lastSelectable(rows)
 	lines, _ := mm.renderWorkBody(96, 25)
 	first := stripANSI(lines[0])
 	if !strings.Contains(first, "Workers") || !strings.Contains(first, "more") {
@@ -183,13 +183,13 @@ func TestWorkersEmptyHintNamesDeclaredSources(t *testing.T) {
 			Actions: tc.actions,
 		})
 		found := false
-		for _, r := range mm.workerRows() {
+		for _, r := range mm.workersTab.rows(&mm.shell) {
 			if r.kind == rowText && r.label == tc.want {
 				found = true
 			}
 		}
 		if !found {
-			t.Errorf("%s: workerRows() did not contain %q", tc.name, tc.want)
+			t.Errorf("%s: Workers rows did not contain %q", tc.name, tc.want)
 		}
 	}
 }
@@ -284,7 +284,7 @@ func TestAttachKeyAttachesFromWorkersTab(t *testing.T) {
 	e.Ops.Attach = func() error { attached = true; return nil }
 	for i, r := range rows {
 		if r.kind == rowWorker && r.work.worker.ID == "admin-3rgp.36" {
-			mm.cursor[tabWorkers] = i
+			mm.workersTab.cursor = i
 		}
 	}
 	mm.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})

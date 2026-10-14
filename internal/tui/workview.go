@@ -570,9 +570,16 @@ func rowName(r rowItem, live *livework.Entry) string {
 func (m Model) entryRow(id string) (rowItem, *livework.Entry, bool) {
 	all := m
 	all.workCollapsed = false
-	for _, r := range append(all.workRows(), all.workerRows()...) {
+	for _, r := range all.workRows() {
 		if e := bandEntry(r); e != nil && e.ID == id && r.work != nil {
 			return r, e, true
+		}
+	}
+	// A worker's row carries nothing but its entry, so it is read off the
+	// registry rather than through the Workers tab, which may not be mounted.
+	for _, e := range liveWorkers() {
+		if e.ID == id {
+			return workerRow(e, e.Name), e, true
 		}
 	}
 	return rowItem{}, nil, false

@@ -423,7 +423,7 @@ func (m Model) freshnessSeg() seg {
 	}
 	var at time.Time
 	switch m.active {
-	case tabWork, tabWorkers:
+	case tabWork:
 		// The manifest and the live-work registry are both read fresh on every
 		// frame — no fetch, no cache, exactly like the Beads tab.
 		return seg{t: "live", fg: cFaint}
@@ -472,8 +472,6 @@ func (m Model) tabCount(t tab) int {
 	switch t {
 	case tabWork:
 		return m.workRowCount()
-	case tabWorkers:
-		return len(liveWorkers())
 	case tabPRs:
 		return len(m.remote.PRs)
 	case tabLocal:

@@ -25,6 +25,7 @@ func TestSourcesStartOnlyForMountedTabs(t *testing.T) {
 		{"config alone", []tab{tabConfig}, nil, false},
 		{"beads alone", []tab{tabBeads}, []source{srcBeads}, false},
 		{"commands alone", []tab{tabWork}, []source{srcWork}, false},
+		{"workers alone", []tab{tabWorkers}, []source{srcWork}, false},
 		{"prs alone", []tab{tabPRs}, []source{srcSync, srcIdentity}, true},
 	}
 	for _, tc := range cases {
