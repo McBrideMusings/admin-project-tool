@@ -1,0 +1,46 @@
+# Every bead carries at least one of these: the part of the repo it changes.
+required = ["interpreter", "dashboard", "archetypes", "logbridge", "install", "docs"]
+
+[labels.interpreter]
+about = "The admin binary outside the dashboard: cmd/ verbs, internal/kinds, manifest, archetype merger, validate, guards, reload, streams, frame, logformat."
+
+[labels.dashboard]
+about = "The full-screen dashboard and its tabs: internal/tui and what only it reads (livework rendering, keymap)."
+
+[labels.archetypes]
+about = "The archetypes/ data dir: per-project-type TOML with Lua or shell bodies, and their detectors."
+
+[labels.apple]
+parent = "archetypes"
+about = "The apple archetype: simulators, devices, mac builds, screenshots."
+
+[labels.screenshots]
+parent = "apple"
+about = "admin screenshot, screenshots.toml and the shot sheets."
+
+[labels.logbridge]
+about = "Browser console forwarding: internal/logbridge, tampermonkey/log-bridge.user.js, tools/tampermonkey provisioning."
+
+[labels.install]
+about = "install.sh, uninstall, admin compile and how the binary reaches ~/.admin."
+
+[labels.docs]
+about = "README, docs/, ADRs, CLAUDE.md — the change is to prose, not code."
+
+[labels.variance]
+about = "Found by variance-audit: another project's custom implementation worth moving upstream into this tool."
+
+[labels.reliability]
+about = "Something fails, hangs, leaks or races at runtime."
+
+[labels.perf]
+about = "The complaint is a number: seconds, CPU, process count."
+
+[labels.security]
+about = "Secrets, .env handling, anything an untrusted caller can reach (the log bridge binds 0.0.0.0)."
+
+[labels.ux]
+about = "What a person sees or types: wording, layout, key bindings, error messages."
+
+[labels.human]
+about = "Needs a person: a decision, hardware, an account, a manual check. Autonomous passes skip it."
