@@ -60,7 +60,7 @@ const (
 // reaper judges: running or waiting. A worker is its live agent session, so
 // these are also the only states a Workers-tab row shows.
 func (s State) Reapable() bool {
-	return s == StateRunning || s == StateWaiting
+	return s.live()
 }
 
 // WorkerInfo is present only on an entry for an agent worker — a workflow

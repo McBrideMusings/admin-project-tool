@@ -185,6 +185,37 @@ func TestSyncNamesAMalformedFileAndLoadsTheRest(t *testing.T) {
 	}
 }
 
+// A file an older build wrote with a state this build dropped ("stopped") is
+// over: it neither refuses an Add of its id nor survives a Sync.
+func TestAFileWithAnUnknownStateIsOver(t *testing.T) {
+	a, b, _ := twoProcesses(t)
+	dir := a.RepoDir("/repo")
+	stale := func(id string) string {
+		path := filepath.Join(dir, id+".json")
+		rec := toRecord(sharedWorker(id, "old"))
+		rec.State = "stopped"
+		if err := writeFile(path, rec, false); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	stale("w")
+	if err := a.Add(sharedWorker("w", "new")); err != nil {
+		t.Fatalf("Add over a stopped file: %v", err)
+	}
+	path := stale("x")
+	err := b.Sync("/repo")
+	if err == nil || !strings.Contains(err.Error(), path) {
+		t.Fatalf("Sync error = %v, want one naming %s", err, path)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("stopped file survived Sync: %v", err)
+	}
+	if _, ok := b.Get("x"); ok {
+		t.Fatal("Sync loaded a stopped entry")
+	}
+}
+
 func TestSyncDoesNotReviveAnEntryThisProcessEnded(t *testing.T) {
 	a, _, _ := twoProcesses(t)
 	running := func(handle string) record {

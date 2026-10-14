@@ -61,9 +61,11 @@ func (rec record) entry() *Entry {
 	}
 }
 
-// live reports whether s is a state a shared file holds: anything but over.
+// live reports whether s is a state a shared file holds: running or waiting.
+// The set is closed, so a state this build does not know — one a file written
+// by an older build carries — is over, never live.
 func (s State) live() bool {
-	return s != StateExited && s != StateFailed
+	return s == StateRunning || s == StateWaiting
 }
 
 // DefaultStateDir is where Default keeps its entries: ~/.admin/state/livework.
@@ -279,7 +281,8 @@ func readRecord(path string) (record, error) {
 // never replaces an entry still live in this process, and never revives one
 // this process saw end on the same handle. A malformed file is skipped and
 // named in the returned error the first time Sync meets it; every other file
-// still loads. The error also carries every write this registry failed since
+// still loads. A file holding a state that is not live is removed and named
+// in the error (removeOverFile). The error also carries every write this registry failed since
 // the last Sync.
 func (r *Registry) Sync(root string) error {
 	dir := r.RepoDir(root)
@@ -315,6 +318,12 @@ func (r *Registry) Sync(root string) error {
 		rec, err := readRecord(path)
 		if err != nil {
 			if !os.IsNotExist(err) && r.firstReport(path) { // IsNotExist: removed since ReadDir
+				errs = append(errs, err)
+			}
+			continue
+		}
+		if !rec.State.live() {
+			if err := removeOverFile(path); err != nil {
 				errs = append(errs, err)
 			}
 			continue
@@ -372,6 +381,28 @@ func (r *Registry) Sync(root string) error {
 		r.entries[id] = e
 	}
 	return errors.Join(errs...)
+}
+
+// removeOverFile removes the entry file at path when, under the repo dir's
+// lock, it still holds a state that is not live. Nothing this build writes
+// holds one, so such a file is left by an older build whose states this one
+// dropped, and it would otherwise refuse every Add of its id. A removal comes
+// back as an error naming the file, so Sync reports it; the file is gone
+// after, so it is reported once.
+func removeOverFile(path string) error {
+	unlock, err := lockRepoDir(filepath.Dir(path))
+	if err != nil {
+		return fmt.Errorf("livework: locking %s: %w", filepath.Dir(path), err)
+	}
+	defer unlock()
+	rec, err := readRecord(path)
+	if err != nil || rec.State.live() {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("livework: removing %s (state %q): %w", path, rec.State, err)
+	}
+	return fmt.Errorf("livework: removed %s: state %q is not running or waiting", path, rec.State)
 }
 
 // firstReport reports whether Sync has not yet named path as malformed, and
