@@ -314,28 +314,54 @@ func TestReapFreesSlotForQueuedTarget(t *testing.T) {
 	}
 }
 
-// TestPaneGoneExitCode exercises the real /bin/sh exec path (not the
-// paneStatusFn seam): a nonzero exit is the "gone" signal, a zero exit means
-// alive, and neither case produces an err — err is reserved for a query
-// that couldn't run to completion at all.
+// TestPaneGoneExitCode exercises the real /bin/sh exec path: 0 is alive, 1-125
+// is the command's own "gone", and the shell's could-not-run and signal codes
+// are an err that names the exit, never gone.
 func TestPaneGoneExitCode(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+	for _, tc := range []struct {
+		cmd     string
+		gone    bool
+		wantErr string
+	}{
+		{cmd: "exit 0"},
+		{cmd: "exit 1", gone: true},
+		{cmd: "exit 125", gone: true},
+		{cmd: "exit 126", wantErr: "exit 126"},
+		{cmd: `no-such-launcher-xyz agent get "$ADMIN_HANDLE"`, wantErr: "exit 127"},
+		{cmd: "exit 130", wantErr: "exit 130"},
+		{cmd: "kill -TERM $$", wantErr: "killed by"},
+	} {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		gone, err := PaneGone(ctx, tc.cmd, "handle")
+		cancel()
+		if gone != tc.gone {
+			t.Errorf("PaneGone(%q) gone = %v, want %v", tc.cmd, gone, tc.gone)
+		}
+		switch {
+		case tc.wantErr == "" && err != nil:
+			t.Errorf("PaneGone(%q) err = %v, want nil", tc.cmd, err)
+		case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+			t.Errorf("PaneGone(%q) err = %v, want one containing %q", tc.cmd, err, tc.wantErr)
+		}
+	}
+}
 
-	gone, err := PaneGone(ctx, "exit 1", "handle")
-	if err != nil {
-		t.Fatalf("PaneGone(exit 1) err = %v, want nil", err)
-	}
-	if !gone {
-		t.Error("PaneGone(exit 1) gone = false, want true")
-	}
+// A status command that cannot run (its launcher binary is missing) says
+// nothing about the pane: the worker keeps running and its row shows why.
+func TestReapWorkerBrokenStatusKeepsRunning(t *testing.T) {
+	repoRoot := setupWorkflowRepo(t, terminalTOML)
+	addOrigin(t, repoRoot)
+	e := dispatchWorker(t, repoRoot, "")
 
-	gone, err = PaneGone(ctx, "exit 0", "handle")
-	if err != nil {
-		t.Fatalf("PaneGone(exit 0) err = %v, want nil", err)
+	ended, _ := ReapWorker(context.Background(), repoRoot, e, config.Terminal{Kill: "true", Status: "no-such-launcher-xyz"})
+	if ended {
+		t.Fatal("ended a worker because its status command was not found")
 	}
-	if gone {
-		t.Error("PaneGone(exit 0) gone = true, want false")
+	if st, _ := livework.Default.State(e.ID); st != livework.StateRunning {
+		t.Errorf("state = %v, want running", st)
+	}
+	if line, _ := livework.Default.Line(e.ID); !strings.Contains(line, "exit 127") {
+		t.Errorf("row line = %q, want the status failure", line)
 	}
 }
 
@@ -344,9 +370,15 @@ func TestPaneGoneExitCode(t *testing.T) {
 func TestPaneGoneTimeoutIsNotGone(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	gone, err := PaneGone(ctx, "sleep 5", "handle")
+	// The pipeline leaves sleep holding stderr after sh is killed; the probe
+	// must still return near its deadline.
+	start := time.Now()
+	gone, err := PaneGone(ctx, "sleep 5 | cat", "handle")
 	if gone || err == nil {
 		t.Errorf("PaneGone(timed out) = %v, %v; want false and an error", gone, err)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Errorf("PaneGone(timed out) took %v, want it bounded by the deadline", took)
 	}
 }
 

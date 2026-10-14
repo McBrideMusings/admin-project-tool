@@ -88,24 +88,44 @@ func KeepReason(clean bool, workerOnly []string, unpushed int, counted bool) str
 }
 
 // PaneGone runs a [terminal].status command with ADMIN_HANDLE set to handle.
-// A nonzero exit reports gone=true. Any other failure — a timeout, a shell
-// that would not start — is err: it says nothing definite about the pane.
+// Exit 0 says the pane is there and an exit from 1 to 125 says it is gone:
+// those are the only answers the command itself gives. Everything else is err
+// and says nothing definite about the pane: 126 and 127 (the shell could not
+// run the command — not executable, not found), 128 and above or a signalled
+// shell (killed by a signal), a timeout, a shell that would not start. The
+// error carries the exit code and the first line of the command's stderr.
 func PaneGone(ctx context.Context, statusCmd, handle string) (gone bool, err error) {
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", statusCmd)
 	cmd.Env = append(os.Environ(), "ADMIN_HANDLE="+handle)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	// A grandchild left holding the stderr pipe after the deadline kills sh
+	// must not hold Run past it.
+	cmd.WaitDelay = time.Second
 	runErr := cmd.Run()
 	if runErr == nil {
 		return false, nil
 	}
 	if ctx.Err() != nil {
 		// Killed by the deadline: the exit says nothing about the pane.
-		return false, ctx.Err()
+		return false, fmt.Errorf("status command timed out: %w", ctx.Err())
 	}
 	var exitErr *exec.ExitError
-	if errors.As(runErr, &exitErr) {
+	if !errors.As(runErr, &exitErr) {
+		return false, fmt.Errorf("status command: %w", runErr)
+	}
+	code := exitErr.ExitCode()
+	if code >= 1 && code <= 125 {
 		return true, nil
 	}
-	return false, runErr
+	msg := fmt.Sprintf("status command failed to run (exit %d)", code)
+	if code < 0 {
+		msg = "status command killed by " + exitErr.String()
+	}
+	if s, _, _ := strings.Cut(strings.TrimSpace(stderr.String()), "\n"); s != "" {
+		msg += ": " + s
+	}
+	return false, errors.New(msg)
 }
 
 // doneInterval is the least time between two runs of one worker's done
@@ -140,29 +160,33 @@ func doneDue(e *livework.Entry, now time.Time) (last doneRun, due bool) {
 
 // workerSessionGone reports whether e's session has ended on its own, and how:
 // a window worker's launcher pane has gone ([terminal].status), or a hosted
-// worker's process has exited (Ops.Exited). A launcher with no status command,
-// or a probe that could not answer, reads as not gone.
-func workerSessionGone(ctx context.Context, e *livework.Entry, t config.Terminal) (gone bool, why string) {
+// worker's process has exited (Ops.Exited). A launcher with no status command
+// reads as not gone; a status probe that could not answer reads as not gone
+// and returns probeErr, the reason the row shows.
+func workerSessionGone(ctx context.Context, e *livework.Entry, t config.Terminal) (gone bool, why string, probeErr error) {
 	if e.Via != "terminal" {
 		if e.Ops.Exited == nil {
-			return false, ""
+			return false, "", nil
 		}
 		exited, err := e.Ops.Exited()
 		if !exited {
-			return false, ""
+			return false, "", nil
 		}
 		if err != nil {
-			return true, "process exited (" + err.Error() + ")"
+			return true, "process exited (" + err.Error() + ")", nil
 		}
-		return true, "process exited"
+		return true, "process exited", nil
 	}
 	if t.Status == "" {
-		return false, ""
+		return false, "", nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, doneTimeout)
 	defer cancel()
 	gone, err := PaneGone(ctx, t.Status, e.Handle)
-	return err == nil && gone, "pane closed"
+	if err != nil {
+		return false, "", err
+	}
+	return gone, "pane closed", nil
 }
 
 // workerFinished reports whether a worker whose session is still running has
@@ -355,10 +379,13 @@ func ReapWorker(ctx context.Context, repoRoot string, e *livework.Entry, t confi
 		return false, ""
 	}
 	start := time.Now()
-	gone, why := workerSessionGone(ctx, e, t)
+	gone, why, probeErr := workerSessionGone(ctx, e, t)
 	if !gone {
 		finished, note := workerFinished(ctx, repoRoot, e)
 		if !finished {
+			if probeErr != nil {
+				note = strings.TrimPrefix(note+"; "+probeErr.Error(), "; ")
+			}
 			livework.Default.SetNote(e.ID, note)
 			return false, ""
 		}
@@ -410,8 +437,12 @@ func closeFinishedPane(ctx context.Context, handle string, t config.Terminal) er
 	if t.Status != "" {
 		sctx, cancel := context.WithTimeout(ctx, doneTimeout)
 		defer cancel()
-		if gone, err := PaneGone(sctx, t.Status, handle); err == nil && gone {
+		gone, err := PaneGone(sctx, t.Status, handle)
+		if err == nil && gone {
 			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("closing pane %s: %w (and %v)", handle, killErr, err)
 		}
 	}
 	return fmt.Errorf("closing pane %s: %w", handle, killErr)
