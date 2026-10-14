@@ -12,13 +12,9 @@ import (
 // tabVerbs are the reserved verbs that open the dashboard with one tab mounted
 // alone (ADR-0026): `admin workers`, `admin repo`, `admin prs`, `admin issues`,
 // `admin beads`, `admin config`. Each takes the bare dashboard's --dump-frame
-// flags. `cmd` is not among them: it stays the arrow-key picker until the
-// Commands tab replaces it.
+// flags. `admin cmd` opens the Commands tab alone.
 func init() {
 	for _, verb := range tui.AloneVerbs() {
-		if verb == "cmd" {
-			continue
-		}
 		rootCmd.AddCommand(newTabVerb(verb))
 	}
 }

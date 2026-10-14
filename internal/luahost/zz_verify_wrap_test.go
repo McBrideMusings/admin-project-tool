@@ -24,8 +24,7 @@ import (
 // hosted-pty terminal view) sized to a narrow column count so a long
 // Description autowraps exactly like a real terminal would. This is the
 // one thing pick_test.go says no test in this repo can reach (see its
-// TestPickTargetNonTTYNamesEveryTarget comment and cmd/cmdpicker.go's
-// handlePickOutcome doc).
+// TestPickTargetNonTTYNamesEveryTarget comment).
 //
 // It first reproduces the pre-fix bug shape (plain cursor-up, no \x1b[0J)
 // through the same real-terminal pipeline to confirm the harness itself

@@ -758,7 +758,7 @@ func (m *Manifest) Command(name string) (Command, bool) {
 // spacer, then group 2 sorted by priority). A name with no Group/Priority
 // set (HasGroup/HasPriority false) carries the zero value, which sorts
 // first — matching internal/tui's declaredCommands ordering exactly, so
-// `admin cmd`'s picker and the full TUI's Work tab never disagree about
+// the CLI and the full TUI's Work tab never disagree about
 // command order. Stable: ties beyond the three keys keep their input order,
 // though the third key (name) leaves no real ties to break.
 func (m *Manifest) SortCommandNames(names []string) {

@@ -118,7 +118,7 @@ func TestRunCommandDashboardProducerLocaleDispatchesThroughLauncher(t *testing.T
 }
 
 // TestRunCommandInlineNeverReachesLauncher proves RunCommandInline — the
-// `admin cmd` picker's own entry point — never reaches the launcher for a
+// CLI's entry point — never reaches the launcher for a
 // locale="window" command, even with a spawnable [terminal] declared, the same
 // guarantee TestRunActionCLILocaleRunsInlineNeverReachesLauncher proves for
 // RunAction. Unlike RunCommand, this must hold with no dependence on

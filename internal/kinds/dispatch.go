@@ -286,9 +286,8 @@ type CommandProducer struct {
 // CLI caller (cmd/root.go's manifest-command RunE and its __run-command
 // re-entry verb) actually calls: it never consults `locale` regardless of
 // reentry — see its own doc comment. Its behavior is now identical to case
-// 1 above; it remains a separate function because `admin cmd`'s picker
-// (cmd/cmdpicker.go) calls it directly with no CommandProducer in scope at
-// all.
+// 1 above; it remains a separate function because the CLI calls it with no
+// CommandProducer in scope at all.
 func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string, p *CommandProducer) error {
 	if inReentry() {
 		return runSteps(m, r, name, args)
@@ -302,13 +301,9 @@ func RunCommand(m *manifest.Manifest, r *Registry, name string, args []string, p
 // reentry state or any CommandProducer. Every other RunCommand caller keeps
 // consulting the command's own `locale` declaration; this one never does.
 //
-// It exists for cmd/cmdpicker.go's `admin cmd` picker: a human sitting at an
-// interactive arrow-key picker, in a terminal they are already watching,
-// expects the picked command's output to appear right there, never in a
-// new pane elsewhere. `admin <name>` typed directly now calls
-// RunCommandInline too (admin-wwrg — locale is dashboard-producer-only), so
-// this is no longer a special case relative to the plain CLI: both skip
-// launchCommand's launcher/locale resolution entirely.
+// `admin <name>` typed at a shell calls it (admin-wwrg — locale is
+// dashboard-producer-only), so the plain CLI skips launchCommand's
+// launcher/locale resolution entirely.
 func RunCommandInline(m *manifest.Manifest, r *Registry, name string, args []string) error {
 	return runSteps(m, r, name, args)
 }

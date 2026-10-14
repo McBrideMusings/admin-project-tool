@@ -13,8 +13,7 @@ import (
 // TestSharedStdinReaderNestedRestoreDoesNotStealBytes is the pty-driven
 // regression test for admin-byva: two sequential startKeyReader calls, the
 // first started and fully restored before the second begins — exactly the
-// command-picker-then-target-picker sequence in cmd/cmdpicker.go and
-// internal/kinds/multitarget.go. Before the shared refcounted reader, the
+// picker-then-target-picker sequence in internal/kinds/multitarget.go. Before the shared refcounted reader, the
 // first call's goroutine leaked blocked in Read(os.Stdin) forever (restore
 // only restored termios), so it kept competing with the second reader for
 // every byte the tty delivered afterward — dropping some outright and
