@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/create"
 	"github.com/McBrideMusings/admin-project-tool/internal/git"
@@ -197,9 +198,9 @@ var rootCmd = &cobra.Command{
 			return fmt.Errorf("--fixture only applies to --dump-frame")
 		}
 		if dumpFrame {
-			return runDumpFrame(cmd.Context())
+			return runDumpFrame(cmd.Context(), "")
 		}
-		return runDashboard(cmd.Context())
+		return runDashboard(cmd.Context(), "")
 	},
 }
 
@@ -578,15 +579,8 @@ func init() {
 	// ADMIN_TIMING=1 for that reason — the help string says so.
 	rootCmd.PersistentFlags().Bool("timing", false, "print elapsed time per dispatch phase to stderr (also: ADMIN_TIMING=1 — required for a manifest command, since its flags are its own)")
 
-	f := rootCmd.Flags()
-	f.BoolVar(&dumpFrame, "dump-frame", false, "render one frame to stdout and exit (no TTY needed)")
-	f.IntVar(&dumpWidth, "width", 120, "terminal width for --dump-frame")
-	f.IntVar(&dumpHeight, "height", 40, "terminal height for --dump-frame")
-	f.StringSliceVar(&dumpKeys, "keys", nil, "keys to press before --dump-frame takes the frame, e.g. --keys tab,tab")
-	f.DurationVar(&dumpSettle, "settle", 2*time.Second, "how long --dump-frame waits for background loads")
-	f.StringVar(&dumpFixture, "fixture", "", "seed live work before --dump-frame draws: "+strings.Join(tui.FrameFixtures, ", "))
-	_ = f.MarkHidden("fixture")
-	f.BoolVar(&compiledInfoFlag, "compiled-info", false, "report which admin.toml this binary was compiled from and when, then exit")
+	addDumpFrameFlags(rootCmd.Flags())
+	rootCmd.Flags().BoolVar(&compiledInfoFlag, "compiled-info", false, "report which admin.toml this binary was compiled from and when, then exit")
 
 	// --version is a flag, not a verb: a `version` subcommand would join
 	// reservedCmdVerbs and shadow any admin.toml command of that name. It
@@ -597,6 +591,19 @@ func init() {
 
 	rootCmd.PersistentFlags().StringVarP(&worktreeFlag, "worktree", "w", "",
 		"run against another git worktree instead of the cwd — a directory path, a worktree's basename, its branch, or a substring of either")
+}
+
+// addDumpFrameFlags registers --dump-frame and the flags that shape it on f.
+// The bare dashboard and every tab verb (cmd/tabverb.go) share the same
+// variables, so one headless render path serves them all.
+func addDumpFrameFlags(f *pflag.FlagSet) {
+	f.BoolVar(&dumpFrame, "dump-frame", false, "render one frame to stdout and exit (no TTY needed)")
+	f.IntVar(&dumpWidth, "width", 120, "terminal width for --dump-frame")
+	f.IntVar(&dumpHeight, "height", 40, "terminal height for --dump-frame")
+	f.StringSliceVar(&dumpKeys, "keys", nil, "keys to press before --dump-frame takes the frame, e.g. --keys tab,tab")
+	f.DurationVar(&dumpSettle, "settle", 2*time.Second, "how long --dump-frame waits for background loads")
+	f.StringVar(&dumpFixture, "fixture", "", "seed live work before --dump-frame draws: "+strings.Join(tui.FrameFixtures, ", "))
+	_ = f.MarkHidden("fixture")
 }
 
 // buildRevision is the commit `go build` stamped into this binary from the
@@ -687,7 +694,9 @@ func dashboardCheckout(ctx context.Context, repoRoot string) string {
 // dashboard path this writes the UI to stdout on purpose: the frame *is* the
 // output, there is no cd sentinel to keep it clear of, and the repo() shell
 // function passes non-sentinel stdout lines straight through.
-func runDumpFrame(ctx context.Context) error {
+//
+// tabVerb is the verb that opened one tab alone ("" for the bare dashboard).
+func runDumpFrame(ctx context.Context, tabVerb string) error {
 	repoRoot, err := effectiveRepoRoot(ctx)
 	if err != nil {
 		return err
@@ -707,7 +716,10 @@ func runDumpFrame(ctx context.Context) error {
 	checkout := dashboardCheckout(ctx, repoRoot)
 	nwo, _ := git.OriginNWO(ctx, checkout)
 	model := tui.New(ctx, repoRoot, nwo, git.CurrentBranch(ctx, checkout), git.DefaultBranch(ctx, checkout),
-		tui.WithManifestRoot(dashboardManifestRoot()), tui.WithCheckout(checkout), remoteOption(ctx, checkout, nwo))
+		dashboardOptions(ctx, checkout, nwo, tabVerb)...)
+	if err := requireDrawn(model, tabVerb); err != nil {
+		return err
+	}
 	frame := tui.Frame(ctx, model, tui.FrameOptions{
 		Width:  dumpWidth,
 		Height: dumpHeight,
@@ -718,7 +730,8 @@ func runDumpFrame(ctx context.Context) error {
 	return nil
 }
 
-func runDashboard(ctx context.Context) error {
+// tabVerb is the verb that opened one tab alone ("" for the bare dashboard).
+func runDashboard(ctx context.Context, tabVerb string) error {
 	// The TUI draws its own alt screen on stderr — the same stream timing
 	// lines go to — so a phase line written while the program is running
 	// would be wiped by Bubble Tea's next repaint. Buffer until prog.Run
@@ -761,9 +774,11 @@ func runDashboard(ctx context.Context) error {
 	renderer.SetHasDarkBackground(colorfgbgDarkBackground(os.Getenv("COLORFGBG")))
 
 	start = timing.Start()
-	model := tui.New(ctx, repoRoot, nwo, current, def,
-		tui.WithManifestRoot(dashboardManifestRoot()), tui.WithCheckout(checkout), remoteOption(ctx, checkout, nwo))
+	model := tui.New(ctx, repoRoot, nwo, current, def, dashboardOptions(ctx, checkout, nwo, tabVerb)...)
 	timing.Phase("tui.New", start)
+	if err := requireDrawn(model, tabVerb); err != nil {
+		return err
+	}
 
 	// Render to stderr so stdout carries only the cd sentinel — the repo() shell
 	// function captures stdout via $(...) while the TUI draws on the TTY (stderr).

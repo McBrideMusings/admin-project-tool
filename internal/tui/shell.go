@@ -59,6 +59,11 @@ type shell struct {
 	// drawn, and a data source only that tab declares never starts
 	// (sources.go).
 	mounted []tab
+	// alone is set when the dashboard was opened on one tab by its own verb
+	// (`admin prs`): no tab bar is drawn, no key switches tabs, and focus stays
+	// on the body. It is set only through WithMountedAlone, never inferred from
+	// len(mounted), so a Model built with a one-element mount set stays a shell.
+	alone bool
 
 	filtering bool
 	filter    string

@@ -408,6 +408,56 @@ func WithRemote(host, addr string) Option {
 	}
 }
 
+// aloneVerbs maps the verb that opens one tab alone (`admin prs`) to the tab it
+// mounts. The tab bar calls the Repo tab "Local" internally and the Commands
+// tab "Work"; a verb is the lowercase title a person reads.
+var aloneVerbs = []struct {
+	verb string
+	tab  tab
+}{
+	{"cmd", tabWork},
+	{"workers", tabWorkers},
+	{"repo", tabLocal},
+	{"prs", tabPRs},
+	{"issues", tabIssues},
+	{"beads", tabBeads},
+	{"config", tabConfig},
+}
+
+// WithMountedAlone mounts only the tab the verb names: no tab bar, no
+// tab-switch keys or footer hint, focus on the body, and no data source that
+// only the other tabs declare. It is applied inside New, before the tabs claim
+// their sources, because Init starts exactly the sources New claimed. A verb
+// that names no tab is ignored.
+func WithMountedAlone(verb string) Option {
+	return func(m *Model) {
+		for _, v := range aloneVerbs {
+			if v.verb == verb {
+				m.mounted = []tab{v.tab}
+				m.alone = true
+				return
+			}
+		}
+	}
+}
+
+// AloneVerbs lists the verbs WithMountedAlone accepts, in tab-bar order.
+func AloneVerbs() []string {
+	out := make([]string, len(aloneVerbs))
+	for i, v := range aloneVerbs {
+		out[i] = v.verb
+	}
+	return out
+}
+
+// MountedDrawn reports whether the project draws the tab this dashboard was
+// opened on alone. It is false when that tab needs a manifest, a GitHub origin
+// or a tracker the project lacks. A dashboard that is not alone is always
+// drawn.
+func (m Model) MountedDrawn() bool {
+	return !m.alone || len(m.visibleTabs()) > 0
+}
+
 // FindManifestRoot walks up from cwd for the nearest admin.toml, exactly as
 // cmd.resolveProjectManifest does, and returns "" when there is none — the
 // caller then leaves the dashboard on repoRoot.
@@ -468,13 +518,18 @@ func New(ctx context.Context, repoRoot, nwo, current, def string, opts ...Option
 			}
 		}
 	}
+	if m.alone {
+		m.active = m.mounted[0]
+	}
 	// Init starts exactly the sources claimed here, so a later manifest
 	// reload (fsChangedMsg) never starts one a second time.
 	m.claimSources()
 	// admin-70hb: a new session opens with focus on the tab bar, not on a
 	// body row — set after active settles so it doesn't interact with which
 	// tab that is.
-	m.focus = focusTabs
+	if !m.alone {
+		m.focus = focusTabs
+	}
 	return m
 }
 
@@ -924,7 +979,7 @@ func (m *Model) quitWith(p *PendingAction) (tea.Model, tea.Cmd) {
 // and splice its highlight — or extract its copy — against a different tab's
 // frame at stale coordinates.
 func (m *Model) switchTab(t tab) {
-	if m.tabIndex(t) < 0 {
+	if m.alone || m.tabIndex(t) < 0 {
 		return
 	}
 	m.active = t
@@ -1117,6 +1172,9 @@ func (m *Model) enterBody() {
 // the Repo tab's paneCursor — those persist untouched, which is the whole of what makes a
 // trip back into the body land on the same row again.
 func (m *Model) leaveBody() {
+	if m.alone {
+		return
+	}
 	m.focus = focusTabs
 }
 

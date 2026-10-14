@@ -44,7 +44,7 @@ creates a SEPARATE worktree for the branch, leaving the current one alone.`,
 			return runPrune(cmd.Context(), pruneBranches, dryRun, yes)
 		}
 		if len(args) == 0 {
-			return runDashboard(cmd.Context())
+			return runDashboard(cmd.Context(), "")
 		}
 		return runBranchCheckout(cmd.Context(), args[0])
 	},

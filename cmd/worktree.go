@@ -59,7 +59,7 @@ argument. With -x, the input must come before --.`,
 			return err
 		}
 		if input == "" {
-			return runDashboard(cmd.Context())
+			return runDashboard(cmd.Context(), "")
 		}
 		yes, _ := cmd.Flags().GetBool("yes")
 		return worktreeRun(cmd.Context(), input, yes, exec, words)

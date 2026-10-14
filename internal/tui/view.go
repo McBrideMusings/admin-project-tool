@@ -105,7 +105,7 @@ func (m Model) frameRaw() (lines []string, hits []hitTarget) {
 
 	top := m.topChrome(width)
 	topHits := make([]hitTarget, len(top))
-	if !m.termAttached {
+	if !m.termAttached && !m.alone {
 		topHits[1] = m.tabBarHit()
 	}
 	body, bodyHits := m.renderBodyHits(width, bodyHeight)
@@ -145,6 +145,9 @@ func (m Model) topChrome(width int) []string {
 	header := truncateLine(m.headerLine(width), width)
 	if m.termAttached {
 		return []string{header, truncateLine(m.attachBreadcrumb(width), width)}
+	}
+	if m.alone {
+		return []string{header, ""}
 	}
 	return []string{header, truncateLine(m.tabBar(), width), ""}
 }
@@ -692,6 +695,9 @@ func (m Model) keymap() [][2]string {
 	// than listed twice.
 	if !hasKey(pairs, "o") {
 		pairs = append(pairs, [2]string{"o", "config"})
+	}
+	if m.alone {
+		return pairs
 	}
 	return append(pairs, [2]string{"←→", "tab"})
 }
