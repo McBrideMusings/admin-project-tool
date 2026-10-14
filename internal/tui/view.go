@@ -783,6 +783,18 @@ func (m Model) withRowKeys(k keymap.RowKind, bindings []keymap.Binding) [][2]str
 		return pairsOf(bindings)
 	}
 	binds := m.rowKeys[kind]
+	if m.alone {
+		// ADR-0026: bindings to a workflow are dead in a tab mounted alone,
+		// so the footer does not advertise them.
+		live := make(map[string]string, len(binds))
+		for key, name := range binds {
+			if c, ok := commandNamed(m.manifest, name); ok && isWorkflowCommand(m.manifest, c) {
+				continue
+			}
+			live[key] = name
+		}
+		binds = live
+	}
 	if len(binds) == 0 {
 		return pairsOf(bindings)
 	}

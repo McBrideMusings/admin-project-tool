@@ -549,3 +549,31 @@ func trackerCursorTo(t *testing.T, m *Model, id string) {
 	}
 	t.Fatalf("no row with id %q among %d rows", id, len(rows))
 }
+
+// TestWorkflowBindingDeadWhenMountedAlone pins ADR-0026: a tab mounted alone
+// dispatches no workers, so a row key bound to a workflow does nothing and the
+// footer keeps the built-in label instead of advertising it.
+func TestWorkflowBindingDeadWhenMountedAlone(t *testing.T) {
+	gotTargets := stubDispatchWorkflow(t, nil)
+
+	m := workTestModel(dogfoodImplementManifest())
+	m.active = tabBeads
+	m.alone = true
+	m.feeds.beads.beads = []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}}
+	m.rowKeys = map[keymap.RowKind]map[string]string{
+		keymap.Bead: {"enter": "implement"},
+	}
+	trackerCursorTo(t, &m, "proj-1")
+
+	if _, cmd, ok := m.rowKeyDispatch("enter"); ok || cmd != nil {
+		t.Errorf("enter on a workflow binding mounted alone = hit %v, cmd %v; want a miss", ok, cmd != nil)
+	}
+	if len(*gotTargets) != 0 {
+		t.Errorf("dispatched targets = %v, want none", *gotTargets)
+	}
+	for _, p := range m.rowPairs(keymap.Bead) {
+		if strings.Contains(p[1], "Dispatch an agent") {
+			t.Errorf("footer advertises the workflow binding: %v", p)
+		}
+	}
+}
