@@ -54,6 +54,11 @@ type cleanupTarget struct {
 	dirty        bool // uncommitted changes in the worktree; unrecoverable once removed
 	changed      int  // how many files are uncommitted — shown to size the loss, never weighed
 	unpushed     bool // commits that exist nowhere but here; recoverable via the reflog
+	// ignored is how many ignored paths the worktree holds that the primary checkout
+	// lacks (git.UnsharedIgnored) — a worker-made .env, build output. `git worktree
+	// remove` deletes them without asking, even unforced, and `stash -u` leaves them
+	// out, so like conflicts they are files the delete cannot make recoverable.
+	ignored int
 	// quarantined is the delete-safety flag the buckets, the sweep, and the force
 	// decision all read. Always held(), never set independently.
 	quarantined bool
@@ -79,7 +84,7 @@ func (t cleanupTarget) sweepable() bool {
 // unreadable worktree read as unconflicted.
 func (t *cleanupTarget) applyWtState(st wtState) {
 	t.dirty, t.conflicts, t.statusUnread = st.dirty, st.conflicts, st.unread
-	t.changed = st.changed
+	t.changed, t.ignored = st.changed, len(st.ignored)
 }
 
 // unstashable reports whether the delete's auto-stash cannot be trusted to run:
@@ -89,18 +94,38 @@ func (t *cleanupTarget) applyWtState(st wtState) {
 // files a wrong guess destroys have no reflog, stash, or object behind them.
 func (t cleanupTarget) unstashable() bool { return t.conflicts > 0 || t.statusUnread }
 
+// unrecoverable reports whether deleting the worktree would destroy files nothing
+// can bring back: the auto-stash cannot run, or the worktree holds ignored files
+// only it has, which the stash would not capture even when it runs. The first run
+// refuses these; only the `f` retry removes them.
+func (t cleanupTarget) unrecoverable() bool { return t.unstashable() || t.ignored > 0 }
+
+// stashes reports whether this target's delete auto-stashes its uncommitted files
+// on a run with the given force — the one answer the stepper acts on and
+// stashRefAfter counts, so the summary never points at a stash that wasn't made.
+// An unrecoverable target is refused on the first run and so stashes nothing; under
+// force it stashes only if the stash can run at all.
+func (t cleanupTarget) stashes(force bool) bool {
+	if t.kind != cleanupWorktree || !t.dirty || t.unstashable() {
+		return false
+	}
+	return force || !t.unrecoverable()
+}
+
 // held reports whether anything about this target says leave it alone — the single
 // definition of quarantine, so no caller can construct a target that is dangerous
 // to delete but not flagged as such.
 //
-// unstashable() is in the list even though every real construction site also sets
+// unrecoverable() is in the list even though every real construction site also sets
 // dirty (an unmerged path always shows in porcelain, and an unread status fails
 // safe to dirty). Relying on that would make quarantine depend on an agreement
 // held nowhere: a target built with conflicts but not dirty would go out with
 // quarantined false, and the forced removal reads that flag as its --force — so
 // the one delete that most needs forcing would be the one that goes out unforced.
+// Ignored files ride in through it too: they never set dirty, and a target holding
+// only those is otherwise unheld and removed unforced, ignored files and all.
 func (t cleanupTarget) held() bool {
-	return t.op != "" || t.active || t.dirty || t.unpushed || t.unstashable()
+	return t.op != "" || t.active || t.dirty || t.unpushed || t.unrecoverable()
 }
 
 // staleAfter is how long a branch or worktree must sit untouched before the
@@ -334,6 +359,10 @@ func cleanupReason(t cleanupTarget) string {
 			return "uncommitted " + strconv.Itoa(t.changed)
 		}
 		return "uncommitted"
+	case t.ignored > 0:
+		// Ignored files only this worktree has die with it exactly as uncommitted
+		// ones do, and nothing stashes them, so they rank beside uncommitted.
+		return "ignored " + strconv.Itoa(t.ignored)
 	case t.unpushed:
 		return "unpushed"
 	}
@@ -404,18 +433,30 @@ func conflictNote(n int) string {
 	return strconv.Itoa(n) + " conflict" + plural(n)
 }
 
-// blockedError is the delete stepper's refusal to touch a worktree whose
-// auto-stash cannot be trusted — unresolved conflicts, which git refuses to
-// stash, or a status it could not read at all. It is a distinct type rather than
-// a plain message so the done phase can find these results again and offer the
-// `f` retry that deletes anyway.
+// blockedError is the delete stepper's refusal to touch a worktree whose files
+// it cannot make recoverable — unresolved conflicts, which git refuses to stash,
+// a status it could not read at all, or ignored files only the worktree has. It
+// is a distinct type rather than a plain message so the done phase can find these
+// results again and offer the `f` retry that deletes anyway.
 type blockedError struct {
 	op        string
 	conflicts int
 	unread    bool // the status read failed, so the conflict count means nothing
+	ignored   int  // ignored files the primary checkout lacks — see cleanupTarget.ignored
 }
 
 func (e *blockedError) Error() string {
+	// Every loss the refusal guards gets named, since `f` gives up all of them.
+	var ignored string
+	if e.ignored > 0 {
+		ignored = strconv.Itoa(e.ignored) + " ignored file" + plural(e.ignored) + " only it has"
+	}
+	if e.conflicts == 0 && !e.unread {
+		return ignored + " — nothing deleted"
+	}
+	if ignored != "" {
+		ignored = ", " + ignored
+	}
 	// No paused operation is named when op is empty — an unmerged index can also
 	// come from a `checkout -m`, and an unreadable worktree may have nothing paused
 	// in it at all. Saying "paused operation" there would invent a cause.
@@ -424,9 +465,9 @@ func (e *blockedError) Error() string {
 		what = "paused " + e.op
 	}
 	if e.unread {
-		return what + ", can't read its status — won't risk the stash, nothing deleted"
+		return what + ", can't read its status" + ignored + " — won't risk the stash, nothing deleted"
 	}
-	return what + ", " + conflictNote(e.conflicts) + " — can't stash, nothing deleted"
+	return what + ", " + conflictNote(e.conflicts) + ignored + " — can't stash, nothing deleted"
 }
 
 // isBlocked reports whether a delete result failed a refusal force can

@@ -1454,6 +1454,51 @@ func TestForcedConflictedWorktreeRemovesWithoutStashing(t *testing.T) {
 	}
 }
 
+// TestIgnoredOnlyWorktreeRefusesThenForces pins the worktree whose only content
+// is ignored files the primary lacks (a worker-made .env). It reads clean, so
+// before ignored reached held() it went out unquarantined and `git worktree
+// remove` deleted the .env on the first run. It must be held, refused on the
+// first run without touching the worktree, and removed with --force under `f`.
+func TestIgnoredOnlyWorktreeRefusesThenForces(t *testing.T) {
+	var stashed, removed, gotForce bool
+	restoreStash := stashWorktreeFn
+	stashWorktreeFn = func(_ context.Context, _ string) error { stashed = true; return nil }
+	defer func() { stashWorktreeFn = restoreStash }()
+	restoreRemove := removeWorktreeFn
+	removeWorktreeFn = func(_ context.Context, _, _ string, force bool) error {
+		removed, gotForce = true, force
+		return errStubbed
+	}
+	defer func() { removeWorktreeFn = restoreRemove }()
+
+	var tgt cleanupTarget
+	tgt.kind, tgt.branch, tgt.path = cleanupWorktree, "x", "/repo/.worktrees/x"
+	tgt.applyWtState(wtState{ignored: []string{".env"}})
+	tgt.quarantined = tgt.held()
+	if !tgt.quarantined {
+		t.Fatal("a worktree holding ignored files only it has is not quarantined")
+	}
+	if got := cleanupReason(tgt); got != "ignored 1" {
+		t.Errorf("cleanupReason = %q, want %q", got, "ignored 1")
+	}
+
+	msg := deleteStepCmd(context.Background(), t.TempDir(), []cleanupTarget{tgt}, 0, false)().(deleteStepMsg)
+	if removed || stashed {
+		t.Fatalf("first run touched the worktree (removed=%v stashed=%v); the .env has no way back", removed, stashed)
+	}
+	if !isBlocked(msg.err) || !strings.Contains(msg.err.Error(), "1 ignored file only it has") {
+		t.Fatalf("err = %v, want a blockedError naming the ignored file", msg.err)
+	}
+
+	deleteStepCmd(context.Background(), t.TempDir(), []cleanupTarget{tgt}, 0, true)()
+	if !removed || !gotForce {
+		t.Errorf("forced run removed=%v force=%v, want both true", removed, gotForce)
+	}
+	if stashed {
+		t.Error("forced run stashed a worktree with no uncommitted files")
+	}
+}
+
 // TestFailedStepKeepsGitsFullOutputForTheOverlay pins the split a one-line row
 // forces. Git's refusals run to several lines and each modal row holds one, so the
 // row shows the headline and `e` shows the rest. Before the stash went through

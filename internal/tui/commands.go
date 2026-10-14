@@ -711,9 +711,11 @@ func deleteStepCmd(ctx context.Context, dir string, targets []cleanupTarget, i i
 			// is paused instead, and leave the delete to the explicit `f` retry. A
 			// worktree whose status could not be read at all takes the same route: it
 			// might hold conflicts, and guessing wrong costs files nothing brings back.
-			if t.unstashable() && !force {
+			// Ignored files only this worktree has take the same route: `git worktree
+			// remove` deletes them even unforced, and `stash -u` leaves them out.
+			if t.unrecoverable() && !force {
 				return deleteStepMsg{idx: i, err: &blockedError{
-					op: t.op, conflicts: t.conflicts, unread: t.statusUnread,
+					op: t.op, conflicts: t.conflicts, unread: t.statusUnread, ignored: t.ignored,
 				}}
 			}
 			// pre_remove (ADR-0024) goes before the stash and the herdr close, so
@@ -723,14 +725,13 @@ func deleteStepCmd(ctx context.Context, dir string, targets []cleanupTarget, i i
 			if err = preRemoveFn(git.WithQuiet(ctx), dir, t.path, force); err != nil {
 				return deleteStepMsg{idx: i, err: err}
 			}
-			switch {
-			case t.unstashable():
-				// Forced: no stash is possible, so the removal below is the whole step.
-			case t.dirty:
+			// Forced and unstashable: no stash is possible, so the removal below is
+			// the whole step.
+			if t.stashes(force) {
 				if err = stashWorktreeFn(ctx, t.path); err != nil {
 					return deleteStepMsg{idx: i, err: err}
 				}
-				stashRef = stashRefAfter(targets, i)
+				stashRef = stashRefAfter(targets, i, force)
 			}
 			// Quarantined worktrees are exactly the ones a plain remove refuses —
 			// dirty, or holding a paused operation. Selecting one is the
@@ -757,14 +758,13 @@ func deleteStepCmd(ctx context.Context, dir string, targets []cleanupTarget, i i
 // stashRefAfter returns the `stash@{n}` the target at index i just stashed into.
 // A fresh `stash push` always lands at stash@{0}, and each later dirty-worktree
 // delete in the same batch stashes on top and pushes this one down by one — so
-// its resting position is the count of dirty worktree targets still to come.
-// Unstashable ones are not counted: they never reach the stash, whether they
-// refuse or are forced through, so counting them would point the summary at a
-// stash entry that does not exist.
-func stashRefAfter(targets []cleanupTarget, i int) string {
+// its resting position is the count of later targets that stash on this run.
+// Targets that refuse or skip the stash are not counted (cleanupTarget.stashes),
+// so the summary never points at a stash entry that does not exist.
+func stashRefAfter(targets []cleanupTarget, i int, force bool) string {
 	n := 0
 	for j := i + 1; j < len(targets); j++ {
-		if t := targets[j]; t.kind == cleanupWorktree && t.dirty && !t.unstashable() {
+		if targets[j].stashes(force) {
 			n++
 		}
 	}

@@ -1083,7 +1083,7 @@ func (m Model) modalContent() (title, badge string, lines [][]seg, active int) {
 		// Each held item is badged with its own reason rather than a blanket
 		// "unsaved": this is the last screen before the delete runs, so it has to
 		// say which of them is about to lose files that exist nowhere else.
-		dirty, blocked := 0, 0
+		dirty, blocked, ignored := 0, 0, 0
 		var guess []string
 		for _, t := range m.confirmTargets {
 			segs := []seg{{t: " • ", fg: cFaint}, {t: cleanupKindLabel(t), fg: cFg}}
@@ -1108,6 +1108,9 @@ func (m Model) modalContent() (title, badge string, lines [][]seg, active int) {
 			if t.dirty {
 				dirty++
 			}
+			if t.ignored > 0 {
+				ignored++
+			}
 			lines = append(lines, segs)
 		}
 		if dirty > 0 {
@@ -1115,6 +1118,9 @@ func (m Model) modalContent() (title, badge string, lines [][]seg, active int) {
 		}
 		if blocked > 0 {
 			lines = append(lines, []seg{{t: fmt.Sprintf(" %d holding unresolved conflicts — no stash possible, those stop and ask", blocked), fg: cYellow}})
+		}
+		if ignored > 0 {
+			lines = append(lines, []seg{{t: fmt.Sprintf(" %d holding ignored files only they have — those stop and ask", ignored), fg: cYellow}})
 		}
 		if len(guess) > 0 {
 			lines = append(lines, []seg{{t: fmt.Sprintf(" %d not proven dead — deleted on evidence, not proof", len(guess)), fg: cMag}})
@@ -1157,11 +1163,11 @@ func (m Model) modalContent() (title, badge string, lines [][]seg, active int) {
 		// than left to the footer's general hints.
 		var keys [][]seg
 		if b := m.blockedCount(); b > 0 {
-			what := "the conflicted files go with them"
+			what := "files nothing restores go with them"
 			if v := m.vetoedCount(); v == b {
 				what = "past the pre_remove hook"
 			} else if v > 0 {
-				what = "past the pre_remove hook, and the conflicted files go with them"
+				what = "past the pre_remove hook, and files nothing restores go with them"
 			}
 			keys = append(keys, []seg{
 				{t: " f", fg: cYellow},
