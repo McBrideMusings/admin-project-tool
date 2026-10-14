@@ -277,14 +277,14 @@ func TestFSChangeDoesNotDuplicateAnInFlightBeadsProbe(t *testing.T) {
 	writeTestManifest(t, dir, editTestManifest)
 	updated, _ := m.Update(fsChangedMsg{})
 	m = updated.(Model)
-	if m.hasTracker("beads") || m.beadsProbing {
-		t.Fatalf("hasTracker(beads) = %v, beadsProbing = %v before beads is declared, want both false", m.hasTracker("beads"), m.beadsProbing)
+	if m.hasTracker("beads") || m.feeds.beads.probing {
+		t.Fatalf("hasTracker(beads) = %v, beadsProbing = %v before beads is declared, want both false", m.hasTracker("beads"), m.feeds.beads.probing)
 	}
 
 	writeTestManifest(t, dir, "tracker = [\"beads\"]\n"+editTestManifest)
 	updated, cmd := m.Update(fsChangedMsg{})
 	m = updated.(Model)
-	if !m.beadsProbing {
+	if !m.feeds.beads.probing {
 		t.Fatal("beadsProbing = false right after tracker=\"beads\" first appeared, want the probe dispatched")
 	}
 	if !containsMsgType[beadsDetectedMsg](cmdBatchMsgs(t, cmd)) {
@@ -296,10 +296,10 @@ func TestFSChangeDoesNotDuplicateAnInFlightBeadsProbe(t *testing.T) {
 	writeTestManifest(t, dir, "tracker = [\"beads\"]\n"+editTestManifest+"\n# touched again\n")
 	updated, cmd = m.Update(fsChangedMsg{})
 	m = updated.(Model)
-	if m.beadsProbed {
+	if m.feeds.beads.probed {
 		t.Fatal("beadsProbed = true without beadsDetectedMsg ever landing")
 	}
-	if !m.beadsProbing {
+	if !m.feeds.beads.probing {
 		t.Error("beadsProbing flipped to false with the probe still outstanding, want it to stay true")
 	}
 	if containsMsgType[beadsDetectedMsg](cmdBatchMsgs(t, cmd)) {

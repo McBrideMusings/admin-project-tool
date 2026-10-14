@@ -148,11 +148,12 @@ func ShowRows(m Model, name string, opts FrameOptions) ([]ShowRow, error) {
 // tabLoaded reports whether the tab has the data it draws, so ShowRows never
 // prints a "loading…" placeholder as if it were a row.
 func (m Model) tabLoaded(t tab) bool {
+	if tm := m.tabModel(t); tm != nil {
+		return tm.loaded()
+	}
 	switch t {
 	case tabLocal:
 		return m.haveLocal
-	case tabBeads:
-		return m.haveBeads || m.beadsErr != ""
 	case tabPRs, tabIssues:
 		return m.haveData
 	}

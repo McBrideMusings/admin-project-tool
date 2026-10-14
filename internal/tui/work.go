@@ -735,10 +735,10 @@ func (m Model) workflowMatches(name string, target kinds.WorkflowTarget, action 
 	}
 	switch tracker {
 	case "", "beads":
-		if len(m.beads) == 0 && m.beadsErr != "" {
-			return nil, m.beadsErr
+		if len(m.feeds.beads.beads) == 0 && m.feeds.beads.err != "" {
+			return nil, m.feeds.beads.err
 		}
-		if !m.haveBeads {
+		if !m.feeds.beads.have {
 			return nil, "loading beads…"
 		}
 	case "github":
@@ -749,7 +749,7 @@ func (m Model) workflowMatches(name string, target kinds.WorkflowTarget, action 
 			return nil, "loading issues…"
 		}
 	}
-	matched, err := kinds.MatchQuery(action, tracker, target.Query, m.beads, m.remote.Issues)
+	matched, err := kinds.MatchQuery(action, tracker, target.Query, m.feeds.beads.beads, m.remote.Issues)
 	if err != nil {
 		return nil, err.Error()
 	}
@@ -1085,7 +1085,7 @@ func (m *Model) toggleWorkCollapse() {
 	}
 	for i, r := range m.visibleRows() {
 		if sameRowIdentity(r, before) {
-			m.cursor[m.active] = i
+			*m.cur(m.active) = i
 			return
 		}
 	}

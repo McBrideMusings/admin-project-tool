@@ -9,9 +9,11 @@ import (
 )
 
 // source is one background feed the dashboard runs on behalf of its tabs
-// (ADR-0026). A tab declares the sources it reads in tabSources; the shell
-// starts each source once, for every mounted tab that declares it, and never
-// starts one that no mounted tab declares. Local git and the merged config are
+// (ADR-0026). A tab with a model of its own declares the sources it reads by
+// asking its sourceSet for their handles (feeds.go); a tab whose state still
+// lives on Model declares them in tabSources. The shell starts each source
+// once, for every mounted tab that declares it, and never starts one that no
+// mounted tab declares. Local git and the merged config are
 // not sources: every tab reads them, so they load unconditionally in Init.
 type source int
 
@@ -32,19 +34,29 @@ const (
 	numSources
 )
 
-// tabSources is each tab's declaration of the sources it reads. The Repo tab
-// reads the sync (the merged-PR head set), beads (the `w` naming prompt's bead
-// search) and identity (which branches are yours); PRs reads the sync and
-// identity; Issues reads the sync; Beads reads the beads poll; Commands and
-// Workers read the work tick; Config reads none.
-var tabSources = [numTabs][]source{
+// tabSources is the declaration of the sources each tab reads, for the tabs
+// whose state still lives on Model. The Repo tab reads the sync (the
+// merged-PR head set), beads (the `w` naming prompt's bead search) and
+// identity (which branches are yours); PRs reads the sync and identity;
+// Issues reads the sync; Commands and Workers read the work tick; Config reads
+// none. A tab that has moved into its own model has no row here: its
+// constructor's handles are its declaration (Model.declared).
+var tabSources = map[tab][]source{
 	tabWork:    {srcWork},
 	tabWorkers: {srcWork},
 	tabLocal:   {srcSync, srcBeads, srcIdentity},
 	tabPRs:     {srcSync, srcIdentity},
 	tabIssues:  {srcSync},
-	tabBeads:   {srcBeads},
 	tabConfig:  nil,
+}
+
+// declared is the sources tab t reads: its model's declaration, or its
+// tabSources row while it has no model.
+func (m Model) declared(t tab) []source {
+	if tm := m.tabModel(t); tm != nil {
+		return tm.sources()
+	}
+	return tabSources[t]
 }
 
 // dataSource is one row of the registry: whether the project has what the
@@ -76,7 +88,7 @@ var sources = [numSources]dataSource{
 		// workspace, or an error if none is found), never whether the tab is
 		// drawn at all.
 		ready: func(m Model) bool { return m.hasTracker("beads") },
-		start: func(m Model) tea.Cmd { return detectBeadsCmd(m.ctx, m.repoRoot) },
+		start: func(m Model) tea.Cmd { return m.feeds.beads.start() },
 	},
 	srcWork: {
 		name:  "work",
@@ -104,7 +116,7 @@ var sources = [numSources]dataSource{
 // wants reports whether any mounted, drawn tab declares s.
 func (m Model) wants(s source) bool {
 	for _, t := range m.visibleTabs() {
-		for _, v := range tabSources[t] {
+		for _, v := range m.declared(t) {
 			if v == s {
 				return true
 			}
@@ -130,7 +142,7 @@ func (m *Model) claimSources() []source {
 		}
 		m.started[s] = true
 		if s == srcBeads {
-			m.beadsProbing = true
+			m.feeds.beads.probing = true
 		}
 		due = append(due, s)
 	}
@@ -163,7 +175,7 @@ func (m Model) sourceCmds(ss []source) tea.Cmd {
 func (m Model) declarers(s source) string {
 	var names []string
 	for _, t := range m.visibleTabs() {
-		for _, v := range tabSources[t] {
+		for _, v := range m.declared(t) {
 			if v == s {
 				names = append(names, strings.ToLower(tabDisplay(t)))
 			}

@@ -48,23 +48,23 @@ func shortBeadID(id, prefix string) string {
 // Deferred beads are left out: they are on ice by definition. They still count
 // as blockers for anything that depends on them, which is why they're fetched
 // and only dropped at render time.
-func (m Model) beadRows() []rowItem {
-	if m.beadsErr != "" {
-		return []rowItem{{kind: rowText, label: m.beadsErr}}
+func (t beadsTab) beadRows(sh *shell) []rowItem {
+	if err := t.src.err(); err != "" {
+		return []rowItem{{kind: rowText, label: err}}
 	}
-	cols := m.cols()
-	switch m.beadTreeMode {
+	cols := sh.cols()
+	switch t.tree {
 	case beadListBlocksTree:
-		return m.beadTreeRows(cols)
+		return t.beadTreeRows(cols)
 	case beadListFamilyTree:
-		return m.beadFamilyTreeRows(cols)
+		return t.beadFamilyTreeRows(cols)
 	}
-	human, ready, inProgress, blocked := groupBeads(m.beads)
-	ctx := m.beadCtx(false)
+	human, ready, inProgress, blocked := groupBeads(t.src.list())
+	ctx := t.beadCtx(false)
 	for _, s := range [][]bd.Bead{human, ready, inProgress, blocked} {
-		sortBeadsBy(s, m.trackSort, ctx.unblocks)
+		sortBeadsBy(s, sh.trackSort, ctx.unblocks)
 	}
-	l := beadLayoutFor(m.beadCols, cols, ctx, human, ready, inProgress, blocked)
+	l := beadLayoutFor(t.cols, cols, ctx, human, ready, inProgress, blocked)
 
 	secs := []struct {
 		title string
@@ -83,17 +83,17 @@ func (m Model) beadRows() []rowItem {
 	// placeholder above sections that do have one.
 	var rows []rowItem
 	for _, s := range secs {
-		if len(s.beads) == 0 && (s.title == "Needs you" || m.haveBeads) {
+		if len(s.beads) == 0 && (s.title == "Needs you" || t.src.loaded()) {
 			continue
 		}
 		if len(rows) > 0 {
 			rows = append(rows, blankRow())
 		}
 		rows = append(rows, headerRow(s.title, countSeg(len(s.beads))...), ruleRow())
-		rows = append(rows, m.beadSection(s.beads, cols, l)...)
+		rows = append(rows, t.beadSection(s.beads, cols, l)...)
 	}
 	if len(rows) == 0 {
-		rows = append(rows, rowItem{kind: rowText, label: emptyOrLoading(m.haveBeads, "none")})
+		rows = append(rows, rowItem{kind: rowText, label: emptyOrLoading(t.src.loaded(), "none")})
 	}
 	return rows
 }
@@ -105,16 +105,16 @@ func (m Model) beadRows() []rowItem {
 // because position now carries what it named. What position cannot carry is
 // status and a second blocker, so a glyph column marks in-progress work and a
 // "+N" after the title counts the blockers this row's position left out.
-func (m Model) beadTreeRows(cols int) []rowItem {
-	nodes := beadForest(m.beads)
+func (t beadsTab) beadTreeRows(cols int) []rowItem {
+	nodes := beadForest(t.src.list())
 	if len(nodes) == 0 {
-		return []rowItem{{kind: rowText, label: emptyOrLoading(m.haveBeads, "none")}}
+		return []rowItem{{kind: rowText, label: emptyOrLoading(t.src.loaded(), "none")}}
 	}
 	beads := make([]bd.Bead, 0, len(nodes))
 	for _, n := range nodes {
 		beads = append(beads, n.b)
 	}
-	l := beadLayoutFor(m.beadCols, cols, m.beadCtx(true), beads)
+	l := beadLayoutFor(t.cols, cols, t.beadCtx(true), beads)
 
 	rows := make([]rowItem, 0, len(nodes))
 	for _, n := range nodes {
@@ -132,16 +132,16 @@ func (m Model) beadTreeRows(cols int) []rowItem {
 // swapped for beadFamilyForest — same layout call, same row rendering, because
 // beadcolumns.go's row() gates indent and the hidden blocker column on
 // c.tree, not on which tree produced the node.
-func (m Model) beadFamilyTreeRows(cols int) []rowItem {
-	nodes := beadFamilyForest(m.beads)
+func (t beadsTab) beadFamilyTreeRows(cols int) []rowItem {
+	nodes := beadFamilyForest(t.src.list())
 	if len(nodes) == 0 {
-		return []rowItem{{kind: rowText, label: emptyOrLoading(m.haveBeads, "none")}}
+		return []rowItem{{kind: rowText, label: emptyOrLoading(t.src.loaded(), "none")}}
 	}
 	beads := make([]bd.Bead, 0, len(nodes))
 	for _, n := range nodes {
 		beads = append(beads, n.b)
 	}
-	l := beadLayoutFor(m.beadCols, cols, m.beadCtx(true), beads)
+	l := beadLayoutFor(t.cols, cols, t.beadCtx(true), beads)
 
 	rows := make([]rowItem, 0, len(nodes))
 	for _, n := range nodes {
@@ -157,8 +157,14 @@ func (m Model) beadFamilyTreeRows(cols int) []rowItem {
 // beadCtx assembles what the columns need about the pane. The unblocks counts
 // are a whole-graph fact, so they are derived here from the full fetch — the
 // section a bead lands in must not change how much work it frees.
-func (m Model) beadCtx(tree bool) beadCtx {
-	return beadCtx{prefix: m.beadPrefix, tree: tree, unblocks: bd.Unblocks(m.beads), workers: livework.Default.WorkerStates()}
+func (t beadsTab) beadCtx(tree bool) beadCtx {
+	return beadCtxFor(t.src.list(), t.src.prefix(), tree)
+}
+
+// beadCtxFor is beadCtx over any loaded bead list — the Beads tab's, or the
+// Repo tab's naming prompt, which searches the same feed.
+func beadCtxFor(beads []bd.Bead, prefix string, tree bool) beadCtx {
+	return beadCtx{prefix: prefix, tree: tree, unblocks: bd.Unblocks(beads), workers: livework.Default.WorkerStates()}
 }
 
 // beadHumanLabel is bd's own HITL (human-in-the-loop) marker — the one bare
@@ -205,9 +211,9 @@ func groupBeads(beads []bd.Bead) (human, ready, inProgress, blocked []bd.Bead) {
 	return human, ready, inProgress, blocked
 }
 
-func (m Model) beadSection(beads []bd.Bead, cols int, l beadLayout) []rowItem {
+func (t beadsTab) beadSection(beads []bd.Bead, cols int, l beadLayout) []rowItem {
 	if len(beads) == 0 {
-		return []rowItem{{kind: rowText, label: emptyOrLoading(m.haveBeads, "none")}}
+		return []rowItem{{kind: rowText, label: emptyOrLoading(t.src.loaded(), "none")}}
 	}
 	rows := make([]rowItem, 0, len(beads))
 	for _, b := range beads {
@@ -352,12 +358,12 @@ func beadCandidates(beads []bd.Bead, prefix, buf string) []bd.Bead {
 // case the issue calls out for auto-highlighting; a prefix or title match never
 // pre-selects, since it may not be the bead the user meant.
 func (m *Model) refreshNameCands() {
-	m.nameCands = beadCandidates(m.beads, m.beadPrefix, m.nameBuf)
+	m.nameCands = beadCandidates(m.feeds.beads.beads, m.feeds.beads.prefix, m.nameBuf)
 	m.nameSel = -1
 	q := strings.ToLower(strings.TrimSpace(m.nameBuf))
 	for i, b := range m.nameCands {
 		id := strings.ToLower(b.ID)
-		short := strings.ToLower(shortBeadID(b.ID, m.beadPrefix))
+		short := strings.ToLower(shortBeadID(b.ID, m.feeds.beads.prefix))
 		if id == q || short == q {
 			m.nameSel = i
 			break

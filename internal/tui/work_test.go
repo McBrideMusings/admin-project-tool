@@ -11,13 +11,14 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/archetype"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/viewstate"
 )
 
 // workTestModel builds a bare Model carrying a hand-built merged manifest —
 // no filesystem, no archetype resolution — so declaredCommands/commandKind/
 // workRows can be tested against exact, known input.
 func workTestModel(m *manifest.Manifest) Model {
-	return Model{
+	mm := Model{
 		shell:           shell{width: 120, height: 40},
 		manifest:        m,
 		manifestOK:      true,
@@ -25,6 +26,8 @@ func workTestModel(m *manifest.Manifest) Model {
 		pendingAttach:   map[string]bool{},
 		pendingTarget:   map[string]string{},
 	}
+	mm.mountTabs(viewstate.State{})
+	return mm
 }
 
 func TestDeclaredCommandsOrdersByGroupThenPriorityThenName(t *testing.T) {
@@ -870,7 +873,7 @@ func TestWorkTabUsesTheWorktreeManifestNotTheMainCheckout(t *testing.T) {
 // An empty manifest root leaves the old behaviour alone, which is what every
 // Model built without the option relies on.
 func TestManifestDirFallsBackToRepoRoot(t *testing.T) {
-	m := Model{repoRoot: "/repo"}
+	m := Model{shell: shell{repoRoot: "/repo"}}
 	if got := m.manifestDir(); got != "/repo" {
 		t.Errorf("manifestDir() = %q, want the repoRoot fallback %q", got, "/repo")
 	}

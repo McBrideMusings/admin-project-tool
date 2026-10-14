@@ -2074,7 +2074,7 @@ func TestTrackerKeyChoosesTheTrackerTab(t *testing.T) {
 
 	// The declared tracker wins over a live probe pointing the other way.
 	githubWithBeadsOnDisk := seededModel()
-	githubWithBeadsOnDisk.hasBeads = true
+	githubWithBeadsOnDisk.feeds.beads.present = true
 	if got := githubWithBeadsOnDisk.visibleTabs(); len(got) != 4 || got[2] != tabIssues {
 		t.Fatalf("tracker = [\"github\"] with a beads workspace on disk drew %v, want Issues still", got)
 	}
@@ -2098,7 +2098,7 @@ func TestTrackerKeyChoosesTheTrackerTab(t *testing.T) {
 	none := seededModel()
 	none.manifest.Trackers = nil
 	none.manifest.HasTracker = false
-	none.hasBeads = true
+	none.feeds.beads.present = true
 	if got := none.visibleTabs(); len(got) != 3 {
 		t.Fatalf("undeclared tracker drew %v, want Repo/PRs/Config with no tracker tab", got)
 	}
@@ -2158,10 +2158,10 @@ func TestUsesPullRequestsKeyControlsThePRsTab(t *testing.T) {
 // job of whoever does the work; the dashboard only opens the window.
 func TestEnterOnABeadBuildsAWorktreeAndWritesNothing(t *testing.T) {
 	m := seededModel()
-	m.hasBeads = true
-	m.haveBeads = true
+	m.feeds.beads.present = true
+	m.feeds.beads.have = true
 	m.active = tabBeads
-	m.beads = []bd.Bead{{ID: "bd-4f2", Title: "Add password reset", Status: "open", Type: "feature"}}
+	m.feeds.beads.beads = []bd.Bead{{ID: "bd-4f2", Title: "Add password reset", Status: "open", Type: "feature"}}
 	m.clampCursor()
 	m.moveCursor(1)
 
@@ -2225,8 +2225,8 @@ func TestNamePromptBeadSearch(t *testing.T) {
 	}
 
 	base := seededModel()
-	base.hasBeads, base.haveBeads = true, true
-	base.beads = beads
+	base.feeds.beads.present, base.feeds.beads.have = true, true
+	base.feeds.beads.beads = beads
 	base.active, base.pane = tabLocal, paneBranches
 	// resolveNameCmd asks git whether the typed name is a legal ref, in the
 	// checkout; seededModel's /repo does not exist, so give it a real directory.
@@ -2370,8 +2370,8 @@ func TestNamePromptFrameHeightWithCandidates(t *testing.T) {
 		})
 	}
 	m := seededModel()
-	m.hasBeads, m.haveBeads = true, true
-	m.beads = beads
+	m.feeds.beads.present, m.feeds.beads.have = true, true
+	m.feeds.beads.beads = beads
 	m.width, m.height = 80, 24
 	m.naming = true
 	m.nameBuf = "widget"

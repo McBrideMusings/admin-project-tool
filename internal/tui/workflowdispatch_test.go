@@ -37,8 +37,8 @@ func queryWorkflowModel(beads []bd.Bead) Model {
 			"run":  `claude "/retire $ADMIN_TARGET"`,
 		}},
 	})
-	m.haveBeads = true
-	m.beads = beads
+	m.feeds.beads.have = true
+	m.feeds.beads.beads = beads
 	return m
 }
 

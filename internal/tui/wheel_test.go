@@ -13,9 +13,9 @@ import (
 
 func wheelBeadsModel(n int) Model {
 	m := seededModel()
-	m.haveBeads, m.hasBeads, m.beadPrefix = true, true, "bdtest"
+	m.feeds.beads.have, m.feeds.beads.present, m.feeds.beads.prefix = true, true, "bdtest"
 	for i := 0; i < n; i++ {
-		m.beads = append(m.beads, bd.Bead{ID: fmt.Sprintf("bdtest-%d", i), Title: "t", Status: "open", Type: "task", Priority: 2})
+		m.feeds.beads.beads = append(m.feeds.beads.beads, bd.Bead{ID: fmt.Sprintf("bdtest-%d", i), Title: "t", Status: "open", Type: "task", Priority: 2})
 	}
 	m.active = tabBeads
 	m.clampCursor()
@@ -44,47 +44,47 @@ func selectableAfter(m Model, from, n int) int {
 
 func TestWheelDownMovesCursorThreeRows(t *testing.T) {
 	m := wheelBeadsModel(20)
-	start := m.cursor[tabBeads]
+	start := m.beadsTab.cursor
 	want := selectableAfter(m, start, 3)
 	m, _ = wheel(m, 10, true)
-	if got := m.cursor[tabBeads]; got != want {
+	if got := m.beadsTab.cursor; got != want {
 		t.Fatalf("cursor after wheel down = %d, want %d (from %d)", got, want, start)
 	}
 	m, _ = wheel(m, 10, false)
-	if got := m.cursor[tabBeads]; got != start {
+	if got := m.beadsTab.cursor; got != start {
 		t.Fatalf("cursor after wheel up = %d, want back at %d", got, start)
 	}
 }
 
 func TestWheelClampsAtFirstAndLastRow(t *testing.T) {
 	m := wheelBeadsModel(5)
-	first := m.cursor[tabBeads]
+	first := m.beadsTab.cursor
 	m, _ = wheel(m, 10, false)
-	if m.cursor[tabBeads] != first || m.focus != focusBody {
-		t.Fatalf("wheel up on the first row: cursor %d focus %v, want %d and body focus", m.cursor[tabBeads], m.focus, first)
+	if m.beadsTab.cursor != first || m.focus != focusBody {
+		t.Fatalf("wheel up on the first row: cursor %d focus %v, want %d and body focus", m.beadsTab.cursor, m.focus, first)
 	}
 	for i := 0; i < 10; i++ {
 		m, _ = wheel(m, 10, true)
 	}
-	last := selectableAfter(m, m.cursor[tabBeads], 100)
-	if m.cursor[tabBeads] != last {
-		t.Fatalf("cursor after wheeling past the end = %d, want last row %d", m.cursor[tabBeads], last)
+	last := selectableAfter(m, m.beadsTab.cursor, 100)
+	if m.beadsTab.cursor != last {
+		t.Fatalf("cursor after wheeling past the end = %d, want last row %d", m.beadsTab.cursor, last)
 	}
 }
 
 func TestWheelOverOverlayLeavesListCursorAlone(t *testing.T) {
 	m := wheelBeadsModel(20)
-	start := m.cursor[tabBeads]
+	start := m.beadsTab.cursor
 	m.errOpen = true
 	m, _ = wheel(m, 10, true)
-	if m.cursor[tabBeads] != start {
-		t.Fatalf("wheel under the error overlay moved the cursor to %d", m.cursor[tabBeads])
+	if m.beadsTab.cursor != start {
+		t.Fatalf("wheel under the error overlay moved the cursor to %d", m.beadsTab.cursor)
 	}
 	m.errOpen = false
-	m.beadOpen = true
+	m.beadsTab.overlay = true
 	m, _ = wheel(m, 10, true)
-	if m.cursor[tabBeads] != start || m.beadScroll != wheelRows {
-		t.Fatalf("wheel in bead overlay: cursor %d scroll %d, want cursor %d scroll %d", m.cursor[tabBeads], m.beadScroll, start, wheelRows)
+	if m.beadsTab.cursor != start || m.beadsTab.scroll != wheelRows {
+		t.Fatalf("wheel in bead overlay: cursor %d scroll %d, want cursor %d scroll %d", m.beadsTab.cursor, m.beadsTab.scroll, start, wheelRows)
 	}
 }
 

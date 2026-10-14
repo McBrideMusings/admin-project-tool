@@ -13,15 +13,15 @@ import (
 // bead and the overlay up.
 func beadOverlayModel(sel string, beads []bd.Bead) Model {
 	m := seededModel()
-	m.haveBeads = true
-	m.hasBeads = true
-	m.beadPrefix = "bdtest"
-	m.beads = beads
+	m.feeds.beads.have = true
+	m.feeds.beads.present = true
+	m.feeds.beads.prefix = "bdtest"
+	m.feeds.beads.beads = beads
 	m.active = tabBeads
-	m.beadOpen = true
+	m.beadsTab.overlay = true
 	for i, r := range m.visibleRows() {
 		if r.kind == rowBead && r.beadID == sel {
-			m.cursor[tabBeads] = i
+			m.beadsTab.cursor = i
 		}
 	}
 	return m
@@ -144,13 +144,13 @@ func TestBeadOverlayHoldsItsSize(t *testing.T) {
 		w, h := size[0], size[1]
 		m := beadOverlayModel("bdtest-b", chainBeads())
 		m.width, m.height = w, h
-		m.beads[1].Description = strings.Repeat("a long description that wraps. ", 40)
+		m.feeds.beads.beads[1].Description = strings.Repeat("a long description that wraps. ", 40)
 
-		bead := beadBox(m.renderBeadOverlay(w, h))
-		m.beadTab = beadTabGraph
-		graph := beadBox(m.renderBeadOverlay(w, h))
-		m.beadTab = beadTabBlocking
-		blocking := beadBox(m.renderBeadOverlay(w, h))
+		bead := beadBox(m.beadsTab.renderBeadOverlay(&m.shell, w, h))
+		m.beadsTab.overlayTab = beadTabGraph
+		graph := beadBox(m.beadsTab.renderBeadOverlay(&m.shell, w, h))
+		m.beadsTab.overlayTab = beadTabBlocking
+		blocking := beadBox(m.beadsTab.renderBeadOverlay(&m.shell, w, h))
 
 		if len(bead) != len(graph) || len(bead) != len(blocking) {
 			t.Errorf("%dx%d: the box is %d rows on the bead, %d on the graph, %d on blocking", w, h, len(bead), len(graph), len(blocking))
@@ -181,37 +181,37 @@ func beadBox(frame []string) []string {
 // that reached the list would move the cursor off the bead the box is describing.
 func TestBeadOverlaySwallowsKeys(t *testing.T) {
 	m := beadOverlayModel("bdtest-b", chainBeads())
-	before := m.cursor[tabBeads]
+	before := m.beadsTab.cursor
 
 	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	after := next.(Model)
-	if after.cursor[tabBeads] != before {
-		t.Errorf("j moved the list cursor from %d to %d while the overlay was up", before, after.cursor[tabBeads])
+	if after.beadsTab.cursor != before {
+		t.Errorf("j moved the list cursor from %d to %d while the overlay was up", before, after.beadsTab.cursor)
 	}
-	if !after.beadOpen {
+	if !after.beadsTab.overlay {
 		t.Error("j closed the overlay")
 	}
 
 	// ← → cycle the three tabs, esc closes; both are the overlay's, not the
 	// dashboard's.
 	switched, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRight})
-	if sm := switched.(Model); sm.beadTab != beadTabGraph || sm.active != tabBeads {
-		t.Errorf("→ left tab=%v active=%v, want the graph on the Beads tab", sm.beadTab, sm.active)
+	if sm := switched.(Model); sm.beadsTab.overlayTab != beadTabGraph || sm.active != tabBeads {
+		t.Errorf("→ left tab=%v active=%v, want the graph on the Beads tab", sm.beadsTab.overlayTab, sm.active)
 	}
 	twice, _ := switched.(Model).handleKey(tea.KeyMsg{Type: tea.KeyRight})
-	if sm := twice.(Model); sm.beadTab != beadTabBlocking {
-		t.Errorf("→ → left tab=%v, want Blocking", sm.beadTab)
+	if sm := twice.(Model); sm.beadsTab.overlayTab != beadTabBlocking {
+		t.Errorf("→ → left tab=%v, want Blocking", sm.beadsTab.overlayTab)
 	}
 	wrapped, _ := twice.(Model).handleKey(tea.KeyMsg{Type: tea.KeyRight})
-	if sm := wrapped.(Model); sm.beadTab != beadTabDetail {
-		t.Errorf("→ → → left tab=%v, want the cycle to wrap back to Detail", sm.beadTab)
+	if sm := wrapped.(Model); sm.beadsTab.overlayTab != beadTabDetail {
+		t.Errorf("→ → → left tab=%v, want the cycle to wrap back to Detail", sm.beadsTab.overlayTab)
 	}
 	back, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyLeft})
-	if sm := back.(Model); sm.beadTab != beadTabBlocking {
-		t.Errorf("← from Detail left tab=%v, want it to land on Blocking", sm.beadTab)
+	if sm := back.(Model); sm.beadsTab.overlayTab != beadTabBlocking {
+		t.Errorf("← from Detail left tab=%v, want it to land on Blocking", sm.beadsTab.overlayTab)
 	}
 	closed, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
-	if closed.(Model).beadOpen {
+	if closed.(Model).beadsTab.overlay {
 		t.Error("esc did not close the overlay")
 	}
 }
@@ -220,10 +220,10 @@ func TestBeadOverlaySwallowsKeys(t *testing.T) {
 // scroll position from one tab means nothing on another.
 func TestBeadOverlayTabResetsScroll(t *testing.T) {
 	m := beadOverlayModel("bdtest-b", chainBeads())
-	m.beadScroll = 9
+	m.beadsTab.scroll = 9
 
 	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRight})
-	if got := next.(Model).beadScroll; got != 0 {
+	if got := next.(Model).beadsTab.scroll; got != 0 {
 		t.Errorf("→ left beadScroll=%d, want 0", got)
 	}
 }
@@ -232,11 +232,11 @@ func TestBeadOverlayTabResetsScroll(t *testing.T) {
 // beads whose Blockers contain the selected bead's id, not the whole workspace.
 func TestBeadBlockingLinesDerivesDependents(t *testing.T) {
 	m := beadOverlayModel("bdtest-b", chainBeads())
-	b, ok := m.beadUnderCursor()
+	b, ok := m.beadsTab.beadUnderCursor(&m.shell)
 	if !ok {
 		t.Fatal("no bead under the cursor")
 	}
-	lines := m.beadBlockingLines(b, 80)
+	lines := m.beadsTab.beadBlockingLines(b, 80)
 	var text string
 	for _, l := range lines {
 		text += segsText(l) + "\n"
@@ -253,11 +253,11 @@ func TestBeadBlockingLinesDerivesDependents(t *testing.T) {
 // drawing an empty box.
 func TestBeadBlockingLinesEmpty(t *testing.T) {
 	m := beadOverlayModel("bdtest-c", chainBeads())
-	b, ok := m.beadUnderCursor()
+	b, ok := m.beadsTab.beadUnderCursor(&m.shell)
 	if !ok {
 		t.Fatal("no bead under the cursor")
 	}
-	lines := m.beadBlockingLines(b, 80)
+	lines := m.beadsTab.beadBlockingLines(b, 80)
 	var text string
 	for _, l := range lines {
 		text += segsText(l) + "\n"
@@ -279,9 +279,9 @@ func TestBeadOverlayRefusesTheGraphItCannotDraw(t *testing.T) {
 		})
 	}
 	m := beadOverlayModel("bdtest-p", beads)
-	m.beadTab = beadTabGraph
+	m.beadsTab.overlayTab = beadTabGraph
 	m.width, m.height = 200, 40
-	text := strings.Join(m.renderBeadOverlay(200, 40), "\n")
+	text := strings.Join(m.beadsTab.renderBeadOverlay(&m.shell, 200, 40), "\n")
 	if !strings.Contains(text, "21 beads over 2 ranks") || !strings.Contains(text, "rows, the box has") {
 		t.Errorf("the refusal does not name the dimension that ran out:\n%s", text)
 	}

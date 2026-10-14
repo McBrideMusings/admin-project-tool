@@ -245,8 +245,8 @@ func trackSortHeaderModel() Model {
 	m.width, m.height = 110, 30
 	m.manifest = &manifest.Manifest{Trackers: []string{"beads"}, HasTracker: true}
 	m.active = tabBeads
-	m.hasBeads, m.beadsProbed, m.haveBeads = true, true, true
-	m.beads = beadSortFixture()
+	m.feeds.beads.present, m.feeds.beads.probed, m.feeds.beads.have = true, true, true
+	m.feeds.beads.beads = beadSortFixture()
 	return m
 }
 
@@ -316,14 +316,14 @@ func TestSortHintInFooter(t *testing.T) {
 func TestBeadRowsRenderUnderEveryOrderEmptyAndSingle(t *testing.T) {
 	for order := sortLastModified; order < numTrackSorts; order++ {
 		empty := trackSortHeaderModel()
-		empty.beads = nil
+		empty.feeds.beads.beads = nil
 		empty.trackSort = order
-		_ = empty.beadRows() // must not panic
+		_ = empty.beadsTab.beadRows(&empty.shell) // must not panic
 
 		single := trackSortHeaderModel()
-		single.beads = []bd.Bead{{ID: "solo", Type: "task", Updated: time.Now()}}
+		single.feeds.beads.beads = []bd.Bead{{ID: "solo", Type: "task", Updated: time.Now()}}
 		single.trackSort = order
-		rows := rowsOfKind(single.beadRows(), rowBead)
+		rows := rowsOfKind(single.beadsTab.beadRows(&single.shell), rowBead)
 		if len(rows) != 1 {
 			t.Errorf("%s: single-bead beadRows produced %d bead rows, want 1", order.label(), len(rows))
 		}

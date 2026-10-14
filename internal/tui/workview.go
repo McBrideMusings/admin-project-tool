@@ -45,7 +45,7 @@ const fieldRowsH = 5
 // longest, and two layout branches could disagree.
 func (m Model) renderWorkBody(width, height int) ([]string, []hitTarget) {
 	rows := m.visibleRows()
-	cursor := m.cursor[m.active]
+	cursor := *m.cur(m.active)
 
 	// The Status strip is pinned above the scrolling list, whatever the filter
 	// leaves in it, and takes its rows from the list alone while leaving the

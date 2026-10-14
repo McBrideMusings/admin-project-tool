@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -10,13 +11,29 @@ import (
 )
 
 // shell is the state every mounted tab shares (ADR-0026): the terminal size,
-// which tab is up and whether the tab bar or the body holds focus, which tabs
-// are mounted at all, the filter, the status line and its toast, the error,
-// delete and quit popups, and the drag-to-copy gesture. A tab reads and
+// the repository and the directory its manifest lives in, which tab is up and
+// whether the tab bar or the body holds focus, which tabs are mounted at all,
+// the filter, the tracker sort order, the status line and its toast, the
+// error, delete and quit popups, and the drag-to-copy gesture. A tab reads and
 // writes these through the Model that embeds the shell; none of it belongs to
 // any one tab.
 type shell struct {
 	width, height int
+
+	// repoRoot is the repository every tab reads — git.RepoRoot's answer,
+	// the MAIN worktree even from inside a linked one.
+	repoRoot string
+	// manifestRoot is the directory whose admin.toml this dashboard reads, and
+	// it is not always repoRoot. git.RepoRoot deliberately returns the MAIN
+	// worktree from inside a linked one (internal/git/git.go), which is right
+	// for branches, worktrees and PRs — they are repo-wide — but wrong for the
+	// manifest: admin.toml is per-checkout and never committed, so a worktree
+	// that declares one had its Work tab silently dropped while `admin <cmd>`
+	// in that same directory ran the commands fine. cmd.resolveProjectManifest
+	// walks up from the working directory (manifest.FindRoot); this mirrors it,
+	// so the Work tab lists exactly the commands `admin <name>` would run here.
+	// Empty means "fall back to repoRoot" — see manifestDir.
+	manifestRoot string
 
 	active tab
 	// focus is which zone on screen owns the keyboard — the tab bar or the
@@ -32,6 +49,17 @@ type shell struct {
 
 	filtering bool
 	filter    string
+
+	// trackSort is the active order for the tracker list — the Beads tab's flat
+	// list and the Issues tab — cycled by `s` (see tracksort.go). It is shared
+	// across both tabs rather than kept per-tab: one key, one order, named in
+	// the header. Persisted to view.toml's tracker.sort (admin-y5lc.1): New()
+	// loads it through viewstate's cascade and every `s` press saves the new
+	// order to the project-level file. It does not reach the bead trees — the
+	// dependency tree's order already comes from the graph itself, and an
+	// arbitrary sort would scramble the blocker-above-blocked shape that view
+	// exists to show.
+	trackSort trackSort
 
 	status   string                 // transient action result line
 	statusFg lipgloss.TerminalColor // its color (nil → dim)
@@ -96,6 +124,16 @@ type shell struct {
 	selGen int
 }
 
+// manifestDir is the directory to read admin.toml, and anything co-located with
+// it, out of. Zero-value Models (every table-driven test that sets only
+// repoRoot) keep their old behaviour.
+func (s shell) manifestDir() string {
+	if s.manifestRoot != "" {
+		return s.manifestRoot
+	}
+	return s.repoRoot
+}
+
 // isMounted reports whether t is one of the shell's mounted tabs.
 func (s shell) isMounted(t tab) bool {
 	if s.mounted == nil {
@@ -107,6 +145,48 @@ func (s shell) isMounted(t tab) bool {
 		}
 	}
 	return false
+}
+
+// cols returns the layout width for list rows.
+func (s shell) cols() int {
+	if s.width > 0 {
+		return s.width
+	}
+	return 80
+}
+
+// filterRows applies the active filter (substring on a row's text), always
+// keeping section headers so the structure stays legible.
+func (s shell) filterRows(all []rowItem) []rowItem {
+	if s.filter == "" {
+		return all
+	}
+	q := strings.ToLower(s.filter)
+	var out []rowItem
+	for _, r := range all {
+		switch r.kind {
+		case rowHeader, rowRule:
+			out = append(out, r) // keep section structure
+		default:
+			if strings.Contains(strings.ToLower(r.searchText()), q) {
+				out = append(out, r)
+			}
+		}
+	}
+	return out
+}
+
+// rowAt is the row under cursor i in rows, or none while focus is on the tab
+// bar — the single lever admin-70hb uses to make every row-scoped key an
+// automatic no-op from there.
+func (s shell) rowAt(rows []rowItem, i int) (rowItem, bool) {
+	if s.focus == focusTabs {
+		return rowItem{}, false
+	}
+	if i >= 0 && i < len(rows) && rows[i].selectable() {
+		return rows[i], true
+	}
+	return rowItem{}, false
 }
 
 // setStatus sets the transient status line and its color in one place.

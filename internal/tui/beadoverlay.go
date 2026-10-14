@@ -40,12 +40,12 @@ func beadOverlaySize(width, height int) (boxW, boxH int) {
 // beadUnderCursor is the bead the overlay was opened on, found by the id the row
 // carries rather than by cursor arithmetic, so a refresh that reorders the list
 // cannot swap the bead out from under an open overlay.
-func (m Model) beadUnderCursor() (bd.Bead, bool) {
-	r, ok := m.currentRow()
+func (t beadsTab) beadUnderCursor(sh *shell) (bd.Bead, bool) {
+	r, ok := sh.rowAt(t.visibleRows(sh), t.cursor)
 	if !ok || r.kind != rowBead {
 		return bd.Bead{}, false
 	}
-	for _, b := range m.beads {
+	for _, b := range t.src.list() {
 		if b.ID == r.beadID {
 			return b, true
 		}
@@ -56,28 +56,28 @@ func (m Model) beadUnderCursor() (bd.Bead, bool) {
 // renderBeadOverlay draws the fixed box over the pane: the bead's own text, its
 // dependency neighbourhood, or what waits on it, with all three named in the
 // top border.
-func (m Model) renderBeadOverlay(width, height int) []string {
+func (t beadsTab) renderBeadOverlay(sh *shell, width, height int) []string {
 	boxW, boxH := beadOverlaySize(width, height)
 	innerW, innerH := boxW-2, boxH-2
 	// The last inner row is the box's own help line, so the content gets one fewer.
 	contentH := maxi(innerH-1, 1)
 
-	b, ok := m.beadUnderCursor()
+	b, ok := t.beadUnderCursor(sh)
 	var lines [][]seg
 	switch {
 	case !ok:
 		lines = [][]seg{{{t: " no bead under the cursor", fg: cDim}}}
-	case m.beadTab == beadTabGraph:
-		lines = m.beadGraphLines(b, innerW, contentH)
-	case m.beadTab == beadTabBlocking:
-		lines = m.beadBlockingLines(b, innerW)
+	case t.overlayTab == beadTabGraph:
+		lines = t.beadGraphLines(b, innerW, contentH)
+	case t.overlayTab == beadTabBlocking:
+		lines = t.beadBlockingLines(b, innerW)
 	default:
-		lines = m.beadTextLines(b, innerW)
+		lines = beadTextLines(b, innerW)
 	}
 
-	scroll := clampi(0, m.beadScroll, maxi(len(lines)-contentH, 0))
+	scroll := clampi(0, t.scroll, maxi(len(lines)-contentH, 0))
 	out := make([]string, 0, boxH)
-	out = append(out, m.beadOverlayTop(boxW))
+	out = append(out, t.beadOverlayTop(boxW))
 	border := renderSegs([]seg{{t: "│", fg: cBlue}}, nil)
 	for i := 0; i < contentH; i++ {
 		var row []seg
@@ -109,7 +109,7 @@ func (m Model) renderBeadOverlay(width, height int) []string {
 // three tabs live in the border rather than in a row of their own: the box is
 // fixed-size, so a row spent on chrome is a row taken off the content in every
 // tab forever.
-func (m Model) beadOverlayTop(boxW int) string {
+func (t beadsTab) beadOverlayTop(boxW int) string {
 	tab := func(label string, on bool) []seg {
 		if on {
 			return []seg{{t: "[ " + label + " ]", fg: cBg, bg: cBlue}}
@@ -117,11 +117,11 @@ func (m Model) beadOverlayTop(boxW int) string {
 		return []seg{{t: "[ " + label + " ]", fg: cDim}}
 	}
 	segs := []seg{{t: "┌─", fg: cBlue}}
-	segs = append(segs, tab("Bead", m.beadTab == beadTabDetail)...)
+	segs = append(segs, tab("Bead", t.overlayTab == beadTabDetail)...)
 	segs = append(segs, seg{t: "─", fg: cBlue})
-	segs = append(segs, tab("Graph", m.beadTab == beadTabGraph)...)
+	segs = append(segs, tab("Graph", t.overlayTab == beadTabGraph)...)
 	segs = append(segs, seg{t: "─", fg: cBlue})
-	segs = append(segs, tab("Blocking", m.beadTab == beadTabBlocking)...)
+	segs = append(segs, tab("Blocking", t.overlayTab == beadTabBlocking)...)
 	// The close affordance sits at a fixed offset from the right edge so it does
 	// not move when the tab labels do.
 	used := segsWidth(segs)
@@ -134,7 +134,7 @@ func (m Model) beadOverlayTop(boxW int) string {
 // beadTextLines is the bead itself: its title, the one-line summary of what kind
 // of work it is, and the prose bd already sent with the list — no second
 // subprocess for a bead that is already in memory.
-func (m Model) beadTextLines(b bd.Bead, innerW int) [][]seg {
+func beadTextLines(b bd.Bead, innerW int) [][]seg {
 	proseW := mini(innerW-1, beadProseW)
 	var lines [][]seg
 	add := func(segs ...seg) { lines = append(lines, append([]seg{{t: " "}}, segs...)) }
@@ -281,10 +281,10 @@ func wrapWords(s string, w int) []string {
 // in a real workspace and is expected to appear. Full geometry — bordered boxes
 // with a title — is tried first; a neighbourhood too big for that is retried
 // compact, one row per node holding just the id, before it is refused.
-func (m Model) beadGraphLines(b bd.Bead, innerW, innerH int) [][]seg {
+func (t beadsTab) beadGraphLines(b bd.Bead, innerW, innerH int) [][]seg {
 	// One cell of inset either side, matching every other line in the box.
 	w := maxi(innerW-2, 1)
-	nodes := beadNeighbourhood(m.beads, b.ID)
+	nodes := beadNeighbourhood(t.src.list(), b.ID)
 	var l beadGraphLayout
 	var why string
 	for _, geom := range []beadGeom{beadGeomFull, beadGeomCompact} {
@@ -298,19 +298,19 @@ func (m Model) beadGraphLines(b bd.Bead, innerW, innerH int) [][]seg {
 		return [][]seg{nil, {{t: "  " + why, fg: cDim}}}
 	}
 	var out [][]seg
-	for _, row := range l.render(w, l.rows, m.beadPrefix) {
+	for _, row := range l.render(w, l.rows, t.src.prefix()) {
 		out = append(out, append([]seg{{t: " "}}, row...))
 	}
 	return out
 }
 
-// beadBlockingLines lists the beads that wait on b: every bead in m.beads whose
+// beadBlockingLines lists the beads that wait on b: every bead in the feed whose
 // Blockers names b.ID, derived from the list already on the model rather than a
 // second `bd` call. Rows render id/priority/type/title as fixed-width columns
 // per this repo's row-layout rule, so the four fields line up down the box.
-func (m Model) beadBlockingLines(b bd.Bead, innerW int) [][]seg {
+func (t beadsTab) beadBlockingLines(b bd.Bead, innerW int) [][]seg {
 	var deps []bd.Bead
-	for _, d := range m.beads {
+	for _, d := range t.src.list() {
 		if slices.Contains(d.Blockers, b.ID) {
 			deps = append(deps, d)
 		}
@@ -327,7 +327,7 @@ func (m Model) beadBlockingLines(b bd.Bead, innerW int) [][]seg {
 
 	wID, wType := 0, 0
 	for _, d := range deps {
-		wID = maxi(wID, vlen(shortBeadID(d.ID, m.beadPrefix)))
+		wID = maxi(wID, vlen(shortBeadID(d.ID, t.src.prefix())))
 		wType = maxi(wType, vlen(d.Type))
 	}
 	const wPrio = 2
@@ -337,7 +337,7 @@ func (m Model) beadBlockingLines(b bd.Bead, innerW int) [][]seg {
 	for _, d := range deps {
 		out = append(out, []seg{
 			{t: " "},
-			{t: padEnd(shortBeadID(d.ID, m.beadPrefix), wID), fg: cCyan},
+			{t: padEnd(shortBeadID(d.ID, t.src.prefix()), wID), fg: cCyan},
 			{t: "  "},
 			{t: padEnd(priorityLabel(d.Priority), wPrio), fg: priorityColor(d.Priority)},
 			{t: "  "},
@@ -352,22 +352,22 @@ func (m Model) beadBlockingLines(b bd.Bead, innerW int) [][]seg {
 // beadOverlayKey handles a key while the overlay owns the keyboard. Every other
 // key is swallowed: a modal that lets one through moves the list underneath it,
 // so the row the overlay is describing is no longer the row under the cursor.
-func (m *Model) beadOverlayKey(key string) {
+func (t *beadsTab) beadOverlayKey(key string) {
 	switch key {
 	case "right":
-		m.beadTab = (m.beadTab + 1) % beadTabCount
-		m.beadScroll = 0
+		t.overlayTab = (t.overlayTab + 1) % beadTabCount
+		t.scroll = 0
 	case "left":
-		m.beadTab = (m.beadTab + beadTabCount - 1) % beadTabCount
-		m.beadScroll = 0
+		t.overlayTab = (t.overlayTab + beadTabCount - 1) % beadTabCount
+		t.scroll = 0
 	case "up":
-		if m.beadScroll > 0 {
-			m.beadScroll--
+		if t.scroll > 0 {
+			t.scroll--
 		}
 	case "down":
-		m.beadScroll++
+		t.scroll++
 	case "esc":
-		m.beadOpen = false
+		t.overlay = false
 	}
 }
 

@@ -5,7 +5,6 @@ package tui
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -160,9 +159,8 @@ type PendingAction struct {
 type Model struct {
 	shell
 
-	ctx      context.Context
-	repoRoot string
-	nwo      string
+	ctx context.Context
+	nwo string
 	// remoteHost and remoteAddr describe a non-GitHub origin (see WithRemote);
 	// both are empty when origin is GitHub, absent, or a local path.
 	remoteHost string
@@ -195,67 +193,15 @@ type Model struct {
 	haveData     bool
 	inflight     int // in-flight background work (the sync, row refreshes); header spins while > 0
 
-	// Beads: whether the Beads tab is drawn at all comes from the declared
-	// tracker list alone (trackers/hasTracker), never from these fields. The
-	// probe they hold only runs for a repo that already declared "beads"
-	// among its trackers (Init), and decides what's inside that tab: hasBeads is whether the `bd
-	// where` probe actually found a workspace, beadsProbed records that the
-	// probe has answered — the launch sync waits for it, so a beads repo
-	// never spends the `gh` issues call before knowing whether it needs one.
-	// beadsErr holds either "declared but not found" or a workspace this
-	// build can't read (a schema the `bd` on PATH doesn't agree with), which
-	// the pane shows in place of rows rather than passing off as an empty
-	// backlog.
-	hasBeads    bool
-	beadsProbed bool
-	// beadsProbing is true from the moment detectBeadsCmd is dispatched until
-	// beadsDetectedMsg lands and sets beadsProbed — closing the window where a
-	// second dispatch (Init, then a fsChangedMsg firing before the first probe's
-	// goroutine returns) would launch a redundant `bd where` subprocess.
-	beadsProbing bool
-	// beadsPolling is true from the moment loadBeadsCmd is dispatched until its
-	// beadsMsg lands — the in-flight guard that keeps the 15s tick, the launch
-	// load, and the manual `r` refresh from ever stacking a second `bd list`
-	// process on top of one still running. A busy embedded Dolt (one writer at
-	// a time) can otherwise wedge every poll indefinitely, piling up one
-	// process per tick and making the tracker unwritable for every other
-	// session on the machine (admin-fy79).
-	beadsPolling bool
-	// beadsStale is set when a poll is abandoned at beadsPollTimeout rather
-	// than answering — the child was killed, not merely slow, so there is no
-	// real data to apply. The last-known m.beads/m.beadsErr are left
-	// untouched in that case; this only flips the header's freshness readout
-	// to a tinted "stale" so a wedged poll is visible without a working
-	// dashboard ever wiping rows it can no longer refresh.
-	beadsStale bool
-	beadPrefix string // bd workspace prefix, stripped off every displayed id
-	// beadTreeMode is which of the three list shapes `g` has cycled to — flat,
-	// dependency tree, or family tree. See beadTreeMode in beadtree.go.
-	beadTreeMode beadTreeMode
-	beads        []bd.Bead
-	// trackSort is the active order for the tracker list — the Beads tab's flat
-	// list and the Issues tab — cycled by `s` (see tracksort.go). It is shared
-	// across both tabs rather than kept per-tab: one key, one order, named in
-	// the header. Persisted to view.toml's tracker.sort (admin-y5lc.1): New()
-	// loads it through viewstate's cascade and every `s` press saves the new
-	// order to the project-level file. It does not reach beadTreeRows — the
-	// dependency tree's order already comes from the graph itself, and an
-	// arbitrary sort would scramble the blocker-above-blocked shape that view
-	// exists to show.
-	trackSort trackSort
-	haveBeads bool
-	beadsErr  string
-	// beadCols is [beads] columns from the merged config — which columns the pane
-	// draws and in what order. Empty means DefaultBeadColumns.
-	beadCols []string
-
-	// Bead overlay: `d` opens a fixed-size box over the pane holding one of three
-	// tabs — the selected bead's own text, its dependency neighbourhood, or the
-	// beads that wait on it. The box is sized from the terminal and never from
-	// its content, so cycling between tabs does not move the screen.
-	beadOpen   bool           // the overlay is up
-	beadTab    beadOverlayTab // which of the three tabs is up
-	beadScroll int            // rows scrolled inside the box
+	// feeds is the state of every data source a tab model reads through a
+	// handle (feeds.go); the shell starts each one for the mounted tabs that
+	// declare it (sources.go). Whether the Beads tab is drawn at all comes
+	// from the declared tracker list alone (trackers/hasTracker), never from
+	// the beads feed: the feed decides what is inside the tab.
+	feeds feeds
+	// beadsTab is the Beads tab's own model (beadstab.go). It is built only
+	// when the tab is mounted (mountTabs) and reached through tabModel.
+	beadsTab beadsTab
 
 	// One background sync covers everything the dashboard reads from outside the
 	// working tree — open PRs, open issues, the merged-PR set, and `git fetch
@@ -300,7 +246,7 @@ type Model struct {
 	nameErr   string // inline validation message shown under an invalid nameBuf
 	resolving bool   // an enter'd nameBuf is out at resolveNameCmd; keys are held
 	// nameCands is the bead search under the naming prompt in a beads repo,
-	// recomputed on every edit from the already-loaded m.beads (see
+	// recomputed on every edit from the beads feed's loaded list (see
 	// refreshNameCands). nameSel is -1 when nothing in the list is highlighted, in
 	// which case enter creates a branch from the literal typed text exactly as it
 	// always has — only an exact id match auto-highlights a candidate, and editing
@@ -368,17 +314,6 @@ type Model struct {
 	// so each runs once for the life of the process however many times the
 	// manifest flaps between invalid and valid.
 	started [numSources]bool
-	// manifestRoot is the directory whose admin.toml this dashboard reads, and
-	// it is not always repoRoot. git.RepoRoot deliberately returns the MAIN
-	// worktree from inside a linked one (internal/git/git.go), which is right
-	// for branches, worktrees and PRs — they are repo-wide — but wrong for the
-	// manifest: admin.toml is per-checkout and never committed, so a worktree
-	// that declares one had its Work tab silently dropped while `admin <cmd>`
-	// in that same directory ran the commands fine. cmd.resolveProjectManifest
-	// walks up from the working directory (manifest.FindRoot); this mirrors it,
-	// so the Work tab lists exactly the commands `admin <name>` would run here.
-	// Empty means "fall back to repoRoot" — see manifestDir.
-	manifestRoot string
 	// checkout is the top level of the checkout the dashboard was opened in,
 	// which differs from repoRoot inside a linked worktree for the same reason
 	// manifestRoot does. Every git read and write runs there except the main
@@ -495,16 +430,6 @@ type Model struct {
 	termCols     int
 }
 
-// manifestDir is the directory to read admin.toml, and anything co-located with
-// it, out of. Zero-value Models (every table-driven test that sets only
-// repoRoot) keep their old behaviour.
-func (m Model) manifestDir() string {
-	if m.manifestRoot != "" {
-		return m.manifestRoot
-	}
-	return m.repoRoot
-}
-
 // checkoutDir is the directory the dashboard's git commands run in — see the
 // checkout field.
 func (m Model) checkoutDir() string {
@@ -564,11 +489,10 @@ func FindManifestRoot(cwd string) string {
 func New(ctx context.Context, repoRoot, nwo, current, def string, opts ...Option) Model {
 	m := Model{
 		ctx:             ctx,
-		repoRoot:        repoRoot,
 		nwo:             nwo,
 		current:         current,
 		def:             def,
-		shell:           shell{active: tabLocal},
+		shell:           shell{active: tabLocal, repoRoot: repoRoot},
 		herdr:           shim.Available(),
 		selected:        map[string]bool{},
 		pendingDispatch: map[string]bool{},
@@ -585,9 +509,7 @@ func New(ctx context.Context, repoRoot, nwo, current, def string, opts ...Option
 	// itself loaded to resolve.
 	vs := viewstate.Load(ctx, m.manifestDir())
 	m.workCollapsed = vs.WorkCollapsed
-	if mode, ok := beadTreeModeFromView(vs.BeadTree); ok {
-		m.beadTreeMode = mode
-	}
+	m.mountTabs(vs)
 	if sort, ok := trackSortFromView(vs.TrackSort); ok {
 		m.trackSort = sort
 	}
@@ -749,7 +671,55 @@ func (m Model) tabIndex(t tab) int {
 	return -1
 }
 
+// mountTabs builds the feeds and a model for every mounted tab that has one,
+// each constructor declaring the sources it reads by asking for their handles
+// (feeds.go), and each starting from the view state vs remembered. New calls
+// it once the options have settled what is mounted.
+func (m *Model) mountTabs(vs viewstate.State) {
+	m.feeds = newFeeds(m.ctx, m.repoRoot)
+	if m.isMounted(tabBeads) {
+		tree, _ := beadTreeModeFromView(vs.BeadTree)
+		m.beadsTab = newBeadsTab(m.feeds, tree)
+	}
+}
+
+// updateTabs hands msg to every mounted tab model.
+func (m *Model) updateTabs(msg tea.Msg) tea.Cmd {
+	var cmds []tea.Cmd
+	for t := tab(0); t < numTabs; t++ {
+		if tm := m.tabModel(t); tm != nil {
+			cmds = append(cmds, tm.update(msg))
+		}
+	}
+	return tea.Batch(cmds...)
+}
+
+// tabModel is the model of tab t when t is mounted and has moved into a model
+// of its own (ADR-0026), or nil while t's state still lives on Model.
+func (m *Model) tabModel(t tab) tabModel {
+	if !m.isMounted(t) {
+		return nil
+	}
+	switch t {
+	case tabBeads:
+		return &m.beadsTab
+	}
+	return nil
+}
+
+// cur is tab t's list cursor: the tab model's own, or Model's slot for a tab
+// that has not moved yet.
+func (m *Model) cur(t tab) *int {
+	if tm := m.tabModel(t); tm != nil {
+		return tm.cursorRef()
+	}
+	return &m.cursor[t]
+}
+
 func (m Model) rows() []rowItem {
+	if tm := m.tabModel(m.active); tm != nil {
+		return tm.rows(&m.shell)
+	}
 	switch m.active {
 	case tabWork:
 		return m.workRows()
@@ -759,8 +729,6 @@ func (m Model) rows() []rowItem {
 		return m.prRows()
 	case tabIssues:
 		return m.issueRows()
-	case tabBeads:
-		return m.beadRows()
 	case tabConfig:
 		return m.configRows()
 	}
@@ -771,23 +739,7 @@ func (m Model) rows() []rowItem {
 // visibleRows applies the active filter (substring on label), always keeping
 // section headers so the structure stays legible.
 func (m Model) visibleRows() []rowItem {
-	all := m.rows()
-	if m.filter == "" {
-		return all
-	}
-	q := strings.ToLower(m.filter)
-	var out []rowItem
-	for _, r := range all {
-		switch r.kind {
-		case rowHeader, rowRule:
-			out = append(out, r) // keep section structure
-		default:
-			if strings.Contains(strings.ToLower(r.searchText()), q) {
-				out = append(out, r)
-			}
-		}
-	}
-	return out
+	return m.filterRows(m.rows())
 }
 
 // clampCursor runs after every state change that can shrink a pane's rows
@@ -810,19 +762,19 @@ func (m *Model) clampCursor() {
 	rows := m.visibleRows()
 	n := len(rows)
 	if n == 0 {
-		m.cursor[m.active] = 0
+		*m.cur(m.active) = 0
 		return
 	}
-	if m.cursor[m.active] >= n {
-		m.cursor[m.active] = n - 1
+	if *m.cur(m.active) >= n {
+		*m.cur(m.active) = n - 1
 	}
-	if m.cursor[m.active] < 0 {
-		m.cursor[m.active] = 0
+	if *m.cur(m.active) < 0 {
+		*m.cur(m.active) = 0
 	}
 	// Row 0 of a list tab is a section header, which is not selectable, so a
 	// cursor left sitting there makes every row-scoped key a silent no-op. Snap
 	// forward through moveCursor rather than repeating its skip logic here.
-	if !rows[m.cursor[m.active]].selectable() {
+	if !rows[*m.cur(m.active)].selectable() {
 		m.moveCursor(1)
 	}
 }
@@ -851,7 +803,7 @@ func (m *Model) moveCursor(delta int) {
 	if n == 0 {
 		return
 	}
-	i := m.cursor[m.active]
+	i := *m.cur(m.active)
 	for steps := 0; steps < n; steps++ {
 		i += delta
 		if i < 0 {
@@ -861,7 +813,7 @@ func (m *Model) moveCursor(delta int) {
 			i = 0
 		}
 		if rows[i].selectable() {
-			m.cursor[m.active] = i
+			*m.cur(m.active) = i
 			return
 		}
 	}
@@ -897,7 +849,7 @@ func (m *Model) moveCursorWork(delta int) {
 	if n == 0 {
 		return
 	}
-	i := m.cursor[m.active]
+	i := *m.cur(m.active)
 	for steps := 0; steps < n; steps++ {
 		i += delta
 		if i < 0 {
@@ -910,18 +862,18 @@ func (m *Model) moveCursorWork(delta int) {
 		if r.selectable() {
 			owner := ownerCmdName(r)
 			if owner == m.workOpenCmd {
-				m.cursor[m.active] = i
+				*m.cur(m.active) = i
 				return
 			}
 			m.workOpenCmd = owner
 			newRows := m.visibleRows()
 			for j, rr := range newRows {
 				if sameRowIdentity(rr, r) {
-					m.cursor[m.active] = j
+					*m.cur(m.active) = j
 					return
 				}
 			}
-			m.cursor[m.active] = i // defensive fallback; should be unreachable
+			*m.cur(m.active) = i // defensive fallback; should be unreachable
 			return
 		}
 		if r.kind == rowCommand && r.group && r.work != nil && r.work.cmdName != m.workOpenCmd {
@@ -952,9 +904,9 @@ func (m *Model) moveCursorWork(delta int) {
 				continue
 			}
 			if delta > 0 {
-				m.cursor[m.active] = start
+				*m.cur(m.active) = start
 			} else {
-				m.cursor[m.active] = end - 1
+				*m.cur(m.active) = end - 1
 			}
 			return
 		}
@@ -1010,7 +962,7 @@ func oneLine(s string) string {
 // resetCursors sends every cursor back to the top — used when the filter changes.
 // The clamp then snaps the active tab's cursor onto the first selectable row.
 func (m *Model) resetCursors() {
-	m.cursor[m.active] = 0
+	*m.cur(m.active) = 0
 	m.paneCursor = [numPanes]int{}
 	m.clampCursor()
 }
@@ -1141,7 +1093,7 @@ func (m *Model) launchSyncCmd() tea.Cmd {
 	if m.synced || !m.haveLocal {
 		return nil
 	}
-	if m.sourceOn(srcBeads) && !m.beadsProbed {
+	if m.sourceOn(srcBeads) && !m.feeds.beads.probed {
 		return nil
 	}
 	m.synced = true
@@ -1160,19 +1112,6 @@ func (m *Model) refreshAllCmd() tea.Cmd {
 		loadLocalCmd(m.ctx, m.repoRoot, m.checkoutDir(), m.current, m.def),
 		m.startSyncCmd(true),
 	)
-}
-
-// pollBeadsCmd dispatches loadBeadsCmd, but only when no poll is already in
-// flight — the single gate every beads read goes through (the launch load in
-// beadsDetectedMsg, the repeating beadsTickMsg, and the manual `r` refresh),
-// so a slow or contended `bd` can never accumulate more than one outstanding
-// `bd list` process no matter which of the three triggers it.
-func (m *Model) pollBeadsCmd() tea.Cmd {
-	if m.beadsPolling {
-		return nil
-	}
-	m.beadsPolling = true
-	return loadBeadsCmd(m.ctx, m.repoRoot)
 }
 
 // isRefreshing reports whether any background GitHub fetch is in flight, driving
@@ -1198,12 +1137,7 @@ func (m Model) currentRow() (rowItem, bool) {
 	if m.active == tabLocal {
 		return m.localCurrent()
 	}
-	rows := m.visibleRows()
-	i := m.cursor[m.active]
-	if i >= 0 && i < len(rows) && rows[i].selectable() {
-		return rows[i], true
-	}
-	return rowItem{}, false
+	return m.rowAt(m.visibleRows(), *m.cur(m.active))
 }
 
 // bodyRowCount is the active tab's selectable row count — used to decide
@@ -1239,7 +1173,7 @@ func (m Model) atBodyTop() bool {
 	rows := m.visibleRows()
 	for i, r := range rows {
 		if r.selectable() {
-			return m.cursor[m.active] <= i
+			return *m.cur(m.active) <= i
 		}
 	}
 	return true
@@ -1369,77 +1303,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.launchSyncCmd()
 
 	case beadsDetectedMsg:
-		// The probe answered: does a beads workspace actually exist here. This
-		// only fires for a repo that already declared tracker = "beads" (see
-		// Init), so the Beads tab itself is never at stake — it's already
-		// drawn on the declaration alone. This decides what's inside it: real
-		// rows, or the "declared but not found" state below.
-		m.beadsProbed = true
-		m.beadsProbing = false
-		m.hasBeads = msg.present
-		m.beadPrefix = msg.ws.Prefix
-		m.beadsErr = ""
-		var cmds []tea.Cmd
-		switch {
-		case errors.Is(msg.err, context.DeadlineExceeded):
-			// bd where never answered. Say so, and ask again: unlike a schema
-			// mismatch, a wedged bd can recover on its own.
-			// hasBeads stays false until a probe answers, so no poll or `r`
-			// refresh reads a workspace whose prefix is still unknown.
-			m.hasBeads = false
-			m.beadsErr = beadsTimeoutText("where")
-			cmds = append(cmds, m.beadsReprobeCmd())
-		case msg.err != nil:
-			m.beadsErr = msg.err.Error()
-		case !msg.present:
-			m.beadsErr = `tracker = "beads" is declared, but no beads workspace was found here`
-		}
-		if m.hasBeads && m.beadsErr == "" {
-			cmds = append(cmds, m.pollBeadsCmd(), m.beadsTickCmd())
-		}
-		cmds = append(cmds, m.launchSyncCmd())
+		cmd := m.feeds.beads.update(msg, m.headless)
 		m.clampCursor()
-		return m, tea.Batch(cmds...)
+		return m, tea.Batch(cmd, m.launchSyncCmd())
 
-	case beadsMsg:
-		m.beadsPolling = false
-		if !errors.Is(msg.err, context.DeadlineExceeded) {
-			m.haveBeads = true
-		}
-		switch {
-		case errors.Is(msg.err, context.DeadlineExceeded):
-			// The poll was abandoned at beadsPollTimeout, not answered — bd.List's
-			// exec.CommandContext killed the child, so msg carries no real data.
-			// Keep the last-known beads/beadsErr untouched and only flag staleness:
-			// a slow tick must never wipe good rows off the screen. With no rows
-			// yet there is nothing to keep, so the pane names the timeout instead
-			// of reading "loading…" forever; the next answer clears it.
-			m.beadsStale = true
-			if !m.haveBeads {
-				m.beadsErr = beadsTimeoutText("list")
-			}
-		case msg.err != nil:
-			m.beadsErr = msg.err.Error()
-		default:
-			m.beads = msg.beads
-			m.beadsErr = ""
-			m.beadsStale = false
-		}
+	case beadsMsg, beadsReprobeMsg, beadsTickMsg:
+		cmd := m.feeds.beads.update(msg, m.headless)
 		m.clampCursor()
-		return m, nil
-
-	case beadsReprobeMsg:
-		return m, detectBeadsCmd(m.ctx, m.repoRoot)
-
-	case beadsTickMsg:
-		// Beads live in a local database, so re-reading them costs a subprocess and
-		// no network at all — nothing like the GitHub sync this dashboard rations to
-		// one every five minutes. The tick is short enough that a bead an agent
-		// creates mid-session shows up while you are still looking at the pane.
-		if !m.hasBeads {
-			return m, nil
-		}
-		return m, tea.Batch(m.pollBeadsCmd(), m.beadsTickCmd())
+		return m, cmd
 
 	case cacheDataMsg:
 		if msg.ok {
@@ -1660,9 +1531,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, loadLocalCmd(m.ctx, m.repoRoot, m.checkoutDir(), m.current, m.def)
 
 	case settingsMsg:
-		m.beadCols = msg.beads.Columns
 		m.cfgMerged, m.cfgErr = msg.cfg, msg.loadErr
-		return m, nil
+		return m, m.updateTabs(msg)
 
 	case workDispatchStartedMsg:
 		// A hosted dispatch reports "started" immediately rather than an
@@ -1976,10 +1846,10 @@ func (m Model) clickRow(pane localPane, row int) (tea.Model, tea.Cmd) {
 		m.paneCursor[pane] = row
 		return m, nil
 	}
-	if !fromTabs && m.cursor[m.active] == row {
+	if !fromTabs && *m.cur(m.active) == row {
 		return m.activate()
 	}
-	m.cursor[m.active] = row
+	*m.cur(m.active) = row
 	return m, nil
 }
 
@@ -2036,12 +1906,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.worktreePickerKey(msg.String())
 	}
 
-	// The bead overlay owns the keyboard while it is up, the same way the
-	// error-detail overlay does below: ← → switch mode, ↑↓ scroll, esc closes, and
-	// every other key is swallowed rather than moving the list it is drawn over.
-	if m.beadOpen {
-		m.beadOverlayKey(msg.String())
-		return m, nil
+	// A tab's own overlay (the Beads tab's bead box) owns the keyboard while
+	// it is up, the same way the error-detail overlay does below: the tab
+	// takes every key rather than letting one move the list it is drawn over.
+	if tm := m.tabModel(m.active); tm != nil && tm.modal() {
+		_, cmd := tm.key(&m.shell, msg.String())
+		return m, cmd
 	}
 
 	// The error-detail overlay swallows all keys: any key dismisses it. It sits above
@@ -2179,6 +2049,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return mm, cmd
 	}
 
+	// A tab with a model of its own gets the key next: the keys it owns
+	// preempt the built-in switch, and everything else falls through to it.
+	if tm := m.tabModel(m.active); tm != nil {
+		if handled, cmd := tm.key(&m.shell, msg.String()); handled {
+			return m, cmd
+		}
+	}
+
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m.requestQuit()
@@ -2272,13 +2150,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.onWorkSurface() {
 			return m, nil
 		}
-		// The Beads tab has no per-row refresh: re-reading the whole workspace is
-		// one local query, so there is nothing a single bead would save. Routed
-		// through pollBeadsCmd like the tick and the launch load, so a manual
-		// refresh can't stack a second `bd list` on top of one already in flight.
-		if m.active == tabBeads {
-			return m, m.pollBeadsCmd()
-		}
 		// On an Issues/PRs row, refresh just that row — one targeted GraphQL call
 		// instead of syncing the whole repo. Anywhere else (the Repo tab, or no row
 		// under the cursor), fall back to refreshing everything.
@@ -2304,15 +2175,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.errDetail != "" {
 			m.errOpen = true
 		}
-	case "d":
-		// The bead's own text and its dependency neighbourhood are the two things
-		// the row cannot carry: 883 characters of description and a graph do not
-		// fit in a table cell.
-		if m.active == tabBeads {
-			if r, ok := m.currentRow(); ok && r.kind == rowBead {
-				m.beadOpen, m.beadTab, m.beadScroll = true, beadTabDetail, 0
-			}
-		}
 	case "p":
 		if m.active == tabLocal && m.pane == paneBranches {
 			m.setStatus("pulling…", cDim)
@@ -2321,28 +2183,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "s":
 		if m.active == tabBeads || m.active == tabIssues {
 			m.trackSort = m.trackSort.next()
-			m.cursor[m.active] = 0
+			*m.cur(m.active) = 0
 			m.setStatus("sorted: "+m.trackSort.label(), cDim)
 			if err := viewstate.SaveTrackSort(m.manifestDir(), m.trackSort.viewString()); err != nil {
 				m.setStatus("view.toml: "+err.Error(), cRed)
 			}
-		}
-	case "g":
-		if m.active == tabBeads {
-			m.beadTreeMode = m.beadTreeMode.next()
-			m.cursor[tabBeads] = 0
-			switch m.beadTreeMode {
-			case beadListBlocksTree:
-				m.setStatus("dependency tree — blockers sit above what they block", cDim)
-			case beadListFamilyTree:
-				m.setStatus("family tree — parents sit above their children", cDim)
-			default:
-				m.setStatus("flat list, grouped by what's ready", cDim)
-			}
-			if err := viewstate.SaveBeadTree(m.manifestDir(), m.beadTreeMode.viewString()); err != nil {
-				m.setStatus("view.toml: "+err.Error(), cRed)
-			}
-			break
 		}
 	case "G":
 		if m.active == tabLocal && m.pane == paneBranches {

@@ -432,11 +432,3 @@ func (m Model) worktreeByBranch() map[string]string {
 	}
 	return out
 }
-
-// cols returns the layout width for list rows.
-func (m Model) cols() int {
-	if m.width > 0 {
-		return m.width
-	}
-	return 80
-}

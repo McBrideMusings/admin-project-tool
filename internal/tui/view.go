@@ -189,13 +189,13 @@ func (m Model) renderBodyHits(width, bodyHeight int) ([]string, []hitTarget) {
 	}
 	var content []string
 	var hits []hitTarget
+	tm := m.tabModel(m.active)
 	switch {
 	case m.errOpen:
 		content = m.renderErrDetailBody(width, contentH)
 		hits = noneHits(len(content))
-	case m.beadOpen:
-		content = m.renderBeadOverlay(width, contentH)
-		hits = noneHits(len(content))
+	case tm != nil && tm.modal():
+		content, hits = tm.body(&m.shell, width, contentH)
 	case m.confirming || m.deleting:
 		content = m.renderModalBody(width, contentH)
 		hits = noneHits(len(content))
@@ -208,23 +208,19 @@ func (m Model) renderBodyHits(width, bodyHeight int) ([]string, []hitTarget) {
 		content, hits = m.renderWorkBody(width, contentH)
 	case m.active == tabLocal:
 		content, hits = m.renderLocalPanels(width, contentH)
-	case m.showBeadStrip(contentH):
-		content, hits = m.renderList(width, contentH-beadStripRows)
-		for _, l := range m.beadStrip(width) {
-			content = append(content, l)
-			hits = append(hits, hitTarget{kind: hitNone})
-		}
+	case tm != nil:
+		content, hits = tm.body(&m.shell, width, contentH)
 	default:
 		content, hits = m.renderList(width, contentH)
 	}
 	content = pad(content, contentH)
 	hits = padHits(hits, contentH)
-	content = append(content, m.ruleLine(width))
+	content = append(content, ruleLine(width))
 	hits = append(hits, hitTarget{kind: hitNone})
 	return content, hits
 }
 
-func (m Model) ruleLine(width int) string {
+func ruleLine(width int) string {
 	return renderSegs([]seg{{t: strings.Repeat("─", width), fg: cRule}}, nil)
 }
 
@@ -247,12 +243,15 @@ func centerMessage(msg string, width, height int) []string {
 	return out
 }
 
-// renderList renders the flat row list (PRs/Issues/Beads) into height lines,
-// alongside which row each line hits — row i is exactly rows[i], the same
-// index m.cursor[m.active] and currentRow() already address.
+// renderList renders the active tab's flat row list into height lines.
 func (m Model) renderList(width, height int) ([]string, []hitTarget) {
-	rows := m.visibleRows()
-	cursor := m.cursor[m.active]
+	return m.renderRows(m.visibleRows(), *m.cur(m.active), width, height)
+}
+
+// renderRows renders a flat row list (PRs/Issues/Beads) into height lines,
+// alongside which row each line hits — row i is exactly rows[i], the same
+// index the tab's cursor and currentRow() already address.
+func (s shell) renderRows(rows []rowItem, cursor, width, height int) ([]string, []hitTarget) {
 
 	// Whole-view empty state: a single centered message (e.g. Cleanup, nothing to do).
 	if len(rows) == 1 && rows[0].kind == rowCenter {
@@ -280,7 +279,7 @@ func (m Model) renderList(width, height int) ([]string, []hitTarget) {
 		if moreBelow && len(lines) == height-1 {
 			break
 		}
-		lines = append(lines, m.renderRow(rows[i], i == cursor, width))
+		lines = append(lines, s.renderRow(rows[i], i == cursor, width))
 		if rows[i].selectable() {
 			hits = append(hits, hitTarget{kind: hitRow, row: i})
 		} else {
@@ -419,22 +418,14 @@ func (m Model) syncFailedLabel() string {
 // company only when a section failed its fetch and kept its older stamp, which is
 // exactly when the difference is worth seeing.
 func (m Model) freshnessSeg() seg {
+	if tm := m.tabModel(m.active); tm != nil {
+		return tm.freshness()
+	}
 	var at time.Time
 	switch m.active {
 	case tabWork, tabWorkers:
 		// The manifest and the live-work registry are both read fresh on every
-		// frame — no fetch, no cache, exactly like Beads below.
-		return seg{t: "live", fg: cFaint}
-	case tabBeads:
-		// Beads are read straight out of the local database on a short clock, so
-		// there is no cache age to report — what is on screen is what the workspace
-		// said seconds ago. Unless the last poll was abandoned at beadsPollTimeout
-		// (a contended embedded Dolt): then what's on screen is whatever the poll
-		// before that one last returned, so this reads as stale rather than live,
-		// same yellow tint the TTL check below uses for an aged cache.
-		if m.beadsStale {
-			return seg{t: "stale", fg: cYellow}
-		}
+		// frame — no fetch, no cache, exactly like the Beads tab.
 		return seg{t: "live", fg: cFaint}
 	case tabPRs:
 		at = m.remote.PRsFetchedAt
@@ -477,6 +468,9 @@ func tabDisplay(t tab) string {
 }
 
 func (m Model) tabCount(t tab) int {
+	if tm := m.tabModel(t); tm != nil {
+		return tm.count()
+	}
 	switch t {
 	case tabWork:
 		return m.workRowCount()
@@ -486,9 +480,6 @@ func (m Model) tabCount(t tab) int {
 		return len(m.remote.PRs)
 	case tabIssues:
 		return len(m.remote.Issues)
-	case tabBeads:
-		human, ready, inProgress, blocked := groupBeads(m.beads)
-		return len(human) + len(ready) + len(inProgress) + len(blocked)
 	case tabLocal:
 		return m.localBranchCount()
 	}
@@ -584,7 +575,7 @@ func leadSeg(selected bool) seg {
 	return seg{t: " "}
 }
 
-func (m Model) renderRow(r rowItem, selected bool, width int) string {
+func (s shell) renderRow(r rowItem, selected bool, width int) string {
 	switch r.kind {
 	case rowHeader:
 		left := []seg{{t: " "}, {t: r.label, fg: cBright}}
@@ -593,7 +584,7 @@ func (m Model) renderRow(r rowItem, selected bool, width int) string {
 		}
 		return renderSegs(fitSegs(left, width), nil)
 	case rowRule:
-		return m.ruleLine(width)
+		return ruleLine(width)
 	case rowText:
 		return renderSegs(fitSegs([]seg{{t: "   "}, {t: r.label, fg: cFaint}}, width), nil)
 	}
@@ -602,7 +593,7 @@ func (m Model) renderRow(r rowItem, selected bool, width int) string {
 	// the tab bar instead: admin-70hb's AC1 is that no row reads as current
 	// while focus lives elsewhere, so the lead marker and the solid
 	// background only appear when focus is actually in the body.
-	current := selected && m.focus == focusBody
+	current := selected && s.focus == focusBody
 	left := []seg{leadSeg(current)}
 	left = append(left, r.leftSegs...)
 	line := composeLR(left, r.rightSegs, width)
@@ -616,8 +607,10 @@ func (m Model) renderRow(r rowItem, selected bool, width int) string {
 }
 
 func (m Model) footer(width int) string {
-	if m.beadOpen {
-		return beadOverlayFooter()
+	if tm := m.tabModel(m.active); tm != nil {
+		if line, ok := tm.footer(); ok {
+			return line
+		}
 	}
 	if m.errOpen {
 		return renderSegs([]seg{
@@ -678,7 +671,7 @@ func (m Model) nameCandLines(width int) []string {
 	if len(m.nameCands) == 0 {
 		return nil
 	}
-	l := beadLayoutFor([]string{"id", "priority", "type", "title"}, width, m.beadCtx(false), m.nameCands)
+	l := beadLayoutFor([]string{"id", "priority", "type", "title"}, width, beadCtxFor(m.feeds.beads.beads, m.feeds.beads.prefix, false), m.nameCands)
 	lines := make([]string, len(m.nameCands))
 	for i, b := range m.nameCands {
 		left, right := l.row(beadNode{b: b}, width)

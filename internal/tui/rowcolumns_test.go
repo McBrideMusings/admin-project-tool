@@ -428,10 +428,10 @@ func TestBeadRowsFormFixedColumns(t *testing.T) {
 	const cols = 140
 	m := seededModel()
 	m.width = cols
-	m.haveBeads = true
-	m.hasBeads = true
-	m.beadPrefix = "bdtest"
-	m.beads = []bd.Bead{
+	m.feeds.beads.have = true
+	m.feeds.beads.present = true
+	m.feeds.beads.prefix = "bdtest"
+	m.feeds.beads.beads = []bd.Bead{
 		{ID: "bdtest-38t", Title: "Auth token expiry off by one", Status: "open", Type: "bug", Priority: 0, Labels: []string{"backend", "security"}, Assignee: "pierce"},
 		{ID: "bdtest-qt0", Title: "Add password reset", Status: "open", Type: "feature", Priority: 1, Labels: []string{"backend"}},
 		{ID: "bdtest-1xn", Title: "Bump deps", Status: "in_progress", Type: "chore", Priority: 2, Labels: []string{"tooling"}, Assignee: "pierce"},
@@ -440,9 +440,9 @@ func TestBeadRowsFormFixedColumns(t *testing.T) {
 	}
 	// "owner" is not in the default set — a solo workspace spends nine cells on
 	// one name — so the fixture asks for it, which is what the column exists for.
-	m.beadCols = []string{"id", "priority", "type", "glyph", "title", "unblocks", "labels", "owner", "age"}
-	human, ready, inProgress, blocked := groupBeads(m.beads)
-	l := beadLayoutFor(m.beadCols, cols, m.beadCtx(false), human, ready, inProgress, blocked)
+	m.beadsTab.cols = []string{"id", "priority", "type", "glyph", "title", "unblocks", "labels", "owner", "age"}
+	human, ready, inProgress, blocked := groupBeads(m.feeds.beads.beads)
+	l := beadLayoutFor(m.beadsTab.cols, cols, m.beadsTab.beadCtx(false), human, ready, inProgress, blocked)
 	wID, wType := l.widths[l.indexOf("id")], l.widths[l.indexOf("type")]
 	wLabel, wOwner := l.widths[l.indexOf("labels")], l.widths[l.indexOf("owner")]
 	wUnblocks := l.widths[l.indexOf("unblocks")]
@@ -480,9 +480,9 @@ func TestBeadRowsFormFixedColumns(t *testing.T) {
 		"bdtest-isd": {"isd", "P1", "task", "1", "", ""},
 		"bdtest-63h": {"63h", "P2", "task", "", "", "alice"},
 	}
-	beadRows := rowsOfKind(m.beadRows(), rowBead)
-	if len(beadRows) != len(m.beads) {
-		t.Fatalf("rendered %d bead rows, want %d", len(beadRows), len(m.beads))
+	beadRows := rowsOfKind(m.beadsTab.beadRows(&m.shell), rowBead)
+	if len(beadRows) != len(m.feeds.beads.beads) {
+		t.Fatalf("rendered %d bead rows, want %d", len(beadRows), len(m.feeds.beads.beads))
 	}
 	for _, r := range beadRows {
 		text := []rune(segsText(composeLR(append([]seg{leadSeg(false)}, r.leftSegs...), r.rightSegs, cols)))
@@ -511,23 +511,23 @@ func TestBeadRowsFormFixedColumns(t *testing.T) {
 func TestBeadBlockingRowsFormFixedColumns(t *testing.T) {
 	const innerW = 100
 	m := seededModel()
-	m.beadPrefix = "bdtest"
+	m.feeds.beads.prefix = "bdtest"
 	target := bd.Bead{ID: "bdtest-p", Title: "Parent", Status: "open", Type: "task", Priority: 1}
-	m.beads = []bd.Bead{
+	m.feeds.beads.beads = []bd.Bead{
 		target,
 		{ID: "bdtest-a", Title: "Short one", Status: "open", Type: "bug", Priority: 0, Blockers: []string{"bdtest-p"}},
 		{ID: "bdtest-longid9", Title: "A rather longer title here", Status: "open", Type: "feature", Priority: 2, Blockers: []string{"bdtest-p"}},
 		{ID: "bdtest-c", Title: "Chore item", Status: "open", Type: "chore", Priority: 1, Blockers: []string{"bdtest-p"}},
 	}
 
-	rows := m.beadBlockingLines(target, innerW)
+	rows := m.beadsTab.beadBlockingLines(target, innerW)
 	if len(rows) != 3 {
 		t.Fatalf("blocking rows for bdtest-p = %d, want 3", len(rows))
 	}
 
 	wID, wType := 0, 0
-	for _, d := range m.beads[1:] {
-		if l := vlen(shortBeadID(d.ID, m.beadPrefix)); l > wID {
+	for _, d := range m.feeds.beads.beads[1:] {
+		if l := vlen(shortBeadID(d.ID, m.feeds.beads.prefix)); l > wID {
 			wID = l
 		}
 		if l := vlen(d.Type); l > wType {
@@ -828,19 +828,19 @@ func TestBeadTreeKeepsFixedColumns(t *testing.T) {
 	const cols = 140
 	m := seededModel()
 	m.width = cols
-	m.haveBeads = true
-	m.hasBeads = true
-	m.beadTreeMode = beadListBlocksTree
-	m.beadPrefix = "bdtest"
-	m.beads = []bd.Bead{
+	m.feeds.beads.have = true
+	m.feeds.beads.present = true
+	m.beadsTab.tree = beadListBlocksTree
+	m.feeds.beads.prefix = "bdtest"
+	m.feeds.beads.beads = []bd.Bead{
 		{ID: "bdtest-38t", Title: "Auth token expiry off by one", Status: "open", Type: "bug", Priority: 0, Labels: []string{"backend", "security"}, Assignee: "pierce"},
 		{ID: "bdtest-qt0", Title: "Add password reset", Status: "open", Type: "feature", Priority: 1, Labels: []string{"backend"}},
 		{ID: "bdtest-1xn", Title: "Bump deps", Status: "in_progress", Type: "chore", Priority: 2, Labels: []string{"tooling"}, Assignee: "pierce"},
 		{ID: "bdtest-isd", Title: "Wire reset email", Status: "open", Type: "task", Priority: 1, Blockers: []string{"bdtest-qt0"}},
 		{ID: "bdtest-63h", Title: "Docs for reset", Status: "open", Type: "task", Priority: 2, Assignee: "alice", Blockers: []string{"bdtest-qt0", "bdtest-isd"}},
 	}
-	m.beadCols = []string{"id", "priority", "type", "glyph", "title", "labels", "owner", "age"}
-	l := beadLayoutFor(m.beadCols, cols, m.beadCtx(true), m.beads)
+	m.beadsTab.cols = []string{"id", "priority", "type", "glyph", "title", "labels", "owner", "age"}
+	l := beadLayoutFor(m.beadsTab.cols, cols, m.beadsTab.beadCtx(true), m.feeds.beads.beads)
 	wID, wType := l.widths[l.indexOf("id")], l.widths[l.indexOf("type")]
 	wGlyph := l.widths[l.indexOf("glyph")]
 	wLabel, wOwner := l.widths[l.indexOf("labels")], l.widths[l.indexOf("owner")]
@@ -864,9 +864,9 @@ func TestBeadTreeKeepsFixedColumns(t *testing.T) {
 		"bdtest-63h": {"63h", "P2", "task", "", "    └╴ Docs for reset  +1", "", "alice"},
 		"bdtest-1xn": {"1xn", "P2", "chore", "▶", "Bump deps", "tooling", "pierce"},
 	}
-	beadRows := rowsOfKind(m.beadRows(), rowBead)
-	if len(beadRows) != len(m.beads) {
-		t.Fatalf("rendered %d bead rows, want %d", len(beadRows), len(m.beads))
+	beadRows := rowsOfKind(m.beadsTab.beadRows(&m.shell), rowBead)
+	if len(beadRows) != len(m.feeds.beads.beads) {
+		t.Fatalf("rendered %d bead rows, want %d", len(beadRows), len(m.feeds.beads.beads))
 	}
 	for _, r := range beadRows {
 		text := []rune(segsText(composeLR(append([]seg{leadSeg(false)}, r.leftSegs...), r.rightSegs, cols)))
@@ -899,11 +899,11 @@ func TestBeadTreeKeepsFixedColumns(t *testing.T) {
 func beadColumnFixture(cols int, names []string) Model {
 	m := seededModel()
 	m.width = cols
-	m.haveBeads = true
-	m.hasBeads = true
-	m.beadPrefix = "bdtest"
-	m.beadCols = names
-	m.beads = []bd.Bead{
+	m.feeds.beads.have = true
+	m.feeds.beads.present = true
+	m.feeds.beads.prefix = "bdtest"
+	m.beadsTab.cols = names
+	m.feeds.beads.beads = []bd.Bead{
 		{ID: "bdtest-38t", Title: "Auth token expiry off by one", Status: "open", Type: "bug", Priority: 0, Labels: []string{"backend", "security"}, Assignee: "pierce"},
 		{ID: "bdtest-qt0", Title: "Add password reset", Status: "open", Type: "feature", Priority: 1, Labels: []string{"backend"}, Assignee: "alice"},
 		{ID: "bdtest-1xn", Title: "Bump deps", Status: "in_progress", Type: "chore", Priority: 2, Labels: []string{"tooling"}, Assignee: "pierce"},
@@ -933,8 +933,8 @@ func TestBeadColumnsDropOne(t *testing.T) {
 	with := []string{"id", "priority", "type", "title", "labels", "owner", "age"}
 	without := []string{"id", "priority", "type", "title", "age"}
 
-	full := beadLayoutFor(with, cols, beadCtx{prefix: "bdtest"}, beadColumnFixture(cols, with).beads)
-	lean := beadLayoutFor(without, cols, beadCtx{prefix: "bdtest"}, beadColumnFixture(cols, without).beads)
+	full := beadLayoutFor(with, cols, beadCtx{prefix: "bdtest"}, beadColumnFixture(cols, with).feeds.beads.beads)
+	lean := beadLayoutFor(without, cols, beadCtx{prefix: "bdtest"}, beadColumnFixture(cols, without).feeds.beads.beads)
 
 	dropped := full.widths[full.indexOf("labels")] + 2 + full.widths[full.indexOf("owner")] + 2
 	if dropped <= 4 {
@@ -960,9 +960,9 @@ func TestBeadColumnsDropOne(t *testing.T) {
 func TestBeadColumnsAlwaysKeepTitle(t *testing.T) {
 	const cols = 140
 	m := beadColumnFixture(cols, []string{"id", "age"})
-	rows := rowsOfKind(m.beadRows(), rowBead)
-	if len(rows) != len(m.beads) {
-		t.Fatalf("rendered %d bead rows, want %d", len(rows), len(m.beads))
+	rows := rowsOfKind(m.beadsTab.beadRows(&m.shell), rowBead)
+	if len(rows) != len(m.feeds.beads.beads) {
+		t.Fatalf("rendered %d bead rows, want %d", len(rows), len(m.feeds.beads.beads))
 	}
 	for _, r := range rows {
 		text := segsText(composeLR(append([]seg{leadSeg(false)}, r.leftSegs...), r.rightSegs, cols))
@@ -994,18 +994,18 @@ func TestNameCandidateRowsFormFixedColumns(t *testing.T) {
 	const cols = 140
 	m := seededModel()
 	m.width = cols
-	m.beadPrefix = "bdtest"
-	m.beads = []bd.Bead{
+	m.feeds.beads.prefix = "bdtest"
+	m.feeds.beads.beads = []bd.Bead{
 		{ID: "bdtest-38t", Title: "Auth token expiry off by one", Status: "open", Type: "bug", Priority: 0},
 		{ID: "bdtest-qt0", Title: "Add password reset", Status: "open", Type: "feature", Priority: 1},
 		{ID: "bdtest-1xn", Title: "Bump deps", Status: "in_progress", Type: "chore", Priority: 2},
 	}
 	m.naming = true
-	m.nameCands = m.beads
+	m.nameCands = m.feeds.beads.beads
 	m.nameSel = 1
 
 	names := []string{"id", "priority", "type", "title"}
-	l := beadLayoutFor(names, cols, m.beadCtx(false), m.nameCands)
+	l := beadLayoutFor(names, cols, m.beadsTab.beadCtx(false), m.nameCands)
 	wID, wType := l.widths[l.indexOf("id")], l.widths[l.indexOf("type")]
 
 	// The lead (cursor/highlight) cell is prepended the same way renderRow
@@ -1020,7 +1020,7 @@ func TestNameCandidateRowsFormFixedColumns(t *testing.T) {
 		"bdtest-qt0": {"qt0", "P1", "feature"},
 		"bdtest-1xn": {"1xn", "P2", "chore"},
 	}
-	for i, b := range m.beads {
+	for i, b := range m.feeds.beads.beads {
 		left, right := l.row(beadNode{b: b}, cols)
 		line := append([]seg{leadSeg(i == m.nameSel)}, left...)
 		text := []rune(segsText(fitSegs(composeLR(line, right, cols), cols)))
@@ -1040,8 +1040,8 @@ func TestNameCandidateRowsFormFixedColumns(t *testing.T) {
 	}
 
 	lines := m.nameCandLines(cols)
-	if len(lines) != len(m.beads) {
-		t.Fatalf("nameCandLines returned %d lines, want %d", len(lines), len(m.beads))
+	if len(lines) != len(m.feeds.beads.beads) {
+		t.Fatalf("nameCandLines returned %d lines, want %d", len(lines), len(m.feeds.beads.beads))
 	}
 }
 
@@ -1095,16 +1095,16 @@ func TestSuppressedBranchGlyphKeepsTheColumns(t *testing.T) {
 func TestBeadGlyphDrawsInFlatMode(t *testing.T) {
 	m := seededModel()
 	m.width = 140
-	m.haveBeads = true
-	m.hasBeads = true
-	m.beadPrefix = "bdtest"
-	m.beads = []bd.Bead{
+	m.feeds.beads.have = true
+	m.feeds.beads.present = true
+	m.feeds.beads.prefix = "bdtest"
+	m.feeds.beads.beads = []bd.Bead{
 		{ID: "bdtest-1xn", Title: "Bump deps", Status: "in_progress", Type: "chore", Priority: 2},
 		{ID: "bdtest-qt0", Title: "Add reset", Status: "open", Type: "feature", Priority: 1, Labels: []string{"human"}},
 	}
-	m.beadCols = []string{"id", "glyph", "title"}
+	m.beadsTab.cols = []string{"id", "glyph", "title"}
 	var got []string
-	for _, r := range m.beadRows() {
+	for _, r := range m.beadsTab.beadRows(&m.shell) {
 		if r.kind != rowBead {
 			continue
 		}
@@ -1133,16 +1133,16 @@ func TestWorkerMarksItsBeadAndIssueRow(t *testing.T) {
 	}
 	m := seededModel()
 	m.width = 140
-	m.haveBeads = true
-	m.hasBeads = true
-	m.beadPrefix = "bdtest"
-	m.beads = []bd.Bead{
+	m.feeds.beads.have = true
+	m.feeds.beads.present = true
+	m.feeds.beads.prefix = "bdtest"
+	m.feeds.beads.beads = []bd.Bead{
 		{ID: "bdtest-1xn", Title: "Bump deps", Status: "in_progress", Type: "chore", Priority: 2},
 		{ID: "bdtest-qt0", Title: "Add reset", Status: "in_progress", Type: "feature", Priority: 1},
 	}
-	m.beadCols = []string{"id", "glyph", "title"}
+	m.beadsTab.cols = []string{"id", "glyph", "title"}
 	var got []string
-	for _, r := range m.beadRows() {
+	for _, r := range m.beadsTab.beadRows(&m.shell) {
 		if r.kind != rowBead {
 			continue
 		}

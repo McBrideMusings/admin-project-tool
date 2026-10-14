@@ -128,8 +128,8 @@ func TestFrameHitsMatchLinesLength(t *testing.T) {
 
 			mb := seededModel()
 			mb.width, mb.height = w, h
-			mb.hasBeads = true
-			mb.beads = []bd.Bead{{ID: "bdtest-1", Title: "a bead", Status: "open"}}
+			mb.feeds.beads.present = true
+			mb.feeds.beads.beads = []bd.Bead{{ID: "bdtest-1", Title: "a bead", Status: "open"}}
 			mb.switchTab(tabBeads)
 			lines, hits := mb.frame()
 			if len(hits) != len(lines) {
@@ -162,10 +162,10 @@ func TestFrameHitsMatchLinesLengthWithOverlaysOpen(t *testing.T) {
 	check("errOpen", m)
 
 	m = base()
-	m.hasBeads = true
-	m.beads = []bd.Bead{{ID: "bdtest-1", Title: "a bead", Status: "open"}}
+	m.feeds.beads.present = true
+	m.feeds.beads.beads = []bd.Bead{{ID: "bdtest-1", Title: "a bead", Status: "open"}}
 	m.active = tabBeads
-	m.beadOpen = true
+	m.beadsTab.overlay = true
 	check("beadOpen", m)
 
 	m = base()

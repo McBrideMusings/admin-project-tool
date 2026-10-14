@@ -21,14 +21,14 @@ func (m Model) handleWheel(y int, down bool) (tea.Model, tea.Cmd) {
 	if m.termAttached {
 		return m, nil
 	}
-	// The bead overlay has its own ↑/↓ scroll handler: reuse it.
-	if m.beadOpen {
+	// A tab's own overlay (the bead box) scrolls on ↑/↓: reuse its keys.
+	if tm := m.tabModel(m.active); tm != nil && tm.modal() {
 		key := "up"
 		if down {
 			key = "down"
 		}
 		for i := 0; i < wheelRows; i++ {
-			m.beadOverlayKey(key)
+			tm.key(&m.shell, key)
 		}
 		return m, nil
 	}
@@ -86,10 +86,10 @@ func (m *Model) wheelStep(delta int) bool {
 	if delta < 0 && m.atBodyTop() {
 		return false
 	}
-	before, open := m.cursor[m.active], m.workOpenCmd
+	before, open := *m.cur(m.active), m.workOpenCmd
 	m.moveCursor(delta)
-	if m.active != tabLocal && (m.cursor[m.active]-before)*delta < 0 {
-		m.cursor[m.active], m.workOpenCmd = before, open
+	if m.active != tabLocal && (*m.cur(m.active)-before)*delta < 0 {
+		*m.cur(m.active), m.workOpenCmd = before, open
 		return false
 	}
 	return true

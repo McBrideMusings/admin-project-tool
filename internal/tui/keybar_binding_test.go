@@ -28,11 +28,11 @@ func TestKeybarShowsEffectiveBinding(t *testing.T) {
 				"start-triage": {Desc: "triage this bead"},
 			},
 		},
-		beads: []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}},
 		rowKeys: map[keymap.RowKind]map[string]string{
 			keymap.Bead: {"enter": "start-triage"},
 		},
 	}
+	loadBeads(&m, []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}})
 	trackerCursorTo(t, &m, "proj-1")
 
 	builtin := builtinPairs(keymap.Bead)
@@ -69,11 +69,11 @@ func TestKeybarAppendsUnboundKey(t *testing.T) {
 				"open-notes": {Desc: "open notes"},
 			},
 		},
-		beads: []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}},
 		rowKeys: map[keymap.RowKind]map[string]string{
 			keymap.Bead: {"o": "open-notes"},
 		},
 	}
+	loadBeads(&m, []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}})
 	trackerCursorTo(t, &m, "proj-1")
 
 	builtin := builtinPairs(keymap.Bead)
@@ -107,11 +107,11 @@ func TestKeybarFallsBackToCommandName(t *testing.T) {
 				"open-notes": {},
 			},
 		},
-		beads: []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}},
 		rowKeys: map[keymap.RowKind]map[string]string{
 			keymap.Bead: {"o": "open-notes"},
 		},
 	}
+	loadBeads(&m, []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}})
 	trackerCursorTo(t, &m, "proj-1")
 
 	got := m.rowPairs(keymap.Bead)
@@ -157,9 +157,9 @@ func TestKeybarIdenticalWithoutKeysTable(t *testing.T) {
 		shell:      shell{active: tabBeads, width: 120, height: 40},
 		manifestOK: true,
 		manifest:   &manifest.Manifest{},
-		beads:      []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}},
 		// rowKeys intentionally left nil.
 	}
+	loadBeads(&m, []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}})
 
 	got := m.rowPairs(keymap.Bead)
 	want := builtinPairs(keymap.Bead)
@@ -200,7 +200,6 @@ func TestKeybarKeepsQuitAndTabWithBindings(t *testing.T) {
 				"cmd-d": {Desc: "delta action"},
 			},
 		},
-		beads: []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}},
 		rowKeys: map[keymap.RowKind]map[string]string{
 			keymap.Bead: {
 				"1": "cmd-a",
@@ -210,6 +209,7 @@ func TestKeybarKeepsQuitAndTabWithBindings(t *testing.T) {
 			},
 		},
 	}
+	loadBeads(&m, []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}})
 	trackerCursorTo(t, &m, "proj-1")
 
 	for width := 40; width <= 200; width += 10 {

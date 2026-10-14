@@ -47,11 +47,11 @@ func TestRowKeyDispatchHitOnBeadRow(t *testing.T) {
 		manifest: &manifest.Manifest{
 			Custom: map[string]manifest.Command{"mycmd": {Steps: []string{"mycmd"}}},
 		},
-		beads: []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}},
 		rowKeys: map[keymap.RowKind]map[string]string{
 			keymap.Bead: {"o": "mycmd"},
 		},
 	}
+	loadBeads(&m, []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}})
 	trackerCursorTo(t, &m, "proj-1")
 
 	_, cmd, ok := m.rowKeyDispatch("o")
@@ -94,11 +94,11 @@ func TestRowKeyDispatchRefusesReservedKey(t *testing.T) {
 		shell:      shell{active: tabBeads, width: 120, height: 40},
 		manifestOK: true,
 		manifest:   &manifest.Manifest{},
-		beads:      []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}},
 		rowKeys: map[keymap.RowKind]map[string]string{
 			keymap.Bead: {"q": "mycmd"},
 		},
 	}
+	loadBeads(&m, []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}})
 	trackerCursorTo(t, &m, "proj-1")
 
 	_, cmd, ok := m.rowKeyDispatch("q")
@@ -140,9 +140,9 @@ func TestRowKeyDispatchNoKeysTableIsAlwaysAMiss(t *testing.T) {
 		shell:      shell{active: tabBeads, width: 120, height: 40},
 		manifestOK: true,
 		manifest:   &manifest.Manifest{},
-		beads:      []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}},
 		// rowKeys intentionally left nil: no [keys] table.
 	}
+	loadBeads(&m, []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}})
 	trackerCursorTo(t, &m, "proj-1")
 
 	if _, _, ok := m.rowKeyDispatch("enter"); ok {
@@ -266,7 +266,7 @@ func TestRowKeyDispatchWorkflowImmediateOnCursorRow(t *testing.T) {
 
 	m := workTestModel(rowKeyWorkflowManifest("claude"))
 	m.active = tabBeads
-	m.beads = []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}}
+	m.feeds.beads.beads = []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}}
 	m.rowKeys = map[keymap.RowKind]map[string]string{
 		keymap.Bead: {"enter": "review-branch"},
 	}
@@ -312,7 +312,7 @@ func TestRowKeyDispatchWorkflowNoRunReportsRedStatus(t *testing.T) {
 
 	m := workTestModel(rowKeyWorkflowManifest(""))
 	m.active = tabBeads
-	m.beads = []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}}
+	m.feeds.beads.beads = []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}}
 	m.rowKeys = map[keymap.RowKind]map[string]string{
 		keymap.Bead: {"enter": "review-branch"},
 	}
@@ -347,7 +347,7 @@ func TestRowKeyDispatchNonWorkflowCommandStillRunsPlain(t *testing.T) {
 
 	m := workTestModel(rowKeyWorkflowManifest("claude"))
 	m.active = tabBeads
-	m.beads = []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}}
+	m.feeds.beads.beads = []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}}
 	m.rowKeys = map[keymap.RowKind]map[string]string{
 		keymap.Bead: {"b": "build"},
 	}
@@ -408,11 +408,11 @@ func TestRowKeyDispatchAttachesWhenCommandAlreadyLive(t *testing.T) {
 			Custom:  map[string]manifest.Command{"rowkeylive": {Steps: []string{"rowkeylive"}}},
 			Actions: map[string]manifest.Action{"rowkeylive": {"kind": "shell"}},
 		},
-		beads: []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}},
 		rowKeys: map[keymap.RowKind]map[string]string{
 			keymap.Bead: {"b": "rowkeylive"},
 		},
 	}
+	loadBeads(&m, []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}})
 	trackerCursorTo(t, &m, "proj-1")
 
 	// Press the bound key twice — the double-press case the ticket names.
@@ -460,7 +460,7 @@ func dogfoodImplementManifest() *manifest.Manifest {
 func TestRowPairsDogfoodEnterAdvertisesImplementDesc(t *testing.T) {
 	m := workTestModel(dogfoodImplementManifest())
 	m.active = tabBeads
-	m.beads = []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}}
+	m.feeds.beads.beads = []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}}
 	m.rowKeys = map[keymap.RowKind]map[string]string{
 		keymap.Bead: {"enter": "implement"},
 	}
@@ -489,7 +489,7 @@ func TestRowKeyDispatchDogfoodEnterRoutesToWorkflowNotBuiltinWorktree(t *testing
 
 	m := workTestModel(dogfoodImplementManifest())
 	m.active = tabBeads
-	m.beads = []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}}
+	m.feeds.beads.beads = []bd.Bead{{ID: "proj-1", Title: "one", Status: "open"}}
 	m.rowKeys = map[keymap.RowKind]map[string]string{
 		keymap.Bead: {"enter": "implement"},
 	}
@@ -541,7 +541,7 @@ func trackerCursorTo(t *testing.T, m *Model, id string) {
 	rows := m.visibleRows()
 	for i, r := range rows {
 		if kind, ok := rowKindOf(r); ok && rowID(r, kind) == id {
-			m.cursor[m.active] = i
+			*m.cur(m.active) = i
 			return
 		}
 	}

@@ -19,10 +19,10 @@ const beadStripMinBody = 14
 // beadStrip is what a list row cannot fit for the bead under the cursor: its
 // whole title, its full labels, and its status and unblocks. A row cuts a long
 // title and shortens the labels; this strip is where both are read in full.
-func (m Model) beadStrip(width int) []string {
+func (t beadsTab) beadStrip(sh *shell, width int) []string {
 	lines := make([]string, 0, beadStripRows)
-	lines = append(lines, m.ruleLine(width))
-	b, ok := m.beadUnderCursor()
+	lines = append(lines, ruleLine(width))
+	b, ok := t.beadUnderCursor(sh)
 	if !ok {
 		for len(lines) < beadStripRows {
 			lines = append(lines, "")
@@ -39,11 +39,11 @@ func (m Model) beadStrip(width int) []string {
 	for _, t := range title {
 		lines = append(lines, renderSegs([]seg{{t: " " + t, fg: cFg}}, nil))
 	}
-	lines = append(lines, renderSegs(fitSegs(m.beadStripMeta(b), width), nil))
+	lines = append(lines, renderSegs(fitSegs(t.beadStripMeta(b), width), nil))
 	return lines
 }
 
-func (m Model) beadStripMeta(b bd.Bead) []seg {
+func (t beadsTab) beadStripMeta(b bd.Bead) []seg {
 	segs := []seg{
 		{t: " " + b.ID, fg: cCyan},
 		{t: "  " + b.Type + "  " + priorityLabel(b.Priority) + "  " + b.Status, fg: cDim},
@@ -51,7 +51,7 @@ func (m Model) beadStripMeta(b bd.Bead) []seg {
 	if len(b.Labels) > 0 {
 		segs = append(segs, seg{t: "  " + strings.Join(b.Labels, ", "), fg: cDim})
 	}
-	if n := bd.Unblocks(m.beads)[b.ID]; n > 0 {
+	if n := bd.Unblocks(t.src.list())[b.ID]; n > 0 {
 		segs = append(segs, seg{t: "  unblocks " + strconv.Itoa(n), fg: unblocksColor(n)})
 	}
 	if !b.Updated.IsZero() {
@@ -63,11 +63,11 @@ func (m Model) beadStripMeta(b bd.Bead) []seg {
 // showBeadStrip reports whether the Beads list gives up beadStripRows to the
 // strip: only when the body is tall enough and there is a bead for the strip to
 // describe. An empty list or a lone centered message keeps the whole body.
-func (m Model) showBeadStrip(contentH int) bool {
-	if m.active != tabBeads || contentH < beadStripMinBody {
+func (t beadsTab) showBeadStrip(rows []rowItem, contentH int) bool {
+	if contentH < beadStripMinBody {
 		return false
 	}
-	for _, r := range m.visibleRows() {
+	for _, r := range rows {
 		if r.kind == rowBead {
 			return true
 		}

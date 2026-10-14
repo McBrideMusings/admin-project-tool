@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/viewstate"
 )
 
 // TestSourcesStartOnlyForMountedTabs pins ADR-0026's source rule: the shell
@@ -28,9 +29,8 @@ func TestSourcesStartOnlyForMountedTabs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := Model{
 				ctx:        context.Background(),
-				repoRoot:   t.TempDir(),
 				nwo:        "owner/repo",
-				shell:      shell{mounted: tc.mounted},
+				shell:      shell{mounted: tc.mounted, repoRoot: t.TempDir()},
 				manifestOK: true,
 				manifest: &manifest.Manifest{
 					HasTracker: true, Trackers: []string{"beads"},
@@ -38,6 +38,7 @@ func TestSourcesStartOnlyForMountedTabs(t *testing.T) {
 				},
 				headless: true,
 			}
+			m.mountTabs(viewstate.State{})
 			got := m.claimSources()
 			if !slices.Equal(got, tc.want) {
 				t.Errorf("claimed %v, want %v", got, tc.want)

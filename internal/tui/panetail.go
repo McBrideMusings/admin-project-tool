@@ -41,7 +41,7 @@ func (m Model) paneTailTarget() *livework.Entry {
 		return nil
 	}
 	rows := m.visibleRows()
-	cur := m.cursor[m.active]
+	cur := *m.cur(m.active)
 	if cur < 0 || cur >= len(rows) {
 		return nil
 	}

@@ -454,7 +454,7 @@ const beadsInterval = 15 * time.Second
 // own per-query timeout. `bd list` is a local Dolt read that takes
 // about 2s healthy and 6s when several dashboards and agents query the embedded
 // Dolt (one writer at a time) together, so 15s covers contention. A wedged Dolt
-// costs one beadsInterval: Model.beadsPolling skips the ticks that land while a
+// costs one beadsInterval: beadsFeed.polling skips the ticks that land while a
 // poll is in flight, so polls never stack, and exec.CommandContext kills the
 // child the moment this timeout's ctx is done.
 const beadsPollTimeout = 15 * time.Second
@@ -481,8 +481,8 @@ type beadsReprobeMsg struct{}
 
 // beadsReprobeCmd schedules the next `bd where` probe one beadsInterval out
 // (none for a headless frame).
-func (m Model) beadsReprobeCmd() tea.Cmd {
-	if m.headless {
+func beadsReprobeCmd(headless bool) tea.Cmd {
+	if headless {
 		return nil
 	}
 	return tea.Tick(beadsInterval, func(time.Time) tea.Msg { return beadsReprobeMsg{} })
@@ -520,7 +520,7 @@ func detectBeadsCmd(ctx context.Context, repoRoot string) tea.Cmd {
 // (effectively unbounded) lifetime ctx — a busy embedded Dolt (one writer at a
 // time) can wedge `bd list` indefinitely, and exec.CommandContext only kills
 // the child when ITS ctx expires. Without this, a wedged poll never returns
-// and never lets the in-flight guard (Model.beadsPolling) clear.
+// and never lets the in-flight guard (beadsFeed.polling) clear.
 func loadBeadsCmd(ctx context.Context, repoRoot string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(ctx, beadsPollTimeout)
@@ -542,8 +542,8 @@ func recordUsageCmd(nwo, invocation string) tea.Cmd {
 }
 
 // beadsTickCmd schedules the next beads read (none for a headless frame).
-func (m Model) beadsTickCmd() tea.Cmd {
-	if m.headless {
+func beadsTickCmd(headless bool) tea.Cmd {
+	if headless {
 		return nil
 	}
 	return tea.Tick(beadsInterval, func(time.Time) tea.Msg { return beadsTickMsg{} })

@@ -76,7 +76,7 @@ func TestManifestConfigLinesUsesArchetypeOrigin(t *testing.T) {
 func TestConfigTableLinesReportsOrigin(t *testing.T) {
 	dir := t.TempDir()
 	m := Model{
-		repoRoot: dir,
+		shell: shell{repoRoot: dir},
 		cfgMerged: config.Config{
 			Worktrees: config.Worktrees{Root: "/tmp/wt"},
 		},
@@ -281,7 +281,7 @@ func TestConfigTabClickActivatesCurrentRow(t *testing.T) {
 func TestConfigTabDirectoryRowOpens(t *testing.T) {
 	dir := t.TempDir()
 	m := Model{
-		repoRoot: dir,
+		shell: shell{repoRoot: dir},
 		cfgMerged: config.Config{
 			Worktrees: config.Worktrees{Root: dir},
 		},
@@ -313,7 +313,7 @@ func TestConfigTabPopulatePatternAbsentRow(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "present.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m := Model{repoRoot: dir}
+	m := Model{shell: shell{repoRoot: dir}}
 	entries := []config.Entry{{Pattern: "present.txt"}, {Pattern: "missing.txt"}}
 	rows := m.populateRows(entries, "")
 
