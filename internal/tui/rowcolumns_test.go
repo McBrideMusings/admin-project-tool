@@ -154,7 +154,7 @@ func TestPRRowsFormFixedColumns(t *testing.T) {
 		},
 		{Number: 22, Title: "No head branch on this one", Author: "bob", Bucket: gh.BucketAssigned, MyReview: gh.NotReviewed},
 	}
-	pc := m.prColumns(cols)
+	pc := m.prsTab.prColumns(cols)
 	if pc.branchW == 0 || pc.verdictW == 0 {
 		t.Fatalf("fixture produced no branch/verdict column: %+v", pc)
 	}
@@ -167,7 +167,7 @@ func TestPRRowsFormFixedColumns(t *testing.T) {
 	}
 	branchAt := -1
 	rightW := -1
-	prRows := rowsOfKind(m.prRows(), rowPR)
+	prRows := rowsOfKind(m.prsTab.prRows(&m.shell), rowPR)
 	if len(prRows) != len(m.remote.PRs) {
 		t.Fatalf("rendered %d PR rows, want %d", len(prRows), len(m.remote.PRs))
 	}
@@ -218,7 +218,7 @@ func TestPRRowsFormFixedColumns(t *testing.T) {
 	}
 	// The branchless PR has to leave that column blank rather than pull the
 	// following columns left.
-	for _, r := range rowsOfKind(m.prRows(), rowPR) {
+	for _, r := range rowsOfKind(m.prsTab.prRows(&m.shell), rowPR) {
 		if r.prNum != 22 {
 			continue
 		}
@@ -242,7 +242,7 @@ func TestPRMarkSurvivesEveryWidth(t *testing.T) {
 				HeadBranch: "some-branch-with-a-decent-length", Checks: gh.ChecksFailing, Bucket: gh.BucketMine,
 			},
 		}
-		for _, r := range rowsOfKind(m.prRows(), rowPR) {
+		for _, r := range rowsOfKind(m.prsTab.prRows(&m.shell), rowPR) {
 			line := rowLine(r, cols)
 			// A row wider than the terminal wraps, and a wrapped row destroys the
 			// table. The branch column gives way to keep every row inside the width.
@@ -273,11 +273,11 @@ func TestUnusedFlagColumnsTakeNoWidth(t *testing.T) {
 		{Number: 7, Title: "Passing one", HeadBranch: "feature", Checks: gh.ChecksPassing, Bucket: gh.BucketMine},
 	}
 	m.remote.PRs[0].IsDraft = true
-	if pc := m.prColumns(cols); pc.flagW != 0 {
+	if pc := m.prsTab.prColumns(cols); pc.flagW != 0 {
 		t.Errorf("no PR is untriaged, but the flag column is %d cells, want 0", pc.flagW)
 	}
 	m.remote.PRs[0].Gaps = gh.GapLabels
-	if pc := m.prColumns(cols); pc.flagW != vlen("⚑ L") {
+	if pc := m.prsTab.prColumns(cols); pc.flagW != vlen("⚑ L") {
 		t.Errorf("one untriaged PR gives a flag column of %d cells, want %d", pc.flagW, vlen("⚑ L"))
 	}
 }
@@ -320,7 +320,7 @@ func TestBranchColumnNeverEatsTheTitle(t *testing.T) {
 		m := seededModel()
 		m.width = cols
 		m.remote.PRs = prs
-		pc := m.prColumns(cols)
+		pc := m.prsTab.prColumns(cols)
 		title := cols - (pc.numW + 6) - pc.rightWidth()
 		if pc.branchW > 0 {
 			// The floor bounds what the branch column may take. It cannot conjure
@@ -332,7 +332,7 @@ func TestBranchColumnNeverEatsTheTitle(t *testing.T) {
 			}
 		}
 		// Rows still have to fit the terminal at every width.
-		for _, r := range rowsOfKind(m.prRows(), rowPR) {
+		for _, r := range rowsOfKind(m.prsTab.prRows(&m.shell), rowPR) {
 			if n := len(rowLine(r, cols)); n > cols {
 				t.Errorf("cols=%d: #%d row is %d cells wide", cols, r.prNum, n)
 			}
@@ -342,12 +342,12 @@ func TestBranchColumnNeverEatsTheTitle(t *testing.T) {
 	// genuine surplus and it comes back.
 	narrow := seededModel()
 	narrow.width, narrow.remote.PRs = 80, prs
-	if w := narrow.prColumns(80).branchW; w != 0 {
+	if w := narrow.prsTab.prColumns(80).branchW; w != 0 {
 		t.Errorf("at 80 cells the branch column is %d wide, want it dropped for the title", w)
 	}
 	wide := seededModel()
 	wide.width, wide.remote.PRs = 200, prs
-	if w := wide.prColumns(200).branchW; w == 0 {
+	if w := wide.prsTab.prColumns(200).branchW; w == 0 {
 		t.Error("at 200 cells there is surplus, but the branch column is still dropped")
 	}
 }
@@ -362,7 +362,7 @@ func TestMergedFlagColumnLeavesRoomForTheTitle(t *testing.T) {
 		{Number: 1869, Title: "Conflicting draft", Author: "alexthemighty", Bucket: gh.BucketOther, IsDraft: true, Mergeable: "CONFLICTING"},
 		{Number: 1911, Title: "Failing one", Author: "biggmackk17", Bucket: gh.BucketOther, Checks: gh.ChecksFailing, Gaps: gh.GapAssignee},
 	}
-	pc := m.prColumns(cols)
+	pc := m.prsTab.prColumns(cols)
 	// numberedRowLeft budgets numW+6 for the glyph/number cluster.
 	title := cols - (pc.numW + 6) - pc.rightWidth()
 	if pc.branchW > 0 {
@@ -1080,10 +1080,10 @@ func TestSuppressedBranchGlyphKeepsTheColumns(t *testing.T) {
 		{Number: 7, Title: "Has a branch", HeadBranch: "feature-branch-name", Bucket: gh.BucketMine},
 		{Number: 22, Title: "No head branch", Bucket: gh.BucketMine},
 	}
-	if pc := m.prColumns(cols); pc.branchW == 0 {
+	if pc := m.prsTab.prColumns(cols); pc.branchW == 0 {
 		t.Fatalf("fixture produced no branch column: %+v", pc)
 	}
-	for _, r := range rowsOfKind(m.prRows(), rowPR) {
+	for _, r := range rowsOfKind(m.prsTab.prRows(&m.shell), rowPR) {
 		if text := rowLine(r, cols); len(text) != cols {
 			t.Errorf("#%d: row is %d cells wide, want %d", r.prNum, len(text), cols)
 		}
