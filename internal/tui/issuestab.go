@@ -1,11 +1,7 @@
 package tui
 
 import (
-	"time"
-
 	tea "github.com/charmbracelet/bubbletea"
-
-	"github.com/McBrideMusings/admin-project-tool/internal/data"
 )
 
 // issuesTab is the Issues tab as its own model (ADR-0026): its rows and its
@@ -57,17 +53,6 @@ func (t *issuesTab) count() int { return len(t.sync.issues()) }
 func (t *issuesTab) loaded() bool { return t.sync.loaded() }
 
 // freshness is the age of the issues section the last sync stamped.
-func (t *issuesTab) freshness() seg {
-	at := t.sync.issuesFetchedAt()
-	if at.IsZero() {
-		return seg{t: "cached", fg: cFaint}
-	}
-	age := time.Since(at)
-	fg := cFaint
-	if age >= data.TTL {
-		fg = cYellow
-	}
-	return seg{t: "cached · " + humanizeAge(age), fg: fg}
-}
+func (t *issuesTab) freshness() seg { return cachedAgeSeg(t.sync.issuesFetchedAt()) }
 
 func (t *issuesTab) update(tea.Msg) tea.Cmd { return nil }

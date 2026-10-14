@@ -26,7 +26,7 @@ func TestSourcesStartOnlyForMountedTabs(t *testing.T) {
 		{"beads alone", []tab{tabBeads}, []source{srcBeads}, false},
 		{"commands alone", []tab{tabWork}, []source{srcWork}, false},
 		{"workers alone", []tab{tabWorkers}, []source{srcWork}, false},
-		{"prs alone", []tab{tabPRs}, []source{srcSync, srcIdentity}, true},
+		{"prs alone", []tab{tabPRs}, []source{srcSync}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -82,6 +82,43 @@ func TestIssuesTabMountedAloneMatchesBare(t *testing.T) {
 	bareRows := bare.issuesTab.rows(&bare.shell)
 	if len(aloneRows) == 0 || len(aloneRows) != len(bareRows) {
 		t.Fatalf("issues alone drew %d rows, bare drew %d", len(aloneRows), len(bareRows))
+	}
+	for i := range aloneRows {
+		if a, b := fmt.Sprint(rowLine(aloneRows[i], 120)), fmt.Sprint(rowLine(bareRows[i], 120)); a != b {
+			t.Errorf("row %d: alone %q, bare %q", i, a, b)
+		}
+	}
+}
+
+// TestPRsTabMountedAloneMatchesBare pins the PRs slice's acceptance: the tab
+// declares only the sync, so mounted alone it starts exactly that, and it
+// renders the same rows as under bare admin.
+func TestPRsTabMountedAloneMatchesBare(t *testing.T) {
+	build := func(mounted []tab) Model {
+		m := Model{
+			ctx:        context.Background(),
+			nwo:        "owner/repo",
+			shell:      shell{mounted: mounted, repoRoot: t.TempDir(), width: 120, height: 40},
+			manifestOK: true,
+			manifest:   &manifest.Manifest{HasUsesPullRequests: true, UsesPullRequests: true},
+			headless:   true,
+		}
+		m.mountTabs(viewstate.State{})
+		m.remote.PRs = []gh.OpenPR{
+			{Number: 7, Title: "Add thing", Author: "me", HeadBranch: "add-thing", Bucket: gh.BucketMine},
+			{Number: 8, Title: "Fix other", Author: "you", HeadBranch: "fix-other", Bucket: gh.BucketOther},
+		}
+		m.haveData = true
+		return m
+	}
+	alone, bare := build([]tab{tabPRs}), build(nil)
+	if got := alone.claimSources(); !slices.Equal(got, []source{srcSync}) {
+		t.Errorf("prs alone claimed %v, want [srcSync]", got)
+	}
+	aloneRows := alone.prsTab.rows(&alone.shell)
+	bareRows := bare.prsTab.rows(&bare.shell)
+	if len(aloneRows) == 0 || len(aloneRows) != len(bareRows) {
+		t.Fatalf("prs alone drew %d rows, bare drew %d", len(aloneRows), len(bareRows))
 	}
 	for i := range aloneRows {
 		if a, b := fmt.Sprint(rowLine(aloneRows[i], 120)), fmt.Sprint(rowLine(bareRows[i], 120)); a != b {

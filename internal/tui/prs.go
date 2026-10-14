@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/gh"
+	"github.com/McBrideMusings/admin-project-tool/internal/git"
 )
 
 // prRows builds the PRs view: four exclusive buckets — "Mine", "Needs me",
@@ -15,29 +16,30 @@ import (
 // by whose move it is: a PR the viewer has already had their say on drops out of
 // "Needs me" the moment they say it, and only climbs back when a new commit or a
 // direct reply puts the ball in their court again.
-func (m Model) prRows() []rowItem {
-	cols := m.cols()
-	pc := m.prColumns(cols)
-	wtByBranch := m.worktreeByBranch()
+func (t *prsTab) prRows(sh *shell) []rowItem {
+	cols := sh.cols()
+	prs := t.sync.prs()
+	pc := t.prColumns(cols)
+	wtByBranch := worktreesByBranch(t.local.worktrees(), sh.repoRoot)
 	var rows []rowItem
 
 	section := func(title string, bucket gh.PRBucket, empty string, first bool) {
-		var prs []gh.OpenPR
-		for _, pr := range m.remote.PRs {
+		var inBucket []gh.OpenPR
+		for _, pr := range prs {
 			if pr.Bucket == bucket {
-				prs = append(prs, pr)
+				inBucket = append(inBucket, pr)
 			}
 		}
 		if !first {
 			rows = append(rows, blankRow())
 		}
-		hdr := countSeg(len(prs))
+		hdr := countSeg(len(inBucket))
 		if first {
-			all := make([]*gh.OpenPR, len(m.remote.PRs))
-			for i := range m.remote.PRs {
-				all[i] = &m.remote.PRs[i]
+			all := make([]*gh.OpenPR, len(prs))
+			for i := range prs {
+				all[i] = &prs[i]
 			}
-			gaps := gapLegend(m.remote.PRs, cols)
+			gaps := gapLegend(prs, cols)
 			// What the heading needs beside the legends: its label, the count and
 			// the gaps around both — the same reserve gapLegend keeps.
 			if marks := markLegend(all, cols-24-segsWidth(gaps)-3); marks != nil {
@@ -46,15 +48,15 @@ func (m Model) prRows() []rowItem {
 			hdr = append(gaps, hdr...)
 		}
 		rows = append(rows, headerRow(title, hdr...), ruleRow())
-		if len(prs) == 0 {
-			rows = append(rows, rowItem{kind: rowText, label: emptyOrLoading(m.haveData, empty)})
+		if len(inBucket) == 0 {
+			rows = append(rows, rowItem{kind: rowText, label: emptyOrLoading(t.sync.loaded(), empty)})
 		}
-		for _, pr := range prs {
-			left, right := m.openPRRow(pr, pc, cols)
+		for _, pr := range inBucket {
+			left, right := t.openPRRow(pr, pc, cols)
 			rows = append(rows, rowItem{
 				kind: rowPR, leftSegs: left, rightSegs: right,
 				prNum: pr.Number, pr: &pr, branch: pr.HeadBranch,
-				wtPath: wtByBranch[pr.HeadBranch], url: gh.PRURL(m.nwo, pr.Number),
+				wtPath: wtByBranch[pr.HeadBranch], url: gh.PRURL(t.nwo, pr.Number),
 			})
 		}
 	}
@@ -135,9 +137,9 @@ func (pc prCols) rightWidth() int {
 // The branch column is the one that gives way under width pressure — it shrinks
 // to fit whatever the number, title floor, and status block leave over, and
 // disappears below minBranchW. cols is the terminal width the rows render into.
-func (m Model) prColumns(cols int) prCols {
+func (t *prsTab) prColumns(cols int) prCols {
 	pc := prCols{}
-	for _, pr := range m.remote.PRs {
+	for _, pr := range t.sync.prs() {
 		if pr.Bucket != gh.BucketMine {
 			if w := vlen("@" + pr.Author); w > pc.ownerW {
 				pc.ownerW = w
@@ -179,13 +181,13 @@ func (m Model) prColumns(cols int) prCols {
 // openPRRow builds left + right segments for one open PR. The PR's mark rides
 // the left with the number and title; the right is the fixed-width status grid
 // (see prStatusCells). pc is the shared column geometry from prColumns.
-func (m Model) openPRRow(pr gh.OpenPR, pc prCols, cols int) (left, right []seg) {
+func (t *prsTab) openPRRow(pr gh.OpenPR, pc prCols, cols int) (left, right []seg) {
 	right = prStatusCells(pr, pc)
 	// The number is padded to the widest one in the list, so the title — and
 	// every column after it — starts at the same cell whether the row carries a
 	// two-digit PR number or a five-digit one.
 	numS := "#" + strconv.Itoa(pr.Number)
-	numSeg := seg{t: padEnd(numS, pc.numW), fg: cCyan, link: gh.PRURL(m.nwo, pr.Number)}
+	numSeg := seg{t: padEnd(numS, pc.numW), fg: cCyan, link: gh.PRURL(t.nwo, pr.Number)}
 	var tail []seg
 	if pc.branchW > 0 {
 		// Fixed-width branch column: gap + glyph + branch padded to branchW + gap,
@@ -423,10 +425,16 @@ func emptyOrLoading(haveData bool, empty string) string {
 	return empty
 }
 
+// worktreeByBranch maps each branch checked out in a linked worktree to that
+// worktree's path; the main tree is omitted.
 func (m Model) worktreeByBranch() map[string]string {
+	return worktreesByBranch(m.local.wts, m.repoRoot)
+}
+
+func worktreesByBranch(wts []git.Worktree, repoRoot string) map[string]string {
 	out := map[string]string{}
-	for _, w := range m.local.wts {
-		if w.Branch != "" && w.Path != m.repoRoot {
+	for _, w := range wts {
+		if w.Branch != "" && w.Path != repoRoot {
 			out[w.Branch] = w.Path
 		}
 	}

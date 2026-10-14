@@ -2471,7 +2471,7 @@ func TestRowNamesLinkToGitHub(t *testing.T) {
 	}
 
 	pr := m.remote.PRs[0]
-	prLeft, _ := m.openPRRow(pr, m.prColumns(cols), cols)
+	prLeft, _ := m.prsTab.openPRRow(pr, m.prsTab.prColumns(cols), cols)
 	if got, want := nameLink(prLeft, pr.Title), "https://github.com/owner/repo/pull/10"; got != want {
 		t.Errorf("PR title: link = %q, want %q", got, want)
 	}
@@ -2483,11 +2483,11 @@ func TestRowNamesLinkToGitHub(t *testing.T) {
 	}
 
 	// No GitHub remote, no links on any of the three.
-	m.nwo, m.issuesTab.nwo = "", ""
+	m.nwo, m.issuesTab.nwo, m.prsTab.nwo = "", "", ""
 	if got := nameLink(m.cmPanelLine(sha, 60), sha.SHA); got != "" {
 		t.Errorf("origin isn't GitHub: commit sha link = %q, want none", got)
 	}
-	prLeft, _ = m.openPRRow(pr, m.prColumns(cols), cols)
+	prLeft, _ = m.prsTab.openPRRow(pr, m.prsTab.prColumns(cols), cols)
 	if got := nameLink(prLeft, pr.Title); got != "" {
 		t.Errorf("origin isn't GitHub: PR title link = %q, want none", got)
 	}

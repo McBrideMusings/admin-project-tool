@@ -154,6 +154,12 @@ func (h syncSource) issues() []gh.IssueItem { return h.f.remote.Issues }
 // viewerLogin is the signed-in GitHub account's login, or "".
 func (h syncSource) viewerLogin() string { return h.f.remote.ViewerLogin }
 
+// prs is every open PR the last sync answered.
+func (h syncSource) prs() []gh.OpenPR { return h.f.remote.PRs }
+
+// prsFetchedAt is when the PRs section was last fetched cleanly.
+func (h syncSource) prsFetchedAt() time.Time { return h.f.remote.PRsFetchedAt }
+
 // issuesFetchedAt is when the issues section was last fetched cleanly.
 func (h syncSource) issuesFetchedAt() time.Time { return h.f.remote.IssuesFetchedAt }
 
@@ -168,6 +174,9 @@ func (h localSource) branches() []git.BranchInfo { return h.f.local.branches }
 
 // branchUnsafe reports a branch with unpushed commits.
 func (h localSource) branchUnsafe(name string) bool { return h.f.local.branchUnsafe[name] }
+
+// worktrees is every worktree of the repository.
+func (h localSource) worktrees() []git.Worktree { return h.f.local.wts }
 
 // wtDirty reports a worktree whose working tree is dirty.
 func (h localSource) wtDirty(path string) bool { return h.f.local.wtState[path].dirty }

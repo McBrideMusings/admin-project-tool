@@ -427,13 +427,17 @@ func (m Model) freshnessSeg() seg {
 		// The manifest and the live-work registry are both read fresh on every
 		// frame — no fetch, no cache, exactly like the Beads tab.
 		return seg{t: "live", fg: cFaint}
-	case tabPRs:
-		at = m.remote.PRsFetchedAt
 	case tabLocal:
 		// The Repo tab's remote input is the merged-PR set: what strikes a
 		// squash-merged branch through.
 		at = m.remote.MergedFetchedAt
 	}
+	return cachedAgeSeg(at)
+}
+
+// cachedAgeSeg is the header's cache readout for data last fetched at `at`:
+// "cached" when it never was, otherwise its age, yellow once past data.TTL.
+func cachedAgeSeg(at time.Time) seg {
 	if at.IsZero() {
 		return seg{t: "cached", fg: cFaint}
 	}
@@ -472,8 +476,6 @@ func (m Model) tabCount(t tab) int {
 	switch t {
 	case tabWork:
 		return m.workRowCount()
-	case tabPRs:
-		return len(m.remote.PRs)
 	case tabLocal:
 		return m.localBranchCount()
 	}

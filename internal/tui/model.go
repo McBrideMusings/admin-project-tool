@@ -205,6 +205,9 @@ type Model struct {
 	// workersTab is the Workers tab's own model (workerstab.go), built and
 	// reached the same way.
 	workersTab workersTab
+	// prsTab is the PRs tab's own model (prstab.go), built and reached the
+	// same way.
+	prsTab prsTab
 
 	// One background sync covers everything the dashboard reads from outside the
 	// working tree — open PRs, open issues, the merged-PR set, and `git fetch
@@ -684,6 +687,9 @@ func (m *Model) mountTabs(vs viewstate.State) {
 	if m.isMounted(tabWorkers) {
 		m.workersTab = newWorkersTab(m.feeds)
 	}
+	if m.isMounted(tabPRs) {
+		m.prsTab = newPRsTab(m.feeds, m.nwo)
+	}
 }
 
 // updateTabs hands msg to every mounted tab model.
@@ -712,6 +718,8 @@ func (m *Model) tabModel(t tab) tabModel {
 		return &m.issuesTab
 	case tabWorkers:
 		return &m.workersTab
+	case tabPRs:
+		return &m.prsTab
 	}
 	return nil
 }
@@ -732,8 +740,6 @@ func (m Model) rows() []rowItem {
 	switch m.active {
 	case tabWork:
 		return m.workRows()
-	case tabPRs:
-		return m.prRows()
 	}
 	// The Repo (local) tab uses the lazygit panes, not the flat row list.
 	return nil
