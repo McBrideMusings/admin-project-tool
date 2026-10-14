@@ -1108,7 +1108,7 @@ func (m *Model) enterBody() {
 }
 
 // leaveBody hands focus back to the tab bar. It never touches m.cursor or
-// m.paneCursor — those persist untouched, which is the whole of what makes a
+// the Repo tab's paneCursor — those persist untouched, which is the whole of what makes a
 // trip back into the body land on the same row again.
 func (m *Model) leaveBody() {
 	m.focus = focusTabs

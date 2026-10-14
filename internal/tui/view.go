@@ -419,14 +419,9 @@ func (m Model) freshnessSeg() seg {
 	if tm := m.tabModel(m.active); tm != nil {
 		return tm.freshness()
 	}
-	var at time.Time
-	switch m.active {
-	case tabWork, tabWorkers:
-		// The manifest and the live-work registry are both read fresh on every
-		// frame — no fetch, no cache, exactly like the Beads tab.
-		return seg{t: "live", fg: cFaint}
-	}
-	return cachedAgeSeg(at)
+	// The Work and Workers tabs read the manifest and the live-work registry
+	// fresh on every frame — no fetch, no cache, exactly like the Beads tab.
+	return seg{t: "live", fg: cFaint}
 }
 
 // cachedAgeSeg is the header's cache readout for data last fetched at `at`:

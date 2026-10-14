@@ -21,11 +21,13 @@ func (m Model) handleWheel(y int, down bool) (tea.Model, tea.Cmd) {
 	if m.termAttached {
 		return m, nil
 	}
-	if m.wheelCaptured() {
-		return m, nil
-	}
-	// A tab's own overlay (the bead box) scrolls on ↑/↓: reuse its keys.
+	// A tab's own overlay (the bead box) scrolls on ↑/↓: reuse its keys. The
+	// Repo tab's name prompt is text entry, not a scroller, so the wheel does
+	// nothing over it.
 	if tm := m.tabModel(m.active); tm != nil && tm.modal() {
+		if m.active == tabLocal {
+			return m, nil
+		}
 		key := tea.KeyMsg{Type: tea.KeyUp}
 		if down {
 			key.Type = tea.KeyDown
@@ -33,6 +35,9 @@ func (m Model) handleWheel(y int, down bool) (tea.Model, tea.Cmd) {
 		for i := 0; i < wheelRows; i++ {
 			tm.key(&m.shell, key)
 		}
+		return m, nil
+	}
+	if m.wheelCaptured() {
 		return m, nil
 	}
 	if m.focus == focusTabs {
@@ -58,7 +63,7 @@ func (m Model) handleWheel(y int, down bool) (tea.Model, tea.Cmd) {
 // any of them must not move.
 func (m Model) wheelCaptured() bool {
 	return m.quitOpen || m.confirming || m.wtPickerOpen ||
-		m.errOpen || m.deleting || m.repoTab.naming || m.filtering
+		m.errOpen || m.deleting || m.filtering
 }
 
 // wheelPane resolves the pane under row y on the Repo tab from the last

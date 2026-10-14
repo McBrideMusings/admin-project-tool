@@ -100,7 +100,6 @@ type repoView struct {
 	remote    *data.Remote
 	identity  data.Identity
 	haveLocal bool
-	haveData  bool
 }
 
 // view joins the tab with sh and the current answer of each handle.
@@ -108,7 +107,7 @@ func (t *repoTab) view(sh *shell) repoView {
 	return repoView{
 		repoTab: t, shell: sh,
 		local: t.localSrc.data(), remote: t.syncSrc.remote(), identity: t.identSrc.who(),
-		haveLocal: t.localSrc.loaded(), haveData: t.syncSrc.loaded(),
+		haveLocal: t.localSrc.loaded(),
 	}
 }
 

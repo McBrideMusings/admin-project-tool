@@ -98,6 +98,13 @@ list. `right`/`left` switch tabs, so never use them to move the cursor; a digit 
 drawn tab (`2` is Workers). A dispatch started by `enter` is a real child that dies when the
 dump exits. Check at 80 columns as well as 96.
 
+To prove a tab move changed nothing, build the base commit (`git archive <sha> | tar -x -C <scratch>/base`,
+`go build` there) and the working tree into two binaries, then diff their `--dump-frame` output for the same
+`--keys` at widths 96 and 80, ANSI kept. `3` jumps to the Repo tab. `G` (mines-only) and `c` (Work collapse)
+persist to `.admin/view.toml` in the project directory and change the next run's starting state: delete that
+directory before every run, or the second binary starts where the first left off. Ages such as `17m` tick
+between runs, so normalise them before diffing.
+
 A behavioral change to `internal/tui` is also proven by:
 
 1. A focused `go test` exercising the exact `Model.Update` transition through its message
