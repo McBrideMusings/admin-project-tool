@@ -19,6 +19,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/logformat"
 	"github.com/McBrideMusings/admin-project-tool/internal/reload"
 	"github.com/McBrideMusings/admin-project-tool/internal/streams"
+	"github.com/McBrideMusings/admin-project-tool/internal/supervise"
 	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
 
@@ -162,7 +163,8 @@ func waitLoop(c *exec.Cmd, sigCh <-chan os.Signal, keysCh <-chan byte, exitCh <-
 			case syscall.SIGINT:
 				reload.KillProcessGroup(c, exitCh, syscall.SIGINT)
 				return outcomeSigint
-			case syscall.SIGTERM:
+			case syscall.SIGTERM, syscall.SIGHUP:
+				// A closed terminal (SIGHUP) tears down exactly like SIGTERM.
 				reload.KillProcessGroup(c, exitCh, syscall.SIGTERM)
 				return outcomeSigterm
 			}
@@ -223,11 +225,12 @@ func Run(cmdline string, keys map[string]validate.KeyBinding, opts Options) (int
 	}
 
 	sigCh := make(chan os.Signal, 4)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(sigCh)
 
 	c := exec.Command("/bin/sh", "-c", cmdline)
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	run := supervise.Start(c, opts.Root, !opts.Unsupervised)
 	pr, pw := io.Pipe()
 	c.Stdout = pw
 	c.Stderr = pw
@@ -249,6 +252,7 @@ func Run(cmdline string, keys map[string]validate.KeyBinding, opts Options) (int
 	}()
 
 	if err := c.Start(); err != nil {
+		run.Stop()
 		pw.Close()
 		<-lineDone
 		return 1, fmt.Errorf("failed to start: %w", err)
@@ -262,6 +266,8 @@ func Run(cmdline string, keys map[string]validate.KeyBinding, opts Options) (int
 
 	launch := time.Now()
 	outcome := waitLoop(c, sigCh, keysCh, exitCh, keys, opts)
+	// The group kill misses descendants that called setsid; sweep the run.
+	run.Stop()
 
 	pw.Close()
 	<-lineDone

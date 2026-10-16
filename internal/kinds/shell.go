@@ -10,6 +10,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/supervise"
 )
 
 // emptyCmdErr: a blank `run` would otherwise reach /bin/sh -c "" and exit
@@ -52,7 +53,7 @@ func makeShell(name string, action manifest.Action, m *manifest.Manifest, _ *Sur
 		if ptyVal {
 			runCmd = h.RunCmdPTY
 		}
-		res, err := runCmd(cmd, luahost.RunCmdOptions{CaptureLog: true})
+		res, err := runCmd(cmd, luahost.RunCmdOptions{CaptureLog: true, Unsupervised: !superviseEnabled(action)})
 		if err != nil {
 			return fmt.Errorf("action %q: %w", name, err)
 		}
@@ -114,12 +115,12 @@ func makeShellPassthrough(name string, action manifest.Action, m *manifest.Manif
 			// process is about to hand over wholesale, and a full-screen child
 			// clears them anyway. Nothing is logged, because there is no pipe
 			// to tee from.
-			return runInteractive(name, resolved, projectRoot(m))
+			return runInteractive(name, resolved, projectRoot(m), superviseEnabled(action))
 		}
 		f := enterFrame(h, name, rawURLs, hasFooter, footerVal, m)
 		defer frame.Deactivate(f)
 		h.Info("running: " + resolved)
-		res, err := h.RunCmd(resolved, luahost.RunCmdOptions{CaptureLog: true})
+		res, err := h.RunCmd(resolved, luahost.RunCmdOptions{CaptureLog: true, Unsupervised: !superviseEnabled(action)})
 		if err != nil {
 			return fmt.Errorf("action %q: %w", name, err)
 		}
@@ -148,9 +149,10 @@ func makeShellPassthrough(name string, action manifest.Action, m *manifest.Manif
 // an io.Writer that tees to a log. Wrapping any of them reintroduces the bug
 // this function exists to fix, and it fails silently: the child still runs,
 // just small and monochrome.
-func runInteractive(name, cmdline, dir string) error {
+func runInteractive(name, cmdline, dir string, supervised bool) error {
 	c := exec.Command("/bin/sh", "-c", cmdline)
 	c.Dir = dir
+	supervise.Start(c, dir, supervised)
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := c.Run(); err != nil {
 		var ee *exec.ExitError

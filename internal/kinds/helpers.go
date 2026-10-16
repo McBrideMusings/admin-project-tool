@@ -137,6 +137,15 @@ func actionBool(a manifest.Action, key string) (val bool, present bool) {
 	return b, ok
 }
 
+// superviseEnabled reads an action's `supervise` key, default true. False
+// means the action starts a daemon meant to outlive admin: its processes are
+// neither tagged nor swept (supervise.Start). A non-bool value is rejected by
+// ValidateSupervise, so it reads as the default here.
+func superviseEnabled(a manifest.Action) bool {
+	v, ok := actionBool(a, "supervise")
+	return !ok || v
+}
+
 // actionURLs reads the raw `urls` key off a manifest.Action as the []any
 // TOML decodes an array into — frame.ResolveURLs takes it from here.
 // Absent or non-list is treated the same as "no urls declared" (nil); a

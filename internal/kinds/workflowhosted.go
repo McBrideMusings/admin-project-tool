@@ -27,6 +27,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/create"
 	"github.com/McBrideMusings/admin-project-tool/internal/livework"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/supervise"
 	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
 
@@ -73,6 +74,7 @@ var (
 		c := exec.Command(argv[0], argv[1:]...)
 		c.Dir = dir
 		c.Env = append(os.Environ(), env...)
+		supervise.Start(c, dir, true)
 		c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 		return c.Run()
 	}

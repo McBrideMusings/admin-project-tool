@@ -113,16 +113,18 @@ func makeInteractiveShell(name string, action manifest.Action, m *manifest.Manif
 		h.Info("running: " + resolved)
 		fmtFn := logformat.MakeFormatter(logformat.DefaultOptions())
 		rc, rerr := keybindings.Run(resolved, keys, keybindings.Options{
-			Label:     name,
-			Formatter: fmtFn,
-			Stdout:    h.Stdout,
-			LogFn:     h.AppendLog,
-			LogPath:   h.MaterializeLogFile(),
-			LogBridge: bridgeCfg,
-			RunAction: func(target string) error { return surf.Action(target, nil) },
-			Info:      h.Info,
-			Warn:      h.Warn,
-			Err:       h.Err,
+			Root:         h.ProjectRoot,
+			Unsupervised: !superviseEnabled(action),
+			Label:        name,
+			Formatter:    fmtFn,
+			Stdout:       h.Stdout,
+			LogFn:        h.AppendLog,
+			LogPath:      h.MaterializeLogFile(),
+			LogBridge:    bridgeCfg,
+			RunAction:    func(target string) error { return surf.Action(target, nil) },
+			Info:         h.Info,
+			Warn:         h.Warn,
+			Err:          h.Err,
 		})
 		if rerr != nil {
 			return fmt.Errorf("action %q: %w", name, rerr)
@@ -207,16 +209,18 @@ func makeBridgeListen(name string, action manifest.Action, m *manifest.Manifest,
 		h.Info("waiting for browser console output (Ctrl-C to stop)")
 		fmtFn := logformat.MakeFormatter(logformat.DefaultOptions())
 		rc, rerr := keybindings.Run(bridgePark, keys, keybindings.Options{
-			Label:     name,
-			Formatter: fmtFn,
-			Stdout:    h.Stdout,
-			LogFn:     h.AppendLog,
-			LogPath:   h.MaterializeLogFile(),
-			LogBridge: bridgeCfg,
-			RunAction: func(target string) error { return surf.Action(target, nil) },
-			Info:      h.Info,
-			Warn:      h.Warn,
-			Err:       h.Err,
+			Root:         h.ProjectRoot,
+			Unsupervised: !superviseEnabled(action),
+			Label:        name,
+			Formatter:    fmtFn,
+			Stdout:       h.Stdout,
+			LogFn:        h.AppendLog,
+			LogPath:      h.MaterializeLogFile(),
+			LogBridge:    bridgeCfg,
+			RunAction:    func(target string) error { return surf.Action(target, nil) },
+			Info:         h.Info,
+			Warn:         h.Warn,
+			Err:          h.Err,
 		})
 		if rerr != nil {
 			return fmt.Errorf("action %q: %w", name, rerr)

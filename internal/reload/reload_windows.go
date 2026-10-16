@@ -32,12 +32,14 @@ func PollForReload(isRunning func() bool, timeout time.Duration) bool { return f
 // Options mirrors the Unix Options shape so callers compile unchanged;
 // RunWithReload ignores every field and fails immediately.
 type Options struct {
-	Dir       string
-	Stdout    io.Writer
-	Formatter func(lineWithNewline string) string
-	LogFn     func(text string)
-	Info      func(msg string)
-	Warn      func(msg string)
+	Root         string
+	Unsupervised bool
+	Dir          string
+	Stdout       io.Writer
+	Formatter    func(lineWithNewline string) string
+	LogFn        func(text string)
+	Info         func(msg string)
+	Warn         func(msg string)
 }
 
 // RunWithReload always fails on Windows: no SIGUSR1, no process-group

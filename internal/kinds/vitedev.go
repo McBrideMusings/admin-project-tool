@@ -15,6 +15,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/ports"
 	"github.com/McBrideMusings/admin-project-tool/internal/reload"
+	"github.com/McBrideMusings/admin-project-tool/internal/supervise"
 )
 
 // devMount is one parsed `name=path` entry from DEV_MOUNTS.
@@ -166,6 +167,8 @@ type viteDevOptions struct {
 	DevMountsRaw string
 	HasDevMounts bool // DEV_MOUNTS explicitly passed (even if empty) vs. read from the environment
 	ViteLogName  string
+	// Unsupervised is the action's `supervise = false`.
+	Unsupervised bool
 }
 
 // runViteDev runs Vite detached in the background (its own process group,
@@ -247,6 +250,7 @@ func runViteDev(h *luahost.Host, o viteDevOptions) int {
 	viteProc.Stdout = viteFh
 	viteProc.Stderr = viteFh
 	viteProc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	viteRun := supervise.Start(viteProc, h.ProjectRoot, !o.Unsupervised)
 	if err := viteProc.Start(); err != nil {
 		h.Err("could not start vite: " + err.Error())
 		return 1
@@ -255,6 +259,7 @@ func runViteDev(h *luahost.Host, o viteDevOptions) int {
 		if viteProc.Process != nil {
 			_ = syscall.Kill(-viteProc.Process.Pid, syscall.SIGTERM)
 			_ = viteProc.Wait()
+			viteRun.Stop()
 		}
 	}()
 
@@ -302,11 +307,13 @@ func runViteDev(h *luahost.Host, o viteDevOptions) int {
 		// Same reason as vite's own Dir above: BackendDir is relative to the
 		// project (it defaults to "."), and the reload loop respawns the
 		// child repeatedly, so an inherited cwd is wrong every restart.
-		Dir:    resolveUnder(h.ProjectRoot, o.BackendDir),
-		Stdout: h.Stdout,
-		LogFn:  h.AppendLog,
-		Info:   h.Info,
-		Warn:   h.Warn,
+		Dir:          resolveUnder(h.ProjectRoot, o.BackendDir),
+		Root:         h.ProjectRoot,
+		Unsupervised: o.Unsupervised,
+		Stdout:       h.Stdout,
+		LogFn:        h.AppendLog,
+		Info:         h.Info,
+		Warn:         h.Warn,
 	})
 }
 
@@ -321,12 +328,13 @@ func sortedStringMapKeys(m map[string]string) []string {
 
 // viteDevFromConfig reads the manifest's [vite_dev] table and calls
 // runViteDev.
-func viteDevFromConfig(h *luahost.Host, cfg map[string]any) int {
+func viteDevFromConfig(h *luahost.Host, cfg map[string]any, unsupervised bool) int {
 	opts, err := buildViteDevOptions(h.ProjectRoot, cfg)
 	if err != nil {
 		h.Err(err.Error())
 		return 1
 	}
+	opts.Unsupervised = unsupervised
 	return runViteDev(h, opts)
 }
 
@@ -450,7 +458,7 @@ func makeViteDev(name string, action manifest.Action, m *manifest.Manifest, surf
 	return func(args []string) error {
 		h := newHost(m)
 		runPreHook(m, surf, preRun, args, h.Warn)
-		rc := viteDevFromConfig(h, cfg)
+		rc := viteDevFromConfig(h, cfg, !superviseEnabled(action))
 		if rc != 0 && rc != 130 {
 			return fmt.Errorf("action %q: vite-dev exited %d", name, rc)
 		}

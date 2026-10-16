@@ -84,11 +84,13 @@ func makeElectron(name string, action manifest.Action, m *manifest.Manifest, _ *
 				electron.DevOptions{Info: h.Info},
 				func(cmd, target string) int {
 					return reload.RunWithReload(cmd, target, reload.Options{
-						Dir:    h.ProjectRoot,
-						Stdout: h.Stdout,
-						LogFn:  h.AppendLog,
-						Info:   h.Info,
-						Warn:   h.Warn,
+						Dir:          h.ProjectRoot,
+						Root:         h.ProjectRoot,
+						Unsupervised: !superviseEnabled(action),
+						Stdout:       h.Stdout,
+						LogFn:        h.AppendLog,
+						Info:         h.Info,
+						Warn:         h.Warn,
 					})
 				})
 			if err != nil {

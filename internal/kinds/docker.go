@@ -36,12 +36,14 @@ func makeDockerReloadLoop(name string, action manifest.Action, m *manifest.Manif
 		// its own header print.
 		formatter := logcolumns.MakeColumnFormatter("docker", archetypeConfigTable(m, "output"))
 		rc := reload.RunWithReload(run, name, reload.Options{
-			Dir:       h.ProjectRoot,
-			Stdout:    h.Stdout,
-			LogFn:     h.AppendLog,
-			Info:      h.Info,
-			Warn:      h.Warn,
-			Formatter: formatter,
+			Dir:          h.ProjectRoot,
+			Root:         h.ProjectRoot,
+			Unsupervised: !superviseEnabled(action),
+			Stdout:       h.Stdout,
+			LogFn:        h.AppendLog,
+			Info:         h.Info,
+			Warn:         h.Warn,
+			Formatter:    formatter,
 		})
 		if rc != 0 {
 			return fmt.Errorf("action %q: exited %d", name, rc)
@@ -111,11 +113,13 @@ func makeDockerDev(name string, action manifest.Action, m *manifest.Manifest, su
 		}
 
 		rc := reload.RunWithReload(cmd, target, reload.Options{
-			Dir:    h.ProjectRoot,
-			Stdout: h.Stdout,
-			LogFn:  h.AppendLog,
-			Info:   h.Info,
-			Warn:   h.Warn,
+			Dir:          h.ProjectRoot,
+			Root:         h.ProjectRoot,
+			Unsupervised: !superviseEnabled(action),
+			Stdout:       h.Stdout,
+			LogFn:        h.AppendLog,
+			Info:         h.Info,
+			Warn:         h.Warn,
 		})
 		if rc != 0 {
 			return fmt.Errorf("action %q: exited %d", name, rc)

@@ -41,6 +41,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/logformat"
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/supervise"
 )
 
 // readLogAnnounce records the first log path a hosted child reports over its
@@ -127,7 +128,26 @@ func killProcessGroup(c *exec.Cmd) error {
 	if pgid == syscall.Getpgrp() {
 		return fmt.Errorf("killProcessGroup: refusing to signal the orchestrator's own process group %d", pgid)
 	}
-	return syscall.Kill(-pgid, syscall.SIGKILL)
+	err = syscall.Kill(-pgid, syscall.SIGKILL)
+	// The group kill misses descendants that left the group (Node's
+	// `detached: true` calls setsid), so sweep everything stamped with this
+	// run's id as well.
+	endHostedRun(c)
+	return err
+}
+
+// beginHostedRun gives c a fresh run id and a watcher, stamping
+// ADMIN_RUN_ID/ADMIN_CHECKOUT onto its environment. c.Env must already be set.
+func beginHostedRun(c *exec.Cmd, root string, supervised bool) {
+	supervise.Start(c, root, supervised)
+}
+
+// endHostedRun stops c's run — sweeps every process carrying its id and
+// releases its watcher — once, whichever of a kill or the child's exit comes
+// first. The sweep can take seconds, so it never runs on the caller's
+// goroutine (the dashboard's key handler reaches it through Ops.Kill).
+func endHostedRun(c *exec.Cmd) {
+	go supervise.StopID(supervise.RunIDFromEnv(c.Env))
 }
 
 // hostedReentryArgs builds the argv for the pty child: the hidden
@@ -181,7 +201,7 @@ func StartHostedPTY(m *manifest.Manifest, name string, args []string, rows, cols
 	c.ExtraFiles = []*os.File{announceW}
 	c.Env = append(hostedChildEnv(), luahost.LogAnnounceFDEnv+"=3")
 	c.Env = append(c.Env, env...)
-	_, err = startHostedChild(liveID, name, c, rows, cols, announceR, nil)
+	_, err = startHostedChild(liveID, name, m.Root, commandSupervised(m, cmd), c, rows, cols, announceR, nil)
 	// The child holds its own copy of the write end; closing ours is what
 	// lets readLogAnnounce see EOF once the child's copies are gone.
 	_ = announceW.Close()
@@ -205,7 +225,20 @@ func StartHostedWorker(id string, argv []string, dir string, env []string, rows,
 	c := exec.Command(argv[0], argv[1:]...)
 	c.Dir = dir
 	c.Env = append(hostedChildEnv(), env...)
-	return startHostedChild(id, id, c, rows, cols, nil, worker)
+	return startHostedChild(id, id, dir, true, c, rows, cols, nil, worker)
+}
+
+// commandSupervised reports whether a hosted command's pty child is tagged
+// and swept: yes unless every step is an action declaring `supervise = false`
+// (a command mixing both keeps the run, because the shared child cannot be
+// half-supervised; the unsupervised step's own spawn still drops the tag).
+func commandSupervised(m *manifest.Manifest, cmd manifest.Command) bool {
+	for _, step := range cmd.Steps {
+		if a, ok := m.Actions[step]; !ok || superviseEnabled(a) {
+			return true
+		}
+	}
+	return false
 }
 
 // hostedChildEnv is the dashboard's own environment plus the two resolved
@@ -221,7 +254,7 @@ func hostedChildEnv() []string {
 // startHostedChild starts c on a fresh pty sized rows x cols (80x24 when
 // either is <= 0) and hands it to recordHostedPTYWork under liveID. announce
 // is the read end of the child's log-path pipe, nil when the child has none.
-func startHostedChild(liveID, name string, c *exec.Cmd, rows, cols int, announce *os.File, worker *livework.WorkerInfo) (<-chan error, error) {
+func startHostedChild(liveID, name, root string, supervised bool, c *exec.Cmd, rows, cols int, announce *os.File, worker *livework.WorkerInfo) (<-chan error, error) {
 	// Setsid (pty.StartWithSize sets this unconditionally on the SysProcAttr
 	// it allocates when nil, so pinning it here is behaviour-neutral) makes
 	// the child both a session leader and its own process-group leader
@@ -231,11 +264,13 @@ func startHostedChild(liveID, name string, c *exec.Cmd, rows, cols int, announce
 	// forkAndExecInChild runs setsid() before setpgid(0,0), and setpgid on a
 	// session leader returns EPERM, which would fail every hosted dispatch.
 	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	beginHostedRun(c, root, supervised)
 	if rows <= 0 || cols <= 0 {
 		rows, cols = 24, 80
 	}
 	ptmx, err := pty.StartWithSize(c, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
 	if err != nil {
+		endHostedRun(c)
 		return nil, fmt.Errorf("command %q: starting hosted pty: %w", name, err)
 	}
 	return recordHostedPTYWork(liveID, name, rows, cols, c, ptmx, announce, worker), nil
@@ -405,6 +440,7 @@ func recordHostedPTYWork(entryID, name string, rows, cols int, c *exec.Cmd, ptmx
 		_ = copyErr
 
 		waitErr = c.Wait()
+		endHostedRun(c)
 		closed.Store(true)
 		_ = ptmx.Close()
 		exited.Store(true)

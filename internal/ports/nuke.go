@@ -231,6 +231,15 @@ type NukeDevOptions struct {
 	WebArgvMarkers    []string
 	SupervisorMarkers []string // nil means defaultSupervisorMarkers
 	Patterns          []PatternSpec
+
+	// AnyCheckout widens the tag pass from "processes stamped with this
+	// checkout's ADMIN_CHECKOUT" to every process carrying any
+	// ADMIN_RUN_ID, whichever checkout started it. Opt-in: it reaches other
+	// projects' and worktrees' running actions.
+	AnyCheckout bool
+	// Logf receives the tag pass's per-process log lines (run id, checkout,
+	// pid, pgid, command, outcome); nil discards them.
+	Logf func(format string, args ...any)
 }
 
 // NukeReport is what NukeDevProcesses actually did — the acceptance
@@ -290,6 +299,17 @@ func NukeDevProcesses(projectRoot string, opts NukeDevOptions) NukeReport {
 			killed[p] = true
 		}
 	}
+
+	// 0. Tag pass: every process stamped with an ADMIN_RUN_ID by an admin run
+	// of this checkout (or, with AnyCheckout, of any checkout). This is the
+	// only pass that reaches an orphan which left its process group and lost
+	// its supervisor, and it runs first so the supervisor-parent heuristics
+	// below find less to guess at. This process's own run is never touched.
+	tagKilled, tagResults := NukeTagged(root, opts.AnyCheckout, SweepOptions{Logf: opts.Logf})
+	for _, pid := range tagKilled {
+		killed[pid] = true
+	}
+	report.Killed = append(report.Killed, tagResults...)
 
 	// 1. Ports — plus the bun/node/npm/python supervisor parent of each
 	// holder.

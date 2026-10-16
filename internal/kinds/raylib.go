@@ -116,7 +116,7 @@ func makeRaylib(name string, action manifest.Action, m *manifest.Manifest, _ *Su
 			run = smokeEnv + "=1 " + shellQuote(exe)
 		}
 
-		res, err := h.RunCmd(run, luahost.RunCmdOptions{CaptureLog: true})
+		res, err := h.RunCmd(run, luahost.RunCmdOptions{CaptureLog: true, Unsupervised: !superviseEnabled(action)})
 		if err != nil {
 			return fmt.Errorf("action %q: %w", name, err)
 		}

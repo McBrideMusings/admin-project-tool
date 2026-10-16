@@ -30,11 +30,13 @@ func makeReloadLoop(name string, action manifest.Action, m *manifest.Manifest, _
 	return func(args []string) error {
 		h := newHost(m)
 		rc := reload.RunWithReload(manifest.ResolveComputed(run), target, reload.Options{
-			Dir:    h.ProjectRoot,
-			Stdout: h.Stdout,
-			LogFn:  h.AppendLog,
-			Info:   h.Info,
-			Warn:   h.Warn,
+			Dir:          h.ProjectRoot,
+			Root:         h.ProjectRoot,
+			Unsupervised: !superviseEnabled(action),
+			Stdout:       h.Stdout,
+			LogFn:        h.AppendLog,
+			Info:         h.Info,
+			Warn:         h.Warn,
 		})
 		// 130 is a user Ctrl-C, which is how this loop is meant to end.
 		if rc != 0 && rc != 130 {

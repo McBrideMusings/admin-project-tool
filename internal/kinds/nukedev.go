@@ -149,8 +149,26 @@ func makeNukeDev(name string, action manifest.Action, m *manifest.Manifest, _ *S
 
 	return func(args []string) error {
 		h := newHost(m)
+		anyCheckout := false
+		for _, a := range args {
+			if a == "--any-checkout" {
+				anyCheckout = true
+			}
+		}
+		logf := func(f string, a ...any) { h.Info(fmt.Sprintf(f, a...)) }
 		if len(cfg) == 0 {
-			h.Info("nothing was running")
+			// No [dev_kill] table: the tag pass is the whole sweep. The
+			// port, pidfile and marker passes need a declaration to be safe.
+			root, err := os.Getwd()
+			if err != nil {
+				root = "."
+			}
+			_, results := ports.NukeTagged(root, anyCheckout, ports.SweepOptions{Logf: logf})
+			if len(results) == 0 {
+				h.Info("nothing was running")
+				return nil
+			}
+			h.Ok(fmt.Sprintf("stopped %d tagged process(es)/group(s)", len(results)))
 			return nil
 		}
 
@@ -166,11 +184,13 @@ func makeNukeDev(name string, action manifest.Action, m *manifest.Manifest, _ *S
 		}
 
 		opts := ports.NukeDevOptions{
-			Ports:      portSpecs,
-			Pidfiles:   buildPidfileSpecs(cfg),
-			JSFiles:    cfgStrings(cfg, "js_files"),
-			WebSubdirs: cfgStrings(cfg, "web_subdirs"),
-			Patterns:   buildPatternSpecs(cfg, root),
+			AnyCheckout: anyCheckout,
+			Logf:        logf,
+			Ports:       portSpecs,
+			Pidfiles:    buildPidfileSpecs(cfg),
+			JSFiles:     cfgStrings(cfg, "js_files"),
+			WebSubdirs:  cfgStrings(cfg, "web_subdirs"),
+			Patterns:    buildPatternSpecs(cfg, root),
 		}
 		if rt := cfgStrings(cfg, "runtimes"); len(rt) > 0 {
 			opts.Runtimes = rt
@@ -185,6 +205,10 @@ func makeNukeDev(name string, action manifest.Action, m *manifest.Manifest, _ *S
 			label := "TERM"
 			if r.Escalated {
 				label = "TERM then KILL"
+			}
+			if r.PID < 0 {
+				h.Info(fmt.Sprintf("  killed process group %d (%s)", -r.PID, label))
+				continue
 			}
 			h.Info(fmt.Sprintf("  killed pid %d (%s)", r.PID, label))
 		}

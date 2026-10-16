@@ -588,7 +588,7 @@ func TestRunInteractiveRunsInTheGivenDir(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(t.TempDir())
 
-	if err := runInteractive("marker", "touch marker.txt", root); err != nil {
+	if err := runInteractive("marker", "touch marker.txt", root, true); err != nil {
 		t.Fatalf("runInteractive() = %v, want nil", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "marker.txt")); err != nil {

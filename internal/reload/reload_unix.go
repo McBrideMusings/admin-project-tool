@@ -21,6 +21,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/logformat"
 	"github.com/McBrideMusings/admin-project-tool/internal/streams"
+	"github.com/McBrideMusings/admin-project-tool/internal/supervise"
 )
 
 // rebuildRequested is the ONE rebuild flag SIGUSR1 sets — shared by both
@@ -239,6 +240,12 @@ func PollForReload(isRunning func() bool, timeout time.Duration) bool {
 // Options configures RunWithReload's output wiring. Every field is optional;
 // a nil Info/Warn is simply not called.
 type Options struct {
+	// Root is the project root (the directory holding admin.toml), recorded
+	// as ADMIN_CHECKOUT on each spawned child.
+	Root string
+	// Unsupervised is the action's `supervise = false`; see keybindings.Options.
+	Unsupervised bool
+
 	// Dir is the working directory each spawned child runs in — the calling
 	// kind's project root. Left empty, the child inherits this process's own
 	// cwd, which is wherever `admin` was typed rather than where the project
@@ -278,7 +285,7 @@ func RunWithReload(cmd, target string, opts Options) int {
 	defer removeRecord(pidFile)
 
 	sigCh := make(chan os.Signal, 4)
-	signal.Notify(sigCh, syscall.SIGUSR1, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, syscall.SIGUSR1, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(sigCh)
 
 	keys, restoreTerm := startKeyReader()
@@ -295,6 +302,7 @@ func RunWithReload(cmd, target string, opts Options) int {
 		c := exec.Command("/bin/sh", "-c", cmd)
 		c.Dir = opts.Dir
 		c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		run := supervise.Start(c, opts.Root, !opts.Unsupervised)
 		pr, pw := io.Pipe()
 		c.Stdout = pw
 		c.Stderr = pw
@@ -326,6 +334,7 @@ func RunWithReload(cmd, target string, opts Options) int {
 		}()
 
 		if err := c.Start(); err != nil {
+			run.Stop()
 			pw.Close()
 			<-lineDone
 			if opts.Warn != nil {
@@ -338,6 +347,8 @@ func RunWithReload(cmd, target string, opts Options) int {
 		go func() { exitCh <- c.Wait() }()
 
 		outcome := waitForExitOrSignal(c, sigCh, keys, exitCh, opts)
+		// The group kill misses descendants that called setsid; sweep the run.
+		run.Stop()
 		pw.Close()
 		<-lineDone
 		pump.Flush()
@@ -430,7 +441,8 @@ func waitForExitOrSignal(c *exec.Cmd, sigCh <-chan os.Signal, keys <-chan byte, 
 			case syscall.SIGINT:
 				teardown(syscall.SIGINT)
 				return outcomeSigint
-			case syscall.SIGTERM:
+			case syscall.SIGTERM, syscall.SIGHUP:
+				// A closed terminal (SIGHUP) tears down exactly like SIGTERM.
 				teardown(syscall.SIGTERM)
 				return outcomeSigterm
 			}

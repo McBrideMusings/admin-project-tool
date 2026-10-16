@@ -9,6 +9,8 @@ import (
 // needed here because the report is part of the acceptance criteria:
 // "killing a held port reports which processes were killed."
 type KillResult struct {
+	// PID is the pid signalled; negative means the whole process group
+	// -PID (a sweep's group target).
 	PID       int
 	Signal    string // "TERM" or "KILL" — the strongest signal that was sent
 	Escalated bool   // true if TERM didn't work and KILL was needed
@@ -20,9 +22,27 @@ type KillResult struct {
 // is already gone, or one this process has no permission to signal, is
 // treated as a best-effort no-op, never a hard failure.
 func KillPIDs(pids []int, timeout time.Duration) []KillResult {
+	// A non-positive pid would be a group or broadcast kill to kill(2); this
+	// entry point signals processes only.
+	valid := make([]int, 0, len(pids))
+	for _, pid := range pids {
+		if pid > 0 {
+			valid = append(valid, pid)
+		}
+	}
+	return killTargets(valid, timeout)
+}
+
+// killTargets is the one escalating-kill procedure: a positive target is a
+// pid, a negative one the process group -target. 0, 1 and -1 are never
+// signalled.
+func killTargets(pids []int, timeout time.Duration) []KillResult {
 	results := make(map[int]*KillResult, len(pids))
 	order := make([]int, 0, len(pids))
 	for _, pid := range pids {
+		if pid == 0 || pid == 1 || pid == -1 {
+			continue
+		}
 		if _, ok := results[pid]; ok {
 			continue
 		}

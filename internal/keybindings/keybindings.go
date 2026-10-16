@@ -33,6 +33,14 @@ import (
 // Options configures Run. Every callback field is optional; a nil one is
 // simply not called.
 type Options struct {
+	// Root is the project root (the directory holding admin.toml), recorded
+	// as ADMIN_CHECKOUT on the wrapped process.
+	Root string
+	// Unsupervised is the action's `supervise = false`: the wrapped process
+	// is not tagged and no watcher sweeps it, so a daemon it starts outlives
+	// admin.
+	Unsupervised bool
+
 	// Label names the action for the keybinding banner and the log-bridge
 	// info line ("[docker-dev] ...").
 	Label string

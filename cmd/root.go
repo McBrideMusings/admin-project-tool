@@ -28,6 +28,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/shim"
+	"github.com/McBrideMusings/admin-project-tool/internal/supervise"
 	"github.com/McBrideMusings/admin-project-tool/internal/timing"
 	"github.com/McBrideMusings/admin-project-tool/internal/tui"
 	"github.com/McBrideMusings/admin-project-tool/internal/worktree"
@@ -219,6 +220,7 @@ var rootCmd = &cobra.Command{
 // --timing would be passed straight through to the step as one of its own
 // arguments instead of being consumed here.
 func Execute() error {
+	supervise.Enable()
 	if err := kinds.Validate(); err != nil {
 		return err
 	}
@@ -502,6 +504,27 @@ var runCommandCmd = &cobra.Command{
 	},
 }
 
+// superviseCmd is the hidden watcher internal/supervise.Begin starts for each
+// action run: it blocks on fd 3 (a pipe whose write end only the owning admin
+// process holds) and, at EOF, kills every process carrying the run's
+// ADMIN_RUN_ID. Hidden and double-underscore prefixed like __run-action.
+var superviseCmd = &cobra.Command{
+	Use:    "__supervise <run-id> <root> <owner-pid> <owner-pgid>",
+	Hidden: true,
+	Args:   cobra.ExactArgs(4),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ownerPID, err := strconv.Atoi(args[2])
+		if err != nil {
+			return fmt.Errorf("__supervise: owner pid %q: %w", args[2], err)
+		}
+		ownerPGID, err := strconv.Atoi(args[3])
+		if err != nil {
+			return fmt.Errorf("__supervise: owner pgid %q: %w", args[3], err)
+		}
+		return supervise.Watch(args[0], args[1], ownerPID, ownerPGID)
+	},
+}
+
 // applyHostedColorProfile reads the color profile the parent dashboard
 // resolved (StartHostedPTY set it in the child's env) and applies it to
 // this process's own termenv/lipgloss renderers before anything can render
@@ -571,6 +594,7 @@ func init() {
 	rootCmd.AddCommand(populateCmd)
 	rootCmd.AddCommand(runActionCmd)
 	rootCmd.AddCommand(runCommandCmd)
+	rootCmd.AddCommand(superviseCmd)
 
 	// Registered purely so `admin --help` lists it — Execute strips a literal
 	// --timing out of argv by hand (see stripTimingFlag) before cobra ever

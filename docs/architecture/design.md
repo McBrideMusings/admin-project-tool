@@ -193,6 +193,10 @@ run  = "curl -X POST https://api.example.com/build?config=$(cat build.json)"  # 
 
 The second form is not declarative — the shell string encodes control flow (parsing `build.json`, building a URL) that belongs in a factory the archetype can validate and reuse, not in a one-off string every consuming project has to get right itself.
 
+### `supervise = false` — an action whose daemon outlives admin
+
+Every process admin starts for an action is stamped with `ADMIN_RUN_ID` and `ADMIN_CHECKOUT` and swept (SIGTERM, then SIGKILL, including children that left the process group with `setsid`) when the action stops or admin exits for any reason (`internal/supervise`). An action that starts a daemon meant to outlive admin (a VM, a tmux server, a database) sets `supervise = false`: its processes are not tagged and no watcher sweeps them. The key is a boolean on the action (`admin check` rejects any other value) and defaults to true. It applies to the process kinds (`shell`, `shell-passthrough`, `interactive-shell`, `reload-loop`, `docker-reload-loop`, `docker-dev`, `electron`, `vite-dev`, `npm`, `docs`, `go`, `raylib`) and to a hosted command whose steps all set it.
+
 ### When to add a new kind
 
 If an action needs config-driven logic and no existing kind covers it, **add a new kind**. The pattern (CLAUDE.md's hard rules, `internal/kinds/catalog.go`):

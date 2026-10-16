@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/supervise"
 	"github.com/McBrideMusings/admin-project-tool/internal/timing"
 )
 
@@ -26,6 +27,9 @@ type RunCmdOptions struct {
 	// child prints is also appended to the active log file, same as
 	// info/ok/warn/err already do.
 	CaptureLog bool
+	// Unsupervised is the action's `supervise = false`: the child is not
+	// tagged and no watcher sweeps it.
+	Unsupervised bool
 }
 
 // RunCmdResult is what a Lua run_cmd(...) call returns: whether the command
@@ -64,6 +68,7 @@ func (h *Host) shellCommand(cmd string, opts RunCmdOptions) (*exec.Cmd, error) {
 		c.Dir = h.ProjectRoot
 	}
 	c.Env = os.Environ()
+	supervise.Start(c, h.ProjectRoot, !opts.Unsupervised)
 	return c, nil
 }
 
