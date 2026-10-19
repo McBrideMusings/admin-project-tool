@@ -250,3 +250,22 @@ A pass:
 
 `go test ./internal/clip` runs the clipper through real ffmpeg on synthetic takes, both the
 periodic path and the crossfade path; it skips when ffmpeg is missing.
+
+## Simulator pool (`internal/simpool`, `admin sim run`)
+
+`ADMIN_SIM_TOOL` names the pool tool (`~/.claude/tools/sim`); admin calls its `acquire` and
+`release`. Drive it with a stand-in first: a script that appends `$*` to a `calls.log` beside
+itself and prints a UDID on `acquire`. From any `apple`-archetype project:
+
+    ADMIN_SIM_TOOL=<fake>/sim admin sim run -- sh -c 'echo "udid=$ADMIN_SIM_UDID"'
+
+A pass: `Using pool simulator: <udid>`, then `udid=<udid>`, exit 0, and `calls.log` reads
+`acquire` then `release`. The child's non-zero exit comes back as admin's exit code, and
+`release` still runs.
+
+`admin check` prints one `sim pool:` line: `found at <path>`, `missing — … is not an
+executable file`, or `not configured`.
+
+The real pool (cap 1 in `~/.claude/tools/sim-pool.toml`) waits up to 9 minutes for a free
+slot and exits 1 naming the holder when none frees; `~/.claude/tools/sim status` shows who
+holds it, and `~/Library/Logs/sim-pool.log` logs each `acquire`, `wait`, `ready` and `release`.
