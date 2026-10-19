@@ -78,7 +78,7 @@ func TestDockerRunFormatDriftReportMasksSecrets(t *testing.T) {
 	err := h.Exec(`
 local target_only = {"-e\tTAUTULLI_API_KEY=newkey"}
 local live_only = {"-e\tTAUTULLI_API_KEY=oldkey"}
-info(dockerrun.format_drift_report(target_only, live_only, true))
+info(dockerrun.format_drift_report(target_only, live_only, {}, true))
 `, nil)
 	if err != nil {
 		t.Fatalf("Exec: %v", err)

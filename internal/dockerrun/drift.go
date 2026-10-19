@@ -166,12 +166,32 @@ func LiveArgvForDrift(inspect map[string]any, imageEnv []string, imageLabels map
 	return filtered
 }
 
-// FormatDriftReport renders a drift report for human eyeballs. "-e" entries
-// are masked by variable name (IsSecretEnvName) before printing, same as
-// the deploy-time dry-run preview and admin diff's own masking. Returns ""
-// when there is no drift.
-func FormatDriftReport(inTargetOnly, inLiveOnly []string, refusing bool) string {
-	if len(inTargetOnly) == 0 && len(inLiveOnly) == 0 {
+// DeployGate decides whether a deploy may proceed over the live container.
+// A deploy exists to apply declared changes, so target-only entries never
+// refuse; the gate protects live state a person set by hand. With a
+// last-deploy snapshot, hand changes are whatever separates the snapshot from
+// the live container (snapOnly: the last deploy set it and live lost it;
+// snapLiveOnly: live gained it since). Without one, the only evidence is
+// liveOnly from the declared-vs-live diff. handOnly is what the gate names.
+func DeployGate(liveOnly, snapOnly, snapLiveOnly []string, haveSnap bool) (refuse bool, handOnly, handRemoved []string) {
+	if haveSnap {
+		handOnly, handRemoved = snapLiveOnly, snapOnly
+	} else {
+		handOnly = liveOnly
+	}
+	return len(handOnly) > 0 || len(handRemoved) > 0, handOnly, handRemoved
+}
+
+// FormatDriftReport renders a deploy's drift report for human eyeballs. "-e"
+// entries are masked by variable name (IsSecretEnvName) before printing, same
+// as the deploy-time dry-run preview and admin diff's own masking. applying
+// is what the deploy will change (declared but not live); handOnly is live
+// state the last deploy did not put there, and handRemoved is state the last
+// deploy put there that live no longer has. refusing selects the refusal
+// wording, which names only the hand changes. Returns "" when all three are
+// empty.
+func FormatDriftReport(applying, handOnly, handRemoved []string, refusing bool) string {
+	if len(applying) == 0 && len(handOnly) == 0 && len(handRemoved) == 0 {
 		return ""
 	}
 
@@ -216,16 +236,26 @@ func FormatDriftReport(inTargetOnly, inLiveOnly []string, refusing bool) string 
 	}
 
 	var out []string
-	out = append(out, "Drift detected between live container and admin.toml ([docker_run]):\n")
-	if b := fmtBlock("target has, live missing", inTargetOnly); b != "" {
-		out = append(out, b)
-	}
-	if b := fmtBlock("live has, target missing", inLiveOnly); b != "" {
-		out = append(out, b)
-	}
 	if refusing {
+		out = append(out, "The live container was changed by hand since the last deploy:\n")
+		if b := fmtBlock("live only", handOnly); b != "" {
+			out = append(out, b)
+		}
+		if b := fmtBlock("removed from live", handRemoved); b != "" {
+			out = append(out, b)
+		}
 		out = append(out, "Refusing to deploy. Either back-port the live values to admin.toml,\n"+
 			"or rerun with --force to overwrite (live state will be discarded).")
+		return strings.Join(out, "\n")
+	}
+	if b := fmtBlock("discarding live only (--force)", handOnly); b != "" {
+		out = append(out, b)
+	}
+	if b := fmtBlock("restoring removed from live (--force)", handRemoved); b != "" {
+		out = append(out, b)
+	}
+	if b := fmtBlock("applying", applying); b != "" {
+		out = append(out, b)
 	}
 	return strings.Join(out, "\n")
 }

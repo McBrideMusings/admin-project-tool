@@ -176,14 +176,62 @@ func TestMaskArgvForDisplay(t *testing.T) {
 }
 
 func TestFormatDriftReportMasksSecrets(t *testing.T) {
-	inTargetOnly := []string{"-e\tTAUTULLI_API_KEY=newkey"}
-	inLiveOnly := []string{"-e\tTAUTULLI_API_KEY=oldkey"}
-	report := FormatDriftReport(inTargetOnly, inLiveOnly, true)
+	applying := []string{"-e\tTAUTULLI_API_KEY=newkey"}
+	handOnly := []string{"-e\tTAUTULLI_API_KEY=oldkey"}
+	report := FormatDriftReport(applying, handOnly, nil, false) + FormatDriftReport(applying, handOnly, nil, true)
 	if containsSubstr(report, "newkey") || containsSubstr(report, "oldkey") {
 		t.Errorf("drift report leaked a secret value:\n%s", report)
 	}
 	if !containsSubstr(report, MaskValue) {
 		t.Errorf("drift report did not mask the secret:\n%s", report)
+	}
+}
+
+func TestDeployGate(t *testing.T) {
+	gpu := []string{"--gpus\tall"}
+	hand := []string{"-e\tHAND=1"}
+
+	t.Run("snapshot matches live: declared additions deploy", func(t *testing.T) {
+		if refuse, _, _ := DeployGate(nil, nil, nil, true); refuse {
+			t.Fatal("a declared addition over an untouched container must not refuse")
+		}
+	})
+	t.Run("no snapshot, nothing live-only deploys", func(t *testing.T) {
+		if refuse, _, _ := DeployGate(nil, nil, nil, false); refuse {
+			t.Fatal("target-only additions must apply without a snapshot")
+		}
+	})
+	t.Run("no snapshot, live-only entry refuses", func(t *testing.T) {
+		refuse, only, _ := DeployGate(hand, nil, nil, false)
+		if !refuse || len(only) != 1 || only[0] != hand[0] {
+			t.Fatalf("refuse=%v only=%v, want refusal naming %v", refuse, only, hand)
+		}
+	})
+	t.Run("hand-added live entry refuses against the snapshot", func(t *testing.T) {
+		refuse, only, _ := DeployGate(hand, nil, hand, true)
+		if !refuse || len(only) != 1 || only[0] != hand[0] {
+			t.Fatalf("refuse=%v only=%v, want refusal naming %v", refuse, only, hand)
+		}
+	})
+	t.Run("hand-removed entry refuses against the snapshot", func(t *testing.T) {
+		refuse, only, removed := DeployGate(nil, gpu, nil, true)
+		if !refuse || len(only) != 0 || len(removed) != 1 {
+			t.Fatalf("refuse=%v only=%v removed=%v", refuse, only, removed)
+		}
+	})
+}
+
+func TestFormatDriftReportRefusalNamesOnlyLiveEntries(t *testing.T) {
+	report := FormatDriftReport([]string{"--gpus\tall"}, []string{"-e\tHAND=1"}, nil, true)
+	if containsSubstr(report, "--gpus") {
+		t.Errorf("refusal named a declared addition:\n%s", report)
+	}
+	if !containsSubstr(report, "HAND=1") {
+		t.Errorf("refusal omitted the live-only entry:\n%s", report)
+	}
+	applying := FormatDriftReport([]string{"--gpus\tall"}, nil, nil, false)
+	if !containsSubstr(applying, "applying") || !containsSubstr(applying, "--gpus") {
+		t.Errorf("non-refusing report did not print the applying block:\n%s", applying)
 	}
 }
 
