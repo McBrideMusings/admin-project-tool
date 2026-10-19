@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/frame"
 	"github.com/McBrideMusings/admin-project-tool/internal/kinds"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
+	"github.com/McBrideMusings/admin-project-tool/internal/simpool"
 	"github.com/McBrideMusings/admin-project-tool/internal/status"
 	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
@@ -137,6 +139,9 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		return errors.Join(append(problems, validate.Wrap(err))...)
 	}
 	reportAntiPatterns(checkAntiPatterns(project))
+	if slices.Contains(m.Archetypes, "apple") {
+		fmt.Fprintln(os.Stderr, simpool.Status())
+	}
 
 	if len(problems) == 0 {
 		fmt.Fprintln(os.Stderr, "admin.toml: valid — no problems found")

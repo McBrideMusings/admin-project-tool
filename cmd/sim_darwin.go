@@ -3,12 +3,30 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"regexp"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
+	"github.com/McBrideMusings/admin-project-tool/internal/simpool"
 )
+
+var simUDIDArg = regexp.MustCompile(`^[A-Fa-f0-9]{8}-([A-Fa-f0-9]{4}-){3}[A-Fa-f0-9]{12}$`)
+
+// ownLeaseToCaller makes a pool lease belong to the process that ran admin
+// rather than to admin itself: `sim launch` exits while the app keeps running,
+// and a lease owned by admin would shut the device down with it. Inside a
+// Claude Code session the pool already keys the lease to that session.
+func ownLeaseToCaller() {
+	if os.Getenv("CLAUDE_PID") == "" && os.Getenv("SIM_POOL_OWNER") == "" {
+		_ = os.Setenv("SIM_POOL_OWNER", strconv.Itoa(os.Getppid()))
+	}
+}
 
 var (
 	simLaunchDevice   string
@@ -44,8 +62,24 @@ fails.`,
 			return fmt.Errorf("could not read CFBundleIdentifier from %s/Info.plist", app)
 		}
 
+		ownLeaseToCaller()
 		var udid, name string
-		if simLaunchDevice == "" {
+		leased := false
+		if !simUDIDArg.MatchString(simLaunchDevice) {
+			id, n, info, ok, err := luahost.LeasePoolSimulator(simLaunchPlatform, simLaunchDevice)
+			if err != nil {
+				return err
+			}
+			if ok {
+				leased = true
+				fmt.Fprintln(cmd.ErrOrStderr(), info)
+				udid, name = id, n
+				luahost.WaitBootedSimulator(udid)
+			}
+		}
+		if leased {
+			// the pool's device is already booted and named above
+		} else if simLaunchDevice == "" {
 			id, n, info, err := luahost.EnsureBootedSimulator(simLaunchPlatform)
 			if err != nil {
 				return err
@@ -74,7 +108,69 @@ fails.`,
 	},
 }
 
+// simPoolPin is the device-type name to lease for --device: empty when
+// --device is unset or already a UDID (a UDID names a device, not a type).
+func simPoolPin(device string) string {
+	if simUDIDArg.MatchString(device) {
+		return ""
+	}
+	return device
+}
+
+var (
+	simRunDevice   string
+	simRunPlatform string
+)
+
+var simRunCmd = &cobra.Command{
+	Use:   "run [flags] -- <command> [args...]",
+	Short: "Run a command with a leased, booted simulator; release it when the command ends",
+	Long: `Take a simulator, run the command with its UDID in ADMIN_SIM_UDID, then give
+the simulator back — on success, on failure and on Ctrl-C. This is the door for
+a test or screenshot script that drives a simulator admin does not pick itself.
+
+With the simulator pool configured (ADMIN_SIM_TOOL) the device comes from the
+pool; without it, the booted simulator of --platform, else the newest one.
+Exits non-zero when the command does.`,
+	Args: cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		defer func() {
+			if err := simpool.ReleaseHeld(); err != nil {
+				fmt.Fprintln(cmd.ErrOrStderr(), err)
+			}
+		}()
+		var udid string
+		if id, _, info, leased, err := luahost.LeasePoolSimulator(simRunPlatform, simPoolPin(simRunDevice)); err != nil {
+			return err
+		} else if leased {
+			fmt.Fprintln(cmd.ErrOrStderr(), info)
+			udid = id
+			luahost.WaitBootedSimulator(udid)
+		} else {
+			id, _, info, err := luahost.EnsureBootedSimulator(simRunPlatform)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.ErrOrStderr(), info)
+			udid = id
+		}
+		child := exec.Command(args[0], args[1:]...)
+		child.Stdin, child.Stdout, child.Stderr = cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr()
+		child.Env = append(os.Environ(), "ADMIN_SIM_UDID="+udid)
+		err := child.Run()
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			cmd.SilenceUsage = true
+			return fmt.Errorf("%s exited %d", args[0], ee.ExitCode())
+		}
+		return err
+	},
+}
+
 func init() {
+	simRunCmd.Flags().StringVar(&simRunDevice, "device", "", "device-type name to lease from the pool (default: the pool's)")
+	simRunCmd.Flags().StringVar(&simRunPlatform, "platform", "ios", "simulator platform: ios or tv")
+	simCmd.AddCommand(simRunCmd)
 	simLaunchCmd.Flags().StringVar(&simLaunchDevice, "device", "", "simulator UDID or exact device name (default: auto-resolve)")
 	simLaunchCmd.Flags().StringVar(&simLaunchPlatform, "platform", "ios", "simulator platform to auto-resolve: ios or tv")
 	simCmd.AddCommand(simLaunchCmd)

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/McBrideMusings/admin-project-tool/internal/simpool"
 )
 
 // --- Simulators --------------------------------------------------------
@@ -67,7 +69,7 @@ func ResolveSimulator(platform string) (deviceID, deviceName string, infoLine st
 				continue
 			}
 			m := simDeviceLine.FindStringSubmatch(line)
-			if m != nil && m[3] == "Booted" && strings.HasPrefix(currentRuntime, plat.RuntimeMatch) {
+			if m != nil && m[3] == "Booted" && strings.HasPrefix(currentRuntime, plat.RuntimeMatch) && strings.Contains(m[1], plat.DeviceMatch) {
 				return m[2], m[1], fmt.Sprintf("Using booted simulator: %s", m[1]), nil
 			}
 		}
@@ -115,12 +117,95 @@ func BootSimulator(deviceID string) {
 // booting (which itself boots the device if it wasn't already — no race
 // between "boot" and "install").
 func EnsureBootedSimulator(platform string) (deviceID, deviceName, infoLine string, err error) {
+	if id, name, info, leased, perr := LeasePoolSimulator(platform, ""); perr != nil {
+		return "", "", "", perr
+	} else if leased {
+		WaitBootedSimulator(id)
+		return id, name, info, nil
+	}
 	deviceID, deviceName, infoLine, err = ResolveSimulator(platform)
 	if err != nil {
 		return "", "", "", err
 	}
 	WaitBootedSimulator(deviceID)
 	return deviceID, deviceName, infoLine, nil
+}
+
+// LeasePoolSimulator takes platform's simulator from the machine-wide pool
+// (internal/simpool). pinned is an exact device-type name the project pinned
+// ("iPad Pro 13-inch (M4)"); empty takes the pool's default for "ios" and the
+// newest Apple TV for "tv". leased is false when no pool tool is configured,
+// and the caller picks a simulator itself. The pool boots the device; callers
+// still WaitBootedSimulator before installing.
+func LeasePoolSimulator(platform, pinned string) (deviceID, deviceName, infoLine string, leased bool, err error) {
+	plat, ok := simPlatforms[platform]
+	if !ok {
+		return "", "", "", false, fmt.Errorf("unknown simulator platform %q — expected one of %s", platform, strings.Join(simPlatformKeys(), ", "))
+	}
+	if _, usable := simpool.Tool(); !usable {
+		return "", "", "", false, nil
+	}
+	var deviceType, runtime string
+	if pinned != "" || platform != "ios" {
+		if deviceType, runtime, err = poolDeviceArgs(plat, pinned); err != nil {
+			return "", "", "", false, err
+		}
+	}
+	lease, err := simpool.Acquire(deviceType, runtime)
+	if err != nil || lease == nil {
+		return "", "", "", false, err
+	}
+	name := lease.UDID
+	if out, e := execOutput("xcrun", "simctl", "list", "devices"); e == nil {
+		for _, line := range strings.Split(out, "\n") {
+			if m := simDeviceLine.FindStringSubmatch(line); m != nil && m[2] == lease.UDID {
+				name = m[1]
+			}
+		}
+	}
+	return lease.UDID, name, "Using pool simulator: " + name, true, nil
+}
+
+// poolDeviceArgs maps a platform (and an optional pinned device-type name) to
+// the device-type and runtime identifiers `sim acquire --device --runtime`
+// takes: the newest available runtime of the platform, and the first of its
+// supported device types whose name is pinned, else contains the platform's
+// DeviceMatch.
+func poolDeviceArgs(plat simPlatform, pinned string) (deviceType, runtime string, err error) {
+	out, err := execOutput("xcrun", "simctl", "list", "runtimes", "-j")
+	if err != nil {
+		return "", "", err
+	}
+	var parsed struct {
+		Runtimes []struct {
+			Identifier           string `json:"identifier"`
+			Name                 string `json:"name"`
+			IsAvailable          bool   `json:"isAvailable"`
+			SupportedDeviceTypes []struct {
+				Identifier string `json:"identifier"`
+				Name       string `json:"name"`
+			} `json:"supportedDeviceTypes"`
+		} `json:"runtimes"`
+	}
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		return "", "", fmt.Errorf("parse simctl runtimes: %w", err)
+	}
+	for i := len(parsed.Runtimes) - 1; i >= 0; i-- {
+		rt := parsed.Runtimes[i]
+		if !rt.IsAvailable || !strings.HasPrefix(rt.Name, plat.RuntimeMatch) {
+			continue
+		}
+		for _, dt := range rt.SupportedDeviceTypes {
+			if (pinned != "" && dt.Name == pinned) || (pinned == "" && strings.Contains(dt.Name, plat.DeviceMatch)) {
+				return dt.Identifier, rt.Identifier, nil
+			}
+		}
+	}
+	want := plat.DeviceMatch
+	if pinned != "" {
+		want = pinned
+	}
+	return "", "", fmt.Errorf("no available %s runtime supports a %q device", plat.Label, want)
 }
 
 // WaitBootedSimulator opens Simulator.app and blocks on `simctl bootstatus

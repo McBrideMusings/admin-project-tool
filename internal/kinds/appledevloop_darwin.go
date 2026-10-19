@@ -37,6 +37,7 @@ import (
 	"github.com/McBrideMusings/admin-project-tool/internal/luahost"
 	"github.com/McBrideMusings/admin-project-tool/internal/macapp"
 	"github.com/McBrideMusings/admin-project-tool/internal/reload"
+	"github.com/McBrideMusings/admin-project-tool/internal/simpool"
 )
 
 // appleDevTarget is the reload target name every Apple dev verb records its
@@ -316,8 +317,20 @@ func appleDevSimulator(cfg map[string]any, h *luahost.Host, platform string, f a
 	if deviceName == "" {
 		deviceName = cfgString(cfg, platform+"_device", "")
 	}
+	// The pool, when configured, owns which device runs; a pinned name picks
+	// the device type it leases.
+	defer func() {
+		if rerr := simpool.ReleaseHeld(); rerr != nil {
+			h.Warn(rerr.Error())
+		}
+	}()
 	var simID string
-	if deviceName != "" {
+	if id, _, info, leased, perr := luahost.LeasePoolSimulator(platform, deviceName); perr != nil {
+		return perr
+	} else if leased {
+		h.Info(info)
+		simID = id
+	} else if deviceName != "" {
 		if id, ferr := luahost.FindSimulator(deviceName); ferr == nil && id != "" {
 			simID = id
 		} else {
@@ -328,11 +341,10 @@ func appleDevSimulator(cfg map[string]any, h *luahost.Host, platform string, f a
 	}
 	var destination string
 	if simID != "" {
-		luahost.BootSimulator(simID)
-		_ = runQuiet("xcrun", "simctl", "bootstatus", simID, "-b")
+		luahost.WaitBootedSimulator(simID)
 		destination = fmt.Sprintf("platform=%s,id=%s", sdk.destinationLabel, simID)
 	} else {
-		id, name, info, rerr := luahost.EnsureBootedSimulator(platform)
+		id, _, info, rerr := luahost.EnsureBootedSimulator(platform)
 		if rerr != nil {
 			return rerr
 		}
@@ -340,7 +352,6 @@ func appleDevSimulator(cfg map[string]any, h *luahost.Host, platform string, f a
 		if info != "" {
 			h.Info(info)
 		}
-		_ = name
 		destination = fmt.Sprintf("platform=%s,id=%s", sdk.destinationLabel, simID)
 	}
 
