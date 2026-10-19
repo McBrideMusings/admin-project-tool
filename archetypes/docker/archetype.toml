@@ -512,14 +512,34 @@ if run_cfg_present then
     end
     local live_argv = dockerrun.live_argv_for_drift(inspect, img_env, img_labels, img_workdir, img_user, run_cfg)
     local target_only, live_only = dockerrun.compute_drift(target_argv, live_argv)
-    if #target_only > 0 or #live_only > 0 then
-      if force then
-        warn("Drift detected — proceeding with --force (live state will be discarded):")
-        print(dockerrun.format_drift_report(target_only, live_only, false))
-      else
-        err(dockerrun.format_drift_report(target_only, live_only, true))
-        error("docker deploy: drift refusal")
+
+    -- A deploy applies declared changes (target_only) and refuses only live
+    -- state the last deploy did not put there: compare the live container
+    -- against the last-deploy snapshot, the same axis admin diff reports.
+    local snap_path = "/tmp/" .. container .. "-lastdeploy.json"
+    local snap_shell = "cat " .. shq(snap_path) .. " 2>/dev/null"
+    local snap_ok, snap_out = run_cmd(local_deploy and snap_shell or ("ssh " .. shq(host) .. " " .. shq(snap_shell)))
+    local snap_only, snap_live_only, have_snap = {}, {}, false
+    if snap_ok and (snap_out or ""):match("%S") then
+      local snap_decoded = json.decode(snap_out)
+      if type(snap_decoded) == "table" and snap_decoded[1] then
+        local live_raw = dockerrun.live_argv_for_drift(inspect, img_env, img_labels, img_workdir, img_user, nil)
+        local snap_raw = dockerrun.live_argv_for_drift(snap_decoded[1], img_env, img_labels, img_workdir, img_user, nil)
+        snap_only, snap_live_only = dockerrun.compute_drift(snap_raw, live_raw)
+        have_snap = true
       end
+    end
+
+    local refuse, hand_only, hand_removed = dockerrun.deploy_gate(live_only, snap_only, snap_live_only, have_snap)
+    if refuse and not force then
+      err(dockerrun.format_drift_report(target_only, hand_only, hand_removed, true))
+      error("docker deploy: drift refusal")
+    elseif refuse then
+      warn("Live container changed by hand — proceeding with --force (live state will be discarded):")
+      print(dockerrun.format_drift_report(target_only, hand_only, hand_removed, false))
+    elseif #target_only > 0 then
+      info("Declared changes — applying:")
+      print(dockerrun.format_drift_report(target_only, {}, {}, false))
     else
       info("No drift between live container and [docker_run] — proceeding")
     end

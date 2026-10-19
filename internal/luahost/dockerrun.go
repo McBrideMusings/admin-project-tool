@@ -45,15 +45,29 @@ func (h *Host) registerDockerRun(L *lua.LState) {
 		return 2
 	}))
 
-	// dockerrun.format_drift_report(in_target_only, in_live_only[, refusing]) -> string
+	// dockerrun.deploy_gate(live_only, snap_only, snap_live_only, have_snap) -> refuse, hand_only, hand_removed
+	tbl.RawSetString("deploy_gate", L.NewFunction(func(L *lua.LState) int {
+		liveOnly := tableToStringSlice(L.CheckTable(1))
+		snapOnly := tableToStringSlice(L.CheckTable(2))
+		snapLiveOnly := tableToStringSlice(L.CheckTable(3))
+		haveSnap := lua.LVAsBool(L.Get(4))
+		refuse, handOnly, handRemoved := dockerrun.DeployGate(liveOnly, snapOnly, snapLiveOnly, haveSnap)
+		L.Push(lua.LBool(refuse))
+		L.Push(stringSliceToLua(L, handOnly))
+		L.Push(stringSliceToLua(L, handRemoved))
+		return 3
+	}))
+
+	// dockerrun.format_drift_report(applying, hand_only, hand_removed[, refusing]) -> string
 	tbl.RawSetString("format_drift_report", L.NewFunction(func(L *lua.LState) int {
-		inTargetOnly := tableToStringSlice(L.CheckTable(1))
-		inLiveOnly := tableToStringSlice(L.CheckTable(2))
+		applying := tableToStringSlice(L.CheckTable(1))
+		handOnly := tableToStringSlice(L.CheckTable(2))
+		handRemoved := tableToStringSlice(L.CheckTable(3))
 		refusing := true
-		if b, ok := L.Get(3).(lua.LBool); ok {
+		if b, ok := L.Get(4).(lua.LBool); ok {
 			refusing = bool(b)
 		}
-		L.Push(lua.LString(dockerrun.FormatDriftReport(inTargetOnly, inLiveOnly, refusing)))
+		L.Push(lua.LString(dockerrun.FormatDriftReport(applying, handOnly, handRemoved, refusing)))
 		return 1
 	}))
 
