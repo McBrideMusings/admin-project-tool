@@ -62,9 +62,9 @@ type Lease struct {
 	// UDID is the leased device's identifier.
 	UDID string
 
-	tool string
-	once sync.Once
-	err  error
+	tool, device, runtime string
+	once                  sync.Once
+	err                   error
 }
 
 var (
@@ -76,7 +76,8 @@ var (
 // runtime are `simctl` identifiers for a non-default device (an iPad, an
 // Apple TV); both empty takes the pool's default. It returns (nil, nil) when
 // no usable pool tool is configured, so callers fall back to their own pick.
-// A second Acquire in one process returns the lease already held.
+// A second Acquire in one process returns the lease already held, or an error
+// when it asks for a different device or runtime.
 func Acquire(device, runtime string) (*Lease, error) {
 	tool, ok := Tool()
 	if !ok {
@@ -85,6 +86,9 @@ func Acquire(device, runtime string) (*Lease, error) {
 	heldMu.Lock()
 	defer heldMu.Unlock()
 	if held != nil {
+		if held.device != device || held.runtime != runtime {
+			return nil, fmt.Errorf("this process already holds simulator %s (device %q, runtime %q); release it before leasing another kind", held.UDID, held.device, held.runtime)
+		}
 		return held, nil
 	}
 	args := []string{"acquire"}
@@ -111,7 +115,7 @@ func Acquire(device, runtime string) (*Lease, error) {
 	if !udidRe.MatchString(udid) {
 		return nil, fmt.Errorf("sim acquire printed %q, not a device UDID", stdout.String())
 	}
-	held = &Lease{UDID: udid, tool: tool}
+	held = &Lease{UDID: udid, tool: tool, device: device, runtime: runtime}
 	return held, nil
 }
 

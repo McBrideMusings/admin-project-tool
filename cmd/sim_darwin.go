@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"regexp"
 	"strconv"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -55,7 +57,14 @@ The last line on stdout is "<bundle-id> <udid> <device name>" for the caller.
 Exits non-zero when the bundle id, the simulator, the install or the launch
 fails.`,
 	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) (rerr error) {
+		// A failed launch frees the lease; a successful one keeps it because
+		// the app is still running.
+		defer func() {
+			if rerr != nil {
+				_ = simpool.ReleaseHeld()
+			}
+		}()
 		app := args[0]
 		bundle := luahost.AppBundleIdentifier(app)
 		if bundle == "" {
@@ -154,6 +163,11 @@ Exits non-zero when the command does.`,
 			fmt.Fprintln(cmd.ErrOrStderr(), info)
 			udid = id
 		}
+		// Ctrl-C reaches the child through the terminal's process group; admin
+		// ignores it so the deferred release still runs once the child ends.
+		sigs := make(chan os.Signal, 1)
+		signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(sigs)
 		child := exec.Command(args[0], args[1:]...)
 		child.Stdin, child.Stdout, child.Stderr = cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr()
 		child.Env = append(os.Environ(), "ADMIN_SIM_UDID="+udid)
