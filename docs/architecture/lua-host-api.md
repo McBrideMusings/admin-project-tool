@@ -107,6 +107,8 @@ live three-way diff `diff` computes) cannot drift apart (issue #388).
 | `dockerrun.parse_env_text(text)` | `(string) -> table` | Parses `KEY=value` env-file text (`#` comments, blank lines skipped; values are **not** unquoted, matching `docker --env-file`'s own literal handling). |
 | `dockerrun.build_deploy_sync_plan(cfg, env_vars, is_local, dry_run)` | `(table, table?, bool, bool) -> (table?, string[])` | Resolves a `[deploy]` table into a sync plan — `src`/`dest`/`target`/`is_remote`/`host`/`rsync_cmd`/`chown`/`post_sync_cmd` — or `nil` plus a list of user-facing error strings (missing `src`/`dest`, an unknown key). This is the **only** implementation of a `[deploy]` sync in the tool, so `chown` and `post_sync` (admin-9bex) can't be silently dropped by a second, more-generic sync path. |
 
+`[docker_run].gpu`, when a string, expands `${VAR}` against the same `env_vars` as `env` and `bind_mounts`: `all`/`true` render `--gpus all`, a count or `device=...` renders as written, and an empty or unset expansion drops the flag with one warning naming the reference.
+
 `[docker_run]`'s `remote_env_file` (a path on the *target*, read over ssh) is not itself a
 `dockerrun` function — a Lua body reads it with `run_cmd("ssh ... cat ...")` and parses the result
 with `parse_env_text`, then passes it as `build_args_from_cfg`'s `env_vars` argument. This keeps

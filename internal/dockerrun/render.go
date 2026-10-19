@@ -270,10 +270,15 @@ func BuildArgsFromCfg(cfg map[string]any, envVars map[string]string, envFileVars
 			args = append(args, "--gpus", "all")
 		}
 	case string:
-		if gpu == "all" {
+		expanded, allOk := ExpandEnvRefs(gpu, envVars)
+		expanded = strings.TrimSpace(expanded)
+		switch {
+		case !allOk || (expanded == "" && gpu != ""):
+			warn("docker_run.gpu: '" + gpu + "' references unset or empty env var — skipping --gpus")
+		case expanded == "all" || expanded == "true":
 			args = append(args, "--gpus", "all")
-		} else if gpu != "" {
-			args = append(args, "--gpus", gpu)
+		case expanded != "":
+			args = append(args, "--gpus", expanded)
 		}
 	case []any:
 		if len(gpu) > 0 {

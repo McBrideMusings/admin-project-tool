@@ -255,3 +255,30 @@ func TestMountEnvDeps(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
+
+func TestBuildArgsFromCfgGPUExpand(t *testing.T) {
+	cfg := map[string]any{"gpu": "${PLEXDB_GPU}"}
+	cases := []struct {
+		name     string
+		env      map[string]string
+		want     []string
+		wantWarn bool
+	}{
+		{"all", map[string]string{"PLEXDB_GPU": "all"}, []string{"--gpus", "all"}, false},
+		{"true", map[string]string{"PLEXDB_GPU": "true"}, []string{"--gpus", "all"}, false},
+		{"count", map[string]string{"PLEXDB_GPU": "2"}, []string{"--gpus", "2"}, false},
+		{"device", map[string]string{"PLEXDB_GPU": "device=0"}, []string{"--gpus", "device=0"}, false},
+		{"empty", map[string]string{"PLEXDB_GPU": ""}, nil, true},
+		{"unset", map[string]string{}, nil, true},
+	}
+	for _, c := range cases {
+		var warns []string
+		got := BuildArgsFromCfg(cfg, c.env, nil, func(m string) { warns = append(warns, m) })
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+		if (len(warns) == 1) != c.wantWarn || len(warns) > 1 {
+			t.Errorf("%s: warns = %v", c.name, warns)
+		}
+	}
+}
