@@ -138,19 +138,18 @@ if build_cfg.on_host then
     err("[docker_build].on_host is set but 'context' is missing or references an unset env var")
     error("docker build: missing context")
   end
-  local build_cmd = "cd " .. shq(context) .. " && docker build " .. (build_cfg.dockerfile and ("-f " .. shq(build_cfg.dockerfile) .. " ") or "")
-  if target then build_cmd = build_cmd .. "--target " .. shq(target) .. " " end
-  build_cmd = build_cmd .. "-t " .. shq(image) .. " ."
   local local_build = is_local_host(host)
+  local cmd, build_err = dockerrun.build_command(build_cfg, {
+    image = image, target = target, on_host = true, context = context, host = host, is_local = local_build,
+  })
+  if not cmd then err(build_err) error("docker build: " .. build_err) end
   info("Building " .. tostring(image) .. " on " .. (local_build and "this host" or host) .. " in " .. context .. "...")
-  local cmd = local_build and build_cmd or ("ssh " .. shq(host) .. " " .. shq(build_cmd))
   if not run_cmd(cmd) then error("docker build (remote) failed") end
 else
   local target_note = target and (" (target=" .. target .. ")") or ""
   info("Building Docker image: " .. tostring(image) .. target_note .. "...")
-  local cmd = "docker build --platform linux/amd64 " .. (build_cfg.dockerfile and ("-f " .. shq(build_cfg.dockerfile) .. " ") or "")
-  if target then cmd = cmd .. "--target " .. shq(target) .. " " end
-  cmd = cmd .. "-t " .. shq(image) .. " ."
+  local cmd, build_err = dockerrun.build_command(build_cfg, { image = image, target = target })
+  if not cmd then err(build_err) error("docker build: " .. build_err) end
   if not run_cmd(cmd) then error("docker build failed") end
 end
 '''
@@ -414,23 +413,24 @@ if not dry_run then
       warn("Template install failed (non-fatal) — " .. tostring(why))
     end
   end
+end
 
+local build_cmd, build_err = dockerrun.build_command(build_cfg, {
+  image = image, target = build_target, on_host = on_host, context = context,
+  host = host, is_local = local_deploy,
+})
+if not build_cmd then err(build_err) error("docker deploy: " .. build_err) end
+if dry_run then
+  info("Dry run — image build command:")
+  print("  " .. build_cmd .. "\n")
+else
   if on_host then
-    local build_cmd = "cd " .. shq(context) .. " && docker build " .. (build_cfg.dockerfile and ("-f " .. shq(build_cfg.dockerfile) .. " ") or "")
-    if build_target then build_cmd = build_cmd .. "--target " .. shq(build_target) .. " " end
-    build_cmd = build_cmd .. "-t " .. shq(image) .. " ."
-    local local_build = is_local_host(host)
-    info("Building " .. tostring(image) .. " on " .. (local_build and "this host" or host) .. " in " .. context .. "...")
-    local cmd = local_build and build_cmd or ("ssh " .. shq(host) .. " " .. shq(build_cmd))
-    if not run_cmd(cmd) then error("docker deploy: remote build failed") end
+    info("Building " .. tostring(image) .. " on " .. (local_deploy and "this host" or host) .. " in " .. context .. "...")
   else
     local target_note = build_target and (" (target=" .. build_target .. ")") or ""
     info("Building Docker image: " .. tostring(image) .. target_note .. "...")
-    local cmd = "docker build --platform linux/amd64 " .. (build_cfg.dockerfile and ("-f " .. shq(build_cfg.dockerfile) .. " ") or "")
-    if build_target then cmd = cmd .. "--target " .. shq(build_target) .. " " end
-    cmd = cmd .. "-t " .. shq(image) .. " ."
-    if not run_cmd(cmd) then error("docker deploy: build failed") end
   end
+  if not run_cmd(build_cmd) then error("docker deploy: build failed") end
 end
 
 -- ---- remote_recreate_container ----

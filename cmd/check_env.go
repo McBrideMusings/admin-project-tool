@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/McBrideMusings/admin-project-tool/internal/dockerrun"
 	"github.com/McBrideMusings/admin-project-tool/internal/manifest"
 	"github.com/McBrideMusings/admin-project-tool/internal/validate"
 )
@@ -55,6 +56,9 @@ func unresolvedConfigEnvRefs(m *manifest.Manifest) []unresolvedEnvRef {
 			state = "set but empty"
 		}
 		for _, origin := range r.UsedBy {
+			if dockerrun.IsBuildComputed(r.Name) && strings.HasPrefix(origin, "docker_build.args.") {
+				continue
+			}
 			bad = append(bad, unresolvedEnvRef{Var: r.Name, Origin: origin, State: state})
 		}
 	}

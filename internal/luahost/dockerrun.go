@@ -218,6 +218,32 @@ func (h *Host) registerDockerRun(L *lua.LState) {
 		return 2
 	}))
 
+	// dockerrun.build_command(build_cfg, opts) -> command or nil, err
+	// opts: image, target, on_host, context, host, is_local. The one place a
+	// `docker build` line is assembled (build and deploy both call it).
+	tbl.RawSetString("build_command", L.NewFunction(func(L *lua.LState) int {
+		cfg, _ := fromLuaValue(L.CheckTable(1)).(map[string]any)
+		opts := L.CheckTable(2)
+		str := func(k string) string { return lua.LVAsString(opts.RawGetString(k)) }
+		cmd, err := dockerrun.BuildImageCommand(dockerrun.BuildParams{
+			BuildCfg:    cfg,
+			Target:      str("target"),
+			Image:       str("image"),
+			OnHost:      lua.LVAsBool(opts.RawGetString("on_host")),
+			Context:     str("context"),
+			Host:        str("host"),
+			IsLocal:     lua.LVAsBool(opts.RawGetString("is_local")),
+			ProjectRoot: h.ProjectRoot,
+		})
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+		L.Push(lua.LString(cmd))
+		return 1
+	}))
+
 	// dockerrun.parse_env_text(text) -> {NAME = value, ...}
 	tbl.RawSetString("parse_env_text", L.NewFunction(func(L *lua.LState) int {
 		parsed := dockerrun.ParseEnvText(L.CheckString(1))

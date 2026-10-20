@@ -35,3 +35,17 @@ func TestUnresolvedConfigEnvRefs(t *testing.T) {
 		t.Errorf("unresolvedConfigEnvRefs =\n  %+v\nwant\n  %+v", got, want)
 	}
 }
+
+func TestDockerBuildArgsComputedRefsAreNotUnresolved(t *testing.T) {
+	t.Setenv("CHECK_ENV_UNSET", "")
+	m := &manifest.Manifest{Settings: map[string]map[string]any{
+		"docker_build": {"args": map[string]any{
+			"REV": "${GIT_REVISION}", "AT": "${BUILD_TIME}", "BAD": "${CHECK_ENV_UNSET}",
+		}},
+	}}
+	got := unresolvedConfigEnvRefs(m)
+	want := []unresolvedEnvRef{{Var: "CHECK_ENV_UNSET", Origin: "docker_build.args.BAD", State: "set but empty"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("unresolvedConfigEnvRefs = %+v, want %+v", got, want)
+	}
+}

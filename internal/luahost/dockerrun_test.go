@@ -109,3 +109,23 @@ info(dockerrun.mask_env_assignment("PORT=8080"))
 		t.Fatalf("non-secret value should pass through unchanged: %q", got)
 	}
 }
+
+func TestDockerRunBuildCommandReachesLua(t *testing.T) {
+	h, out, _ := newTestHost(t)
+	cfg := map[string]any{
+		"docker_build": map[string]any{"args": map[string]any{"REV": "abc", "BAD": "${LUAHOST_BUILD_UNSET}"}},
+	}
+	err := h.Exec(`
+local cmd = dockerrun.build_command({args = {REV = "abc"}}, {image = "app:1"})
+info(cmd)
+local bad, why = dockerrun.build_command(config.docker_build, {image = "app:1"})
+info(tostring(bad) .. "|" .. why)
+`, cfg)
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "--build-arg 'REV=abc' -t 'app:1' .") || !strings.Contains(got, "nil|[docker_build].args.BAD") {
+		t.Fatalf("build_command output = %q", got)
+	}
+}
