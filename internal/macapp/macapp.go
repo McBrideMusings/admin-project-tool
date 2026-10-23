@@ -3,12 +3,14 @@
 // electron kind, and the `apple.install_app` Lua binding — so the three things
 // that are easy to get wrong are handled once:
 //
-//   - The running copy is stopped first (SIGTERM, then SIGKILL) and waited
-//     for. Copying over a running bundle corrupts it on disk and leaves the old
-//     binary mapped.
-//   - The swap is atomic: the new bundle is staged beside the destination with
-//     `ditto` and renamed into place, and a failed rename puts the previous
-//     bundle back. `rm -rf` then copy leaves a window with no app installed.
+//   - The new bundle is staged beside the destination with `ditto` while the
+//     running copy keeps running, so the app is closed for the shortest
+//     possible time. Only then is the running copy stopped (SIGTERM, then
+//     SIGKILL) and waited for. Copying over a running bundle corrupts it on
+//     disk and leaves the old binary mapped.
+//   - The swap is atomic: the staged bundle is renamed into place, and a
+//     failed rename puts the previous bundle back. `rm -rf` then copy leaves a
+//     window with no app installed.
 //   - LaunchServices is told the bundle changed, so the Dock and `open` stop
 //     using the previous registration.
 package macapp
@@ -70,10 +72,6 @@ func Resolve(pattern string) (string, error) {
 // can relaunch what it stopped.
 func Install(src, dest string, log Logger) (wasRunning bool, err error) {
 	dest = strings.TrimRight(dest, "/")
-	if pids := pidsRunningFrom(dest); len(pids) > 0 {
-		wasRunning = true
-		stop(dest, pids, log)
-	}
 
 	staged := dest + ".installing"
 	previous := dest + ".previous"
@@ -82,9 +80,16 @@ func Install(src, dest string, log Logger) (wasRunning bool, err error) {
 
 	// ditto, not a recursive copy: a signed bundle's validity depends on its
 	// exact symlink and resource-fork structure (*.framework/Versions/Current).
+	// The copy happens while the old app is still running, so the app is
+	// closed only for the stop, two renames and the caller's relaunch.
 	if out, err := exec.Command("ditto", src, staged).CombinedOutput(); err != nil {
 		_ = os.RemoveAll(staged)
-		return wasRunning, fmt.Errorf("copy failed: %s", strings.TrimSpace(string(out)))
+		return false, fmt.Errorf("copy failed: %s", strings.TrimSpace(string(out)))
+	}
+
+	if pids := pidsRunningFrom(dest); len(pids) > 0 {
+		wasRunning = true
+		stop(dest, pids, log)
 	}
 
 	if _, err := os.Stat(dest); err == nil {
