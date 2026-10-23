@@ -3,11 +3,13 @@
 // electron kind, and the `apple.install_app` Lua binding — so the three things
 // that are easy to get wrong are handled once:
 //
-//   - The new bundle is staged beside the destination with `ditto` while the
-//     running copy keeps running, so the app is closed for the shortest
-//     possible time. Only then is the running copy stopped (SIGTERM, then
-//     SIGKILL) and waited for. Copying over a running bundle corrupts it on
-//     disk and leaves the old binary mapped.
+//   - The new bundle is staged with `ditto` in a hidden ".noindex" folder beside
+//     the destination while the running copy keeps running, so the app is
+//     closed for the shortest possible time. Only then is the running copy
+//     stopped (SIGTERM, then SIGKILL) and waited for. Copying over a running
+//     bundle corrupts it on disk and leaves the old binary mapped.
+//   - Every staged path is unregistered from LaunchServices once the swap is
+//     over, because it keeps an entry for a path that no longer exists.
 //   - The swap is atomic: the staged bundle is renamed into place, and a
 //     failed rename puts the previous bundle back. `rm -rf` then copy leaves a
 //     window with no app installed.
