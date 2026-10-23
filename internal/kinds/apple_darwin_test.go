@@ -329,3 +329,22 @@ func TestAppleExportOptionsPlistNamesRoute(t *testing.T) {
 		}
 	}
 }
+
+func TestAppleIOSExportSignsEachExtension(t *testing.T) {
+	x, _ := appleIOSExport(map[string]any{
+		"ios_bundle":               "com.example.app",
+		"ios_provisioning_profile": "Example Ad Hoc",
+		"ios_extension_profiles": map[string]any{
+			"com.example.app.Widget": "Example Widget Ad Hoc",
+		},
+	}, "")
+	plist := appleExportOptionsPlist(x, "TEAM123")
+	for _, want := range []string{
+		"<key>com.example.app</key><string>Example Ad Hoc</string>",
+		"<key>com.example.app.Widget</key><string>Example Widget Ad Hoc</string>",
+	} {
+		if !strings.Contains(plist, want) {
+			t.Errorf("ExportOptions plist missing %q:\n%s", want, plist)
+		}
+	}
+}

@@ -35,6 +35,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -849,6 +850,9 @@ type appleExport struct {
 	cert        string // signingCertificate
 	profile     string // provisioning profile name or UUID
 	bundleID    string
+	// extensionProfiles maps each embedded extension's bundle id to its own
+	// profile; an export signs every bundle in the app, so each needs one.
+	extensionProfiles map[string]string
 }
 
 // appleMacExport is the Developer ID route for deploy mac, or an error when
@@ -884,9 +888,10 @@ func appleMacExport(cfg map[string]any, project string) (appleExport, error) {
 func appleIOSExport(cfg map[string]any, project string) (appleExport, bool) {
 	x := appleExport{
 		destination: "generic/platform=iOS", method: "release-testing",
-		cert:     cfgString(cfg, "ios_export_identity", "Apple Distribution"),
-		profile:  cfgString(cfg, "ios_provisioning_profile", ""),
-		bundleID: appleBundle(project, cfg, "ios", false),
+		cert:              cfgString(cfg, "ios_export_identity", "Apple Distribution"),
+		profile:           cfgString(cfg, "ios_provisioning_profile", ""),
+		bundleID:          appleBundle(project, cfg, "ios", false),
+		extensionProfiles: cfgStringMap(cfgMap(cfg, "ios_extension_profiles")),
 	}
 	return x, x.profile != ""
 }
@@ -909,6 +914,15 @@ func appleExportOptionsPlist(x appleExport, team string) string {
 		_ = xml.EscapeText(&b, []byte(s)) // a strings.Builder write never fails
 		return b.String()
 	}
+	var extensions strings.Builder
+	ids := make([]string, 0, len(x.extensionProfiles))
+	for id := range x.extensionProfiles {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		extensions.WriteString(`<key>` + esc(id) + `</key><string>` + esc(x.extensionProfiles[id]) + "</string>\n")
+	}
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -919,7 +933,7 @@ func appleExportOptionsPlist(x appleExport, team string) string {
 <key>signingCertificate</key><string>` + esc(x.cert) + `</string>
 <key>provisioningProfiles</key><dict>
 <key>` + esc(x.bundleID) + `</key><string>` + esc(x.profile) + `</string>
-</dict>
+` + extensions.String() + `</dict>
 </dict></plist>
 `
 }

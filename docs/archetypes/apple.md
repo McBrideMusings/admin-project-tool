@@ -98,6 +98,7 @@ both, with manual signing against a profile installed under
 | `mac_provisioning_profile` | — | Name or UUID of the Developer ID profile for the Mac bundle id. Required by the Developer ID export. |
 | `notarize` | `false` | Implies the Developer ID export, then submits the app to the notary service and staples it before install. |
 | `ios_provisioning_profile` | — | Name or UUID of an ad-hoc profile for the iOS bundle id. Setting it routes `deploy ios` through a `release-testing` (ad-hoc) export; the `.ipa`'s `Payload/*.app` is what devicectl installs. The profile must list the device's UDID. |
+| `ios_extension_profiles` | — | Table of extension bundle id → ad-hoc profile name or UUID, for an app that embeds extensions (a widget, a Live Activity). The export signs every bundle in the app, so each extension needs its own profile beside `ios_provisioning_profile`'s. |
 | `ios_export_identity` | `Apple Distribution` | Certificate the ad-hoc export signs with. Separate from `ios_sign_identity`, which every iOS build uses, the dev loop included. |
 
 macOS can drop `get-task-allow` without distribution signing: set
