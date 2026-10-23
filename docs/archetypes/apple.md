@@ -288,3 +288,7 @@ admin appid com.example.new --name "New" --capability push   # register, then en
 Capability names accept Apple's enum (`ICLOUD`, `PUSH_NOTIFICATIONS`, …) or the friendlier aliases in `internal/ascapi/ascapi.go` (`icloud`, `push`, `app-groups`, …).
 
 All three variables or none: `xcodebuild` rejects a partial set, and a path pointing at a missing file falls back to whatever account Xcode has rather than failing every build on that machine.
+
+## `deploy-mac` keeps the running app up until the swap
+
+`appleDeployMac` builds first and never stops the installed app on its own. `macapp.Install` stops it (SIGTERM, then SIGKILL) only after the build, notarize and `mac_deploy_verify` steps have passed, swaps the bundle, and `open` relaunches it. A deploy run from a terminal inside the app being replaced is killed by that stop, so the caller must start it detached (`nohup` under `setsid`) or the relaunch never happens.

@@ -369,9 +369,6 @@ func appleDeployMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 		installPath = "/Applications/" + process + ".app"
 	}
 
-	h.Info("Killing any running " + process + "...")
-	_ = exec.Command("pkill", "-x", process).Run()
-
 	// Developer ID cannot be reached by passing CODE_SIGN_IDENTITY to a plain
 	// build: an automatically-signed target refuses it outright with
 	// "conflicting provisioning settings". Distribution signing is an EXPORT
