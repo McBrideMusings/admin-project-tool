@@ -73,17 +73,30 @@ func Resolve(pattern string) (string, error) {
 func Install(src, dest string, log Logger) (wasRunning bool, err error) {
 	dest = strings.TrimRight(dest, "/")
 
-	staged := dest + ".installing"
-	previous := dest + ".previous"
-	_ = os.RemoveAll(staged)
-	_ = os.RemoveAll(previous)
+	// Both the staged copy and the old bundle live in one hidden folder whose
+	// ".noindex" name keeps Spotlight (and Raycast, which reads it) from listing
+	// them. LaunchServices still registers an app the moment it appears there
+	// and keeps the entry after the files are gone, so every path used here is
+	// unregistered once the swap is over, whatever its outcome.
+	work := filepath.Join(filepath.Dir(dest), "."+filepath.Base(dest)+".installing.noindex")
+	staged := filepath.Join(work, "new", filepath.Base(dest))
+	previous := filepath.Join(work, "previous", filepath.Base(dest))
+	cleanup := func() {
+		_ = os.RemoveAll(work)
+		unregister(staged)
+		unregister(previous)
+	}
+	_ = os.RemoveAll(work)
+	defer cleanup()
 
 	// ditto, not a recursive copy: a signed bundle's validity depends on its
 	// exact symlink and resource-fork structure (*.framework/Versions/Current).
 	// The copy happens while the old app is still running, so the app is
 	// closed only for the stop, two renames and the caller's relaunch.
+	if err := os.MkdirAll(filepath.Dir(staged), 0o755); err != nil {
+		return false, fmt.Errorf("could not create the staging folder %s: %w", work, err)
+	}
 	if out, err := exec.Command("ditto", src, staged).CombinedOutput(); err != nil {
-		_ = os.RemoveAll(staged)
 		return false, fmt.Errorf("copy failed: %s", strings.TrimSpace(string(out)))
 	}
 
@@ -93,8 +106,10 @@ func Install(src, dest string, log Logger) (wasRunning bool, err error) {
 	}
 
 	if _, err := os.Stat(dest); err == nil {
+		if err := os.MkdirAll(filepath.Dir(previous), 0o755); err != nil {
+			return wasRunning, fmt.Errorf("could not create the staging folder %s: %w", work, err)
+		}
 		if err := os.Rename(dest, previous); err != nil {
-			_ = os.RemoveAll(staged)
 			return wasRunning, fmt.Errorf("could not move the old %s aside: %w", dest, err)
 		}
 	}
@@ -103,13 +118,19 @@ func Install(src, dest string, log Logger) (wasRunning bool, err error) {
 		if _, statErr := os.Stat(previous); statErr == nil {
 			_ = os.Rename(previous, dest)
 		}
-		_ = os.RemoveAll(staged)
 		return wasRunning, fmt.Errorf("could not swap in the new bundle: %w", err)
 	}
-	_ = os.RemoveAll(previous)
 
 	RefreshRegistration(dest)
 	return wasRunning, nil
+}
+
+// unregister drops path from LaunchServices. Best-effort, like
+// RefreshRegistration: a stale entry is a nuisance, never a failed install.
+func unregister(path string) {
+	if _, err := os.Stat(lsregister); err == nil {
+		_ = exec.Command(lsregister, "-u", path).Run()
+	}
 }
 
 // RefreshRegistration bumps the bundle's mtime and re-registers it with

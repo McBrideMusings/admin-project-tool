@@ -79,9 +79,11 @@ func TestInstallReplacesExistingBundle(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dest, "Contents", "old.txt")); !os.IsNotExist(err) {
 		t.Errorf("old bundle's file survived the swap: %v", err)
 	}
-	for _, leftover := range []string{dest + ".installing", dest + ".previous"} {
-		if _, err := os.Stat(leftover); !os.IsNotExist(err) {
-			t.Errorf("%s left behind", leftover)
-		}
+	entries, err := os.ReadDir(filepath.Dir(dest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "App.app" {
+		t.Errorf("the destination folder holds more than the installed app: %v", entries)
 	}
 }
