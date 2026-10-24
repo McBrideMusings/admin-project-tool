@@ -432,7 +432,9 @@ func appleDeployMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 
 	if cfgBool(cfg, "mac_deploy_launch", true) {
 		h.Info("Launching " + installPath)
-		if err := exec.Command("open", installPath).Run(); err != nil {
+		launch := exec.Command("open", installPath)
+		launch.Env = macapp.LaunchEnv()
+		if err := launch.Run(); err != nil {
 			return err
 		}
 	}

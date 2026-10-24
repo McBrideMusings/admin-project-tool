@@ -135,6 +135,28 @@ func unregister(path string) {
 	}
 }
 
+// launchEnvKeys are the variables a Finder launch carries. `open` hands its own
+// environment to the app it starts, so a deploy run from inside another app's
+// terminal (WHEEL_URL, WHEEL_PANE ...) would start the new app as a client of
+// that terminal's session instead of as the app a person opens.
+var launchEnvKeys = map[string]bool{
+	"HOME": true, "USER": true, "LOGNAME": true, "SHELL": true, "PATH": true,
+	"TMPDIR": true, "LANG": true, "__CF_USER_TEXT_ENCODING": true,
+}
+
+// LaunchEnv is the environment to give `open` when it relaunches an installed
+// app: the caller's environment cut down to what a Finder launch carries.
+func LaunchEnv() []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		key, _, _ := strings.Cut(kv, "=")
+		if launchEnvKeys[key] || strings.HasPrefix(key, "LC_") {
+			env = append(env, kv)
+		}
+	}
+	return env
+}
+
 // RefreshRegistration bumps the bundle's mtime and re-registers it with
 // LaunchServices so the next launch picks up a changed icon. Best-effort: a
 // cache refresh is never worth failing an install over.

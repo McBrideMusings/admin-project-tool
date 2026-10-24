@@ -50,6 +50,24 @@ func TestResolveGlobToOneBundle(t *testing.T) {
 	}
 }
 
+// TestLaunchEnvDropsTheCallersAppSession: a deploy run inside another app's
+// terminal must not hand that app's session variables to the relaunched app.
+func TestLaunchEnvDropsTheCallersAppSession(t *testing.T) {
+	t.Setenv("WHEEL_URL", "ws://127.0.0.1:7420/ws")
+	t.Setenv("WHEEL_PANE", "p1")
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	t.Setenv("HOME", "/Users/someone")
+	env := strings.Join(LaunchEnv(), "\n")
+	if strings.Contains(env, "WHEEL_") {
+		t.Errorf("the launch environment carries the caller's WHEEL_ variables:\n%s", env)
+	}
+	for _, want := range []string{"HOME=/Users/someone", "LC_ALL=en_US.UTF-8"} {
+		if !strings.Contains(env, want) {
+			t.Errorf("the launch environment lost %s", want)
+		}
+	}
+}
+
 // TestInstallReplacesExistingBundle drives the real ditto + rename swap.
 func TestInstallReplacesExistingBundle(t *testing.T) {
 	if runtime.GOOS != "darwin" {
