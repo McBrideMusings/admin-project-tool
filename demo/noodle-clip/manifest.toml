@@ -36,6 +36,7 @@ steps = ["test"]
 [actions.dev]
 kind = "shell"
 run  = "bash scripts/dev.sh"
+urls = ["http://localhost:3000"]
 
 [actions.build]
 kind = "shell"
