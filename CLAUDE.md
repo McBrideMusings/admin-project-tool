@@ -2,13 +2,11 @@
 
 Runs per-project tasks from a short `admin.toml` manifest plus a library of composable archetypes. The installed tool **interprets** `admin.toml` at runtime (ADR-0006) — a project commits only the manifest; the `admin` command (installed on PATH at `~/.admin/admin`) finds it by walking up from `$PWD`. `admin compile` builds a standalone `./admin` — a full copy of the Go binary with the project's resolved manifest embedded (`internal/compiledinfo`) — for the rare case the tool isn't installed. See `docs/architecture/design.md` for the full architecture.
 
-## `admin.toml` is NOT committed — this overrides the README
+## `admin.toml` is NOT committed
 
-**Do not commit `admin.toml` to any repository except this one. Do not suggest committing it. Do not "fix" a project whose `admin.toml` is untracked — that is the intended state.**
+**Do not commit `admin.toml` to any repository, this one included. Do not suggest committing it. Do not "fix" a project whose `admin.toml` is untracked — that is the intended state.**
 
-`README.md` says a project commits only `admin.toml`. That describes how this tool will work **once it is public**, and it is deliberately left accurate for that future. It is not how things work today.
-
-Today the tool is private. An `admin.toml` sitting in a public repository advertises the tool, its verbs, and its manifest format, and the tool is not ready to be advertised. So `admin.toml` is caught by a **global** ignore rule on the developer's machine (`~/.config/git/ignore`), which applies to every repository at once rather than per-project. This repo used to be the single exception and track its own, but a pre-commit guard (added in 214ee57) now blocks every commit here while `admin.toml` sits in the index — so this repo's own manifest is untracked like every other project's, and nothing about it travels through git.
+Some manifests embed secrets (see below), so `admin.toml` is caught by a **global** ignore rule on the developer's machine (`~/.config/git/ignore`), which applies to every repository at once rather than per-project. A pre-commit guard here blocks every commit while `admin.toml` sits in the index, so this repo's own manifest is untracked like every other project's, and nothing about it travels through git.
 
 Consequences that look like bugs and are not:
 
@@ -16,11 +14,9 @@ Consequences that look like bugs and are not:
 - No branch can carry a change to `admin.toml`, so config edits happen in the primary checkout only.
 - A fresh clone on a new machine has no task runner until the manifest is copied over by hand.
 
-When the tool goes public this section is what gets deleted, and the README becomes true as written.
-
 ### Secrets in manifests
 
-Some `admin.toml` files embed secrets today, which is a second and independent reason not to commit them. Before any manifest is committed anywhere, it gets audited for secrets.
+Some `admin.toml` files embed secrets today. Before any manifest is committed anywhere, it gets audited for secrets.
 
 The tool's mechanism for a secret is `.env` plus `${VAR}`. `internal/manifest/dotenv.go`'s `LoadDotenv` reads `<project root>/.env` into the process environment before the manifest resolves, so a `run` string or config value writes `${STASH_TOKEN}` and the value never appears in `admin.toml`. A variable already exported in the shell wins over the file's line, and loading twice changes nothing. A `.env` encrypted by git-crypt and still locked (it starts with the `\0GITCRYPT\0` header) is skipped, so a locked checkout still boots — with those variables unset.
 
