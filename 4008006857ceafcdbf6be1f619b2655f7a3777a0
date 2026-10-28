@@ -1,0 +1,1 @@
+The admin_lib/apple.py and tests/test_apple.py hunks in this commit are not part of the env-resolver change the subject describes. They were uncommitted work from a concurrent session, swept in by a git add -A here. Nothing was lost, and the apple work continues in c839ad8 and 1caa81f. Recorded rather than rebased because those two commits were already pushed on top.
