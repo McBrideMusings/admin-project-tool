@@ -434,8 +434,8 @@ func appleDeployMac(cfg map[string]any, h *luahost.Host, f appleFlags) error {
 		h.Info("Launching " + installPath)
 		launch := exec.Command("open", installPath)
 		launch.Env = macapp.LaunchEnv()
-		if err := launch.Run(); err != nil {
-			return err
+		if out, err := launch.CombinedOutput(); err != nil {
+			return fmt.Errorf("installed %s but could not launch it: %v: %s", installPath, err, strings.TrimSpace(string(out)))
 		}
 	}
 	h.Ok("deploy mac -> " + installPath)
