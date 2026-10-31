@@ -93,6 +93,9 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	if err := kinds.ValidateNoComplete(m.Actions); err != nil {
 		problems = append(problems, validate.Wrap(err))
 	}
+	if err := kinds.ValidateDryRun(m.Actions); err != nil {
+		problems = append(problems, validate.Wrap(err))
+	}
 	if err := kinds.ValidateSupervise(m.Actions); err != nil {
 		problems = append(problems, validate.Wrap(err))
 	}

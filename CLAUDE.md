@@ -130,6 +130,16 @@ A target that delegates (`action = "dev-cf"`) is framed by the *picked target*, 
 
 **Pipeline.** `internal/validate` checks the `urls` shape and that `footer` is a real bool (parent and per-target — TOML has no truthy strings, so `footer = "true"` is a typo worth reporting); `internal/archetype` normalises entries to label/url pairs and builds the resolved and per-target URL lists plus the tri-state footer flags; `internal/kinds` calls `enterFrame` in the shell, multi-target, and interactive-shell closures and always calls `frame.Deactivate()` via `defer`. Child output reaches the terminal through `frame.Write`, which repaints the footer after each chunk — so every pump must call it rather than writing to stdout directly. In practice this means one thing: every caller writes through `internal/streams.OutputPump`, which is the only place that calls `frame.Write`. `frame.ApplyWinsize` sizes a child's pty to the *region*, not the screen; without it a child that positions its own cursor (wrangler, vite, metro) paints over the footer. `admin logs` reads logs and never runs under a frame.
 
+## Reserved command arguments
+
+A manifest command's arguments belong to its steps — cobra registers every manifest command with `DisableFlagParsing` — except three words the tool reads itself, anywhere before the first bare `--` (`internal/kinds/cmdargs.go`'s `ParseCommandArgs`, applied in `runSteps`, so the CLI, `__run-command` and the dashboard share it):
+
+- **`-h` / `--help`** prints `CommandHelp` — the command's `desc`, each step's kind and `desc` (or its `run` line), every multi-target step's targets — and returns before preflight, guards, `[env].requires`, the log file or any step.
+- **`--dry-run`** runs only the actions that declare `dry_run = true`, the ones whose body reads the flag and previews (the docker archetype's `deploy`). `RunAction` prints every other action — `dry run: not running action "x" … would run: <run>` — instead of running it, before its guards; a multi-target runs (it only routes) and its picked target meets the same check; an inline `run` target receives no arguments, so a dry run always prints it. The word stays in the steps' arguments. `admin check` rejects a non-bool `dry_run` and one on a multi-target action (`ValidateDryRun`).
+- **`--`** ends the tool's words and is removed: `admin x -- --help` hands `--help` to the program `x` wraps.
+
+A step can never be trusted to honor these itself: a `kind = "shell"` step ignores its arguments, so a `--help` checked by a command's second step arrives after the first has done real work.
+
 ## Guards
 
 A project can gate any action or multi-target target behind a named precondition by listing guard names in `requires`. Built-in guards (`git-clean`, `git-pushed`, `deps-fresh`) are registered by `internal/guards` at package `init()`; user-defined ones live in `[guards.<name>]` tables. The full design and rejected alternatives live in [ADR-0005](docs/adr/0005-guards-and-requires.md).

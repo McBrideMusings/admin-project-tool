@@ -186,12 +186,6 @@ end
 
 local requested = args[1] or "all"
 
-if requested == "-h" or requested == "--help" then
-  info("usage: admin clean [target|all]")
-  info("targets: " .. table.concat(targets, ", ") .. ", all (default)")
-  return
-end
-
 local to_run = {}
 if requested == "all" then
   to_run = targets
@@ -398,8 +392,6 @@ elseif sub == "restore" then
   end
   apple.restore_icons(all, "tmp/icon-backup")
   ok("icons restored from tmp/icon-backup")
-elseif sub == "-h" or sub == "--help" then
-  info("usage: admin icons [regenerate|swap-dev|restore]")
 else
   err("unknown subcommand: " .. sub)
   error("unknown subcommand: " .. sub)

@@ -374,6 +374,25 @@ func makeMultiTarget(name string, action manifest.Action, m *manifest.Manifest, 
 		if !ok {
 			return fmt.Errorf("action %q: unknown target %q", name, picked)
 		}
+
+		// A dry run decides before the target's guards, which run shell
+		// commands of their own. An inline `run` target receives no
+		// arguments, so it can never implement --dry-run: it is printed, not
+		// run. A delegated target that cannot preview goes straight to
+		// RunAction, which prints it the same way. A target delegating to an
+		// action that previews (or to another multi-target) runs as usual,
+		// guards included, since that action really runs.
+		if dryRun.Load() {
+			if t.action == "" {
+				printDryRunSkip(fmt.Sprintf("target %s:%s", name, picked), "shell", t.run)
+				return nil
+			}
+			if inner, ok := m.Actions[t.action]; ok && surf != nil &&
+				actionKind(inner) != "multi-target" && !dryRunCapable(inner) {
+				return surf.action(t.action, rest)
+			}
+		}
+
 		h.SetLogContext([]string{name, picked}, luahost.RetainUnset)
 
 		// Guards run BEFORE the frame goes up. A guard is a precondition that

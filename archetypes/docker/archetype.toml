@@ -156,6 +156,8 @@ end
 
 [actions.deploy]
 kind = "lua"
+# The body reads --dry-run and previews every phase without changing anything.
+dry_run = true
 desc = "Deploy to Unraid — `image` (default, rebuild + recreate from [docker_run]), `files` ([deploy] mirror dir only), or `all`; --force to override drift, --dry-run to preview"
 run = '''
 -- Deploys and recreates the container (admin-3rgp.37), via the shared
@@ -255,16 +257,6 @@ local function is_local_host(host)
 end
 
 -- ---- parse args ----
-for _, a in ipairs(args) do
-  if a == "--help" or a == "-h" then
-    print("Usage: admin deploy [image|files|all] [--dry-run] [--force]\n\n" ..
-          "  image  rebuild the image and recreate the container (default)\n" ..
-          "  files  sync the [deploy] mirror directory only\n" ..
-          "  all    sync the mirror directory, then the image")
-    return
-  end
-end
-
 local target, dry_run, force = nil, false, false
 for _, a in ipairs(args) do
   if a:sub(1, 1) == "-" then

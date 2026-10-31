@@ -73,7 +73,7 @@ func TestDotenvFeedsResolveComputedPassthrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveEnv: %v", err)
 	}
-	if want := "ssh tower-host true"; got != want {
+	if want := "ssh root@100.64.0.10 true"; got != want {
 		t.Errorf("ResolveEnv = %q, want %q", got, want)
 	}
 }

@@ -264,6 +264,8 @@ A `kind = "lua"` body runs against `internal/luahost`'s registered function tabl
 
 **Actions** (`[actions.*]`) are the implementation: hidden from TUI and `--help`, dispatched by `internal/kinds`. They have `kind` + `run`/`targets`/etc. All actual work — shell strings, Lua bodies, multi-target dispatch, apple verb calls — lives in actions.
 
+A command's arguments reach every step, except `-h`/`--help` (print the command's help, run nothing), `--dry-run` (run only actions declaring `dry_run = true`, print the rest) and `--` (end of those words; removed), which the tool reads itself before the first bare `--` — see `internal/kinds/cmdargs.go`.
+
 The canonical pattern:
 ```toml
 [commands.build]

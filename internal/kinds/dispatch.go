@@ -214,6 +214,20 @@ func RunAction(m *manifest.Manifest, r *Registry, name string, args []string) er
 		return fmt.Errorf("action %q: unknown kind %q", name, kind)
 	}
 
+	// A dry run reaches here for every action — a command's step, a
+	// multi-target's delegated target, a nested command's step — and runs
+	// only the ones that implement a preview themselves. A multi-target only
+	// routes, so it runs and its picked target meets this check in turn. The
+	// check comes before the guards, which run shell commands of their own.
+	if dryRun.Load() && kind != "multi-target" && !dryRunCapable(action) {
+		run, _ := actionString(action, "run")
+		if kind != "shell" && kind != "shell-passthrough" {
+			run = ""
+		}
+		printDryRunSkip(fmt.Sprintf("action %q", name), kind, run)
+		return nil
+	}
+
 	if kind != "multi-target" {
 		reqs, err := guards.RequiresOf(action)
 		if err != nil {
@@ -226,7 +240,7 @@ func RunAction(m *manifest.Manifest, r *Registry, name string, args []string) er
 
 	surf := &Surface{
 		action:  func(n string, a []string) error { return RunAction(m, r, n, a) },
-		command: func(n string, a []string) error { return runSteps(m, r, n, a) },
+		command: func(n string, a []string) error { return runCommandSteps(m, r, n, a) },
 	}
 
 	runner, err := factory(name, action, m, surf)
@@ -408,7 +422,30 @@ func launchCommand(m *manifest.Manifest, name string, args []string, env []strin
 // check, declared-order execution, stop-at-first-failure, and the error
 // wrapping that names the command. Every step dispatches through RunAction,
 // which never reaches the launcher.
+//
+// runSteps first takes the words the tool owns out of args
+// (ParseCommandArgs): --help prints CommandHelp and returns before anything
+// else here runs, and --dry-run holds for every action this command reaches.
 func runSteps(m *manifest.Manifest, r *Registry, name string, args []string) error {
+	ca := ParseCommandArgs(args)
+	if ca.Help {
+		help, err := CommandHelp(m, name)
+		if err != nil {
+			return err
+		}
+		fmt.Print(help)
+		return nil
+	}
+	prev := dryRun.Swap(ca.DryRun)
+	defer dryRun.Store(prev)
+	return runCommandSteps(m, r, name, ca.Args)
+}
+
+// runCommandSteps is runSteps after the tool's own words are taken. A nested
+// command (Surface.Command) calls it directly: its arguments are a step's
+// arguments, already parsed once, so a --help or -- forwarded past a "--" is
+// never read a second time.
+func runCommandSteps(m *manifest.Manifest, r *Registry, name string, args []string) error {
 	cmd, ok := resolveCommand(m, name)
 	if !ok {
 		return fmt.Errorf("unknown command %q", name)
