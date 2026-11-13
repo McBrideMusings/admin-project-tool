@@ -5,3 +5,5 @@ A project keeps real addresses, hostnames and paths out of its tracked files by 
 A reference with no value and no default fails the action and names the variable. A literal `${VAR}` never reaches a host.
 
 The `install-template` action is the one place a file's contents are expanded. The docker archetype's deploy calls it and has no copy path of its own.
+
+With `[install_template] generate = true` the deploy installs no file. It writes the dockerMan template from the `docker run` arguments it just created the container with, so there is no template text to expand and no second description of the container.
