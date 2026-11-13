@@ -394,10 +394,28 @@ if on_host then
   context = ctx
 end
 
-if not dry_run then
-  -- ensure_docker_template: install the Unraid GUI template every deploy,
-  -- non-fatal. The install-template action renders the ${VAR} placeholders
-  -- from the environment before it copies the file.
+-- [install_template].generate: the Unraid template is written after the
+-- recreate from the argv that created the container (see the end of this
+-- body), so a hand-kept template file is a second description of the
+-- container and is refused rather than installed beside it.
+if template_cfg.generate then
+  if template_cfg.src then
+    err("[install_template] sets both generate and src — generate writes the template from [docker_run]; remove src")
+    error("docker deploy: install_template generate with src")
+  end
+  if not run_cfg_present then
+    err("[install_template].generate needs a [docker_run] table to generate the template from")
+    error("docker deploy: install_template generate without docker_run")
+  end
+end
+
+if not dry_run and not template_cfg.generate then
+  -- ensure_docker_template: install the hand-kept Unraid GUI template every
+  -- deploy, non-fatal. The install-template action renders the ${VAR}
+  -- placeholders from the environment before it copies the file. A generated
+  -- template (generate = true) is written at the end of this body instead,
+  -- and a failure there fails the deploy: a stale template is what a GUI
+  -- Apply would rebuild the container from.
   local tsrc = template_cfg.src or "deploy/unraid-template.xml"
   if fs.read(tsrc) and (env("UNRAID_HOST") or "") ~= "" then
     local installed, why = pcall(run_action, "install-template")
@@ -591,6 +609,10 @@ if dry_run then
   end
   info("Dry run — docker run command that would be executed " .. location .. ":")
   print("  " .. display_run .. "\n")
+  if template_cfg.generate then
+    info("Dry run — Unraid template that would be written from this argv " .. location .. ": " ..
+         dockerrun.unraid_template_dir .. "/my-" .. container .. ".xml")
+  end
   if health_shell then
     info("Dry run — post-deploy health check that would run:")
     print("  " .. health_shell .. "\n")
@@ -731,6 +753,26 @@ end
 info("Pruning dangling images " .. location .. "...")
 local prune_shell = "docker image prune -f"
 run_cmd(local_deploy and prune_shell or ("ssh " .. shq(host) .. " " .. shq(prune_shell)))
+
+-- The Unraid GUI's Edit form and "force update" rebuild the container from
+-- its template, so the template is written from the very argv the container
+-- was just created with: a GUI Apply then rebuilds this container, not an
+-- older or hand-kept description of it. Written through a temp file and mv,
+-- 0600, because the values are the real ones, credentials included.
+if template_cfg.generate then
+  local tdir = dockerrun.unraid_template_dir
+  local tpath = tdir .. "/my-" .. container .. ".xml"
+  local xml = dockerrun.unraid_template(container, image, target_argv)
+  local tmp = tpath .. ".tmp"
+  local write_shell = "umask 077 && mkdir -p " .. shq(tdir) .. " && printf '%s' " .. shq(xml) ..
+                      " > " .. shq(tmp) .. " && mv " .. shq(tmp) .. " " .. shq(tpath)
+  if not on_target(write_shell) then
+    err("Could not write the Unraid template " .. tpath .. " " .. location ..
+        " — the container is deployed, but a GUI Apply would rebuild it from the old template")
+    error("docker deploy: unraid template write failed")
+  end
+  ok("Unraid template written from [docker_run]: " .. tpath)
+end
 '''
 
 

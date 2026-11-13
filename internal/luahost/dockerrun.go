@@ -103,6 +103,16 @@ func (h *Host) registerDockerRun(L *lua.LState) {
 		return 1
 	}))
 
+	// dockerrun.unraid_template(container, image, argv) -> xml
+	tbl.RawSetString("unraid_template", L.NewFunction(func(L *lua.LState) int {
+		argv := tableToStringSlice(L.CheckTable(3))
+		L.Push(lua.LString(dockerrun.UnraidTemplate(L.CheckString(1), L.CheckString(2), argv)))
+		return 1
+	}))
+
+	// dockerrun.unraid_template_dir -> the dockerMan templates-user path
+	tbl.RawSetString("unraid_template_dir", lua.LString(dockerrun.UnraidTemplateDir))
+
 	// dockerrun.is_secret_env_name(name) -> bool
 	tbl.RawSetString("is_secret_env_name", L.NewFunction(func(L *lua.LState) int {
 		L.Push(lua.LBool(dockerrun.IsSecretEnvName(L.CheckString(1))))
